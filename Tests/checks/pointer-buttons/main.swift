@@ -132,6 +132,23 @@ struct Check {
                 buffered.send(up)
             }
 
+            let handoff = Fixture()
+            handoff.buffer.hold()
+            expect("\(button) disconnect releases before next client's same button", [
+                "\(button) mouse down (none) at 300,300",
+                "\(button) mouse up (none) at 300,300",
+                "\(button) mouse down (none) at 300,300",
+                "\(button) mouse drag (none) at 400,350",
+                "\(button) mouse up (none) at 400,350"
+            ]) {
+                handoff.buffer.send(.pointer(down, x: 0.5, y: 0.5), in: handoff.rect, from: handoff.first)
+                handoff.buffer.disconnect(handoff.first)
+                handoff.buffer.send(.pointer(down, x: 0.5, y: 0.5), in: handoff.rect, from: handoff.second)
+                handoff.buffer.send(.pointer(.move, x: 0.75, y: 0.75), in: handoff.rect, from: handoff.second)
+                handoff.buffer.flush()
+                handoff.buffer.disconnect(handoff.second)
+            }
+
             let dropped = Fixture()
             dropped.buffer.hold()
             expect("\(button) source switch discards held down", []) {

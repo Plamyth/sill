@@ -1230,9 +1230,10 @@ package final class StreamCoordinator {
                 if injector.isUpOfSomethingDown(event, from: device) { injector.apply(event, in: .null, from: device) }
             case .chord(let keyCode, let flags):
                 injector.chord(keyCode: keyCode, flags: flags)
+            case .disconnect(let device):
+                injector.releaseInput(of: device)
             }
         }
-        releaseInputOfDevicesThatLeft()
         encoder = nil                  // deinit invalidates the VT session
         server.resetForNewStream()          // every client waits for the next parameter sets + keyframe
         // New settings take effect here, between pipelines, before the rate, the scale and the
@@ -1474,11 +1475,13 @@ package final class StreamCoordinator {
     /// Input held for an activation, replayed in order once the app is up, each with the device that
     /// sent it (its keys are its own, KeyStrokes); a gesture's chord that arrives meanwhile waits
     /// behind it, so a click just before the gesture lands first.
-    private enum Held { case input(InputEvent, CGRect, KeyStrokes.Device), chord(keyCode: UInt16, flags: UInt64) }
+    private enum Held {
+        case input(InputEvent, CGRect, KeyStrokes.Device)
+        case chord(keyCode: UInt16, flags: UInt64)
+        case disconnect(KeyStrokes.Device)
+    }
     private var heldInput: [Held] = []
     private var holdUntil: CFAbsoluteTime = 0
-    /// Devices that left while input was held: their keys and buttons go up after it.
-    private var leftWhileHeld: [KeyStrokes.Device] = []
     /// How long held input waits for the app to become frontmost before it is replayed anyway.
     private static let activationTimeout: TimeInterval = 0.6
 
@@ -1497,23 +1500,19 @@ package final class StreamCoordinator {
             switch item {
             case .input(let event, let rect, let device): logClick(event, in: rect); injector.apply(event, in: rect, from: device)
             case .chord(let keyCode, let flags): injector.chord(keyCode: keyCode, flags: flags)
+            case .disconnect(let device): injector.releaseInput(of: device)
             }
         }
-        releaseInputOfDevicesThatLeft()
     }
 
     /// A device left: its keys and buttons go up (InputInjector.releaseInput),
-    /// after whatever of its input is still held for an activation, so no up of its own is overtaken
-    /// and no down of its own comes after.
+    /// after its earlier input and before later input from another device.
     private func releaseInput(of device: KeyStrokes.Device) {
-        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil { leftWhileHeld.append(device); return }
+        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil {
+            heldInput.append(.disconnect(device))
+            return
+        }
         injector.releaseInput(of: device)
-    }
-
-    private func releaseInputOfDevicesThatLeft() {
-        let left = leftWhileHeld
-        leftWhileHeld = []
-        for device in left { injector.releaseInput(of: device) }
     }
 
     private func raiseIfInteracting(_ event: InputEvent) {
