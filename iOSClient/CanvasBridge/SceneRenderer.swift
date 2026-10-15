@@ -1,0 +1,78 @@
+import PencilKit
+import SwiftUI
+
+enum CanvasPalette {
+    static let background = UIColor.black
+    static let ink = UIColor.white
+    static let link = UIColor.cyan
+    static let nodeFill = UIColor.darkGray
+    static let nodeText = UIColor.white
+}
+
+enum SceneRenderer {
+    @MainActor
+    static func png(scene: CanvasScene, drawing: PKDrawing) -> Data? {
+        let size = CGSize(width: scene.width, height: scene.height)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            CanvasPalette.background.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            let cg = context.cgContext
+            cg.setStrokeColor(CanvasPalette.ink.cgColor)
+            cg.setLineWidth(4)
+            cg.setLineCap(.round)
+            cg.setLineJoin(.round)
+            for stroke in scene.strokes {
+                guard let first = stroke.points.first else { continue }
+                cg.beginPath()
+                cg.move(to:CGPoint(x:first.x,y:first.y))
+                for point in stroke.points.dropFirst() {
+                    cg.addLine(to:CGPoint(x:point.x,y:point.y))
+                }
+                cg.strokePath()
+            }
+            for link in scene.links {
+                guard let from = scene.nodes.first(where: { $0.id == link.from })?.frame.center,
+                      let to = scene.nodes.first(where: { $0.id == link.to })?.frame.center else { continue }
+                let a = CGPoint(x: from.x, y: from.y)
+                let b = CGPoint(x: to.x, y: to.y)
+                cg.setStrokeColor(CanvasPalette.link.cgColor)
+                cg.setLineWidth(4)
+                cg.move(to: a); cg.addLine(to: b); cg.strokePath()
+                let angle = atan2(b.y - a.y, b.x - a.x)
+                let wing = CGFloat.pi / 7
+                for sign in [-1.0,1.0] {
+                    let end = CGPoint(x: b.x - 18 * cos(angle + sign * wing),
+                                      y: b.y - 18 * sin(angle + sign * wing))
+                    cg.move(to: b); cg.addLine(to: end); cg.strokePath()
+                }
+            }
+            for node in scene.nodes {
+                let frame = CGRect(x: node.frame.x, y: node.frame.y,
+                                   width: node.frame.width, height: node.frame.height)
+                CanvasPalette.nodeFill.setFill()
+                UIBezierPath(roundedRect: frame, cornerRadius: 14).fill()
+                let color = node.confidence == .proposal ? UIColor.systemOrange : CanvasPalette.link
+                color.setStroke()
+                let outline = UIBezierPath(roundedRect: frame, cornerRadius: 14)
+                outline.lineWidth = 3
+                outline.stroke()
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 26, weight: .medium),
+                    .foregroundColor: CanvasPalette.nodeText
+                ]
+                (node.text as NSString).draw(in: frame.insetBy(dx: 16, dy: 16), withAttributes: attributes)
+            }
+            for note in scene.annotations {
+                guard let node = scene.nodes.first(where: { $0.id == note.nodeId }) else { continue }
+                let x = node.frame.x, y = node.frame.y + node.frame.height + 8
+                let frame = CGRect(x: x, y: y, width: 300, height: 80)
+                UIColor.systemYellow.withAlphaComponent(0.85).setFill()
+                UIBezierPath(roundedRect: frame, cornerRadius: 10).fill()
+                (note.text as NSString).draw(in: frame.insetBy(dx: 10, dy: 10), withAttributes:
+                    [.font: UIFont.systemFont(ofSize: 20), .foregroundColor: UIColor.black])
+            }
+        }
+        return image.pngData()
+    }
+}

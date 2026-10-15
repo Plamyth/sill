@@ -1,0 +1,316 @@
+import SwiftUI
+
+struct CurrentVoicePIP: View {
+    let projection: ControlRoomProjection?
+    let message: String?
+    let expand: () -> Void
+    let drag: AnyGesture<DragGesture.Value>
+
+    var body: some View {
+        TimelineView(.periodic(from:.now,by:5)) { context in
+            let fresh = projection?.isFresh(now:context.date) == true
+            let card = fresh ? projection?.availableVoiceCard : nil
+            let session = fresh ? projection?.observedSession(now:context.date) : nil
+            VStack(alignment:.leading,spacing:0) {
+                HStack {
+                    Label("현재 음성 대화",systemImage:"waveform")
+                    Spacer(minLength:4)
+                    Image(systemName:"line.3.horizontal")
+                }
+                .font(.caption).padding(.horizontal,12).frame(height:34)
+                .contentShape(Rectangle()).gesture(drag)
+                .accessibilityLabel("음성 카드 이동")
+                Button(action:expand) {
+                    VStack(alignment:.leading,spacing:5) {
+                        Text(card?.displayTitle ?? "현재 카드 미확인").font(.headline).lineLimit(1)
+                        Text(card?.isAvailable == true ? card?.status ?? "상태 미제공" : "카드 사용 가능 상태 미확인")
+                            .font(.caption)
+                        if let progress = card?.latestProgress?.text {
+                            Text(progress).font(.caption).lineLimit(2)
+                        }
+                        Text(session == nil ? "열린 음성 세션 미확인" : "음성 세션 관측됨")
+                            .font(.caption).foregroundStyle(session == nil ? .secondary : .primary)
+                        if let id = fresh ? projection?.activeVoiceId : nil {
+                            Text("대화 \(id)").font(.caption2).lineLimit(1).truncationMode(.middle)
+                        }
+                        if let session {
+                            Text("세션 \(session.sessionId)").font(.caption2).lineLimit(1).truncationMode(.middle)
+                        } else if let message {
+                            Text(message).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                        } else if !fresh {
+                            Text("최신 projection 확인 필요").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).padding(12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(card == nil).accessibilityIdentifier("currentVoicePIP")
+                .accessibilityHint("현재 Control Room 카드 펼치기")
+            }
+            .background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
+            .overlay(RoundedRectangle(cornerRadius:16).stroke(.secondary.opacity(0.4)))
+            .clipShape(RoundedRectangle(cornerRadius:16))
+        }
+    }
+}
+
+struct ControlRoomGrid: View {
+    let projection: ControlRoomProjection?
+    let message: String?
+    @Binding var selection: ControlRoomNavigationSelection
+    let expand: (ControlRoomCardReference) -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from:.now,by:5)) { context in
+            if let projection, projection.isFresh(now:context.date) {
+                let navigation = ControlRoomNavigation(projection:projection)
+                let target = navigation.target(for:selection)
+                VStack(alignment:.leading,spacing:6) {
+                    controls(navigation)
+                    Text("Conversations · 3×3 · 읽기 전용 · \(projection.generatedAt)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    brainTrinityStatus(projection,now:context.date)
+                    if target == .unavailable {
+                        ContentUnavailableView("선택한 workspace 미제공",systemImage:"square.grid.3x3",
+                                               description:Text("Section 또는 Project를 다시 선택하세요."))
+                    } else {
+                        GeometryReader { geometry in
+                            ScrollView([.horizontal,.vertical]) {
+                                LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:ControlRoomGridGeometry.spacing),
+                                                        count:ControlRoomGridGeometry.columns),spacing:ControlRoomGridGeometry.spacing) {
+                                    ForEach(projection.slots(layoutID:target.layoutID)) { slot in
+                                        slotCard(slot,projection:projection,target:target,now:context.date)
+                                    }
+                                }
+                                .frame(width:ControlRoomGridGeometry.width(available:geometry.size.width))
+                            }
+                            .accessibilityIdentifier("controlRoomConversationGrid")
+                        }
+                    }
+                }
+                .padding(10)
+            } else {
+                ContentUnavailableView("Control Room 미확인",systemImage:"square.grid.3x3",
+                                       description:Text(message ?? "최신 projection을 기다립니다."))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func brainTrinityStatus(_ projection: ControlRoomProjection, now: Date) -> some View {
+        if let feed = projection.freshBrainTrinity(now:now), let mode = feed.mode {
+            Text(["BT \(mode.rawValue)",feed.reason,
+                  "활동 \(feed.activities.count) · 검토 \(feed.reviewRequests.count)","읽기 전용"]
+                .compactMap { $0 }.joined(separator:" · "))
+                .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                .accessibilityIdentifier("brainTrinityStatus")
+        } else {
+            Text("BT 피드 미확인 · 읽기 전용").font(.caption2).foregroundStyle(.secondary)
+                .accessibilityIdentifier("brainTrinityStatus")
+        }
+    }
+
+    private func brainTrinityBadges(_ badges: BrainTrinityBadges) -> some View {
+        ScrollView(.horizontal) {
+            HStack(spacing:4) {
+                ForEach(badges.activities) { activity in
+                    Text("BT \(activity.phase.rawValue) · \(activity.key)")
+                        .help(activity.reference.summary)
+                        .accessibilityLabel("BT 활동 \(activity.key), \(activity.phase.rawValue), \(activity.reference.summary)")
+                }
+                ForEach(badges.reviews) { review in
+                    Text("BT 검토 · 읽기 전용 · \(review.id)")
+                        .help(review.reference.summary)
+                        .accessibilityLabel("BT 검토 읽기 전용, \(review.id), \(review.reference.summary)")
+                }
+            }
+            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .scrollIndicators(.hidden)
+        .accessibilityIdentifier("brainTrinityBadges")
+    }
+
+    private func controls(_ navigation: ControlRoomNavigation) -> some View {
+        let section = navigation.sections.first(where: { $0.id == selection.sectionID })
+        return ScrollView(.horizontal) {
+            HStack(spacing:6) {
+                VStack(alignment:.leading,spacing:0) {
+                    Text("Section").font(.caption2).foregroundStyle(.secondary)
+                    Picker("Section",selection:Binding(get:{ selection.sectionID },set:{ id in
+                        selection.sectionID = id
+                        selection.projectID = nil
+                    })) {
+                        ForEach(navigation.sections) { option in Text(option.label).tag(option.id) }
+                    }
+                    .accessibilityLabel("Control Room Section")
+                    .accessibilityValue(navigation.sections.first(where: { $0.id == selection.sectionID })?.label ?? "미확인")
+                    .accessibilityIdentifier("controlRoomSection")
+                }
+                Image(systemName:"chevron.right").accessibilityHidden(true)
+                VStack(alignment:.leading,spacing:0) {
+                    Text("Filter").font(.caption2).foregroundStyle(.secondary)
+                    Picker("Filter",selection:$selection.filter) {
+                        ForEach(ControlRoomStatusFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
+                    }
+                    .accessibilityLabel("Conversation status Filter")
+                    .accessibilityValue(selection.filter.rawValue)
+                    .accessibilityIdentifier("controlRoomStatusFilter")
+                }
+                Image(systemName:"chevron.right").accessibilityHidden(true)
+                VStack(alignment:.leading,spacing:0) {
+                    Text("Project").font(.caption2).foregroundStyle(.secondary)
+                    Picker("Project",selection:Binding(get:{ selection.projectID },set:{ id in
+                        selection.projectID = id
+                    })) {
+                        Text("Section 3×3").tag(nil as ControlRoomProjectID?)
+                        ForEach(section?.projects ?? []) { option in
+                            Text(option.label + (option.workspaceID == nil ? " · workspace 미제공" : ""))
+                                .tag(Optional(option.id)).disabled(option.workspaceID == nil)
+                        }
+                    }
+                    .accessibilityLabel("Control Room Project")
+                    .accessibilityValue(section?.projects.first(where: { $0.id == selection.projectID })?.label ?? "Section 3×3")
+                    .accessibilityIdentifier("controlRoomProject")
+                }
+            }
+            .pickerStyle(.menu).font(.callout).fixedSize(horizontal:true,vertical:false)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private func slotCard(_ slot: ControlRoomSlot, projection: ControlRoomProjection,
+                          target: ControlRoomGridTarget, now: Date) -> some View {
+        let matches = selection.filter.matches(slot)
+        let card = slot.availableCard
+        let badges = projection.brainTrinityBadges(layoutID:target.layoutID,index:slot.index,now:now)
+        return Button {
+            if let card { expand(.slot(layoutID:target.layoutID,index:slot.index,threadId:card.id)) }
+        } label: {
+            Color(uiColor:.secondarySystemBackground)
+                .aspectRatio(ControlRoomGridGeometry.aspectRatio,contentMode:.fit)
+                .overlay(alignment:.topLeading) {
+                    VStack(alignment:.leading,spacing:4) {
+                        HStack {
+                            Text("\(slot.index+1) · \(slot.sourceKindLabel)").lineLimit(1)
+                            Spacer(minLength:2)
+                            if !matches { Text("필터 불일치").lineLimit(1) }
+                        }
+                        .font(.caption2).foregroundStyle(.secondary)
+                        Text(slot.displayTitle ?? projection.projectLabel(for:slot) ??
+                             (slot.threadId == nil ? "빈 슬롯" : "대화 확인 불가"))
+                            .font(.callout.weight(.semibold)).lineLimit(2)
+                        if !badges.activities.isEmpty || !badges.reviews.isEmpty {
+                            brainTrinityBadges(badges)
+                        }
+                        if let project = projection.project(for:slot), project.displayLabel != project.label {
+                            Text(project.label).font(.caption2).lineLimit(1)
+                        }
+                        if let card {
+                            HStack(spacing:4) {
+                                Image(systemName:card.needsInput ? "exclamationmark.bubble" :
+                                    card.isRunning ? "play.circle" : "circle")
+                                Text(card.status ?? "상태 미제공")
+                                if let turn = card.turnStatus { Text("· \(turn)") }
+                            }
+                            .font(.caption).lineLimit(1)
+                            .foregroundStyle(card.needsInput ? Color.orange : Color.primary)
+                            if let request = card.inputRequestSummary {
+                                Text("입력 요청 · \(request)").font(.caption).lineLimit(2)
+                            }
+                            if let progress = card.latestProgress?.text {
+                                Text(progress).font(.caption).lineLimit(2)
+                            }
+                        } else if let reason = slot.availabilityLabel {
+                            Text(reason).font(.caption).foregroundStyle(.orange).lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).padding(10)
+                }
+                .clipShape(RoundedRectangle(cornerRadius:12))
+                .overlay(RoundedRectangle(cornerRadius:12).stroke(card?.needsInput == true ? Color.orange : Color.secondary.opacity(0.3)))
+                .opacity(matches ? 1 : 0.45)
+        }
+        .buttonStyle(.plain).disabled(card == nil)
+        .accessibilityElement(children:.combine)
+        .accessibilityIdentifier("controlRoomSlot-\(slot.index)")
+        .accessibilityHint(card == nil ? "읽기 전용. 현재 연결된 대화가 없습니다." :
+            matches ? "대화 상세 보기" : "필터 불일치. 원래 슬롯 위치를 유지합니다.")
+    }
+}
+
+struct ControlRoomCardDetail: View {
+    let reference: ControlRoomCardReference
+    let projection: ControlRoomProjection?
+    let message: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            TimelineView(.periodic(from:.now,by:5)) { context in
+                if let projection, projection.isFresh(now:context.date), let card = reference.card(in:projection) {
+                    ScrollView {
+                        VStack(alignment:.leading,spacing:16) {
+                            Text(card.displayTitle).font(.title2)
+                            Text("대화 \(card.id)").font(.caption).textSelection(.enabled)
+                            Text(card.status ?? "상태 미제공")
+                            if let project = card.project { Text("프로젝트 \(project)").font(.caption) }
+                            if let turn = card.turnStatus { Text("Turn \(turn)") }
+                            if let progress = card.latestProgress?.text {
+                                Text("최근 진행").font(.headline)
+                                Text(progress).textSelection(.enabled)
+                            }
+                            if let user = card.latestUser?.text {
+                                Text("최근 사용자 입력").font(.headline)
+                                Text(user).textSelection(.enabled)
+                            }
+                            if let tools = card.activeTools, !tools.isEmpty {
+                                Text("실행 도구 \(tools.joined(separator:", "))").font(.caption)
+                            }
+                            if let pending = card.pendingTools, pending > 0 {
+                                Text("대기 도구 \(pending)").font(.caption)
+                            }
+                            if case .voice = reference {
+                                if let session = projection.observedSession(now:context.date) {
+                                    Text("관측된 세션 \(session.sessionId)").textSelection(.enabled)
+                                    Text("관측 시각 \(session.observedAt)").font(.caption)
+                                } else { Text("열린 음성 세션 미확인") }
+                            }
+                            evidence("음성 기록",card.voiceState)
+                            evidence("목표",card.goal)
+                            evidence("입력·승인 요청",card.inputRequest)
+                            ForEach(card.events ?? []) { event in
+                                VStack(alignment:.leading,spacing:4) {
+                                    Text([event.role,event.kind,event.ts].compactMap { $0 }.joined(separator:" · "))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    if let text = event.text { Text(text).textSelection(.enabled) }
+                                    if let source = event.source { Text(source).font(.caption2).foregroundStyle(.secondary) }
+                                    if let session = event.voiceSessionId { Text("세션 \(session)").font(.caption2) }
+                                }
+                                Divider()
+                            }
+                            evidence("실행 관측",card.executions)
+                            Text([card.source,card.provenance,card.owner,card.permission,card.result,card.observedAt]
+                                .compactMap { $0 }.joined(separator:"\n"))
+                                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        }.frame(maxWidth:.infinity,alignment:.leading).padding()
+                    }
+                } else {
+                    ContentUnavailableView("현재 카드 미확인",systemImage:"waveform",
+                                           description:Text(message ?? "최신 원본 카드가 없습니다."))
+                }
+            }
+            .navigationTitle("Control Room 카드")
+            .toolbar { ToolbarItem(placement:.confirmationAction) { Button("닫기") { dismiss() } } }
+        }
+    }
+
+    @ViewBuilder
+    private func evidence(_ title: String, _ value: ProjectionValue?) -> some View {
+        if let value {
+            DisclosureGroup(title) {
+                Text(value.formatted).font(.caption.monospaced()).textSelection(.enabled)
+                    .frame(maxWidth:.infinity,alignment:.leading)
+            }
+        }
+    }
+}
