@@ -51,6 +51,15 @@
 		A1000001000000000000A402 /* TourOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F402 /* TourOverlay.swift */; };
 		A1000001000000000000AB01 /* DuoPosture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB01 /* DuoPosture.swift */; };
 		A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
+		B2000001000000000000A001 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
+		B2000001000000000000A002 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
+		B2000001000000000000A003 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
+		B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F004 /* CanvasWorkspace.swift */; };
+		B2000001000000000000A005 /* ControlRoomProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F005 /* ControlRoomProjection.swift */; };
+		B2000001000000000000A006 /* ControlRoomViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F006 /* ControlRoomViews.swift */; };
+		B2000001000000000000A007 /* PencilCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F007 /* PencilCanvas.swift */; };
+		B2000001000000000000A008 /* SceneFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F008 /* SceneFile.swift */; };
+		B2000001000000000000A009 /* SceneRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F009 /* SceneRenderer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -100,6 +109,15 @@
 		A1000001000000000000F402 /* TourOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourOverlay.swift; sourceTree = "<group>"; };
 		A1000001000000000000FB01 /* DuoPosture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPosture.swift; sourceTree = "<group>"; };
 		A1000001000000000000FB02 /* DuoPostureReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPostureReader.swift; sourceTree = "<group>"; };
+		B2000001000000000000F001 /* CanvasModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasModel.swift; sourceTree = "<group>"; };
+		B2000001000000000000F002 /* CanvasRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasRelay.swift; sourceTree = "<group>"; };
+		B2000001000000000000F003 /* CanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasStore.swift; sourceTree = "<group>"; };
+		B2000001000000000000F004 /* CanvasWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasWorkspace.swift; sourceTree = "<group>"; };
+		B2000001000000000000F005 /* ControlRoomProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlRoomProjection.swift; sourceTree = "<group>"; };
+		B2000001000000000000F006 /* ControlRoomViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlRoomViews.swift; sourceTree = "<group>"; };
+		B2000001000000000000F007 /* PencilCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilCanvas.swift; sourceTree = "<group>"; };
+		B2000001000000000000F008 /* SceneFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneFile.swift; sourceTree = "<group>"; };
+		B2000001000000000000F009 /* SceneRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneRenderer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -119,6 +137,7 @@
 			children = (
 				A1000001000000000000F001 /* SillApp.swift */,
 				A1000001000000000000F002 /* ContentView.swift */,
+				B2000001000000000000C001 /* CanvasBridge */,
 				A1000001000000000000F201 /* SillLinks.swift */,
 				A1000001000000000000F011 /* StreamClient+Viewport.swift */,
 				A1000001000000000000F010 /* DiagnosticsHUD.swift */,
@@ -165,6 +184,22 @@
 				A1000001000000000000C002 /* Frameworks */,
 				A1000001000000000000C003 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		B2000001000000000000C001 /* CanvasBridge */ = {
+			isa = PBXGroup;
+			children = (
+				B2000001000000000000F001 /* CanvasModel.swift */,
+				B2000001000000000000F002 /* CanvasRelay.swift */,
+				B2000001000000000000F003 /* CanvasStore.swift */,
+				B2000001000000000000F004 /* CanvasWorkspace.swift */,
+				B2000001000000000000F005 /* ControlRoomProjection.swift */,
+				B2000001000000000000F006 /* ControlRoomViews.swift */,
+				B2000001000000000000F007 /* PencilCanvas.swift */,
+				B2000001000000000000F008 /* SceneFile.swift */,
+				B2000001000000000000F009 /* SceneRenderer.swift */,
+			);
+			path = CanvasBridge;
 			sourceTree = "<group>";
 		};
 		A1000001000000000000C002 /* Frameworks */ = {
@@ -272,6 +307,15 @@
 				A1000001000000000000A401 /* TourPolicy.swift in Sources */,
 				A1000001000000000000AB01 /* DuoPosture.swift in Sources */,
 				A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */,
+				B2000001000000000000A001 /* CanvasModel.swift in Sources */,
+				B2000001000000000000A002 /* CanvasRelay.swift in Sources */,
+				B2000001000000000000A003 /* CanvasStore.swift in Sources */,
+				B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */,
+				B2000001000000000000A005 /* ControlRoomProjection.swift in Sources */,
+				B2000001000000000000A006 /* ControlRoomViews.swift in Sources */,
+				B2000001000000000000A007 /* PencilCanvas.swift in Sources */,
+				B2000001000000000000A008 /* SceneFile.swift in Sources */,
+				B2000001000000000000A009 /* SceneRenderer.swift in Sources */,
 				A1000001000000000000A003 /* StreamClient.swift in Sources */,
 				A1000001000000000000A012 /* HostSettingsLedger.swift in Sources */,
 				A1000001000000000000A014 /* DiscoveryPolicy.swift in Sources */,
@@ -440,6 +484,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Info-Debug.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "CCR Sill";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -456,7 +501,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Debug;
 		};
@@ -472,6 +517,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "CCR Sill";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -488,7 +534,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = minimal;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Release;
 		};

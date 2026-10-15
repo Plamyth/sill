@@ -4,6 +4,7 @@ import StreamProtocol
 
 struct ContentView: View {
     @StateObject private var client = StreamClient()
+    @State private var canvasOpen = false
     /// Tells the host what this device sees, once a second while connected. Also covers the DEBUG
     /// harness's `-SillLive 1` session, which runs on this same client.
     @StateObject private var statsReporter = ClientStatsReporter()
@@ -34,6 +35,32 @@ struct ContentView: View {
             } else {
                 ConnectScreen(client: client)
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                Button {
+                    canvasOpen = true
+                } label: {
+                    Label("그림판", systemImage: "pencil.tip.crop.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .padding(.trailing, 20)
+                .padding(.bottom, 72)
+                .accessibilityIdentifier("openCanvasBridge")
+            }
+        }
+        .fullScreenCover(isPresented: $canvasOpen) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Canvas Bridge")
+                    Spacer()
+                    Button("Mac 화면") { canvasOpen = false }
+                        .accessibilityIdentifier("closeCanvasBridge")
+                }
+                .padding(12)
+                CanvasWorkspace()
+            }
+            .preferredColorScheme(.dark)
         }
         .preferredColorScheme(.dark)
         // Tells MacMenuHub which window shows this session: the iPad's menu bar shows its menus while

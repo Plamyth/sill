@@ -9,11 +9,9 @@ struct CanvasWorkspace: View {
     @State private var connectionOpen = false
     @State private var exportOpen = false
     @State private var importOpen = false
-    @State private var screen = WorkspaceScreen.canvas
     @State private var inspectorOpen = false
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
-    @State private var navigationSelection = ControlRoomNavigationSelection()
     @State private var expandedCard: ControlRoomCardReference?
     @State private var pipPlacement = VoicePIPPlacement()
     @State private var pipDragOrigin: CGPoint?
@@ -31,21 +29,15 @@ struct CanvasWorkspace: View {
         VStack(spacing: 0) {
             toolbar.zIndex(1)
             GeometryReader { geometry in
-                if screen == .canvas {
-                    ZStack(alignment:.topLeading) {
-                        canvas
-                        if geometry.size.width >= 100 && geometry.size.height >= 100 {
-                            voicePIP(in:geometry.size)
-                        }
-                    }
-                    .coordinateSpace(name:"voicePIPContainer")
-                    .clipped()
-                    .onChange(of:geometry.size) { _,_ in pipDragOrigin = nil }
-                } else {
-                    ControlRoomGrid(projection:readProjection,message:projectionMessage,selection:$navigationSelection) {
-                        expandedCard = $0
+                ZStack(alignment:.topLeading) {
+                    canvas
+                    if geometry.size.width >= 100 && geometry.size.height >= 100 {
+                        voicePIP(in:geometry.size)
                     }
                 }
+                .coordinateSpace(name:"voicePIPContainer")
+                .clipped()
+                .onChange(of:geometry.size) { _,_ in pipDragOrigin = nil }
             }
             Text(store.status)
                 .font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
@@ -80,9 +72,6 @@ struct CanvasWorkspace: View {
                     readProjection = next
                     projectionMessage = nil
                     store.displayedVoice = next.observedSession()
-                    if ControlRoomNavigation(projection:next).target(for:navigationSelection) == .unavailable {
-                        navigationSelection = ControlRoomNavigationSelection()
-                    }
                 } catch {
                     guard !Task.isCancelled else { return }
                     readProjection = nil
@@ -137,7 +126,6 @@ struct CanvasWorkspace: View {
     private var toolbar: some View {
         ViewThatFits(in:.horizontal) {
             HStack(spacing:8) {
-                screenToggle
                 ForEach(CanvasMode.allCases,id:\.self) { mode in
                     Button(mode.rawValue) { store.mode = mode }
                         .buttonStyle(.borderedProminent)
@@ -147,7 +135,6 @@ struct CanvasWorkspace: View {
                 sendButton
             }.fixedSize(horizontal:true,vertical:false)
             HStack(spacing:8) {
-                screenToggle.labelStyle(.iconOnly)
                 toolsMenu
                 Spacer(minLength:0)
                 sendButton.labelStyle(.iconOnly)
@@ -157,22 +144,15 @@ struct CanvasWorkspace: View {
         .background(Color(uiColor:.secondarySystemBackground))
     }
 
-    private var screenToggle: some View {
-        Button(screen == .canvas ? "Control Room 3×3" : "Pencil 캔버스",
-               systemImage:screen == .canvas ? "square.grid.3x3" : "pencil.tip.crop.circle") {
-            screen = screen == .canvas ? .controlRoom : .canvas
-        }.accessibilityIdentifier("workspaceScreenToggle")
-    }
-
     private var toolsMenu: some View {
         Menu("도구",systemImage:"slider.horizontal.3") {
             Picker("그리기 도구",selection:$store.mode) {
                 ForEach(CanvasMode.allCases,id:\.self) { Text($0.rawValue).tag($0) }
             }
-            Button("상자") { store.addNode(.box); screen = .canvas }
-            Button("메모") { store.addNode(.note); screen = .canvas }
+            Button("상자") { store.addNode(.box) }
+            Button("메모") { store.addNode(.note) }
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
-            Button("화살표") { store.beginLink(); screen = .canvas }.disabled(store.selectedNode == nil)
+            Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("연결",systemImage:"network") { connectionOpen = true }
             Button("가져오기") { importOpen = true }
@@ -429,7 +409,6 @@ struct CanvasWorkspace: View {
     }
 }
 
-private enum WorkspaceScreen { case canvas, controlRoom }
 
 private struct ProjectionConnection: Hashable {
     let address: String

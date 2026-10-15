@@ -13,6 +13,11 @@
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Finds your Mac on the local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<!-- DEBUG ONLY: Info.plist (the Release configuration's) plus `_silltest._tcp`, which the Debug
 	     build browses for with -SillServiceType _silltest._tcp: the simulator refuses a browse for
 	     a type this list does not declare (-65555 NoAuth, docs/home-pairing-plan.md, H0's P5). A

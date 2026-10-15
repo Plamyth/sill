@@ -13,6 +13,11 @@
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Finds your Mac on the local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<!-- The Debug configuration builds from Info-Debug.plist: this file plus the test service type
 	     (docs/home-pairing-plan.md §7.9). A key added here goes there too. -->
 	<key>NSBonjourServices</key>
