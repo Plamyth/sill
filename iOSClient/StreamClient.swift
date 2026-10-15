@@ -227,8 +227,10 @@ final class StreamClient: ObservableObject {
     private var lastAutoDesktop: Date = .distantPast
     /// DEBUG `-SillNoAutoDesktop 1`: the device never picks the Desktop by itself, so a live gate's
     /// session streams nothing and no host encodes (a test host's software encoder included) while
-    /// it runs. Always false in a Release build.
-    #if DEBUG
+    /// it runs. Always false in an iOS Release build.
+    #if os(visionOS)
+    private static let noAutoDesktop = true
+    #elseif DEBUG
     private static let noAutoDesktop = UserDefaults.standard.bool(forKey: "SillNoAutoDesktop")
     #else
     private static let noAutoDesktop = false
@@ -754,6 +756,24 @@ final class StreamClient: ObservableObject {
     /// the direct connection to the network one (SessionLink).
     private let link = SessionLink()
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
+    #if os(visionOS)
+    lazy var visionInputFence = VisionInputFence(queue: queue)
+
+    func afterVisionInputRelease(_ completion: @escaping (Bool) -> Void) {
+        let expected = connection
+        queue.async { [weak self] in
+            guard let self, let expected, self.connection === expected else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            self.visionInputFence.begin(peer: ObjectIdentifier(expected), send: { nonce in
+                self.send(.ping, payload: nonce)
+            }, finished: { [weak self] readByHost in
+                DispatchQueue.main.async { completion(readByHost && self?.connection === expected) }
+            })
+        }
+    }
+    #endif
     private var lastParameterSets: ParameterSets?
 
     // Liveness, on `queue` (docs/remote-access-plan.md §7.6). The host answers every ping, so a
@@ -3326,6 +3346,9 @@ final class StreamClient: ObservableObject {
     /// direct connection a move is leaving only matters if it is the fence's pong, which says the
     /// Mac has read everything sent there; the network connection brings all the rest.
     private func deliver(_ header: StreamHeader, _ data: Data, from c: NWConnection) {
+        #if os(visionOS)
+        if header.kind == .pong, visionInputFence.receive(data, peer: ObjectIdentifier(c)) { return }
+        #endif
         if c === connection {
             handle(header, data)
         } else if header.kind == .pong, let released = link.fenceReturned(data, on: c) {
@@ -3937,7 +3960,9 @@ extension StreamClient {
     /// A choice not made: the warning haptic (iPhones; an iPad has no Taptic Engine) and VoiceOver's
     /// announcement. Nothing on screen: the Mac's picture says what happened (plan's Q9).
     private func menuRefused(_ refusal: MacMenuState.Refusal) {
+        #if !os(visionOS)
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        #endif
         UIAccessibility.post(notification: .announcement, argument: refusal.announcement)
         #if DEBUG
         print(refusal.byMac ? "menus: the Mac refused \(refusal.title) (\(refusal.id)): \(refusal.note)"

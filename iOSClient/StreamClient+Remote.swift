@@ -143,7 +143,13 @@ enum RemoteCopy {
 
 extension StreamClient {
     /// "iPhone" or "iPad", for copy about this device.
-    static var deviceWord: String { UIDevice.current.userInterfaceIdiom == .phone ? "iPhone" : "iPad" }
+    static var deviceWord: String {
+        #if os(visionOS)
+        return "Apple Vision Pro"
+        #else
+        return UIDevice.current.userInterfaceIdiom == .phone ? "iPhone" : "iPad"
+        #endif
+    }
 
     /// DEBUG builds keep 127.0.0.1 for the simulator's tests against a host on this Mac.
     static var keepsLoopback: Bool {
