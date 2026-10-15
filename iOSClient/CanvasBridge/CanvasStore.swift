@@ -77,8 +77,9 @@ final class CanvasStore: ObservableObject {
         return try outbox.existing(for:frozen,threadId:session.threadId,sessionId:session.sessionId)
     }
 
-    func preparePacket(scene: CanvasScene, imagePNG: Data, session: VoiceSession, relayAddress: String) throws -> CanvasPacket {
-        let packet = try CanvasPacket(scene:scene,imagePNG:imagePNG,session:session)
+    func preparePacket(scene: CanvasScene, imagePNG: Data, session: VoiceSession,
+                       targetMode: String? = nil, relayAddress: String) throws -> CanvasPacket {
+        let packet = try CanvasPacket(scene:scene,imagePNG:imagePNG,session:session,targetMode:targetMode)
         try updateOutbox { try $0.reserve(packet,relayAddress:relayAddress) }
         return packet
     }
@@ -94,6 +95,8 @@ final class CanvasStore: ObservableObject {
         switch accepted.state {
         case .steered:
             status = "현재 대화 턴에 그림 전달 확인 · 턴 ID \(accepted.turnId.map { String($0.uuidString.prefix(8)) } ?? "미확인")"
+        case .started:
+            status = "선택한 대화에서 새 턴 시작 확인 · 턴 ID \(accepted.turnId.map { String($0.uuidString.prefix(8)) } ?? "미확인")"
         case .queued:
             let continuity = accepted.sessionContinuity.status == "observed-same" ?
                 "음성 세션 전후 동일 관측" : "음성 세션 연속성 미확인"

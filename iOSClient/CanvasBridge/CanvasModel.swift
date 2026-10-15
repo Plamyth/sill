@@ -177,12 +177,13 @@ struct VoiceProjection: Codable {
 }
 
 enum CanvasSendError: LocalizedError {
-    case unavailable, changedSession, invalidPacket, unresolvedPacket, receiptMismatch, outboxUnavailable
+    case unavailable, changedSession, missingTarget, invalidPacket, unresolvedPacket, receiptMismatch, outboxUnavailable
 
     var errorDescription: String? {
         switch self {
         case .unavailable: return "현재 열린 음성 세션을 확인하지 못했습니다."
         case .changedSession: return "표시한 음성 대화 또는 세션이 바뀌었습니다. 다시 확인하세요."
+        case .missingTarget: return "음성 대화가 없으면 받는 대화 카드를 먼저 선택하세요."
         case .invalidPacket: return "장면 1 MiB, PNG 5 MiB 한도 또는 패킷 바이트를 확인하세요."
         case .unresolvedPacket: return "이전 패킷의 접수 결과를 먼저 확인해야 합니다. 자동 재전송하지 않습니다."
         case .receiptMismatch: return "영수증의 패킷·대화·세션·해시가 일치하지 않습니다."
@@ -195,12 +196,13 @@ struct CanvasPacket: Codable, Equatable {
     let packetId: UUID
     let threadId: UUID
     let sessionId: String
+    let targetMode: String?
     let imageSha256: String
     let sceneSha256: String
     let imagePNGBase64: String
     let sceneJSONBase64: String
 
-    init(scene: CanvasScene, imagePNG: Data, session: VoiceSession) throws {
+    init(scene: CanvasScene, imagePNG: Data, session: VoiceSession, targetMode: String? = nil) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let sceneBytes = try encoder.encode(scene)
@@ -211,6 +213,7 @@ struct CanvasPacket: Codable, Equatable {
         packetId = UUID()
         threadId = session.threadId
         sessionId = session.sessionId
+        self.targetMode = targetMode
         imageSha256 = Self.sha(imagePNG)
         sceneSha256 = Self.sha(sceneBytes)
         imagePNGBase64 = imagePNG.base64EncodedString()
@@ -232,8 +235,8 @@ struct CanvasPacket: Codable, Equatable {
 }
 
 enum PacketState: String, Codable {
-    case stored, dispatching, queued, steered, unknown, rejected
-    var terminal: Bool { self == .queued || self == .steered || self == .rejected }
+    case stored, dispatching, queued, steered, started, unknown, rejected
+    var terminal: Bool { self == .queued || self == .steered || self == .started || self == .rejected }
 }
 
 struct PacketReceipt: Codable {
@@ -246,6 +249,7 @@ struct PacketReceipt: Codable {
     let packetId: UUID
     let threadId: UUID
     let sessionId: String
+    let targetMode: String?
     let state: PacketState
     let imageSha256: String
     let sceneSha256: String
@@ -259,12 +263,14 @@ struct PacketReceipt: Codable {
 
     func matches(_ packet: CanvasPacket) -> Bool {
         packetId == packet.packetId && threadId == packet.threadId && sessionId == packet.sessionId &&
+        targetMode == packet.targetMode &&
         imageSha256 == packet.imageSha256 && sceneSha256 == packet.sceneSha256 &&
         clientUserMessageId == (canonicalPacketId ?? packet.packetId) &&
-        ["exact-chat-queue-only", "active-turn-steer"].contains(deliveryScope) &&
+        ["exact-chat-queue-only", "active-turn-steer", "exact-chat-start"].contains(deliveryScope) &&
         !sessionContinuity.atomic &&
         (state != .queued || (deliveryScope == "exact-chat-queue-only" && queuedId != nil)) &&
-        (state != .steered || (deliveryScope == "active-turn-steer" && turnId != nil))
+        (state != .steered || (deliveryScope == "active-turn-steer" && turnId != nil)) &&
+        (state != .started || (deliveryScope == "exact-chat-start" && turnId != nil))
     }
 }
 

@@ -13,6 +13,7 @@ struct CanvasWorkspace: View {
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
     @State private var expandedCard: ControlRoomCardReference?
+    @State private var selectedThreadId: UUID?
     @State private var pipPlacement = VoicePIPPlacement()
     @State private var pipDragOrigin: CGPoint?
 
@@ -132,10 +133,12 @@ struct CanvasWorkspace: View {
                         .tint(store.mode == mode ? .blue : .gray)
                 }
                 toolsMenu
+                recipientMenu
                 sendButton
             }.fixedSize(horizontal:true,vertical:false)
             HStack(spacing:8) {
                 toolsMenu
+                recipientMenu
                 Spacer(minLength:0)
                 sendButton.labelStyle(.iconOnly)
             }
@@ -164,6 +167,25 @@ struct CanvasWorkspace: View {
         Button("현재 대화로 보내기",systemImage:"paperplane.fill") {
             Task { await send() }
         }.buttonStyle(.borderedProminent).disabled(store.sendBusy)
+    }
+
+    private var recipientMenu: some View {
+        Menu {
+            Button("현재 음성 대화") { selectedThreadId = nil }
+                .disabled(store.displayedVoice == nil)
+            ForEach(readProjection?.currentGrid ?? []) { slot in
+                if let card = slot.availableCard, card.source == "codex",
+                   let id = UUID(uuidString:card.id) {
+                    Button("\(slot.index + 1) · \(card.displayTitle)") { selectedThreadId = id }
+                }
+            }
+        } label: {
+            Label(selectedThreadId == nil ?
+                  (store.displayedVoice == nil ? "받는 대화 선택" : "현재 음성 대화") :
+                  "받는 대화 \(selectedThreadId?.uuidString.prefix(8) ?? "")",
+                  systemImage:"person.crop.square")
+        }
+        .accessibilityIdentifier("canvasRecipientMenu")
     }
 
     private func voicePIP(in size: CGSize) -> some View {
@@ -342,6 +364,7 @@ struct CanvasWorkspace: View {
         let frozen = store.scene
         let frozenDrawing = store.drawing
         let displayed = store.displayedVoice
+        let selected = selectedThreadId
         let connection = relay
         let address = relayAddress
         do {
@@ -354,12 +377,29 @@ struct CanvasWorkspace: View {
             }
             let projection = try await connection.projection()
             store.displayedVoice = projection.activeVoiceSession
-            let session = try projection.session(matching:displayed)
+            let session: VoiceSession
+            let targetMode: String?
+            if let selected {
+                guard let current = readProjection, current.isFresh(),
+                      current.currentGrid.contains(where: { slot in
+                          slot.availableCard?.source == "codex" &&
+                          slot.availableCard?.id.lowercased() == selected.uuidString.lowercased()
+                      }) else { throw CanvasSendError.changedSession }
+                session = VoiceSession(threadId:selected,
+                    sessionId:"manual:\(selected.uuidString.lowercased())",
+                    observedAt:current.generatedAt)
+                targetMode = "selected-chat"
+            } else {
+                guard projection.activeVoiceSession != nil else { throw CanvasSendError.missingTarget }
+                session = try projection.session(matching:displayed)
+                targetMode = nil
+            }
             if let existing = try store.existingPacket(for:frozen,session:session) {
                 await reconcile(existing)
                 return
             }
-            let packet = try store.preparePacket(scene:frozen,imagePNG:image,session:session,relayAddress:address)
+            let packet = try store.preparePacket(scene:frozen,imagePNG:image,session:session,
+                targetMode:targetMode,relayAddress:address)
             try store.beginSubmission(packet.packetId)
             do {
                 try store.acceptReceipt(await connection.send(packet))
