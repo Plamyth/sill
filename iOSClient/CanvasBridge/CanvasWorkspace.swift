@@ -180,12 +180,21 @@ struct CanvasWorkspace: View {
                 }
             }
         } label: {
-            Label(selectedThreadId == nil ?
-                  (store.displayedVoice == nil ? "받는 대화 선택" : "현재 음성 대화") :
-                  "받는 대화 \(selectedThreadId?.uuidString.prefix(8) ?? "")",
-                  systemImage:"person.crop.square")
+            Label(selectedRecipientLabel,systemImage:"person.crop.square")
         }
         .accessibilityIdentifier("canvasRecipientMenu")
+    }
+
+    private var selectedRecipientLabel: String {
+        guard let selectedThreadId else {
+            return store.displayedVoice == nil ? "받는 대화 선택" : "현재 음성 대화"
+        }
+        guard let slot = readProjection?.currentGrid.first(where: {
+            $0.availableCard?.source == "codex" &&
+            $0.availableCard?.id.lowercased() == selectedThreadId.uuidString.lowercased()
+        }), let card = slot.availableCard else { return "받는 대화 다시 선택" }
+        let title = card.displayTitle
+        return "\(slot.index + 1) · \(title.prefix(18))\(title.count > 18 ? "…" : "")"
     }
 
     private func voicePIP(in size: CGSize) -> some View {
