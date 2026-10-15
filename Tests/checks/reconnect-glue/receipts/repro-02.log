@@ -1,0 +1,15 @@
+Mac mini heavy-job slot: free=38%, swap=9736MB
+INPUT_SHA256 2a22b4e110b06865bb724454c311be5cf349e459676eca2d77bc8db05fe7fecc
+FAIL listed sleeping host receives exactly 12 dials, observed 2
+FAIL listed dials follow upstream 5/10/20/30 second starts
+PASS exhausted listed budget leaves no repeating timer
+FAIL fresh row evidence resumes exhausted listing
+FAIL native background gate also prevents remote attempts
+FAIL background leaves no retry chain
+PASS automatic remote attempts stop at original 120 second window
+PASS expired remote window leaves no polling timer
+FAIL foreground rebuilds browser even without a reported mDNS failure
+PASS failed replacement keeps rows beyond old settle deadline
+PASS successful replacement expires stale kept rows
+Reconnect glue: 5/11 passed, 6 failed
+RESULT_JSON {"before": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 38%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [0, 1], "exitCode": 1, "memorySourcesUnchanged": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 37%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}

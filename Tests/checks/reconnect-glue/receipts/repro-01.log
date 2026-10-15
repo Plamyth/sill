@@ -1,0 +1,106 @@
+Mac mini heavy-job slot: free=40%, swap=9736MB
+INPUT_SHA256 28edfca0f68e727954bd2dd642493117ba6dbbd6c34e00711900ae153a80ab44
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:328:5: error: extensions must not contain stored properties
+326 | 
+327 | 
+328 | var appInForeground = true
+    |     `- error: extensions must not contain stored properties
+329 | 
+330 | private var networkBrowser: NWBrowser?
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:330:13: error: extensions must not contain stored properties
+328 | var appInForeground = true
+329 | 
+330 | private var networkBrowser: NWBrowser?
+    |             `- error: extensions must not contain stored properties
+331 | private var nearbyBrowser: NWBrowser?
+332 | private var networkResults: [NWBrowser.Result] = []
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:331:13: error: extensions must not contain stored properties
+329 | 
+330 | private var networkBrowser: NWBrowser?
+331 | private var nearbyBrowser: NWBrowser?
+    |             `- error: extensions must not contain stored properties
+332 | private var networkResults: [NWBrowser.Result] = []
+333 | private var nearbyResults: [NWBrowser.Result] = []
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:332:13: error: extensions must not contain stored properties
+330 | private var networkBrowser: NWBrowser?
+331 | private var nearbyBrowser: NWBrowser?
+332 | private var networkResults: [NWBrowser.Result] = []
+    |             `- error: extensions must not contain stored properties
+333 | private var nearbyResults: [NWBrowser.Result] = []
+334 | 
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:333:13: error: extensions must not contain stored properties
+331 | private var nearbyBrowser: NWBrowser?
+332 | private var networkResults: [NWBrowser.Result] = []
+333 | private var nearbyResults: [NWBrowser.Result] = []
+    |             `- error: extensions must not contain stored properties
+334 | 
+335 |     func background() { appInForeground = false }
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:349:35: warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+347 | do {
+348 |     let c = StreamClient(); c.seed(saved: false)
+349 |     c.scheduleReconnectRetry(); c.reconnectIfListed()
+    |                                   `- warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+350 |     Clock.advance(350)
+351 |     check(c.rowDials.count == 12, "listed sleeping host receives exactly 12 dials, observed \(c.rowDials.count)")
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:356:7: warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+354 |     check(Clock.pending == 0, "exhausted listed budget leaves no repeating timer")
+355 |     c.sightings.since["Mac"] = Clock.now
+356 |     c.reconnectIfListed()
+    |       `- warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+357 |     check(c.rowDials.count == 13, "fresh row evidence resumes exhausted listing")
+358 | }
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:362:7: warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+360 | do {
+361 |     let c = StreamClient(); c.seed(); c.macs = []; c.background()
+362 |     c.reconnectIfListed(); c.scheduleReconnectRetry()
+    |       `- warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+363 |     Clock.advance(25)
+364 |     check(c.remoteDials.isEmpty, "native background gate also prevents remote attempts")
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:370:7: warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+368 | do {
+369 |     let c = StreamClient(); c.seed(); c.macs = []
+370 |     c.reconnectIfListed(); c.scheduleReconnectRetry()
+    |       `- warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+371 |     Clock.advance(160)
+372 |     check(!c.remoteDials.isEmpty && c.remoteDials.allSatisfy { $0 < 220 }, "automatic remote attempts stop at original 120 second window")
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:125:18: warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+123 |                 self.reconnect = r
+124 |             }
+125 |             self.reconnectIfListed()
+    |                  `- warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+126 |         }
+127 |     }
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:130:31: warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+128 |     func tearDown(status: String, restartSearch: Bool = true) { connection = nil; session = nil; self.status = status }
+129 |     func updateDiscovery() {}
+130 |     func discoveryChanged() { reconnectIfListed() }
+    |                               `- warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+131 |     func seed(saved: Bool = true) {
+132 |         reconnect = Reconnect(macID: saved ? "saved" : nil, bonjourName: "Mac", name: "Mac", lostAt: Clock.now,
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:244:64: warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+242 |         }
+243 |         if let at = wake {
+244 |             let work = DispatchWorkItem { [weak self] in self?.reconnectIfListed() }
+    |                                                                `- warning: result of call to 'reconnectIfListed()' is unused [#no-usage]
+245 |             reconnectCheck = work
+246 |             DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, at - now), execute: work)
+
+/Volumes/CCRReconnect0fd61fd2ae/input/main.swift:264:9: error: cannot find 'startPathMonitor' in scope
+262 |         guard networkBrowser == nil else { return }
+263 |         searchingSince = ProcessInfo.processInfo.systemUptime
+264 |         startPathMonitor()
+    |         `- error: cannot find 'startPathMonitor' in scope
+265 |         // Network only: includePeerToPeer stays at its default, false. A peer-to-peer browse makes
+266 |         // the kernel bring AWDL up, which takes the radio off its Wi-Fi channel up to ~100 ms twice
+RESULT_JSON {"before": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 40%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [1], "error": "FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/ccr-reconnect-output-vzxtp3kq/glue'", "exitCode": 2, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 38%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}
