@@ -474,6 +474,33 @@ final class StreamClient: ObservableObject {
     private var nearbyBrowser: NWBrowser?
     private var networkResults: [NWBrowser.Result] = []
     private var nearbyResults: [NWBrowser.Result] = []
+    private enum BrowserKind: String { case network, nearby }
+    private struct BrowserLife {
+        /// When the running browser was made.
+        var startedAt = 0.0
+        /// Its failures in a row (DiscoveryPolicy.browserFailures), and when the last came while it
+        /// waits to be made again; nil while it runs.
+        var failures = 0
+        var failedAt: Double?
+        /// Its own results, and those of the browser it replaced, shown beside them until `settleEnds`.
+        var fresh: [NWBrowser.Result] = []
+        var kept: [NWBrowser.Result] = []
+        var settleEnds: Double?
+        /// The rebuild a failure waits for, and the settle's end.
+        var rebuildWork: DispatchWorkItem?
+        var settleWork: DispatchWorkItem?
+    }
+    private var networkLife = BrowserLife()
+    private var nearbyLife = BrowserLife()
+    /// `startBrowsing` has run: this client looks for Macs (the harness's mock clients never do).
+    private var browsing = false
+    /// The app is not in the background (UIApplication's notifications): the automatic reconnect dials
+    /// a listed row, and a failed browser is made again, only then (issue #69). Main thread.
+    #if os(visionOS)
+    private(set) var appInForeground = UIApplication.shared.applicationState == .active
+    #else
+    private(set) var appInForeground = UIApplication.shared.applicationState != .background
+    #endif
     /// Launch, the last connection ending, or Local Network access coming back: the network gets its
     /// first seconds from here.
     var searchingSince = ProcessInfo.processInfo.systemUptime
@@ -701,6 +728,9 @@ final class StreamClient: ObservableObject {
         /// The session ended with goodbye `quit`: a row listed since before `lostAt` is the Mac's
         /// registration that is going, left alone for DiscoveryPolicy.quitWait (`reconnectRow`).
         var afterQuit = false
+        var rowListing: Double?
+        var rowDials = 0
+        var lastRowDialAt: Double?
     }
     var reconnect: Reconnect?
     /// The dial in flight, remote or pairing: one at a time each.
@@ -846,48 +876,143 @@ final class StreamClient: ObservableObject {
         #else
         savedMacs = SavedMacs.decode(UserDefaults.standard.string(forKey: SavedMacs.defaultsKey))
         #endif
-        // Back from the background: the pings stopped while the app was suspended, which is no loss.
+        #if os(visionOS)
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.resetLiveness()
+            self?.cameForward()
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.wentToBackground()
+        }
+        #else
         NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
+            self?.cameForward()
         }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.wentToBackground()
+        }
+        #endif
     }
 
-    /// Starts the network browser (once). The nearby one follows the policy (`updateDiscovery`).
+    /// Starts the network browser, once; from then on it is only made again (`rebuildBrowser`). The
+    /// nearby one follows the policy (`updateDiscovery`).
     func startBrowsing() {
-        guard networkBrowser == nil else { return }
+        guard !browsing else { return }
+        browsing = true
         searchingSince = ProcessInfo.processInfo.systemUptime
         startPathMonitor()
-        // Network only: includePeerToPeer stays at its default, false. A peer-to-peer browse makes
-        // the kernel bring AWDL up, which takes the radio off its Wi-Fi channel up to ~100 ms twice
-        // a second (CLAUDE.md, trackpad stutter), and on a shared network AWDL carries nothing of
-        // Sill's. Direct Wireless Connection is the Mac's opt-in for that route (the nearby browser).
-        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: NWParameters())
+        makeBrowser(.network)
+        discoveryChanged()
+    }
+
+    /// Makes `kind`'s browser and starts it. The network one never peer-to-peer: includePeerToPeer stays
+    /// at its default, false. A peer-to-peer browse makes the kernel bring AWDL up, which takes the radio
+    /// off its Wi-Fi channel up to ~100 ms twice a second (CLAUDE.md, trackpad stutter), and on a shared
+    /// network AWDL carries nothing of Sill's. Direct Wireless Connection is the Mac's opt-in for that
+    /// route: the nearby browser, for a Mac whose Direct Wireless Connection is on and that shares no
+    /// network with this device, started and stopped by `updateDiscovery` only. Each browser's results
+    /// and state reach main, and only while it is still that kind's browser. Main thread.
+    private func makeBrowser(_ kind: BrowserKind) {
+        guard appInForeground else { return }
+        let params = NWParameters()
+        if kind == .nearby { params.includePeerToPeer = true }
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: params)
+        let key = browserKey(kind)
         browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
             DispatchQueue.main.async {
-                guard let self, let browser, self.networkBrowser === browser else { return }
-                self.networkResults = Array(results)
-                self.discoveryChanged()
+                guard let self, let browser, self[keyPath: key] === browser else { return }
+                self[keyPath: self.lifeKey(kind)].fresh = Array(results)
+                self.showResults(kind)
             }
         }
         browser.stateUpdateHandler = { [weak self, weak browser] state in
             DispatchQueue.main.async {
-                guard let self, let browser, self.networkBrowser === browser else { return }
-                self.networkBrowserChanged(state)
+                guard let self, let browser, self[keyPath: key] === browser else { return }
+                self.browserChanged(kind, state)
             }
         }
+        self[keyPath: lifeKey(kind)].startedAt = ProcessInfo.processInfo.systemUptime
         browser.start(queue: queue)
-        networkBrowser = browser
+        self[keyPath: key] = browser
+    }
+
+    private func browserKey(_ kind: BrowserKind) -> ReferenceWritableKeyPath<StreamClient, NWBrowser?> {
+        kind == .network ? \.networkBrowser : \.nearbyBrowser
+    }
+    private func lifeKey(_ kind: BrowserKind) -> ReferenceWritableKeyPath<StreamClient, BrowserLife> {
+        kind == .network ? \.networkLife : \.nearbyLife
+    }
+    private func resultsKey(_ kind: BrowserKind) -> ReferenceWritableKeyPath<StreamClient, [NWBrowser.Result]> {
+        kind == .network ? \.networkResults : \.nearbyResults
+    }
+
+    /// What `kind`'s rows are read from now (DiscoveryPolicy.browserResults), and the look that follows
+    /// (`discoveryChanged`): its browser's own results, with those of the one it replaced beside them
+    /// while it settles. Main thread.
+    private func showResults(_ kind: BrowserKind) {
+        let key = lifeKey(kind)
+        let now = ProcessInfo.processInfo.systemUptime
+        let life = self[keyPath: key]
+        self[keyPath: resultsKey(kind)] = DiscoveryPolicy.browserResults(kept: life.kept, fresh: life.fresh, name: Self.serviceName(of:),
+                                                                         settleEnds: life.settleEnds, now: now)
+        if let ends = life.settleEnds, now >= ends {
+            self[keyPath: key].kept = []
+            self[keyPath: key].settleEnds = nil
+        }
         discoveryChanged()
     }
 
-    /// The network browser's state. Local Network access denied shows as waiting with PolicyDenied
-    /// (TN3179), at launch or after Don't Allow, and every Bonjour browse is refused then, the nearby
-    /// one too: the status says what to do instead of the hint, whose advice about the network would
-    /// be wrong. The browser becomes ready once Settings allows it. Main thread.
-    private func networkBrowserChanged(_ state: NWBrowser.State) {
+    /// Back from the background (issue #69): both browsers are made again (DiscoveryPolicy.rebuildBrowser:
+    /// iOS may have made their connection to mDNSResponder defunct while the app was suspended, and said
+    /// nothing yet), and the automatic reconnect's count of dials starts again: the person is back, so
+    /// a listed row is dialled at once. Only after the app was seen going to the background. Main
+    /// thread.
+    private func cameForward() {
+        let wasInBackground = !appInForeground
+        appInForeground = true
+        guard wasInBackground else { return }
+        if browsing {
+            rebuildIfDue(.network, cameForward: true)
+            if nearbyBrowser != nil { rebuildIfDue(.nearby, cameForward: true) }
+        }
+        if var r = reconnect {
+            r.rowDials = 0
+            r.lastRowDialAt = nil
+            reconnect = r
+        }
+        discoveryChanged()
+    }
+
+    private func wentToBackground() {
+        appInForeground = false
+        reconnectCheck?.cancel()
+        reconnectCheck = nil
+        networkLife.rebuildWork?.cancel()
+        nearbyLife.rebuildWork?.cancel()
+        networkLife.settleWork?.cancel()
+        nearbyLife.settleWork?.cancel()
+        guard reconnect != nil, !connected else { return }
+        if let c = connection {
+            connection = nil
+            c.cancel()
+            tearDown(status: status, restartSearch: false)
+        }
+        cancelRemoteDial()
+    }
+
+    /// A browser's state. A failed one, of either kind, is made again after DiscoveryPolicy's back-off
+    /// (`browserFailed`). The network browser's Local Network rule: access denied shows as waiting with
+    /// PolicyDenied (TN3179), at launch or after Don't Allow, and every Bonjour browse is refused then,
+    /// the nearby one too: the status says what to do instead of the hint, whose advice about the
+    /// network would be wrong. The browser becomes ready once Settings allows it. Main thread.
+    private func browserChanged(_ kind: BrowserKind, _ state: NWBrowser.State) {
+        if case .failed(let e) = state {
+            browserFailed(kind, e)
+            return
+        }
+        guard kind == .network else { return }
         switch state {
-        case .failed(let e):
-            status = "Browse failed: \(e)"
         case .waiting(let e):
             guard case .dns(let code) = e, code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied), !localNetworkDenied else { return }
             localNetworkDenied = true
@@ -902,21 +1027,82 @@ final class StreamClient: ObservableObject {
         }
     }
 
-    /// Peer-to-peer, for a Mac whose Direct Wireless Connection is on and that shares no network
-    /// with this device. Started and stopped by `updateDiscovery` only.
-    private func startNearbyBrowser() {
-        let params = NWParameters()
-        params.includePeerToPeer = true
-        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: params)
-        browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
-            DispatchQueue.main.async {
-                guard let self, let browser, self.nearbyBrowser === browser else { return }
-                self.nearbyResults = Array(results)
-                self.discoveryChanged()
-            }
+    /// `kind`'s browser failed (the connection iOS made defunct, -65569, or anything else). It is
+    /// cancelled (Network.framework releases a failed browser only then) but stays `kind`'s until the
+    /// new one replaces it, so the nearby search still counts as running and the rows stay as they
+    /// were; the new one comes after DiscoveryPolicy's back-off, in the foreground. The status line is
+    /// left alone: before, it said "Browse failed: …" and nothing ever made the browser again. Main
+    /// thread.
+    private func browserFailed(_ kind: BrowserKind, _ error: NWError) {
+        let key = lifeKey(kind)
+        guard self[keyPath: key].failedAt == nil else { return }   // waiting to be made again already
+        let now = ProcessInfo.processInfo.systemUptime
+        let failures = DiscoveryPolicy.browserFailures(previous: self[keyPath: key].failures, startedAt: self[keyPath: key].startedAt, now: now)
+        self[keyPath: key].failures = failures
+        self[keyPath: key].failedAt = now
+        // Until the new one comes, the rows stay as they are now: a settle still running for this
+        // browser (it was made again moments ago) does not end while it waits, and a result it still
+        // delivers only joins them.
+        self[keyPath: key].settleWork?.cancel()
+        self[keyPath: key].settleWork = nil
+        self[keyPath: key].kept = self[keyPath: resultsKey(kind)]
+        self[keyPath: key].fresh = []
+        self[keyPath: key].settleEnds = .infinity
+        self[keyPath: browserKey(kind)]?.cancel()
+        rebuildIfDue(kind, cameForward: false)
+    }
+
+    /// Makes `kind`'s browser again now when DiscoveryPolicy.rebuildBrowser says so, or looks again
+    /// when it says to. Main thread.
+    private func rebuildIfDue(_ kind: BrowserKind, cameForward: Bool) {
+        let key = lifeKey(kind)
+        self[keyPath: key].rebuildWork?.cancel()
+        self[keyPath: key].rebuildWork = nil
+        let now = ProcessInfo.processInfo.systemUptime
+        let life = self[keyPath: key]
+        let due = DiscoveryPolicy.rebuildBrowser(failedAt: life.failedAt, failures: life.failures, cameForward: cameForward,
+                                                foreground: appInForeground, now: now)
+        if due.rebuild {
+            rebuildBrowser(kind, cameForward: cameForward)
+        } else if let at = due.recheckAt {
+            let work = DispatchWorkItem { [weak self] in self?.rebuildIfDue(kind, cameForward: false) }
+            self[keyPath: key].rebuildWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, at - now), execute: work)
         }
-        browser.start(queue: queue)
-        nearbyBrowser = browser
+    }
+
+    /// `kind`'s browser, made again: the rows' results so far kept beside the new one's until it
+    /// settles (DiscoveryPolicy.rebuildSettle), so a Mac that stays listed never leaves them and its
+    /// sightings keep their times. The return from the background starts the count of failures again.
+    /// Main thread.
+    private func rebuildBrowser(_ kind: BrowserKind, cameForward: Bool) {
+        let key = lifeKey(kind)
+        var life = self[keyPath: key]
+        life.rebuildWork?.cancel()
+        life.rebuildWork = nil
+        life.settleWork?.cancel()
+        life.kept = self[keyPath: resultsKey(kind)]
+        life.fresh = []
+        life.settleEnds = ProcessInfo.processInfo.systemUptime + DiscoveryPolicy.rebuildSettle
+        life.failedAt = nil
+        if cameForward { life.failures = 0 }
+        let settle = DispatchWorkItem { [weak self] in self?.showResults(kind) }
+        life.settleWork = settle
+        self[keyPath: key] = life
+        self[keyPath: browserKey(kind)]?.cancel()
+        self[keyPath: browserKey(kind)] = nil
+        makeBrowser(kind)
+        DispatchQueue.main.asyncAfter(deadline: .now() + DiscoveryPolicy.rebuildSettle, execute: settle)
+    }
+
+    /// Stops the nearby browser and forgets its life (`updateDiscovery`). Main thread.
+    private func stopNearbyBrowser() {
+        nearbyBrowser?.cancel()
+        nearbyBrowser = nil
+        nearbyResults = []
+        nearbyLife.rebuildWork?.cancel()
+        nearbyLife.settleWork?.cancel()
+        nearbyLife = BrowserLife()
     }
 
     /// A browser's results changed, or what the policy reads did (the saved Macs, the network's
@@ -1083,14 +1269,13 @@ final class StreamClient: ObservableObject {
             remembered: Set(directWirelessMacs), searchingSince: searchingSince, askedNearby: askedNearby,
             nearbyRunning: nearbyBrowser != nil, listed: macs.count, localNetworkDenied: localNetworkDenied))
         if out.browseNearby, nearbyBrowser == nil {
-            startNearbyBrowser()
+            nearbyLife = BrowserLife()
+            makeBrowser(.nearby)
             #if DEBUG
             print("discovery: nearby search on")
             #endif
-        } else if !out.browseNearby, let browser = nearbyBrowser {
-            browser.cancel()
-            nearbyBrowser = nil
-            nearbyResults = []
+        } else if !out.browseNearby, nearbyBrowser != nil {
+            stopNearbyBrowser()
             recomputeMacs()
             #if DEBUG
             print("discovery: nearby search off")
@@ -1369,7 +1554,9 @@ final class StreamClient: ObservableObject {
                     }
                     return
                 }
-                DispatchQueue.main.async { self.status = "Waiting for \(name)…" }
+                DispatchQueue.main.async {
+                    if self.connection === c, self.reconnect == nil { self.status = "Waiting for \(name)…" }
+                }
                 // A connection that never gets past waiting would block every reconnect path
                 // (they all require `connection == nil`): give it five seconds, then let it go.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
@@ -1436,7 +1623,8 @@ final class StreamClient: ObservableObject {
                 #endif
                 self.connection = nil
                 c.cancel()                                                 // its .cancelled finds it replaced
-                self.tearDown(status: self.status, restartSearch: false)   // then its discoveryChanged looks again
+                self.tearDown(status: self.status, restartSearch: false)
+                self.reconnectIfListed()
             }
         }
         return true
@@ -2853,14 +3041,10 @@ final class StreamClient: ObservableObject {
         sessionEnded(error: error, end: end)
     }
 
-    /// The browse-results handlers reconnect when the Mac's Bonjour record comes back. If the record
-    /// never left (the host dropped us but kept running), nothing would fire, so also retry on a
-    /// timer while a reconnect is wanted. Main thread.
-    func scheduleReconnectRetry(after seconds: TimeInterval = 2) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self, !self.connected, self.reconnect != nil else { return }
-            if !self.reconnectIfListed() { self.scheduleReconnectRetry(after: min(seconds * 2, 10)) }
-        }
+    /// Starts one evaluation. Subsequent looks belong to the dial's end or the policy's due time.
+    /// There is no polling chain after a budget expires or the app leaves the foreground.
+    func scheduleReconnectRetry() {
+        reconnectIfListed()
     }
 
     /// Clears everything the session owned. `restartSearch` false for a remote dial whose winner

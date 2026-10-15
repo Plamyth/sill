@@ -28,7 +28,7 @@ payload = json.dumps({'source': source, 'hashes': hashes}).encode()
 runner = r'''
 import base64,hashlib,json,os,pathlib,plistlib,re,signal,subprocess,sys,tempfile,uuid,shutil
 raw=sys.stdin.buffer.read();print('INPUT_SHA256 '+hashlib.sha256(raw).hexdigest(),flush=True);p=json.loads(raw);raw=None
-volume='CCRReconnect'+uuid.uuid4().hex[:10];disk=None;output=None;child=None;record={}
+volume='CCRReconnect'+uuid.uuid4().hex[:10];disk=None;output=None;child=None;record={'runnerPID':os.getpid(),'childPIDs':[]}
 def health():
  return {'swap':subprocess.check_output(['/usr/sbin/sysctl','vm.swapusage'],text=True).strip(),'pressure':subprocess.check_output(['/usr/bin/memory_pressure','-Q'],text=True).strip(),'orca':subprocess.run(['/usr/bin/pgrep','-f','orca-server-1.4'],capture_output=True,text=True).stdout.splitlines()}
 record['before']=health()
@@ -48,12 +48,15 @@ try:
  record['inputHashesMatched']=True;original=p['hashes'];p=None
  output=pathlib.Path(tempfile.mkdtemp(prefix='ccr-reconnect-output-',dir='/private/tmp'))
  cache=str(output/'cache')
- commands=[['/usr/bin/xcrun','swiftc',str(package/'DiscoveryPolicy.swift'),str(package/'main.swift'),'-o',str(output/'glue'),'-module-cache-path',cache],[str(output/'glue')]]
+ sources=[str(package/'DiscoveryPolicy.swift'),str(package/'main.swift')]
+ if (package/'sleep.swift').exists(): sources.append(str(package/'sleep.swift'))
+ commands=[['/usr/bin/xcrun','swiftc']+sources+['-o',str(output/'glue'),'-module-cache-path',cache],[str(output/'glue')]]
  if (package/'Tests/vision-pointer/main.swift').exists():
   commands += [['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-module-name','StreamProtocol',str(package/'Sources/StreamProtocol/Input.swift'),'-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'Input.o'),'-module-cache-path',cache],['/usr/bin/xcrun','swiftc','-I',str(output),str(package/'visionOSClient/VisionPointer.swift'),str(package/'visionOSClient/VisionInputFence.swift'),str(package/'visionOSClient/VisionTransition.swift'),str(package/'Tests/vision-pointer/main.swift'),str(output/'Input.o'),'-o',str(output/'pointer'),'-module-cache-path',cache],[str(output/'pointer')]]
  record['commandExitCodes']=[]
  for command in commands:
   child=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
+  record['childPIDs'].append(child.pid)
   try: log,_=child.communicate(timeout=180)
   except subprocess.TimeoutExpired:
    os.killpg(child.pid,signal.SIGTERM)
@@ -67,6 +70,7 @@ except Exception as e:
  record['error']=type(e).__name__+': '+str(e);record['exitCode']=2
 finally:
  if child and child.poll() is None: os.killpg(child.pid,signal.SIGKILL);child.wait()
+ record['childrenReaped']=child is None or child.poll() is not None
  if output: shutil.rmtree(output);record['outputRemoved']=not output.exists()
  if disk:
   r=subprocess.run(['/usr/bin/hdiutil','detach',disk],capture_output=True,text=True,timeout=20)
@@ -83,7 +87,7 @@ except subprocess.TimeoutExpired:
     log, _ = process.communicate(timeout=30)
 (out / (label + '.log')).write_bytes(log)
 records = [line[len('RESULT_JSON '):] for line in log.decode(errors='replace').splitlines() if line.startswith('RESULT_JSON ')]
-record = {'exitCode': process.returncode, 'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'scope': 'Independent RAM input validation, not codex-source-guard transfer acceptance', 'inputSHA256': sha(payload), 'remoteInputHashMatched': ('INPUT_SHA256 ' + sha(payload)).encode() in log, 'sourceSHA256': original, 'sourceUnchanged': all(sha((ROOT / n).read_bytes()) == h for n, h in original.items()), 'extractionSHA256': extraction, 'remoteResult': json.loads(records[-1]) if records else None}
+record = {'exitCode': process.returncode, 'transportPID': process.pid, 'transportReaped': process.poll() is not None, 'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'scope': 'Independent RAM input validation, not codex-source-guard transfer acceptance', 'inputSHA256': sha(payload), 'remoteInputHashMatched': ('INPUT_SHA256 ' + sha(payload)).encode() in log, 'sourceSHA256': original, 'sourceUnchanged': all(sha((ROOT / n).read_bytes()) == h for n, h in original.items()), 'extractionSHA256': extraction, 'remoteResult': json.loads(records[-1]) if records else None}
 (out / (label + '.json')).write_text(json.dumps(record, indent=2) + '\n')
 print(log.decode(errors='replace'))
 print(json.dumps(record, indent=2))

@@ -41,6 +41,11 @@ struct DispatchQueue {
     func async(execute: @escaping () -> Void) { asyncAfter(deadline: .now(), execute: execute) }
 }
 enum NWError: Error { case dns(Int32) }
+final class UIApplication {
+    enum State { case active, background }
+    static let shared = UIApplication()
+    var applicationState = State.active
+}
 typealias DNSServiceErrorType = Int32
 let kDNSServiceErr_PolicyDenied: Int32 = -65570
 final class NWParameters { var includePeerToPeer = false }
@@ -71,7 +76,11 @@ struct FoundMac {
     var direct: Bool { route == .direct }
     var endpoint: String? = "fake"
 }
-struct Session { var why: DialReason?; var route = FoundMac.Route.network }
+struct Session {
+    enum Route { case network, remote; var isRemote: Bool { self == .remote } }
+    var why: DialReason?
+    var route = Route.network
+}
 enum DialReason { case automatic }
 struct SavedMac { var fingerprintData: Data? = Data([1]); var newKey = false }
 struct Sightings { var since: [String: Double] = ["Mac": 100]; var leftAt: [String: Double] = [:] }
@@ -82,7 +91,6 @@ final class StreamClient {
     let queue = DispatchQueue()
     var reconnect: Reconnect?
     var reconnectCheck: DispatchWorkItem?
-    var reconnectRetryChain = 0
     var connected = false
     var moveUnderWay = false
     var connection: NWConnection?
@@ -97,6 +105,7 @@ final class StreamClient {
     var localNetworkDenied = false
     var searchingSince = 100.0
     var status = "Reconnecting"
+    var hostName = "Mac"
     var rowDials: [Double] = []
     var remoteDials: [Double] = []
     var decision = DiscoveryPolicy.HomeDial.pinned
@@ -134,6 +143,7 @@ final class StreamClient {
                               pathAtLoss: pathSignature, remoteAllowed: saved, rememberedDirect: false)
     }
     func browserIdentity() -> ObjectIdentifier? { networkBrowser.map(ObjectIdentifier.init) }
+    func browserHandle() -> NWBrowser? { networkBrowser }
     func failBrowser() { networkBrowser?.stateUpdateHandler?(.failed(.dns(-65569))) }
     func report(_ names: [String]) { networkBrowser?.browseResultsChangedHandler?(Set(names.map { NWBrowser.Result(name: $0) }), []) }
     func rows() -> [String] { networkResults.map(\.name).sorted() }

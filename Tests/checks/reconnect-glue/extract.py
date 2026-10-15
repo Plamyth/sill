@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -24,6 +25,9 @@ def fixture():
         if marker in stream:
             pieces[marker] = block(stream, marker)
     pieces['reconnectIfListed'] = block(remote, '@discardableResult\n    func reconnectIfListed()')
+    marker = 'if !connected, goodbye == nil, reconnect != nil, let s, !s.route.isRemote'
+    if marker in remote:
+        pieces['sessionEndedRowFailure'] = 'func finishRowFailure() {\nlet goodbye: Int? = nil\nlet s = session\n' + block(remote, marker) + '\n}'
     marker = 'DispatchQueue.main.asyncAfter(deadline: .now() + Self.reconnectDialWait)'
     pieces['dialTimeout'] = 'func armTimeout(_ c: NWConnection, name: String) {\n' + block(stream, marker) + '\n}'
     start = stream.index('    func startBrowsing()')
@@ -35,9 +39,6 @@ def fixture():
         pieces['browserState'] = stream[start:end]
     else:
         pieces['browserState'] = 'var appInForeground = true\n'
-    for marker in ['private func wentToBackground()', 'func automaticRowDialEnded()']:
-        if marker in stream:
-            pieces[marker] = block(stream, marker)
     pieces['networkBrowser'] = 'private var networkBrowser: NWBrowser?\nprivate var nearbyBrowser: NWBrowser?\nprivate var networkResults: [NWBrowser.Result] = []\nprivate var nearbyResults: [NWBrowser.Result] = []\n'
     state = (Path(__file__).parent / 'Standins.swift').read_text()
     tests = (Path(__file__).parent / 'scenarios.swift').read_text()
@@ -54,7 +55,15 @@ def fixture():
     main = state.rsplit('\n}', 1)[0] + '\n' + body + lifecycle + '\n}\n' + tests
     sha = lambda b: hashlib.sha256(b).hexdigest()
     receipts = {name: sha(value.encode()) for name, value in pieces.items()}
-    return {'main.swift': main, 'DiscoveryPolicy.swift': (ROOT / 'iOSClient/DiscoveryPolicy.swift').read_text()}, receipts
+    policy = (ROOT / 'iOSClient/DiscoveryPolicy.swift').read_text()
+    files = {'main.swift': main, 'DiscoveryPolicy.swift': policy}
+    if 'static func redialRow' in policy:
+        upstream = subprocess.check_output(['git', 'show', '03ca390b3ce7fcd05d81794b396e20d02ea56258:Tests/checks/policy/sleep.swift'], cwd=ROOT, text=True)
+        selected = upstream[:upstream.index('    // MARK: The Desktop after a stop')]
+        files['sleep.swift'] = selected + '}\n'
+        receipts['upstreamSleepSelected'] = sha(selected.encode())
+        receipts['upstreamSleepFull'] = sha(upstream.encode())
+    return files, receipts
 
 
 if __name__ == '__main__':

@@ -1,0 +1,17 @@
+Mac mini heavy-job slot: free=40%, swap=9736MB
+INPUT_SHA256 aa46fa8b9c5e131720388ca746a367dc3600d91898083a999c5a06ad0168efb4
+/Volumes/CCRReconnect6481223156/input/main.swift:545:14: error: invalid redeclaration of 'wentToBackground()'
+393 |     }
+394 | 
+395 |     private func wentToBackground() {
+    |                  `- note: 'wentToBackground()' previously declared here
+396 |         appInForeground = false
+397 |         reconnectCheck?.cancel()
+    :
+543 |     #endif
+544 | 
+545 | private func wentToBackground() {
+    |              `- error: invalid redeclaration of 'wentToBackground()'
+546 |         appInForeground = false
+547 |         reconnectCheck?.cancel()
+RESULT_JSON {"before": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 40%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [1], "exitCode": 1, "memorySourcesUnchanged": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 37%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}
