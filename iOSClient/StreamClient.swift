@@ -790,7 +790,17 @@ final class StreamClient: ObservableObject {
         get { link.connection }
         set {
             #if os(visionOS)
-            if link.connection !== newValue { resetVisionAudio() }
+            if link.connection !== newValue {
+                resetVisionAudio()
+                visionMovePreparation = nil
+                _ = visionInputSession?.takeReleases()
+                let old = link.connection
+                link.replaceConnection(newValue) {
+                    self.visionInputDebt.release(on: old).map(Self.visionInputBytes)
+                }
+                visionInputSession?.setMoving(false)
+                return
+            }
             #endif
             link.connection = newValue
         }
@@ -801,6 +811,26 @@ final class StreamClient: ObservableObject {
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     #if os(visionOS)
     lazy var visionInputFence = VisionInputFence(queue: queue)
+    weak var visionInputSession: VisionInputSession?
+    private var visionMovePreparation: UUID?
+    private let visionInputDebt = VisionInputDebt()
+
+    private static func visionInputBytes(_ event: InputEvent) -> Data {
+        StreamMessage(kind: .input, timestamp: Date().timeIntervalSince1970,
+                      isKeyframe: false, payload: Wire.encode(event)).serialized()
+    }
+
+    func cancelVisionInputs(completion: (() -> Void)? = nil) {
+        let expected = connection
+        queue.async { [weak self] in
+            if let self {
+                _ = self.link.cancelInputs(onlyOn: expected) {
+                    self.visionInputDebt.release(on: expected).map(Self.visionInputBytes)
+                }
+            }
+            if let completion { DispatchQueue.main.async(execute: completion) }
+        }
+    }
 
     private let visionAudioRoute = VisionAudioRoute()
     lazy var visionAudio = VisionAudioController { [weak self] control in
@@ -2288,6 +2318,26 @@ final class StreamClient: ObservableObject {
     /// Mac's settings come again on this connection (the ledger's rule 7), the Desktop rule starts
     /// over, and the panel gives the first state its two seconds. Main thread.
     private func finishMove(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
+        #if os(visionOS)
+        guard visionMovePreparation == nil, connected, let old = connection,
+              moving?.connection === c else { return }
+        let ticket = UUID()
+        visionMovePreparation = ticket
+        visionInputSession?.setMoving(true)
+        _ = visionInputSession?.takeReleases()
+        cancelVisionInputs() { [weak self] in
+            guard let self, self.visionMovePreparation == ticket else { return }
+            self.visionMovePreparation = nil
+            defer { self.visionInputSession?.setMoving(false) }
+            guard self.connected, self.connection === old, self.moving?.connection === c else { return }
+            self.finishMoveAfterInputDrain(c, kind: kind, kept: kept)
+        }
+        #else
+        finishMoveAfterInputDrain(c, kind: kind, kept: kept)
+        #endif
+    }
+
+    private func finishMoveAfterInputDrain(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
         moving = nil
         // The session this move was for must still run: over AWDL for a move from AWDL (a direct
         // session that ended meanwhile reconnects by itself, to the network row), not over it for
@@ -2481,6 +2531,10 @@ final class StreamClient: ObservableObject {
     /// Stops a move under way and its timer (a new session, or none), and drops a hand-over still
     /// waiting for its fence, or a hold: what it held belonged to the session that ended. Main thread.
     private func abandonMove() {
+        #if os(visionOS)
+        visionMovePreparation = nil
+        visionInputSession?.setMoving(false)
+        #endif
         moveCheck?.cancel()
         moveCheck = nil
         if let move = moving {
@@ -3104,6 +3158,7 @@ final class StreamClient: ObservableObject {
     func tearDown(status: String, restartSearch: Bool = true) {
         #if os(visionOS)
         resetVisionAudio()
+        visionInputSession?.releaseAll()
         #endif
         abandonMove()
         resetPath()
@@ -3260,6 +3315,20 @@ final class StreamClient: ObservableObject {
     }
 
     func sendInput(_ event: InputEvent) {
+        #if os(visionOS)
+        guard visionMovePreparation == nil, let expected = connection else { return }
+        lastInputAt = ProcessInfo.processInfo.systemUptime
+        let bytes = Self.visionInputBytes(event)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let accepted = self.link.send(bytes, onlyOn: expected) { [weak self] in
+                self?.visionInputDebt.record(event, on: expected)
+            }
+            guard accepted else { return }
+            self.pointerNoteSent(event)
+        }
+        return
+        #else
         // Every input passes here, a hover and a flick's coast included: the tour's rule counts it
         // as something happening (StreamScreen.considerTour).
         lastInputAt = ProcessInfo.processInfo.systemUptime
@@ -3297,6 +3366,7 @@ final class StreamClient: ObservableObject {
                 }
             }
         }
+        #endif
     }
 
     /// This device's switch for three-finger gestures (the Settings panel's This iPad group): on

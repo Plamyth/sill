@@ -30,7 +30,7 @@ if '--cancel-mutation' in sys.argv:
     }
 paths = [ROOT / p for p in ['iOSClient/StreamClient.swift', 'iOSClient/StreamClient+Remote.swift', 'iOSClient/DiscoveryPolicy.swift']]
 if '--pointer' in sys.argv:
-    for name in ['Sources/StreamProtocol/Input.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputFence.swift', 'visionOSClient/VisionTransition.swift', 'Tests/vision-pointer/main.swift']:
+    for name in ['Sources/StreamProtocol/Input.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputFence.swift', 'visionOSClient/VisionTransition.swift', 'Tests/vision-pointer/main.swift']:
         p = ROOT / name
         paths.append(p)
         files[name] = p.read_text()
@@ -68,7 +68,7 @@ try:
  if (package/'cancel-mutant/main.swift').exists():
   commands += [['/usr/bin/xcrun','swiftc',str(package/'DiscoveryPolicy.swift'),str(package/'cancel-mutant/main.swift'),str(package/'sleep.swift'),'-o',str(output/'cancel-mutant'),'-module-cache-path',cache],[str(output/'cancel-mutant')]]
  if (package/'Tests/vision-pointer/main.swift').exists():
-  commands += [['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-module-name','StreamProtocol',str(package/'Sources/StreamProtocol/Input.swift'),'-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'Input.o'),'-module-cache-path',cache],['/usr/bin/xcrun','swiftc','-I',str(output),str(package/'visionOSClient/VisionPointer.swift'),str(package/'visionOSClient/VisionInputFence.swift'),str(package/'visionOSClient/VisionTransition.swift'),str(package/'Tests/vision-pointer/main.swift'),str(output/'Input.o'),'-o',str(output/'pointer'),'-module-cache-path',cache],[str(output/'pointer')]]
+  commands += [['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-module-name','StreamProtocol',str(package/'Sources/StreamProtocol/Input.swift'),'-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'Input.o'),'-module-cache-path',cache],['/usr/bin/xcrun','swiftc','-I',str(output),str(package/'visionOSClient/VisionPointer.swift'),str(package/'iOSClient/KeyChords.swift'),str(package/'visionOSClient/VisionInputFence.swift'),str(package/'visionOSClient/VisionTransition.swift'),str(package/'Tests/vision-pointer/main.swift'),str(output/'Input.o'),'-o',str(output/'pointer'),'-module-cache-path',cache],[str(output/'pointer')]]
  record['commandExitCodes']=[]
  for command in commands:
   child=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
@@ -86,7 +86,7 @@ try:
    record['commandExitCodes'].append(0 if record['cancelMutationDetected'] else 2)
   else: record['commandExitCodes'].append(child.returncode)
   if 'swiftc' in command and child.returncode: break
- record['exitCode']=max(record['commandExitCodes'])
+ record['exitCode']=0 if all(code==0 for code in record['commandExitCodes']) else 1
  record['memorySourcesUnchanged']=all(hashlib.sha256((package/n).read_bytes()).hexdigest()==h for n,h in original.items())
 except Exception as e:
  record['error']=type(e).__name__+': '+str(e);record['exitCode']=2

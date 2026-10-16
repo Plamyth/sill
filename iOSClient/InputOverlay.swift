@@ -484,6 +484,15 @@ final class InputOverlayView: UIView, UIKeyInput {
     private func releaseForwardedKeys() {
         for up in forwarded.releaseAll() { send(up) }
     }
+
+    #if os(visionOS)
+    func takeVisionKeyReleases() -> [InputEvent] {
+        latchedModifiers = []
+        let releases = forwarded.releaseAll()
+        _ = resignFirstResponder()
+        return releases
+    }
+    #endif
 }
 
 /// Lets SwiftUI reach the overlay's first responder from the top bar's Keyboard button.

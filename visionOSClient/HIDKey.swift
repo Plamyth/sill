@@ -1,6 +1,5 @@
 // Copied from Sill v0.5.1 PortraitStreamScreen.swift. Apache-2.0; see LICENSE.
-import SwiftUI
-import StreamProtocol
+import Foundation
 
 // MARK: - Keys
 

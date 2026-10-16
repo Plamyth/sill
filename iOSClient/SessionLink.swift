@@ -75,7 +75,11 @@ final class SessionLink {
     /// The session's connection has lost its path, and a move to another is under way.
     private var holding: Hold?
     /// What waits for the fences and the hold, in the order sent.
-    private var waiting: [Data] = []
+    private struct Waiting {
+        let data: Data
+        let didSend: (() -> Void)?
+    }
+    private var waiting: [Waiting] = []
     /// The old connections of hand-overs whose fence is down, until what waited has gone out.
     private var fencedOff: [NWConnection] = []
     /// Input messages counted for the session's connection: those handed to it since it became the
@@ -99,7 +103,7 @@ final class SessionLink {
     private static func isInput(_ data: Data) -> Bool { data.first == 8 }
 
     /// The input messages among those waiting. Under the lock.
-    private var waitingInputs: Int { waiting.reduce(0) { $0 + (Self.isInput($1) ? 1 : 0) } }
+    private var waitingInputs: Int { waiting.reduce(0) { $0 + (Self.isInput($1.data) ? 1 : 0) } }
 
     /// The session's connection: the one read, and the one sent on outside a hand-over or a hold.
     /// Setting it leaves the fences and the hold alone; `dropHandOver` ends them.
@@ -113,12 +117,53 @@ final class SessionLink {
     func send(_ data: Data) {
         lock.lock(); defer { lock.unlock() }
         if !fences.isEmpty || holding != nil {
-            waiting.append(data)
+            waiting.append(Waiting(data: data, didSend: nil))
             if Self.isInput(data) { inputs += 1 }
             return
         }
         current?.send(content: data, completion: .contentProcessed { _ in })
         if current != nil, Self.isInput(data) { inputs += 1 }
+    }
+
+    @discardableResult
+    func send(_ data: Data, onlyOn expected: NWConnection, didSend: (() -> Void)? = nil) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard current === expected else { return false }
+        if !fences.isEmpty || holding != nil {
+            waiting.append(Waiting(data: data, didSend: didSend))
+        } else {
+            expected.send(content: data, completion: .contentProcessed { _ in })
+            didSend?()
+        }
+        if Self.isInput(data) { inputs += 1 }
+        return true
+    }
+
+    /// A native gesture was cancelled. Waiting inputs never reached a Mac; release only the
+    /// originating connection, before its next handover fence, and preserve non-input messages.
+    @discardableResult
+    func cancelInputs(onlyOn expected: NWConnection?, releases: () -> [Data]) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        guard current === expected else { return 0 }
+        return cancelInputsLocked(releasing: releases())
+    }
+
+    func replaceConnection(_ next: NWConnection?, releases: () -> [Data]) {
+        lock.lock(); defer { lock.unlock() }
+        _ = cancelInputsLocked(releasing: releases())
+        current = next
+        inputs = waitingInputs
+    }
+
+    private func cancelInputsLocked(releasing releases: [Data]) -> Int {
+        let dropped = waitingInputs
+        waiting.removeAll { Self.isInput($0.data) }
+        inputs -= dropped
+        for data in releases where Self.isInput(data) {
+            current?.send(content: data, completion: .contentProcessed { _ in })
+            if current != nil { inputs += 1 }
+        }
+        return dropped
     }
 
     /// Whether `c` is still read: the session's connection, or the old one of a hand-over until its
@@ -211,7 +256,10 @@ final class SessionLink {
         }
         let out = waiting
         waiting = []
-        for data in out { current?.send(content: data, completion: .contentProcessed { _ in }) }
+        for item in out {
+            current?.send(content: item.data, completion: .contentProcessed { _ in })
+            if current != nil { item.didSend?() }
+        }
         let close = fencedOff
         fencedOff = []
         return Released(held: out.count, waiting: 0, clear: true, seconds: seconds, close: close)
