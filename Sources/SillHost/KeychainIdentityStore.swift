@@ -58,19 +58,21 @@ import Security
 /// (the same posture as the iOS device key, WhenUnlockedThisDeviceOnly). The legacy store keeps the
 /// login keychain's own default, as it always did.
 package final class KeychainIdentityStore: IdentityStore {
-    static let keyTag = Data("me.saffer.sill.remote.host-key".utf8)
-    static let label = "Sill Remote Access"
-    static let service = "me.saffer.sill.remote"
     static let recognitionAccount = "recognition-key"
     static let pairedAccount = "paired-devices"
     static let requirePairingAccount = "require-pairing"
 
     /// The data-protection access group, or nil for the legacy login keychain. Immutable.
     let accessGroup: String?
+    private let namespace: KeychainIdentityNamespace
     private var dataProtection: Bool { accessGroup != nil }
 
     /// `accessGroup` nil is the legacy login keychain; a group name is the data-protection keychain.
-    package init(accessGroup: String? = nil) { self.accessGroup = accessGroup }
+    package init(accessGroup: String? = nil,
+                 namespace: KeychainIdentityNamespace = .forBundleIdentifier(nil)) {
+        self.accessGroup = accessGroup
+        self.namespace = namespace
+    }
 
     package var summary: String {
         guard let accessGroup else { return "in the login keychain" }
@@ -95,7 +97,7 @@ package final class KeychainIdentityStore: IdentityStore {
     package func loadOrCreateKey() throws -> SecKey {
         var query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: Self.keyTag,
+            kSecAttrApplicationTag as String: namespace.keyTag,
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -117,8 +119,8 @@ package final class KeychainIdentityStore: IdentityStore {
             kSecAttrKeySizeInBits as String: 256,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: Self.keyTag,
-                kSecAttrLabel as String: Self.label,
+                kSecAttrApplicationTag as String: namespace.keyTag,
+                kSecAttrLabel as String: namespace.label,
             ] as [String: Any],
         ]
         if let accessGroup {
@@ -146,7 +148,7 @@ package final class KeychainIdentityStore: IdentityStore {
             return data
         }
         let data = try MemoryIdentityStore.randomBytes(32)
-        try write(data, account: Self.recognitionAccount, label: "\(Self.label) (recognition key)")
+        try write(data, account: Self.recognitionAccount, label: "\(namespace.label) (recognition key)")
         return data
     }
 
@@ -166,7 +168,7 @@ package final class KeychainIdentityStore: IdentityStore {
     package func savePaired(_ devices: [PairedDevice]) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        try write(try encoder.encode(devices), account: Self.pairedAccount, label: "\(Self.label) (paired devices)")
+        try write(try encoder.encode(devices), account: Self.pairedAccount, label: "\(namespace.label) (paired devices)")
     }
 
     package func loadRequirePairing() throws -> Data? {
@@ -174,7 +176,7 @@ package final class KeychainIdentityStore: IdentityStore {
     }
 
     package func saveRequirePairing(_ record: Data) throws {
-        try write(record, account: Self.requirePairingAccount, label: "\(Self.label) (require pairing)")
+        try write(record, account: Self.requirePairingAccount, label: "\(namespace.label) (require pairing)")
     }
 
     // MARK: Generic passwords
@@ -185,7 +187,7 @@ package final class KeychainIdentityStore: IdentityStore {
     private func read(_ account: String) throws -> Data? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: namespace.service,
             kSecAttrAccount as String: account,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
@@ -203,7 +205,7 @@ package final class KeychainIdentityStore: IdentityStore {
     private func write(_ data: Data, account: String, label: String) throws {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
+            kSecAttrService as String: namespace.service,
             kSecAttrAccount as String: account,
         ]
         query.merge(scope()) { _, new in new }

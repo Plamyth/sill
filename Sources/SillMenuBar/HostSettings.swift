@@ -109,7 +109,7 @@ final class HostSettings {
             Key.remotePort: standard.remotePort,
             Key.internetAccess: standard.internetAccess,
             Key.remoteAddressName: "",
-            Key.updateCheck: true,
+            Key.updateCheck: Bundle.main.bundleIdentifier != "com.ambrion.sillcanvas.mac",
         ])
         config = HostConfig(maxFPS: defaults.integer(forKey: Key.maxFPS),
                             captureScale: CGFloat(defaults.double(forKey: Key.captureScale)),

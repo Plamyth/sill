@@ -176,6 +176,7 @@ final class AppModel {
     /// only for a test host and otherwise ignored with a line, as before.
     private func makeIdentityStore() -> IdentityStore {
         let dir = ProcessInfo.processInfo.environment["SILL_TEST_REMOTE_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+        let namespace = KeychainIdentityNamespace.forBundleIdentifier(Bundle.main.bundleIdentifier)
         let choice = IdentityStorePlan.choose(bundled: Self.bundled, synthetic: synthetic,
                                               entitledAccessGroup: Self.entitledKeychainAccessGroup(), testRemoteDir: dir)
         if dir != nil, case .testDirectory = choice {} else if dir != nil {
@@ -186,13 +187,13 @@ final class AppModel {
             // The strong keychain: no other process can pre-create or read these items. Logged so a
             // release build can be confirmed hardened (and Noah's on-device pass can read it back).
             print("Remote access: the identity is in the data-protection keychain (access group \(group)).")
-            return KeychainIdentityStore(accessGroup: group)
+            return KeychainIdentityStore(accessGroup: group, namespace: namespace)
         case .legacy:
             // No keychain-access-groups entitlement (a development build, or a release with no
             // embedded provisioning profile): the login keychain, the profile-free fallback. Said in
             // the log so a build that should have hardened but did not is visible.
             print("Remote access: the identity is in the login keychain (no keychain-access-groups entitlement — a development build, or a release with no embedded provisioning profile; docs/keychain-plan.md).")
-            return KeychainIdentityStore()
+            return KeychainIdentityStore(namespace: namespace)
         case .memory:
             return MemoryIdentityStore()
         case .testDirectory(let path):

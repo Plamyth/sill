@@ -83,6 +83,9 @@ enum DebugHooks {
         }
         let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
+        if Bundle.main.bundleIdentifier == "com.ambrion.sillcanvas.mac" {
+            return library.appendingPathComponent("Logs/CCR Sill/CCR Sill.log")
+        }
         return library.appendingPathComponent("Logs/Sill/Sill.log")
     }
 
