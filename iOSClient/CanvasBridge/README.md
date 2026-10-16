@@ -17,6 +17,6 @@ The integration owner needs all nine files in the iOS app target:
 
 `CanvasBridgeApp.swift` is excluded. Sill retains its app entry point. The initial port commit added source files only and included no relay credential files or Keychain contents.
 
-The Sill integration now opens `CanvasWorkspace` as a full-screen Pencil canvas and removes its native 3×3 switch. The Mac screen remains Sill's stream. Sending still requires an active voice session; exact-chat delivery when voice is off is a separate unfinished change.
+The Sill integration opens `CanvasWorkspace` as a full-screen Pencil canvas. The Mac's existing 3×3 Control Room remains a video stream; this app does not rebuild it as native cards. The canvas reads the Mac's current 3×3 projection and lets the user select an exact Codex card when voice is off. The new relay send path is coded to steer an active target turn or start an idle selected chat; it does not queue new packets. Legacy queue receipts remain readable.
 
-Verification compares each copied file with the pinned source Git blob and worktree using SHA-256 and byte equality. No build, installation, pairing, push, or browser launch was performed.
+The separate `com.ambrion.sillcanvas.ipad` bundle was signed, installed, and launched on the physical iPad. The user verified live Pencil ink, the recipient list and selected card title, Mac video, and touch control. The relay token moved from a one-time app document into the app's Keychain and the document was removed. Exact-chat image delivery is still unverified: the running Codex desktop app does not expose the shared control socket the relay requires. The Mac Sill host, Sunshine, and Moonlight remain installed and unchanged.
