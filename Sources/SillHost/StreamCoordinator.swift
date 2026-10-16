@@ -46,6 +46,8 @@ package final class StreamCoordinator {
     private let remoteAudioCapture = SystemAudioCapture()
     private var remoteAudioSubscribers: Set<ObjectIdentifier> = []
     private var remoteAudioRequests: [ObjectIdentifier: UUID] = [:]
+    private var remoteAudioActions: [ObjectIdentifier: UInt64] = [:]
+    private var nextRemoteAudioAction: UInt64 = 0
     private var remoteAudioEpoch: UInt64 = 0
     private var remoteAudioRunning = false
     private var remoteAudioStart: Task<Bool, Never>?
@@ -391,6 +393,7 @@ package final class StreamCoordinator {
                 self.connections[id] = nil
                 self.remoteAudioSubscribers.remove(id)
                 self.remoteAudioRequests[id] = nil
+                self.remoteAudioActions[id] = nil
                 if self.remoteAudioSubscribers.isEmpty { self.stopRemoteAudioIfIdle() }
                 self.lastPublished[id] = nil
                 self.linkReports[id] = nil
@@ -2274,9 +2277,10 @@ package final class StreamCoordinator {
         remoteAudioRunning = false
         let pendingStart = remoteAudioStart
         let stopID = UUID()
-        let task = Task { [remoteAudioCapture] in
+        let task = Task { [weak self] in
             _ = await pendingStart?.value
-            await remoteAudioCapture.stop()
+            guard let self, self.remoteAudioSubscribers.isEmpty else { return }
+            await self.remoteAudioCapture.stop()
         }
         remoteAudioStop = task
         remoteAudioStopID = stopID
@@ -2290,6 +2294,7 @@ package final class StreamCoordinator {
         let old = remoteAudioSubscribers.compactMap { connections[$0] }
         remoteAudioSubscribers.removeAll()
         remoteAudioRequests.removeAll()
+        remoteAudioActions.removeAll()
         let epoch = await withCheckedContinuation { continuation in
             server.resetRemoteAudio { continuation.resume(returning: $0) }
         }
@@ -2299,17 +2304,20 @@ package final class StreamCoordinator {
         await remoteAudioStop?.value
     }
 
-    private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID,
+    private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID, action: UInt64,
                                       epoch: UInt64? = nil) -> Bool {
         !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
-        routes[id] != nil && remoteAudioRequests[id] == requestID &&
+        routes[id] != nil && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
         (epoch == nil || epoch == remoteAudioEpoch)
     }
 
     private func controlRemoteAudio(_ request: RemoteAudioSubscription, from connection: NWConnection) async {
         let id = ObjectIdentifier(connection)
         guard routes[id] != nil else { return }
+        nextRemoteAudioAction &+= 1
+        let action = nextRemoteAudioAction
         remoteAudioRequests[id] = request.requestID
+        remoteAudioActions[id] = action
         if !request.enabled {
             remoteAudioSubscribers.remove(id)
             server.setRemoteAudio(false, for: connection)
@@ -2317,57 +2325,61 @@ package final class StreamCoordinator {
             stopRemoteAudioIfIdle()
             return
         }
-        guard canEnableRemoteAudio(id, requestID: request.requestID) else {
+        guard canEnableRemoteAudio(id, requestID: request.requestID, action: action) else {
             remoteAudioState(false, requestID: request.requestID, reason: "source unavailable", to: connection)
             return
         }
-        let priorStopID = remoteAudioStopID
-        await remoteAudioStop?.value
-        if remoteAudioStopID == priorStopID { remoteAudioStop = nil; remoteAudioStopID = nil }
-        // A later OFF can replace this request while the previous capture is stopping.
-        guard canEnableRemoteAudio(id, requestID: request.requestID) else {
-            remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
-            return
-        }
-        let epoch = remoteAudioEpoch
-        if !remoteAudioRunning {
-            if remoteAudioStart == nil, let display = catalog.display {
-                guard canEnableRemoteAudio(id, requestID: request.requestID, epoch: epoch) else {
-                    remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
-                    return
-                }
-                remoteAudioCapture.onPacket = { [server] payload, sequence in
-                    server.broadcastRemoteAudio(payload, epoch: epoch, sequence: sequence)
-                }
-                remoteAudioStart = Task { [remoteAudioCapture] in
-                    do { try await remoteAudioCapture.start(display: display); return true }
-                    catch { return false }
-                }
-            }
-            let started = await remoteAudioStart?.value ?? false
-            remoteAudioStart = nil
-            guard started else {
-                remoteAudioState(false, requestID: request.requestID, reason: "capture unavailable", to: connection)
+        // A stop can be scheduled while the capture-queue boundary is pending. Retry
+        // only after that stop has finished; never ACK a stream that is about to close.
+        for _ in 0..<3 {
+            let priorStopID = remoteAudioStopID
+            await remoteAudioStop?.value
+            if remoteAudioStopID == priorStopID { remoteAudioStop = nil; remoteAudioStopID = nil }
+            guard canEnableRemoteAudio(id, requestID: request.requestID, action: action) else {
+                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
                 return
             }
-        }
-        guard canEnableRemoteAudio(id, requestID: request.requestID, epoch: epoch),
-              remoteAudioCapture.hasStream else {
-            remoteAudioState(false, requestID: request.requestID, reason: "source changed", to: connection)
+            let epoch = remoteAudioEpoch
+            if !remoteAudioRunning || !remoteAudioCapture.hasStream {
+                if remoteAudioStart == nil, let display = catalog.display {
+                    guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
+                                               epoch: epoch) else { return }
+                    remoteAudioCapture.onPacket = { [server] payload, sequence in
+                        server.broadcastRemoteAudio(payload, epoch: epoch, sequence: sequence)
+                    }
+                    remoteAudioStart = Task { [remoteAudioCapture] in
+                        do { try await remoteAudioCapture.start(display: display); return true }
+                        catch { return false }
+                    }
+                }
+                let started = await remoteAudioStart?.value ?? false
+                remoteAudioStart = nil
+                guard started else {
+                    remoteAudioState(false, requestID: request.requestID, reason: "capture unavailable", to: connection)
+                    return
+                }
+            }
+            guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
+                                       epoch: epoch) else {
+                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                return
+            }
+            if remoteAudioStop != nil || !remoteAudioCapture.hasStream { continue }
+            // Serial with every capture callback; drop a partial packet at the boundary.
+            let boundary = await remoteAudioCapture.subscriptionBoundary()
+            guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
+                                       epoch: epoch) else {
+                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                return
+            }
+            if remoteAudioStop != nil || !remoteAudioCapture.hasStream { continue }
+            remoteAudioRunning = true
+            remoteAudioSubscribers.insert(id)
+            server.setRemoteAudio(true, for: connection, afterSequence: boundary)
+            remoteAudioState(true, requestID: request.requestID, to: connection)
             return
         }
-        // Serial with the capture callback: old samples and a partial packet are fenced
-        // before this connection can receive an enabled answer.
-        let boundary = await remoteAudioCapture.subscriptionBoundary()
-        guard canEnableRemoteAudio(id, requestID: request.requestID, epoch: epoch),
-              remoteAudioCapture.hasStream else {
-            remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
-            return
-        }
-        remoteAudioRunning = true
-        remoteAudioSubscribers.insert(id)
-        server.setRemoteAudio(true, for: connection, afterSequence: boundary)
-        remoteAudioState(true, requestID: request.requestID, to: connection)
+        remoteAudioState(false, requestID: request.requestID, reason: "capture changing", to: connection)
     }
 
     private func sendCatalog(to connection: NWConnection) {
