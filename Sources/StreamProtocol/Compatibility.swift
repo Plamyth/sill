@@ -97,7 +97,7 @@ public struct SillVersion: Comparable, Hashable, Sendable, CustomStringConvertib
 /// Kind 23: the first message of every session connection a device makes (home door, remote door,
 /// a move's network connection), written straight to that connection before anything else, so a
 /// host can judge the device before it sends it anything (DeviceGate). Never on a pairing
-/// connection, whose one message is kind 19. All four fields are optional: `{}` decodes, so a host
+/// connection, whose one message is kind 19. All fields are optional: `{}` decodes, so a host
 /// never fails on a thin hello.
 public struct Hello: Codable, Sendable, Equatable {
     /// CFBundleShortVersionString: "1.0" (the iOS project's MARKETING_VERSION). What a host's floor
@@ -110,7 +110,12 @@ public struct Hello: Codable, Sendable, Equatable {
     /// "iPad (iPad14,1)", as ClientStats.device. The host cleans it (SafeText.label).
     public var device: String?
 
-    public init(appVersion: String? = nil, build: String? = nil, protocol: Int? = nil, device: String? = nil) {
+    /// 1: this connection sends SourceInput whenever the catalog advertises inputGeneration.
+    /// Missing from older clients, whose connection keeps the host's source selection pinned.
+    public var sourceInput: Int?
+
+    public init(appVersion: String? = nil, build: String? = nil, protocol: Int? = nil, device: String? = nil, sourceInput: Int? = nil) {
         self.appVersion = appVersion; self.build = build; self.protocol = `protocol`; self.device = device
+        self.sourceInput = sourceInput
     }
 }

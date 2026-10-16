@@ -1504,7 +1504,8 @@ final class StreamClient: ObservableObject {
         if let v = UserDefaults.standard.string(forKey: "SillHelloVersion"), !v.isEmpty { version = v }
         #endif
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        return Wire.encode(Hello(appVersion: version, build: build, protocol: SillProtocol.current, device: ClientStatsReporter.deviceName))
+        return Wire.encode(Hello(appVersion: version, build: build, protocol: SillProtocol.current,
+                                 device: ClientStatsReporter.deviceName, sourceInput: 1))
     }()
 
     /// The hello, the first thing on every session connection, written straight to `c` before

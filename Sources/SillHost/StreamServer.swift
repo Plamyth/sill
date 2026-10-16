@@ -55,6 +55,8 @@ import StreamProtocol
 final class StreamServer {
     private final class Client {
         let connection: NWConnection
+        /// Set only by the coordinator's first direct catalog, after source-fence admission.
+        var catalogSent = false
         var inflight = 0          // every message still unacknowledged (backpressure for delta drops)
         var inflightFrames = 0    // video frames only
         var oldestUnackedFrameAt: TimeInterval?   // last time a frame was drained, or queued from 0 (dead-peer detection)
@@ -1352,6 +1354,7 @@ final class StreamServer {
                 print("send: no client for \(connection.endpoint) (\(clients.count) known)")
                 return
             }
+            if message.kind == .windowList { client.catalogSent = true }
             send(data, to: client)
         }
     }
@@ -1457,7 +1460,7 @@ final class StreamServer {
             if message.kind == .frame, message.isKeyframe { lastKeyframeAt = Date().timeIntervalSince1970 }
             var wantKeyframe = false
             defer { if wantKeyframe { onKeyframeNeeded?() } }
-            for client in clients.values where client.connection.state == .ready {
+            for client in clients.values where client.catalogSent && client.connection.state == .ready {
                 if message.kind == .frame, client.route.isRemote {
                     if paceRemote(client, message: message, data: data) { wantKeyframe = true }
                     continue

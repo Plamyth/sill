@@ -144,9 +144,11 @@ package final class StreamCoordinator {
         }
     }
     private var inputGeneration = UUID().uuidString
+    private var inputFence = SourceInputFence<ObjectIdentifier>()
     package private(set) var active: StreamSource = .none {
         didSet {
             if active != oldValue { inputGeneration = UUID().uuidString }
+            inputFence.sourceChanged(to: active)
             if case .window(let id) = active { catalog.activeWindowID = id } else { catalog.activeWindowID = nil }
             if active == .none { status.update { $0.stream = nil } }
             server.setStreaming(active != .none)   // link keepalive ticks while a source is live
@@ -340,6 +342,10 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 let id = ObjectIdentifier(connection)
+                guard self.inputFence.join(id, source: self.active, switching: self.switching) else {
+                    connection.cancel()
+                    return
+                }
                 self.routes[id] = route
                 // A paired device shows its paired name until its own stats arrive, and a remote one
                 // its route; a home device its link (Wired, Wi-Fi, Direct) as soon as it is known.
@@ -378,6 +384,7 @@ package final class StreamCoordinator {
                 self.settingsArrivals[ObjectIdentifier(connection)] = nil
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
                 let id = ObjectIdentifier(connection)
+                self.inputFence.leave(id)
                 self.gestureArrivals[id] = nil
                 self.routes[id] = nil
                 self.lastPairingWanted[id] = nil
@@ -477,9 +484,11 @@ package final class StreamCoordinator {
         server.onClientHello = { [weak self] connection, hello in
             let id = ObjectIdentifier(connection)
             let name = SafeText.label(hello.device ?? "")
-            guard !name.isEmpty else { return }
             Task { @MainActor in
-                self?.status.update {
+                guard let self else { return }
+                self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
+                guard !name.isEmpty else { return }
+                self.status.update {
                     guard let i = $0.devices.firstIndex(where: { $0.id == id }), $0.devices[i].name == nil else { return }
                     $0.devices[i].name = name
                 }
@@ -894,11 +903,13 @@ package final class StreamCoordinator {
                 if let error { print("Launch failed: \(error.localizedDescription)") }
             }
         case .input:
+            let device = ObjectIdentifier(connection)
+            guard inputFence.contains(device) else { return }
             let scoped = Wire.decode(SourceInput.self, from: message.payload)
             guard let event = scoped?.event ?? Wire.decode(InputEvent.self, from: message.payload) else { return }
-            let device = ObjectIdentifier(connection)
-            guard !switching, scoped?.generation == inputGeneration, let rect = currentSourceRect() else {
-                // Stale or unscoped input, a switch in progress, or no stream: input has nowhere
+            guard !switching, inputFence.accepts(device, generation: scoped?.generation, current: inputGeneration, source: active),
+                  let rect = currentSourceRect() else {
+                // Stale input, a switch in progress, or no stream: input has nowhere
                 // to land. The up of a key or a button the Mac has down still
                 // goes (DroppedInput), a button's where the pointer is (`.null`), so no modifier this
                 // device pressed stays down to make a later click a ⌘-click, and no button to make
@@ -1178,6 +1189,11 @@ package final class StreamCoordinator {
     /// comes forward too, whichever select commits that change (see `cameHome`).
     func select(_ source: StreamSource, bringForward: Bool = false) async {
         guard !switching, !shuttingDown else { return }
+        guard inputFence.allowsSelection(source) else {
+            print("Source change paused: older Sill clients must disconnect or update before selecting another source.")
+            broadcastList()
+            return
+        }
         switching = true
         restartOf = (source == active && source != .none) ? source : nil
         defer {

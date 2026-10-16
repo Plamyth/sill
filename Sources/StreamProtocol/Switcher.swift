@@ -55,7 +55,8 @@ public struct WindowList: Codable {
     public var gestures: Int?
 
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
-    /// a host that advertises it rejects unscoped input, except releases it already owes.
+    /// scoped connections must echo it. Legacy connections pin source selection and keep their
+    /// original input format until they disconnect or negotiate scoped input.
     public var inputGeneration: String?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
