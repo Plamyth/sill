@@ -676,6 +676,42 @@
 			<key>fileRef</key>
 			<string>F079CE19974C6C61933DC047</string>
 		</dict>
+		<key>57225E96412900A09CA16381</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionTextDraft.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>AC8D6597572DB8007CEC8C9F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>57225E96412900A09CA16381</string>
+		</dict>
+		<key>F3944248DEC4A319BD3398CE</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionDraftEditor.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>AAF2C2DAF25BA42888B2B819</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>F3944248DEC4A319BD3398CE</string>
+		</dict>
 		<key>96ED5C5789B174A01557791C</key>
 		<dict>
 			<key>isa</key>
@@ -763,6 +799,8 @@
 				<string>AE15723CA61DB321A16717AE</string>
 				<string>256B0F03B37CA87A91C72FFF</string>
 				<string>F079CE19974C6C61933DC047</string>
+				<string>57225E96412900A09CA16381</string>
+				<string>F3944248DEC4A319BD3398CE</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
 				<string>3D4DE531BFD1AC11F6F66F4A</string>
@@ -815,6 +853,8 @@
 				<string>BC739450E2D039089A4BACA9</string>
 				<string>5E4A1EC0F1B59D52EB290FC6</string>
 				<string>331E11F67379528B562D146B</string>
+				<string>AC8D6597572DB8007CEC8C9F</string>
+				<string>AAF2C2DAF25BA42888B2B819</string>
 				<string>C6F3E5ABA8600FBF8CF25DC6</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>

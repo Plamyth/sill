@@ -27,7 +27,7 @@ check('only Vision advertises presentation capability', 'let presentationInput: 
 check('both clients retain optional source codec negotiation', all('sourceInput: 1' in select_platform(hello, vision=v) for v in [False, True]))
 check('input session controls unchanged', (ROOT / 'visionOSClient/VisionInputSession.swift').read_text() == baseline('visionOSClient/VisionInputSession.swift'))
 workspace = (ROOT / 'visionOSClient/SillVisionApp.swift').read_text()
-check('emergency release remains available', 'Button("누른 입력 해제") { input.releaseAll() }' in workspace and '.disabled(!input.canSend)' in block(workspace, 'private var controls: some View'))
+check('emergency release remains available', 'Button("누른 입력 해제") { input.releaseAll() }' in workspace and '.disabled(!input.canSend || draftShown)' in block(workspace, 'private var controls: some View'))
 check('move and teardown await fresh catalog', all('visionInputBinding = .awaitingCatalog' in block(stream, marker) for marker in ['private func finishMoveAfterInputDrain(', 'func tearDown(status:']))
 files, manifest = fixture()
 check('fixture substitutions resolved', all(marker not in files['Client.swift'] for marker in ['// EXTRACTED', '// OVERLAY_DRAIN', '// MOVE_INPUT_RESET', '// BINDING_STATE']))

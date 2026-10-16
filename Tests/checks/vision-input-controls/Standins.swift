@@ -19,12 +19,14 @@ final class StreamClient {
     var requested: [StreamSource] = []
     func request(_ source: StreamSource) { requested.append(source) }
     var active = StreamSource.desktop
+    var macName = "Fixture Mac"
     var windows: [WindowInfo] = []
     var connected = true
     weak var visionInputSession: VisionInputSession?
     var visionMovePreparation: UUID?
     var visionModernPeer: ObjectIdentifier?
     var visionWireBinding: (peer: ObjectIdentifier, binding: VisionInputBinding)?
+    var visionWireSource: StreamSource?
     var visionMediaPS: (epoch: UUID, ps: ParameterSets)?
     var visionInputPermit: UUID?
     let displayView = FixtureDisplay()
@@ -32,7 +34,7 @@ final class StreamClient {
     // BINDING_STATE
     let link = SessionLink()
     let queue = DispatchQueue(label: "fixture.input")
-    var moving: Move?
+    // MOVING_STATE
     var lastInputAt = 0.0
     var notes: [InputEvent] = []
     var completions = 0
@@ -72,6 +74,7 @@ final class FixtureDisplay {
     var epoch: VideoEpoch?
     var peer: ObjectIdentifier?
     var modern = false
+    func setPresentationForeground(_ value: Bool) {}
     func setPresentation(epoch: VideoEpoch?, peer: ObjectIdentifier?, modern: Bool) {
         self.epoch = epoch; self.peer = peer; self.modern = modern
     }

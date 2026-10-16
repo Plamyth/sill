@@ -42,7 +42,7 @@ MUTANTS = [
      'new epoch retires old image behind closed shield'),
     ('held-permit', 'iOSClient/SessionLink.swift', '(item.permit == nil || item.permit == inputPermit)',
      'true', 'held SessionLink flush rejects revoked permit'),
-    ('submit-permit', 'iOSClient/SessionLink.swift', 'guard permit == nil || permit == inputPermit else { return false }',
+    ('submit-permit', 'iOSClient/SessionLink.swift', 'guard permit == nil || permit == inputPermit else { submission?.cancel(); return false }',
      '', 'same-peer queued submission rechecks permit after revocation'),
     ('old-debt', 'visionOSClient/VisionInputDebt.swift', 'Self(event: event, generation: generation, videoEpoch: videoEpoch)',
      'Self(event: event, generation: generation, videoEpoch: nil)',

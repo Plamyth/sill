@@ -66,7 +66,7 @@ def main():
     sources = ['Client.swift', 'Host.swift', 'Geometry.swift', 'Display.swift', 'Framework.swift', 'Accounting.swift', 'MessageReader.swift', 'ProbeCap.swift',
                'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift', 'Sources/SillHost/SourceInputFence.swift',
                'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift',
-               'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift',
+               'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionTextDraft.swift',
                'visionOSClient/VisionRemoteKey.swift', 'main.swift']
     objects = [str(output / (n + '.o')) for n in ['Network', 'SwiftUI', 'StreamProtocol']]
 
