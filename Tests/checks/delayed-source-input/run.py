@@ -430,6 +430,12 @@ settled.receive(rawClick, from: pendingClient.connection)
 check(settled.injector.points == [CGPoint(x: 1200, y: 1250)], "new legacy peer has only seen B and controls B")
 ''' if fenced else '') + r'''
 ''' if scoped else '') + r'''
+let portableLegacy = Host(), portablePeer = NWConnection()
+_ = portableLegacy.join(portablePeer)
+portableLegacy.select(.window(2))
+portableLegacy.receive(Wire.encode(click), from: portablePeer)
+check(portableLegacy.active == .window(1) && portableLegacy.injector.points == [CGPoint(x: 200, y: 350)],
+      "legacy connection keeps original source until capability upgrade")
 print("\(checks - failures)/\(checks) checks passed; \(failures) failed")
 exit(failures == 0 ? 0 : 1)
 '''
