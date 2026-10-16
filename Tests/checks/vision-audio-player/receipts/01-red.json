@@ -1,0 +1,15 @@
+{
+  "exitCode": 1,
+  "transportPID": 64544,
+  "transportReaped": true,
+  "sourceHEAD": "618bf706257d5298e5accce1ead05d687d19e9ab",
+  "scope": "Independent pure component RAM validation; no native player, peer acceptance, or source-guard transfer acceptance",
+  "inputSHA256": "20212f488efd9984c5e186f82eeae8dfd10cfe21ab442df2388d79c05b198d7e",
+  "remoteInputHashMatched": true,
+  "sourceSHA256": {
+    "visionOSClient/VisionAudioBuffer.swift": "700ce7c8dcee871db37d3b29076df6c84360db152bb1055074311e93ca861d6d",
+    "Tests/checks/vision-audio-player/main.swift": "0501001340e945dc52a9823e167c5ff46b745bdcb6821687c60546d900f97a43"
+  },
+  "sourceUnchanged": true,
+  "remoteResult": null
+}
