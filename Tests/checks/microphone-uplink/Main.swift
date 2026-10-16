@@ -255,6 +255,14 @@ func packet(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64 = 1) -> Micr
         failed.sink.closeError = nil
         failed.receiver.retryCleanup(grantID: failed.grantID); await settle()
         expect(failed.sink.closes == 2 && failed.receiver.phase == .off && failed.prepares == 1, "cleanup-explicit-retry")
+
+        let partial = Fixture(delayed: true)
+        partial.sink.closeError = "uncertain partial stop"
+        _ = partial.start(); await settle()
+        partial.continuation!.resume(returning: HostMicrophonePreparation(resource: partial.sink, error: "partial prepare"))
+        partial.continuation = nil
+        await settle()
+        expect(partial.sink.closes == 1 && partial.receiver.phase == .cleanupFailed, "partial-prepare-single-close")
     }
 
     @MainActor static func nativeTests() async {
