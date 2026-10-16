@@ -63,16 +63,18 @@ public struct WindowList: Codable {
     public var inputGeneration: String?
     public var presentationInput: Int?
     public var videoEpoch: VideoEpoch?
+    public var microphone: MicrophoneCapability?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
-                remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil) {
+                remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
         self.inputGeneration = inputGeneration
         self.presentationInput = presentationInput
         self.videoEpoch = videoEpoch
+        self.microphone = microphone
     }
 }
 
@@ -187,4 +189,14 @@ public enum VideoEpochAdmission: Equatable {
     }
 
     public func admits(_ id: UUID?) -> Bool { id != nil && current?.id == id }
+}
+
+public struct MicrophoneCapability: Codable, Equatable {
+    public let peer: UUID
+    public let destination: UUID
+    public let generation: UUID
+
+    public init(peer: UUID, destination: UUID, generation: UUID) {
+        self.peer = peer; self.destination = destination; self.generation = generation
+    }
 }
