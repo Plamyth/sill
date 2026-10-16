@@ -53,11 +53,16 @@ public struct WindowList: Codable {
     /// 2026-09-27, to which a device sends no kind 28. A later generation of gestures says 2 and
     /// goes only to a host that says so.
     public var gestures: Int?
+    /// This fork's optional remote sound path. A device sends kind 200 only when this is 1.
+    /// Nil from older hosts; older devices ignore this field.
+    public var remoteAudio: Int?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
-                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil) {
+                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
+                remoteAudio: Int? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
+        self.remoteAudio = remoteAudio
     }
 }
 

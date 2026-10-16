@@ -514,6 +514,96 @@
 			<key>fileRef</key>
 			<string>3CF9EEA601827A088871BACC</string>
 		</dict>
+		<key>0C6D16372AD58DE724D8AF23</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioState.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>DB5D04E8041B0FC9FF58D895</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>0C6D16372AD58DE724D8AF23</string>
+		</dict>
+		<key>F1C4E8501A537755FC17C59B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioController.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>A4C79F788B3CA044B6655ABE</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>F1C4E8501A537755FC17C59B</string>
+		</dict>
+		<key>AE15723CA61DB321A16717AE</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioRoute.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>BC739450E2D039089A4BACA9</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>AE15723CA61DB321A16717AE</string>
+		</dict>
+		<key>256B0F03B37CA87A91C72FFF</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioPlayer.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>5E4A1EC0F1B59D52EB290FC6</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>256B0F03B37CA87A91C72FFF</string>
+		</dict>
+		<key>F079CE19974C6C61933DC047</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioBuffer.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>331E11F67379528B562D146B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>F079CE19974C6C61933DC047</string>
+		</dict>
 		<key>96ED5C5789B174A01557791C</key>
 		<dict>
 			<key>isa</key>
@@ -592,6 +682,11 @@
 				<string>1B29DE20856D644210EB3034</string>
 				<string>D23FBB0746C0D214E1B85F0F</string>
 				<string>3CF9EEA601827A088871BACC</string>
+				<string>0C6D16372AD58DE724D8AF23</string>
+				<string>F1C4E8501A537755FC17C59B</string>
+				<string>AE15723CA61DB321A16717AE</string>
+				<string>256B0F03B37CA87A91C72FFF</string>
+				<string>F079CE19974C6C61933DC047</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
 			</array>
@@ -634,6 +729,11 @@
 				<string>0AFB5283362651425EABE5A8</string>
 				<string>6CC43938824CF9AE932BEF5B</string>
 				<string>EE2BDC3589587CDA3DA71281</string>
+				<string>DB5D04E8041B0FC9FF58D895</string>
+				<string>A4C79F788B3CA044B6655ABE</string>
+				<string>BC739450E2D039089A4BACA9</string>
+				<string>5E4A1EC0F1B59D52EB290FC6</string>
+				<string>331E11F67379528B562D146B</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>

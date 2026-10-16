@@ -44,6 +44,8 @@ struct SillVisionWorkspace: View {
             if client.connected {
                 screen
                 controls
+                VisionAudioControls(audio: client.visionAudio,
+                                    allowStart: phase == .active && !transitions.isPending && !inputSuspended)
             } else {
                 hosts
             }
@@ -51,7 +53,10 @@ struct SillVisionWorkspace: View {
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
         .task { stats.attach(to: client); client.startBrowsing() }
-        .onChange(of: phase) { _, value in if value != .active { releaseInput() } }
+        .onChange(of: phase, initial: true) { _, value in
+            client.visionAudio.setForeground(value == .active)
+            if value != .active { releaseInput() }
+        }
         .onChange(of: client.connected) { _, connected in
             releaseInput()
             transitions.cancel()
@@ -61,7 +66,10 @@ struct SillVisionWorkspace: View {
         .onChange(of: client.active) { _, _ in releaseInput() }
         .onChange(of: mode) { _, _ in releaseInput() }
         .onChange(of: dragging) { _, value in if !value { pointer.end().forEach(send) } }
-        .onDisappear { if client.connected { requestTransition(.disconnect) } else { releaseInput() } }
+        .onDisappear {
+            client.visionAudio.setForeground(false)
+            if client.connected { requestTransition(.disconnect) } else { releaseInput() }
+        }
         .sheet(isPresented: $addMac) { pairingForm }
         .confirmationDialog("같은 Mac에 연결된 iPad 화면도 바뀔 수 있습니다.", isPresented: $changingSource) {
             Button("Mac 전체 화면 표시") { requestTransition(.desktop) }
@@ -89,7 +97,7 @@ struct SillVisionWorkspace: View {
             }
             if case .failed(let problem) = client.pairing { Text(problem.text).foregroundStyle(.orange) }
             Button("주소로 Mac 추가") { addMac = true }
-            Text("Mac 소리와 마이크 전송은 이 빌드에 포함되지 않습니다.").font(.caption)
+            Text("Mac 소리는 지원하는 호스트에서 직접 켤 수 있습니다. 마이크 전송은 아직 지원하지 않습니다.").font(.caption)
         }
         .frame(maxWidth: 650, maxHeight: .infinity)
     }
@@ -168,6 +176,7 @@ struct SillVisionWorkspace: View {
     }
 
     private func requestTransition(_ action: VisionTransition.Action) {
+        client.visionAudio.stop()
         guard let ticket = transitions.request(action) else { return }
         let expected = client.connection
         releaseInput()
@@ -183,6 +192,41 @@ struct SillVisionWorkspace: View {
             case .desktop: client.select(.desktop)
             case .disconnect: client.disconnect()
             case nil: break
+            }
+        }
+    }
+}
+
+private struct VisionAudioControls: View {
+    @ObservedObject var audio: VisionAudioController
+    let allowStart: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            let running = audio.presentation.phase.grant != nil
+            Button(running ? "Mac 소리 중지" : "Mac 소리 켜기",
+                   systemImage: running ? "speaker.slash" : "speaker.wave.2") {
+                if running { audio.stop() } else if allowStart { audio.enable() }
+            }
+            .disabled(!running && (!audio.presentation.canEnable || !allowStart))
+            .accessibilityHint(running ? "즉시 소리를 중지합니다." : "선택한 Mac의 소리만 수신합니다. 마이크는 켜지지 않습니다.")
+            Text(message).font(.caption).lineLimit(2)
+            Spacer()
+        }
+    }
+
+    private var message: String {
+        switch audio.presentation.phase {
+        case .requesting: return "Mac의 소리 전송 확인을 기다립니다."
+        case .waiting: return "소리 데이터를 기다립니다."
+        case .rendering: return "Mac 소리 재생 중 · 마이크 꺼짐"
+        case .failed(let problem): return problem
+        case .off:
+            switch audio.presentation.availability {
+            case .disconnected: return "Mac 연결 후 사용할 수 있습니다."
+            case .unsupported: return "현재 Mac 호스트는 소리 전송을 지원하지 않습니다."
+            case .noSource: return "Mac 화면을 선택하면 소리를 켤 수 있습니다."
+            case .available: return "Mac 소리 꺼짐 · 연결이 바뀌면 다시 켜야 합니다."
             }
         }
     }
