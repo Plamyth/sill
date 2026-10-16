@@ -41,7 +41,7 @@ def fixture():
     body = '\n'.join(p for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState']).replace('#if os(visionOS)', '').replace('#else\n        finishMoveAfterInputDrain(c, kind: kind, kept: kept)\n        #endif', '').replace('#endif', '')
     overlay = (ROOT / 'iOSClient/InputOverlay.swift').read_text()
     pieces['takeVisionKeyReleases'] = block(overlay, 'func takeVisionKeyReleases()')
-    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', pieces['moveInputReset'].replace('#if os(visionOS)', '').replace('#endif', '')).replace('// BINDING_STATE', pieces['bindingState'])
+    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', pieces['moveInputReset'].replace('#if os(visionOS)', '').replace('#endif', '')).replace('// BINDING_STATE', pieces['bindingState'].replace('@Published', '@SwiftUI.Published', 1))
     files = {'Client.swift': stub.replace('// EXTRACTED', body), 'main.swift': (Path(__file__).parent / 'main.swift').read_text(), 'Network.swift': (Path(__file__).parent / 'Network.swift').read_text(), 'SwiftUI.swift': (Path(__file__).parent / 'SwiftUI.swift').read_text()}
     for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()
