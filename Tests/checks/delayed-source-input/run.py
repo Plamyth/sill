@@ -140,7 +140,7 @@ final class Injector {
     var points: [CGPoint] = []
     var nulls: [Bool] = []
     var owedUp = false
-    func isUpOfSomethingDown(_ event: InputEvent, from device: ObjectIdentifier) -> Bool {
+    func isUpOfSomethingDown(_ event: InputEvent, from device: ObjectIdentifier? = nil) -> Bool {
         guard owedUp else { return false }
         switch event {
         case .pointer(.leftUp, _, _), .pointer(.rightUp, _, _), .key(_, false, _): return true
