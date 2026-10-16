@@ -10,6 +10,8 @@
 		D4000001000000000000A001 /* IPadAudioRoutePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */; };
 		D4000001000000000000A002 /* IPadAudioRouteChooser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4000001000000000000F002 /* IPadAudioRouteChooser.swift */; };
 		D4000001000000000000A003 /* StreamClient+AudioRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4000001000000000000F003 /* StreamClient+AudioRoutes.swift */; };
+		D4000001000000000000A004 /* MacAudioRouteSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4000001000000000000F004 /* MacAudioRouteSession.swift */; };
+		D4000001000000000000A005 /* StreamClient+MacAudioRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4000001000000000000F005 /* StreamClient+MacAudioRoutes.swift */; };
 		C3000001000000000000A003 /* StreamClient+Audio.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3000001000000000000F003 /* StreamClient+Audio.swift */; };
 		C3000001000000000000A002 /* IPadRemoteAudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3000001000000000000F002 /* IPadRemoteAudioController.swift */; };
 		A1000001000000000000A001 /* SillApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F001 /* SillApp.swift */; };
@@ -81,6 +83,8 @@
 		D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAudioRoutePolicy.swift; sourceTree = "<group>"; };
 		D4000001000000000000F002 /* IPadAudioRouteChooser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAudioRouteChooser.swift; sourceTree = "<group>"; };
 		D4000001000000000000F003 /* StreamClient+AudioRoutes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+AudioRoutes.swift"; sourceTree = "<group>"; };
+		D4000001000000000000F004 /* MacAudioRouteSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAudioRouteSession.swift; sourceTree = "<group>"; };
+		D4000001000000000000F005 /* StreamClient+MacAudioRoutes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+MacAudioRoutes.swift"; sourceTree = "<group>"; };
 		C3000001000000000000F003 /* StreamClient+Audio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+Audio.swift"; sourceTree = "<group>"; };
 		C3000001000000000000F002 /* IPadRemoteAudioController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadRemoteAudioController.swift"; sourceTree = "<group>"; };
 		A1000001000000000000F001 /* SillApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SillApp.swift; sourceTree = "<group>"; };
@@ -186,6 +190,8 @@
 				D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */,
 				D4000001000000000000F002 /* IPadAudioRouteChooser.swift */,
 				D4000001000000000000F003 /* StreamClient+AudioRoutes.swift */,
+				D4000001000000000000F004 /* MacAudioRouteSession.swift */,
+				D4000001000000000000F005 /* StreamClient+MacAudioRoutes.swift */,
 				C3000001000000000000F005 /* IPadAudioLeaseState.swift */,
 				C3000001000000000000F006 /* IPadMicrophonePCM.swift */,
 				C3000001000000000000F007 /* IPadMicrophoneCapture.swift */,
@@ -368,6 +374,8 @@
 				D4000001000000000000A001 /* IPadAudioRoutePolicy.swift in Sources */,
 				D4000001000000000000A002 /* IPadAudioRouteChooser.swift in Sources */,
 				D4000001000000000000A003 /* StreamClient+AudioRoutes.swift in Sources */,
+				D4000001000000000000A004 /* MacAudioRouteSession.swift in Sources */,
+				D4000001000000000000A005 /* StreamClient+MacAudioRoutes.swift in Sources */,
 				C3000001000000000000A005 /* IPadAudioLeaseState.swift in Sources */,
 				C3000001000000000000A006 /* IPadMicrophonePCM.swift in Sources */,
 				C3000001000000000000A007 /* IPadMicrophoneCapture.swift in Sources */,

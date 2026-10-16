@@ -145,6 +145,7 @@ final class StreamClient: ObservableObject {
     var microphoneCaptureToken: UUID?
     @Published var audioRouteChooserPresented = false
     var audioRouteOffer = IPadAudioRouteOffer()
+    @Published var macAudioRoutes = MacAudioRouteSession()
     #endif
     #endif
     // Connection. The setters of what the connect screen shows are internal: the DEBUG harness
@@ -859,6 +860,9 @@ final class StreamClient: ObservableObject {
                 return
             }
             #else
+            #if os(iOS)
+            if link.connection !== newValue { macAudioRoutes.bind(newValue.map(ObjectIdentifier.init)) }
+            #endif
             remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))
             #if os(iOS)
             microphoneSetConnection(newValue)
@@ -3541,6 +3545,7 @@ final class StreamClient: ObservableObject {
         #if os(iOS)
         audioRouteChooserPresented = false
         audioRouteOffer = IPadAudioRouteOffer()
+        macAudioRoutes.bind(nil)
         #endif
         #if os(visionOS)
         resetVisionAudio()
@@ -4269,6 +4274,10 @@ final class StreamClient: ObservableObject {
                 guard self.connection === from else { return }
                 self.receiveSettings(state)
             }
+        #if os(iOS)
+        case .audioRoutes:
+            receiveMacAudioRoutes(data, from: peer)
+        #endif
         case .pong:
             // The host echoes the ping's payload unchanged: our own monotonic send time.
             guard data.count >= 8 else { return }
