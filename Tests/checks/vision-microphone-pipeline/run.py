@@ -37,6 +37,7 @@ MUTANTS = [
     ('drain-one', 'Dispatch.swift', 'for frame in frames where', 'for frame in frames.prefix(1) where', 'continuous actual client burst preserves ordered PCM'),
     ('egress-route', 'Dispatch.swift', 'client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready', '!client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready', 'actual host state enables actual client capture'),
     ('short-residence', 'Sources/SillHost/HostMicrophoneGrant.swift', 'static let maxQueueAge: UInt64 = 160_000_000', 'static let maxQueueAge: UInt64 = 140_000_000', 'actual queued packet remains valid at exact160ms boundary'),
+    ('receipt-stops', 'visionOSClient/StreamClient+VisionMicrophone.swift', 'sendMicrophoneControl(MicrophoneControl(operation: .receipt,', 'sendMicrophoneControl(MicrophoneControl(operation: .stop,', 'explicit client receipt reaches host and returns'),
 ]
 
 

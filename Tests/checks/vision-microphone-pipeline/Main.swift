@@ -158,6 +158,8 @@ import StreamProtocol
     @MainActor static func main() async {
         let p = Pipeline()
         expect(permissionRequests.withLock { $0 == 0 }, "catalog does not request microphone permission")
+        p.client.requestVisionMicrophoneReceipt()
+        expect(p.clientMessages().isEmpty, "inactive receipt action sends nothing")
         p.client.toggleVisionMicrophone()
         let start = p.clientMessages()
         expect(start.count == 1, "actual client sends one start")
@@ -178,6 +180,16 @@ import StreamProtocol
         }
         expect(p.render.counters.0 == 14_400 && p.host.microphoneIngress.overflowCount == 0 &&
                p.render.counters.2 == 0 && p.ordinary == 0, "continuous burst counts and authenticated dispatch")
+        p.client.requestVisionMicrophoneReceipt()
+        p.feed(p.clientMessages()); p.host.drainMicrophoneIngress()
+        await until({ p.deliverReplies(); return p.client.microphoneReceipt != nil },
+                    "explicit client receipt reaches host and returns")
+        expect(p.client.microphoneReceipt?.admittedPackets == 15 &&
+               p.client.microphoneReceipt?.renderedFrames == 14_400 &&
+               p.client.microphoneReceipt?.applicationQueueAgeMilliseconds == 130,
+               "actual receipt preserves admitted rendered and queue snapshot")
+        expect(p.receiver.phase == .active && permissionRequests.withLock { $0 == 1 },
+               "receipt action keeps existing capture without new authorization")
 
         p.clock += 100_000_000
         p.feed(await p.produce(packets: 5)); p.host.drainMicrophoneIngress()
@@ -227,6 +239,8 @@ import StreamProtocol
         expect(p.pull(960, time: p.clock).allSatisfy { $0 == 0 }, "late exact old grant cannot render after stop")
         expect(p.client.microphoneCapture == nil && VisionAudioSharedHardware.shared.cleanupProblem == nil,
                "actual capture cleanup leaves no shared graph owner")
+        p.client.requestVisionMicrophoneReceipt()
+        expect(p.clientMessages().isEmpty, "stopped receipt action sends nothing")
         print("RESULT_ASSERTIONS \(assertions)")
     }
 }

@@ -315,6 +315,11 @@ private struct VisionMicrophoneControls: View {
             .disabled(!cleanup && !stopping && (!allowStart || !client.microphonePolicy.canStart || client.visionAudio.cleanupProblem != nil))
             .accessibilityHint(cleanup ? "기존 마이크 자원만 정리합니다. 다시 녹음하지 않습니다." :
                 stopping ? "즉시 음성 전송을 중지합니다." : "직접 허용하면 Vision 마이크를 현재 선택한 Mac으로 전송합니다.")
+            Button("수신 확인", systemImage: "checkmark.waveform") {
+                client.requestVisionMicrophoneReceipt()
+            }
+            .disabled(cleanup || client.microphonePhase != .live)
+            .accessibilityHint("현재 Mac의 음성 수신량을 한 번 확인합니다. 실제 통화 입력은 별도 확인이 필요합니다.")
             Text(message).font(.caption).lineLimit(2)
             Spacer()
         }

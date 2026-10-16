@@ -4,6 +4,14 @@ import Network
 import StreamProtocol
 
 extension StreamClient {
+    func requestVisionMicrophoneReceipt() {
+        guard microphoneCleanupProblem == nil, microphonePolicy.phase == .live,
+              let c = connection, microphonePolicy.peer == ObjectIdentifier(c),
+              let scope = microphonePolicy.scope, let grant = microphonePolicy.grantID else { return }
+        sendMicrophoneControl(MicrophoneControl(operation: .receipt, requestID: UUID(),
+            scope: scope, grantID: grant), to: ObjectIdentifier(c))
+    }
+
     func toggleVisionMicrophone() {
         if microphoneCleanupProblem != nil {
             retryMicrophoneCleanup(explicit: true)
