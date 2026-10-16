@@ -15,8 +15,7 @@ final class CanvasDictation: ObservableObject {
     private var tapInstalled = false
     private var finalization: Task<Void,Never>?
     private var generation = UUID()
-    private var previousAudio: (category: AVAudioSession.Category, mode: AVAudioSession.Mode,
-                                options: AVAudioSession.CategoryOptions)?
+    private var ownsMicrophoneLease = false
 
     func start() async {
         guard !isListening, !isStarting, !isFinalizing else { return }
@@ -46,12 +45,9 @@ final class CanvasDictation: ObservableObject {
 
         draft = ""
 
-        let audio = AVAudioSession.sharedInstance()
-        previousAudio = (audio.category,audio.mode,audio.categoryOptions)
         do {
-            try audio.setCategory(.playAndRecord,mode:.default,
-                                  options:[.defaultToSpeaker,.mixWithOthers])
-            try audio.setActive(true)
+            try IPadAudioSession.shared.acquire(.canvasDictation)
+            ownsMicrophoneLease = true
             let nextEngine = AVAudioEngine()
             let nextRequest = SFSpeechAudioBufferRecognitionRequest()
             nextRequest.requiresOnDeviceRecognition = true
@@ -122,11 +118,10 @@ final class CanvasDictation: ObservableObject {
         engine = nil
         request = nil
         recognition = nil
-        if let previousAudio {
-            try? AVAudioSession.sharedInstance().setCategory(previousAudio.category,
-                mode:previousAudio.mode,options:previousAudio.options)
+        if ownsMicrophoneLease {
+            IPadAudioSession.shared.release(.canvasDictation)
+            ownsMicrophoneLease = false
         }
-        previousAudio = nil
         isListening = false
         isFinalizing = false
         status = message

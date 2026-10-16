@@ -16,7 +16,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     private var rate: Double = 0
     private var channels = 0
     private var engine: AVAudioEngine?
-    private var ownsAudioSession = false
+    private var ownsPlaybackLease = false
 
     func receive(_ packet: Data) {
         let epoch = epochLock.withLock { $0 }
@@ -50,9 +50,9 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         }
         engine?.stop()
         engine = nil
-        if ownsAudioSession {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            ownsAudioSession = false
+        if ownsPlaybackLease {
+            IPadAudioSession.shared.release(.remotePlayback)
+            ownsPlaybackLease = false
         }
         decodeQueue.async { [self] in
             decoder = nil
@@ -98,11 +98,9 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate,
                                          channels: AVAudioChannelCount(channels), interleaved: false)
         else { return }
-        let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true)
-            ownsAudioSession = true
+            try IPadAudioSession.shared.acquire(.remotePlayback)
+            ownsPlaybackLease = true
             let engine = AVAudioEngine()
             let source = AVAudioSourceNode(format: format) { [weak self] _, _, frames, list -> OSStatus in
                 let output = UnsafeMutableAudioBufferListPointer(list)
@@ -131,9 +129,9 @@ final class RemoteAudioPlayer: @unchecked Sendable {
             self.engine = engine
         } catch {
             engine = nil
-            if ownsAudioSession {
-                try? session.setActive(false, options: .notifyOthersOnDeactivation)
-                ownsAudioSession = false
+            if ownsPlaybackLease {
+                IPadAudioSession.shared.release(.remotePlayback)
+                ownsPlaybackLease = false
             }
         }
     }

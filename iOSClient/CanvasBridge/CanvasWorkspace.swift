@@ -67,6 +67,7 @@ struct CanvasWorkspace: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
+        .onDisappear { dictation.cancel(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
                 store.saveNow()
