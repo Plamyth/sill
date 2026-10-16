@@ -154,6 +154,8 @@ final class StreamServer {
     var onClientRouteChanged: ((NWConnection, ClientLink.Route?) -> Void)?
     /// A message from a client (selectSource, launchApp). Called on the network queue.
     var onMessage: ((StreamMessage, NWConnection) -> Void)?
+    var onMicrophoneMessage: ((StreamMessage, NWConnection) -> Void)?
+    private let microphoneReplies = MicrophoneReplyMailbox()
     /// A client fell behind and lost a delta frame; the encoder should produce a keyframe now
     /// rather than in up to 4 s. Called on the network queue.
     var onKeyframeNeeded: (() -> Void)?
@@ -1452,12 +1454,21 @@ final class StreamServer {
             client.lastHeardAt = Date().timeIntervalSince1970
             // A header can announce up to 4 GiB and the read below would wait for all of it. No
             // client message comes near a megabyte, so a bigger one is a broken or hostile peer.
-            if header.payloadLength > StreamMessage.maxClientPayload {
-                print("Closing \(c.endpoint): it announced a \(header.payloadLength)-byte message (the limit is 1 MB).")
+            let payloadLimit = StreamMessage.clientPayloadLimit(for: header.kind)
+            if header.payloadLength > payloadLimit {
+                print("Closing \(c.endpoint): it announced a \(header.payloadLength)-byte message (limit \(payloadLimit)).")
                 c.cancel()
                 return
             }
             let deliver = { (payload: Data) in
+                if header.kind == .microphoneControl || header.kind == .microphoneFrame {
+                    if client.route.encrypted, client.route.fingerprint != nil {
+                        self.onMicrophoneMessage?(StreamMessage(kind: header.kind, timestamp: header.timestamp,
+                            isKeyframe: false, payload: payload), c)
+                    }
+                    self.receiveLoop(client)
+                    return
+                }
                 if header.kind == .input {
                     self.lastInputAt = Date().timeIntervalSince1970
                     if self.tickTimer == nil { self.updateTicking() }
@@ -1515,8 +1526,31 @@ final class StreamServer {
                     if isComplete || error != nil { c.cancel() }
                     return
                 }
+                guard data.count == header.payloadLength else { c.cancel(); return }
                 deliver(data)
             }
+        }
+    }
+
+    func sendMicrophoneCatalog(_ message: StreamMessage, to connection: NWConnection, grant: HostLocalOwnerGrant) {
+        let data = message.serialized()
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)], client.catalogSent,
+                  client.route.encrypted, client.route.fingerprint == grant.fingerprint,
+                  videoAdmission.current?.id == grant.scope.videoEpoch,
+                  client.connection.state == .ready else { return }
+            _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) { send(data, to: client) }
+        }
+    }
+
+    func sendMicrophone(_ message: StreamMessage, to connection: NWConnection, render: MicrophoneRenderBuffer?) {
+        microphoneReplies.offer(message, connection: connection, render: render, queue: queue) { [weak self] message, connection, render in
+            guard let self, let client = self.clients[ObjectIdentifier(connection)],
+                  client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready else { return }
+            if let render {
+                guard client.pendingBytes < 64_000 else { return }
+                render.sendEnabled(message.serialized(), to: connection)
+            } else { self.send(message.serialized(), to: client) }
         }
     }
 

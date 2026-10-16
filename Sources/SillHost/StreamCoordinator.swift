@@ -39,6 +39,8 @@ package final class StreamCoordinator {
     private var bitrate: Int { config.effective(away: awayRunning).bitrate }
     private var prioritizeSpeed: Bool { config.prioritizeSpeed }
 
+    private let microphoneIngress = MicrophoneIngress()
+    private let microphoneReceiver: HostMicrophoneReceiver
     let server: StreamServer
     let catalog = WindowCatalog()
     let capture = WindowCapture()
@@ -153,13 +155,26 @@ package final class StreamCoordinator {
         }
     }
     private var inputGeneration = UUID().uuidString
-    private var videoEpoch: VideoEpoch?
+    private var videoEpoch: VideoEpoch? {
+        didSet {
+            if oldValue?.id != videoEpoch?.id {
+                microphoneIngress.revoke()
+                microphoneReceiver.forgetCapabilities()
+                microphoneReceiver.revoke(reason: "video epoch changed")
+            }
+        }
+    }
     private enum GeometryRecovery { case idle, scheduled(UUID) }
     private var geometryRecovery = GeometryRecovery.idle
     private var inputFence = SourceInputFence<ObjectIdentifier>()
     package private(set) var active: StreamSource = .none {
         didSet {
-            if active != oldValue { inputGeneration = UUID().uuidString }
+            if active != oldValue {
+                microphoneIngress.revoke()
+                microphoneReceiver.forgetCapabilities()
+                microphoneReceiver.revoke(reason: "source changed")
+                inputGeneration = UUID().uuidString
+            }
             inputFence.sourceChanged(to: active)
             if case .window(let id) = active { catalog.activeWindowID = id } else { catalog.activeWindowID = nil }
             if active == .none { status.update { $0.stream = nil } }
@@ -286,13 +301,15 @@ package final class StreamCoordinator {
     /// that advertises, those hooks are ignored with one line each. `hostVersion`: Sill.app's
     /// version for the window lists, when it has one that parses.
     package init(config: HostConfig, synthetic: Bool = false, appKitLoop: Bool, remote: RemoteAccess? = nil,
-                 homePairing: Bool = false, testHooks: Bool = true, hostVersion: String? = nil) throws {
+                 homePairing: Bool = false, testHooks: Bool = true, hostVersion: String? = nil,
+                 microphoneOwner: (any HostMicrophoneOriginalOwner)? = nil) throws {
         var config = config.validated()
         if !appKitLoop { config.virtualDisplay = false }
         self.config = config
         self.synthetic = synthetic
         self.appKitLoop = appKitLoop
         self.hostVersion = hostVersion
+        microphoneReceiver = HostMicrophoneReceiver(provider: synthetic ? nil : microphoneOwner)
         let env = ProcessInfo.processInfo.environment
         let path = PointerTestHooks.pointerPath(synthetic: synthetic, environment: env)
         let software = PointerTestHooks.softwareEncoder(synthetic: synthetic, environment: env)
@@ -327,6 +344,34 @@ package final class StreamCoordinator {
         // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
         server.setPeerToPeer(config.directWireless)
         stage = VirtualStage(sizer: sizer, catalog: catalog)
+        microphoneReceiver.current = { [weak self] scope, fingerprint in
+            self?.microphoneScopeIsCurrent(scope, fingerprint: fingerprint) == true
+        }
+        microphoneReceiver.onRenderGate = { [microphoneIngress] request, grantID, render in
+            microphoneIngress.attach(request, grantID: grantID, render: render)
+        }
+        microphoneReceiver.sendState = { [weak self] state, render in
+            guard let self, let connection = self.microphoneConnection(peer: state.scope.peer) else { return }
+            self.server.sendMicrophone(StreamMessage(kind: .microphoneState, timestamp: Date().timeIntervalSince1970,
+                isKeyframe: false, payload: Wire.encode(state)), to: connection, render: render)
+        }
+        microphoneReceiver.sendReceipt = { [weak self] receipt in
+            guard let self, let connection = self.microphoneConnection(peer: receipt.scope.peer) else { return }
+            self.server.sendMicrophone(StreamMessage(kind: .microphoneReceipt, timestamp: Date().timeIntervalSince1970,
+                isKeyframe: false, payload: Wire.encode(receipt)), to: connection, render: nil)
+        }
+        microphoneIngress.schedule = { [weak self] in
+            Task { @MainActor in self?.drainMicrophoneIngress() }
+        }
+        remote?.onMicrophoneTrustRevoked = { [weak self] fingerprint in
+            guard let self else { return }
+            self.microphoneIngress.revoke(fingerprint: fingerprint)
+            self.microphoneReceiver.forgetCapabilities(fingerprint: fingerprint)
+            self.microphoneReceiver.checkWatchdog()
+        }
+        server.onMicrophoneMessage = { [microphoneIngress] message, connection in
+            microphoneIngress.offer(message, from: connection, now: DispatchTime.now().uptimeNanoseconds)
+        }
         // Sill's own motion is Sill's: the server counts each device's input, the injector notes
         // each post just before it (and a synthetic host posts nothing: the test pattern is not the
         // screen, docs/pointer-visibility-plan.md Q10), the stage its warp home.
@@ -359,6 +404,10 @@ package final class StreamCoordinator {
                     return
                 }
                 self.routes[id] = route
+                if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
+                   self.remote?.isPaired(fingerprint) == true {
+                    self.microphoneIngress.authorize(connection, fingerprint: fingerprint)
+                }
                 // A paired device shows its paired name until its own stats arrive, and a remote one
                 // its route; a home device its link (Wired, Wi-Fi, Direct) as soon as it is known.
                 self.status.update {
@@ -389,9 +438,15 @@ package final class StreamCoordinator {
             // re-encoded once the window has been still for 50 ms (HEVCEncoder.requestKeyframe).
             self?.encoderBox.current?.requestKeyframe()
         }
-        server.onClientDisconnected = { [weak self] connection in
+        server.onClientDisconnected = { [weak self, microphoneIngress] connection in
+            let microphonePeer = microphoneIngress.peer(connection)?.id
+            microphoneIngress.close(connection)
             Task { @MainActor in
                 guard let self else { return }
+                if let microphonePeer {
+                    self.microphoneReceiver.forgetCapabilities(peer: microphonePeer)
+                    self.microphoneReceiver.revoke(peer: microphonePeer, reason: "disconnected")
+                }
                 self.clientFPS[ObjectIdentifier(connection)] = nil
                 self.settingsArrivals[ObjectIdentifier(connection)] = nil
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
@@ -1264,6 +1319,7 @@ package final class StreamCoordinator {
         await revokeRemoteAudio(reason: "source changed")
         defer {
             switching = false
+            for connection in connections.values { sendMicrophoneCatalog(to: connection) }
             restartOf = nil
             var pick = pickArrivedWhileSwitching
             pickArrivedWhileSwitching = nil
@@ -2350,7 +2406,58 @@ package final class StreamCoordinator {
                                                       inputGeneration: inputGeneration, presentationInput: 1, videoEpoch: videoEpoch)))
     }
 
-    private func broadcastList() { server.broadcast(listMessage()) }
+    private func broadcastList() {
+        server.broadcast(listMessage())
+        for connection in connections.values { sendMicrophoneCatalog(to: connection) }
+    }
+
+    private func sendMicrophoneCatalog(to connection: NWConnection) {
+        let message = microphoneCatalog(to: connection)
+        guard let capability = Wire.decode(WindowList.self, from: message.payload)?.microphone,
+              let grant = microphoneReceiver.advertisedGrant(peer: capability.peer) else { return }
+        server.sendMicrophoneCatalog(message, to: connection, grant: grant)
+    }
+
+    private func microphoneConnection(peer: UUID) -> NWConnection? {
+        connections.values.first { microphoneIngress.peer($0)?.id == peer }
+    }
+
+    private func microphoneScopeIsCurrent(_ scope: MicrophoneScope, fingerprint: Data) -> Bool {
+        guard !synthetic, !switching, !shuttingDown, let epoch = videoEpoch,
+              epoch.id == scope.videoEpoch, epoch.source == active, scope.source == active,
+              UUID(uuidString: inputGeneration) == scope.inputGeneration, epoch.generation == inputGeneration,
+              let connection = microphoneConnection(peer: scope.peer),
+              let route = routes[ObjectIdentifier(connection)], route.encrypted,
+              route.fingerprint == fingerprint, remote?.isPaired(fingerprint) == true else { return false }
+        return true
+    }
+
+    private func microphoneCatalog(to connection: NWConnection) -> StreamMessage {
+        var message = listMessage()
+        guard let peer = microphoneIngress.peer(connection), let epoch = videoEpoch,
+              let generation = UUID(uuidString: inputGeneration),
+              var list = Wire.decode(WindowList.self, from: message.payload) else { return message }
+        list.microphone = microphoneReceiver.capability(peer: peer.id, source: active,
+            inputGeneration: generation, videoEpoch: epoch.id, fingerprint: peer.fingerprint)
+        message.payload = Wire.encode(list)
+        return message
+    }
+
+    private func drainMicrophoneIngress() {
+        let (controls, frame, closedPeers) = microphoneIngress.take()
+        for peer in closedPeers {
+            microphoneReceiver.forgetCapabilities(peer: peer)
+            microphoneReceiver.revoke(peer: peer, reason: "cancellation queue exhausted")
+        }
+        for control in controls {
+            guard microphoneIngress.peer(control.peer.connection)?.id == control.peer.id else { continue }
+            if control.request.operation == .start && !microphoneScopeIsCurrent(control.request.scope, fingerprint: control.peer.fingerprint) { continue }
+            microphoneReceiver.control(control.request, fingerprint: control.peer.fingerprint)
+        }
+        if let frame, microphoneScopeIsCurrent(frame.frame.scope, fingerprint: frame.peer.fingerprint) {
+            _ = microphoneReceiver.frame(frame.frame, fingerprint: frame.peer.fingerprint, arrived: frame.arrived)
+        }
+    }
 
     private func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil,
                                   to connection: NWConnection) {
@@ -2465,7 +2572,9 @@ package final class StreamCoordinator {
     private func sendCatalog(to connection: NWConnection) {
         let now = Date().timeIntervalSince1970
         print("Catalog → \(connection.endpoint): \(catalog.infos.count) windows, \(catalog.allIcons.count) icons, \(catalog.installedApps.count) apps")
+        connections[ObjectIdentifier(connection)] = connection
         server.send(listMessage(), to: connection)
+        sendMicrophoneCatalog(to: connection)
         // What the settings are, silently (the line above is the only one printed on connect). An
         // older device skips the kind. Recorded as what this connection was last sent, and only
         // then does it join the publishes: none goes out ahead of its window list, and the catalog
