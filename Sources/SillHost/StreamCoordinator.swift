@@ -341,6 +341,9 @@ package final class StreamCoordinator {
         testMenuPID = hook.pid
         testMenuLine = hook.line
         self.remote = remote
+        // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
+        server.setPeerToPeer(config.directWireless)
+        stage = VirtualStage(sizer: sizer, catalog: catalog)
         microphoneReceiver.current = { [weak self] scope, fingerprint in
             self?.microphoneScopeIsCurrent(scope, fingerprint: fingerprint) == true
         }
@@ -369,9 +372,6 @@ package final class StreamCoordinator {
         server.onMicrophoneMessage = { [microphoneIngress] message, connection in
             microphoneIngress.offer(message, from: connection, now: DispatchTime.now().uptimeNanoseconds)
         }
-        // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
-        server.setPeerToPeer(config.directWireless)
-        stage = VirtualStage(sizer: sizer, catalog: catalog)
         // Sill's own motion is Sill's: the server counts each device's input, the injector notes
         // each post just before it (and a synthetic host posts nothing: the test pattern is not the
         // screen, docs/pointer-visibility-plan.md Q10), the stage its warp home.

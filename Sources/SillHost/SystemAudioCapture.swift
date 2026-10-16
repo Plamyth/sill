@@ -32,7 +32,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     func start(display: SCDisplay) async throws {
-        guard streamLock.withLock({ stream == nil }) else { return }
+        guard streamLock.withLock({ self.stream == nil }) else { return }
         let configuration = SCStreamConfiguration()
         configuration.width = 16
         configuration.height = 16
