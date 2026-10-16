@@ -70,6 +70,8 @@ public enum StreamMessageKind: UInt8 {
     case audio = 33          // host → device: AudioPacket; only after this device explicitly subscribes
     case remoteAudioControl = 200 // device → host: RemoteAudioSubscription; fork-specific and opt-in
     case remoteAudioState = 201   // host → device: RemoteAudioState; echoes requestID and fences playback
+    case epochParameterSets = 202
+    case epochFrame = 203
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -95,16 +97,22 @@ public struct StreamMessage {
     /// Any other host → device message (window lists, icons, thumbnails, the app list).
     public static let maxOtherHostPayload = 4 << 20
 
+    public static func hostPayloadLimit(for kind: StreamMessageKind) -> Int {
+        kind == .frame || kind == .epochFrame ? maxFramePayload : maxOtherHostPayload
+    }
+
     public var kind: StreamMessageKind
     public var timestamp: Double
     public var isKeyframe: Bool
     public var payload: Data
+    public var requiresPresentation: Bool
 
-    public init(kind: StreamMessageKind, timestamp: Double, isKeyframe: Bool, payload: Data) {
+    public init(kind: StreamMessageKind, timestamp: Double, isKeyframe: Bool, payload: Data, requiresPresentation: Bool = false) {
         self.kind = kind
         self.timestamp = timestamp
         self.isKeyframe = isKeyframe
         self.payload = payload
+        self.requiresPresentation = requiresPresentation
     }
 
     public func serialized() -> Data {
@@ -182,5 +190,69 @@ extension Data {
             copyBytes(to: dst, from: start..<(start + MemoryLayout<T>.size))
         }
         return T(bigEndian: v)
+    }
+}
+
+public enum PresentationMedia {
+    public struct Payload {
+        public let epoch: UUID
+        public let media: Data
+    }
+
+    public static func encode(epoch: UUID, media: Data) -> Data {
+        var uuid = epoch.uuid
+        var result = withUnsafeBytes(of: &uuid) { Data($0) }
+        result.append(media)
+        return result
+    }
+
+    public static func decode(_ data: Data, kind: StreamMessageKind) -> Payload? {
+        let cap = kind == .epochFrame ? StreamMessage.maxFramePayload : StreamMessage.maxOtherHostPayload
+        guard kind == .epochFrame || kind == .epochParameterSets, data.count > 16, data.count <= cap else { return nil }
+        let b = Array(data.prefix(16))
+        let id = UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]))
+        let media = Data(data.dropFirst(16))
+        if kind == .epochParameterSets {
+            guard let ps = ParameterSets(encoded: media), [1, 2, 4].contains(ps.nalUnitHeaderLength), ps.sets.count == 3,
+                  ps.sets.allSatisfy({ $0.count >= 2 }), ps.encoded() == media,
+                  zip(ps.sets, [32, 33, 34]).allSatisfy({ Int(($0.0.first! >> 1) & 0x3f) == $0.1 }) else { return nil }
+        }
+        return Payload(epoch: id, media: media)
+    }
+
+    public static func validFrame(_ data: Data, nalLength: Int, keyframe: Bool) -> Bool {
+        guard [1, 2, 4].contains(nalLength), !data.isEmpty else { return false }
+        var offset = 0
+        var idr = false
+        while offset < data.count {
+            guard data.count - offset >= nalLength else { return false }
+            var count = 0
+            for byte in data.dropFirst(offset).prefix(nalLength) { count = (count << 8) | Int(byte) }
+            offset += nalLength
+            guard count >= 2, count <= data.count - offset else { return false }
+            let first = data[data.startIndex + offset], second = data[data.startIndex + offset + 1]
+            guard first & 0x80 == 0, second & 0x07 != 0 else { return false }
+            let type = (first >> 1) & 0x3f
+            if type == 19 || type == 20 { idr = true }
+            offset += count
+        }
+        return !keyframe || idr
+    }
+
+    public static func serialize(_ message: StreamMessage, epoch: UUID) -> Data {
+        var tagged = message
+        tagged.kind = message.kind == .frame ? .epochFrame : .epochParameterSets
+        tagged.payload = encode(epoch: epoch, media: message.payload)
+        return tagged.serialized()
+    }
+
+    public static func adapt(_ data: Data, modern: Bool) -> Data? {
+        guard let header = StreamMessage.parseHeader(data), data.count == StreamMessage.headerLength + header.payloadLength else { return nil }
+        let tagged = header.kind == .epochFrame || header.kind == .epochParameterSets
+        if modern { return header.kind == .frame || header.kind == .parameterSets ? nil : data }
+        guard tagged else { return data }
+        guard let payload = decode(Data(data.dropFirst(StreamMessage.headerLength)), kind: header.kind) else { return nil }
+        return StreamMessage(kind: header.kind == .epochFrame ? .frame : .parameterSets,
+                             timestamp: header.timestamp, isKeyframe: header.isKeyframe, payload: payload.media).serialized()
     }
 }

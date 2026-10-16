@@ -23,6 +23,11 @@ final class StreamClient {
     var connected = true
     weak var visionInputSession: VisionInputSession?
     var visionMovePreparation: UUID?
+    var visionModernPeer: ObjectIdentifier?
+    var visionWireBinding: (peer: ObjectIdentifier, binding: VisionInputBinding)?
+    var visionMediaPS: (epoch: UUID, ps: ParameterSets)?
+    var visionInputPermit: UUID?
+    let displayView = FixtureDisplay()
     let visionInputDebt = VisionInputDebt()
     // BINDING_STATE
     let link = SessionLink()
@@ -48,12 +53,26 @@ final class StreamClient {
         retained = []
         for message in pending where message.header.kind == .windowList {
             if let list = Wire.decode(WindowList.self, from: message.payload) {
-                _ = applyVisionInputCatalog(list, from: message.peer)
+                _ = catalog(list, from: message.peer)
             }
         }
     }
-    func catalog(_ list: WindowList, from peer: NWConnection?) -> Bool { applyVisionInputCatalog(list, from: peer) }
+    func ready(_ ticket: VisionPresentation.Ticket?) { visionPresentationChanged(ticket) }
+    func catalog(_ list: WindowList, from peer: NWConnection?) -> Bool {
+        if let peer, connection === peer { observeVisionInputCatalog(list, from: peer) }
+        return applyVisionInputCatalog(list, from: peer)
+    }
+    func observe(_ list: WindowList, from peer: NWConnection) { observeVisionInputCatalog(list, from: peer) }
     static var hello: Data { helloPayload }
     static var iPadHello: Data { iPadHelloPayload }
     // EXTRACTED
+}
+
+final class FixtureDisplay {
+    var epoch: VideoEpoch?
+    var peer: ObjectIdentifier?
+    var modern = false
+    func setPresentation(epoch: VideoEpoch?, peer: ObjectIdentifier?, modern: Bool) {
+        self.epoch = epoch; self.peer = peer; self.modern = modern
+    }
 }
