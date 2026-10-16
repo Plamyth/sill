@@ -43,6 +43,7 @@ import StreamProtocol
 @MainActor
 final class BufferedInput {{
     let injector: InputInjector
+    var switching = false
     init(_ injector: InputInjector) {{ precondition(injector.dryRun); self.injector = injector }}
     func hold() {{ holdUntil = CFAbsoluteTimeGetCurrent() + 60 }}
     func send(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {{
@@ -50,6 +51,8 @@ final class BufferedInput {{
     }}
     func disconnect(_ device: KeyStrokes.Device) {{ {release}(of: device) }}
     func flush() {{ releaseHeldInput() }}
+    func beginSwitch() {{ switching = true }}
+    func endSwitch() {{ switching = false }}
     func drop() {{
 {drop}
     }}

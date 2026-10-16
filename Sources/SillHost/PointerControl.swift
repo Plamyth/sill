@@ -126,7 +126,8 @@ struct PointerControl {
     /// The same for a kind 8 payload as the host reads it; one that does not decode moves nothing
     /// (it still hands its device the pointer, as every kind 8 does).
     static func movesPointer(payload: Data) -> Bool {
-        Wire.decode(InputEvent.self, from: payload).map(movesPointer) ?? false
+        let event = Wire.decode(SourceInput.self, from: payload)?.event ?? Wire.decode(InputEvent.self, from: payload)
+        return event.map(movesPointer) ?? false
     }
 
     /// Where `p` is in the streamed source's rectangle `r` (both in top-left global points, the

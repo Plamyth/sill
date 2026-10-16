@@ -158,6 +158,20 @@ struct Check {
                 dropped.buffer.flush()
             }
 
+            #if !SILL_BASELINE
+            let switching = Fixture()
+            switching.buffer.hold()
+            switching.buffer.send(.pointer(down, x: 0.5, y: 0.5), in: switching.rect, from: switching.first)
+            switching.buffer.beginSwitch()
+            expect("\(button) activation cannot replay old-source down during switch", []) {
+                switching.buffer.flush()
+                switching.buffer.drop()
+                switching.buffer.endSwitch()
+                switching.buffer.flush()
+            }
+            check(!switching.stillGoes(up, from: switching.first), "\(button) remains released after switch")
+            #endif
+
             let alreadyDown = Fixture()
             _ = capture { alreadyDown.send(down) }
             alreadyDown.buffer.hold()

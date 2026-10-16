@@ -36,3 +36,20 @@ public enum InputEvent: Codable, Hashable {
 public enum ScrollPhase: String, Codable {
     case began, ended, momentumBegan, momentumEnded
 }
+
+/// Kind 8 on a host whose catalog carries `inputGeneration`. The generation belongs to the
+/// source selection, so input delayed across another device's pick cannot target its new source.
+public struct SourceInput: Codable {
+    public var event: InputEvent
+    public var generation: String
+
+    public init(event: InputEvent, generation: String) {
+        self.event = event; self.generation = generation
+    }
+
+    /// An older host has no generation and still expects the original InputEvent payload.
+    public static func payload(_ event: InputEvent, generation: String?) -> Data {
+        guard let generation else { return Wire.encode(event) }
+        return Wire.encode(SourceInput(event: event, generation: generation))
+    }
+}
