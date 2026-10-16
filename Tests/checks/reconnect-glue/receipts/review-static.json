@@ -1,0 +1,14 @@
+{
+  "checks": {
+    "owned files only": true,
+    "native lifecycle explicit active gate": true,
+    "native initial active state": true,
+    "global gate precedes row and remote dispatch": true,
+    "one-shot entry has no recursive poll": true,
+    "noAutoDesktop and native input ACK preserved": true,
+    "window-list delivery and input fence unchanged": true,
+    "no upstream clipboard dependency": true
+  },
+  "count": 8,
+  "scope": "Static constraints supplement extracted Swift execution."
+}

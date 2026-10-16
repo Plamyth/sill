@@ -1,0 +1,35 @@
+{
+  "exitCode": 75,
+  "transportPID": 85792,
+  "transportReaped": true,
+  "sourceHEAD": "8aa995cf0d08fe290b4268fc7fa5767d2cfc1df0",
+  "scope": "Independent RAM input validation, not codex-source-guard transfer acceptance",
+  "inputSHA256": "ebb7a619e71294d57a4ad09b700d6764c2d24258a2a57672b5c334cd74a451cd",
+  "remoteInputHashMatched": false,
+  "sourceSHA256": {
+    "iOSClient/StreamClient.swift": "f07f4652bfa455e7e3e684a5f4ca7dfcff7510422214246c608c4e5ebef78a99",
+    "iOSClient/StreamClient+Remote.swift": "853bd0d5f79ba78ee40d595366cab972c2edfc7b65cf3c6da3e328d3ca1ca383",
+    "iOSClient/DiscoveryPolicy.swift": "9d8763ee8df438eeabb423dd66faa5b34668235437115af2acd78191e72d39a9"
+  },
+  "sourceUnchanged": true,
+  "extractionSHA256": {
+    "struct Reconnect {": "280b94381b5c46cae78b329d72b1d060c15cd7881c03b81ae574328f2a30d049",
+    "func scheduleReconnectRetry(": "da88157d622c11fbc2f36613ee087ddfce2b22017903de4f1391adb0569ff0f5",
+    "cancelRemoteDial": "73b4770f8b5c98d4028e18348adc57d6a6499475c72279130d56f5f692288efc",
+    "reconnectIfListed": "98fff5f86adadae504c2729d57ec4107f372fb66b7555c009662b4f8c733e47a",
+    "sessionEndedRowFailure": "d6834f9880f828648b660707a33d51aef8f5c27c3b21af22bda024c296bfb8c1",
+    "dialTimeout": "a1a66a9eec2b069cd0cb85d426e44d9cfa4703f5cc1f7a289e52679ebf6b3304",
+    "browserGlue": "4990c64d401f603b08a6e6281a738beec7fc9b5ab742fafbe1c9e14e02b1f77d",
+    "browserState": "0edb004d73ed70c10bf354b1d6b7522ace1b6937ed84e1e7c358281a59369d37",
+    "networkBrowser": "cffb06902e38261a1c689797ee342a947edd6617d51ef6706b08fb4c3d7e5145",
+    "upstreamSleepSelected": "93928730eb4dca05b2db5fb8af91306caba388b4e730f5368bdbd9e7a4275058",
+    "upstreamSleepFull": "1e0461cec57df81547db136d7007ec9f4c4f85ab1bdfb018ab603764e89313a0",
+    "backgroundCancelMutation": {
+      "originalSHA256": "98919d52169cb8aa4b5c5139403168ae0dedc22c041a5d25c88cbee180046f45",
+      "mutantSHA256": "308923e8301c3748231c11f3899e23aefb34e7d8f9af5550112c5b7eccb32716",
+      "removed": "cancelRemoteDial()",
+      "scope": "One call removed from extracted production lifecycle; connector cancellation is recorded by a stand-in."
+    }
+  },
+  "remoteResult": null
+}

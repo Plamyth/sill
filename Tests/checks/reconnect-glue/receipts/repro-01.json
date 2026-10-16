@@ -1,0 +1,59 @@
+{
+  "exitCode": 2,
+  "sourceHEAD": "62bc4c5884bf54f4eb729b71e082d0fa8d7d8609",
+  "scope": "Independent RAM input validation, not codex-source-guard transfer acceptance",
+  "inputSHA256": "28edfca0f68e727954bd2dd642493117ba6dbbd6c34e00711900ae153a80ab44",
+  "remoteInputHashMatched": true,
+  "sourceSHA256": {
+    "iOSClient/StreamClient.swift": "97e68611d6c2116144c564c1bbc1b78e6f3fdafbc5428157710a8089f7484936",
+    "iOSClient/StreamClient+Remote.swift": "ae27c155d8f2ac926dcfbcc136340c46b98f18ce255210bbbe519693ac7e8cbf",
+    "iOSClient/DiscoveryPolicy.swift": "99cbb99f8996aa001c57be715c3d6a2b783e9c78c35af3eeda29f4c7aea95cc4"
+  },
+  "sourceUnchanged": true,
+  "extractionSHA256": {
+    "struct Reconnect {": "5f4fe4150bc2212a04f2f6187a256fdbc3975cb273c24eba36fe6384516e6e8d",
+    "func scheduleReconnectRetry(": "98ecdb8d640a4f448767cde5a3f7e56cce4aa49c11945a32c1686b109ebd45ba",
+    "reconnectIfListed": "dff934f4826300dcf6ee40866f34e545575e5aa1681845ee23b6ecbd73bb133f",
+    "dialTimeout": "9dea5e22a6c16b72e6ecd3fa8c555f3d354e6fc1b444eb3f3de7c364bef209ef",
+    "browserGlue": "94a251dc3513d1313fd388e4fe6089a02b98e141cc4e763f1edad6962cb26619",
+    "browserState": "f8a68b88234c97f3855568be1f5d2bf351618e58345b8193d7a2daab1481ca3c",
+    "networkBrowser": "cffb06902e38261a1c689797ee342a947edd6617d51ef6706b08fb4c3d7e5145"
+  },
+  "remoteResult": {
+    "before": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 40%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      1
+    ],
+    "error": "FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/ccr-reconnect-output-vzxtp3kq/glue'",
+    "exitCode": 2,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 38%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    }
+  }
+}

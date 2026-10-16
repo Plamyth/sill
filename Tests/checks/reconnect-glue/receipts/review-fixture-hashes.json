@@ -1,0 +1,15 @@
+{
+  "reconstructedInputSHA256": "7b62b3c962e4fcfcb6338779912339302ef5ffcb28eed754b13657bf0b6f0b99",
+  "matchesTransmittedReceipt": true,
+  "fixtureSHA256": {
+    "main.swift": "208002681fa5960d7faf712625953c6a2a208dbb7ca19479b6b94296c6e52f29",
+    "DiscoveryPolicy.swift": "9d8763ee8df438eeabb423dd66faa5b34668235437115af2acd78191e72d39a9",
+    "sleep.swift": "70ab5c75e45c1b65246be049f0fbda8309dee88f06bd0558ea0d02e232bcf51d",
+    "cancel-mutant/main.swift": "745da1c13c82a1fd490bfba4c3a3665efb7af752fe2dba2301a81baf9a342dfc",
+    "Sources/StreamProtocol/Input.swift": "c36db9b15e87711adf0477612b8e5ab30b206602d04aa421ac3cf398f39fe8b3",
+    "visionOSClient/VisionPointer.swift": "264af026d070f9a7421a07ff7666f90ffc9fc5fb46956377f0a23ff6619ec1c2",
+    "visionOSClient/VisionInputFence.swift": "a51eb823046dfe5015e8106131b3eb8498bd11ebede8fd3af082be50b99890a3",
+    "visionOSClient/VisionTransition.swift": "d9f991531a5ffa0ef0a54f7e6015e0d044be7110ae84c0c7b202206f0ecd76b3",
+    "Tests/vision-pointer/main.swift": "d386344ed794f032e14e5e0a6cf8c791aaf0b7b7210e7d0950ea2439f5a467ef"
+  }
+}

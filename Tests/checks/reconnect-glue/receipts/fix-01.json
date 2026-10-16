@@ -1,0 +1,66 @@
+{
+  "exitCode": 1,
+  "sourceHEAD": "c76983726ecf30c453972155eb9eb001f599e867",
+  "scope": "Independent RAM input validation, not codex-source-guard transfer acceptance",
+  "inputSHA256": "aa46fa8b9c5e131720388ca746a367dc3600d91898083a999c5a06ad0168efb4",
+  "remoteInputHashMatched": true,
+  "sourceSHA256": {
+    "iOSClient/StreamClient.swift": "f07f4652bfa455e7e3e684a5f4ca7dfcff7510422214246c608c4e5ebef78a99",
+    "iOSClient/StreamClient+Remote.swift": "853bd0d5f79ba78ee40d595366cab972c2edfc7b65cf3c6da3e328d3ca1ca383",
+    "iOSClient/DiscoveryPolicy.swift": "9d8763ee8df438eeabb423dd66faa5b34668235437115af2acd78191e72d39a9",
+    "Sources/StreamProtocol/Input.swift": "c36db9b15e87711adf0477612b8e5ab30b206602d04aa421ac3cf398f39fe8b3",
+    "visionOSClient/VisionPointer.swift": "264af026d070f9a7421a07ff7666f90ffc9fc5fb46956377f0a23ff6619ec1c2",
+    "visionOSClient/VisionInputFence.swift": "a51eb823046dfe5015e8106131b3eb8498bd11ebede8fd3af082be50b99890a3",
+    "visionOSClient/VisionTransition.swift": "d9f991531a5ffa0ef0a54f7e6015e0d044be7110ae84c0c7b202206f0ecd76b3",
+    "Tests/vision-pointer/main.swift": "d386344ed794f032e14e5e0a6cf8c791aaf0b7b7210e7d0950ea2439f5a467ef"
+  },
+  "sourceUnchanged": true,
+  "extractionSHA256": {
+    "struct Reconnect {": "280b94381b5c46cae78b329d72b1d060c15cd7881c03b81ae574328f2a30d049",
+    "func scheduleReconnectRetry(": "da88157d622c11fbc2f36613ee087ddfce2b22017903de4f1391adb0569ff0f5",
+    "reconnectIfListed": "98fff5f86adadae504c2729d57ec4107f372fb66b7555c009662b4f8c733e47a",
+    "sessionEndedRowFailure": "d6834f9880f828648b660707a33d51aef8f5c27c3b21af22bda024c296bfb8c1",
+    "dialTimeout": "a1a66a9eec2b069cd0cb85d426e44d9cfa4703f5cc1f7a289e52679ebf6b3304",
+    "browserGlue": "4990c64d401f603b08a6e6281a738beec7fc9b5ab742fafbe1c9e14e02b1f77d",
+    "browserState": "0edb004d73ed70c10bf354b1d6b7522ace1b6937ed84e1e7c358281a59369d37",
+    "private func wentToBackground()": "98919d52169cb8aa4b5c5139403168ae0dedc22c041a5d25c88cbee180046f45",
+    "networkBrowser": "cffb06902e38261a1c689797ee342a947edd6617d51ef6706b08fb4c3d7e5145"
+  },
+  "remoteResult": {
+    "before": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 40%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      1
+    ],
+    "exitCode": 1,
+    "memorySourcesUnchanged": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 37%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "sill-vision-reconnect": {
+    "HEAD": "8aa995cf0d08fe290b4268fc7fa5767d2cfc1df0",
+    "status": "",
+    "productionSHA256": {
+      "iOSClient/StreamClient.swift": "f07f4652bfa455e7e3e684a5f4ca7dfcff7510422214246c608c4e5ebef78a99",
+      "iOSClient/StreamClient+Remote.swift": "853bd0d5f79ba78ee40d595366cab972c2edfc7b65cf3c6da3e328d3ca1ca383",
+      "iOSClient/DiscoveryPolicy.swift": "9d8763ee8df438eeabb423dd66faa5b34668235437115af2acd78191e72d39a9"
+    }
+  },
+  "sill-vision-source": {
+    "HEAD": "62bc4c5884bf54f4eb729b71e082d0fa8d7d8609",
+    "status": "",
+    "productionSHA256": {
+      "iOSClient/StreamClient.swift": "97e68611d6c2116144c564c1bbc1b78e6f3fdafbc5428157710a8089f7484936",
+      "iOSClient/StreamClient+Remote.swift": "ae27c155d8f2ac926dcfbcc136340c46b98f18ce255210bbbe519693ac7e8cbf",
+      "iOSClient/DiscoveryPolicy.swift": "99cbb99f8996aa001c57be715c3d6a2b783e9c78c35af3eeda29f4c7aea95cc4"
+    }
+  },
+  "ownedBuildOutputExistedBeforeBuild": false,
+  "priorReceiptHashes": {
+    "fix-policy-04.json": "8dc5560be5ad116d38d9cba2a3ddc266cc99a9400ad8db0a624178b23e6f0ee4",
+    "xros-01.json": "317fdcd8a357f4468d35b68780c6294979dfb94f92dfa97b2b97e82e3bc97ede",
+    "artifact.json": "650dbdfe017f0eb4695b7c57eb3a041f42e145f1d0f90c1b84d25c7c77851211",
+    "cleanup.json": "caf5e6309afb4e29078fdf8afd78cf35567a2023b6dc4cf4cc86d40772c33129"
+  }
+}
