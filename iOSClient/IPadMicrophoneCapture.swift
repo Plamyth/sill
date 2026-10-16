@@ -184,19 +184,50 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
         let expanded = Int(ceil(Double(input.frameLength) * outputFormat.sampleRate / converter.inputFormat.sampleRate))
         guard (1...IPadMicrophonePCM.maxConvertedFrames).contains(expanded),
               let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(expanded)) else { return }
-        var supplied = false
+        var cursor: AVAudioFrameCount = 0
+        var slices: [AVAudioPCMBuffer] = []
+        var inputFailed = false
         var error: NSError?
-        let result = converter.convert(to: output, error: &error) { _, status in
-            guard !supplied else { status.pointee = .noDataNow; return nil }
-            supplied = true
+        let result = converter.convert(to: output, error: &error) { requested, status in
+            guard cursor < input.frameLength else { status.pointee = .noDataNow; return nil }
+            let count = min(requested, input.frameLength - cursor)
+            guard count > 0, let slice = Self.slice(input, offset: cursor, count: count) else {
+                inputFailed = true
+                status.pointee = .noDataNow
+                return nil
+            }
+            cursor += count
+            slices.append(slice)
             status.pointee = .haveData
-            return input
+            return slice
         }
-        guard error == nil, result != .error,
+        withExtendedLifetime(slices) {}
+        guard !inputFailed, error == nil, result != .error,
               let channel = output.floatChannelData?.pointee else { return }
         let samples = UnsafeBufferPointer(start: channel, count: Int(output.frameLength))
         var batch: [IPadMicrophonePCMFrame] = []
         packetizer.append(samples) { batch.append($0) }
         if !batch.isEmpty { emitBatch(batch) }
     }
+
+    private static func slice(_ input: AVAudioPCMBuffer, offset: AVAudioFrameCount,
+                              count: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        guard offset <= input.frameLength, count <= input.frameLength - offset,
+              let result = AVAudioPCMBuffer(pcmFormat: input.format, frameCapacity: count) else { return nil }
+        result.frameLength = count
+        let bytesPerFrame = Int(input.format.streamDescription.pointee.mBytesPerFrame)
+        guard bytesPerFrame > 0 else { return nil }
+        let start = Int(offset) * bytesPerFrame, bytes = Int(count) * bytesPerFrame
+        let source = UnsafeMutableAudioBufferListPointer(input.mutableAudioBufferList)
+        let target = UnsafeMutableAudioBufferListPointer(result.mutableAudioBufferList)
+        guard source.count == target.count else { return nil }
+        for index in source.indices {
+            guard Int(source[index].mDataByteSize) >= start + bytes,
+                  Int(target[index].mDataByteSize) >= bytes,
+                  let from = source[index].mData, let to = target[index].mData else { return nil }
+            memcpy(to, from.advanced(by: start), bytes)
+        }
+        return result
+    }
+
 }

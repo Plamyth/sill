@@ -52,6 +52,29 @@ for (rate,count): (Double,AVAudioFrameCount) in [(8_000,800),(44_100,4_410),(192
     check(output.count >= max(1,complete-1), "resampler complete blocks survive \(rate)Hz")
     check(output.allSatisfy { $0.frameCount == 960 && $0.pcm.count == 1920 }, "resampler wire bounds \(rate)Hz")
 }
+for rate in [8_000.0,16_000.0,44_100.0,48_000.0,192_000.0] {
+    let length = AVAudioFrameCount(rate * 0.08)
+    let inputFormat = AVAudioFormat(standardFormatWithSampleRate:rate,channels:1)!
+    let worker = IPadMicrophoneConversionWorker()
+    let saved = OSAllocatedUnfairLock(initialState:[IPadMicrophonePCMFrame]())
+    let finished = DispatchSemaphore(value:0)
+    let id = worker.beginBatch(inputFormat:inputFormat) { batch in
+        saved.withLock { $0.append(contentsOf:batch) }; finished.signal()
+    }!
+    for _ in 0..<4 {
+        let input = AVAudioPCMBuffer(pcmFormat:inputFormat,frameCapacity:length)!
+        input.frameLength = length
+        for i in 0..<Int(length) { input.floatChannelData![0][i] = 0.25 }
+        worker.enqueue(input,captureID:id)
+        check(finished.wait(timeout:.now()+2) == .success, "consecutive conversion callback \(rate)Hz")
+    }
+    worker.end()
+    let frames = saved.withLock { $0 }
+    let expected = Int(Double(length)*4*48_000/rate)/960
+    print("PROBE consecutive \(rate)Hz -> \(frames.count) of about \(expected) complete packets")
+    check(frames.count >= expected-1, "consecutive input accounts for all but at most one priming block \(rate)Hz")
+    check(frames.map(\.sequence) == (1...max(1,frames.count)).prefix(frames.count).map(UInt64.init), "consecutive wire sequence \(rate)Hz")
+}
 runAdapterChecks()
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")
