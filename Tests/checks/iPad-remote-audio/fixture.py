@@ -48,6 +48,27 @@ fixture += connection + '''
 }
 '''
 fixture += adapter.replace('import Network\n', '')
+screen = (root / 'iOSClient/StreamScreen.swift').read_text()
+marker = '.onChange(of: scenePhase) { _, phase in'
+start = screen.index(marker) + len(marker)
+depth = 1
+end = start
+while depth:
+    depth += (screen[end] == '{') - (screen[end] == '}')
+    end += 1
+scene_body = screen[start:end - 1]
+fixture += '''
+enum ScenePhase { case active, inactive, background }
+@MainActor final class SceneHarness {
+    let client: StreamClient
+    var scaleOpen = true
+    var windowMenu: Int? = 1
+    init(client: StreamClient) { self.client = client }
+    func changed(_ phase: ScenePhase) {
+''' + scene_body + '''
+    }
+}
+'''
 (out / 'ClientFixture.swift').write_text(fixture)
 
 checks = {

@@ -50,6 +50,7 @@ struct Check {
         revocation()
         timeout()
         await transport()
+        await backgroundLifecycle()
         await playback()
         print("PASS \(checks) iPad audio behavior assertions")
     }
@@ -242,6 +243,56 @@ struct Check {
         _ = c.receiveRemoteAudio(header(.audio), Data([5]), from: next)
         await drain()
         expect(c.remoteAudio.packets.count == 2, "post disconnect packet is silent")
+    }
+
+    @MainActor static func backgroundLifecycle() async {
+        let c = StreamClient()
+        let peer = NWConnection()
+        c.connection = peer
+        c.remoteAudioControl.receive(list(), from: ObjectIdentifier(peer))
+        c.toggleRemoteAudio()
+        let on = c.remoteAudioControl.status
+        guard case .requesting(let id) = on else { fatalError("expected pending ON") }
+        _ = c.receiveRemoteAudio(header(.remoteAudioState),
+            Wire.encode(RemoteAudioState(enabled: true, requestID: id)), from: peer)
+        await drain()
+        expect(c.remoteAudioStatus == .listening(id), "matching ACK enables before background")
+        let screen = SceneHarness(client: c)
+        let stops = c.remoteAudio.stops
+        screen.changed(.background)
+        expect(!screen.scaleOpen && screen.windowMenu == nil, "background still dismisses transient UI")
+        expect(c.remoteAudioStatus == .off && c.remoteAudio.stops == stops + 1,
+               "background immediately revokes playing consent")
+        let off = Wire.decode(RemoteAudioSubscription.self,
+            from: peer.writes.last!.subdata(in: 14..<peer.writes.last!.count))!
+        expect(!off.enabled && off.requestID != id, "background sends distinct OFF to original peer")
+        _ = c.receiveRemoteAudio(header(.remoteAudioState),
+            Wire.encode(RemoteAudioState(enabled: true, requestID: id)), from: peer)
+        _ = c.receiveRemoteAudio(header(.audio), Data([1]), from: peer)
+        await drain()
+        expect(c.remoteAudio.packets.isEmpty, "late ACK and packet cannot resume background audio")
+
+        let pendingClient = StreamClient()
+        let pendingPeer = NWConnection()
+        pendingClient.connection = pendingPeer
+        pendingClient.remoteAudioControl.receive(list(), from: ObjectIdentifier(pendingPeer))
+        pendingClient.toggleRemoteAudio()
+        guard case .requesting(let pendingID) = pendingClient.remoteAudioStatus else {
+            fatalError("expected pending background request")
+        }
+        let pendingScreen = SceneHarness(client: pendingClient)
+        pendingScreen.changed(.inactive)
+        expect(pendingClient.remoteAudioStatus == .off, "inactive phase revokes pending ON")
+        let pendingOFF = Wire.decode(RemoteAudioSubscription.self,
+            from: pendingPeer.writes.last!.subdata(in: 14..<pendingPeer.writes.last!.count))!
+        expect(!pendingOFF.enabled && pendingOFF.requestID != pendingID,
+               "inactive phase sends distinct OFF for pending ON")
+        _ = pendingClient.receiveRemoteAudio(header(.remoteAudioState),
+            Wire.encode(RemoteAudioState(enabled: true, requestID: pendingID)), from: pendingPeer)
+        pendingScreen.changed(.active)
+        await drain()
+        expect(pendingClient.remoteAudioStatus == .off && pendingPeer.writes.count == 2,
+               "foreground return does not reuse background consent")
     }
 
     @MainActor static func playback() async {

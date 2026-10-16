@@ -96,6 +96,9 @@ final class IPadRemoteAudioController {
 
     func sourceWillChange() { revoke() }
 
+    /// Leaving the foreground ends this consent, including an ON still awaiting its ACK.
+    func backgrounded() { revoke() }
+
     private func revoke() {
         let wasRequested = status.requested
         if wasRequested { stop() }

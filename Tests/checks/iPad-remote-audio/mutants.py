@@ -16,6 +16,8 @@ mutants = [
     ('connection setter retains consent', source, fixture.replace('remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))', '')),
     ('adapter drops ACK', source, fixture.replace('self.remoteAudioControl.receive(state, from: peer)', '_ = state')),
     ('adapter drops packets', source, fixture.replace('self.remoteAudioControl.receiveAudio(data, from: peer)', '_ = data')),
+    ('background controller keeps consent', source.replace('func backgrounded() { revoke() }', 'func backgrounded() {}'), fixture),
+    ('scene handler omits background revoke', source, fixture.replace('client.remoteAudioControl.backgrounded()', '')),
 ]
 mutants = [(name, candidate, adapter, player) for name, candidate, adapter in mutants] + [
     ('stale decoded buffer survives OFF', source, fixture, player.replace('guard current == epoch else { return }', '')),

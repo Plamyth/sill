@@ -303,7 +303,11 @@ struct StreamScreen: View {
         }
         .onChange(of: scenePhase) { _, phase in
             // A gesture cut short by a scene change never ends: put the transient UI away.
-            if phase != .active { scaleOpen = false; windowMenu = nil }
+            if phase != .active {
+                scaleOpen = false
+                windowMenu = nil
+                client.remoteAudioControl.backgrounded()
+            }
         }
         // One thing open at a time: the Aa ruler and a thumbnail's traffic lights put the Settings
         // panel away. (Opening the panel closes them, the drawer and the keyboard.)
