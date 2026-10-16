@@ -817,7 +817,7 @@ final class StreamClient: ObservableObject {
         guard let expected = visionAudioRoute.peer(for: control) else { return }
         queue.async { [weak self] in
             guard let self else { return }
-            let request = RemoteAudioSubscription(enabled: control.enabled, requestID: control.grant.id)
+            let request = RemoteAudioSubscription(enabled: control.enabled, requestID: control.requestID)
             let message = StreamMessage(kind: .remoteAudioControl, timestamp: Date().timeIntervalSince1970,
                                         isKeyframe: false, payload: Wire.encode(request))
             let bytes = message.serialized()

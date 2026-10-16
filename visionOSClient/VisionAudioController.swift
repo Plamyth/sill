@@ -6,6 +6,13 @@ import os
 struct VisionAudioControl {
     let grant: VisionAudioGrant
     let enabled: Bool
+    let requestID: UUID
+
+    init(grant: VisionAudioGrant, enabled: Bool) {
+        self.grant = grant
+        self.enabled = enabled
+        requestID = enabled ? grant.id : UUID()
+    }
 }
 
 protocol VisionAudioPlaying: AnyObject {
@@ -95,7 +102,7 @@ final class VisionAudioController: ObservableObject {
     @discardableResult
     func sendIfPermitted(_ control: VisionAudioControl, _ body: () -> Void) -> Bool {
         storage.withLock { state in
-            guard state.model.isCurrent(control.grant) else { return false }
+            guard state.model.maySend(control.grant, now: clock()) else { return false }
             body()
             return true
         }

@@ -1,0 +1,86 @@
+Mac mini heavy-job slot: free=56%, swap=9830MB
+INPUT_SHA256 90e5dde068c5c8eb2e93b8ad7662a738006d60f625fb12c039daf1303e952002
+/Volumes/CCRAudioConsent91fd8b3861/input/main.swift:15:7: warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+13 | check(!state.canEnable && state.phase == .off, "initial state cannot activate")
+14 | check(state.request(id: UUID(), now: 0) == nil, "packets and request cannot create missing eligibility")
+15 | state.update(.unsupported, foreground: true)
+   |       `- warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+16 | check(!state.canEnable, "unsupported host cannot subscribe")
+17 | state.update(.noSource, foreground: true)
+
+/Volumes/CCRAudioConsent91fd8b3861/input/main.swift:17:7: warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+15 | state.update(.unsupported, foreground: true)
+16 | check(!state.canEnable, "unsupported host cannot subscribe")
+17 | state.update(.noSource, foreground: true)
+   |       `- warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+18 | check(!state.canEnable, "missing source cannot subscribe")
+19 | state.update(.available(a), foreground: false)
+
+/Volumes/CCRAudioConsent91fd8b3861/input/main.swift:19:7: warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+17 | state.update(.noSource, foreground: true)
+18 | check(!state.canEnable, "missing source cannot subscribe")
+19 | state.update(.available(a), foreground: false)
+   |       `- warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+20 | check(!state.canEnable, "background cannot subscribe")
+21 | state.update(.available(a), foreground: true)
+
+/Volumes/CCRAudioConsent91fd8b3861/input/main.swift:21:7: warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+19 | state.update(.available(a), foreground: false)
+20 | check(!state.canEnable, "background cannot subscribe")
+21 | state.update(.available(a), foreground: true)
+   |       `- warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+22 | check(state.canEnable, "eligible foreground exposes explicit Enable")
+23 | let first = state.request(id: UUID(), now: 10)!
+
+/Volumes/CCRAudioConsent91fd8b3861/input/main.swift:43:7: warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+41 | check(state.update(.available(b), foreground: true) == second, "source change revokes before next samples")
+42 | check(state.phase == .off && !state.admits(second, now: 17), "source change never resumes automatically")
+43 | state.update(.available(a), foreground: true)
+   |       `- warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+44 | check(!state.admits(second, now: 18), "A to B to A cannot revive the previous grant")
+45 | let third = state.request(id: UUID(), now: 20)!
+
+/Volumes/CCRAudioConsent91fd8b3861/input/main.swift:50:7: warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+48 | let fourth = state.request(id: UUID(), now: 22)!
+49 | check(state.update(.available(other), foreground: false) == fourth, "background revokes immediately")
+50 | state.update(.available(other), foreground: true)
+   |       `- warning: result of call to 'update(_:foreground:)' is unused [#no-usage]
+51 | check(state.phase == .off && !state.admits(fourth, now: 23), "foreground does not restore consent")
+52 | let fifth = state.request(id: UUID(), now: 30)!
+PASS initial state cannot activate
+PASS packets and request cannot create missing eligibility
+PASS unsupported host cannot subscribe
+PASS missing source cannot subscribe
+PASS background cannot subscribe
+PASS eligible foreground exposes explicit Enable
+PASS a pending request cannot mint another request
+PASS request alone cannot admit packets
+PASS wrong request response is ignored
+PASS other connection response is ignored
+PASS other source response is ignored
+PASS matching acknowledgement permits waiting samples
+PASS acknowledgement does not report rendering
+PASS only matching acknowledged grant admits
+PASS render callback establishes rendering
+PASS underrun has a bounded fresh-samples wait
+PASS Stop revokes previously acknowledged samples
+PASS late render completion cannot resurrect Stop
+PASS late acknowledgement cannot resurrect Stop
+PASS old enabled response cannot satisfy new opt-in
+PASS fresh request uses its own response
+PASS source change revokes before next samples
+PASS source change never resumes automatically
+PASS A to B to A cannot revive the previous grant
+PASS connection handover revokes without connected Boolean
+PASS old connection never supplies new context
+PASS background revokes immediately
+PASS foreground does not restore consent
+PASS request stays bounded until its deadline
+PASS deadline revokes unanswered request
+PASS expired acknowledgement does not enable
+PASS host refusal grants no playback
+PASS host failure is visible and closed
+PASS nonfinite clock cannot create unbounded request
+PASS ack without samples also has a bounded wait
+Vision audio consent: 35/35 passed, 0 failed
+RESULT_JSON {"runnerPID": 24930, "childPIDs": [24962, 25064], "before": {"swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 56%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [0, 0], "exitCode": 0, "memorySourcesUnchanged": true, "childrenReaped": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 52%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}

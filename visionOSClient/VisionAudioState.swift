@@ -78,6 +78,15 @@ struct VisionAudioState {
         }
     }
 
+    func maySend(_ grant: VisionAudioGrant, now: Double) -> Bool {
+        guard now.isFinite, isCurrent(grant) else { return false }
+        switch phase {
+        case .requesting(_, let deadline), .waiting(_, let deadline): return now < deadline
+        case .rendering: return true
+        case .off, .failed: return false
+        }
+    }
+
     mutating func rendered(_ grant: VisionAudioGrant, now: Double) -> Bool {
         guard admits(grant, now: now) else { return false }
         phase = .rendering(grant)

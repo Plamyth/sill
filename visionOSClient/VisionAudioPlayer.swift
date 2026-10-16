@@ -196,14 +196,19 @@ final class VisionAudioPlayer: @unchecked Sendable {
                 return noErr
             }
         } catch {
+            enum Recovery { case revoked, replacedFormat, failed }
             let message = "Audio playback could not start: \(error.localizedDescription)"
-            let current = state.withLock { value -> Bool in
-                guard value.playback.admits(ticket) else { return false }
+            let recovery = state.withLock { value -> Recovery in
+                guard value.playback.admits(ticket) else { return .revoked }
+                guard value.playback.version == version else { return .replacedFormat }
                 value.playback.fail(ticket, message: message)
-                return true
+                return .failed
             }
-            if current { finishFailure(ticket, message: message) }
-            else { _ = output.close(ticket) }
+            switch recovery {
+            case .failed: finishFailure(ticket, message: message)
+            case .revoked: _ = output.close(ticket)
+            case .replacedFormat: break
+            }
         }
     }
 
