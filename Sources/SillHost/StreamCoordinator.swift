@@ -1214,8 +1214,8 @@ package final class StreamCoordinator {
             return
         }
         switching = true
-        await revokeRemoteAudio(reason: "source changed")
         restartOf = (source == active && source != .none) ? source : nil
+        await revokeRemoteAudio(reason: "source changed")
         defer {
             switching = false
             restartOf = nil
