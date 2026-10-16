@@ -15,7 +15,7 @@ struct CanvasWorkspace: View {
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
     @State private var expandedCard: ControlRoomCardReference?
-    @State private var selectedThreadId: UUID?
+    @AppStorage("canvas.selectedThreadId") private var selectedThreadIdText = ""
     @State private var pipPlacement = VoicePIPPlacement()
     @State private var pipDragOrigin: CGPoint?
 
@@ -27,6 +27,18 @@ struct CanvasWorkspace: View {
     }
 
     private var relay: CanvasRelay { CanvasRelay(address:relayAddress,token:relayToken) }
+
+    private enum RecipientSelection {
+        case voice
+        case thread(UUID)
+        case invalid
+    }
+
+    private var recipientSelection: RecipientSelection {
+        guard !selectedThreadIdText.isEmpty else { return .voice }
+        guard let id = UUID(uuidString:selectedThreadIdText) else { return .invalid }
+        return .thread(id)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -180,12 +192,12 @@ struct CanvasWorkspace: View {
 
     private var recipientMenu: some View {
         Menu {
-            Button("현재 음성 대화") { selectedThreadId = nil }
+            Button("현재 음성 대화") { selectedThreadIdText = "" }
                 .disabled(store.displayedVoice == nil)
             ForEach(readProjection?.currentGrid ?? []) { slot in
                 if let card = slot.availableCard, card.source == "codex",
                    let id = UUID(uuidString:card.id) {
-                    Button("\(slot.index + 1) · \(card.displayTitle)") { selectedThreadId = id }
+                    Button("\(slot.index + 1) · \(card.displayTitle)") { selectedThreadIdText = id.uuidString }
                 }
             }
         } label: {
@@ -195,8 +207,14 @@ struct CanvasWorkspace: View {
     }
 
     private var selectedRecipientLabel: String {
-        guard let selectedThreadId else {
+        let selectedThreadId: UUID
+        switch recipientSelection {
+        case .voice:
             return store.displayedVoice == nil ? "받는 대화 선택" : "현재 음성 대화"
+        case .invalid:
+            return "받는 대화 다시 선택"
+        case .thread(let id):
+            selectedThreadId = id
         }
         guard let slot = readProjection?.currentGrid.first(where: {
             $0.availableCard?.source == "codex" &&
@@ -416,7 +434,7 @@ struct CanvasWorkspace: View {
         let frozen = store.scene
         let frozenDrawing = store.drawing
         let displayed = store.displayedVoice
-        let selected = selectedThreadId
+        let selected = recipientSelection
         let connection = relay
         let address = relayAddress
         do {
@@ -431,9 +449,10 @@ struct CanvasWorkspace: View {
             store.displayedVoice = projection.activeVoiceSession
             let session: VoiceSession
             let targetMode: String?
-            if let selected {
-                guard let current = readProjection, current.isFresh(),
-                      current.currentGrid.contains(where: { slot in
+            switch selected {
+            case .thread(let selected):
+                let current = try await connection.controlRoomProjection()
+                guard current.isFresh(), current.currentGrid.contains(where: { slot in
                           slot.availableCard?.source == "codex" &&
                           slot.availableCard?.id.lowercased() == selected.uuidString.lowercased()
                       }) else { throw CanvasSendError.changedSession }
@@ -441,10 +460,12 @@ struct CanvasWorkspace: View {
                     sessionId:"manual:\(selected.uuidString.lowercased())",
                     observedAt:current.generatedAt)
                 targetMode = "selected-chat"
-            } else {
+            case .voice:
                 guard projection.activeVoiceSession != nil else { throw CanvasSendError.missingTarget }
                 session = try projection.session(matching:displayed)
                 targetMode = nil
+            case .invalid:
+                throw CanvasSendError.changedSession
             }
             if let existing = try store.existingPacket(for:frozen,session:session) {
                 await reconcile(existing)
