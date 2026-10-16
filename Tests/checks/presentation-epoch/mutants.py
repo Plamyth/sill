@@ -1,4 +1,6 @@
 MUTANTS = [
+    ('pending-format', 'Display.swift', 'if let prior = pendingNativePS, prior.encoded() != ps.encoded() { pendingNativeIDR = nil }',
+     '', 'pending keyframe cannot outlive its parameter sets'),
     ('staged-bounds', 'Geometry.swift', 'Self.epochGeometry(rect) == epoch.geometry, windowMatches',
      'Self.epochGeometry(rect) == epoch.geometry', 'staged capture crop cannot hide changed live window bounds'),
     ('reader-route-cap', 'MessageReader.swift', 'StreamMessage.hostPayloadLimit(for: header.kind)',
@@ -16,7 +18,9 @@ MUTANTS = [
      'stale callback and missing epoch cannot relabel old media'),
     ('cached-parameters', 'Host.swift', 'videoAdmission = .preparing(epoch)\n            lastParameterSets = nil',
      'videoAdmission = .preparing(epoch)', 'new pipeline cannot reuse cached old parameter sets'),
-    ('catalog-order', 'Host.swift', '            requestKeyframe()\n        }', '',
+    ('catalog-order', 'Host.swift',
+     '            for client in clients.values where client.catalogSent && client.connection.state == .ready {\n                send(catalog.serialized(), to: client)\n            }\n            requestKeyframe()',
+     '            requestKeyframe()\n            for client in clients.values where client.catalogSent && client.connection.state == .ready {\n                send(catalog.serialized(), to: client)\n            }',
      'commit publishes catalog before keyframe request'),
     ('hello-gap', 'Host.swift', 'catalog.presentationInput = 1',
      'catalog.presentationInput = client.presentationInput ? 1 : nil',

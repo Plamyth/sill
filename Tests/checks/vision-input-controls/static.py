@@ -1,4 +1,3 @@
-"""Check source parity and fixture generation without a compiler or Swift runtime."""
 import ast
 import json
 import subprocess

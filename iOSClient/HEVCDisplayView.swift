@@ -5,8 +5,6 @@ import CoreMedia
 import SwiftUI
 import StreamProtocol
 
-/// A UIView whose layer is an AVSampleBufferDisplayLayer, which decodes HEVC in hardware itself.
-/// No VTDecompressionSession needed for the spike.
 final class HEVCDisplayView: UIView {
     #if os(visionOS)
     override class var layerClass: AnyClass { CALayer.self }
@@ -283,6 +281,7 @@ final class HEVCDisplayView: UIView {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.nativeBinding == .legacy, self.nativeLegacyPeer == peer else { return }
             if let prior = self.lastParameterSets, prior != ps.encoded() { self.invalidateNativeMedia() }
+            if let prior = self.pendingNativePS, prior.encoded() != ps.encoded() { self.pendingNativeIDR = nil }
             self.pendingNativePS = ps
             self.rebuildNativeLayer()
             if self.nativeLayer != nil { self.applyFormat(ps) }
@@ -466,6 +465,7 @@ final class HEVCDisplayView: UIView {
         if let prior = lastParameterSets, prior != ps.encoded(), formatDescription != nil {
             invalidateNativeMedia()
         }
+        if let prior = pendingNativePS, prior.encoded() != ps.encoded() { pendingNativeIDR = nil }
         pendingNativePS = ps
         rebuildNativeLayer()
         guard nativeLayer != nil else { return }

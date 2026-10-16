@@ -94,12 +94,17 @@ host.broadcast(message(.frame, idr, key: true), epoch: a.id); host.drain()
 host.commitVideo(b, catalog: message(.windowList, Wire.encode(catalog(b)))) { keyframeRequests += 1 }; host.drain()
 host.broadcast(message(.frame, idr, key: true), epoch: a.id)
 host.broadcast(message(.frame, idr, key: true)); host.drain()
-check(modern.sent.count == beforeStale + 1, "stale callback and missing epoch cannot relabel old media")
+check(modern.sent.count == beforeStale + 1, "stale callback cannot bypass missing keyframe state")
 host.broadcast(message(.frame, idr, key: true), epoch: b.id); host.drain()
 check(modern.sent.count == beforeStale + 1, "new pipeline cannot reuse cached old parameter sets")
 host.broadcast(message(.parameterSets, ps.encoded(), key: true), epoch: b.id)
 host.broadcast(message(.frame, idr, key: true), epoch: b.id); host.drain()
 check(PresentationMedia.decode(messages(modern).last!.payload, kind: .epochFrame)?.epoch == b.id, "same-source restart emits its own epoch")
+let committedCount = modern.sent.count
+host.broadcast(message(.parameterSets, ps.encoded(), key: true), epoch: a.id)
+host.broadcast(message(.frame, idr, key: true), epoch: a.id)
+host.broadcast(message(.frame, idr, key: true)); host.drain()
+check(modern.sent.count == committedCount, "stale callback and missing epoch cannot relabel old media")
 host.queue.sync { host.clients[ObjectIdentifier(remote)]!.needsKeyframe = true }
 host.broadcast(message(.frame, idr, key: true), epoch: b.id); host.drain()
 check(messages(remote).suffix(2).map(\.kind) == [.epochParameterSets, .epochFrame] && messages(remote).suffix(2).allSatisfy { PresentationMedia.decode($0.payload, kind: $0.kind)?.epoch == b.id }, "remote retransmit uses current cached parameters with matching IDR")
@@ -166,6 +171,21 @@ display.readPresentation(failTicket)
 check(display.presentation.admitted == nil && display.nativeLayer == nil, "decoder failure revokes ready notification")
 FakeRenderer.finish()
 
+let formatBoundary = EpochDisplay()
+formatBoundary.setPresentation(epoch: a, peer: ownerID, modern: true)
+formatBoundary.receiveParameters(ps, epoch: a.id, peer: ownerID)
+formatBoundary.setPresentation(epoch: b, peer: ownerID, modern: true)
+formatBoundary.receiveParameters(ps, epoch: b.id, peer: ownerID)
+formatBoundary.receiveFrame(idr, keyframe: true, epoch: b.id, peer: ownerID)
+check(formatBoundary.pendingNativeIDR != nil, "format-change precondition retains bounded IDR during retirement")
+var changedSets = ps.sets
+changedSets[1].append(0x01)
+let changedParameters = ParameterSets(nalUnitHeaderLength: 4, sets: changedSets)
+formatBoundary.receiveParameters(changedParameters, epoch: b.id, peer: ownerID)
+check(formatBoundary.pendingNativeIDR == nil, "pending keyframe cannot outlive its parameter sets")
+FakeRenderer.finish()
+check(formatBoundary.waitingForKeyframe, "replacement format waits for a fresh matching IDR")
+
 let client = StreamClient(), peer = NWConnection()
 client.connection = peer
 _ = client.catalog(catalog(a), from: peer); client.queue.sync {}
@@ -187,9 +207,13 @@ client.sendInput(.key(hidUsage: 4, down: true, modifiers: 0)); client.queue.sync
 check(inputs(peer).last?.videoEpoch == a.id, "actual native submission carries presented epoch")
 client.link.hold(peer)
 client.sendInput(.text("held A")); client.queue.sync {}
+let cancelEntered = DispatchSemaphore(value: 0), cancelResume = DispatchSemaphore(value: 0)
+client.queue.async { cancelEntered.signal(); cancelResume.wait() }; cancelEntered.wait()
 _ = client.catalog(catalog(b), from: peer)
-_ = client.link.unhold(peer); client.queue.sync {}
-check(!inputs(peer).contains { $0.event == .text("held A") }, "held SessionLink flush rejects revoked permit")
+_ = client.link.unhold(peer)
+let heldWasRejected = !inputs(peer).contains { $0.event == .text("held A") }
+cancelResume.signal(); client.queue.sync {}
+check(heldWasRejected, "held SessionLink flush rejects revoked permit")
 check(inputs(peer).last?.event == .key(hidUsage: 4, down: false, modifiers: 0) && inputs(peer).last?.videoEpoch == a.id, "owed terminal release retains original epoch after revocation")
 _ = client.catalog(catalog(nil, modern: nil), from: peer)
 client.sendInput(.text("downgrade")); client.queue.sync {}

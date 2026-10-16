@@ -113,10 +113,12 @@ def main():
             if code == 0:
                 code, log = compile_app(compile_paths, variant / 'epoch', name + '-compile')
             entry['compileExit'] = code
+            if code: entry['diagnostic'] = log[-8000:]
             if code == 0:
                 code, log = run([str(variant / 'epoch')], name + '-runtime')
                 entry['runtimeExit'] = code
                 entry['caught'] = code != 0 and ('FAIL ' + witness) in log
+                if not entry['caught']: entry['diagnostic'] = log[-8000:]
             if path in protocol:
                 code, log = run(module('StreamProtocol', protocol), name + '-restore-module')
                 if code: raise RuntimeError('protocol restore failed\n' + log)

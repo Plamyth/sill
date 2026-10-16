@@ -1493,9 +1493,6 @@ package final class StreamCoordinator {
         // Mid-switch requests (a viewport, the last client leaving) are applied by the defer.
     }
 
-    /// Encoder, then capture (ScreenCaptureKit for a filter, the test pattern without one), then
-    /// `active`. Throws with `active` untouched if either refuses; the caller decides what to do.
-    /// `title` and `kind` describe the stream in the app's menu.
     private enum PipelineEpochError: Error { case missingGeometry }
 
     private func startPipeline(source: StreamSource, filter: SCContentFilter?, sourceRect: CGRect?, width: Int, height: Int, describe: String,

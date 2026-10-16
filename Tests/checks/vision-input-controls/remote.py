@@ -32,7 +32,7 @@ try:
  commands += [[str(output/'legacy-fence'),mode] for mode in ['ok','nofence','timeout','oldcloses','hold','holdclosed','unhold','adoptfence','twofences','twomoves','holdfence','holdadopt','newsession','newsessionhold','count','remotehome','remotedead']]
  mutants={'debt':('Client.swift','mutants/debt/Client.swift','actual setter releases old peer atomically'),'route':('iOSClient/SessionLink.swift','mutants/route/SessionLink.swift','late old input refused after handover')}
  mutants['capture']=('Client.swift','mutants/capture/Client.swift','queued input revoked before submission cannot cross source update')
- mutants['generation']=('visionOSClient/VisionInputDebt.swift','visionOSClient/VisionPresentation.swift','mutants/generation/VisionInputDebt.swift','source change releases held input with original generation')
+ mutants['generation']=('visionOSClient/VisionInputDebt.swift','mutants/generation/VisionInputDebt.swift','source change releases held input with original generation')
  mutants['admission']=('Client.swift','mutants/admission/Client.swift','awaiting fresh catalog blocks native transport before enqueue')
  mutants['controls']=('visionOSClient/VisionInputSession.swift','mutants/controls/VisionInputSession.swift','awaiting fresh catalog keeps native controls disabled')
  expectedFailures={}
