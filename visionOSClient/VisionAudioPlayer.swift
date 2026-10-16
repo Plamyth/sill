@@ -24,13 +24,15 @@ final class VisionAudioPlayer: @unchecked Sendable {
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
-    private let decodeQueue = DispatchQueue(label: "sill.vision-audio.decode", qos: .userInitiated)
+    private let decodeQueue: DispatchQueue
     private let output: VisionAudioOutput
     private var decoder: VisionAACDecoder?
     private var decoderTicket: VisionAudioTicket?
     private var decoderGap: UInt64 = 0
 
-    init(hardware: VisionAudioHardware = VisionAudioSharedHardware.shared, ownerID: UUID = UUID()) {
+    init(hardware: VisionAudioHardware = VisionAudioSharedHardware.shared, ownerID: UUID = UUID(),
+         decodeQueue: DispatchQueue = DispatchQueue(label: "sill.vision-audio.decode", qos: .userInitiated)) {
+        self.decodeQueue = decodeQueue
         output = VisionAudioOutput(hardware: hardware, owner: ownerID)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -201,13 +203,14 @@ final class VisionAudioPlayer: @unchecked Sendable {
         guard let (format, version) = configuration,
               !output.matches(ticket, version: version) else { return }
         let renderState = state
-        let permitted = {
-            renderState.withLock { value in
-                value.playback.admits(ticket) && value.playback.version == version
+        let authorization = {
+            renderState.withLock { value -> VisionAudioPlaybackAuthorization in
+                guard value.playback.admits(ticket) else { return .revoked }
+                return value.playback.version == version ? .current : .superseded
             }
         }
         do {
-            try output.start(ticket, format: format, version: version, permitted: permitted) { _, _, frames, list in
+            try output.start(ticket, format: format, version: version, authorization: authorization) { _, _, frames, list in
                 let buffers = UnsafeMutableAudioBufferListPointer(list)
                 for buffer in buffers {
                     if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
@@ -314,10 +317,10 @@ private final class VisionAudioOutput: @unchecked Sendable {
     }
 
     func start(_ ticket: VisionAudioTicket, format: VisionAudioFormat, version: UInt64,
-               permitted: @escaping () -> Bool, render: @escaping AVAudioSourceNodeRenderBlock) throws {
+               authorization: @escaping () -> VisionAudioPlaybackAuthorization, render: @escaping AVAudioSourceNodeRenderBlock) throws {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard self.ticket == ticket, permitted() else { throw CancellationError() }
-        try hardware.startPlayback(claim(ticket), format: format, version: version, permitted: permitted, render: render)
+        guard self.ticket == ticket, authorization() == .current else { throw CancellationError() }
+        try hardware.startPlayback(claim(ticket), format: format, version: version, authorization: authorization, render: render)
         if timer == nil, let poll {
             let timer = DispatchSource.makeTimerSource(queue: .main)
             timer.schedule(deadline: .now(), repeating: .milliseconds(20), leeway: .milliseconds(5))

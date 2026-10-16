@@ -8,11 +8,11 @@ private final class FakeAudioOutput {
     var closed = 0
     func matches(_ ticket: VisionAudioTicket, version: UInt64) -> Bool { startedVersions.last == version }
     func start(_ ticket: VisionAudioTicket, format: VisionAudioFormat, version: UInt64,
-               permitted: () -> Bool, render: @escaping AVAudioSourceNodeRenderBlock) throws {
+               authorization: () -> VisionAudioPlaybackAuthorization, render: @escaping AVAudioSourceNodeRenderBlock) throws {
         let pending = duringStart
         duringStart = nil
         pending?()
-        guard permitted() else { throw CancellationError() }
+        guard authorization() == .current else { throw CancellationError() }
         startedVersions.append(version)
     }
     func close(_ ticket: VisionAudioTicket) -> String? { closed += 1; return nil }

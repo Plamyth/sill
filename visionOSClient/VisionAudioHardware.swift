@@ -45,7 +45,7 @@ final class VisionAudioHardware: @unchecked Sendable {
         let claim: VisionAudioClaim
         let version: UInt64
         let graph: VisionAudioPlaybackGraph
-        let permitted: () -> Bool
+        let authorization: () -> VisionAudioPlaybackAuthorization
     }
     private struct Capture {
         let claim: VisionAudioClaim
@@ -112,11 +112,11 @@ final class VisionAudioHardware: @unchecked Sendable {
     }
 
     func startPlayback(_ claim: VisionAudioClaim, format: VisionAudioFormat, version: UInt64,
-                       permitted: @escaping () -> Bool, render: @escaping AVAudioSourceNodeRenderBlock) throws {
+                       authorization: @escaping () -> VisionAudioPlaybackAuthorization, render: @escaping AVAudioSourceNodeRenderBlock) throws {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard !transitioning, claim.role == .playback, isReserved(claim), permitted() else { throw CancellationError() }
+        guard !transitioning, claim.role == .playback, isReserved(claim), authorization() == .current else { throw CancellationError() }
         playback = Playback(claim: claim, version: version,
-                            graph: VisionAudioPlaybackGraph(format: format, render: render), permitted: permitted)
+                            graph: VisionAudioPlaybackGraph(format: format, render: render), authorization: authorization)
         try rebuild()
     }
 
@@ -260,7 +260,7 @@ final class VisionAudioHardware: @unchecked Sendable {
     }
 
     private func validateRoles() throws {
-        if let playback, !(isReserved(playback.claim) && playback.permitted()) { throw CancellationError() }
+        if let playback, !(isReserved(playback.claim) && playback.authorization() == .current) { throw CancellationError() }
         if let capture, !(isReserved(capture.claim) && capture.permitted() && driver.recordPermissionGranted) {
             throw CancellationError()
         }

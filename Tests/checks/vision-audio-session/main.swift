@@ -63,8 +63,8 @@ func input(_ graph: VisionAudioCaptureGraph?, frames: AVAudioFrameCount = 960) {
     buffer.frameLength = frames
     graph?.copyInput(buffer, AVAudioTime(sampleTime: 0, atRate: 48_000))
 }
-func start(_ hw: VisionAudioHardware, _ claim: VisionAudioClaim, version: UInt64 = 1, permitted: @escaping () -> Bool = { true }) throws {
-    try hw.startPlayback(claim, format: format, version: version, permitted: permitted, render: tone)
+func start(_ hw: VisionAudioHardware, _ claim: VisionAudioClaim, version: UInt64 = 1, authorization: @escaping () -> VisionAudioPlaybackAuthorization = { .current }) throws {
+    try hw.startPlayback(claim, format: format, version: version, authorization: authorization, render: tone)
 }
 func reserve(_ hw: VisionAudioHardware, owner: UUID) -> VisionAudioClaim {
     hw.reserve(owner: owner, role: .playback, epoch: UUID())!
@@ -194,6 +194,36 @@ func runFailureChecks() throws {
     h.retryCleanup()
     check(d.profiles.count == before && h.cleanupProblem == nil, "route recovery is cleanup-only")
 }
+func runReviewRegressions() throws {
+    let d = FakeGraph()
+    let h = VisionAudioHardware(driver: d), owner = UUID()
+    let claim = reserve(h, owner: owner)
+    var current = true
+    d.duringStart = { current = false }
+    check(rejects { try start(h, claim, authorization: { current ? .current : .superseded }) },
+          "superseded graph asks caller for newer reconciliation")
+    check(h.cleanupProblem == nil && !h.matches(claim, version: 1), "normal format replacement does not quarantine lease")
+    if h.cleanupProblem == nil {
+        try start(h, claim, version: 2)
+        check(h.matches(claim, version: 2), "newer format can commit on same grant and claim")
+        _ = h.close(claim)
+    } else { h.retryCleanup() }
+
+    let d2 = FakeGraph()
+    let h3 = VisionAudioHardware(driver: d2)
+    var startedInCallback = false
+    _ = try h3.beginCapture(owner: owner, epoch: UUID(), permitted: { true }, formatChanged: { _ in }, copyInput: { _, _ in }, stopped: { _ in
+        h3.retryCleanup()
+        if let next = h3.reserve(owner: owner, role: .playback, epoch: UUID()) {
+            startedInCallback = true
+            try? start(h3, next)
+        }
+    })
+    h3.invalidate("synthetic invalidation")
+    check(!startedInCallback && h3.cleanupProblem != nil, "invalidation callback cannot replace a resource before old stop finishes")
+    h3.invalidate("end review probe")
+    h3.retryCleanup()
+}
 func drain(_ until: () -> Bool) {
     let deadline = Date().addingTimeInterval(2)
     while !until() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
@@ -233,7 +263,7 @@ func runPlayerChecks() throws {
     player.retryCleanup()
     check(player.cleanupProblem == nil, "real player explicit cleanup recovers shared owner")
 }
-do { try runHardwareChecks(); try runFailureChecks(); try runPlayerChecks() }
+do { try runReviewRegressions(); if failures == 0 { try runHardwareChecks() }; if failures == 0 { try runFailureChecks() }; if failures == 0 { try runPlayerChecks() } }
 catch { failures += 1; print("FAIL unexpected error \(error)") }
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")
