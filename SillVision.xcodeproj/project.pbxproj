@@ -1118,7 +1118,7 @@
 				<key>GENERATE_INFOPLIST_FILE</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>Sill Vision</string>
+				<string>CCR Sill</string>
 				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
@@ -1134,7 +1134,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>2</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>
@@ -1185,7 +1185,7 @@
 				<key>GENERATE_INFOPLIST_FILE</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
-				<string>Sill Vision</string>
+				<string>CCR Sill</string>
 				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
@@ -1201,7 +1201,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>2</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>

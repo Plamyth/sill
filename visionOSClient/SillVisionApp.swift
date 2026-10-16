@@ -32,7 +32,7 @@ struct SillVisionWorkspace: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text(client.macName.isEmpty ? "Sill Vision" : client.macName).font(.headline)
+                Text(client.macName.isEmpty ? "CCR Sill" : client.macName).font(.headline)
                 Spacer()
                 Text(client.status).font(.caption).lineLimit(2)
                 if client.connected {
