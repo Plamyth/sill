@@ -120,6 +120,12 @@ enum RemoteRoute: Equatable {
 /// Frame callbacks fire on the network queue; published state hops to main.
 final class StreamClient: ObservableObject {
     private let remoteAudio = RemoteAudioPlayer()
+    @Published private(set) var remoteAudioStatus: IPadRemoteAudioController.Status = .unavailable
+    lazy var remoteAudioControl = IPadRemoteAudioController(
+        send: { [weak self] peer, request in self?.sendRemoteAudio(request, to: peer) },
+        stop: { [weak self] in self?.remoteAudio.stop() },
+        play: { [weak self] packet in self?.remoteAudio.receive(packet) },
+        changed: { [weak self] status in self?.remoteAudioStatus = status })
     // Connection. The setters of what the connect screen shows are internal: the DEBUG harness
     // seeds them.
     @Published var status = StreamClient.lookingOnNetwork {
@@ -749,7 +755,10 @@ final class StreamClient: ObservableObject {
     /// on main (connect, disconnect, loss, a move's hand-over), so it is locked there.
     var connection: NWConnection? {
         get { link.connection }
-        set { link.connection = newValue }
+        set {
+            remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))
+            link.connection = newValue
+        }
     }
     /// Where every message to the Mac goes, in the order sent, also across a move's hand-over from
     /// the direct connection to the network one (SessionLink).
@@ -2044,6 +2053,7 @@ final class StreamClient: ObservableObject {
         // only until the fence's pong (`deliver`), or stops at once without a fence.
         let reconnected = sessionDead
         let fenced = kind != .toWifi && !reconnected
+        remoteAudioControl.setConnection(ObjectIdentifier(c))
         if fenced {
             let nonce = withUnsafeBytes(of: UInt64.random(in: .min ... .max)) { Data($0) }
             let fencePing = StreamMessage(kind: .ping, timestamp: Date().timeIntervalSince1970, isKeyframe: false, payload: nonce)
@@ -2115,7 +2125,7 @@ final class StreamClient: ObservableObject {
         #endif
         queue.async {
             self.startMeasuring(c, remote: false)
-            for m in kept { self.handle(m.header, m.payload) }
+            for m in kept { self.handle(m.header, m.payload, from: c) }
             self.startReading(c)
         }
         // The Mac keeps a frame rate per connection: this one's viewport is the first thing the new
@@ -2814,6 +2824,7 @@ final class StreamClient: ObservableObject {
         if let released = link.release(c) { fenceEnded(c, released, why: "the direct connection closed") }
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
+            self.remoteAudioControl.setConnection(nil)
             // A move carries the session on (`rescue`), not when this device closed the connection
             // itself (`end`: a message no Sill sends): that one ends with the words it deserves.
             if self.sessionDead || (end == nil && self.rescue(from: c)) { return }
@@ -2848,7 +2859,7 @@ final class StreamClient: ObservableObject {
     /// never delivered its window list: the connect screen never left, and its Remote rows must not
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
-        remoteAudio.stop()
+        remoteAudioControl.setConnection(nil)
         abandonMove()
         resetPath()
         lastMoveAttempt = nil
@@ -2927,6 +2938,7 @@ final class StreamClient: ObservableObject {
     /// request (the Desktop on a connection's first list, a pick made again after a move), which
     /// is not the person's doing.
     private func request(_ source: StreamSource) {
+        remoteAudioControl.sourceWillChange()
         choicesSent += 1
         send(.selectSource, Wire.encode(source))
         #if DEBUG
@@ -3329,14 +3341,15 @@ final class StreamClient: ObservableObject {
     /// Mac has read everything sent there; the network connection brings all the rest.
     private func deliver(_ header: StreamHeader, _ data: Data, from c: NWConnection) {
         if c === connection {
-            handle(header, data)
+            handle(header, data, from: c)
         } else if header.kind == .pong, let released = link.fenceReturned(data, on: c) {
             fenceEnded(c, released, why: "the Mac has read all the direct connection carried")
         }
     }
 
     /// On the network queue.
-    private func handle(_ header: StreamHeader, _ data: Data) {
+    private func handle(_ header: StreamHeader, _ data: Data, from origin: NWConnection) {
+        if receiveRemoteAudio(header, data, from: origin) { return }
         switch header.kind {
         case .parameterSets:
             if let ps = ParameterSets(encoded: data) {
@@ -3352,15 +3365,14 @@ final class StreamClient: ObservableObject {
             if age.isFinite { frameAgeSamples.append(min(max(age, 0), Self.sampleCeilingMs)) }
             frameCounter += 1
             onFrame?(data, header.isKeyframe)
-        case .audio:
-            remoteAudio.receive(data)
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
-            let from = connection
+            let from = origin
             DispatchQueue.main.async {
                 // Only from the current connection: a list queued by a replaced one must not
                 // describe the next session.
                 guard self.connection === from else { return }
+                self.remoteAudioControl.receive(list, from: ObjectIdentifier(from))
                 // A remote session, and one at home over TLS, is connected at its first window list,
                 // not at `.ready`: the Mac has admitted this device's key.
                 self.remoteSessionReady()
