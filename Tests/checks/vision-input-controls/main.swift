@@ -17,6 +17,10 @@ func inputs(_ c: NWConnection) -> [CapturedVisionInput] {
     }
 }
 func events(_ c: NWConnection) -> [InputEvent] { inputs(c).map(\.event) }
+func seedLegacy(_ client: StreamClient, _ peer: NWConnection) {
+    precondition(client.catalog(WindowList(macName: "Legacy fixture", windows: [], active: .desktop), from: peer))
+    client.queue.sync {}
+}
 func waitMain(_ done: () -> Bool) {
     let end = Date().addingTimeInterval(2)
     while !done() && Date() < end { _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.002)) }
@@ -66,6 +70,7 @@ let client = StreamClient(), input = VisionInputSession()
 let a = NWConnection(), b = NWConnection(), c = NWConnection()
 input.bind(client); input.allowed = true
 client.connection = a
+seedLegacy(client, a)
 let blocked = DispatchSemaphore(value: 0)
 client.queue.async { blocked.wait() }
 client.sendInput(.text("stale"))
@@ -73,6 +78,7 @@ let before = events(b).count
 client.connection = b
 blocked.signal(); client.queue.sync {}
 check(events(b).count == before, "actual queued native send never retargets new peer")
+seedLegacy(client, b)
 input.toggle(.command)
 input.drag(from: p, to: q, mode: .pointer)
 client.queue.sync {}
@@ -80,6 +86,7 @@ let bBefore = events(b).count
 client.connection = c
 check(events(b).dropFirst(bBefore).first == .pointer(.leftUp, x: q.x, y: q.y), "actual setter releases old peer atomically")
 check(events(c).isEmpty && input.latched.isEmpty, "setter never sends old release to replacement")
+seedLegacy(client, c)
 input.drag(from: p, to: q, mode: .pointer); client.queue.sync {}
 check(events(c).isEmpty, "held gesture remains cancelled across setter")
 input.endGesture()
@@ -93,10 +100,15 @@ client.finish(d)
 check(input.moving && !input.canSend, "handover immediately pauses native admission")
 client.sendInput(.text("must not escape pause"))
 waitMain { client.completions == 1 }
-check(!input.moving && client.connection === d, "handover resumes only after old release drain")
+check(!input.moving && client.connection === d, "handover adopts new peer only after old release drain")
+check(!input.canSend, "awaiting fresh catalog keeps native controls disabled")
+let movedNotes = client.notes.count
+client.sendInput(.text("must wait for catalog")); client.queue.sync {}
+check(client.notes.count == movedNotes && client.link.inputsOnSession == 0 && events(d).isEmpty, "awaiting fresh catalog blocks native transport before enqueue")
 let tail = c.sent.suffix(3)
 check(tail.last?.first == 12 && events(c).suffix(2).first == .pointer(.leftUp, x: q.x, y: q.y), "actual viable move writes release before fence ping")
 check(events(d).isEmpty, "handover carries neither held gesture nor paused text")
+seedLegacy(client, d)
 input.endGesture(); input.press(.left); input.press(.left); client.queue.sync {}
 check(events(d).isEmpty, "new input waits behind previous route fence")
 _ = client.link.fenceReturned(Data([1]), on: c)
@@ -108,6 +120,7 @@ check(ups == [.key(hidUsage: 0xE3, down: false, modifiers: 0)], "reset drains ha
 check(input.takeReleases().isEmpty, "hardware reset is idempotent")
 let owed = StreamClient(), owedInput = VisionInputSession(), owedPeer = NWConnection()
 owedInput.bind(owed); owedInput.allowed = true; owed.connection = owedPeer
+seedLegacy(owed, owedPeer)
 owedInput.drag(from: p, to: q, mode: .pointer); owed.queue.sync {}
 owed.link.hold(owedPeer)
 owedInput.endGesture(); owed.queue.sync {}
@@ -118,6 +131,7 @@ _ = owed.link.unhold(owedPeer)
 check(events(owedPeer).count == 3, "cancelled queued release cannot replay after unhold")
 let fresh = NWConnection(); owed.moving = .init(connection: fresh); owed.finish(fresh)
 waitMain { owed.completions == 1 }
+seedLegacy(owed, fresh)
 let oldCount = events(owedPeer).count
 owedInput.drag(from: p, to: q, mode: .pointer); owed.queue.sync {}
 owedInput.releaseAll(); owed.queue.sync {}
@@ -169,7 +183,8 @@ check(inputs(scopedPeer).count == heldCount + 2, "held gesture cannot restart af
 scopedInput.endGesture(); scopedInput.press(.enter); scopedInput.press(.left); scoped.queue.sync {}
 check(inputs(scopedPeer).suffix(4).allSatisfy { $0.generation == "B1" }, "ordinary successive chords retain new source scope")
 
-let early = StreamClient(), earlyPeer = NWConnection()
+let early = StreamClient(), earlyInput = VisionInputSession(), earlyPeer = NWConnection()
+earlyInput.bind(early); earlyInput.allowed = true
 early.connection = earlyPeer
 _ = early.catalog(catalog(sourceA, "A1"), from: earlyPeer); early.queue.sync {}
 let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
@@ -197,11 +212,12 @@ early.sendInput(.text("still A2")); early.queue.sync {}
 check(early.active == sourceA && early.windows.isEmpty && inputs(earlyPeer).last?.generation == "A2", "stale catalog cannot mutate active list or generation")
 let replacement = NWConnection(); early.connection = replacement
 early.sendInput(.text("before new catalog")); early.queue.sync {}
-check(inputs(replacement).last?.generation == nil, "actual connection setter clears generation binding")
+check(inputs(replacement).isEmpty && !earlyInput.canSend && early.visionInputBinding == .awaitingCatalog, "actual connection setter awaits catalog without raw fallback")
+check(!early.catalog(oldCatalog, from: stranger) && early.visionInputBinding == .awaitingCatalog, "wrong peer legacy catalog cannot enable fallback")
 _ = early.catalog(oldCatalog, from: replacement)
 early.sendInput(.text("old host")); early.queue.sync {}
 let raw = Data(replacement.sent.last!.dropFirst(StreamMessage.headerLength))
-check(Wire.decode(InputEvent.self, from: raw) == .text("old host") && Wire.decode(SourceInput.self, from: raw) == nil, "old host receives unchanged raw event fallback")
+check(earlyInput.canSend && early.visionInputBinding == .confirmedLegacy && events(replacement) == [.text("old host")] && Wire.decode(InputEvent.self, from: raw) == .text("old host") && Wire.decode(SourceInput.self, from: raw) == nil, "confirmed legacy catalog enables unchanged raw event fallback")
 
 _ = scoped.catalog(catalog(sourceB, "B1"), from: scopedPeer)
 scopedInput.drag(from: p, to: q, mode: .pointer); scoped.queue.sync {}
@@ -218,13 +234,32 @@ let beforeReset = inputs(scopedPeer).count
 scoped.teardownInput(); scoped.queue.sync {}
 check(inputs(scopedPeer).count == beforeReset + 1 && inputs(scopedPeer).last?.generation == "A2", "actual teardown input prefix drains original generation")
 scoped.sendInput(.text("reset")); scoped.queue.sync {}
-check(inputs(scopedPeer).last?.generation == nil, "actual teardown input prefix clears binding")
+check(inputs(scopedPeer).count == beforeReset + 1 && !scopedInput.canSend && scoped.visionInputBinding == .awaitingCatalog, "actual teardown input prefix blocks input until another catalog")
 _ = early.catalog(catalog(sourceA, "move-A"), from: replacement); early.queue.sync {}
-let afterMove = NWConnection(); early.moving = .init(connection: afterMove); early.finish(afterMove)
+let retainedPayload = Wire.encode(catalog(sourceA, "kept-A"))
+let retainedBytes = StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false, payload: retainedPayload).serialized()
+let afterMove = NWConnection(); early.moving = .init(connection: afterMove)
+early.finish(afterMove, kept: [(header: StreamMessage.parseHeader(retainedBytes)!, payload: retainedPayload)])
 waitMain { early.completions == 1 }
 _ = early.link.fenceReturned(Data([1]), on: replacement)
-early.sendInput(.text("moved")); early.queue.sync {}
-check(inputs(afterMove).last?.generation == nil, "actual move reset fragment clears binding before next peer")
+check(!earlyInput.moving && early.connected && early.active == sourceA && early.visionInputBinding == .awaitingCatalog && !earlyInput.canSend && early.retained.count == 1, "delayed retained catalog keeps old active UI input disabled")
+earlyInput.toggle(.command); earlyInput.press(.enter); earlyInput.tap(p, mode: .pointer)
+earlyInput.overlayInput(.text("premature overlay"))
+early.sendInput(.text("premature direct")); early.queue.sync {}
+check(events(afterMove).isEmpty && early.link.inputsOnSession == 0 && earlyInput.latched.isEmpty, "UI and core admit no input while retained catalog waits")
+check(!hostFence.accepts("vision", generation: nil, current: "kept-A", source: sourceA), "real scoped host would reject premature unscoped input")
+check(!early.catalog(catalog(sourceA, "old-peer"), from: replacement) && !earlyInput.canSend, "prior peer catalog cannot resolve moved peer binding")
+early.deliverRetainedCatalogs()
+check(earlyInput.canSend && early.visionInputBinding == .scoped(generation: "kept-A"), "current peer retained catalog enables scoped input after normal application")
+early.sendInput(.text("scoped after catalog")); earlyInput.press(.enter); early.queue.sync {}
+check(events(afterMove) == [.text("scoped after catalog")] + KeyChord.press(VisionRemoteKey.enter.rawValue, with: []) && inputs(afterMove).allSatisfy { $0.generation == "kept-A" && hostFence.accepts("vision", generation: $0.generation, current: "kept-A", source: sourceA) }, "current catalog input transmits and passes real scoped host guard")
+let supersedingPeer = NWConnection()
+early.moving = .init(connection: supersedingPeer)
+early.finish(supersedingPeer, kept: [(header: StreamMessage.parseHeader(retainedBytes)!, payload: retainedPayload)])
+waitMain { early.completions == 2 }
+let finalPeer = NWConnection(); early.connection = finalPeer
+early.deliverRetainedCatalogs()
+check(early.visionInputBinding == .awaitingCatalog && !earlyInput.canSend, "retained catalog is refused if its peer was replaced before delivery")
 
 let waitingSource = StreamClient(), waitingInput = VisionInputSession(), waitingPeer = NWConnection()
 waitingInput.bind(waitingSource); waitingInput.allowed = true; waitingSource.connection = waitingPeer

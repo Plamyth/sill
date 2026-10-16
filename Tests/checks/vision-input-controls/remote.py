@@ -33,6 +33,8 @@ try:
  mutants={'debt':('Client.swift','mutants/debt/Client.swift','actual setter releases old peer atomically'),'route':('iOSClient/SessionLink.swift','mutants/route/SessionLink.swift','late old input refused after handover')}
  mutants['capture']=('Client.swift','mutants/capture/Client.swift','queued input retains generation captured on main')
  mutants['generation']=('visionOSClient/VisionInputDebt.swift','mutants/generation/VisionInputDebt.swift','source change releases held input with original generation')
+ mutants['admission']=('Client.swift','mutants/admission/Client.swift','awaiting fresh catalog blocks native transport before enqueue')
+ mutants['controls']=('visionOSClient/VisionInputSession.swift','mutants/controls/VisionInputSession.swift','awaiting fresh catalog keeps native controls disabled')
  expectedFailures={}
  for name,(originalPath,replacement,witness) in mutants.items():
   variant=[str(package/replacement) if p==str(package/originalPath) else p for p in sources]

@@ -13,7 +13,7 @@ Work key `vision-source-generation-20261016`. Original owner `01a13005-ff61-7780
   - Smallest safe decomposition. One writer keeps admission, queueing, debt, catalog lifecycle, and fixture extraction consistent.
 - [x] Delegate code-writing to a subagent using your configured feature model. This delegated writer owns the exclusive diff directly. No nested agents.
 - [ ] Verify on the matching surface. Parent must execute actual Swift scenarios and XROS compilation. This writer runs static checks only.
-- [x] Rebase into small, ordered commits. Stack follow-ups. This candidate is one coherent commit based on the assigned immutable base. No unrelated commit is merged.
+- [x] Rebase into small, ordered commits. Stack follow-ups. Initial candidate c624 is preserved; the catalog-wait correction follows it as a separate coherent commit. No unrelated commit is merged.
 - [ ] If the design is contested, `interrogate` before shipping. No contested design so far. Independent review belongs to the parent.
 - [ ] Run **Opening a PR**. Skip. Push, PR, network, and deployment are outside this writer's authorization.
 
@@ -27,9 +27,9 @@ Native input is admitted on main, serialized before entering the network queue, 
 
 ## Usage and shape
 
-The caller still invokes `client.sendInput(event)`. On Vision, admission creates `CapturedVisionInput(event:generation:)` before enqueueing. Serialization uses the peer's `SourceInput.payload`; nil generation preserves old-host raw input. The actual-send callback records the captured value. Debt synthesizes terminal events by replacing the event while retaining the down's generation.
+The caller still invokes `client.sendInput(event)`. VisionInputBinding distinguishes awaitingCatalog, confirmedLegacy, and scoped(generation). Its capture method refuses awaitingCatalog, admits a raw captured event for confirmedLegacy, and admits a generation-bearing captured event for scoped. Only a current-peer catalog can confirm legacy or scoped input. Admission captures before enqueueing. Serialization uses the peer's `SourceInput.payload`. The actual-send callback records the captured value. Debt synthesizes terminal events by replacing the event while retaining the down's generation.
 
-`applyVisionInputCatalog(_:from:)` checks the originating peer, drains local held ownership and queues transport cancellation before publishing a changed generation or active source. It applies the current catalog only. Connection replacement, move, and teardown clear the binding. No extra generation is invented by the client. Model the Domain determines the event value and debt ownership instead of optional generation arguments at each release call site.
+`applyVisionInputCatalog(_:from:)` checks the originating peer, drains local held ownership and queues transport cancellation before publishing a changed source or binding. It applies the current catalog only and confirms admission after the active/list update. Connection replacement, move, and teardown invalidate the binding to awaitingCatalog. Both VisionInputSession.canSend and native StreamClient.sendInput require catalog confirmation. No extra generation is invented by the client. Model the Domain determines the binding and event value instead of optional generation arguments at each release call site.
 
 ## Alternatives and synthesis
 
@@ -40,7 +40,7 @@ The caller still invokes `client.sendInput(event)`. On Vision, admission creates
 
 B passed the architect screen for split ownership, temporal decomposition, pass-through layers, and hand-synced protocol policy. The peer codec remains the sole wire policy. B adds no wire kind. Optional inputGeneration is composed with this branch's remoteAudio field. Only Vision advertises Hello.sourceInput=1. The shared iPad path remains legacy and unadvertised.
 
-We accept raw fallback for older hosts in exchange for compatibility. This provides weaker protection and establishes no safety result for oldhost563. We accept asynchronous cancellation ordered on the existing serial queue in exchange for preserving the b403 nonblocking main/network contract.
+We accept raw fallback after a current-peer legacy catalog in exchange for compatibility. This provides weaker protection and establishes no safety result for oldhost563. An unresolved binding never means legacy. We accept asynchronous cancellation ordered on the existing serial queue in exchange for preserving the b403 nonblocking main/network contract.
 
 ## Baseline witness
 
@@ -52,7 +52,7 @@ Frames and ParameterSets carry no generation. The host can emit frames before th
 
 The candidate fixture must use actual Input, Switcher/Wire, StreamMessage/Data helpers, Compatibility/Hello, and peer148 SourceInputFence. Fake Network only records transmitted bytes. Deterministic scenarios cover retained-generation releases, capture before enqueue, A-to-B-to-A stale rejection, raw fallback, current-peer catalogs, lifecycle reset, ordinary chords, stop controls, and actual-transmitted debt. Parent runs a finite Mini attempt and at most two corrections per unchanged hypothesis, then signed XROS compilation under its lease and independent review. This writer executes no compiler, runtime test, app, device, audio, browser, messaging, or push action.
 
-## Implementation reconciliation
+## Initial implementation reconciliation at c624
 
 The native value lives in the existing VisionInputDebt product file, so the project and generator need no new product entry. Held keys retain their captured input. Pointer moves update coordinates while preserving the down's generation. Scroll and key terminal events also retain the original token. Native admission serializes the captured value before queueing, and the existing weak actual-send callback records it under SessionLink's lock. No SessionLink or normal-chord implementation changed.
 
@@ -64,9 +64,27 @@ The fixture now uses actual Wire, WindowList, Hello, and 14-byte StreamMessage f
 
 New deterministic Swift scenarios cover the real native Hello releasing the real legacy source pin, non-Vision Hello retaining that pin, old-host raw fallback, remoteAudio composition, held-source releases, queue capture before a catalog change, A-to-B-to-A rejection, current-peer refusal, connection/move/teardown resets, source-change cancellation of unsent downs, queued terminal releases, and a delayed actual-send callback after binding publication. Debt checks cover right button coordinates, scroll scope, reverse key release flags, wrong-peer refusal, and idempotence. Four runtime mutants target debt recording, route admission, late generation capture, and generation loss in synthesized releases. These are prepared tests, not candidate runtime results.
 
-The 22 checks in `Tests/checks/vision-input-controls/static.py` pass. They verify exact peer blobs, unchanged iPad input branch, unchanged SessionLink, StreamMessage, and normal chord/stop code, limited Switcher composition, native capture/drain ordering, fixture extraction, mutation application, dependency packaging, and Python syntax. `bash -n Tests/touchrig/run.sh` and `git diff --check` also pass. The local diff received a deslop pass. No independent source or comment review ran in this writer; parent review remains required. Pstack poteto-mode and Feature organized the gates, architect compared A and B, and Model the Domain determined captured-event ownership.
+At c624, the 22 checks in `Tests/checks/vision-input-controls/static.py` passed. They verified exact peer blobs, unchanged iPad input branch, unchanged SessionLink, StreamMessage, and normal chord/stop code, limited Switcher composition, native capture/drain ordering, fixture extraction, mutation application, dependency packaging, and Python syntax. `bash -n Tests/touchrig/run.sh` and `git diff --check` also passed. The local diff received a deslop pass. No independent source or comment review ran in this writer. Pstack poteto-mode and Feature organized the gates, architect compared A and B, and Model the Domain determined captured-event ownership.
 
 An initial local Git object lookup in the Vision repository triggered Git's implicit promisor fetch for the absent peer commit and failed. It did not retrieve that commit. Subsequent component reads used `git --no-lazy-fetch show` in the peer repository, and static baseline reads also disable lazy fetching. This was an unintended network attempt under the writer's no-network constraint. No push, PR, host install, app/device launch, audio, or browser action occurred.
+
+## Planck P2 and catalog-wait correction
+
+Parent reports candidate01 at c624 passed 88 controls/source scenarios, the prior 38 pointer checks, 17 SessionLink modes, and four runtime mutants. Those results are retained as evidence for c624. They did not cover the unresolved-catalog admission defect and do not prove this follow-up.
+
+Planck's independent source review found one new P2 and no other P1 or P2. The move path reset the generation to nil, then restored moving=false while connected and active still described the old source. Retained catalogs reach main later through deliver. Both the UI and core admitted raw input during that gap. A Hello1 host rejects it, so keys could disappear. Setter and teardown resets had the same nil ambiguity, and several fixture expectations encoded the wrong raw fallback.
+
+Parent reproduced the move gap with actual extracted move wrapper/reset and VisionInputSession. `source-generation/catalog-wait01.log` fails at `awaiting fresh catalog keeps native controls disabled`, runtime exit -5. Its envelope exits 0 because it expects that specific failure; source/stdin hashes and RAM/output cleanup passed. The receipt explicitly limits its fake Network/finish-body dependency and does not prove physical or transport acknowledgment behavior. Evidence remains under `work/verification/vision-remote-spatial-20261016/source-generation/catalog-wait01.{json,log}` outside this worktree.
+
+Parent and Planck accepted de-ambiguating B's binding as awaitingCatalog, confirmedLegacy, or scoped(generation). Pstack correct puts this distinction in the domain type rather than adding a second boolean beside optional generation. CapturedVisionInput, serialization, weak didSend, and actual-transmitted debt remain identical to c624. Protocol blobs, audio fields, SessionLink, host code, and project entries also remain unchanged in this follow-up.
+
+The client publishes one typed binding. Connection replacement, accepted move, and teardown set awaitingCatalog. The ordinary validated retained-catalog delivery path remains unchanged; a move can restore moving=false while admission stays closed. Only applyVisionInputCatalog for the current peer confirms legacy or scoped readiness, after enqueueing old debt cleanup and applying active/list. Retained catalogs from a peer replaced before delivery fail the same guard. The workspace shows a waiting message beside the available release control. Palette presentation also reads the published binding, so catalog readiness changes update its disabled state. Pointer, keyboard, palette, and direct native sends remain gated separately from release/stop controls.
+
+The controls fixture now extracts the actual published binding declaration and uses the same model as the product. Its fake finish body retains supplied messages until an explicit delivery step, modeling the delayed main catalog without replacing admission logic. Tests exercise the actual move wrapper/reset, VisionInputSession, native send admission, and peer148 SourceInputFence. They require no admitted bytes or pointer notes before a current-peer catalog, accepted SourceInput afterward, and raw fallback only after a separate confirmed legacy catalog. Prior controls scenarios explicitly seed legacy catalogs; their event count assertions remain intact. Reset tests that previously expected premature raw input now require blocked admission.
+
+Two additional prepared mutants remove UI readiness and core readiness separately. Their required failure witnesses are `awaiting fresh catalog keeps native controls disabled` and `awaiting fresh catalog blocks native transport before enqueue`. The core witness also checks SessionLink's queued-input count and native pointer notes, so a fence hiding an admitted raw packet cannot make it pass. The late-capture mutant uses the typed binding capture method. No mutant, Swift suite, compiler, or XROS build was executed by this writer.
+
+The updated 29 static checks pass, including typed binding, both gates, published UI readiness, lifecycle invalidation, normal retained delivery, exact wire blobs, unchanged capture/debt, and six applied mutant sources. `git diff --check` passes. Independent closure, the six runtime mutant results, the updated controls suite, and XROS compilation/signing remain parent gates. This follow-up uses only local reads with lazy fetching disabled and makes no network, host, device, audio, frame epoch, microphone, push, or deployment change.
 
 ## Parent execution handoff
 
@@ -74,8 +92,7 @@ From this exact committed worktree, the parent can run these commands after its 
 
 ```sh
 python3 -B Tests/checks/vision-input-controls/static.py
-python3 -B Tests/checks/vision-input-controls/mini.py source-generation-candidate01
-python3 -B Tests/checks/reconnect-glue/mini.py source-generation-pointer01 --pointer
+python3 -B Tests/checks/vision-input-controls/mini.py source-generation-candidate02
 ```
 
-The Mini controls runner includes candidate scenarios, four runtime mutants, the prior pointer suite, and the 17 existing SessionLink modes. Labels must be reconciled before reuse. The run streams hashed inputs to RAM with isolated output and cleanup evidence. A passing RAM run remains independent validation, not source-guard same-task transfer acceptance. Parent must compile/sign the exact XROS candidate under its lease, independently review it, and update the original project Page. No runtime or XROS result is claimed here. The baseline02 expected-failure envelope remains separate from candidate evidence.
+The Mini controls runner includes updated candidate scenarios, six runtime mutants, the prior pointer suite, and the 17 existing SessionLink modes. Parent controls the compiler lease; host compilation currently owns it and this writer does not start a competing run. Labels must be reconciled before reuse. The run streams hashed inputs to RAM with isolated output and cleanup evidence. A passing RAM run remains independent validation, not source-guard same-task transfer acceptance. Parent must compile/sign the exact XROS candidate under its lease, independently close Planck's P2, and update the original project Page. No follow-up runtime or XROS result is claimed here. The baseline02 and catalog-wait01 expected-failure envelopes remain separate from candidate evidence.

@@ -37,10 +37,11 @@ def fixture():
     move = block(stream, 'private func finishMoveAfterInputDrain(')
     start = move.index('        #if os(visionOS)')
     pieces['moveInputReset'] = move[start:move.index('#endif', start) + len('#endif')]
-    body = '\n'.join(p for name, p in pieces.items() if name != 'moveInputReset').replace('#if os(visionOS)', '').replace('#else\n        finishMoveAfterInputDrain(c, kind: kind, kept: kept)\n        #endif', '').replace('#endif', '')
+    pieces['bindingState'] = next(line.strip() for line in stream.splitlines() if '@Published private(set) var visionInputBinding =' in line)
+    body = '\n'.join(p for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState']).replace('#if os(visionOS)', '').replace('#else\n        finishMoveAfterInputDrain(c, kind: kind, kept: kept)\n        #endif', '').replace('#endif', '')
     overlay = (ROOT / 'iOSClient/InputOverlay.swift').read_text()
     pieces['takeVisionKeyReleases'] = block(overlay, 'func takeVisionKeyReleases()')
-    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', pieces['moveInputReset'].replace('#if os(visionOS)', '').replace('#endif', ''))
+    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', pieces['moveInputReset'].replace('#if os(visionOS)', '').replace('#endif', '')).replace('// BINDING_STATE', pieces['bindingState'])
     files = {'Client.swift': stub.replace('// EXTRACTED', body), 'main.swift': (Path(__file__).parent / 'main.swift').read_text(), 'Network.swift': (Path(__file__).parent / 'Network.swift').read_text(), 'SwiftUI.swift': (Path(__file__).parent / 'SwiftUI.swift').read_text()}
     for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()
@@ -50,8 +51,11 @@ def fixture():
         files[str(path.relative_to(ROOT))] = path.read_text()
     files['mutants/debt/Client.swift'] = files['Client.swift'].replace('self?.visionInputDebt.record(input, on: expected)', '_ = input', 1)
     files['mutants/route/SessionLink.swift'] = files['iOSClient/SessionLink.swift'].replace('guard current === expected else { return false }', '', 1)
-    late = files['Client.swift'].replace('        let input = CapturedVisionInput(event: event, generation: visionInputGeneration)\n', '', 1).replace('        let bytes = Self.visionInputBytes(input)\n', '', 1)
-    files['mutants/capture/Client.swift'] = late.replace('            let accepted = self.link.send(bytes, onlyOn: expected)', '            let input = CapturedVisionInput(event: event, generation: self.visionInputGeneration)\n            let bytes = Self.visionInputBytes(input)\n            let accepted = self.link.send(bytes, onlyOn: expected)', 1)
+    admission = '        guard let input = visionInputBinding.capture(event) else { return }\n'
+    late = files['Client.swift'].replace(admission, '', 1).replace('        let bytes = Self.visionInputBytes(input)\n', '', 1)
+    files['mutants/capture/Client.swift'] = late.replace('            let accepted = self.link.send(bytes, onlyOn: expected)', '            guard let input = self.visionInputBinding.capture(event) else { return }\n            let bytes = Self.visionInputBytes(input)\n            let accepted = self.link.send(bytes, onlyOn: expected)', 1)
     files['mutants/generation/VisionInputDebt.swift'] = files['visionOSClient/VisionInputDebt.swift'].replace('Self(event: event, generation: generation)', 'Self(event: event, generation: nil)', 1)
+    files['mutants/admission/Client.swift'] = files['Client.swift'].replace(admission, '        let input = visionInputBinding.capture(event) ?? CapturedVisionInput(event: event, generation: nil)\n', 1)
+    files['mutants/controls/VisionInputSession.swift'] = files['visionOSClient/VisionInputSession.swift'].replace(' && client.visionInputBinding.isConfirmed', '', 1)
     manifest = {m: hashlib.sha256(p.encode()).hexdigest() for m, p in pieces.items()}
     return files, manifest

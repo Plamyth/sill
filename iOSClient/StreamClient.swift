@@ -798,7 +798,7 @@ final class StreamClient: ObservableObject {
                 link.replaceConnection(newValue) {
                     self.visionInputDebt.release(on: old).map(Self.visionInputBytes)
                 }
-                visionInputGeneration = nil
+                visionInputBinding = .awaitingCatalog
                 visionInputSession?.setMoving(false)
                 return
             }
@@ -815,7 +815,7 @@ final class StreamClient: ObservableObject {
     weak var visionInputSession: VisionInputSession?
     private var visionMovePreparation: UUID?
     private let visionInputDebt = VisionInputDebt()
-    private var visionInputGeneration: String?
+    @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog
 
     private static func visionInputBytes(_ input: CapturedVisionInput) -> Data {
         StreamMessage(kind: .input, timestamp: Date().timeIntervalSince1970,
@@ -825,13 +825,14 @@ final class StreamClient: ObservableObject {
     @discardableResult
     private func applyVisionInputCatalog(_ list: WindowList, from peer: NWConnection?) -> Bool {
         guard let peer, connection === peer else { return false }
-        if active != list.active || visionInputGeneration != list.inputGeneration {
+        let binding = VisionInputBinding(catalog: list)
+        if active != list.active || visionInputBinding != binding {
             _ = visionInputSession?.takeReleases()
             cancelVisionInputs()
         }
-        visionInputGeneration = list.inputGeneration
         windows = list.windows
         active = list.active
+        visionInputBinding = binding
         return true
     }
 
@@ -2368,7 +2369,7 @@ final class StreamClient: ObservableObject {
         // only until the fence's pong (`deliver`), or stops at once without a fence.
         #if os(visionOS)
         resetVisionAudio()
-        visionInputGeneration = nil
+        visionInputBinding = .awaitingCatalog
         #endif
         let reconnected = sessionDead
         let fenced = kind != .toWifi && !reconnected
@@ -3179,7 +3180,7 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         resetVisionAudio()
         visionInputSession?.releaseAll()
-        visionInputGeneration = nil
+        visionInputBinding = .awaitingCatalog
         #endif
         abandonMove()
         resetPath()
@@ -3338,7 +3339,7 @@ final class StreamClient: ObservableObject {
     func sendInput(_ event: InputEvent) {
         #if os(visionOS)
         guard visionMovePreparation == nil, let expected = connection else { return }
-        let input = CapturedVisionInput(event: event, generation: visionInputGeneration)
+        guard let input = visionInputBinding.capture(event) else { return }
         lastInputAt = ProcessInfo.processInfo.systemUptime
         let bytes = Self.visionInputBytes(input)
         queue.async { [weak self] in

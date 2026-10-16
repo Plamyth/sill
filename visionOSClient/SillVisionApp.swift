@@ -48,6 +48,9 @@ struct SillVisionWorkspace: View {
                         .accessibilityHint("이 Vision 앱이 누른 키와 드래그를 해제합니다.")
                     Spacer()
                     if input.moving { Text("연결 경로 전환 중").font(.caption) }
+                    else if client.visionInputBinding == .awaitingCatalog {
+                        Text("Mac 화면 정보를 기다리는 중입니다. 입력은 확인 후 사용할 수 있습니다.").font(.caption)
+                    }
                 }
                 VisionAudioControls(audio: client.visionAudio,
                                     allowStart: phase == .active && !transitions.isPending && !inputSuspended)
@@ -159,6 +162,7 @@ struct SillVisionWorkspace: View {
             Button("Mac 키") { keysShown.toggle() }
                 .popover(isPresented: $keysShown) {
                     VisionKeyPalette(input: input, desktop: client.active == .desktop)
+                        .disabled(!client.visionInputBinding.isConfirmed)
                 }
             Button("전체 화면") { changingSource = true }
             if let measured = client.linkStats {

@@ -2,6 +2,30 @@ import Foundation
 import Network
 import StreamProtocol
 
+enum VisionInputBinding: Equatable {
+    case awaitingCatalog
+    case confirmedLegacy
+    case scoped(generation: String)
+
+    init(catalog: WindowList) {
+        if let generation = catalog.inputGeneration { self = .scoped(generation: generation) }
+        else { self = .confirmedLegacy }
+    }
+
+    var isConfirmed: Bool {
+        if case .awaitingCatalog = self { return false }
+        return true
+    }
+
+    func capture(_ event: InputEvent) -> CapturedVisionInput? {
+        switch self {
+        case .awaitingCatalog: return nil
+        case .confirmedLegacy: return CapturedVisionInput(event: event, generation: nil)
+        case .scoped(let generation): return CapturedVisionInput(event: event, generation: generation)
+        }
+    }
+}
+
 struct CapturedVisionInput {
     let event: InputEvent
     let generation: String?

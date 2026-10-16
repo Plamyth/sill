@@ -12,7 +12,7 @@ final class VisionInputSession: ObservableObject {
     }
     var canSend: Bool {
         guard let client else { return false }
-        return allowed && !moving && client.connected && client.active != .none
+        return allowed && !moving && client.connected && client.active != .none && client.visionInputBinding.isConfirmed
     }
 
     func bind(_ client: StreamClient) {
