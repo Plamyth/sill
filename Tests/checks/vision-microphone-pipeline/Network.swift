@@ -25,7 +25,9 @@ public final class NWConnection: @unchecked Sendable {
     }
     public func send(content: Data?, completion: SendCompletion) {
         if let content { lock.lock(); output.append(content); lock.unlock() }
-        if case .contentProcessed(let done) = completion { done(nil) }
+        DispatchQueue.global().async {
+            if case .contentProcessed(let done) = completion { done(nil) }
+        }
     }
     public func cancel() { state = .cancelled }
 }

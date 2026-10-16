@@ -37,6 +37,7 @@ import StreamProtocol
     var states: [MicrophoneState] = []
     var clock = DispatchTime.now().uptimeNanoseconds
     var outputCursor = 0
+    var replyCursor = 0
     var inputSample: Int64 = 0
     var ordinary = 0
     var sequence = 0
@@ -71,15 +72,12 @@ import StreamProtocol
             self.states.append(state)
             let message = StreamMessage(kind: .microphoneState, timestamp: 0,
                                         isKeyframe: false, payload: Wire.encode(state))
-            if let render { _ = render.sendEnabled(message.serialized(), to: self.connection) }
-            _ = self.client.receiveMicrophone(StreamMessage.parseHeader(message.serialized())!,
-                message.payload, from: self.connection)
+            self.reader.sendMicrophone(message, to: self.connection, render: render)
         }
         receiver.sendReceipt = { [unowned self] receipt in
             let message = StreamMessage(kind: .microphoneReceipt, timestamp: 0,
                                         isKeyframe: false, payload: Wire.encode(receipt))
-            _ = self.client.receiveMicrophone(StreamMessage.parseHeader(message.serialized())!,
-                message.payload, from: self.connection)
+            self.reader.sendMicrophone(message, to: self.connection, render: nil)
         }
         readerClient = ReaderHarness.Client(connection)
         readerClient.route = host.routes[ObjectIdentifier(connection)]!
@@ -103,6 +101,15 @@ import StreamProtocol
             let kind = StreamMessage.parseHeader($0)?.kind
             return kind == .microphoneControl || kind == .microphoneFrame
         }
+    }
+    func deliverReplies() {
+        let sent = connection.sent
+        for bytes in sent.dropFirst(replyCursor) {
+            guard let header = StreamMessage.parseHeader(bytes),
+                  header.kind == .microphoneState || header.kind == .microphoneReceipt else { continue }
+            _ = client.receiveMicrophone(header, Data(bytes.dropFirst(StreamMessage.headerLength)), from: connection)
+        }
+        replyCursor = sent.count
     }
     func feed(_ batches: [Data]) {
         for batch in batches {
@@ -155,7 +162,8 @@ import StreamProtocol
         let start = p.clientMessages()
         expect(start.count == 1, "actual client sends one start")
         p.feed(start); p.host.drainMicrophoneIngress()
-        await until({ p.client.microphonePhase == .live }, "actual host state enables actual client capture")
+        await until({ p.deliverReplies(); return p.client.microphonePhase == .live },
+                    "actual host state enables actual client capture")
         expect(p.receiver.phase == .active && permissionRequests.withLock { $0 == 1 }, "one permission follows host grant")
 
         for burst in 0..<3 {
@@ -201,8 +209,10 @@ import StreamProtocol
 
         p.clock += 100_000_000
         p.feed(await p.produce(packets: 5)); p.host.drainMicrophoneIngress()
-        expect(p.pull(960, time: p.clock + 161_000_000).allSatisfy { $0 == 0 } &&
-               p.render.counters.2 == 9, "expired actual burst is silent and fully counted")
+        expect(p.pull(960, time: p.clock + 160_000_000).allSatisfy { $0 == 41 * 256 },
+               "actual queued packet remains valid at exact160ms boundary")
+        expect(p.pull(960, time: p.clock + 160_000_001).allSatisfy { $0 == 0 } &&
+               p.render.counters.2 == 8, "expired actual burst is silent and fully counted")
         p.clock += 200_000_000
         let final = await p.produce(packets: 5)
         p.feed(final); p.host.drainMicrophoneIngress()
