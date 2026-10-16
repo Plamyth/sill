@@ -35,8 +35,33 @@ for (rate,size): (Double,AVAudioFrameCount) in [(16_000,4_800),(48_000,4_800)] {
             for level in 0..<4 where abs(sample-(level+1)*4096) < 8 { levels[level] += 1 }
         }
     }
-    let perBlock = Int(Double(size)*48_000/rate)
-    check(levels.allSatisfy { $0 >= perBlock-960 },"distinct consecutive signals retain each input block \(rate)Hz")
+    let target = AVAudioFormat(standardFormatWithSampleRate:48_000,channels:1)!
+    let reference = AVAudioConverter(from:format,to:target)!
+    let total = size*4
+    let whole = AVAudioPCMBuffer(pcmFormat:format,frameCapacity:total)!
+    whole.frameLength = total
+    for i in 0..<Int(total) { whole.floatChannelData![0][i] = Float(i/Int(size)+1)/8 }
+    let output = AVAudioPCMBuffer(pcmFormat:target,frameCapacity:AVAudioFrameCount(Double(total)*48_000/rate))!
+    var cursor: AVAudioFrameCount = 0, retained: [AVAudioPCMBuffer] = []
+    var error: NSError?
+    let status = reference.convert(to:output,error:&error) { requested,state in
+        guard cursor < total else { state.pointee = .noDataNow; return nil }
+        let count = min(requested,total-cursor)
+        let part = AVAudioPCMBuffer(pcmFormat:format,frameCapacity:count)!
+        part.frameLength = count
+        part.floatChannelData![0].update(from:whole.floatChannelData![0].advanced(by:Int(cursor)),count:Int(count))
+        cursor += count; retained.append(part); state.pointee = .haveData
+        return part
+    }
+    withExtendedLifetime(retained) {}
+    var referencePCM = Data(), actualPCM = Data()
+    var packetizer = IPadMicrophonePCM()
+    if error == nil && status != .error {
+        packetizer.append(UnsafeBufferPointer(start:output.floatChannelData![0],count:Int(output.frameLength))) { referencePCM.append($0.pcm) }
+    }
+    frames.forEach { actualPCM.append($0.pcm) }
+    check(!referencePCM.isEmpty && actualPCM == referencePCM,"chunked signal is bitwise equal to single continuous converter reference \(rate)Hz")
+    print("REFERENCE \(rate)Hz sourceConsumed=\(cursor)/\(total) samples=\(output.frameLength) bytes=\(referencePCM.count) match=\(actualPCM == referencePCM)")
     print("ACCOUNTING \(rate)Hz packets=\(frames.count)/\(expected), levels=\(levels)")
 }
 print("RESULT_ASSERTIONS \(assertions)")
