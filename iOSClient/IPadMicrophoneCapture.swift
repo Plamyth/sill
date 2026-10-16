@@ -7,10 +7,11 @@ import os
 @MainActor
 final class IPadMicrophoneCapture {
     enum CaptureError: LocalizedError {
-        case permissionDenied, unavailableFormat, conversionUnavailable
+        case alreadyRunning, permissionDenied, unavailableFormat, conversionUnavailable
 
         var errorDescription: String? {
             switch self {
+            case .alreadyRunning: "iPad 마이크가 이미 사용 중입니다."
             case .permissionDenied: "iPad 마이크 권한이 필요합니다."
             case .unavailableFormat: "iPad 마이크 입력 형식을 확인할 수 없습니다."
             case .conversionUnavailable: "iPad 마이크 소리를 전송 형식으로 바꿀 수 없습니다."
@@ -28,7 +29,7 @@ final class IPadMicrophoneCapture {
     /// `emit` runs on the conversion queue. Its owner must fence the exact peer and grant again
     /// before sending; a stopped capture never calls it after `stop()` returns.
     func start(emit: @escaping @Sendable (IPadMicrophonePCMFrame) -> Void) async throws {
-        guard engine == nil, !starting else { return }
+        guard engine == nil, !starting else { throw CaptureError.alreadyRunning }
         starting = true
         let attempt = UUID()
         generation = attempt
