@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Compile the real injector and the coordinator's input queue without starting a host."""
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
-OUT = ROOT / ".build/checks/pointer-buttons"
+OUT = Path(os.environ.get("SILL_CHECK_OUTPUT", str(ROOT / ".build/checks/pointer-buttons")))
 BASE = "d669a813454603f76074491724ecb4339ad2185c"
 baseline = sys.argv[1:] == ["--baseline"]
 if sys.argv[1:] and not baseline:
@@ -32,7 +33,8 @@ release = "releaseKeys" if baseline else "releaseInput"
 query = "isUpOfSomethingDown(event)" if baseline else "isUpOfSomethingDown(event, from: device)"
 disconnect = coordinator.split("server.onClientDisconnected =", 1)[1].split("server.onClientCountChanged =", 1)[0]
 assert f"self.{release}(of: id)" in disconnect, "disconnect must use the tested cleanup"
-assert coordinator.count(f"injector.{query}") == 2, "both no-source paths must check releases"
+expected_release_paths = 2 if baseline else 3
+assert coordinator.count(f"injector.{query}") == expected_release_paths, "every no-source or epoch rejection must check releases"
 queue = coordinator.split("    private enum Held {", 1)[1].split("    private func raiseIfInteracting", 1)[0]
 queue = "    private enum Held {" + queue
 drop = coordinator.split("        let dropped = heldInput", 1)[1].split("        encoder = nil", 1)[0]
@@ -44,6 +46,7 @@ import StreamProtocol
 final class BufferedInput {{
     let injector: InputInjector
     var switching = false
+    func presentationInputRect(_ input: SourceInput?) -> CGRect? {{ nil }}
     init(_ injector: InputInjector) {{ precondition(injector.dryRun); self.injector = injector }}
     func hold() {{ holdUntil = CFAbsoluteTimeGetCurrent() + 60 }}
     func send(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {{

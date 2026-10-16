@@ -35,7 +35,7 @@ def program(sources):
     client = select_platform(sources[FILES[4]], vision=False)
     route = host.split("        case .input:\n", 1)[1].split("        case .gesture:\n", 1)[0]
     point = function(sources[FILES[3]], "private func point(")
-    rect = function(host, "private func currentSourceRect()")
+    rect = function(host, "private func currentSourceRect(")
     rotation = re.search(r"if active != oldValue \{ inputGeneration = UUID\(\).uuidString \}", host)
     token = "var inputGeneration = \"epoch-A\"" if "private var inputGeneration" in host else ""
     fenced = bool(sources.get(FILES[6]))
@@ -53,8 +53,9 @@ def program(sources):
     listing = function(host, "private func listMessage()").replace("private func", "func", 1) if scoped else ""
     protocol = sources[FILES[0]] + sources[FILES[1]].split("/// Binary image payloads:", 1)[0]
     protocol += "\n" + function(sources[FILES[7]], "public struct Hello:")
+    protocol += "\n" + function(sources[FILES[1]], "public struct VideoEpoch:")
     protocol += "\n" + sources.get(FILES[6], "").replace("import StreamProtocol", "")
-    broadcast = function(sources[FILES[8]], "func broadcast(_ message: StreamMessage)")
+    broadcast = function(sources[FILES[8]], "func broadcast(_ message: StreamMessage,")
     recipients = next(line.strip() for line in broadcast.splitlines() if "for client in clients.values where" in line)
     direct_send = function(sources[FILES[8]], "func send(_ message: StreamMessage, to connection:")
     catalog_sent = next((line.strip() for line in direct_send.splitlines() if "client.catalogSent = true" in line), "")
@@ -93,6 +94,7 @@ struct StreamMessage {
     let timestamp: Double
     let isKeyframe: Bool
     let payload: Data
+    let requiresPresentation = false
     init(kind: Kind = .input, timestamp: Double = 0, isKeyframe: Bool = false, payload: Data) {
         self.kind = kind; self.timestamp = timestamp; self.isKeyframe = isKeyframe; self.payload = payload
     }
@@ -121,11 +123,11 @@ final class Client {
 let aRect = CGRect(x: 100, y: 200, width: 400, height: 200)
 let bRect = CGRect(x: 1000, y: 800, width: 800, height: 600)
 let bounds: [UInt32: CGRect] = [1: aRect, 2: bRect]
-struct Window { let frame: CGRect }
+struct Window { let frame: CGRect; var displayID: UInt32 = 1 }
 final class Catalog {
     var infos: [WindowInfo] = []
     var display: Window? = Window(frame: CGRect(x: 0, y: 0, width: 2000, height: 1400))
-    func window(id: UInt32) -> Window? { bounds[id].map(Window.init) }
+    func window(id: UInt32) -> Window? { bounds[id].map { Window(frame: $0) } }
 }
 struct Stage { var isStaged = false; var captureRectOnScreen: CGRect? }
 struct Pointer { var hasTestPointer = false }
@@ -173,6 +175,8 @@ final class Host {
     func hello(_ connection: NWConnection, _ hello: Hello) {{ let id = ObjectIdentifier(connection); {negotiate} }}
     func select(_ source: StreamSource) {{ {selection_guard}\n active = source }}
 ''' + r'''
+    var videoEpoch: VideoEpoch?
+    func presentationInputRect(_ input: SourceInput?) -> CGRect? { nil }
     var switching = false
     var shuttingDown = false
     func broadcastList() {}
@@ -191,7 +195,7 @@ final class Host {
     static func gestureInput(_ event: InputEvent) -> InputEvent { event }
     func raiseIfInteracting(_ event: InputEvent) { raised += 1 }
     func desktopInputMayActivate(_ event: InputEvent) { desktopActivations += 1 }
-    func deliver(_ event: InputEvent, in rect: CGRect, from device: ObjectIdentifier) {
+    func deliver(_ event: InputEvent, in rect: CGRect, from device: ObjectIdentifier, epoch: VideoEpoch? = nil) {
         injector.apply(event, in: rect)
     }
     func receive(_ data: Data, from connection: NWConnection) {
