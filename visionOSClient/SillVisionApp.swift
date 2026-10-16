@@ -3,25 +3,50 @@ import StreamProtocol
 
 @main
 struct SillVisionApp: App {
+    @StateObject private var session = VisionAppSession()
     var body: some Scene {
         WindowGroup {
-            SillVisionWorkspace()
+            SillVisionWindow(session: session)
         }
         .defaultSize(width: 1280, height: 800)
     }
 }
 
+private struct SillVisionWindow: View {
+    @ObservedObject var session: VisionAppSession
+    @State private var window = UUID()
+
+    var body: some View {
+        Group {
+            if let lease = session.windowLease, lease.window == window {
+                SillVisionWorkspace(session: session, lease: lease).id(lease.admission)
+            }
+            else {
+                VStack(spacing: 16) {
+                    Text("Mac 화면은 한 번에 하나의 CCR Sill 창에서 사용할 수 있습니다.")
+                    Button("이 창에서 연결 계속") { session.claim(window) }
+                        .disabled(session.windowOwner != nil)
+                }.padding(30)
+            }
+        }
+        .onAppear { session.claim(window) }
+        .onDisappear { session.release(window) }
+    }
+}
+
 struct SillVisionWorkspace: View {
-    @StateObject private var client = StreamClient()
-    @StateObject private var stats = ClientStatsReporter()
+    @ObservedObject var session: VisionAppSession
+    let lease: VisionWindowLease
+    @ObservedObject private var client: StreamClient
     @Environment(\.scenePhase) private var phase
-    @StateObject private var input = VisionInputSession()
+    @ObservedObject private var input: VisionInputSession
     @State private var mode = VisionPointer.Mode.pointer
     @State private var keyboardShown = false
     @State private var keysShown = false
     @State private var code = ""
     @State private var address = ""
     @State private var addMac = false
+    @State private var recoveryShown = false
     @State private var changingSource = false
     @GestureState private var dragging = false
     @State private var transitions = VisionTransition()
@@ -29,12 +54,19 @@ struct SillVisionWorkspace: View {
     @State private var textDraft: VisionTextDraft<StreamClient.VisionTextTarget>?
     @State private var draftShown = false
 
+    init(session: VisionAppSession, lease: VisionWindowLease) {
+        self.session = session
+        self.lease = lease
+        self.client = session.client
+        self.input = session.input
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             HStack {
                 Text(client.macName.isEmpty ? "CCR Sill" : client.macName).font(.headline)
                 Spacer()
-                Text(client.status).font(.caption).lineLimit(2)
+                Text(session.message).font(.caption).lineLimit(2)
                 if client.connected {
                     Button("연결 해제") { requestTransition(.disconnect) }
                 }
@@ -46,7 +78,7 @@ struct SillVisionWorkspace: View {
                 screen
                 controls
                 HStack {
-                    Button("누른 입력 해제") { input.releaseAll() }
+                    Button("누른 입력 해제") { withWindowOwnership { input.releaseAll() } }
                         .accessibilityHint("이 Vision 앱이 누른 키와 드래그를 해제합니다.")
                     Spacer()
                     if input.moving { Text("연결 경로 전환 중").font(.caption) }
@@ -61,26 +93,31 @@ struct SillVisionWorkspace: View {
                     }
                 }
                 VisionAudioControls(audio: client.visionAudio,
-                                    allowStart: phase == .active && !transitions.isPending && !inputSuspended)
+                                    allowStart: phase == .active && !transitions.isPending && !inputSuspended,
+                                    admit: withWindowOwnership)
                 VisionMicrophoneControls(client: client,
-                                         allowStart: phase == .active && !transitions.isPending && !inputSuspended)
+                                         allowStart: phase == .active && !transitions.isPending && !inputSuspended,
+                                         admit: withWindowOwnership)
             } else {
                 hosts
             }
         }
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
-        .task { input.bind(client); updateInputAdmission(); stats.attach(to: client); client.startBrowsing() }
+        .task {
+            guard session.owns(lease) else { return }
+            session.start(foreground: phase == .active); updateInputAdmission()
+        }
         .onChange(of: inputAllowed) { _, _ in updateInputAdmission() }
         .onChange(of: phase, initial: true) { _, value in
-            client.visionAudio.setForeground(value == .active)
-            client.setVisionPresentationForeground(value == .active)
+            guard session.owns(lease) else { return }
+            session.start(foreground: value == .active)
             if value != .active { clearDraft(); releaseInput() }
         }
         .onChange(of: client.connected) { _, connected in
             releaseInput()
             transitions.cancel()
-            if connected { inputSuspended = false }
+            if connected { inputSuspended = false; client.rememberAuthenticatedMac() }
         }
         .onChange(of: client.videoSize) { _, _ in releaseInput() }
         .onChange(of: client.active) { _, _ in releaseInput() }
@@ -88,14 +125,14 @@ struct SillVisionWorkspace: View {
             if let textDraft, client.captureVisionTextTarget() != textDraft.target { clearDraft() }
         }
         .onChange(of: mode) { _, _ in releaseInput() }
-        .onChange(of: dragging) { _, value in if !value { input.endGesture() } }
+        .onChange(of: dragging) { _, value in withWindowOwnership { if !value { input.endGesture() } } }
         .onDisappear {
+            guard session.owns(lease) else { return }
             clearDraft()
-            client.setVisionPresentationForeground(false)
-            client.visionAudio.setForeground(false)
-            if client.connected { requestTransition(.disconnect) } else { releaseInput() }
+            session.setForeground(false)
+            releaseInput()
         }
-        .sheet(isPresented: $addMac) { pairingForm }
+        .sheet(isPresented: $recoveryShown) { recoveryForm }
         .sheet(isPresented: $draftShown, onDismiss: clearDraft) {
             VisionTextDraftPanel(client: client, draft: $textDraft, close: clearDraft)
         }
@@ -107,10 +144,28 @@ struct SillVisionWorkspace: View {
     private var hosts: some View {
         VStack(spacing: 18) {
             Text("Mac 화면을 공간 창에서 사용합니다").font(.title2)
+            Text(session.message)
+            ForEach(client.macs) { mac in
+                Button {
+                    withWindowOwnership { client.connect(to: mac) }
+                } label: {
+                    HStack { Text(mac.name); Spacer(); Text(mac.word ?? "") }
+                }
+                .disabled(mac.savedID.flatMap { SavedMacs.automaticTarget(client.savedMacs, preferredID: $0) } == nil)
+            }
+            Button("연결 문제 해결 / 다른 Mac") { recoveryShown = true }
+            Text("Mac 소리와 마이크는 연결 후 직접 켤 수 있습니다.").font(.caption)
+        }
+        .frame(maxWidth: 650, maxHeight: .infinity)
+    }
+
+    private var recoveryForm: some View {
+        VStack(spacing: 18) {
+            Text("연결 문제 해결 / 다른 Mac").font(.title2)
             Text("연결할 Mac을 선택하세요. Vision Pro는 자체 키로 새로 페어링합니다.")
             ForEach(client.macs) { mac in
                 Button {
-                    client.connect(to: mac)
+                    withWindowOwnership { client.connect(to: mac) }
                 } label: {
                     HStack { Text(mac.name); Spacer(); Text(mac.word ?? "") }
                 }
@@ -119,25 +174,27 @@ struct SillVisionWorkspace: View {
                 Text("\(ask.name)에 표시된 12자리 코드를 입력하세요.")
                 TextField("페어링 코드", text: $code).textContentType(.oneTimeCode)
                 HStack {
-                    Button("페어링") { client.pairHome(code: code); code = "" }
-                    Button("취소") { client.cancelHomeAsk(); code = "" }
+                    Button("페어링") { withWindowOwnership { client.pairHome(code: code) }; code = "" }
+                    Button("취소") { withWindowOwnership { client.cancelHomeAsk() }; code = "" }
                 }
             }
             if case .failed(let problem) = client.pairing { Text(problem.text).foregroundStyle(.orange) }
             Button("주소로 Mac 추가") { addMac = true }
-            Text("Mac 소리는 지원하는 호스트에서 직접 켤 수 있습니다. 마이크 전송은 아직 지원하지 않습니다.").font(.caption)
+            Button("닫기") { withWindowOwnership { client.cancelHomeAsk() }; code = ""; recoveryShown = false }
         }
-        .frame(maxWidth: 650, maxHeight: .infinity)
+        .padding(30)
+        .frame(width: 650)
+        .sheet(isPresented: $addMac) { pairingForm }
     }
 
     private var screen: some View {
         GeometryReader { geo in
             ZStack {
                 StreamView(client: client)
-                InputOverlay(videoSize: client.videoSize, send: { input.overlayInput($0) },
-                             setOwnPointer: client.setOwnPointer, proxy: input.keyboard,
+                InputOverlay(videoSize: client.videoSize, send: { event in withWindowOwnership { input.overlayInput(event) } },
+                             setOwnPointer: { point, origin in withWindowOwnership { client.setOwnPointer(point, from: origin) } }, proxy: input.keyboard,
                              isKeyboardShown: $keyboardShown, latchedModifiers: input.latched,
-                             onModifiersConsumed: { input.consumeLatch() })
+                             onModifiersConsumed: { withWindowOwnership { input.consumeLatch() } })
                     .allowsHitTesting(false)
                 Color.clear.contentShape(Rectangle())
                     .gesture(SpatialTapGesture().exclusively(before: DragGesture(minimumDistance: 5))
@@ -149,14 +206,14 @@ struct SillVisionWorkspace: View {
                             let bounds = CGRect(origin: .zero, size: geo.size)
                             guard let start = VisionPointer.point(drag.startLocation, bounds: bounds, video: client.videoSize),
                                   let p = VisionPointer.point(drag.location, bounds: bounds, video: client.videoSize, clamp: true) else { return }
-                            input.drag(from: start, to: p, mode: mode)
+                            withWindowOwnership { input.drag(from: start, to: p, mode: mode) }
                         }
                         .onEnded { value in
                             switch value {
                             case .first(let tap):
                                 guard let p = VisionPointer.point(tap.location, bounds: CGRect(origin: .zero, size: geo.size), video: client.videoSize) else { return }
-                                input.tap(p, mode: mode)
-                            case .second: input.endGesture()
+                                withWindowOwnership { input.tap(p, mode: mode) }
+                            case .second: withWindowOwnership { input.endGesture() }
                             }
                         })
                 if client.active == .none {
@@ -177,13 +234,13 @@ struct SillVisionWorkspace: View {
             Picker("조작", selection: $mode) {
                 ForEach(VisionPointer.Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
-            Button("키보드") { input.keyboard.view?.toggleKeyboard() }
+            Button("키보드") { withWindowOwnership { input.keyboard.view?.toggleKeyboard() } }
             Button("입력 초안") { openDraft() }
                 .accessibilityHint("Mac 입력을 잠시 멈추고 로컬 초안을 편집합니다. 시스템 키보드 받아쓰기도 사용할 수 있습니다.")
-            Button("Esc") { input.press(.escape) }
+            Button("Esc") { withWindowOwnership { input.press(.escape) } }
             Button("Mac 키") { keysShown.toggle() }
                 .popover(isPresented: $keysShown) {
-                    VisionKeyPalette(input: input, desktop: client.active == .desktop)
+                    VisionKeyPalette(input: input, desktop: client.active == .desktop, admit: withWindowOwnership)
                         .disabled(!client.visionInputBinding.isConfirmed)
                 }
             Button("전체 화면") { changingSource = true }
@@ -201,8 +258,8 @@ struct SillVisionWorkspace: View {
             TextField("Mac 주소", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled()
             TextField("12자리 코드", text: $code).textContentType(.oneTimeCode)
             if case .failed(let problem) = client.pairing { Text(problem.text).foregroundStyle(.orange) }
-            Button("페어링") { client.pairTyped(code: code, address: address, overlay: false); code = "" }
-            Button("닫기") { client.cancelPairing(); code = ""; addMac = false }
+            Button("페어링") { withWindowOwnership { client.pairTyped(code: code, address: address, overlay: false) }; code = "" }
+            Button("닫기") { withWindowOwnership { client.cancelPairing() }; code = ""; addMac = false }
         }.padding(30).frame(width: 550)
     }
 
@@ -210,12 +267,19 @@ struct SillVisionWorkspace: View {
         phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown
     }
 
-    private func updateInputAdmission() { input.allowed = inputAllowed }
+    private func updateInputAdmission() {
+        guard session.owns(lease) else { return }
+        input.allowed = inputAllowed; session.refresh()
+    }
 
-    private func releaseInput() { input.releaseAll() }
+    private func withWindowOwnership(_ action: () -> Void) {
+        lease.perform(current: session.windowLease, action)
+    }
+
+    private func releaseInput() { if session.owns(lease) { input.releaseAll() } }
 
     private func openDraft() {
-        guard input.canSend else { return }
+        guard session.owns(lease), input.canSend else { return }
         keysShown = false
         draftShown = true
         updateInputAdmission()
@@ -233,6 +297,7 @@ struct SillVisionWorkspace: View {
     }
 
     private func requestTransition(_ action: VisionTransition.Action) {
+        guard session.owns(lease) else { return }
         clearDraft()
         client.revokeVisionTextDrafts()
         client.visionAudio.stop()
@@ -241,6 +306,7 @@ struct SillVisionWorkspace: View {
         updateInputAdmission()
         releaseInput()
         client.afterVisionInputRelease { readByHost in
+            guard session.owns(lease) else { transitions.cancel(); return }
             guard client.connection === expected else {
                 _ = transitions.settle(ticket, confirmed: false)
                 inputSuspended = true
@@ -263,19 +329,20 @@ struct SillVisionWorkspace: View {
 private struct VisionAudioControls: View {
     @ObservedObject var audio: VisionAudioController
     let allowStart: Bool
+    let admit: (() -> Void) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             let running = audio.presentation.phase.grant != nil
             Button(running ? "Mac 소리 중지" : "Mac 소리 켜기",
                    systemImage: running ? "speaker.slash" : "speaker.wave.2") {
-                if running { audio.stop() } else if allowStart { audio.enable() }
+                admit { if running { audio.stop() } else if allowStart { audio.enable() } }
             }
             .disabled(!running && (!audio.presentation.canEnable || !allowStart || audio.cleanupProblem != nil))
             .accessibilityHint(running ? "즉시 소리를 중지합니다." : "이 버튼은 Mac 소리 수신만 켭니다. 마이크 전송은 별도입니다.")
             Text(message).font(.caption).lineLimit(2)
             if audio.cleanupProblem != nil {
-                Button("오디오 정리 다시 시도", systemImage: "arrow.clockwise") { audio.retryCleanup() }
+                Button("오디오 정리 다시 시도", systemImage: "arrow.clockwise") { admit { audio.retryCleanup() } }
                     .accessibilityHint("남아 있는 오디오 세션만 정리합니다. 소리나 마이크를 다시 켜지 않습니다.")
             }
             Spacer()
@@ -303,6 +370,7 @@ private struct VisionAudioControls: View {
 private struct VisionMicrophoneControls: View {
     @ObservedObject var client: StreamClient
     let allowStart: Bool
+    let admit: (() -> Void) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -310,13 +378,13 @@ private struct VisionMicrophoneControls: View {
             let cleanup = client.microphoneCleanupProblem != nil
             Button(cleanup ? "마이크 정리 다시 시도" : stopping ? "Vision 마이크 중지" : "Vision 마이크 보내기",
                    systemImage: stopping ? "mic.slash" : "mic") {
-                if cleanup || stopping || allowStart { client.toggleVisionMicrophone() }
+                admit { if cleanup || stopping || allowStart { client.toggleVisionMicrophone() } }
             }
             .disabled(!cleanup && !stopping && (!allowStart || !client.microphonePolicy.canStart || client.visionAudio.cleanupProblem != nil))
             .accessibilityHint(cleanup ? "기존 마이크 자원만 정리합니다. 다시 녹음하지 않습니다." :
                 stopping ? "즉시 음성 전송을 중지합니다." : "직접 허용하면 Vision 마이크를 현재 선택한 Mac으로 전송합니다.")
             Button("수신 확인", systemImage: "checkmark.circle") {
-                client.requestVisionMicrophoneReceipt()
+                admit { client.requestVisionMicrophoneReceipt() }
             }
             .disabled(cleanup || client.microphonePhase != .live)
             .accessibilityHint("현재 Mac의 음성 수신량을 한 번 확인합니다. 실제 통화 입력은 별도 확인이 필요합니다.")

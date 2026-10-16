@@ -1,4 +1,4 @@
-# iPad reconnects to its saved Mac
+# Reconnect to a saved Mac
 
 The iPad app previously started Bonjour browsing after launch but waited for a tap even when it had a valid pairing. A fresh process has no in-memory `Reconnect` value, so the existing lost-session retry path cannot make the first connection.
 
@@ -9,3 +9,23 @@ After `startRemote`, the iOS client arms one startup attempt. It waits for an ex
 This path uses the existing saved pairing instead of constructing a synthetic lost-session `Reconnect` value. That keeps initial selection separate from retries after an established session ends. It does not add a background poller. If the saved Mac is absent or its trust record is invalid, the normal Mac list remains available for an explicit user choice.
 
 The pure saved-Mac policy checks cover explicit preference, older-record migration, invalid trust records, and ambiguous pairing order. A signed build was installed on the iPad Pro with bundle `com.ambrion.sillcanvas.ipad`. Two consecutive process relaunches connected to the separate `CCR Sill.app` Mac host without a tap or another pairing code. The Canvas scene file hash matched before and after installation. This verifies local automatic connection on that device and host; remote network recovery and another Apple device still need their own physical checks.
+
+## Native Vision startup candidate, build 3
+
+The native Vision app owns one StreamClient, input session and stats reporter across windows. One window admits the session. An initial inactive scene leaves startup waiting. The first active scene calls `startRemote()`, `armSavedMacAutoConnect()` and `startBrowsing()` once. It uses the same saved-Mac policy and preferred-Mac key as iPad. Existing reconnect handles an established session dropping. Closing a window before the first activation leaves the startup attempt available.
+
+An operator can authorize one cable pairing at process launch with `--ccr-cable-bootstrap-pin <canonical unpadded Base64URL SHA256 public pin>` and `--ccr-cable-bootstrap-service <exact Bonjour instance>`. Both arguments are native process arguments. The parent captures the expected public pin from the exact local host process. The client never obtains it from an arbitrary enrollment endpoint. The observed instance contains NBSP after MacBook. The client compares UTF-8 bytes without trimming or folding.
+
+The bootstrap coordinator requires zero saved pairings, an active app and owning scene, an idle client and one exact NETWORK row with a pairing-required door and a wired dial. HomeAsk carries the expected pin through the normal HomeDialer. Its target forces IPv6 and has no Wi-Fi fallback. The actual client cable check runs without the DEBUG cable override before sending `PairRequest.ask`. A single-use permit prevents queued sends after cancellation or backgrounding. A busy or locked host, mismatched pin, noncable response or invalid result ends this attempt. Activation never retries a consumed bootstrap.
+
+Only a cable result accepted by the existing DiscoveryPolicy can reach `savePairedAtHome` and `sessionAfterHomePairing`. The full Mac ID must correspond to the expected pin. Keys remain in the device's normal key store. Ordinary launches have no bootstrap request and never enroll an unknown Mac automatically.
+
+The main view shows Korean connection state. Existing address, code and cancellation forms remain under the explicit `연결 문제 해결 / 다른 Mac` action. A bootstrap refusal does not open that recovery UI or invoke its pairing methods. Source selection and audio remain explicit actions.
+
+Every admitted window receives a fresh lease, including when the same window claims again. Overlay, gesture, key palette, release, pairing and audio control callbacks check that captured lease when they execute. A disappearing view does not disconnect the shared client. A pending source/disconnect transition also checks its lease before applying its result. Transfer tests queue an old tap and gesture-end callback, then verify that only the current owner's action reaches the session. Moving input state participates in status updates; authenticated remote sessions use the saved pin when reporting the expected Mac.
+
+`Documents/CCRAutoConnectStatus.json` is a private, protected, backup-excluded snapshot owned by this feature. It contains only schema, build, startupMode, phase, savedMacCount, expectedMacMatched, connected, catalogReceived, presentationReady, inputReady and a fixed reason. The writer reacts to selected state events and skips identical snapshots. A locked file remains unwritten until an event permits I/O. Pairing does not imply connection, display presentation, desktop frames, input delivery or user acceptance. Readiness comes from the current client, current source, presentation binding and input admission.
+
+This candidate has a generated project and a source diff check. This code worker does not compile, build, install, contact the host, pair a device or publish a branch. Independent native review, the pure adapter suite, the real XROS build and physical evidence belong to the parent task. Host CableLink admission and StreamProtocol remain independently owned.
+
+The reproducible parent command is `python3 Tests/checks/vision-autoconnect/run.py <source-root> <new-isolated-output-dir>`. It writes `result.json`, hashes and compiler/runtime logs. It compiles the actual coordinator and pure policies together with extracted ask, dial-selection, response, normal-save, saved-startup and app-startup bodies. Its typed stand-ins provide inert networking, keys, defaults, timers and session I/O. It includes initial inactive-to-active startup, cancellation of queued sends, invalid pins, exact NBSP matching, unrelated/duplicate/nonwired rows, existing-pair refusal, no fallback, no busy retry and accepted-pair-to-saved-cold-start behavior. The suite cannot establish physical cable admission or presented desktop frames.

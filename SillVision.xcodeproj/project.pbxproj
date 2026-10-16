@@ -514,6 +514,78 @@
 			<key>fileRef</key>
 			<string>B327B8A7477D1231996FCA1C</string>
 		</dict>
+		<key>7C90C59BF846BE05384578DB</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAppSession.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>B771555041E5E11E0F265CA4</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>7C90C59BF846BE05384578DB</string>
+		</dict>
+		<key>3479E8EBBFDC8FBE714AE2E1</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionCableBootstrap.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>88EACB3A2740149DFB20447F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>3479E8EBBFDC8FBE714AE2E1</string>
+		</dict>
+		<key>1EC353247B72DF67C513ED2B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAutoConnectStatus.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>945B89332D433A1D178BA2E4</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>1EC353247B72DF67C513ED2B</string>
+		</dict>
+		<key>48F453A3A0A3E814F7179DDC</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/StreamClient+VisionAutoConnect.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>C5942AF7883F30CB41E8925D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>48F453A3A0A3E814F7179DDC</string>
+		</dict>
 		<key>A35A325A1D9AC8F8AE7E0E91</key>
 		<dict>
 			<key>isa</key>
@@ -952,6 +1024,10 @@
 				<string>74F957567B21004296A7A8F8</string>
 				<string>182110FA0F96BC35CDB69840</string>
 				<string>B327B8A7477D1231996FCA1C</string>
+				<string>7C90C59BF846BE05384578DB</string>
+				<string>3479E8EBBFDC8FBE714AE2E1</string>
+				<string>1EC353247B72DF67C513ED2B</string>
+				<string>48F453A3A0A3E814F7179DDC</string>
 				<string>A35A325A1D9AC8F8AE7E0E91</string>
 				<string>3454D9B9946EBD2F06842B49</string>
 				<string>446CFAC6C19FF4FA98E736E4</string>
@@ -1014,6 +1090,10 @@
 				<string>2EE7E986523D977002850DB1</string>
 				<string>093FAD9F1AFE6154567069A4</string>
 				<string>B752A128F4045FB722367596</string>
+				<string>B771555041E5E11E0F265CA4</string>
+				<string>88EACB3A2740149DFB20447F</string>
+				<string>945B89332D433A1D178BA2E4</string>
+				<string>C5942AF7883F30CB41E8925D</string>
 				<string>CD3BDEEBE03DDE64B75B7B65</string>
 				<string>5E0C7BD5E5E54E80D694B9B9</string>
 				<string>674544828B4029D98977E5D7</string>
@@ -1134,7 +1214,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>2</string>
+				<string>3</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>
@@ -1201,7 +1281,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>2</string>
+				<string>3</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>

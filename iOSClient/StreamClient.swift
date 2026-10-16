@@ -169,7 +169,7 @@ final class StreamClient: ObservableObject {
     /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
     @Published var savedMacs: [SavedMac] = []
 
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
     private enum StartupAutoConnection {
         case unarmed
         case waiting(String)
@@ -534,7 +534,7 @@ final class StreamClient: ObservableObject {
     /// Search Nearby tapped since the last connection.
     var askedNearby = false
     /// The network browser waits with PolicyDenied: Local Network access is off for Sill.
-    var localNetworkDenied = false
+    @Published var localNetworkDenied = false
     /// The policy's next look (its 3 s mark).
     private var discoveryRecheck: DispatchWorkItem?
     /// When each Direct row was first seen as one (DiscoveryPolicy.directSince): an automatic
@@ -849,6 +849,13 @@ final class StreamClient: ObservableObject {
     private let link = SessionLink()
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     #if os(visionOS)
+    var visionStartupStarted = false
+    var visionStartupForeground = false
+    @Published var visionCableBootstrap = VisionCableBootstrap<FoundMac>(launch: .ordinary)
+    var visionExpectedMacPin: Data? {
+        if let request = visionCableBootstrap.request { return request.pin }
+        return SavedMacs.automaticTarget(savedMacs, preferredID: UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey))?.fingerprintData
+    }
     lazy var visionInputFence = VisionInputFence(queue: queue)
     weak var visionInputSession: VisionInputSession?
     private var visionMovePreparation: UUID?
@@ -1201,7 +1208,7 @@ final class StreamClient: ObservableObject {
         discoveryChanged()
     }
 
-    #if os(iOS)
+    #if os(iOS) || os(visionOS)
     /// Runs after startRemote has discarded records whose device key is missing. It never creates
     /// an identity, opens a pairing ask, or chooses a different Mac after a stored preference fails.
     func armSavedMacAutoConnect() {
@@ -1216,7 +1223,7 @@ final class StreamClient: ObservableObject {
             return
         }
         guard DeviceIdentity.existing() != nil else {
-            status = "This iPad's saved device key is unavailable. Unlock this iPad and reopen Sill."
+            status = "This \(Self.deviceWord)'s saved device key is unavailable. Unlock this \(Self.deviceWord) and reopen Sill."
             startupAutoConnection = .stopped
             return
         }
@@ -1253,7 +1260,7 @@ final class StreamClient: ObservableObject {
               homeDecision(row, macID: macID, tap: false) == .pinned else { return }
         startupAutoConnection = .attempted
         if !dialRow(row, macID: macID, trust: .saved(pin: pin), tagNamed: true, tap: false) {
-            status = "This iPad's saved device key is unavailable. Unlock this iPad and reopen Sill."
+            status = "This \(Self.deviceWord)'s saved device key is unavailable. Unlock this \(Self.deviceWord) and reopen Sill."
             startupAutoConnection = .stopped
         }
     }
@@ -1343,6 +1350,9 @@ final class StreamClient: ObservableObject {
         microphoneBackgrounded()
         #endif
         appInForeground = false
+        #if os(visionOS)
+        stopVisionCableBootstrap(.foregroundRequired)
+        #endif
         reconnectCheck?.cancel()
         reconnectCheck = nil
         networkLife.rebuildWork?.cancel()
@@ -1468,8 +1478,11 @@ final class StreamClient: ObservableObject {
         recomputeMacs()
         updateDiscovery()
         reconnectIfListed()
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         trySavedMacAutoConnect()
+        #endif
+        #if os(visionOS)
+        considerVisionCableBootstrap()
         #endif
         moveToNetworkIfListed()
         followBestPath()
@@ -1688,7 +1701,10 @@ final class StreamClient: ObservableObject {
     /// the saved Mac's addresses through the remote door. At home the row's door decides the rest
     /// (`dial`): a pinned session, the ask, a session on an open door, a plain one, or nothing.
     func connect(to mac: FoundMac) {
-        #if os(iOS)
+        #if os(visionOS)
+        stopVisionCableBootstrap(.cancelled)
+        #endif
+        #if os(iOS) || os(visionOS)
         startupAutoConnection = .stopped
         #endif
         #if DEBUG
@@ -3406,7 +3422,10 @@ final class StreamClient: ObservableObject {
 
     /// The user chose to leave. No reconnect.
     func disconnect() {
-        #if os(iOS)
+        #if os(visionOS)
+        stopVisionCableBootstrap(.cancelled)
+        #endif
+        #if os(iOS) || os(visionOS)
         startupAutoConnection = .stopped
         #endif
         reconnect = nil

@@ -104,6 +104,7 @@ final class HomeDialer {
         /// The row (FoundMac.id) it dials; nil for an address or the session's own connection.
         var row: String? = nil
         /// What the DEBUG console calls it.
+        var cableOnly = false
         let label: String
     }
 
@@ -169,8 +170,8 @@ final class HomeDialer {
         guard index < targets.count else { finish(); return }
         onFallback = false
         let t = targets[index]
-        dial(t.endpoint, ipv6Only: t.fallback != nil,
-             wait: t.fallback != nil ? DiscoveryPolicy.wiredWait : Double(RemoteTLS.dialTimeout) + 2)
+        dial(t.endpoint, ipv6Only: t.cableOnly || t.fallback != nil,
+             wait: t.cableOnly || t.fallback != nil ? DiscoveryPolicy.wiredWait : Double(RemoteTLS.dialTimeout) + 2)
     }
 
     private func dial(_ endpoint: NWEndpoint, ipv6Only: Bool, wait: Double) {
@@ -277,6 +278,7 @@ struct HomeAsk: Equatable {
     var askedKey: Data?
     var answered: NWEndpoint?
     var claimedCable = false
+    var bootstrapPin: Data? = nil
 }
 
 extension StreamClient {
@@ -464,17 +466,26 @@ extension StreamClient {
     /// connection runs over the USB cable, and kind 20 within 15 s. `savedID`: a saved Mac that
     /// removed this device, whose key the ask and the proofs are pinned to; otherwise any key, and
     /// the one the ask saw is kept (`askedKey`).
-    func ask(_ mac: FoundMac, savedID: String?, tagNamed: Bool, tried: [String] = [], replaces: String? = nil) {
+    func ask(_ mac: FoundMac, savedID: String?, tagNamed: Bool, tried: [String] = [], replaces: String? = nil, bootstrapPin: Data? = nil) {
         guard let endpoint = mac.endpoint else { return }
         let wired = wiredDial(for: mac)
-        let target = HomeDialer.Target(endpoint: wired?.endpoint ?? endpoint, fallback: wired != nil ? endpoint : nil,
-                                       peerToPeer: mac.direct, row: mac.id, label: wired?.via ?? mac.name)
+        if bootstrapPin != nil {
+            guard mac.route == .network, mac.door == .pairingRequired, wired != nil else { return }
+        }
+        let target = HomeDialer.Target(endpoint: wired?.endpoint ?? endpoint,
+                                       fallback: bootstrapPin == nil && wired != nil ? endpoint : nil,
+                                       peerToPeer: mac.direct, row: mac.id, cableOnly: bootstrapPin != nil, label: wired?.via ?? mac.name)
         startAsk(HomeAsk(target: target, name: mac.name, cableRow: mac.homeWord == .pairsOverCable, savedID: savedID,
-                         tagNamed: tagNamed, tried: tried, replaces: replaces))
+                         tagNamed: tagNamed, tried: tried, replaces: replaces, bootstrapPin: bootstrapPin))
     }
 
     func startAsk(_ start: HomeAsk, busyRetried: Bool = false) {
-        guard let identity = deviceIdentity() else { return }
+        guard let identity = deviceIdentity() else {
+            #if os(visionOS)
+            if start.bootstrapPin != nil { stopVisionCableBootstrap(.keyUnavailable) }
+            #endif
+            return
+        }
         homeDialer?.cancel()
         pairingDial?.cancel()
         pairingDial = nil
@@ -492,7 +503,7 @@ extension StreamClient {
         if pairing != .idle { pairing = .idle }
         hostName = ask.name
         status = DiscoveryPolicy.HomeCopy.pairing(mac: ask.name, cable: ask.cableRow)
-        let pin = ask.savedID.flatMap { savedMac($0)?.fingerprintData }
+        let pin = ask.bootstrapPin ?? ask.savedID.flatMap { savedMac($0)?.fingerprintData }
         #if DEBUG
         print("home: asking \(ask.name) to pair at \(ask.target.label)\(pin != nil ? ", pinned to its saved key" : "")")
         #endif
@@ -501,26 +512,46 @@ extension StreamClient {
         let deviceName = UIDevice.current.name
         dialer.onWinner = { [weak self, weak dialer] w in
             guard let self, let dialer else { w.connection.cancel(); return }
-            let check = self.cableCheck(w.connection)
+            let check = self.cableCheck(w.connection, allowTestOverride: ask.bootstrapPin == nil)
             #if DEBUG
             print("home: \(check.console)")
             #endif
-            self.homeExchange(w, identity: identity, deviceName: deviceName, method: PairRequest.ask, cable: check.cable ? true : nil,
-                              key: nil) { outcome in
-                DispatchQueue.main.async {
-                    guard self.homeDialer === dialer, self.pairingAttempt == attempt else {
-                        // Cancelled while the ask was on its way, and the Mac showed a code for it
-                        // meanwhile: that code can go too.
-                        if case .answer(let r, _) = outcome, r.reason == PairResult.shown {
-                            self.withdrawAsk(at: HomeDialer.Target(endpoint: w.endpoint, peerToPeer: w.target.peerToPeer,
-                                                                   row: w.target.row, label: w.target.label), key: w.fingerprint)
+            let exchange = {
+                self.homeExchange(w, identity: identity, deviceName: deviceName, method: PairRequest.ask, cable: check.cable ? true : nil,
+                                  key: nil) { outcome in
+                    DispatchQueue.main.async {
+                        guard self.homeDialer === dialer, self.pairingAttempt == attempt else {
+                            if ask.bootstrapPin == nil, case .answer(let r, _) = outcome, r.reason == PairResult.shown {
+                                self.withdrawAsk(at: HomeDialer.Target(endpoint: w.endpoint, peerToPeer: w.target.peerToPeer,
+                                                                       row: w.target.row, label: w.target.label), key: w.fingerprint)
+                            }
+                            return
                         }
-                        return
+                        self.homeDialer = nil
+                        self.asked(outcome, winner: w, claimed: check.cable, busyRetried: busyRetried)
                     }
-                    self.homeDialer = nil
-                    self.asked(outcome, winner: w, claimed: check.cable, busyRetried: busyRetried)
                 }
             }
+            if ask.bootstrapPin != nil {
+                #if os(visionOS)
+                DispatchQueue.main.async {
+                    guard self.homeDialer === dialer, self.pairingAttempt == attempt else { w.connection.cancel(); return }
+                    var sent = false
+                    self.visionCableBootstrap.authorizeAsk(peerPin: w.fingerprint, cable: check.cable,
+                        foreground: self.appInForeground && self.visionStartupForeground,
+                        exclusive: self.savedMacs.isEmpty && !self.connected && self.connection == nil && self.reconnect == nil && self.remoteDial == nil && self.pairingDial == nil && self.pairing == .idle) { permit in
+                        sent = true
+                        self.queue.async { permit.perform(exchange) }
+                    }
+                    if !sent {
+                        w.connection.cancel()
+                        self.cancelHomeAsk(idleStatus: false)
+                    }
+                }
+                #else
+                w.connection.cancel()
+                #endif
+            } else { exchange() }
         }
         dialer.onFailed = { [weak self, weak dialer] failed in
             DispatchQueue.main.async {
@@ -536,6 +567,9 @@ extension StreamClient {
     private func asked(_ outcome: HomeExchange, winner w: HomeDialer.Winner, claimed: Bool, busyRetried: Bool) {
         guard var ask = homeAsk else { return }
         guard case .answer(let r, _) = outcome else {
+            #if os(visionOS)
+            if ask.bootstrapPin != nil { stopVisionCableBootstrap(.noAnswer) }
+            #endif
             homeAsk = nil
             status = DiscoveryPolicy.HomeCopy.noAnswer(mac: ask.name)
             return
@@ -547,11 +581,36 @@ extension StreamClient {
         #if DEBUG
         print("home: \(ask.name) answered the ask: \(answer)")
         #endif
+        #if os(visionOS)
+        if let expected = ask.bootstrapPin {
+            guard visionCableBootstrap.isAttempting, appInForeground, visionStartupForeground, savedMacs.isEmpty,
+                  w.fingerprint == expected, r.macID == MacID.make(fingerprint: expected), answer == .pairedOverCable else {
+                let reason: VisionCableBootstrap<FoundMac>.Reason
+                if !appInForeground || !visionStartupForeground { reason = .foregroundRequired }
+                else if w.fingerprint != expected { reason = .pinRejected }
+                else {
+                    switch answer {
+                    case .locked: reason = .macLocked
+                    case .busy: reason = .hostBusy
+                    case .shown: reason = .cableRejected
+                    case .openOnMac, .refused: reason = .hostRefused
+                    default: reason = .invalidResponse
+                    }
+                }
+                stopVisionCableBootstrap(reason)
+                homeAsk = nil
+                return
+            }
+        }
+        #endif
         switch answer {
         case .pairedOverCable:
             homeAsk = nil
             guard let id = savePairedAtHome(r, fingerprint: w.fingerprint, method: PairResult.cable, name: ask.name, replacing: ask.replaces,
                                             bonjourName: Self.bonjourName(ask.target.fallback ?? ask.target.endpoint)) else { return }
+            #if os(visionOS)
+            if ask.bootstrapPin != nil { visionCableBootstrap.accepted() }
+            #endif
             // The session's dial first, then the pairing's words: the dial sets "Connecting to…" in
             // this same turn, and a status line set twice in one turn is drawn and spoken once, as
             // the last. So "Paired with Mac mini over the cable." stays on screen, and VoiceOver says
@@ -587,7 +646,7 @@ extension StreamClient {
             homeAsk = nil
             status = DiscoveryPolicy.HomeCopy.locked(mac: ask.name)
         case .busy(let after):
-            guard !busyRetried else {
+            guard ask.bootstrapPin == nil, !busyRetried else {
                 homeAsk = nil
                 status = DiscoveryPolicy.HomeCopy.openOnMac(mac: ask.name)
                 return
@@ -608,6 +667,12 @@ extension StreamClient {
     private func askFailed(_ failed: HomeDialer.Failed) {
         guard let ask = homeAsk else { return }
         homeAsk = nil
+        #if os(visionOS)
+        if ask.bootstrapPin != nil {
+            stopVisionCableBootstrap(failed.statuses.contains(DiscoveryPolicy.pinRefused) ? .pinRejected : .noAnswer)
+            return
+        }
+        #endif
         if failed.statuses.contains(DiscoveryPolicy.pinRefused), let id = ask.savedID {
             let tried = ask.tried + [ask.target.row].compactMap { $0 }
             // Rows taken by their Bonjour name alone whose key was another's: not that Mac.
@@ -639,6 +704,9 @@ extension StreamClient {
         homeDialer?.cancel()
         homeDialer = nil
         guard let ask = homeAsk else { return }
+        #if os(visionOS)
+        if ask.bootstrapPin != nil { visionCableBootstrap.stop(.cancelled) }
+        #endif
         pairingAttempt += 1
         homeAsk = nil
         // The Mac showed a code for this ask: it can go now, rather than stay up its 5 minutes.
@@ -998,7 +1066,7 @@ extension StreamClient {
         savedMacs = SavedMacs.adding(mac, to: savedMacs)
         if let old = replaces { savedMacs = SavedMacs.replacingNewKey(old: old, new: macID, in: savedMacs) }
         persistSavedMacs()
-        #if os(iOS)
+        #if os(iOS) || os(visionOS)
         rememberPreferredMac(macID)
         #endif
         return macID
@@ -1103,9 +1171,9 @@ extension StreamClient {
     /// interface it is scoped to, from the connection's path, against this device's own addresses
     /// (DiscoveryPolicy.onCable). DEBUG `-SillCableTest 1` counts this device's path as the cable:
     /// the simulator has no cable of its own.
-    func cableCheck(_ c: NWConnection) -> DiscoveryPolicy.CableCheck {
+    func cableCheck(_ c: NWConnection, allowTestOverride: Bool = true) -> DiscoveryPolicy.CableCheck {
         #if DEBUG
-        if UserDefaults.standard.bool(forKey: "SillCableTest") {
+        if allowTestOverride, UserDefaults.standard.bool(forKey: "SillCableTest") {
             return DiscoveryPolicy.CableCheck(cable: true, console: "cable: yes (-SillCableTest)")
         }
         #endif

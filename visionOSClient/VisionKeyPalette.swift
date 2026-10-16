@@ -3,6 +3,7 @@ import SwiftUI
 struct VisionKeyPalette: View {
     @ObservedObject var input: VisionInputSession
     let desktop: Bool
+    let admit: (() -> Void) -> Void
     @State private var tab = 0
 
     var body: some View {
@@ -10,7 +11,7 @@ struct VisionKeyPalette: View {
             Text("Mac 키와 단축키").font(.headline)
             HStack {
                 ForEach(VisionModifier.allCases) { modifier in
-                    Button(modifier.title) { input.toggle(modifier) }
+                    Button(modifier.title) { admit { input.toggle(modifier) } }
                         .frame(minWidth: 60, minHeight: 60)
                         .tint(input.latched.contains(modifier.flag) ? .blue : .gray)
                         .accessibilityLabel(modifier.name)
@@ -26,7 +27,7 @@ struct VisionKeyPalette: View {
             if tab == 1 {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3)) {
                     ForEach(VisionShortcut.allCases) { shortcut in
-                        Button(shortcut.title) { input.perform(shortcut) }
+                        Button(shortcut.title) { admit { input.perform(shortcut) } }
                             .frame(maxWidth: .infinity, minHeight: 60)
                             .disabled(shortcut.desktopOnly && !desktop)
                     }
@@ -34,7 +35,7 @@ struct VisionKeyPalette: View {
             } else {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4)) {
                     ForEach(VisionRemoteKey.allCases.filter { $0.isFunction == (tab == 2) }) { key in
-                        Button(key.title) { input.press(key) }
+                        Button(key.title) { admit { input.press(key) } }
                             .frame(maxWidth: .infinity, minHeight: 60)
                             .accessibilityLabel(key.accessibilityName)
                     }
