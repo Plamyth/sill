@@ -5,11 +5,30 @@ import CoreMedia
 import SwiftUI
 import StreamProtocol
 
-/// A UIView whose layer is an AVSampleBufferDisplayLayer, which decodes HEVC in hardware itself.
-/// No VTDecompressionSession needed for the spike.
 final class HEVCDisplayView: UIView {
+    #if os(visionOS)
+    override class var layerClass: AnyClass { CALayer.self }
+    private var nativeLayer: AVSampleBufferDisplayLayer?
+    private var displayLayer: AVSampleBufferDisplayLayer { nativeLayer! }
+    private enum NativeBinding: Equatable {
+        case closed
+        case legacy
+        case epoch(VideoEpoch, ObjectIdentifier)
+    }
+    private var nativeBinding = NativeBinding.closed
+    private var nativeLegacyPeer: ObjectIdentifier?
+    private var presentation = VisionPresentation()
+    private var retiring: (id: UUID, layer: AVSampleBufferDisplayLayer)?
+    private var presentationObservers: [NSObjectProtocol] = []
+    private var presentationForeground = true
+    private let presentationShield = CALayer()
+    private var pendingNativePS: ParameterSets?
+    private var pendingNativeIDR: Data?
+    var onPresentation: ((VisionPresentation.Ticket?) -> Void)?
+    #else
     override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
     private var displayLayer: AVSampleBufferDisplayLayer { layer as! AVSampleBufferDisplayLayer }
+    #endif
 
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyframe = true
@@ -68,7 +87,13 @@ final class HEVCDisplayView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
+        #if os(visionOS)
+        presentationShield.backgroundColor = UIColor.black.cgColor
+        presentationShield.zPosition = 90
+        layer.addSublayer(presentationShield)
+        #else
         displayLayer.videoGravity = .resizeAspect
+        #endif
         layer.addSublayer(cursorLayer)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -78,6 +103,8 @@ final class HEVCDisplayView: UIView {
         // A standalone layer renders at 1× unless told otherwise; the arrow should be crisp.
         #if os(visionOS)
         cursorLayer.contentsScale = traitCollection.displayScale
+        if window == nil { invalidateNativeMedia() }
+        else { rebuildNativeLayer() }
         #else
         if let scale = window?.screen.scale { cursorLayer.contentsScale = scale }
         #endif
@@ -85,6 +112,13 @@ final class HEVCDisplayView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        #if os(visionOS)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        nativeLayer?.frame = bounds
+        presentationShield.frame = bounds
+        CATransaction.commit()
+        #endif
         placeCursor()   // rotation and letterbox changes move the video rect under it
         #if DEBUG
         if let debugFrame {
@@ -183,6 +217,9 @@ final class HEVCDisplayView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
+        #if os(visionOS)
+        if case .epoch = nativeBinding, presentation.admitted == nil { cursorLayer.isHidden = true; return }
+        #endif
         let rect = Self.videoRect(in: bounds, videoSize: pointerVideoSize)
         guard let p = pointer, rect.width > 0, rect.height > 0 else {
             cursorLayer.isHidden = true
@@ -232,6 +269,27 @@ final class HEVCDisplayView: UIView {
 
     /// Thread-safe: AVSampleBufferDisplayLayer's enqueue/flush are documented as safe off main.
     func apply(_ ps: ParameterSets) {
+        #if os(visionOS)
+        return
+        #else
+        applyFormat(ps)
+        #endif
+    }
+
+    #if os(visionOS)
+    func applyLegacy(_ ps: ParameterSets, peer: ObjectIdentifier) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.nativeBinding == .legacy, self.nativeLegacyPeer == peer else { return }
+            if let prior = self.lastParameterSets, prior != ps.encoded() { self.invalidateNativeMedia() }
+            if let prior = self.pendingNativePS, prior.encoded() != ps.encoded() { self.pendingNativeIDR = nil }
+            self.pendingNativePS = ps
+            self.rebuildNativeLayer()
+            if self.nativeLayer != nil { self.applyFormat(ps) }
+        }
+    }
+    #endif
+
+    private func applyFormat(_ ps: ParameterSets) {
         // The host repeats the parameter sets with every keyframe. Only a real change (a new source,
         // a resize) needs a new format description and a blank layer; a repeat must not flicker.
         let encoded = ps.encoded()
@@ -252,10 +310,25 @@ final class HEVCDisplayView: UIView {
             parameterSetSizes: sizes, nalUnitHeaderLength: Int32(ps.nalUnitHeaderLength),
             extensions: nil, formatDescriptionOut: &desc)
         guard status == noErr, let desc else { print("format description failed: \(status)"); return }
+        #if os(visionOS)
+        if case .epoch(let epoch, _) = nativeBinding {
+            let dimensions = CMVideoFormatDescriptionGetDimensions(desc)
+            guard epoch.matchesEncodedDimensions(width: Int(dimensions.width), height: Int(dimensions.height)) else {
+                invalidateNativeMedia()
+                return
+            }
+        }
+        #endif
         formatDescription = desc
         waitingForKeyframe = true
         let dimensions = CMVideoFormatDescriptionGetDimensions(desc)
         let size = CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height))
+        #if os(visionOS)
+        pointerVideoSize = size
+        onVideoSize?(size)
+        placeCursor()
+        onVideoSizeForPointer?(size)
+        #else
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pointerVideoSize = size
@@ -263,13 +336,22 @@ final class HEVCDisplayView: UIView {
             self.placeCursor()
             self.onVideoSizeForPointer?(size)
         }
+        #endif
         // Remove the last frame too: switching sources should show black until the new keyframe,
         // not the previous window frozen in place.
+        #if !os(visionOS)
         displayLayer.flushAndRemoveImage()
+        #endif
     }
 
     /// Session over: drop the picture and forget the format so the next Mac starts clean.
     func clear() {
+        #if os(visionOS)
+        nativeBinding = .closed
+        nativeLegacyPeer = nil
+        invalidateNativeMedia()
+        return
+        #else
         formatDescription = nil
         lastParameterSets = nil
         waitingForKeyframe = true
@@ -279,9 +361,31 @@ final class HEVCDisplayView: UIView {
             self?.pointerVideoSize = .zero
             self?.placeCursor()
         }
+        #endif
     }
 
     func enqueue(_ data: Data, isKeyframe: Bool) {
+        #if os(visionOS)
+        return
+        #else
+        enqueueSample(data, isKeyframe: isKeyframe)
+        #endif
+    }
+
+    #if os(visionOS)
+    func enqueueLegacy(_ data: Data, isKeyframe: Bool, peer: ObjectIdentifier) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.nativeBinding == .legacy, self.nativeLegacyPeer == peer else { return }
+            guard self.nativeLayer != nil else {
+                if isKeyframe { self.pendingNativeIDR = data }
+                return
+            }
+            self.enqueueSample(data, isKeyframe: isKeyframe)
+        }
+    }
+    #endif
+
+    private func enqueueSample(_ data: Data, isKeyframe: Bool) {
         guard let desc = formatDescription else { return }
         if waitingForKeyframe {
             guard isKeyframe else { return }
@@ -315,12 +419,137 @@ final class HEVCDisplayView: UIView {
 
         if displayLayer.status == .failed {
             print("display layer failed: \(String(describing: displayLayer.error))")
+            #if os(visionOS)
+            invalidateNativeMedia()
+            #else
             displayLayer.flush()
+            #endif
             waitingForKeyframe = true
             return
         }
+        #if os(visionOS)
+        displayLayer.sampleBufferRenderer.enqueue(sample)
+        #else
         displayLayer.enqueue(sample)
+        #endif
+        #if os(visionOS)
+        if let ticket = presentation.ticket {
+            if isKeyframe { presentation.enqueuedIDR(ticket) }
+            readPresentation(ticket)
+        }
+        #endif
     }
+
+    #if os(visionOS)
+    func setPresentation(epoch: VideoEpoch?, peer: ObjectIdentifier?, modern: Bool) {
+        let next: NativeBinding
+        if modern, let epoch, let peer { next = .epoch(epoch, peer) }
+        else { next = modern ? .closed : .legacy }
+        guard nativeBinding != next || (next == .legacy && nativeLegacyPeer != peer) else { return }
+        nativeLegacyPeer = modern ? nil : peer
+        nativeBinding = next
+        invalidateNativeMedia()
+        rebuildNativeLayer()
+    }
+
+    func setPresentationForeground(_ foreground: Bool) {
+        guard presentationForeground != foreground else { return }
+        presentationForeground = foreground
+        invalidateNativeMedia()
+        if foreground { rebuildNativeLayer() }
+    }
+
+    func receiveParameters(_ ps: ParameterSets, epoch: UUID, peer: ObjectIdentifier) {
+        guard window != nil, presentationForeground,
+              case .epoch(let binding, let expected) = nativeBinding, binding.id == epoch, expected == peer else { return }
+        if let prior = lastParameterSets, prior != ps.encoded(), formatDescription != nil {
+            invalidateNativeMedia()
+        }
+        if let prior = pendingNativePS, prior.encoded() != ps.encoded() { pendingNativeIDR = nil }
+        pendingNativePS = ps
+        rebuildNativeLayer()
+        guard nativeLayer != nil else { return }
+        applyFormat(ps)
+    }
+
+    func receiveFrame(_ data: Data, keyframe: Bool, epoch: UUID, peer: ObjectIdentifier) {
+        guard window != nil, presentationForeground,
+              case .epoch(let binding, let expected) = nativeBinding, binding.id == epoch, expected == peer,
+              let ps = pendingNativePS, PresentationMedia.validFrame(data, nalLength: ps.nalUnitHeaderLength, keyframe: keyframe) else { return }
+        if nativeLayer == nil {
+            if keyframe { pendingNativeIDR = data }
+            return
+        }
+        enqueueSample(data, isKeyframe: keyframe)
+    }
+
+    private func invalidateNativeMedia() {
+        presentation.revoke()
+        onPresentation?(nil)
+        presentationShield.isHidden = false
+        cursorLayer.isHidden = true
+        formatDescription = nil
+        lastParameterSets = nil
+        waitingForKeyframe = true
+        pendingNativePS = nil
+        pendingNativeIDR = nil
+        pointerVideoSize = .zero
+        onVideoSize?(.zero)
+        presentationObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        presentationObservers = []
+        guard let old = nativeLayer else { return }
+        nativeLayer = nil
+        old.isHidden = true
+        old.removeFromSuperlayer()
+        let id = UUID()
+        retiring = (id, old)
+        old.sampleBufferRenderer.flush(removingDisplayedImage: true) { [weak self, old] in
+            DispatchQueue.main.async {
+                guard let self, self.retiring?.id == id, self.retiring?.layer === old else { return }
+                self.retiring = nil
+                self.rebuildNativeLayer()
+            }
+        }
+    }
+
+    private func rebuildNativeLayer() {
+        guard window != nil, presentationForeground, nativeLayer == nil, retiring == nil, nativeBinding != .closed else { return }
+        let child = AVSampleBufferDisplayLayer()
+        child.videoGravity = .resizeAspect
+        child.frame = bounds
+        layer.insertSublayer(child, at: 0)
+        nativeLayer = child
+        switch nativeBinding {
+        case .epoch(let epoch, let peer):
+            presentation.begin(epoch: epoch, peer: peer, layer: ObjectIdentifier(child))
+            let ticket = presentation.ticket!
+            for name in [NSNotification.Name.AVSampleBufferDisplayLayerReadyForDisplayDidChange,
+                         NSNotification.Name.AVSampleBufferDisplayLayerFailedToDecode,
+                         NSNotification.Name.AVSampleBufferDisplayLayerRequiresFlushToResumeDecodingDidChange] {
+                presentationObservers.append(NotificationCenter.default.addObserver(forName: name, object: child, queue: .main) { [weak self, weak child] note in
+                    guard let self, let child, self.nativeLayer === child, self.presentation.ticket == ticket else { return }
+                    if note.name == .AVSampleBufferDisplayLayerFailedToDecode { self.invalidateNativeMedia() }
+                    else { self.readPresentation(ticket) }
+                })
+            }
+        case .legacy: presentationShield.isHidden = true
+        case .closed: break
+        }
+        if let ps = pendingNativePS { applyFormat(ps) }
+        if let idr = pendingNativeIDR { pendingNativeIDR = nil; enqueueSample(idr, isKeyframe: true) }
+    }
+
+    private func readPresentation(_ ticket: VisionPresentation.Ticket) {
+        guard presentation.ticket == ticket, let child = nativeLayer, ObjectIdentifier(child) == ticket.layer else { return }
+        let healthy = child.status != .failed && !child.requiresFlushToResumeDecoding
+        presentation.observe(ticket, ready: child.isReadyForDisplay, healthy: healthy,
+                             attached: window != nil, foreground: presentationForeground)
+        guard presentation.ticket != nil else { invalidateNativeMedia(); return }
+        let admitted = presentation.admitted
+        presentationShield.isHidden = admitted != nil
+        onPresentation?(admitted)
+    }
+    #endif
 }
 
 struct StreamView: UIViewRepresentable {

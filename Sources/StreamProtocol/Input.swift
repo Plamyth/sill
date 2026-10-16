@@ -42,14 +42,15 @@ public enum ScrollPhase: String, Codable {
 public struct SourceInput: Codable {
     public var event: InputEvent
     public var generation: String
+    public var videoEpoch: UUID?
 
-    public init(event: InputEvent, generation: String) {
-        self.event = event; self.generation = generation
+    public init(event: InputEvent, generation: String, videoEpoch: UUID? = nil) {
+        self.event = event; self.generation = generation; self.videoEpoch = videoEpoch
     }
 
     /// An older host has no generation and still expects the original InputEvent payload.
-    public static func payload(_ event: InputEvent, generation: String?) -> Data {
+    public static func payload(_ event: InputEvent, generation: String?, videoEpoch: UUID? = nil) -> Data {
         guard let generation else { return Wire.encode(event) }
-        return Wire.encode(SourceInput(event: event, generation: generation))
+        return Wire.encode(SourceInput(event: event, generation: generation, videoEpoch: videoEpoch))
     }
 }
