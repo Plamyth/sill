@@ -1,0 +1,82 @@
+{
+  "exitCode": 1,
+  "transportPID": 20394,
+  "transportReaped": true,
+  "sourceHEAD": "40b3bc13ef7c35c016c2ca023f92861f2977ca9b",
+  "scope": "Native policy/controller/route with synthetic peer and player. AVAudioSession observers compile only on visionOS, not executed here. No network/audio/device or source-guard task transfer.",
+  "originalSourceSHA256": {
+    "VisionAudioState.swift": "9fa6227b7d32bf06a8dacfe8d2d39eaff8525dc9a7306f596124270abc17233a",
+    "main.swift": "3e5236aa1506f7e9a695f5ca3776390ec776a58daee3ac3103ae2acb428906d8",
+    "VisionAudioController.swift": "b155bd5f94166a0921867f7ff06c8c090ebd2236fd8a30f929465079a9ec4161",
+    "VisionAudioRoute.swift": "0d91cec466c1c5a4a75d4dad0fd0846048d9b0bb8c457b80ebfe05af77a79fd0",
+    "Activation.swift": "b13a17fc678fed0ba5ba6292ca32c8d5be925ba0beccc61edf2df977199c3c56",
+    "VisionAudioBuffer.swift": "ff661390cdefcb660b8b55d882079d2bbb0ab02807af11cc17d336e997108781",
+    "RemoteAudioSubscription.swift": "a1caeeefbc509eacadf67ee0fdf5b01d640637ed81e5a637b984782d231ff3f2",
+    "NativePlayer.reference": "d6c2aadd6bac8426f7de856f094da088a56b1a9cdfc1b8e1cdd9b93d89b70739",
+    "Client.reference": "a06b6f33d7efe61157506d061810b18061911652471af8b8674be6b12bdc07b8"
+  },
+  "emittedSHA256": {
+    "VisionAudioState.swift": "9fa6227b7d32bf06a8dacfe8d2d39eaff8525dc9a7306f596124270abc17233a",
+    "main.swift": "f9c4c224954ea54636fe74aab31f39ebe9554fa20f92262bf74e19b43d0ea298",
+    "VisionAudioController.swift": "b155bd5f94166a0921867f7ff06c8c090ebd2236fd8a30f929465079a9ec4161",
+    "VisionAudioRoute.swift": "cd2c7eef3e43ada18f714c09828cf74dc05414c3c48f770967848bc39bfc9e97",
+    "Activation.swift": "fdba438265e24fbe7027e550682f7679ca664363518153250b4d821d3b47b157",
+    "VisionAudioBuffer.swift": "ff661390cdefcb660b8b55d882079d2bbb0ab02807af11cc17d336e997108781",
+    "RemoteAudioSubscription.swift": "a1caeeefbc509eacadf67ee0fdf5b01d640637ed81e5a637b984782d231ff3f2",
+    "NativePlayer.reference": "d6c2aadd6bac8426f7de856f094da088a56b1a9cdfc1b8e1cdd9b93d89b70739",
+    "Client.reference": "a06b6f33d7efe61157506d061810b18061911652471af8b8674be6b12bdc07b8"
+  },
+  "routeImportSubstitution": "Network and StreamProtocol imports removed; fixture supplies identity-only peer and source enum; all methods unchanged",
+  "senderReceiverMatch": true,
+  "sourceUnchanged": true,
+  "RAMRunnerReferenceSHA256": "eeea55d08f6052ce59621d2d63bef85645d7bb8a80dddc25bdb4fd3d1a8aba76",
+  "RAMRunnerSHA256": "9ad486acd7c8bf8f7839bd9847809410f17d531602640ba03817fff9438edca2",
+  "remoteResult": {
+    "runnerPID": 24145,
+    "childPIDs": [
+      24183,
+      24340
+    ],
+    "before": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 60%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      0,
+      1
+    ],
+    "exitCode": 1,
+    "memorySourcesUnchanged": true,
+    "childrenReaped": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 57%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    }
+  },
+  "extractedProduction": {
+    "reconcileVerbatimSHA256": "768cc380fece0aa1e3c21a0bfc05897f9d8b7e6943180b59b26a56e8d47b0fab",
+    "requestConstructorVerbatimSHA256": "a5160e9a6cc508721ef2547447e6aaa1065bf7e5ec6d233bd1045e19c4aa54f1"
+  }
+}

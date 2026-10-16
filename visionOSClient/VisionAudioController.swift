@@ -26,13 +26,16 @@ final class VisionAudioController: ObservableObject {
     private let storage = OSAllocatedUnfairLock(initialState: Storage())
     private let player: VisionAudioPlaying
     private let send: (VisionAudioControl) -> Void
+    private let clock: () -> Double
     private var displayedRevision: UInt64 = 0
     private var deadline: DispatchWorkItem?
     private var observers: [NSObjectProtocol] = []
 
-    init(send: @escaping (VisionAudioControl) -> Void, player: VisionAudioPlaying = VisionAudioPlayer()) {
+    init(send: @escaping (VisionAudioControl) -> Void, player: VisionAudioPlaying = VisionAudioPlayer(),
+         clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
         self.send = send
         self.player = player
+        self.clock = clock
         #if os(visionOS)
         for name in [AVAudioSession.interruptionNotification, AVAudioSession.routeChangeNotification,
                      AVAudioSession.mediaServicesWereResetNotification] {
@@ -62,7 +65,7 @@ final class VisionAudioController: ObservableObject {
 
     func enable() {
         change { model in
-            guard model.canEnable, let grant = model.request(id: UUID(), now: Self.now) else { return }
+            guard model.canEnable, let grant = model.request(id: UUID(), now: clock()) else { return }
             send(VisionAudioControl(grant: grant, enabled: true))
         }
     }
@@ -74,7 +77,7 @@ final class VisionAudioController: ObservableObject {
     func acknowledge(id: UUID, enabled: Bool, scope: VisionAudioScope, reason: String?) {
         change { model in
             guard let grant = model.acknowledge(id: id, enabled: enabled, scope: scope,
-                                                now: Self.now, reason: reason) else { return }
+                                                now: clock(), reason: reason) else { return }
             player.begin(grant: grant.id) { [weak self] id, event in
                 DispatchQueue.main.async { self?.playbackEvent(event, id: id) }
             }
@@ -84,7 +87,7 @@ final class VisionAudioController: ObservableObject {
     func receive(_ packet: Data, scope: VisionAudioScope) {
         storage.withLock { state in
             guard let grant = state.model.phase.grant, grant.scope == scope,
-                  state.model.admits(grant, now: Self.now) else { return }
+                  state.model.admits(grant, now: clock()) else { return }
             player.receive(packet, grant: grant.id)
         }
     }
@@ -102,8 +105,8 @@ final class VisionAudioController: ObservableObject {
         change { model in
             guard let grant = model.phase.grant, grant.id == id else { return }
             switch event {
-            case .rendering: _ = model.rendered(grant, now: Self.now)
-            case .waiting: model.underrun(grant, now: Self.now)
+            case .rendering: _ = model.rendered(grant, now: clock())
+            case .waiting: model.underrun(grant, now: clock())
             case .failed(let problem): model.stop(problem: problem)
             }
         }
@@ -132,12 +135,12 @@ final class VisionAudioController: ObservableObject {
             default: return
             }
             let work = DispatchWorkItem { [weak self] in
-                self?.change { model in _ = model.expire(now: Self.now) }
+                guard let self else { return }
+                self.change { model in _ = model.expire(now: self.clock()) }
             }
             self.deadline = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, until - Self.now), execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, until - self.clock()), execute: work)
         }
     }
 
-    private static var now: Double { ProcessInfo.processInfo.systemUptime }
 }

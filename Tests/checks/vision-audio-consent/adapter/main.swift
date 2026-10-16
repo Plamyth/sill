@@ -54,6 +54,9 @@ drain()
 check(controller.presentation.phase == .rendering(first), "render callback alone reports rendering")
 controller.stop()
 check(player.stops == 1 && sent.count == 2 && !sent.last!.enabled, "Stop synchronously revokes player and sends scoped off")
+#if AUDIO_REVIEW
+check(requestIDOnWire(sent[0]) != requestIDOnWire(sent[1]), "OFF has an action UUID distinct from pending ON")
+#endif
 controller.receive(Data([5]), scope: a)
 player.callbacks[0](first.id, .rendering)
 drain()
@@ -131,5 +134,18 @@ _ = route.observe(peerB, source: .desktop, supported: true)
 check(route.peer(for: oldOff) == nil && route.scope(for: peerA) == nil, "replacement peer never inherits old commands")
 route.clear()
 check(route.scope(for: peerB) == nil, "connection reset clears capability and scope")
+#if AUDIO_REVIEW
+var testNow = 100.0
+var delayed: [VisionAudioControl] = []
+let delayedController = VisionAudioController(send: { delayed.append($0) }, player: VisionAudioPlayer(), clock: { testNow })
+delayedController.setForeground(true)
+delayedController.update(.available(a))
+delayedController.enable()
+testNow = 109
+var staleSends = 0
+_ = delayedController.sendIfPermitted(delayed[0]) { staleSends += 1 }
+check(staleSends == 0, "expired queued Enable cannot run before main expiry callback")
+runActivationRegression()
+#endif
 print("Vision audio adapter: \(checks - failures)/\(checks) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
