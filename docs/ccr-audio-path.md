@@ -25,3 +25,16 @@ Do not merge the whole upstream Sill PR #66 audio path. Its process tap uses `mu
 3. Install a separate host candidate only after source and input review. On the physical iPad, hear the Mac sound, check that the Mac still plays through its chosen output, then switch video sources and reconnect.
 4. Measure sound delay and test a slow link. Verify that audio drops instead of piling up and that video remains responsive.
 5. Design the microphone destination with an exact voice-session or input-device binding. Test microphone permission, route changes, echo cancellation, and reconnect before calling two-way sound complete.
+
+## Microphone owner decision, 2026-10-16
+
+The current source has a host receiver and a virtual-device HAL sink, but the production `SillMenuBar` coordinator is created without a `HostMicrophoneOriginalOwner`. Its `WindowList.microphone` capability is therefore absent. The receiver checks the paired peer, encrypted route fingerprint, source, input generation, video epoch, destination, call generation, and expiry before admitting PCM. The sink also verifies the approved virtual device UID, plug-in, channel layout, and 48 kHz format. These checks do not identify which Codex voice call owns that device.
+
+Two owner shapes were considered:
+
+1. Infer ownership from the Control Room `activeVoiceSession` snapshot and CoreAudio's Codex process input state. This can observe a candidate call and current input device, but neither read is an atomic authorization. A closed call and a new call in the same process could occur between reads. This shape must not mint a host grant.
+2. Have the original voice-call owner issue a lease containing its exact call generation, approved input device, and revocation event. A single Mac-side owner object would expose only `microphoneGrant(...)` to `StreamCoordinator`; it would synchronously revoke all issued `HostLocalOwnerGrant`s before a call, route, or device generation changes. The CoreAudio process probe can independently reject a mismatched route, but cannot create the lease. This is the selected integration shape.
+
+Caller usage is `StreamCoordinator(..., microphoneOwner: owner)` only after that owner is backed by a live original-call lease and the virtual input route is explicitly approved. With no lease, the provider returns `nil`, the catalog advertises no microphone capability, and the iPad cannot start capture. Tests must prove no lease means no capability, a changed call or route revokes an old render grant, and a new call cannot inherit the prior peer or packet sequence. The read-only `Tests/checks/microphone-route/ProcessProbe.swift` currently reports the Codex process input state and device UIDs; its idle result is not a voice-call receipt.
+
+The missing input is an authoritative call-generation/revocation event from the Codex voice owner. Until it exists, keep production microphone routing off. Audit the existing BlackHole devices' S23 and system-output users before dedicating any virtual input to Sill. The original Sill installation and Mac sound routes remain untouched.
