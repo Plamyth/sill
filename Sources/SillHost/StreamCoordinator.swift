@@ -235,7 +235,10 @@ package final class StreamCoordinator {
     private var deselectWhenSettled = false
     /// The Mac's cursor shape, streamed to the clients that draw the pointer themselves.
     let cursorShapes = CursorShapeWatcher()
-    private let macName = Host.current().localizedName ?? "Mac"
+    private let macName: String = {
+        let name = Host.current().localizedName ?? "Mac"
+        return Bundle.main.bundleIdentifier == "com.ambrion.sillcanvas.mac" ? "\(name) · CCR Sill" : name
+    }()
     /// In every window list (`WindowList.launchID`): a device moving its session from AWDL to the
     /// network checks that the new connection reaches this same running host, since the Bonjour
     /// name it found it by can belong to another Mac too. Per launch, so nothing is stored.

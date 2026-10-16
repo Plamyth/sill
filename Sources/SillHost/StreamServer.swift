@@ -421,7 +421,10 @@ final class StreamServer {
         // and show the test pattern (Noah saw "a white moving wall", 2026-09-23). Test clients
         // connect to it by port.
         if advertise {
-            serviceNameAndType = (Host.current().localizedName ?? "Mac", serviceType)
+            let macName = Host.current().localizedName ?? "Mac"
+            let visibleName = Bundle.main.bundleIdentifier == "com.ambrion.sillcanvas.mac"
+                ? "\(macName) · CCR Sill" : macName
+            serviceNameAndType = (visibleName, serviceType)
             serviceIsTest = false
         } else if test, let type = Self.testServiceType {
             serviceNameAndType = ("Sill test \(getpid())", type)
