@@ -30,7 +30,7 @@ struct PairingOverlay: View {
         _typed = State(initialValue: typed || (scannerMode == .live && !CodeScanner.isSupported))
     }
 
-    private var mac: String { client.macName.isEmpty ? "your Mac" : client.macName }
+    private var mac: String { client.macName.isEmpty ? "사용 중인 Mac" : client.macName }
     private var working: Bool { if case .working = client.pairing { return true }; return false }
 
     var body: some View {
@@ -141,7 +141,7 @@ struct PairingOverlay: View {
     /// than the one this session streams.
     private func linkProgress(_ name: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Pair with \(name)")
+            Text("\(name) 기기와 페어링")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Palette.text)
                 .fixedSize(horizontal: false, vertical: true)
@@ -157,7 +157,7 @@ struct PairingOverlay: View {
     private var title: some View {
         VStack(alignment: .leading, spacing: 4) {
             // The typed path is all a device without the scanner gets: it says what to do there.
-            Text(typed ? "Enter the Code from \(mac)" : "Scan the Code on \(mac)")
+            Text(typed ? "\(mac)에 표시된 코드 입력" : "\(mac)에 표시된 코드 스캔")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Palette.text)
                 .accessibilityAddTraits(.isHeader)
@@ -173,7 +173,7 @@ struct PairingOverlay: View {
 
     private var codeField: some View {
         VStack(alignment: .leading, spacing: 8) {
-            PairingField(prompt: "0000 0000 0000", label: "Code", text: $code, keyboard: PairingField.codeKeyboard, submit: .go, monospaced: true)
+            PairingField(prompt: "0000 0000 0000", label: "코드", text: $code, keyboard: PairingField.codeKeyboard, submit: .go, monospaced: true)
                 .focused($codeFocused)
                 .onSubmit(pairTyped)
                 .onChange(of: code) { _, typed in
@@ -181,7 +181,7 @@ struct PairingOverlay: View {
                     if grouped != typed { code = grouped }
                 }
             Button(action: pairTyped) {
-                Text("Pair")
+                Text("페어링")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.black)
                     .frame(minWidth: 88, minHeight: 44)
@@ -213,10 +213,10 @@ struct PairingOverlay: View {
             .foregroundStyle(Palette.muted)
             .accessibilityElement(children: .combine)
         case .paired(let name):
-            Label("Paired with \(name).", systemImage: "checkmark.circle.fill")
+            Label("\(name) 기기와 페어링했습니다.", systemImage: "checkmark.circle.fill")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Palette.text)
-                .onAppear { AccessibilityNotification.Announcement("Paired with \(name).").post() }
+                .onAppear { AccessibilityNotification.Announcement("\(name) 기기와 페어링했습니다.").post() }
         case .failed(let p):
             ProblemLine(text: p.text)
         case .idle:
@@ -227,7 +227,7 @@ struct PairingOverlay: View {
     private var links: some View {
         HStack(spacing: 18) {
             if CodeScanner.isSupported || scannerMode != .live {
-                Button(typed ? "Scan Code Instead" : "Enter Code Instead") {
+                Button(typed ? "코드 스캔하기" : "코드 직접 입력하기") {
                     client.pairing = .idle
                     codeFocused = false
                     typed.toggle()
@@ -242,7 +242,7 @@ struct PairingOverlay: View {
     }
 
     private var cancelButton: some View {
-        Button("Cancel", action: cancel)
+        Button("취소", action: cancel)
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(Palette.accent)
             .frame(minHeight: 44)

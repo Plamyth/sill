@@ -67,24 +67,24 @@ enum PairingProblem: Equatable {
 
     var text: String {
         switch self {
-        case .address: return "That doesn’t look like an address. Try 100.101.102.103 or mac.example.net."
-        case .zone: return "Remove the part after %: it only works on this network."
-        case .codeLength: return "A code has 12 digits."
-        case .codeTypo: return "That code has a typo. Check it against your Mac."
+        case .address: return "올바른 주소를 입력하세요. 예: 100.101.102.103 또는 mac.example.net."
+        case .zone: return "%와 그 뒤의 내용을 지우세요. 해당 부분은 현재 네트워크에서만 사용할 수 있습니다."
+        case .codeLength: return "코드는 숫자 12자리입니다."
+        case .codeTypo: return "코드에 오타가 있습니다. Mac에 표시된 코드를 확인하세요."
         case .wrongCode(let left):
             // A no-break space keeps the count with its word when the line wraps ("4 / tries left").
-            return "That code didn’t work. Check the code on your Mac. \(left)\u{00A0}tr\(left == 1 ? "y" : "ies") left."
-        case .notPairing(let mac): return "\(mac) isn’t pairing right now. On your Mac, choose Pair iPhone or iPad… first."
+            return "코드가 일치하지 않습니다. Mac에 표시된 코드를 확인하세요. \(left)회 더 시도할 수 있습니다."
+        case .notPairing(let mac): return "\(mac)이 페어링 대기 중이 아닙니다. 먼저 Mac에서 ‘Pair iPhone or iPad…’를 선택하세요."
         case .stopped(let mac):
-            return "\(mac) stopped pairing after too many wrong codes. Choose Pair iPhone or iPad… on your Mac for a new code."
-        case .expired: return "This code expired. Choose Pair iPhone or iPad… on your Mac for a new one."
+            return "잘못된 코드를 여러 번 입력하여 \(mac)에서 페어링을 중단했습니다. Mac에서 ‘Pair iPhone or iPad…’를 선택해 새 코드를 받으세요."
+        case .expired: return "코드가 만료되었습니다. Mac에서 ‘Pair iPhone or iPad…’를 선택해 새 코드를 받으세요."
         case .proofFailed(let host):
-            return "Pairing didn’t finish: the Mac at \(host) couldn’t show it knows the code. Pair from the same network as your Mac, or scan the code instead."
-        case .nothingAnswered(let host): return "Nothing answered at \(host). Check the address, and that Sill is open on your Mac."
-        case .notSill(let host): return "Something answered at \(host), but it isn’t Sill, or its Sill is too old to pair."
-        case .localNetwork(let host): return "To reach \(host), allow Local Network for Sill in Settings."
-        case .notALink: return "That’s not a Sill code."
-        case .noKey(let reason): return "This \(StreamClient.deviceWord) couldn’t make its key (\(reason))."
+            return "페어링을 완료하지 못했습니다. \(host)의 Mac에서 코드를 검증하지 못했습니다. Mac과 같은 네트워크에서 페어링하거나 코드를 스캔하세요."
+        case .nothingAnswered(let host): return "\(host)의 응답이 없습니다. 주소와 Mac에서 Sill이 실행 중인지 확인하세요."
+        case .notSill(let host): return "\(host)에서 응답했지만 Sill이 아니거나, Sill 버전이 오래되어 페어링할 수 없습니다."
+        case .localNetwork(let host): return "\(host)에 연결하려면 설정에서 Sill의 로컬 네트워크 접근을 허용하세요."
+        case .notALink: return "Sill 코드가 아닙니다."
+        case .noKey(let reason): return "이 \(StreamClient.deviceWord)의 키를 만들지 못했습니다(\(reason))."
         case .homeStopped(let mac): return DiscoveryPolicy.HomeCopy.stopped(mac: mac)
         case .homeExpired(let mac): return DiscoveryPolicy.HomeCopy.expired(mac: mac)
         case .homeClosed(let mac): return DiscoveryPolicy.HomeCopy.closed(mac: mac)
@@ -101,35 +101,35 @@ enum PairingProblem: Equatable {
 enum RemoteCopy {
     static func dialFailure(_ failure: RemoteDialPolicy.Failure, mac: String, candidate: RemoteDialPolicy.Candidate?,
                             vpnName: String?, device: String) -> String {
-        let at = candidate?.display ?? "its address"
+        let at = candidate?.display ?? "해당 주소"
         switch failure {
         case .wrongMac:
-            return "This isn’t the \(mac) this \(device) paired with. If Sill was set up again on it, forget it here and pair again."
+            return "이 \(device)와 페어링했던 \(mac)이 아닙니다. Mac에서 Sill을 다시 설정했다면 저장된 Mac을 삭제한 뒤 다시 페어링하세요."
         case .revoked:
-            return "\(mac) no longer accepts this \(device). Pair it again from Sill’s Settings on the Mac."
+            return "\(mac)에서 더 이상 이 \(device)의 연결을 허용하지 않습니다. Mac의 Sill 설정에서 다시 페어링하세요."
         case .remoteOff:
-            return "\(mac) turned off Remote Access."
+            return "\(mac)에서 원격 접근을 껐습니다."
         case .busy:
-            return "\(mac) is already serving 8 devices."
+            return "\(mac)에 이미 기기 8대가 연결되어 있습니다."
         case .refused:
-            return "\(mac) answered, but Sill isn’t accepting remote connections there. Check that Sill is open and Remote Access is on. If you changed its port, connect at home once."
+            return "\(mac)에서 응답했지만 Sill의 원격 연결이 허용되지 않았습니다. Sill이 실행 중이고 원격 접근이 켜져 있는지 확인하세요. 포트를 변경했다면 같은 네트워크에서 한 번 연결하세요."
         case .vpnOff:
             let name = candidate.flatMap { vpnLabel($0) }
-            return name.map { "\($0) looks off on this \(device). Turn it on, then tap \(mac)." }
-                ?? "Your VPN looks off on this \(device). Turn it on, then tap \(mac)."
+            return name.map { "이 \(device)에서 \($0)이 꺼져 있는 것 같습니다. 켠 뒤 \(mac)을 탭하세요." }
+                ?? "이 \(device)에서 VPN이 꺼져 있는 것 같습니다. 켠 뒤 \(mac)을 탭하세요."
         case .nameNotFound:
-            let host = candidate?.host ?? "its name"
-            return RemoteDialPolicy.isTailscaleName(host) ? "This \(device) can’t look up \(host). Is Tailscale on?"
-                                                        : "This \(device) can’t look up \(host)."
+            let host = candidate?.host ?? "해당 호스트 이름"
+            return RemoteDialPolicy.isTailscaleName(host) ? "이 \(device)에서 \(host)의 주소를 찾을 수 없습니다. Tailscale이 켜져 있는지 확인하세요."
+                                                        : "이 \(device)에서 \(host)의 주소를 찾을 수 없습니다."
         case .localNetwork:
-            return "To reach \(at), allow Local Network for Sill in Settings."
+            return "\(at)에 연결하려면 설정에서 Sill의 로컬 네트워크 접근을 허용하세요."
         case .notSill:
-            return "Something answered at \(at), but it isn’t Sill. Your home’s internet address may have changed."
+            return "\(at)에서 응답했지만 Sill이 아닙니다. Mac이 있는 네트워크의 인터넷 주소가 변경되었을 수 있습니다."
         case .noAnswer:
             if let c = candidate, c.kind == MacAddress.internet, !c.isName {
-                return "\(mac) didn’t answer at \(at). If your home’s internet address changed, connect at home once to update it, or add an address name on the Mac."
+                return "\(mac)이 \(at)에서 응답하지 않았습니다. 인터넷 주소가 변경되었다면 같은 네트워크에서 한 번 연결해 갱신하거나, Mac에 호스트 이름을 추가하세요."
             }
-            return vpnName.map { "\(mac) didn’t answer. It may be asleep, or \($0) may be off on the Mac." } ?? "\(mac) didn’t answer. It may be asleep."
+            return vpnName.map { "\(mac)의 응답이 없습니다. 잠자기 상태이거나 Mac에서 \($0)이 꺼져 있을 수 있습니다." } ?? "\(mac)의 응답이 없습니다. 잠자기 상태일 수 있습니다."
         }
     }
 
@@ -185,13 +185,13 @@ extension StreamClient {
     /// Forget: the record only. The Mac lists this device until it is removed there, and the
     /// status line says so.
     func forget(_ macID: String) {
-        let name = savedMac(macID) != nil ? displayName(macID) : (macs.first { $0.macID == macID }?.name ?? "the Mac")
+        let name = savedMac(macID) != nil ? displayName(macID) : (macs.first { $0.macID == macID }?.name ?? "Mac")
         if reconnect?.macID == macID { reconnect = nil }
         savedMacs.removeAll { $0.macID == macID }
         savedSightings.since[macID] = nil
         savedSightings.leftAt[macID] = nil
         persistSavedMacs()
-        status = "Forgot \(name). It still lists this \(Self.deviceWord) until you remove it in Sill’s Settings on the Mac."
+        status = "저장된 \(name)을 삭제했습니다. Mac의 Sill 설정에서도 제거하기 전까지는 이 \(Self.deviceWord)가 등록된 상태로 남아 있습니다."
     }
 
     /// The card's Cancel while a pairing dial runs: it stops, nothing is saved. The home card's too:
@@ -300,7 +300,7 @@ extension StreamClient {
         guard let mac = savedMac(macID), let pin = mac.fingerprintData else { return }
         let name = displayName(macID)
         guard let identity = DeviceIdentity.existing() else {
-            status = "This \(Self.deviceWord) has no key for \(name). Pair it again."
+            status = "이 \(Self.deviceWord)에 \(name)의 키가 없습니다. 다시 페어링하세요."
             return
         }
         cancelRemoteDial()
@@ -309,7 +309,7 @@ extension StreamClient {
             old.cancel()
         }
         hostName = name
-        status = why == .automatic ? "Reconnecting to \(name) remotely…" : "Connecting to \(name) remotely…"
+        status = why == .automatic ? "\(name)에 원격으로 다시 연결하는 중…" : "\(name)에 원격으로 연결하는 중…"
         let candidates = RemoteDialPolicy.order(mac.allAddresses, remotePort: mac.remotePort, lastWorked: mac.lastWorked,
                                                 localIPv4: Self.localIPv4Networks())
         #if DEBUG
@@ -344,7 +344,7 @@ extension StreamClient {
                     if self.reconnect?.macID == macID { self.reconnect?.macID = newer.macID }
                     macID = newer.macID
                     self.hostName = self.displayName(macID)
-                    self.status = why == .automatic ? "Reconnecting to \(self.hostName) remotely…" : "Connecting to \(self.hostName) remotely…"
+                    self.status = why == .automatic ? "\(self.hostName)에 원격으로 다시 연결하는 중…" : "\(self.hostName)에 원격으로 연결하는 중…"
                 } else if winner.fingerprint != pin {
                     winner.connection.cancel()           // cannot happen: the verify block took no other key
                     self.remoteDialFailed(macID: macID, why: why, failure: .wrongMac, candidate: winner.candidate)
@@ -420,7 +420,7 @@ extension StreamClient {
         remoteRoute = r
         askedNearby = false
         connectedAt = Date()
-        status = "Connected to \(hostName)"
+        status = "\(hostName)에 연결됨"
         if case .paired = pairing { pairing = .idle }
         resetLiveness()
         if let id = s.macID, let i = savedMacs.firstIndex(where: { $0.macID == id }) {
@@ -456,7 +456,7 @@ extension StreamClient {
             default:
                 r.remoteFailures += 1
                 r.nextRemoteAt = ProcessInfo.processInfo.systemUptime + DiscoveryPolicy.remoteRetryDelay(afterFailures: r.remoteFailures)
-                status = "Reconnecting to \(name) remotely…"
+                status = "\(name)에 원격으로 다시 연결하는 중…"
             }
             reconnect = r
             reconnectIfListed()
@@ -464,7 +464,7 @@ extension StreamClient {
             afterPairingWatch?.cancel()
             afterPairingWatch = nil
             pairing = .idle
-            status = failure == .remoteOff ? words : "\(name) is saved. Tap it to connect."
+            status = failure == .remoteOff ? words : "\(name)이 저장되었습니다. 탭하여 연결하세요."
         case .tap, .connectRemotely, .launchArgument:
             status = words
         }
@@ -680,7 +680,7 @@ extension StreamClient {
             if now >= r.lostAt + DiscoveryPolicy.redialWindow {
                 r.remoteAllowed = false
                 reconnect = r
-                status = "Stopped trying to reach \(r.name). Tap it to try again."
+                status = "\(r.name)에 연결 시도를 중단했습니다. 탭하여 다시 시도하세요."
             } else {
                 let due = DiscoveryPolicy.remoteDialDue(listed: network != nil || direct != nil, lostAt: r.lostAt,
                                                         networkLeftAt: savedSightings.leftAt[id], rememberedDirect: r.rememberedDirect,
@@ -884,8 +884,8 @@ extension StreamClient {
             return
         }
         pairingDial?.cancel()
-        let shown = macName ?? candidates.first?.display ?? "your Mac"
-        pairing = .working("Pairing with \(shown)…")
+        let shown = macName ?? candidates.first?.display ?? "사용 중인 Mac"
+        pairing = .working("\(shown) 기기와 페어링하는 중…")
         #if DEBUG
         print("remote: pairing with \(shown) (\(method)) at \(candidates.map(\.key))")
         #endif
@@ -916,7 +916,7 @@ extension StreamClient {
                         }
                         self.pairing = .failed(Self.problem(for: r, mac: macName ?? w.candidate.display))
                     case .notPairing:
-                        self.pairing = .failed(.notPairing(macName ?? "The Mac at \(w.candidate.display)"))
+                        self.pairing = .failed(.notPairing(macName ?? "\(w.candidate.display)의 Mac"))
                     case .noProof:
                         self.pairing = .failed(.proofFailed(w.candidate.display))
                     }
@@ -932,7 +932,7 @@ extension StreamClient {
                 case .refused, .revoked:
                     // Nothing listening (Remote Access off and no pairing window), or a door that
                     // turned the pairing away in its handshake.
-                    self.pairing = .failed(.notPairing(macName ?? "The Mac at \(host)"))
+                    self.pairing = .failed(.notPairing(macName ?? "\(host)의 Mac"))
                 case .notSill, .wrongMac: self.pairing = .failed(.notSill(host))
                 case .localNetwork: self.pairing = .failed(.localNetwork(host))
                 default: self.pairing = .failed(.nothingAnswered(host))
@@ -1062,7 +1062,7 @@ extension StreamClient {
             self.cancelRemoteDial()
             if let c = self.connection { self.connection = nil; c.cancel(); self.tearDown(status: self.status, restartSearch: false) }
             self.pairing = .idle
-            self.status = "\(self.displayName(macID)) is saved. Tap it to connect."
+            self.status = "\(self.displayName(macID)) 기기가 저장되었습니다. 탭하여 연결하세요."
             self.discoveryChanged()
         }
         afterPairingWatch?.cancel()

@@ -48,38 +48,38 @@ enum GoodbyePolicy {
     /// "iPhone", `saved` whether the Mac is a saved one (its remote door may be dialled).
     static func outcome(_ goodbye: Goodbye?, mac: String, device: String, saved: Bool) -> Outcome {
         guard let goodbye else {
-            return Outcome(text: saved ? "\(mac) disconnected. Sill will reconnect when it can reach it."
-                                       : "\(mac) disconnected. It will reconnect when the Mac is back.",
+            return Outcome(text: saved ? "\(mac) 연결이 끊어졌습니다. 연결이 가능해지면 자동으로 다시 연결합니다."
+                                       : "\(mac) 연결이 끊어졌습니다. Mac이 다시 나타나면 자동으로 연결합니다.",
                            reconnect: true, remoteAllowed: saved, isNotice: false)
         }
         switch goodbye.reason {
         case Goodbye.quit:
-            return Outcome(text: "\(mac) quit Sill. This \(device) reconnects when it’s back.",
+            return Outcome(text: "\(mac)에서 Sill이 종료되었습니다. 다시 실행되면 이 \(device)에서 자동으로 연결합니다.",
                            reconnect: true, remoteAllowed: saved, isNotice: false)
         case Goodbye.removed:
-            return Outcome(text: "\(mac) removed this \(device). To use it again, pair it again.",
+            return Outcome(text: "\(mac)에서 이 \(device)의 등록을 해제했습니다. 다시 사용하려면 페어링하세요.",
                            reconnect: false, remoteAllowed: false, isNotice: false)
         case Goodbye.remoteOff:
-            return Outcome(text: "\(mac) turned off Remote Access.", reconnect: true, remoteAllowed: false, isNotice: false)
+            return Outcome(text: "\(mac)에서 원격 접근을 껐습니다.", reconnect: true, remoteAllowed: false, isNotice: false)
         case Goodbye.internetOff:
-            return Outcome(text: "\(mac) stopped accepting connections from the internet. Connect through your VPN.",
+            return Outcome(text: "\(mac)에서 인터넷 연결 허용을 껐습니다. VPN으로 연결하세요.",
                            reconnect: true, remoteAllowed: false, isNotice: false)
         case Goodbye.busy:
-            return Outcome(text: "\(mac) is already serving 8 devices.", reconnect: true, remoteAllowed: saved, isNotice: false)
+            return Outcome(text: "\(mac)에 이미 기기 8대가 연결되어 있습니다.", reconnect: true, remoteAllowed: saved, isNotice: false)
         case Goodbye.pairingRequired:
             // Only at a home door over TLS, to an unpaired device: a tap on its row asks to pair.
-            return Outcome(text: "\(mac) now asks devices to pair. Tap it to pair this \(device).",
+            return Outcome(text: "\(mac)에 연결하려면 이제 페어링이 필요합니다. Mac을 탭해 이 \(device)와 페어링하세요.",
                            reconnect: false, remoteAllowed: false, isNotice: false)
         case Goodbye.update:
             // The host always sends its message; these words are for one that does not.
-            var own = "Update Sill on this \(device) to keep using \(mac)."
-            if let floor = goodbye.minimumVersion.flatMap({ SillVersion($0) }) { own += " It needs version \(floor) or later." }
+            var own = "\(mac)을 계속 사용하려면 이 \(device)의 Sill을 업데이트하세요."
+            if let floor = goodbye.minimumVersion.flatMap({ SillVersion($0) }) { own += " 버전 \(floor) 이상이 필요합니다." }
             return Outcome(text: message(goodbye) ?? own, reconnect: goodbye.reconnect == true, remoteAllowed: saved,
                            storeLink: true, isNotice: true)
         default:
             let reconnect = goodbye.reconnect == true
-            let own = reconnect ? "\(mac) closed the connection. Sill will reconnect when it can."
-                                : "\(mac) closed the connection. Tap it to try again."
+            let own = reconnect ? "\(mac)에서 연결을 종료했습니다. 연결이 가능해지면 자동으로 다시 연결합니다."
+                                : "\(mac)에서 연결을 종료했습니다. Mac을 탭해 다시 시도하세요."
             return Outcome(text: message(goodbye) ?? own, reconnect: reconnect, remoteAllowed: saved, isNotice: true)
         }
     }

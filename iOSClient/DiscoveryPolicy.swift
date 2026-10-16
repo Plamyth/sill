@@ -139,9 +139,9 @@ enum DiscoveryPolicy {
 
         var word: String {
             switch self {
-            case .wired: return "Wired"
+            case .wired: return "유선"
             case .wifi: return "Wi\u{2011}Fi"   // a non-breaking hyphen: never "Wi-" and "Fi" on two lines
-            case .direct: return "Direct"
+            case .direct: return "직접 연결"
             }
         }
 
@@ -751,11 +751,11 @@ enum DiscoveryPolicy {
     /// hears it once), and after `reconnectDials` that the dials stopped, in the words the remote
     /// path's end uses.
     static func reconnectLine(mac: String, failed: Int, direct: Bool) -> String {
-        if failed >= reconnectDials { return "Stopped trying to reach \(mac). Tap it to try again." }
+        if failed >= reconnectDials { return "\(mac)에 연결 시도를 중단했습니다. Mac을 탭해 다시 시도하세요." }
         if failed >= reconnectQuietAfter {
-            return "\(mac) isn\u{2019}t answering. It may be asleep. Sill keeps trying, or tap it to try now."
+            return "\(mac)의 응답이 없습니다. 잠자기 상태일 수 있습니다. 자동으로 계속 시도합니다. 지금 다시 시도하려면 Mac을 탭하세요."
         }
-        return direct ? "Reconnecting to \(mac) directly\u{2026}" : "Reconnecting to \(mac)\u{2026}"
+        return direct ? "\(mac)에 직접 다시 연결하는 중…" : "\(mac)에 다시 연결하는 중…"
     }
 
     /// The memory after a state from `mac`: true moves it to the front, false removes it, nil (an
@@ -886,15 +886,15 @@ enum DiscoveryPolicy {
         var word: String? {
             switch self {
             case .method(let m): return m?.word
-            case .notPaired, .openDoor: return "Not paired"
+            case .notPaired, .openDoor: return "페어링되지 않음"
             case .pairsOverCable: return Method.wired.word
-            case .updateSill: return "Update Sill"
+            case .updateSill: return "Sill 업데이트"
             }
         }
 
         /// VoiceOver's label: "Mac mini, Wired", "Mac mini, not paired"; the name alone without a word.
         func label(name: String) -> String {
-            if self == .notPaired || self == .openDoor { return "\(name), not paired" }
+            if self == .notPaired || self == .openDoor { return "\(name), 페어링되지 않음" }
             return word.map { "\(name), \($0)" } ?? name
         }
 
@@ -902,11 +902,11 @@ enum DiscoveryPolicy {
         /// is reachable keeps the hint it had ("" but for a Direct row).
         func hint(name: String, device: String, direct: Bool) -> String {
             switch self {
-            case .method: return direct ? "Connects without a shared Wi\u{2011}Fi network" : ""
-            case .notPaired: return "Pairs with a code \(name) shows, then connects."
-            case .openDoor: return "Connects without pairing: \(name) lets any device in."
-            case .pairsOverCable: return "Pairs over the USB cable, then connects."
-            case .updateSill: return "\(name)\u{2019}s Sill is too old for this \(device)."
+            case .method: return direct ? "같은 Wi-Fi 네트워크에 접속하지 않아도 연결합니다" : ""
+            case .notPaired: return "\(name)에 표시된 코드로 페어링한 뒤 연결합니다."
+            case .openDoor: return "페어링 없이 연결합니다. \(name)에서 모든 기기의 연결을 허용합니다."
+            case .pairsOverCable: return "USB 케이블로 페어링한 뒤 연결합니다."
+            case .updateSill: return "\(name)의 Sill 버전이 오래되어 이 \(device)와 연결할 수 없습니다."
             }
         }
     }
@@ -990,7 +990,7 @@ enum DiscoveryPolicy {
 
     /// The status line after a tap that dialed nothing because the Mac's Sill is too old.
     static func updateSillStatus(mac: String) -> String {
-        "\(mac) runs an older Sill. Update Sill on the Mac to connect."
+        "\(mac)의 Sill 버전이 오래되었습니다. 연결하려면 Mac의 Sill을 업데이트하세요."
     }
 
     /// Whether this device's connection runs over the USB cable to the Mac, as this device sees it
@@ -1357,67 +1357,67 @@ enum DiscoveryPolicy {
     /// calls the Mac; `device` this device's kind ("iPad").
     enum HomeCopy {
         static func pairing(mac: String, cable: Bool) -> String {
-            cable ? "Pairing with \(mac) over the cable\u{2026}" : "Pairing with \(mac)\u{2026}"
+            cable ? "케이블로 \(mac) 기기와 페어링하는 중…" : "\(mac) 기기와 페어링하는 중…"
         }
-        static func pairedOverCable(mac: String) -> String { "Paired with \(mac) over the cable." }
+        static func pairedOverCable(mac: String) -> String { "케이블로 \(mac) 기기와 페어링했습니다." }
         /// The status line while the home card is up, and the card's scan line.
-        static func showing(mac: String, device: String) -> String { "\(mac) is showing a code. Point this \(device) at it." }
+        static func showing(mac: String, device: String) -> String { "\(mac)에 코드가 표시되어 있습니다. 이 \(device)의 카메라로 비추세요." }
         /// The home card (§7.7): its title, a heading; its typed path's line, which is also the
         /// line it collapses to while the code has the keyboard; the viewfinder's caption, and
         /// what VoiceOver says for the viewfinder.
-        static func cardTitle(mac: String) -> String { "Pair with \(mac)" }
-        static func typeCode(mac: String) -> String { "Type the code \(mac) shows." }
-        static func viewfinderCaption(mac: String) -> String { "Point at the code on \(mac)" }
-        static func viewfinderLabel(mac: String) -> String { "Camera. Point it at the code on \(mac)." }
+        static func cardTitle(mac: String) -> String { "\(mac) 기기와 페어링" }
+        static func typeCode(mac: String) -> String { "\(mac)에 표시된 코드를 입력하세요." }
+        static func viewfinderCaption(mac: String) -> String { "\(mac)에 표시된 코드를 비추세요" }
+        static func viewfinderLabel(mac: String) -> String { "카메라입니다. \(mac)에 표시된 코드를 비추세요." }
         /// Pair This iPad… over a session at home that needs no pairing (the Settings panel's
         /// footnote, `AwayFromHome.pairThisDevice(atHome: true)`).
         static func pairThisDeviceAtHome(mac: String, device: String) -> String {
-            "\(mac) lets devices connect without pairing. Pair this \(device) once to keep connecting if that changes, and to reach \(mac) away from home while Remote Access is on. \(mac) shows a code; scan it with this \(device)."
+            "\(mac)에서 페어링 없이 연결을 허용하고 있습니다. 이 \(device)와 한 번 페어링하면 설정이 바뀌어도 계속 연결할 수 있고, 원격 접근이 켜져 있으면 외부에서도 연결할 수 있습니다. \(mac)에 표시된 코드를 이 \(device)로 스캔하세요."
         }
         /// Pair This iPad…'s errors over a stream at home, where no row can be tapped: the Mac
         /// could not prove it knows the code; nothing answered the pairing connection. (A refused
         /// code says what the remote path's does: choose Pair iPhone or iPad… on the Mac.)
         static func proofFailedOverStream(mac: String) -> String {
-            "Pairing didn\u{2019}t finish: \(mac) couldn\u{2019}t show it knows the code."
+            "페어링을 완료하지 못했습니다. \(mac)의 코드를 검증할 수 없습니다."
         }
-        static func noAnswerOverStream(mac: String) -> String { "\(mac) didn\u{2019}t answer. Try again." }
+        static func noAnswerOverStream(mac: String) -> String { "\(mac)의 응답이 없습니다. 다시 시도하세요." }
         /// Pair This iPad…'s line under its title over a session at home that speaks TLS, from the
         /// Mac's answer to its ask (`overlayLine`): asking; a code showing; none shown by itself;
         /// the Mac locked. Never "Tap": over a stream there is no row.
-        static func overlayAsking(mac: String) -> String { "Asking \(mac) for a code\u{2026}" }
-        static func overlayShowing(mac: String) -> String { "\(mac) is showing a code now." }
+        static func overlayAsking(mac: String) -> String { "\(mac)에 코드를 요청하는 중…" }
+        static func overlayShowing(mac: String) -> String { "\(mac)에 코드가 표시되어 있습니다." }
         static func overlayOpenOnMac(mac: String) -> String {
-            "\(mac) didn\u{2019}t show a code by itself. On the Mac, choose Pair iPhone or iPad\u{2026} in the Sill menu."
+            "\(mac)에 코드가 자동으로 표시되지 않았습니다. Mac의 Sill 메뉴에서 ‘Pair iPhone or iPad…’를 선택하세요."
         }
         static func overlayLocked(mac: String, device: String) -> String {
-            "Unlock \(mac), then choose Pair This \(device)\u{2026} again."
+            "\(mac)의 잠금을 해제한 뒤 ‘이 \(device) 페어링…’을 다시 선택하세요."
         }
         static func openOnMac(mac: String) -> String {
-            "\(mac) didn\u{2019}t show a code. On the Mac, choose Pair iPhone or iPad\u{2026} in the Sill menu, then tap \(mac) again."
+            "\(mac)에 코드가 표시되지 않았습니다. Mac의 Sill 메뉴에서 ‘Pair iPhone or iPad…’를 선택한 뒤 Mac을 다시 탭하세요."
         }
-        static func locked(mac: String) -> String { "Unlock \(mac), then tap it again." }
-        static func removed(mac: String, device: String) -> String { "\(mac) removed this \(device). Tap it to pair again." }
+        static func locked(mac: String) -> String { "\(mac)의 잠금을 해제한 뒤 다시 탭하세요." }
+        static func removed(mac: String, device: String) -> String { "\(mac)에서 이 \(device)의 등록을 해제했습니다. Mac을 탭해 다시 페어링하세요." }
         /// Another key answered as the saved Mac and no other row of it was left (`afterPinRefused`).
         static func newKey(mac: String, device: String) -> String {
-            "\(mac) has a new key since this \(device) paired. Tap it to pair again."
+            "이 \(device)와 페어링한 이후 \(mac)의 키가 변경되었습니다. Mac을 탭해 다시 페어링하세요."
         }
         static func pairingRequired(mac: String, device: String) -> String {
-            "\(mac) now asks devices to pair. Tap it to pair this \(device)."
+            "\(mac)에 연결하려면 이제 페어링이 필요합니다. Mac을 탭해 이 \(device)와 페어링하세요."
         }
         /// The home card's errors, under its field or in its place (`homeRefusal`). After a stop
         /// or a closed code the Mac keeps this device quiet (a cancel on the Mac, a stop), so the
         /// words send the person to its menu first; after an expiry a tap is enough.
         static func stopped(mac: String) -> String {
-            "\(mac) stopped pairing after too many wrong codes. On the Mac, choose Pair iPhone or iPad\u{2026} in the Sill menu, then tap \(mac) again."
+            "잘못된 코드를 여러 번 입력하여 \(mac)에서 페어링을 중단했습니다. Mac의 Sill 메뉴에서 ‘Pair iPhone or iPad…’를 선택한 뒤 Mac을 다시 탭하세요."
         }
-        static func expired(mac: String) -> String { "That code expired. Tap \(mac) for a new one." }
+        static func expired(mac: String) -> String { "코드가 만료되었습니다. \(mac)을 탭해 새 코드를 받으세요." }
         static func closed(mac: String) -> String {
-            "That code no longer works. On the Mac, choose Pair iPhone or iPad\u{2026} in the Sill menu, then tap \(mac) again."
+            "더 이상 사용할 수 없는 코드입니다. Mac의 Sill 메뉴에서 ‘Pair iPhone or iPad…’를 선택한 뒤 Mac을 다시 탭하세요."
         }
         static func proofFailed(mac: String) -> String {
-            "Pairing didn\u{2019}t finish: \(mac) couldn\u{2019}t show it knows the code. Tap it to try again."
+            "페어링을 완료하지 못했습니다. \(mac)의 코드를 검증할 수 없습니다. Mac을 탭해 다시 시도하세요."
         }
         /// Nothing answered the ask or a proof at the row (it went, or Sill quit meanwhile).
-        static func noAnswer(mac: String) -> String { "\(mac) didn\u{2019}t answer. Check that Sill is open on it, then tap it again." }
+        static func noAnswer(mac: String) -> String { "\(mac)의 응답이 없습니다. Mac에서 Sill이 실행 중인지 확인한 뒤 다시 탭하세요." }
     }
 }

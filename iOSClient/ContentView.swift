@@ -4,7 +4,6 @@ import StreamProtocol
 
 struct ContentView: View {
     @StateObject private var client = StreamClient()
-    @State private var canvasOpen = false
     /// Tells the host what this device sees, once a second while connected. Also covers the DEBUG
     /// harness's `-SillLive 1` session, which runs on this same client.
     @StateObject private var statsReporter = ClientStatsReporter()
@@ -35,32 +34,6 @@ struct ContentView: View {
             } else {
                 ConnectScreen(client: client)
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                Button {
-                    canvasOpen = true
-                } label: {
-                    Label("그림판", systemImage: "pencil.tip.crop.circle")
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.trailing, 20)
-                .padding(.bottom, 72)
-                .accessibilityIdentifier("openCanvasBridge")
-            }
-        }
-        .fullScreenCover(isPresented: $canvasOpen) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Canvas Bridge")
-                    Spacer()
-                    Button("Mac 화면") { canvasOpen = false }
-                        .accessibilityIdentifier("closeCanvasBridge")
-                }
-                .padding(12)
-                CanvasWorkspace()
-            }
-            .preferredColorScheme(.dark)
         }
         .preferredColorScheme(.dark)
         // Tells MacMenuHub which window shows this session: the iPad's menu bar shows its menus while
@@ -858,9 +831,9 @@ struct ConnectScreen: View {
     /// "Pair with Mac mini" over the home card; "Add a Mac" over Add a Mac and an outside link's
     /// confirmation.
     private var title: String {
-        if client.pendingLink != nil || adding { return "Add a Mac" }
+        if client.pendingLink != nil || adding { return "Mac 추가" }
         if let mac = homeCard { return DiscoveryPolicy.HomeCopy.cardTitle(mac: mac) }
-        return "Connect to a Mac"
+        return "Mac 연결"
     }
 
     private var device: String { StreamClient.deviceWord }
@@ -1023,7 +996,7 @@ struct ConnectScreen: View {
         // before Sill's App Store address is known (SillLinks): the words say what to do anyway.
         if let notice = client.notice, notice.storeLink, notice.text == client.status, let url = SillLinks.appStore {
             Link(destination: url) {
-                Text("Update Sill in the App Store")
+                Text("App Store에서 Sill 업데이트")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Palette.accent)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1031,7 +1004,7 @@ struct ConnectScreen: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Opens the App Store.")
+            .accessibilityHint("App Store를 엽니다.")
         }
 
         ForEach(client.macs) { mac in
@@ -1052,14 +1025,14 @@ struct ConnectScreen: View {
                 }
                 .frame(width: 32, height: 32)
             }
-            .accessibilityLabel(mac.route == .remote ? "\(mac.name), Remote" : mac.homeWord.label(name: mac.name))
-            .accessibilityHint(mac.route == .remote ? "Connects through your VPN or the internet."
+            .accessibilityLabel(mac.route == .remote ? "\(mac.name), 원격" : mac.homeWord.label(name: mac.name))
+            .accessibilityHint(mac.route == .remote ? "VPN이나 인터넷을 통해 연결합니다."
                                : mac.homeWord.hint(name: mac.name, device: device, direct: mac.direct))
             .contextMenu { menu(for: mac) }
         }
 
         if client.showsNearbyHint {
-            Text("Your Mac has to be on the same Wi\u{2011}Fi network as this \(device), or have Direct Wireless Connection turned on in Sill. Away from home, add it once with a code from your Mac.")
+            Text("Mac과 이 \(device)가 같은 Wi-Fi에 있거나 Mac의 Sill에서 직접 무선 연결을 켜야 합니다. 외부에서 접속하려면 Mac에 표시된 코드로 한 번 추가하세요.")
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1068,7 +1041,7 @@ struct ConnectScreen: View {
             // status line says (a disconnect's message stays there), at the button's height so
             // nothing moves.
             if client.searchingNearby {
-                Text("Also looking nearby")
+                Text("주변 Mac도 찾는 중")
                     .font(.system(size: 15))
                     .foregroundStyle(Palette.muted)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1077,9 +1050,9 @@ struct ConnectScreen: View {
                 Button(action: {
                     client.searchNearby()
                     // The button leaves from under VoiceOver's cursor: say what it started.
-                    AccessibilityNotification.Announcement("Also looking nearby").post()
+                    AccessibilityNotification.Announcement("주변 Mac도 찾는 중").post()
                 }) {
-                    Text("Search Nearby")
+                    Text("주변 Mac 찾기")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Palette.accent)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1087,13 +1060,13 @@ struct ConnectScreen: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Also looks for a Mac with Direct Wireless Connection turned on, without a Wi\u{2011}Fi network.")
+                .accessibilityHint("같은 Wi-Fi가 없어도 직접 무선 연결을 켠 Mac을 찾습니다.")
             }
         }
 
         // Always the last line, from the first frame, so nothing moves when it is needed.
         Button(action: unfold) {
-            Text("Add a Mac…")
+            Text("Mac 추가…")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Palette.accent)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1101,7 +1074,7 @@ struct ConnectScreen: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Pairs this \(device) with a Mac so you can reach it away from home.")
+        .accessibilityHint("이 \(device)를 Mac과 페어링해 외부에서도 연결할 수 있게 합니다.")
     }
 
     /// A saved Mac's row: Connect (a Remote row) or Connect Remotely (its network row, to try the
@@ -1109,12 +1082,12 @@ struct ConnectScreen: View {
     @ViewBuilder private func menu(for mac: FoundMac) -> some View {
         if let id = mac.macID {
             if mac.route == .remote {
-                Button { client.connect(to: mac) } label: { Label("Connect", systemImage: "globe") }
+                Button { client.connect(to: mac) } label: { Label("연결", systemImage: "globe") }
             } else if mac.route == .network {
-                Button { client.connectRemotely(id) } label: { Label("Connect Remotely", systemImage: "globe") }
+                Button { client.connectRemotely(id) } label: { Label("원격 연결", systemImage: "globe") }
             }
             let name = client.savedMac(id) != nil ? client.displayName(id) : mac.name
-            Button(role: .destructive) { client.forget(id) } label: { Label("Forget \(name)", systemImage: "trash") }
+            Button(role: .destructive) { client.forget(id) } label: { Label("\(name) 등록 해제", systemImage: "trash") }
         }
     }
 
@@ -1166,7 +1139,7 @@ struct ConnectScreen: View {
     /// openURL), and VoiceOver reads it as a link. The addresses are SillLinks'.
     private func footer(_ layout: ConnectLayout) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Needs the free Sill app on your Mac.")
+            Text("Mac에 무료 Sill 앱이 필요합니다.")
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             // All three on one line while they fit, else the download link over the other two,
@@ -1198,15 +1171,15 @@ struct ConnectScreen: View {
     }
 
     private var downloadLink: some View {
-        footerLink("Get it at \(SillLinks.siteName)", to: SillLinks.download)
+        footerLink("\(SillLinks.siteName)에서 다운로드", to: SillLinks.download)
     }
 
     /// Support, then the privacy policy, on one line.
     private var supportAndPrivacy: some View {
         HStack(spacing: 0) {
-            footerLink("Support", to: SillLinks.support)
+            footerLink("지원", to: SillLinks.support)
             linkSeparator
-            footerLink("Privacy Policy", to: SillLinks.privacy)
+            footerLink("개인정보 처리방침", to: SillLinks.privacy)
         }
     }
 

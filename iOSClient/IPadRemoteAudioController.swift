@@ -67,7 +67,7 @@ final class IPadRemoteAudioController {
         if !answer.enabled, answer.requestID == nil {
             let requested = status.requested
             if requested { stop() }
-            if requested { status = .failed(answer.reason ?? "Mac audio stopped") }
+            if requested { status = .failed(answer.reason ?? "Mac 오디오가 중지되었습니다.") }
             return
         }
         let requestID: UUID
@@ -79,7 +79,7 @@ final class IPadRemoteAudioController {
         if answer.enabled { status = .listening(requestID) }
         else {
             stop()
-            status = .failed(answer.reason ?? "Mac audio unavailable")
+            status = .failed(answer.reason ?? "Mac 오디오를 사용할 수 없습니다.")
         }
     }
 
@@ -91,7 +91,7 @@ final class IPadRemoteAudioController {
     func expire(_ requestID: UUID, from origin: ObjectIdentifier) {
         guard peer == origin, status == .requesting(requestID) else { return }
         revoke()
-        status = .failed("Mac audio did not respond.")
+        status = .failed("Mac 오디오의 응답이 없습니다.")
     }
 
     func sourceWillChange() { revoke() }

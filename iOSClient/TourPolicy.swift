@@ -477,18 +477,18 @@ enum TourPolicy {
 
     // MARK: The words (§7)
 
-    static let skipTitle = "Skip"
-    static let nextTitle = "Next"
-    static let doneTitle = "Done"
-    static let skipHint = "Ends the tour. Take the Tour in Settings shows it again."
+    static let skipTitle = "건너뛰기"
+    static let nextTitle = "다음"
+    static let doneTitle = "완료"
+    static let skipHint = "사용 안내를 마칩니다. 설정의 ‘사용 안내’에서 다시 볼 수 있습니다."
     /// The Settings panel's last row.
-    static let takeTourTitle = "Take the Tour"
-    static func takeTourFootnote(device: String) -> String { "A short tour of Sill’s controls on this \(device)." }
-    static func takeTourHint(device: String) -> String { "Shows how to use Sill on this \(device)." }
+    static let takeTourTitle = "사용 안내"
+    static func takeTourFootnote(device: String) -> String { "이 \(device)에서 Sill을 조작하는 방법을 간단히 안내합니다." }
+    static func takeTourHint(device: String) -> String { "이 \(device)에서 Sill을 사용하는 방법을 보여줍니다." }
 
     /// The title as VoiceOver reads it: its place in the run, when the run has more than one card.
     static func spokenTitle(_ copy: TourCopy, index: Int, count: Int) -> String {
-        count > 1 ? "\(copy.title), step \(index + 1) of \(count)" : copy.title
+        count > 1 ? "\(copy.title), \(count)단계 중 \(index + 1)단계" : copy.title
     }
 
     /// A step's card. ‹Mac› is the Mac's name ("your Mac" when there is none yet); ‹device› is
@@ -498,73 +498,73 @@ enum TourPolicy {
     /// turned on its side, so its words say so where an iPhone's say upright.
     static func copy(_ t: TourTopic, _ layout: TourLayout, mac: String, device: String,
                      voiceOver: Bool, firstOfRun: Bool, keysOnItsSide: Bool = false) -> TourCopy {
-        let mac = mac.isEmpty ? "your Mac" : mac
+        let mac = mac.isEmpty ? "사용 중인 Mac" : mac
         let iPad = device == "iPad"
-        let keyboardRow = row("keyboard", [strong("Keyboard"), plain(" types on \(mac), on screen or with a hardware keyboard.")])
+        let keyboardRow = row("keyboard", [strong("키보드"), plain("로 화면 키보드나 외장 키보드를 사용해 \(mac)에 입력합니다.")])
         switch t {
         case .touch:
-            var rows = [row("hand.tap", [strong("Tap"), plain(" to click.")]),
-                        row("contextualmenu.and.cursorarrow", [strong("Touch and hold"), plain(" to right-click.")]),
-                        row("hand.draw", [strong("Drag"), plain(" to scroll.")])]
-            if iPad { rows.append(row("applepencil", [strong("Apple Pencil"), plain(" works as a mouse.")])) }
+            var rows = [row("hand.tap", [strong("탭"), plain("하면 클릭합니다.")]),
+                        row("contextualmenu.and.cursorarrow", [strong("길게 터치"), plain("하면 오른쪽 클릭합니다.")]),
+                        row("hand.draw", [strong("드래그"), plain("하면 스크롤합니다.")])]
+            if iPad { rows.append(row("applepencil", [strong("Apple Pencil"), plain("을 마우스처럼 사용할 수 있습니다.")])) }
             let hint: String
             switch layout {
-            case .landscape: hint = "The picture of \(mac) fills the screen below the bar."
-            case .portrait: hint = "The picture of \(mac) fills the top half of the screen."
-            case .phone: hint = "The picture of \(mac) is at the top of the screen."
+            case .landscape: hint = "\(mac) 화면이 도구 막대 아래를 채웁니다."
+            case .portrait: hint = "\(mac) 화면이 위쪽 절반을 채웁니다."
+            case .phone: hint = "\(mac) 화면이 맨 위에 표시됩니다."
             }
-            return TourCopy(title: "Tap, Hold and Drag", subtitle: "What you do here happens on \(mac).", rows: rows, hint: hint)
+            return TourCopy(title: "탭, 길게 터치, 드래그", subtitle: "여기서 조작하면 \(mac)에 반영됩니다.", rows: rows, hint: hint)
         case .bar:
             var rows: [TourRow]
             // Aa sizes a window, never the Desktop (the Mac ignores a viewport's scale for it), and
             // the first picture is the Desktop: the rows say whose text it is.
             if voiceOver {
-                rows = [row("hand.point.up.left", [strong("Each window"), plain(" has actions: close, minimize, full screen, and move left or right. Swipe up or down to hear them.")]),
-                        row("textformat.size", [strong("Text size"), plain(" makes a window’s text on \(mac) larger or smaller. Swipe up or down on it.")])]
+                rows = [row("hand.point.up.left", [strong("각 창"), plain("에서 닫기, 최소화, 전체 화면, 좌우 이동을 사용할 수 있습니다. 위아래로 쓸어넘겨 동작을 들으세요.")]),
+                        row("textformat.size", [strong("글자 크기"), plain("로 \(mac) 창의 글자를 키우거나 줄입니다. 항목 위에서 위아래로 쓸어넘기세요.")])]
             } else {
-                rows = [row("hand.point.up.left", [strong("Touch and hold"), plain(" a window to close, minimize or go full screen. Keep holding and drag to move it.")]),
-                        row("textformat.size", [strong("Aa"), plain(": touch it and slide to make a window’s text larger or smaller.")])]
+                rows = [row("hand.point.up.left", [strong("길게 터치"), plain("하면 창을 닫거나 최소화하거나 전체 화면으로 전환할 수 있습니다. 누른 채 드래그하면 창이 이동합니다.")]),
+                        row("textformat.size", [strong("Aa"), plain("를 터치한 채 밀면 창의 글자를 키우거나 줄일 수 있습니다.")])]
             }
             // The Keyboard button is the bar's sideways and a phone's upright; the halves' keyboard
             // is a cap, which the laptop card names.
             if layout != .portrait { rows.append(keyboardRow) }
             let hint: String
             switch layout {
-            case .landscape: hint = "In the bar at the top, after Apps."
-            case .portrait: hint = "In the bar below the picture, after Apps."
-            case .phone: hint = "Under the picture: Aa and Keyboard in the first row, the windows in the second."
+            case .landscape: hint = "상단 도구 막대의 ‘앱’ 다음에 있습니다."
+            case .portrait: hint = "화면 아래 도구 막대의 ‘앱’ 다음에 있습니다."
+            case .phone: hint = "화면 아래 첫째 줄에는 Aa와 키보드, 둘째 줄에는 창이 있습니다."
             }
-            return TourCopy(title: "Windows and Text Size", subtitle: nil, rows: rows, hint: hint)
+            return TourCopy(title: "창과 글자 크기", subtitle: nil, rows: rows, hint: hint)
         case .settings:
-            var rows = [row("xmark.circle", [strong("Disconnect"), plain(" is at the bottom of Settings.")]),
-                        row("questionmark.circle", [strong("Take the Tour"), plain(" is there too, to see this again.")])]
+            var rows = [row("xmark.circle", [strong("연결 해제"), plain("는 설정 맨 아래에 있습니다.")]),
+                        row("questionmark.circle", [strong("사용 안내"), plain("도 같은 곳에 있습니다. 안내를 다시 보려면 선택하세요.")])]
             if layout == .landscape {
-                let turn = keysOnItsSide ? "Turn your \(device) on its side" : "Hold your \(device) upright"
-                rows.append(row(iPad ? "ipad" : "iphone", [strong(turn), plain(" for a trackpad and keys.")]))
+                let turn = keysOnItsSide ? "\(device)를 가로로 돌리세요" : "\(device)를 세로로 세우세요"
+                rows.append(row(iPad ? "ipad" : "iphone", [strong(turn), plain(". 트랙패드와 키가 표시됩니다.")]))
             }
-            return TourCopy(title: "Settings", subtitle: nil, rows: rows,
-                            hint: layout == .phone ? "The last button in the row under the picture." : "The last button in the bar.")
+            return TourCopy(title: "설정", subtitle: nil, rows: rows,
+                            hint: layout == .phone ? "화면 아래 줄의 마지막 버튼입니다." : "도구 막대의 마지막 버튼입니다.")
         case .laptop:
             var rows: [TourRow]
             if voiceOver {
-                rows = [row("command", [strong("cmd, opt, ctrl and shift"), plain(" stay on for the next key: cmd, then C, copies.")],
-                            spoken: "Command, Option, Control and Shift stay on for the next key: Command, then C, copies.")]
+                rows = [row("command", [strong("cmd, opt, ctrl, shift"), plain("는 다음 키를 누를 때까지 유지됩니다. cmd를 누른 다음 C를 누르면 복사합니다.")],
+                            spoken: "Command, Option, Control, Shift는 다음 키를 누를 때까지 유지됩니다. Command를 누른 다음 C를 누르면 복사합니다.")]
             } else {
-                rows = [row("command", [strong("cmd, opt, ctrl and shift"), plain(" stay on for the next key or trackpad click: tap cmd, then C, to copy.")],
-                            spoken: "Command, Option, Control and Shift stay on for the next key or trackpad click: tap Command, then C, to copy.")]
+                rows = [row("command", [strong("cmd, opt, ctrl, shift"), plain("는 다음 키나 트랙패드 클릭까지 유지됩니다. cmd를 누른 다음 C를 누르면 복사합니다.")],
+                            spoken: "Command, Option, Control, Shift는 다음 키나 트랙패드 클릭까지 유지됩니다. Command를 누른 다음 C를 누르면 복사합니다.")]
             }
             // A phone's keyboard is row 1's button, which the bar card names; the halves' is a cap.
             if layout != .phone {
-                rows.append(row("keyboard", [strong("The keyboard key"), plain(" types on \(mac), on screen or with a hardware keyboard.")]))
+                rows.append(row("keyboard", [strong("키보드 키"), plain("로 화면 키보드나 외장 키보드를 사용해 \(mac)에 입력합니다.")]))
             }
             if !voiceOver {
-                rows.append(row("cursorarrow.click.2", [strong("Tap with two fingers"), plain(" on the trackpad to right-click.")]))
-                rows.append(row("hand.draw", [strong("Touch and hold"), plain(" the trackpad, "), strong("then drag"), plain(", to move a window or select text.")]))
+                rows.append(row("cursorarrow.click.2", [strong("두 손가락으로 탭"), plain("하면 트랙패드에서 오른쪽 클릭합니다.")]))
+                rows.append(row("hand.draw", [plain("트랙패드를 "), strong("길게 터치"), plain("한 채 "), strong("드래그"), plain("하면 창을 이동하거나 텍스트를 선택할 수 있습니다.")]))
             }
-            let subtitle = keysOnItsSide ? "On its side, Sill adds keys and a trackpad." : "Upright, Sill adds keys and a trackpad."
-            return TourCopy(title: "Keys and Trackpad", subtitle: firstOfRun ? subtitle : nil,
-                            rows: rows, hint: layout == .phone ? "Under the windows: the row of keys, then the trackpad."
-                                                               : "Below the bar: the row of keys, then the trackpad.")
+            let subtitle = keysOnItsSide ? "가로로 돌리면 키와 트랙패드가 표시됩니다." : "세로로 세우면 키와 트랙패드가 표시됩니다."
+            return TourCopy(title: "키와 트랙패드", subtitle: firstOfRun ? subtitle : nil,
+                            rows: rows, hint: layout == .phone ? "창 아래에 키가, 그 아래에 트랙패드가 있습니다."
+                                                               : "도구 막대 아래에 키가, 그 아래에 트랙패드가 있습니다.")
         }
     }
 

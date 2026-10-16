@@ -41,7 +41,7 @@ struct HostSettingsPanel: View {
     /// its rows do the gestures instead.
     @State private var voiceOver = HostSettingsPanel.voiceOverRunning
 
-    private var mac: String { client.macName.isEmpty ? "the Mac" : client.macName }
+    private var mac: String { client.macName.isEmpty ? "Mac" : client.macName }
     private static let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
     /// DEBUG `-SillSettingsEnd 1`: the rows start scrolled to their end, so a photo of a short
     /// screen shows the last groups (Direct Wireless, Away from home, This iPad, Take the Tour).
@@ -104,7 +104,7 @@ struct HostSettingsPanel: View {
         // is in the footer or the note. The haptic is a no-op on an iPad.
         .sensoryFeedback(.warning, trigger: client.settingsRefusals)
         .onChange(of: client.settingsRefusals) { _, _ in
-            AccessibilityNotification.Announcement("\(mac) kept its setting").post()
+            AccessibilityNotification.Announcement("\(mac)의 설정이 변경되지 않았습니다").post()
         }
         .onChange(of: client.settingsProblem) { _, problem in
             if let problem { AccessibilityNotification.Announcement(problem).post() }
@@ -146,7 +146,7 @@ struct HostSettingsPanel: View {
                         // Its own line: beside the numbers it never fit the panel's width, and it
                         // is what confirms the Virtual Display switch took effect.
                         if state.stream?.onVirtualDisplay == true {
-                            Text("On the virtual display")
+                            Text("가상 디스플레이에서 스트리밍 중")
                         }
                         // From afar, how, with the round trip (it needs no clock agreement between
                         // the two devices, unlike frame age); the readout above then ends in the
@@ -155,7 +155,7 @@ struct HostSettingsPanel: View {
                         // spaces are no-break ones, as on the Mac's card (at xxLarge on the outer
                         // display it read "Connected through" / "Tailscale · 48 ms").
                         if let r = remoteRoute {
-                            Text("Connected \(r.phrase.replacingOccurrences(of: " ", with: "\u{00A0}"))\u{00A0}· \(Self.rttText(client.linkStats))")
+                            Text("연결됨 · \(r.localizedPhrase.replacingOccurrences(of: " ", with: "\u{00A0}"))\u{00A0}· \(Self.rttText(client.linkStats))")
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         // Away from home (docs/remote-bundle-plan.md §5.8): which quality this
@@ -179,7 +179,7 @@ struct HostSettingsPanel: View {
             // padding and the shape sit inside the label, which is what the button hit-tests, and
             // the layout takes them back outside.
             Button(action: close) {
-                Text("Done")
+                Text("완료")
                     .padding(.vertical, 11)
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
@@ -199,8 +199,8 @@ struct HostSettingsPanel: View {
             // The header already names the Mac: when a long name leaves no room, "Disconnect"
             // alone says enough (a truncated "Disconnect from…ah's MacBook Pro" read badly).
             ViewThatFits(in: .horizontal) {
-                Label("Disconnect from \(mac)", systemImage: "xmark.circle").lineLimit(1)
-                Label("Disconnect", systemImage: "xmark.circle").lineLimit(1)
+                Label("\(mac) 연결 해제", systemImage: "xmark.circle").lineLimit(1)
+                Label("연결 해제", systemImage: "xmark.circle").lineLimit(1)
             }
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .padding(.horizontal, 14)
@@ -209,7 +209,7 @@ struct HostSettingsPanel: View {
         .buttonStyle(.plain)
         .foregroundStyle(Palette.accent)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.control))
-        .accessibilityLabel("Disconnect from \(mac)")
+        .accessibilityLabel("\(mac) 연결 해제")
         .padding(.top, 10)
     }
 
@@ -225,7 +225,7 @@ struct HostSettingsPanel: View {
                 if state.softwareEncoder {
                     // Neither a restart nor a return is promised: hosts before 2026-09-25 keep the
                     // software encoder until they relaunch, newer ones go back by themselves.
-                    Callout(text: "\(mac)’s hardware encoder is busy or not responding, so for now streams run at up to 60 fps at Standard.")
+                    Callout(text: "\(mac)의 하드웨어 인코더가 사용 중이거나 응답하지 않아 현재는 표준 해상도, 최대 60 fps로 스트리밍합니다.")
                 }
                 if let problem = client.settingsProblem {
                     Callout(text: problem)
@@ -238,7 +238,7 @@ struct HostSettingsPanel: View {
                         Callout.Action(title: b.title, spoken: b.spoken) { client.changeSettings(b.change) }
                     })
                 } else if AwayCopy.showsRttCallout(away: state.away, remote: remoteRoute != nil, slowLink: client.slowLink) {
-                    Callout(text: "The picture is arriving slowly from \(mac). Choose Low quality or Standard resolution.")
+                    Callout(text: "\(mac)에서 화면이 느리게 전송되고 있습니다. 화질을 ‘낮음’으로 또는 해상도를 ‘표준’으로 설정하세요.")
                 }
                 streamRows(shown)
                 Footnote(text: streamFooter)
@@ -250,15 +250,15 @@ struct HostSettingsPanel: View {
                 // what it trades away.
                 Rows {
                     Toggle(isOn: binding(shown.prioritizeSpeed) { HostSettingsChange(prioritizeSpeed: $0) }) {
-                        RowTitle(title: "Prioritize Encoding Speed", since: client.settings.pendingSince(.prioritizeSpeed))
+                        RowTitle(title: "인코딩 속도 우선", since: client.settings.pendingSince(.prioritizeSpeed))
                     }
                     .rowFrame()
                 }
-                Footnote(text: "Lower latency when \(mac) is busy, at a softer picture.")
+                Footnote(text: "\(mac)이 사용 중일 때 지연을 줄입니다. 화면 선명도는 낮아집니다.")
                 Rows {
                     let unavailable = !state.virtualDisplayAvailable && !shown.virtualDisplay
                     Toggle(isOn: binding(shown.virtualDisplay) { HostSettingsChange(virtualDisplay: $0) }) {
-                        RowTitle(title: "Virtual Display", since: client.settings.pendingSince(.virtualDisplay))
+                        RowTitle(title: "가상 디스플레이", since: client.settings.pendingSince(.virtualDisplay))
                     }
                     // Off and impossible on this host: disabled, the reason under it. On, it can
                     // always be turned off, as from the Mac's own menu.
@@ -269,9 +269,9 @@ struct HostSettingsPanel: View {
                 if let note = state.virtualDisplayNote {
                     Footnote(text: note, warning: true)
                 } else {
-                    Footnote(text: "The window you pick moves onto an invisible display on \(mac) while it streams, so it keeps updating when covered.")
+                    Footnote(text: "선택한 창을 스트리밍하는 동안 \(mac)의 보이지 않는 디스플레이로 이동합니다. 다른 창에 가려져도 화면이 계속 갱신됩니다.")
                 }
-                Footnote(text: "Applies to every device streaming from \(mac). The stream restarts for a moment.")
+                Footnote(text: "\(mac)에서 스트리밍하는 모든 기기에 적용됩니다. 스트리밍이 잠시 재시작됩니다.")
                 // Direct Wireless Connection: how devices reach the Mac, not how it streams; after the
                 // closing footer, whose "the stream restarts" is not true of it, and last, the least
                 // changed row with the longest footer (the compact halves' 259 pt shows the rest
@@ -281,23 +281,23 @@ struct HostSettingsPanel: View {
                 if let direct = shown.directWireless {
                     Rows {
                         Toggle(isOn: binding(direct) { HostSettingsChange(directWireless: $0) }) {
-                            RowTitle(title: "Direct Wireless Connection", since: client.settings.pendingSince(.directWireless))
+                            RowTitle(title: "직접 무선 연결", since: client.settings.pendingSince(.directWireless))
                         }
                         // A warning about turning it off, so only while the switch shows on.
-                        .accessibilityHint(client.connectedDirectly && direct ? "Turning this off disconnects this \(device)." : "")
+                        .accessibilityHint(client.connectedDirectly && direct ? "끄면 이 \(device)의 연결이 끊어집니다." : "")
                         // From afar the Mac refuses it anyway: how devices near the Mac reach it is
                         // theirs and the Mac's to change.
                         .disabled(remoteRoute != nil)
                         .rowFrame()
                     }
-                    Footnote(text: remoteRoute != nil ? "Change this on \(mac), or from a device near it." : directFooter(on: direct))
+                    Footnote(text: remoteRoute != nil ? "\(mac)이나 근처에 있는 기기에서 변경하세요." : directFooter(on: direct))
                 }
                 if !state.persistent {
-                    Footnote(text: "SillHost keeps these until it quits.")
+                    Footnote(text: "SillHost가 종료될 때까지 이 설정을 유지합니다.")
                 }
                 awayFromHome
             } else if olderMac {
-                Label("Update Sill on \(mac) to change these from here.", systemImage: "arrow.down.circle")
+                Label("여기서 설정을 변경하려면 \(mac)의 Sill을 업데이트하세요.", systemImage: "arrow.down.circle")
                     .font(.body)
                     .foregroundStyle(Palette.text)
                     .fixedSize(horizontal: false, vertical: true)
@@ -306,7 +306,7 @@ struct HostSettingsPanel: View {
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small).tint(Palette.muted)
-                    Text("Loading settings…")
+                    Text("설정을 불러오는 중…")
                 }
                 .font(.footnote)
                 .foregroundStyle(Palette.muted)
@@ -343,30 +343,30 @@ struct HostSettingsPanel: View {
     /// before anything scrolls.
     private func streamRows(_ shown: StreamSettings) -> some View {
         Rows {
-            AdaptiveRow(title: "Quality", since: client.settings.pendingSince(.bitrate)) {
-                Picker("Quality", selection: binding(shown.bitrate) { HostSettingsChange(bitrate: $0) }) {
-                    ForEach(QualityPreset.allCases) { Text($0.title).tag($0.rawValue) }
+            AdaptiveRow(title: "화질", since: client.settings.pendingSince(.bitrate)) {
+                Picker("화질", selection: binding(shown.bitrate) { HostSettingsChange(bitrate: $0) }) {
+                    ForEach(QualityPreset.allCases) { Text($0.localizedTitle).tag($0.rawValue) }
                     if QualityPreset(rawValue: shown.bitrate) == nil {
                         // Set by hand on the Mac: shown, never offered (the Mac's menu does the same).
-                        Text(QualityPreset.title(forBitrate: shown.bitrate)).tag(shown.bitrate)
+                        Text(QualityPreset.localizedTitle(forBitrate: shown.bitrate)).tag(shown.bitrate)
                     }
                 }
                 .pickerStyle(.menu)
                 .fixedSize()     // one line; the row stacks instead when it does not fit beside the title
             }
             RowDivider()
-            AdaptiveRow(title: "Resolution", since: client.settings.pendingSince(.captureScale)) {
-                Picker("Resolution", selection: binding(shown.captureScale) { HostSettingsChange(captureScale: $0) }) {
-                    Text("Retina").tag(2.0)
-                    Text("Standard").tag(1.0)
+            AdaptiveRow(title: "해상도", since: client.settings.pendingSince(.captureScale)) {
+                Picker("해상도", selection: binding(shown.captureScale) { HostSettingsChange(captureScale: $0) }) {
+                    Text("레티나").tag(2.0)
+                    Text("표준").tag(1.0)
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
             }
             RowDivider()
-            AdaptiveRow(title: "Frame Rate", since: client.settings.pendingSince(.maxFPS)) {
+            AdaptiveRow(title: "프레임률", since: client.settings.pendingSince(.maxFPS)) {
                 // A Mac-held value such as 90 selects no segment, as on the Mac.
-                Picker("Frame Rate", selection: binding(shown.maxFPS) { HostSettingsChange(maxFPS: $0) }) {
+                Picker("프레임률", selection: binding(shown.maxFPS) { HostSettingsChange(maxFPS: $0) }) {
                     Text("60 fps").tag(60)
                     Text("120 fps").tag(120)
                 }
@@ -396,7 +396,7 @@ struct HostSettingsPanel: View {
     /// connection).
     @ViewBuilder private var awayFromHome: some View {
         if let info = client.macInfo {
-            Text("Away from home")
+            Text("외부에서 연결")
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(Palette.muted)
                 .padding(.horizontal, 14)
@@ -407,22 +407,22 @@ struct HostSettingsPanel: View {
                                                 remoteAccess: info.remoteAccess, tlsAtHome: client.sessionAtHomeOverTLS) {
             case .paired(let reach):
                 Rows {
-                    Label("Paired", systemImage: "checkmark.circle.fill")
+                    Label("페어링됨", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(Palette.text)
                         .rowFrame()
                 }
                 switch reach {
                 case .connected:
-                    if let r = remoteRoute { Footnote(text: "Connected \(r.phrase).") }
+                    if let r = remoteRoute { Footnote(text: "\(r.localizedPhrase) 연결되었습니다.") }
                 case .reaches:
-                    Footnote(text: "Away from home, Sill reaches \(mac) \(Self.reach(info)).")
+                    Footnote(text: "외부에서는 \(Self.reach(info)) \(mac)에 연결합니다.")
                 case .turnOnRemoteAccess:
                     Footnote(text: Self.turnOnRemoteAccess(mac))
                 }
             case .pairThisDevice(let atHome):
                 Rows {
                     Button(action: pairThisDevice) {
-                        Text("Pair This \(device)…")
+                        Text("이 \(device) 페어링…")
                             .foregroundStyle(Palette.accent)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
@@ -431,7 +431,7 @@ struct HostSettingsPanel: View {
                     .rowFrame()
                 }
                 Footnote(text: atHome ? DiscoveryPolicy.HomeCopy.pairThisDeviceAtHome(mac: mac, device: device)
-                                      : "Pair once to reach \(mac) through your VPN or the internet. \(mac) shows a code; scan it with this \(device).")
+                                      : "한 번 페어링하면 VPN이나 인터넷으로 \(mac)에 연결할 수 있습니다. \(mac)에 표시된 코드를 이 \(device)로 스캔하세요.")
             case .turnOnRemoteAccess:
                 Footnote(text: Self.turnOnRemoteAccess(mac))
             }
@@ -440,7 +440,7 @@ struct HostSettingsPanel: View {
 
     /// With Remote Access off on the Mac: how to reach it away from home.
     static func turnOnRemoteAccess(_ mac: String) -> String {
-        "To reach \(mac) away from home, turn on Remote Access in Sill’s Settings on the Mac."
+        "외부에서 \(mac)에 연결하려면 Mac의 Sill 설정에서 원격 접근을 켜세요."
     }
 
     // MARK: This device
@@ -452,7 +452,7 @@ struct HostSettingsPanel: View {
     /// gesture on the Mac as three fingers would (`sendGesture`: the switch, the Mac's `gestures`,
     /// the Desktop first while a window streams).
     @ViewBuilder private var thisDevice: some View {
-        Text("This \(device)")
+        Text("이 \(device)")
             .font(.footnote.weight(.medium))
             .foregroundStyle(Palette.muted)
             .padding(.horizontal, 14)
@@ -462,7 +462,7 @@ struct HostSettingsPanel: View {
             .id(Self.gesturesGroupID)
         Rows {
             Toggle(isOn: $gesturesOn) {
-                Text("Three-Finger Gestures").foregroundStyle(Palette.text)
+                Text("세 손가락 제스처").foregroundStyle(Palette.text)
             }
             .rowFrame()
             if gesturesOn, macTakesGestures {
@@ -484,23 +484,23 @@ struct HostSettingsPanel: View {
     /// gesture, or, for the Spaces, one action each way (natural direction: a swipe left brings the
     /// Space on the right). The pinch opens Launchpad on macOS 14 and 15, from the same key.
     private static let gestureRows: [(symbol: String, gesture: String, action: String, does: [GestureRow.Action])] = [
-        ("arrow.up", "Swipe Up", "Mission Control", [GestureRow.Action(name: "Mission Control", gesture: .swipeUp)]),
-        ("arrow.down", "Swipe Down", "App Exposé", [GestureRow.Action(name: "App Exposé", gesture: .swipeDown)]),
-        ("arrow.left.and.right", "Swipe Left or Right", "Spaces", [GestureRow.Action(name: "Space on the Right", gesture: .swipeLeft),
-                                                                   GestureRow.Action(name: "Space on the Left", gesture: .swipeRight)]),
-        ("arrow.down.right.and.arrow.up.left", "Pinch", "Apps", [GestureRow.Action(name: "Apps", gesture: .pinch)]),
-        ("arrow.up.left.and.arrow.down.right", "Spread", "Show Desktop", [GestureRow.Action(name: "Show Desktop", gesture: .spread)]),
+        ("arrow.up", "위로 쓸어넘기기", "미션 컨트롤", [GestureRow.Action(name: "미션 컨트롤", gesture: .swipeUp)]),
+        ("arrow.down", "아래로 쓸어넘기기", "앱 윈도우 보기", [GestureRow.Action(name: "앱 윈도우 보기", gesture: .swipeDown)]),
+        ("arrow.left.and.right", "좌우로 쓸어넘기기", "데스크탑 공간", [GestureRow.Action(name: "오른쪽 데스크탑 공간", gesture: .swipeLeft),
+                                                                   GestureRow.Action(name: "왼쪽 데스크탑 공간", gesture: .swipeRight)]),
+        ("arrow.down.right.and.arrow.up.left", "오므리기", "앱", [GestureRow.Action(name: "앱", gesture: .pinch)]),
+        ("arrow.up.left.and.arrow.down.right", "펼치기", "데스크탑 보기", [GestureRow.Action(name: "데스크탑 보기", gesture: .spread)]),
     ]
 
     /// Under the switch: where the gestures go and what they do, or why nothing happens.
     private var gesturesFooter: String {
-        guard gesturesOn else { return "Three-finger strokes do nothing while this is off." }
-        guard macTakesGestures else { return "Update Sill on \(mac) to use these." }
+        guard gesturesOn else { return "끄면 세 손가락 제스처가 작동하지 않습니다." }
+        guard macTakesGestures else { return "사용하려면 \(mac)의 Sill을 업데이트하세요." }
         // VoiceOver keeps three-finger swipes and taps for itself, and no touch of them reaches Sill.
-        var text = voiceOver ? "VoiceOver keeps three-finger gestures for itself, so the rows above do them on \(mac) instead."
-            : "Three fingers on the trackpad or over the stream."
-        text += " While a window streams, a gesture shows the Desktop first, and the opposite gesture closes what one opened. \(mac) does these with its own keyboard shortcuts: one turned off in its Keyboard settings does nothing."
-        if device == "iPad" { text += " Four-finger swipes and a Magic Keyboard trackpad’s gestures stay with iPadOS." }
+        var text = voiceOver ? "VoiceOver에서 세 손가락 제스처를 사용하므로, 위 항목을 선택하면 \(mac)에서 해당 동작을 실행합니다."
+            : "트랙패드나 스트리밍 화면에서 세 손가락을 사용하세요."
+        text += " 창을 스트리밍하는 동안 제스처를 사용하면 먼저 데스크탑이 표시됩니다. 반대 제스처는 열린 화면을 닫습니다. \(mac)의 키보드 단축키로 실행하므로, Mac 키보드 설정에서 꺼진 단축키는 작동하지 않습니다."
+        if device == "iPad" { text += " 네 손가락 쓸어넘기기와 Magic Keyboard 트랙패드 제스처는 iPadOS에서 처리합니다." }
         return text
     }
 
@@ -508,11 +508,11 @@ struct HostSettingsPanel: View {
     /// gave; otherwise "through your VPN or the internet".
     static func reach(_ info: MacInfo) -> String {
         guard let a = info.addresses.first(where: { $0.kind == MacAddress.vpn || $0.kind == MacAddress.internet }) else {
-            return "through your VPN or the internet"
+            return "VPN이나 인터넷으로"
         }
-        if a.kind == MacAddress.internet { return "over the internet (\(a.host))" }
-        let name = a.via.isEmpty || a.via.hasPrefix("VPN (") ? "your VPN" : a.via
-        return "through \(name) (\(a.host))"
+        if a.kind == MacAddress.internet { return "인터넷(\(a.host))으로" }
+        let name = a.via.isEmpty || a.via.hasPrefix("VPN (") ? "VPN" : a.via
+        return "\(name)(\(a.host))을 통해"
     }
 
     // MARK: Copy
@@ -524,7 +524,7 @@ struct HostSettingsPanel: View {
     /// own (see `header`). A no-break space before each "·" keeps it with the value before it, so a
     /// wrap at larger text never starts a line with one.
     static func readout(_ stream: RunningStream?, route: DiscoveryPolicy.Method? = nil) -> String {
-        let values = stream.map { ["\($0.width)×\($0.height)", "\($0.fps)\u{00A0}fps", "\($0.mbps)\u{00A0}Mbps"] } ?? ["Not streaming"]
+        let values = stream.map { ["\($0.width)×\($0.height)", "\($0.fps)\u{00A0}fps", "\($0.mbps)\u{00A0}Mbps"] } ?? ["스트리밍 중 아님"]
         return (values + [route?.word].compactMap { $0 }).joined(separator: "\u{00A0}· ")
     }
 
@@ -540,19 +540,19 @@ struct HostSettingsPanel: View {
                               rttMs: Int? = nil) -> String {
         var link = route.map { ", " + spoken($0) } ?? ""
         if let remote {
-            link = ", connected \(remote.phrase)" + (rttMs.map { ", \($0) millisecond round trip" } ?? "")
+            link = ", \(remote.localizedPhrase) 연결됨" + (rttMs.map { ", 왕복 지연 \($0)밀리초" } ?? "")
         }
-        guard let s = stream else { return "Not streaming" + link }
-        return "Streaming \(s.width) by \(s.height), \(s.fps) frames per second, \(s.mbps) megabits per second"
-            + (s.onVirtualDisplay ? ", on the virtual display" : "") + link
+        guard let s = stream else { return "스트리밍 중 아님" + link }
+        return "화면 \(s.width) 곱하기 \(s.height), 초당 \(s.fps)프레임, 초당 \(s.mbps)메가비트로 스트리밍 중"
+            + (s.onVirtualDisplay ? ", 가상 디스플레이 사용 중" : "") + link
     }
 
     /// The route as VoiceOver says it: a sentence's end rather than the bare word.
     private static func spoken(_ route: DiscoveryPolicy.Method) -> String {
         switch route {
-        case .wired: return "connected by cable"
-        case .wifi: return "connected over Wi-Fi"
-        case .direct: return "connected directly"
+        case .wired: return "케이블로 연결됨"
+        case .wifi: return "Wi-Fi로 연결됨"
+        case .direct: return "직접 연결됨"
         }
     }
 
@@ -566,8 +566,8 @@ struct HostSettingsPanel: View {
     /// to it by itself), so it cannot come back until it does. Once the switch shows off (turned
     /// off here or on the Mac, with this connection still up for that moment) the warning is moot.
     private func directFooter(on: Bool) -> String {
-        var text = "Lets devices reach \(mac) without a shared Wi\u{2011}Fi network, the way AirDrop does. While it’s on, streaming over Wi\u{2011}Fi can stutter."
-        if on, client.connectedDirectly { text += " This \(device) is connected directly: turning this off disconnects it." }
+        var text = "AirDrop처럼 같은 Wi-Fi 네트워크에 접속하지 않아도 \(mac)에 연결할 수 있습니다. 켜져 있는 동안 Wi-Fi 스트리밍이 끊길 수 있습니다."
+        if on, client.connectedDirectly { text += " 이 \(device)는 직접 연결 중입니다. 끄면 연결이 끊어집니다." }
         return text
     }
 
@@ -577,16 +577,16 @@ struct HostSettingsPanel: View {
     /// for 60 fps.
     private var streamFooter: String {
         _ = powerState
-        var text = "Quality is per 60 fps; a 120 fps stream gets twice as much. " + QualityPreset.fastLinkNote
+        var text = "화질은 60 fps 기준이며, 120 fps에서는 두 배의 데이터를 사용합니다. " + QualityPreset.localizedFastLinkNote
         let away = client.awayCapsFrameRate
         let wanted = StreamClient.wantedFPS(remote: away)
         guard wanted < 120 else { return text }
         if away, StreamClient.wantedFPS() > wanted {
-            text += " Away from home, this \(device) asks for \(wanted) fps, which halves the data your Mac sends."
+            text += " 외부에서는 이 \(device)가 \(wanted) fps로 요청하여 Mac의 전송 데이터를 절반으로 줄입니다."
         } else if ProcessInfo.processInfo.isLowPowerModeEnabled, StreamClient.screenMaximumFPS() >= 120 {
-            text += " Low Power Mode holds this \(device) to \(wanted) fps."
+            text += " 저전력 모드에서는 이 \(device)의 프레임률이 \(wanted) fps로 제한됩니다."
         } else {
-            text += " This \(device) shows up to \(wanted) fps."
+            text += " 이 \(device)는 최대 \(wanted) fps로 표시합니다."
         }
         return text
     }

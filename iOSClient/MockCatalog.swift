@@ -63,7 +63,7 @@ enum MockCatalog {
         // missing from a network the mock never looked at.
         client.mockDiscovery = true
         client.connected = true
-        client.status = "Connected to Mac mini"
+        client.status = "Mac mini에 연결됨"
         client.macName = "Mac mini"
         client.windows = mockWindows
         client.active = active
@@ -446,7 +446,7 @@ enum MockCatalog {
             client.mockFrozen = true
         }
         client.settings = ledger
-        if c == .timeout { client.settingsProblem = "Mac mini didn’t answer. Try again." }
+        if c == .timeout { client.settingsProblem = "Mac mini의 응답이 없습니다. 다시 시도하세요." }
     }
 
     // MARK: - The connect screen
@@ -465,14 +465,14 @@ enum MockCatalog {
         case addmac        // Add a Mac unfolded, scanning (a drawn viewfinder: the simulator has no camera)
         case addcode       // the typed path, empty
         case addcodeerror  // the typed path after a wrong code: "That code didn’t work…"
-        case pairing       // "Pairing with Mac mini…"
-        case remotedial    // "Connecting to Mac mini remotely…"
+        case pairing       // "Mac mini 기기와 페어링하는 중…"
+        case remotedial    // "Mac mini에 원격으로 연결하는 중…"
         case remotefail    // a remote dial's failure, -SillRemoteFailure vpnoff|timeout|timeoutip|refused|dns|wrongmac|revoked|notsill|gaveup|quit|removed|remoteoff
         case camera        // Add a Mac with the camera refused
         case externalpair  // an outside sill://pair link waiting for its confirmation
         // Pairing at home (docs/home-pairing-plan.md §7.3–7.9). Each row's word is DiscoveryPolicy.rowWord's.
         case homerows        // a saved Wi-Fi row, Not paired, an unpaired Wired (the cable), a Wired row through a USB Ethernet adapter (Not paired), an open door's (Not paired), Update Sill, long names
-        case homeasking      // a tap on a Not paired row: "Pairing with Mac mini…", the row lit
+        case homeasking      // a tap on a Not paired row: "Mac mini 기기와 페어링하는 중…", the row lit
         case homecard        // the Mac shows its code: the home card, scanning (a drawn viewfinder)
         case homecode        // the home card's typed path, empty
         case homecodeerror   // the typed path after a wrong code: "That code didn’t work… 4 tries left."
@@ -587,10 +587,10 @@ enum MockCatalog {
         case .addcodeerror:
             client.pairing = .failed(.wrongCode(triesLeft: 4))
         case .pairing:
-            client.pairing = .working("Pairing with Mac mini…")
+            client.pairing = .working("Mac mini 기기와 페어링하는 중…")
         case .remotedial:
             client.macs = remoteRows
-            client.status = "Connecting to Mac mini remotely…"
+            client.status = "Mac mini에 원격으로 연결하는 중…"
         case .remotefail:
             client.macs = remoteRows
             client.status = failureCopy(UserDefaults.standard.string(forKey: "SillRemoteFailure") ?? "timeout")
@@ -656,7 +656,7 @@ enum MockCatalog {
         case "wrongmac": return copy(.wrongMac, vpn)
         case "revoked": return copy(.revoked, vpn)
         case "notsill": return copy(.notSill, router)
-        case "gaveup": return "Stopped trying to reach Mac mini. Tap it to try again."
+        case "gaveup": return "Mac mini에 연결 시도를 중단했습니다. 탭하여 다시 시도하세요."
         // A session's goodbyes, in the words GoodbyePolicy gives them.
         case "quit": return GoodbyePolicy.outcome(Goodbye(reason: Goodbye.quit), mac: "Mac mini", device: device, saved: true).text
         case "removed": return GoodbyePolicy.outcome(Goodbye(reason: Goodbye.removed), mac: "Mac mini", device: device, saved: true).text

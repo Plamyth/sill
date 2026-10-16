@@ -38,7 +38,7 @@ struct Trackpad: View {
                          verticalSpan: verticalSpan, sendGesture: sendGesture)
             VStack {
                 Spacer(minLength: 0)
-                Text("Drag to move the pointer. Tap to click, two fingers to scroll.")
+                Text("드래그하면 포인터가 이동합니다. 탭하면 클릭하고, 두 손가락으로 스크롤합니다.")
                     .font(.system(size: 13))
                     .foregroundStyle(Palette.muted)
                     .multilineTextAlignment(.center)

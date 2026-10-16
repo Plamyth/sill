@@ -5,6 +5,38 @@ import Foundation
 import StreamProtocol
 #endif
 
+extension QualityPreset {
+    var localizedName: String {
+        switch self {
+        case .low: "낮음"
+        case .efficient: "데이터 절약"
+        case .balanced: "균형"
+        case .high: "높음"
+        case .pro: "전문가"
+        case .ultra: "초고화질"
+        case .extreme: "최고화질"
+        }
+    }
+
+    var localizedTitle: String { "\(localizedName) · \(rawValue / 1_000_000) Mbps" }
+
+    static func localizedName(forBitrate bitrate: Int) -> String {
+        QualityPreset(rawValue: bitrate)?.localizedName ?? "\(mbps(bitrate)) Mbps"
+    }
+
+    static func localizedTitle(forBitrate bitrate: Int) -> String {
+        QualityPreset(rawValue: bitrate)?.localizedTitle ?? "사용자 설정 · \(mbps(bitrate)) Mbps"
+    }
+
+    static func localizedShortTitle(bitrate: Int, captureScale: Double) -> String {
+        "\(localizedName(forBitrate: bitrate)) · \(captureScale >= 1.5 ? "레티나" : "표준")"
+    }
+
+    static var localizedFastLinkNote: String {
+        "초고화질과 최고화질은 USB 케이블이나 매우 빠른 Wi-Fi가 필요합니다. 화면이 지연되면 화질을 낮추세요."
+    }
+}
+
 /// Away from home and the link, on the device (docs/remote-bundle-plan.md §5.8, §6.7 and §8): every
 /// string the Settings panel and the stream screen show for them, which callout shows, and when the
 /// stream screen's line comes and goes (`LinkLine`). Values only ever from the Mac's own state on this
@@ -13,13 +45,13 @@ import StreamProtocol
 enum AwayCopy {
     /// "Low · Standard", from the Mac's word.
     static func title(_ bitrate: Int, _ captureScale: Double) -> String {
-        QualityPreset.shortTitle(bitrate: bitrate, captureScale: captureScale)
+        QualityPreset.localizedShortTitle(bitrate: bitrate, captureScale: captureScale)
     }
 
     /// The same for VoiceOver: "Low, Standard", "12 megabits per second, Retina".
     static func spoken(_ bitrate: Int, _ captureScale: Double) -> String {
-        let name = QualityPreset(rawValue: bitrate)?.name ?? "\(QualityPreset.mbps(bitrate)) megabits per second"
-        return "\(name), \(captureScale >= 1.5 ? "Retina" : "Standard")"
+        let name = QualityPreset(rawValue: bitrate)?.localizedName ?? "\(QualityPreset.mbps(bitrate))메가비트/초"
+        return "\(name), \(captureScale >= 1.5 ? "레티나" : "표준")"
     }
 
     /// A title kept whole on its line ("Low · Standard", "12 Mbps · Retina"): no-break spaces.
@@ -36,11 +68,11 @@ enum AwayCopy {
     static func headerLine(_ away: AwayQuality?) -> (text: String, spoken: String)? {
         guard let a = away, a.thisConnectionAway else { return nil }
         if a.awayRunning {
-            return ("Away: \(whole(title(a.awayBitrate, a.awayCaptureScale)))",
-                    ", away quality, \(spoken(a.awayBitrate, a.awayCaptureScale))")
+            return ("외부 화질: \(whole(title(a.awayBitrate, a.awayCaptureScale)))",
+                    ", 외부 화질, \(spoken(a.awayBitrate, a.awayCaptureScale))")
         }
-        return ("Home quality: \(whole(title(a.homeBitrate, a.homeCaptureScale))) (a device at home is connected)",
-                ", home quality, \(spoken(a.homeBitrate, a.homeCaptureScale)), because a device at home is connected")
+        return ("내부 화질: \(whole(title(a.homeBitrate, a.homeCaptureScale))) (내부 기기 연결 중)",
+                ", 내부 기기가 연결되어 내부 화질 \(spoken(a.homeBitrate, a.homeCaptureScale)) 사용 중")
     }
 
     // MARK: The panel's footnote
@@ -52,13 +84,13 @@ enum AwayCopy {
         guard let a = away else { return nil }
         let home = whole(title(a.homeBitrate, a.homeCaptureScale))
         if a.thisConnectionAway, a.awayRunning {
-            return "Away from home, \(mac) streams at what you choose here and keeps it for next time. At home it goes back to \(home)."
+            return "외부에서는 여기서 선택한 화질로 \(mac)이 스트리밍하며 다음 연결에도 유지됩니다. 같은 네트워크에서는 \(home) 화질로 돌아갑니다."
         }
         if a.thisConnectionAway {
-            return "A device at home is connected, so \(mac) streams at its home quality, \(home). What you choose here applies once every device is away."
+            return "내부 기기가 연결되어 \(mac)이 내부 화질인 \(home)로 스트리밍합니다. 여기서 선택한 화질은 모든 기기가 외부에 있을 때 적용됩니다."
         }
         guard remoteAccessOn else { return nil }
-        return "Away from home, \(mac) streams at \(whole(title(a.awayBitrate, a.awayCaptureScale)))."
+        return "외부에서는 \(mac)이 \(whole(title(a.awayBitrate, a.awayCaptureScale))) 화질로 스트리밍합니다."
     }
 
     // MARK: The link
@@ -71,8 +103,8 @@ enum AwayCopy {
         if let scale = link.suggestedCaptureScale {
             return (title(bitrate, scale), spoken(bitrate, scale), change)
         }
-        let name = QualityPreset.name(forBitrate: bitrate)
-        return (name, QualityPreset(rawValue: bitrate)?.name ?? "\(QualityPreset.mbps(bitrate)) megabits per second", change)
+        let name = QualityPreset.localizedName(forBitrate: bitrate)
+        return (name, QualityPreset(rawValue: bitrate)?.localizedName ?? "\(QualityPreset.mbps(bitrate))메가비트/초", change)
     }
 
     /// The callout while the link is behind, and its button. First match wins: away while a device at
@@ -93,15 +125,15 @@ enum AwayCopy {
 
     static func callout(link: LinkReport?, away: AwayQuality?, mac: String) -> Callout? {
         guard let link, link.isBehind else { return nil }
-        let quality = QualityPreset.name(forBitrate: link.bitrate)
+        let quality = QualityPreset.localizedName(forBitrate: link.bitrate)
         if let a = away, a.thisConnectionAway, !a.awayRunning {
-            return Callout(text: "The link can’t carry \(quality), which \(mac) keeps while a device at home is connected.", button: nil)
+            return Callout(text: "현재 연결로는 \(quality) 화질을 전송하기 어렵습니다. 내부 기기가 연결된 동안 \(mac)은 이 화질을 유지합니다.", button: nil)
         }
         if let s = suggestion(link) {
-            return Callout(text: "The link can’t carry \(quality). \(whole(s.title)) is recommended.",
-                           button: Callout.Button(title: "Use \(whole(s.title))", spoken: "Use \(s.spoken)", change: s.change))
+            return Callout(text: "현재 연결로는 \(quality) 화질을 전송하기 어렵습니다. \(whole(s.title)) 화질을 권장합니다.",
+                           button: Callout.Button(title: "\(whole(s.title)) 사용", spoken: "\(s.spoken) 사용", change: s.change))
         }
-        return Callout(text: "The link to \(mac) is too slow for a steady picture, even at Low.", button: nil)
+        return Callout(text: "\(mac) 연결 속도가 느려 ‘낮음’ 화질에서도 화면을 원활하게 표시하기 어렵습니다.", button: nil)
     }
 
     /// The old slow-link callout (the round trip over 250 ms away from home) shows only for a Mac that
@@ -115,8 +147,8 @@ enum AwayCopy {
     /// Settings." when the panel offers something to pick, else "The link to Mac mini can’t keep up."
     static func streamLine(link: LinkReport?, away: AwayQuality?, mac: String) -> String? {
         guard let c = callout(link: link, away: away, mac: mac), let link else { return nil }
-        if c.button != nil { return "The link can’t keep up with \(QualityPreset.name(forBitrate: link.bitrate)). Lower it in Settings." }
-        return "The link to \(mac) can’t keep up."
+        if c.button != nil { return "현재 연결로는 \(QualityPreset.localizedName(forBitrate: link.bitrate)) 화질을 유지하기 어렵습니다. 설정에서 화질을 낮추세요." }
+        return "\(mac) 연결 속도가 스트리밍을 따라가지 못합니다."
     }
 }
 

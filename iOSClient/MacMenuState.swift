@@ -100,7 +100,7 @@ struct MacMenuState: Equatable {
         let note: String
         /// The Mac refused it (a `pressed: false` answer); false: never sent (stale here).
         let byMac: Bool
-        var announcement: String { "Couldn’t choose \(title). \(note)" }
+        var announcement: String { "\(title) 항목을 선택하지 못했습니다. \(note)" }
     }
 
     /// What `fetch` makes of an opened menu.
@@ -129,11 +129,11 @@ struct MacMenuState: Equatable {
         var note: String?
     }
 
-    static let changedNote = "The menus changed. Open the menu again."
-    static let notConnected = "Not connected."
-    static let noItems = "No items"
-    static func noAnswer(mac: String) -> String { "\(mac.isEmpty ? "The Mac" : mac) didn’t answer. Open the menu again." }
-    static func moreOnTheMac(_ count: Int) -> String { "\(count) more on the Mac" }
+    static let changedNote = "메뉴가 변경되었습니다. 메뉴를 다시 여세요."
+    static let notConnected = "연결되지 않았습니다."
+    static let noItems = "항목 없음"
+    static func noAnswer(mac: String) -> String { "\(mac.isEmpty ? "Mac" : mac)의 응답이 없습니다. 메뉴를 다시 여세요." }
+    static func moreOnTheMac(_ count: Int) -> String { "Mac에서 \(count)개 더 보기" }
     static let maxMenus = 32
     static let titleLimit = 100, keyLimit = 16, noteLimit = 300
     /// Choices waiting for their answer, at most (each is answered, or the connection ends).
@@ -188,7 +188,7 @@ struct MacMenuState: Equatable {
             app = Self.clean(m.app, limit: SafeText.labelLimit)
             stale = m.stale == true
             note = Self.clean(m.note, limit: Self.noteLimit)
-            if stale, note == nil { note = "\(app ?? "The app") isn’t responding." }
+            if stale, note == nil { note = "\(app ?? "앱")의 응답이 없습니다." }
             menus = Self.topRows(items, version: v)
             // Rule 2: what was asked of another tree is answered here.
             var done: [Done] = []

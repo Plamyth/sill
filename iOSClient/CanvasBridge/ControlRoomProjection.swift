@@ -92,10 +92,28 @@ struct ControlRoomProjection: Decodable {
 
 enum BrainTrinityMode: String, Decodable {
     case stopped, starting, running, stopping, blocked
+    var localizedTitle: String {
+        switch self {
+        case .stopped: return "중지됨"
+        case .starting: return "시작 중"
+        case .running: return "실행 중"
+        case .stopping: return "중지 중"
+        case .blocked: return "차단됨"
+        }
+    }
 }
 
 enum BrainTrinityPhase: String, Decodable {
     case queued, observationPending = "observation_pending", resultReview = "result_review", attention, completed
+    var localizedTitle: String {
+        switch self {
+        case .queued: return "대기 중"
+        case .observationPending: return "관측 대기"
+        case .resultReview: return "결과 검토"
+        case .attention: return "확인 필요"
+        case .completed: return "완료"
+        }
+    }
 }
 
 enum BrainTrinityReviewState: String, Decodable { case pending }
@@ -358,6 +376,14 @@ struct ControlRoomNavigation {
 enum ControlRoomStatusFilter: String, CaseIterable, Identifiable {
     case all = "All", running = "Running", needsInput = "Needs input", unavailable = "Unavailable"
     var id: Self { self }
+    var localizedTitle: String {
+        switch self {
+        case .all: return "전체"
+        case .running: return "진행 중"
+        case .needsInput: return "입력 필요"
+        case .unavailable: return "사용할 수 없음"
+        }
+    }
 
     func matches(_ slot: ControlRoomSlot) -> Bool {
         switch self {

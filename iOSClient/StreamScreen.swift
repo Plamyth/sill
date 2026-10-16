@@ -8,11 +8,11 @@ struct IPadRemoteAudioControl: View {
 
     private var detail: String {
         switch client.remoteAudioStatus {
-        case .unavailable: return "This Mac does not offer audio on this iPad."
-        case .off: return "Off. Tap to listen on this iPad."
-        case .requesting: return "Connecting. Tap to cancel."
-        case .listening: return "On. Tap to stop."
-        case .failed(let reason): return "\(reason) Tap to retry."
+        case .unavailable: return "이 Mac은 iPad 오디오를 지원하지 않습니다."
+        case .off: return "꺼짐 · 탭하면 iPad에서 듣습니다."
+        case .requesting: return "연결 중 · 탭하면 취소합니다."
+        case .listening: return "켜짐 · 탭하면 중지합니다."
+        case .failed(let reason): return "\(reason) 탭하면 다시 시도합니다."
         }
     }
 
@@ -22,7 +22,7 @@ struct IPadRemoteAudioControl: View {
                 Image(systemName: client.remoteAudioStatus.requested ? "speaker.wave.2.fill" : "speaker.slash")
                     .font(.title3)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Mac audio").font(.body.weight(.semibold))
+                    Text("Mac 오디오").font(.body.weight(.semibold))
                     Text(detail).font(.caption).foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -36,7 +36,7 @@ struct IPadRemoteAudioControl: View {
         }
         .buttonStyle(.plain)
         .disabled(!client.remoteAudioStatus.available)
-        .accessibilityLabel("Mac audio")
+        .accessibilityLabel("Mac 오디오")
         .accessibilityValue(detail)
         .accessibilityIdentifier("iPadRemoteAudio")
     }
@@ -48,14 +48,14 @@ struct IPadMicrophoneControl: View {
     private var detail: String {
         if let problem = client.microphoneCleanupProblem { return problem }
         return switch client.microphonePhase {
-        case .unavailable: "This Mac does not offer iPad microphone input."
-        case .off: "Off. Tap to share this iPad's microphone with the Mac."
-        case .requesting: "Waiting for this Mac to allow input. Tap to cancel."
-        case .capturing: "Starting this iPad's microphone. Tap to cancel."
-        case .live: "On. Tap to stop sharing this iPad's microphone."
-        case .stopping: "Stopping microphone input."
+        case .unavailable: "이 Mac은 iPad 마이크 입력을 지원하지 않습니다."
+        case .off: "꺼짐 · 탭하면 iPad 마이크를 Mac과 공유합니다."
+        case .requesting: "Mac의 입력 허용을 기다리는 중 · 탭하면 취소합니다."
+        case .capturing: "iPad 마이크를 시작하는 중 · 탭하면 취소합니다."
+        case .live: "켜짐 · 탭하면 마이크 공유를 중지합니다."
+        case .stopping: "마이크 입력을 중지하는 중입니다."
         case .failed(let reason): client.microphonePolicy.canStart
-            ? "\(reason) Tap to try again." : "\(reason) Reconnect to try again."
+            ? "\(reason) 탭하면 다시 시도합니다." : "\(reason) 다시 연결한 뒤 시도하세요."
         }
     }
 
@@ -65,7 +65,7 @@ struct IPadMicrophoneControl: View {
                 Image(systemName: client.microphonePhase == .live ? "mic.fill" : "mic.slash")
                     .font(.title3)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("iPad microphone").font(.body.weight(.semibold))
+                    Text("iPad 마이크").font(.body.weight(.semibold))
                     Text(detail).font(.caption).foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -82,7 +82,7 @@ struct IPadMicrophoneControl: View {
         .buttonStyle(.plain)
         .disabled(client.microphoneCleanupProblem == nil &&
                   !(client.microphonePolicy.canStart || client.microphonePhase.canStop))
-        .accessibilityLabel("iPad microphone")
+        .accessibilityLabel("iPad 마이크")
         .accessibilityValue(detail)
         .accessibilityIdentifier("iPadMicrophone")
     }
@@ -188,6 +188,7 @@ enum DuoLayout {
 
 struct StreamScreen: View {
     @ObservedObject var client: StreamClient
+    @State private var canvasOpen = false
     @State private var drawerOpen = false
     @State private var keyboardShown = false
     /// Modifiers held down by the portrait key row until the next key, character or click uses
@@ -337,6 +338,20 @@ struct StreamScreen: View {
             .duoStatusBar(posture, size: geo.size)
         }
         .background(Color.black)
+        .fullScreenCover(isPresented: $canvasOpen) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("그림판")
+                    Spacer()
+                    Button("Mac 화면") { canvasOpen = false }
+                        .accessibilityIdentifier("closeCanvasBridge")
+                }
+                .padding(12)
+                CanvasWorkspace()
+            }
+            .background(Color.black.ignoresSafeArea())
+            .preferredColorScheme(.dark)
+        }
         .overlayPreferenceValue(WindowMenuAnchorKey.self) { anchor in
             if let anchor, let id = windowMenu, let window = client.windows.first(where: { $0.id == id }) {
                 WindowLightsMenu(anchor: anchor, window: window,
@@ -936,6 +951,7 @@ struct StreamScreen: View {
                    // Apps, Menus, Aa, Keyboard, Desktop, Settings, and the strip.
                    menusFit: MacMenuButton.fits(width: width - 2 * bar.padding, buttons: 6, buttonWidth: bar.buttonWidth,
                                                 gap: bar.gap, thumbWidth: bar.thumbWidth),
+                   openCanvas: { canvasOpen = true },
                    toggleKeyboard: { overlay.toggleKeyboard() },
                    setSettings: { setSettings($0, restoreKeyboard: $1) },
                    menusOpened: menusOpened, menusClosed: menusClosed)
@@ -951,6 +967,7 @@ struct StreamScreen: View {
                              settingsOpen: settingsOpen,
                              setSettings: { setSettings($0, restoreKeyboard: $1) },
                              menusOpened: menusOpened, menusClosed: menusClosed,
+                             openCanvas: { canvasOpen = true },
                              settingsTransition: { settingsTransition(anchor: $0) },
                              onPanelSize: { panelSize = $0 },
                              pairThisDevice: openPairingOverlay,
@@ -1126,6 +1143,7 @@ private struct TopBar: View {
     let settingsOpen: Bool
     /// Whether the bar holds the Menus button and still a whole thumbnail (`MacMenuButton.fits`).
     let menusFit: Bool
+    let openCanvas: () -> Void
     let toggleKeyboard: () -> Void
     /// Opens or closes the Settings panel; the second argument says whether closing puts the
     /// keyboard back (see `StreamScreen.setSettings`).
@@ -1136,8 +1154,8 @@ private struct TopBar: View {
 
     var body: some View {
         HStack(spacing: metrics.gap) {
-            button(open: drawerOpen, symbol: "magnifyingglass", label: "Apps",
-                   accessibilityLabel: drawerOpen ? "Close the app list" : "Open the app list",
+            button(open: drawerOpen, symbol: "magnifyingglass", label: "앱",
+                   accessibilityLabel: drawerOpen ? "앱 목록 닫기" : "앱 목록 열기",
                    action: {
                        setSettings(false, false)
                        withAnimation(.easeOut(duration: 0.18)) { drawerOpen.toggle() }
@@ -1164,6 +1182,14 @@ private struct TopBar: View {
                     .transition(.opacity)
             }
 
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                button(open: false, symbol: "pencil.tip.crop.circle", label: "그림판",
+                       accessibilityLabel: "그림판 열기", action: openCanvas)
+                    .accessibilityIdentifier("openCanvasBridge")
+                    .opacity(scaleOpen ? 0 : 1)
+                    .allowsHitTesting(!scaleOpen)
+            }
+
             // Text size: the host sizes the Mac window to the panel divided by this scale, so a
             // bigger number means a smaller Mac window and bigger text here. The slider unfolds to
             // the right, over the two buttons after it, which fade while it is open.
@@ -1172,22 +1198,22 @@ private struct TopBar: View {
                              pointsPerStep: metrics.buttonHeight >= 60 ? 44 : 40)
                 .tourTarget(.textSize)
 
-            button(open: keyboardShown, symbol: "keyboard", label: "Keyboard",
-                   accessibilityLabel: keyboardShown ? "Hide the keyboard" : "Show the keyboard",
+            button(open: keyboardShown, symbol: "keyboard", label: "키보드",
+                   accessibilityLabel: keyboardShown ? "키보드 숨기기" : "키보드 표시",
                    action: { setSettings(false, false); toggleKeyboard() })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
                 .tourTarget(.keyboard)
 
-            button(open: client.active == .desktop, symbol: "desktopcomputer", label: "Desktop",
-                   accessibilityLabel: "Show the full Mac desktop",
+            button(open: client.active == .desktop, symbol: "desktopcomputer", label: "데스크탑",
+                   accessibilityLabel: "Mac 데스크탑 전체 표시",
                    action: { client.select(.desktop) })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
             // Leave's old slot: Disconnect is the Settings panel's pinned last row now.
-            button(open: settingsOpen, symbol: "gearshape", label: "Settings",
-                   accessibilityLabel: settingsOpen ? "Close settings" : "Settings for \(client.macName.isEmpty ? "the Mac" : client.macName)",
+            button(open: settingsOpen, symbol: "gearshape", label: "설정",
+                   accessibilityLabel: settingsOpen ? "설정 닫기" : "\(client.macName.isEmpty ? "Mac" : client.macName) 설정",
                    action: { setSettings(!settingsOpen, true) })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
@@ -1355,7 +1381,7 @@ struct TextScaleControl: View {
         )
         .onDisappear { open = false }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Text size")
+        .accessibilityLabel("글자 크기")
         .accessibilityValue("\(Self.label(scale ?? 1.0)) times")
         .accessibilityAdjustableAction { direction in
             let i = Self.steps.firstIndex(of: scale ?? 1.0) ?? 2
@@ -1650,9 +1676,9 @@ struct WindowLightsMenu: View {
             ZStack {
                 Color.clear.contentShape(Rectangle()).onTapGesture(perform: dismiss)
                 HStack(spacing: 6) {
-                    light(.close, Color(hex: 0xFF5F57), "xmark", "Close")
-                    light(.minimize, Color(hex: 0xFEBC2E), "minus", "Minimize")
-                    light(.fullScreen, Color(hex: 0x28C840), "arrow.up.left.and.arrow.down.right", "Full Screen")
+                    light(.close, Color(hex: 0xFF5F57), "xmark", "닫기")
+                    light(.minimize, Color(hex: 0xFEBC2E), "minus", "최소화")
+                    light(.fullScreen, Color(hex: 0x28C840), "arrow.up.left.and.arrow.down.right", "전체 화면")
                 }
                 .padding(.horizontal, 10)
                 .frame(width: w, height: h)
@@ -1714,11 +1740,11 @@ private struct WindowThumbnail: View {
             .accessibilityLabel("\(window.appName) window: \(window.title)" + (isActive ? ", showing now" : ""))
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(.default) { onSelect() }
-            .accessibilityAction(named: "Close window") { onCommand(.close) }
-            .accessibilityAction(named: "Minimize window") { onCommand(.minimize) }
-            .accessibilityAction(named: "Full screen") { onCommand(.fullScreen) }
-            .accessibilityAction(named: "Move left") { onMove(-1) }
-            .accessibilityAction(named: "Move right") { onMove(1) }
+            .accessibilityAction(named: "창 닫기") { onCommand(.close) }
+            .accessibilityAction(named: "창 최소화") { onCommand(.minimize) }
+            .accessibilityAction(named: "전체 화면") { onCommand(.fullScreen) }
+            .accessibilityAction(named: "왼쪽으로 이동") { onMove(-1) }
+            .accessibilityAction(named: "오른쪽으로 이동") { onMove(1) }
     }
 
     /// The thumbnail with its badge, halo, wiggle and lift.
@@ -1821,7 +1847,7 @@ struct AppDrawer: View {
             ScrollView {
                 VStack(spacing: 6) {
                     if !openApps.isEmpty {
-                        header("Open now")
+                        header("열린 창")
                         ForEach(openApps) { app in
                             DrawerRow(height: 50,
                                       highlighted: app.bundleID == activeBundleID,
@@ -1834,7 +1860,7 @@ struct AppDrawer: View {
                         }
                     }
                     if !closedApps.isEmpty {
-                        header("All apps").padding(.top, 2)
+                        header("모든 앱").padding(.top, 2)
                         ForEach(closedApps) { app in
                             DrawerRow(height: 46, highlighted: false, title: app.name, trailing: nil,
                                       action: { client.launch(bundleID: app.bundleID) }) {
@@ -1860,14 +1886,14 @@ struct AppDrawer: View {
                 .font(.system(size: 18))
                 .foregroundStyle(Palette.muted)
             TextField("", text: $search,
-                      prompt: Text("Search apps on \(client.macName)").foregroundColor(Palette.muted))
+                      prompt: Text("\(client.macName)의 앱 검색").foregroundColor(Palette.muted))
                 .font(.system(size: 15))
                 .foregroundStyle(Palette.text)
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .submitLabel(.search)
-                .accessibilityLabel("Search apps on this Mac")
+                .accessibilityLabel("이 Mac의 앱 검색")
         }
         .frame(height: 48)
         .padding(.horizontal, 14)

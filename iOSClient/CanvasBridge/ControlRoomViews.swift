@@ -38,14 +38,14 @@ struct CurrentVoicePIP: View {
                         } else if let message {
                             Text(message).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                         } else if !fresh {
-                            Text("최신 projection 확인 필요").font(.caption2).foregroundStyle(.secondary)
+                            Text("최신 표시 정보 확인 필요").font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                     .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).padding(12)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).disabled(card == nil).accessibilityIdentifier("currentVoicePIP")
-                .accessibilityHint("현재 Control Room 카드 펼치기")
+                .accessibilityHint("현재 컨트롤룸 카드 펼치기")
             }
             .background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
             .overlay(RoundedRectangle(cornerRadius:16).stroke(.secondary.opacity(0.4)))
@@ -67,12 +67,12 @@ struct ControlRoomGrid: View {
                 let target = navigation.target(for:selection)
                 VStack(alignment:.leading,spacing:6) {
                     controls(navigation)
-                    Text("Conversations · 3×3 · 읽기 전용 · \(projection.generatedAt)")
+                    Text("대화 · 3×3 · 읽기 전용 · \(projection.generatedAt)")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     brainTrinityStatus(projection,now:context.date)
                     if target == .unavailable {
-                        ContentUnavailableView("선택한 workspace 미제공",systemImage:"square.grid.3x3",
-                                               description:Text("Section 또는 Project를 다시 선택하세요."))
+                        ContentUnavailableView("선택한 작업 공간 없음",systemImage:"square.grid.3x3",
+                                               description:Text("섹션 또는 프로젝트를 다시 선택하세요."))
                     } else {
                         GeometryReader { geometry in
                             ScrollView([.horizontal,.vertical]) {
@@ -90,8 +90,8 @@ struct ControlRoomGrid: View {
                 }
                 .padding(10)
             } else {
-                ContentUnavailableView("Control Room 미확인",systemImage:"square.grid.3x3",
-                                       description:Text(message ?? "최신 projection을 기다립니다."))
+                ContentUnavailableView("컨트롤룸 미확인",systemImage:"square.grid.3x3",
+                                       description:Text(message ?? "최신 표시 정보를 기다립니다."))
             }
         }
     }
@@ -99,7 +99,7 @@ struct ControlRoomGrid: View {
     @ViewBuilder
     private func brainTrinityStatus(_ projection: ControlRoomProjection, now: Date) -> some View {
         if let feed = projection.freshBrainTrinity(now:now), let mode = feed.mode {
-            Text(["BT \(mode.rawValue)",feed.reason,
+            Text(["브레인트리니티 \(mode.localizedTitle)",feed.reason,
                   "활동 \(feed.activities.count) · 검토 \(feed.reviewRequests.count)","읽기 전용"]
                 .compactMap { $0 }.joined(separator:" · "))
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -114,9 +114,9 @@ struct ControlRoomGrid: View {
         ScrollView(.horizontal) {
             HStack(spacing:4) {
                 ForEach(badges.activities) { activity in
-                    Text("BT \(activity.phase.rawValue) · \(activity.key)")
+                    Text("브레인트리니티 \(activity.phase.localizedTitle) · \(activity.key)")
                         .help(activity.reference.summary)
-                        .accessibilityLabel("BT 활동 \(activity.key), \(activity.phase.rawValue), \(activity.reference.summary)")
+                        .accessibilityLabel("브레인트리니티 활동 \(activity.key), \(activity.phase.localizedTitle), \(activity.reference.summary)")
                 }
                 ForEach(badges.reviews) { review in
                     Text("BT 검토 · 읽기 전용 · \(review.id)")
@@ -135,41 +135,41 @@ struct ControlRoomGrid: View {
         return ScrollView(.horizontal) {
             HStack(spacing:6) {
                 VStack(alignment:.leading,spacing:0) {
-                    Text("Section").font(.caption2).foregroundStyle(.secondary)
-                    Picker("Section",selection:Binding(get:{ selection.sectionID },set:{ id in
+                    Text("섹션").font(.caption2).foregroundStyle(.secondary)
+                    Picker("섹션",selection:Binding(get:{ selection.sectionID },set:{ id in
                         selection.sectionID = id
                         selection.projectID = nil
                     })) {
                         ForEach(navigation.sections) { option in Text(option.label).tag(option.id) }
                     }
-                    .accessibilityLabel("Control Room Section")
+                    .accessibilityLabel("컨트롤룸 섹션")
                     .accessibilityValue(navigation.sections.first(where: { $0.id == selection.sectionID })?.label ?? "미확인")
                     .accessibilityIdentifier("controlRoomSection")
                 }
                 Image(systemName:"chevron.right").accessibilityHidden(true)
                 VStack(alignment:.leading,spacing:0) {
-                    Text("Filter").font(.caption2).foregroundStyle(.secondary)
-                    Picker("Filter",selection:$selection.filter) {
-                        ForEach(ControlRoomStatusFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
+                    Text("필터").font(.caption2).foregroundStyle(.secondary)
+                    Picker("필터",selection:$selection.filter) {
+                        ForEach(ControlRoomStatusFilter.allCases) { filter in Text(filter.localizedTitle).tag(filter) }
                     }
-                    .accessibilityLabel("Conversation status Filter")
-                    .accessibilityValue(selection.filter.rawValue)
+                    .accessibilityLabel("대화 상태 필터")
+                    .accessibilityValue(selection.filter.localizedTitle)
                     .accessibilityIdentifier("controlRoomStatusFilter")
                 }
                 Image(systemName:"chevron.right").accessibilityHidden(true)
                 VStack(alignment:.leading,spacing:0) {
-                    Text("Project").font(.caption2).foregroundStyle(.secondary)
-                    Picker("Project",selection:Binding(get:{ selection.projectID },set:{ id in
+                    Text("프로젝트").font(.caption2).foregroundStyle(.secondary)
+                    Picker("프로젝트",selection:Binding(get:{ selection.projectID },set:{ id in
                         selection.projectID = id
                     })) {
-                        Text("Section 3×3").tag(nil as ControlRoomProjectID?)
+                        Text("섹션 3×3").tag(nil as ControlRoomProjectID?)
                         ForEach(section?.projects ?? []) { option in
                             Text(option.label + (option.workspaceID == nil ? " · workspace 미제공" : ""))
                                 .tag(Optional(option.id)).disabled(option.workspaceID == nil)
                         }
                     }
-                    .accessibilityLabel("Control Room Project")
-                    .accessibilityValue(section?.projects.first(where: { $0.id == selection.projectID })?.label ?? "Section 3×3")
+                    .accessibilityLabel("컨트롤룸 프로젝트")
+                    .accessibilityValue(section?.projects.first(where: { $0.id == selection.projectID })?.label ?? "섹션 3×3")
                     .accessibilityIdentifier("controlRoomProject")
                 }
             }
@@ -254,7 +254,7 @@ struct ControlRoomCardDetail: View {
                             Text("대화 \(card.id)").font(.caption).textSelection(.enabled)
                             Text(card.status ?? "상태 미제공")
                             if let project = card.project { Text("프로젝트 \(project)").font(.caption) }
-                            if let turn = card.turnStatus { Text("Turn \(turn)") }
+                            if let turn = card.turnStatus { Text("턴 \(turn)") }
                             if let progress = card.latestProgress?.text {
                                 Text("최근 진행").font(.headline)
                                 Text(progress).textSelection(.enabled)
@@ -299,7 +299,7 @@ struct ControlRoomCardDetail: View {
                                            description:Text(message ?? "최신 원본 카드가 없습니다."))
                 }
             }
-            .navigationTitle("Control Room 카드")
+            .navigationTitle("컨트롤룸 카드")
             .toolbar { ToolbarItem(placement:.confirmationAction) { Button("닫기") { dismiss() } } }
         }
     }

@@ -44,7 +44,7 @@ enum DeviceIdentity {
         if let id = existing() { return id }
         lock.lock(); defer { lock.unlock() }
         let key = try makeKey()
-        guard let id = RemoteIdentity(privateKey: key) else { throw IdentityError("the new key couldn’t make a certificate") }
+        guard let id = RemoteIdentity(privateKey: key) else { throw IdentityError("새 키로 인증서를 만들지 못했습니다") }
         cached = id
         return id
     }
@@ -112,7 +112,7 @@ enum DeviceIdentity {
         #if DEBUG
         if usesSecureEnclave {
             guard let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, .privateKeyUsage, nil) else {
-                throw IdentityError("no Secure Enclave access control")
+                throw IdentityError("Secure Enclave 접근 제어를 설정하지 못했습니다")
             }
             privateAttributes.removeValue(forKey: kSecAttrAccessible as String)
             privateAttributes[kSecAttrAccessControl as String] = access
@@ -122,7 +122,7 @@ enum DeviceIdentity {
         attributes[kSecPrivateKeyAttrs as String] = privateAttributes
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            throw IdentityError("no key could be made (\(error.map { "\($0.takeRetainedValue())" } ?? "no reason given"))")
+            throw IdentityError("키를 만들지 못했습니다(\(error.map { "\($0.takeRetainedValue())" } ?? "원인 정보 없음"))")
         }
         return key
     }

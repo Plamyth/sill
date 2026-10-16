@@ -12,7 +12,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Finds your Mac on the local network.</string>
+	<string>로컬 네트워크에서 Mac을 찾습니다.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -26,7 +26,7 @@
 	</array>
 	<!-- Add a Mac: the embedded scanner reads the pairing code the Mac shows. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Sill scans the code on your Mac to pair with it.</string>
+	<string>Mac에 표시된 코드를 스캔하여 페어링합니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>받아쓰기 버튼을 누르면 iPad 마이크로 캔버스 설명을 기록합니다.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

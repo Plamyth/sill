@@ -149,6 +149,7 @@ struct PortraitStreamScreen: View {
     /// The Menus pull-down opened and went (see `StreamScreen.menusOpened`).
     let menusOpened: () -> Void
     let menusClosed: () -> Void
+    let openCanvas: () -> Void
     /// The panel's open and close motion, scaled about the given point (see `StreamScreen`).
     let settingsTransition: (_ anchor: UnitPoint) -> AnyTransition
     /// The stream panel's size in points, for the viewport `StreamScreen` sends the host.
@@ -266,6 +267,21 @@ struct PortraitStreamScreen: View {
                     .transition(.opacity)
             }
 
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                BarButton(open: false, width: metrics.buttonWidth, height: metrics.buttonHeight,
+                          radius: metrics.buttonRadius, accessibilityLabel: "그림판 열기",
+                          action: openCanvas) {
+                    VStack(spacing: metrics.buttonSpacing) {
+                        Image(systemName: "pencil.tip.crop.circle")
+                            .font(.system(size: metrics.buttonIcon))
+                        Text("그림판").font(.system(size: 11, weight: .medium))
+                    }
+                }
+                .accessibilityIdentifier("openCanvasBridge")
+                .opacity(scaleOpen ? 0 : 1)
+                .allowsHitTesting(!scaleOpen)
+            }
+
             TextScaleControl(scale: $textScale, open: $scaleOpen,
                              width: metrics.buttonWidth, height: metrics.buttonHeight,
                              radius: metrics.buttonRadius, pointsPerStep: 36)
@@ -352,8 +368,8 @@ struct PortraitStreamScreen: View {
                              iconBox: PortraitMetrics.phoneIconBox, iconSpacing: metrics.buttonSpacing)
                 .tourTarget(.textSize)
 
-            barButton(open: keyboardShown, symbol: "keyboard", label: "Keyboard", width: width,
-                      accessibilityLabel: keyboardShown ? "Hide the keyboard" : "Show the keyboard",
+            barButton(open: keyboardShown, symbol: "keyboard", label: "키보드", width: width,
+                      accessibilityLabel: keyboardShown ? "키보드 숨기기" : "키보드 표시",
                       action: {
                           setSettings(false, false)
                           overlay.toggleKeyboard()
@@ -474,8 +490,8 @@ struct PortraitStreamScreen: View {
     }
 
     private func appsButton(width: CGFloat? = nil) -> some View {
-        barButton(open: drawerOpen, symbol: "magnifyingglass", label: "Apps", width: width,
-                  accessibilityLabel: drawerOpen ? "Close the app list" : "Open the app list",
+        barButton(open: drawerOpen, symbol: "magnifyingglass", label: "앱", width: width,
+                  accessibilityLabel: drawerOpen ? "앱 목록 닫기" : "앱 목록 열기",
                   action: {
                       setSettings(false, false)
                       withAnimation(.easeOut(duration: 0.18)) { drawerOpen.toggle() }
@@ -483,15 +499,15 @@ struct PortraitStreamScreen: View {
     }
 
     private func desktopButton(width: CGFloat? = nil) -> some View {
-        barButton(open: client.active == .desktop, symbol: "desktopcomputer", label: "Desktop", width: width,
-                  accessibilityLabel: "Show the full Mac desktop",
+        barButton(open: client.active == .desktop, symbol: "desktopcomputer", label: "데스크탑", width: width,
+                  accessibilityLabel: "Mac 데스크탑 전체 표시",
                   action: { client.select(.desktop) })
     }
 
     /// Leave's old slot: Disconnect is the Settings panel's pinned last row now.
     private func settingsButton(width: CGFloat? = nil) -> some View {
-        barButton(open: settingsOpen, symbol: "gearshape", label: "Settings", width: width,
-                  accessibilityLabel: settingsOpen ? "Close settings" : "Settings for \(client.macName.isEmpty ? "the Mac" : client.macName)",
+        barButton(open: settingsOpen, symbol: "gearshape", label: "설정", width: width,
+                  accessibilityLabel: settingsOpen ? "설정 닫기" : "\(client.macName.isEmpty ? "Mac" : client.macName) 설정",
                   action: { setSettings(!settingsOpen, true) })
             .tourTarget(.settings)
     }
@@ -619,16 +635,16 @@ private struct KeyRow: View {
     let showSpotlight: Bool
 
     private static let all: [Key] = [
-        .press("esc", HIDKey.escape, "Escape"),
-        .press("tab", HIDKey.tab, "Tab"),
-        .modifier("ctrl", .control, "Control"),
-        .modifier("opt", .option, "Option"),
-        .modifier("cmd", .command, "Command"),
-        .modifier("shift", .shift, "Shift"),
-        .arrow("chevron.left", HIDKey.leftArrow, "Left arrow"),
-        .arrow("chevron.down", HIDKey.downArrow, "Down arrow"),
-        .arrow("chevron.up", HIDKey.upArrow, "Up arrow"),
-        .arrow("chevron.right", HIDKey.rightArrow, "Right arrow"),
+        .press("esc", HIDKey.escape, "이스케이프"),
+        .press("tab", HIDKey.tab, "탭"),
+        .modifier("ctrl", .control, "컨트롤"),
+        .modifier("opt", .option, "옵션"),
+        .modifier("cmd", .command, "커맨드"),
+        .modifier("shift", .shift, "시프트"),
+        .arrow("chevron.left", HIDKey.leftArrow, "왼쪽 화살표"),
+        .arrow("chevron.down", HIDKey.downArrow, "아래쪽 화살표"),
+        .arrow("chevron.up", HIDKey.upArrow, "위쪽 화살표"),
+        .arrow("chevron.right", HIDKey.rightArrow, "오른쪽 화살표"),
         .keyboard,
         .spotlight,
     ]
@@ -682,14 +698,14 @@ private struct KeyRow: View {
             latchKey(key, title, flag, label: label)
         case .keyboard:
             cap(open: keyboardShown,
-                label: keyboardShown ? "Hide the keyboard" : "Show the keyboard",
+                label: keyboardShown ? "키보드 숨기기" : "키보드 표시",
                 action: { tap(key) }) {
                 Image(systemName: "keyboard")
                     .font(.system(size: 20))
                     .foregroundStyle(keyboardShown ? Palette.accent : Palette.text)
             }
         case .spotlight:
-            cap(open: false, label: "Open Spotlight on the Mac", action: { tap(key) }) {
+            cap(open: false, label: "Mac에서 Spotlight 열기", action: { tap(key) }) {
                 Image(systemName: Spotlight.symbol)
                     .font(.system(size: 19))
                     .foregroundStyle(Palette.text)

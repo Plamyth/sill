@@ -58,11 +58,11 @@ struct CodeScanner: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.control)
                 if denied {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Sill can’t use the camera. Enter the code instead, or allow the camera in Settings.")
+                        Text("카메라를 사용할 수 없습니다. 코드를 직접 입력하거나 설정에서 Sill의 카메라 접근을 허용하세요.")
                             .font(.system(size: 15))
                             .foregroundStyle(Palette.text)
                             .fixedSize(horizontal: false, vertical: true)
-                        Button("Open Settings") {
+                        Button("설정 열기") {
                             if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                         }
                         .font(.system(size: 15, weight: .semibold))
@@ -86,10 +86,10 @@ struct CodeScanner: View {
                 }
             }
             .accessibilityElement(children: denied ? .contain : .ignore)
-            .accessibilityLabel(denied ? "" : mac.map(DiscoveryPolicy.HomeCopy.viewfinderLabel) ?? "Camera. Point it at the code on your Mac.")
+            .accessibilityLabel(denied ? "" : mac.map(DiscoveryPolicy.HomeCopy.viewfinderLabel) ?? "카메라입니다. Mac에 표시된 코드를 비추세요.")
             if !denied {
-                Text(notSill ? "That’s not a Sill code." : retryNeedsTap ? "Tap the code to try again."
-                     : mac.map(DiscoveryPolicy.HomeCopy.viewfinderCaption) ?? "Point at the code on your Mac")
+                Text(notSill ? "Sill 코드가 아닙니다." : retryNeedsTap ? "코드를 탭해 다시 시도하세요."
+                     : mac.map(DiscoveryPolicy.HomeCopy.viewfinderCaption) ?? "Mac에 표시된 코드를 비추세요")
                     .font(.system(size: 13))
                     .foregroundStyle(notSill ? Color.orange : Palette.muted)
                     .accessibilityHidden(!notSill && !retryNeedsTap)
@@ -114,7 +114,7 @@ struct CodeScanner: View {
         } else if !notSill {
             notSill = true
             notSillToken += 1
-            AccessibilityNotification.Announcement("That’s not a Sill code.").post()
+            AccessibilityNotification.Announcement("Sill 코드가 아닙니다.").post()
         }
     }
 

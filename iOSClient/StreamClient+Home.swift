@@ -875,7 +875,7 @@ extension StreamClient {
         pairingAttempt += 1
         let attempt = pairingAttempt
         if var ask = homeAsk { ask.attempt = attempt; homeAsk = ask }
-        pairing = .working("Pairing with \(name)\u{2026}")
+        pairing = .working("\(name) 기기와 페어링하는 중…")
         #if DEBUG
         print("home: pairing with \(name) (\(method)) at \(targets.map(\.label)), pinned")
         #endif
@@ -1020,7 +1020,7 @@ extension StreamClient {
             guard let self, !self.connected else { return }
             if let c = self.connection { self.connection = nil; c.cancel(); self.tearDown(status: self.status, restartSearch: false) }
             self.pairing = .idle
-            self.status = "\(self.displayName(macID)) is saved. Tap it to connect."
+            self.status = "\(self.displayName(macID)) 기기가 저장되었습니다. 탭하여 연결하세요."
             self.discoveryChanged()
         }
         afterPairingWatch?.cancel()

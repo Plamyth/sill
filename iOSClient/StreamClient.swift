@@ -65,7 +65,7 @@ struct FoundMac: Identifiable, Hashable {
     var id: String { route == .remote ? "remote:\(macID ?? name)" : "\(route.rawValue):\(name)" }
     /// The word at the end of its row: "Remote" for a saved Mac dialed away from home, else its home
     /// word (`homeWord`): how its Mac is reachable (`method`), "Not paired" or "Update Sill", or nil.
-    var word: String? { route == .remote ? "Remote" : homeWord.word }
+    var word: String? { route == .remote ? "원격" : homeWord.word }
 }
 
 /// How the current connection runs (`Session.route`): set when it starts, again at `.ready` and by
@@ -102,6 +102,15 @@ enum RemoteRoute: Equatable {
         case .vpn(nil): return "through your VPN"
         case .internet: return "over the internet"
         case .address: return "by address"
+        }
+    }
+
+    var localizedPhrase: String {
+        switch self {
+        case .vpn(let name?): return "\(name)을 통해"
+        case .vpn(nil): return "VPN을 통해"
+        case .internet: return "인터넷으로"
+        case .address: return "주소로"
         }
     }
 
@@ -241,9 +250,9 @@ final class StreamClient: ObservableObject {
 
     /// The connect screen's idle status lines: only these follow the nearby search and Local Network
     /// access (updateDiscovery); any other status (a disconnect, a failure) stays as it was set.
-    static let lookingOnNetwork = "Looking for Macs on this network"
-    static let lookingNearby = "Looking for Macs on this network and nearby"
-    static let allowLocalNetwork = "To find your Mac, allow Local Network for Sill in Settings."
+    static let lookingOnNetwork = "현재 네트워크에서 Mac을 찾는 중"
+    static let lookingNearby = "현재 네트워크와 주변에서 Mac을 찾는 중"
+    static let allowLocalNetwork = "Mac을 찾으려면 설정에서 Sill의 로컬 네트워크 접근을 허용하세요."
 
     // Switcher catalog, as the host sends it. Published on main.
     @Published var macName = ""
@@ -1217,7 +1226,7 @@ final class StreamClient: ObservableObject {
             return
         }
         guard DeviceIdentity.existing() != nil else {
-            status = "This iPad's saved device key is unavailable. Unlock this iPad and reopen Sill."
+            status = "저장된 iPad 기기 키를 사용할 수 없습니다. iPad의 잠금을 해제한 뒤 Sill을 다시 여세요."
             startupAutoConnection = .stopped
             return
         }
@@ -1254,7 +1263,7 @@ final class StreamClient: ObservableObject {
               homeDecision(row, macID: macID, tap: false) == .pinned else { return }
         startupAutoConnection = .attempted
         if !dialRow(row, macID: macID, trust: .saved(pin: pin), tagNamed: true, tap: false) {
-            status = "This iPad's saved device key is unavailable. Unlock this iPad and reopen Sill."
+            status = "저장된 iPad 기기 키를 사용할 수 없습니다. iPad의 잠금을 해제한 뒤 Sill을 다시 여세요."
             startupAutoConnection = .stopped
         }
     }
@@ -1694,9 +1703,9 @@ final class StreamClient: ObservableObject {
         #if DEBUG
         if mockDiscovery {
             switch mac.route {
-            case .direct: status = "Connecting to \(mac.name) directly…"
-            case .remote: status = "Connecting to \(mac.name) remotely…"
-            case .network: status = "Connecting to \(mac.name)…"
+            case .direct: status = "\(mac.name)에 직접 연결하는 중…"
+            case .remote: status = "\(mac.name)에 원격으로 연결하는 중…"
+            case .network: status = "\(mac.name)에 연결하는 중…"
             }
             return
         }
@@ -1855,7 +1864,7 @@ final class StreamClient: ObservableObject {
         session = Session(route: peerToPeer ? .direct : .network, macID: macID, bonjourName: bonjourName, home: trust, row: row,
                           endpoint: endpoint)
         goodbye = nil
-        status = peerToPeer ? "Connecting to \(name) directly…" : "Connecting to \(name)…"
+        status = peerToPeer ? "\(name)에 직접 연결하는 중…" : "\(name)에 연결하는 중…"
         #if DEBUG
         if trust.tls { print("home: dialing \(name) over TLS, \(DiscoveryPolicy.pin(trust) == .anyKey ? "any key" : "pinned")") }
         #endif
@@ -1918,7 +1927,7 @@ final class StreamClient: ObservableObject {
                     return
                 }
                 DispatchQueue.main.async {
-                    if self.connection === c, self.reconnect == nil { self.status = "Waiting for \(name)…" }
+                    if self.connection === c, self.reconnect == nil { self.status = "\(name)의 응답을 기다리는 중…" }
                 }
                 // A connection that never gets past waiting would block every reconnect path
                 // (they all require `connection == nil`): give it five seconds, then let it go.
@@ -2008,7 +2017,7 @@ final class StreamClient: ObservableObject {
         askedNearby = false
         connectedAt = Date()
         pinRefusedRows = []
-        status = "Connected to \(name)"
+        status = "\(name)에 연결됨"
         updateDiscovery()   // stops the nearby browser; the network one keeps running
         #if DEBUG
         if let endpoint, let test = UserDefaults.standard.string(forKey: "SillMoveTest") {
@@ -2148,7 +2157,7 @@ final class StreamClient: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         lastMoveAttempt = now
         lastMoveUp = now
-        status = "Switching to Wi\u{2011}Fi…"
+        status = "Wi-Fi로 전환하는 중…"
         if let wired = wiredDial(for: mac) {
             #if DEBUG
             print("discovery: moving the session to the network on \(wired.via)")
@@ -2709,7 +2718,7 @@ final class StreamClient: ObservableObject {
         pathSignals = PathSignals()
         lastPongAt = ProcessInfo.processInfo.systemUptime
         setRoute(from: c.currentPath, fresh: true)   // the new connection's, which carries the session now
-        status = "Connected to \(hostName)"
+        status = "\(hostName)에 연결됨"
         settings.reset()
         settingsProblem = nil
         settingsExpiry?.cancel()
@@ -2791,7 +2800,7 @@ final class StreamClient: ObservableObject {
             endSession()
             return
         }
-        if connected { status = "Connected to \(hostName)" }
+        if connected { status = "\(hostName)에 연결됨" }
         switch move.kind {
         case .fromRemote:
             // Still remote. A move that did not complete: the next try waits DiscoveryPolicy.upWait,
@@ -4456,7 +4465,7 @@ extension StreamClient {
         if mockFrozen { return }
         #endif
         if settings.expire(now: ProcessInfo.processInfo.systemUptime, timeout: settingsTimeout) {
-            settingsProblem = "\(macName.isEmpty ? "The Mac" : macName) didn’t answer. Try again."
+            settingsProblem = "\(macName.isEmpty ? "Mac" : macName)의 응답이 없습니다. 다시 시도하세요."
         }
         scheduleSettingsExpiry()   // a later pick, or a timeout that grew with the RTT
     }

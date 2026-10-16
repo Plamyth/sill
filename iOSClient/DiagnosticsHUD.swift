@@ -93,8 +93,8 @@ final class DiagnosticsHUDView: UIView {
 
     /// `stats` nil: no second measured yet.
     func update(stats: StreamClient.LinkStats?, videoSize: CGSize) {
-        let size = videoSize == .zero ? "no video" : "\(Int(videoSize.width))×\(Int(videoSize.height))"
-        label.text = "\(stats?.fps ?? 0) fps · age \(Self.text(stats?.frameAge)) · rtt \(Self.text(stats?.rtt)) · \(size)"
+        let size = videoSize == .zero ? "영상 없음" : "\(Int(videoSize.width))×\(Int(videoSize.height))"
+        label.text = "\(stats?.fps ?? 0) fps · 프레임 경과 \(Self.text(stats?.frameAge)) · 왕복 지연\(Self.text(stats?.rtt)) · \(size)"
         superview?.setNeedsLayout()
     }
 
