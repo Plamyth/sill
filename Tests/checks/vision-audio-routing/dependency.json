@@ -1,0 +1,50 @@
+{
+  "sourceCommit": "3c710f17f8568f13f9f046c6d5c838e944564c9d",
+  "sourceTree": "54a02dcd424170de89f326a7d6ca8cab88ad2604",
+  "scope": "Normal dependency import, not source-guard same-task transfer acceptance. Shared original runner retained as reference.",
+  "wireNote": "AudioRouting.swift exact. StreamMessage.swift differs only in independent payload-limit switch case ordering; native exact d5 version preserved.",
+  "files": {
+    "iOSClient/MacAudioRouteSession.swift": {
+      "sourcePath": "iOSClient/MacAudioRouteSession.swift",
+      "sourceSHA256": "4d456c55afec33a7d82bce63c4559c0e18edf5a4169d5966257a2c05ec3532ad",
+      "candidateSHA256": "4d456c55afec33a7d82bce63c4559c0e18edf5a4169d5966257a2c05ec3532ad",
+      "adaptation": null
+    },
+    "iOSClient/MacAudioRouteTransport.swift": {
+      "sourcePath": "iOSClient/MacAudioRouteTransport.swift",
+      "sourceSHA256": "f0a72c2a2f1012d5575e0b6847e4e2efb924de95fcf5767195732268fa880073",
+      "candidateSHA256": "f8f592ad80a9d7da6bc0cf40b2745a34a949a15ec9271e230bdb8d079df8890f",
+      "adaptation": "One platform guard expands to visionOS; body unchanged"
+    },
+    "Tests/checks/vision-audio-routing/shared/run.py": {
+      "sourcePath": "iOSClient/Tests/mac-audio-routes/run.py",
+      "sourceSHA256": "8d67dfc5c5b550e7f60d83d22980672c680b5dda1df507d57d85f9fe2edf7e72",
+      "candidateSHA256": "8d67dfc5c5b550e7f60d83d22980672c680b5dda1df507d57d85f9fe2edf7e72",
+      "adaptation": null
+    },
+    "Tests/checks/vision-audio-routing/shared/main.swift": {
+      "sourcePath": "iOSClient/Tests/mac-audio-routes/main.swift",
+      "sourceSHA256": "a8597988836156458180495031c3dc827e789a92609da3697b8c16c8021efe8d",
+      "candidateSHA256": "a8597988836156458180495031c3dc827e789a92609da3697b8c16c8021efe8d",
+      "adaptation": null
+    },
+    "Tests/checks/vision-audio-routing/shared/transport.swift": {
+      "sourcePath": "iOSClient/Tests/mac-audio-routes/transport.swift",
+      "sourceSHA256": "d6540a0f5d15e665a7ef849d6e5cd66f8343ffdcdfd9aa4880f8f5995f8d9931",
+      "candidateSHA256": "d6540a0f5d15e665a7ef849d6e5cd66f8343ffdcdfd9aa4880f8f5995f8d9931",
+      "adaptation": null
+    },
+    "Tests/checks/vision-audio-routing/shared/Network.swift": {
+      "sourcePath": "Tests/checks/vision-input-controls/Network.swift",
+      "sourceSHA256": "6dbb67c1c6176b39a1887178fed674de9775ab8a079b55601ae77af15d828362",
+      "candidateSHA256": "6dbb67c1c6176b39a1887178fed674de9775ab8a079b55601ae77af15d828362",
+      "adaptation": null
+    }
+  },
+  "authGuard": {
+    "sourcePath": "iOSClient/StreamClient+MacAudioRoutes.swift",
+    "sourceSHA256": "03b72d79b6e6327d6b0c8e239bb14e8ff65bbec587729ddb36249915969c8b25",
+    "normalizedGuardSHA256": "c575612b90dcc446af6f51af207eb3daa7289261c0f57492cfa59fc24a800b4a",
+    "candidateAdaptation": "Property renamed for Vision; guard body differs only in whitespace."
+  }
+}

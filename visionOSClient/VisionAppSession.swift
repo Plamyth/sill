@@ -23,6 +23,8 @@ final class VisionAppSession: ObservableObject {
         let events: [AnyPublisher<Void, Never>] = [
             client.$connected.map { _ in () }.eraseToAnyPublisher(),
             client.$savedMacs.map { _ in () }.eraseToAnyPublisher(),
+            client.$macInfoSaved.map { _ in () }.eraseToAnyPublisher(),
+            client.$macInfo.map { _ in () }.eraseToAnyPublisher(),
             client.$macs.map { _ in () }.eraseToAnyPublisher(),
             client.$homeAsk.map { _ in () }.eraseToAnyPublisher(),
             client.$localNetworkDenied.map { _ in () }.eraseToAnyPublisher(),
@@ -77,6 +79,7 @@ final class VisionAppSession: ObservableObject {
     }
 
     func refresh() {
+        client.updateVisionMacAudioRoutes(lease: windowLease, foreground: foreground)
         let bootstrap = client.visionCableBootstrap
         let mode: VisionAutoConnectStatus.StartupMode
         switch launch {

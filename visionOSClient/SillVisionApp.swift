@@ -56,6 +56,8 @@ struct SillVisionWorkspace: View {
     @AppStorage("ccrVisionAudioOfferAnswered") private var audioOfferAnswered = false
     @State private var audioOfferShown = false
     @State private var audioOfferScope: VisionAudioScope?
+    @State private var macAudioShown = false
+    @State private var macAudioOfferShown = false
 
     init(session: VisionAppSession, lease: VisionWindowLease) {
         self.session = session
@@ -72,6 +74,10 @@ struct SillVisionWorkspace: View {
                 Text(session.message).font(.caption).lineLimit(2)
                 if client.connected {
                     Menu("오디오") {
+                        Button("Mac 오디오 장치") {
+                            openMacAudioChooser()
+                        }
+                        .disabled(!audioControlsAllowed)
                         Button(client.visionAudio.presentation.phase.grant == nil
                                ? "Mac 소리를 Vision Pro에서도 재생" : "Vision Pro 소리 중지") {
                             withWindowOwnership {
@@ -82,7 +88,7 @@ struct SillVisionWorkspace: View {
                         }
                         .disabled(!audioControlsAllowed ||
                                   (client.visionAudio.presentation.phase.grant == nil && !client.visionAudio.presentation.canEnable))
-                        Text("Mac의 출력 장치는 그대로 유지합니다.")
+                        Text("Vision Pro에서 재생해도 Mac의 출력 장치는 유지합니다.")
                         Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
                     }
                     Button("연결 해제") { requestTransition(.disconnect) }
@@ -126,16 +132,34 @@ struct SillVisionWorkspace: View {
             session.start(foreground: phase == .active); updateInputAdmission()
         }
         .onChange(of: inputAllowed) { _, _ in updateInputAdmission() }
-        .onChange(of: audioControlsAllowed) { _, allowed in
-            if !allowed { audioOfferShown = false; audioOfferScope = nil }
+        .onChange(of: macAudioModalShown) { _, shown in
+            if shown {
+                audioOfferShown = false
+                audioOfferScope = nil
+                keysShown = false
+            }
+            updateInputAdmission()
         }
+        .onChange(of: audioControlsAllowed) { _, allowed in
+            if !allowed {
+                audioOfferShown = false; audioOfferScope = nil
+                macAudioShown = false; macAudioOfferShown = false
+            } else { offerMacAudioChooser() }
+        }
+        .onReceive(client.visionMacAudioRoutes.$scope) { scope in
+            if scope == nil { macAudioShown = false; macAudioOfferShown = false }
+        }
+        .onReceive(client.visionMacAudioRoutes.$model) { _ in
+            DispatchQueue.main.async { offerMacAudioChooser() }
+        }
+        .onChange(of: audioOfferShown) { _, shown in if !shown { offerMacAudioChooser() } }
         .onReceive(client.visionAudio.$presentation) { state in
             DispatchQueue.main.async {
                 guard session.owns(lease),
                       client.visionAudio.presentation.availability == state.availability else { return }
                 if case .available(let scope) = state.availability,
                    state.canEnable, audioControlsAllowed,
-                   !audioOfferAnswered, !audioOfferShown {
+                   !audioOfferAnswered, !audioOfferShown, !macAudioShown, !macAudioOfferShown {
                     audioOfferScope = scope
                     audioOfferShown = true
                 } else if state.availability != audioOfferScope.map(VisionAudioState.Availability.available) {
@@ -168,13 +192,24 @@ struct SillVisionWorkspace: View {
             releaseInput()
         }
         .sheet(isPresented: $recoveryShown) { recoveryForm }
+        .sheet(isPresented: $macAudioShown) {
+            VisionMacAudioChooser(routes: client.visionMacAudioRoutes, admit: { action in
+                withWindowOwnership { if audioControlsAllowed { action() } }
+            }, close: { macAudioShown = false })
+        }
+        .confirmationDialog("Mac 오디오 장치를 선택할까요?", isPresented: $macAudioOfferShown) {
+            Button("장치 선택", action: openMacAudioChooser)
+            Button("현재 장치 유지", role: .cancel) {}
+        } message: {
+            Text("목록을 열어 입력·출력 장치를 선택한 뒤 적용을 눌러야 Mac의 기본 장치가 변경됩니다.")
+        }
         .sheet(isPresented: $draftShown, onDismiss: clearDraft) {
             VisionTextDraftPanel(client: client, draft: $textDraft, close: clearDraft)
         }
         .confirmationDialog("Mac 소리를 Vision Pro에서도 재생할까요?", isPresented: $audioOfferShown) {
             Button("Vision Pro에서도 재생") {
                 withWindowOwnership {
-                    guard audioControlsAllowed, let scope = audioOfferScope,
+                    guard audioControlsAllowed, !macAudioModalShown, let scope = audioOfferScope,
                           client.visionAudio.presentation.availability == .available(scope),
                           client.visionAudio.presentation.canEnable else { return }
                     if client.visionAudio.enable(expectedScope: scope) { audioOfferAnswered = true }
@@ -321,7 +356,30 @@ struct SillVisionWorkspace: View {
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !audioOfferShown
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !audioOfferShown && !macAudioModalShown
+    }
+
+    private var macAudioModalShown: Bool { macAudioShown || macAudioOfferShown }
+
+    private func openMacAudioChooser() {
+        withWindowOwnership {
+            guard audioControlsAllowed else { return }
+            audioOfferShown = false
+            audioOfferScope = nil
+            macAudioOfferShown = false
+            macAudioShown = true
+            keysShown = false
+            updateInputAdmission()
+        }
+    }
+
+    private func offerMacAudioChooser() {
+        guard session.owns(lease), audioControlsAllowed, !audioOfferShown,
+              !macAudioShown, !macAudioOfferShown else { return }
+        if client.visionMacAudioRoutes.takeOffer() {
+            macAudioOfferShown = true
+            updateInputAdmission()
+        }
     }
 
     private func updateInputAdmission() {

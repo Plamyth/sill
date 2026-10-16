@@ -1065,6 +1065,11 @@ final class StreamClient: ObservableObject {
         }
     }
 
+    private var visionMacAudioConnectionEpoch = UUID()
+    private lazy var visionMacAudioTransport = VisionMacAudioTransport(link: link)
+    lazy var visionMacAudioRoutes = VisionMacAudioController(transport: visionMacAudioTransport,
+        authorize: { [weak self] scope in self?.visionMacAudioScopeIsCurrent(scope) == true })
+
     let visionAudioOwnerID = UUID()
     @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
     @Published var microphoneCleanupProblem: String?
@@ -1079,6 +1084,7 @@ final class StreamClient: ObservableObject {
     }, player: VisionAudioPlayer(ownerID: visionAudioOwnerID))
 
     private func resetVisionAudio() {
+        revokeVisionMacAudioRoutes()
         microphoneSourceWillChange()
         visionAudio.stop()
         visionAudioRoute.clear()
@@ -1420,6 +1426,7 @@ final class StreamClient: ObservableObject {
 
     private func wentToBackground() {
         #if os(visionOS)
+        revokeVisionMacAudioRoutes(foreground: false)
         visionAudio.setForeground(false)
         microphoneBackgrounded()
         #endif
@@ -4083,6 +4090,7 @@ final class StreamClient: ObservableObject {
     /// On the network queue.
     private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
         #if os(visionOS)
+        if receiveVisionMacAudioRoutes(header, data, from: peer) { return }
         if receiveMicrophone(header, data, from: peer) { return }
         #endif
         #if !os(visionOS)
@@ -4933,3 +4941,56 @@ private extension Data {
         return UInt64(bigEndian: v)
     }
 }
+
+#if os(visionOS)
+extension StreamClient {
+    func updateVisionMacAudioRoutes(lease: VisionWindowLease?, foreground: Bool) {
+        let scope: VisionMacAudioScope?
+        if foreground, appInForeground, connected, let lease, let peer = connection,
+           authenticatedVisionMacAudioPeer == ObjectIdentifier(peer) {
+            scope = VisionMacAudioScope(connection: visionMacAudioConnectionEpoch, window: lease.window, admission: lease.admission)
+            visionMacAudioTransport.bind(scope, peer: peer)
+        } else {
+            scope = nil
+            if visionMacAudioRoutes.scope != nil { visionMacAudioConnectionEpoch = UUID() }
+            visionMacAudioTransport.bind(nil, peer: nil)
+        }
+        visionMacAudioRoutes.setScope(scope, trustedCurrentPeer: authenticatedVisionMacAudioPeer != nil,
+            owningWindow: lease != nil, foreground: foreground && appInForeground)
+    }
+
+    private var authenticatedVisionMacAudioPeer: ObjectIdentifier? {
+        guard connected, let connection, let session, let id = session.macID,
+              macInfoSaved, let verified = macInfoVerified, verified.info.macID == id,
+              let saved = savedMacs.first(where: { $0.macID == id }),
+              let pin = saved.fingerprintData, verified.fingerprint == pin,
+              RemoteTLS.peerFingerprint(connection) == pin,
+              session.route.isRemote || session.home == .saved(pin: pin) else { return nil }
+        return ObjectIdentifier(connection)
+    }
+
+    private func visionMacAudioScopeIsCurrent(_ scope: VisionMacAudioScope) -> Bool {
+        guard appInForeground, visionStartupForeground, let connection,
+              authenticatedVisionMacAudioPeer == ObjectIdentifier(connection) else { return false }
+        return visionMacAudioTransport.scope(for: connection) == scope
+    }
+
+    private func revokeVisionMacAudioRoutes(foreground: Bool? = nil) {
+        visionMacAudioTransport.bind(nil, peer: nil)
+        visionMacAudioConnectionEpoch = UUID()
+        visionMacAudioRoutes.setScope(nil, trustedCurrentPeer: false, owningWindow: visionMacAudioRoutes.owningWindow,
+            foreground: foreground ?? (appInForeground && visionStartupForeground))
+    }
+
+    private func receiveVisionMacAudioRoutes(_ header: StreamHeader, _ data: Data, from peer: NWConnection) -> Bool {
+        guard header.kind == .audioRoutes else { return false }
+        guard connection === peer, let scope = visionMacAudioTransport.scope(for: peer) else { return true }
+        DispatchQueue.main.async { [weak self, weak peer] in
+            guard let self, let peer, self.connection === peer,
+                  self.visionMacAudioScopeIsCurrent(scope) else { return }
+            self.visionMacAudioRoutes.receive(data, scope: scope)
+        }
+        return true
+    }
+}
+#endif

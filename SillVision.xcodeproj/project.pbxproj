@@ -28,6 +28,42 @@
 			<key>fileRef</key>
 			<string>55F4C88ECE7C60F68A020113</string>
 		</dict>
+		<key>701FF96548D4F45FC8677744</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/MacAudioRouteSession.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>A3DEEC43D5A749CBB5DC4802</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>701FF96548D4F45FC8677744</string>
+		</dict>
+		<key>DC859A8193370992AD6BE453</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/MacAudioRouteTransport.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>9F9AAE0C8E2ECA297B79AB8D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>DC859A8193370992AD6BE453</string>
+		</dict>
 		<key>9157AA4C9D05833F017AB1BF</key>
 		<dict>
 			<key>isa</key>
@@ -946,6 +982,78 @@
 			<key>fileRef</key>
 			<string>F3944248DEC4A319BD3398CE</string>
 		</dict>
+		<key>A97287A399D523619501D150</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionMacAudioTransport.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>6974DD38FD7D3B64BCE34E32</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>A97287A399D523619501D150</string>
+		</dict>
+		<key>F4B97C3DCE8264FBF8CFAB26</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionMacAudioController.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>61CBD8FEE241841E22C2EEE4</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>F4B97C3DCE8264FBF8CFAB26</string>
+		</dict>
+		<key>1F1548F2952FADA5E99255D6</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionMacAudioChooser.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>7748DBD153CAC047DEB83D40</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>1F1548F2952FADA5E99255D6</string>
+		</dict>
+		<key>45367E63B25A435BCF4C0237</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionMacAudioStatus.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>5B607DCE6240AE7BCB5CB3AD</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>45367E63B25A435BCF4C0237</string>
+		</dict>
 		<key>96ED5C5789B174A01557791C</key>
 		<dict>
 			<key>isa</key>
@@ -997,6 +1105,8 @@
 			<key>children</key>
 			<array>
 				<string>55F4C88ECE7C60F68A020113</string>
+				<string>701FF96548D4F45FC8677744</string>
+				<string>DC859A8193370992AD6BE453</string>
 				<string>9157AA4C9D05833F017AB1BF</string>
 				<string>F1B4E95B0F11A7C20A849069</string>
 				<string>A1F6460DB158B9C77E16514E</string>
@@ -1048,6 +1158,10 @@
 				<string>F079CE19974C6C61933DC047</string>
 				<string>57225E96412900A09CA16381</string>
 				<string>F3944248DEC4A319BD3398CE</string>
+				<string>A97287A399D523619501D150</string>
+				<string>F4B97C3DCE8264FBF8CFAB26</string>
+				<string>1F1548F2952FADA5E99255D6</string>
+				<string>45367E63B25A435BCF4C0237</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
 			</array>
@@ -1063,6 +1177,8 @@
 			<key>files</key>
 			<array>
 				<string>FF0EB77E25688DA5A0DB4603</string>
+				<string>A3DEEC43D5A749CBB5DC4802</string>
+				<string>9F9AAE0C8E2ECA297B79AB8D</string>
 				<string>127A7A39804628DFDE2DB428</string>
 				<string>F389FE810353A79BBA3544CB</string>
 				<string>4ACDFFE948A78DF23ED0035D</string>
@@ -1114,6 +1230,10 @@
 				<string>331E11F67379528B562D146B</string>
 				<string>AC8D6597572DB8007CEC8C9F</string>
 				<string>AAF2C2DAF25BA42888B2B819</string>
+				<string>6974DD38FD7D3B64BCE34E32</string>
+				<string>61CBD8FEE241841E22C2EEE4</string>
+				<string>7748DBD153CAC047DEB83D40</string>
+				<string>5B607DCE6240AE7BCB5CB3AD</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1214,7 +1334,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>8</string>
+				<string>9</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>
@@ -1281,7 +1401,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>8</string>
+				<string>9</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>
