@@ -17,6 +17,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     private var channels = 0
     private var engine: AVAudioEngine?
     private var ownsPlaybackLease = false
+    private let audioLeaseId = UUID()
 
     func receive(_ packet: Data) {
         let epoch = epochLock.withLock { $0 }
@@ -51,7 +52,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         engine?.stop()
         engine = nil
         if ownsPlaybackLease {
-            IPadAudioSession.shared.release(.remotePlayback)
+            IPadAudioSession.shared.release(leaseId:audioLeaseId)
             ownsPlaybackLease = false
         }
         decodeQueue.async { [self] in
@@ -99,7 +100,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                                          channels: AVAudioChannelCount(channels), interleaved: false)
         else { return }
         do {
-            try IPadAudioSession.shared.acquire(.remotePlayback)
+            try IPadAudioSession.shared.acquire(.remotePlayback,leaseId:audioLeaseId)
             ownsPlaybackLease = true
             let engine = AVAudioEngine()
             let source = AVAudioSourceNode(format: format) { [weak self] _, _, frames, list -> OSStatus in
@@ -130,7 +131,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         } catch {
             engine = nil
             if ownsPlaybackLease {
-                IPadAudioSession.shared.release(.remotePlayback)
+                IPadAudioSession.shared.release(leaseId:audioLeaseId)
                 ownsPlaybackLease = false
             }
         }

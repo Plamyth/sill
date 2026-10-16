@@ -1,11 +1,6 @@
 import AVFoundation
 
 final class IPadAudioSession {
-    enum Owner: Hashable {
-        case remotePlayback
-        case canvasDictation
-    }
-
     static let shared = IPadAudioSession()
 
     private struct PreviousConfiguration {
@@ -14,40 +9,46 @@ final class IPadAudioSession {
         let options: AVAudioSession.CategoryOptions
     }
 
-    private var owners = Set<Owner>()
+    private var leases = IPadAudioLeaseState()
     private var previous: PreviousConfiguration?
 
     private init() {}
 
-    func acquire(_ owner: Owner) throws {
+    func acquire(_ role: IPadAudioLeaseState.Role, leaseId: UUID) throws {
         dispatchPrecondition(condition:.onQueue(.main))
-        guard !owners.contains(owner) else { return }
+        var next = leases
+        try next.acquire(role,leaseId:leaseId)
+        guard next != leases else { return }
         let session = AVAudioSession.sharedInstance()
-        if owners.isEmpty {
+        if leases.isEmpty {
             previous = PreviousConfiguration(category:session.category,mode:session.mode,
                                              options:session.categoryOptions)
         }
-        let next = owners.union([owner])
         do {
-            try configure(next)
-            owners = next
+            if leases.isEmpty || leases.needsMicrophone != next.needsMicrophone {
+                try configure(next)
+            }
+            leases = next
         } catch {
-            if owners.isEmpty { restorePrevious() }
-            else { try? configure(owners) }
+            if leases.isEmpty { restorePrevious() }
+            else { try? configure(leases) }
             throw error
         }
     }
 
-    func release(_ owner: Owner) {
+    func release(leaseId: UUID) {
         dispatchPrecondition(condition:.onQueue(.main))
-        guard owners.remove(owner) != nil else { return }
-        if owners.isEmpty { restorePrevious() }
-        else { try? configure(owners) }
+        var next = leases
+        guard next.release(leaseId:leaseId) else { return }
+        let microphoneChanged = leases.needsMicrophone != next.needsMicrophone
+        leases = next
+        if next.isEmpty { restorePrevious() }
+        else if microphoneChanged { try? configure(next) }
     }
 
-    private func configure(_ active: Set<Owner>) throws {
+    private func configure(_ active: IPadAudioLeaseState) throws {
         let session = AVAudioSession.sharedInstance()
-        if active.contains(.canvasDictation) {
+        if active.needsMicrophone {
             try session.setCategory(.playAndRecord,mode:.default,
                                     options:[.defaultToSpeaker,.mixWithOthers])
         } else {

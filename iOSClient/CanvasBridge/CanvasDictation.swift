@@ -16,6 +16,7 @@ final class CanvasDictation: ObservableObject {
     private var finalization: Task<Void,Never>?
     private var generation = UUID()
     private var ownsMicrophoneLease = false
+    private let audioLeaseId = UUID()
 
     func start() async {
         guard !isListening, !isStarting, !isFinalizing else { return }
@@ -46,7 +47,7 @@ final class CanvasDictation: ObservableObject {
         draft = ""
 
         do {
-            try IPadAudioSession.shared.acquire(.canvasDictation)
+            try IPadAudioSession.shared.acquire(.canvasDictation,leaseId:audioLeaseId)
             ownsMicrophoneLease = true
             let nextEngine = AVAudioEngine()
             let nextRequest = SFSpeechAudioBufferRecognitionRequest()
@@ -119,7 +120,7 @@ final class CanvasDictation: ObservableObject {
         request = nil
         recognition = nil
         if ownsMicrophoneLease {
-            IPadAudioSession.shared.release(.canvasDictation)
+            IPadAudioSession.shared.release(leaseId:audioLeaseId)
             ownsMicrophoneLease = false
         }
         isListening = false
