@@ -52,8 +52,13 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         engine?.stop()
         engine = nil
         if ownsPlaybackLease {
-            IPadAudioSession.shared.release(leaseId:audioLeaseId)
-            ownsPlaybackLease = false
+            do {
+                try IPadAudioSession.shared.release(leaseId:audioLeaseId)
+                ownsPlaybackLease = false
+            } catch {
+                Logger(subsystem: "me.saffer.sill", category: "AudioSession")
+                    .error("Playback lease cleanup failed: \(String(describing: error), privacy: .public)")
+            }
         }
         decodeQueue.async { [self] in
             decoder = nil
@@ -130,9 +135,19 @@ final class RemoteAudioPlayer: @unchecked Sendable {
             self.engine = engine
         } catch {
             engine = nil
+            ownsPlaybackLease = ownsPlaybackLease || IPadAudioSession.shared.holds(leaseId:audioLeaseId)
             if ownsPlaybackLease {
-                IPadAudioSession.shared.release(leaseId:audioLeaseId)
-                ownsPlaybackLease = false
+                do {
+                    try IPadAudioSession.shared.release(leaseId:audioLeaseId)
+                    ownsPlaybackLease = false
+                } catch {
+                    Logger(subsystem: "me.saffer.sill", category: "AudioSession")
+                        .error("Playback lease cleanup failed: \(String(describing: error), privacy: .public)")
+                }
+            }
+            decodeQueue.async { [self] in
+                self.rate = 0
+                self.channels = 0
             }
         }
     }

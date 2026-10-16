@@ -127,6 +127,14 @@ final class StreamClient: ObservableObject {
         stop: { [weak self] in self?.remoteAudio.stop() },
         play: { [weak self] packet in self?.remoteAudio.receive(packet) },
         changed: { [weak self] status in self?.remoteAudioStatus = status })
+    #if os(iOS)
+    @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
+    @Published var microphoneCleanupProblem: String?
+    var microphonePolicy = IPadMicrophonePolicy()
+    let microphoneFrames = IPadMicrophoneFrameGate()
+    var microphoneCapture: IPadMicrophoneCapture?
+    var microphoneCaptureToken: UUID?
+    #endif
     #endif
     // Connection. The setters of what the connect screen shows are internal: the DEBUG harness
     // seeds them.
@@ -828,6 +836,9 @@ final class StreamClient: ObservableObject {
             }
             #else
             remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))
+            #if os(iOS)
+            microphoneSetConnection(newValue)
+            #endif
             #endif
             link.connection = newValue
         }
@@ -2566,6 +2577,9 @@ final class StreamClient: ObservableObject {
         let fenced = kind != .toWifi && !reconnected
         #if !os(visionOS)
         remoteAudioControl.setConnection(ObjectIdentifier(c))
+        #if os(iOS)
+        microphoneSetConnection(c)
+        #endif
         #endif
         if fenced {
             let nonce = withUnsafeBytes(of: UInt64.random(in: .min ... .max)) { Data($0) }
@@ -3343,6 +3357,9 @@ final class StreamClient: ObservableObject {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
             #if !os(visionOS)
             self.remoteAudioControl.setConnection(nil)
+            #if os(iOS)
+            self.microphoneSetConnection(nil)
+            #endif
             #endif
             // A move carries the session on (`rescue`), not when this device closed the connection
             // itself (`end`: a message no Sill sends): that one ends with the words it deserves.
@@ -3380,6 +3397,9 @@ final class StreamClient: ObservableObject {
         visionInputBinding = .awaitingCatalog
         #else
         remoteAudioControl.setConnection(nil)
+        #if os(iOS)
+        microphoneSetConnection(nil)
+        #endif
         #endif
         abandonMove()
         resetPath()
@@ -3464,6 +3484,9 @@ final class StreamClient: ObservableObject {
         visionAudio.stop()
         #else
         remoteAudioControl.sourceWillChange()
+        #if os(iOS)
+        microphoneSourceWillChange()
+        #endif
         #endif
         choicesSent += 1
         send(.selectSource, Wire.encode(source))
@@ -3897,6 +3920,9 @@ final class StreamClient: ObservableObject {
     private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
         #if !os(visionOS)
         if receiveRemoteAudio(header, data, from: peer) { return }
+        #if os(iOS)
+        if receiveMicrophone(header, data, from: peer) { return }
+        #endif
         #endif
         switch header.kind {
         #if os(visionOS)
@@ -3978,6 +4004,9 @@ final class StreamClient: ObservableObject {
                 guard self.connection === from else { return }
                 #if !os(visionOS)
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
+                #if os(iOS)
+                self.microphoneObserve(list, from: peer)
+                #endif
                 #endif
                 // A remote session, and one at home over TLS, is connected at its first window list,
                 // not at `.ready`: the Mac has admitted this device's key.

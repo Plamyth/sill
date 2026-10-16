@@ -9,41 +9,40 @@ final class IPadAudioSession {
         let options: AVAudioSession.CategoryOptions
     }
 
-    private var leases = IPadAudioLeaseState()
+    private var coordinator = IPadAudioLeaseCoordinator()
     private var previous: PreviousConfiguration?
 
     private init() {}
 
+    func holds(leaseId: UUID) -> Bool { coordinator.holds(leaseId) }
+
     func acquire(_ role: IPadAudioLeaseState.Role, leaseId: UUID) throws {
         dispatchPrecondition(condition:.onQueue(.main))
-        var next = leases
-        try next.acquire(role,leaseId:leaseId)
-        guard next != leases else { return }
-        let session = AVAudioSession.sharedInstance()
-        if leases.isEmpty {
-            previous = PreviousConfiguration(category:session.category,mode:session.mode,
-                                             options:session.categoryOptions)
+        if let recoveryOwner = coordinator.recoveryOwner {
+            try release(leaseId: recoveryOwner)
         }
-        do {
-            if leases.isEmpty || leases.needsMicrophone != next.needsMicrophone {
+        let session = AVAudioSession.sharedInstance()
+        var nextCoordinator = coordinator
+        defer { coordinator = nextCoordinator }
+        try nextCoordinator.acquire(role, id: leaseId) { old, next in
+            if old.isEmpty && previous == nil {
+                previous = PreviousConfiguration(category:session.category,mode:session.mode,
+                                                 options:session.categoryOptions)
+            }
+            if old.isEmpty || old.needsMicrophone != next.needsMicrophone {
                 try configure(next)
             }
-            leases = next
-        } catch {
-            if leases.isEmpty { restorePrevious() }
-            else { try? configure(leases) }
-            throw error
         }
     }
 
-    func release(leaseId: UUID) {
+    func release(leaseId: UUID) throws {
         dispatchPrecondition(condition:.onQueue(.main))
-        var next = leases
-        guard next.release(leaseId:leaseId) else { return }
-        let microphoneChanged = leases.needsMicrophone != next.needsMicrophone
-        leases = next
-        if next.isEmpty { restorePrevious() }
-        else if microphoneChanged { try? configure(next) }
+        var nextCoordinator = coordinator
+        defer { coordinator = nextCoordinator }
+        try nextCoordinator.release(id: leaseId) { old, next in
+            if next.isEmpty { try restorePrevious() }
+            else if old.needsMicrophone != next.needsMicrophone { try configure(next) }
+        }
     }
 
     private func configure(_ active: IPadAudioLeaseState) throws {
@@ -57,12 +56,12 @@ final class IPadAudioSession {
         try session.setActive(true)
     }
 
-    private func restorePrevious() {
+    private func restorePrevious() throws {
         let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false,options:.notifyOthersOnDeactivation)
+        try session.setActive(false,options:.notifyOthersOnDeactivation)
         if let previous {
-            try? session.setCategory(previous.category,mode:previous.mode,
-                                     options:previous.options)
+            try session.setCategory(previous.category,mode:previous.mode,
+                                    options:previous.options)
         }
         previous = nil
     }

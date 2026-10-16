@@ -20,6 +20,15 @@ final class CanvasDictation: ObservableObject {
 
     func start() async {
         guard !isListening, !isStarting, !isFinalizing else { return }
+        if ownsMicrophoneLease {
+            do {
+                try IPadAudioSession.shared.release(leaseId:audioLeaseId)
+                ownsMicrophoneLease = false
+            } catch {
+                status = "이전 마이크 세션 정리가 필요합니다: \(error.localizedDescription)"
+                return
+            }
+        }
         isStarting = true
         let sessionId = UUID()
         generation = sessionId
@@ -81,6 +90,7 @@ final class CanvasDictation: ObservableObject {
             isListening = true
             status = "듣는 중 · 설명을 말한 뒤 멈추기를 누르세요."
         } catch {
+            ownsMicrophoneLease = ownsMicrophoneLease || IPadAudioSession.shared.holds(leaseId:audioLeaseId)
             finish(status:"마이크 시작 실패: \(error.localizedDescription)")
         }
     }
@@ -120,8 +130,15 @@ final class CanvasDictation: ObservableObject {
         request = nil
         recognition = nil
         if ownsMicrophoneLease {
-            IPadAudioSession.shared.release(leaseId:audioLeaseId)
-            ownsMicrophoneLease = false
+            do {
+                try IPadAudioSession.shared.release(leaseId:audioLeaseId)
+                ownsMicrophoneLease = false
+            } catch {
+                status = "마이크 세션 정리가 필요합니다: \(error.localizedDescription)"
+                isListening = false
+                isFinalizing = false
+                return
+            }
         }
         isListening = false
         isFinalizing = false

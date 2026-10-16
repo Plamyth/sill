@@ -42,6 +42,7 @@ final class NWConnection {
 final class SessionLink { var connection: NWConnection? }
 final class StreamClient {
     private let link = SessionLink()
+    func microphoneBackgrounded() {}
 '''
 fixture += properties.replace('    private let remoteAudio', '    let remoteAudio')
 fixture += connection + '''
@@ -88,6 +89,6 @@ for name, needle in checks.items():
     assert needle in client, name
 assert 'remoteAudio.receive(data)' not in client
 panel = (root / 'iOSClient/HostSettingsPanel.swift').read_text()
-assert 'if client.remoteAudioStatus.available {' in panel
 assert 'IPadRemoteAudioControl(client: client)' in panel
+assert '.disabled(!client.remoteAudioStatus.available)' in (root / 'iOSClient/StreamScreen.swift').read_text()
 print(f'PASS {len(checks) + 3} supplementary integration checks')

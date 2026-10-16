@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import AVFoundation
 import StreamProtocol
 
 struct IPadRemoteAudioControl: View {
@@ -38,6 +39,52 @@ struct IPadRemoteAudioControl: View {
         .accessibilityLabel("Mac audio")
         .accessibilityValue(detail)
         .accessibilityIdentifier("iPadRemoteAudio")
+    }
+}
+
+struct IPadMicrophoneControl: View {
+    @ObservedObject var client: StreamClient
+
+    private var detail: String {
+        if let problem = client.microphoneCleanupProblem { return problem }
+        return switch client.microphonePhase {
+        case .unavailable: "This Mac does not offer iPad microphone input."
+        case .off: "Off. Tap to share this iPad's microphone with the Mac."
+        case .requesting: "Waiting for this Mac to allow input. Tap to cancel."
+        case .capturing: "Starting this iPad's microphone. Tap to cancel."
+        case .live: "On. Tap to stop sharing this iPad's microphone."
+        case .stopping: "Stopping microphone input."
+        case .failed(let reason): client.microphonePolicy.canStart
+            ? "\(reason) Tap to try again." : "\(reason) Reconnect to try again."
+        }
+    }
+
+    var body: some View {
+        Button(action: client.toggleIPadMicrophone) {
+            HStack(spacing: 12) {
+                Image(systemName: client.microphonePhase == .live ? "mic.fill" : "mic.slash")
+                    .font(.title3)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("iPad microphone").font(.body.weight(.semibold))
+                    Text(detail).font(.caption).foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                if client.microphonePhase == .requesting || client.microphonePhase == .capturing {
+                    ProgressView().tint(Palette.accent)
+                }
+            }
+            .foregroundStyle(Palette.text)
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(Palette.control, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .disabled(client.microphoneCleanupProblem == nil &&
+                  !(client.microphonePolicy.canStart || client.microphonePhase.canStop))
+        .accessibilityLabel("iPad microphone")
+        .accessibilityValue(detail)
+        .accessibilityIdentifier("iPadMicrophone")
     }
 }
 
@@ -309,7 +356,26 @@ struct StreamScreen: View {
                 scaleOpen = false
                 windowMenu = nil
                 client.remoteAudioControl.backgrounded()
+                client.microphoneBackgrounded()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
+            .receive(on: RunLoop.main)) { note in
+            let kind = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
+            if kind == AVAudioSession.InterruptionType.began.rawValue {
+                client.microphoneSourceWillChange()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
+            .receive(on: RunLoop.main)) { note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
+            if reason != AVAudioSession.RouteChangeReason.categoryChange.rawValue {
+                client.microphoneSourceWillChange()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)
+            .receive(on: RunLoop.main)) { _ in
+            client.microphoneSourceWillChange()
         }
         // One thing open at a time: the Aa ruler and a thumbnail's traffic lights put the Settings
         // panel away. (Opening the panel closes them, the drawer and the keyboard.)

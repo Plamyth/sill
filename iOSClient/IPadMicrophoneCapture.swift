@@ -4,8 +4,18 @@ import os
 /// Native capture only. The caller must first receive a matching, live Mac grant for an explicit
 /// user request; constructing this object does not ask for permission or open the microphone.
 #if os(iOS)
-@MainActor
 final class IPadMicrophoneCapture {
+    struct AudioLease {
+        let acquire: (UUID) throws -> Void
+        let release: (UUID) throws -> Void
+        let holds: (UUID) -> Bool
+
+        static let iPad = AudioLease(
+            acquire: { try IPadAudioSession.shared.acquire(.microphoneUplink, leaseId: $0) },
+            release: { try IPadAudioSession.shared.release(leaseId: $0) },
+            holds: { IPadAudioSession.shared.holds(leaseId: $0) })
+    }
+
     enum CaptureError: LocalizedError {
         case alreadyRunning, permissionDenied, unavailableFormat, conversionUnavailable
 
@@ -21,13 +31,19 @@ final class IPadMicrophoneCapture {
 
     private let worker = IPadMicrophoneConversionWorker()
     private let leaseID = UUID()
+    private let audioLease: AudioLease
     private var engine: AVAudioEngine?
     private var starting = false
     private var generation = UUID()
     private var ownsLease = false
 
+    init(audioLease: AudioLease = .iPad) {
+        self.audioLease = audioLease
+    }
+
     /// `emit` runs on the conversion queue. Its owner must fence the exact peer and grant again
     /// before sending; a stopped capture never calls it after `stop()` returns.
+    @MainActor
     func start(emit: @escaping @Sendable (IPadMicrophonePCMFrame) -> Void) async throws {
         guard engine == nil, !starting else { throw CaptureError.alreadyRunning }
         starting = true
@@ -41,7 +57,7 @@ final class IPadMicrophoneCapture {
         guard generation == attempt else { throw CancellationError() }
 
         do {
-            try IPadAudioSession.shared.acquire(.microphoneUplink, leaseId: leaseID)
+            try audioLease.acquire(leaseID)
             ownsLease = true
             let next = AVAudioEngine()
             let input = next.inputNode
@@ -60,12 +76,14 @@ final class IPadMicrophoneCapture {
             try next.start()
             guard generation == attempt else { throw CancellationError() }
         } catch {
-            stop()
+            ownsLease = ownsLease || audioLease.holds(leaseID)
+            do { try stop() } catch { throw error }
             throw error
         }
     }
 
-    func stop() {
+    func stop() throws {
+        dispatchPrecondition(condition: .onQueue(.main))
         generation = UUID()
         if let engine {
             engine.stop()
@@ -74,7 +92,7 @@ final class IPadMicrophoneCapture {
         }
         worker.end()
         if ownsLease {
-            IPadAudioSession.shared.release(leaseId: leaseID)
+            try audioLease.release(leaseID)
             ownsLease = false
         }
     }

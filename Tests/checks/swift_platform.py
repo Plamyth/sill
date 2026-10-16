@@ -1,8 +1,9 @@
 """Select the platform and DEBUG conditionals used by shared-client fixtures."""
 
 
-def select_platform(source, *, vision, debug=False):
-    conditions = {'os(visionOS)': vision, '!os(visionOS)': not vision, 'DEBUG': debug}
+def select_platform(source, *, vision, debug=False, ios=False):
+    conditions = {'os(visionOS)': vision, '!os(visionOS)': not vision,
+                  'os(iOS)': ios and not vision, 'DEBUG': debug}
     output, stack = [], []
     active = True
     for line in source.splitlines(keepends=True):

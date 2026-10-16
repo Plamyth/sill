@@ -13,7 +13,7 @@ while depth:
 source = source[:brace + 1] + '''
         engine?.stop()
         engine = AVAudioEngine()
-        ownsAudioSession = true
+        ownsPlaybackLease = true
     }''' + source[end:]
 end = source.rindex('}')
 source = source[:end] + '''
@@ -26,15 +26,14 @@ final class AVAudioEngine {
     var stopped = false
     func stop() { stopped = true }
 }
-final class AVAudioSession {
-    struct Options: OptionSet {
-        let rawValue: Int
-        static let notifyOthersOnDeactivation = Options(rawValue: 1)
-    }
-    static let shared = AVAudioSession()
+final class IPadAudioSession {
+    static let shared = IPadAudioSession()
     var releases = 0
-    static func sharedInstance() -> AVAudioSession { shared }
-    func setActive(_ active: Bool, options: Options) throws { if !active { releases += 1 } }
+    var failRelease = false
+    func release(leaseId: UUID) throws {
+        if failRelease { throw NSError(domain: "AudioSession", code: 1) }
+        releases += 1
+    }
 }
 private final class RemoteAACDecoder {
     static var decoding: (() -> Void)?

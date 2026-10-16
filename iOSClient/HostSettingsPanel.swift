@@ -219,6 +219,8 @@ struct HostSettingsPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             IPadRemoteAudioControl(client: client)
                 .padding(.bottom, 12)
+            IPadMicrophoneControl(client: client)
+                .padding(.bottom, 12)
             if let state = client.settings.host, let shown = client.settings.displayed {
                 if state.softwareEncoder {
                     // Neither a restart nor a return is promised: hosts before 2026-09-25 keep the

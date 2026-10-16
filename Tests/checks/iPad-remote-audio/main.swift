@@ -299,9 +299,9 @@ struct Check {
         let player = PlaybackProbe()
         let samples = Array(repeating: Int16(1000), count: 2400)
         let packet = samples.withUnsafeBufferPointer { AudioPacket.pack(sampleRate: 48000, channels: 1, samples: $0) }
-        let releases = AVAudioSession.shared.releases
+        let releases = IPadAudioSession.shared.releases
         player.stop()
-        expect(AVAudioSession.shared.releases == releases, "inactive player leaves other audio sessions alone")
+        expect(IPadAudioSession.shared.releases == releases, "inactive player leaves other audio sessions alone")
         player.receive(packet)
         player.drainDecode()
         await drain()
@@ -310,7 +310,17 @@ struct Check {
         player.stop()
         expect(oldEngine.stopped && player.currentEngine == nil, "production OFF stops engine before returning")
         expect(player.buffered == 0, "production OFF clears buffered samples")
-        expect(AVAudioSession.shared.releases == releases + 1, "owned session is released immediately")
+        expect(IPadAudioSession.shared.releases == releases + 1, "owned session is released immediately")
+
+        player.receive(packet)
+        player.drainDecode()
+        await drain()
+        IPadAudioSession.shared.failRelease = true
+        player.stop()
+        expect(IPadAudioSession.shared.releases == releases + 1, "failed release keeps the lease owned")
+        IPadAudioSession.shared.failRelease = false
+        player.stop()
+        expect(IPadAudioSession.shared.releases == releases + 2, "same owner can retry cleanup")
 
         let entered = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
