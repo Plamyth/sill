@@ -58,6 +58,7 @@
 		B2000001000000000000A002 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
 		B2000001000000000000A003 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
 		B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F004 /* CanvasWorkspace.swift */; };
+		B2000001000000000000A00A /* CanvasDictation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F00A /* CanvasDictation.swift */; };
 		B2000001000000000000A005 /* ControlRoomProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F005 /* ControlRoomProjection.swift */; };
 		B2000001000000000000A006 /* ControlRoomViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F006 /* ControlRoomViews.swift */; };
 		B2000001000000000000A007 /* PencilCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F007 /* PencilCanvas.swift */; };
@@ -119,6 +120,7 @@
 		B2000001000000000000F002 /* CanvasRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasRelay.swift; sourceTree = "<group>"; };
 		B2000001000000000000F003 /* CanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasStore.swift; sourceTree = "<group>"; };
 		B2000001000000000000F004 /* CanvasWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasWorkspace.swift; sourceTree = "<group>"; };
+		B2000001000000000000F00A /* CanvasDictation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDictation.swift; sourceTree = "<group>"; };
 		B2000001000000000000F005 /* ControlRoomProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlRoomProjection.swift; sourceTree = "<group>"; };
 		B2000001000000000000F006 /* ControlRoomViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlRoomViews.swift; sourceTree = "<group>"; };
 		B2000001000000000000F007 /* PencilCanvas.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilCanvas.swift; sourceTree = "<group>"; };
@@ -202,6 +204,7 @@
 				B2000001000000000000F002 /* CanvasRelay.swift */,
 				B2000001000000000000F003 /* CanvasStore.swift */,
 				B2000001000000000000F004 /* CanvasWorkspace.swift */,
+				B2000001000000000000F00A /* CanvasDictation.swift */,
 				B2000001000000000000F005 /* ControlRoomProjection.swift */,
 				B2000001000000000000F006 /* ControlRoomViews.swift */,
 				B2000001000000000000F007 /* PencilCanvas.swift */,
@@ -320,6 +323,7 @@
 				B2000001000000000000A002 /* CanvasRelay.swift in Sources */,
 				B2000001000000000000A003 /* CanvasStore.swift in Sources */,
 				B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */,
+				B2000001000000000000A00A /* CanvasDictation.swift in Sources */,
 				B2000001000000000000A005 /* ControlRoomProjection.swift in Sources */,
 				B2000001000000000000A006 /* ControlRoomViews.swift in Sources */,
 				B2000001000000000000A007 /* PencilCanvas.swift in Sources */,

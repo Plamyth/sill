@@ -168,6 +168,15 @@ final class CanvasStore: ObservableObject {
         mode = .select
     }
 
+    func addSpokenNote(_ text: String) {
+        let trimmed = text.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { status = "저장할 음성 설명이 없습니다."; return }
+        selectedNode = scene.addNode(kind:.note,
+            at:CanvasPoint(x:700 - pan.width,y:430 - pan.height),text:trimmed)
+        mode = .select
+        status = "확인한 음성 설명을 캔버스에 저장했습니다. 대화 전송은 별도 버튼으로 진행합니다."
+    }
+
     func select(_ id: UUID) {
         if let from = linkStart, from != id {
             _ = scene.connect(from, to: id)

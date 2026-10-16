@@ -4,12 +4,14 @@ import SwiftUI
 struct CanvasWorkspace: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store = CanvasStore()
+    @StateObject private var dictation = CanvasDictation()
     @State private var relayAddress = "http://192.168.45.4:8791"
     @State private var relayToken = ""
     @State private var connectionOpen = false
     @State private var exportOpen = false
     @State private var importOpen = false
     @State private var inspectorOpen = false
+    @State private var dictationOpen = false
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
     @State private var expandedCard: ControlRoomCardReference?
@@ -54,7 +56,10 @@ struct CanvasWorkspace: View {
         .background(Color.black)
         .preferredColorScheme(.dark)
         .onChange(of:scenePhase) { _,phase in
-            if phase != .active { store.saveNow() }
+            if phase != .active {
+                store.saveNow()
+                dictation.cancel()
+            }
             else { Task { await checkConnection() } }
         }
         .task { await checkConnection() }
@@ -91,6 +96,9 @@ struct CanvasWorkspace: View {
                         Button("닫기") { inspectorOpen = false }
                     }}
             }
+        }
+        .sheet(isPresented:$dictationOpen,onDismiss:{ dictation.cancel() }) {
+            dictationSheet
         }
         .sheet(item:$expandedCard) { reference in
             ControlRoomCardDetail(reference:reference,projection:readProjection,message:projectionMessage)
@@ -155,6 +163,7 @@ struct CanvasWorkspace: View {
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
+            Button("음성 설명",systemImage:"mic") { dictationOpen = true }
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("연결",systemImage:"network") { connectionOpen = true }
@@ -345,6 +354,40 @@ struct CanvasWorkspace: View {
                 }
                 ToolbarItem(placement:.cancellationAction) {
                     Button("나중에") { store.proposedNode = nil }
+                }
+            }
+        }
+    }
+
+    private var dictationSheet: some View {
+        NavigationStack {
+            Form {
+                Text("iPad 마이크로 설명을 받아씁니다. 문구를 확인해 캔버스에 저장하기 전까지 그림이나 대화로 전송되지 않습니다.")
+                    .font(.footnote)
+                Text(dictation.status).font(.footnote).foregroundStyle(.secondary)
+                TextEditor(text:$dictation.draft)
+                    .frame(minHeight:150)
+                    .accessibilityIdentifier("canvasDictationDraft")
+                Button(dictation.isListening ? "받아쓰기 멈추기" : "받아쓰기 시작하기",
+                       systemImage:dictation.isListening ? "stop.fill" : "mic.fill") {
+                    if dictation.isListening { dictation.stop() }
+                    else { Task { await dictation.start() } }
+                }
+                .disabled(dictation.isStarting || dictation.isFinalizing)
+            }
+            .navigationTitle("음성 설명")
+            .toolbar {
+                ToolbarItem(placement:.cancellationAction) {
+                    Button("취소") { dictation.cancel(); dictationOpen = false }
+                }
+                ToolbarItem(placement:.confirmationAction) {
+                    Button("캔버스에 저장") {
+                        dictation.stop()
+                        store.addSpokenNote(dictation.draft)
+                        dictationOpen = false
+                    }
+                    .disabled(dictation.isStarting || dictation.isListening || dictation.isFinalizing ||
+                              dictation.draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
                 }
             }
         }
