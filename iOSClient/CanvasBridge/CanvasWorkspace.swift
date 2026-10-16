@@ -407,6 +407,11 @@ struct CanvasWorkspace: View {
                 await reconcile(existing)
                 return
             }
+            let readiness = try await connection.deliveryReadiness()
+            guard readiness.available else {
+                store.status = "전송 중단: Mac의 대화 연결이 준비되지 않았습니다. 그림은 보관했습니다."
+                return
+            }
             let packet = try store.preparePacket(scene:frozen,imagePNG:image,session:session,
                 targetMode:targetMode,relayAddress:address)
             try store.beginSubmission(packet.packetId)

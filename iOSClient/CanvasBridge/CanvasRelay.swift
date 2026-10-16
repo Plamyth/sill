@@ -2,6 +2,7 @@ import Foundation
 import Security
 
 struct CanvasRelay {
+    struct DeliveryReadiness: Decodable { let available: Bool }
     let address: String
     let token: String
     private let session: URLSession
@@ -86,6 +87,10 @@ struct CanvasRelay {
 
     func controlRoomProjection() async throws -> ControlRoomProjection {
         try await response(request("/control-room/projection"),as:ControlRoomProjection.self)
+    }
+
+    func deliveryReadiness() async throws -> DeliveryReadiness {
+        try await response(request("/delivery/ready"),as:DeliveryReadiness.self)
     }
 
     func send(_ packet: CanvasPacket) async throws -> PacketReceipt {
