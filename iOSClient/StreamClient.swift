@@ -143,6 +143,8 @@ final class StreamClient: ObservableObject {
     let microphoneFrames = IPadMicrophoneFrameGate()
     var microphoneCapture: IPadMicrophoneCapture?
     var microphoneCaptureToken: UUID?
+    @Published var audioRouteChooserPresented = false
+    var audioRouteOffer = IPadAudioRouteOffer()
     #endif
     #endif
     // Connection. The setters of what the connect screen shows are internal: the DEBUG harness
@@ -190,6 +192,8 @@ final class StreamClient: ObservableObject {
     private enum StartupAutoConnection {
         case unarmed
         case waiting(String)
+        case wired(String)
+        case waitingRemote(String)
         case attempted
         case stopped
     }
@@ -1232,6 +1236,9 @@ final class StreamClient: ObservableObject {
         }
         startupAutoConnection = .waiting(target.macID)
         trySavedMacAutoConnect()
+        DispatchQueue.main.asyncAfter(deadline: .now() + DiscoveryPolicy.networkFirst) { [weak self] in
+            self?.trySavedMacAutoConnect()
+        }
     }
 
     /// Called only after a formal pairing or an authenticated session with a saved Mac.
@@ -1242,7 +1249,7 @@ final class StreamClient: ObservableObject {
     }
 
     func rememberAuthenticatedMac() {
-        guard let session, let macID = session.macID,
+        guard connected, let session, let macID = session.macID,
               let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
               let pin = saved.fingerprintData else { return }
         if session.route.isRemote {
@@ -1251,21 +1258,70 @@ final class StreamClient: ObservableObject {
             rememberPreferredMac(macID)
         }
         startupAutoConnection = .stopped
+        retireOriginalCCREntryIfProven()
+    }
+
+    func retireOriginalCCREntryIfProven() {
+        guard connected, pairing == .idle, pairingDial == nil, homeAsk == nil,
+              overlayAskDialer == nil, overlayAskShown == nil, pendingLink == nil,
+              let session, let macID = session.macID,
+              UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey) == macID,
+              let saved = savedMac(macID), let pin = saved.fingerprintData,
+              session.route.isRemote || session.home == .saved(pin: pin),
+              let (info, signer) = macInfoVerified, info.macID == macID, signer == pin, info.issuedAt >= saved.infoIssuedAt,
+              let next = RemoteDialPolicy.retiringCCROriginal(preferredID: macID, authenticatedPin: pin,
+                                                             verifiedAddresses: info.addresses, in: savedMacs) else { return }
+        savedMacs = next
+        persistSavedMacs()
     }
 
     private func trySavedMacAutoConnect() {
-        guard case .waiting(let macID) = startupAutoConnection,
-              appInForeground, !connected, connection == nil, reconnect == nil,
-              pairing == .idle, homeAsk == nil,
-              let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
-              let pin = saved.fingerprintData,
-              let row = macs.first(where: { $0.route == .network && $0.macID == macID && $0.carriesTag && $0.endpoint != nil }),
-              homeDecision(row, macID: macID, tap: false) == .pinned else { return }
-        startupAutoConnection = .attempted
-        if !dialRow(row, macID: macID, trust: .saved(pin: pin), tagNamed: true, tap: false) {
-            status = "저장된 iPad 기기 키를 사용할 수 없습니다. iPad의 잠금을 해제한 뒤 Sill을 다시 여세요."
-            startupAutoConnection = .stopped
+        let macID: String
+        let preferCable: Bool
+        switch startupAutoConnection {
+        case .waiting(let id): macID = id; preferCable = true
+        case .waitingRemote(let id): macID = id; preferCable = false
+        default: return
         }
+        guard appInForeground, !connected, connection == nil, reconnect == nil,
+              remoteDial == nil, pairing == .idle, pairingDial == nil, homeAsk == nil, pendingLink == nil,
+              let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
+              let pin = saved.fingerprintData else { return }
+        let row = macs.first {
+            $0.route == .network && $0.macID == macID && $0.carriesTag && $0.endpoint != nil
+                && wiredDial(for: $0) != nil && homeDecision($0, macID: macID, tap: false) == .pinned
+        }
+        if preferCable, let row {
+            startupAutoConnection = .wired(macID)
+            if !dialRow(row, macID: macID, trust: .saved(pin: pin), tagNamed: true, tap: false) {
+                status = "저장된 iPad 기기 키를 사용할 수 없습니다. iPad의 잠금을 해제한 뒤 Sill을 다시 여세요."
+                startupAutoConnection = .stopped
+            }
+        } else if !preferCable || localNetworkDenied || ProcessInfo.processInfo.systemUptime >= searchingSince + DiscoveryPolicy.networkFirst {
+            startupAutoConnection = .attempted
+            dialSaved(macID, why: .tap)
+        }
+    }
+
+    /// A startup cable attempt may fall back once, through the existing pinned remote dial.
+    @discardableResult
+    func fallBackFromStartupWired() -> Bool {
+        guard case .wired(let macID) = startupAutoConnection, !connected, session?.macID == macID else { return false }
+        startupAutoConnection = .attempted
+        let old = connection
+        connection = nil
+        old?.cancel()
+        tearDown(status: status, restartSearch: false)
+        guard appInForeground else {
+            startupAutoConnection = .waitingRemote(macID)
+            return true
+        }
+        guard SavedMacs.automaticTarget(savedMacs, preferredID: macID) != nil else {
+            startupAutoConnection = .stopped
+            return true
+        }
+        dialSaved(macID, why: .tap)
+        return true
     }
     #endif
 
@@ -2038,7 +2094,11 @@ final class StreamClient: ObservableObject {
     /// the last moment. Main thread.
     private func dialUnconstrained(after c: NWConnection, _ fallback: NWEndpoint, name: String, macID: String?,
                                    trust: DiscoveryPolicy.HomeTrust, row: HomeRow?, why: String) {
-        guard connection === c, !connected, c.state != .ready else { return }
+        guard connection === c, !connected else { return }
+        #if os(iOS)
+        if fallBackFromStartupWired() { return }
+        #endif
+        guard c.state != .ready else { return }
         #if DEBUG
         print("wired dial \(why); dialing unconstrained")
         #endif
@@ -3478,6 +3538,10 @@ final class StreamClient: ObservableObject {
     /// never delivered its window list: the connect screen never left, and its Remote rows must not
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
+        #if os(iOS)
+        audioRouteChooserPresented = false
+        audioRouteOffer = IPadAudioRouteOffer()
+        #endif
         #if os(visionOS)
         resetVisionAudio()
         visionInputSession?.releaseAll()

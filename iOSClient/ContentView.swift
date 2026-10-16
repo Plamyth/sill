@@ -7,6 +7,7 @@ struct ContentView: View {
     /// Tells the host what this device sees, once a second while connected. Also covers the DEBUG
     /// harness's `-SillLive 1` session, which runs on this same client.
     @StateObject private var statsReporter = ClientStatsReporter()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         root.onAppear { statsReporter.attach(to: client) }
@@ -56,7 +57,18 @@ struct ContentView: View {
         #if os(iOS)
         .onChange(of: client.connected) { _, connected in
             if connected { client.rememberAuthenticatedMac() }
+            client.offerInitialAudioRoutes()
+            MacMenuHub.shared.menusChanged(client)
         }
+        .onChange(of: client.active) { _, _ in client.offerInitialAudioRoutes() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { client.offerInitialAudioRoutes() }
+            else { client.audioRouteChooserPresented = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            client.offerInitialAudioRoutes()
+        }
+        .sheet(isPresented: $client.audioRouteChooserPresented) { IPadAudioRouteChooser(client: client) }
         #endif
         // sill://pair from the Camera, Messages or `xcrun simctl openurl`: a confirmation first.
         .onOpenURL { client.handleOpenURL($0) }

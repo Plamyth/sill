@@ -501,6 +501,9 @@ extension StreamClient {
         // At home over TLS: removed, pairing now required, or another key as the saved Mac
         // (StreamClient+Home). Every other end goes on below.
         if homeSessionEnded(s, error: error, goodbye: goodbye?.reason) { return }
+        #if os(iOS)
+        if goodbye == nil, fallBackFromStartupWired() { return }
+        #endif
         // The automatic reconnect's own dial of a row ended before it connected, without a goodbye
         // (it waited 5 s, failed, or brought no window list): one dial of the listing that did not
         // connect, not a session's end. The reconnect keeps what it was (its loss, its remote dials'
@@ -749,6 +752,9 @@ extension StreamClient {
             savedMacs[i] = mac
             persistSavedMacs()
         }
+        #if os(iOS)
+        retireOriginalCCREntryIfProven()
+        #endif
     }
 
     // MARK: Pairing

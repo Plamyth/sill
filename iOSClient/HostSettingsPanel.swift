@@ -217,6 +217,12 @@ struct HostSettingsPanel: View {
 
     @ViewBuilder private var middle: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Button(action: client.showAudioRoutes) {
+                Label("오디오 입력·출력 선택…", systemImage: "arrow.triangle.swap")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .accessibilityIdentifier("openAudioRoutes")
+            .padding(.bottom, 12)
             IPadRemoteAudioControl(client: client)
                 .padding(.bottom, 12)
             IPadMicrophoneControl(client: client)

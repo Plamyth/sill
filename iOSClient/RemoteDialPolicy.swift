@@ -120,6 +120,39 @@ enum RemoteDialPolicy {
         }
     }
 
+    /// CCR's cable pairing can replace its original QR record only with live, signed address proof.
+    static func retiringCCROriginal(preferredID: String, authenticatedPin: Data, verifiedAddresses: [MacAddress],
+                                    in list: [SavedMac]) -> [SavedMac]? {
+        guard Set(list.map(\.macID)).count == list.count,
+              let current = SavedMacs.automaticTarget(list, preferredID: preferredID),
+              current.fingerprintData == authenticatedPin, current.method == PairResult.cable else { return nil }
+        func tailscaleHosts(_ addresses: [MacAddress]) -> Set<String> {
+            Set(addresses.compactMap { address in
+                var host = address.host.lowercased()
+                if host.hasSuffix(".") { host.removeLast() }
+                return isVPNAddress(host) ? host : nil
+            })
+        }
+        let live = tailscaleHosts(verifiedAddresses).intersection(tailscaleHosts(current.allAddresses))
+        guard !live.isEmpty else { return nil }
+        let originals = list.filter { old in
+            guard old.macID != current.macID, old.method == PairRequest.qr, !old.name.isEmpty,
+                  current.name == old.name + " · CCR Sill",
+                  let pin = old.fingerprintData, pin != authenticatedPin, MacID.make(fingerprint: pin) == old.macID,
+                  old.recognitionKeyData != nil, let last = old.lastConnectedAt,
+                  old.pairedAt <= last, last < current.pairedAt else { return false }
+            let shared = live.intersection(tailscaleHosts(old.allAddresses))
+            return shared.contains { host in
+                !list.contains { other in
+                    other.macID != old.macID && other.macID != current.macID
+                        && tailscaleHosts(other.allAddresses).contains(host)
+                }
+            }
+        }
+        guard originals.count == 1, let old = originals.first else { return nil }
+        return list.filter { $0.macID != old.macID }
+    }
+
     static func isTailscaleName(_ host: String) -> Bool {
         let h = host.lowercased()
         return h.hasSuffix(".ts.net") || h.hasSuffix(".ts.net.")

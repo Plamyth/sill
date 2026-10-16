@@ -77,6 +77,14 @@ enum MacMenuBar {
                 }
                 #endif
             }
+            let audioID = UIMenu.Identifier("ccr.ipad.audio")
+            if client.connected, builder.menu(for: audioID) == nil, builder.menu(for: .root) != nil {
+                let choose = UIAction(title: "입력·출력 선택…", image: UIImage(systemName: "speaker.wave.2")) { [weak client] _ in
+                    guard let client, MacMenuHub.shared.focused === client else { return }
+                    client.showAudioRoutes()
+                }
+                builder.insertElements([UIMenu(title: "오디오", identifier: audioID, children: [choose])], atEndOfMenu: .root)
+            }
         }
         #if DEBUG
         print("menubar: built: \(line)")
