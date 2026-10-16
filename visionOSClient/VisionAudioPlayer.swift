@@ -343,7 +343,6 @@ private final class VisionAudioOutput: @unchecked Sendable {
     }
 }
 
-// AAC converter adapted from committed peer 89f9550, blob ffdbfc457feb82e94bfbdffc79006de5a99049a7.
 private final class VisionAACDecoder {
     private let converter: AVAudioConverter
     private let input: AVAudioFormat

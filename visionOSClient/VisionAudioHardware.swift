@@ -19,7 +19,7 @@ struct VisionAudioPlaybackGraph {
 
 struct VisionAudioCaptureGraph {
     let formatChanged: (AVAudioFormat) -> Void
-    // The tap buffer is borrowed. The consumer must synchronously copy it and fence queued output.
+    // The tap buffer is borrowed. The consumer must synchronously copy it.
     let copyInput: (AVAudioPCMBuffer, AVAudioTime) -> Void
 }
 
@@ -33,6 +33,7 @@ protocol VisionAudioGraphDriving: AnyObject {
 
 // Native graph operations run on main. Reservation and revocation also run from decode/network callers.
 final class VisionAudioHardware: @unchecked Sendable {
+    private enum GraphWait: Error { case newerPlayback }
     private struct Claims {
         var lease = VisionAudioLease()
         var reserved: [VisionAudioRole: VisionAudioClaim] = [:]
@@ -89,7 +90,6 @@ final class VisionAudioHardware: @unchecked Sendable {
 
     var cleanupProblem: String? { claims.withLock { $0.problem } }
 
-    // An explicit cleanup can recover a quarantined resource after its original window has closed.
     func retryCleanup() {
         guard let owner = claims.withLock({ $0.problem == nil ? nil : $0.lease.owner }) else { return }
         _ = retryCleanup(owner: owner)
@@ -117,10 +117,9 @@ final class VisionAudioHardware: @unchecked Sendable {
         guard !transitioning, claim.role == .playback, isReserved(claim), authorization() == .current else { throw CancellationError() }
         playback = Playback(claim: claim, version: version,
                             graph: VisionAudioPlaybackGraph(format: format, render: render), authorization: authorization)
-        try rebuild()
+        guard try rebuild() else { throw CancellationError() }
     }
 
-    // This does not request permission, negotiate a grant, convert PCM, or send a packet.
     func beginCapture(owner: UUID, epoch: UUID, permitted: @escaping () -> Bool,
                       formatChanged: @escaping (AVAudioFormat) -> Void,
                       copyInput: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void,
@@ -131,7 +130,7 @@ final class VisionAudioHardware: @unchecked Sendable {
         capture = Capture(claim: claim,
                           graph: VisionAudioCaptureGraph(formatChanged: formatChanged, copyInput: copyInput),
                           permitted: permitted, stopped: stopped)
-        try rebuild()
+        _ = try rebuild()
         return claim
     }
 
@@ -147,7 +146,7 @@ final class VisionAudioHardware: @unchecked Sendable {
         if playback?.claim == claim { playback = nil }
         if capture?.claim == claim { capture = nil }
         do {
-            try rebuild()
+            _ = try rebuild()
             claims.withLock { state in
                 guard state.reserved[claim.role] == claim else { return }
                 state.reserved.removeValue(forKey: claim.role)
@@ -189,8 +188,10 @@ final class VisionAudioHardware: @unchecked Sendable {
     func invalidate(_ reason: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard claims.withLock({ $0.lease.owner != nil }) else { return }
+        if transitioning { quarantine(reason); return }
+        transitioning = true
+        defer { transitioning = false }
         quarantine(reason)
-        guard !transitioning else { return }
         do { try driver.stop() }
         catch { quarantine(reason + " Stop failed: " + error.localizedDescription) }
     }
@@ -206,7 +207,7 @@ final class VisionAudioHardware: @unchecked Sendable {
         } ?? false
     }
 
-    private func rebuild() throws {
+    private func rebuild() throws -> Bool {
         precondition(!transitioning)
         transitioning = true
         defer { transitioning = false }
@@ -216,7 +217,7 @@ final class VisionAudioHardware: @unchecked Sendable {
             guard playback != nil || capture != nil else {
                 if hardwareTouched { try driver.deactivate() }
                 hardwareTouched = false
-                return
+                return true
             }
             try validateRoles()
             hardwareTouched = true // Category and activation calls can mutate before throwing.
@@ -251,7 +252,15 @@ final class VisionAudioHardware: @unchecked Sendable {
                 return true
             }
             guard committed else { throw CancellationError() }
+            return true
         } catch {
+            if error is GraphWait, playbackIsSuperseded() {
+                do { try driver.stop(); return false }
+                catch {
+                    quarantine(error.localizedDescription)
+                    throw error
+                }
+            }
             quarantine(error.localizedDescription)
             do { try driver.stop() }
             catch { quarantine("Audio cleanup failed: " + error.localizedDescription) }
@@ -260,10 +269,23 @@ final class VisionAudioHardware: @unchecked Sendable {
     }
 
     private func validateRoles() throws {
-        if let playback, !(isReserved(playback.claim) && playback.authorization() == .current) { throw CancellationError() }
         if let capture, !(isReserved(capture.claim) && capture.permitted() && driver.recordPermissionGranted) {
             throw CancellationError()
         }
+        if let playback {
+            guard isReserved(playback.claim) else { throw CancellationError() }
+            switch playback.authorization() {
+            case .current: break
+            case .superseded: throw GraphWait.newerPlayback
+            case .revoked: throw CancellationError()
+            }
+        }
+    }
+
+    private func playbackIsSuperseded() -> Bool {
+        guard let playback, isReserved(playback.claim), playback.authorization() == .superseded else { return false }
+        if let capture, !(isReserved(capture.claim) && capture.permitted() && driver.recordPermissionGranted) { return false }
+        return isReserved(playback.claim)
     }
 
     private func quarantine(_ message: String) {

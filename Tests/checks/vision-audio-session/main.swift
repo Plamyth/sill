@@ -231,14 +231,22 @@ func drain(_ until: () -> Bool) {
 func runPlayerChecks() throws {
     let d = FakeGraph()
     let hw = VisionAudioHardware(driver: d), owner = UUID(), grant = UUID()
-    let player = VisionAudioPlayer(hardware: hw, ownerID: owner)
+    let decode = DispatchQueue(label: "checks.real-player-decode")
+    let player = VisionAudioPlayer(hardware: hw, ownerID: owner, decodeQueue: decode)
     var events: [VisionAudioPlaybackEvent] = []
     player.begin(grant: grant) { _, event in events.append(event) }
     let samples = [Int16](repeating: 16_384, count: 4_800)
     let packet = samples.withUnsafeBufferPointer { AudioPacket.pack(sampleRate: 48_000, channels: 1, samples: $0) }
+    let replacement = samples.withUnsafeBufferPointer { AudioPacket.pack(sampleRate: 44_100, channels: 1, samples: $0) }
+    d.duringStart = {
+        player.receive(replacement, grant: grant)
+        decode.sync {}
+    }
     player.receive(packet, grant: grant)
-    drain { !d.outputs.isEmpty }
-    check(!d.outputs.isEmpty && d.profiles == [.playback], "real player decodes and starts injected shared graph")
+    drain { d.outputs.count >= 2 }
+    check(d.outputs.count >= 2 && d.outputs.last!?.format.rate == 44_100 && player.cleanupProblem == nil,
+          "real player newer PCM survives old graph supersession without cleanup UI")
+    check(!d.outputs.isEmpty && d.profiles.allSatisfy { $0 == .playback }, "real player decodes and starts injected shared graph")
     guard !d.outputs.isEmpty else { return }
     if let graph = d.outputs.last! {
         check(render(graph) > 0, "real player render uses admitted PCM")

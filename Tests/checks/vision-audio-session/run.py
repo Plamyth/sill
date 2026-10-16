@@ -8,6 +8,8 @@ import subprocess
 import sys
 
 MUTANTS = [
+    ('supersession', [('if error is GraphWait, playbackIsSuperseded() {', 'if false {')], 'normal format replacement does not quarantine lease'),
+    ('invalidation', [('if transitioning { quarantine(reason); return }\n        transitioning = true', 'if transitioning { quarantine(reason); return }')], 'invalidation callback cannot replace a resource before old stop finishes'),
     ('generation', [('&& (generation == nil || state.generation == generation)', '&& true')], 'previous graph stays silent after new commit'),
     ('quarantine', [('guard state.problem == nil, state.reserved[role] == nil,', 'guard state.reserved[role] == nil,')], 'configure quarantine refuses same-owner capture reservation'),
     ('permission', [('guard !transitioning, permitted(), driver.recordPermissionGranted,', 'guard !transitioning, permitted(),')], 'permission refusal cannot configure or start hardware'),
