@@ -6,7 +6,8 @@ out=ROOT/'.build/checks/vision-input-controls/receipts';out.mkdir(parents=True,e
 if (out/(label+'.json')).exists(): raise SystemExit('Reconcile prior attempt')
 files,extraction=fixture()
 sha=lambda b:hashlib.sha256(b).hexdigest()
-paths=['iOSClient/StreamClient.swift','iOSClient/SessionLink.swift','iOSClient/InputOverlay.swift','iOSClient/KeyChords.swift','Sources/StreamProtocol/Input.swift','Sources/SillHost/KeyStrokes.swift','visionOSClient/VisionPointer.swift','visionOSClient/VisionInputSession.swift','visionOSClient/VisionInputDebt.swift','visionOSClient/VisionRemoteKey.swift']
+paths=['iOSClient/StreamClient.swift','iOSClient/SessionLink.swift','iOSClient/InputOverlay.swift','iOSClient/KeyChords.swift','Sources/SillHost/KeyStrokes.swift','visionOSClient/VisionPointer.swift','visionOSClient/VisionInputSession.swift','visionOSClient/VisionInputDebt.swift','visionOSClient/VisionRemoteKey.swift','Tests/checks/vision-input-controls/SourceInputFence.swift']
+paths += [str(p.relative_to(ROOT)) for p in sorted((ROOT/'Sources/StreamProtocol').glob('*.swift'))]
 original={n:sha((ROOT/n).read_bytes()) for n in paths}
 payload=json.dumps({'source':{n:base64.b64encode(t.encode()).decode() for n,t in files.items()},'hashes':{n:sha(t.encode()) for n,t in files.items()}}).encode()
 runner=(Path(__file__).parent/'remote.py').read_text()

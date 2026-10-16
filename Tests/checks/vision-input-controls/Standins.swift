@@ -2,18 +2,7 @@ import Foundation
 import Network
 import StreamProtocol
 
-enum Wire {
-    static func encode<T: Encodable>(_ value: T) -> Data { try! JSONEncoder().encode(value) }
-}
-enum StreamMessageKind: UInt8 { case input = 8, ping = 12 }
-struct StreamHeader {}
-struct StreamMessage {
-    let kind: StreamMessageKind
-    let timestamp: Double
-    let isKeyframe: Bool
-    let payload: Data
-    func serialized() -> Data { Data([kind.rawValue]) + payload }
-}
+enum ClientStatsReporter { static let deviceName = "Vision fixture" }
 final class InputOverlayProxy { var view: InputOverlayView? }
 final class InputOverlayView {
     var latchedModifiers: KeyModifiers = []
@@ -22,14 +11,15 @@ final class InputOverlayView {
     // OVERLAY_DRAIN
 }
 final class StreamClient {
-    enum Source { case none, desktop, window }
     enum MoveKind { case fromDirect, toCable, toWifi, fromRemote }
     struct Move { let connection: NWConnection }
-    var active = Source.desktop
+    var active = StreamSource.desktop
+    var windows: [WindowInfo] = []
     var connected = true
     weak var visionInputSession: VisionInputSession?
     var visionMovePreparation: UUID?
     let visionInputDebt = VisionInputDebt()
+    private var visionInputGeneration: String?
     let link = SessionLink()
     let queue = DispatchQueue(label: "fixture.input")
     var moving: Move?
@@ -39,11 +29,15 @@ final class StreamClient {
     func pointerNoteSent(_ event: InputEvent) { notes.append(event) }
     func resetVisionAudio() {}
     func finishMoveAfterInputDrain(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
+        // MOVE_INPUT_RESET
         moving = nil
         completions += 1
         let old = link.connection!
         link.handOver(from: old, to: c, fencePing: Data([12, 1]), nonce: Data([1]))
     }
     func finish(_ c: NWConnection) { finishMove(c, kind: .toCable, kept: []) }
+    func catalog(_ list: WindowList, from peer: NWConnection?) -> Bool { applyVisionInputCatalog(list, from: peer) }
+    static var hello: Data { helloPayload }
+    static var legacyHello: Data { legacyHelloPayload }
     // EXTRACTED
 }

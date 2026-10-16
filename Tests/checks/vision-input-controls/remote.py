@@ -20,16 +20,19 @@ try:
  record['inputHashesMatched']=True;original=p['hashes'];p=None
  output=pathlib.Path(tempfile.mkdtemp(prefix='ccr-reconnect-output-',dir='/private/tmp'))
  cache=str(output/'cache')
- sources=[str(package/n) for n in ['Client.swift','iOSClient/SessionLink.swift','iOSClient/KeyChords.swift','Sources/SillHost/KeyStrokes.swift','visionOSClient/VisionPointer.swift','visionOSClient/VisionInputSession.swift','visionOSClient/VisionInputDebt.swift','visionOSClient/VisionRemoteKey.swift','main.swift']]
+ sources=[str(package/n) for n in ['Client.swift','iOSClient/SessionLink.swift','iOSClient/KeyChords.swift','Sources/SillHost/KeyStrokes.swift','visionOSClient/VisionPointer.swift','visionOSClient/VisionInputSession.swift','visionOSClient/VisionInputDebt.swift','visionOSClient/VisionRemoteKey.swift','Tests/checks/vision-input-controls/SourceInputFence.swift','main.swift']]
  def module(name, source):
   return ['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-module-name',name,str(package/source),'-emit-module-path',str(output/(name+'.swiftmodule')),'-o',str(output/(name+'.o')),'-module-cache-path',cache]
- commands=[module('Network','Network.swift'),module('SwiftUI','SwiftUI.swift'),module('StreamProtocol','Sources/StreamProtocol/Input.swift'),['/usr/bin/xcrun','swiftc','-package-name','sill','-I',str(output)]+sources+[str(output/(n+'.o')) for n in ['Network','SwiftUI','StreamProtocol']]+['-o',str(output/'controls'),'-module-cache-path',cache],[str(output/'controls')]]
+ protocol=['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-whole-module-optimization','-module-name','StreamProtocol']+[str(package/('Sources/StreamProtocol/'+name+'.swift')) for name in ['Input','Switcher','StreamMessage','Compatibility']]+['-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'StreamProtocol.o'),'-module-cache-path',cache]
+ commands=[module('Network','Network.swift'),module('SwiftUI','SwiftUI.swift'),protocol,['/usr/bin/xcrun','swiftc','-package-name','sill','-I',str(output)]+sources+[str(output/(n+'.o')) for n in ['Network','SwiftUI','StreamProtocol']]+['-o',str(output/'controls'),'-module-cache-path',cache],[str(output/'controls')]]
  commands += [
   ['/usr/bin/xcrun','swiftc','-I',str(output),str(package/'iOSClient/KeyChords.swift'),str(package/'visionOSClient/VisionPointer.swift'),str(package/'visionOSClient/VisionInputFence.swift'),str(package/'visionOSClient/VisionTransition.swift'),str(package/'Tests/vision-pointer/main.swift'),str(output/'StreamProtocol.o'),'-o',str(output/'prior-pointer'),'-module-cache-path',cache], [str(output/'prior-pointer')],
   ['/usr/bin/xcrun','swiftc','-O',str(package/'iOSClient/SessionLink.swift')]+[str(p) for p in sorted((package/'Sources/StreamProtocol').glob('*.swift'))]+[str(package/'Tests/checks/fence/main.swift'),'-o',str(output/'legacy-fence'),'-module-cache-path',cache]
  ]
  commands += [[str(output/'legacy-fence'),mode] for mode in ['ok','nofence','timeout','oldcloses','hold','holdclosed','unhold','adoptfence','twofences','twomoves','holdfence','holdadopt','newsession','newsessionhold','count','remotehome','remotedead']]
  mutants={'debt':('Client.swift','mutants/debt/Client.swift','actual setter releases old peer atomically'),'route':('iOSClient/SessionLink.swift','mutants/route/SessionLink.swift','late old input refused after handover')}
+ mutants['capture']=('Client.swift','mutants/capture/Client.swift','queued input retains generation captured on main')
+ mutants['generation']=('visionOSClient/VisionInputDebt.swift','mutants/generation/VisionInputDebt.swift','source change releases held input with original generation')
  expectedFailures={}
  for name,(originalPath,replacement,witness) in mutants.items():
   variant=[str(package/replacement) if p==str(package/originalPath) else p for p in sources]

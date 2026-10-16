@@ -798,6 +798,7 @@ final class StreamClient: ObservableObject {
                 link.replaceConnection(newValue) {
                     self.visionInputDebt.release(on: old).map(Self.visionInputBytes)
                 }
+                visionInputGeneration = nil
                 visionInputSession?.setMoving(false)
                 return
             }
@@ -814,10 +815,24 @@ final class StreamClient: ObservableObject {
     weak var visionInputSession: VisionInputSession?
     private var visionMovePreparation: UUID?
     private let visionInputDebt = VisionInputDebt()
+    private var visionInputGeneration: String?
 
-    private static func visionInputBytes(_ event: InputEvent) -> Data {
+    private static func visionInputBytes(_ input: CapturedVisionInput) -> Data {
         StreamMessage(kind: .input, timestamp: Date().timeIntervalSince1970,
-                      isKeyframe: false, payload: Wire.encode(event)).serialized()
+                      isKeyframe: false, payload: input.payload).serialized()
+    }
+
+    @discardableResult
+    private func applyVisionInputCatalog(_ list: WindowList, from peer: NWConnection?) -> Bool {
+        guard let peer, connection === peer else { return false }
+        if active != list.active || visionInputGeneration != list.inputGeneration {
+            _ = visionInputSession?.takeReleases()
+            cancelVisionInputs()
+        }
+        visionInputGeneration = list.inputGeneration
+        windows = list.windows
+        active = list.active
+        return true
     }
 
     func cancelVisionInputs(completion: (() -> Void)? = nil) {
@@ -1786,7 +1801,11 @@ final class StreamClient: ObservableObject {
         if let v = UserDefaults.standard.string(forKey: "SillHelloVersion"), !v.isEmpty { version = v }
         #endif
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        return Wire.encode(Hello(appVersion: version, build: build, protocol: SillProtocol.current, device: ClientStatsReporter.deviceName))
+        var hello = Hello(appVersion: version, build: build, protocol: SillProtocol.current, device: ClientStatsReporter.deviceName)
+        #if os(visionOS)
+        hello.sourceInput = 1
+        #endif
+        return Wire.encode(hello)
     }()
 
     /// The hello, the first thing on every session connection, written straight to `c` before
@@ -2349,6 +2368,7 @@ final class StreamClient: ObservableObject {
         // only until the fence's pong (`deliver`), or stops at once without a fence.
         #if os(visionOS)
         resetVisionAudio()
+        visionInputGeneration = nil
         #endif
         let reconnected = sessionDead
         let fenced = kind != .toWifi && !reconnected
@@ -3159,6 +3179,7 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         resetVisionAudio()
         visionInputSession?.releaseAll()
+        visionInputGeneration = nil
         #endif
         abandonMove()
         resetPath()
@@ -3317,12 +3338,13 @@ final class StreamClient: ObservableObject {
     func sendInput(_ event: InputEvent) {
         #if os(visionOS)
         guard visionMovePreparation == nil, let expected = connection else { return }
+        let input = CapturedVisionInput(event: event, generation: visionInputGeneration)
         lastInputAt = ProcessInfo.processInfo.systemUptime
-        let bytes = Self.visionInputBytes(event)
+        let bytes = Self.visionInputBytes(input)
         queue.async { [weak self] in
             guard let self else { return }
             let accepted = self.link.send(bytes, onlyOn: expected) { [weak self] in
-                self?.visionInputDebt.record(event, on: expected)
+                self?.visionInputDebt.record(input, on: expected)
             }
             guard accepted else { return }
             self.pointerNoteSent(event)
@@ -3742,8 +3764,12 @@ final class StreamClient: ObservableObject {
                 }
                 if self.macName != list.macName { self.macName = list.macName; self.loadWindowOrder() }
                 let previous = self.active
+                #if os(visionOS)
+                guard self.applyVisionInputCatalog(list, from: from) else { return }
+                #else
                 self.windows = list.windows
                 self.active = list.active
+                #endif
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))
                 self.thumbnails = self.thumbnails.filter { live.contains($0.key) }
