@@ -158,8 +158,11 @@ final class HostMicrophoneReceiver {
             owned.resource = result.resource
             guard lease === owned, phase == .preparing, result.error == nil, result.resource != nil, live(owned) else {
                 owned.render.close()
-                if lease === owned { revoke(reason: result.error ?? "preparation superseded") }
-                await retire(owned)
+                if lease === owned, phase == .preparing {
+                    revoke(reason: result.error ?? "preparation superseded")
+                } else {
+                    await retire(owned)
+                }
                 return
             }
             phase = .active
@@ -237,6 +240,7 @@ final class HostMicrophoneReceiver {
     }
 
     private func retire(_ owned: Lease, retry: Bool = false) async {
+        if !retry, phase == .cleanupFailed { return }
         guard !owned.preparePending, !owned.closing else { return }
         owned.closing = true
         owned.render.close()
