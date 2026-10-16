@@ -128,12 +128,15 @@ final class StreamServer {
         /// The last kind 26 sent to it; nil also while it drives the pointer, so the next one goes out
         /// whatever it says.
         var lastPointer: MacPointer?
+        /// Only this connection's explicit, current opt-in authorizes Mac sound.
+        var remoteAudioEnabled = false
         init(_ c: NWConnection) { connection = c }
     }
 
     /// The network queue: both doors, their connections, the verify blocks and the timers.
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
+    private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
     /// A client was admitted (home door at `.ready`, remote door once paired and checked), with
     /// its route (which door, from where) and, for a home client, its link (ClientLink.route; nil
@@ -1353,6 +1356,37 @@ final class StreamServer {
                 return
             }
             send(data, to: client)
+        }
+    }
+
+    /// Thread-safe; queued before the matching kind 201 answer on the same network queue.
+    func setRemoteAudio(_ enabled: Bool, for connection: NWConnection) {
+        queue.async { [self] in
+            clients[ObjectIdentifier(connection)]?.remoteAudioEnabled = enabled
+        }
+    }
+
+    /// Revokes every connection and invalidates callbacks from the previous capture stream.
+    /// The epoch is returned asynchronously because this method is called on the main actor.
+    func resetRemoteAudio(completion: @escaping (UInt64) -> Void) {
+        queue.async { [self] in
+            remoteAudioEpoch &+= 1
+            for client in clients.values { client.remoteAudioEnabled = false }
+            completion(remoteAudioEpoch)
+        }
+    }
+
+    /// Only current opt-in clients receive sound. Stale capture callbacks and congested links
+    /// are dropped before touching NWConnection's ordered send queue.
+    func broadcastRemoteAudio(_ payload: Data, epoch: UInt64) {
+        let data = StreamMessage(kind: .audio, timestamp: Date().timeIntervalSince1970,
+                                 isKeyframe: false, payload: payload).serialized()
+        queue.async { [self] in
+            guard epoch == remoteAudioEpoch else { return }
+            for client in clients.values where client.remoteAudioEnabled && client.connection.state == .ready {
+                guard client.pendingBytes < 512_000 else { continue }
+                send(data, to: client)
+            }
         }
     }
 

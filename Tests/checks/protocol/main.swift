@@ -476,6 +476,19 @@ check("audio AAC-ELD packet round trip", unpackedEncoded?.sampleRate == 48_000 &
       unpackedEncoded?.channels == 2 && unpackedEncoded?.cookie == Data([1, 2, 3]) &&
       unpackedEncoded?.packet == Data([4, 5]))
 check("audio AAC-ELD rejects truncated payload", AudioPacket.unpackEncoded(Data(encodedAudio.dropLast(2))) == nil)
+let oldAudioList = WindowList(macName: "Mac", windows: [], active: .none)
+let newAudioList = WindowList(macName: "Mac", windows: [], active: .none, remoteAudio: 1)
+check("audio capability absent on old host", Wire.decode(WindowList.self, from: Wire.encode(oldAudioList))?.remoteAudio == nil)
+check("audio capability is explicit", Wire.decode(WindowList.self, from: Wire.encode(newAudioList))?.remoteAudio == 1)
+let audioRequest = RemoteAudioSubscription(enabled: true)
+check("audio subscription round trip", Wire.decode(RemoteAudioSubscription.self,
+      from: Wire.encode(audioRequest)) == audioRequest)
+let audioAnswer = RemoteAudioState(enabled: true, requestID: audioRequest.requestID)
+check("audio answer binds the request", Wire.decode(RemoteAudioState.self,
+      from: Wire.encode(audioAnswer)) == audioAnswer)
+let revokedAudio = RemoteAudioState(enabled: false, requestID: nil, reason: "source changed")
+check("audio revocation has no grant token", Wire.decode(RemoteAudioState.self,
+      from: Wire.encode(revokedAudio))?.requestID == nil)
 
 print(fails == 0 ? "ALL PASS (\(passes) checks)" : "\(fails) FAILED of \(passes + fails)")
 exit(Int32(min(fails, 100)))

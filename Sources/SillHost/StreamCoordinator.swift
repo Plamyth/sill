@@ -42,6 +42,15 @@ package final class StreamCoordinator {
     let server: StreamServer
     let catalog = WindowCatalog()
     let capture = WindowCapture()
+    /// Separate from video: source changes revoke consent without muting the Mac.
+    private let remoteAudioCapture = SystemAudioCapture()
+    private var remoteAudioSubscribers: Set<ObjectIdentifier> = []
+    private var remoteAudioRequests: [ObjectIdentifier: UUID] = [:]
+    private var remoteAudioEpoch: UInt64 = 0
+    private var remoteAudioRunning = false
+    private var remoteAudioStart: Task<Bool, Never>?
+    private var remoteAudioStop: Task<Void, Never>?
+    private var remoteAudioStopID: UUID?
     /// `--synthetic`: the Desktop source streams a test pattern instead of the screen.
     let synthetic: Bool
     let syntheticCapture = SyntheticCapture()
@@ -380,6 +389,9 @@ package final class StreamCoordinator {
                 self.routes[id] = nil
                 self.lastPairingWanted[id] = nil
                 self.connections[id] = nil
+                self.remoteAudioSubscribers.remove(id)
+                self.remoteAudioRequests[id] = nil
+                if self.remoteAudioSubscribers.isEmpty { self.stopRemoteAudioIfIdle() }
                 self.lastPublished[id] = nil
                 self.linkReports[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
@@ -442,6 +454,9 @@ package final class StreamCoordinator {
         capture.onStopped = { [weak self] error in
             print("Capture stopped: \(error.localizedDescription)")
             Task { @MainActor in await self?.select(.none) }
+        }
+        remoteAudioCapture.onStopped = { [weak self] _ in
+            Task { @MainActor in await self?.revokeRemoteAudio(reason: "capture stopped") }
         }
         // Status for the menu bar app. The server's callbacks hop here from its network queue; the
         // stats tick runs on the main queue, which under the CLI's dispatchMain is drained by a
@@ -926,6 +941,9 @@ package final class StreamCoordinator {
             recent.append(now)
             gestureArrivals[id] = recent
             queueGesture(gesture, from: deviceName(connection))
+        case .remoteAudioControl:
+            guard let request = Wire.decode(RemoteAudioSubscription.self, from: message.payload) else { return }
+            await controlRemoteAudio(request, from: connection)
         case .viewport:
             guard let v = Wire.decode(Viewport.self, from: message.payload) else { return }
             viewport = v
@@ -1176,6 +1194,7 @@ package final class StreamCoordinator {
     func select(_ source: StreamSource, bringForward: Bool = false) async {
         guard !switching, !shuttingDown else { return }
         switching = true
+        await revokeRemoteAudio(reason: "source changed")
         restartOf = (source == active && source != .none) ? source : nil
         defer {
             switching = false
@@ -2236,10 +2255,96 @@ package final class StreamCoordinator {
         StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
-                                                      gestures: TrackpadGesture.generation)))
+                                                      gestures: TrackpadGesture.generation,
+                                                      remoteAudio: synthetic ? nil : 1)))
     }
 
     private func broadcastList() { server.broadcast(listMessage()) }
+
+    private func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil,
+                                  to connection: NWConnection) {
+        server.send(StreamMessage(kind: .remoteAudioState, timestamp: Date().timeIntervalSince1970,
+                                  isKeyframe: false,
+                                  payload: Wire.encode(RemoteAudioState(enabled: enabled, requestID: requestID,
+                                                                        reason: reason))), to: connection)
+    }
+
+    private func stopRemoteAudioIfIdle() {
+        guard remoteAudioSubscribers.isEmpty, remoteAudioStop == nil else { return }
+        remoteAudioRunning = false
+        let pendingStart = remoteAudioStart
+        let stopID = UUID()
+        let task = Task { [remoteAudioCapture] in
+            _ = await pendingStart?.value
+            await remoteAudioCapture.stop()
+        }
+        remoteAudioStop = task
+        remoteAudioStopID = stopID
+        Task { @MainActor in
+            await task.value
+            if remoteAudioStopID == stopID { remoteAudioStop = nil; remoteAudioStopID = nil }
+        }
+    }
+
+    private func revokeRemoteAudio(reason: String) async {
+        let old = remoteAudioSubscribers.compactMap { connections[$0] }
+        remoteAudioSubscribers.removeAll()
+        remoteAudioRequests.removeAll()
+        let epoch = await withCheckedContinuation { continuation in
+            server.resetRemoteAudio { continuation.resume(returning: $0) }
+        }
+        remoteAudioEpoch = epoch
+        for connection in old { remoteAudioState(false, requestID: nil, reason: reason, to: connection) }
+        stopRemoteAudioIfIdle()
+        await remoteAudioStop?.value
+    }
+
+    private func controlRemoteAudio(_ request: RemoteAudioSubscription, from connection: NWConnection) async {
+        let id = ObjectIdentifier(connection)
+        guard routes[id] != nil else { return }
+        remoteAudioRequests[id] = request.requestID
+        if !request.enabled {
+            remoteAudioSubscribers.remove(id)
+            server.setRemoteAudio(false, for: connection)
+            remoteAudioState(false, requestID: request.requestID, to: connection)
+            stopRemoteAudioIfIdle()
+            return
+        }
+        guard !switching, !shuttingDown, !synthetic, catalog.display != nil, active != .none else {
+            remoteAudioState(false, requestID: request.requestID, reason: "source unavailable", to: connection)
+            return
+        }
+        let priorStopID = remoteAudioStopID
+        await remoteAudioStop?.value
+        if remoteAudioStopID == priorStopID { remoteAudioStop = nil; remoteAudioStopID = nil }
+        let epoch = remoteAudioEpoch
+        if !remoteAudioRunning {
+            if remoteAudioStart == nil, let display = catalog.display {
+                remoteAudioCapture.onPacket = { [server] payload in
+                    server.broadcastRemoteAudio(payload, epoch: epoch)
+                }
+                remoteAudioStart = Task { [remoteAudioCapture] in
+                    do { try await remoteAudioCapture.start(display: display); return true }
+                    catch { return false }
+                }
+            }
+            let started = await remoteAudioStart?.value ?? false
+            remoteAudioStart = nil
+            guard started else {
+                remoteAudioState(false, requestID: request.requestID, reason: "capture unavailable", to: connection)
+                return
+            }
+        }
+        guard epoch == remoteAudioEpoch, !switching, routes[id] != nil, active != .none,
+              remoteAudioRequests[id] == request.requestID else {
+            remoteAudioState(false, requestID: request.requestID, reason: "source changed", to: connection)
+            return
+        }
+        remoteAudioRunning = true
+        remoteAudioSubscribers.insert(id)
+        server.setRemoteAudio(true, for: connection)
+        remoteAudioState(true, requestID: request.requestID, to: connection)
+    }
 
     private func sendCatalog(to connection: NWConnection) {
         let now = Date().timeIntervalSince1970
