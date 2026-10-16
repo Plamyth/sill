@@ -88,10 +88,13 @@ let start = controls(peer).last!, scope = start.scope, grant = UUID()
 check(start.operation == .start && VisionMicrophoneCapture.permissionCalls == 0, "explicit start waits for host before permission")
 reply(client,peer:peer,id:UUID(),scope:scope,phase:.active,grant:grant)
 reply(client,peer:other,id:start.requestID,scope:scope,phase:.active,grant:grant)
-check(VisionMicrophoneCapture.starts == 0, "wrong request and peer cannot begin capture")
+check(VisionMicrophoneCapture.starts == 0 && client.microphoneCapture == nil && client.microphonePhase == .requesting, "wrong request and peer cannot begin capture")
 reply(client,peer:peer,id:start.requestID,scope:scope,phase:.active,grant:grant)
 pump { client.microphonePhase == .live }
 check(client.microphonePhase == .live && VisionMicrophoneCapture.permissionCalls == 1, "matching live grant starts one explicit capture")
+guard client.microphonePhase == .live else {
+    print("RESULT_ASSERTIONS \(checks)"); print("RESULT_FAILURES \(max(1,failures))"); exit(1)
+}
 let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Data(repeating: 0,count:1920))
 let oldEmit = client.microphoneCapture!.emit!
 oldEmit([frame])

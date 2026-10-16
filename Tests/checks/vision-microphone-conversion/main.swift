@@ -75,7 +75,7 @@ for rate in [8_000.0,16_000.0,44_100.0,48_000.0,192_000.0] {
     check(frames.count >= expected-1, "consecutive input accounts for all but at most one priming block \(rate)Hz")
     check(frames.map(\.sequence) == (1...max(1,frames.count)).prefix(frames.count).map(UInt64.init), "consecutive wire sequence \(rate)Hz")
 }
-runAdapterChecks()
+if !CommandLine.arguments.contains("conversion-only") { runAdapterChecks() }
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)
