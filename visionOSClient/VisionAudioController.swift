@@ -78,12 +78,17 @@ final class VisionAudioController: ObservableObject {
         change { model in _ = model.update(model.availability, foreground: foreground) }
     }
 
-    func enable() {
-        guard player.cleanupProblem == nil else { return }
+    @discardableResult
+    func enable(expectedScope: VisionAudioScope? = nil) -> Bool {
+        guard player.cleanupProblem == nil else { return false }
+        var admitted = false
         change { model in
+            if let expectedScope, model.availability != .available(expectedScope) { return }
             guard model.canEnable, let grant = model.request(id: UUID(), now: clock()) else { return }
+            admitted = true
             send(VisionAudioControl(grant: grant, enabled: true))
         }
+        return admitted
     }
 
     func retryCleanup() {

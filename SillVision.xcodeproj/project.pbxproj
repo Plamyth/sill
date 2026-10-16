@@ -1204,7 +1204,7 @@
 				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_NSLocalNetworkUsageDescription</key>
-				<string>Pair with your Mac and use its screen over an encrypted connection.</string>
+				<string>Mac에 연결하여 암호화된 연결로 화면을 표시하고 제어합니다.</string>
 				<key>INFOPLIST_FILE</key>
 				<string>visionOSClient/Info.plist</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
@@ -1214,7 +1214,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>3</string>
+				<string>7</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>
@@ -1271,7 +1271,7 @@
 				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
 				<string>YES</string>
 				<key>INFOPLIST_KEY_NSLocalNetworkUsageDescription</key>
-				<string>Pair with your Mac and use its screen over an encrypted connection.</string>
+				<string>Mac에 연결하여 암호화된 연결로 화면을 표시하고 제어합니다.</string>
 				<key>INFOPLIST_FILE</key>
 				<string>visionOSClient/Info.plist</string>
 				<key>TARGETED_DEVICE_FAMILY</key>
@@ -1281,7 +1281,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>3</string>
+				<string>7</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>

@@ -162,5 +162,17 @@ controller.retryCleanup()
 drain()
 check(player.cleanupRetries == 1 && controller.cleanupProblem == nil && sent.count == beforeCleanupSends,
       "explicit cleanup retry cannot enable or send audio")
+var scopeRequests: [VisionAudioControl] = []
+let scoped = VisionAudioController(send: { scopeRequests.append($0) }, player: VisionAudioPlayer())
+scoped.setForeground(true)
+scoped.update(.available(a))
+drain()
+scoped.update(.available(b))
+check(scoped.presentation.availability == .available(a), "scope race fixture retains old published offer")
+check(!scoped.enable(expectedScope: a) && scopeRequests.isEmpty,
+      "old audio consent cannot enable the newer unpublished source")
+check(scoped.enable(expectedScope: b) && scopeRequests.last?.grant.scope == b,
+      "matching audio consent admits only its offered scope")
+scoped.stop()
 print("Vision audio adapter: \(checks - failures)/\(checks) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
