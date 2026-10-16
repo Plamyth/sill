@@ -461,5 +461,21 @@ check("floor: every host offers sill/1 and sill-pair/1 (\(RemoteTLS.serverALPNs)
       RemoteTLS.serverALPNs.contains("sill/1") && RemoteTLS.serverALPNs.contains("sill-pair/1"))
 check("floor: the two names never change", RemoteTLS.sessionALPN == "sill/1" && RemoteTLS.pairingALPN == "sill-pair/1")
 
+let audioSamples: [Int16] = [0, -1, 1234, -32768]
+let plainAudio = audioSamples.withUnsafeBufferPointer {
+    AudioPacket.pack(sampleRate: 48_000, channels: 2, samples: $0)
+}
+let unpackedAudio = AudioPacket.unpack(plainAudio)
+check("audio PCM round trip", unpackedAudio?.sampleRate == 48_000 && unpackedAudio?.channels == 2 &&
+      unpackedAudio?.samples == audioSamples)
+check("audio PCM rejects encoded channel flag", AudioPacket.unpack(Data([0, 0, 187, 128, 130, 0, 0])) == nil)
+let encodedAudio = AudioPacket.packEncoded(sampleRate: 48_000, channels: 2,
+                                           cookie: Data([1, 2, 3]), packet: Data([4, 5]))
+let unpackedEncoded = AudioPacket.unpackEncoded(encodedAudio)
+check("audio AAC-ELD packet round trip", unpackedEncoded?.sampleRate == 48_000 &&
+      unpackedEncoded?.channels == 2 && unpackedEncoded?.cookie == Data([1, 2, 3]) &&
+      unpackedEncoded?.packet == Data([4, 5]))
+check("audio AAC-ELD rejects truncated payload", AudioPacket.unpackEncoded(Data(encodedAudio.dropLast(2))) == nil)
+
 print(fails == 0 ? "ALL PASS (\(passes) checks)" : "\(fails) FAILED of \(passes + fails)")
 exit(Int32(min(fails, 100)))

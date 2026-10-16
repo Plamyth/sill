@@ -119,6 +119,7 @@ enum RemoteRoute: Equatable {
 /// Finds Macs over Bonjour, connects, and splits the byte stream into messages.
 /// Frame callbacks fire on the network queue; published state hops to main.
 final class StreamClient: ObservableObject {
+    private let remoteAudio = RemoteAudioPlayer()
     // Connection. The setters of what the connect screen shows are internal: the DEBUG harness
     // seeds them.
     @Published var status = StreamClient.lookingOnNetwork {
@@ -2847,6 +2848,7 @@ final class StreamClient: ObservableObject {
     /// never delivered its window list: the connect screen never left, and its Remote rows must not
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
+        remoteAudio.stop()
         abandonMove()
         resetPath()
         lastMoveAttempt = nil
@@ -3350,6 +3352,8 @@ final class StreamClient: ObservableObject {
             if age.isFinite { frameAgeSamples.append(min(max(age, 0), Self.sampleCeilingMs)) }
             frameCounter += 1
             onFrame?(data, header.isKeyframe)
+        case .audio:
+            remoteAudio.receive(data)
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
             let from = connection
