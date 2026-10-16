@@ -7,7 +7,8 @@ struct IPadRemoteAudioControl: View {
 
     private var detail: String {
         switch client.remoteAudioStatus {
-        case .unavailable, .off: return "Off. Tap to listen on this iPad."
+        case .unavailable: return "This Mac does not offer audio on this iPad."
+        case .off: return "Off. Tap to listen on this iPad."
         case .requesting: return "Connecting. Tap to cancel."
         case .listening: return "On. Tap to stop."
         case .failed(let reason): return "\(reason) Tap to retry."
@@ -33,6 +34,7 @@ struct IPadRemoteAudioControl: View {
             .background(Palette.control, in: RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .disabled(!client.remoteAudioStatus.available)
         .accessibilityLabel("Mac audio")
         .accessibilityValue(detail)
         .accessibilityIdentifier("iPadRemoteAudio")
