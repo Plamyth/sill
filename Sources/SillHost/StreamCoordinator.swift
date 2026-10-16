@@ -2293,10 +2293,17 @@ package final class StreamCoordinator {
         let epoch = await withCheckedContinuation { continuation in
             server.resetRemoteAudio { continuation.resume(returning: $0) }
         }
-        remoteAudioEpoch = epoch
+        remoteAudioEpoch = max(remoteAudioEpoch, epoch)
         for connection in old { remoteAudioState(false, requestID: nil, reason: reason, to: connection) }
         stopRemoteAudioIfIdle()
         await remoteAudioStop?.value
+    }
+
+    private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID,
+                                      epoch: UInt64? = nil) -> Bool {
+        !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
+        routes[id] != nil && remoteAudioRequests[id] == requestID &&
+        (epoch == nil || epoch == remoteAudioEpoch)
     }
 
     private func controlRemoteAudio(_ request: RemoteAudioSubscription, from connection: NWConnection) async {
@@ -2310,18 +2317,27 @@ package final class StreamCoordinator {
             stopRemoteAudioIfIdle()
             return
         }
-        guard !switching, !shuttingDown, !synthetic, catalog.display != nil, active != .none else {
+        guard canEnableRemoteAudio(id, requestID: request.requestID) else {
             remoteAudioState(false, requestID: request.requestID, reason: "source unavailable", to: connection)
             return
         }
         let priorStopID = remoteAudioStopID
         await remoteAudioStop?.value
         if remoteAudioStopID == priorStopID { remoteAudioStop = nil; remoteAudioStopID = nil }
+        // A later OFF can replace this request while the previous capture is stopping.
+        guard canEnableRemoteAudio(id, requestID: request.requestID) else {
+            remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+            return
+        }
         let epoch = remoteAudioEpoch
         if !remoteAudioRunning {
             if remoteAudioStart == nil, let display = catalog.display {
-                remoteAudioCapture.onPacket = { [server] payload in
-                    server.broadcastRemoteAudio(payload, epoch: epoch)
+                guard canEnableRemoteAudio(id, requestID: request.requestID, epoch: epoch) else {
+                    remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                    return
+                }
+                remoteAudioCapture.onPacket = { [server] payload, sequence in
+                    server.broadcastRemoteAudio(payload, epoch: epoch, sequence: sequence)
                 }
                 remoteAudioStart = Task { [remoteAudioCapture] in
                     do { try await remoteAudioCapture.start(display: display); return true }
@@ -2335,14 +2351,22 @@ package final class StreamCoordinator {
                 return
             }
         }
-        guard epoch == remoteAudioEpoch, !switching, routes[id] != nil, active != .none,
-              remoteAudioRequests[id] == request.requestID else {
+        guard canEnableRemoteAudio(id, requestID: request.requestID, epoch: epoch),
+              remoteAudioCapture.hasStream else {
             remoteAudioState(false, requestID: request.requestID, reason: "source changed", to: connection)
+            return
+        }
+        // Serial with the capture callback: old samples and a partial packet are fenced
+        // before this connection can receive an enabled answer.
+        let boundary = await remoteAudioCapture.subscriptionBoundary()
+        guard canEnableRemoteAudio(id, requestID: request.requestID, epoch: epoch),
+              remoteAudioCapture.hasStream else {
+            remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
             return
         }
         remoteAudioRunning = true
         remoteAudioSubscribers.insert(id)
-        server.setRemoteAudio(true, for: connection)
+        server.setRemoteAudio(true, for: connection, afterSequence: boundary)
         remoteAudioState(true, requestID: request.requestID, to: connection)
     }
 

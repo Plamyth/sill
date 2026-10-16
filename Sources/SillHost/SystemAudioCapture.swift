@@ -13,8 +13,23 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     private let streamLock = NSLock()
     private var stream: SCStream?
     private var packer: RemoteAudioPCM?
-    var onPacket: ((Data) -> Void)?
+    private var sampleSequence: UInt64 = 0
+    var onPacket: ((Data, UInt64) -> Void)?
     var onStopped: ((Error) -> Void)?
+
+    var hasStream: Bool { streamLock.withLock { stream != nil } }
+
+    /// A capture-queue barrier for a new subscriber. Everything captured before this
+    /// point has a sequence no greater than the returned value. Discard the partial
+    /// PCM packet so a later sample cannot finish it under a new subscription.
+    func subscriptionBoundary() async -> UInt64 {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                packer?.discardPending()
+                continuation.resume(returning: sampleSequence)
+            }
+        }
+    }
 
     func start(display: SCDisplay) async throws {
         guard streamLock.withLock({ stream == nil }) else { return }
@@ -39,12 +54,12 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     func stop() async {
-        guard let stream = streamLock.withLock({ () -> SCStream? in
+        let stream = streamLock.withLock({ () -> SCStream? in
             let old = self.stream
             self.stream = nil
             return old
-        }) else { return }
-        try? await stream.stopCapture()
+        })
+        if let stream { try? await stream.stopCapture() }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async { [self] in packer = nil; continuation.resume() }
         }
@@ -62,6 +77,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
               (8_000...192_000).contains(value.mSampleRate),
               (1...8).contains(Int(value.mChannelsPerFrame)) else { return }
         let channels = Int(value.mChannelsPerFrame)
+        sampleSequence &+= 1
+        let sequence = sampleSequence
         if packer?.matches(rate: value.mSampleRate, channels: channels) != true {
             packer = RemoteAudioPCM(rate: value.mSampleRate, channels: channels)
         }
@@ -83,7 +100,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
                 flags: UInt32(kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment),
                 blockBufferOut: &block) == noErr
             else { return }
-            packer?.add(UnsafeMutableAudioBufferListPointer(list), send: onPacket)
+            packer?.add(UnsafeMutableAudioBufferListPointer(list), sequence: sequence, send: onPacket)
             _ = block
         }
     }
@@ -94,6 +111,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
             self.stream = nil
             return true
         }) else { return }
+        queue.async { [self] in packer = nil }
         onStopped?(error)
     }
 }
@@ -103,6 +121,7 @@ private final class RemoteAudioPCM {
     private let channels: Int
     private let framesPerPacket: Int
     private var pending: [Int16] = []
+    private var pendingSequence: UInt64?
 
     init(rate: Double, channels: Int) {
         self.rate = rate
@@ -112,8 +131,12 @@ private final class RemoteAudioPCM {
 
     func matches(rate: Double, channels: Int) -> Bool { self.rate == rate && self.channels == channels }
 
-    func add(_ buffers: UnsafeMutableAudioBufferListPointer, send: ((Data) -> Void)?) {
+    func discardPending() { pending.removeAll(keepingCapacity: true); pendingSequence = nil }
+
+    func add(_ buffers: UnsafeMutableAudioBufferListPointer, sequence: UInt64,
+             send: ((Data, UInt64) -> Void)?) {
         guard let send, let first = buffers.first, let firstData = first.mData else { return }
+        if pendingSequence == nil { pendingSequence = sequence }
         if buffers.count == 1 {
             let available = Int(first.mNumberChannels)
             guard available > 0 else { return }
@@ -139,8 +162,10 @@ private final class RemoteAudioPCM {
                 AudioPacket.pack(sampleRate: UInt32(rate), channels: UInt8(channels),
                                  samples: UnsafeBufferPointer(rebasing: $0[0..<count]))
             }
+            let earliest = pendingSequence ?? sequence
             pending.removeFirst(count)
-            send(packet)
+            pendingSequence = pending.isEmpty ? nil : sequence
+            send(packet, earliest)
         }
     }
 
