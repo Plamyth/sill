@@ -9,10 +9,12 @@ ROOT = Path(__file__).resolve().parents[3]
 OUT = Path(__file__).resolve().parent / 'receipts'
 OUT.mkdir(exist_ok=True)
 attempt = sys.argv[1]
-if attempt not in ('01-red', '02-green', '03-diagnostic') or (OUT / (attempt + '.json')).exists():
+if attempt not in ('01-red', '02-red', '03-green') or (OUT / (attempt + '.json')).exists():
     raise SystemExit('one run and two diagnostic corrections maximum; never replace a receipt')
 sha = lambda data: hashlib.sha256(data).hexdigest()
 names = ['visionOSClient/VisionAudioBuffer.swift', 'Tests/checks/vision-audio-player/main.swift']
+if (ROOT / 'visionOSClient/VisionAudioPlayer.swift').exists():
+    names.append('visionOSClient/VisionAudioPlayer.swift')
 sources = {name: (ROOT / name).read_bytes() for name in names}
 hashes = {name: sha(data) for name, data in sources.items()}
 payload = json.dumps({'source': {name: base64.b64encode(data).decode() for name, data in sources.items()}, 'hashes': hashes}).encode()
@@ -22,10 +24,12 @@ raw=sys.stdin.buffer.read();print('INPUT_SHA256 '+hashlib.sha256(raw).hexdigest(
 volume='CCRAudio'+uuid.uuid4().hex[:10];disk=None;output=None;child=None;record={'runnerPID':os.getpid(),'childPIDs':[]}
 def health():
  result={}
- commands={'swap':['/usr/sbin/sysctl','vm.swapusage'],'pressure':['/usr/bin/memory_pressure','-Q'],'orca':['/usr/bin/pgrep','-f','orca-server-1.4'],'containers':['docker','ps','--format','{{.Names}} {{.Status}}'],'avd':['/usr/bin/pgrep','-f','qemu-system-aarch64']}
+ commands={'swap':['/usr/sbin/sysctl','vm.swapusage'],'pressure':['/usr/bin/memory_pressure','-Q'],'orca':['/usr/bin/pgrep','-f','orca-server-1.4'],'avd':['/usr/bin/pgrep','-f','qemu-system-aarch64']}
  for name,command in commands.items():
-  r=subprocess.run(command,capture_output=True,text=True,timeout=15)
-  result[name]={'code':r.returncode,'stdout':r.stdout.strip(),'stderr':r.stderr.strip()}
+  try:
+   r=subprocess.run(command,capture_output=True,text=True,timeout=15)
+   result[name]={'code':r.returncode,'stdout':r.stdout.strip(),'stderr':r.stderr.strip()}
+  except Exception as e: result[name]={'error':type(e).__name__+': '+str(e)}
  return result
 record['before']=health()
 try:
@@ -71,6 +75,11 @@ finally:
  print('RESULT_JSON '+json.dumps(record),flush=True)
 sys.exit(record.get('exitCode',2) if record.get('sourceRemoved') and record.get('outputRemoved') else 2)
 '''
+def containers():
+    result = subprocess.run(['/opt/homebrew/bin/docker', '--context', 'cargo24-mini', 'ps', '--format', '{{.ID}} {{.Names}} {{.Status}}'], capture_output=True, text=True, timeout=15)
+    return {'code': result.returncode, 'stdout': result.stdout.strip(), 'stderr': result.stderr.strip()}
+
+containers_before = containers()
 process = subprocess.Popen(['/Users/ambrion/.local/bin/mini', 'heavy', '--cwd', '/private/tmp', '--', 'python3', '-B', '-c', runner], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 try:
     log, _ = process.communicate(payload, timeout=300)
@@ -84,7 +93,8 @@ record = {'exitCode': process.returncode, 'transportPID': process.pid, 'transpor
           'scope': 'Independent pure component RAM validation; no native player, peer acceptance, or source-guard transfer acceptance',
           'inputSHA256': sha(payload), 'remoteInputHashMatched': ('INPUT_SHA256 ' + sha(payload)).encode() in log,
           'sourceSHA256': hashes, 'sourceUnchanged': all(sha((ROOT / name).read_bytes()) == value for name, value in hashes.items()),
-          'remoteResult': json.loads(records[-1]) if records else None}
+          'remoteResult': json.loads(records[-1]) if records else None,
+          'containersBefore': containers_before, 'containersAfter': containers()}
 (OUT / (attempt + '.json')).write_text(json.dumps(record, indent=2) + '\n')
 print(log.decode(errors='replace'))
 print(json.dumps(record, indent=2))

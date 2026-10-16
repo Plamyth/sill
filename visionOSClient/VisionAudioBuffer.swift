@@ -58,8 +58,24 @@ final class VisionAudioRing {
 
     @discardableResult
     func append(_ samples: [Float]) -> Bool {
-        // Scoped TDD scaffold. The first executable check must reject this empty admission.
-        return false
+        guard let format, !samples.isEmpty, samples.count <= 32_768,
+              samples.count % format.channels == 0, samples.allSatisfy({ $0.isFinite }) else { return false }
+        let frames = samples.count / format.channels
+        let retained = count + frames > format.ceiling ? format.newest : count + frames
+        let discarded = max(0, count + frames - retained)
+        let oldDrop = min(count, discarded)
+        head = (head + oldDrop) % Self.maximumFrames
+        count -= oldDrop
+        let incomingStart = discarded - oldDrop
+        for frame in incomingStart..<frames {
+            let destination = (head + count) % Self.maximumFrames
+            for channel in 0..<format.channels {
+                storage[destination * 2 + channel] = samples[frame * format.channels + channel]
+            }
+            count += 1
+        }
+        if !ready && count >= format.prefill { ready = true }
+        return true
     }
 
     func readFrame(into write: (Int, Float) -> Void) -> Bool {
@@ -120,7 +136,7 @@ struct VisionAudioMailbox {
     }
 
     private mutating func expire(now: TimeInterval) {
-        while let entry = slots[head], now - entry.arrived > Self.ageLimit {
+        while let entry = slots[head], now > entry.arrived + Self.ageLimit {
             drop()
             gap &+= 1
         }
@@ -162,7 +178,7 @@ struct VisionAudioMailbox {
     mutating func invalidateDecode() { gap &+= 1 }
 
     func isFresh(_ work: Work, now: TimeInterval) -> Bool {
-        work.gap == gap && now >= work.arrived && now - work.arrived <= Self.ageLimit
+        work.gap == gap && now >= work.arrived && now <= work.arrived + Self.ageLimit
     }
 }
 
@@ -190,6 +206,7 @@ struct VisionAudioPlaybackState {
     var mailbox = VisionAudioMailbox()
     private(set) var version: UInt64 = 0
     private(set) var rendered: VisionAudioRenderState = .waiting
+    private var lastAdmission: TimeInterval?
 
     mutating func begin(_ ticket: VisionAudioTicket) {
         revoke()
@@ -205,6 +222,7 @@ struct VisionAudioPlaybackState {
         mailbox.clear()
         version &+= 1
         rendered = .waiting
+        lastAdmission = nil
         return old
     }
 
@@ -219,6 +237,17 @@ struct VisionAudioPlaybackState {
         version &+= 1
         failure = message
         rendered = .waiting
+        lastAdmission = nil
+    }
+
+    mutating func replaceFailure(_ message: String) {
+        guard failure != nil else { return }
+        failure = message
+    }
+
+    func hasFreshPCM(now: TimeInterval) -> Bool {
+        guard let lastAdmission else { return false }
+        return ring.count > 0 && now >= lastAdmission && now <= lastAdmission + VisionAudioMailbox.ageLimit
     }
 
     mutating func append(_ samples: [Float], format: VisionAudioFormat,
@@ -229,12 +258,19 @@ struct VisionAudioPlaybackState {
             version &+= 1
             rendered = .waiting
         }
-        return ring.append(samples)
+        guard ring.append(samples) else { return false }
+        lastAdmission = now
+        return true
     }
 
     mutating func render(ticket: VisionAudioTicket, version: UInt64,
-                         frames: Int, write: (Int, Int, Float) -> Void) {
+                         frames: Int, now: TimeInterval, write: (Int, Int, Float) -> Void) {
         guard admits(ticket), self.version == version else { return }
+        guard let lastAdmission, now >= lastAdmission, now <= lastAdmission + 0.150 else {
+            ring.clear()
+            rendered = .waiting
+            return
+        }
         var consumed = false
         for frame in 0..<frames {
             if ring.readFrame(into: { channel, value in write(frame, channel, value) }) { consumed = true }

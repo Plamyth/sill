@@ -99,21 +99,60 @@ let admitted = state.mailbox.next(now: 5)!
 check(state.append([Float](repeating: 1, count: 320), format: mono, work: admitted, now: 5), "admitted decoded samples")
 let version = state.version
 check(state.rendered == .waiting, "append and engine readiness do not claim rendering")
+check(state.hasFreshPCM(now: 5.1) && !state.hasFreshPCM(now: 5.101), "delayed activation needs fresh admitted PCM")
 var writes = 0
-state.render(ticket: a, version: version, frames: 1) { _, _, _ in writes += 1 }
+state.render(ticket: a, version: version, frames: 1, now: 5) { _, _, _ in writes += 1 }
 check(writes == 1 && state.rendered == .rendering, "render consumes PCM before rendering state")
 _ = state.revoke()
-state.render(ticket: a, version: version, frames: 1) { _, _, _ in writes += 1 }
+state.render(ticket: a, version: version, frames: 1, now: 5) { _, _, _ in writes += 1 }
 check(writes == 1 && state.ring.count == 0 && state.rendered == .waiting, "stop revokes render and clears PCM synchronously")
 check(!state.append([1], format: mono, work: admitted, now: 5), "late decode cannot resurrect stopped grant")
 state.begin(b)
 check(!state.admits(a) && state.admits(b), "new epoch rejects stale grant")
-state.render(ticket: a, version: version, frames: 1) { _, _, _ in writes += 1 }
+state.render(ticket: a, version: version, frames: 1, now: 5) { _, _, _ in writes += 1 }
 check(writes == 1, "stale source node cannot consume new epoch")
 state.fail(a, message: "stale")
 check(state.failure == nil && state.admits(b), "stale failure cannot revoke new grant")
 state.fail(b, message: "decoder")
 check(!state.admits(b) && state.failure == "decoder" && state.ring.count == 0, "failure closes admission and clears render")
+state.replaceFailure("decoder; cleanup")
+check(state.failure == "decoder; cleanup", "partial session cleanup error remains visible")
+_ = state.revoke()
+state.replaceFailure("late cleanup")
+check(state.failure == nil, "late cleanup cannot recreate failure after stop")
+
+var aged = VisionAudioPlaybackState()
+aged.begin(a)
+_ = aged.mailbox.offer(Data([1]), ticket: a, now: 10)
+let aging = aged.mailbox.next(now: 10)!
+_ = aged.append([Float](repeating: 1, count: 320), format: mono, work: aging, now: 10)
+aged.mailbox.finish()
+var staleWrites = 0
+aged.render(ticket: a, version: aged.version, frames: 1, now: 10.151) { _, _, _ in staleWrites += 1 }
+check(staleWrites == 0 && aged.ring.count == 0 && aged.rendered == .waiting, "stalled renderer discards PCM older than 150ms")
+
+var underrun = VisionAudioPlaybackState()
+underrun.begin(a)
+_ = underrun.mailbox.offer(Data([1]), ticket: a, now: 20)
+let feeding = underrun.mailbox.next(now: 20)!
+_ = underrun.append([Float](repeating: 1, count: 320), format: mono, work: feeding, now: 20)
+underrun.render(ticket: a, version: underrun.version, frames: 320, now: 20) { _, _, _ in }
+check(underrun.rendered == .rendering, "last consumed block reports actual rendering")
+underrun.render(ticket: a, version: underrun.version, frames: 320, now: 20.04) { _, _, _ in }
+check(underrun.rendered == .waiting, "next empty render reports underrun")
+
+ring.configure(mono)
+_ = ring.append([Float](repeating: 2, count: 1200))
+_ = ring.append([Float](repeating: 3, count: 100))
+var oldFrames = 0
+var newFrames = 0
+while ring.readFrame(into: { _, value in
+    if value == 2 { oldFrames += 1 }
+    if value == 3 { newFrames += 1 }
+}) {}
+check(oldFrames == 380 && newFrames == 100, "newest trim spans old and incoming frames")
+let fractional = VisionAudioFormat(rate: 44_100, channels: 2)!
+check(fractional.prefill == 1764 && fractional.ceiling == 6615 && fractional.newest == 2646, "44100Hz durations preserve exact frame counts")
 
 var lease = VisionAudioLease()
 check(lease.acquire(a.epoch), "first owner acquires lease")
@@ -129,5 +168,11 @@ sdkLock.withLock { _ in
     let busy: Bool? = sdkLock.withLockIfAvailable { _ in true }
     check(busy == nil, "busy render lock returns without blocking")
 }
+let renderLock = OSAllocatedUnfairLock(initialState: VisionAudioPlaybackState())
+renderLock.withLock { value in value.begin(a) }
+let renderAdmitted = renderLock.withLockIfAvailable { value in value.admits(a) }
+check(renderAdmitted == true, "SDK lock supports the actual pure revocation state")
+renderLock.withLock { value in _ = value.revoke() }
+check(renderLock.withLock { !$0.admits(a) }, "shared render lock observes synchronous revoke")
 print("Vision audio pure checks: \(checks - failures)/\(checks) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
