@@ -53,7 +53,7 @@ final class StreamClient {
     func connectionLost(_ c: NWConnection, error: NWError) {}
 }
 func catalog(_ capability: MicrophoneCapability?, generation: UUID = UUID()) -> WindowList {
-    let epoch = VideoEpoch(id: UUID(), inputGeneration: generation, source: .desktop,
+    let epoch = VideoEpoch(id: UUID(), generation: generation.uuidString, source: .desktop,
                           geometry: .init(x: 0, y: 0, width: 1, height: 1), width: 1, height: 1)
     return WindowList(macName: "Mac", windows: [], active: .desktop,
                       inputGeneration: generation.uuidString, videoEpoch: epoch, microphone: capability)
