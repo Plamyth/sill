@@ -31,6 +31,12 @@ func ownerGrant(_ scope: MicrophoneScope, fingerprint: Data = Data([1]), expiry:
 func packet(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64 = 1) -> MicrophoneFrame {
     MicrophoneFrame(scope: scope, grantID: grant, sequence: sequence, frameCount: 2, pcm: Data([1, 0, 255, 127]))!
 }
+func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> MicrophoneFrame {
+    var pcm = Data(repeating: 0, count: MicrophoneWire.maxFrames * 2)
+    for frame in 0..<MicrophoneWire.maxFrames { pcm[frame * 2] = UInt8(sequence) }
+    return MicrophoneFrame(scope: scope, grantID: grant, sequence: sequence,
+                           frameCount: MicrophoneWire.maxFrames, pcm: pcm)!
+}
 @MainActor final class FakeOwner: HostMicrophoneOriginalOwner {
     var grant: HostLocalOwnerGrant?
     init(_ grant: HostLocalOwnerGrant?) { self.grant = grant }
@@ -145,14 +151,21 @@ func packet(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64 = 1) -> Micr
         let stale = scope(peer: f.binding.peer, generation: f.binding.inputGeneration, epoch: UUID(), destination: f.binding.destination, capability: f.binding.capability)
         expect(!f.receiver.frame(packet(stale, grant: f.grantID, sequence: 2), fingerprint: Data([1]), arrived: f.now), "frame-wrong-epoch")
         expect(!f.receiver.frame(packet(f.binding, grant: UUID(), sequence: 2), fingerprint: Data([1]), arrived: f.now), "frame-wrong-grant")
-        expect(!f.receiver.frame(packet(f.binding, grant: f.grantID, sequence: 2), fingerprint: Data([1]), arrived: f.now - 61_000_000), "frame-stale-queue")
+        expect(!f.receiver.frame(packet(f.binding, grant: f.grantID, sequence: 2), fingerprint: Data([1]), arrived: f.now - 161_000_000), "frame-stale-queue")
         var rendered = [Int16](repeating: 0, count: 2)
         f.render!.render(frames: 2, now: f.now) { rendered[$0] = $1 }
         expect(rendered == [1, 32767], "render-pcm")
+        for sequence in 2...6 {
+            expect(f.receiver.frame(packet(f.binding, grant: f.grantID, sequence: UInt64(sequence)),
+                                    fingerprint: Data([1]), arrived: f.now), "burst-frame-admission")
+        }
+        rendered = [Int16](repeating: 0, count: 10)
+        f.render!.render(frames: 10, now: f.now + 80_000_000) { rendered[$0] = $1 }
+        expect(rendered == Array(repeating: [1, 32767], count: 5).flatMap { $0 }, "burst-render-order")
         var receipt: MicrophoneReceipt?
         f.receiver.sendReceipt = { receipt = $0 }
         f.receiver.control(MicrophoneControl(operation: .receipt, requestID: UUID(), scope: f.binding, grantID: f.grantID), fingerprint: Data([1]))
-        expect(receipt?.admittedPackets == 1 && receipt?.renderedFrames == 2 && receipt?.applicationQueueAgeMilliseconds == 0, "receipt-admission-render-counts")
+        expect(receipt?.admittedPackets == 6 && receipt?.renderedFrames == 12 && receipt?.applicationQueueAgeMilliseconds == 80, "receipt-admission-render-counts")
         for wrong in [scope(peer: f.binding.peer, source: .window(9), generation: f.binding.inputGeneration, epoch: f.binding.videoEpoch, destination: f.binding.destination, capability: f.binding.capability),
                       scope(peer: f.binding.peer, generation: UUID(), epoch: f.binding.videoEpoch, destination: f.binding.destination, capability: f.binding.capability),
                       scope(peer: f.binding.peer, generation: f.binding.inputGeneration, epoch: f.binding.videoEpoch, destination: UUID(), capability: f.binding.capability)] {
@@ -285,6 +298,69 @@ func packet(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64 = 1) -> Micr
         disabled.control(MicrophoneControl(operation: .start, requestID: UUID(), scope: grant.scope), fingerprint: grant.fingerprint)
         await settle()
         expect(unavailableCap == nil && unsupportedPrepares == 0 && disabled.phase == .off, "disabled-backend-valid-owner-nil-cap")
+
+        let burstRender = MicrophoneRenderBuffer(grant: grant)
+        burstRender.sendEnabled(Data(), to: NWConnection())
+        let burstNow = DispatchTime.now().uptimeNanoseconds
+        for sequence in 1...5 {
+            expect(burstRender.offer(voicePacket(grant.scope, grant: UUID(), sequence: UInt64(sequence)),
+                                     arrived: burstNow, now: burstNow), "100ms-burst-admitted")
+        }
+        for sequence in 1...5 {
+            var output = [Int16](repeating: 0, count: MicrophoneWire.maxFrames)
+            burstRender.render(frames: output.count, now: burstNow + 50_000_000 + UInt64(sequence - 1) * 20_000_000) {
+                output[$0] = $1
+            }
+            expect(output.allSatisfy { $0 == Int16(sequence) }, "100ms-burst-ordered-samples")
+        }
+        expect(burstRender.counters.0 == 5 * UInt64(MicrophoneWire.maxFrames), "100ms-burst-total-frames")
+        let partialRender = MicrophoneRenderBuffer(grant: grant)
+        partialRender.sendEnabled(Data(), to: NWConnection())
+        for sequence in 1...2 {
+            expect(partialRender.offer(voicePacket(grant.scope, grant: UUID(), sequence: UInt64(sequence)),
+                                       arrived: burstNow, now: burstNow), "partial-admitted")
+        }
+        var firstPart = [Int16](repeating: 0, count: 400)
+        partialRender.render(frames: firstPart.count, now: burstNow) { firstPart[$0] = $1 }
+        expect(firstPart.allSatisfy { $0 == 1 }, "partial-first")
+        var crossing = [Int16](repeating: 0, count: MicrophoneWire.maxFrames)
+        partialRender.render(frames: crossing.count, now: burstNow + 20_000_000) { crossing[$0] = $1 }
+        expect(crossing.prefix(560).allSatisfy { $0 == 1 } && crossing.suffix(400).allSatisfy { $0 == 2 },
+               "partial-cross-packet")
+        var lastPart = [Int16](repeating: 0, count: 560)
+        partialRender.render(frames: lastPart.count, now: burstNow + 40_000_000) { lastPart[$0] = $1 }
+        expect(lastPart.allSatisfy { $0 == 2 }, "partial-last")
+        for sequence in 3...12 {
+            let step = burstNow + 60_000_000 + UInt64(sequence - 3) * 10_000_000
+            expect(partialRender.offer(voicePacket(grant.scope, grant: UUID(), sequence: UInt64(sequence)),
+                                       arrived: step, now: step), "wrap-admitted")
+            var output = [Int16](repeating: 0, count: MicrophoneWire.maxFrames)
+            partialRender.render(frames: output.count, now: step) { output[$0] = $1 }
+            expect(output.allSatisfy { $0 == Int16(sequence) }, "wrap-ordered")
+        }
+        expect(partialRender.counters.0 == 12 * UInt64(MicrophoneWire.maxFrames), "wrap-total-frames")
+        let overflowRender = MicrophoneRenderBuffer(grant: grant)
+        overflowRender.sendEnabled(Data(), to: NWConnection())
+        for sequence in 1...7 {
+            expect(overflowRender.offer(voicePacket(grant.scope, grant: UUID(), sequence: UInt64(sequence)),
+                                        arrived: burstNow, now: burstNow), "overflow-burst-admitted")
+        }
+        var overflowFirst = [Int16](repeating: 0, count: MicrophoneWire.maxFrames)
+        overflowRender.render(frames: overflowFirst.count, now: burstNow) { overflowFirst[$0] = $1 }
+        expect(overflowFirst.allSatisfy { $0 == 2 }, "overflow-drops-oldest")
+        expect(overflowRender.counters.2 == 1, "overflow-counted")
+        let staleRender = MicrophoneRenderBuffer(grant: grant)
+        staleRender.sendEnabled(Data(), to: NWConnection())
+        expect(staleRender.offer(voicePacket(grant.scope, grant: UUID(), sequence: 1),
+                                 arrived: burstNow, now: burstNow), "stale-render-accepted-first")
+        var staleOutput = [Int16](repeating: 0, count: MicrophoneWire.maxFrames)
+        staleRender.render(frames: staleOutput.count, now: burstNow + 161_000_000) { staleOutput[$0] = $1 }
+        expect(staleOutput.allSatisfy { $0 == 0 } && staleRender.counters.2 == 1,
+               "stale-render-dropped-counted")
+        overflowRender.close()
+        overflowFirst = [Int16](repeating: 0, count: MicrophoneWire.maxFrames)
+        overflowRender.render(frames: overflowFirst.count, now: burstNow) { overflowFirst[$0] = $1 }
+        expect(overflowFirst.allSatisfy { $0 == 0 }, "overflow-stop-silence")
 
         let render = MicrophoneRenderBuffer(grant: grant)
         render.sendEnabled(Data(), to: NWConnection())
@@ -469,8 +545,11 @@ func packet(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64 = 1) -> Micr
         }
         expect(wakes == 2, "ingress-one-wake")
         let batch = h.microphoneIngress.take()
-        expect(batch.0.isEmpty && batch.1?.frame.sequence == 4000, "ingress-latest-only")
-        expect(f.receiver.frame(batch.1!.frame, fingerprint: Data([1]), arrived: f.now), "actual-dispatch-frame")
+        expect(batch.0.isEmpty && batch.1.map(\.frame.sequence) == Array(3995...4000).map(UInt64.init), "ingress-bounded-order")
+        expect(h.microphoneIngress.overflowCount == 3994, "ingress-overflow-counted")
+        for item in batch.1 {
+            expect(f.receiver.frame(item.frame, fingerprint: Data([1]), arrived: f.now), "actual-dispatch-frame")
+        }
         h.videoEpoch = VideoEpoch(generation: h.inputGeneration, source: .desktop,
             geometry: .init(x: 0, y: 0, width: 2, height: 2), width: 2, height: 2)
         expect(f.render?.isOpen == false, "same-source-epoch-revoke")

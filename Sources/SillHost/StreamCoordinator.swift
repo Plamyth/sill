@@ -2444,7 +2444,7 @@ package final class StreamCoordinator {
     }
 
     private func drainMicrophoneIngress() {
-        let (controls, frame, closedPeers) = microphoneIngress.take()
+        let (controls, frames, closedPeers) = microphoneIngress.take()
         for peer in closedPeers {
             microphoneReceiver.forgetCapabilities(peer: peer)
             microphoneReceiver.revoke(peer: peer, reason: "cancellation queue exhausted")
@@ -2454,7 +2454,7 @@ package final class StreamCoordinator {
             if control.request.operation == .start && !microphoneScopeIsCurrent(control.request.scope, fingerprint: control.peer.fingerprint) { continue }
             microphoneReceiver.control(control.request, fingerprint: control.peer.fingerprint)
         }
-        if let frame, microphoneScopeIsCurrent(frame.frame.scope, fingerprint: frame.peer.fingerprint) {
+        for frame in frames where microphoneScopeIsCurrent(frame.frame.scope, fingerprint: frame.peer.fingerprint) {
             _ = microphoneReceiver.frame(frame.frame, fingerprint: frame.peer.fingerprint, arrived: frame.arrived)
         }
     }

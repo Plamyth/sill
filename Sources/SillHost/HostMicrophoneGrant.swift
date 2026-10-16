@@ -64,25 +64,36 @@ final class MicrophoneRenderBuffer: @unchecked Sendable {
     private struct Storage {
         var open = true
         var admitted = false
-        var count = 0
-        var offset = 0
-        var arrived: UInt64 = 0
+        var head = 0
+        var packetCount = 0
         var rendered: UInt64 = 0
         var queueAgeMilliseconds: Double = 0
+        var droppedPackets: UInt64 = 0
     }
+    private struct Slot {
+        var length = 0
+        var offset = 0
+        var arrived: UInt64 = 0
+    }
+    private static let packetCapacity = 6
     private let state = OSAllocatedUnfairLock(initialState: Storage())
-    private let samples = UnsafeMutablePointer<Int16>.allocate(capacity: MicrophoneWire.maxFrames)
+    private let samples = UnsafeMutablePointer<Int16>.allocate(capacity: packetCapacity * MicrophoneWire.maxFrames)
+    private let slots = UnsafeMutablePointer<Slot>.allocate(capacity: packetCapacity)
     let grant: HostLocalOwnerGrant
     let monotonicNow: () -> UInt64
-    static let maxQueueAge: UInt64 = 60_000_000
+    static let maxQueueAge: UInt64 = 160_000_000
 
     init(grant: HostLocalOwnerGrant, now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         self.grant = grant; monotonicNow = now
-        samples.initialize(repeating: 0, count: MicrophoneWire.maxFrames)
+        samples.initialize(repeating: 0, count: Self.packetCapacity * MicrophoneWire.maxFrames)
+        slots.initialize(repeating: Slot(), count: Self.packetCapacity)
     }
-    deinit { samples.deinitialize(count: MicrophoneWire.maxFrames); samples.deallocate() }
+    deinit {
+        samples.deinitialize(count: Self.packetCapacity * MicrophoneWire.maxFrames); samples.deallocate()
+        slots.deinitialize(count: Self.packetCapacity); slots.deallocate()
+    }
 
-    func close() { state.withLock { $0.open = false; $0.count = 0; $0.offset = 0 } }
+    func close() { state.withLock { $0.open = false; $0.packetCount = 0; $0.head = 0 } }
     var isOpen: Bool { state.withLock { $0.open } }
     var isAdmitted: Bool { state.withLock { $0.open && $0.admitted } }
     @discardableResult
@@ -98,14 +109,23 @@ final class MicrophoneRenderBuffer: @unchecked Sendable {
 
     func offer(_ frame: MicrophoneFrame, arrived: UInt64, now: UInt64) -> Bool {
         guard now >= arrived, now - arrived <= Self.maxQueueAge, grant.valid(at: now) else { return false }
+        let decoded: [Int16] = (0..<frame.frameCount).map { i in
+            let offset = frame.pcm.startIndex + i * 2
+            return Int16(bitPattern: UInt16(frame.pcm[offset]) | UInt16(frame.pcm[offset + 1]) << 8)
+        }
         return state.withLock { value in
             guard value.open, value.admitted else { return false }
             return grant.whileValid(at: now) {
-                for i in 0..<frame.frameCount {
-                    let offset = frame.pcm.startIndex + i * 2
-                    samples[i] = Int16(bitPattern: UInt16(frame.pcm[offset]) | UInt16(frame.pcm[offset + 1]) << 8)
+                let tail = (value.head + value.packetCount) % Self.packetCapacity
+                if value.packetCount == Self.packetCapacity {
+                    value.head = (value.head + 1) % Self.packetCapacity
+                    if value.droppedPackets < UInt64.max { value.droppedPackets += 1 }
+                } else { value.packetCount += 1 }
+                slots[tail] = Slot(length: frame.frameCount, offset: 0, arrived: arrived)
+                decoded.withUnsafeBufferPointer { source in
+                    samples.advanced(by: tail * MicrophoneWire.maxFrames)
+                        .update(from: source.baseAddress!, count: frame.frameCount)
                 }
-                value.count = frame.frameCount; value.offset = 0; value.arrived = arrived
             }
         }
     }
@@ -113,17 +133,35 @@ final class MicrophoneRenderBuffer: @unchecked Sendable {
     func render(frames: Int, now: UInt64, write: (Int, Int16) -> Void) {
         guard frames > 0, frames <= MicrophoneWire.maxFrames else { return }
         _ = state.withLockIfAvailable { value in
-            guard value.open, value.admitted, now >= value.arrived,
-                  now - value.arrived <= Self.maxQueueAge else { value.count = 0; return }
+            guard value.open, value.admitted else { return }
             grant.renderIfValid(at: now) {
-                let count = min(frames, value.count - value.offset)
-                for i in 0..<count { write(i, samples[value.offset + i]) }
-                value.offset += count
-                value.rendered = value.rendered > UInt64.max - UInt64(count) ? UInt64.max : value.rendered + UInt64(count)
-                value.queueAgeMilliseconds = Double(now - value.arrived) / 1_000_000
+                var output = 0
+                while output < frames && value.packetCount > 0 {
+                    let index = value.head
+                    var slot = slots[index]
+                    guard now >= slot.arrived, now - slot.arrived <= Self.maxQueueAge else {
+                        value.head = (index + 1) % Self.packetCapacity
+                        value.packetCount -= 1
+                        if value.droppedPackets < UInt64.max { value.droppedPackets += 1 }
+                        continue
+                    }
+                    let count = min(frames - output, slot.length - slot.offset)
+                    for i in 0..<count {
+                        write(output + i, samples[index * MicrophoneWire.maxFrames + slot.offset + i])
+                    }
+                    output += count; slot.offset += count
+                    value.rendered = value.rendered > UInt64.max - UInt64(count) ? UInt64.max : value.rendered + UInt64(count)
+                    value.queueAgeMilliseconds = Double(now - slot.arrived) / 1_000_000
+                    if slot.offset == slot.length {
+                        value.head = (index + 1) % Self.packetCapacity
+                        value.packetCount -= 1
+                    } else { slots[index] = slot }
+                }
             }
         }
     }
 
-    var counters: (UInt64, Double) { state.withLock { ($0.rendered, $0.queueAgeMilliseconds) } }
+    var counters: (UInt64, Double, UInt64) {
+        state.withLock { ($0.rendered, $0.queueAgeMilliseconds, $0.droppedPackets) }
+    }
 }
