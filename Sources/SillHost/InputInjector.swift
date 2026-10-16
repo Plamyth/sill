@@ -25,7 +25,8 @@ final class InputInjector {
     private static let multiClickSlop: CGFloat = 12
 
     private struct ButtonState {
-        var isDown = false
+        var owner: KeyStrokes.Device?
+        var isDown: Bool { owner != nil }
         var clicks: Int64 = 1
         var lastDownAt: CFAbsoluteTime = -1_000
         var lastDownPoint: CGPoint = .zero
@@ -68,7 +69,8 @@ final class InputInjector {
     // MARK: Entry point
 
     /// One device's input. `device` is its connection, whose keys KeyStrokes keeps down until they
-    /// come up or it leaves (`releaseKeys`). `rect` is the streamed source's rectangle, or `.null` for
+    /// come up or it leaves (`releaseInput`). Buttons also belong to their pressing device.
+    /// `rect` is the streamed source's rectangle, or `.null` for
     /// input with nowhere to land that still goes (`isUpOfSomethingDown`: StreamCoordinator), a
     /// button's up then going where the pointer is.
     func apply(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {
@@ -87,7 +89,7 @@ final class InputInjector {
                     else if gap > 0.025 { Stats.shared.bump("in.gap>25ms") }
                 }
             }
-            pointer(action, at: point(x, y, in: rect))
+            pointer(action, at: point(x, y, in: rect), from: device)
         case .scroll(let x, let y, let dx, let dy):
             scroll(at: point(x, y, in: rect), dx: dx * rect.width, dy: dy * rect.height)
         case .text(let string):
@@ -165,7 +167,7 @@ final class InputInjector {
 
     // MARK: Pointer
 
-    private func pointer(_ action: PointerAction, at location: CGPoint) {
+    private func pointer(_ action: PointerAction, at location: CGPoint, from device: KeyStrokes.Device) {
         let type: CGEventType
         let button: CGMouseButton
         var clicks: Int64 = 1
@@ -178,16 +180,20 @@ final class InputInjector {
             else if right.isDown { type = .rightMouseDragged; button = .right; clicks = right.clicks }
             else { type = .mouseMoved; button = .left }
         case .leftDown:
-            beginClick(&left, at: location)
+            guard left.owner == nil else { return }
+            beginClick(&left, at: location, from: device)
             type = .leftMouseDown; button = .left; clicks = left.clicks
         case .leftUp:
-            left.isDown = false
+            guard left.owner == device else { return }
+            left.owner = nil
             type = .leftMouseUp; button = .left; clicks = left.clicks   // the up carries the down's count
         case .rightDown:
-            beginClick(&right, at: location)
+            guard right.owner == nil else { return }
+            beginClick(&right, at: location, from: device)
             type = .rightMouseDown; button = .right; clicks = right.clicks
         case .rightUp:
-            right.isDown = false
+            guard right.owner == device else { return }
+            right.owner = nil
             type = .rightMouseUp; button = .right; clicks = right.clicks
         }
 
@@ -204,11 +210,11 @@ final class InputInjector {
     /// Whether this input is the up of a key or a button the Mac has down, which still goes when the
     /// input has nowhere to land (DroppedInput, StreamCoordinator): its down was posted, its up has
     /// not been.
-    func isUpOfSomethingDown(_ event: InputEvent) -> Bool {
-        DroppedInput.stillGoes(event, keyDown: keys.isDown, leftDown: left.isDown, rightDown: right.isDown)
+    func isUpOfSomethingDown(_ event: InputEvent, from device: KeyStrokes.Device) -> Bool {
+        DroppedInput.stillGoes(event, keyDown: keys.isDown, leftDown: left.owner == device, rightDown: right.owner == device)
     }
 
-    private func beginClick(_ state: inout ButtonState, at location: CGPoint) {
+    private func beginClick(_ state: inout ButtonState, at location: CGPoint, from device: KeyStrokes.Device) {
         let now = CFAbsoluteTimeGetCurrent()
         let moved = hypot(location.x - state.lastDownPoint.x, location.y - state.lastDownPoint.y)
         if now - state.lastDownAt <= Self.multiClickInterval && moved <= Self.multiClickSlop {
@@ -216,7 +222,7 @@ final class InputInjector {
         } else {
             state.clicks = 1
         }
-        state.isDown = true
+        state.owner = device
         state.lastDownAt = now
         state.lastDownPoint = location
     }
@@ -480,19 +486,20 @@ final class InputInjector {
         }
     }
 
-    /// A device left: every key it still holds down goes up (KeyStrokes.release), so a key or a
-    /// modifier whose up it never sent (its connection ended in between) does not stay down on the
-    /// Mac and make the next click a ⌘-click. Counted, `in.keyLetGo`, when posted.
-    func releaseKeys(of device: KeyStrokes.Device) {
+    /// A device left: its keys and buttons go up, a button where the pointer is now.
+    /// Another device's buttons stay down. Key releases count as `in.keyLetGo` when posted.
+    func releaseInput(of device: KeyStrokes.Device) {
         post(keys.release(device), letGo: true)
+        if left.owner == device { pointer(.leftUp, at: pointerNow(), from: device) }
+        if right.owner == device { pointer(.rightUp, at: pointerNow(), from: device) }
     }
 
     /// The host is going: every key any device holds down goes up (KeyStrokes.releaseAll), then a
     /// button still down, where the pointer is, so nothing a device pressed outlives Sill on the Mac.
     func releaseAll() {
         post(keys.releaseAll(), letGo: true)
-        if left.isDown { pointer(.leftUp, at: pointerNow()) }
-        if right.isDown { pointer(.rightUp, at: pointerNow()) }
+        if let device = left.owner { pointer(.leftUp, at: pointerNow(), from: device) }
+        if let device = right.owner { pointer(.rightUp, at: pointerNow(), from: device) }
     }
 
     /// Shift, control, option and command: the modifiers that change a click or a scroll.

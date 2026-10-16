@@ -397,7 +397,7 @@ package final class StreamCoordinator {
                 self.linkReports[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
                 self.menus.clientLeft(connection)
-                self.releaseKeys(of: id)
+                self.releaseInput(of: id)
                 self.status.update { $0.devices.removeAll { $0.id == id } }
                 // The last device at home left devices away behind: the away quality, at once.
                 let flipped = self.routesChanged(joined: nil, endpoint: nil)
@@ -916,7 +916,7 @@ package final class StreamCoordinator {
                 // goes (DroppedInput), a button's where the pointer is (`.null`), so no modifier this
                 // device pressed stays down to make a later click a ⌘-click, and no button to make
                 // every later move a drag.
-                if injector.isUpOfSomethingDown(event) { deliver(event, in: .null, from: device) }
+                if injector.isUpOfSomethingDown(event, from: device) { deliver(event, in: .null, from: device) }
                 return
             }
             // A click, a key or text may close a view a gesture opened; a move or a scroll does not.
@@ -1241,18 +1241,19 @@ package final class StreamCoordinator {
         // Mac still goes, in order: a gesture's chord held behind it, and the up of a key or a button
         // the Mac has down (DroppedInput: a modifier left down makes the next click a ⌘-click, a
         // button every move a drag), a button's where the pointer is (`.null`), not where the old
-        // source would have put it. The keys of devices that left meanwhile go up after them.
+        // source would have put it. The keys and buttons of devices that left go up after them.
         let dropped = heldInput
         heldInput = []; holdUntil = 0
         for item in dropped {
             switch item {
             case .input(let event, _, let device):
-                if injector.isUpOfSomethingDown(event) { injector.apply(event, in: .null, from: device) }
+                if injector.isUpOfSomethingDown(event, from: device) { injector.apply(event, in: .null, from: device) }
             case .chord(let keyCode, let flags):
                 injector.chord(keyCode: keyCode, flags: flags)
+            case .disconnect(let device):
+                injector.releaseInput(of: device)
             }
         }
-        releaseKeysOfDevicesThatLeft()
         encoder = nil                  // deinit invalidates the VT session
         server.resetForNewStream()          // every client waits for the next parameter sets + keyframe
         // New settings take effect here, between pipelines, before the rate, the scale and the
@@ -1494,11 +1495,13 @@ package final class StreamCoordinator {
     /// Input held for an activation, replayed in order once the app is up, each with the device that
     /// sent it (its keys are its own, KeyStrokes); a gesture's chord that arrives meanwhile waits
     /// behind it, so a click just before the gesture lands first.
-    private enum Held { case input(InputEvent, CGRect, KeyStrokes.Device), chord(keyCode: UInt16, flags: UInt64) }
+    private enum Held {
+        case input(InputEvent, CGRect, KeyStrokes.Device)
+        case chord(keyCode: UInt16, flags: UInt64)
+        case disconnect(KeyStrokes.Device)
+    }
     private var heldInput: [Held] = []
     private var holdUntil: CFAbsoluteTime = 0
-    /// Devices that left while input was held: their keys go up after it (`releaseKeys`).
-    private var leftWhileHeld: [KeyStrokes.Device] = []
     /// How long held input waits for the app to become frontmost before it is replayed anyway.
     private static let activationTimeout: TimeInterval = 0.6
 
@@ -1517,23 +1520,19 @@ package final class StreamCoordinator {
             switch item {
             case .input(let event, let rect, let device): logClick(event, in: rect); injector.apply(event, in: rect, from: device)
             case .chord(let keyCode, let flags): injector.chord(keyCode: keyCode, flags: flags)
+            case .disconnect(let device): injector.releaseInput(of: device)
             }
         }
-        releaseKeysOfDevicesThatLeft()
     }
 
-    /// A device left: the keys it still holds down on the Mac go up (InputInjector.releaseKeys),
-    /// after whatever of its input is still held for an activation, so no up of its own is overtaken
-    /// and no down of its own comes after.
-    private func releaseKeys(of device: KeyStrokes.Device) {
-        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil { leftWhileHeld.append(device); return }
-        injector.releaseKeys(of: device)
-    }
-
-    private func releaseKeysOfDevicesThatLeft() {
-        let left = leftWhileHeld
-        leftWhileHeld = []
-        for device in left { injector.releaseKeys(of: device) }
+    /// A device left: its keys and buttons go up (InputInjector.releaseInput),
+    /// after its earlier input and before later input from another device.
+    private func releaseInput(of device: KeyStrokes.Device) {
+        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil {
+            heldInput.append(.disconnect(device))
+            return
+        }
+        injector.releaseInput(of: device)
     }
 
     private func raiseIfInteracting(_ event: InputEvent) {
