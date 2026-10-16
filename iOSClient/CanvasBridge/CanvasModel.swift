@@ -121,10 +121,23 @@ struct CanvasScene: Codable, Equatable {
     }
 
     mutating func apply(_ change: AgentRevision) -> Bool {
-        guard change.sceneId == id, change.baseRevision == revision else { return false }
-        let existingIds = Set(nodes.map(\.id))
+        guard change.sceneId == id else { return false }
+        let annotationIds = change.annotations.map(\.id)
         let proposalIds = change.proposedNodes.map(\.id)
-        guard Set(proposalIds).count == proposalIds.count,
+        guard Set(annotationIds).count == annotationIds.count,
+              Set(proposalIds).count == proposalIds.count else { return false }
+        if change.baseRevision < revision {
+            guard !annotationIds.isEmpty || !proposalIds.isEmpty else { return false }
+            return change.annotations.allSatisfy { incoming in
+                annotations.first(where: { $0.id == incoming.id }) == incoming
+            } && change.proposedNodes.allSatisfy { incoming in
+                nodes.first(where: { $0.id == incoming.id }) == incoming
+            }
+        }
+        guard change.baseRevision == revision else { return false }
+        let existingIds = Set(nodes.map(\.id))
+        let existingAnnotationIds = Set(annotations.map(\.id))
+        guard change.annotations.allSatisfy({ !existingAnnotationIds.contains($0.id) }),
               change.proposedNodes.allSatisfy({ $0.confidence == .proposal && !existingIds.contains($0.id) }) else {
             return false
         }
