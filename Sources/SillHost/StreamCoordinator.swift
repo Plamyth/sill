@@ -51,8 +51,7 @@ package final class StreamCoordinator {
     private var remoteAudioEpoch: UInt64 = 0
     private var remoteAudioRunning = false
     private var remoteAudioStart: Task<Bool, Never>?
-    private var remoteAudioStop: Task<Void, Never>?
-    private var remoteAudioStopID: UUID?
+    private let remoteAudioStopGate = RemoteAudioStopGate()
     /// `--synthetic`: the Desktop source streams a test pattern instead of the screen.
     let synthetic: Bool
     let syntheticCapture = SyntheticCapture()
@@ -2273,20 +2272,13 @@ package final class StreamCoordinator {
     }
 
     private func stopRemoteAudioIfIdle() {
-        guard remoteAudioSubscribers.isEmpty, remoteAudioStop == nil else { return }
+        guard remoteAudioSubscribers.isEmpty, !remoteAudioStopGate.isStopping else { return }
         remoteAudioRunning = false
         let pendingStart = remoteAudioStart
-        let stopID = UUID()
-        let task = Task { [weak self] in
+        remoteAudioStopGate.schedule { [weak self] in
             _ = await pendingStart?.value
             guard let self, self.remoteAudioSubscribers.isEmpty else { return }
             await self.remoteAudioCapture.stop()
-        }
-        remoteAudioStop = task
-        remoteAudioStopID = stopID
-        Task { @MainActor in
-            await task.value
-            if remoteAudioStopID == stopID { remoteAudioStop = nil; remoteAudioStopID = nil }
         }
     }
 
@@ -2301,7 +2293,7 @@ package final class StreamCoordinator {
         remoteAudioEpoch = max(remoteAudioEpoch, epoch)
         for connection in old { remoteAudioState(false, requestID: nil, reason: reason, to: connection) }
         stopRemoteAudioIfIdle()
-        await remoteAudioStop?.value
+        await remoteAudioStopGate.waitUntilIdle()
     }
 
     private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID, action: UInt64,
@@ -2332,10 +2324,9 @@ package final class StreamCoordinator {
         // A stop can be scheduled while the capture-queue boundary is pending. Retry
         // only after that stop has finished; never ACK a stream that is about to close.
         for _ in 0..<3 {
-            let priorStopID = remoteAudioStopID
-            await remoteAudioStop?.value
-            if remoteAudioStopID == priorStopID { remoteAudioStop = nil; remoteAudioStopID = nil }
-            guard canEnableRemoteAudio(id, requestID: request.requestID, action: action) else {
+            guard await remoteAudioStopGate.waitToStart(if: {
+                self.canEnableRemoteAudio(id, requestID: request.requestID, action: action)
+            }) else {
                 remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
                 return
             }
@@ -2364,7 +2355,7 @@ package final class StreamCoordinator {
                 remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
                 return
             }
-            if remoteAudioStop != nil || !remoteAudioCapture.hasStream { continue }
+            if remoteAudioStopGate.isStopping || !remoteAudioCapture.hasStream { continue }
             // Serial with every capture callback; drop a partial packet at the boundary.
             let boundary = await remoteAudioCapture.subscriptionBoundary()
             guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
@@ -2372,7 +2363,7 @@ package final class StreamCoordinator {
                 remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
                 return
             }
-            if remoteAudioStop != nil || !remoteAudioCapture.hasStream { continue }
+            if remoteAudioStopGate.isStopping || !remoteAudioCapture.hasStream { continue }
             remoteAudioRunning = true
             remoteAudioSubscribers.insert(id)
             server.setRemoteAudio(true, for: connection, afterSequence: boundary)
