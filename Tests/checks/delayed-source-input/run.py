@@ -53,9 +53,12 @@ def program(sources):
     listing = function(host, "private func listMessage()").replace("private func", "func", 1) if scoped else ""
     protocol = sources[FILES[0]] + sources[FILES[1]].split("/// Binary image payloads:", 1)[0]
     protocol += "\n" + function(sources[FILES[7]], "public struct Hello:")
-    protocol += "\n" + function(sources[FILES[1]], "public struct VideoEpoch:")
+    if "public struct VideoEpoch:" in sources[FILES[1]]:
+        protocol += "\n" + function(sources[FILES[1]], "public struct VideoEpoch:")
+    else:
+        protocol += "\nstruct VideoEpoch {}"
     protocol += "\n" + sources.get(FILES[6], "").replace("import StreamProtocol", "")
-    broadcast = function(sources[FILES[8]], "func broadcast(_ message: StreamMessage,")
+    broadcast = function(sources[FILES[8]], "func broadcast(_ message: StreamMessage")
     recipients = next(line.strip() for line in broadcast.splitlines() if "for client in clients.values where" in line)
     direct_send = function(sources[FILES[8]], "func send(_ message: StreamMessage, to connection:")
     catalog_sent = next((line.strip() for line in direct_send.splitlines() if "client.catalogSent = true" in line), "")
@@ -176,7 +179,6 @@ final class Host {
     func select(_ source: StreamSource) {{ {selection_guard}\n active = source }}
 ''' + r'''
     var videoEpoch: VideoEpoch?
-    func presentationInputRect(_ input: SourceInput?) -> CGRect? { nil }
     var switching = false
     var shuttingDown = false
     func broadcastList() {}
@@ -195,6 +197,7 @@ final class Host {
     static func gestureInput(_ event: InputEvent) -> InputEvent { event }
     func raiseIfInteracting(_ event: InputEvent) { raised += 1 }
     func desktopInputMayActivate(_ event: InputEvent) { desktopActivations += 1 }
+    func presentationInputRect(_ input: ''' + ('SourceInput' if scoped else 'InputEvent') + r'''?) -> CGRect? { nil }
     func deliver(_ event: InputEvent, in rect: CGRect, from device: ObjectIdentifier, epoch: VideoEpoch? = nil) {
         injector.apply(event, in: rect)
     }

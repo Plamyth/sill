@@ -52,7 +52,7 @@ def fixture():
     late = files['Client.swift'].replace(admission, '', 1).replace('        let bytes = Self.visionInputBytes(input)\n', '', 1)
     files['mutants/capture/Client.swift'] = late.replace('            let accepted = self.link.send(bytes, onlyOn: expected, permit: permit)', '            guard let input = self.visionInputBinding.capture(event), let permit = self.visionInputPermit else { return }\n            let bytes = Self.visionInputBytes(input)\n            let accepted = self.link.send(bytes, onlyOn: expected, permit: permit)', 1)
     files['mutants/generation/VisionInputDebt.swift'] = files['visionOSClient/VisionInputDebt.swift'].replace('Self(event: event, generation: generation, videoEpoch: videoEpoch)', 'Self(event: event, generation: nil, videoEpoch: videoEpoch)', 1)
-    files['mutants/admission/Client.swift'] = files['Client.swift'].replace(admission, '        let input = visionInputBinding.capture(event) ?? CapturedVisionInput(event: event, generation: nil)\n        let permit = UUID()\n        link.setInputPermit(permit)\n', 1)
+    files['mutants/admission/Client.swift'] = files['Client.swift'].replace(admission, '        let input = visionInputBinding.capture(event) ?? CapturedVisionInput(event: event, generation: nil)\n        let permit = visionInputPermit\n', 1)
     files['mutants/controls/VisionInputSession.swift'] = files['visionOSClient/VisionInputSession.swift'].replace(' && client.visionInputBinding.isConfirmed', '', 1)
     manifest = {m: hashlib.sha256(p.encode()).hexdigest() for m, p in pieces.items()}
     return files, manifest
