@@ -998,6 +998,9 @@ extension StreamClient {
         savedMacs = SavedMacs.adding(mac, to: savedMacs)
         if let old = replaces { savedMacs = SavedMacs.replacingNewKey(old: old, new: macID, in: savedMacs) }
         persistSavedMacs()
+        #if os(iOS)
+        rememberPreferredMac(macID)
+        #endif
         return macID
     }
 

@@ -76,7 +76,15 @@ struct ContentView: View {
             client.connectFromLaunchArgument()   // -SillConnect host:port, for the off-Bonjour test hosts
             Self.orientFromLaunchArgument()      // -SillOrientation landscape|portrait
             #endif
+            #if os(iOS)
+            client.armSavedMacAutoConnect()
+            #endif
         }
+        #if os(iOS)
+        .onChange(of: client.connected) { _, connected in
+            if connected { client.rememberAuthenticatedMac() }
+        }
+        #endif
         // sill://pair from the Camera, Messages or `xcrun simctl openurl`: a confirmation first.
         .onOpenURL { client.handleOpenURL($0) }
     }

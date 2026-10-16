@@ -176,6 +176,17 @@ final class StreamClient: ObservableObject {
     // Remote access (StreamClient+Remote.swift). Published on main; the DEBUG harness seeds them.
     /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
     @Published var savedMacs: [SavedMac] = []
+
+    #if os(iOS)
+    private enum StartupAutoConnection {
+        case unarmed
+        case waiting(String)
+        case attempted
+        case stopped
+    }
+    private var startupAutoConnection: StartupAutoConnection = .unarmed
+    private static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
+    #endif
     /// This connection's latest kind 18: who the Mac is and how to reach it from afar. Verified
     /// against the pin when the Mac is a saved one; otherwise decoded unverified, shown in the
     /// panel's Away from home group and never saved.
@@ -1191,6 +1202,64 @@ final class StreamClient: ObservableObject {
         discoveryChanged()
     }
 
+    #if os(iOS)
+    /// Runs after startRemote has discarded records whose device key is missing. It never creates
+    /// an identity, opens a pairing ask, or chooses a different Mac after a stored preference fails.
+    func armSavedMacAutoConnect() {
+        guard case .unarmed = startupAutoConnection else { return }
+        #if DEBUG
+        // Explicit harness dials and seeded records own their own startup behavior.
+        if CommandLine.arguments.contains(where: { $0.hasPrefix("-Sill") }) { startupAutoConnection = .stopped; return }
+        #endif
+        let preferred = UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey)
+        guard let target = SavedMacs.automaticTarget(savedMacs, preferredID: preferred) else {
+            startupAutoConnection = .stopped
+            return
+        }
+        guard DeviceIdentity.existing() != nil else {
+            status = "This iPad's saved device key is unavailable. Unlock this iPad and reopen Sill."
+            startupAutoConnection = .stopped
+            return
+        }
+        startupAutoConnection = .waiting(target.macID)
+        trySavedMacAutoConnect()
+    }
+
+    /// Called only after a formal pairing or an authenticated session with a saved Mac.
+    func rememberPreferredMac(_ macID: String) {
+        guard SavedMacs.automaticTarget(savedMacs, preferredID: macID) != nil else { return }
+        UserDefaults.standard.set(macID, forKey: Self.preferredTrustedMacKey)
+        startupAutoConnection = .stopped
+    }
+
+    func rememberAuthenticatedMac() {
+        guard let session, let macID = session.macID,
+              let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
+              let pin = saved.fingerprintData else { return }
+        if session.route.isRemote {
+            rememberPreferredMac(macID)
+        } else if case .saved(let sessionPin) = session.home, sessionPin == pin {
+            rememberPreferredMac(macID)
+        }
+        startupAutoConnection = .stopped
+    }
+
+    private func trySavedMacAutoConnect() {
+        guard case .waiting(let macID) = startupAutoConnection,
+              appInForeground, !connected, connection == nil, reconnect == nil,
+              pairing == .idle, homeAsk == nil,
+              let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
+              let pin = saved.fingerprintData,
+              let row = macs.first(where: { $0.route == .network && $0.macID == macID && $0.carriesTag && $0.endpoint != nil }),
+              homeDecision(row, macID: macID, tap: false) == .pinned else { return }
+        startupAutoConnection = .attempted
+        if !dialRow(row, macID: macID, trust: .saved(pin: pin), tagNamed: true, tap: false) {
+            status = "This iPad's saved device key is unavailable. Unlock this iPad and reopen Sill."
+            startupAutoConnection = .stopped
+        }
+    }
+    #endif
+
     /// Makes `kind`'s browser and starts it. The network one never peer-to-peer: includePeerToPeer stays
     /// at its default, false. A peer-to-peer browse makes the kernel bring AWDL up, which takes the radio
     /// off its Wi-Fi channel up to ~100 ms twice a second (CLAUDE.md, trackpad stutter), and on a shared
@@ -1399,6 +1468,9 @@ final class StreamClient: ObservableObject {
         recomputeMacs()
         updateDiscovery()
         reconnectIfListed()
+        #if os(iOS)
+        trySavedMacAutoConnect()
+        #endif
         moveToNetworkIfListed()
         followBestPath()
         moveHomeIfListed()
@@ -1616,6 +1688,9 @@ final class StreamClient: ObservableObject {
     /// the saved Mac's addresses through the remote door. At home the row's door decides the rest
     /// (`dial`): a pinned session, the ask, a session on an open door, a plain one, or nothing.
     func connect(to mac: FoundMac) {
+        #if os(iOS)
+        startupAutoConnection = .stopped
+        #endif
         #if DEBUG
         if mockDiscovery {
             switch mac.route {
@@ -3334,6 +3409,9 @@ final class StreamClient: ObservableObject {
 
     /// The user chose to leave. No reconnect.
     func disconnect() {
+        #if os(iOS)
+        startupAutoConnection = .stopped
+        #endif
         reconnect = nil
         cancelRemoteDial()
         let c = connection

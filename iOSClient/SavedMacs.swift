@@ -76,6 +76,24 @@ enum SavedMacs {
         return list.filter { mac in mac.fingerprintData.map { MacID.make(fingerprint: $0) == mac.macID } ?? false }
     }
 
+    /// A cold launch may choose only a Mac this device already paired with. The explicit ID wins;
+    /// older installs without one migrate from the uniquely newest formal pairing. A stale or
+    /// revoked preference never falls through to another Mac.
+    static func automaticTarget(_ list: [SavedMac], preferredID: String?) -> SavedMac? {
+        func eligible(_ mac: SavedMac) -> Bool {
+            guard mac.homeTLS == true, mac.revoked != true, mac.newKey != true,
+                  let fingerprint = mac.fingerprintData, mac.recognitionKeyData != nil else { return false }
+            return MacID.make(fingerprint: fingerprint) == mac.macID
+        }
+        if let preferredID {
+            return list.first { $0.macID == preferredID }.flatMap { eligible($0) ? $0 : nil }
+        }
+        let candidates = list.filter(eligible).sorted { $0.pairedAt > $1.pairedAt }
+        guard let first = candidates.first,
+              candidates.count == 1 || first.pairedAt > candidates[1].pairedAt else { return nil }
+        return first
+    }
+
     static func encode(_ list: [SavedMac]) -> String {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
