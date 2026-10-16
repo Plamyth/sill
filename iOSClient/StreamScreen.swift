@@ -2,6 +2,43 @@ import SwiftUI
 import Combine
 import StreamProtocol
 
+struct IPadRemoteAudioControl: View {
+    @ObservedObject var client: StreamClient
+
+    private var detail: String {
+        switch client.remoteAudioStatus {
+        case .unavailable, .off: return "Off. Tap to listen on this iPad."
+        case .requesting: return "Connecting. Tap to cancel."
+        case .listening: return "On. Tap to stop."
+        case .failed(let reason): return "\(reason) Tap to retry."
+        }
+    }
+
+    var body: some View {
+        Button(action: client.toggleRemoteAudio) {
+            HStack(spacing: 12) {
+                Image(systemName: client.remoteAudioStatus.requested ? "speaker.wave.2.fill" : "speaker.slash")
+                    .font(.title3)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Mac audio").font(.body.weight(.semibold))
+                    Text(detail).font(.caption).foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                if case .requesting = client.remoteAudioStatus { ProgressView().tint(Palette.accent) }
+            }
+            .foregroundStyle(Palette.text)
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(Palette.control, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Mac audio")
+        .accessibilityValue(detail)
+        .accessibilityIdentifier("iPadRemoteAudio")
+    }
+}
+
 // MARK: - Palette
 
 extension Color {

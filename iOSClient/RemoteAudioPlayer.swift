@@ -16,6 +16,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     private var rate: Double = 0
     private var channels = 0
     private var engine: AVAudioEngine?
+    private var ownsAudioSession = false
 
     func receive(_ packet: Data) {
         let epoch = epochLock.withLock { $0 }
@@ -37,64 +38,71 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     }
 
     func stop() {
-        let epoch = epochLock.withLock { value -> UInt64 in value &+= 1; return value }
-        lock.withLock {
-            formatVersion &+= 1
-            samples.removeAll(keepingCapacity: false)
-            readIndex = 0
-            playing = false
+        dispatchPrecondition(condition: .onQueue(.main))
+        epochLock.withLock { value in
+            value &+= 1
+            lock.withLock {
+                formatVersion &+= 1
+                samples.removeAll(keepingCapacity: false)
+                readIndex = 0
+                playing = false
+            }
+        }
+        engine?.stop()
+        engine = nil
+        if ownsAudioSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            ownsAudioSession = false
         }
         decodeQueue.async { [self] in
             decoder = nil
             rate = 0
             channels = 0
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.epochLock.withLock({ $0 == epoch }) else { return }
-                self.engine?.stop()
-                self.engine = nil
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
         }
     }
 
     private func append(_ incoming: [Float], rate newRate: Double, channels newChannels: Int, epoch: UInt64) {
-        guard epochLock.withLock({ $0 == epoch }) else { return }
-        if rate != newRate || channels != newChannels {
-            rate = newRate
-            channels = newChannels
-            let version = lock.withLock { () -> UInt64 in
-                formatVersion &+= 1
-                samples.removeAll(keepingCapacity: true)
-                readIndex = 0
-                playing = false
-                return formatVersion
+        // Hold the epoch through append so a decode cannot refill the buffer after OFF cleared it.
+        epochLock.withLock { current in
+            guard current == epoch else { return }
+            if rate != newRate || channels != newChannels {
+                rate = newRate
+                channels = newChannels
+                let version = lock.withLock { () -> UInt64 in
+                    formatVersion &+= 1
+                    samples.removeAll(keepingCapacity: true)
+                    readIndex = 0
+                    playing = false
+                    return formatVersion
+                }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.epochLock.withLock({ $0 == epoch }),
+                          self.lock.withLock({ self.formatVersion == version }) else { return }
+                    self.restart(rate: newRate, channels: newChannels, version: version)
+                }
             }
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.epochLock.withLock({ $0 == epoch }),
-                      self.lock.withLock({ self.formatVersion == version }) else { return }
-                self.restart(rate: newRate, channels: newChannels, version: version)
+            let perMs = Int(newRate / 1000) * newChannels
+            lock.withLock {
+                if readIndex > 48_000 * 8 { samples.removeFirst(readIndex); readIndex = 0 }
+                samples.append(contentsOf: incoming)
+                let buffered = samples.count - readIndex
+                if !playing && buffered >= 40 * perMs { playing = true }
+                if buffered > 150 * perMs { readIndex = samples.count - 60 * perMs }
             }
-        }
-        let perMs = Int(newRate / 1000) * newChannels
-        lock.withLock {
-            if readIndex > 48_000 * 8 { samples.removeFirst(readIndex); readIndex = 0 }
-            samples.append(contentsOf: incoming)
-            let buffered = samples.count - readIndex
-            if !playing && buffered >= 40 * perMs { playing = true }
-            if buffered > 150 * perMs { readIndex = samples.count - 60 * perMs }
         }
     }
 
     private func restart(rate: Double, channels: Int, version: UInt64) {
         engine?.stop()
         engine = nil
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate,
+                                         channels: AVAudioChannelCount(channels), interleaved: false)
+        else { return }
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
-            guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate,
-                                             channels: AVAudioChannelCount(channels), interleaved: false)
-            else { return }
+            ownsAudioSession = true
             let engine = AVAudioEngine()
             let source = AVAudioSourceNode(format: format) { [weak self] _, _, frames, list -> OSStatus in
                 let output = UnsafeMutableAudioBufferListPointer(list)
@@ -123,6 +131,10 @@ final class RemoteAudioPlayer: @unchecked Sendable {
             self.engine = engine
         } catch {
             engine = nil
+            if ownsAudioSession {
+                try? session.setActive(false, options: .notifyOthersOnDeactivation)
+                ownsAudioSession = false
+            }
         }
     }
 }
