@@ -11,7 +11,7 @@ func inputs(_ c: NWConnection) -> [CapturedVisionInput] {
         precondition(bytes.count == StreamMessage.headerLength + header.payloadLength)
         let payload = Data(bytes.dropFirst(StreamMessage.headerLength))
         if let scoped = Wire.decode(SourceInput.self, from: payload) {
-            return CapturedVisionInput(event: scoped.event, generation: scoped.generation)
+            return CapturedVisionInput(event: scoped.event, generation: scoped.generation, videoEpoch: scoped.videoEpoch)
         }
         return CapturedVisionInput(event: try! JSONDecoder().decode(InputEvent.self, from: payload), generation: nil)
     }
@@ -64,8 +64,13 @@ check(lb.sent == [Data([5, 9])], "cancel preserves non-input waiting messages")
 link.hold(lb)
 _ = link.send(Data([8, 5]), onlyOn: lb)
 _ = link.cancelInputs(onlyOn: la) { [] }
+_ = link.unhold(lb)
+check(lb.sent.last == Data([8, 5]), "stale cleanup cannot erase replacement peer input")
+link.hold(lb)
+_ = link.send(Data([8, 6]), onlyOn: lb)
+link.send(Data([5, 10]))
 _ = link.adopt(lc)
-check(lc.sent == [Data([8, 5])], "stale cleanup cannot erase replacement peer input")
+check(lc.sent == [Data([5, 10])] && link.inputsOnSession == 0, "scoped waiting input stays with origin while generic control migrates")
 let client = StreamClient(), input = VisionInputSession()
 let a = NWConnection(), b = NWConnection(), c = NWConnection()
 input.bind(client); input.allowed = true
@@ -201,12 +206,12 @@ _ = early.catalog(catalog(sourceB, "B1"), from: earlyPeer)
 early.sendInput(.text("captured B"))
 resume.signal(); early.queue.sync {}
 let queued = inputs(earlyPeer)
-check(queued.count == 2 && queued[0].generation == "A1" && queued[1].generation == "B1", "queued input retains generation captured on main")
-check(!hostFence.accepts("vision", generation: queued[0].generation, current: "B1", source: sourceB), "real host guard rejects delayed source A input on B")
-check(hostFence.accepts("vision", generation: queued[1].generation, current: "B1", source: sourceB), "real host guard accepts current source B input")
+check(queued.count == 1 && queued[0].generation == "B1", "queued input revoked before submission cannot cross source update")
+check(!hostFence.accepts("vision", generation: "A1", current: "B1", source: sourceB), "real host guard rejects delayed source A input on B")
+check(hostFence.accepts("vision", generation: queued[0].generation, current: "B1", source: sourceB), "real host guard accepts current source B input")
 _ = early.catalog(catalog(sourceA, "A2"), from: earlyPeer)
 early.sendInput(.text("returned A")); early.queue.sync {}
-check(!hostFence.accepts("vision", generation: queued[0].generation, current: "A2", source: sourceA), "A to B to A rejects first A generation")
+check(!hostFence.accepts("vision", generation: "A1", current: "A2", source: sourceA), "A to B to A rejects first A generation")
 check(inputs(earlyPeer).last?.generation == "A2" && hostFence.accepts("vision", generation: inputs(earlyPeer).last?.generation, current: "A2", source: sourceA), "return to A uses distinct current generation")
 check(!hostFence.accepts("vision", generation: nil, current: "A2", source: sourceA), "scoped host refuses raw input after native Hello")
 
@@ -292,9 +297,9 @@ flushed.queue.async { flushEntered.signal(); flushResume.wait() }
 flushEntered.wait()
 _ = flushed.catalog(catalog(sourceB, "flush-B"), from: flushedPeer)
 _ = flushed.link.unhold(flushedPeer)
-check(inputs(flushedPeer).count == 1 && inputs(flushedPeer).first?.generation == "flush-A", "held queue flush transmits captured input after catalog update")
+check(inputs(flushedPeer).isEmpty, "held queue flush rejects revoked input after catalog update")
 flushResume.signal(); flushed.queue.sync {}
-check(events(flushedPeer).last == .key(hidUsage: 0x04, down: false, modifiers: 0) && inputs(flushedPeer).last?.generation == "flush-A", "delayed actual-send callback records original generation debt")
+check(inputs(flushedPeer).isEmpty, "revoked unsent input creates no actual-send release debt")
 
 let debt = VisionInputDebt(), debtPeer = NWConnection()
 let command = KeyModifiers.command.rawValue, shift = KeyModifiers.shift.rawValue

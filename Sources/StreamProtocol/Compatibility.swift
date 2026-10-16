@@ -113,9 +113,11 @@ public struct Hello: Codable, Sendable, Equatable {
     /// 1: this connection sends SourceInput whenever the catalog advertises inputGeneration.
     /// Missing from older clients, whose connection keeps the host's source selection pinned.
     public var sourceInput: Int?
+    public var presentationInput: Int?
 
-    public init(appVersion: String? = nil, build: String? = nil, protocol: Int? = nil, device: String? = nil, sourceInput: Int? = nil) {
+    public init(appVersion: String? = nil, build: String? = nil, protocol: Int? = nil, device: String? = nil, sourceInput: Int? = nil, presentationInput: Int? = nil) {
         self.appVersion = appVersion; self.build = build; self.protocol = `protocol`; self.device = device
         self.sourceInput = sourceInput
+        self.presentationInput = presentationInput
     }
 }

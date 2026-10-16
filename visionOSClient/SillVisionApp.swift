@@ -48,6 +48,12 @@ struct SillVisionWorkspace: View {
                         .accessibilityHint("이 Vision 앱이 누른 키와 드래그를 해제합니다.")
                     Spacer()
                     if input.moving { Text("연결 경로 전환 중").font(.caption) }
+                    else if client.visionInputBinding.isModern && !client.visionInputBinding.isConfirmed {
+                        Text("현재 Mac 화면의 표시 준비를 기다리는 중입니다.").font(.caption)
+                    }
+                    else if client.visionInputBinding.isLegacy {
+                        Text("이전 Mac 호환 모드입니다. 화면 세대 확인은 지원되지 않습니다.").font(.caption)
+                    }
                     else if client.visionInputBinding == .awaitingCatalog {
                         Text("Mac 화면 정보를 기다리는 중입니다. 입력은 확인 후 사용할 수 있습니다.").font(.caption)
                     }
@@ -64,6 +70,7 @@ struct SillVisionWorkspace: View {
         .onChange(of: inputAllowed) { _, _ in updateInputAdmission() }
         .onChange(of: phase, initial: true) { _, value in
             client.visionAudio.setForeground(value == .active)
+            client.setVisionPresentationForeground(value == .active)
             if value != .active { releaseInput() }
         }
         .onChange(of: client.connected) { _, connected in

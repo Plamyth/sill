@@ -6,20 +6,52 @@ enum VisionInputBinding: Equatable {
     case awaitingCatalog
     case confirmedLegacy
     case scoped(generation: String)
+    case awaitingPresentation(VideoEpoch?)
+    case presented(VideoEpoch)
 
     init(catalog: WindowList) {
-        if let generation = catalog.inputGeneration { self = .scoped(generation: generation) }
+        if catalog.presentationInput == 1 {
+            if let epoch = catalog.videoEpoch, epoch.matches(source: catalog.active, generation: catalog.inputGeneration) {
+                self = .awaitingPresentation(epoch)
+            } else { self = .awaitingPresentation(nil) }
+        }
+        else if let generation = catalog.inputGeneration { self = .scoped(generation: generation) }
         else { self = .confirmedLegacy }
     }
 
+    var epoch: VideoEpoch? {
+        switch self {
+        case .awaitingPresentation(let epoch): return epoch
+        case .presented(let epoch): return epoch
+        default: return nil
+        }
+    }
+
+    var isModern: Bool {
+        switch self {
+        case .awaitingPresentation, .presented: return true
+        default: return false
+        }
+    }
+
+    var isLegacy: Bool {
+        switch self {
+        case .confirmedLegacy, .scoped: return true
+        default: return false
+        }
+    }
+
     var isConfirmed: Bool {
-        if case .awaitingCatalog = self { return false }
-        return true
+        switch self {
+        case .awaitingCatalog, .awaitingPresentation: return false
+        case .confirmedLegacy, .scoped, .presented: return true
+        }
     }
 
     func capture(_ event: InputEvent) -> CapturedVisionInput? {
         switch self {
-        case .awaitingCatalog: return nil
+        case .awaitingCatalog, .awaitingPresentation: return nil
+        case .presented(let epoch): return CapturedVisionInput(event: event, generation: epoch.generation, videoEpoch: epoch.id)
         case .confirmedLegacy: return CapturedVisionInput(event: event, generation: nil)
         case .scoped(let generation): return CapturedVisionInput(event: event, generation: generation)
         }
@@ -29,11 +61,12 @@ enum VisionInputBinding: Equatable {
 struct CapturedVisionInput {
     let event: InputEvent
     let generation: String?
+    var videoEpoch: UUID? = nil
 
-    var payload: Data { SourceInput.payload(event, generation: generation) }
+    var payload: Data { SourceInput.payload(event, generation: generation, videoEpoch: videoEpoch) }
 
     func replacing(_ event: InputEvent) -> Self {
-        Self(event: event, generation: generation)
+        Self(event: event, generation: generation, videoEpoch: videoEpoch)
     }
 }
 
