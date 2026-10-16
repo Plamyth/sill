@@ -272,5 +272,32 @@ check("12 replacingNewKey keeps M unmarked, M itself, and M while N is not saved
 check("12 the same key answering after all: its pairing replaces the marked record, unmarked",
       SavedMacs.adding(savedMac(macM, fp: fpM, rk: rkM), to: keep).first.map { $0.macID == macM && $0.newKey == nil } == true)
 
+// A new app process may dial a saved Mac only after formal pairing. The preference is an ID,
+// never an unverified Bonjour name, and an invalid preferred record cannot select another Mac.
+var older = savedMac(macM, fp: fpM, rk: rkM)
+older.pairedAt = Date(timeIntervalSince1970: 100)
+var newest = savedMac(macN, fp: fpN, rk: rkN)
+newest.pairedAt = Date(timeIntervalSince1970: 200)
+check("13 cold launch migrates to the uniquely newest formally paired Mac",
+      SavedMacs.automaticTarget([older, newest], preferredID: nil)?.macID == macN)
+check("13 an explicit preferred ID wins over pairing order",
+      SavedMacs.automaticTarget([older, newest], preferredID: macM)?.macID == macM)
+check("13 a missing preferred ID does not fall through to another Mac",
+      SavedMacs.automaticTarget([older, newest], preferredID: "missing") == nil)
+var revoked = newest
+revoked.revoked = true
+var rotated = newest
+rotated.newKey = true
+var plain = newest
+plain.homeTLS = false
+check("13 revocation, changed key, and plain door block automatic trust",
+      SavedMacs.automaticTarget([older, revoked], preferredID: macN) == nil
+      && SavedMacs.automaticTarget([older, rotated], preferredID: macN) == nil
+      && SavedMacs.automaticTarget([older, plain], preferredID: macN) == nil)
+var tied = newest
+tied.pairedAt = older.pairedAt
+check("13 ambiguous migration needs a user selection",
+      SavedMacs.automaticTarget([older, tied], preferredID: nil) == nil)
+
 print(fails == 0 ? "ALL PASS (\(passes))" : "\(fails) FAIL, \(passes) pass")
 if fails > 0 { exit(1) }
