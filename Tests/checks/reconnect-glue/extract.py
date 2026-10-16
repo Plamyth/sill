@@ -59,7 +59,7 @@ def fixture():
     policy = (ROOT / 'iOSClient/DiscoveryPolicy.swift').read_text()
     files = {'main.swift': main, 'DiscoveryPolicy.swift': policy}
     if 'static func redialRow' in policy:
-        upstream = subprocess.check_output(['git', 'show', '03ca390b3ce7fcd05d81794b396e20d02ea56258:Tests/checks/policy/sleep.swift'], cwd=ROOT, text=True)
+        upstream = subprocess.check_output(['git', '--no-lazy-fetch', 'show', '03ca390b3ce7fcd05d81794b396e20d02ea56258:Tests/checks/policy/sleep.swift'], cwd=ROOT, text=True)
         selected = upstream[:upstream.index('    // MARK: The Desktop after a stop')]
         files['sleep.swift'] = selected + '}\n'
         receipts['upstreamSleepSelected'] = sha(selected.encode())

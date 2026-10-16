@@ -1,5 +1,9 @@
 import hashlib
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from swift_platform import select_platform
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -16,32 +20,23 @@ def fixture():
     stream = (ROOT / 'iOSClient/StreamClient.swift').read_text()
     markers = ['var connection: NWConnection?', 'private static func visionInputBytes(', 'private func applyVisionInputCatalog(', 'func cancelVisionInputs(', 'private func finishMove(']
     pieces = {m: block(stream, m) for m in markers}
-    send = block(stream, 'func sendInput(')
-    if '#if os(visionOS)' in send:
-        send = send[:send.index('#else')] + '\n}'
-    pieces['sendInput'] = send
+    pieces['sendInput'] = block(stream, 'func sendInput(')
     hello = block(stream, 'private static let helloPayload: Data =') + '()'
-    hello = hello.replace('#if DEBUG', '#if NEVER_FIXTURE_DEBUG')
-    def hello_for(vision):
-        selected = hello
-        for condition, enabled in [('NEVER_FIXTURE_DEBUG', False), ('os(visionOS)', vision)]:
-            begin = selected.index('#if ' + condition)
-            end = selected.index('#endif', begin)
-            content = selected[selected.index('\n', begin) + 1:end] if enabled else ''
-            selected = selected[:begin] + content + selected[end + len('#endif'):]
-        return selected
-    pieces['helloPayload'] = hello_for(True)
-    pieces['legacyHelloPayload'] = hello_for(False).replace('helloPayload:', 'legacyHelloPayload:')
+    pieces['helloPayload'] = select_platform(hello, vision=True)
+    pieces['iPadHelloPayload'] = select_platform(hello, vision=False).replace('helloPayload:', 'iPadHelloPayload:')
     teardown = block(stream, 'func tearDown(status:')
-    pieces['teardownInput'] = 'func teardownInput() {\n' + teardown[teardown.index('#if os(visionOS)'):teardown.index('        abandonMove()')] + '\n}'
+    start = teardown.index('#if os(visionOS)')
+    pieces['teardownInput'] = 'func teardownInput() {\n' + teardown[start:teardown.index('        abandonMove()')] + '\n}'
     move = block(stream, 'private func finishMoveAfterInputDrain(')
     start = move.index('        #if os(visionOS)')
     pieces['moveInputReset'] = move[start:move.index('#endif', start) + len('#endif')]
     pieces['bindingState'] = next(line.strip() for line in stream.splitlines() if '@Published private(set) var visionInputBinding =' in line)
-    body = '\n'.join(p for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState']).replace('#if os(visionOS)', '').replace('#else\n        finishMoveAfterInputDrain(c, kind: kind, kept: kept)\n        #endif', '').replace('#endif', '')
+    pieces['resumeSource'] = block(stream, 'if let resume = self.resumeSource')
+    pieces['resumeMethod'] = 'func resumeCatalog(_ list: WindowList) {\n' + pieces['resumeSource'] + '\n}'
+    body = '\n'.join(select_platform(p, vision=True) for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState', 'resumeSource'])
     overlay = (ROOT / 'iOSClient/InputOverlay.swift').read_text()
     pieces['takeVisionKeyReleases'] = block(overlay, 'func takeVisionKeyReleases()')
-    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', pieces['moveInputReset'].replace('#if os(visionOS)', '').replace('#endif', '')).replace('// BINDING_STATE', pieces['bindingState'].replace('@Published', '@SwiftUI.Published', 1))
+    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', select_platform(pieces['moveInputReset'], vision=True)).replace('// BINDING_STATE', pieces['bindingState'].replace('@Published', '@SwiftUI.Published', 1))
     files = {'Client.swift': stub.replace('// EXTRACTED', body), 'main.swift': (Path(__file__).parent / 'main.swift').read_text(), 'Network.swift': (Path(__file__).parent / 'Network.swift').read_text(), 'SwiftUI.swift': (Path(__file__).parent / 'SwiftUI.swift').read_text()}
     for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()

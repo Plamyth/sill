@@ -152,12 +152,18 @@ let hello = Wire.decode(Hello.self, from: StreamClient.hello)!
 check(hello.sourceInput == 1, "actual native Hello advertises scoped input")
 hostFence.negotiate("vision", supportsScoped: hello.sourceInput == 1)
 check(hostFence.allowsSelection(sourceB), "scoped Vision releases legacy source pin")
-let iPadHello = Wire.decode(Hello.self, from: StreamClient.legacyHello)!
-check(iPadHello.sourceInput == nil, "actual non-Vision Hello remains unadvertised")
+let iPadHello = Wire.decode(Hello.self, from: StreamClient.iPadHello)!
+check(iPadHello.sourceInput == 1, "actual iPad Hello advertises scoped input")
+var iPadFence = SourceInputFence<String>()
+_ = iPadFence.join("ipad", source: sourceA, switching: false)
+iPadFence.negotiate("ipad", supportsScoped: iPadHello.sourceInput == 1)
+check(iPadFence.allowsSelection(sourceB), "actual iPad Hello releases real host legacy pin")
+let oldHello = Wire.decode(Hello.self, from: Data("{}".utf8))!
+check(oldHello.sourceInput == nil, "genuinely old Hello has no source capability")
 var legacyFence = SourceInputFence<String>()
-_ = legacyFence.join("ipad", source: sourceA, switching: false)
-legacyFence.negotiate("ipad", supportsScoped: iPadHello.sourceInput == 1)
-check(!legacyFence.allowsSelection(sourceB), "unintegrated iPad retains real host legacy pin")
+_ = legacyFence.join("old", source: sourceA, switching: false)
+legacyFence.negotiate("old", supportsScoped: oldHello.sourceInput == 1)
+check(!legacyFence.allowsSelection(sourceB), "old Hello retains real host legacy pin")
 let composed = Wire.decode(WindowList.self, from: Wire.encode(catalog(sourceA, "A1")))!
 check(composed.remoteAudio == 1 && composed.inputGeneration == "A1", "catalog composes remote audio and generation")
 let oldCatalog = Wire.decode(WindowList.self, from: Data(#"{"macName":"Old Mac","windows":[],"active":{"desktop":{}}}"#.utf8))!
@@ -302,4 +308,32 @@ let debtUps = debt.release(on: debtPeer)
 check(debtUps.map(\.generation) == ["held-A", "scroll-A", "held-A", "held-A"], "each debt release retains its originating generation")
 check(debtUps.map(\.event) == [.pointer(.rightUp, x: q.x, y: q.y), .scrollGesture(.ended, x: p.x, y: p.y), .key(hidUsage: 0xE1, down: false, modifiers: command), .key(hidUsage: 0xE3, down: false, modifiers: 0)], "debt updates position and releases keys in reverse order with remaining flags")
 check(debt.release(on: debtPeer).isEmpty, "source debt release is idempotent")
+let resumeClient = StreamClient()
+let idleCatalog = catalog(.none, "idle")
+for prior in [StreamSource.window(999), .desktop] {
+    StreamClient.noAutoDesktop = true
+    resumeClient.resumeSource = prior
+    resumeClient.resumeCatalog(idleCatalog)
+    check(resumeClient.requested.isEmpty && resumeClient.resumeSource == nil,
+          "native automatic resume clears pending choice without source effects")
+    resumeClient.resumeCatalog(idleCatalog)
+    check(resumeClient.requested.isEmpty, "cleared native resume cannot carry into a later catalog")
+}
+StreamClient.noAutoDesktop = false
+resumeClient.resumeSource = .window(999)
+resumeClient.resumeCatalog(idleCatalog)
+check(resumeClient.requested == [.desktop] && resumeClient.resumeSource == nil,
+      "iPad automatic restore keeps peer missing-window desktop fallback")
+resumeClient.requested = []
+resumeClient.resumeSource = .window(42)
+let restoredWindow = WindowInfo(id: 42, title: "Still present", appName: "Fixture", bundleID: "fixture", width: 100, height: 100)
+resumeClient.resumeCatalog(catalog(.none, "idle", windows: [restoredWindow]))
+check(resumeClient.requested == [.window(42)] && resumeClient.resumeSource == nil,
+      "iPad automatic restore keeps peer surviving-window choice")
+resumeClient.requested = []
+resumeClient.resumeSource = .window(42)
+resumeClient.resumeCatalog(catalog(.desktop, "already-streaming"))
+check(resumeClient.requested.isEmpty && resumeClient.resumeSource == nil,
+      "active host consumes resume without replacing its source")
+StreamClient.noAutoDesktop = true
 print("Vision controls \(checks)/\(checks)")

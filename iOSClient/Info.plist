@@ -13,6 +13,11 @@
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Finds your Mac on the local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<!-- The Debug configuration builds from Info-Debug.plist: this file plus the test service type
 	     (docs/home-pairing-plan.md §7.9). A key added here goes there too. -->
 	<key>NSBonjourServices</key>
@@ -22,18 +27,6 @@
 	<!-- Add a Mac: the embedded scanner reads the pairing code the Mac shows. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Sill scans the code on your Mac to pair with it.</string>
-	<!-- sill://pair links from the Camera or Messages. Never acted on without a confirmation, since
-	     another app could claim the scheme too; the in-app scanner is the main path. -->
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>me.saffer.sill.pair</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>sill</string>
-			</array>
-		</dict>
-	</array>
+	<!-- The official app owns external sill:// links. The embedded scanner reads them directly. -->
 </dict>
 </plist>

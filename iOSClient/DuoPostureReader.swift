@@ -1,17 +1,10 @@
 import SwiftUI
 
-// Feeds DuoPosture (the pure rules, DuoPosture.swift) from iOS 27.1's foldable APIs, and hands the
-// layouts what they need (docs/iphone-duo-plan.md). Nothing here runs before iOS 27.1, and on a
-// device without a hinge iOS 27.1 reports none: the environment then says `unknown`, and every layout
-// is what it was.
+// The iPad fork builds with Xcode 27.0, whose SDK has no iPhone Duo hinge APIs. The physical
+// posture stays unknown; the existing DEBUG layout harness can still provide its stand-in.
 //
-// - The hinge: `View.onHingeChange` at the app's root (SillApp, `readsDuoPosture()`), into the
-//   environment as `\.duoEnvironment`. Its change is what redraws the screens that read it.
-// - The fold: each screen reads it from its own GeometryReader (`DuoPosture.read`), as
-//   `GeometryProxy.reservedRegions(kind: .division, options: .includeInactive)` gives it: in that
-//   reader's own space. The stream screen hands it to its layouts and overlays as `\.duoFold`.
-//   Before the hinge's first report the fold alone says which display this is and whether it is
-//   folded (DuoPosture.hinge(reported:regionActive:)), so the first layout is already the pose's.
+// The stream screen hands a fold to its layouts and overlays as `\.duoFold` only when the harness
+// supplies one.
 // - The stream screen hides the status bar on the inner display in every pose
 //   (DuoPosture.hidesStatusBar, `duoStatusBar`); every other screen keeps it.
 //
@@ -55,7 +48,7 @@ extension EnvironmentValues {
 }
 
 extension View {
-    /// The app's root: the Duo's hinge into the environment. Nothing at all before iOS 27.1.
+    /// The iPad fork does not read physical hinge state.
     func readsDuoPosture() -> some View { modifier(DuoPostureReader()) }
 
     /// The stream screen's status bar (DuoPosture.hidesStatusBar): hidden on the inner display in
@@ -84,38 +77,8 @@ extension View {
 }
 
 private struct DuoPostureReader: ViewModifier {
-    @State private var hinge: DuoPosture.Hinge = .unknown
-
     func body(content: Content) -> some View {
-        if #available(iOS 27.1, *) {
-            content
-                .environment(\.duoEnvironment, DuoEnvironment(hinge: hinge))
-                .onHingeChange { _, new in
-                    let now = DuoPosture.Hinge(new)
-                    guard now != hinge else { return }      // it repeats itself while it settles
-                    #if DEBUG
-                    print("duo: hinge \(now.rawValue)" + (new.hinge.map { String(format: " %.1f°", $0.angle.degrees) } ?? ""))
-                    #endif
-                    hinge = now
-                }
-        } else {
-            content
-        }
-    }
-}
-
-@available(iOS 27.1, *)
-extension DuoPosture.Hinge {
-    init(_ context: DeviceHingeContext) {
-        guard let hinge = context.hinge else { self = .unknown; return }
-        // A struct of statics, not an enum: anything else it may say later counts as partly open.
-        if hinge.status == .closed {
-            self = .closed
-        } else if hinge.status == .fullyOpen {
-            self = .fullyOpen
-        } else {
-            self = .partiallyOpen
-        }
+        content
     }
 }
 
@@ -132,12 +95,6 @@ extension DuoPosture {
             let origin = geo.frame(in: .named(displaySpace)).origin
             return DuoPosture(hinge: environment.hinge, fold: fold?.offsetBy(dx: -origin.x, dy: -origin.y))
         case .reservedRegions:
-            if #available(iOS 27.1, *) {
-                let region = geo.reservedRegions(kind: .division, options: .includeInactive).first
-                let hinge = hinge(reported: environment.hinge, regionActive: region?.isActive)
-                guard hinge != .unknown else { return .unknown }
-                return DuoPosture(hinge: hinge, fold: region?.frame)
-            }
             return .unknown
         }
     }

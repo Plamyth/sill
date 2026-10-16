@@ -42,6 +42,15 @@ package final class StreamCoordinator {
     let server: StreamServer
     let catalog = WindowCatalog()
     let capture = WindowCapture()
+    /// Separate from video: source changes revoke consent without muting the Mac.
+    private let remoteAudioCapture = SystemAudioCapture()
+    private var remoteAudioSubscribers: Set<ObjectIdentifier> = []
+    private var remoteAudioRequests: [ObjectIdentifier: UUID] = [:]
+    private var remoteAudioActions: [ObjectIdentifier: UInt64] = [:]
+    private var nextRemoteAudioAction: UInt64 = 0
+    private var remoteAudioEpoch: UInt64 = 0
+    private var remoteAudioRunning = false
+    private let remoteAudioLifecycle = RemoteAudioCaptureLifecycle()
     /// `--synthetic`: the Desktop source streams a test pattern instead of the screen.
     let synthetic: Bool
     let syntheticCapture = SyntheticCapture()
@@ -143,8 +152,12 @@ package final class StreamCoordinator {
             set { lock.lock(); value = newValue; lock.unlock() }
         }
     }
+    private var inputGeneration = UUID().uuidString
+    private var inputFence = SourceInputFence<ObjectIdentifier>()
     package private(set) var active: StreamSource = .none {
         didSet {
+            if active != oldValue { inputGeneration = UUID().uuidString }
+            inputFence.sourceChanged(to: active)
             if case .window(let id) = active { catalog.activeWindowID = id } else { catalog.activeWindowID = nil }
             if active == .none { status.update { $0.stream = nil } }
             server.setStreaming(active != .none)   // link keepalive ticks while a source is live
@@ -338,6 +351,10 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 let id = ObjectIdentifier(connection)
+                guard self.inputFence.join(id, source: self.active, switching: self.switching) else {
+                    connection.cancel()
+                    return
+                }
                 self.routes[id] = route
                 // A paired device shows its paired name until its own stats arrive, and a remote one
                 // its route; a home device its link (Wired, Wi-Fi, Direct) as soon as it is known.
@@ -376,15 +393,20 @@ package final class StreamCoordinator {
                 self.settingsArrivals[ObjectIdentifier(connection)] = nil
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
                 let id = ObjectIdentifier(connection)
+                self.inputFence.leave(id)
                 self.gestureArrivals[id] = nil
                 self.routes[id] = nil
                 self.lastPairingWanted[id] = nil
                 self.connections[id] = nil
+                self.remoteAudioSubscribers.remove(id)
+                self.remoteAudioRequests[id] = nil
+                self.remoteAudioActions[id] = nil
+                if self.remoteAudioSubscribers.isEmpty { self.stopRemoteAudioIfIdle() }
                 self.lastPublished[id] = nil
                 self.linkReports[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
                 self.menus.clientLeft(connection)
-                self.releaseKeys(of: id)
+                self.releaseInput(of: id)
                 self.status.update { $0.devices.removeAll { $0.id == id } }
                 // The last device at home left devices away behind: the away quality, at once.
                 let flipped = self.routesChanged(joined: nil, endpoint: nil)
@@ -443,6 +465,9 @@ package final class StreamCoordinator {
             print("Capture stopped: \(error.localizedDescription)")
             Task { @MainActor in await self?.select(.none) }
         }
+        remoteAudioCapture.onStopped = { [weak self] _ in
+            Task { @MainActor in await self?.revokeRemoteAudio(reason: "capture stopped") }
+        }
         // Status for the menu bar app. The server's callbacks hop here from its network queue; the
         // stats tick runs on the main queue, which under the CLI's dispatchMain is drained by a
         // worker thread, so it hops too instead of assuming main-actor isolation (that traps).
@@ -475,9 +500,11 @@ package final class StreamCoordinator {
         server.onClientHello = { [weak self] connection, hello in
             let id = ObjectIdentifier(connection)
             let name = SafeText.label(hello.device ?? "")
-            guard !name.isEmpty else { return }
             Task { @MainActor in
-                self?.status.update {
+                guard let self else { return }
+                self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
+                guard !name.isEmpty else { return }
+                self.status.update {
                     guard let i = $0.devices.firstIndex(where: { $0.id == id }), $0.devices[i].name == nil else { return }
                     $0.devices[i].name = name
                 }
@@ -892,15 +919,18 @@ package final class StreamCoordinator {
                 if let error { print("Launch failed: \(error.localizedDescription)") }
             }
         case .input:
-            guard let event = Wire.decode(InputEvent.self, from: message.payload) else { return }
             let device = ObjectIdentifier(connection)
-            guard let rect = currentSourceRect() else {
-                // Nothing streams (between sources, or the stream stopped: the window closed under a
-                // drag): input has nowhere to land. The up of a key or a button the Mac has down still
+            guard inputFence.contains(device) else { return }
+            let scoped = Wire.decode(SourceInput.self, from: message.payload)
+            guard let event = scoped?.event ?? Wire.decode(InputEvent.self, from: message.payload) else { return }
+            guard !switching, inputFence.accepts(device, generation: scoped?.generation, current: inputGeneration, source: active),
+                  let rect = currentSourceRect() else {
+                // Stale input, a switch in progress, or no stream: input has nowhere
+                // to land. The up of a key or a button the Mac has down still
                 // goes (DroppedInput), a button's where the pointer is (`.null`), so no modifier this
                 // device pressed stays down to make a later click a ⌘-click, and no button to make
                 // every later move a drag.
-                if injector.isUpOfSomethingDown(event) { deliver(event, in: .null, from: device) }
+                if injector.isUpOfSomethingDown(event, from: device) { deliver(event, in: .null, from: device) }
                 return
             }
             // A click, a key or text may close a view a gesture opened; a move or a scroll does not.
@@ -926,6 +956,9 @@ package final class StreamCoordinator {
             recent.append(now)
             gestureArrivals[id] = recent
             queueGesture(gesture, from: deviceName(connection))
+        case .remoteAudioControl:
+            guard let request = Wire.decode(RemoteAudioSubscription.self, from: message.payload) else { return }
+            await controlRemoteAudio(request, from: connection)
         case .viewport:
             guard let v = Wire.decode(Viewport.self, from: message.payload) else { return }
             viewport = v
@@ -1175,8 +1208,14 @@ package final class StreamCoordinator {
     /// comes forward too, whichever select commits that change (see `cameHome`).
     func select(_ source: StreamSource, bringForward: Bool = false) async {
         guard !switching, !shuttingDown else { return }
+        guard inputFence.allowsSelection(source) else {
+            print("Source change paused: older Sill clients must disconnect or update before selecting another source.")
+            broadcastList()
+            return
+        }
         switching = true
         restartOf = (source == active && source != .none) ? source : nil
+        await revokeRemoteAudio(reason: "source changed")
         defer {
             switching = false
             restartOf = nil
@@ -1221,18 +1260,19 @@ package final class StreamCoordinator {
         // Mac still goes, in order: a gesture's chord held behind it, and the up of a key or a button
         // the Mac has down (DroppedInput: a modifier left down makes the next click a ⌘-click, a
         // button every move a drag), a button's where the pointer is (`.null`), not where the old
-        // source would have put it. The keys of devices that left meanwhile go up after them.
+        // source would have put it. The keys and buttons of devices that left go up after them.
         let dropped = heldInput
         heldInput = []; holdUntil = 0
         for item in dropped {
             switch item {
             case .input(let event, _, let device):
-                if injector.isUpOfSomethingDown(event) { injector.apply(event, in: .null, from: device) }
+                if injector.isUpOfSomethingDown(event, from: device) { injector.apply(event, in: .null, from: device) }
             case .chord(let keyCode, let flags):
                 injector.chord(keyCode: keyCode, flags: flags)
+            case .disconnect(let device):
+                injector.releaseInput(of: device)
             }
         }
-        releaseKeysOfDevicesThatLeft()
         encoder = nil                  // deinit invalidates the VT session
         server.resetForNewStream()          // every client waits for the next parameter sets + keyframe
         // New settings take effect here, between pipelines, before the rate, the scale and the
@@ -1474,11 +1514,13 @@ package final class StreamCoordinator {
     /// Input held for an activation, replayed in order once the app is up, each with the device that
     /// sent it (its keys are its own, KeyStrokes); a gesture's chord that arrives meanwhile waits
     /// behind it, so a click just before the gesture lands first.
-    private enum Held { case input(InputEvent, CGRect, KeyStrokes.Device), chord(keyCode: UInt16, flags: UInt64) }
+    private enum Held {
+        case input(InputEvent, CGRect, KeyStrokes.Device)
+        case chord(keyCode: UInt16, flags: UInt64)
+        case disconnect(KeyStrokes.Device)
+    }
     private var heldInput: [Held] = []
     private var holdUntil: CFAbsoluteTime = 0
-    /// Devices that left while input was held: their keys go up after it (`releaseKeys`).
-    private var leftWhileHeld: [KeyStrokes.Device] = []
     /// How long held input waits for the app to become frontmost before it is replayed anyway.
     private static let activationTimeout: TimeInterval = 0.6
 
@@ -1490,6 +1532,7 @@ package final class StreamCoordinator {
     }
 
     private func releaseHeldInput() {
+        guard !switching else { return }
         holdUntil = 0
         let held = heldInput
         heldInput = []
@@ -1497,23 +1540,19 @@ package final class StreamCoordinator {
             switch item {
             case .input(let event, let rect, let device): logClick(event, in: rect); injector.apply(event, in: rect, from: device)
             case .chord(let keyCode, let flags): injector.chord(keyCode: keyCode, flags: flags)
+            case .disconnect(let device): injector.releaseInput(of: device)
             }
         }
-        releaseKeysOfDevicesThatLeft()
     }
 
-    /// A device left: the keys it still holds down on the Mac go up (InputInjector.releaseKeys),
-    /// after whatever of its input is still held for an activation, so no up of its own is overtaken
-    /// and no down of its own comes after.
-    private func releaseKeys(of device: KeyStrokes.Device) {
-        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil { leftWhileHeld.append(device); return }
-        injector.releaseKeys(of: device)
-    }
-
-    private func releaseKeysOfDevicesThatLeft() {
-        let left = leftWhileHeld
-        leftWhileHeld = []
-        for device in left { injector.releaseKeys(of: device) }
+    /// A device left: its keys and buttons go up (InputInjector.releaseInput),
+    /// after its earlier input and before later input from another device.
+    private func releaseInput(of device: KeyStrokes.Device) {
+        if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil {
+            heldInput.append(.disconnect(device))
+            return
+        }
+        injector.releaseInput(of: device)
     }
 
     private func raiseIfInteracting(_ event: InputEvent) {
@@ -2236,10 +2275,122 @@ package final class StreamCoordinator {
         StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
-                                                      gestures: TrackpadGesture.generation)))
+                                                      gestures: TrackpadGesture.generation,
+                                                      remoteAudio: synthetic ? nil : 1,
+                                                      inputGeneration: inputGeneration)))
     }
 
     private func broadcastList() { server.broadcast(listMessage()) }
+
+    private func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil,
+                                  to connection: NWConnection) {
+        server.send(StreamMessage(kind: .remoteAudioState, timestamp: Date().timeIntervalSince1970,
+                                  isKeyframe: false,
+                                  payload: Wire.encode(RemoteAudioState(enabled: enabled, requestID: requestID,
+                                                                        reason: reason))), to: connection)
+    }
+
+    private func stopRemoteAudioIfIdle() {
+        guard remoteAudioSubscribers.isEmpty, !remoteAudioLifecycle.isStopping else { return }
+        remoteAudioRunning = false
+        remoteAudioLifecycle.scheduleStop { [weak self] in
+            guard let self, self.remoteAudioSubscribers.isEmpty else { return }
+            await self.remoteAudioCapture.stop()
+        }
+    }
+
+    private func revokeRemoteAudio(reason: String) async {
+        let old = remoteAudioSubscribers.compactMap { connections[$0] }
+        remoteAudioSubscribers.removeAll()
+        remoteAudioRequests.removeAll()
+        remoteAudioActions.removeAll()
+        let epoch = await withCheckedContinuation { continuation in
+            server.resetRemoteAudio { continuation.resume(returning: $0) }
+        }
+        remoteAudioEpoch = max(remoteAudioEpoch, epoch)
+        for connection in old { remoteAudioState(false, requestID: nil, reason: reason, to: connection) }
+        stopRemoteAudioIfIdle()
+        await remoteAudioLifecycle.waitUntilIdle()
+    }
+
+    private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID, action: UInt64,
+                                      epoch: UInt64? = nil) -> Bool {
+        !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
+        routes[id] != nil && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
+        (epoch == nil || epoch == remoteAudioEpoch)
+    }
+
+    private func controlRemoteAudio(_ request: RemoteAudioSubscription, from connection: NWConnection) async {
+        let id = ObjectIdentifier(connection)
+        guard routes[id] != nil else { return }
+        nextRemoteAudioAction &+= 1
+        let action = nextRemoteAudioAction
+        remoteAudioRequests[id] = request.requestID
+        remoteAudioActions[id] = action
+        if !request.enabled {
+            remoteAudioSubscribers.remove(id)
+            server.setRemoteAudio(false, for: connection)
+            remoteAudioState(false, requestID: request.requestID, to: connection)
+            stopRemoteAudioIfIdle()
+            return
+        }
+        guard canEnableRemoteAudio(id, requestID: request.requestID, action: action) else {
+            remoteAudioState(false, requestID: request.requestID, reason: "source unavailable", to: connection)
+            return
+        }
+        // A stop can be scheduled while the capture-queue boundary is pending. Retry
+        // only after that stop has finished; never ACK a stream that is about to close.
+        for _ in 0..<3 {
+            guard await remoteAudioLifecycle.waitToStart(if: {
+                self.canEnableRemoteAudio(id, requestID: request.requestID, action: action)
+            }) else {
+                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                return
+            }
+            let epoch = remoteAudioEpoch
+            if !remoteAudioRunning || !remoteAudioCapture.hasStream {
+                if let display = catalog.display {
+                    guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
+                                               epoch: epoch) else { return }
+                    remoteAudioCapture.onPacket = { [server] payload, sequence in
+                        server.broadcastRemoteAudio(payload, epoch: epoch, sequence: sequence)
+                    }
+                    let start = remoteAudioLifecycle.acquireStart { [remoteAudioCapture] in
+                        do { try await remoteAudioCapture.start(display: display); return true }
+                        catch { return false }
+                    }
+                    let started = await remoteAudioLifecycle.settleStart(start)
+                    guard started else {
+                        remoteAudioState(false, requestID: request.requestID, reason: "capture unavailable", to: connection)
+                        return
+                    }
+                } else {
+                    remoteAudioState(false, requestID: request.requestID, reason: "source unavailable", to: connection)
+                    return
+                }
+            }
+            guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
+                                       epoch: epoch) else {
+                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                return
+            }
+            if remoteAudioLifecycle.isStopping || !remoteAudioCapture.hasStream { continue }
+            // Serial with every capture callback; drop a partial packet at the boundary.
+            let boundary = await remoteAudioCapture.subscriptionBoundary()
+            guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
+                                       epoch: epoch) else {
+                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                return
+            }
+            if remoteAudioLifecycle.isStopping || !remoteAudioCapture.hasStream { continue }
+            remoteAudioRunning = true
+            remoteAudioSubscribers.insert(id)
+            server.setRemoteAudio(true, for: connection, afterSequence: boundary)
+            remoteAudioState(true, requestID: request.requestID, to: connection)
+            return
+        }
+        remoteAudioState(false, requestID: request.requestID, reason: "capture changing", to: connection)
+    }
 
     private func sendCatalog(to connection: NWConnection) {
         let now = Date().timeIntervalSince1970

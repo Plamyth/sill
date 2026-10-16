@@ -1,0 +1,1833 @@
+{
+  "workKey": "sill-unified-client-20261016",
+  "parents": [
+    "f331d8d307fb301e1c0f2bfd71e4a83a76d62dbc",
+    "3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5"
+  ],
+  "parentTrees": {
+    "f331d8d307fb301e1c0f2bfd71e4a83a76d62dbc": "fd736e09108f5d83453034dbfed63535b9a1c4ad",
+    "3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5": "9c9c4e3e488fed1d038b1a4264cfdf695f72047f"
+  },
+  "groups": {
+    "peer_host_and_probes": {
+      "parent": "3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5",
+      "files": {
+        "Sources/CaptureProbe/main.swift": {
+          "mode": "100644",
+          "blob": "833bf37258d0afc093d8b8e3cd7acab63f6d9375",
+          "sha256": "dfcc2c8ad9c29e7af5a7e271910ae4cc1061be2b2c8946beae731e6aa83243d1"
+        },
+        "Sources/SillHost/AddressList.swift": {
+          "mode": "100644",
+          "blob": "97b1332bcb827ee7f8752f23d14ef9775adae1ea",
+          "sha256": "275d75d9ee5b14c0d4db2b3399dfa18b7f16e6177e559a39daa7eb325334703d"
+        },
+        "Sources/SillHost/AwayPolicy.swift": {
+          "mode": "100644",
+          "blob": "b4b67a8f6f6dcfe5edb1061030e42d14dbf81e3f",
+          "sha256": "add28205ac0de00b121e3b62d5c7d319446d62983cc3f6f9ef2c3a05bd23cbf8"
+        },
+        "Sources/SillHost/CableLink.swift": {
+          "mode": "100644",
+          "blob": "311cc9b565778adede3ece6e427adafbf71f9d4e",
+          "sha256": "ad432da0e5e2a0958d3458732356460e39cbd7da33f2bdfaabc2d878b7c30666"
+        },
+        "Sources/SillHost/CableReport.swift": {
+          "mode": "100644",
+          "blob": "e9a023933ea6737016c7033590534ed5c1541c25",
+          "sha256": "675e14662d285521ffd33d9e4fc5e56d912e391509d8539ac5f80e8a1bcb02dc"
+        },
+        "Sources/SillHost/ClientLink.swift": {
+          "mode": "100644",
+          "blob": "af4b6f3660486db8450b7f8f4e6204e3ec450ca6",
+          "sha256": "03e402aa2d91fd37da0fea3a104b4de761ab54a33ddcf306ca898ae4b0954e0c"
+        },
+        "Sources/SillHost/CursorShapeWatcher.swift": {
+          "mode": "100644",
+          "blob": "52d7d29d18fca6ee8ab155bf85c18339eefe5431",
+          "sha256": "e924fb2c758fa4da8086855c3f44a0afaed09fe21ae613659950fc90ffafcef4"
+        },
+        "Sources/SillHost/DeviceGate.swift": {
+          "mode": "100644",
+          "blob": "4bbdb1e4b168473c88384b81e12fb4b147476586",
+          "sha256": "8a053c17d2e4298945513cca36d4452e35071454ffb2e2c034e2f12190f1dbac"
+        },
+        "Sources/SillHost/DeviceSettings.swift": {
+          "mode": "100644",
+          "blob": "e6f30521ad7bae529951bf767ca873e1f974c7e4",
+          "sha256": "9c49b44885725f7b6f7d6c9d730410c9a34dd96592343f3a2ae95251d0ffebba"
+        },
+        "Sources/SillHost/Door.swift": {
+          "mode": "100644",
+          "blob": "f64810c80e23ebf5edb0cf878699b26e0744f957",
+          "sha256": "a3b4e1f1fb59b2782b3c98822a074cdf42f2e602e49e43667e1f09a2725a4a5f"
+        },
+        "Sources/SillHost/DoorPolicy.swift": {
+          "mode": "100644",
+          "blob": "74c84f88bdeaa986eb6cf97c41dacf045c16a307",
+          "sha256": "efc1516a222a7f5a6504fd526778bf707ad9ad9fc250e615cd689bac77d06f73"
+        },
+        "Sources/SillHost/EncoderMailbox.swift": {
+          "mode": "100644",
+          "blob": "6375e92f2d5a2344e49e2f5c03201ef29412efda",
+          "sha256": "a9ed3b7273a9619562e2279062211c44fbf393024832704ef2ab432b828de3fd"
+        },
+        "Sources/SillHost/EncoderProbe.swift": {
+          "mode": "100644",
+          "blob": "0952ff98aa1ff0ab1f33baee164909d746a494d7",
+          "sha256": "6a3b7a8e65f660d60c34d5fd9d224cb42552d19dfde66186a05058bb6baa66eb"
+        },
+        "Sources/SillHost/EncoderSelfTest.swift": {
+          "mode": "100644",
+          "blob": "573482f9745e48ad43b10e1dffe623ff9ceb5f14",
+          "sha256": "9043ae6ff564928a3cf997b9767fd9439ff0753b3c1a836f6f7e351419c604f6"
+        },
+        "Sources/SillHost/EncoderSlowState.swift": {
+          "mode": "100644",
+          "blob": "f86213aa35726767444c95b1998cc976a171f0f2",
+          "sha256": "83612b3177cd4d8ae82bd246ec6c058902eed65b821cf4dcf2c3d328b441bc2e"
+        },
+        "Sources/SillHost/GestureChords.swift": {
+          "mode": "100644",
+          "blob": "35ab6eaf6ec77e2aecf151d7f4beefe5f0e02419",
+          "sha256": "c7d39e9c41b85538267d24486127ec027e3aafd2cf85e5baa50ec8bbece59931"
+        },
+        "Sources/SillHost/HEVCEncoder.swift": {
+          "mode": "100644",
+          "blob": "089ca167d3eea8b0d9ef7cc2a6a693b854285537",
+          "sha256": "5c03b55111be4c5bd234cb1253f20ea54fb60266b3a4928fea5cd75ce171fc7d"
+        },
+        "Sources/SillHost/HostConfig.swift": {
+          "mode": "100644",
+          "blob": "52506621d429591e16453f48f3222674d9f60b36",
+          "sha256": "171eaa9a98135f8b154cd2995e407a3296f4b7a15248f62b63bef06ff40d9d0e"
+        },
+        "Sources/SillHost/HostIdentity.swift": {
+          "mode": "100644",
+          "blob": "f5e0992e80d2490492c9bd7e4a68f9a3b1f840d5",
+          "sha256": "0666c35ed14b619f0f1ed834c030d9a51e915e3c6af3fa7ce5c696e1e534ce86"
+        },
+        "Sources/SillHost/HostLog.swift": {
+          "mode": "100644",
+          "blob": "01c9f2a03bba61a7733f35d993915e3afbc2d892",
+          "sha256": "d6876592ae0656dd02acf992bd6109079f17b1f93495e98692615247642edabc"
+        },
+        "Sources/SillHost/HostShutdown.swift": {
+          "mode": "100644",
+          "blob": "b0f3030ef8e90dc5f16a29a711e46ec558991ed6",
+          "sha256": "d43319ef8cb45d6e05f6f156549addf48a10c4cfe00674a2ff8d27483340efd0"
+        },
+        "Sources/SillHost/HostStatus.swift": {
+          "mode": "100644",
+          "blob": "950ad972798c8736897812c4dd45c54778877257",
+          "sha256": "c995551a721d93466ff9193d046a4a34c6dd354d801bf72707eeea2e47f86b31"
+        },
+        "Sources/SillHost/InputInjector.swift": {
+          "mode": "100644",
+          "blob": "e2b77afbcae4414f8ff8156159ea6fef504de5c3",
+          "sha256": "a2330c4198a8689342423ac1e065e0dc7fe4d4a305ddb64d79a552b18d521538"
+        },
+        "Sources/SillHost/InterfaceSnapshot.swift": {
+          "mode": "100644",
+          "blob": "761b3d0380baca87d4c6dab737993f385be98ffd",
+          "sha256": "f70edfe85d96c9e2841bdc86a2de80e07284f72c49144d55f7df6c4d4c0e59f2"
+        },
+        "Sources/SillHost/KeyStrokes.swift": {
+          "mode": "100644",
+          "blob": "062b42b8dec1ba2a686ddc2f67014cb83c591bcb",
+          "sha256": "3bedd3e608fac01197d30a06eea41ee5f4e7605662f456047dc044dd203aa21c"
+        },
+        "Sources/SillHost/KeychainIdentityStore.swift": {
+          "mode": "100644",
+          "blob": "efccafbc32d11325596cd0e1dd24b0ad3037a5ca",
+          "sha256": "939dcaaed22c9ce4d21b4cf113225d32dead68d1fc54a7cb75bf41a3a814e823"
+        },
+        "Sources/SillHost/LinkJudge.swift": {
+          "mode": "100644",
+          "blob": "d7a6cea3714008bba7806a5ba09fba315d99f5c8",
+          "sha256": "27e17259034c48716ed4b96666786da542c62b7790458df362118eec621ae8a9"
+        },
+        "Sources/SillHost/MenuFormat.swift": {
+          "mode": "100644",
+          "blob": "3d3fa45f2b57b2b170a8504113e81c3814c6051e",
+          "sha256": "241bd3975c670ac08137659e7dfe7277f99f1446c430b9a984f4e0ef431010ee"
+        },
+        "Sources/SillHost/MenuMirror.swift": {
+          "mode": "100644",
+          "blob": "49c9aa7af2787977bf86caab758aa193fea3dbf1",
+          "sha256": "00bed9bde692cbcbb4ee66b7293a8c648fa46214b04bf4d149d5a33e92509938"
+        },
+        "Sources/SillHost/MenuPolicy.swift": {
+          "mode": "100644",
+          "blob": "a12c82acb3176b7f42f17948139a0ef4f841b642",
+          "sha256": "fdf17672ef8f91052fdf30c08b34407f74d89992adb187d6b3e8b6883eea852e"
+        },
+        "Sources/SillHost/MenuReader.swift": {
+          "mode": "100644",
+          "blob": "203792a2a4b32484171ab90844b9754fc9533551",
+          "sha256": "20434ab9a9f90d95cad5a230dafed03b48e3b8591e877f29f992d8b44a542647"
+        },
+        "Sources/SillHost/MenuSelfTest.swift": {
+          "mode": "100644",
+          "blob": "e1faa51653d40461c8d6353243b582c3b15aa77c",
+          "sha256": "aa28d2e066d2584c03143ce005e39ffcfc303e08c7c28726bfdbe3901312482a"
+        },
+        "Sources/SillHost/OriginPolicy.swift": {
+          "mode": "100644",
+          "blob": "ea233474cb70b5c132dd9ae03bc21445b1928e5d",
+          "sha256": "c263125add93da1c21e1a2238a3368e85e4eca10ed6843710fa6df922ee7cda3"
+        },
+        "Sources/SillHost/PairingWindow.swift": {
+          "mode": "100644",
+          "blob": "3c1498b2c90b961ab05c20ac3bf9368ee0fa7e19",
+          "sha256": "154e016109c4ce30804fb038cf8c5fee01cdc701b391041fc9815e8590991355"
+        },
+        "Sources/SillHost/PointerControl.swift": {
+          "mode": "100644",
+          "blob": "fd5772c9ac813d6e69ee5c451f39bc9af8a65aef",
+          "sha256": "b6f7687be0eb2fe4bdd0da445f90d8c0ef001f37890d76ee36e33e37c85b4f52"
+        },
+        "Sources/SillHost/PointerWatch.swift": {
+          "mode": "100644",
+          "blob": "4b42583519f89e010195199d4d38894b180aa919",
+          "sha256": "222c9b5af914fed8e42986d297df2c9e8cbedeca7b11e32d5eb73cf6f34d667d"
+        },
+        "Sources/SillHost/Reachability.swift": {
+          "mode": "100644",
+          "blob": "868984f4cad8d7084ca727fc6a614d1bb45e02b6",
+          "sha256": "7a810093eb5059ca7523ad3d3b1cde5e62f6b5469c52c55e410cbde3365001c5"
+        },
+        "Sources/SillHost/RefusalSummary.swift": {
+          "mode": "100644",
+          "blob": "e78ebf229b40a4399fd1ef337a4101d3e84bfa4c",
+          "sha256": "8afe3ca80f80a0be104dcb6a3b7bd868d4f2a6898e6cb065952c3827dd7c3982"
+        },
+        "Sources/SillHost/RemoteAccess.swift": {
+          "mode": "100644",
+          "blob": "61129b7593ff5c21ab20b114dad18f03c29ff848",
+          "sha256": "0e68d8dfc2c98ac7bb99bc2c3d43552907f32cb0f4dd97330e004e4723ec8414"
+        },
+        "Sources/SillHost/RemoteAudioCaptureLifecycle.swift": {
+          "mode": "100644",
+          "blob": "9b9780b44eff573940266d7e3077d8bc4151bd03",
+          "sha256": "8c91f95f052d8beb202e392a8a3d037e2b415ce1557f37ab3af919d5f8eba35c"
+        },
+        "Sources/SillHost/RemoteServer.swift": {
+          "mode": "100644",
+          "blob": "4e56d42e1a087229ee01fac16531fbf7163c9170",
+          "sha256": "36cff53c90158f4d6cfffb952db6f367391a7d8072cab42684b4191fbf58a755"
+        },
+        "Sources/SillHost/RouterAddress.swift": {
+          "mode": "100644",
+          "blob": "bea52e41eb6a42e3658688e7b2d3e3e55cacade1",
+          "sha256": "bf3e365b28d9ceb99dee8aacc2adfdf7c2f2ac8ff63365149c36aecd0feccf10"
+        },
+        "Sources/SillHost/SessionLock.swift": {
+          "mode": "100644",
+          "blob": "afd13c811c4e747361e2f4abb4c4826bbd63baab",
+          "sha256": "4c55bb7af20335ca57b3006bc8225c955425fd576cb8f7f81c8c4001caa3d3f5"
+        },
+        "Sources/SillHost/SourceInputFence.swift": {
+          "mode": "100644",
+          "blob": "17918baec9691e5118000c42e348717bb29ef341",
+          "sha256": "8888d01a3af2b5d4883e72cb293d0233566119a2ced7943765079cc10b9aeedb"
+        },
+        "Sources/SillHost/Stats.swift": {
+          "mode": "100644",
+          "blob": "03d51f842df3757014395c80f891aeb8a3b64ca6",
+          "sha256": "153156e433db345d7f136215612d09e90389a4da461f0ed4ee6d623e6d1cb6be"
+        },
+        "Sources/SillHost/StreamCoordinator.swift": {
+          "mode": "100644",
+          "blob": "611f0f04abf743c2821922d0d018f6d60aaf84b4",
+          "sha256": "f485b40bbe73fa7bc477fde1085e6ab66d3976c63b44bb3dbed00cfb6a29864d"
+        },
+        "Sources/SillHost/StreamServer.swift": {
+          "mode": "100644",
+          "blob": "bbc64d7feae3bb73edc6d936e56266df27531f0c",
+          "sha256": "c3abe206f840295d7db56f0c2b8f2aa4bb3d1701228a3013d6c1b2e2f2f2390e"
+        },
+        "Sources/SillHost/SymbolicHotKeys.swift": {
+          "mode": "100644",
+          "blob": "9c3effaf025fbc1ed958868a975d4f4f819061bd",
+          "sha256": "1b024ec75c1e524d843bd47c009facc0be70c0e84ac55998bfe381cc213b54f0"
+        },
+        "Sources/SillHost/SyntheticCapture.swift": {
+          "mode": "100644",
+          "blob": "f2697c41130c9f8f446af5088997d9bda449b321",
+          "sha256": "8aeb5aa9d5ca41e837a19e6811197a7f5874c4332a1893e3d41106603c03581a"
+        },
+        "Sources/SillHost/SystemAudioCapture.swift": {
+          "mode": "100644",
+          "blob": "e7e632b6170c273b90c2c62b3012ac85a8e7892d",
+          "sha256": "8df147cb8ecd63b7579d9c3684d1dd52b52003e17a38fe0724496234949d46ec"
+        },
+        "Sources/SillHost/TestHooks.swift": {
+          "mode": "100644",
+          "blob": "f6f4c2cfe26845bb92c1ff219b121f18944bac14",
+          "sha256": "0aa8e8b9b7c550ffa52955d46d90e4216c9e1aa1e0fae6f93f83d11a2a153011"
+        },
+        "Sources/SillHost/VirtualDisplay.swift": {
+          "mode": "100644",
+          "blob": "d857284c37c15d975579fdbd59bcb4cb73defdbd",
+          "sha256": "9c52eeae841de25a386ccdd984095006d6add5eb533393f059b56d461e36bfea"
+        },
+        "Sources/SillHost/VirtualDisplaySelfTest.swift": {
+          "mode": "100644",
+          "blob": "5f23d26bdb8a7d5b950be9e20b4004fb487fd0b9",
+          "sha256": "4d2aebeb0af2a98ceeade6a647a3bca6cb068762e9ba4124f4d0425b32df7dd0"
+        },
+        "Sources/SillHost/VirtualStage.swift": {
+          "mode": "100644",
+          "blob": "b2afdbebe834b151f1c24e93f8e4f3d13af69ad6",
+          "sha256": "e7731753951fc66567dbd13b1e50add6a98adf8f549cd06ddbf5abd6664d1ca2"
+        },
+        "Sources/SillHost/WindowCapture.swift": {
+          "mode": "100644",
+          "blob": "92030640edc8ba3fd032d204f88bb89eccc2a7a5",
+          "sha256": "f821aa23ba28ee443c168f41925899e4fb7e6896432c170b05f728cd6d0f945b"
+        },
+        "Sources/SillHost/WindowCatalog.swift": {
+          "mode": "100644",
+          "blob": "09d2f71e199335d24b21cf396d4f00797f79291d",
+          "sha256": "284fcfe71797e26e36ee3209cae700e63f46de7e7a040ae14bdb19f3c336c751"
+        },
+        "Sources/SillHost/WindowSizer.swift": {
+          "mode": "100644",
+          "blob": "255f5230a304cf16b8c16413cd2b404d62b2058e",
+          "sha256": "d78a7eb2fdc684375cb3ff13197f906521bebacc2aef1258c0cd8914381bd05a"
+        },
+        "Sources/SillHostCLI/main.swift": {
+          "mode": "100644",
+          "blob": "64c2ec6d81dd6163df477ff76e4f3b574157f50a",
+          "sha256": "b1e048677a4c8d9d8c473643debbccf74dff9a8f29b139dede3c1742c30a8b03"
+        },
+        "Sources/SillMenuBar/AppDelegate.swift": {
+          "mode": "100644",
+          "blob": "5e4e110254790c2c8f5dbe478425e9eb2c4c5930",
+          "sha256": "a67243ae2b93640f22b1341094c98d53a18f9d343db215fe1b0579fbe1ebce54"
+        },
+        "Sources/SillMenuBar/AppLog.swift": {
+          "mode": "100644",
+          "blob": "809374ca9b8ea255512518a189546161956f446d",
+          "sha256": "1fc279513c7eec7b0fe42dc33952b6ce1e366ca5c5cd2e1ef52049afda9c0de7"
+        },
+        "Sources/SillMenuBar/AppModel.swift": {
+          "mode": "100644",
+          "blob": "35735d6d66dd23ff8517d5df4126ad41c756aa0f",
+          "sha256": "39067d1041f488b560cf82a40af8cd836db63f1df5d5e7d58bb1b72835a81799"
+        },
+        "Sources/SillMenuBar/DebugHooks.swift": {
+          "mode": "100644",
+          "blob": "32df8ff4e71d99e5515c1cbd1d16c684d75529f1",
+          "sha256": "241b8bafdcfa468ce0c1a2d22483137a6cd26bcfc7cbd7116963a905eb76ae7e"
+        },
+        "Sources/SillMenuBar/DevicesPane.swift": {
+          "mode": "100644",
+          "blob": "d58d9022006cde06fc474032bee961eda51dce35",
+          "sha256": "18d11099279436d2544c3f65f43f2c6a5e962f88930cbf92ec2b49d809f48ce1"
+        },
+        "Sources/SillMenuBar/HostSettings.swift": {
+          "mode": "100644",
+          "blob": "7a7fe58a424f504a0068d896fd0a20753e2f1134",
+          "sha256": "e1b1891792d9b01d6eaf9f2deb1b90b1c47f378a4384e738709187a01e502d4b"
+        },
+        "Sources/SillMenuBar/IdentityStorePlan.swift": {
+          "mode": "100644",
+          "blob": "5ce678bcd9bc9a009beade9e18713c30312ee862",
+          "sha256": "a09eb7e63ccba39213cc47fae66a969910db5a3678355fd700c0114511a3024c"
+        },
+        "Sources/SillMenuBar/LogWindow.swift": {
+          "mode": "100644",
+          "blob": "5e9fde27c4c390fc946a03c4521eaf08585a85c2",
+          "sha256": "fb4159abce583ff3187db157a82ed0b3ff99fe77c0ef1c15cc268e6589a65501"
+        },
+        "Sources/SillMenuBar/LoginItem.swift": {
+          "mode": "100644",
+          "blob": "0bde74b40d3d84fd6f2d89a959013aaf7df28119",
+          "sha256": "52564a26445adac7c9ae5bbc432d80675a746b0fde6efafcc7be411b27663051"
+        },
+        "Sources/SillMenuBar/MainMenu.swift": {
+          "mode": "100644",
+          "blob": "278b952aacfd07ac8b0904fd6390eafc87745ef2",
+          "sha256": "396b75d6fb7df673655911b7196ab2ac52e859165a2392791caf34621e755603"
+        },
+        "Sources/SillMenuBar/PairDeviceWindow.swift": {
+          "mode": "100644",
+          "blob": "a5e5054b5c3f63aac62d297a63bf0516112b378d",
+          "sha256": "23c593b999d8d14214ef1511f654fc15d8944db0f3371596fc2a3ecd0ec5028e"
+        },
+        "Sources/SillMenuBar/PairingWindowAddress.swift": {
+          "mode": "100644",
+          "blob": "70de8b4a4d6d58193e1ef7292e10ce9ab1b1dba4",
+          "sha256": "e549d3e2999fa6d85ae3a3adc761c434bb40b59cf18dc73259b43dd15486cdc4"
+        },
+        "Sources/SillMenuBar/Permissions.swift": {
+          "mode": "100644",
+          "blob": "e419885dd1a8325cb396fa13467817234c45a4ef",
+          "sha256": "7a242c7eaacbc2266cefec9e8dddd08b65ebeed1831098c39164b639804f1ac3"
+        },
+        "Sources/SillMenuBar/RemoteAccessPane.swift": {
+          "mode": "100644",
+          "blob": "b6eba9827443ef70981ad04c796d6f99ed58066b",
+          "sha256": "a6a631f1db044c2b6b52a6a9de0b240a51889c61d21e01454a1339b4990731ad"
+        },
+        "Sources/SillMenuBar/SettingsPanes.swift": {
+          "mode": "100644",
+          "blob": "41ed4cb203245d98024b1793cb7ea5fd8eb503a7",
+          "sha256": "a1b2a3379b70d89d0b55e1d3e855b5c401c149730134b0b0d5d43bab72bd7cd8"
+        },
+        "Sources/SillMenuBar/SettingsWindow.swift": {
+          "mode": "100644",
+          "blob": "c2d7ab70a855dd360373a4e8e136ee9c801120e0",
+          "sha256": "fc6a8b770d47783055194a19f0063e974710675321b6193f95bda04d22c54d39"
+        },
+        "Sources/SillMenuBar/StatusCard.swift": {
+          "mode": "100644",
+          "blob": "f87e2c2155c5347e31b443ac998bb71fd44f4895",
+          "sha256": "a9df4a27bf9ac45ab027436f66720096b941c606e5e1745c6ede2a22838f29b7"
+        },
+        "Sources/SillMenuBar/StatusGlyph.swift": {
+          "mode": "100644",
+          "blob": "6b3de47515c9f38d293ab46a6c6c4db4cc782b05",
+          "sha256": "767236475d01909e224fbd684989cb93294bd17c81a761cc72a9b02abdf106ea"
+        },
+        "Sources/SillMenuBar/StatusItemController.swift": {
+          "mode": "100644",
+          "blob": "0466f9c7cb07af3eb09f991411628e5a573b2824",
+          "sha256": "aa6a69e85f727876564356f573a790522759988f49c3202ded6733e6318d5133"
+        },
+        "Sources/SillMenuBar/StatusText.swift": {
+          "mode": "100644",
+          "blob": "e2d8b697eb20c74293306f62ac0616d3cfb17e70",
+          "sha256": "13b3a8fa1bc7de9b2ef63f2cd42e5b725d2c11226d863dd1481c1f5fc1a4c577"
+        },
+        "Sources/SillMenuBar/UpdateChecker.swift": {
+          "mode": "100644",
+          "blob": "0357f7cfe7a5da91bc1b935d936623215b1a838d",
+          "sha256": "9a54327f4319015812058929f964db08c96282c1f4206fccbdc279c34a57e4b6"
+        },
+        "Sources/SillMenuBar/UpdatePolicy.swift": {
+          "mode": "100644",
+          "blob": "376e40d3a9f289f84c430c5950f1ecb7cef6f641",
+          "sha256": "71f1ffa4ddc2f5aede57bce3a856105c36fe829ed752d4db5de2d689a5c27a2b"
+        },
+        "Sources/SillMenuBar/main.swift": {
+          "mode": "100644",
+          "blob": "eb3fcf9400ee6e56f89df5cb26170ddb517cb430",
+          "sha256": "71f5caf1945ec063be1602bab3242206aed9c8729a18bad25f0eaa2717feaba2"
+        },
+        "Sources/VirtualDisplayProbe/VirtualDisplay.swift": {
+          "mode": "120000",
+          "blob": "516fc3046356e7410679b9cb9f16909b25a94bbc",
+          "sha256": "743cef852388159151d02a74418bd6373125ae1be09f633481a363740cf52605"
+        },
+        "Sources/VirtualDisplayProbe/main.swift": {
+          "mode": "100644",
+          "blob": "8906b84628a90a3ec331d91b79dd420dd0ba4d38",
+          "sha256": "323d69de75204f3e80431200db4e4ab6fb1e02219aa22ad14f39dd31ab888361"
+        }
+      }
+    },
+    "peer_existing_tests": {
+      "parent": "3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5",
+      "files": {
+        "Tests/checks/README.md": {
+          "mode": "100644",
+          "blob": "1d63823ce9c77694bf27d3a057293f14a9f7d21d",
+          "sha256": "9ca4468335b40663a903f37027790084c5832d9275891738d6920837cf6976cf"
+        },
+        "Tests/checks/addresses/build.sh": {
+          "mode": "100755",
+          "blob": "2c9f29abfd43060a9bce2088d993d791516e443c",
+          "sha256": "c8c8ce18434f564eb0cf093026f5909f08fc41a448b01ffb767b5ff8f8828d01"
+        },
+        "Tests/checks/addresses/main.swift": {
+          "mode": "100644",
+          "blob": "008058ff8ff47def4dff573ed45bf6e96fa3a342",
+          "sha256": "4396b2e20011c4aa82296067d6b732cbe9e27dfc4c715ad3e3b96802bb593ff6"
+        },
+        "Tests/checks/addresses/mutants.py": {
+          "mode": "100644",
+          "blob": "b4d403a0b2270db0bcf5515c9c1581b1094d48c1",
+          "sha256": "b51cf080e368517e1e7eed348a8797d9c126bda61a287ecd256e6e92413693fe"
+        },
+        "Tests/checks/addresses/run.sh": {
+          "mode": "100755",
+          "blob": "efecdad9f9e1d9d4cdfd09e14ea8c887ac4ec91a",
+          "sha256": "bf9743580476f4407057be00a1fc7e5e68d09b6ea03d7bc35c6abc6329af0547"
+        },
+        "Tests/checks/ask-limits/main.swift": {
+          "mode": "100644",
+          "blob": "10fa8c3f851dbbc40f6d1f687752d7e0b8c63d52",
+          "sha256": "781d0329f7984a52cb6d78bd257b861328f723f4cfb4c6d9df7f127e9461a6c4"
+        },
+        "Tests/checks/ask-limits/module.txt": {
+          "mode": "100644",
+          "blob": "0f2251fd0061cf5d5b9b4995562c30c1052b16c0",
+          "sha256": "5964318af3ec35bd2bdbea8dd79db4d46c7b85d7d24a833a536be20308ba109b"
+        },
+        "Tests/checks/ask-limits/mutants.py": {
+          "mode": "100644",
+          "blob": "841eae8dfe0620e314612d7ee418ffdd66435053",
+          "sha256": "45d12d1c4377abe0ff108daba80af7e6623075d8c598ad8f2b026f865580ab44"
+        },
+        "Tests/checks/ask-limits/run.sh": {
+          "mode": "100755",
+          "blob": "367f1c02bf7d003882db65bd711408e7bcb27605",
+          "sha256": "eaae00624844c6286231861b337ba74eeead580a5e6b59af9e63de736b47b395"
+        },
+        "Tests/checks/away-copy/main.swift": {
+          "mode": "100644",
+          "blob": "4bbfd066e7d976cc01ffe4786116180d12535428",
+          "sha256": "dbd6f9d6718aa7438a227077fd6c5a6a340082274f6371a86e688c7784104ac8"
+        },
+        "Tests/checks/away-copy/mutants.py": {
+          "mode": "100644",
+          "blob": "1b0fc5e9595379da902dbcd859c70d5f91a92420",
+          "sha256": "c9778ca61e498231af8c046dbb617f5d72ef4c806ca0f3203c2034e4a393bd7c"
+        },
+        "Tests/checks/away-copy/run.sh": {
+          "mode": "100755",
+          "blob": "aaa57bf2435554dc54d103f56cfbe0ada6aff456",
+          "sha256": "54c826200d00398002ba99c9c210100e0e17d05bee9d20c8fab9d7cff2a5bcd1"
+        },
+        "Tests/checks/away-quality/build.sh": {
+          "mode": "100755",
+          "blob": "d10cd8255ebe7ad00ad06782353c42dd2e61aed7",
+          "sha256": "240e8d4f9e2af77f4248ee2944200b6b05730888aef766ce6181df567049936e"
+        },
+        "Tests/checks/away-quality/main.swift": {
+          "mode": "100644",
+          "blob": "476e1db6fed8439cb843929b9e9ec5e634ebe1ef",
+          "sha256": "dcd87ad17397eb3492676c4760ed9ff430820d7bfb3aab4df5792d510d6a69e4"
+        },
+        "Tests/checks/away-quality/mutants.py": {
+          "mode": "100644",
+          "blob": "af60c1372547b4842ec8babe29387235dcba696e",
+          "sha256": "7481a6dd18f7c994b9de284d00b3f2ca4b55f011a30162a2c15fbc92d20c5da2"
+        },
+        "Tests/checks/away-quality/run.sh": {
+          "mode": "100755",
+          "blob": "03d8577c9802b05283762c10b467ff74e6577cb5",
+          "sha256": "9a975c7628355ee8da89859527b681b5e761da67c64af195ca38df4425de1025"
+        },
+        "Tests/checks/away-wire/main.swift": {
+          "mode": "100644",
+          "blob": "4478c671a29fbcc7e0ded67ff9cb53a59172a569",
+          "sha256": "26a9b7cc2964b5e82c9478475346bc091ea92ea511b9a04b05228da7524c9cc3"
+        },
+        "Tests/checks/away-wire/mutants.py": {
+          "mode": "100644",
+          "blob": "1b156f085f4b8d53114566c29759c07456ce16fe",
+          "sha256": "d9f929fe09d50a06a33ced06dcc5df4c53115cf00be1541db9818c1b664abe7e"
+        },
+        "Tests/checks/away-wire/run.sh": {
+          "mode": "100755",
+          "blob": "b7f029f62846017f77e4499394cb123d333820f6",
+          "sha256": "a3ae5d08f5569338764ced8ae855e88af0ce2c72346f0cb1ba7b6a4c2e070add"
+        },
+        "Tests/checks/cable-link/main.swift": {
+          "mode": "100644",
+          "blob": "9a769bb086368bc39a16f11d7455e8674527e061",
+          "sha256": "6abd67b9d57f2a275e7a06cea8915810ab7b526c2d668c97861c070e8db57563"
+        },
+        "Tests/checks/cable-link/module.txt": {
+          "mode": "100644",
+          "blob": "48e2372a1ce08bd90f3b96cc7499816d1030803c",
+          "sha256": "c4f9c17eb097c09301463ca5a1209ce982bba459f91732de16312c224eea7af3"
+        },
+        "Tests/checks/cable-link/mutants.py": {
+          "mode": "100644",
+          "blob": "202e595b4dda28edf57fd80f51c532bcc5562249",
+          "sha256": "7bbcc02f36e333531368c2ab6ad408182acd87f83658b2a355c3ef3fef014292"
+        },
+        "Tests/checks/cable-link/run.sh": {
+          "mode": "100755",
+          "blob": "3bf9af38b797b4f213838071a815fa9c65ea947d",
+          "sha256": "59614ed33a1d1e1217a1ca0a148547934d1275068e51f3b4619a25943f61dab7"
+        },
+        "Tests/checks/clientlink/main.swift": {
+          "mode": "100644",
+          "blob": "9b2cf23e18c4c679c9260e7f76163f6eb99f7b69",
+          "sha256": "cb743bae43f297eaf7b16dcb85ef9fd95181d31d0ba720436634b414e008970b"
+        },
+        "Tests/checks/clientlink/mutants.py": {
+          "mode": "100644",
+          "blob": "9f0ca75e90697e26b35790a0f206e75d8cec2ecd",
+          "sha256": "8204244f094c7bb613ca23aa968b339da2ad894d24996d60c07dd241c9c98f40"
+        },
+        "Tests/checks/clientlink/run.sh": {
+          "mode": "100755",
+          "blob": "8c4bca3af6d120ff4487a3494ab023d6cb9b0a14",
+          "sha256": "75a89c1a698d90de6a016a199e0315da73b6a8a118fa0638a5526644f16dab42"
+        },
+        "Tests/checks/common.sh": {
+          "mode": "100644",
+          "blob": "381ee97790413554af40d4cd1d94f85bbebae02c",
+          "sha256": "cb8e1b59ae745cdd19753e32b4162ae9442e8c24c204cc572801d9843cd75334"
+        },
+        "Tests/checks/compatibility/main.swift": {
+          "mode": "100644",
+          "blob": "7b17ce6de0525959ec47cd6273d5e2c3e1acb7ed",
+          "sha256": "2900827879bb650f8ebbcc25f0e5194748b493965edbe9ab8fd177ee16a5fead"
+        },
+        "Tests/checks/compatibility/mutants.py": {
+          "mode": "100644",
+          "blob": "2a78d1b58c173e87b7d3e32784383b17789e7092",
+          "sha256": "0d22bd39341ed7febe7e956d82bd98229fc1d6f3e22e4479ba8925f9fe87ca5b"
+        },
+        "Tests/checks/compatibility/run.sh": {
+          "mode": "100755",
+          "blob": "c03f153aa173931fc6eb29e64f85a25027d4f9c4",
+          "sha256": "625046248a813bc98e8d605569c8eab115c4dfea89538e00a554fbb7dfd5e335"
+        },
+        "Tests/checks/delayed-source-input/README.md": {
+          "mode": "100644",
+          "blob": "7433e98c20aed08014098dfc9d080dc203674289",
+          "sha256": "c75ee3ac7e132fdd658900bc288aab9be0b1e526aa6c71bd350e2184c45812b4"
+        },
+        "Tests/checks/delayed-source-input/evidence.json": {
+          "mode": "100644",
+          "blob": "9ff63fa4f0e30eadceeb5eae8271fac54b6dc2f9",
+          "sha256": "3a5e9b6bc2f45d4c50d4326b10edc8cbb5aa252f1e5c964bfadce980a232b0ce"
+        },
+        "Tests/checks/delayed-source-input/rollout-evidence.json": {
+          "mode": "100644",
+          "blob": "b8eabd65d848c3f7199141f9fcb68bfd8a2d1a59",
+          "sha256": "77af6e93a7a74e7a4916f5a891dabf2f5cb594d96a9eae681b650386c911539d"
+        },
+        "Tests/checks/device-gate/build.sh": {
+          "mode": "100755",
+          "blob": "d6ee725461a0681ffc0e59f6c1d29d1e486c70ca",
+          "sha256": "340f2b1d84a80286e5837ef71edf87fefbad27f3b893a41b30a4c883d3d310af"
+        },
+        "Tests/checks/device-gate/main.swift": {
+          "mode": "100644",
+          "blob": "6d6c960e9d9a5611453e8c322fe131e1e6fb8671",
+          "sha256": "00d92ec2d5acda2855f6963e2c472b23db751f838448c5e3ed6359ad0777cacf"
+        },
+        "Tests/checks/device-gate/mutants.py": {
+          "mode": "100644",
+          "blob": "6224c803a7862002010d72f94fb77a96eb41ebee",
+          "sha256": "3d3a05da9975fb267542c81c64b97e63f5ed8300f03734a6715d384e0df99fbd"
+        },
+        "Tests/checks/device-gate/run.sh": {
+          "mode": "100755",
+          "blob": "de52b6a4cb630714797a78a7d4761cb68dd0af1d",
+          "sha256": "102f7928b9062f2de8fd2c0ca9e82742c77b8ea8ac62f1f9749d397da9476b03"
+        },
+        "Tests/checks/dmg-layout/main.swift": {
+          "mode": "100644",
+          "blob": "05b43ec9e9f5a068e10ccb9cfc6f366272ac5c10",
+          "sha256": "6df5a9f950c8337b52282c16a7c113f72103bc4ac589c81cd15156a1cde85f4f"
+        },
+        "Tests/checks/dmg-layout/mutants.py": {
+          "mode": "100644",
+          "blob": "cb4acd5e8d598585ad6e2b24ad09a040d161876d",
+          "sha256": "19076f435bf6c7ff1f8f6625101a42eb70bc3d7124671ac8cf2c0632a53388ff"
+        },
+        "Tests/checks/dmg-layout/run.sh": {
+          "mode": "100755",
+          "blob": "c87fd944b6f9a55ef0aece67d41b45e28de11d32",
+          "sha256": "97e07e40a8c5a3defe816196a5e69921d3b9dc2ef7f99ffd0291f0e6e303a798"
+        },
+        "Tests/checks/door-policy/main.swift": {
+          "mode": "100644",
+          "blob": "cc150c6c39ffce436d1fa9fdbeb376b5d1d552da",
+          "sha256": "5ae8ab4e7d7bc2a34beca61b14e0e6b2315e40e8917ada70fd4285998c5f827b"
+        },
+        "Tests/checks/door-policy/module.txt": {
+          "mode": "100644",
+          "blob": "94e42a76b4e386eb626214901ff4c884f3d9497e",
+          "sha256": "c3411c246bdae9faa085aac863dadec9235a811020c3da433421df0d5c1c1ce2"
+        },
+        "Tests/checks/door-policy/mutants.py": {
+          "mode": "100644",
+          "blob": "cdabfd8a7fbdadcf034c66beb9496de1ff3c5828",
+          "sha256": "9883a096caaef39547021ed16c73217503ad1332e1f3e12d46530e8a949c64db"
+        },
+        "Tests/checks/door-policy/run.sh": {
+          "mode": "100755",
+          "blob": "5899717ace3fba9e17c7a8f2e023f6db1dfd8593",
+          "sha256": "9323403b9ffd0f8600d1372baf25aaf864ffa89238faa664f01ce9f713326f8c"
+        },
+        "Tests/checks/duo/main.swift": {
+          "mode": "100644",
+          "blob": "4b2a277d699ef0ec6a7e10aa9fbae660a37d7faf",
+          "sha256": "a291053cc6fdbc25bf7c12df4968a479d5f1a97a82ad5af848560ea4e7faa166"
+        },
+        "Tests/checks/duo/mutants.py": {
+          "mode": "100644",
+          "blob": "8b0389707f7c0bf2e0a45e95609fb3f19faf3e37",
+          "sha256": "7d53434c2ed1ef9dd7beac88f06c044a1fa9fb8300d016e6ab5e5a07b002231a"
+        },
+        "Tests/checks/duo/run.sh": {
+          "mode": "100755",
+          "blob": "bc4558b2d01d452d541c80bd43cd6e9348b8f2bd",
+          "sha256": "643ec29705cd6b80c097a5aff3e623c8513fde82fcec49e125b6b279c0447067"
+        },
+        "Tests/checks/encoder-mailbox/main.swift": {
+          "mode": "100644",
+          "blob": "6bc9ebeed7934921477e0b62ddf5165afba9d5ce",
+          "sha256": "98499c939c88d6b8e0d7b738f50eb6ae63ada66c62a7a5e863e04a510f08424c"
+        },
+        "Tests/checks/encoder-mailbox/mutants.py": {
+          "mode": "100755",
+          "blob": "9c043cf3bfaf2b61b3e1b1f6965a63d740892d44",
+          "sha256": "c581db2823ce88629dc170c726a3a06cf4254b52477b4c63d4dfd187c287e5d9"
+        },
+        "Tests/checks/encoder-mailbox/run.sh": {
+          "mode": "100755",
+          "blob": "12bbedcac1560bdb06bb17f1096fac4af9cd7504",
+          "sha256": "7c879799e506985a0e44895d4a95bb473040ccdf8a59ad09f4b75f36886fafb7"
+        },
+        "Tests/checks/encoder-slowstate/main.swift": {
+          "mode": "100644",
+          "blob": "94d6397140d77bf934bc566b551c690874096385",
+          "sha256": "f7bd69eb3035e302024876e8ea36485936bcf56a218a01d561b685daf830d2e4"
+        },
+        "Tests/checks/encoder-slowstate/mutants.py": {
+          "mode": "100755",
+          "blob": "0c94873fa742bd2ac22e79434adb1d0d80ccd3d4",
+          "sha256": "3030ec1b255adf9a1badd14c4edce2fe923dc5b0a7494486092dc08c79880e24"
+        },
+        "Tests/checks/encoder-slowstate/run.sh": {
+          "mode": "100755",
+          "blob": "133e6a0fe0987b23a8142b22c45ffcbcdc5efc60",
+          "sha256": "cf91f1f72c7745860e0d1ea33ff1d1ff43bd822ff6d8345c110f5e423e8e83fb"
+        },
+        "Tests/checks/fence/main.swift": {
+          "mode": "100644",
+          "blob": "1678a44a45d0d445f3b38131c1787870fc54a1a5",
+          "sha256": "886aa50c2e24d3a13f6d3e121679bd357ef6dac5a090353ea72d1777ebe7a5b2"
+        },
+        "Tests/checks/fence/mutants.py": {
+          "mode": "100644",
+          "blob": "b7055cf86e869106708442e648ec6be7c2a54027",
+          "sha256": "d18dfdb60e3b4586423be1c9665ec97e805845fa3c7032fc283231c36ce74f8b"
+        },
+        "Tests/checks/fence/run.sh": {
+          "mode": "100755",
+          "blob": "8b1f2dd19fb0363988199603df99845d21a74d6d",
+          "sha256": "1c8620a0dd921058669c1a5625f9be0681865b11ef7476037440983348ad9882"
+        },
+        "Tests/checks/gesture-chords/main.swift": {
+          "mode": "100644",
+          "blob": "8e16fe1a7abb073617ecd862ea37bead209dd5a4",
+          "sha256": "1d2dbbf966ee7941e0c90a4d126b9390a4864f12ac24afd3b5e17b3376a89995"
+        },
+        "Tests/checks/gesture-chords/mutants.py": {
+          "mode": "100644",
+          "blob": "0afd39320ce00793f3f4d9ef7846ff4c9cb84c82",
+          "sha256": "25c03d6055bc370d0fc685751d12aa8920ef78ecf1a59865fffdf63c509c3331"
+        },
+        "Tests/checks/gesture-chords/run.sh": {
+          "mode": "100755",
+          "blob": "49a13403e92c9afa46dd9e0f10e4b9c6ce222959",
+          "sha256": "4c167608201e56ef9ca2d3d4554e49a1c81e5881cb049d728bdd11428a68a5cd"
+        },
+        "Tests/checks/gestures/main.swift": {
+          "mode": "100644",
+          "blob": "b1fb24c9fcccc974d45f3dda614efbbc093c31be",
+          "sha256": "6ba8ad74bb13c4b3d8921e8c9ad89818ba9b27aa0e1eabb83144a71e327001dc"
+        },
+        "Tests/checks/gestures/mutants.py": {
+          "mode": "100644",
+          "blob": "c8a0853783cf5ae97d644f1bc5d54edc36399c2f",
+          "sha256": "d86a1b71838c3a9b848494d8818264645301a5d162d815a83c7641b61962130b"
+        },
+        "Tests/checks/gestures/run.sh": {
+          "mode": "100755",
+          "blob": "8286bb68cb3b3a889894c5eced9304b21ecfae3b",
+          "sha256": "a5cc112ca384804028af684b049b458cf64d6cb034c4aefc2cfc7f79eefdd1dd"
+        },
+        "Tests/checks/goodbye/build.sh": {
+          "mode": "100755",
+          "blob": "f16fa9ea1fee4754e6cd3df1777353b0a49c3114",
+          "sha256": "a5a3e119dc272de846afc8553037c9075587db462ddec6a0c5abd2f31172951d"
+        },
+        "Tests/checks/goodbye/main.swift": {
+          "mode": "100644",
+          "blob": "2fd401b4ed30f61de8971c4d7578a1081049f74b",
+          "sha256": "2cb7cc7bf8d19505b1e279765bf7e8e2c8abe57a955571b8b8fc724a867caabc"
+        },
+        "Tests/checks/goodbye/mutants.py": {
+          "mode": "100644",
+          "blob": "46402c68ed438a7015eabc5ef0f516069f02db6c",
+          "sha256": "262ac985e3b4383b8d91c2923dd2e09db379c00c6eb2e9df88a74c8372acff7b"
+        },
+        "Tests/checks/goodbye/run.sh": {
+          "mode": "100755",
+          "blob": "57edb07ed89492be9ace3eb889a2cd112d79dfc2",
+          "sha256": "a0acaa9aca007b6bc970e91117faa52b8c9fe3a7b35b59087e605e7500e4aaa0"
+        },
+        "Tests/checks/home-device/main.swift": {
+          "mode": "100644",
+          "blob": "ca83e82dcbbab70c66e59efb4cfd76679534857b",
+          "sha256": "aeec6c3f157b77e64da9005612478066d04a88c4605003b4490c8219b0cd3bb2"
+        },
+        "Tests/checks/home-device/module.txt": {
+          "mode": "100644",
+          "blob": "82caa66d0d3c4b5cca337e9587b0432ec8e3b5e2",
+          "sha256": "2fb735b8ecc56bda4f4519f0534656b099a861e5dcc4cb119f5a254cf80ea733"
+        },
+        "Tests/checks/home-device/mutants.py": {
+          "mode": "100644",
+          "blob": "aa3c0551d8a8771f9594ecaf8e366123409c14d3",
+          "sha256": "777caec887cc9234cbef3383b8186de63fd2b1f5683c35fdaa1459ec9a0ac929"
+        },
+        "Tests/checks/home-device/run.sh": {
+          "mode": "100755",
+          "blob": "a2e289a791768467af828be08156b7197d68b811",
+          "sha256": "da10cf3120104cc6ac16c0d3220831904ac7592dabe038499dfa73f2a1a5c7b2"
+        },
+        "Tests/checks/home-model/main.swift": {
+          "mode": "100644",
+          "blob": "9b2138d872797013ccc4c41e5f158163014ad254",
+          "sha256": "3b91735fcf6d2be63b14290cfe607b7a78b8d1c99766b7d4ba6f8b7b4a6d5098"
+        },
+        "Tests/checks/home-model/module.txt": {
+          "mode": "100644",
+          "blob": "7e2dd6f0d64f27d6a1fc048ed74c3541a5f6a2f4",
+          "sha256": "584eb5beb77a820ac9e6dcf32c7e744a846126e4191925ee3807f8fdbe515d70"
+        },
+        "Tests/checks/home-model/mutants.py": {
+          "mode": "100644",
+          "blob": "8a50f29137d20d0979276f7ede7a370001550110",
+          "sha256": "9728cbf8249cb48e6ff43d0311c35f190d8966271d58e96687ac12a0737a779c"
+        },
+        "Tests/checks/home-model/run.sh": {
+          "mode": "100755",
+          "blob": "d6f6a49f69fd776b0dc856a50b2eebe0d2d05620",
+          "sha256": "5592c8a3f535f084a7c5d88cd007918af9289ee2c3c6643358e6df3ea2431664"
+        },
+        "Tests/checks/home-records/main.swift": {
+          "mode": "100644",
+          "blob": "5e16d86b817b66eab3dcf727d4901e84db23c79d",
+          "sha256": "26b995478c1053da4e3f4e55113f1016839a26857e9d66ea08a18d0cabe7f4d5"
+        },
+        "Tests/checks/home-records/module.txt": {
+          "mode": "100644",
+          "blob": "3d65c1e592f2ebaf5a7c8908b7f3aa970330e0e6",
+          "sha256": "a4737998976c6dad0b8dc5444ab3fcd4e29b5edd140ac72dbf5a976b013690a5"
+        },
+        "Tests/checks/home-records/mutants.py": {
+          "mode": "100644",
+          "blob": "c1443b60f3537bc42d37aa938f920645857279f1",
+          "sha256": "c89dc576ee66f5a96d135dc6d0a6a1ca5523ad5d579def14392047adecd7f94c"
+        },
+        "Tests/checks/home-records/run.sh": {
+          "mode": "100755",
+          "blob": "4eb29c2201898b91a7f2f11488a4e6125d092395",
+          "sha256": "2ba932966ca3ff51d3605ce5e18ef88ba015e0be1c19aa599b006c57dd886154"
+        },
+        "Tests/checks/home-txt/main.swift": {
+          "mode": "100644",
+          "blob": "c60e83427d062a729699c81f84adfa660897e218",
+          "sha256": "9ade0c34087e652067ffe47431f26c8bb6d1770bc24a113213f2ca30b1df9627"
+        },
+        "Tests/checks/home-txt/module.txt": {
+          "mode": "100644",
+          "blob": "25ad33c1e7f3b9ad445b7f43754b9bb5a4adbfc7",
+          "sha256": "25b1bc27efd30cd89a5a439e1944fc12328b1e7fad09a12af017b6b87ac3768f"
+        },
+        "Tests/checks/home-txt/mutants.py": {
+          "mode": "100644",
+          "blob": "25ae6b638860eae5b454ae8edc0628ff152c2d6f",
+          "sha256": "2f8193c0cef520503d02ed87dd56e6fac4aa1a90fd078079de49b65f4bd6ec89"
+        },
+        "Tests/checks/home-txt/run.sh": {
+          "mode": "100755",
+          "blob": "5713db544b5b23551fc5a33c8ac419d8f8b7198e",
+          "sha256": "5f17a4990af89a7e73fe347e02c19e6beb58a0f14643a9f0afffa49be1a58c1a"
+        },
+        "Tests/checks/iPad-remote-audio/README.md": {
+          "mode": "100644",
+          "blob": "76c152373d18c083518c844f86c4600fe381fc44",
+          "sha256": "3c7fccce1a06fe5a34d0b9ca13dc5d3a60e1850e77b410ca41b2b4416cc6f705"
+        },
+        "Tests/checks/iPad-remote-audio/RESULTS.md": {
+          "mode": "100644",
+          "blob": "19303eb2294e72ae52d08aff8c024469a13501b3",
+          "sha256": "ef176ad0bb2504b86006beff940d9d553bba7506e7ab20becbff1f85767c1839"
+        },
+        "Tests/checks/iPad-remote-audio/main.swift": {
+          "mode": "100644",
+          "blob": "c9fc2ac3c6a7bf260368f985fedb2c9173741d4c",
+          "sha256": "64eddf56c71821c98fa1687520562b20f61100e5bdc2af70a4a306505b134f39"
+        },
+        "Tests/checks/iPad-remote-audio/mutants.py": {
+          "mode": "100644",
+          "blob": "cdf5b82c2e8aa925f9c830181ac7814894142707",
+          "sha256": "e1a3b32111658e63d7ebd755669f68e80bfca4ef260d03b23dc139cf6c947b05"
+        },
+        "Tests/checks/iPad-remote-audio/player-fixture.py": {
+          "mode": "100644",
+          "blob": "1db1ea500c5bb2b62464ffef1fb897d9b7c7b65c",
+          "sha256": "86e698170f17eb993f7c570b9502ca710b2cb03044017fbf68c0acbe2310266e"
+        },
+        "Tests/checks/iPad-remote-audio/run.sh": {
+          "mode": "100755",
+          "blob": "2951952976f871a63531ae07dc6f229c3d452fb2",
+          "sha256": "e5a91885f9225edaef81941f7b3dc408b6b23ae376cb7eddc5e81eb2cccc6f34"
+        },
+        "Tests/checks/key-strokes/build.sh": {
+          "mode": "100755",
+          "blob": "5470b5274db23c94659f364107984b2a3ee21355",
+          "sha256": "102148494bc9c4b9b016ee88bef6bd70845f90f67e87c5359033092e455b9c27"
+        },
+        "Tests/checks/key-strokes/main.swift": {
+          "mode": "100644",
+          "blob": "7c2ebe982f40b1625c80de39afc22a5e494a0a03",
+          "sha256": "822d7a18ef0d404df070e9795b2512608d239a7832f27b97abccfecb5f8d8773"
+        },
+        "Tests/checks/key-strokes/mutants.py": {
+          "mode": "100644",
+          "blob": "dd9f2e36e2bfcc45f0315e1772e8a825a537a53a",
+          "sha256": "8daa765205d8d9f9964d9902d39aff9b335fb9dcfcd464ff58b69d15d4b4afc6"
+        },
+        "Tests/checks/key-strokes/run.sh": {
+          "mode": "100755",
+          "blob": "b513347d1b8c1884c9ff21f7c164edaea7cbba43",
+          "sha256": "3fdf7096b75206b0760cfb4ebfd5f092db13eaba65a784db9011824220e938cb"
+        },
+        "Tests/checks/keychain/build.sh": {
+          "mode": "100755",
+          "blob": "7d74ca8f778840fe6300634567bbec8ddee4a98a",
+          "sha256": "0c66338bc96a15da289d76e13f671e41ec8ae3a426c34f5c98e26c6459c2e0d9"
+        },
+        "Tests/checks/keychain/main.swift": {
+          "mode": "100644",
+          "blob": "9f70abe5cdc3111b0ea0d03bbed230120f54b60d",
+          "sha256": "92e7c795cefaea54eec15e3bedf1df31b4b1eba44d2084bf8e7dc3082a3d857e"
+        },
+        "Tests/checks/keychain/mutants.py": {
+          "mode": "100644",
+          "blob": "3cf51330e91ce6857d4f007b95de3d1191e152d8",
+          "sha256": "3bf9a3fe0f0dce323b0698161921c74881799067b8f8c279a2b8bdb7a69c55d2"
+        },
+        "Tests/checks/keychain/run.sh": {
+          "mode": "100755",
+          "blob": "b182849f398f0319a58fb59112efe8c131b01ecc",
+          "sha256": "7ba1e5ac966ea20aa75c1f54bcb184c407a4a7f1c5d2c8c5dd2fe0bb46853ebc"
+        },
+        "Tests/checks/ledger/main.swift": {
+          "mode": "100644",
+          "blob": "e5d3800ac27d200885d0fa0aa3fb1f6f64ade209",
+          "sha256": "ab431c60a516d4213be8e706a5c52d838b5330957e6dd7816160a42242e6b0c1"
+        },
+        "Tests/checks/ledger/run.sh": {
+          "mode": "100755",
+          "blob": "d0d9a35e915391ccd0f0a85f104ec1bd64b1cc6d",
+          "sha256": "903557e9dc72c642b865e88bae73ce6d42cadda3e6a9a85cf6dde1378f226ac6"
+        },
+        "Tests/checks/link-judge/build.sh": {
+          "mode": "100755",
+          "blob": "66ff59ad7824d99f99d1ac77ed9348a094641192",
+          "sha256": "102480370dd5778da0b7ed02b32d56ae75ccd8034564384c5cd4f6aae24be2d9"
+        },
+        "Tests/checks/link-judge/main.swift": {
+          "mode": "100644",
+          "blob": "ea2ca3fca137e0a5896379c7548ceea2de281a2d",
+          "sha256": "d2061db64946bcd1e1a6ce42953e1887cc01b7712713df45da289f02ca7f282f"
+        },
+        "Tests/checks/link-judge/mutants.py": {
+          "mode": "100644",
+          "blob": "0fe1202d979a5a895d3381b847a77a74d2250ba4",
+          "sha256": "55e6026700d9c8a987ccadb6704698e4a5a0ae5a781eb0622f7cd053557110f8"
+        },
+        "Tests/checks/link-judge/run.sh": {
+          "mode": "100755",
+          "blob": "327f704add5401e4261f78246b1629fbd7c55505",
+          "sha256": "8103f26d0e9c9a9119357763c4370b6c36d674d6709baf45d79a243dc1770efb"
+        },
+        "Tests/checks/menu-state/build.sh": {
+          "mode": "100755",
+          "blob": "c82a4770bd0af390157ae3545608241c18eea9d1",
+          "sha256": "176554bc472b6afa49bb34c2dd87b08f881cf47f58fba2e34a1fa4c9d7faa931"
+        },
+        "Tests/checks/menu-state/main.swift": {
+          "mode": "100644",
+          "blob": "c84018d280cac9251dbed26101669d71ff47f6ee",
+          "sha256": "3a64bf791a14a252ad66c3462e88d1523317a079fb589020ae9671c3e7907287"
+        },
+        "Tests/checks/menu-state/mutants.py": {
+          "mode": "100644",
+          "blob": "642f1f5fd1b24613e5e04341dc87590c74ff4898",
+          "sha256": "c6bef7374b1d36c96456dcab7c35636367a85d2617f70ff9aeae935031120570"
+        },
+        "Tests/checks/menu-state/run.sh": {
+          "mode": "100755",
+          "blob": "c6e5ed9aaa03c483368af0b08250c48baf89127c",
+          "sha256": "5361d6b35b684fe56b0d151a874f5f95d35c3cf9d2a126fc190473e51933c554"
+        },
+        "Tests/checks/menus/build.sh": {
+          "mode": "100755",
+          "blob": "d02965cce635c7cbe9f155618103efd4659d8d3a",
+          "sha256": "bec74b4d8ad7ba76e7fa767f147c332ff3f36089e165ae30efbdf9efa55e13e3"
+        },
+        "Tests/checks/menus/main.swift": {
+          "mode": "100644",
+          "blob": "365eea46fe004008e1d7e8b6576979ac80295352",
+          "sha256": "3c32045cd168fb9f55dd27b94187943a0aac278d70c76713b79ab51dfffb5420"
+        },
+        "Tests/checks/menus/mutants.py": {
+          "mode": "100644",
+          "blob": "eb751e1c2e270c9ecbdfa187dd7555903e2ea037",
+          "sha256": "b68de6eb50bdc21dd172fe0fbc57e2f6b8943d6d26605f82d7dda87e2d07f4f8"
+        },
+        "Tests/checks/menus/run.sh": {
+          "mode": "100755",
+          "blob": "ae8e1118c09e66c0383de112df90b56d5f1c9bf0",
+          "sha256": "d3bad643aee9790b11418c82337dc0a33edf3bf906bfc9e2caa6c5f1610180b4"
+        },
+        "Tests/checks/message-reader/main.swift": {
+          "mode": "100644",
+          "blob": "648e6531d4937c3402f54ccd514323520378ee98",
+          "sha256": "8d59ac7bd8cd453804dd91a5d09a2ca4d4cf1831553d760423a5a070a0ea624d"
+        },
+        "Tests/checks/message-reader/mutants.py": {
+          "mode": "100644",
+          "blob": "9e0d40d33cedb1930ce6ff765047c7112c74a409",
+          "sha256": "7b088044d551464bfbe95ef964ed4d89dc8618e7279d97da3da4232eda313a02"
+        },
+        "Tests/checks/message-reader/run.sh": {
+          "mode": "100755",
+          "blob": "7d5e1432c81b2be5d96edbacab8c42967fdc81ea",
+          "sha256": "016ce23d99897cf0dd7092503398576c96feddac04129b7f8e104170768745c5"
+        },
+        "Tests/checks/module.py": {
+          "mode": "100644",
+          "blob": "91083a2648b1d55cf25efec4cc98bef6fa74af33",
+          "sha256": "ebe8549eb43bc5dcd4580988202e0849f0d663daa4912cd9d291f62ea8ce635e"
+        },
+        "Tests/checks/origin/main.swift": {
+          "mode": "100644",
+          "blob": "9063864e8ccba45a21c9e679a3ea5b7169ae7cb5",
+          "sha256": "20823ac7125282079b8a2ef796016484f5da04826acfee63036c24ff0a34ab00"
+        },
+        "Tests/checks/origin/mutants.py": {
+          "mode": "100644",
+          "blob": "ca4e2c9281ac461ccd20ded0409cded89445466d",
+          "sha256": "630e0c76e83fa5980ef9c46b2a9fccaaf9326fe47e887325ce4e8041350d3e57"
+        },
+        "Tests/checks/origin/run.sh": {
+          "mode": "100755",
+          "blob": "7a281ac8fedc0c88c91b562df63b0cbf47bb01ea",
+          "sha256": "39dd3e9653f85bc52476a6b7de57272d13576741cb2f6144ec25f4606406a58c"
+        },
+        "Tests/checks/pairing-address/build.sh": {
+          "mode": "100755",
+          "blob": "ca2bc2e1aeb0bf7e08ee866c62396a8b55914f57",
+          "sha256": "fbcd005988bf3a0ca6df8c01a83c10cf4979e44017e85d6b1d9f236a68a082c5"
+        },
+        "Tests/checks/pairing-address/main.swift": {
+          "mode": "100644",
+          "blob": "23abd8818dd0832d2257af232102e3b87b97aa11",
+          "sha256": "81959b6b98e9eae5e0a280846a5763f52103719a86aed24eafa947ca66e4ddde"
+        },
+        "Tests/checks/pairing-address/mutants.py": {
+          "mode": "100644",
+          "blob": "dfcc92ba3a325859ee77e6a9c3d82f62fc7b82dc",
+          "sha256": "92f086d5dcd9e7d57889e81c43bd40d81a08c36d310aac587a98350cbe44b699"
+        },
+        "Tests/checks/pairing-address/run.sh": {
+          "mode": "100755",
+          "blob": "222412a3cca54e367b9d13aa219a427d3a25aad3",
+          "sha256": "45ae0199ef5dfd22a92d12cf8c553c02049cec71bb88ad5b8a96ae9f48041c1e"
+        },
+        "Tests/checks/phone-portrait/main.swift": {
+          "mode": "100644",
+          "blob": "ffa96a037817fb8a7da0ca28ac22802d2c11c010",
+          "sha256": "7f7ac7a57ff80d88edad50ad46c0a3d5d5fdeb37a357e08b520bc9ad4a05ad6f"
+        },
+        "Tests/checks/phone-portrait/mutants.py": {
+          "mode": "100644",
+          "blob": "44228dde3e9b0de952de2900bd88f7d5fb1efa07",
+          "sha256": "3f99e63b02caf3a9a9ac25c06ddaadb463613543e1b6f1a0099729ed10caef3f"
+        },
+        "Tests/checks/phone-portrait/run.sh": {
+          "mode": "100755",
+          "blob": "4bec1548fa04c4175e42864c54a940ad8b1dd830",
+          "sha256": "4b8c2af2097c1240cfa70e3f030493bd3856233c757c84508afe6f71ab128f08"
+        },
+        "Tests/checks/pointer-buttons/README.md": {
+          "mode": "100644",
+          "blob": "a80e3e73457718322ba8f7929a9041b5615bd977",
+          "sha256": "3c9bb7e80de6d492849844ddbc3b3be95daff32cb96c168248e333cb33b0f67d"
+        },
+        "Tests/checks/pointer-buttons/main.swift": {
+          "mode": "100644",
+          "blob": "447f4981cbe8af9df0e730dbd1c4ffbc8cf9239f",
+          "sha256": "c265b11b840bf5d1b2217240557e4c68fd64446f026e3834484f38dd575ce270"
+        },
+        "Tests/checks/pointer-buttons/run.py": {
+          "mode": "100644",
+          "blob": "698ff42b4195f70fe3bf1702ac96b676614def6f",
+          "sha256": "8de33dbf994993a099934740ab8393f20a58ada8ba2c8f1a7cb10895114180f1"
+        },
+        "Tests/checks/pointer-control/build.sh": {
+          "mode": "100755",
+          "blob": "1cebf8eecf3c0ff7545711265c4d1a3fe6669c26",
+          "sha256": "fb3eb899125d9766bf19f69e203dbc58c5977840b2030197bb7fad082faacacb"
+        },
+        "Tests/checks/pointer-control/main.swift": {
+          "mode": "100644",
+          "blob": "87d146a5b819bcf100062f7818528b6ea4bb32b5",
+          "sha256": "04d34ac1540acdd15599e88b927249288613fda426c221a52a624fa76afb3cbc"
+        },
+        "Tests/checks/pointer-control/mutants.py": {
+          "mode": "100644",
+          "blob": "c65e5c57a329fc7ccc638ccc9e14c80e950028ef",
+          "sha256": "e7d822225c4320c774dfc6090c49386e95e03afd0ecd08437aa48aa0c9eb0c43"
+        },
+        "Tests/checks/pointer-control/run.sh": {
+          "mode": "100755",
+          "blob": "be38f6f345a53a1decb41d1bd3cb1942139f1359",
+          "sha256": "13ad0bab1aa6ece39edd93d5018b602b8305960f22d594b9c1af4b8c318cc635"
+        },
+        "Tests/checks/pointer-presence/main.swift": {
+          "mode": "100644",
+          "blob": "3c21acc8636d686ed40754a8286b2a41027e3593",
+          "sha256": "d6e731b7ad4f63311c67ba06f95f5e200bc4c210da4edbdd6a9ad2c94402ac97"
+        },
+        "Tests/checks/pointer-presence/mutants.py": {
+          "mode": "100644",
+          "blob": "3e682296c9480b24bbb6d340696c5a247c8caf53",
+          "sha256": "07431bea721daa6e707fd1e909ca0f1cf4a255acf47899e6672db65baabb234c"
+        },
+        "Tests/checks/pointer-presence/run.sh": {
+          "mode": "100755",
+          "blob": "bc2f63c84b2e5b45a646fd1cf7443953af49926c",
+          "sha256": "e1f7cb2b12158ab16b5715a347cf2581628e0c25ca4283436e204f7d162ac223"
+        },
+        "Tests/checks/pointer-watch/build.sh": {
+          "mode": "100755",
+          "blob": "c15cbff83c6432035cad2692c4440a951506afd2",
+          "sha256": "eea623df7183bbd20e34b83d7478cc00eedc9afb8fade2228a710984838ce506"
+        },
+        "Tests/checks/pointer-watch/main.swift": {
+          "mode": "100644",
+          "blob": "8186ed0cf5ead1b36c6abd97df07093ed0f3849f",
+          "sha256": "21d956da0afc15e43b266b22a9240e7cb182e61ac0b1048baac9845e5df61138"
+        },
+        "Tests/checks/pointer-watch/mutants.py": {
+          "mode": "100644",
+          "blob": "551c5656666dea64bb3910e6dfb9474b2cbffbaf",
+          "sha256": "33f41d3b3aa8bd64501df4ee3972f3d0934a2c98e0ac283fd43ad31d7c3e8db1"
+        },
+        "Tests/checks/pointer-watch/run.sh": {
+          "mode": "100755",
+          "blob": "51eafd8f05e7e132935c73ed0980356729fe675b",
+          "sha256": "e8f2ae645a7a1aee3a4f92014dcc88ebbb1d3a8bc9bc4582038488ca6cf19006"
+        },
+        "Tests/checks/policy/home.swift": {
+          "mode": "100644",
+          "blob": "fd96c5306ea1c9aa9953bfb0ef06b0d81d3876cb",
+          "sha256": "58e2d71f2763b882d70b2c13bce7695159c1fa9ddf7d56b55bab0607ca056501"
+        },
+        "Tests/checks/policy/main.swift": {
+          "mode": "100644",
+          "blob": "f0c91e38d04fba877cdc520f12c212677096a35e",
+          "sha256": "8ea7865954b07d0ece9e432170cd736eb38a977059a34f48ac96b634a709a043"
+        },
+        "Tests/checks/policy/mutants.py": {
+          "mode": "100644",
+          "blob": "48aef3e935ebbce574e769273df60956424a4cbb",
+          "sha256": "abf17079e0bd777c013b657c568cf12e7d9c922d8c7f2ea98f99ba588297218a"
+        },
+        "Tests/checks/policy/run.sh": {
+          "mode": "100755",
+          "blob": "57fcecb47a6a0ec7ed847713e68b36f4283fa3a2",
+          "sha256": "a74f368a93e3b4a0cbc0e4591ed5f2a756646ad195b2dae6b1ddb66c7534387c"
+        },
+        "Tests/checks/protocol/crosscheck.py": {
+          "mode": "100644",
+          "blob": "6c09fa80cc36062a27b46b46f3cf8fb3e6313c72",
+          "sha256": "de200c18f1c195f8ad93efcff19633aaa85cd0340a37ae2d4c1e27e8a8ea93e6"
+        },
+        "Tests/checks/protocol/main.swift": {
+          "mode": "100644",
+          "blob": "7e026772698e20691a9d5106fb8f1a0ef332a1e1",
+          "sha256": "9c87b82d420d50186614ba008541ee3a6c532a651d270066b95184117dde5a30"
+        },
+        "Tests/checks/protocol/mutants.py": {
+          "mode": "100644",
+          "blob": "9cead25d323f2874b790d22e1faa40acf35b28d6",
+          "sha256": "26b76e5637c8a1e7e633a862f4f23bf547d3791a5ce8f7df95ffc45ec260dc07"
+        },
+        "Tests/checks/protocol/run.sh": {
+          "mode": "100755",
+          "blob": "f4dad8ddad0ad6efa8e233e31289a64cd864eb11",
+          "sha256": "e586d760357999f6a0d7058e0e559428a4ebfc444a8cf880908282f2f8e99494"
+        },
+        "Tests/checks/remote-audio-lifecycle/main.swift": {
+          "mode": "100644",
+          "blob": "686c331ed8d9d40fb47b4fefb1abae0721c25762",
+          "sha256": "f2d6b44d819831ac7296c9013fe057908bdd71b644bc899bbdead0f6b453fc44"
+        },
+        "Tests/checks/remote-audio-lifecycle/off_body.py": {
+          "mode": "100644",
+          "blob": "5856996f9bbaf9e090bb3397fa6edf37167c3149",
+          "sha256": "fb38d690564d6610cefb931d90e2149a2d011f289cdbabc8912157634d6be6a9"
+        },
+        "Tests/checks/remote-audio-lifecycle/run.sh": {
+          "mode": "100755",
+          "blob": "50cda5753b7128a6647cf91f150af8ce4cf42cd2",
+          "sha256": "d4ab2ef6d748d808a03162510538cfef550c89f1b5a3e9e0edaff71abe2c4484"
+        },
+        "Tests/checks/remote-audio-lifecycle/wiring.py": {
+          "mode": "100644",
+          "blob": "d943f1f8fa846f5f135353f08f396261bc0eeef6",
+          "sha256": "c5030899a5b19f818b41f5ef9c08ba2fbc276790ff2afe92e7eb9e34b79dab9d"
+        },
+        "Tests/checks/remote-rules/build.sh": {
+          "mode": "100755",
+          "blob": "855755293808daa909b4c70c7ecc9c8aa9c0ae8a",
+          "sha256": "1804892eb6b67b89620f6b1bb42317e44633b9ddb0246e26933ddc022e902e27"
+        },
+        "Tests/checks/remote-rules/home.swift": {
+          "mode": "100644",
+          "blob": "61fe9391b916557c4e7a3415c2169469bddd9fc1",
+          "sha256": "09fb19ef68c68deceb301004c874000ab33d211a0e0be34abc127f3f2a749569"
+        },
+        "Tests/checks/remote-rules/main.swift": {
+          "mode": "100644",
+          "blob": "ffca5ec50b949d5d00d60edaff07bfa86cb3e62f",
+          "sha256": "c38ce1e8f15417fe6ee33d31babcc7c5cf903c281709590c208f2f5ee27ff778"
+        },
+        "Tests/checks/remote-rules/mutants.py": {
+          "mode": "100644",
+          "blob": "24c3094c844ae628c7ad933369c0c499afb06564",
+          "sha256": "1067a5679178c63622567d845c8ccf80a91a2e600d738e64a6fef23bed23a1bf"
+        },
+        "Tests/checks/remote-rules/run.sh": {
+          "mode": "100755",
+          "blob": "ed31bd1386dfa46f297066fb4c8b40c95e146d6f",
+          "sha256": "abcf1650d92aebaaef3ee826577fc06a72296d0abc6365f576e4db161db2fb2d"
+        },
+        "Tests/checks/run-all.sh": {
+          "mode": "100755",
+          "blob": "0bbccb4e6541cd49912dfcbe76a8e64b3d336fee",
+          "sha256": "f29bf5569a62278dc596d2896298293289cce05cb4fb49eaade9f564d810caae"
+        },
+        "Tests/checks/tour/main.swift": {
+          "mode": "100644",
+          "blob": "a5baf98b7947029334d3ed5a0debd47d3547c2b6",
+          "sha256": "e553facf90c44b3538d3fda0e9067cb7cae427116d89e72c621a44650636f7dc"
+        },
+        "Tests/checks/tour/mutants.py": {
+          "mode": "100644",
+          "blob": "6f2fed29e5a1f0a2e1d64c79989d9c2a650af99f",
+          "sha256": "60c731986c2e056df536f7256d56c1d60355ebef2bb25ad9e05dceed99a52665"
+        },
+        "Tests/checks/tour/run.sh": {
+          "mode": "100755",
+          "blob": "31b51e377b1f81792b7a662d529a86f6c75035e2",
+          "sha256": "56bb9568ee642a40c379bf884b9d85363393ca4b5097fc2559153fcb495e3238"
+        },
+        "Tests/checks/update-policy/build.sh": {
+          "mode": "100755",
+          "blob": "486b019f5a6297d32e28ecfd25b5ddb90bbe13a1",
+          "sha256": "dea0d0e37cbe20a687b57bab9fac690f6564a9eeea6c492bd4599a4bde5e4bc0"
+        },
+        "Tests/checks/update-policy/main.swift": {
+          "mode": "100644",
+          "blob": "570b142562c3f261bacad3a3f88e797d06e60693",
+          "sha256": "cceee9eaa084ccd9f8778f3c8898a9210343d27707932990ce38879c21fe21c6"
+        },
+        "Tests/checks/update-policy/mutants.py": {
+          "mode": "100644",
+          "blob": "cf8d6bec06370fa2b60f8b5fb0ed49c38eddcc72",
+          "sha256": "5a9dbe7ea95238b2c8ab188b9c4761b0a3cdcdd46654ecaaacabd9d4c4ed8d67"
+        },
+        "Tests/checks/update-policy/run.sh": {
+          "mode": "100755",
+          "blob": "61b5ceeaa52d2438365ce6aadd487c8efe6d84e6",
+          "sha256": "5fd133926ae155bdbec364ca161ee0580d3848e776c28af68c78c92cf1462c41"
+        },
+        "Tests/duorig/README.md": {
+          "mode": "100644",
+          "blob": "3a8daa4d66fd9f3e33cd79852cb957c9f01dbc90",
+          "sha256": "d3c61756cb026c7632bea793efadae00f081398e5521b1307722fca98a52a44f"
+        },
+        "Tests/duorig/duorig.entitlements": {
+          "mode": "100644",
+          "blob": "60d0a2ef4afb20a99f425011500130e2d6ca0de8",
+          "sha256": "94d052ec4418286053a55666073d115c1f10ef8cbbf4ef7ae7487235bee07aad"
+        },
+        "Tests/duorig/duorig.m": {
+          "mode": "100644",
+          "blob": "332912fd7742eb2dfbbcdc9b013769872985e596",
+          "sha256": "b34a99131eca3763e1d5b526ab2ab3cff13730d1e2740da1c873a85fdf3eb324"
+        },
+        "Tests/duorig/run.sh": {
+          "mode": "100755",
+          "blob": "866d79849403ec57579ebf3b1bba5ed00a63ddb3",
+          "sha256": "f3a8efde71b20a0b6b90642b52f7cbe65e8a29686955b1d3411109750496174e"
+        },
+        "Tests/touchrig/Bridging.h": {
+          "mode": "100644",
+          "blob": "86e75ab411cae97169ed959bd724b3c16850c7be",
+          "sha256": "44b61e696ab8442cf00797515bca9717ca362dfd431df338990945ea2d50c31e"
+        },
+        "Tests/touchrig/Stubs.swift": {
+          "mode": "100644",
+          "blob": "8e5e020e39219ad6b73a4291ff6a6855be6ce69e",
+          "sha256": "250a1ceab0e7150dfb834c148546a1466632e941431016b5d86216e81d5535cb"
+        },
+        "Tests/touchrig/TouchSynth.h": {
+          "mode": "100644",
+          "blob": "2564aac0f13bb1b7234f121f85ad2e1554b9b006",
+          "sha256": "0764da4488a73720d0aede6292299374da43a2b617a6785c7845e91bc5feeb00"
+        },
+        "Tests/touchrig/TouchSynth.m": {
+          "mode": "100644",
+          "blob": "48257344903aab9472fad40163af03ab06db8dd4",
+          "sha256": "9961b99f7587461f08c6c5c322e7307e0ba85321678cb799bdd595c384c1d8d2"
+        },
+        "Tests/touchrig/compare.py": {
+          "mode": "100755",
+          "blob": "4b6430e7fb8e858a4e3f82de82d4d9dd2c359da1",
+          "sha256": "27eb9d1df784cf82af583868c63558f3d75676ca3c1ab4e8a774f689c9325786"
+        },
+        "Tests/touchrig/main.swift": {
+          "mode": "100644",
+          "blob": "5cf2499838a7ae0f88a862af0a548e9688eba4ee",
+          "sha256": "fd373b8618d3832305e50a702780e591e1b0d5eb7d461dd29ecfbff3d433c898"
+        }
+      }
+    },
+    "peer_iPad_UI_store_player_controller_project": {
+      "parent": "3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5",
+      "files": {
+        "iOSClient/AddMacCard.swift": {
+          "mode": "100644",
+          "blob": "d61d849095f69c86810c9522d3c71b08ef82a1f1",
+          "sha256": "8fe640bf0998f93512db29bdbd4a7e551e0575bd677f475efa35c548ec335cd2"
+        },
+        "iOSClient/Assets.xcassets/AccentColor.colorset/Contents.json": {
+          "mode": "100644",
+          "blob": "eb8789700816459c1e1480e0b34781d9fb78a1ca",
+          "sha256": "9af65086fa30b49252fae1a1225731691de794f7775af74d71befeb507d12b7c"
+        },
+        "iOSClient/Assets.xcassets/AppIcon.appiconset/AppIcon.png": {
+          "mode": "100644",
+          "blob": "87ba651ab81c5d7fb8c9aea1bf18fea4b66d187e",
+          "sha256": "ffe7fea0894ae7ae8e27ce5ef1c21a4ca0c119ebbabf4548d7d4852f9d15e229"
+        },
+        "iOSClient/Assets.xcassets/AppIcon.appiconset/Contents.json": {
+          "mode": "100644",
+          "blob": "cefcc878e08455cb63e46f6f8f78dbc6f45332d6",
+          "sha256": "3725fefca1cc2f15dcff52b03b7db47884c8141e5be1d4e559367b76117f8c48"
+        },
+        "iOSClient/Assets.xcassets/Contents.json": {
+          "mode": "100644",
+          "blob": "73c00596a7fca3f3d4bdd64053b69d86745f9e10",
+          "sha256": "0fd49ba3c3585c709678e0046a821c3c60685ec7063720d30d3a3448be3a208b"
+        },
+        "iOSClient/AwayCopy.swift": {
+          "mode": "100644",
+          "blob": "bd90b6a1d93fa397f98c1edc8f53e6214624535e",
+          "sha256": "9d03b840e1ab820574489cd22ed47069ec579594789e9d66c923719bbfab7a6f"
+        },
+        "iOSClient/CanvasBridge/CanvasModel.swift": {
+          "mode": "100644",
+          "blob": "395959e040687c1d58ca3fdf4bf18b25ca46f1b4",
+          "sha256": "8ee2b3571568826afd5ed2bc0e5d15268e65902035505b5cd87a2ef5b9bd5595"
+        },
+        "iOSClient/CanvasBridge/CanvasRelay.swift": {
+          "mode": "100644",
+          "blob": "9843e1167fa000a59cf90bb490049031ea645d40",
+          "sha256": "7babe0587bf9d4ad729679216385d9d208cba10518476472d23f3da7034234c7"
+        },
+        "iOSClient/CanvasBridge/CanvasStore.swift": {
+          "mode": "100644",
+          "blob": "15197828031a47c6a1789c1ba9200f0fa941ec5a",
+          "sha256": "d860344c91335a3cfdb17289066ec2b7a15f9802daaf50ce5f07eef428a16df6"
+        },
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift": {
+          "mode": "100644",
+          "blob": "6f0e50e41b5337d127e207a0bfc69c3206f1c82b",
+          "sha256": "47821a3cc9d38e624381e159c24140f5e36139348a060a69524bb45cb1d9bdd5"
+        },
+        "iOSClient/CanvasBridge/ControlRoomProjection.swift": {
+          "mode": "100644",
+          "blob": "c42299b9e257c75149d6018be713aba5088cc761",
+          "sha256": "748999c22a46f47831af6f4103c75ecdf257f2be8853ae0dcc3710cff8bb1f6c"
+        },
+        "iOSClient/CanvasBridge/ControlRoomViews.swift": {
+          "mode": "100644",
+          "blob": "ad7af6690bc165bc2684659a3a85bfa94dfee84f",
+          "sha256": "114bdb7761df7214bd5cf4ce162262efc61f305cd6838f7d8a585dc7d48c7e65"
+        },
+        "iOSClient/CanvasBridge/PencilCanvas.swift": {
+          "mode": "100644",
+          "blob": "a05571de870065d4782cda3efeb6099c02efbf97",
+          "sha256": "ccaf44a1a43b640758c7b077181e5ce72b998e8850db6739b4559d36692fefa2"
+        },
+        "iOSClient/CanvasBridge/README.md": {
+          "mode": "100644",
+          "blob": "9865b4d4bab80fbb2cedf89ef1cb24162fb84044",
+          "sha256": "fad16aa07b88923ca56851e1aae3f2dc6cf8868a0453a886b7b8ede8e7ef5c5a"
+        },
+        "iOSClient/CanvasBridge/SceneFile.swift": {
+          "mode": "100644",
+          "blob": "7e4cbc996c4dc6893695b12e8d085b144aac10f9",
+          "sha256": "8fbef60d7209078e83eb240262cd50c7b5c0d6dcc174239b51f749a089b37bf3"
+        },
+        "iOSClient/CanvasBridge/SceneRenderer.swift": {
+          "mode": "100644",
+          "blob": "ee1d68ea196f977a2d9ffa232b05c2e935c2f053",
+          "sha256": "cad62a8506afe81ec54e09803def5f840a4a449e9d05a85a6c407eccc31f8606"
+        },
+        "iOSClient/CodeScanner.swift": {
+          "mode": "100644",
+          "blob": "394f7695f944d5ba4b02912d252f74696236cbbd",
+          "sha256": "9ade1dede1a53a403b14b415000396791f3464fdd63ff19e34e0ff0f85543091"
+        },
+        "iOSClient/ContentView.swift": {
+          "mode": "100644",
+          "blob": "865a7cfeecdd1500d57cf5352c287f283a61bda3",
+          "sha256": "3453f4731586b83a51d44417b88a299fd2b74f10e535df1c1a42b008ac0138dc"
+        },
+        "iOSClient/DeviceIdentity.swift": {
+          "mode": "100644",
+          "blob": "706683f3e72238c8f6412fa1d6c3b5abc68573c4",
+          "sha256": "71ee79425ba53e75c7a945b2c082c0f44fa947a85042e0712cc174f6342d3cc7"
+        },
+        "iOSClient/DiagnosticsHUD.swift": {
+          "mode": "100644",
+          "blob": "98c1edb7b5b372668be71c0bc0051b4879e99b08",
+          "sha256": "71653564863e8cd6fb912be2c1fbbd91e2854a8736503f8414284f7894dc725d"
+        },
+        "iOSClient/DuoPosture.swift": {
+          "mode": "100644",
+          "blob": "d3b45633e0a1cdea57ac4ce23f0815035035ce7d",
+          "sha256": "4caaf503b2ecf624ef65bfdfce6c3cb133f71063ae0d284beaa3579e0fbf9e20"
+        },
+        "iOSClient/DuoPostureReader.swift": {
+          "mode": "100644",
+          "blob": "b2052d2d47b02515a28565d3f0af03b452ba1ffe",
+          "sha256": "1844ea74d525c04e68a7d309c998282ffe1bbf1bba0014d506a06feece790de6"
+        },
+        "iOSClient/GoodbyePolicy.swift": {
+          "mode": "100644",
+          "blob": "e8ff2635a8a69035dd0e937ce54a87270538c03e",
+          "sha256": "bf1bc60df02e5abb031f6b0ed45a9af54ab1d3f13a5f53d9148763654dc28794"
+        },
+        "iOSClient/HostSettingsLedger.swift": {
+          "mode": "100644",
+          "blob": "e3a5e3c8edd28a5cfb461abbe6ea2a094a4bd685",
+          "sha256": "2d69b012f227b9836a869a746f7504a94a3ec384a5fb797f0ddb5bcdc85c99b1"
+        },
+        "iOSClient/HostSettingsPanel.swift": {
+          "mode": "100644",
+          "blob": "cd8625b7bd3cf201348fff2c954d69bec416afc7",
+          "sha256": "e87891110af35649a9f5bd9fdf12eca1b300b7d65d478558799a7699e41db77a"
+        },
+        "iOSClient/IPadRemoteAudioController.swift": {
+          "mode": "100644",
+          "blob": "de788cd1bd9ef23dea54e21349872ba3f872f8df",
+          "sha256": "5a896a3ef35bb99fb4c9938be3a726abee0ad8e489c70c6a57979a44cc9b804f"
+        },
+        "iOSClient/Info-Debug.plist": {
+          "mode": "100644",
+          "blob": "4f9ecb90360e529cb893a437f55521804c7a553a",
+          "sha256": "5e88d62ae9430d137e6a3c1bbf8c2a60749b48113d0ee922a1e23747ef8fdb5d"
+        },
+        "iOSClient/Info.plist": {
+          "mode": "100644",
+          "blob": "339d2452e4724bf36331d91aed2ae33d86f167b0",
+          "sha256": "5e9d79f0b43e548b550254b38c79827b725672e98b20303c104aa5823d1e85c2"
+        },
+        "iOSClient/KeyChords.swift": {
+          "mode": "100644",
+          "blob": "e78b5ed59e8955eb1fc245d3b9adc079868e829e",
+          "sha256": "af3121fd921beb5e750f4cf10ad59faaaa2dd12087b034040afcd38620a1249c"
+        },
+        "iOSClient/MacMenuButton.swift": {
+          "mode": "100644",
+          "blob": "022069a3afcb84e2484ad0b17fb44137efa01e5d",
+          "sha256": "f18e161298f2ba06dbb962c6d6bcdcb8ddace8b554d092c2b13ce804ee18b203"
+        },
+        "iOSClient/MacMenuElements.swift": {
+          "mode": "100644",
+          "blob": "21e38eb30e86ce1d623e39f8263e3e298db21b24",
+          "sha256": "d8982c1080ca0782539272cb0afaa1c272fc46e21f0fc03d1cfd5a9a4f8ae4c0"
+        },
+        "iOSClient/MacMenuHub.swift": {
+          "mode": "100644",
+          "blob": "dfe8eca7bd2daf90a271e761e1b159454e4bd650",
+          "sha256": "c3520348d0e9e5b144f7b99260a204cfbd1c79e00a8fd2bf5d91533b97b02b10"
+        },
+        "iOSClient/MacMenuState.swift": {
+          "mode": "100644",
+          "blob": "c24a5cfb828f2478c0758df334f8a51f289fb154",
+          "sha256": "738ca8347b06cd3a31fb9d7e538cefad6341d92df47b5bb441005210bd200b32"
+        },
+        "iOSClient/MessageReader.swift": {
+          "mode": "100644",
+          "blob": "eab5f589074221d0daac63c49c5dd95fb5dabe3b",
+          "sha256": "c88828f4be067c17796a69ebe68620f6ba6d18d6a5da01aaf170153db26cc4a3"
+        },
+        "iOSClient/MockCatalog.swift": {
+          "mode": "100644",
+          "blob": "201c405cc063a0b14a69b91c475c048d7f4833b5",
+          "sha256": "65ec0abec88b1883ac099da4a6e77424166ea71f4060c995818e2e88d4693bc0"
+        },
+        "iOSClient/PairingOverlay.swift": {
+          "mode": "100644",
+          "blob": "3e8dc5722e1d3d1e2bb5a17f4c21e8a589efc924",
+          "sha256": "7cc6f09b4121b55dabd565441babde101a27f66a50b0d6fe027dd965080889a8"
+        },
+        "iOSClient/PhonePortraitLayout.swift": {
+          "mode": "100644",
+          "blob": "ecddf336d129cf715a9aa15d990b246c075c15c6",
+          "sha256": "05106c3a47b079c28c54f136bffc9fb99e30b66b619e20729815dfa385f9fa1b"
+        },
+        "iOSClient/PointerPresence.swift": {
+          "mode": "100644",
+          "blob": "272ba9ffc9eee6153e7519ed878870122d4b50be",
+          "sha256": "25fb192b44489a7b042d2b64125b9768c036a1af65310ec5ae92430e998ffceb"
+        },
+        "iOSClient/PortraitStreamScreen.swift": {
+          "mode": "100644",
+          "blob": "3b141f19723dbc28f740526536c8e99b379020b1",
+          "sha256": "f121b8f37df96b58d84485d31affdeb74f6a57b56ca5a95733f240eb0e6904fb"
+        },
+        "iOSClient/PrivacyInfo.xcprivacy": {
+          "mode": "100644",
+          "blob": "dc900deebb9348dba88af2f8fec48783546e86cc",
+          "sha256": "f9e21baa2ade53f025f455dd07237c2ae59bcd0af2e1aeb6d7944cd431c0c342"
+        },
+        "iOSClient/RemoteAudioPlayer.swift": {
+          "mode": "100644",
+          "blob": "3592d3d6b1ad972ccf4805912497d062fc5c3525",
+          "sha256": "341098d2f5201bc26f2cedeba8f2cd9560a603646d89e84c24e5f2a86cb7fa16"
+        },
+        "iOSClient/RemoteConnector.swift": {
+          "mode": "100644",
+          "blob": "202a2c7bc4c2e9ee9ecca2db562192eee9e91886",
+          "sha256": "81162b9d3edb61b96ba2ec98152c6774b93df335a0488c62ec038e00c8d46a3d"
+        },
+        "iOSClient/RemoteDialPolicy.swift": {
+          "mode": "100644",
+          "blob": "ea38c1c791e829fd10173442694e5193928414fa",
+          "sha256": "0365db9aa216aeb8cee2fb42b15df1324bc6a35abb3dd1cf8b25cb4b816b72c4"
+        },
+        "iOSClient/SavedMacs.swift": {
+          "mode": "100644",
+          "blob": "841b8fc4c4db54b2f4ecf2199da8776546d2d740",
+          "sha256": "35c76955574d0a31e13016b1432b464673d107f3bf67f3ce481a6b88e79b1597"
+        },
+        "iOSClient/Sill.xcodeproj/project.pbxproj": {
+          "mode": "100644",
+          "blob": "33f732f6fc294bea9a5e9f84acb6c7d1bd314d0e",
+          "sha256": "64c4b9b5a0cd2c523db3157f9a0792f71af81c3e328c7daea80c9831458270c3"
+        },
+        "iOSClient/SillApp.swift": {
+          "mode": "100644",
+          "blob": "3811b5a8e2270949b5bd95ce6e3f59d845705199",
+          "sha256": "bb354e58144a639c8e8d298025589fd03a244e8a0f5be0ce99f2a4bd1e7e821a"
+        },
+        "iOSClient/SillAppDelegate.swift": {
+          "mode": "100644",
+          "blob": "5a6533046a85b2f680e381afc21a13889571e546",
+          "sha256": "2a9754f7190e6d21b55d5c0836f2d9e711b717dc8b7aabca19cba8ab7b8051d4"
+        },
+        "iOSClient/SillLinks.swift": {
+          "mode": "100644",
+          "blob": "d84a35447e6909750485879783850717579c69f6",
+          "sha256": "16c7cc5f9b1c29d06f27981e63cc58250140fe6065488d59ad581569520a007d"
+        },
+        "iOSClient/StreamClient+Home.swift": {
+          "mode": "100644",
+          "blob": "1f8e1eb8297291825fbad187816f09da753a5c27",
+          "sha256": "4fbc7722cdadac1bab6517c2fc5f54d71ca6397a624f4e9145933c7a804feff8"
+        },
+        "iOSClient/StreamScreen.swift": {
+          "mode": "100644",
+          "blob": "375bf3b6e552bf78a2184a6513da512a69cc09aa",
+          "sha256": "de20425f73212f0a8806f1b2ad279c833221c1eb4f4820bd10cc67a029301121"
+        },
+        "iOSClient/TourOverlay.swift": {
+          "mode": "100644",
+          "blob": "41885c4fe114dcf5ecb583e31bbecdd02bde5770",
+          "sha256": "359438fa53b5c7a5bee54d18752b15a80b8165afc02f629e500b9082cabf4713"
+        },
+        "iOSClient/TourPolicy.swift": {
+          "mode": "100644",
+          "blob": "31aff1c6b1e5301408b2c9c36e9a33167d2863d0",
+          "sha256": "d8f64f0d6630066b6a8a913f5902510d470804427216412116549dd26fb0c728"
+        },
+        "iOSClient/TrackpadGestures.swift": {
+          "mode": "100644",
+          "blob": "3437715f0bec86695fe907375d240d29e39eb515",
+          "sha256": "b25fe2d16833580e26bccdfc199c747b8b8fa9e263e9e815f9edd172886a69f9"
+        },
+        "iOSClient/TrackpadView.swift": {
+          "mode": "100644",
+          "blob": "788e08ec0190b6e4aed8a2de514c138682613df3",
+          "sha256": "511ee07943dfa54b6857d478db745f3d9889261c6f066dee212390e707050e3f"
+        }
+      }
+    },
+    "protocol_both_parents": {
+      "parent": "3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5",
+      "files": {
+        "Sources/StreamProtocol/AddressParser.swift": {
+          "mode": "100644",
+          "blob": "93a33392e211b091f9f1bfac89ad34ad1561cb33",
+          "sha256": "d33c0f33f358b7e25340849dc4233d975405374a99703e52d838fa64a0b4cf89"
+        },
+        "Sources/StreamProtocol/AudioPacket.swift": {
+          "mode": "100644",
+          "blob": "153d29cefd7b8150fbfa0f74002ff0f626ba37ce",
+          "sha256": "84913ea1f3fd4d3098654b198e89551d705fb6cde623364031912e8bc2bb78ab"
+        },
+        "Sources/StreamProtocol/Compatibility.swift": {
+          "mode": "100644",
+          "blob": "8bd6f3d0b3dcdea6bff2f855f6af6153d48b1223",
+          "sha256": "0cccb69f47af41bb17519ee548191a519d8c9487366ed144e6b6fdfa011cca26"
+        },
+        "Sources/StreamProtocol/Gesture.swift": {
+          "mode": "100644",
+          "blob": "f34ecb931402357462578a889364ecf7d8b6ae8a",
+          "sha256": "c6041867df7551393625fb6f1af4ae199a8b358cdeb7637638853a4db20d5157"
+        },
+        "Sources/StreamProtocol/HostSettings.swift": {
+          "mode": "100644",
+          "blob": "fc469e9d981e24539e36fbed96c58538a77bb6cd",
+          "sha256": "33fbf9fcfb19b18bd7e6aea62ae1637df27a35a76300be6ec2c980bed82cb5a1"
+        },
+        "Sources/StreamProtocol/Input.swift": {
+          "mode": "100644",
+          "blob": "82b454edc3cc818a7c8ccd372a3861c897161864",
+          "sha256": "7a69dfa1d302eebd5a11533bc5e960316999acbcde6762b5439ab46439009759"
+        },
+        "Sources/StreamProtocol/MacMenu.swift": {
+          "mode": "100644",
+          "blob": "09c6516701ac25e7200ae34aee950df5b8f27c88",
+          "sha256": "d1ddeeadb6417641e02e95f5be4c66a5d30beb5e8410bff88d0f1ddb2c0960bd"
+        },
+        "Sources/StreamProtocol/Pairing.swift": {
+          "mode": "100644",
+          "blob": "663739bbe16a20f43c593d22e264045390545e78",
+          "sha256": "f1d1f707d1d2d089d63ab3d58256c0cbe480eb0cb5ad24884f8dfde5a00ad12f"
+        },
+        "Sources/StreamProtocol/Pointer.swift": {
+          "mode": "100644",
+          "blob": "1bbecefc007c45bb03ef810b0ed650d122c8c01e",
+          "sha256": "1ffc28eeab0344e4cbed48f5c7fdc70a4aa7fd04cff606dde0e4885bd2dc2106"
+        },
+        "Sources/StreamProtocol/Remote.swift": {
+          "mode": "100644",
+          "blob": "bd79403f323bde55c1954446819cff1c701cf5af",
+          "sha256": "b821d5fcaf93f101cf6f1b4bf1a55c3df5091d775350ae1e2c779d82a26f987d"
+        },
+        "Sources/StreamProtocol/RemoteAudioSubscription.swift": {
+          "mode": "100644",
+          "blob": "ab538aaf58b9b1ac3e7f668d7ed3e805ab7c03ed",
+          "sha256": "a1caeeefbc509eacadf67ee0fdf5b01d640637ed81e5a637b984782d231ff3f2"
+        },
+        "Sources/StreamProtocol/RemoteIdentity.swift": {
+          "mode": "100644",
+          "blob": "739a8fb86da6c53fd4b3c7d7f456ff4569cda3e9",
+          "sha256": "e62cc0fdded56219a4a8a82cc6365ce8c6deb9b9082d97acc8684c17fecb1be4"
+        },
+        "Sources/StreamProtocol/RemoteTLS.swift": {
+          "mode": "100644",
+          "blob": "4cf956e0aee26427a946e8bcf88268ac3c5b19ac",
+          "sha256": "0fd68d47fed6002283a0ad1026cfb6e64042fc3c464aa99b86410f6ca484829e"
+        },
+        "Sources/StreamProtocol/SafeText.swift": {
+          "mode": "100644",
+          "blob": "23ddfbf41cd5257f13c1d3154cc572e643afffe6",
+          "sha256": "233377ba3798e58ecec4c88d8fff8c6d1dabd3031b694936fd855387ad92c472"
+        },
+        "Sources/StreamProtocol/StreamMessage.swift": {
+          "mode": "100644",
+          "blob": "69ad78355b5b7aad6769f599002b3f76bf49f570",
+          "sha256": "c7fb0fe4f16e082939aabd1fa8b490d550d7c61e43a093bb39ab7cdbe1b1a34b"
+        },
+        "Sources/StreamProtocol/Switcher.swift": {
+          "mode": "100644",
+          "blob": "4ec29a10756dfb7795b0548f64802d4c63b0d721",
+          "sha256": "7f6b0c919d2de4d87bd32efa3591e1f68cb3683aa8a807647007a83e763781dc"
+        },
+        "Sources/StreamProtocol/Viewport.swift": {
+          "mode": "100644",
+          "blob": "cffff6ca2c9f59bfffac32e7651ed291bfbd9067",
+          "sha256": "efb8f26e69cccf902b68ef1a63c51a693ab1bef5c0062e4d2b6bfbae5189403e"
+        }
+      }
+    },
+    "native_application_input_audio_policy_packaging": {
+      "parent": "f331d8d307fb301e1c0f2bfd71e4a83a76d62dbc",
+      "files": {
+        "Package.swift": {
+          "mode": "100644",
+          "blob": "bbdbb3989245da483b4a00e903a0c073daf214c8",
+          "sha256": "b53dc2315eca1c2c18d4b0e308dc873ac66c524758f4bf00a8e8c34b5d61906a"
+        },
+        "Scripts/make-vision-project.py": {
+          "mode": "100644",
+          "blob": "3a61114dcec0be7370875605ccfa5cfa4ee1d266",
+          "sha256": "dd6fd14c977278a5e46a8b2bedc92296eb62cb1e33ef4c774b768ffc21243aac"
+        },
+        "SillVision.xcodeproj/project.pbxproj": {
+          "mode": "100644",
+          "blob": "930f67e19d5229062afa7004bf747fcfcd963bd3",
+          "sha256": "8a1eb30499a9fbc79e80b51c4545540820f6a1adf546efc71af53691176ff886"
+        },
+        "Tests/touchrig/run.sh": {
+          "mode": "100755",
+          "blob": "e5fe1639d9fbd54b2f6ffdb928b9d5196068c354",
+          "sha256": "800fac35f2e268e24256fc978e96ee5468d4e9cd1a90b9219391a0ee3fa8d72c"
+        },
+        "iOSClient/DiscoveryPolicy.swift": {
+          "mode": "100644",
+          "blob": "c47c605ed68205d97dc0f6a5a76497939e6ed73d",
+          "sha256": "9d8763ee8df438eeabb423dd66faa5b34668235437115af2acd78191e72d39a9"
+        },
+        "iOSClient/HEVCDisplayView.swift": {
+          "mode": "100644",
+          "blob": "5db23a165b22d5c5a58206743d14c92afb275c84",
+          "sha256": "22c5dcdbcc28d4a12a0d22438c978164bd25747bad5300e78ca91aa7374efe01"
+        },
+        "iOSClient/InputOverlay.swift": {
+          "mode": "100644",
+          "blob": "a2ca8587643fcf87004bf6ac6ca71f05d79e61e7",
+          "sha256": "d3cc3028bf0a8cb3180a6100188bb817c4171f1c14627faa0503eb6c7275948a"
+        },
+        "iOSClient/SessionLink.swift": {
+          "mode": "100644",
+          "blob": "fc2f65c57f0cc00a05c6c8765c008fa991083035",
+          "sha256": "e9292f4e09fb96a029e4ec62f09df454525bceedf01a07928d2b73d160b0d94d"
+        },
+        "iOSClient/StreamClient+Remote.swift": {
+          "mode": "100644",
+          "blob": "b8b84aed3b580185d4718a3ee20560c90b8963f9",
+          "sha256": "8cce78415b29bd6c14c740f9b57261fb960af73a96f07ca180b5c79513a6a55a"
+        },
+        "iOSClient/StreamClient+Viewport.swift": {
+          "mode": "100644",
+          "blob": "3ad9b5ea326b5442546830c6e8000eb67576918c",
+          "sha256": "51696e74d55a58b1198e5b593665369b0e4bd89fdf455cf13ebe7c996fef597a"
+        },
+        "visionOSClient/HIDKey.swift": {
+          "mode": "100644",
+          "blob": "9c3870a0323b3a9e5b10429ba7d0d67e1cb8bc0a",
+          "sha256": "e57ecf6f7e50c44ff56706c95ba00b19525e24cfd35d9aa827eed4a7a82c94f8"
+        },
+        "visionOSClient/Info.plist": {
+          "mode": "100644",
+          "blob": "341e27bc213732662c2be3b842052b2b1a72cd09",
+          "sha256": "5cb454b39ac5f7078108e135ec41e9055cb70a6358698c07898f7b66e278c4bb"
+        },
+        "visionOSClient/SillVisionApp.swift": {
+          "mode": "100644",
+          "blob": "6822eb0c5b35eb6b900506e7eb8698b30313c5e1",
+          "sha256": "4ce8204e6b835b176c17a2f6cf9ac46bd19fcf38ef5922d7e520157954ec3619"
+        },
+        "visionOSClient/VisionAudioBuffer.swift": {
+          "mode": "100644",
+          "blob": "8a80af768c8fc313f53a67bc840f589aff5fe5bb",
+          "sha256": "ff661390cdefcb660b8b55d882079d2bbb0ab02807af11cc17d336e997108781"
+        },
+        "visionOSClient/VisionAudioController.swift": {
+          "mode": "100644",
+          "blob": "4ed901f63f9c11f9f782ed851481260cac56d97a",
+          "sha256": "ac60f71d0c3a489960ee1b02c0bd9928c107517d8c3119fb319cc61448d6f0ad"
+        },
+        "visionOSClient/VisionAudioPlayer.swift": {
+          "mode": "100644",
+          "blob": "185b54c1ae340982aa9e6028e1d50ae5deaad125",
+          "sha256": "9737b82aac04950c6983ae6217bd33046677b40ee8c3b50a2d32927d9eb5045b"
+        },
+        "visionOSClient/VisionAudioRoute.swift": {
+          "mode": "100644",
+          "blob": "fb612a4a7c534f59fa96a00b4c0a93df9064f8b2",
+          "sha256": "0d91cec466c1c5a4a75d4dad0fd0846048d9b0bb8c457b80ebfe05af77a79fd0"
+        },
+        "visionOSClient/VisionAudioState.swift": {
+          "mode": "100644",
+          "blob": "c54cdc7f5b8f9e3f4ce6cd0592cfb378deb1a42d",
+          "sha256": "ea3c29c2f7e186f01b0de91edec3fb6318edc278f1f00a91ac4220875b82f24b"
+        },
+        "visionOSClient/VisionInputDebt.swift": {
+          "mode": "100644",
+          "blob": "8040af32fc8934dbfa88370a639fad42075424c6",
+          "sha256": "7931b8d62b87bba2a7a34b083f3971c07bcdf8841121cd8822819dd7fed0bebd"
+        },
+        "visionOSClient/VisionInputFence.swift": {
+          "mode": "100644",
+          "blob": "d6b3ef14746093977fcfa99d1f02db1f178f9675",
+          "sha256": "a51eb823046dfe5015e8106131b3eb8498bd11ebede8fd3af082be50b99890a3"
+        },
+        "visionOSClient/VisionInputSession.swift": {
+          "mode": "100644",
+          "blob": "85fd92211d45e432152f1fe7eaf74c26ae7c1528",
+          "sha256": "41edf4ab80c29a272ce7375f9314460c3a37d2f9b9c743791f8db2a163a62da7"
+        },
+        "visionOSClient/VisionKeyPalette.swift": {
+          "mode": "100644",
+          "blob": "350266c9e9553e8f7e80208f7af0121ef66e019a",
+          "sha256": "5528ba7c0a5af44e1d9db157eb095ec6207a865ca5223be3961e38421b9e9e9e"
+        },
+        "visionOSClient/VisionPointer.swift": {
+          "mode": "100644",
+          "blob": "b1ff0ad823c7e490de6b931d38c763fa7daac527",
+          "sha256": "1059aef8fee3e5a465c312ba14e4aa0749b046cb657afa295e6cbaa4edae21bf"
+        },
+        "visionOSClient/VisionRemoteKey.swift": {
+          "mode": "100644",
+          "blob": "58aee9fc09870b44a5e0ecab1c8117e4d063ac69",
+          "sha256": "8cbea4161e85771d24059ede2f90676b7896f293038e3696c84a2ae7b3087994"
+        },
+        "visionOSClient/VisionTransition.swift": {
+          "mode": "100644",
+          "blob": "1542113bfa8855bc7873abc7cb2e324b4562a78f",
+          "sha256": "d9f991531a5ffa0ef0a54f7e6015e0d044be7110ae84c0c7b202206f0ecd76b3"
+        }
+      }
+    }
+  },
+  "changedContracts": {
+    "iOSClient/StreamClient.swift": {
+      "decision": "One shared transport; exact native debt and readiness; peer captured generic input and Data coalescing; actual-origin audio on both platforms; both Hello sourceInput 1; consume resume and require existing noAutoDesktop policy.",
+      "sha256": "1f3fd0a1131ec85c0696c8d7faa8bdfcf68dbc8e8d9db2018061ab979cf3ab79"
+    },
+    "iOSClient/StreamClient+Audio.swift": {
+      "decision": "Exact peer adapter wrapped only in !os(visionOS). Native generator still excludes it.",
+      "sha256": "4a812534049c4af5e541192adc7281f30394b57821609981ab2bd8f13a6032ef"
+    },
+    "Package.swift": {
+      "decision": "Exact f331 platform addition. Existing host products and probe declarations remain exact peer.",
+      "sha256": "b53dc2315eca1c2c18d4b0e308dc873ac66c524758f4bf00a8e8c34b5d61906a"
+    },
+    "Tests/touchrig/run.sh": {
+      "decision": "Exact f331 protocol dependency packaging for Input.swift. UIKit fixture, no runtime execution here.",
+      "sha256": "800fac35f2e268e24256fc978e96ee5468d4e9cd1a90b9219391a0ee3fa8d72c"
+    }
+  },
+  "nativeExtractionSHA256": {
+    "var connection: NWConnection?": "b6ef92a53ddcd5f2365d8b05cfcfff556a447f79340f24c11d74a35a91613e71",
+    "private static func visionInputBytes(": "f17df05536c3e1117ab855bcb7430cbb695182d1fe72109b7e6e9ddbfa06bb48",
+    "private func applyVisionInputCatalog(": "5078c669167e7d0b912d49f8f9d357f592b435b3663804933890cb4fa262dd9f",
+    "func cancelVisionInputs(": "db84bf3ab99d130941a33e74284edb11bc8ca0f4bf8d36619cc3858371cba131",
+    "private func finishMove(": "a969abd58f737a4af45b0241c7465e16408e873426771981f746b57d47861bef",
+    "sendInput": "36d9f4a82b9cdc0b598f066bd5d5b8aa08051ca25e9145d4a508aa43ed64b2fe",
+    "helloPayload": "d6b9fda84307f36335fb4095ba2b7ff9e739aa4c138245f6a1d9d16fe7de4cc6",
+    "iPadHelloPayload": "cf8658d7a228404133c91a3c3b9c9609f1b5afcd7f99a4a460ce1ef0d594497b",
+    "teardownInput": "8e94a8897ef25d19acbc5893c102c0ee209bdce516df1f0af5b0a8d4f1d82791",
+    "moveInputReset": "438520d9d55ea7c99a713c3cd3088e64ee9ff1f5012219223007690176753aca",
+    "bindingState": "c7bede2a0b7f29fd8a362e5e66fb48e8d794664821ebdd00711f8018eb1b0888",
+    "resumeSource": "fbc4671f7463b56cf7189ded0941699b5ed483db53f5236d4a5aa6af1c387b47",
+    "resumeMethod": "f34e74ef8a7b522cc9cb6a4ea84148aa7c973bb7a6e0a6b9245dbba392b27baa",
+    "takeVisionKeyReleases": "e82b8e821e0ad208ceefcd812732e7bd6f6ba4a287dc8cdfb540a7f5861af117"
+  },
+  "scope": "Exact source preservation and static composition. No compiler, runtime, device, network, audio, independent review, provenance acceptance, or publication."
+}

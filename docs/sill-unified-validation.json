@@ -1,0 +1,93 @@
+{
+  "scope": "Static source checks, extraction, generator determinism and bash syntax only. No Swift compilation or runtime execution.",
+  "commands": [
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/sill-unified-client/static.py"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/vision-input-controls/static.py"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/reconnect-glue/static.py"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/vision-audio-consent/static.py",
+        "--output-dir",
+        ".build/sill-unified-static/audio-consent"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/vision-audio-player/static.py",
+        "--output-dir",
+        ".build/sill-unified-static/audio-player"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/iPad-remote-audio/fixture.py",
+        ".",
+        ".build/sill-unified-static"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/iPad-remote-audio/player-fixture.py",
+        ".",
+        ".build/sill-unified-static"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "Tests/checks/remote-audio-lifecycle/wiring.py",
+        "Sources/SillHost/StreamCoordinator.swift"
+      ],
+      "exit": 0
+    }
+  ],
+  "nativeExtractedFiles": 39,
+  "delayedSourceSHA256": "b2c6e2536baa42bb3436ead4b7e73e2877751688098a903c38b6c509eb924195",
+  "nativeGeneratorExactBytes": true,
+  "iPadActualScenePhaseOFFAndConstructorExtracted": true,
+  "bashSyntax": 3,
+  "diffCheck": true,
+  "counts": {
+    "unifiedIncludingManifest": 739,
+    "nativeInputStatic": 34,
+    "reconnectStatic": 9,
+    "nativeAudioConsentStatic": 18,
+    "nativeAudioPlayerStatic": 12,
+    "iPadAudioIntegrationStatic": 11,
+    "hostAudioWiringDeletionVariants": 8
+  }
+}

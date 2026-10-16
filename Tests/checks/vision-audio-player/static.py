@@ -1,3 +1,4 @@
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -29,26 +30,29 @@ checks['cleanup requires exact owner'] = '$0.owner == ticket.epoch' in block(pla
 checks['no microphone or route control'] = all(word not in player for word in ('duckOthers', 'voiceChat', 'setPreferredInput', 'overrideOutputAudioPort', 'setPreferredSampleRate', 'addObserver'))
 checks['shared wire declaration not copied'] = 'enum AudioPacket' not in player + buffer
 checks['pure checks exclude native adapter compilation'] = "str(package/'visionOSClient/VisionAudioPlayer.swift')" not in (HERE / 'mini.py').read_text()
-changed = subprocess.check_output(['git', 'diff', '--name-only', '8ef216d'], cwd=ROOT, text=True).splitlines()
-untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
-allowed = lambda name: name in ('visionOSClient/VisionAudioPlayer.swift', 'visionOSClient/VisionAudioBuffer.swift', 'docs/vision-audio-player.md') or name.startswith('Tests/checks/vision-audio-player/')
-checks['only allowed writes'] = all(allowed(name) for name in changed + untracked)
+reference = 'f331d8d307fb301e1c0f2bfd71e4a83a76d62dbc'
+checks['native player and buffer exactly native integration parent'] = all(
+    (ROOT / name).read_bytes() == subprocess.check_output(['git', '--no-lazy-fetch', 'show', reference + ':' + name], cwd=ROOT)
+    for name in ('visionOSClient/VisionAudioPlayer.swift', 'visionOSClient/VisionAudioBuffer.swift'))
 
-peer = '/Users/ambrion/Documents/ChatGPT/BT_CCR-Sill-iPad'
 commit = '89f955072e520b6b0aaa00b1e19c26afc3d9fdb3'
 path = 'iOSClient/RemoteAudioPlayer.swift'
-source = subprocess.check_output(['git', 'show', commit + ':' + path], cwd=peer)
+source = subprocess.check_output(['git', '--no-lazy-fetch', 'show', commit + ':' + path], cwd=ROOT)
 source_decoder = block(source.decode(), 'private final class RemoteAACDecoder')
 provenance = {'peerCommit': commit, 'peerPath': path,
-              'peerBlob': subprocess.check_output(['git', 'rev-parse', commit + ':' + path], cwd=peer, text=True).strip(),
+              'peerBlob': subprocess.check_output(['git', '--no-lazy-fetch', 'rev-parse', commit + ':' + path], cwd=ROOT, text=True).strip(),
               'sourceSHA256': hashlib.sha256(source).hexdigest(),
               'originalDecoderSHA256': hashlib.sha256(source_decoder.encode()).hexdigest(),
               'adaptedDecoderSHA256': hashlib.sha256(block(player, 'private final class VisionAACDecoder').encode()).hexdigest(),
               'componentSHA256': {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in ('visionOSClient/VisionAudioBuffer.swift', 'visionOSClient/VisionAudioPlayer.swift')},
               'source': 'Read-only git show of committed bytes. No peer test acceptance.'}
 checks['source blob matches specified peer'] = provenance['peerBlob'] == 'ffdbfc457feb82e94bfbdffc79006de5a99049a7'
-(HERE / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
-(HERE / 'static.json').write_text(json.dumps(checks, indent=2) + '\n')
+parser = argparse.ArgumentParser()
+parser.add_argument('--output-dir', type=Path, default=HERE)
+destination = parser.parse_args().output_dir
+destination.mkdir(parents=True, exist_ok=True)
+(destination / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+(destination / 'static.json').write_text(json.dumps(checks, indent=2) + '\n')
 for name, passed in checks.items():
     print(('PASS ' if passed else 'FAIL ') + name)
 raise SystemExit(0 if all(checks.values()) else 1)

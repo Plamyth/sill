@@ -119,6 +119,15 @@ enum RemoteRoute: Equatable {
 /// Finds Macs over Bonjour, connects, and splits the byte stream into messages.
 /// Frame callbacks fire on the network queue; published state hops to main.
 final class StreamClient: ObservableObject {
+    #if !os(visionOS)
+    private let remoteAudio = RemoteAudioPlayer()
+    @Published private(set) var remoteAudioStatus: IPadRemoteAudioController.Status = .unavailable
+    lazy var remoteAudioControl = IPadRemoteAudioController(
+        send: { [weak self] peer, request in self?.sendRemoteAudio(request, to: peer) },
+        stop: { [weak self] in self?.remoteAudio.stop() },
+        play: { [weak self] packet in self?.remoteAudio.receive(packet) },
+        changed: { [weak self] status in self?.remoteAudioStatus = status })
+    #endif
     // Connection. The setters of what the connect screen shows are internal: the DEBUG harness
     // seeds them.
     @Published var status = StreamClient.lookingOnNetwork {
@@ -802,6 +811,8 @@ final class StreamClient: ObservableObject {
                 visionInputSession?.setMoving(false)
                 return
             }
+            #else
+            remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))
             #endif
             link.connection = newValue
         }
@@ -931,9 +942,12 @@ final class StreamClient: ObservableObject {
     /// A day. A sample beyond it is a broken clock, and clamping keeps an infinity away from `Int()`.
     private static let sampleCeilingMs = 86_400_000.0
 
+    /// Main thread, alongside `active`; captured before an event enters the network queue.
+    private var inputGeneration: String?
+
     // Pointer-move coalescing, all touched on `queue` only.
     private static let moveInterval = 0.008   // 125 Hz ceiling; a Pencil can report at 120+ Hz
-    private var pendingMove: InputEvent?
+    private var pendingMove: Data?
     private var lastMoveAt = 0.0              // CACurrentMediaTime
     private var moveFlushScheduled = false
 
@@ -1802,11 +1816,8 @@ final class StreamClient: ObservableObject {
         if let v = UserDefaults.standard.string(forKey: "SillHelloVersion"), !v.isEmpty { version = v }
         #endif
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        var hello = Hello(appVersion: version, build: build, protocol: SillProtocol.current, device: ClientStatsReporter.deviceName)
-        #if os(visionOS)
-        hello.sourceInput = 1
-        #endif
-        return Wire.encode(hello)
+        return Wire.encode(Hello(appVersion: version, build: build, protocol: SillProtocol.current,
+                                 device: ClientStatsReporter.deviceName, sourceInput: 1))
     }()
 
     /// The hello, the first thing on every session connection, written straight to `c` before
@@ -2373,6 +2384,9 @@ final class StreamClient: ObservableObject {
         #endif
         let reconnected = sessionDead
         let fenced = kind != .toWifi && !reconnected
+        #if !os(visionOS)
+        remoteAudioControl.setConnection(ObjectIdentifier(c))
+        #endif
         if fenced {
             let nonce = withUnsafeBytes(of: UInt64.random(in: .min ... .max)) { Data($0) }
             let fencePing = StreamMessage(kind: .ping, timestamp: Date().timeIntervalSince1970, isKeyframe: false, payload: nonce)
@@ -3147,6 +3161,9 @@ final class StreamClient: ObservableObject {
         if let released = link.release(c) { fenceEnded(c, released, why: "the direct connection closed") }
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
+            #if !os(visionOS)
+            self.remoteAudioControl.setConnection(nil)
+            #endif
             // A move carries the session on (`rescue`), not when this device closed the connection
             // itself (`end`: a message no Sill sends): that one ends with the words it deserves.
             if self.sessionDead || (end == nil && self.rescue(from: c)) { return }
@@ -3181,6 +3198,8 @@ final class StreamClient: ObservableObject {
         resetVisionAudio()
         visionInputSession?.releaseAll()
         visionInputBinding = .awaitingCatalog
+        #else
+        remoteAudioControl.setConnection(nil)
         #endif
         abandonMove()
         resetPath()
@@ -3198,6 +3217,7 @@ final class StreamClient: ObservableObject {
         hostVersion = nil
         hostProtocol = nil
         hostGestures = nil
+        inputGeneration = nil
         remoteRoute = nil
         macInfo = nil
         macInfoSaved = false
@@ -3262,6 +3282,8 @@ final class StreamClient: ObservableObject {
     private func request(_ source: StreamSource) {
         #if os(visionOS)
         visionAudio.stop()
+        #else
+        remoteAudioControl.sourceWillChange()
         #endif
         choicesSent += 1
         send(.selectSource, Wire.encode(source))
@@ -3352,6 +3374,7 @@ final class StreamClient: ObservableObject {
         }
         return
         #else
+        let payload = SourceInput.payload(event, generation: inputGeneration)
         // Every input passes here, a hover and a flick's coast included: the tour's rule counts it
         // as something happening (StreamScreen.considerTour).
         lastInputAt = ProcessInfo.processInfo.systemUptime
@@ -3368,7 +3391,7 @@ final class StreamClient: ObservableObject {
             self.pointerNoteSent(event)
             guard case .pointer(.move, _, _) = event else {
                 self.flushPendingMove()
-                self.send(.input, Wire.encode(event))
+                self.send(.input, payload)
                 return
             }
             let now = CACurrentMediaTime()
@@ -3376,9 +3399,9 @@ final class StreamClient: ObservableObject {
             if now >= due {
                 self.pendingMove = nil
                 self.lastMoveAt = now
-                self.send(.input, Wire.encode(event))
+                self.send(.input, payload)
             } else {
-                self.pendingMove = event   // replaces any older pending move
+                self.pendingMove = payload   // replaces any older pending move, retaining its generation
                 if !self.moveFlushScheduled {
                     self.moveFlushScheduled = true
                     self.queue.asyncAfter(deadline: .now() + (due - now)) { [weak self] in
@@ -3431,7 +3454,7 @@ final class StreamClient: ObservableObject {
         guard let move = pendingMove else { return }
         pendingMove = nil
         lastMoveAt = CACurrentMediaTime()
-        send(.input, Wire.encode(move))
+        send(.input, move)
     }
 
     private func send(_ kind: StreamMessageKind, _ payload: Data) {
@@ -3692,6 +3715,9 @@ final class StreamClient: ObservableObject {
 
     /// On the network queue.
     private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
+        #if !os(visionOS)
+        if receiveRemoteAudio(header, data, from: peer) { return }
+        #endif
         switch header.kind {
         #if os(visionOS)
         case .audio:
@@ -3732,6 +3758,9 @@ final class StreamClient: ObservableObject {
                 // Only from the current connection: a list queued by a replaced one must not
                 // describe the next session.
                 guard self.connection === from else { return }
+                #if !os(visionOS)
+                self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
+                #endif
                 // A remote session, and one at home over TLS, is connected at its first window list,
                 // not at `.ready`: the Mac has admitted this device's key.
                 self.remoteSessionReady()
@@ -3769,6 +3798,7 @@ final class StreamClient: ObservableObject {
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
                 #else
                 self.windows = list.windows
+                self.inputGeneration = list.inputGeneration
                 self.active = list.active
                 #endif
                 // Forget thumbnails for windows that are gone.
@@ -3778,7 +3808,7 @@ final class StreamClient: ObservableObject {
                 // what this device was watching is picked again (`resumeSource`).
                 if let resume = self.resumeSource {
                     self.resumeSource = nil
-                    if list.active == .none {
+                    if list.active == .none, !Self.noAutoDesktop {
                         var pick = resume
                         if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
                         #if DEBUG

@@ -14,6 +14,10 @@ final class InputOverlayView {
 final class StreamClient {
     enum MoveKind { case fromDirect, toCable, toWifi, fromRemote }
     struct Move { let connection: NWConnection }
+    static var noAutoDesktop = true
+    var resumeSource: StreamSource?
+    var requested: [StreamSource] = []
+    func request(_ source: StreamSource) { requested.append(source) }
     var active = StreamSource.desktop
     var windows: [WindowInfo] = []
     var connected = true
@@ -50,6 +54,6 @@ final class StreamClient {
     }
     func catalog(_ list: WindowList, from peer: NWConnection?) -> Bool { applyVisionInputCatalog(list, from: peer) }
     static var hello: Data { helloPayload }
-    static var legacyHello: Data { legacyHelloPayload }
+    static var iPadHello: Data { iPadHelloPayload }
     // EXTRACTED
 }

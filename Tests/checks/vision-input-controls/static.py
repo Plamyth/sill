@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from extract import ROOT, block, fixture
+from extract import ROOT, block, fixture, select_platform
 
 BASE = 'b403986efa84a0741400da2153d0d09b3b00bc81'
 results = {}
@@ -30,13 +30,14 @@ for path, expected in {
     check('exact peer148 blob ' + path, actual == expected)
 
 stream = (ROOT / 'iOSClient/StreamClient.swift').read_text()
-old_stream = baseline('iOSClient/StreamClient.swift').decode()
+peer_stream = baseline('iOSClient/StreamClient.swift', '3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5').decode()
 send = block(stream, 'func sendInput(')
 check('confirmed capture and serialization precede queue', send.index('guard let input = visionInputBinding.capture(event) else { return }') < send.index('Self.visionInputBytes(input)') < send.index('queue.async'))
 check('locked scoped send and weak actual callback retained', 'self.link.send(bytes, onlyOn: expected) { [weak self] in\n                self?.visionInputDebt.record(input, on: expected)' in send)
-check('iPad input path unchanged', send.split('#else', 1)[1] == block(old_stream, 'func sendInput(').split('#else', 1)[1])
+check('iPad input path exactly peer3bd scoped codec', select_platform(send, vision=False).strip() == select_platform(block(peer_stream, 'func sendInput('), vision=False).strip())
+check('iPad coalescer flush exactly peer3bd Data path', block(stream, 'private func flushPendingMove()') == block(peer_stream, 'private func flushPendingMove()'))
 hello = block(stream, 'private static let helloPayload: Data =')
-check('capability confined to Vision', '#if os(visionOS)\n        hello.sourceInput = 1\n        #endif' in hello)
+check('both real Hello paths advertise peer scoped codec', all('sourceInput: 1' in select_platform(hello, vision=vision) for vision in [True, False]))
 apply = block(stream, 'private func applyVisionInputCatalog(')
 check('binding guard and drain precede catalog mutation and confirmation', apply.index('guard let peer, connection === peer') < apply.index('takeReleases()') < apply.index('cancelVisionInputs()') < apply.index('windows =') < apply.index('active =') < apply.index('visionInputBinding = binding'))
 catalog = stream[stream.index('        case .windowList:'):stream.index('                // Forget thumbnails')]
@@ -73,7 +74,12 @@ check('Switcher delta only adds peer optional field beside audio', switcher == e
 files, manifest = fixture()
 check('fixture has no unresolved substitutions', all(token not in files['Client.swift'] for token in ['// EXTRACTED', '// OVERLAY_DRAIN', '// MOVE_INPUT_RESET', '// BINDING_STATE']))
 check('fixture uses actual Wire and framing without shadows', all(token not in files['Client.swift'] for token in ['enum Wire', 'struct StreamMessage', 'struct StreamHeader', 'enum StreamMessageKind']))
-check('fixture extracts Vision and legacy Hello', 'hello.sourceInput = 1' in files['Client.swift'] and 'hello.sourceInput = 1' not in block(files['Client.swift'], 'private static let legacyHelloPayload: Data ='))
+check('fixture extracts actual Vision and iPad Hello', all('sourceInput: 1' in block(files['Client.swift'], 'private static let ' + name + ': Data =') for name in ['helloPayload', 'iPadHelloPayload']))
+check('fixture qualifies copied Published for fake SwiftUI module', '@SwiftUI.Published private(set) var visionInputBinding =' in files['Client.swift'])
+check('native fixture excludes iPad audio policy and generic input', all(name not in files['Client.swift'] for name in ['remoteAudioControl', 'RemoteAudioPlayer', 'IPadRemoteAudioController', 'SourceInput.payload', 'private var inputGeneration', '#if', '#else', '#endif']))
+resume = block(stream, 'if let resume = self.resumeSource')
+check('resume consumes pending choice before automatic policy guard', resume.index('self.resumeSource = nil') < resume.index('if list.active == .none, !Self.noAutoDesktop') < resume.index('self.request(pick)'))
+check('resume fixture copies actual selected branch', select_platform(resume, vision=True) in files['Client.swift'])
 check('six mutants change sources', all(files[mutant] != files[original] for mutant, original in [('mutants/debt/Client.swift', 'Client.swift'), ('mutants/route/SessionLink.swift', 'iOSClient/SessionLink.swift'), ('mutants/capture/Client.swift', 'Client.swift'), ('mutants/generation/VisionInputDebt.swift', 'visionOSClient/VisionInputDebt.swift'), ('mutants/admission/Client.swift', 'Client.swift'), ('mutants/controls/VisionInputSession.swift', 'visionOSClient/VisionInputSession.swift')]))
 remote = (Path(__file__).parent / 'remote.py').read_text()
 check('input fixture builds actual protocol dependencies', "['Input','Switcher','StreamMessage','Compatibility']" in remote and '-whole-module-optimization' in remote)

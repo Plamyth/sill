@@ -55,6 +55,8 @@ import StreamProtocol
 final class StreamServer {
     private final class Client {
         let connection: NWConnection
+        /// Set only by the coordinator's first direct catalog, after source-fence admission.
+        var catalogSent = false
         var inflight = 0          // every message still unacknowledged (backpressure for delta drops)
         var inflightFrames = 0    // video frames only
         var oldestUnackedFrameAt: TimeInterval?   // last time a frame was drained, or queued from 0 (dead-peer detection)
@@ -128,12 +130,16 @@ final class StreamServer {
         /// The last kind 26 sent to it; nil also while it drives the pointer, so the next one goes out
         /// whatever it says.
         var lastPointer: MacPointer?
+        /// Only this connection's explicit, current opt-in authorizes Mac sound.
+        var remoteAudioEnabled = false
+        var remoteAudioAfterSequence: UInt64 = .max
         init(_ c: NWConnection) { connection = c }
     }
 
     /// The network queue: both doors, their connections, the verify blocks and the timers.
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
+    private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
     /// A client was admitted (home door at `.ready`, remote door once paired and checked), with
     /// its route (which door, from where) and, for a home client, its link (ClientLink.route; nil
@@ -1352,7 +1358,46 @@ final class StreamServer {
                 print("send: no client for \(connection.endpoint) (\(clients.count) known)")
                 return
             }
+            if message.kind == .windowList { client.catalogSent = true }
             send(data, to: client)
+        }
+    }
+
+    /// Thread-safe; queued before the matching kind 201 answer on the same network queue.
+    func setRemoteAudio(_ enabled: Bool, for connection: NWConnection,
+                        afterSequence: UInt64 = .max) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)] else { return }
+            client.remoteAudioEnabled = enabled
+            client.remoteAudioAfterSequence = enabled ? afterSequence : .max
+        }
+    }
+
+    /// Revokes every connection and invalidates callbacks from the previous capture stream.
+    /// The epoch is returned asynchronously because this method is called on the main actor.
+    func resetRemoteAudio(completion: @escaping (UInt64) -> Void) {
+        queue.async { [self] in
+            remoteAudioEpoch &+= 1
+            for client in clients.values {
+                client.remoteAudioEnabled = false
+                client.remoteAudioAfterSequence = .max
+            }
+            completion(remoteAudioEpoch)
+        }
+    }
+
+    /// Only current opt-in clients receive sound. Stale capture callbacks and congested links
+    /// are dropped before touching NWConnection's ordered send queue.
+    func broadcastRemoteAudio(_ payload: Data, epoch: UInt64, sequence: UInt64) {
+        let data = StreamMessage(kind: .audio, timestamp: Date().timeIntervalSince1970,
+                                 isKeyframe: false, payload: payload).serialized()
+        queue.async { [self] in
+            guard epoch == remoteAudioEpoch else { return }
+            for client in clients.values where client.remoteAudioEnabled &&
+                sequence > client.remoteAudioAfterSequence && client.connection.state == .ready {
+                guard client.pendingBytes < 512_000 else { continue }
+                send(data, to: client)
+            }
         }
     }
 
@@ -1457,7 +1502,7 @@ final class StreamServer {
             if message.kind == .frame, message.isKeyframe { lastKeyframeAt = Date().timeIntervalSince1970 }
             var wantKeyframe = false
             defer { if wantKeyframe { onKeyframeNeeded?() } }
-            for client in clients.values where client.connection.state == .ready {
+            for client in clients.values where client.catalogSent && client.connection.state == .ready {
                 if message.kind == .frame, client.route.isRemote {
                     if paceRemote(client, message: message, data: data) { wantKeyframe = true }
                     continue
