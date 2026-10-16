@@ -3,6 +3,7 @@ import os
 
 /// Native capture only. The caller must first receive a matching, live Mac grant for an explicit
 /// user request; constructing this object does not ask for permission or open the microphone.
+#if os(iOS)
 @MainActor
 final class IPadMicrophoneCapture {
     enum CaptureError: LocalizedError {
@@ -77,10 +78,11 @@ final class IPadMicrophoneCapture {
         }
     }
 }
+#endif
 
 /// The tap copies at most two short buffers; conversion and packet framing stay off the render
 /// callback. If work falls behind, it drops new buffers rather than stretching spoken latency.
-private final class IPadMicrophoneConversionWorker: @unchecked Sendable {
+final class IPadMicrophoneConversionWorker: @unchecked Sendable {
     private let queue = DispatchQueue(label: "sill.ipad-microphone.convert", qos: .userInitiated)
     private let pending = OSAllocatedUnfairLock(initialState: 0)
     private var converter: AVAudioConverter?
