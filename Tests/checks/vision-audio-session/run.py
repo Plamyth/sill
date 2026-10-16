@@ -46,10 +46,10 @@ def main():
     main = root/'Tests/checks/vision-audio-session/main.swift'
     try:
         require(base+['-parse-as-library','-whole-module-optimization','-emit-module','-emit-object','-module-name','StreamProtocol']+list(map(str,protocol))+['-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'StreamProtocol.o')], 'protocol-compile')
-        def compile_run(paths, label):
+        def compile_run(paths, label, scenario=None):
             exe = output/label
             require(base+['-I',str(output)]+list(map(str,paths))+[str(main),str(output/'StreamProtocol.o'),'-o',str(exe)], label+'-compile')
-            return run([str(exe)], label+'-runtime')
+            return run([str(exe)]+([scenario] if scenario else []), label+'-runtime')
         code, log = compile_run(sources, 'baseline')
         if code: raise RuntimeError('baseline runtime\n'+log)
         record['assertions'] = int(re.search(r'^RESULT_ASSERTIONS (\d+)$',log,re.M)[1])
@@ -65,7 +65,9 @@ def main():
             path.write_text(mutated)
             entry = {'name':name,'witness':witness,'compiled':False,'caught':False}
             record['mutants'].append(entry)
-            code, log = compile_run([sources[0],path,sources[2]],'mutant-'+name+'-run')
+            scenario = {'supersession':'review','invalidation':'review','generation':'hardware','stop-gate':'hardware','quarantine':'failure','permission':'hardware','permission-recheck':'failure'}[name]
+            entry['scenario'] = scenario
+            code, log = compile_run([sources[0],path,sources[2]],'mutant-'+name+'-run',scenario)
             entry.update(compiled=True,exitCode=code,failures=re.findall(r'^FAIL (.*)$',log,re.M))
             entry['caught'] = code == 1 and witness in entry['failures']
         regression = [

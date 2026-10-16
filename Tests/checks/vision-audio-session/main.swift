@@ -271,7 +271,19 @@ func runPlayerChecks() throws {
     player.retryCleanup()
     check(player.cleanupProblem == nil, "real player explicit cleanup recovers shared owner")
 }
-do { try runReviewRegressions(); if failures == 0 { try runHardwareChecks() }; if failures == 0 { try runFailureChecks() }; if failures == 0 { try runPlayerChecks() } }
+do {
+    switch CommandLine.arguments.dropFirst().first {
+    case "review": try runReviewRegressions()
+    case "hardware": try runHardwareChecks()
+    case "failure": try runFailureChecks()
+    case nil:
+        try runReviewRegressions()
+        if failures == 0 { try runHardwareChecks() }
+        if failures == 0 { try runFailureChecks() }
+        if failures == 0 { try runPlayerChecks() }
+    default: throw SyntheticError()
+    }
+}
 catch { failures += 1; print("FAIL unexpected error \(error)") }
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")
