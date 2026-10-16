@@ -1,4 +1,3 @@
-# Every mutant must compile and fail its named runtime witness.
 MUTANTS = [
     ('cancel-before-enqueue', 'iOSClient/SessionLink.swift', [
         ('guard outcome == nil, !claimed else { return false }', 'guard !claimed else { return false }'),
