@@ -142,6 +142,7 @@ import StreamProtocol
             AVAudioTime(sampleTime: inputSample, atRate: 48_000))
         inputSample += Int64(packets * 960)
         await until({ self.connection.sent.count > previous }, "actual converter emits new hardware batch")
+        await until({ self.connection.pendingCompletions == 0 }, "ordinary burst send completion finishes")
         let result = clientMessages()
         expect(result.count == 1 && StreamMessage.parseHeader(result[0])?.kind == .microphoneFrame,
                "one hardware batch is one framed send")
@@ -167,6 +168,15 @@ import StreamProtocol
         await until({ p.deliverReplies(); return p.client.microphonePhase == .live },
                     "actual host state enables actual client capture")
         expect(p.receiver.phase == .active && permissionRequests.withLock { $0 == 1 }, "one permission follows host grant")
+        p.client.microphoneCleanupProblem = "inert cleanup refusal"
+        p.client.requestVisionMicrophoneReceipt()
+        expect(p.clientMessages().isEmpty, "cleanup uncertainty blocks receipt action")
+        p.client.microphoneCleanupProblem = nil
+        let replacement = NWConnection()
+        p.client.connection = replacement
+        p.client.requestVisionMicrophoneReceipt()
+        expect(replacement.sent.isEmpty && p.clientMessages().isEmpty, "connection mismatch blocks receipt action")
+        p.client.connection = p.connection
 
         for burst in 0..<3 {
             p.clock += 100_000_000
