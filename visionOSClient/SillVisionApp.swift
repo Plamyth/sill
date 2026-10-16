@@ -270,7 +270,7 @@ private struct VisionAudioControls: View {
                 if running { audio.stop() } else if allowStart { audio.enable() }
             }
             .disabled(!running && (!audio.presentation.canEnable || !allowStart))
-            .accessibilityHint(running ? "즉시 소리를 중지합니다." : "선택한 Mac의 소리만 수신합니다. 마이크는 켜지지 않습니다.")
+            .accessibilityHint(running ? "즉시 소리를 중지합니다." : "선택한 Mac의 소리만 수신합니다. Mac으로 마이크를 전송하지 않습니다.")
             Text(message).font(.caption).lineLimit(2)
             Spacer()
         }
@@ -280,7 +280,7 @@ private struct VisionAudioControls: View {
         switch audio.presentation.phase {
         case .requesting: return "Mac의 소리 전송 확인을 기다립니다."
         case .waiting: return "소리 데이터를 기다립니다."
-        case .rendering: return "Mac 소리 재생 중 · 마이크 꺼짐"
+        case .rendering: return "Mac 소리 재생 중 · Mac으로 마이크 전송 없음"
         case .failed(let problem): return problem
         case .off:
             switch audio.presentation.availability {
