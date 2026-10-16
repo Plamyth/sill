@@ -142,6 +142,35 @@ struct Check {
         delayed.finishStop()
         await lifecycle.waitUntilIdle()
         precondition(!delayed.active, "capture remains active after C OFF")
-        print("remote audio lifecycle: replacement stop and shared-start checks passed")
+
+        // Replacement stops may keep arriving. The ON waiter must refuse a
+        // 33rd chained stop instead of looping indefinitely or starting early.
+        let boundedCapture = FakeCapture()
+        var completed = 0
+        var keepScheduling = true
+        var bounded: RemoteAudioCaptureLifecycle!
+        bounded = RemoteAudioCaptureLifecycle(onCleared: {
+            completed += 1
+            if keepScheduling && completed <= 32 {
+                bounded.scheduleStop { await boundedCapture.stop() }
+            }
+        })
+        bounded.scheduleStop { await boundedCapture.stop() }
+        let boundedWaiter = Task { @MainActor in await bounded.waitToStart(if: { true }) }
+        for target in 1...32 {
+            for _ in 0..<1000 where boundedCapture.waitingStops == 0 { await Task.yield() }
+            precondition(boundedCapture.waitingStops == 1, "stop chain \(target) was not pending")
+            boundedCapture.finishStop()
+            for _ in 0..<1000 where completed < target { await Task.yield() }
+            precondition(completed >= target, "stop chain \(target) was not cleared")
+        }
+        let allowedAfterLimit = await boundedWaiter.value
+        precondition(!allowedAfterLimit, "unbounded replacement stops permitted a start")
+        keepScheduling = false
+        for _ in 0..<1000 where boundedCapture.waitingStops == 0 { await Task.yield() }
+        precondition(boundedCapture.waitingStops == 1, "final stop was not pending")
+        boundedCapture.finishStop()
+        await bounded.waitUntilIdle()
+        print("remote audio lifecycle: replacement stop, shared start and bound checks passed")
     }
 }

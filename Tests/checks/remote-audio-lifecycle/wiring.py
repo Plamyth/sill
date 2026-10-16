@@ -18,6 +18,7 @@ def wired(source: str) -> bool:
         stop = section(source, "private func stopRemoteAudioIfIdle()", "private func revokeRemoteAudio")
         revoke = section(source, "private func revokeRemoteAudio", "private func canEnableRemoteAudio")
         control = section(source, "private func controlRemoteAudio", "private func sendCatalog")
+        off = section(control, "if !request.enabled {", "guard canEnableRemoteAudio")
     except IndexError:
         return False
     return all((
@@ -29,6 +30,9 @@ def wired(source: str) -> bool:
         "remoteAudioLifecycle.acquireStart" in control,
         "remoteAudioLifecycle.settleStart(start)" in control,
         control.count("remoteAudioLifecycle.isStopping") == 2,
+        "remoteAudioSubscribers.remove(id)" in off,
+        "server.setRemoteAudio(false, for: connection)" in off,
+        "stopRemoteAudioIfIdle()" in off,
         "remoteAudioStart = nil" not in control,
     ))
 
@@ -47,4 +51,7 @@ mutants = [
 for marker in mutants:
     assert marker in source, marker
     assert not wired(source.replace(marker, "bypassedLifecycle", 1)), marker
-print(f"remote audio coordinator wiring: {len(mutants)} of {len(mutants)} mutants caught")
+off_call = "            stopRemoteAudioIfIdle()\n            return\n        }\n        guard canEnableRemoteAudio"
+assert off_call in source, "OFF branch shape changed; update the deletion witness"
+assert not wired(source.replace(off_call, "            return\n        }\n        guard canEnableRemoteAudio", 1)), "OFF stop deletion survived"
+print(f"remote audio coordinator wiring: {len(mutants) + 1} of {len(mutants) + 1} mutants caught")
