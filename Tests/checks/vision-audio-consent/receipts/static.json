@@ -1,0 +1,29 @@
+{
+  "scope": "Static source constraints, not runtime audio, host fence, or device acceptance",
+  "checks": {
+    "native framework startup is outside state locks": true,
+    "render never waits for playback state lock": true,
+    "framework startup rechecks current grant": true,
+    "stop never starts or constructs audio engine": true,
+    "own category changes do not recursively stop activation": true,
+    "Enable send body remains under consent lock": true,
+    "captured positive send checks scope inside grant fence": true,
+    "audio request bypasses handover-held SessionLink": true,
+    "actual originating connection enters asynchronous handler": true,
+    "replayed move messages retain origin": true,
+    "handover revokes even while connected stays true": true,
+    "application background revokes audio": true,
+    "native stop is a sibling of disabled input controls": true,
+    "Stop remains actionable while Enable is inhibited": true,
+    "source transition revokes before input fence": true,
+    "no native microphone or device route override": true,
+    "four common component hashes still match owner snapshot": true
+  },
+  "count": 17,
+  "sourceSHA256": {
+    "visionOSClient/VisionAudioPlayer.swift": "d6c2aadd6bac8426f7de856f094da088a56b1a9cdfc1b8e1cdd9b93d89b70739",
+    "visionOSClient/VisionAudioController.swift": "8f66c8ab6cfd715a259af8d3a71f76f512f8bae0353b80573ae52143da1aeaee",
+    "visionOSClient/SillVisionApp.swift": "030192ca07914e0728d42eb608af64550b5d397c0fd1c467f4bfd29c04689e55",
+    "iOSClient/StreamClient.swift": "a06b6f33d7efe61157506d061810b18061911652471af8b8674be6b12bdc07b8"
+  }
+}

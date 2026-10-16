@@ -162,40 +162,49 @@ final class VisionAudioPlayer: @unchecked Sendable {
     }
 
     private func reconcile(_ ticket: VisionAudioTicket) {
-        let problem = state.withLock { value -> String? in
+        let configuration = state.withLock { value -> (VisionAudioFormat, UInt64)? in
             guard value.playback.admits(ticket) else { return nil }
             value.controlScheduled = false
             guard let format = value.playback.ring.format,
                   value.playback.hasFreshPCM(now: Self.now) else { return nil }
-            let version = value.playback.version
-            guard !output.matches(ticket, version: version) else { return nil }
-            let renderState = state
-            do {
-                try output.start(ticket, format: format, version: version) { _, _, frames, list in
-                    let buffers = UnsafeMutableAudioBufferListPointer(list)
-                    for buffer in buffers {
-                        if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
-                    }
-                    guard buffers.count >= format.channels else { return noErr }
-                    for channel in 0..<format.channels {
-                        guard buffers[channel].mData != nil,
-                              Int(buffers[channel].mDataByteSize) >= Int(frames) * MemoryLayout<Float>.size else { return noErr }
-                    }
-                    _ = renderState.withLockIfAvailable { value in
-                        value.playback.render(ticket: ticket, version: version, frames: Int(frames), now: Self.now) { frame, channel, sample in
-                            buffers[channel].mData!.assumingMemoryBound(to: Float.self)[frame] = sample
-                        }
-                    }
-                    return noErr
-                }
-                return nil
-            } catch {
-                let message = "Audio playback could not start: \(error.localizedDescription)"
-                value.playback.fail(ticket, message: message)
-                return message
+            return (format, value.playback.version)
+        }
+        guard let (format, version) = configuration,
+              !output.matches(ticket, version: version) else { return }
+        let renderState = state
+        let permitted = {
+            renderState.withLock { value in
+                value.playback.admits(ticket) && value.playback.version == version
             }
         }
-        if let problem { finishFailure(ticket, message: problem) }
+        do {
+            try output.start(ticket, format: format, version: version, permitted: permitted) { _, _, frames, list in
+                let buffers = UnsafeMutableAudioBufferListPointer(list)
+                for buffer in buffers {
+                    if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+                }
+                guard buffers.count >= format.channels else { return noErr }
+                for channel in 0..<format.channels {
+                    guard buffers[channel].mData != nil,
+                          Int(buffers[channel].mDataByteSize) >= Int(frames) * MemoryLayout<Float>.size else { return noErr }
+                }
+                _ = renderState.withLockIfAvailable { value in
+                    value.playback.render(ticket: ticket, version: version, frames: Int(frames), now: Self.now) { frame, channel, sample in
+                        buffers[channel].mData!.assumingMemoryBound(to: Float.self)[frame] = sample
+                    }
+                }
+                return noErr
+            }
+        } catch {
+            let message = "Audio playback could not start: \(error.localizedDescription)"
+            let current = state.withLock { value -> Bool in
+                guard value.playback.admits(ticket) else { return false }
+                value.playback.fail(ticket, message: message)
+                return true
+            }
+            if current { finishFailure(ticket, message: message) }
+            else { _ = output.close(ticket) }
+        }
     }
 
     private func fail(_ ticket: VisionAudioTicket, _ message: String) {
@@ -258,9 +267,9 @@ private final class VisionAudioOutput: @unchecked Sendable {
     }
 
     func start(_ ticket: VisionAudioTicket, format: VisionAudioFormat, version: UInt64,
-               render: @escaping AVAudioSourceNodeRenderBlock) throws {
+               permitted: () -> Bool, render: @escaping AVAudioSourceNodeRenderBlock) throws {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard self.ticket == ticket, VisionAudioProcess.lease.withLock({ $0.owner == ticket.epoch }) else {
+        guard permitted(), self.ticket == ticket, VisionAudioProcess.lease.withLock({ $0.owner == ticket.epoch }) else {
             throw NSError(domain: "VisionAudioPlayer", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Playback lease was revoked."])
         }
@@ -274,15 +283,18 @@ private final class VisionAudioOutput: @unchecked Sendable {
         if !activationAttempted {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            guard permitted() else { throw CancellationError() }
             activationAttempted = true
             try session.setActive(true)
         }
+        guard permitted() else { throw CancellationError() }
         let engine = AVAudioEngine()
         self.engine = engine
         let source = AVAudioSourceNode(format: nativeFormat, renderBlock: render)
         engine.attach(source)
         engine.connect(source, to: engine.mainMixerNode, format: nativeFormat)
         try engine.start()
+        guard permitted() else { throw CancellationError() }
         self.version = version
         if timer == nil, let poll {
             let timer = DispatchSource.makeTimerSource(queue: .main)
