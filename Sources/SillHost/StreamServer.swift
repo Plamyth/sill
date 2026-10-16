@@ -123,6 +123,7 @@ final class StreamServer {
         var acceptedPeerToPeer = false
         /// A hello (kind 23) came on this connection: only the first counts.
         var helloSeen = false
+        var presentationInput = false
         /// The input messages (kind 8) read from it. Every kind 26 sent to it carries the count, so the
         /// device can drop one the host built before it read that device's latest input
         /// (docs/pointer-visibility-plan.md §3.3).
@@ -141,6 +142,8 @@ final class StreamServer {
     private var clients: [ObjectIdentifier: Client] = [:]
     private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
+    private var videoAdmission = VideoEpochAdmission.stopped
+    private var latestCatalog: StreamMessage?
     /// A client was admitted (home door at `.ready`, remote door once paired and checked), with
     /// its route (which door, from where) and, for a home client, its link (ClientLink.route; nil
     /// when its connection does not say, and always for a remote session). Called on the network
@@ -1221,6 +1224,13 @@ final class StreamServer {
     /// `queue`.
     private func took(_ hello: Hello, from client: Client) {
         client.helloSeen = true
+        client.presentationInput = hello.presentationInput == 1
+        if client.presentationInput {
+            client.needsKeyframe = true
+            client.awaitingFirstKeyframe = true
+            if client.catalogSent, let catalog = latestCatalog { send(catalog.serialized(), to: client) }
+            onKeyframeNeeded?()
+        }
         let c = client.connection
         let name = SafeText.label(hello.device ?? "")
         if client.device == nil, !name.isEmpty { client.device = name }
@@ -1314,11 +1324,35 @@ final class StreamServer {
     /// client's link keeps its judgement (`resetLinks` is the coordinator's to call).
     func resetForNewStream() {
         queue.async { [self] in
+            videoAdmission = .stopped
             lastParameterSets = nil
             for client in clients.values {
                 client.needsKeyframe = true
                 client.awaitingFirstKeyframe = true
             }
+        }
+    }
+
+    func prepareVideo(_ epoch: VideoEpoch) {
+        queue.async { [self] in
+            videoAdmission = .preparing(epoch)
+            lastParameterSets = nil
+            for client in clients.values {
+                client.needsKeyframe = true
+                client.awaitingFirstKeyframe = true
+            }
+        }
+    }
+
+    func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, requestKeyframe: @escaping () -> Void) {
+        queue.async { [self] in
+            guard videoAdmission == .preparing(epoch) else { return }
+            videoAdmission = .committed(epoch)
+            latestCatalog = catalog
+            for client in clients.values where client.catalogSent && client.connection.state == .ready {
+                send(catalog.serialized(), to: client)
+            }
+            requestKeyframe()
         }
     }
 
@@ -1358,7 +1392,10 @@ final class StreamServer {
                 print("send: no client for \(connection.endpoint) (\(clients.count) known)")
                 return
             }
-            if message.kind == .windowList { client.catalogSent = true }
+            if message.kind == .windowList {
+                client.catalogSent = true
+                latestCatalog = message
+            }
             send(data, to: client)
         }
     }
@@ -1468,7 +1505,7 @@ final class StreamServer {
                 } else if header.kind == .pairingWanted && client.route.isRemote {
                     // "Show your pairing code" comes only from a device near the Mac: ignored here.
                 } else {
-                    self.onMessage?(StreamMessage(kind: header.kind, timestamp: header.timestamp, isKeyframe: header.isKeyframe, payload: payload), c)
+                    self.onMessage?(StreamMessage(kind: header.kind, timestamp: header.timestamp, isKeyframe: header.isKeyframe, payload: payload, requiresPresentation: client.presentationInput), c)
                 }
                 self.receiveLoop(client)
             }
@@ -1495,9 +1532,12 @@ final class StreamServer {
     }
 
     /// Thread-safe: hops onto the network queue.
-    func broadcast(_ message: StreamMessage) {
-        let data = message.serialized()
+    func broadcast(_ message: StreamMessage, epoch: UUID? = nil) {
         queue.async { [self] in
+            let media = message.kind == .parameterSets || message.kind == .frame
+            if media, !videoAdmission.admits(epoch) { return }
+            let data = media ? PresentationMedia.serialize(message, epoch: epoch!) : message.serialized()
+            if message.kind == .windowList { latestCatalog = message }
             if message.kind == .parameterSets { lastParameterSets = data }
             if message.kind == .frame, message.isKeyframe { lastKeyframeAt = Date().timeIntervalSince1970 }
             var wantKeyframe = false
@@ -1650,7 +1690,16 @@ final class StreamServer {
     /// No eviction while the connect burst (catalog + first keyframe) is still draining.
     private static let graceAfterConnect: TimeInterval = 8.0
 
-    private func send(_ data: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
+    private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
+        var raw = raw
+        if let header = StreamMessage.parseHeader(raw), header.kind == .windowList,
+           var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
+            catalog.presentationInput = 1
+            catalog.videoEpoch = catalog.videoEpoch == videoAdmission.current ? videoAdmission.current : nil
+            raw = StreamMessage(kind: .windowList, timestamp: header.timestamp, isKeyframe: header.isKeyframe,
+                                payload: Wire.encode(catalog)).serialized()
+        }
+        guard let data = PresentationMedia.adapt(raw, modern: client.presentationInput) else { return }
         let now = Date().timeIntervalSince1970
         let remote = client.route.isRemote
         if isFrame, let oldest = client.oldestUnackedFrameAt,

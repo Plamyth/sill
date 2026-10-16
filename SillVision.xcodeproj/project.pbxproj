@@ -765,6 +765,7 @@
 				<string>F079CE19974C6C61933DC047</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
+				<string>3D4DE531BFD1AC11F6F66F4A</string>
 			</array>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
@@ -814,6 +815,7 @@
 				<string>BC739450E2D039089A4BACA9</string>
 				<string>5E4A1EC0F1B59D52EB290FC6</string>
 				<string>331E11F67379528B562D146B</string>
+				<string>C6F3E5ABA8600FBF8CF25DC6</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1094,6 +1096,24 @@
 			<array>
 				<string>582681C2EAE02B3F3D399C0C</string>
 			</array>
+		</dict>
+		<key>3D4DE531BFD1AC11F6F66F4A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionPresentation.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>C6F3E5ABA8600FBF8CF25DC6</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>3D4DE531BFD1AC11F6F66F4A</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

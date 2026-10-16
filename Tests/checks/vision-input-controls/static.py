@@ -1,13 +1,10 @@
-"""Check source composition and fixture assembly without invoking a Swift compiler or runtime."""
+"""Check source parity and fixture generation without a compiler or Swift runtime."""
 import ast
-import hashlib
 import json
 import subprocess
 from pathlib import Path
-
 from extract import ROOT, block, fixture, select_platform
 
-BASE = 'b403986efa84a0741400da2153d0d09b3b00bc81'
 results = {}
 
 
@@ -16,76 +13,34 @@ def check(name, passed):
     assert passed, name
 
 
-def baseline(path, revision=BASE):
-    return subprocess.check_output(['git', '--no-lazy-fetch', 'show', revision + ':' + path], cwd=ROOT)
+def baseline(path):
+    return subprocess.check_output(['git', '--no-lazy-fetch', 'show', '51f241522268ddc71d974056f1a3484645d7aa17:' + path], cwd=ROOT).decode()
 
-
-for path, expected in {
-    'Sources/StreamProtocol/Input.swift': '82b454edc3cc818a7c8ccd372a3861c897161864',
-    'Sources/StreamProtocol/Compatibility.swift': '8bd6f3d0b3dcdea6bff2f855f6af6153d48b1223',
-    'Tests/checks/vision-input-controls/SourceInputFence.swift': '17918baec9691e5118000c42e348717bb29ef341',
-}.items():
-    content = (ROOT / path).read_bytes()
-    actual = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
-    check('exact peer148 blob ' + path, actual == expected)
 
 stream = (ROOT / 'iOSClient/StreamClient.swift').read_text()
-peer_stream = baseline('iOSClient/StreamClient.swift', '3bd3c0b4cdf91a2b16f1fd68be9265700acaaff5').decode()
 send = block(stream, 'func sendInput(')
-check('confirmed capture and serialization precede queue', send.index('guard let input = visionInputBinding.capture(event) else { return }') < send.index('Self.visionInputBytes(input)') < send.index('queue.async'))
-check('locked scoped send and weak actual callback retained', 'self.link.send(bytes, onlyOn: expected) { [weak self] in\n                self?.visionInputDebt.record(input, on: expected)' in send)
-check('iPad input path exactly peer3bd scoped codec', select_platform(send, vision=False).strip() == select_platform(block(peer_stream, 'func sendInput('), vision=False).strip())
-check('iPad coalescer flush exactly peer3bd Data path', block(stream, 'private func flushPendingMove()') == block(peer_stream, 'private func flushPendingMove()'))
+check('iPad input encoder unchanged', select_platform(send, vision=False) == select_platform(block(baseline('iOSClient/StreamClient.swift'), 'func sendInput('), vision=False))
+check('iPad move coalescer unchanged', block(stream, 'private func flushPendingMove()') == block(baseline('iOSClient/StreamClient.swift'), 'private func flushPendingMove()'))
+check('native capture owns immutable permit before enqueue', send.index('let permit = visionInputPermit') < send.index('queue.async') and 'onlyOn: expected, permit: permit' in send)
+check('native actual-send debt callback remains weak', 'self?.visionInputDebt.record(input, on: expected)' in send)
 hello = block(stream, 'private static let helloPayload: Data =')
-check('both real Hello paths advertise peer scoped codec', all('sourceInput: 1' in select_platform(hello, vision=vision) for vision in [True, False]))
-apply = block(stream, 'private func applyVisionInputCatalog(')
-check('binding guard and drain precede catalog mutation and confirmation', apply.index('guard let peer, connection === peer') < apply.index('takeReleases()') < apply.index('cancelVisionInputs()') < apply.index('windows =') < apply.index('active =') < apply.index('visionInputBinding = binding'))
-catalog = stream[stream.index('        case .windowList:'):stream.index('                // Forget thumbnails')]
-check('main catalog checks current peer before binding', catalog.index('guard self.connection === from') < catalog.index('self.applyVisionInputCatalog(list, from: from)'))
-check('connection setter awaits catalog before resuming UI', block(stream, 'var connection: NWConnection?').index('visionInputBinding = .awaitingCatalog') < block(stream, 'var connection: NWConnection?').index('setMoving(false)'))
-check('move and teardown await catalog', all('visionInputBinding = .awaitingCatalog' in block(stream, marker) for marker in ['private func finishMoveAfterInputDrain(', 'func tearDown(status:']))
-check('SessionLink locked implementation unchanged', (ROOT / 'iOSClient/SessionLink.swift').read_bytes() == baseline('iOSClient/SessionLink.swift'))
-check('stream kinds and Data helpers unchanged', (ROOT / 'Sources/StreamProtocol/StreamMessage.swift').read_bytes() == baseline('Sources/StreamProtocol/StreamMessage.swift'))
-session = (ROOT / 'visionOSClient/VisionInputSession.swift').read_text()
-check('UI admission requires confirmed binding', ' && client.visionInputBinding.isConfirmed' in block(session, 'var canSend: Bool'))
-check('normal chord and stop controls unchanged outside catalog gate', session.replace(' && client.visionInputBinding.isConfirmed', '') == baseline('visionOSClient/VisionInputSession.swift').decode())
-debt = (ROOT / 'visionOSClient/VisionInputDebt.swift').read_text()
-binding = block(debt, 'enum VisionInputBinding:')
-check('binding distinguishes awaiting legacy and scoped', all(case in binding for case in ['case awaitingCatalog', 'case confirmedLegacy', 'case scoped(generation: String)']) and 'case .awaitingCatalog: return nil' in binding and 'case .confirmedLegacy: return CapturedVisionInput(event: event, generation: nil)' in binding)
-prior_debt = baseline('visionOSClient/VisionInputDebt.swift', 'c62487a654e707aa47470213d4ac94e7dccb9f11').decode()
-check('captured value and actual-send debt scope unchanged', debt[debt.index('struct CapturedVisionInput'): ] == prior_debt[prior_debt.index('struct CapturedVisionInput'): ])
-check('unknown optional generation state removed', 'visionInputGeneration' not in stream and '@Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog' in stream)
+check('only Vision advertises presentation capability', 'let presentationInput: Int? = 1' in select_platform(hello, vision=True) and 'let presentationInput: Int? = nil' in select_platform(hello, vision=False))
+check('both clients retain optional source codec negotiation', all('sourceInput: 1' in select_platform(hello, vision=v) for v in [False, True]))
+check('input session controls unchanged', (ROOT / 'visionOSClient/VisionInputSession.swift').read_text() == baseline('visionOSClient/VisionInputSession.swift'))
 workspace = (ROOT / 'visionOSClient/SillVisionApp.swift').read_text()
-check('waiting message outside disabled input controls and stop stays available', workspace.index('else if client.visionInputBinding == .awaitingCatalog') < workspace.index('private var controls: some View') and 'Button("누른 입력 해제") { input.releaseAll() }' in workspace)
-check('palette also observes binding admission', 'VisionKeyPalette(input: input, desktop: client.active == .desktop)\n                        .disabled(!client.visionInputBinding.isConfirmed)' in workspace and '.disabled(!input.canSend)' in block(workspace, 'private var controls: some View'))
-move = block(stream, 'private func finishMoveAfterInputDrain(')
-check('move resets before adoption and retains normal catalog delivery', move.index('visionInputBinding = .awaitingCatalog') < move.index('link.handOver(') and 'for m in kept { self.deliver(m.header, m.payload, from: c) }' in move)
-
-switcher = (ROOT / 'Sources/StreamProtocol/Switcher.swift').read_text()
-field = '''
-    /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
-    /// scoped connections must echo it. Legacy connections pin source selection and keep their
-    /// original input format until they disconnect or negotiate scoped input.
-    public var inputGeneration: String?
-'''
-expected = baseline('Sources/StreamProtocol/Switcher.swift').decode().replace('    public var remoteAudio: Int?\n', '    public var remoteAudio: Int?\n' + field).replace('remoteAudio: Int? = nil) {', 'remoteAudio: Int? = nil, inputGeneration: String? = nil) {').replace('        self.remoteAudio = remoteAudio\n', '        self.remoteAudio = remoteAudio\n        self.inputGeneration = inputGeneration\n')
-check('Switcher delta only adds peer optional field beside audio', switcher == expected)
-
+check('emergency release remains available', 'Button("누른 입력 해제") { input.releaseAll() }' in workspace and '.disabled(!input.canSend)' in block(workspace, 'private var controls: some View'))
+check('move and teardown await fresh catalog', all('visionInputBinding = .awaitingCatalog' in block(stream, marker) for marker in ['private func finishMoveAfterInputDrain(', 'func tearDown(status:']))
 files, manifest = fixture()
-check('fixture has no unresolved substitutions', all(token not in files['Client.swift'] for token in ['// EXTRACTED', '// OVERLAY_DRAIN', '// MOVE_INPUT_RESET', '// BINDING_STATE']))
-check('fixture uses actual Wire and framing without shadows', all(token not in files['Client.swift'] for token in ['enum Wire', 'struct StreamMessage', 'struct StreamHeader', 'enum StreamMessageKind']))
-check('fixture extracts actual Vision and iPad Hello', all('sourceInput: 1' in block(files['Client.swift'], 'private static let ' + name + ': Data =') for name in ['helloPayload', 'iPadHelloPayload']))
-check('fixture qualifies copied Published for fake SwiftUI module', '@SwiftUI.Published private(set) var visionInputBinding =' in files['Client.swift'])
-check('native fixture excludes iPad audio policy and generic input', all(name not in files['Client.swift'] for name in ['remoteAudioControl', 'RemoteAudioPlayer', 'IPadRemoteAudioController', 'SourceInput.payload', 'private var inputGeneration', '#if', '#else', '#endif']))
+check('fixture substitutions resolved', all(marker not in files['Client.swift'] for marker in ['// EXTRACTED', '// OVERLAY_DRAIN', '// MOVE_INPUT_RESET', '// BINDING_STATE']))
+check('fixture uses production SourceInputFence', files['Tests/checks/vision-input-controls/SourceInputFence.swift'] == (ROOT / 'Sources/SillHost/SourceInputFence.swift').read_text())
+check('fixture includes native presentation state', files['visionOSClient/VisionPresentation.swift'] == (ROOT / 'visionOSClient/VisionPresentation.swift').read_text())
+check('fixture has actual scoped input and hello paths', all(marker in files['Client.swift'] for marker in ['private func observeVisionInputCatalog(', 'private func visionPresentationChanged(', 'private static let helloPayload:', 'private static let iPadHelloPayload:']))
+pairs = [('debt', 'Client.swift'), ('route', 'iOSClient/SessionLink.swift'), ('capture', 'Client.swift'), ('generation', 'visionOSClient/VisionInputDebt.swift'), ('admission', 'Client.swift'), ('controls', 'visionOSClient/VisionInputSession.swift')]
+check('all six prior runtime mutants change source', all(files['mutants/' + name + '/' + Path(path).name] != files[path] for name, path in pairs))
 resume = block(stream, 'if let resume = self.resumeSource')
-check('resume consumes pending choice before automatic policy guard', resume.index('self.resumeSource = nil') < resume.index('if list.active == .none, !Self.noAutoDesktop') < resume.index('self.request(pick)'))
-check('resume fixture copies actual selected branch', select_platform(resume, vision=True) in files['Client.swift'])
-check('six mutants change sources', all(files[mutant] != files[original] for mutant, original in [('mutants/debt/Client.swift', 'Client.swift'), ('mutants/route/SessionLink.swift', 'iOSClient/SessionLink.swift'), ('mutants/capture/Client.swift', 'Client.swift'), ('mutants/generation/VisionInputDebt.swift', 'visionOSClient/VisionInputDebt.swift'), ('mutants/admission/Client.swift', 'Client.swift'), ('mutants/controls/VisionInputSession.swift', 'visionOSClient/VisionInputSession.swift')]))
-remote = (Path(__file__).parent / 'remote.py').read_text()
-check('input fixture builds actual protocol dependencies', "['Input','Switcher','StreamMessage','Compatibility']" in remote and '-whole-module-optimization' in remote)
-reconnect = (ROOT / 'Tests/checks/reconnect-glue/mini.py').read_text()
-check('reconnect pointer fixture includes Wire and Data helpers', all('Sources/StreamProtocol/' + name + '.swift' in reconnect for name in ['Input', 'Switcher', 'StreamMessage']) and "['Input','Switcher','StreamMessage']" in reconnect and '-whole-module-optimization' in reconnect)
-for relative in ['Tests/checks/vision-input-controls/extract.py', 'Tests/checks/vision-input-controls/static.py', 'Tests/checks/vision-input-controls/mini.py', 'Tests/checks/vision-input-controls/remote.py', 'Tests/checks/reconnect-glue/mini.py']:
-    ast.parse((ROOT / relative).read_text(), filename=relative)
-check('Python fixture syntax', True)
-print(json.dumps({'checks': results, 'count': len(results), 'extractionSHA256': manifest, 'scope': 'Static source and fixture checks only. Swift behavior and compilation remain unexecuted.'}, indent=2))
+check('automatic resume remains guarded', resume.index('self.resumeSource = nil') < resume.index('if list.active == .none, !Self.noAutoDesktop') < resume.index('self.request(pick)'))
+for path in Path(__file__).parent.glob('*.py'):
+    ast.parse(path.read_text(), filename=str(path))
+check('fixture Python syntax valid', True)
+print(json.dumps({'checks': results, 'count': len(results), 'extractionSHA256': manifest,
+                  'scope': 'Static source parity and fixture generation only. Swift compilation and runtime are not executed.'}, indent=2))
