@@ -2,7 +2,7 @@ import Foundation
 
 public struct NWError: Error {}
 public final class NWConnection: @unchecked Sendable {
-    public enum SendCompletion { case contentProcessed(@Sendable (Error?) -> Void) }
+    public enum SendCompletion { case contentProcessed(@Sendable (NWError?) -> Void) }
     public enum State { case ready, cancelled }
     public var state = State.ready
     public let endpoint = "inert-pipeline"
