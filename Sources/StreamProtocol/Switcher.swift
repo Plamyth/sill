@@ -61,14 +61,18 @@ public struct WindowList: Codable {
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
     /// original input format until they disconnect or negotiate scoped input.
     public var inputGeneration: String?
+    public var presentationInput: Int?
+    public var videoEpoch: VideoEpoch?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
-                remoteAudio: Int? = nil, inputGeneration: String? = nil) {
+                remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
         self.inputGeneration = inputGeneration
+        self.presentationInput = presentationInput
+        self.videoEpoch = videoEpoch
     }
 }
 
@@ -126,4 +130,61 @@ public enum ImageBlob {
         guard let id = String(data: d.subdata(in: idStart..<(idStart + len)), encoding: .utf8) else { return nil }
         return (id, d.subdata(in: (idStart + len)..<d.endIndex))
     }
+}
+
+public struct VideoEpoch: Codable, Equatable {
+    public struct Geometry: Codable, Equatable {
+        public let x: Double
+        public let y: Double
+        public let width: Double
+        public let height: Double
+
+        public init(x: Double, y: Double, width: Double, height: Double) {
+            self.x = x; self.y = y; self.width = width; self.height = height
+        }
+
+        public var isValid: Bool {
+            x.isFinite && y.isFinite && width.isFinite && height.isFinite && width > 0 && height > 0
+        }
+    }
+
+    public let id: UUID
+    public let generation: String
+    public let source: StreamSource
+    public let geometry: Geometry
+    public let windowGeometry: Geometry?
+    public let width: Int
+    public let height: Int
+
+    public init(id: UUID = UUID(), generation: String, source: StreamSource, geometry: Geometry, width: Int, height: Int, windowGeometry: Geometry? = nil) {
+        self.id = id; self.generation = generation; self.source = source; self.geometry = geometry
+        self.width = width; self.height = height
+        self.windowGeometry = windowGeometry
+    }
+
+    public var isValid: Bool {
+        !generation.isEmpty && source != .none && geometry.isValid && (windowGeometry?.isValid ?? true) && (1...32768).contains(width) && (1...32768).contains(height)
+    }
+
+    public func matchesEncodedDimensions(width: Int, height: Int) -> Bool {
+        isValid && self.width == width && self.height == height
+    }
+
+    public func matches(source: StreamSource, generation: String?) -> Bool {
+        isValid && self.source == source && self.generation == generation
+    }
+}
+
+
+public enum VideoEpochAdmission: Equatable {
+    case stopped
+    case preparing(VideoEpoch)
+    case committed(VideoEpoch)
+
+    public var current: VideoEpoch? {
+        if case .committed(let epoch) = self { return epoch }
+        return nil
+    }
+
+    public func admits(_ id: UUID?) -> Bool { id != nil && current?.id == id }
 }

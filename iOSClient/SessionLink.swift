@@ -78,8 +78,30 @@ final class SessionLink {
     private struct Waiting {
         let data: Data
         let didSend: (() -> Void)?
+        let peer: NWConnection?
+        let permit: UUID?
     }
     private var waiting: [Waiting] = []
+    private enum InputScope: Equatable { case legacy, epoch(UUID), blocked }
+    private var inputScope = InputScope.legacy
+    private var inputPermit: UUID?
+
+    func observeInputEpoch(_ epoch: UUID?, modern: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        inputScope = modern ? epoch.map(InputScope.epoch) ?? .blocked : .legacy
+        inputPermit = nil
+    }
+
+    @discardableResult
+    func setInputPermit(_ permit: UUID?, epoch: UUID? = nil) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if permit != nil {
+            let expected = epoch.map(InputScope.epoch) ?? .legacy
+            guard inputScope == expected else { return false }
+        }
+        inputPermit = permit
+        return true
+    }
     /// The old connections of hand-overs whose fence is down, until what waited has gone out.
     private var fencedOff: [NWConnection] = []
     /// Input messages counted for the session's connection: those handed to it since it became the
@@ -117,7 +139,7 @@ final class SessionLink {
     func send(_ data: Data) {
         lock.lock(); defer { lock.unlock() }
         if !fences.isEmpty || holding != nil {
-            waiting.append(Waiting(data: data, didSend: nil))
+            waiting.append(Waiting(data: data, didSend: nil, peer: nil, permit: nil))
             if Self.isInput(data) { inputs += 1 }
             return
         }
@@ -126,11 +148,12 @@ final class SessionLink {
     }
 
     @discardableResult
-    func send(_ data: Data, onlyOn expected: NWConnection, didSend: (() -> Void)? = nil) -> Bool {
+    func send(_ data: Data, onlyOn expected: NWConnection, permit: UUID? = nil, didSend: (() -> Void)? = nil) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard current === expected else { return false }
+        guard permit == nil || permit == inputPermit else { return false }
         if !fences.isEmpty || holding != nil {
-            waiting.append(Waiting(data: data, didSend: didSend))
+            waiting.append(Waiting(data: data, didSend: didSend, peer: expected, permit: permit))
         } else {
             expected.send(content: data, completion: .contentProcessed { _ in })
             didSend?()
@@ -152,6 +175,8 @@ final class SessionLink {
         lock.lock(); defer { lock.unlock() }
         _ = cancelInputsLocked(releasing: releases())
         current = next
+        inputScope = .blocked
+        inputPermit = nil
         inputs = waitingInputs
     }
 
@@ -256,13 +281,18 @@ final class SessionLink {
         }
         let out = waiting
         waiting = []
+        var sent = 0
         for item in out {
+            guard (item.peer == nil || item.peer === current), (item.permit == nil || item.permit == inputPermit) else {
+                if Self.isInput(item.data) { inputs -= 1 }
+                continue
+            }
             current?.send(content: item.data, completion: .contentProcessed { _ in })
-            if current != nil { item.didSend?() }
+            if current != nil { sent += 1; item.didSend?() }
         }
         let close = fencedOff
         fencedOff = []
-        return Released(held: out.count, waiting: 0, clear: true, seconds: seconds, close: close)
+        return Released(held: sent, waiting: 0, clear: true, seconds: seconds, close: close)
     }
 
     /// The session ended during a hand-over or a hold: what waited goes nowhere. Returns the
