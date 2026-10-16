@@ -89,8 +89,10 @@ struct CanvasRelay {
         try await response(request("/control-room/projection"),as:ControlRoomProjection.self)
     }
 
-    func deliveryReadiness() async throws -> DeliveryReadiness {
-        try await response(request("/delivery/ready"),as:DeliveryReadiness.self)
+    func deliveryReadiness(threadId: UUID, targetMode: String?) async throws -> DeliveryReadiness {
+        let mode = targetMode ?? "voice"
+        let path = "/delivery/ready?threadId=\(threadId.uuidString.lowercased())&targetMode=\(mode)"
+        return try await response(request(path),as:DeliveryReadiness.self)
     }
 
     func send(_ packet: CanvasPacket) async throws -> PacketReceipt {
