@@ -72,6 +72,10 @@ public enum StreamMessageKind: UInt8 {
     case remoteAudioState = 201   // host → device: RemoteAudioState; echoes requestID and fences playback
     case epochParameterSets = 202
     case epochFrame = 203
+    case microphoneControl = 204
+    case microphoneState = 205
+    case microphoneFrame = 206
+    case microphoneReceipt = 207
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -97,8 +101,21 @@ public struct StreamMessage {
     /// Any other host → device message (window lists, icons, thumbnails, the app list).
     public static let maxOtherHostPayload = 4 << 20
 
+    public static func clientPayloadLimit(for kind: StreamMessageKind) -> Int {
+        switch kind {
+        case .microphoneControl: return 2048
+        case .microphoneFrame: return 2033
+        case .microphoneState, .microphoneReceipt: return -1
+        default: return maxClientPayload
+        }
+    }
+
     public static func hostPayloadLimit(for kind: StreamMessageKind) -> Int {
-        kind == .frame || kind == .epochFrame ? maxFramePayload : maxOtherHostPayload
+        switch kind {
+        case .microphoneState, .microphoneReceipt: return 4096
+        case .microphoneControl, .microphoneFrame: return 0
+        default: return kind == .frame || kind == .epochFrame ? maxFramePayload : maxOtherHostPayload
+        }
     }
 
     public var kind: StreamMessageKind

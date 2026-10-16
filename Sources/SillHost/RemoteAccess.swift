@@ -26,6 +26,7 @@ import StreamProtocol
 /// 600 s, and the address list starts with 127.0.0.1.
 @MainActor
 package final class RemoteAccess {
+    var onMicrophoneTrustRevoked: ((Data) -> Void)?
     /// What the Mac shows to pair a device: the QR link, the typed code, until when, and why.
     package struct PairingOffer: Sendable {
         /// sill://pair?v=1&… (PairLink).
@@ -457,6 +458,7 @@ package final class RemoteAccess {
             print("Remote access: \(device.displayName) is still paired: the paired devices could not be saved (\(error)).")
             return "\(error)"
         }
+        if let fp = device.fingerprintData { onMicrophoneTrustRevoked?(fp) }
         paired = rest
         if let fp = device.fingerprintData { lastSeen[RemoteIdentity.shortName(fp)] = nil }
         publishTrust()
