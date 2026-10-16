@@ -1,0 +1,19 @@
+Mac mini heavy-job slot: free=59%, swap=9838MB
+INPUT_SHA256 20212f488efd9984c5e186f82eeae8dfd10cfe21ab442df2388d79c05b198d7e
+FAIL admit valid PCM
+FAIL admit prefill boundary
+FAIL 40ms starts rendering
+FAIL consume oldest admitted frame
+FAIL 150ms ceiling inclusive
+FAIL overflow trims to newest 60ms
+FAIL trim preserves newest chronological frames
+FAIL oversize valid decoded block retains newest bound
+FAIL oversize block starts at newest suffix
+FAIL stereo order preserved
+FAIL 100ms freshness inclusive
+FAIL admitted decoded samples
+FAIL render consumes PCM before rendering state
+FAIL stop revokes render and clears PCM synchronously
+FAIL stale source node cannot consume new epoch
+Vision audio pure checks: 147/162 passed, 15 failed
+RESULT_JSON {"runnerPID": 19921, "childPIDs": [19959, 20039], "before": {"swap": {"code": 0, "stdout": "vm.swapusage: total = 10240.00M  used = 9838.19M  free = 401.81M  (encrypted)", "stderr": ""}, "pressure": {"code": 0, "stdout": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 59%", "stderr": ""}, "orca": {"code": 0, "stdout": "67053\n67066\n67070\n67071\n67075\n67076\n67078", "stderr": ""}, "avd": {"code": 1, "stdout": "", "stderr": ""}}, "inputHashesMatched": true, "commandExitCodes": [0, 1], "exitCode": 1, "memorySourcesUnchanged": true, "childrenReaped": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": {"code": 0, "stdout": "vm.swapusage: total = 10240.00M  used = 9838.19M  free = 401.81M  (encrypted)", "stderr": ""}, "pressure": {"code": 0, "stdout": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 58%", "stderr": ""}, "orca": {"code": 0, "stdout": "67053\n67066\n67070\n67071\n67075\n67076\n67078", "stderr": ""}, "avd": {"code": 1, "stdout": "", "stderr": ""}}}

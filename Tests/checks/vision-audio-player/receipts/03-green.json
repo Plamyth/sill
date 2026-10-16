@@ -1,0 +1,87 @@
+{
+  "exitCode": 0,
+  "transportPID": 76323,
+  "transportReaped": true,
+  "sourceHEAD": "618bf706257d5298e5accce1ead05d687d19e9ab",
+  "scope": "Independent pure component RAM validation; no native player, peer acceptance, or source-guard transfer acceptance",
+  "inputSHA256": "b7f52f6e36c839a5754aca5148d30af3197478fc3bed50b09f72168a2ee6b75a",
+  "remoteInputHashMatched": true,
+  "sourceSHA256": {
+    "visionOSClient/VisionAudioBuffer.swift": "ff661390cdefcb660b8b55d882079d2bbb0ab02807af11cc17d336e997108781",
+    "Tests/checks/vision-audio-player/main.swift": "cf692297da8996424ec9b8b02c6fda6eb8b383b2217aac53f08fb22d5aa648dc",
+    "visionOSClient/VisionAudioPlayer.swift": "2d960236964b9c2376012aefb7db65ffe84b90f16c1cc80067d16e5c2e160e4e"
+  },
+  "sourceUnchanged": true,
+  "remoteResult": {
+    "runnerPID": 20609,
+    "childPIDs": [
+      20642,
+      20723
+    ],
+    "before": {
+      "swap": {
+        "code": 0,
+        "stdout": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+        "stderr": ""
+      },
+      "pressure": {
+        "code": 0,
+        "stdout": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 59%",
+        "stderr": ""
+      },
+      "orca": {
+        "code": 0,
+        "stdout": "67053\n67066\n67070\n67071\n67075\n67076\n67078",
+        "stderr": ""
+      },
+      "avd": {
+        "code": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      0,
+      0
+    ],
+    "exitCode": 0,
+    "memorySourcesUnchanged": true,
+    "childrenReaped": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": {
+        "code": 0,
+        "stdout": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+        "stderr": ""
+      },
+      "pressure": {
+        "code": 0,
+        "stdout": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 59%",
+        "stderr": ""
+      },
+      "orca": {
+        "code": 0,
+        "stdout": "67053\n67066\n67070\n67071\n67075\n67076\n67078",
+        "stderr": ""
+      },
+      "avd": {
+        "code": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "containersBefore": {
+    "code": 0,
+    "stdout": "803b0b325993 cargo24-management-device-db-10491 Up About an hour (healthy)\n4893eeb563bc cargo24-isolated-trial-db-20261002 Up 24 hours (healthy)\n224d832e30f1 cargo24-isolated-trial-rest-20261002 Up 24 hours\ncebf3c47b39b supabase_studio_theone-cargo Up 24 hours (healthy)\nbc783e36ab6d supabase_pg_meta_theone-cargo Up 24 hours (healthy)\n9e29dbd69916 supabase_storage_theone-cargo Up 24 hours (healthy)\ndeba0583d7b6 supabase_rest_theone-cargo Up 24 hours\n424f1c6f86aa supabase_realtime_theone-cargo Up 24 hours (healthy)\n334cc2e6f998 supabase_inbucket_theone-cargo Up 24 hours (healthy)\nc5014a7bf602 supabase_auth_theone-cargo Up 24 hours (healthy)\n8f4d25eed0cf supabase_kong_theone-cargo Up 24 hours (healthy)\n6cac78f68aad supabase_analytics_theone-cargo Up 24 hours (healthy)\n19ca9164df98 supabase_db_theone-cargo Up 24 hours (healthy)",
+    "stderr": ""
+  },
+  "containersAfter": {
+    "code": 0,
+    "stdout": "803b0b325993 cargo24-management-device-db-10491 Up About an hour (healthy)\n4893eeb563bc cargo24-isolated-trial-db-20261002 Up 24 hours (healthy)\n224d832e30f1 cargo24-isolated-trial-rest-20261002 Up 24 hours\ncebf3c47b39b supabase_studio_theone-cargo Up 24 hours (healthy)\nbc783e36ab6d supabase_pg_meta_theone-cargo Up 24 hours (healthy)\n9e29dbd69916 supabase_storage_theone-cargo Up 24 hours (healthy)\ndeba0583d7b6 supabase_rest_theone-cargo Up 24 hours\n424f1c6f86aa supabase_realtime_theone-cargo Up 24 hours (healthy)\n334cc2e6f998 supabase_inbucket_theone-cargo Up 24 hours (healthy)\nc5014a7bf602 supabase_auth_theone-cargo Up 24 hours (healthy)\n8f4d25eed0cf supabase_kong_theone-cargo Up 24 hours (healthy)\n6cac78f68aad supabase_analytics_theone-cargo Up 24 hours (healthy)\n19ca9164df98 supabase_db_theone-cargo Up 24 hours (healthy)",
+    "stderr": ""
+  }
+}

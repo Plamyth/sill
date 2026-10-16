@@ -1,0 +1,12 @@
+Mac mini heavy-job slot: free=52%, swap=9838MB
+INPUT_SHA256 20212f488efd9984c5e186f82eeae8dfd10cfe21ab442df2388d79c05b198d7e
+Traceback (most recent call last):
+  File "<string>", line 12, in <module>
+  File "<string>", line 9, in health
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 505, in run
+    with Popen(*popenargs, **kwargs) as process:
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 951, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 1821, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'docker'

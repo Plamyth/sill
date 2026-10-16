@@ -1,0 +1,13 @@
+{
+  "peerCommit": "89f955072e520b6b0aaa00b1e19c26afc3d9fdb3",
+  "peerPath": "iOSClient/RemoteAudioPlayer.swift",
+  "peerBlob": "ffdbfc457feb82e94bfbdffc79006de5a99049a7",
+  "sourceSHA256": "830a816957ceb2a464c7dc2d099a609213afe55b9d9acaa1b5fb3f96b0413c4a",
+  "originalDecoderSHA256": "02209321c5a406c53b0cc2929429b3066e8867933e4983e634d2dc244289f800",
+  "adaptedDecoderSHA256": "6e13f3d125e837ce8282fb855c32e73a30cf2e83a7b976ebd15ea9f7ec94d9d5",
+  "componentSHA256": {
+    "visionOSClient/VisionAudioBuffer.swift": "ff661390cdefcb660b8b55d882079d2bbb0ab02807af11cc17d336e997108781",
+    "visionOSClient/VisionAudioPlayer.swift": "2d960236964b9c2376012aefb7db65ffe84b90f16c1cc80067d16e5c2e160e4e"
+  },
+  "source": "Read-only git show of committed bytes. No peer test acceptance."
+}
