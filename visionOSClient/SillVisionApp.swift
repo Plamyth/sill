@@ -315,7 +315,7 @@ private struct VisionMicrophoneControls: View {
             .disabled(!cleanup && !stopping && (!allowStart || !client.microphonePolicy.canStart || client.visionAudio.cleanupProblem != nil))
             .accessibilityHint(cleanup ? "기존 마이크 자원만 정리합니다. 다시 녹음하지 않습니다." :
                 stopping ? "즉시 음성 전송을 중지합니다." : "직접 허용하면 Vision 마이크를 현재 선택한 Mac으로 전송합니다.")
-            Button("수신 확인", systemImage: "checkmark.waveform") {
+            Button("수신 확인", systemImage: "checkmark.circle") {
                 client.requestVisionMicrophoneReceipt()
             }
             .disabled(cleanup || client.microphonePhase != .live)
@@ -334,7 +334,7 @@ private struct VisionMicrophoneControls: View {
         case .capturing: return "Vision 마이크를 준비합니다."
         case .live:
             return (client.microphoneReceipt?.admittedPackets ?? 0) > 0 ?
-                "Mac 수신 확인 · 실제 통화 입력은 별도 확인" : "전송 허용됨 · Mac 수신을 기다립니다."
+                "마지막 조회에서 Mac 수신 확인 · 실제 통화 입력은 별도 확인" : "전송 허용됨 · 수신 확인을 눌러 조회하세요."
         case .stopping: return "음성 전송을 중지했습니다. Mac의 정리 확인을 기다립니다."
         case .failed(let problem): return problem
         }
