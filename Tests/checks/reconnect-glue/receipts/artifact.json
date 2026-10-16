@@ -1,0 +1,12 @@
+{
+  "xrosBuildSourceMatchesMiniTest": true,
+  "binarySHA256": "ef7f59c30f4809e6bbfdb43ea9af2596ccbba003a0a8c5233ff72e8a2501d427",
+  "bundleID": "dev.ambrion.SillVision",
+  "platform": "xros",
+  "sdk": "xros27.0",
+  "supportedPlatforms": [
+    "XROS"
+  ],
+  "minimumOS": "2.5",
+  "signed": false
+}

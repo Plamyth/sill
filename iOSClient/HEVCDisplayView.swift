@@ -76,7 +76,11 @@ final class HEVCDisplayView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         // A standalone layer renders at 1× unless told otherwise; the arrow should be crisp.
+        #if os(visionOS)
+        cursorLayer.contentsScale = traitCollection.displayScale
+        #else
         if let scale = window?.screen.scale { cursorLayer.contentsScale = scale }
+        #endif
     }
 
     override func layoutSubviews() {

@@ -1,3 +1,4 @@
+#if !os(visionOS)
 import Foundation
 import Network
 import StreamProtocol
@@ -36,3 +37,4 @@ extension StreamClient {
         })
     }
 }
+#endif

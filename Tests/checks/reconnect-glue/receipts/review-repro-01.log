@@ -1,0 +1,99 @@
+Mac mini heavy-job slot: free=40%, swap=9720MB
+INPUT_SHA256 ad6e882f841051634391aa5e19024885c6d013bf28eff74dc639bdd1bf124223
+PASS listed sleeping host receives exactly 12 dials, observed 12
+PASS listed dials follow upstream 5/10/20/30 second starts
+PASS exhausted listed budget leaves no repeating timer
+PASS fresh row evidence resumes exhausted listing
+PASS native background gate also prevents remote attempts
+PASS background leaves no retry chain
+PASS automatic remote attempts stop at original 120 second window
+PASS expired remote window leaves no polling timer
+PASS foreground rebuilds browser even without a reported mDNS failure
+PASS failed replacement keeps rows beyond old settle deadline
+PASS successful replacement expires stale kept rows
+PASS failed row dial preserves original loss and consumed budget
+PASS failed row dial cannot redial immediately before its due time
+PASS failed row dial resumes at original due time
+PASS background cancels pending automatic row and ends timer chain
+PASS new foreground evidence resets listed count and resumes once
+PASS repeated foreground notification cannot reset active attempt
+PASS remote cancellation precondition has active connector at 103
+PASS background immediately cancels retained active remote connector
+PASS background cancels automatic remote connector and retry chain
+PASS foreground resumes remote within original window
+PASS foreground does not extend expired remote window
+PASS same listing and repeated evaluations cannot restart exhausted budget
+PASS new user intent may start a fresh reconnect value
+PASS connected session receives no automatic attempt
+PASS path move blocks automatic reconnect
+PASS pairing or revoked row ends reconnect without a dial
+PASS failed browser cannot rebuild or poll in background
+PASS replaced browser callbacks cannot mutate current rows or life
+PASS foreground keeps old rows only for bounded settle interval
+PASS same trusted Mac has independent 12 dial budgets for two continuously listed rows
+FAIL reorder cannot revive either exhausted listing, observed 25 starts
+PASS actual renewal resets only renewed listing A
+PASS renewing A leaves continuously listed B exhausted, observed 25 starts
+PASS new foreground evidence resets B budget
+FAIL new foreground evidence also resets alternate A budget
+FAIL alternate listed endpoint can fail over immediately with its own budget
+FAIL A to B to A reorder retains A five second backoff, observed [100.0]
+PASS A resumes at its original five second due event
+FAIL B also retains its own five second backoff
+FAIL B resumes at its own due event
+FAIL returning A retains ten second backoff
+FAIL two listed endpoints retain independent ten second due events
+FAIL background stops both listed budgets and due events
+FAIL equal listing timestamps do not conflate distinct row identities
+PASS browser policy also refuses inconsistent foreground evidence
+Reconnect glue: 36/46 passed, 10 failed
+Upstream sleep policy subset: 43/43 passed, 0 failed
+PASS listed sleeping host receives exactly 12 dials, observed 12
+PASS listed dials follow upstream 5/10/20/30 second starts
+PASS exhausted listed budget leaves no repeating timer
+PASS fresh row evidence resumes exhausted listing
+PASS native background gate also prevents remote attempts
+PASS background leaves no retry chain
+PASS automatic remote attempts stop at original 120 second window
+PASS expired remote window leaves no polling timer
+PASS foreground rebuilds browser even without a reported mDNS failure
+PASS failed replacement keeps rows beyond old settle deadline
+PASS successful replacement expires stale kept rows
+PASS failed row dial preserves original loss and consumed budget
+PASS failed row dial cannot redial immediately before its due time
+PASS failed row dial resumes at original due time
+PASS background cancels pending automatic row and ends timer chain
+PASS new foreground evidence resets listed count and resumes once
+PASS repeated foreground notification cannot reset active attempt
+PASS remote cancellation precondition has active connector at 103
+FAIL background immediately cancels retained active remote connector
+PASS background cancels automatic remote connector and retry chain
+PASS foreground resumes remote within original window
+PASS foreground does not extend expired remote window
+PASS same listing and repeated evaluations cannot restart exhausted budget
+PASS new user intent may start a fresh reconnect value
+PASS connected session receives no automatic attempt
+PASS path move blocks automatic reconnect
+PASS pairing or revoked row ends reconnect without a dial
+PASS failed browser cannot rebuild or poll in background
+PASS replaced browser callbacks cannot mutate current rows or life
+PASS foreground keeps old rows only for bounded settle interval
+PASS same trusted Mac has independent 12 dial budgets for two continuously listed rows
+FAIL reorder cannot revive either exhausted listing, observed 25 starts
+PASS actual renewal resets only renewed listing A
+PASS renewing A leaves continuously listed B exhausted, observed 25 starts
+PASS new foreground evidence resets B budget
+FAIL new foreground evidence also resets alternate A budget
+FAIL alternate listed endpoint can fail over immediately with its own budget
+FAIL A to B to A reorder retains A five second backoff, observed [100.0]
+PASS A resumes at its original five second due event
+FAIL B also retains its own five second backoff
+FAIL B resumes at its own due event
+FAIL returning A retains ten second backoff
+FAIL two listed endpoints retain independent ten second due events
+FAIL background stops both listed budgets and due events
+FAIL equal listing timestamps do not conflate distinct row identities
+PASS browser policy also refuses inconsistent foreground evidence
+Reconnect glue: 35/46 passed, 11 failed
+Upstream sleep policy subset: 43/43 passed, 0 failed
+RESULT_JSON {"runnerPID": 14400, "childPIDs": [14431, 14543, 14551, 14564], "before": {"swap": "vm.swapusage: total = 10240.00M  used = 9720.00M  free = 520.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 40%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [0, 1, 0, 0], "cancelMutationExitCode": 1, "cancelMutationDetected": true, "exitCode": 1, "memorySourcesUnchanged": true, "childrenReaped": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9720.00M  free = 520.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 36%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}

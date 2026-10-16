@@ -1,0 +1,29 @@
+{
+  "mini": {
+    "ownedPIDsChecked": [
+      10619,
+      10651,
+      10748,
+      10749,
+      10752,
+      10764,
+      11308,
+      11345,
+      11606,
+      11680,
+      11722,
+      11798
+    ],
+    "liveOwnedPIDs": {},
+    "miniHeavySlotFree": true,
+    "remainingRAMVolumes": [],
+    "remainingIsolatedOutputs": [],
+    "swap": "vm.swapusage: total = 10240.00M  used = 9728.00M  free = 512.00M  (encrypted)"
+  },
+  "compilerPID": 40896,
+  "compilerPIDExists": false,
+  "liveOwnedTransportPIDs": {},
+  "parentHEAD": "62bc4c5884bf54f4eb729b71e082d0fa8d7d8609",
+  "parentStatus": "",
+  "compilerLease": "Returned to parent. No further worker compiler invocation."
+}

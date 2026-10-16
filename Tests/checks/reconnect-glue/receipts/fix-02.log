@@ -1,0 +1,41 @@
+Mac mini heavy-job slot: free=38%, swap=9736MB
+INPUT_SHA256 f0448636d5c8da52c700ce6075075d77090357cde51d576d9f5c03d9bae72ff8
+PASS listed sleeping host receives exactly 12 dials, observed 12
+PASS listed dials follow upstream 5/10/20/30 second starts
+PASS exhausted listed budget leaves no repeating timer
+PASS fresh row evidence resumes exhausted listing
+PASS native background gate also prevents remote attempts
+PASS background leaves no retry chain
+PASS automatic remote attempts stop at original 120 second window
+PASS expired remote window leaves no polling timer
+PASS foreground rebuilds browser even without a reported mDNS failure
+PASS failed replacement keeps rows beyond old settle deadline
+PASS successful replacement expires stale kept rows
+PASS failed row dial preserves original loss and consumed budget
+PASS failed row dial cannot redial immediately before its due time
+PASS failed row dial resumes at original due time
+PASS background cancels pending automatic row and ends timer chain
+PASS new foreground evidence resets listed count and resumes once
+PASS repeated foreground notification cannot reset active attempt
+PASS background cancels automatic remote connector and retry chain
+PASS foreground resumes remote within original window
+PASS foreground does not extend expired remote window
+PASS same listing and repeated evaluations cannot restart exhausted budget
+PASS new user intent may start a fresh reconnect value
+PASS connected session receives no automatic attempt
+PASS path move blocks automatic reconnect
+PASS pairing or revoked row ends reconnect without a dial
+PASS failed browser cannot rebuild or poll in background
+PASS replaced browser callbacks cannot mutate current rows or life
+PASS foreground keeps old rows only for bounded settle interval
+PASS browser policy also refuses inconsistent foreground evidence
+Reconnect glue: 29/29 passed, 0 failed
+/Volumes/CCRReconnect101d14c894/input/Tests/vision-pointer/main.swift:53:7: warning: result of call to 'sync(execute:)' is unused [#no-usage]
+51 | }
+52 | let expired = DispatchSemaphore(value: 0)
+53 | queue.sync {
+   |       `- warning: result of call to 'sync(execute:)' is unused [#no-usage]
+54 |     fence.begin(peer: ObjectIdentifier(peer), timeout: 0.03, send: { _ in }, finished: { ok in
+55 |         check(!ok, "missing echo refuses transition")
+Vision input: 38 behavioral checks passed
+RESULT_JSON {"runnerPID": 10619, "childPIDs": [10651, 10748, 10749, 10752, 10764], "before": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 38%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [0, 0, 0, 0, 0], "exitCode": 0, "memorySourcesUnchanged": true, "childrenReaped": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9736.00M  free = 504.00M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 37%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}

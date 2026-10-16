@@ -119,6 +119,7 @@ enum RemoteRoute: Equatable {
 /// Finds Macs over Bonjour, connects, and splits the byte stream into messages.
 /// Frame callbacks fire on the network queue; published state hops to main.
 final class StreamClient: ObservableObject {
+    #if !os(visionOS)
     private let remoteAudio = RemoteAudioPlayer()
     @Published private(set) var remoteAudioStatus: IPadRemoteAudioController.Status = .unavailable
     lazy var remoteAudioControl = IPadRemoteAudioController(
@@ -126,6 +127,7 @@ final class StreamClient: ObservableObject {
         stop: { [weak self] in self?.remoteAudio.stop() },
         play: { [weak self] packet in self?.remoteAudio.receive(packet) },
         changed: { [weak self] status in self?.remoteAudioStatus = status })
+    #endif
     // Connection. The setters of what the connect screen shows are internal: the DEBUG harness
     // seeds them.
     @Published var status = StreamClient.lookingOnNetwork {
@@ -234,8 +236,10 @@ final class StreamClient: ObservableObject {
     private var lastAutoDesktop: Date = .distantPast
     /// DEBUG `-SillNoAutoDesktop 1`: the device never picks the Desktop by itself, so a live gate's
     /// session streams nothing and no host encodes (a test host's software encoder included) while
-    /// it runs. Always false in a Release build.
-    #if DEBUG
+    /// it runs. Always false in an iOS Release build.
+    #if os(visionOS)
+    private static let noAutoDesktop = true
+    #elseif DEBUG
     private static let noAutoDesktop = UserDefaults.standard.bool(forKey: "SillNoAutoDesktop")
     #else
     private static let noAutoDesktop = false
@@ -479,6 +483,33 @@ final class StreamClient: ObservableObject {
     private var nearbyBrowser: NWBrowser?
     private var networkResults: [NWBrowser.Result] = []
     private var nearbyResults: [NWBrowser.Result] = []
+    private enum BrowserKind: String { case network, nearby }
+    private struct BrowserLife {
+        /// When the running browser was made.
+        var startedAt = 0.0
+        /// Its failures in a row (DiscoveryPolicy.browserFailures), and when the last came while it
+        /// waits to be made again; nil while it runs.
+        var failures = 0
+        var failedAt: Double?
+        /// Its own results, and those of the browser it replaced, shown beside them until `settleEnds`.
+        var fresh: [NWBrowser.Result] = []
+        var kept: [NWBrowser.Result] = []
+        var settleEnds: Double?
+        /// The rebuild a failure waits for, and the settle's end.
+        var rebuildWork: DispatchWorkItem?
+        var settleWork: DispatchWorkItem?
+    }
+    private var networkLife = BrowserLife()
+    private var nearbyLife = BrowserLife()
+    /// `startBrowsing` has run: this client looks for Macs (the harness's mock clients never do).
+    private var browsing = false
+    /// The app is not in the background (UIApplication's notifications): the automatic reconnect dials
+    /// a listed row, and a failed browser is made again, only then (issue #69). Main thread.
+    #if os(visionOS)
+    private(set) var appInForeground = UIApplication.shared.applicationState == .active
+    #else
+    private(set) var appInForeground = UIApplication.shared.applicationState != .background
+    #endif
     /// Launch, the last connection ending, or Local Network access coming back: the network gets its
     /// first seconds from here.
     var searchingSince = ProcessInfo.processInfo.systemUptime
@@ -706,6 +737,17 @@ final class StreamClient: ObservableObject {
         /// The session ended with goodbye `quit`: a row listed since before `lostAt` is the Mac's
         /// registration that is going, left alone for DiscoveryPolicy.quitWait (`reconnectRow`).
         var afterQuit = false
+        struct RowListing: Hashable {
+            let id: String
+            let since: Double?
+        }
+        struct RowBudget {
+            var dials = 0
+            var lastDialAt: Double?
+        }
+        var rowBudgets: [RowListing: RowBudget] = [:]
+        var rowListing: RowListing?
+        var rowDials: Int { rowListing.flatMap { rowBudgets[$0]?.dials } ?? 0 }
     }
     var reconnect: Reconnect?
     /// The dial in flight, remote or pairing: one at a time each.
@@ -756,7 +798,22 @@ final class StreamClient: ObservableObject {
     var connection: NWConnection? {
         get { link.connection }
         set {
+            #if os(visionOS)
+            if link.connection !== newValue {
+                resetVisionAudio()
+                visionMovePreparation = nil
+                _ = visionInputSession?.takeReleases()
+                let old = link.connection
+                link.replaceConnection(newValue) {
+                    self.visionInputDebt.release(on: old).map(Self.visionInputBytes)
+                }
+                visionInputBinding = .awaitingCatalog
+                visionInputSession?.setMoving(false)
+                return
+            }
+            #else
             remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))
+            #endif
             link.connection = newValue
         }
     }
@@ -764,6 +821,90 @@ final class StreamClient: ObservableObject {
     /// the direct connection to the network one (SessionLink).
     private let link = SessionLink()
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
+    #if os(visionOS)
+    lazy var visionInputFence = VisionInputFence(queue: queue)
+    weak var visionInputSession: VisionInputSession?
+    private var visionMovePreparation: UUID?
+    private let visionInputDebt = VisionInputDebt()
+    @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog
+
+    private static func visionInputBytes(_ input: CapturedVisionInput) -> Data {
+        StreamMessage(kind: .input, timestamp: Date().timeIntervalSince1970,
+                      isKeyframe: false, payload: input.payload).serialized()
+    }
+
+    @discardableResult
+    private func applyVisionInputCatalog(_ list: WindowList, from peer: NWConnection?) -> Bool {
+        guard let peer, connection === peer else { return false }
+        let binding = VisionInputBinding(catalog: list)
+        if active != list.active || visionInputBinding != binding {
+            _ = visionInputSession?.takeReleases()
+            cancelVisionInputs()
+        }
+        windows = list.windows
+        active = list.active
+        visionInputBinding = binding
+        return true
+    }
+
+    func cancelVisionInputs(completion: (() -> Void)? = nil) {
+        let expected = connection
+        queue.async { [weak self] in
+            if let self {
+                _ = self.link.cancelInputs(onlyOn: expected) {
+                    self.visionInputDebt.release(on: expected).map(Self.visionInputBytes)
+                }
+            }
+            if let completion { DispatchQueue.main.async(execute: completion) }
+        }
+    }
+
+    private let visionAudioRoute = VisionAudioRoute()
+    lazy var visionAudio = VisionAudioController { [weak self] control in
+        self?.sendVisionAudio(control)
+    }
+
+    private func resetVisionAudio() {
+        visionAudio.stop()
+        visionAudioRoute.clear()
+        visionAudio.update(.disconnected)
+    }
+
+    private func sendVisionAudio(_ control: VisionAudioControl) {
+        guard let expected = visionAudioRoute.peer(for: control) else { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            let request = RemoteAudioSubscription(enabled: control.enabled, requestID: control.requestID)
+            let message = StreamMessage(kind: .remoteAudioControl, timestamp: Date().timeIntervalSince1970,
+                                        isKeyframe: false, payload: Wire.encode(request))
+            let bytes = message.serialized()
+            if control.enabled {
+                self.visionAudio.sendIfPermitted(control) {
+                    guard self.connection === expected,
+                          self.visionAudioRoute.scope(for: expected) == control.grant.scope else { return }
+                    expected.send(content: bytes, completion: .contentProcessed { _ in })
+                }
+            } else {
+                expected.send(content: bytes, completion: .contentProcessed { _ in })
+            }
+        }
+    }
+
+    func afterVisionInputRelease(_ completion: @escaping (Bool) -> Void) {
+        let expected = connection
+        queue.async { [weak self] in
+            guard let self, let expected, self.connection === expected else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            self.visionInputFence.begin(peer: ObjectIdentifier(expected), send: { nonce in
+                self.send(.ping, payload: nonce)
+            }, finished: { [weak self] readByHost in
+                DispatchQueue.main.async { completion(readByHost && self?.connection === expected) }
+            })
+        }
+    }
+    #endif
     private var lastParameterSets: ParameterSets?
 
     // Liveness, on `queue` (docs/remote-access-plan.md §7.6). The host answers every ping, so a
@@ -839,48 +980,147 @@ final class StreamClient: ObservableObject {
         #else
         savedMacs = SavedMacs.decode(UserDefaults.standard.string(forKey: SavedMacs.defaultsKey))
         #endif
-        // Back from the background: the pings stopped while the app was suspended, which is no loss.
+        #if os(visionOS)
+        _ = visionAudio
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.resetLiveness()
+            self?.cameForward()
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.wentToBackground()
+        }
+        #else
         NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
+            self?.cameForward()
         }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.wentToBackground()
+        }
+        #endif
     }
 
-    /// Starts the network browser (once). The nearby one follows the policy (`updateDiscovery`).
+    /// Starts the network browser, once; from then on it is only made again (`rebuildBrowser`). The
+    /// nearby one follows the policy (`updateDiscovery`).
     func startBrowsing() {
-        guard networkBrowser == nil else { return }
+        guard !browsing else { return }
+        browsing = true
         searchingSince = ProcessInfo.processInfo.systemUptime
         startPathMonitor()
-        // Network only: includePeerToPeer stays at its default, false. A peer-to-peer browse makes
-        // the kernel bring AWDL up, which takes the radio off its Wi-Fi channel up to ~100 ms twice
-        // a second (CLAUDE.md, trackpad stutter), and on a shared network AWDL carries nothing of
-        // Sill's. Direct Wireless Connection is the Mac's opt-in for that route (the nearby browser).
-        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: NWParameters())
+        makeBrowser(.network)
+        discoveryChanged()
+    }
+
+    /// Makes `kind`'s browser and starts it. The network one never peer-to-peer: includePeerToPeer stays
+    /// at its default, false. A peer-to-peer browse makes the kernel bring AWDL up, which takes the radio
+    /// off its Wi-Fi channel up to ~100 ms twice a second (CLAUDE.md, trackpad stutter), and on a shared
+    /// network AWDL carries nothing of Sill's. Direct Wireless Connection is the Mac's opt-in for that
+    /// route: the nearby browser, for a Mac whose Direct Wireless Connection is on and that shares no
+    /// network with this device, started and stopped by `updateDiscovery` only. Each browser's results
+    /// and state reach main, and only while it is still that kind's browser. Main thread.
+    private func makeBrowser(_ kind: BrowserKind) {
+        guard appInForeground else { return }
+        let params = NWParameters()
+        if kind == .nearby { params.includePeerToPeer = true }
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: params)
+        let key = browserKey(kind)
         browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
             DispatchQueue.main.async {
-                guard let self, let browser, self.networkBrowser === browser else { return }
-                self.networkResults = Array(results)
-                self.discoveryChanged()
+                guard let self, let browser, self[keyPath: key] === browser else { return }
+                self[keyPath: self.lifeKey(kind)].fresh = Array(results)
+                self.showResults(kind)
             }
         }
         browser.stateUpdateHandler = { [weak self, weak browser] state in
             DispatchQueue.main.async {
-                guard let self, let browser, self.networkBrowser === browser else { return }
-                self.networkBrowserChanged(state)
+                guard let self, let browser, self[keyPath: key] === browser else { return }
+                self.browserChanged(kind, state)
             }
         }
+        self[keyPath: lifeKey(kind)].startedAt = ProcessInfo.processInfo.systemUptime
         browser.start(queue: queue)
-        networkBrowser = browser
+        self[keyPath: key] = browser
+    }
+
+    private func browserKey(_ kind: BrowserKind) -> ReferenceWritableKeyPath<StreamClient, NWBrowser?> {
+        kind == .network ? \.networkBrowser : \.nearbyBrowser
+    }
+    private func lifeKey(_ kind: BrowserKind) -> ReferenceWritableKeyPath<StreamClient, BrowserLife> {
+        kind == .network ? \.networkLife : \.nearbyLife
+    }
+    private func resultsKey(_ kind: BrowserKind) -> ReferenceWritableKeyPath<StreamClient, [NWBrowser.Result]> {
+        kind == .network ? \.networkResults : \.nearbyResults
+    }
+
+    /// What `kind`'s rows are read from now (DiscoveryPolicy.browserResults), and the look that follows
+    /// (`discoveryChanged`): its browser's own results, with those of the one it replaced beside them
+    /// while it settles. Main thread.
+    private func showResults(_ kind: BrowserKind) {
+        let key = lifeKey(kind)
+        let now = ProcessInfo.processInfo.systemUptime
+        let life = self[keyPath: key]
+        self[keyPath: resultsKey(kind)] = DiscoveryPolicy.browserResults(kept: life.kept, fresh: life.fresh, name: Self.serviceName(of:),
+                                                                         settleEnds: life.settleEnds, now: now)
+        if let ends = life.settleEnds, now >= ends {
+            self[keyPath: key].kept = []
+            self[keyPath: key].settleEnds = nil
+        }
         discoveryChanged()
     }
 
-    /// The network browser's state. Local Network access denied shows as waiting with PolicyDenied
-    /// (TN3179), at launch or after Don't Allow, and every Bonjour browse is refused then, the nearby
-    /// one too: the status says what to do instead of the hint, whose advice about the network would
-    /// be wrong. The browser becomes ready once Settings allows it. Main thread.
-    private func networkBrowserChanged(_ state: NWBrowser.State) {
+    /// Back from the background (issue #69): both browsers are made again (DiscoveryPolicy.rebuildBrowser:
+    /// iOS may have made their connection to mDNSResponder defunct while the app was suspended, and said
+    /// nothing yet), and the automatic reconnect's count of dials starts again: the person is back, so
+    /// a listed row is dialled at once. Only after the app was seen going to the background. Main
+    /// thread.
+    private func cameForward() {
+        let wasInBackground = !appInForeground
+        appInForeground = true
+        guard wasInBackground else { return }
+        if browsing {
+            rebuildIfDue(.network, cameForward: true)
+            if nearbyBrowser != nil { rebuildIfDue(.nearby, cameForward: true) }
+        }
+        if var r = reconnect {
+            r.rowBudgets.removeAll()
+            r.rowListing = nil
+            reconnect = r
+        }
+        discoveryChanged()
+    }
+
+    private func wentToBackground() {
+        #if os(visionOS)
+        visionAudio.setForeground(false)
+        #endif
+        appInForeground = false
+        reconnectCheck?.cancel()
+        reconnectCheck = nil
+        networkLife.rebuildWork?.cancel()
+        nearbyLife.rebuildWork?.cancel()
+        networkLife.settleWork?.cancel()
+        nearbyLife.settleWork?.cancel()
+        guard reconnect != nil, !connected else { return }
+        if let c = connection {
+            connection = nil
+            c.cancel()
+            tearDown(status: status, restartSearch: false)
+        }
+        cancelRemoteDial()
+    }
+
+    /// A browser's state. A failed one, of either kind, is made again after DiscoveryPolicy's back-off
+    /// (`browserFailed`). The network browser's Local Network rule: access denied shows as waiting with
+    /// PolicyDenied (TN3179), at launch or after Don't Allow, and every Bonjour browse is refused then,
+    /// the nearby one too: the status says what to do instead of the hint, whose advice about the
+    /// network would be wrong. The browser becomes ready once Settings allows it. Main thread.
+    private func browserChanged(_ kind: BrowserKind, _ state: NWBrowser.State) {
+        if case .failed(let e) = state {
+            browserFailed(kind, e)
+            return
+        }
+        guard kind == .network else { return }
         switch state {
-        case .failed(let e):
-            status = "Browse failed: \(e)"
         case .waiting(let e):
             guard case .dns(let code) = e, code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied), !localNetworkDenied else { return }
             localNetworkDenied = true
@@ -895,21 +1135,82 @@ final class StreamClient: ObservableObject {
         }
     }
 
-    /// Peer-to-peer, for a Mac whose Direct Wireless Connection is on and that shares no network
-    /// with this device. Started and stopped by `updateDiscovery` only.
-    private func startNearbyBrowser() {
-        let params = NWParameters()
-        params.includePeerToPeer = true
-        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: Self.serviceType, domain: nil), using: params)
-        browser.browseResultsChangedHandler = { [weak self, weak browser] results, _ in
-            DispatchQueue.main.async {
-                guard let self, let browser, self.nearbyBrowser === browser else { return }
-                self.nearbyResults = Array(results)
-                self.discoveryChanged()
-            }
+    /// `kind`'s browser failed (the connection iOS made defunct, -65569, or anything else). It is
+    /// cancelled (Network.framework releases a failed browser only then) but stays `kind`'s until the
+    /// new one replaces it, so the nearby search still counts as running and the rows stay as they
+    /// were; the new one comes after DiscoveryPolicy's back-off, in the foreground. The status line is
+    /// left alone: before, it said "Browse failed: …" and nothing ever made the browser again. Main
+    /// thread.
+    private func browserFailed(_ kind: BrowserKind, _ error: NWError) {
+        let key = lifeKey(kind)
+        guard self[keyPath: key].failedAt == nil else { return }   // waiting to be made again already
+        let now = ProcessInfo.processInfo.systemUptime
+        let failures = DiscoveryPolicy.browserFailures(previous: self[keyPath: key].failures, startedAt: self[keyPath: key].startedAt, now: now)
+        self[keyPath: key].failures = failures
+        self[keyPath: key].failedAt = now
+        // Until the new one comes, the rows stay as they are now: a settle still running for this
+        // browser (it was made again moments ago) does not end while it waits, and a result it still
+        // delivers only joins them.
+        self[keyPath: key].settleWork?.cancel()
+        self[keyPath: key].settleWork = nil
+        self[keyPath: key].kept = self[keyPath: resultsKey(kind)]
+        self[keyPath: key].fresh = []
+        self[keyPath: key].settleEnds = .infinity
+        self[keyPath: browserKey(kind)]?.cancel()
+        rebuildIfDue(kind, cameForward: false)
+    }
+
+    /// Makes `kind`'s browser again now when DiscoveryPolicy.rebuildBrowser says so, or looks again
+    /// when it says to. Main thread.
+    private func rebuildIfDue(_ kind: BrowserKind, cameForward: Bool) {
+        let key = lifeKey(kind)
+        self[keyPath: key].rebuildWork?.cancel()
+        self[keyPath: key].rebuildWork = nil
+        let now = ProcessInfo.processInfo.systemUptime
+        let life = self[keyPath: key]
+        let due = DiscoveryPolicy.rebuildBrowser(failedAt: life.failedAt, failures: life.failures, cameForward: cameForward,
+                                                foreground: appInForeground, now: now)
+        if due.rebuild {
+            rebuildBrowser(kind, cameForward: cameForward)
+        } else if let at = due.recheckAt {
+            let work = DispatchWorkItem { [weak self] in self?.rebuildIfDue(kind, cameForward: false) }
+            self[keyPath: key].rebuildWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, at - now), execute: work)
         }
-        browser.start(queue: queue)
-        nearbyBrowser = browser
+    }
+
+    /// `kind`'s browser, made again: the rows' results so far kept beside the new one's until it
+    /// settles (DiscoveryPolicy.rebuildSettle), so a Mac that stays listed never leaves them and its
+    /// sightings keep their times. The return from the background starts the count of failures again.
+    /// Main thread.
+    private func rebuildBrowser(_ kind: BrowserKind, cameForward: Bool) {
+        let key = lifeKey(kind)
+        var life = self[keyPath: key]
+        life.rebuildWork?.cancel()
+        life.rebuildWork = nil
+        life.settleWork?.cancel()
+        life.kept = self[keyPath: resultsKey(kind)]
+        life.fresh = []
+        life.settleEnds = ProcessInfo.processInfo.systemUptime + DiscoveryPolicy.rebuildSettle
+        life.failedAt = nil
+        if cameForward { life.failures = 0 }
+        let settle = DispatchWorkItem { [weak self] in self?.showResults(kind) }
+        life.settleWork = settle
+        self[keyPath: key] = life
+        self[keyPath: browserKey(kind)]?.cancel()
+        self[keyPath: browserKey(kind)] = nil
+        makeBrowser(kind)
+        DispatchQueue.main.asyncAfter(deadline: .now() + DiscoveryPolicy.rebuildSettle, execute: settle)
+    }
+
+    /// Stops the nearby browser and forgets its life (`updateDiscovery`). Main thread.
+    private func stopNearbyBrowser() {
+        nearbyBrowser?.cancel()
+        nearbyBrowser = nil
+        nearbyResults = []
+        nearbyLife.rebuildWork?.cancel()
+        nearbyLife.settleWork?.cancel()
+        nearbyLife = BrowserLife()
     }
 
     /// A browser's results changed, or what the policy reads did (the saved Macs, the network's
@@ -1076,14 +1377,13 @@ final class StreamClient: ObservableObject {
             remembered: Set(directWirelessMacs), searchingSince: searchingSince, askedNearby: askedNearby,
             nearbyRunning: nearbyBrowser != nil, listed: macs.count, localNetworkDenied: localNetworkDenied))
         if out.browseNearby, nearbyBrowser == nil {
-            startNearbyBrowser()
+            nearbyLife = BrowserLife()
+            makeBrowser(.nearby)
             #if DEBUG
             print("discovery: nearby search on")
             #endif
-        } else if !out.browseNearby, let browser = nearbyBrowser {
-            browser.cancel()
-            nearbyBrowser = nil
-            nearbyResults = []
+        } else if !out.browseNearby, nearbyBrowser != nil {
+            stopNearbyBrowser()
             recomputeMacs()
             #if DEBUG
             print("discovery: nearby search off")
@@ -1362,7 +1662,9 @@ final class StreamClient: ObservableObject {
                     }
                     return
                 }
-                DispatchQueue.main.async { self.status = "Waiting for \(name)…" }
+                DispatchQueue.main.async {
+                    if self.connection === c, self.reconnect == nil { self.status = "Waiting for \(name)…" }
+                }
                 // A connection that never gets past waiting would block every reconnect path
                 // (they all require `connection == nil`): give it five seconds, then let it go.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
@@ -1429,7 +1731,8 @@ final class StreamClient: ObservableObject {
                 #endif
                 self.connection = nil
                 c.cancel()                                                 // its .cancelled finds it replaced
-                self.tearDown(status: self.status, restartSearch: false)   // then its discoveryChanged looks again
+                self.tearDown(status: self.status, restartSearch: false)
+                self.reconnectIfListed()
             }
         }
         return true
@@ -2046,6 +2349,26 @@ final class StreamClient: ObservableObject {
     /// Mac's settings come again on this connection (the ledger's rule 7), the Desktop rule starts
     /// over, and the panel gives the first state its two seconds. Main thread.
     private func finishMove(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
+        #if os(visionOS)
+        guard visionMovePreparation == nil, connected, let old = connection,
+              moving?.connection === c else { return }
+        let ticket = UUID()
+        visionMovePreparation = ticket
+        visionInputSession?.setMoving(true)
+        _ = visionInputSession?.takeReleases()
+        cancelVisionInputs() { [weak self] in
+            guard let self, self.visionMovePreparation == ticket else { return }
+            self.visionMovePreparation = nil
+            defer { self.visionInputSession?.setMoving(false) }
+            guard self.connected, self.connection === old, self.moving?.connection === c else { return }
+            self.finishMoveAfterInputDrain(c, kind: kind, kept: kept)
+        }
+        #else
+        finishMoveAfterInputDrain(c, kind: kind, kept: kept)
+        #endif
+    }
+
+    private func finishMoveAfterInputDrain(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
         moving = nil
         // The session this move was for must still run: over AWDL for a move from AWDL (a direct
         // session that ended meanwhile reconnects by itself, to the network row), not over it for
@@ -2055,9 +2378,15 @@ final class StreamClient: ObservableObject {
         // From here `c` is the session's: the old connection's pings and one-second windows stop at
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
         // only until the fence's pong (`deliver`), or stops at once without a fence.
+        #if os(visionOS)
+        resetVisionAudio()
+        visionInputBinding = .awaitingCatalog
+        #endif
         let reconnected = sessionDead
         let fenced = kind != .toWifi && !reconnected
+        #if !os(visionOS)
         remoteAudioControl.setConnection(ObjectIdentifier(c))
+        #endif
         if fenced {
             let nonce = withUnsafeBytes(of: UInt64.random(in: .min ... .max)) { Data($0) }
             let fencePing = StreamMessage(kind: .ping, timestamp: Date().timeIntervalSince1970, isKeyframe: false, payload: nonce)
@@ -2129,7 +2458,7 @@ final class StreamClient: ObservableObject {
         #endif
         queue.async {
             self.startMeasuring(c, remote: false)
-            for m in kept { self.handle(m.header, m.payload, from: c) }
+            for m in kept { self.deliver(m.header, m.payload, from: c) }
             self.startReading(c)
         }
         // The Mac keeps a frame rate per connection: this one's viewport is the first thing the new
@@ -2237,6 +2566,10 @@ final class StreamClient: ObservableObject {
     /// Stops a move under way and its timer (a new session, or none), and drops a hand-over still
     /// waiting for its fence, or a hold: what it held belonged to the session that ended. Main thread.
     private func abandonMove() {
+        #if os(visionOS)
+        visionMovePreparation = nil
+        visionInputSession?.setMoving(false)
+        #endif
         moveCheck?.cancel()
         moveCheck = nil
         if let move = moving {
@@ -2828,7 +3161,9 @@ final class StreamClient: ObservableObject {
         if let released = link.release(c) { fenceEnded(c, released, why: "the direct connection closed") }
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
+            #if !os(visionOS)
             self.remoteAudioControl.setConnection(nil)
+            #endif
             // A move carries the session on (`rescue`), not when this device closed the connection
             // itself (`end`: a message no Sill sends): that one ends with the words it deserves.
             if self.sessionDead || (end == nil && self.rescue(from: c)) { return }
@@ -2849,21 +3184,23 @@ final class StreamClient: ObservableObject {
         sessionEnded(error: error, end: end)
     }
 
-    /// The browse-results handlers reconnect when the Mac's Bonjour record comes back. If the record
-    /// never left (the host dropped us but kept running), nothing would fire, so also retry on a
-    /// timer while a reconnect is wanted. Main thread.
-    func scheduleReconnectRetry(after seconds: TimeInterval = 2) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self, !self.connected, self.reconnect != nil else { return }
-            if !self.reconnectIfListed() { self.scheduleReconnectRetry(after: min(seconds * 2, 10)) }
-        }
+    /// Starts one evaluation. Subsequent looks belong to the dial's end or the policy's due time.
+    /// There is no polling chain after a budget expires or the app leaves the foreground.
+    func scheduleReconnectRetry() {
+        reconnectIfListed()
     }
 
     /// Clears everything the session owned. `restartSearch` false for a remote dial whose winner
     /// never delivered its window list: the connect screen never left, and its Remote rows must not
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
+        #if os(visionOS)
+        resetVisionAudio()
+        visionInputSession?.releaseAll()
+        visionInputBinding = .awaitingCatalog
+        #else
         remoteAudioControl.setConnection(nil)
+        #endif
         abandonMove()
         resetPath()
         lastMoveAttempt = nil
@@ -2943,7 +3280,11 @@ final class StreamClient: ObservableObject {
     /// request (the Desktop on a connection's first list, a pick made again after a move), which
     /// is not the person's doing.
     private func request(_ source: StreamSource) {
+        #if os(visionOS)
+        visionAudio.stop()
+        #else
         remoteAudioControl.sourceWillChange()
+        #endif
         choicesSent += 1
         send(.selectSource, Wire.encode(source))
         #if DEBUG
@@ -3018,6 +3359,21 @@ final class StreamClient: ObservableObject {
     }
 
     func sendInput(_ event: InputEvent) {
+        #if os(visionOS)
+        guard visionMovePreparation == nil, let expected = connection else { return }
+        guard let input = visionInputBinding.capture(event) else { return }
+        lastInputAt = ProcessInfo.processInfo.systemUptime
+        let bytes = Self.visionInputBytes(input)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let accepted = self.link.send(bytes, onlyOn: expected) { [weak self] in
+                self?.visionInputDebt.record(input, on: expected)
+            }
+            guard accepted else { return }
+            self.pointerNoteSent(event)
+        }
+        return
+        #else
         let payload = SourceInput.payload(event, generation: inputGeneration)
         // Every input passes here, a hover and a flick's coast included: the tour's rule counts it
         // as something happening (StreamScreen.considerTour).
@@ -3056,6 +3412,7 @@ final class StreamClient: ObservableObject {
                 }
             }
         }
+        #endif
     }
 
     /// This device's switch for three-finger gestures (the Settings panel's This iPad group): on
@@ -3346,6 +3703,9 @@ final class StreamClient: ObservableObject {
     /// direct connection a move is leaving only matters if it is the fence's pong, which says the
     /// Mac has read everything sent there; the network connection brings all the rest.
     private func deliver(_ header: StreamHeader, _ data: Data, from c: NWConnection) {
+        #if os(visionOS)
+        if header.kind == .pong, visionInputFence.receive(data, peer: ObjectIdentifier(c)) { return }
+        #endif
         if c === connection {
             handle(header, data, from: c)
         } else if header.kind == .pong, let released = link.fenceReturned(data, on: c) {
@@ -3354,9 +3714,24 @@ final class StreamClient: ObservableObject {
     }
 
     /// On the network queue.
-    private func handle(_ header: StreamHeader, _ data: Data, from origin: NWConnection) {
-        if receiveRemoteAudio(header, data, from: origin) { return }
+    private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
+        #if !os(visionOS)
+        if receiveRemoteAudio(header, data, from: peer) { return }
+        #endif
         switch header.kind {
+        #if os(visionOS)
+        case .audio:
+            if let scope = visionAudioRoute.scope(for: peer) { visionAudio.receive(data, scope: scope) }
+        case .remoteAudioState:
+            guard let response = Wire.decode(RemoteAudioState.self, from: data),
+                  let scope = visionAudioRoute.scope(for: peer) else { return }
+            if let id = response.requestID {
+                visionAudio.acknowledge(id: id, enabled: response.enabled, scope: scope,
+                                        reason: response.reason.map { String($0.prefix(160)) })
+            } else if !response.enabled {
+                visionAudio.stop(problem: response.reason.map { String($0.prefix(160)) })
+            }
+        #endif
         case .parameterSets:
             if let ps = ParameterSets(encoded: data) {
                 lastParameterSets = ps
@@ -3373,12 +3748,19 @@ final class StreamClient: ObservableObject {
             onFrame?(data, header.isKeyframe)
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
-            let from = origin
+            let from: NWConnection? = peer
+            #if os(visionOS)
+            guard connection === peer else { return }
+            let availability = visionAudioRoute.observe(peer, source: list.active, supported: list.remoteAudio == 1)
+            visionAudio.update(availability)
+            #endif
             DispatchQueue.main.async {
                 // Only from the current connection: a list queued by a replaced one must not
                 // describe the next session.
                 guard self.connection === from else { return }
-                self.remoteAudioControl.receive(list, from: ObjectIdentifier(from))
+                #if !os(visionOS)
+                self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
+                #endif
                 // A remote session, and one at home over TLS, is connected at its first window list,
                 // not at `.ready`: the Mac has admitted this device's key.
                 self.remoteSessionReady()
@@ -3412,9 +3794,13 @@ final class StreamClient: ObservableObject {
                 }
                 if self.macName != list.macName { self.macName = list.macName; self.loadWindowOrder() }
                 let previous = self.active
+                #if os(visionOS)
+                guard self.applyVisionInputCatalog(list, from: from) else { return }
+                #else
                 self.windows = list.windows
                 self.inputGeneration = list.inputGeneration
                 self.active = list.active
+                #endif
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))
                 self.thumbnails = self.thumbnails.filter { live.contains($0.key) }
@@ -3422,7 +3808,7 @@ final class StreamClient: ObservableObject {
                 // what this device was watching is picked again (`resumeSource`).
                 if let resume = self.resumeSource {
                     self.resumeSource = nil
-                    if list.active == .none {
+                    if list.active == .none, !Self.noAutoDesktop {
                         var pick = resume
                         if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
                         #if DEBUG
@@ -3479,7 +3865,7 @@ final class StreamClient: ObservableObject {
             receivePointer(data)
         case .hostSettings:
             guard let state = Wire.decode(HostSettingsState.self, from: data) else { return }
-            let from = connection
+            let from: NWConnection? = peer
             DispatchQueue.main.async {
                 // A state from a connection that has since been replaced must not outlive its reset.
                 guard self.connection === from else { return }
@@ -3500,7 +3886,7 @@ final class StreamClient: ObservableObject {
             // connection it came on showed in its handshake (nil on a plain one): only a kind 18
             // that key signed speaks for this session's Mac (DiscoveryPolicy.macInfoNamesSession).
             guard let signed = Wire.decode(SignedMacInfo.self, from: data) else { return }
-            let from = connection
+            let from: NWConnection? = peer
             let key = from.flatMap { RemoteTLS.peerFingerprint($0) }
             DispatchQueue.main.async {
                 guard self.connection === from else { return }
@@ -3511,7 +3897,7 @@ final class StreamClient: ObservableObject {
             // (GoodbyePolicy, when the connection ends). One that does not decode is a reason this
             // build does not know: its own words, and no reconnect.
             let goodbye = Wire.decode(Goodbye.self, from: data) ?? Goodbye(reason: "")
-            let from = connection
+            let from: NWConnection? = peer
             DispatchQueue.main.async {
                 guard self.connection === from else { return }
                 self.goodbye = goodbye
@@ -3520,7 +3906,7 @@ final class StreamClient: ObservableObject {
             // The Mac's menus: a top level, or the answer to one of this connection's kind 27s or 25s
             // (MacMenuState). One that does not decode is dropped: its completion times out.
             guard let menu = Wire.decode(MacMenu.self, from: data) else { return }
-            let from = connection
+            let from: NWConnection? = peer
             DispatchQueue.main.async {
                 // A replaced connection's answer must not settle, or describe, the next one's menus.
                 guard self.connection === from else { return }
@@ -3960,7 +4346,9 @@ extension StreamClient {
     /// A choice not made: the warning haptic (iPhones; an iPad has no Taptic Engine) and VoiceOver's
     /// announcement. Nothing on screen: the Mac's picture says what happened (plan's Q9).
     private func menuRefused(_ refusal: MacMenuState.Refusal) {
+        #if !os(visionOS)
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        #endif
         UIAccessibility.post(notification: .announcement, argument: refusal.announcement)
         #if DEBUG
         print(refusal.byMac ? "menus: the Mac refused \(refusal.title) (\(refusal.id)): \(refusal.note)"

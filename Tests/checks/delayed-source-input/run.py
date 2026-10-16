@@ -8,6 +8,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from swift_platform import select_platform
+
 ROOT = Path(__file__).resolve().parents[3]
 FILES = ["Sources/StreamProtocol/Input.swift", "Sources/StreamProtocol/Switcher.swift",
          "Sources/SillHost/StreamCoordinator.swift", "Sources/SillHost/InputInjector.swift",
@@ -29,7 +32,7 @@ def function(text, signature):
 
 def program(sources):
     host = sources[FILES[2]]
-    client = sources[FILES[4]]
+    client = select_platform(sources[FILES[4]], vision=False)
     route = host.split("        case .input:\n", 1)[1].split("        case .gesture:\n", 1)[0]
     point = function(sources[FILES[3]], "private func point(")
     rect = function(host, "private func currentSourceRect()")
@@ -433,9 +436,9 @@ def main():
     args = parser.parse_args()
     disk_before = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in FILES}
     if args.ref:
-        commit = subprocess.check_output(["git", "rev-parse", "--verify", args.ref + "^{commit}"], cwd=ROOT, text=True).strip()
-        present = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", commit, "--", *FILES], cwd=ROOT, text=True).splitlines()
-        sources = {p: subprocess.check_output(["git", "show", commit + ":" + p], cwd=ROOT, text=True) for p in present}
+        commit = subprocess.check_output(["git", "--no-lazy-fetch", "rev-parse", "--verify", args.ref + "^{commit}"], cwd=ROOT, text=True).strip()
+        present = subprocess.check_output(["git", "--no-lazy-fetch", "ls-tree", "-r", "--name-only", commit, "--", *FILES], cwd=ROOT, text=True).splitlines()
+        sources = {p: subprocess.check_output(["git", "--no-lazy-fetch", "show", commit + ":" + p], cwd=ROOT, text=True) for p in present}
     else:
         sources = {p: (ROOT / p).read_text() for p in FILES}
     original = dict(sources)

@@ -1,10 +1,13 @@
 from pathlib import Path
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from swift_platform import select_platform
+
 root = Path(sys.argv[1])
 out = Path(sys.argv[2])
-client = (root / 'iOSClient/StreamClient.swift').read_text()
-adapter = (root / 'iOSClient/StreamClient+Audio.swift').read_text()
+client = select_platform((root / 'iOSClient/StreamClient.swift').read_text(), vision=False)
+adapter = select_platform((root / 'iOSClient/StreamClient+Audio.swift').read_text(), vision=False)
 
 def body_after(marker):
     start = client.index(marker)
@@ -73,10 +76,10 @@ enum ScenePhase { case active, inactive, background }
 
 checks = {
     'actual origin is passed at delivery': 'handle(header, data, from: c)',
-    'kept messages retain origin': 'self.handle(m.header, m.payload, from: c)',
-    'audio adapter is called by handle': 'if receiveRemoteAudio(header, data, from: origin) { return }',
-    'window lists retain origin': 'let from = origin',
-    'window lists update capability and source': 'self.remoteAudioControl.receive(list, from: ObjectIdentifier(from))',
+    'kept messages retain origin': 'self.deliver(m.header, m.payload, from: c)',
+    'audio adapter is called by handle': 'if receiveRemoteAudio(header, data, from: peer) { return }',
+    'window lists retain origin': 'let from: NWConnection? = peer',
+    'window lists update capability and source': 'self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))',
     'source selection revokes before send': 'private func request(_ source: StreamSource) {\n        remoteAudioControl.sourceWillChange()',
     'teardown clears consent': 'remoteAudioControl.setConnection(nil)',
     'handover clears consent': 'remoteAudioControl.setConnection(ObjectIdentifier(c))',

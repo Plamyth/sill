@@ -1,0 +1,25 @@
+{
+  "xrosBuildSourceMatchesMiniTestedProduction": true,
+  "matchedProductionFiles": [
+    "iOSClient/StreamClient.swift",
+    "iOSClient/StreamClient+Remote.swift",
+    "iOSClient/DiscoveryPolicy.swift",
+    "Sources/StreamProtocol/Input.swift",
+    "visionOSClient/VisionPointer.swift",
+    "visionOSClient/VisionInputFence.swift",
+    "visionOSClient/VisionTransition.swift"
+  ],
+  "fixtureExcludedFromNativeBuild": "Tests/vision-pointer/main.swift",
+  "binarySHA256": "ea88197ca81014b329d7b7b79b7257da8971d455a7024c7127d3af37ba264096",
+  "bundleID": "dev.ambrion.SillVision",
+  "platform": "xros",
+  "sdk": "xros27.0",
+  "supportedPlatforms": [
+    "XROS"
+  ],
+  "minimumOS": "2.5",
+  "unsignedBuild": true,
+  "codeSignatureDirectoryPresent": false,
+  "buildExitCode": 0,
+  "compiledSourceCount": 216
+}

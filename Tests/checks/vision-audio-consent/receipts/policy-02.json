@@ -1,0 +1,65 @@
+{
+  "exitCode": 0,
+  "transportPID": 30212,
+  "transportReaped": true,
+  "sourceHEAD": "34747280736b7248bb431ad8ef0e13c5a8fcb00a",
+  "scope": "Native policy/controller/route with synthetic peer and player. AVAudioSession observers compile only on visionOS, not executed here. No network/audio/device or source-guard task transfer.",
+  "originalSourceSHA256": {
+    "VisionAudioState.swift": "ea3c29c2f7e186f01b0de91edec3fb6318edc278f1f00a91ac4220875b82f24b",
+    "main.swift": "4aed5f3e27d7ba863c8f4646da98c13093b3dcefa4560bf0ee2c734c47cd4cb8"
+  },
+  "emittedSHA256": {
+    "VisionAudioState.swift": "ea3c29c2f7e186f01b0de91edec3fb6318edc278f1f00a91ac4220875b82f24b",
+    "main.swift": "4aed5f3e27d7ba863c8f4646da98c13093b3dcefa4560bf0ee2c734c47cd4cb8"
+  },
+  "routeImportSubstitution": null,
+  "senderReceiverMatch": true,
+  "sourceUnchanged": true,
+  "RAMRunnerReferenceSHA256": "eeea55d08f6052ce59621d2d63bef85645d7bb8a80dddc25bdb4fd3d1a8aba76",
+  "RAMRunnerSHA256": "60839057b646c1cf6a09cb28d9adf3b38af363633119446370e2f4a17db2c5c3",
+  "remoteResult": {
+    "runnerPID": 24930,
+    "childPIDs": [
+      24962,
+      25064
+    ],
+    "before": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 56%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      0,
+      0
+    ],
+    "exitCode": 0,
+    "memorySourcesUnchanged": true,
+    "childrenReaped": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 52%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    }
+  },
+  "extractedProduction": {}
+}
