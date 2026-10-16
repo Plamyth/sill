@@ -10,6 +10,13 @@ import StreamProtocol
     if !value() { print("FAIL \(name)"); exit(1) }
 }
 @MainActor func settle() async { for _ in 0..<100 { await Task.yield() } }
+@MainActor func until(_ predicate: () -> Bool, _ name: String) async {
+    for _ in 0..<1000 {
+        if predicate() { return }
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+    expect(false, name)
+}
 func scope(peer: UUID = UUID(), source: StreamSource = .desktop, generation: UUID = UUID(),
            epoch: UUID = UUID(), destination: UUID = UUID(), capability: UUID = UUID()) -> MicrophoneScope {
     MicrophoneScope(peer: peer, source: source, inputGeneration: generation, videoEpoch: epoch,
@@ -350,6 +357,39 @@ func packet(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64 = 1) -> Micr
         }
         expect(!checkedResult.resource!.runtimeValid() && !checkedBuffer.isOpen, "hal-runtime-destination-revoked")
         _ = await checkedResult.resource!.close()
+        await pausedValidation(grant)
+
+        let refused = Fixture(delayed: true)
+        let original = refused.start()
+        await until({ refused.continuation != nil }, "prepare-error-entered")
+        refused.continuation!.resume(returning: HostMicrophonePreparation(resource: refused.sink, error: "unit unsupported"))
+        refused.continuation = nil
+        await until({ refused.receiver.phase == .off }, "prepare-error-cleaned")
+        expect(refused.states.last?.reason == "unit unsupported", "prepare-error-terminal-reason")
+        refused.receiver.control(original, fingerprint: Data([1]))
+        expect(refused.prepares == 1 && refused.states.last?.reason == "unit unsupported", "prepare-error-replay-reason")
+    }
+
+    @MainActor static func pausedValidation(_ grant: HostLocalOwnerGrant) async {
+        let fake = FakeHAL()
+        let render = MicrophoneRenderBuffer(grant: grant)
+        render.sendEnabled(Data(), to: NWConnection())
+        let result = await HALMicrophoneSink.prepare(grant: grant, render: render, ops: fake.operations)
+        let held = fake.callback
+        let pause = HALTestPause()
+        fake.pauseNextRead = pause
+        expect(result.resource!.runtimeValid(), "hal-paused-validation-start")
+        let entered = await pause.waitForEntry()
+        expect(entered, "hal-paused-validation-entered")
+        for _ in 0..<16 { expect(result.resource!.runtimeValid(), "hal-paused-cached-validation") }
+        var completed = false
+        let close = Task { let error = await result.resource!.close(); completed = true; return error }
+        await until({ !render.isOpen }, "hal-paused-close-admission")
+        expect(!completed && fake.running, "hal-paused-worker-serial-close")
+        expect(FakeHAL.render(held) == [0, 0, 0, 0], "hal-paused-close-silent")
+        pause.release()
+        let error = await close.value
+        expect(error == nil && !result.resource!.runtimeValid() && !render.isOpen && !fake.running, "hal-late-validation-no-reopen")
     }
 
     @MainActor static func retainedBlockLifetime(_ grant: HostLocalOwnerGrant) async {

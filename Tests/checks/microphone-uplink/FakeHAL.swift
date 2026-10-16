@@ -3,6 +3,16 @@ import CoreAudio
 import AudioToolbox
 import StreamProtocol
 
+final class HALTestPause: @unchecked Sendable {
+    private let began = DispatchSemaphore(value: 0)
+    private let released = DispatchSemaphore(value: 0)
+    func hold() { began.signal(); _ = released.wait(timeout: .now() + 3) }
+    func waitForEntry() async -> Bool {
+        await Task.detached { self.began.wait(timeout: .now() + 3) == .success }.value
+    }
+    func release() { released.signal() }
+}
+
 final class FakeHAL: @unchecked Sendable {
     private struct Storage {
         var trace: [String] = []
@@ -22,6 +32,7 @@ final class FakeHAL: @unchecked Sendable {
         var running = false
         var allocated = false
         var offMain = true
+        var pause: HALTestPause?
     }
     private let lock = NSRecursiveLock()
     private var storage = Storage()
@@ -39,6 +50,7 @@ final class FakeHAL: @unchecked Sendable {
     var selected: AudioDeviceID { access { $0.selected } }
     var running: Bool { access { $0.running } }
     var allocated: Bool { access { $0.allocated } }
+    var pauseNextRead: HALTestPause? { get { access { $0.pause } } set { access { $0.pause = newValue } } }
     struct Failure: Error {}
     func status(_ name: String) -> OSStatus {
         access {
@@ -95,6 +107,8 @@ final class FakeHAL: @unchecked Sendable {
             let selector = address.pointee.mSelector
             let result = status("read:\(selector)")
             guard result == noErr else { return result }
+            let pause = access { state in let value = state.pause; state.pause = nil; return value }
+            pause?.hold()
             switch selector {
             case kAudioHardwarePropertyTranslateUIDToDevice:
                 let uid = qualifier!.assumingMemoryBound(to: CFString.self).pointee as String
