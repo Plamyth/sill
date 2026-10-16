@@ -21,7 +21,7 @@ def main():
     if (output / 'result.json').exists():
         raise SystemExit('Reconcile the previous result before reusing OUTPUT')
     started = time.monotonic()
-    record = {'scope': 'actual receiver, wire, HAL adapter with inert C operations, extracted authenticated dispatch; no native IO or call proof',
+    record = {'scope': 'actual receiver, wire, owned-block HAL sink with inert unit/object seams, extracted authenticated dispatch; no native IO or call proof',
               'commands': [], 'mutants': [], 'assertions': 0, 'exitCode': 2}
     source_hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                      for folder in ['Sources', 'Tests/checks/microphone-uplink']

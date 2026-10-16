@@ -267,79 +267,106 @@ func packet(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64 = 1) -> Micr
 
     @MainActor static func nativeTests() async {
         let grant = ownerGrant(scope())
-        let unavailable = FakeHAL()
-        var unavailableOps = unavailable.operations
-        unavailableOps.supportsCallbackQuiescence = false
-        let refused = HALMicrophoneSink.prepare(grant: grant, render: MicrophoneRenderBuffer(grant: grant), ops: unavailableOps)
-        expect(refused.resource == nil && refused.error != nil && unavailable.trace.isEmpty, "native-unsupported-before-io")
-        expect(!HALMicrophoneSink.nativeSupported, "native-capability-unsupported")
         var unsupportedPrepares = 0
-        let unsupportedReceiver = HostMicrophoneReceiver(provider: FakeOwner(grant), automaticWatchdog: false, prepare: { _, _ in
+        let disabled = HostMicrophoneReceiver(provider: FakeOwner(grant), automaticWatchdog: false, backendAvailable: false, prepare: { _, _ in
             unsupportedPrepares += 1
             return HostMicrophonePreparation(resource: nil, error: "must not prepare")
         })
-        unsupportedReceiver.current = { binding, fingerprint in binding == grant.scope && fingerprint == grant.fingerprint }
-        let unavailableCap = unsupportedReceiver.capability(peer: grant.scope.peer, source: grant.scope.source,
+        disabled.current = { binding, fingerprint in binding == grant.scope && fingerprint == grant.fingerprint }
+        let unavailableCap = disabled.capability(peer: grant.scope.peer, source: grant.scope.source,
             inputGeneration: grant.scope.inputGeneration, videoEpoch: grant.scope.videoEpoch, fingerprint: grant.fingerprint)
-        unsupportedReceiver.control(MicrophoneControl(operation: .start, requestID: UUID(), scope: grant.scope), fingerprint: grant.fingerprint)
+        disabled.control(MicrophoneControl(operation: .start, requestID: UUID(), scope: grant.scope), fingerprint: grant.fingerprint)
         await settle()
-        expect(unavailableCap == nil && unsupportedPrepares == 0 && unsupportedReceiver.phase == .off, "native-unsupported-valid-owner-nil-cap")
+        expect(unavailableCap == nil && unsupportedPrepares == 0 && disabled.phase == .off, "disabled-backend-valid-owner-nil-cap")
+
         let render = MicrophoneRenderBuffer(grant: grant)
         render.sendEnabled(Data(), to: NWConnection())
         let fake = FakeHAL()
-        let prepared = HALMicrophoneSink.prepare(grant: grant, render: render, ops: fake.operations)
+        let prepared = await HALMicrophoneSink.prepare(grant: grant, render: render, ops: fake.operations)
         expect(prepared.error == nil && fake.selected == 41, "hal-explicit-device")
-        expect(fake.trace.firstIndex(of: "set:\(kAudioOutputUnitProperty_EnableIO):\(kAudioUnitScope_Input):1")! < fake.trace.firstIndex(of: "start")!, "hal-input-disabled-first")
-        expect(fake.trace.firstIndex(of: "get:\(kAudioOutputUnitProperty_CurrentDevice)")! < fake.trace.firstIndex(of: "start")!, "hal-device-readback-first")
+        expect(fake.offMain, "hal-hardware-off-main")
+        expect(fake.trace.firstIndex(of: "input")! < fake.trace.firstIndex(of: "start")!, "hal-input-disabled-first")
+        expect(fake.trace.firstIndex(of: "device")! < fake.trace.firstIndex(of: "start")!, "hal-device-readback-first")
         let now = DispatchTime.now().uptimeNanoseconds
         expect(render.offer(packet(grant.scope, grant: UUID()), arrived: now, now: now), "hal-offer")
         expect(fake.render() == [0, 1, 0, 32767], "hal-mapped-callback")
         expect(fake.render() == [0, 0, 0, 0], "hal-underrun-zeros")
+        let late = fake.callback
         let closed = await prepared.resource!.close()
-        expect(closed == nil && fake.stopped && fake.disposed, "hal-positive-fake-quiescence")
-        let setOperations = fake.trace.filter { $0.hasPrefix("set:") }
-        let allowed: Set<String> = ["set:\(kAudioOutputUnitProperty_EnableIO):\(kAudioUnitScope_Input):1",
-            "set:\(kAudioOutputUnitProperty_EnableIO):\(kAudioUnitScope_Output):0",
-            "set:\(kAudioOutputUnitProperty_CurrentDevice):\(kAudioUnitScope_Global):0",
-            "set:\(kAudioUnitProperty_StreamFormat):\(kAudioUnitScope_Input):0",
-            "set:\(kAudioUnitProperty_SetRenderCallback):\(kAudioUnitScope_Input):0",
-            "set:\(kAudioUnitProperty_MaximumFramesPerSlice):\(kAudioUnitScope_Global):0"]
-        expect(Set(setOperations) == allowed, "hal-only-owned-properties")
-        for name in ["create", "initialize", "start"] + Array(allowed) {
+        expect(closed == nil && !fake.running && !fake.allocated && fake.callback == nil, "hal-owned-cleanup")
+        expect(FakeHAL.render(late) == [0, 0, 0, 0], "hal-late-owned-block-silent")
+        expect(fake.trace.firstIndex(of: "stop")! < fake.trace.firstIndex(of: "deallocate")!, "hal-stop-before-deallocate")
+        expect(fake.trace.firstIndex(of: "deallocate")! < fake.trace.firstIndex(of: "release-provider")!, "hal-release-after-deallocate")
+
+        for name in ["create", "input", "output", "device", "format", "provider", "maximum", "allocate", "start"] {
             let ops = FakeHAL(); ops.failAt = name
-            let result = HALMicrophoneSink.prepare(grant: grant, render: MicrophoneRenderBuffer(grant: grant), ops: ops.operations)
+            let result = await HALMicrophoneSink.prepare(grant: grant, render: MicrophoneRenderBuffer(grant: grant), ops: ops.operations)
             expect(result.error != nil, "hal-partial-error")
-            _ = await result.resource!.close()
-            expect(ops.disposed, "hal-partial-owned-dispose")
+            let error = await result.resource!.close()
+            expect(error == nil && !ops.running && !ops.allocated && ops.callback == nil, "hal-partial-owned-cleanup")
             expect(name == "start" || !ops.trace.contains("start"), "hal-no-partial-start")
         }
-        for bad in 0..<5 {
+        for bad in 0..<6 {
             let ops = FakeHAL()
             if bad == 0 { ops.readbackMismatch = true }
             if bad == 1 { ops.unsupportedFormat = true }
             if bad == 2 { ops.physicalTransport = true }
             if bad == 3 { ops.wrongPlugin = true }
             if bad == 4 { ops.wrongChannels = true }
-            let result = HALMicrophoneSink.prepare(grant: grant, render: MicrophoneRenderBuffer(grant: grant), ops: ops.operations)
+            if bad == 5 { ops.wrongUID = true }
+            let result = await HALMicrophoneSink.prepare(grant: grant, render: MicrophoneRenderBuffer(grant: grant), ops: ops.operations)
             expect(result.error != nil && !ops.trace.contains("start"), bad == 0 ? "hal-no-default-fallback" : "hal-identity-format-refusal")
             _ = await result.resource!.close()
         }
-        for boundary in ["stop", "uninitialize", "dispose", "quiescence"] {
+        for boundary in ["stop", "deallocate", "release-provider"] {
             let ops = FakeHAL()
             let buffer = MicrophoneRenderBuffer(grant: grant); buffer.sendEnabled(Data(), to: NWConnection())
-            let result = HALMicrophoneSink.prepare(grant: grant, render: buffer, ops: ops.operations)
-            if boundary == "quiescence" { ops.quiescent = false } else { ops.failAt = boundary }
+            let result = await HALMicrophoneSink.prepare(grant: grant, render: buffer, ops: ops.operations)
+            ops.failAt = boundary
             let error = await result.resource!.close()
             let trace = ops.trace
-            expect(error != nil, "hal-cleanup-error")
+            expect(error != nil && ops.callback != nil, "hal-cleanup-error-retained")
             expect(ops.render() == [0, 0, 0, 0], "hal-failed-cleanup-retained-silent")
             let repeated = await result.resource!.close()
             expect(repeated == error && trace == ops.trace, "hal-no-cleanup-retry")
-            if boundary == "stop" { expect(!ops.disposed, "hal-failed-stop-quarantine") }
-            ops.failAt = nil; ops.quiescent = true
+            ops.failAt = nil
             let retried = await result.resource!.retryClose()
-            expect(retried == nil && ops.disposed && ops.trace.filter { $0 == "start" }.count == 1, "hal-explicit-same-resource-retry")
+            expect(retried == nil && !ops.running && !ops.allocated && ops.callback == nil && ops.trace.filter { $0 == "start" }.count == 1, "hal-explicit-same-resource-retry")
         }
+        await retainedBlockLifetime(grant)
+
+        let checked = FakeHAL()
+        let checkedBuffer = MicrophoneRenderBuffer(grant: grant)
+        let checkedResult = await HALMicrophoneSink.prepare(grant: grant, render: checkedBuffer, ops: checked.operations)
+        let readsBefore = checked.trace.filter { $0 == "read:\(kAudioDevicePropertyDeviceUID)" }.count
+        for _ in 0..<16 { expect(checkedResult.resource!.runtimeValid(), "hal-cached-validation") }
+        await settle()
+        let readsAfter = checked.trace.filter { $0 == "read:\(kAudioDevicePropertyDeviceUID)" }.count
+        expect(readsAfter - readsBefore == 2 && checked.offMain, "hal-one-inflight-validation")
+        checked.wrongPlugin = true
+        for _ in 0..<1000 {
+            if !checkedResult.resource!.runtimeValid() { break }
+            await Task.yield()
+        }
+        expect(!checkedResult.resource!.runtimeValid() && !checkedBuffer.isOpen, "hal-runtime-destination-revoked")
+        _ = await checkedResult.resource!.close()
+    }
+
+    @MainActor static func retainedBlockLifetime(_ grant: HostLocalOwnerGrant) async {
+        let ops = FakeHAL()
+        var buffer: MicrophoneRenderBuffer? = MicrophoneRenderBuffer(grant: grant)
+        weak var observed = buffer
+        var result: HostMicrophonePreparation? = await HALMicrophoneSink.prepare(grant: grant, render: buffer!, ops: ops.operations)
+        expect(result?.error == nil, "hal-owned-block-prepared")
+        var held = ops.callback
+        _ = await result?.resource?.close()
+        result = nil; buffer = nil
+        await settle()
+        expect(observed != nil, "hal-block-retains-render-storage")
+        expect(FakeHAL.render(held) == [0, 0, 0, 0], "hal-retained-block-after-owner-release")
+        held = nil
+        await settle()
+        expect(observed == nil, "hal-block-storage-released")
     }
 
     @MainActor static func integrationTests() async {

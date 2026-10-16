@@ -1,4 +1,13 @@
 MUTANTS = [
+    ('block-owner', 'Sources/SillHost/HALMicrophoneSink.swift',
+     'created.provider = { [context] _, _, frames, _, buffers in context.fill(frames: frames, buffers: buffers) }',
+     'created.provider = { [weak context] _, _, frames, _, buffers in context?.fill(frames: frames, buffers: buffers) ?? noErr }',
+     'hal-block-retains-render-storage'),
+    ('hardware-main', 'Sources/SillHost/HALMicrophoneSink.swift',
+     'private actor HALMicrophoneWorker {',
+     '@MainActor private final class HALMicrophoneWorker {', 'hal-hardware-off-main'),
+    ('validation-bound', 'Sources/SillHost/HALMicrophoneSink.swift',
+     'if validation == nil {', 'if true {', 'hal-one-inflight-validation'),
     ('cancel', 'Sources/SillHost/HostMicrophoneReceiver.swift',
      'if request.operation == .stop && (request.grantID == nil || outcomes[request.requestID]?.request.operation == .start) {',
      'if false {', 'cancellation-before-start'),

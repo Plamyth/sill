@@ -64,9 +64,9 @@ final class HostMicrophoneReceiver {
     private let backendAvailable: Bool
 
     init(provider: (any HostMicrophoneOriginalOwner)? = nil, capacity: Int = 128, serialLimit: UInt64 = .max,
-         automaticWatchdog: Bool = true, backendAvailable: Bool = HALMicrophoneSink.nativeSupported, now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+         automaticWatchdog: Bool = true, backendAvailable: Bool = true, now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
          prepare: @escaping @MainActor (HostLocalOwnerGrant, MicrophoneRenderBuffer) async -> HostMicrophonePreparation = { grant, render in
-             HALMicrophoneSink.prepare(grant: grant, render: render)
+             await HALMicrophoneSink.prepare(grant: grant, render: render)
          }) {
         self.provider = provider; self.capacity = max(2, min(capacity, 1024)); self.serialLimit = serialLimit
         self.automaticWatchdog = automaticWatchdog; self.backendAvailable = backendAvailable
