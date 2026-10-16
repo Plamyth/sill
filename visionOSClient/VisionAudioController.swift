@@ -16,6 +16,9 @@ struct VisionAudioControl {
 }
 
 protocol VisionAudioPlaying: AnyObject {
+    var cleanupProblem: String? { get }
+    var onCleanupChange: ((String?) -> Void)? { get set }
+    func retryCleanup()
     func begin(grant: UUID, onEvent: @escaping (UUID, VisionAudioPlaybackEvent) -> Void)
     func receive(_ packet: Data, grant: UUID)
     func stop()
@@ -30,6 +33,7 @@ final class VisionAudioController: ObservableObject {
     }
 
     @Published private(set) var presentation = VisionAudioState()
+    @Published private(set) var cleanupProblem: String?
     private let storage = OSAllocatedUnfairLock(initialState: Storage())
     private let player: VisionAudioPlaying
     private let send: (VisionAudioControl) -> Void
@@ -43,6 +47,10 @@ final class VisionAudioController: ObservableObject {
         self.send = send
         self.player = player
         self.clock = clock
+        self.cleanupProblem = player.cleanupProblem
+        player.onCleanupChange = { [weak self] problem in
+            DispatchQueue.main.async { self?.cleanupProblem = problem }
+        }
         #if os(visionOS)
         for name in [AVAudioSession.interruptionNotification, AVAudioSession.routeChangeNotification,
                      AVAudioSession.mediaServicesWereResetNotification] {
@@ -71,10 +79,17 @@ final class VisionAudioController: ObservableObject {
     }
 
     func enable() {
+        guard player.cleanupProblem == nil else { return }
         change { model in
             guard model.canEnable, let grant = model.request(id: UUID(), now: clock()) else { return }
             send(VisionAudioControl(grant: grant, enabled: true))
         }
+    }
+
+    func retryCleanup() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        player.retryCleanup()
+        cleanupProblem = player.cleanupProblem
     }
 
     func stop(problem: String? = nil) {

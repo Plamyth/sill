@@ -1,5 +1,7 @@
 import Foundation
 
+enum VisionAudioPlaybackAuthorization { case current, superseded, revoked }
+
 struct VisionAudioFormat: Equatable, Sendable {
     let rate: Double
     let channels: Int
