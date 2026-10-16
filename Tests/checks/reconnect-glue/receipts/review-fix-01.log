@@ -1,0 +1,107 @@
+Mac mini heavy-job slot: free=37%, swap=9748MB
+INPUT_SHA256 7b62b3c962e4fcfcb6338779912339302ef5ffcb28eed754b13657bf0b6f0b99
+PASS listed sleeping host receives exactly 12 dials, observed 12
+PASS listed dials follow upstream 5/10/20/30 second starts
+PASS exhausted listed budget leaves no repeating timer
+PASS fresh row evidence resumes exhausted listing
+PASS native background gate also prevents remote attempts
+PASS background leaves no retry chain
+PASS automatic remote attempts stop at original 120 second window
+PASS expired remote window leaves no polling timer
+PASS foreground rebuilds browser even without a reported mDNS failure
+PASS failed replacement keeps rows beyond old settle deadline
+PASS successful replacement expires stale kept rows
+PASS failed row dial preserves original loss and consumed budget
+PASS failed row dial cannot redial immediately before its due time
+PASS failed row dial resumes at original due time
+PASS background cancels pending automatic row and ends timer chain
+PASS new foreground evidence resets listed count and resumes once
+PASS repeated foreground notification cannot reset active attempt
+PASS remote cancellation precondition has active connector at 103
+PASS background immediately cancels retained active remote connector
+PASS background cancels automatic remote connector and retry chain
+PASS foreground resumes remote within original window
+PASS foreground does not extend expired remote window
+PASS same listing and repeated evaluations cannot restart exhausted budget
+PASS new user intent may start a fresh reconnect value
+PASS connected session receives no automatic attempt
+PASS path move blocks automatic reconnect
+PASS pairing or revoked row ends reconnect without a dial
+PASS failed browser cannot rebuild or poll in background
+PASS replaced browser callbacks cannot mutate current rows or life
+PASS foreground keeps old rows only for bounded settle interval
+PASS same trusted Mac has independent 12 dial budgets for two continuously listed rows
+PASS reorder cannot revive either exhausted listing, observed 24 starts
+PASS actual renewal resets only renewed listing A
+PASS renewing A leaves continuously listed B exhausted, observed 25 starts
+PASS new foreground evidence resets B budget
+PASS new foreground evidence also resets alternate A budget
+PASS alternate listed endpoint can fail over immediately with its own budget
+PASS A to B to A reorder retains A five second backoff, observed [100.0, 101.0]
+PASS A resumes at its original five second due event
+PASS B also retains its own five second backoff
+PASS B resumes at its own due event
+PASS returning A retains ten second backoff
+PASS two listed endpoints retain independent ten second due events
+PASS background stops both listed budgets and due events
+PASS equal listing timestamps do not conflate distinct row identities
+PASS browser policy also refuses inconsistent foreground evidence
+Reconnect glue: 46/46 passed, 0 failed
+Upstream sleep policy subset: 43/43 passed, 0 failed
+PASS listed sleeping host receives exactly 12 dials, observed 12
+PASS listed dials follow upstream 5/10/20/30 second starts
+PASS exhausted listed budget leaves no repeating timer
+PASS fresh row evidence resumes exhausted listing
+PASS native background gate also prevents remote attempts
+PASS background leaves no retry chain
+PASS automatic remote attempts stop at original 120 second window
+PASS expired remote window leaves no polling timer
+PASS foreground rebuilds browser even without a reported mDNS failure
+PASS failed replacement keeps rows beyond old settle deadline
+PASS successful replacement expires stale kept rows
+PASS failed row dial preserves original loss and consumed budget
+PASS failed row dial cannot redial immediately before its due time
+PASS failed row dial resumes at original due time
+PASS background cancels pending automatic row and ends timer chain
+PASS new foreground evidence resets listed count and resumes once
+PASS repeated foreground notification cannot reset active attempt
+PASS remote cancellation precondition has active connector at 103
+FAIL background immediately cancels retained active remote connector
+PASS background cancels automatic remote connector and retry chain
+PASS foreground resumes remote within original window
+PASS foreground does not extend expired remote window
+PASS same listing and repeated evaluations cannot restart exhausted budget
+PASS new user intent may start a fresh reconnect value
+PASS connected session receives no automatic attempt
+PASS path move blocks automatic reconnect
+PASS pairing or revoked row ends reconnect without a dial
+PASS failed browser cannot rebuild or poll in background
+PASS replaced browser callbacks cannot mutate current rows or life
+PASS foreground keeps old rows only for bounded settle interval
+PASS same trusted Mac has independent 12 dial budgets for two continuously listed rows
+PASS reorder cannot revive either exhausted listing, observed 24 starts
+PASS actual renewal resets only renewed listing A
+PASS renewing A leaves continuously listed B exhausted, observed 25 starts
+PASS new foreground evidence resets B budget
+PASS new foreground evidence also resets alternate A budget
+PASS alternate listed endpoint can fail over immediately with its own budget
+PASS A to B to A reorder retains A five second backoff, observed [100.0, 101.0]
+PASS A resumes at its original five second due event
+PASS B also retains its own five second backoff
+PASS B resumes at its own due event
+PASS returning A retains ten second backoff
+PASS two listed endpoints retain independent ten second due events
+PASS background stops both listed budgets and due events
+PASS equal listing timestamps do not conflate distinct row identities
+PASS browser policy also refuses inconsistent foreground evidence
+Reconnect glue: 45/46 passed, 1 failed
+Upstream sleep policy subset: 43/43 passed, 0 failed
+/Volumes/CCRReconnect04b309fed6/input/Tests/vision-pointer/main.swift:53:7: warning: result of call to 'sync(execute:)' is unused [#no-usage]
+51 | }
+52 | let expired = DispatchSemaphore(value: 0)
+53 | queue.sync {
+   |       `- warning: result of call to 'sync(execute:)' is unused [#no-usage]
+54 |     fence.begin(peer: ObjectIdentifier(peer), timeout: 0.03, send: { _ in }, finished: { ok in
+55 |         check(!ok, "missing echo refuses transition")
+Vision input: 38 behavioral checks passed
+RESULT_JSON {"runnerPID": 15155, "childPIDs": [15192, 15282, 15288, 15294, 15300, 15303, 15310], "before": {"swap": "vm.swapusage: total = 10240.00M  used = 9748.12M  free = 491.88M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 37%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [0, 0, 0, 0, 0, 0, 0], "cancelMutationExitCode": 1, "cancelMutationFailures": ["FAIL background immediately cancels retained active remote connector"], "cancelMutationDetected": true, "exitCode": 0, "memorySourcesUnchanged": true, "childrenReaped": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9748.12M  free = 491.88M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 36%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}

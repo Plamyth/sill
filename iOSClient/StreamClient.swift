@@ -728,9 +728,17 @@ final class StreamClient: ObservableObject {
         /// The session ended with goodbye `quit`: a row listed since before `lostAt` is the Mac's
         /// registration that is going, left alone for DiscoveryPolicy.quitWait (`reconnectRow`).
         var afterQuit = false
-        var rowListing: Double?
-        var rowDials = 0
-        var lastRowDialAt: Double?
+        struct RowListing: Hashable {
+            let id: String
+            let since: Double?
+        }
+        struct RowBudget {
+            var dials = 0
+            var lastDialAt: Double?
+        }
+        var rowBudgets: [RowListing: RowBudget] = [:]
+        var rowListing: RowListing?
+        var rowDials: Int { rowListing.flatMap { rowBudgets[$0]?.dials } ?? 0 }
     }
     var reconnect: Reconnect?
     /// The dial in flight, remote or pairing: one at a time each.
@@ -977,8 +985,8 @@ final class StreamClient: ObservableObject {
             if nearbyBrowser != nil { rebuildIfDue(.nearby, cameForward: true) }
         }
         if var r = reconnect {
-            r.rowDials = 0
-            r.lastRowDialAt = nil
+            r.rowBudgets.removeAll()
+            r.rowListing = nil
             reconnect = r
         }
         discoveryChanged()

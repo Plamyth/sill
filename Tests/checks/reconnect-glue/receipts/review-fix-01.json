@@ -1,0 +1,98 @@
+{
+  "exitCode": 0,
+  "transportPID": 90651,
+  "transportReaped": true,
+  "sourceHEAD": "c8cecbf2f0a0fcc77fc72f1265b98452982633ce",
+  "scope": "Independent RAM input validation, not codex-source-guard transfer acceptance",
+  "inputSHA256": "7b62b3c962e4fcfcb6338779912339302ef5ffcb28eed754b13657bf0b6f0b99",
+  "remoteInputHashMatched": true,
+  "sourceSHA256": {
+    "iOSClient/StreamClient.swift": "a4847784ccc6731771909f07acf4068972eb181ae3952aaa445bb15ed8373767",
+    "iOSClient/StreamClient+Remote.swift": "8cce78415b29bd6c14c740f9b57261fb960af73a96f07ca180b5c79513a6a55a",
+    "iOSClient/DiscoveryPolicy.swift": "9d8763ee8df438eeabb423dd66faa5b34668235437115af2acd78191e72d39a9",
+    "Sources/StreamProtocol/Input.swift": "c36db9b15e87711adf0477612b8e5ab30b206602d04aa421ac3cf398f39fe8b3",
+    "visionOSClient/VisionPointer.swift": "264af026d070f9a7421a07ff7666f90ffc9fc5fb46956377f0a23ff6619ec1c2",
+    "visionOSClient/VisionInputFence.swift": "a51eb823046dfe5015e8106131b3eb8498bd11ebede8fd3af082be50b99890a3",
+    "visionOSClient/VisionTransition.swift": "d9f991531a5ffa0ef0a54f7e6015e0d044be7110ae84c0c7b202206f0ecd76b3",
+    "Tests/vision-pointer/main.swift": "d386344ed794f032e14e5e0a6cf8c791aaf0b7b7210e7d0950ea2439f5a467ef"
+  },
+  "sourceUnchanged": true,
+  "extractionSHA256": {
+    "struct Reconnect {": "15d9c1881c495e0cd4682148a4caba9387326a8f07d32bc3e63cff818327652c",
+    "func scheduleReconnectRetry(": "da88157d622c11fbc2f36613ee087ddfce2b22017903de4f1391adb0569ff0f5",
+    "cancelRemoteDial": "73b4770f8b5c98d4028e18348adc57d6a6499475c72279130d56f5f692288efc",
+    "reconnectIfListed": "9660471f466910840c4ba75e50fd51aef60841d6648471888f994ed686367f01",
+    "sessionEndedRowFailure": "d6834f9880f828648b660707a33d51aef8f5c27c3b21af22bda024c296bfb8c1",
+    "dialTimeout": "a1a66a9eec2b069cd0cb85d426e44d9cfa4703f5cc1f7a289e52679ebf6b3304",
+    "browserGlue": "bb89fab4ed8d3e6ac928a8d66bce9d31d5235c0baf5d43295f27b0b623941452",
+    "browserState": "0edb004d73ed70c10bf354b1d6b7522ace1b6937ed84e1e7c358281a59369d37",
+    "networkBrowser": "cffb06902e38261a1c689797ee342a947edd6617d51ef6706b08fb4c3d7e5145",
+    "upstreamSleepSelected": "93928730eb4dca05b2db5fb8af91306caba388b4e730f5368bdbd9e7a4275058",
+    "upstreamSleepFull": "1e0461cec57df81547db136d7007ec9f4c4f85ab1bdfb018ab603764e89313a0",
+    "backgroundCancelMutation": {
+      "originalSHA256": "98919d52169cb8aa4b5c5139403168ae0dedc22c041a5d25c88cbee180046f45",
+      "mutantSHA256": "308923e8301c3748231c11f3899e23aefb34e7d8f9af5550112c5b7eccb32716",
+      "removed": "cancelRemoteDial()",
+      "scope": "One call removed from extracted production lifecycle; connector cancellation is recorded by a stand-in."
+    }
+  },
+  "remoteResult": {
+    "runnerPID": 15155,
+    "childPIDs": [
+      15192,
+      15282,
+      15288,
+      15294,
+      15300,
+      15303,
+      15310
+    ],
+    "before": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9748.12M  free = 491.88M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 37%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "cancelMutationExitCode": 1,
+    "cancelMutationFailures": [
+      "FAIL background immediately cancels retained active remote connector"
+    ],
+    "cancelMutationDetected": true,
+    "exitCode": 0,
+    "memorySourcesUnchanged": true,
+    "childrenReaped": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9748.12M  free = 491.88M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 36%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    }
+  }
+}

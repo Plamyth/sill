@@ -8,9 +8,9 @@ The procedure checklist below is for this fresh unit. The older report is retain
 
 - [x] 1. Reproduce it yourself on the matching surface via the driver skill (Non-negotiables), even when a debug or instrumentation protocol says to ask the user to reproduce. Ask the user only with a stated, specific reason the control surface cannot reach the target, and only after driving it as far as it goes. If it won't reproduce directly, synthesize the trigger, tighten conditions, or instrument until it fires.
 - [x] 2. Binary-search the cause. Form the candidate hypotheses, then rule them out until one survives. Seed them with `how` over the affected subsystem and the **why** skill for regression history. Each pass, take the split that cuts the most remaining problem space, get runtime evidence, eliminate. When program state is unclear, add instrumentation or logging and read it as the code runs. Don't guess. Drive a long or stubborn hunt with Claude Code's `loop` skill. Confirm the surviving *mechanism* with runtime evidence before the step-3 architect/interrogate fan-out.
-- [ ] 3. Plan the fix. If it crosses a function boundary, `architect` first. Delegate implementation to a subagent using your configured bug-fix model (default in poteto-mode's Models section) with a specific scope.
-- [ ] 4. Verify on the same surface. The original repro now passes. "Inconclusive" or wrong-surface is not a pass. Flag it. Unit tests show branch behavior, not bug absence.
-- [ ] 5. Stage the commits so the failing repro lands before the fix in git history. See the **tdd** skill for the failing-test-first cadence when the bug has a cheap local test path. Skip it when the test would be expensive, integration-heavy, or unclear.
+- [x] 3. Plan the fix. If it crosses a function boundary, `architect` first. Delegate implementation to a subagent using your configured bug-fix model (default in poteto-mode's Models section) with a specific scope.
+- [x] 4. Verify on the same surface. The original repro now passes. "Inconclusive" or wrong-surface is not a pass. Flag it. Unit tests show branch behavior, not bug absence.
+- [x] 5. Stage the commits so the failing repro lands before the fix in git history. See the **tdd** skill for the failing-test-first cadence when the bug has a cheap local test path. Skip it when the test would be expensive, integration-heavy, or unclear.
 - [ ] 6. Run **Opening a PR**.
   skip: User prohibits push and PR. Deliver owned local commits for parent review.
 
@@ -29,6 +29,42 @@ The strengthened cancellation fixture retains the active connector before backgr
 `review-repro-01` compiles and demonstrates the exhausted-row restart and the targeted cancellation mutation. Its new in-flight row reorder assertions were invalid because production blocks selection while a home connection prepares. The corrected fixture sets the same nonremote session shape as production `connect` and calls the extracted `sessionEnded` failure branch before selecting the alternate row. This tests real failure-to-backoff behavior instead of manufacturing an automatic home session. No production change followed the first repro run.
 
 `review-repro-03` is the corrected failing reproduction on unchanged `8aa995c` production bytes. Glue reports `34/46 passed, 12 failed`. The decisive failures are `reorder cannot revive either exhausted listing, observed 25 starts` and `A to B to A reorder retains A five second backoff, observed [100.0, 101.0, 102.0]`. Policy remains 43/43. The mutation passes the active-connector precondition at 103, then fails `background immediately cancels retained active remote connector`, adding exactly that assertion to the baseline failures. Sender and receiver hashes match, production and RAM inputs are unchanged, RAM and output are removed, and all children were reaped. Mini swap moved from 9720 to 9748.12 MB while Orca process identities remained unchanged. This is an observation, not a performance attribution.
+
+## P2 closure evidence for this unit
+
+Updated 2026-10-16T09:08:06.239849+09:00. Failing repro commit `c8cecbf` precedes every production edit. The first product hypothesis passes the focused runtime fixture. No extra product fix attempt was needed. One fixture correction was needed to exercise row failure before reordering. One Mini slot rejection created no test execution. The one final native build in `review-xros-01` succeeded. Its terminal returned exit 0.
+
+| Finding | Change and evidence | Scope |
+| --- | --- | --- |
+| P2 listing reorder resets cap and backoff | `Reconnect.RowListing` holds exact `FoundMac.id` and listing timestamp. Its map holds one budget per current listing. Selecting A, B, then A retains both budgets. A real renewal retires only that row's previous generation. Foreground clears the map. `rowDials` reads the selected budget and stores no counter. `review-fix-01` passes same-Mac two-row exhaustion, reorder, five and ten second due times, alternate failover, equal-timestamp distinct identities, renewal isolation, and foreground reset. | Actual extracted reconnect, timeout, row failure, and lifecycle methods run with supplied rows and a deterministic clock. Bonjour and network behavior remain outside the fixture. |
+| P2 remote cancellation assertion was vacuous | The test advances from loss at 100 to the first dial at 103, asserts a live uncancelled connector, retains it, enters background, then asserts cancellation before advancing time. `cancelRemoteDial` is now extracted verbatim from production. Removing only the production lifecycle's actual call causes exactly `FAIL background immediately cancels retained active remote connector`. | The connector records `cancel()` invocation. This is wiring coverage, not full Network.framework or socket cancellation proof. |
+
+`review-fix-01` reports `Reconnect glue: 46/46 passed, 0 failed`, `Upstream sleep policy subset: 43/43 passed, 0 failed`, and `Vision input: 38 behavioral checks passed`. Its cancellation mutant reports `45/46 passed, 1 failed`, with the active-connector precondition still passing. `review-static.json` records 8/8 static constraints. The production policy remains byte-identical to `8aa995c`, preserving 12 attempts and 5/10/20/30 second starts. The original 120 second remote loss window, one due timer owner, and background gates remain covered by the extracted glue checks.
+
+Mini sender and receiver input hashes match. Production and RAM source hashes remain unchanged during validation. `review-fix-01` observes 9748.12 MB swap before and after and unchanged Orca process identities. Its helper reaped every compiler and test child, removed isolated outputs, and detached RAM successfully. This stream is independent RAM validation. It does not pass the `codex-source-guard` transfer acceptance gate.
+
+Model the Domain changed the representation from one selected mutable counter to a map of typed listing identities and budgets. The bug-fix playbook and TDD preserved the failing executable reproduction first. Architect compared a fixed selection with independent listing budgets and selected the latter to retain alternate endpoint failover. Deslop review keeps the production diff in two allowed files. Parent independent review, including core and kind changes, remains open. No tests or self-inspection are counted as that review.
+
+## Final receipts and handoff for this unit
+
+Updated 2026-10-16T09:09:44.521975+09:00.
+
+| Receipt | Result |
+| --- | --- |
+| `review-repro-01` | Fixture compiles and exposes the cap bypass. Some new in-flight row scenarios use the wrong failure precondition, corrected before the product patch. |
+| `review-repro-02` | Heavy slot rejected with exit 75. No runner, RAM volume, or compiler started. |
+| `review-repro-03` | Corrected glue 34/46. Policy 43/43. Mutation adds the immediate cancellation failure. These failing tests are in `c8cecbf`. |
+| `review-fix-01` | Glue 46/46, policy 43/43, Vision input 38/38. The cancellation mutant alone has 45/46 and exactly the intended failure. Source and RAM hashes agree and remain unchanged. |
+| `review-fixture-hashes.json` | Full reconstructed fixture hashes reproduce the exact transmitted payload SHA-256. Includes the mutant and prior input test files. |
+| `review-static.json` | 8/8 constraints pass. |
+| `review-xros-01` | `BUILD SUCCEEDED`, exit 0. Xcode 27.0, unsigned Release XROS 27, jobs 1, Swift num-threads 1. 216 tracked input hashes remain unchanged. |
+| `review-artifact.json` | All seven Mini-tested production input hashes match native build inputs. The pointer test main is a fixture, excluded from the native target. Binary SHA-256 `ea88197ca81014b329d7b7b79b7257da8971d455a7024c7127d3af37ba264096`. Bundle `dev.ambrion.SillVision`, SDK `xros27.0`, minimum OS 2.5. No signature directory. |
+| `review-cleanup.json` | All 18 recorded Mini runner/compiler/test PIDs and all five recorded local compiler/transport PIDs are absent. All four yielded terminal handles have completed. Heavy slot is free. No reconnect RAM volume or isolated output remains. This owner's native build directory and temporary console copies are removed. Compiler lease is released. |
+| `review-readonly-baseline.json` | Both original worktrees are clean at their supplied heads. Final cleanup rechecks those heads, status, production hashes, and untouched prior receipt hashes. |
+
+Native compilation does not prove installation, physical reconnect, actual Bonjour renewal, socket cancellation, or UI behavior. This unit did not install or launch an app or interrupt the movie. Parent independent review of this exact fix candidate, plus the still-open core and kind changes, remains required. This unit makes no `codex-source-guard` transfer acceptance claim. No push or PR was performed. The report remains in this allowed existing document for the parent owner to link into its existing project Page.
+
+Only `StreamClient.swift` and `StreamClient+Remote.swift` change in production. `DiscoveryPolicy.swift`, host, wire, iPad UI, native input targets, and project files are unchanged. The source hash receipts bind the Mini tests and native build to these exact product bytes. A receipt assembly check initially tried to match the test-only pointer main against native production inputs and raised `KeyError` before any cleanup or artifact write. Comparing the seven production inputs and labelling the fixture exclusion fixed the receipt check. No test or native compilation was repeated for that bookkeeping correction.
 
 ## Historical candidate evidence
 

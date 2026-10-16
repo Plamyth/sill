@@ -625,14 +625,13 @@ extension StreamClient {
                 // while its dials do not connect (a Mac a sleep proxy answers for, one stopped), 12 at
                 // most, in the foreground only (DiscoveryPolicy.redialRow). A listing seen afresh
                 // starts again: the Mac's record renewed is the best sign it is back.
-                let listing = mac.direct ? directSince[mac.name] : sightings.since[mac.name]
-                if r.rowListing != listing {
-                    r.rowListing = listing
-                    r.rowDials = 0
-                    r.lastRowDialAt = nil
-                }
-                let line = DiscoveryPolicy.reconnectLine(mac: r.name, failed: r.rowDials, direct: mac.direct)
-                let due = DiscoveryPolicy.redialRow(failed: r.rowDials, lastDialAt: r.lastRowDialAt, foreground: appInForeground, now: now)
+                let listing = Reconnect.RowListing(id: mac.id, since: mac.direct ? directSince[mac.name] : sightings.since[mac.name])
+                r.rowListing = listing
+                // Only a renewed record retires that row's old budget. Selection order is not evidence.
+                r.rowBudgets = r.rowBudgets.filter { $0.key.id != listing.id || $0.key == listing }
+                var budget = r.rowBudgets[listing] ?? Reconnect.RowBudget()
+                let line = DiscoveryPolicy.reconnectLine(mac: r.name, failed: budget.dials, direct: mac.direct)
+                let due = DiscoveryPolicy.redialRow(failed: budget.dials, lastDialAt: budget.lastDialAt, foreground: appInForeground, now: now)
                 guard due.dial else {
                     // Listed, and not dialled now: the line for the dials so far ("…may be asleep…",
                     // "Stopped trying…"), and the next look. No remote dial while a row lists the Mac.
@@ -647,8 +646,9 @@ extension StreamClient {
                 }
                 if dialingAutomatically, let c = connection { connection = nil; c.cancel(); tearDown(status: status, restartSearch: false) }
                 cancelRemoteDial()
-                r.rowDials += 1
-                r.lastRowDialAt = now
+                budget.dials += 1
+                budget.lastDialAt = now
+                r.rowBudgets[listing] = budget
                 reconnect = r        // kept until the row's connection is ready (a TLS one's: its first window list)
                 // False only when a TLS dial finds no key and none can be made: the status says why.
                 guard dial(mac, macID: id, tap: false) else { return false }
