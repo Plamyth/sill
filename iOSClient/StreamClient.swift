@@ -250,6 +250,9 @@ final class StreamClient: ObservableObject {
     private var choicesSent = 0
     @Published var active: StreamSource = .none {
         didSet {
+            #if os(visionOS)
+            if oldValue != active { revokeVisionTextDrafts() }
+            #endif
             // The pointer sprite shows nothing while nothing streams.
             let streaming = active != .none
             if presence.streaming != streaming {
@@ -535,7 +538,13 @@ final class StreamClient: ObservableObject {
     /// this session's host and takes over (`finishMove`), or gives up (`moveEnded`), and what the
     /// move is for. A session at home follows its path (DiscoveryPolicy.pathPlan); a remote one moves
     /// only home, once the network lists its Mac (`moveHomeIfListed`).
-    private var moving: Move?
+    private var moving: Move? {
+        didSet {
+            #if os(visionOS)
+            if moving != nil { revokeVisionTextDrafts() }
+            #endif
+        }
+    }
     private struct Move {
         let connection: NWConnection
         let kind: MoveKind
@@ -834,10 +843,88 @@ final class StreamClient: ObservableObject {
     private let visionInputDebt = VisionInputDebt()
     private var visionModernPeer: ObjectIdentifier?
     private var visionWireBinding: (peer: ObjectIdentifier, binding: VisionInputBinding)?
+    private var visionWireSource: StreamSource?
     private var visionMediaPS: (epoch: UUID, ps: ParameterSets)?
     private var visionInputPermit: UUID?
+    private var visionTextForeground = false
+    @Published private(set) var visionTextScope = UUID()
+    private var visionTextSubmissions: [UUID: SessionLink.Submission] = [:]
+    private var visionTextRequest: UUID?
+
+    struct VisionTextTarget: Equatable {
+        let peer: ObjectIdentifier
+        let source: StreamSource
+        let binding: VisionInputBinding
+        fileprivate let permit: UUID
+        fileprivate let scope: UUID
+        let label: String
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.peer == rhs.peer && lhs.source == rhs.source && lhs.binding == rhs.binding
+                && lhs.permit == rhs.permit && lhs.scope == rhs.scope
+        }
+    }
+
+    func captureVisionTextTarget() -> VisionTextTarget? {
+        guard visionTextForeground, connected, moving == nil, visionMovePreparation == nil,
+              active != .none, visionInputBinding.isConfirmed,
+              let peer = connection, let permit = visionInputPermit else { return nil }
+        let sourceLabel: String
+        switch active {
+        case .window(let id):
+            sourceLabel = windows.first(where: { $0.id == id }).map { "\($0.appName) · \($0.title)" } ?? "Mac 창"
+        case .desktop: sourceLabel = "Mac 전체 화면"
+        case .none: return nil
+        }
+        return VisionTextTarget(peer: ObjectIdentifier(peer), source: active, binding: visionInputBinding,
+                                permit: permit, scope: visionTextScope, label: "\(macName) · \(sourceLabel)")
+    }
+
+    func revokeVisionTextDrafts() {
+        visionTextScope = UUID()
+        visionTextRequest = nil
+        let pending = visionTextSubmissions.values
+        visionTextSubmissions.removeAll()
+        for submission in pending { link.cancel(submission) }
+    }
+
+    func cancelVisionText(_ requestID: UUID) {
+        if let submission = visionTextSubmissions.removeValue(forKey: requestID) { link.cancel(submission) }
+    }
+
+    func submitVisionText(_ text: String, target: VisionTextTarget, requestID: UUID,
+                          terminal: @escaping (SessionLink.Submission.Outcome) -> Void) {
+        guard visionTextRequest != requestID else { return }
+        guard visionTextRequest == nil else {
+            DispatchQueue.main.async { terminal(.cancelled) }
+            return
+        }
+        visionTextRequest = requestID
+        let scope = visionTextScope
+        let submission = SessionLink.Submission { [weak self] outcome in
+            if self?.visionTextScope == scope { self?.visionTextSubmissions.removeValue(forKey: requestID) }
+            terminal(outcome)
+        }
+        guard VisionDraftText.accepts(text), captureVisionTextTarget() == target,
+              let expected = connection, let input = target.binding.capture(.text(text)) else {
+            link.cancel(submission)
+            return
+        }
+        visionTextSubmissions[requestID] = submission
+        let bytes = Self.visionInputBytes(input)
+        let link = self.link
+        queue.async { [weak self] in
+            guard let self else { link.cancel(submission); return }
+            let accepted = self.link.send(bytes, onlyOn: expected, permit: target.permit, submission: submission) { [weak self] in
+                self?.visionInputDebt.record(input, on: expected)
+            }
+            if accepted { self.pointerNoteSent(input.event) }
+        }
+    }
+
     @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog {
         didSet {
+            if oldValue != visionInputBinding { revokeVisionTextDrafts() }
             if !visionInputBinding.isConfirmed {
                 visionInputPermit = nil
                 link.setInputPermit(nil)
@@ -846,6 +933,8 @@ final class StreamClient: ObservableObject {
     }
 
     func setVisionPresentationForeground(_ foreground: Bool) {
+        visionTextForeground = foreground
+        if !foreground { revokeVisionTextDrafts() }
         displayView.setPresentationForeground(foreground)
     }
 
@@ -857,11 +946,12 @@ final class StreamClient: ObservableObject {
             bindingCatalog.videoEpoch = nil
         }
         let binding = VisionInputBinding(catalog: bindingCatalog)
-        if visionWireBinding?.peer != id || visionWireBinding?.binding != binding {
+        if visionWireBinding?.peer != id || visionWireBinding?.binding != binding || visionWireSource != list.active {
             link.observeInputEpoch(binding.epoch?.id, modern: binding.isModern)
             visionMediaPS = nil
         }
         visionWireBinding = (id, binding)
+        visionWireSource = list.active
     }
 
     private func visionPresentationChanged(_ ticket: VisionPresentation.Ticket?) {
@@ -926,6 +1016,7 @@ final class StreamClient: ObservableObject {
     }
 
     func cancelVisionInputs(completion: (() -> Void)? = nil) {
+        revokeVisionTextDrafts()
         let expected = connection
         queue.async { [weak self] in
             if let self {

@@ -26,6 +26,8 @@ struct SillVisionWorkspace: View {
     @GestureState private var dragging = false
     @State private var transitions = VisionTransition()
     @State private var inputSuspended = false
+    @State private var textDraft: VisionTextDraft<StreamClient.VisionTextTarget>?
+    @State private var draftShown = false
 
     var body: some View {
         VStack(spacing: 12) {
@@ -71,7 +73,7 @@ struct SillVisionWorkspace: View {
         .onChange(of: phase, initial: true) { _, value in
             client.visionAudio.setForeground(value == .active)
             client.setVisionPresentationForeground(value == .active)
-            if value != .active { releaseInput() }
+            if value != .active { clearDraft(); releaseInput() }
         }
         .onChange(of: client.connected) { _, connected in
             releaseInput()
@@ -80,13 +82,21 @@ struct SillVisionWorkspace: View {
         }
         .onChange(of: client.videoSize) { _, _ in releaseInput() }
         .onChange(of: client.active) { _, _ in releaseInput() }
+        .onChange(of: client.visionTextScope) { _, _ in
+            if let textDraft, client.captureVisionTextTarget() != textDraft.target { clearDraft() }
+        }
         .onChange(of: mode) { _, _ in releaseInput() }
         .onChange(of: dragging) { _, value in if !value { input.endGesture() } }
         .onDisappear {
+            clearDraft()
+            client.setVisionPresentationForeground(false)
             client.visionAudio.setForeground(false)
             if client.connected { requestTransition(.disconnect) } else { releaseInput() }
         }
         .sheet(isPresented: $addMac) { pairingForm }
+        .sheet(isPresented: $draftShown, onDismiss: clearDraft) {
+            VisionTextDraftPanel(client: client, draft: $textDraft, close: clearDraft)
+        }
         .confirmationDialog("같은 Mac에 연결된 iPad 화면도 바뀔 수 있습니다.", isPresented: $changingSource) {
             Button("Mac 전체 화면 표시") { requestTransition(.desktop) }
         }
@@ -156,6 +166,7 @@ struct SillVisionWorkspace: View {
             }
         }
         .background(.black)
+        .allowsHitTesting(!draftShown)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
@@ -165,6 +176,8 @@ struct SillVisionWorkspace: View {
                 ForEach(VisionPointer.Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
             Button("키보드") { input.keyboard.view?.toggleKeyboard() }
+            Button("입력 초안") { openDraft() }
+                .accessibilityHint("Mac 입력을 잠시 멈추고 로컬 초안을 편집합니다. 시스템 키보드 받아쓰기도 사용할 수 있습니다.")
             Button("Esc") { input.press(.escape) }
             Button("Mac 키") { keysShown.toggle() }
                 .popover(isPresented: $keysShown) {
@@ -177,7 +190,7 @@ struct SillVisionWorkspace: View {
                     .font(.caption.monospacedDigit())
             }
         }
-        .disabled(!input.canSend)
+        .disabled(!input.canSend || draftShown)
     }
 
     private var pairingForm: some View {
@@ -192,14 +205,34 @@ struct SillVisionWorkspace: View {
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown
     }
 
     private func updateInputAdmission() { input.allowed = inputAllowed }
 
     private func releaseInput() { input.releaseAll() }
 
+    private func openDraft() {
+        guard input.canSend else { return }
+        keysShown = false
+        draftShown = true
+        updateInputAdmission()
+        releaseInput()
+        _ = input.keyboard.view?.resignFirstResponder()
+        guard let target = client.captureVisionTextTarget() else { clearDraft(); return }
+        textDraft = VisionTextDraft(target: target)
+    }
+
+    private func clearDraft() {
+        if let phase = textDraft?.phase, case .submitting(_, let request) = phase { client.cancelVisionText(request) }
+        textDraft = nil
+        draftShown = false
+        updateInputAdmission()
+    }
+
     private func requestTransition(_ action: VisionTransition.Action) {
+        clearDraft()
+        client.revokeVisionTextDrafts()
         client.visionAudio.stop()
         guard let ticket = transitions.request(action) else { return }
         let expected = client.connection
@@ -237,7 +270,7 @@ private struct VisionAudioControls: View {
                 if running { audio.stop() } else if allowStart { audio.enable() }
             }
             .disabled(!running && (!audio.presentation.canEnable || !allowStart))
-            .accessibilityHint(running ? "즉시 소리를 중지합니다." : "선택한 Mac의 소리만 수신합니다. 마이크는 켜지지 않습니다.")
+            .accessibilityHint(running ? "즉시 소리를 중지합니다." : "선택한 Mac의 소리만 수신합니다. Mac으로 마이크를 전송하지 않습니다.")
             Text(message).font(.caption).lineLimit(2)
             Spacer()
         }
@@ -247,7 +280,7 @@ private struct VisionAudioControls: View {
         switch audio.presentation.phase {
         case .requesting: return "Mac의 소리 전송 확인을 기다립니다."
         case .waiting: return "소리 데이터를 기다립니다."
-        case .rendering: return "Mac 소리 재생 중 · 마이크 꺼짐"
+        case .rendering: return "Mac 소리 재생 중 · Mac으로 마이크 전송 없음"
         case .failed(let problem): return problem
         case .off:
             switch audio.presentation.availability {

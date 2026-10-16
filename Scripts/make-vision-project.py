@@ -6,7 +6,7 @@ import plistlib
 
 ROOT = Path(__file__).resolve().parent.parent
 CLIENT = ['StreamClient', 'StreamClient+Home', 'StreamClient+Remote', 'StreamClient+Viewport', 'DeviceIdentity', 'RemoteConnector', 'RemoteDialPolicy', 'SessionLink', 'MessageReader', 'SavedMacs', 'DiscoveryPolicy', 'GoodbyePolicy', 'HEVCDisplayView', 'DiagnosticsHUD', 'HostSettingsLedger', 'MacMenuState', 'MacMenuHub', 'PointerPresence', 'TrackpadGestures', 'TourPolicy', 'DuoPosture', 'InputOverlay', 'KeyChords']
-files = ['iOSClient/' + n + '.swift' for n in CLIENT] + ['visionOSClient/' + n + '.swift' for n in ['SillVisionApp', 'VisionPointer', 'VisionInputSession', 'VisionInputDebt', 'VisionPresentation', 'VisionRemoteKey', 'VisionKeyPalette', 'HIDKey', 'VisionInputFence', 'VisionTransition', 'VisionAudioState', 'VisionAudioController', 'VisionAudioRoute', 'VisionAudioPlayer', 'VisionAudioBuffer']]
+files = ['iOSClient/' + n + '.swift' for n in CLIENT] + ['visionOSClient/' + n + '.swift' for n in ['SillVisionApp', 'VisionPointer', 'VisionInputSession', 'VisionInputDebt', 'VisionPresentation', 'VisionRemoteKey', 'VisionKeyPalette', 'HIDKey', 'VisionInputFence', 'VisionTransition', 'VisionAudioState', 'VisionAudioController', 'VisionAudioRoute', 'VisionAudioPlayer', 'VisionAudioBuffer', 'VisionTextDraft', 'VisionDraftEditor']]
 objects = {}
 
 def obj(key, isa, **fields):

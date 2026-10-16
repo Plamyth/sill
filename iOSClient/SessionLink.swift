@@ -43,6 +43,46 @@ import Network
 /// Foundation and Network only: it is checked on its own with swiftc against a local stand-in for
 /// the Mac whose old connection is slow (docs/direct-wireless-plan.md, the review fixes).
 final class SessionLink {
+    /// One admission to Network.send. A terminal result never means delivery to a Mac field.
+    final class Submission {
+        enum Outcome: Equatable { case submitted, cancelled }
+        private let lock = NSLock()
+        private var outcome: Outcome?
+        private var claimed = false
+        private let terminal: (Outcome) -> Void
+
+        init(terminal: @escaping (Outcome) -> Void) { self.terminal = terminal }
+
+        fileprivate func claim() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard outcome == nil, !claimed else { return false }
+            claimed = true
+            return true
+        }
+
+        fileprivate func submit(_ send: () -> Void) -> Bool {
+            lock.lock()
+            guard outcome == nil else { lock.unlock(); return false }
+            send()
+            outcome = .submitted
+            lock.unlock()
+            notify(.submitted)
+            return true
+        }
+
+        fileprivate func cancel() {
+            lock.lock()
+            guard outcome == nil else { lock.unlock(); return }
+            outcome = .cancelled
+            lock.unlock()
+            notify(.cancelled)
+        }
+
+        private func notify(_ outcome: Outcome) {
+            DispatchQueue.main.async { [terminal] in terminal(outcome) }
+        }
+    }
+
     /// What a fence or a hold let go of when it ended: how many messages went out, how many still
     /// wait (for another fence, or the hold), whether nothing stands any more (`clear`: what waited,
     /// if anything, has gone out), how long it stood, and, once clear, the old connections of the
@@ -80,8 +120,10 @@ final class SessionLink {
         let didSend: (() -> Void)?
         let peer: NWConnection?
         let permit: UUID?
+        var submission: Submission? = nil
     }
     private var waiting: [Waiting] = []
+    deinit { for item in waiting { item.submission?.cancel() } }
     private enum InputScope: Equatable { case legacy, epoch(UUID), blocked }
     private var inputScope = InputScope.legacy
     private var inputPermit: UUID?
@@ -90,6 +132,7 @@ final class SessionLink {
         lock.lock(); defer { lock.unlock() }
         inputScope = modern ? epoch.map(InputScope.epoch) ?? .blocked : .legacy
         inputPermit = nil
+        discardInvalidSubmissionsLocked()
     }
 
     @discardableResult
@@ -100,6 +143,7 @@ final class SessionLink {
             guard inputScope == expected else { return false }
         }
         inputPermit = permit
+        discardInvalidSubmissionsLocked()
         return true
     }
     /// The old connections of hand-overs whose fence is down, until what waited has gone out.
@@ -131,7 +175,13 @@ final class SessionLink {
     /// Setting it leaves the fences and the hold alone; `dropHandOver` ends them.
     var connection: NWConnection? {
         get { lock.lock(); defer { lock.unlock() }; return current }
-        set { lock.lock(); current = newValue; inputs = waitingInputs; lock.unlock() }
+        set {
+            lock.lock()
+            current = newValue
+            inputs = waitingInputs
+            discardInvalidSubmissionsLocked()
+            lock.unlock()
+        }
     }
 
     /// One message to the Mac: on the session's connection, or kept, in order, while a fence or a
@@ -148,18 +198,45 @@ final class SessionLink {
     }
 
     @discardableResult
-    func send(_ data: Data, onlyOn expected: NWConnection, permit: UUID? = nil, didSend: (() -> Void)? = nil) -> Bool {
+    func send(_ data: Data, onlyOn expected: NWConnection, permit: UUID? = nil, submission: Submission? = nil, didSend: (() -> Void)? = nil) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard current === expected else { return false }
-        guard permit == nil || permit == inputPermit else { return false }
+        if let submission, !submission.claim() { return false }
+        guard current === expected else { submission?.cancel(); return false }
+        guard permit == nil || permit == inputPermit else { submission?.cancel(); return false }
         if !fences.isEmpty || holding != nil {
-            waiting.append(Waiting(data: data, didSend: didSend, peer: expected, permit: permit))
+            waiting.append(Waiting(data: data, didSend: didSend, peer: expected, permit: permit, submission: submission))
         } else {
-            expected.send(content: data, completion: .contentProcessed { _ in })
+            let send = { expected.send(content: data, completion: .contentProcessed { _ in }) }
+            if let submission {
+                guard submission.submit(send) else { return false }
+            } else { send() }
             didSend?()
         }
         if Self.isInput(data) { inputs += 1 }
         return true
+    }
+
+    /// Cancel first, then acquire the send lock. Never nest the locks in the opposite order.
+    func cancel(_ submission: Submission) {
+        submission.cancel()
+        lock.lock(); defer { lock.unlock() }
+        discardWaitingLocked { $0.submission === submission }
+    }
+
+    private func discardWaitingLocked(where refused: (Waiting) -> Bool) {
+        waiting.removeAll { item in
+            guard refused(item) else { return false }
+            item.submission?.cancel()
+            if Self.isInput(item.data) { inputs -= 1 }
+            return true
+        }
+    }
+
+    private func discardInvalidSubmissionsLocked() {
+        discardWaitingLocked {
+            $0.submission != nil && (current == nil || ($0.peer != nil && $0.peer !== current)
+                || ($0.permit != nil && $0.permit != inputPermit))
+        }
     }
 
     /// A native gesture was cancelled. Waiting inputs never reached a Mac; release only the
@@ -178,12 +255,12 @@ final class SessionLink {
         inputScope = .blocked
         inputPermit = nil
         inputs = waitingInputs
+        discardInvalidSubmissionsLocked()
     }
 
     private func cancelInputsLocked(releasing releases: [Data]) -> Int {
         let dropped = waitingInputs
-        waiting.removeAll { Self.isInput($0.data) }
-        inputs -= dropped
+        discardWaitingLocked { Self.isInput($0.data) }
         for data in releases where Self.isInput(data) {
             current?.send(content: data, completion: .contentProcessed { _ in })
             if current != nil { inputs += 1 }
@@ -206,6 +283,7 @@ final class SessionLink {
         lock.lock(); defer { lock.unlock() }
         current = new
         inputs = waitingInputs
+        discardInvalidSubmissionsLocked()
         fences.append(Fence(old: old, nonce: nonce))
         // Under the lock, as every send is: nothing can go out on `old` after this ping.
         old.send(content: fencePing, completion: .contentProcessed { _ in })
@@ -257,6 +335,7 @@ final class SessionLink {
         lock.lock(); defer { lock.unlock() }
         current = new
         inputs = waitingInputs
+        discardInvalidSubmissionsLocked()
         guard let h = holding else { return nil }
         holding = nil
         return endedLocked(since: h.since)
@@ -284,11 +363,23 @@ final class SessionLink {
         var sent = 0
         for item in out {
             guard (item.peer == nil || item.peer === current), (item.permit == nil || item.permit == inputPermit) else {
+                item.submission?.cancel()
                 if Self.isInput(item.data) { inputs -= 1 }
                 continue
             }
-            current?.send(content: item.data, completion: .contentProcessed { _ in })
-            if current != nil { sent += 1; item.didSend?() }
+            guard let current else {
+                item.submission?.cancel()
+                if item.submission != nil, Self.isInput(item.data) { inputs -= 1 }
+                continue
+            }
+            let send = { current.send(content: item.data, completion: .contentProcessed { _ in }) }
+            if let submission = item.submission, !submission.submit(send) {
+                if Self.isInput(item.data) { inputs -= 1 }
+                continue
+            }
+            if item.submission == nil { send() }
+            sent += 1
+            item.didSend?()
         }
         let close = fencedOff
         fencedOff = []
@@ -302,6 +393,7 @@ final class SessionLink {
         lock.lock(); defer { lock.unlock() }
         let connections = fences.map(\.old) + (holding.map { [$0.connection] } ?? []) + fencedOff
         inputs -= waitingInputs
+        for item in waiting { item.submission?.cancel() }
         fences = []
         holding = nil
         waiting = []

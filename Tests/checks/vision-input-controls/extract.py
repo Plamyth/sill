@@ -31,23 +31,30 @@ def fixture():
     start = move.index('        #if os(visionOS)')
     pieces['moveInputReset'] = move[start:move.index('#endif', start) + len('#endif')]
     pieces['bindingState'] = block(stream, '@Published private(set) var visionInputBinding =')
+    pieces['textDraftBoundary'] = stream[stream.index('    private var visionTextForeground'):stream.index('    @Published private(set) var visionInputBinding =')]
+    pieces['textForeground'] = block(stream, 'func setVisionPresentationForeground(')
+    pieces['movingState'] = block(stream, 'private var moving: Move?').replace('private var moving:', 'var moving:', 1)
     pieces['resumeSource'] = block(stream, 'if let resume = self.resumeSource')
     pieces['resumeMethod'] = 'func resumeCatalog(_ list: WindowList) {\n' + pieces['resumeSource'] + '\n}'
-    body = '\n'.join(select_platform(p, vision=True) for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState', 'resumeSource'])
+    body = '\n'.join(select_platform(p, vision=True) for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState', 'resumeSource', 'movingState'])
     overlay = (ROOT / 'iOSClient/InputOverlay.swift').read_text()
     pieces['takeVisionKeyReleases'] = block(overlay, 'func takeVisionKeyReleases()')
-    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', select_platform(pieces['moveInputReset'], vision=True)).replace('// BINDING_STATE', pieces['bindingState'].replace('@Published', '@SwiftUI.Published', 1))
+    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', select_platform(pieces['moveInputReset'], vision=True)).replace('// BINDING_STATE', pieces['bindingState'].replace('@Published', '@SwiftUI.Published', 1)).replace('// MOVING_STATE', select_platform(pieces['movingState'], vision=True))
+    body = body.replace('@Published', '@SwiftUI.Published')
     files = {'Client.swift': stub.replace('// EXTRACTED', body), 'main.swift': (Path(__file__).parent / 'main.swift').read_text(), 'Network.swift': (Path(__file__).parent / 'Network.swift').read_text(), 'SwiftUI.swift': (Path(__file__).parent / 'SwiftUI.swift').read_text()}
     for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()
     files['Tests/checks/vision-input-controls/SourceInputFence.swift'] = (ROOT / 'Sources/SillHost/SourceInputFence.swift').read_text()
+    files['visionOSClient/VisionTextDraft.swift'] = (ROOT / 'visionOSClient/VisionTextDraft.swift').read_text()
     pieces['sourceInputFence'] = files['Tests/checks/vision-input-controls/SourceInputFence.swift']
     for path in ['Tests/vision-pointer/main.swift','visionOSClient/VisionInputFence.swift','visionOSClient/VisionTransition.swift','Tests/checks/fence/main.swift']:
         files[path] = (ROOT/path).read_text()
     for path in sorted((ROOT/'Sources/StreamProtocol').glob('*.swift')):
         files[str(path.relative_to(ROOT))] = path.read_text()
     files['mutants/debt/Client.swift'] = files['Client.swift'].replace('self?.visionInputDebt.record(input, on: expected)', '_ = input', 1)
-    files['mutants/route/SessionLink.swift'] = files['iOSClient/SessionLink.swift'].replace('guard current === expected else { return false }', '', 1)
+    route_guard = 'guard current === expected else { submission?.cancel(); return false }'
+    assert files['iOSClient/SessionLink.swift'].count(route_guard) == 1
+    files['mutants/route/SessionLink.swift'] = files['iOSClient/SessionLink.swift'].replace(route_guard, '', 1)
     admission = '        guard let input = visionInputBinding.capture(event), let permit = visionInputPermit else { return }\n'
     late = files['Client.swift'].replace(admission, '', 1).replace('        let bytes = Self.visionInputBytes(input)\n', '', 1)
     files['mutants/capture/Client.swift'] = late.replace('            let accepted = self.link.send(bytes, onlyOn: expected, permit: permit)', '            guard let input = self.visionInputBinding.capture(event), let permit = self.visionInputPermit else { return }\n            let bytes = Self.visionInputBytes(input)\n            let accepted = self.link.send(bytes, onlyOn: expected, permit: permit)', 1)
