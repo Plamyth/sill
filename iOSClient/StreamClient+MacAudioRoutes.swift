@@ -16,18 +16,27 @@ extension StreamClient {
     }
 
     func fetchMacAudioRoutes() {
-        guard let peer = authenticatedMacAudioRoutePeer, macAudioRoutes.peer == peer,
+        guard let connection, let peer = authenticatedMacAudioRoutePeer, macAudioRoutes.peer == peer,
               macAudioRoutes.pending == nil else { return }
-        send(.fetchAudioRoutes, payload: Data())
+        _ = macRouteTransport.fetch(on: connection)
     }
 
-    func selectMacAudioRoutes(inputUID: String?, outputUID: String?) throws {
-        guard let peer = authenticatedMacAudioRoutePeer, macAudioRoutes.peer == peer else {
+    func selectMacAudioRoutes(inputUID: String?, outputUID: String?,
+                              displayed: MacAudioRouteSession.CatalogToken) throws {
+        guard let connection, let peer = authenticatedMacAudioRoutePeer, macAudioRoutes.peer == peer else {
             throw IPadAudioRoutePolicy.Problem.changedConnection
         }
-        let request = try macAudioRoutes.request(inputUID: inputUID, outputUID: outputUID)
-        send(.changeAudioRoute, payload: Wire.encode(request))
+        let request = try macAudioRoutes.request(displayed: displayed, inputUID: inputUID, outputUID: outputUID)
+        let accepted = macRouteTransport.change(request, on: connection) { [weak self] requestID in
+            self?.macAudioRoutes.expire(requestID, on: peer)
+        }
+        guard accepted else {
+            macRouteTransport.finish(request.requestID)
+            macAudioRoutes.expire(request.requestID, on: peer)
+            throw IPadAudioRoutePolicy.Problem.changedConnection
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            self?.macRouteTransport.finish(request.requestID)
             self?.macAudioRoutes.expire(request.requestID, on: peer)
         }
     }
@@ -38,7 +47,11 @@ extension StreamClient {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.connection === connection,
                   self.authenticatedMacAudioRoutePeer == ObjectIdentifier(connection) else { return }
+            let requestID = self.macAudioRoutes.pending?.requestID
             self.macAudioRoutes.receive(state, from: ObjectIdentifier(connection))
+            if let requestID, self.macAudioRoutes.pending?.requestID != requestID {
+                self.macRouteTransport.finish(requestID)
+            }
         }
     }
 }

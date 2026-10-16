@@ -861,7 +861,10 @@ final class StreamClient: ObservableObject {
             }
             #else
             #if os(iOS)
-            if link.connection !== newValue { macAudioRoutes.bind(newValue.map(ObjectIdentifier.init)) }
+            if link.connection !== newValue {
+                macRouteTransport.reset()
+                macAudioRoutes.bind(newValue.map(ObjectIdentifier.init))
+            }
             #endif
             remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))
             #if os(iOS)
@@ -874,6 +877,9 @@ final class StreamClient: ObservableObject {
     /// Where every message to the Mac goes, in the order sent, also across a move's hand-over from
     /// the direct connection to the network one (SessionLink).
     private let link = SessionLink()
+    #if os(iOS)
+    lazy var macRouteTransport = MacAudioRouteTransport(link: link)
+    #endif
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     #if os(visionOS)
     lazy var visionInputFence = VisionInputFence(queue: queue)
@@ -2721,6 +2727,10 @@ final class StreamClient: ObservableObject {
         resetVisionAudio()
         visionInputBinding = .awaitingCatalog
         #endif
+        #if os(iOS)
+        macRouteTransport.reset()
+        macAudioRoutes.bind(ObjectIdentifier(c))
+        #endif
         let reconnected = sessionDead
         let fenced = kind != .toWifi && !reconnected
         #if !os(visionOS)
@@ -3545,6 +3555,7 @@ final class StreamClient: ObservableObject {
         #if os(iOS)
         audioRouteChooserPresented = false
         audioRouteOffer = IPadAudioRouteOffer()
+        macRouteTransport.reset()
         macAudioRoutes.bind(nil)
         #endif
         #if os(visionOS)

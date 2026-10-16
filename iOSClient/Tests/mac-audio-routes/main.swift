@@ -36,23 +36,26 @@ check("state JSON roundtrip", Wire.decode(AudioRouteState.self, from: Wire.encod
 
 var session = MacAudioRouteSession()
 session.bind(aID)
-rejects("no catalog refuses selection") { _ = try session.request(inputUID: nil, outputUID: extra.uid) }
+rejects("no catalog refuses selection") {
+    _ = try session.request(displayed: .init(revision: UUID(), defaults: defaults), inputUID: nil, outputUID: extra.uid)
+}
 session.receive(initial, from: bID)
 check("other peer cannot seed catalog", session.state == nil)
 session.receive(initial, from: aID)
 check("current peer catalog accepted", session.state == initial)
-rejects("no direction refuses selection") { _ = try session.request(inputUID: nil, outputUID: nil) }
-rejects("selected default is no change") { _ = try session.request(inputUID: input.uid, outputUID: output.uid) }
-rejects("output cannot be input") { _ = try session.request(inputUID: extra.uid, outputUID: nil) }
-rejects("unknown output rejected") { _ = try session.request(inputUID: nil, outputUID: "fake") }
+let displayed = session.catalogToken!
+rejects("no direction refuses selection") { _ = try session.request(displayed: displayed, inputUID: nil, outputUID: nil) }
+rejects("selected default is no change") { _ = try session.request(displayed: displayed, inputUID: input.uid, outputUID: output.uid) }
+rejects("output cannot be input") { _ = try session.request(displayed: displayed, inputUID: extra.uid, outputUID: nil) }
+rejects("unknown output rejected") { _ = try session.request(displayed: displayed, inputUID: nil, outputUID: "fake") }
 
-let request = try session.request(inputUID: nil, outputUID: extra.uid)
+let request = try session.request(displayed: displayed, inputUID: nil, outputUID: extra.uid)
 check("only explicit output sent", request.inputUID == nil && request.outputUID == extra.uid)
 check("request binds exact revision and both expected defaults", request.revision == initial.revision && request.expected == defaults)
 check("request ID retained as pending", session.pending?.requestID == request.requestID)
 check("send only records waiting", session.outcome?.title == "Mac의 적용 결과를 기다리는 중…")
 check("selection JSON roundtrip", Wire.decode(AudioRouteSelection.self, from: Wire.encode(request)) == request)
-rejects("only one in flight") { _ = try session.request(inputUID: nil, outputUID: extra.uid) }
+rejects("only one in flight") { _ = try session.request(displayed: displayed, inputUID: nil, outputUID: extra.uid) }
 
 let pushed = AudioRouteState(revision: UUID(), endpoints: initial.endpoints, defaults: defaults, available: true)
 session.receive(pushed, from: aID)
@@ -68,26 +71,35 @@ session.receive(answered, from: aID)
 check("matching ACK clears pending", session.pending == nil)
 check("applied shown only after matching ACK", session.outcome?.isSuccess == true && session.state == answered)
 
-rejects("current input stays unchanged") { _ = try session.request(inputUID: input.uid, outputUID: nil) }
+rejects("current input stays unchanged") { _ = try session.request(displayed: session.catalogToken!, inputUID: input.uid, outputUID: nil) }
 
-for result in [AudioRouteResult.unchanged, .stale, .invalid, .conflict, .unavailable, .failed, .rollbackFailed] {
+for result in [AudioRouteResult.stale, .invalid, .conflict, .unavailable, .failed, .rollbackFailed] {
     var trial = MacAudioRouteSession()
     trial.bind(aID)
     trial.receive(initial, from: aID)
-    let sent = try trial.request(inputUID: nil, outputUID: extra.uid)
+    let sent = try trial.request(displayed: trial.catalogToken!, inputUID: nil, outputUID: extra.uid)
     let reply = AudioRouteState(revision: initial.revision, endpoints: initial.endpoints,
                                 defaults: initial.defaults, available: true,
                                 answering: sent.requestID, result: result)
     trial.receive(reply, from: aID)
     check("\(result) clears only matching request", trial.pending == nil)
     check("\(result) exposes host result", trial.outcome?.title.isEmpty == false)
-    check("\(result) never claims applied", trial.outcome?.isSuccess == (result == .unchanged))
+    check("\(result) never claims applied", trial.outcome?.isSuccess == false)
 }
+
+var unchanged = MacAudioRouteSession()
+unchanged.bind(aID)
+unchanged.receive(initial, from: aID)
+let unchangedRequest = try unchanged.request(displayed: unchanged.catalogToken!, inputUID: nil, outputUID: extra.uid)
+unchanged.receive(AudioRouteState(revision: UUID(), endpoints: initial.endpoints,
+                                  defaults: AudioRouteDefaults(inputUID: input.uid, outputUID: extra.uid),
+                                  available: true, answering: unchangedRequest.requestID, result: .unchanged), from: aID)
+check("unchanged requires consumed revision and desired readback", unchanged.outcome?.isSuccess == true)
 
 var waiting = MacAudioRouteSession()
 waiting.bind(aID)
 waiting.receive(initial, from: aID)
-let timed = try waiting.request(inputUID: nil, outputUID: extra.uid)
+let timed = try waiting.request(displayed: waiting.catalogToken!, inputUID: nil, outputUID: extra.uid)
 waiting.expire(UUID(), on: aID)
 check("wrong timeout token ignored", waiting.pending?.requestID == timed.requestID)
 waiting.expire(timed.requestID, on: bID)
@@ -95,7 +107,7 @@ check("wrong peer timeout ignored", waiting.pending?.requestID == timed.requestI
 waiting.expire(timed.requestID, on: aID)
 check("timeout is indeterminate and clears catalog", waiting.pending == nil && waiting.state == nil && waiting.outcome?.isSuccess == false)
 waiting.receive(answered, from: aID)
-check("late ACK never retroactively claims applied", waiting.outcome?.isSuccess == false)
+check("late ACK refreshes catalog without reviving outcome", waiting.state == answered && waiting.outcome?.isSuccess == false)
 waiting.bind(bID)
 check("peer change clears old state and result", waiting.state == nil && waiting.outcome == nil && waiting.pending == nil)
 waiting.receive(initial, from: aID)
@@ -105,7 +117,9 @@ var unavailable = MacAudioRouteSession()
 unavailable.bind(aID)
 unavailable.receive(AudioRouteState(revision: UUID(), endpoints: [],
                                     defaults: AudioRouteDefaults(inputUID: nil, outputUID: nil), available: false), from: aID)
-rejects("unavailable inventory never selects") { _ = try unavailable.request(inputUID: nil, outputUID: extra.uid) }
+rejects("unavailable inventory never selects") {
+    _ = try unavailable.request(displayed: .init(revision: UUID(), defaults: defaults), inputUID: nil, outputUID: extra.uid)
+}
 unavailable.receive(AudioRouteState(revision: UUID(), endpoints: [input, input], defaults: defaults, available: true), from: aID)
 check("duplicate endpoint IDs rejected", unavailable.state?.available == false)
 
@@ -114,8 +128,63 @@ virtual.bind(aID)
 virtual.receive(AudioRouteState(revision: UUID(), endpoints: [input, output, extra],
                                 defaults: AudioRouteDefaults(inputUID: "virtual.input", outputUID: "virtual.output"),
                                 available: true), from: aID)
-let virtualRequest = try virtual.request(inputUID: input.uid, outputUID: nil)
+let virtualRequest = try virtual.request(displayed: virtual.catalogToken!, inputUID: input.uid, outputUID: nil)
 check("virtual actual defaults retained in CAS", virtualRequest.expected.inputUID == "virtual.input" &&
       virtualRequest.expected.outputUID == "virtual.output" && virtualRequest.outputUID == nil)
+
+for changed in [
+    AudioRouteState(revision: UUID(), endpoints: initial.endpoints, defaults: initial.defaults, available: true),
+    AudioRouteState(revision: initial.revision, endpoints: initial.endpoints,
+                    defaults: AudioRouteDefaults(inputUID: input.uid, outputUID: extra.uid), available: true)
+] {
+    var trial = MacAudioRouteSession()
+    trial.bind(aID)
+    trial.receive(initial, from: aID)
+    let shown = trial.catalogToken!
+    trial.receive(changed, from: aID)
+    do {
+        _ = try trial.request(displayed: shown, inputUID: nil, outputUID: extra.uid)
+        fatalError("changed displayed catalog was silently replaced")
+    } catch MacAudioRouteSession.Problem.catalogChanged {
+        check("displayed revision and defaults both fence selection", trial.pending == nil)
+    }
+}
+
+for result in [AudioRouteResult.applied, .unchanged] {
+    for (label, revision, replyDefaults) in [
+        ("same revision", initial.revision, AudioRouteDefaults(inputUID: input.uid, outputUID: extra.uid)),
+        ("wrong selected output", UUID(), defaults),
+        ("wrong untouched input", UUID(), AudioRouteDefaults(inputUID: "other.input", outputUID: extra.uid))
+    ] {
+        var trial = MacAudioRouteSession()
+        trial.bind(aID)
+        trial.receive(initial, from: aID)
+        let sent = try trial.request(displayed: trial.catalogToken!, inputUID: nil, outputUID: extra.uid)
+        trial.receive(AudioRouteState(revision: revision, endpoints: initial.endpoints,
+                                      defaults: replyDefaults, available: true,
+                                      answering: sent.requestID, result: result), from: aID)
+        check("\(result) with \(label) cannot claim success", trial.outcome?.isSuccess == false)
+    }
+    var pushedTrial = MacAudioRouteSession()
+    pushedTrial.bind(aID)
+    pushedTrial.receive(initial, from: aID)
+    let sent = try pushedTrial.request(displayed: pushedTrial.catalogToken!, inputUID: nil, outputUID: extra.uid)
+    let newer = UUID()
+    pushedTrial.receive(AudioRouteState(revision: newer, endpoints: initial.endpoints,
+                                        defaults: defaults, available: true), from: aID)
+    pushedTrial.receive(AudioRouteState(revision: newer, endpoints: initial.endpoints,
+                                        defaults: AudioRouteDefaults(inputUID: input.uid, outputUID: extra.uid),
+                                        available: true, answering: sent.requestID, result: result), from: aID)
+    check("\(result) ACK must consume a revision after a push", pushedTrial.outcome?.isSuccess == false)
+}
+
+var noInventory = MacAudioRouteSession()
+noInventory.bind(aID)
+noInventory.receive(initial, from: aID)
+let noInventoryRequest = try noInventory.request(displayed: noInventory.catalogToken!, inputUID: nil, outputUID: extra.uid)
+noInventory.receive(AudioRouteState(revision: UUID(), endpoints: [],
+                                    defaults: AudioRouteDefaults(inputUID: nil, outputUID: nil),
+                                    available: false, answering: noInventoryRequest.requestID, result: .applied), from: aID)
+check("unavailable applied reply cannot claim success", noInventory.outcome?.isSuccess == false)
 
 print("\(checks) Mac audio routing checks passed")

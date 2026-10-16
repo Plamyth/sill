@@ -13,6 +13,7 @@ struct IPadAudioRouteChooser: View {
     @State private var macProblem: String?
     @State private var macInputUID = ""
     @State private var macOutputUID = ""
+    @State private var macCatalogToken: MacAudioRouteSession.CatalogToken?
     @State private var macCatalogWaitExpired = false
     @State private var inputPorts = "iPad가 선택한 마이크"
     @State private var outputPorts = "iPad가 선택한 출력 장치"
@@ -99,6 +100,7 @@ struct IPadAudioRouteChooser: View {
         .onAppear {
             context = client.audioRouteContext
             selection = client.audioRouteSelection
+            macCatalogToken = client.macAudioRoutes.catalogToken
             readPorts()
             client.fetchMacAudioRoutes()
         }
@@ -114,12 +116,14 @@ struct IPadAudioRouteChooser: View {
         .onChange(of: client.macAudioRoutes.peer) { _, _ in
             macInputUID = ""
             macOutputUID = ""
+            macCatalogToken = nil
             macProblem = nil
             macCatalogWaitExpired = false
         }
-        .onChange(of: client.macAudioRoutes.state?.revision) { _, _ in
+        .onChange(of: client.macAudioRoutes.catalogToken) { _, next in
             macInputUID = ""
             macOutputUID = ""
+            macCatalogToken = next
         }
         .onChange(of: client.macAudioRoutes.pending?.requestID) { previous, current in
             if previous != nil && current == nil {
@@ -163,12 +167,14 @@ struct IPadAudioRouteChooser: View {
                 .accessibilityIdentifier("macAudioOutput")
                 Button("Mac 기본 장치 적용") {
                     do {
+                        guard let macCatalogToken else { throw MacAudioRouteSession.Problem.catalogChanged }
                         try client.selectMacAudioRoutes(inputUID: macInputUID.isEmpty ? nil : macInputUID,
-                                                        outputUID: macOutputUID.isEmpty ? nil : macOutputUID)
+                                                        outputUID: macOutputUID.isEmpty ? nil : macOutputUID,
+                                                        displayed: macCatalogToken)
                         macProblem = nil
                     } catch { macProblem = error.localizedDescription }
                 }
-                .disabled(client.macAudioRoutes.pending != nil || !macHasChange(state))
+                .disabled(client.macAudioRoutes.pending != nil || macCatalogToken == nil || !macHasChange(state))
                 .accessibilityIdentifier("applyMacAudioRoutes")
             } else {
                 Text(client.macAudioRoutes.state?.available == false
