@@ -15,11 +15,10 @@ struct SillVisionWorkspace: View {
     @StateObject private var client = StreamClient()
     @StateObject private var stats = ClientStatsReporter()
     @Environment(\.scenePhase) private var phase
-    @State private var pointer = VisionPointer()
+    @StateObject private var input = VisionInputSession()
     @State private var mode = VisionPointer.Mode.pointer
-    @State private var keyboard = InputOverlayProxy()
     @State private var keyboardShown = false
-    @State private var modifiers: KeyModifiers = []
+    @State private var keysShown = false
     @State private var code = ""
     @State private var address = ""
     @State private var addMac = false
@@ -44,14 +43,29 @@ struct SillVisionWorkspace: View {
             if client.connected {
                 screen
                 controls
+                HStack {
+                    Button("누른 입력 해제") { input.releaseAll() }
+                        .accessibilityHint("이 Vision 앱이 누른 키와 드래그를 해제합니다.")
+                    Spacer()
+                    if input.moving { Text("연결 경로 전환 중").font(.caption) }
+                    else if client.visionInputBinding == .awaitingCatalog {
+                        Text("Mac 화면 정보를 기다리는 중입니다. 입력은 확인 후 사용할 수 있습니다.").font(.caption)
+                    }
+                }
+                VisionAudioControls(audio: client.visionAudio,
+                                    allowStart: phase == .active && !transitions.isPending && !inputSuspended)
             } else {
                 hosts
             }
         }
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
-        .task { stats.attach(to: client); client.startBrowsing() }
-        .onChange(of: phase) { _, value in if value != .active { releaseInput() } }
+        .task { input.bind(client); updateInputAdmission(); stats.attach(to: client); client.startBrowsing() }
+        .onChange(of: inputAllowed) { _, _ in updateInputAdmission() }
+        .onChange(of: phase, initial: true) { _, value in
+            client.visionAudio.setForeground(value == .active)
+            if value != .active { releaseInput() }
+        }
         .onChange(of: client.connected) { _, connected in
             releaseInput()
             transitions.cancel()
@@ -60,8 +74,11 @@ struct SillVisionWorkspace: View {
         .onChange(of: client.videoSize) { _, _ in releaseInput() }
         .onChange(of: client.active) { _, _ in releaseInput() }
         .onChange(of: mode) { _, _ in releaseInput() }
-        .onChange(of: dragging) { _, value in if !value { pointer.end().forEach(send) } }
-        .onDisappear { if client.connected { requestTransition(.disconnect) } else { releaseInput() } }
+        .onChange(of: dragging) { _, value in if !value { input.endGesture() } }
+        .onDisappear {
+            client.visionAudio.setForeground(false)
+            if client.connected { requestTransition(.disconnect) } else { releaseInput() }
+        }
         .sheet(isPresented: $addMac) { pairingForm }
         .confirmationDialog("같은 Mac에 연결된 iPad 화면도 바뀔 수 있습니다.", isPresented: $changingSource) {
             Button("Mac 전체 화면 표시") { requestTransition(.desktop) }
@@ -89,7 +106,7 @@ struct SillVisionWorkspace: View {
             }
             if case .failed(let problem) = client.pairing { Text(problem.text).foregroundStyle(.orange) }
             Button("주소로 Mac 추가") { addMac = true }
-            Text("Mac 소리와 마이크 전송은 이 빌드에 포함되지 않습니다.").font(.caption)
+            Text("Mac 소리는 지원하는 호스트에서 직접 켤 수 있습니다. 마이크 전송은 아직 지원하지 않습니다.").font(.caption)
         }
         .frame(maxWidth: 650, maxHeight: .infinity)
     }
@@ -98,22 +115,31 @@ struct SillVisionWorkspace: View {
         GeometryReader { geo in
             ZStack {
                 StreamView(client: client)
-                InputOverlay(videoSize: client.videoSize, send: send,
-                             setOwnPointer: client.setOwnPointer, proxy: keyboard,
-                             isKeyboardShown: $keyboardShown, latchedModifiers: modifiers,
-                             onModifiersConsumed: { modifiers = [] })
+                InputOverlay(videoSize: client.videoSize, send: { input.overlayInput($0) },
+                             setOwnPointer: client.setOwnPointer, proxy: input.keyboard,
+                             isKeyboardShown: $keyboardShown, latchedModifiers: input.latched,
+                             onModifiersConsumed: { input.consumeLatch() })
                     .allowsHitTesting(false)
                 Color.clear.contentShape(Rectangle())
-                    .gesture(SpatialTapGesture().onEnded { value in
-                        guard let p = VisionPointer.point(value.location, bounds: CGRect(origin: .zero, size: geo.size), video: client.videoSize) else { return }
-                        pointer.tap(p, mode: mode).forEach(send)
-                    })
-                    .simultaneousGesture(DragGesture(minimumDistance: 5).updating($dragging) { _, state, _ in state = true }.onChanged { value in
-                        let bounds = CGRect(origin: .zero, size: geo.size)
-                        guard let start = VisionPointer.point(value.startLocation, bounds: bounds, video: client.videoSize),
-                              let p = VisionPointer.point(value.location, bounds: bounds, video: client.videoSize, clamp: true) else { return }
-                        pointer.drag(from: start, to: p, mode: mode).forEach(send)
-                    }.onEnded { _ in pointer.end().forEach(send) })
+                    .gesture(SpatialTapGesture().exclusively(before: DragGesture(minimumDistance: 5))
+                        .updating($dragging) { value, state, _ in
+                            if case .second = value { state = true }
+                        }
+                        .onChanged { value in
+                            guard case .second(let drag) = value else { return }
+                            let bounds = CGRect(origin: .zero, size: geo.size)
+                            guard let start = VisionPointer.point(drag.startLocation, bounds: bounds, video: client.videoSize),
+                                  let p = VisionPointer.point(drag.location, bounds: bounds, video: client.videoSize, clamp: true) else { return }
+                            input.drag(from: start, to: p, mode: mode)
+                        }
+                        .onEnded { value in
+                            switch value {
+                            case .first(let tap):
+                                guard let p = VisionPointer.point(tap.location, bounds: CGRect(origin: .zero, size: geo.size), video: client.videoSize) else { return }
+                                input.tap(p, mode: mode)
+                            case .second: input.endGesture()
+                            }
+                        })
                 if client.active == .none {
                     Button("Mac 전체 화면 표시") { changingSource = true }
                 }
@@ -131,17 +157,20 @@ struct SillVisionWorkspace: View {
             Picker("조작", selection: $mode) {
                 ForEach(VisionPointer.Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
-            Button("키보드") { keyboard.view?.toggleKeyboard() }
-            Button("Esc") { KeyChord.press(HIDKey.escape, with: modifiers).forEach(send); modifiers = [] }
-            Button("⌘") { if modifiers.contains(.command) { modifiers.remove(.command) } else { modifiers.insert(.command) } }
-                .tint(modifiers.contains(.command) ? .blue : .gray)
+            Button("키보드") { input.keyboard.view?.toggleKeyboard() }
+            Button("Esc") { input.press(.escape) }
+            Button("Mac 키") { keysShown.toggle() }
+                .popover(isPresented: $keysShown) {
+                    VisionKeyPalette(input: input, desktop: client.active == .desktop)
+                        .disabled(!client.visionInputBinding.isConfirmed)
+                }
             Button("전체 화면") { changingSource = true }
             if let measured = client.linkStats {
                 Text("\(measured.fps) fps · RTT \(measured.rtt.map { String($0.median) } ?? "측정 전") ms")
                     .font(.caption.monospacedDigit())
             }
         }
-        .disabled(transitions.isPending || inputSuspended)
+        .disabled(!input.canSend)
     }
 
     private var pairingForm: some View {
@@ -155,34 +184,70 @@ struct SillVisionWorkspace: View {
         }.padding(30).frame(width: 550)
     }
 
-    private func send(_ input: InputEvent) {
-        guard client.connected,
-              VisionPointer.isRelease(input) || (phase == .active && !transitions.isPending && !inputSuspended) else { return }
-        client.sendInput(input)
+    private var inputAllowed: Bool {
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended
     }
 
-    private func releaseInput() {
-        pointer.end().forEach { if client.connected { client.sendInput($0) } }
-        _ = keyboard.view?.resignFirstResponder()
-        modifiers = []
-    }
+    private func updateInputAdmission() { input.allowed = inputAllowed }
+
+    private func releaseInput() { input.releaseAll() }
 
     private func requestTransition(_ action: VisionTransition.Action) {
+        client.visionAudio.stop()
         guard let ticket = transitions.request(action) else { return }
         let expected = client.connection
+        updateInputAdmission()
         releaseInput()
         client.afterVisionInputRelease { readByHost in
             guard client.connection === expected else {
                 _ = transitions.settle(ticket, confirmed: false)
+                inputSuspended = true
+                updateInputAdmission()
                 return
             }
             let next = transitions.settle(ticket, confirmed: readByHost)
             guard next != nil || !readByHost else { return }
             inputSuspended = !readByHost
+            defer { updateInputAdmission() }
             switch next {
             case .desktop: client.select(.desktop)
             case .disconnect: client.disconnect()
             case nil: break
+            }
+        }
+    }
+}
+
+private struct VisionAudioControls: View {
+    @ObservedObject var audio: VisionAudioController
+    let allowStart: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            let running = audio.presentation.phase.grant != nil
+            Button(running ? "Mac 소리 중지" : "Mac 소리 켜기",
+                   systemImage: running ? "speaker.slash" : "speaker.wave.2") {
+                if running { audio.stop() } else if allowStart { audio.enable() }
+            }
+            .disabled(!running && (!audio.presentation.canEnable || !allowStart))
+            .accessibilityHint(running ? "즉시 소리를 중지합니다." : "선택한 Mac의 소리만 수신합니다. 마이크는 켜지지 않습니다.")
+            Text(message).font(.caption).lineLimit(2)
+            Spacer()
+        }
+    }
+
+    private var message: String {
+        switch audio.presentation.phase {
+        case .requesting: return "Mac의 소리 전송 확인을 기다립니다."
+        case .waiting: return "소리 데이터를 기다립니다."
+        case .rendering: return "Mac 소리 재생 중 · 마이크 꺼짐"
+        case .failed(let problem): return problem
+        case .off:
+            switch audio.presentation.availability {
+            case .disconnected: return "Mac 연결 후 사용할 수 있습니다."
+            case .unsupported: return "현재 Mac 호스트는 소리 전송을 지원하지 않습니다."
+            case .noSource: return "Mac 화면을 선택하면 소리를 켤 수 있습니다."
+            case .available: return "Mac 소리 꺼짐 · 연결이 바뀌면 다시 켜야 합니다."
             }
         }
     }

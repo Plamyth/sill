@@ -1,0 +1,59 @@
+{
+  "exitCode": 0,
+  "transportPID": 60386,
+  "transportReaped": true,
+  "sourceHEAD": "8ef216d121ac3e98fb3c098814c10b7d6cc2dd1b",
+  "scope": "Pure native consent policy with synthetic context, not network/audio/device or source-guard task transfer",
+  "sourceSHA256": {
+    "VisionAudioState.swift": "9fa6227b7d32bf06a8dacfe8d2d39eaff8525dc9a7306f596124270abc17233a",
+    "main.swift": "4aed5f3e27d7ba863c8f4646da98c13093b3dcefa4560bf0ee2c734c47cd4cb8"
+  },
+  "senderReceiverMatch": true,
+  "sourceUnchanged": true,
+  "RAMRunnerReferenceSHA256": "eeea55d08f6052ce59621d2d63bef85645d7bb8a80dddc25bdb4fd3d1a8aba76",
+  "RAMRunnerSHA256": "855bcdbf984e6f24b001ca99839a4209ce2b4a00c756fe47281698a008a88e60",
+  "remoteResult": {
+    "runnerPID": 19377,
+    "childPIDs": [
+      19415,
+      19504
+    ],
+    "before": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9838.19M  free = 401.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 68%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      0,
+      0
+    ],
+    "exitCode": 0,
+    "memorySourcesUnchanged": true,
+    "childrenReaped": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9838.19M  free = 401.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 51%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    }
+  }
+}

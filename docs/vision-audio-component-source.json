@@ -1,0 +1,26 @@
+{
+  "sourceWorktree": "/Users/ambrion/Documents/ChatGPT/BT_CCR-Sill-iPad",
+  "sourceCommit": "d962c0901ad0b3345172721f4dba6934476ee5cf",
+  "sourceRef": "codex/ipad-canvas-bridge-v0.5.1",
+  "sourceRemote": "https://github.com/Plamyth/sill.git",
+  "mode": "Four pinned shared components for independent Vision verification. Not accepted yet. No peer test/build/task-transfer acceptance.",
+  "files": {
+    "Sources/StreamProtocol/AudioPacket.swift": {
+      "gitBlob": "153d29cefd7b8150fbfa0f74002ff0f626ba37ce",
+      "sha256": "84913ea1f3fd4d3098654b198e89551d705fb6cde623364031912e8bc2bb78ab"
+    },
+    "Sources/StreamProtocol/RemoteAudioSubscription.swift": {
+      "gitBlob": "ab538aaf58b9b1ac3e7f668d7ed3e805ab7c03ed",
+      "sha256": "a1caeeefbc509eacadf67ee0fdf5b01d640637ed81e5a637b984782d231ff3f2"
+    },
+    "Sources/StreamProtocol/StreamMessage.swift": {
+      "gitBlob": "69ad78355b5b7aad6769f599002b3f76bf49f570",
+      "sha256": "c7fb0fe4f16e082939aabd1fa8b490d550d7c61e43a093bb39ab7cdbe1b1a34b"
+    },
+    "Sources/StreamProtocol/Switcher.swift": {
+      "gitBlob": "ec3d5fdacc7e7855abda22070e2bcac2cde562aa",
+      "sha256": "cd5dc20bd79aa50debb8140a4139196718a5650d234f7e26a414ffb3701e8df1"
+    }
+  },
+  "at": "2026-10-16T00:28:30.399267+00:00"
+}

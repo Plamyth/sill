@@ -1,0 +1,14 @@
+{
+  "func begin( has no audio API access": true,
+  "func stop( has no audio API access": true,
+  "func arm( has no audio API access": true,
+  "render uses nonblocking lock": true,
+  "no growing sample array": true,
+  "native begin requires process lease": true,
+  "cleanup requires exact owner": true,
+  "no microphone or route control": true,
+  "shared wire declaration not copied": true,
+  "pure checks exclude native adapter compilation": true,
+  "only allowed writes": true,
+  "source blob matches specified peer": true
+}

@@ -788,7 +788,23 @@ final class StreamClient: ObservableObject {
     /// on main (connect, disconnect, loss, a move's hand-over), so it is locked there.
     var connection: NWConnection? {
         get { link.connection }
-        set { link.connection = newValue }
+        set {
+            #if os(visionOS)
+            if link.connection !== newValue {
+                resetVisionAudio()
+                visionMovePreparation = nil
+                _ = visionInputSession?.takeReleases()
+                let old = link.connection
+                link.replaceConnection(newValue) {
+                    self.visionInputDebt.release(on: old).map(Self.visionInputBytes)
+                }
+                visionInputBinding = .awaitingCatalog
+                visionInputSession?.setMoving(false)
+                return
+            }
+            #endif
+            link.connection = newValue
+        }
     }
     /// Where every message to the Mac goes, in the order sent, also across a move's hand-over from
     /// the direct connection to the network one (SessionLink).
@@ -796,6 +812,72 @@ final class StreamClient: ObservableObject {
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     #if os(visionOS)
     lazy var visionInputFence = VisionInputFence(queue: queue)
+    weak var visionInputSession: VisionInputSession?
+    private var visionMovePreparation: UUID?
+    private let visionInputDebt = VisionInputDebt()
+    @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog
+
+    private static func visionInputBytes(_ input: CapturedVisionInput) -> Data {
+        StreamMessage(kind: .input, timestamp: Date().timeIntervalSince1970,
+                      isKeyframe: false, payload: input.payload).serialized()
+    }
+
+    @discardableResult
+    private func applyVisionInputCatalog(_ list: WindowList, from peer: NWConnection?) -> Bool {
+        guard let peer, connection === peer else { return false }
+        let binding = VisionInputBinding(catalog: list)
+        if active != list.active || visionInputBinding != binding {
+            _ = visionInputSession?.takeReleases()
+            cancelVisionInputs()
+        }
+        windows = list.windows
+        active = list.active
+        visionInputBinding = binding
+        return true
+    }
+
+    func cancelVisionInputs(completion: (() -> Void)? = nil) {
+        let expected = connection
+        queue.async { [weak self] in
+            if let self {
+                _ = self.link.cancelInputs(onlyOn: expected) {
+                    self.visionInputDebt.release(on: expected).map(Self.visionInputBytes)
+                }
+            }
+            if let completion { DispatchQueue.main.async(execute: completion) }
+        }
+    }
+
+    private let visionAudioRoute = VisionAudioRoute()
+    lazy var visionAudio = VisionAudioController { [weak self] control in
+        self?.sendVisionAudio(control)
+    }
+
+    private func resetVisionAudio() {
+        visionAudio.stop()
+        visionAudioRoute.clear()
+        visionAudio.update(.disconnected)
+    }
+
+    private func sendVisionAudio(_ control: VisionAudioControl) {
+        guard let expected = visionAudioRoute.peer(for: control) else { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            let request = RemoteAudioSubscription(enabled: control.enabled, requestID: control.requestID)
+            let message = StreamMessage(kind: .remoteAudioControl, timestamp: Date().timeIntervalSince1970,
+                                        isKeyframe: false, payload: Wire.encode(request))
+            let bytes = message.serialized()
+            if control.enabled {
+                self.visionAudio.sendIfPermitted(control) {
+                    guard self.connection === expected,
+                          self.visionAudioRoute.scope(for: expected) == control.grant.scope else { return }
+                    expected.send(content: bytes, completion: .contentProcessed { _ in })
+                }
+            } else {
+                expected.send(content: bytes, completion: .contentProcessed { _ in })
+            }
+        }
+    }
 
     func afterVisionInputRelease(_ completion: @escaping (Bool) -> Void) {
         let expected = connection
@@ -885,6 +967,7 @@ final class StreamClient: ObservableObject {
         savedMacs = SavedMacs.decode(UserDefaults.standard.string(forKey: SavedMacs.defaultsKey))
         #endif
         #if os(visionOS)
+        _ = visionAudio
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
             self?.cameForward()
@@ -993,6 +1076,9 @@ final class StreamClient: ObservableObject {
     }
 
     private func wentToBackground() {
+        #if os(visionOS)
+        visionAudio.setForeground(false)
+        #endif
         appInForeground = false
         reconnectCheck?.cancel()
         reconnectCheck = nil
@@ -1716,7 +1802,11 @@ final class StreamClient: ObservableObject {
         if let v = UserDefaults.standard.string(forKey: "SillHelloVersion"), !v.isEmpty { version = v }
         #endif
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        return Wire.encode(Hello(appVersion: version, build: build, protocol: SillProtocol.current, device: ClientStatsReporter.deviceName))
+        var hello = Hello(appVersion: version, build: build, protocol: SillProtocol.current, device: ClientStatsReporter.deviceName)
+        #if os(visionOS)
+        hello.sourceInput = 1
+        #endif
+        return Wire.encode(hello)
     }()
 
     /// The hello, the first thing on every session connection, written straight to `c` before
@@ -2248,6 +2338,26 @@ final class StreamClient: ObservableObject {
     /// Mac's settings come again on this connection (the ledger's rule 7), the Desktop rule starts
     /// over, and the panel gives the first state its two seconds. Main thread.
     private func finishMove(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
+        #if os(visionOS)
+        guard visionMovePreparation == nil, connected, let old = connection,
+              moving?.connection === c else { return }
+        let ticket = UUID()
+        visionMovePreparation = ticket
+        visionInputSession?.setMoving(true)
+        _ = visionInputSession?.takeReleases()
+        cancelVisionInputs() { [weak self] in
+            guard let self, self.visionMovePreparation == ticket else { return }
+            self.visionMovePreparation = nil
+            defer { self.visionInputSession?.setMoving(false) }
+            guard self.connected, self.connection === old, self.moving?.connection === c else { return }
+            self.finishMoveAfterInputDrain(c, kind: kind, kept: kept)
+        }
+        #else
+        finishMoveAfterInputDrain(c, kind: kind, kept: kept)
+        #endif
+    }
+
+    private func finishMoveAfterInputDrain(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
         moving = nil
         // The session this move was for must still run: over AWDL for a move from AWDL (a direct
         // session that ended meanwhile reconnects by itself, to the network row), not over it for
@@ -2257,6 +2367,10 @@ final class StreamClient: ObservableObject {
         // From here `c` is the session's: the old connection's pings and one-second windows stop at
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
         // only until the fence's pong (`deliver`), or stops at once without a fence.
+        #if os(visionOS)
+        resetVisionAudio()
+        visionInputBinding = .awaitingCatalog
+        #endif
         let reconnected = sessionDead
         let fenced = kind != .toWifi && !reconnected
         if fenced {
@@ -2330,7 +2444,7 @@ final class StreamClient: ObservableObject {
         #endif
         queue.async {
             self.startMeasuring(c, remote: false)
-            for m in kept { self.handle(m.header, m.payload) }
+            for m in kept { self.deliver(m.header, m.payload, from: c) }
             self.startReading(c)
         }
         // The Mac keeps a frame rate per connection: this one's viewport is the first thing the new
@@ -2438,6 +2552,10 @@ final class StreamClient: ObservableObject {
     /// Stops a move under way and its timer (a new session, or none), and drops a hand-over still
     /// waiting for its fence, or a hold: what it held belonged to the session that ended. Main thread.
     private func abandonMove() {
+        #if os(visionOS)
+        visionMovePreparation = nil
+        visionInputSession?.setMoving(false)
+        #endif
         moveCheck?.cancel()
         moveCheck = nil
         if let move = moving {
@@ -3059,6 +3177,11 @@ final class StreamClient: ObservableObject {
     /// never delivered its window list: the connect screen never left, and its Remote rows must not
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
+        #if os(visionOS)
+        resetVisionAudio()
+        visionInputSession?.releaseAll()
+        visionInputBinding = .awaitingCatalog
+        #endif
         abandonMove()
         resetPath()
         lastMoveAttempt = nil
@@ -3137,6 +3260,9 @@ final class StreamClient: ObservableObject {
     /// request (the Desktop on a connection's first list, a pick made again after a move), which
     /// is not the person's doing.
     private func request(_ source: StreamSource) {
+        #if os(visionOS)
+        visionAudio.stop()
+        #endif
         choicesSent += 1
         send(.selectSource, Wire.encode(source))
         #if DEBUG
@@ -3211,6 +3337,21 @@ final class StreamClient: ObservableObject {
     }
 
     func sendInput(_ event: InputEvent) {
+        #if os(visionOS)
+        guard visionMovePreparation == nil, let expected = connection else { return }
+        guard let input = visionInputBinding.capture(event) else { return }
+        lastInputAt = ProcessInfo.processInfo.systemUptime
+        let bytes = Self.visionInputBytes(input)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let accepted = self.link.send(bytes, onlyOn: expected) { [weak self] in
+                self?.visionInputDebt.record(input, on: expected)
+            }
+            guard accepted else { return }
+            self.pointerNoteSent(event)
+        }
+        return
+        #else
         // Every input passes here, a hover and a flick's coast included: the tour's rule counts it
         // as something happening (StreamScreen.considerTour).
         lastInputAt = ProcessInfo.processInfo.systemUptime
@@ -3248,6 +3389,7 @@ final class StreamClient: ObservableObject {
                 }
             }
         }
+        #endif
     }
 
     /// This device's switch for three-finger gestures (the Settings panel's This iPad group): on
@@ -3542,15 +3684,28 @@ final class StreamClient: ObservableObject {
         if header.kind == .pong, visionInputFence.receive(data, peer: ObjectIdentifier(c)) { return }
         #endif
         if c === connection {
-            handle(header, data)
+            handle(header, data, from: c)
         } else if header.kind == .pong, let released = link.fenceReturned(data, on: c) {
             fenceEnded(c, released, why: "the Mac has read all the direct connection carried")
         }
     }
 
     /// On the network queue.
-    private func handle(_ header: StreamHeader, _ data: Data) {
+    private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
         switch header.kind {
+        #if os(visionOS)
+        case .audio:
+            if let scope = visionAudioRoute.scope(for: peer) { visionAudio.receive(data, scope: scope) }
+        case .remoteAudioState:
+            guard let response = Wire.decode(RemoteAudioState.self, from: data),
+                  let scope = visionAudioRoute.scope(for: peer) else { return }
+            if let id = response.requestID {
+                visionAudio.acknowledge(id: id, enabled: response.enabled, scope: scope,
+                                        reason: response.reason.map { String($0.prefix(160)) })
+            } else if !response.enabled {
+                visionAudio.stop(problem: response.reason.map { String($0.prefix(160)) })
+            }
+        #endif
         case .parameterSets:
             if let ps = ParameterSets(encoded: data) {
                 lastParameterSets = ps
@@ -3567,7 +3722,12 @@ final class StreamClient: ObservableObject {
             onFrame?(data, header.isKeyframe)
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
-            let from = connection
+            let from: NWConnection? = peer
+            #if os(visionOS)
+            guard connection === peer else { return }
+            let availability = visionAudioRoute.observe(peer, source: list.active, supported: list.remoteAudio == 1)
+            visionAudio.update(availability)
+            #endif
             DispatchQueue.main.async {
                 // Only from the current connection: a list queued by a replaced one must not
                 // describe the next session.
@@ -3605,8 +3765,12 @@ final class StreamClient: ObservableObject {
                 }
                 if self.macName != list.macName { self.macName = list.macName; self.loadWindowOrder() }
                 let previous = self.active
+                #if os(visionOS)
+                guard self.applyVisionInputCatalog(list, from: from) else { return }
+                #else
                 self.windows = list.windows
                 self.active = list.active
+                #endif
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))
                 self.thumbnails = self.thumbnails.filter { live.contains($0.key) }
@@ -3671,7 +3835,7 @@ final class StreamClient: ObservableObject {
             receivePointer(data)
         case .hostSettings:
             guard let state = Wire.decode(HostSettingsState.self, from: data) else { return }
-            let from = connection
+            let from: NWConnection? = peer
             DispatchQueue.main.async {
                 // A state from a connection that has since been replaced must not outlive its reset.
                 guard self.connection === from else { return }
@@ -3692,7 +3856,7 @@ final class StreamClient: ObservableObject {
             // connection it came on showed in its handshake (nil on a plain one): only a kind 18
             // that key signed speaks for this session's Mac (DiscoveryPolicy.macInfoNamesSession).
             guard let signed = Wire.decode(SignedMacInfo.self, from: data) else { return }
-            let from = connection
+            let from: NWConnection? = peer
             let key = from.flatMap { RemoteTLS.peerFingerprint($0) }
             DispatchQueue.main.async {
                 guard self.connection === from else { return }
@@ -3703,7 +3867,7 @@ final class StreamClient: ObservableObject {
             // (GoodbyePolicy, when the connection ends). One that does not decode is a reason this
             // build does not know: its own words, and no reconnect.
             let goodbye = Wire.decode(Goodbye.self, from: data) ?? Goodbye(reason: "")
-            let from = connection
+            let from: NWConnection? = peer
             DispatchQueue.main.async {
                 guard self.connection === from else { return }
                 self.goodbye = goodbye
@@ -3712,7 +3876,7 @@ final class StreamClient: ObservableObject {
             // The Mac's menus: a top level, or the answer to one of this connection's kind 27s or 25s
             // (MacMenuState). One that does not decode is dropped: its completion times out.
             guard let menu = Wire.decode(MacMenu.self, from: data) else { return }
-            let from = connection
+            let from: NWConnection? = peer
             DispatchQueue.main.async {
                 // A replaced connection's answer must not settle, or describe, the next one's menus.
                 guard self.connection === from else { return }

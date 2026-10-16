@@ -8,8 +8,12 @@ struct VisionPointer {
         case idle
         case dragging(CGPoint)
         case scrolling(anchor: CGPoint, last: CGPoint)
+        case cancelled
     }
     private var stroke = Stroke.idle
+    private var modifiers: KeyModifiers = []
+
+    var isIdle: Bool { if case .idle = stroke { return true }; return false }
 
     static func isRelease(_ event: InputEvent) -> Bool {
         switch event {
@@ -30,39 +34,51 @@ struct VisionPointer {
                        y: min(1, max(0, (point.y - rect.minY) / height)))
     }
 
-    mutating func tap(_ p: CGPoint, mode: Mode) -> [InputEvent] {
+    mutating func tap(_ p: CGPoint, mode: Mode, modifiers: KeyModifiers = []) -> [InputEvent] {
         guard case .idle = stroke, mode != .scroll else { return [] }
         let down: PointerAction = mode == .right ? .rightDown : .leftDown
         let up: PointerAction = mode == .right ? .rightUp : .leftUp
-        return [.pointer(down, x: p.x, y: p.y), .pointer(up, x: p.x, y: p.y)]
+        return KeyChord.modifiersDown(modifiers)
+            + [.pointer(down, x: p.x, y: p.y), .pointer(up, x: p.x, y: p.y)]
+            + KeyChord.modifiersUp(modifiers)
     }
 
-    mutating func drag(from start: CGPoint, to p: CGPoint, mode: Mode) -> [InputEvent] {
+    mutating func drag(from start: CGPoint, to p: CGPoint, mode: Mode, modifiers: KeyModifiers = []) -> [InputEvent] {
         switch stroke {
         case .idle:
             if mode == .scroll {
+                self.modifiers = modifiers
                 stroke = .scrolling(anchor: start, last: p)
-                return [.scrollGesture(.began, x: start.x, y: start.y),
+                return KeyChord.modifiersDown(modifiers) + [.scrollGesture(.began, x: start.x, y: start.y),
                         .scroll(x: start.x, y: start.y, dx: p.x - start.x, dy: p.y - start.y)]
             }
             guard mode == .pointer else { return [] }
+            self.modifiers = modifiers
             stroke = .dragging(p)
-            return [.pointer(.leftDown, x: start.x, y: start.y), .pointer(.move, x: p.x, y: p.y)]
+            return KeyChord.modifiersDown(modifiers) + [.pointer(.leftDown, x: start.x, y: start.y), .pointer(.move, x: p.x, y: p.y)]
         case .dragging:
             stroke = .dragging(p)
             return [.pointer(.move, x: p.x, y: p.y)]
         case .scrolling(let anchor, let last):
             stroke = .scrolling(anchor: anchor, last: p)
             return [.scroll(x: anchor.x, y: anchor.y, dx: p.x - last.x, dy: p.y - last.y)]
+        case .cancelled: return []
         }
     }
 
     mutating func end() -> [InputEvent] {
-        defer { stroke = .idle }
+        defer { stroke = .idle; modifiers = [] }
         switch stroke {
-        case .idle: return []
-        case .dragging(let p): return [.pointer(.leftUp, x: p.x, y: p.y)]
-        case .scrolling(let anchor, _): return [.scrollGesture(.ended, x: anchor.x, y: anchor.y)]
+        case .idle, .cancelled: return []
+        case .dragging(let p): return [.pointer(.leftUp, x: p.x, y: p.y)] + KeyChord.modifiersUp(modifiers)
+        case .scrolling(let anchor, _): return [.scrollGesture(.ended, x: anchor.x, y: anchor.y)] + KeyChord.modifiersUp(modifiers)
         }
+    }
+
+    mutating func cancel() -> [InputEvent] {
+        guard !isIdle else { return [] }
+        let releases = end()
+        stroke = .cancelled
+        return releases
     }
 }

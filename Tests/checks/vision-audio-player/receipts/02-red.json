@@ -1,0 +1,86 @@
+{
+  "exitCode": 1,
+  "transportPID": 65634,
+  "transportReaped": true,
+  "sourceHEAD": "618bf706257d5298e5accce1ead05d687d19e9ab",
+  "scope": "Independent pure component RAM validation; no native player, peer acceptance, or source-guard transfer acceptance",
+  "inputSHA256": "20212f488efd9984c5e186f82eeae8dfd10cfe21ab442df2388d79c05b198d7e",
+  "remoteInputHashMatched": true,
+  "sourceSHA256": {
+    "visionOSClient/VisionAudioBuffer.swift": "700ce7c8dcee871db37d3b29076df6c84360db152bb1055074311e93ca861d6d",
+    "Tests/checks/vision-audio-player/main.swift": "0501001340e945dc52a9823e167c5ff46b745bdcb6821687c60546d900f97a43"
+  },
+  "sourceUnchanged": true,
+  "remoteResult": {
+    "runnerPID": 19921,
+    "childPIDs": [
+      19959,
+      20039
+    ],
+    "before": {
+      "swap": {
+        "code": 0,
+        "stdout": "vm.swapusage: total = 10240.00M  used = 9838.19M  free = 401.81M  (encrypted)",
+        "stderr": ""
+      },
+      "pressure": {
+        "code": 0,
+        "stdout": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 59%",
+        "stderr": ""
+      },
+      "orca": {
+        "code": 0,
+        "stdout": "67053\n67066\n67070\n67071\n67075\n67076\n67078",
+        "stderr": ""
+      },
+      "avd": {
+        "code": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      0,
+      1
+    ],
+    "exitCode": 1,
+    "memorySourcesUnchanged": true,
+    "childrenReaped": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": {
+        "code": 0,
+        "stdout": "vm.swapusage: total = 10240.00M  used = 9838.19M  free = 401.81M  (encrypted)",
+        "stderr": ""
+      },
+      "pressure": {
+        "code": 0,
+        "stdout": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 58%",
+        "stderr": ""
+      },
+      "orca": {
+        "code": 0,
+        "stdout": "67053\n67066\n67070\n67071\n67075\n67076\n67078",
+        "stderr": ""
+      },
+      "avd": {
+        "code": 1,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "containersBefore": {
+    "code": 0,
+    "stdout": "803b0b325993 cargo24-management-device-db-10491 Up About an hour (healthy)\n4893eeb563bc cargo24-isolated-trial-db-20261002 Up 24 hours (healthy)\n224d832e30f1 cargo24-isolated-trial-rest-20261002 Up 24 hours\ncebf3c47b39b supabase_studio_theone-cargo Up 24 hours (healthy)\nbc783e36ab6d supabase_pg_meta_theone-cargo Up 24 hours (healthy)\n9e29dbd69916 supabase_storage_theone-cargo Up 24 hours (healthy)\ndeba0583d7b6 supabase_rest_theone-cargo Up 24 hours\n424f1c6f86aa supabase_realtime_theone-cargo Up 24 hours (healthy)\n334cc2e6f998 supabase_inbucket_theone-cargo Up 24 hours (healthy)\nc5014a7bf602 supabase_auth_theone-cargo Up 24 hours (healthy)\n8f4d25eed0cf supabase_kong_theone-cargo Up 24 hours (healthy)\n6cac78f68aad supabase_analytics_theone-cargo Up 24 hours (healthy)\n19ca9164df98 supabase_db_theone-cargo Up 24 hours (healthy)",
+    "stderr": ""
+  },
+  "containersAfter": {
+    "code": 0,
+    "stdout": "803b0b325993 cargo24-management-device-db-10491 Up About an hour (healthy)\n4893eeb563bc cargo24-isolated-trial-db-20261002 Up 24 hours (healthy)\n224d832e30f1 cargo24-isolated-trial-rest-20261002 Up 24 hours\ncebf3c47b39b supabase_studio_theone-cargo Up 24 hours (healthy)\nbc783e36ab6d supabase_pg_meta_theone-cargo Up 24 hours (healthy)\n9e29dbd69916 supabase_storage_theone-cargo Up 24 hours (healthy)\ndeba0583d7b6 supabase_rest_theone-cargo Up 24 hours\n424f1c6f86aa supabase_realtime_theone-cargo Up 24 hours (healthy)\n334cc2e6f998 supabase_inbucket_theone-cargo Up 24 hours (healthy)\nc5014a7bf602 supabase_auth_theone-cargo Up 24 hours (healthy)\n8f4d25eed0cf supabase_kong_theone-cargo Up 24 hours (healthy)\n6cac78f68aad supabase_analytics_theone-cargo Up 24 hours (healthy)\n19ca9164df98 supabase_db_theone-cargo Up 24 hours (healthy)",
+    "stderr": ""
+  }
+}

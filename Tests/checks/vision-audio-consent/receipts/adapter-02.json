@@ -1,0 +1,68 @@
+{
+  "exitCode": 0,
+  "transportPID": 87544,
+  "transportReaped": true,
+  "sourceHEAD": "8ef216d121ac3e98fb3c098814c10b7d6cc2dd1b",
+  "scope": "Native policy/controller/route with synthetic peer and player. AVAudioSession observers compile only on visionOS, not executed here. No network/audio/device or source-guard task transfer.",
+  "originalSourceSHA256": {
+    "VisionAudioState.swift": "9fa6227b7d32bf06a8dacfe8d2d39eaff8525dc9a7306f596124270abc17233a",
+    "main.swift": "14da6e9bf9ad093ba75c62c94988a4ff7a353099c0761abd985ca6e93daf3c5f",
+    "VisionAudioController.swift": "8f66c8ab6cfd715a259af8d3a71f76f512f8bae0353b80573ae52143da1aeaee",
+    "VisionAudioRoute.swift": "0d91cec466c1c5a4a75d4dad0fd0846048d9b0bb8c457b80ebfe05af77a79fd0"
+  },
+  "emittedSHA256": {
+    "VisionAudioState.swift": "9fa6227b7d32bf06a8dacfe8d2d39eaff8525dc9a7306f596124270abc17233a",
+    "main.swift": "14da6e9bf9ad093ba75c62c94988a4ff7a353099c0761abd985ca6e93daf3c5f",
+    "VisionAudioController.swift": "8f66c8ab6cfd715a259af8d3a71f76f512f8bae0353b80573ae52143da1aeaee",
+    "VisionAudioRoute.swift": "cd2c7eef3e43ada18f714c09828cf74dc05414c3c48f770967848bc39bfc9e97"
+  },
+  "routeImportSubstitution": "Network and StreamProtocol imports removed; fixture supplies identity-only peer and source enum; all methods unchanged",
+  "senderReceiverMatch": true,
+  "sourceUnchanged": true,
+  "RAMRunnerReferenceSHA256": "eeea55d08f6052ce59621d2d63bef85645d7bb8a80dddc25bdb4fd3d1a8aba76",
+  "RAMRunnerSHA256": "e559a7c7080eba9d6e325c7e64b6bd93c03deffa14ec6178eea4cc235b6dbaf7",
+  "remoteResult": {
+    "runnerPID": 21563,
+    "childPIDs": [
+      21595,
+      21751
+    ],
+    "before": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 57%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    },
+    "inputHashesMatched": true,
+    "commandExitCodes": [
+      0,
+      0
+    ],
+    "exitCode": 0,
+    "memorySourcesUnchanged": true,
+    "childrenReaped": true,
+    "outputRemoved": true,
+    "detachCode": 0,
+    "sourceRemoved": true,
+    "after": {
+      "swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)",
+      "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 56%",
+      "orca": [
+        "67053",
+        "67066",
+        "67070",
+        "67071",
+        "67075",
+        "67076",
+        "67078"
+      ]
+    }
+  }
+}

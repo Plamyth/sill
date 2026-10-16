@@ -1,0 +1,28 @@
+Mac mini heavy-job slot: free=60%, swap=9830MB
+INPUT_SHA256 2c905c915482d28210fe0f559d6ffa1fc0048d307cb817e92ccea3a764782153
+PASS default controller admits no side effects
+PASS unsupported controller sends no request
+PASS explicit Enable requests without engine start
+PASS pre-ACK controller drops packet
+PASS unmatched ACK cannot start player
+PASS matching ACK begins one granted player
+PASS other source cannot reach player
+PASS granted packet reaches player
+PASS render callback alone reports rendering
+PASS Stop synchronously revokes player and sends scoped off
+PASS late packet and render cannot resurrect Stop
+PASS old ACK does not satisfy next controller request
+PASS source update revokes captured send permission
+PASS source A return never restores previous consent
+PASS foreground does not automatically restart playback
+PASS failure stops player with visible reason
+PASS unlisted peer has no audio scope
+PASS missing capability is unsupported
+PASS scoped request captures its peer
+PASS old source cannot capture Enable
+PASS old source cleanup can disable the exact same peer
+PASS route A to B to A increments source generation
+PASS replacement peer never inherits old commands
+PASS connection reset clears capability and scope
+Vision audio adapter: 24/24 passed, 0 failed
+RESULT_JSON {"runnerPID": 21295, "childPIDs": [21327, 21435], "before": {"swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 60%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}, "inputHashesMatched": true, "commandExitCodes": [0, 0], "exitCode": 0, "memorySourcesUnchanged": true, "childrenReaped": true, "outputRemoved": true, "detachCode": 0, "sourceRemoved": true, "after": {"swap": "vm.swapusage: total = 10240.00M  used = 9830.19M  free = 409.81M  (encrypted)", "pressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 57%", "orca": ["67053", "67066", "67070", "67071", "67075", "67076", "67078"]}}
