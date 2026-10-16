@@ -1,14 +1,20 @@
 import Foundation
 
-/// Serializes capture starts after every stop that was scheduled while a start waited.
-/// MainActor owns the ticket; the capture operation may suspend on another queue.
+/// Owns pending capture starts and stops. A waiter may settle only the start
+/// record it acquired, because another start can replace it during an await.
 @MainActor
-final class RemoteAudioStopGate {
+final class RemoteAudioCaptureLifecycle {
+    struct Start {
+        let id: UUID
+        let task: Task<Bool, Never>
+    }
+
     private struct Stop {
         let id: UUID
         let task: Task<Void, Never>
     }
 
+    private var currentStart: Start?
     private var current: Stop?
     private let onCleared: (() -> Void)?
 
@@ -16,9 +22,26 @@ final class RemoteAudioStopGate {
 
     var isStopping: Bool { current != nil }
 
-    func schedule(_ operation: @escaping @MainActor () async -> Void) {
+    func acquireStart(_ operation: @escaping @MainActor () async -> Bool) -> Start {
+        if let currentStart { return currentStart }
+        let start = Start(id: UUID(), task: Task { await operation() })
+        currentStart = start
+        return start
+    }
+
+    func settleStart(_ start: Start) async -> Bool {
+        let started = await start.task.value
+        if currentStart?.id == start.id { currentStart = nil }
+        return started
+    }
+
+    func scheduleStop(_ operation: @escaping @MainActor () async -> Void) {
         guard current == nil else { return }
-        let stop = Stop(id: UUID(), task: Task { await operation() })
+        let pendingStart = currentStart?.task
+        let stop = Stop(id: UUID(), task: Task {
+            _ = await pendingStart?.value
+            await operation()
+        })
         current = stop
         Task { @MainActor in
             await stop.task.value
