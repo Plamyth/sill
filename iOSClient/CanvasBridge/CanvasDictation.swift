@@ -112,6 +112,7 @@ final class CanvasDictation: ObservableObject {
     }
 
     private func finish(status message: String) {
+        generation = UUID()
         finalization?.cancel()
         finalization = nil
         engine?.stop()
