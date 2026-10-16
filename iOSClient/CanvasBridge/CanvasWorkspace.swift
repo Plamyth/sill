@@ -475,7 +475,7 @@ struct CanvasWorkspace: View {
             let readiness = try await connection.deliveryReadiness(threadId:session.threadId,
                 targetMode:targetMode)
             guard readiness.available else {
-                store.status = "전송 중단: Mac의 대화 연결이 준비되지 않았습니다. 그림은 보관했습니다."
+                store.status = "전송 중단 · Mac 대화 연결 미준비. 그림은 캔버스에 남아 있고 대기열에는 추가하지 않았습니다."
                 return
             }
             let packet = try store.preparePacket(scene:frozen,imagePNG:image,session:session,
