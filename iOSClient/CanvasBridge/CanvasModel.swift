@@ -120,7 +120,7 @@ struct CanvasScene: Codable, Equatable {
         return true
     }
 
-    mutating func apply(_ change: AgentRevision) -> Bool {
+    mutating func apply(_ change: AgentRevision, basedOn sent: CanvasScene? = nil) -> Bool {
         guard change.sceneId == id else { return false }
         let annotationIds = change.annotations.map(\.id)
         let proposalIds = change.proposedNodes.map(\.id)
@@ -128,17 +128,28 @@ struct CanvasScene: Codable, Equatable {
               Set(proposalIds).count == proposalIds.count else { return false }
         if change.baseRevision < revision {
             guard !annotationIds.isEmpty || !proposalIds.isEmpty else { return false }
-            return change.annotations.allSatisfy { incoming in
+            if change.annotations.allSatisfy({ incoming in
                 annotations.first(where: { $0.id == incoming.id }) == incoming
-            } && change.proposedNodes.allSatisfy { incoming in
+            }) && change.proposedNodes.allSatisfy({ incoming in
                 nodes.first(where: { $0.id == incoming.id }) == incoming
+            }) { return true }
+            guard let sent, sent.id == id, sent.revision == change.baseRevision,
+                  sent.schemaVersion == schemaVersion,
+                  sent.width == width, sent.height == height,
+                  sent.nodes == nodes, sent.links == links, sent.annotations == annotations,
+                  strokes.count > sent.strokes.count,
+                  Array(strokes.prefix(sent.strokes.count)) == sent.strokes else {
+                return false
             }
         }
-        guard change.baseRevision == revision else { return false }
+        guard change.baseRevision <= revision else { return false }
         let existingIds = Set(nodes.map(\.id))
         let existingAnnotationIds = Set(annotations.map(\.id))
+        let originalStrokes = change.baseRevision == revision ? strokes : sent?.strokes ?? []
+        let sentStrokeIds = Set(originalStrokes.map(\.id))
         guard change.annotations.allSatisfy({ !existingAnnotationIds.contains($0.id) }),
-              change.proposedNodes.allSatisfy({ $0.confidence == .proposal && !existingIds.contains($0.id) }) else {
+              change.proposedNodes.allSatisfy({ $0.confidence == .proposal && !existingIds.contains($0.id) &&
+                  $0.sourceStrokeIds.allSatisfy(sentStrokeIds.contains) }) else {
             return false
         }
         let availableIds = existingIds.union(proposalIds)

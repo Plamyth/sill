@@ -235,8 +235,10 @@ final class CanvasStore: ObservableObject {
     }
 
     func applyAgentRevision(_ revision: AgentRevision) {
-        guard scene.apply(revision) else {
-            status = "에이전트 주석의 기준 버전이 달라 자동 반영하지 않았습니다."
+        let sent = outbox.entries.first(where: { $0.id == packet?.packetId })
+            .flatMap { try? $0.packet.frozenScene() }
+        guard scene.apply(revision, basedOn:sent) else {
+            status = "에이전트 제안이 현재 그림과 충돌해 자동 반영하지 않았습니다."
             return
         }
         status = "에이전트 주석과 제안 요소가 캔버스에 반영됐습니다. 제안은 수정 후 확인할 수 있습니다."
