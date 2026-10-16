@@ -35,7 +35,7 @@ MUTANTS = [
     ('ingress-one', 'Sources/SillHost/MicrophoneIngress.swift', 'private static let frameCapacity = 6', 'private static let frameCapacity = 1', 'continuous actual client burst preserves ordered PCM'),
     ('render-one', 'Sources/SillHost/HostMicrophoneGrant.swift', 'private static let packetCapacity = 6', 'private static let packetCapacity = 1', 'continuous actual client burst preserves ordered PCM'),
     ('drain-one', 'Dispatch.swift', 'for frame in frames where', 'for frame in frames.prefix(1) where', 'continuous actual client burst preserves ordered PCM'),
-    ('egress-route', 'Dispatch.swift', 'client.route.encrypted, client.route.fingerprint != nil', '!client.route.encrypted, client.route.fingerprint != nil', 'actual host state enables actual client capture'),
+    ('egress-route', 'Dispatch.swift', 'client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready', '!client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready', 'actual host state enables actual client capture'),
     ('short-residence', 'Sources/SillHost/HostMicrophoneGrant.swift', 'static let maxQueueAge: UInt64 = 160_000_000', 'static let maxQueueAge: UInt64 = 140_000_000', 'actual queued packet remains valid at exact160ms boundary'),
 ]
 
