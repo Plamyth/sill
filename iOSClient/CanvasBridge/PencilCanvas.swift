@@ -40,6 +40,13 @@ struct PencilCanvas: UIViewRepresentable {
         overlay.previewLayer = layer
         overlay.layer.addSublayer(layer)
 
+        let hoverLayer = context.coordinator.hoverLayer
+        hoverLayer.fillColor = CanvasPalette.ink.withAlphaComponent(0.4).cgColor
+        hoverLayer.strokeColor = CanvasPalette.ink.cgColor
+        hoverLayer.lineWidth = 2
+        hoverLayer.isHidden = true
+        overlay.layer.addSublayer(hoverLayer)
+
         context.coordinator.canvas = canvas
 
         let trace = PencilTraceRecognizer()
@@ -51,6 +58,11 @@ struct PencilCanvas: UIViewRepresentable {
             coordinator?.sample(point, phase: phase)
         }
         host.addGestureRecognizer(trace)
+
+        let hover = UIHoverGestureRecognizer(target: context.coordinator,
+                                              action: #selector(Coordinator.hoverCanvas(_:)))
+        hover.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        canvas.addGestureRecognizer(hover)
 
         let finger = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         let pan = UIPanGestureRecognizer(target: context.coordinator,
@@ -84,6 +96,7 @@ struct PencilCanvas: UIViewRepresentable {
         case .lasso: canvas.tool = PKLassoTool()
         case .select: break
         }
+        context.coordinator.updateHover()
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate,
@@ -91,8 +104,11 @@ struct PencilCanvas: UIViewRepresentable {
         let store: CanvasStore
         weak var canvas: PKCanvasView?
         let previewLayer = CAShapeLayer()
+        let hoverLayer = CAShapeLayer()
         private var previewPath = UIBezierPath()
         private var previewSession = 0
+        private var hoverPoint: CGPoint?
+        private var isDrawing = false
         private var panStart = CanvasViewport()
         private var pinchStart = CanvasViewport()
         private var pinchAnchor = CGPoint.zero
@@ -103,6 +119,9 @@ struct PencilCanvas: UIViewRepresentable {
         fileprivate func sample(_ point: CGPoint, phase: PencilTraceRecognizer.Phase) {
             switch phase {
             case .began:
+                isDrawing = true
+                hoverPoint = nil
+                hoverLayer.isHidden = true
                 previewSession += 1
                 previewPath = UIBezierPath()
                 previewPath.move(to: point)
@@ -113,12 +132,41 @@ struct PencilCanvas: UIViewRepresentable {
                 previewPath.addLine(to: point)
                 previewLayer.path = previewPath.cgPath
             case .ended:
+                isDrawing = false
                 let session = previewSession
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                     guard let self, self.previewSession == session else { return }
                     self.previewLayer.path = nil
                 }
             }
+        }
+
+        @objc fileprivate func hoverCanvas(_ gesture: UIHoverGestureRecognizer) {
+            switch gesture.state {
+            case .began, .changed:
+                guard !isDrawing else { return }
+                hoverPoint = gesture.location(in: gesture.view)
+                updateHover()
+            default:
+                hoverPoint = nil
+                hoverLayer.isHidden = true
+            }
+        }
+
+        fileprivate func updateHover() {
+            guard !isDrawing, let hoverPoint, store.mode == .pen || store.mode == .eraser else {
+                hoverLayer.isHidden = true
+                return
+            }
+            let erasing = store.mode == .eraser
+            let diameter: CGFloat = erasing ? 20 : 8
+            hoverLayer.path = UIBezierPath(ovalIn:CGRect(x:-diameter / 2,y:-diameter / 2,
+                                                          width:diameter,height:diameter)).cgPath
+            hoverLayer.position = hoverPoint
+            hoverLayer.fillColor = erasing ? UIColor.clear.cgColor :
+                CanvasPalette.ink.withAlphaComponent(0.4).cgColor
+            hoverLayer.strokeColor = erasing ? UIColor.systemRed.cgColor : CanvasPalette.ink.cgColor
+            hoverLayer.isHidden = false
         }
 
         @objc fileprivate func panCanvas(_ gesture: UIPanGestureRecognizer) {
