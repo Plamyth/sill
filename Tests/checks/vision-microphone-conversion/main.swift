@@ -7,11 +7,11 @@ func check(_ value: @autoclosure () -> Bool, _ name: String) {
     checks += 1
     if !value() { failures += 1; print("FAIL \(name)") }
 }
-struct Result {
+struct ConversionResult {
     var frames: [IPadMicrophonePCMFrame] = []
 }
 func convert(rate: Double, frames: AVAudioFrameCount, channels: AVAudioChannelCount = 1, blocks: Int = 1) -> [IPadMicrophonePCMFrame] {
-    let result = OSAllocatedUnfairLock(initialState: Result())
+    let result = OSAllocatedUnfairLock(initialState: ConversionResult())
     let worker = IPadMicrophoneConversionWorker()
     let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: channels)!
     guard let id = worker.begin(inputFormat: format, emit: { frame in result.withLock { $0.frames.append(frame) } }) else {
