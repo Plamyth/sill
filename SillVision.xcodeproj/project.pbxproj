@@ -496,6 +496,24 @@
 			<key>fileRef</key>
 			<string>446CFAC6C19FF4FA98E736E4</string>
 		</dict>
+		<key>3D4DE531BFD1AC11F6F66F4A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionPresentation.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>C6F3E5ABA8600FBF8CF25DC6</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>3D4DE531BFD1AC11F6F66F4A</string>
+		</dict>
 		<key>D84BCDA0185D6D5D9AD59FBC</key>
 		<dict>
 			<key>isa</key>
@@ -658,6 +676,42 @@
 			<key>fileRef</key>
 			<string>256B0F03B37CA87A91C72FFF</string>
 		</dict>
+		<key>871C3AB6569A4C63C1E9C978</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioHardware.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>02B570258369E1E27D771386</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>871C3AB6569A4C63C1E9C978</string>
+		</dict>
+		<key>12D80BE0415B83D3DDD7607D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioNativeGraph.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>B02287A7A145B6DA8AB586F9</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>12D80BE0415B83D3DDD7607D</string>
+		</dict>
 		<key>F079CE19974C6C61933DC047</key>
 		<dict>
 			<key>isa</key>
@@ -789,6 +843,7 @@
 				<string>A35A325A1D9AC8F8AE7E0E91</string>
 				<string>3454D9B9946EBD2F06842B49</string>
 				<string>446CFAC6C19FF4FA98E736E4</string>
+				<string>3D4DE531BFD1AC11F6F66F4A</string>
 				<string>D84BCDA0185D6D5D9AD59FBC</string>
 				<string>7E7CEEC243F752318BEEA63F</string>
 				<string>1B29DE20856D644210EB3034</string>
@@ -798,12 +853,13 @@
 				<string>F1C4E8501A537755FC17C59B</string>
 				<string>AE15723CA61DB321A16717AE</string>
 				<string>256B0F03B37CA87A91C72FFF</string>
+				<string>871C3AB6569A4C63C1E9C978</string>
+				<string>12D80BE0415B83D3DDD7607D</string>
 				<string>F079CE19974C6C61933DC047</string>
 				<string>57225E96412900A09CA16381</string>
 				<string>F3944248DEC4A319BD3398CE</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
-				<string>3D4DE531BFD1AC11F6F66F4A</string>
 			</array>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
@@ -843,6 +899,7 @@
 				<string>CD3BDEEBE03DDE64B75B7B65</string>
 				<string>5E0C7BD5E5E54E80D694B9B9</string>
 				<string>674544828B4029D98977E5D7</string>
+				<string>C6F3E5ABA8600FBF8CF25DC6</string>
 				<string>61A3114FAEA584F17FB75287</string>
 				<string>3230AC4CD5E3763EDD25A737</string>
 				<string>0AFB5283362651425EABE5A8</string>
@@ -852,10 +909,11 @@
 				<string>A4C79F788B3CA044B6655ABE</string>
 				<string>BC739450E2D039089A4BACA9</string>
 				<string>5E4A1EC0F1B59D52EB290FC6</string>
+				<string>02B570258369E1E27D771386</string>
+				<string>B02287A7A145B6DA8AB586F9</string>
 				<string>331E11F67379528B562D146B</string>
 				<string>AC8D6597572DB8007CEC8C9F</string>
 				<string>AAF2C2DAF25BA42888B2B819</string>
-				<string>C6F3E5ABA8600FBF8CF25DC6</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1136,24 +1194,6 @@
 			<array>
 				<string>582681C2EAE02B3F3D399C0C</string>
 			</array>
-		</dict>
-		<key>3D4DE531BFD1AC11F6F66F4A</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXFileReference</string>
-			<key>lastKnownFileType</key>
-			<string>sourcecode.swift</string>
-			<key>path</key>
-			<string>visionOSClient/VisionPresentation.swift</string>
-			<key>sourceTree</key>
-			<string>SOURCE_ROOT</string>
-		</dict>
-		<key>C6F3E5ABA8600FBF8CF25DC6</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXBuildFile</string>
-			<key>fileRef</key>
-			<string>3D4DE531BFD1AC11F6F66F4A</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

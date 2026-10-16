@@ -11,7 +11,6 @@ enum VisionAudioPlaybackEvent: Equatable, Sendable {
 }
 
 private enum VisionAudioProcess {
-    static let lease = OSAllocatedUnfairLock(initialState: VisionAudioLease())
     static let log = Logger(subsystem: "sill.vision", category: "audio-playback")
 }
 
@@ -21,21 +20,50 @@ final class VisionAudioPlayer: @unchecked Sendable {
         var callback: ((UUID, VisionAudioPlaybackEvent) -> Void)?
         var notified: VisionAudioPlaybackEvent?
         var controlScheduled = false
+        var cleanupChanged: ((String?) -> Void)?
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let decodeQueue = DispatchQueue(label: "sill.vision-audio.decode", qos: .userInitiated)
-    private let output = VisionAudioOutput()
+    private let output: VisionAudioOutput
     private var decoder: VisionAACDecoder?
     private var decoderTicket: VisionAudioTicket?
     private var decoderGap: UInt64 = 0
 
-    deinit { stop() }
+    init(hardware: VisionAudioHardware = VisionAudioSharedHardware.shared, ownerID: UUID = UUID()) {
+        output = VisionAudioOutput(hardware: hardware, owner: ownerID)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.output.observe { [weak self] problem in
+                guard let self else { return }
+                let notification = self.state.withLock { value in (value.cleanupChanged, value.playback.ticket) }
+                notification.0?(problem)
+                if let problem, let ticket = notification.1 { self.fail(ticket, problem) }
+            }
+        }
+    }
+
+    var cleanupProblem: String? { output.hardware.cleanupProblem }
+    var onCleanupChange: ((String?) -> Void)? {
+        get { state.withLock { $0.cleanupChanged } }
+        set { state.withLock { $0.cleanupChanged = newValue } }
+    }
+
+    func retryCleanup() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        output.hardware.retryCleanup()
+    }
+
+    deinit {
+        stop()
+        let output = output
+        DispatchQueue.main.async { output.removeObserver() }
+    }
 
     func begin(grant: UUID, onEvent: @escaping (UUID, VisionAudioPlaybackEvent) -> Void) {
         let ticket = VisionAudioTicket(grant: grant, epoch: UUID())
         let accepted = state.withLock { value -> Bool in
-            guard VisionAudioProcess.lease.withLock({ $0.acquire(ticket.epoch) }) else { return false }
+            guard output.reserve(ticket) else { return false }
             value.playback.begin(ticket)
             value.callback = onEvent
             value.notified = nil
@@ -71,6 +99,7 @@ final class VisionAudioPlayer: @unchecked Sendable {
         }
         guard let ticket else { return }
         let output = output
+        output.revoke(ticket)
         DispatchQueue.main.async {
             if let error = output.close(ticket) {
                 VisionAudioProcess.log.error("Playback cleanup failed: \(error, privacy: .public)")
@@ -253,54 +282,42 @@ final class VisionAudioPlayer: @unchecked Sendable {
 }
 
 private final class VisionAudioOutput: @unchecked Sendable {
+    let hardware: VisionAudioHardware
+    private let owner: UUID
     private var ticket: VisionAudioTicket?
-    private var engine: AVAudioEngine?
-    private var version: UInt64 = 0
-    private var activationAttempted = false
     private var timer: DispatchSourceTimer?
     private var poll: (() -> Void)?
 
+    init(hardware: VisionAudioHardware, owner: UUID) { self.hardware = hardware; self.owner = owner }
+
+    private func claim(_ ticket: VisionAudioTicket) -> VisionAudioClaim {
+        VisionAudioClaim(owner: owner, role: .playback, epoch: ticket.epoch)
+    }
+
+    func reserve(_ ticket: VisionAudioTicket) -> Bool {
+        hardware.reserve(owner: owner, role: .playback, epoch: ticket.epoch) != nil
+    }
+
+    func revoke(_ ticket: VisionAudioTicket) { hardware.revoke(claim(ticket)) }
+
+    func observe(_ handler: @escaping (String?) -> Void) { hardware.observeProblems(owner: owner, handler: handler) }
+    func removeObserver() { hardware.removeObserver(owner: owner) }
+
     func arm(_ ticket: VisionAudioTicket, poll: @escaping () -> Void) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard VisionAudioProcess.lease.withLock({ $0.owner == ticket.epoch }) else { return }
         self.ticket = ticket
         self.poll = poll
     }
 
     func matches(_ ticket: VisionAudioTicket, version: UInt64) -> Bool {
-        self.ticket == ticket && self.version == version && engine != nil
+        self.ticket == ticket && hardware.matches(claim(ticket), version: version)
     }
 
     func start(_ ticket: VisionAudioTicket, format: VisionAudioFormat, version: UInt64,
-               permitted: () -> Bool, render: @escaping AVAudioSourceNodeRenderBlock) throws {
+               permitted: @escaping () -> Bool, render: @escaping AVAudioSourceNodeRenderBlock) throws {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard permitted(), self.ticket == ticket, VisionAudioProcess.lease.withLock({ $0.owner == ticket.epoch }) else {
-            throw NSError(domain: "VisionAudioPlayer", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Playback lease was revoked."])
-        }
-        engine?.stop()
-        engine = nil
-        guard let nativeFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.rate,
-                                               channels: AVAudioChannelCount(format.channels), interleaved: false) else {
-            throw NSError(domain: "VisionAudioPlayer", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "Unsupported playback format."])
-        }
-        if !activationAttempted {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            guard permitted() else { throw CancellationError() }
-            activationAttempted = true
-            try session.setActive(true)
-        }
-        guard permitted() else { throw CancellationError() }
-        let engine = AVAudioEngine()
-        self.engine = engine
-        let source = AVAudioSourceNode(format: nativeFormat, renderBlock: render)
-        engine.attach(source)
-        engine.connect(source, to: engine.mainMixerNode, format: nativeFormat)
-        try engine.start()
-        guard permitted() else { throw CancellationError() }
-        self.version = version
+        guard self.ticket == ticket, permitted() else { throw CancellationError() }
+        try hardware.startPlayback(claim(ticket), format: format, version: version, permitted: permitted, render: render)
         if timer == nil, let poll {
             let timer = DispatchSource.makeTimerSource(queue: .main)
             timer.schedule(deadline: .now(), repeating: .milliseconds(20), leeway: .milliseconds(5))
@@ -312,25 +329,14 @@ private final class VisionAudioOutput: @unchecked Sendable {
 
     func close(_ ticket: VisionAudioTicket) -> String? {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard VisionAudioProcess.lease.withLock({ $0.owner == ticket.epoch }) else { return nil }
         guard self.ticket == nil || self.ticket == ticket else { return nil }
-        engine?.stop()
-        engine = nil
+        hardware.revoke(claim(ticket))
         timer?.cancel()
         timer = nil
         poll = nil
-        if activationAttempted {
-            do {
-                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-                activationAttempted = false
-            } catch {
-                // Keep the lease if deactivation fails. Another window cannot inherit an active session.
-                return error.localizedDescription
-            }
-        }
+        let error = hardware.close(claim(ticket))
         self.ticket = nil
-        VisionAudioProcess.lease.withLock { $0.release(ticket.epoch) }
-        return nil
+        return error
     }
 }
 

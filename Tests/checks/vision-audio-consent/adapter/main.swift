@@ -2,6 +2,10 @@ import Foundation
 
 enum VisionAudioPlaybackEvent { case rendering, waiting, failed(String) }
 final class VisionAudioPlayer {
+    var cleanupProblem: String?
+    var onCleanupChange: ((String?) -> Void)?
+    var cleanupRetries = 0
+    func retryCleanup() { cleanupRetries += 1; cleanupProblem = nil; onCleanupChange?(nil) }
     var begins: [UUID] = []
     var packets: [UUID] = []
     var stops = 0
@@ -147,5 +151,16 @@ _ = delayedController.sendIfPermitted(delayed[0]) { staleSends += 1 }
 check(staleSends == 0, "expired queued Enable cannot run before main expiry callback")
 runActivationRegression()
 #endif
+controller.stop()
+let beforeCleanupSends = sent.count
+player.cleanupProblem = "synthetic cleanup failure"
+player.onCleanupChange?(player.cleanupProblem)
+drain()
+controller.enable()
+check(controller.cleanupProblem != nil && sent.count == beforeCleanupSends, "cleanup failure prevents new remote audio request")
+controller.retryCleanup()
+drain()
+check(player.cleanupRetries == 1 && controller.cleanupProblem == nil && sent.count == beforeCleanupSends,
+      "explicit cleanup retry cannot enable or send audio")
 print("Vision audio adapter: \(checks - failures)/\(checks) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

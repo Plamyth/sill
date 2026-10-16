@@ -269,14 +269,19 @@ private struct VisionAudioControls: View {
                    systemImage: running ? "speaker.slash" : "speaker.wave.2") {
                 if running { audio.stop() } else if allowStart { audio.enable() }
             }
-            .disabled(!running && (!audio.presentation.canEnable || !allowStart))
+            .disabled(!running && (!audio.presentation.canEnable || !allowStart || audio.cleanupProblem != nil))
             .accessibilityHint(running ? "즉시 소리를 중지합니다." : "선택한 Mac의 소리만 수신합니다. Mac으로 마이크를 전송하지 않습니다.")
             Text(message).font(.caption).lineLimit(2)
+            if audio.cleanupProblem != nil {
+                Button("오디오 정리 다시 시도", systemImage: "arrow.clockwise") { audio.retryCleanup() }
+                    .accessibilityHint("남아 있는 오디오 세션만 정리합니다. 소리나 마이크를 다시 켜지 않습니다.")
+            }
             Spacer()
         }
     }
 
     private var message: String {
+        if let problem = audio.cleanupProblem { return "오디오 정리가 필요합니다. " + problem }
         switch audio.presentation.phase {
         case .requesting: return "Mac의 소리 전송 확인을 기다립니다."
         case .waiting: return "소리 데이터를 기다립니다."
