@@ -448,8 +448,12 @@ final class StreamClient: ObservableObject {
     private(set) lazy var displayView: HEVCDisplayView = {
         let view = HEVCDisplayView(frame: .zero)
         view.onVideoSize = { [weak self] size in self?.videoSize = size }
+        #if os(visionOS)
+        view.onPresentation = { [weak self] ticket in self?.visionPresentationChanged(ticket) }
+        #else
         onParameterSets = { ps in view.apply(ps) }
         onFrame = { data, isKey in view.enqueue(data, isKeyframe: isKey) }
+        #endif
         return view
     }()
 
@@ -808,6 +812,8 @@ final class StreamClient: ObservableObject {
                     self.visionInputDebt.release(on: old).map(Self.visionInputBytes)
                 }
                 visionInputBinding = .awaitingCatalog
+                visionModernPeer = nil
+                displayView.setPresentation(epoch: nil, peer: nil, modern: true)
                 visionInputSession?.setMoving(false)
                 return
             }
@@ -826,7 +832,56 @@ final class StreamClient: ObservableObject {
     weak var visionInputSession: VisionInputSession?
     private var visionMovePreparation: UUID?
     private let visionInputDebt = VisionInputDebt()
-    @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog
+    private var visionModernPeer: ObjectIdentifier?
+    private var visionWireBinding: (peer: ObjectIdentifier, binding: VisionInputBinding)?
+    private var visionMediaPS: (epoch: UUID, ps: ParameterSets)?
+    private var visionInputPermit: UUID?
+    @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog {
+        didSet {
+            if !visionInputBinding.isConfirmed {
+                visionInputPermit = nil
+                link.setInputPermit(nil)
+            }
+        }
+    }
+
+    func setVisionPresentationForeground(_ foreground: Bool) {
+        displayView.setPresentationForeground(foreground)
+    }
+
+    private func observeVisionInputCatalog(_ list: WindowList, from peer: NWConnection) {
+        var bindingCatalog = list
+        let id = ObjectIdentifier(peer)
+        if visionWireBinding?.peer == id, visionWireBinding?.binding.isModern == true, list.presentationInput != 1 {
+            bindingCatalog.presentationInput = 1
+            bindingCatalog.videoEpoch = nil
+        }
+        let binding = VisionInputBinding(catalog: bindingCatalog)
+        if visionWireBinding?.peer != id || visionWireBinding?.binding != binding {
+            link.observeInputEpoch(binding.epoch?.id, modern: binding.isModern)
+            visionMediaPS = nil
+        }
+        visionWireBinding = (id, binding)
+    }
+
+    private func visionPresentationChanged(_ ticket: VisionPresentation.Ticket?) {
+        if let ticket, let peer = connection, ObjectIdentifier(peer) == ticket.peer,
+           case .awaitingPresentation(let epoch) = visionInputBinding, epoch == ticket.epoch {
+            guard link.setInputPermit(ticket.id, epoch: ticket.epoch.id) else { return }
+            visionInputBinding = .presented(ticket.epoch)
+            visionInputPermit = ticket.id
+        } else if ticket == nil {
+            if case .presented(let epoch) = visionInputBinding {
+                visionInputBinding = .awaitingPresentation(epoch)
+            }
+            if case .awaitingPresentation = visionInputBinding {
+                visionInputPermit = nil
+                link.setInputPermit(nil)
+                _ = visionInputSession?.takeReleases()
+                cancelVisionInputs()
+            }
+        }
+    }
 
     private static func visionInputBytes(_ input: CapturedVisionInput) -> Data {
         StreamMessage(kind: .input, timestamp: Date().timeIntervalSince1970,
@@ -836,14 +891,37 @@ final class StreamClient: ObservableObject {
     @discardableResult
     private func applyVisionInputCatalog(_ list: WindowList, from peer: NWConnection?) -> Bool {
         guard let peer, connection === peer else { return false }
-        let binding = VisionInputBinding(catalog: list)
+        let id = ObjectIdentifier(peer)
+        var catalog = list
+        if list.presentationInput == 1 { visionModernPeer = id }
+        if visionModernPeer == id, list.presentationInput != 1 {
+            catalog.presentationInput = 1
+            catalog.videoEpoch = nil
+        }
+        var binding = VisionInputBinding(catalog: catalog)
+        if case .awaitingPresentation(let epoch) = binding, let epoch,
+           visionInputBinding == .presented(epoch) { binding = .presented(epoch) }
         if active != list.active || visionInputBinding != binding {
+            visionInputPermit = nil
+            link.setInputPermit(nil)
             _ = visionInputSession?.takeReleases()
             cancelVisionInputs()
         }
         windows = list.windows
         active = list.active
         visionInputBinding = binding
+        switch binding {
+        case .awaitingPresentation(let epoch):
+            displayView.setPresentation(epoch: epoch, peer: id, modern: true)
+        case .presented(let epoch):
+            displayView.setPresentation(epoch: epoch, peer: id, modern: true)
+        case .awaitingCatalog:
+            break
+        case .confirmedLegacy, .scoped:
+            displayView.setPresentation(epoch: nil, peer: id, modern: false)
+            if visionInputPermit == nil { visionInputPermit = UUID() }
+            link.setInputPermit(visionInputPermit)
+        }
         return true
     }
 
@@ -1816,9 +1894,20 @@ final class StreamClient: ObservableObject {
         if let v = UserDefaults.standard.string(forKey: "SillHelloVersion"), !v.isEmpty { version = v }
         #endif
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        #if os(visionOS)
+        let presentationInput: Int? = 1
+        #else
+        let presentationInput: Int? = nil
+        #endif
         return Wire.encode(Hello(appVersion: version, build: build, protocol: SillProtocol.current,
-                                 device: ClientStatsReporter.deviceName, sourceInput: 1))
+                                 device: ClientStatsReporter.deviceName, sourceInput: 1, presentationInput: presentationInput))
     }()
+
+    private func noteVideoFrame(_ header: StreamHeader) {
+        let age = (Date().timeIntervalSince1970 - header.timestamp) * 1000
+        if age.isFinite { frameAgeSamples.append(min(max(age, 0), Self.sampleCeilingMs)) }
+        frameCounter += 1
+    }
 
     /// The hello, the first thing on every session connection, written straight to `c` before
     /// anything else can go out on it: a Mac with a device floor judges the device by its first
@@ -2196,7 +2285,7 @@ final class StreamClient: ObservableObject {
             // The session reader's caps (docs/remote-access-plan.md §3.7): nothing a Sill host sends
             // is bigger, and waiting for what such a header announces would hold whatever follows
             // until the move's 5 s run out.
-            let cap = header.kind == .frame ? StreamMessage.maxFramePayload : StreamMessage.maxOtherHostPayload
+            let cap = StreamMessage.hostPayloadLimit(for: header.kind)
             guard header.payloadLength <= cap else {
                 print("move to the network: closing, the host announced a \(header.payloadLength)-byte message (kind \(header.kind.rawValue))")
                 c.cancel()
@@ -3361,12 +3450,12 @@ final class StreamClient: ObservableObject {
     func sendInput(_ event: InputEvent) {
         #if os(visionOS)
         guard visionMovePreparation == nil, let expected = connection else { return }
-        guard let input = visionInputBinding.capture(event) else { return }
+        guard let input = visionInputBinding.capture(event), let permit = visionInputPermit else { return }
         lastInputAt = ProcessInfo.processInfo.systemUptime
         let bytes = Self.visionInputBytes(input)
         queue.async { [weak self] in
             guard let self else { return }
-            let accepted = self.link.send(bytes, onlyOn: expected) { [weak self] in
+            let accepted = self.link.send(bytes, onlyOn: expected, permit: permit) { [weak self] in
                 self?.visionInputDebt.record(input, on: expected)
             }
             guard accepted else { return }
@@ -3732,25 +3821,63 @@ final class StreamClient: ObservableObject {
                 visionAudio.stop(problem: response.reason.map { String($0.prefix(160)) })
             }
         #endif
+        #if os(visionOS)
+        case .epochParameterSets, .epochFrame:
+            guard connection === peer, visionWireBinding?.peer == ObjectIdentifier(peer),
+                  let epoch = visionWireBinding?.binding.epoch, let payload = PresentationMedia.decode(data, kind: header.kind),
+                  epoch.id == payload.epoch else { return }
+            if header.kind == .epochParameterSets, let ps = ParameterSets(encoded: payload.media) {
+                visionMediaPS = (epoch.id, ps)
+            } else {
+                guard let cached = visionMediaPS, cached.epoch == epoch.id,
+                      PresentationMedia.validFrame(payload.media, nalLength: cached.ps.nalUnitHeaderLength, keyframe: header.isKeyframe) else { return }
+                noteVideoFrame(header)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.connection === peer else { return }
+                if header.kind == .epochParameterSets, let ps = ParameterSets(encoded: payload.media) {
+                    self.displayView.receiveParameters(ps, epoch: payload.epoch, peer: ObjectIdentifier(peer))
+                } else if header.kind == .epochFrame {
+                    self.displayView.receiveFrame(payload.media, keyframe: header.isKeyframe, epoch: payload.epoch, peer: ObjectIdentifier(peer))
+                }
+            }
+        #endif
         case .parameterSets:
+            #if os(visionOS)
+            guard visionWireBinding?.peer == ObjectIdentifier(peer),
+                  visionWireBinding?.binding.isLegacy == true else { return }
+            #endif
             if let ps = ParameterSets(encoded: data) {
                 lastParameterSets = ps
+                #if os(visionOS)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.connection === peer else { return }
+                    self.displayView.applyLegacy(ps, peer: ObjectIdentifier(peer))
+                }
+                #else
                 onParameterSets?(ps)
+                #endif
             }
         case .frame:
-            // Every frame is a sample, stamped on arrival before the hand-off to the display layer:
-            // the worst frame of a second is the stutter, and one sample in fifteen missed it.
-            // Clocks that disagree can make an age negative; nothing arrives before it was sent, so
-            // that reads as 0, which keeps -1 free on the wire for "no frame this second".
-            let age = (Date().timeIntervalSince1970 - header.timestamp) * 1000
-            if age.isFinite { frameAgeSamples.append(min(max(age, 0), Self.sampleCeilingMs)) }
-            frameCounter += 1
+            #if os(visionOS)
+            guard visionWireBinding?.peer == ObjectIdentifier(peer),
+                  visionWireBinding?.binding.isLegacy == true else { return }
+            #endif
+            noteVideoFrame(header)
+            #if os(visionOS)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.connection === peer else { return }
+                self.displayView.enqueueLegacy(data, isKeyframe: header.isKeyframe, peer: ObjectIdentifier(peer))
+            }
+            #else
             onFrame?(data, header.isKeyframe)
+            #endif
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
             let from: NWConnection? = peer
             #if os(visionOS)
             guard connection === peer else { return }
+            observeVisionInputCatalog(list, from: peer)
             let availability = visionAudioRoute.observe(peer, source: list.active, supported: list.remoteAudio == 1)
             visionAudio.update(availability)
             #endif

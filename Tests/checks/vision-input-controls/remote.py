@@ -20,7 +20,7 @@ try:
  record['inputHashesMatched']=True;original=p['hashes'];p=None
  output=pathlib.Path(tempfile.mkdtemp(prefix='ccr-reconnect-output-',dir='/private/tmp'))
  cache=str(output/'cache')
- sources=[str(package/n) for n in ['Client.swift','iOSClient/SessionLink.swift','iOSClient/KeyChords.swift','Sources/SillHost/KeyStrokes.swift','visionOSClient/VisionPointer.swift','visionOSClient/VisionInputSession.swift','visionOSClient/VisionInputDebt.swift','visionOSClient/VisionRemoteKey.swift','Tests/checks/vision-input-controls/SourceInputFence.swift','main.swift']]
+ sources=[str(package/n) for n in ['Client.swift','iOSClient/SessionLink.swift','iOSClient/KeyChords.swift','Sources/SillHost/KeyStrokes.swift','visionOSClient/VisionPointer.swift','visionOSClient/VisionInputSession.swift','visionOSClient/VisionInputDebt.swift','visionOSClient/VisionPresentation.swift','visionOSClient/VisionRemoteKey.swift','Tests/checks/vision-input-controls/SourceInputFence.swift','main.swift']]
  def module(name, source):
   return ['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-module-name',name,str(package/source),'-emit-module-path',str(output/(name+'.swiftmodule')),'-o',str(output/(name+'.o')),'-module-cache-path',cache]
  protocol=['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-whole-module-optimization','-module-name','StreamProtocol']+[str(package/('Sources/StreamProtocol/'+name+'.swift')) for name in ['Input','Switcher','StreamMessage','Compatibility']]+['-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'StreamProtocol.o'),'-module-cache-path',cache]
@@ -31,7 +31,7 @@ try:
  ]
  commands += [[str(output/'legacy-fence'),mode] for mode in ['ok','nofence','timeout','oldcloses','hold','holdclosed','unhold','adoptfence','twofences','twomoves','holdfence','holdadopt','newsession','newsessionhold','count','remotehome','remotedead']]
  mutants={'debt':('Client.swift','mutants/debt/Client.swift','actual setter releases old peer atomically'),'route':('iOSClient/SessionLink.swift','mutants/route/SessionLink.swift','late old input refused after handover')}
- mutants['capture']=('Client.swift','mutants/capture/Client.swift','queued input retains generation captured on main')
+ mutants['capture']=('Client.swift','mutants/capture/Client.swift','queued input revoked before submission cannot cross source update')
  mutants['generation']=('visionOSClient/VisionInputDebt.swift','mutants/generation/VisionInputDebt.swift','source change releases held input with original generation')
  mutants['admission']=('Client.swift','mutants/admission/Client.swift','awaiting fresh catalog blocks native transport before enqueue')
  mutants['controls']=('visionOSClient/VisionInputSession.swift','mutants/controls/VisionInputSession.swift','awaiting fresh catalog keeps native controls disabled')
