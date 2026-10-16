@@ -28,16 +28,27 @@ final class UserDefaults {
     func string(forKey key: String) -> String? { strings[key] }
     func set(_ value: String, forKey key: String) { strings[key] = value }
 }
+final class DispatchWorkItem {
+    private let body: () -> Void
+    private(set) var cancelled = false
+    init(block: @escaping () -> Void) { body = block }
+    func cancel() { cancelled = true }
+    func performEvenIfCancelled() { body() }
+}
 final class DispatchQueue {
     static let main = DispatchQueue()
     var scheduled = 0
     var held: [() -> Void] = []
     var hold = false
+    var timers: [(DispatchTime, DispatchWorkItem)] = []
     func async(execute: @escaping () -> Void) {
         if self === Self.main || hold { held.append(execute) } else { execute() }
     }
     func asyncAfter(deadline: DispatchTime, execute: @escaping () -> Void) { scheduled += 1 }
-    func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) { scheduled += 1 }
+    func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) {
+        scheduled += 1
+        timers.append((deadline, execute))
+    }
     func drain() {
         for _ in 0..<1000 {
             guard !held.isEmpty else { return }
@@ -91,6 +102,7 @@ final class StreamClient {
     static let keepsLoopback = false
     static let lookingOnNetwork = "looking"
     private var startupAutoConnection: StartupAutoConnection = .unarmed
+    private var startupRemoteCheck: DispatchWorkItem?
     var visionCableBootstrap: VisionCableBootstrap<FoundMac>
     var savedMacs: [SavedMac] = []
     var macs: [FoundMac] = []
@@ -120,6 +132,9 @@ final class StreamClient {
     var sentMethods: [String] = []
     var sentCable: [Bool?] = []
     var sessionPins: [Data] = []
+    var sessionRows: [FoundMac] = []
+    enum DialReason { case launchArgument }
+    var remoteAttempts: [(String, DialReason)] = []
     var writes = 0
     var identityCalls = 0
     var withdrawals = 0
@@ -143,14 +158,19 @@ final class StreamClient {
     func withdrawAsk(at target: HomeDialer.Target, key: Data) { withdrawals += 1 }
     func markNewKey(_ id: String) { savedMacs = SavedMacs.markingNewKey(id, in: savedMacs) ?? savedMacs }
     func updateDiscovery() {}
-    func discoveryChanged() { considerVisionCableBootstrap() }
+    func discoveryChanged() { trySavedMacAutoConnect(); considerVisionCableBootstrap() }
     func tearDown(status: String, restartSearch: Bool) { self.status = status; connected = false }
     func dialRow(_ row: FoundMac, macID: String?, trust: DiscoveryPolicy.HomeTrust, tagNamed: Bool, tap: Bool = false) -> Bool {
         guard DeviceIdentity.existing() != nil, case .saved(let pin) = trust else { return false }
         sessionPins.append(pin)
+        sessionRows.append(row)
         session = Session(macID: macID, route: .network, home: trust)
         connection = NWConnection()
         return true
+    }
+    func dialSaved(_ macID: String, why: DialReason) {
+        remoteAttempts.append((macID, why))
+        remoteDial = RemoteConnector()
     }
     func connect(to endpoint: NWEndpoint, name: String, peerToPeer: Bool, macID: String?, trust: DiscoveryPolicy.HomeTrust) {
         if case .saved(let pin) = trust { sessionPins.append(pin) }

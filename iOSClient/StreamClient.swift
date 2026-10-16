@@ -170,9 +170,23 @@ final class StreamClient: ObservableObject {
     @Published var savedMacs: [SavedMac] = []
 
     #if os(iOS) || os(visionOS)
+    #if os(visionOS)
+    private struct VisionStartupTarget {
+        let token = UUID()
+        let macID: String
+        let pin: Data
+        let recognitionKey: Data
+        let preferredID: String?
+    }
+    private var startupRemoteCheck: DispatchWorkItem?
+    #endif
     private enum StartupAutoConnection {
         case unarmed
+        #if os(visionOS)
+        case waiting(VisionStartupTarget)
+        #else
         case waiting(String)
+        #endif
         case attempted
         case stopped
     }
@@ -823,6 +837,7 @@ final class StreamClient: ObservableObject {
         get { link.connection }
         set {
             #if os(visionOS)
+            if newValue != nil { stopSavedMacAutoConnect() }
             if link.connection !== newValue {
                 microphoneSetConnection(newValue)
                 resetVisionAudio()
@@ -953,7 +968,10 @@ final class StreamClient: ObservableObject {
 
     func setVisionPresentationForeground(_ foreground: Bool) {
         visionTextForeground = foreground
-        if !foreground { revokeVisionTextDrafts(); microphoneBackgrounded() }
+        if !foreground {
+            if visionStartupStarted { stopSavedMacAutoConnect() }
+            revokeVisionTextDrafts(); microphoneBackgrounded()
+        }
         displayView.setPresentationForeground(foreground)
     }
 
@@ -1213,6 +1231,9 @@ final class StreamClient: ObservableObject {
     /// an identity, opens a pairing ask, or chooses a different Mac after a stored preference fails.
     func armSavedMacAutoConnect() {
         guard case .unarmed = startupAutoConnection else { return }
+        #if os(visionOS)
+        guard case .ordinary = visionCableBootstrap.launch else { stopSavedMacAutoConnect(); return }
+        #endif
         #if DEBUG
         // Explicit harness dials and seeded records own their own startup behavior.
         if CommandLine.arguments.contains(where: { $0.hasPrefix("-Sill") }) { startupAutoConnection = .stopped; return }
@@ -1227,15 +1248,38 @@ final class StreamClient: ObservableObject {
             startupAutoConnection = .stopped
             return
         }
+        #if os(visionOS)
+        guard let pin = target.fingerprintData, let recognitionKey = target.recognitionKeyData else { return }
+        startupAutoConnection = .waiting(VisionStartupTarget(macID: target.macID, pin: pin,
+            recognitionKey: recognitionKey, preferredID: preferred))
+        #else
         startupAutoConnection = .waiting(target.macID)
+        #endif
         trySavedMacAutoConnect()
+        #if os(visionOS)
+        if case .waiting(let target) = startupAutoConnection {
+            let work = DispatchWorkItem { [weak self] in
+                self?.tryVisionSavedMacAutoConnect(expired: target.token)
+            }
+            startupRemoteCheck = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + DiscoveryPolicy.remoteWait, execute: work)
+        }
+        #endif
+    }
+
+    func stopSavedMacAutoConnect() {
+        startupAutoConnection = .stopped
+        #if os(visionOS)
+        startupRemoteCheck?.cancel()
+        startupRemoteCheck = nil
+        #endif
     }
 
     /// Called only after a formal pairing or an authenticated session with a saved Mac.
     func rememberPreferredMac(_ macID: String) {
         guard SavedMacs.automaticTarget(savedMacs, preferredID: macID) != nil else { return }
         UserDefaults.standard.set(macID, forKey: Self.preferredTrustedMacKey)
-        startupAutoConnection = .stopped
+        stopSavedMacAutoConnect()
     }
 
     func rememberAuthenticatedMac() {
@@ -1247,10 +1291,13 @@ final class StreamClient: ObservableObject {
         } else if case .saved(let sessionPin) = session.home, sessionPin == pin {
             rememberPreferredMac(macID)
         }
-        startupAutoConnection = .stopped
+        stopSavedMacAutoConnect()
     }
 
     private func trySavedMacAutoConnect() {
+        #if os(visionOS)
+        tryVisionSavedMacAutoConnect()
+        #else
         guard case .waiting(let macID) = startupAutoConnection,
               appInForeground, !connected, connection == nil, reconnect == nil,
               pairing == .idle, homeAsk == nil,
@@ -1263,7 +1310,34 @@ final class StreamClient: ObservableObject {
             status = "This \(Self.deviceWord)'s saved device key is unavailable. Unlock this \(Self.deviceWord) and reopen Sill."
             startupAutoConnection = .stopped
         }
+        #endif
     }
+    #if os(visionOS)
+    private func tryVisionSavedMacAutoConnect(expired token: UUID? = nil) {
+        guard case .waiting(let target) = startupAutoConnection else { return }
+        guard appInForeground, visionStartupForeground, !connected, connection == nil, reconnect == nil,
+              remoteDial == nil, pairingDial == nil, homeDialer == nil, pairing == .idle, homeAsk == nil,
+              case .ordinary = visionCableBootstrap.launch,
+              UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey) == target.preferredID,
+              let saved = SavedMacs.automaticTarget(savedMacs, preferredID: target.preferredID),
+              saved.macID == target.macID, saved.fingerprintData == target.pin,
+              saved.recognitionKeyData == target.recognitionKey,
+              DeviceIdentity.existing() != nil else { stopSavedMacAutoConnect(); return }
+        let rows = macs.filter { $0.route == .network && $0.macID == target.macID && $0.carriesTag &&
+            $0.endpoint != nil && homeDecision($0, macID: target.macID, tap: false) == .pinned }
+        let row = rows.first(where: { wiredDial(for: $0) != nil }) ?? rows.first
+        guard row != nil || token == target.token else { return }
+        stopSavedMacAutoConnect()
+        startupAutoConnection = .attempted
+        if let row {
+            if !dialRow(row, macID: target.macID, trust: .saved(pin: target.pin), tagNamed: true, tap: false) {
+                status = "저장된 기기 키를 사용할 수 없습니다. Vision Pro의 잠금을 해제한 뒤 앱을 다시 열어 주세요."
+            }
+        } else {
+            dialSaved(target.macID, why: .launchArgument)
+        }
+    }
+    #endif
     #endif
 
     /// Makes `kind`'s browser and starts it. The network one never peer-to-peer: includePeerToPeer stays
@@ -1351,6 +1425,7 @@ final class StreamClient: ObservableObject {
         #endif
         appInForeground = false
         #if os(visionOS)
+        if visionStartupStarted { stopSavedMacAutoConnect() }
         stopVisionCableBootstrap(.foregroundRequired)
         #endif
         reconnectCheck?.cancel()
@@ -1705,7 +1780,7 @@ final class StreamClient: ObservableObject {
         stopVisionCableBootstrap(.cancelled)
         #endif
         #if os(iOS) || os(visionOS)
-        startupAutoConnection = .stopped
+        stopSavedMacAutoConnect()
         #endif
         #if DEBUG
         if mockDiscovery {
@@ -3426,7 +3501,7 @@ final class StreamClient: ObservableObject {
         stopVisionCableBootstrap(.cancelled)
         #endif
         #if os(iOS) || os(visionOS)
-        startupAutoConnection = .stopped
+        stopSavedMacAutoConnect()
         #endif
         reconnect = nil
         cancelRemoteDial()

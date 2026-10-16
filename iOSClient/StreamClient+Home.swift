@@ -467,6 +467,9 @@ extension StreamClient {
     /// removed this device, whose key the ask and the proofs are pinned to; otherwise any key, and
     /// the one the ask saw is kept (`askedKey`).
     func ask(_ mac: FoundMac, savedID: String?, tagNamed: Bool, tried: [String] = [], replaces: String? = nil, bootstrapPin: Data? = nil) {
+        #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
         guard let endpoint = mac.endpoint else { return }
         let wired = wiredDial(for: mac)
         if bootstrapPin != nil {

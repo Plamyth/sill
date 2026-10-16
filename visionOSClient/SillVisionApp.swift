@@ -201,7 +201,7 @@ struct SillVisionWorkspace: View {
                 Button {
                     withWindowOwnership { client.connect(to: mac) }
                 } label: {
-                    HStack { Text(mac.name); Spacer(); Text(mac.word ?? "") }
+                    HStack { Text(mac.name); Spacer(); Text(VisionConnectionCopy.route(mac)) }
                 }
                 .disabled(mac.savedID.flatMap { SavedMacs.automaticTarget(client.savedMacs, preferredID: $0) } == nil)
             }
@@ -219,7 +219,7 @@ struct SillVisionWorkspace: View {
                 Button {
                     withWindowOwnership { client.connect(to: mac) }
                 } label: {
-                    HStack { Text(mac.name); Spacer(); Text(mac.word ?? "") }
+                    HStack { Text(mac.name); Spacer(); Text(VisionConnectionCopy.route(mac)) }
                 }
             }
             if let ask = client.homeAsk {
@@ -230,7 +230,7 @@ struct SillVisionWorkspace: View {
                     Button("취소") { withWindowOwnership { client.cancelHomeAsk() }; code = "" }
                 }
             }
-            if case .failed(let problem) = client.pairing { Text(problem.text).foregroundStyle(.orange) }
+            if case .failed(let problem) = client.pairing { Text(VisionConnectionCopy.problem(problem)).foregroundStyle(.orange) }
             Button("주소로 Mac 추가") { addMac = true }
             Button("닫기") { withWindowOwnership { client.cancelHomeAsk() }; code = ""; recoveryShown = false }
         }
@@ -309,7 +309,7 @@ struct SillVisionWorkspace: View {
             Text("Mac 주소로 페어링").font(.title2)
             TextField("Mac 주소", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled()
             TextField("12자리 코드", text: $code).textContentType(.oneTimeCode)
-            if case .failed(let problem) = client.pairing { Text(problem.text).foregroundStyle(.orange) }
+            if case .failed(let problem) = client.pairing { Text(VisionConnectionCopy.problem(problem)).foregroundStyle(.orange) }
             Button("페어링") { withWindowOwnership { client.pairTyped(code: code, address: address, overlay: false) }; code = "" }
             Button("닫기") { withWindowOwnership { client.cancelPairing() }; code = ""; addMac = false }
         }.padding(30).frame(width: 550)
@@ -321,7 +321,7 @@ struct SillVisionWorkspace: View {
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !audioOfferShown
     }
 
     private func updateInputAdmission() {
@@ -462,6 +462,53 @@ private struct VisionMicrophoneControls: View {
                 "마지막 조회에서 Mac 수신 확인 · 실제 통화 입력은 별도 확인" : "전송 허용됨 · 수신 확인을 눌러 조회하세요."
         case .stopping: return "음성 전송을 중지했습니다. Mac의 정리 확인을 기다립니다."
         case .failed(let problem): return problem
+        }
+    }
+}
+
+private enum VisionConnectionCopy {
+    static func route(_ mac: FoundMac) -> String {
+        if mac.route == .remote { return "원격" }
+        switch mac.homeWord {
+        case .method(let method):
+            switch method {
+            case .wired: return "유선"
+            case .wifi: return "와이파이"
+            case .direct: return "직접 무선 연결"
+            case nil: return ""
+            }
+        case .notPaired: return "페어링 필요"
+        case .openDoor: return "페어링 없이 연결"
+        case .pairsOverCable: return "유선"
+        case .updateSill: return "Mac 앱 업데이트 필요"
+        }
+    }
+
+    static func problem(_ problem: PairingProblem) -> String {
+        switch problem {
+        case .address: return "올바른 Mac 주소를 입력해 주세요."
+        case .zone: return "주소에서 % 뒤의 부분을 지워 주세요. 해당 표시는 같은 네트워크에서만 사용할 수 있습니다."
+        case .codeLength: return "페어링 코드는 12자리입니다."
+        case .codeTypo: return "코드를 확인해 주세요. Mac에 표시된 코드와 일치해야 합니다."
+        case .wrongCode(let left): return "코드가 일치하지 않습니다. 남은 시도는 \(left)회입니다."
+        case .notPairing(let mac): return "\(mac)에서 CCR Sill의 기기 페어링을 먼저 시작해 주세요."
+        case .stopped(let mac), .homeStopped(let mac): return "시도 횟수를 초과했습니다. \(mac)에서 새 페어링을 시작해 주세요."
+        case .expired: return "코드가 만료됐습니다. Mac에서 새 페어링을 시작해 주세요."
+        case .homeExpired(let mac): return "코드가 만료됐습니다. \(mac) 항목을 다시 선택하면 새 코드를 받을 수 있습니다."
+        case .proofFailed(let host):
+            return "\(host)의 연결 신원을 확인하지 못했습니다. Mac과 같은 네트워크에서 다시 페어링하거나 페어링 코드를 스캔해 주세요."
+        case .homeProofFailed(let mac):
+            return "\(mac)의 연결 신원을 확인하지 못했습니다. Mac 목록에서 해당 항목을 다시 선택해 주세요."
+        case .proofFailedOverStream(let mac):
+            return "\(mac)의 연결 신원을 확인하지 못했습니다. 페어링을 다시 시도해 주세요."
+        case .nothingAnswered(let host), .homeNoAnswer(let host), .noAnswerOverStream(let host):
+            return "\(host)에서 응답하지 않습니다. 주소와 Mac의 CCR Sill 실행 상태를 확인해 주세요."
+        case .notSill(let host): return "\(host)의 앱이 CCR Sill인지, 최신 버전인지 확인해 주세요."
+        case .localNetwork(let host): return "\(host)에 연결하려면 설정에서 CCR Sill의 로컬 네트워크 접근을 허용해 주세요."
+        case .notALink: return "CCR Sill 페어링 링크가 아닙니다."
+        case .noKey: return "Vision Pro의 연결 키를 사용할 수 없습니다. 잠금을 해제한 뒤 앱을 다시 열어 주세요."
+        case .homeClosed(let mac): return "\(mac)의 페어링이 종료됐습니다. Mac에서 다시 시작해 주세요."
+        case .macSaid(let words): return words
         }
     }
 }

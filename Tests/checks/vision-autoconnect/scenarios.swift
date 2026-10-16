@@ -151,6 +151,127 @@ ordinaryUnrelated.macs = [row()]; ordinaryUnrelated.armSavedMacAutoConnect()
 check("saved cold startup requires a recognized tagged network row", ordinaryUnrelated.sessionPins.isEmpty && ordinaryUnrelated.homeDialer == nil)
 let normalAsk = fresh(.ordinary); normalAsk.ask(row(), savedID: nil, tagNamed: false)
 check("existing nonbootstrap callers retain normal fallback", normalAsk.homeDialer?.pin == nil && normalAsk.homeDialer?.targets[0].fallback != nil && normalAsk.homeDialer?.targets[0].cableOnly == false)
+func savedStartup(_ mode: Boot.Launch = .ordinary) -> StreamClient {
+    let client = fresh(mode)
+    client.macs = []
+    client.savedMacs = paired.savedMacs
+    client.savedMacs[0].addresses = [MacAddress(host: "fixture-mac.example.invalid", kind: MacAddress.vpn, via: "Fixture VPN")]
+    UserDefaults.standard.set(client.savedMacs[0].macID, forKey: StreamClient.preferredTrustedMacKey)
+    return client
+}
+func armRemote(_ client: StreamClient) -> DispatchWorkItem {
+    let before = DispatchQueue.main.timers.count
+    client.armSavedMacAutoConnect()
+    precondition(DispatchQueue.main.timers.count == before + 1, "one startup deadline must be armed")
+    return DispatchQueue.main.timers.last!.1
+}
+let away = savedStartup()
+let awayTimer = armRemote(away)
+check("no Bonjour cold start waits through discovery grace", away.remoteAttempts.isEmpty && away.sessionPins.isEmpty)
+awayTimer.performEvenIfCancelled()
+check("deadline hands the trusted saved ID to existing one-shot remote dial", away.remoteAttempts.count == 1 && away.remoteAttempts[0].0 == result.macID && away.remoteAttempts[0].1 == .launchArgument)
+away.remoteDial = nil
+awayTimer.performEvenIfCancelled(); away.discoveryChanged(); away.armSavedMacAutoConnect()
+check("remote failure cannot rearm a cold-start attempt", away.remoteAttempts.count == 1 && away.identityCalls == 0 && away.sentMethods.isEmpty)
+let duringGrace = savedStartup()
+let cableTimer = armRemote(duringGrace)
+duringGrace.macs = [row(macID: result.macID, tagged: true)]
+duringGrace.discoveryChanged()
+check("cable appearing during grace consumes startup with saved pin", duringGrace.sessionPins == [pin] && duringGrace.sessionRows.first?.wired != nil && cableTimer.cancelled)
+cableTimer.performEvenIfCancelled()
+check("late remote deadline cannot replace cable connection", duringGrace.remoteAttempts.isEmpty && duringGrace.sessionPins.count == 1)
+let bothRows = savedStartup()
+bothRows.macs = [row(wired: false, macID: result.macID, tagged: true), row(macID: result.macID, tagged: true)]
+bothRows.armSavedMacAutoConnect()
+check("actual cable wins over listed Wi-Fi before any remote grace", bothRows.sessionRows.first?.wired != nil && bothRows.remoteAttempts.isEmpty)
+let wifiFirst = savedStartup()
+wifiFirst.macs = [row(wired: false, macID: result.macID, tagged: true)]
+wifiFirst.armSavedMacAutoConnect()
+check("pinned network row starts immediately without remote attempt", wifiFirst.sessionRows.count == 1 && wifiFirst.remoteAttempts.isEmpty)
+let manual = savedStartup()
+let manualTimer = armRemote(manual)
+manual.stopSavedMacAutoConnect()
+let manualConnection = NWConnection()
+manual.connection = manualConnection
+manual.connected = true
+manualTimer.performEvenIfCancelled()
+check("already queued timer cannot replace manual session after cancellation", manual.connection === manualConnection && manual.remoteAttempts.isEmpty)
+manual.connection = nil; manual.connected = false; manual.discoveryChanged(); manualTimer.performEvenIfCancelled()
+check("manual session ending does not revive consumed startup", manual.remoteAttempts.isEmpty)
+let changedPreference = savedStartup()
+let preferenceTimer = armRemote(changedPreference)
+var otherSaved = changedPreference.savedMacs[0]
+otherSaved.fingerprint = Base64URL.encode(otherPin); otherSaved.macID = MacID.make(fingerprint: otherPin)
+changedPreference.savedMacs.append(otherSaved)
+changedPreference.rememberPreferredMac(otherSaved.macID)
+preferenceTimer.performEvenIfCancelled()
+check("new authenticated preference cancels old startup deadline", changedPreference.remoteAttempts.isEmpty && preferenceTimer.cancelled)
+let rawPreference = savedStartup()
+let rawPreferenceTimer = armRemote(rawPreference)
+UserDefaults.standard.set("another-preference", forKey: StreamClient.preferredTrustedMacKey)
+rawPreferenceTimer.performEvenIfCancelled()
+check("deadline revalidates current preference even without discovery event", rawPreference.remoteAttempts.isEmpty)
+for mutation in 0..<6 {
+    let client = savedStartup()
+    let timer = armRemote(client)
+    switch mutation {
+    case 0: client.savedMacs[0].revoked = true
+    case 1: client.savedMacs[0].newKey = true
+    case 2: client.savedMacs[0].homeTLS = false
+    case 3: client.savedMacs[0].recognitionKey = Base64URL.encode(Data(repeating: 0x44, count: 32))
+    case 4: client.savedMacs.removeAll()
+    default: DeviceIdentity.available = false
+    }
+    timer.performEvenIfCancelled()
+    DeviceIdentity.available = true
+    client.discoveryChanged(); timer.performEvenIfCancelled()
+    check("changed trust or unavailable device key stops deadline without enrollment or retry", client.remoteAttempts.isEmpty && client.sessionPins.isEmpty && client.identityCalls == 0 && client.sentMethods.isEmpty)
+}
+for occupied in 0..<8 {
+    let client = savedStartup()
+    let timer = armRemote(client)
+    switch occupied {
+    case 0: client.connected = true
+    case 1: client.connection = NWConnection()
+    case 2: client.reconnect = 1
+    case 3: client.remoteDial = RemoteConnector()
+    case 4: client.pairingDial = RemoteConnector()
+    case 5: client.pairing = .working
+    case 6: client.homeDialer = HomeDialer(targets: [], pin: nil, identity: RemoteIdentity(), queue: client.queue)
+    default: client.homeAsk = HomeAsk(target: .init(endpoint: row().endpoint!, label: "fixture"), name: "fixture", cableRow: false, savedID: nil, tagNamed: false)
+    }
+    timer.performEvenIfCancelled()
+    client.connected = false; client.connection = nil; client.reconnect = nil; client.remoteDial = nil
+    client.pairingDial = nil; client.pairing = .idle; client.homeDialer = nil; client.homeAsk = nil
+    timer.performEvenIfCancelled(); client.discoveryChanged()
+    check("occupied startup does not replace work or revive when it finishes", client.remoteAttempts.isEmpty && client.sessionPins.isEmpty)
+}
+for appBackground in [false, true] {
+    let client = savedStartup()
+    let timer = armRemote(client)
+    if appBackground { client.appInForeground = false } else { client.visionStartupForeground = false }
+    timer.performEvenIfCancelled()
+    client.appInForeground = true; client.visionStartupForeground = true
+    timer.performEvenIfCancelled(); client.discoveryChanged()
+    check("app or scene background permanently closes pending startup", client.remoteAttempts.isEmpty && timer.cancelled)
+}
+for mode in [launch, Boot.Launch.invalid] {
+    let client = savedStartup(mode)
+    let before = DispatchQueue.main.timers.count
+    client.armSavedMacAutoConnect(); client.discoveryChanged()
+    check("explicit or invalid cable bootstrap never arms remote fallback", client.remoteAttempts.isEmpty && DispatchQueue.main.timers.count == before)
+}
+let nameOnly = savedStartup()
+nameOnly.macs = [row(macID: nil, tagged: false)]
+let nameTimer = armRemote(nameOnly)
+nameTimer.performEvenIfCancelled()
+check("same-name unrecognized Bonjour row never enrolls or becomes a home dial", nameOnly.sessionPins.isEmpty && nameOnly.sentMethods.isEmpty && nameOnly.remoteAttempts.first?.0 == result.macID)
+let missingAtLaunch = savedStartup()
+DeviceIdentity.available = false
+let missingTimers = DispatchQueue.main.timers.count
+missingAtLaunch.armSavedMacAutoConnect()
+DeviceIdentity.available = true; missingAtLaunch.discoveryChanged(); missingAtLaunch.armSavedMacAutoConnect()
+check("missing launch key never rearms after unlock without a new process", missingAtLaunch.remoteAttempts.isEmpty && missingAtLaunch.sessionPins.isEmpty && DispatchQueue.main.timers.count == missingTimers)
 let proofOnly = VisionAutoConnectStatus(build: "3", startupMode: .cableBootstrap, phase: .paired,
     savedMacCount: 1, expectedMacMatched: false, connected: false, catalogReceived: false,
     presentationReady: false, inputReady: false, reasonFixed: .waitingForService)

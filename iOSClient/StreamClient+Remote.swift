@@ -197,6 +197,9 @@ extension StreamClient {
     /// The card's Cancel while a pairing dial runs: it stops, nothing is saved. The home card's too:
     /// the ask, or the proof at the home door, stops, and the card folds (`homeAsk`).
     func cancelPairing() {
+        #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
         pairingAttempt += 1          // a "busy" retry still waiting stays cancelled
         pairingDial?.cancel()
         pairingDial = nil
@@ -297,6 +300,9 @@ extension StreamClient {
     /// Dials a saved Mac at its saved addresses (§7.5). A tap on its Remote row, Connect Remotely
     /// on its network row, the session after a pairing, the automatic reconnect, `-SillDialSaved`.
     func dialSaved(_ macID: String, why: DialReason) {
+        #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
         guard let mac = savedMac(macID), let pin = mac.fingerprintData else { return }
         let name = displayName(macID)
         guard let identity = DeviceIdentity.existing() else {
@@ -875,6 +881,9 @@ extension StreamClient {
     private func startPairing(candidates: [RemoteDialPolicy.Candidate], pin: Data?, key: @escaping (Data) -> SymmetricKey?,
                               method: String, macName: String?, port: Int, addresses: [MacAddress], typed: MacAddress?,
                               overlay: Bool, scannedSecret: Data?, busyRetried: Bool) {
+        #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
         lastScannedSecret = scannedSecret
         pairingAttempt += 1
         let attempt = pairingAttempt

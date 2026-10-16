@@ -40,14 +40,24 @@ def vision(source):
 def emit(root, output):
     stream = (root / 'iOSClient/StreamClient.swift').read_text()
     home = (root / 'iOSClient/StreamClient+Home.swift').read_text()
+    remote = (root / 'iOSClient/StreamClient+Remote.swift').read_text()
+    for source, markers in [(stream, ['func setVisionPresentationForeground(', 'private func wentToBackground(',
+                                      'func connect(to mac:', 'func disconnect()', 'var connection: NWConnection?']),
+                            (remote, ['func cancelPairing(', 'func dialSaved(', 'private func startPairing(']),
+                            (home, ['func ask('])]:
+        for marker in markers:
+            if 'stopSavedMacAutoConnect()' not in vision(block(source, marker)):
+                raise ValueError('missing Vision startup cancellation at ' + marker)
     protocol = root / 'Sources/StreamProtocol'
     pieces = {}
     for marker in ['func ask(', 'func startAsk(', 'private func asked(', 'private func askFailed(',
                    'func cancelHomeAsk(', 'private func savePairedAtHome(', 'private func sessionAfterHomePairing(',
                    'private func askedTarget(', 'static func bonjourName(', 'func homeRows(']:
         pieces[marker] = vision(block(home, marker))
-    for marker in ['private enum StartupAutoConnection', 'func armSavedMacAutoConnect(', 'func rememberPreferredMac(',
-                   'func rememberAuthenticatedMac(', 'private func trySavedMacAutoConnect(', 'func homeDecision(', 'func wiredDial(']:
+    for marker in ['private struct VisionStartupTarget', 'private enum StartupAutoConnection',
+                   'func armSavedMacAutoConnect(', 'func stopSavedMacAutoConnect(', 'func rememberPreferredMac(',
+                   'func rememberAuthenticatedMac(', 'private func trySavedMacAutoConnect(',
+                   'private func tryVisionSavedMacAutoConnect(', 'func homeDecision(', 'func wiredDial(']:
         pieces[marker] = vision(block(stream, marker))
     adapter = (root / 'visionOSClient/StreamClient+VisionAutoConnect.swift').read_text()
     pieces['considerVisionCableBootstrap'] = block(adapter, 'func considerVisionCableBootstrap(')
@@ -93,7 +103,7 @@ def main():
     source_paths = [root / name for name in [
         'visionOSClient/VisionCableBootstrap.swift', 'visionOSClient/VisionAutoConnectStatus.swift',
         'visionOSClient/StreamClient+VisionAutoConnect.swift', 'visionOSClient/VisionAppSession.swift',
-        'iOSClient/StreamClient.swift', 'iOSClient/StreamClient+Home.swift', 'iOSClient/SavedMacs.swift',
+        'iOSClient/StreamClient.swift', 'iOSClient/StreamClient+Home.swift', 'iOSClient/StreamClient+Remote.swift', 'iOSClient/SavedMacs.swift',
         'iOSClient/DiscoveryPolicy.swift', 'Sources/StreamProtocol/RemoteIdentity.swift',
         'Sources/StreamProtocol/Remote.swift', 'Sources/StreamProtocol/Pairing.swift',
         'Sources/StreamProtocol/SafeText.swift', 'Tests/checks/vision-autoconnect/Standins.swift',
