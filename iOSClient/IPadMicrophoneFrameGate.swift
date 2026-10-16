@@ -35,20 +35,34 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
         lock.withLock { $0 = nil }
     }
 
-    func emit(_ block: IPadMicrophonePCMFrame, captureID: UUID) {
+    func close(captureID: UUID) {
         lock.withLock { binding in
-            guard var current = binding, current.captureID == captureID, current.pending < 2,
-                  let frame = MicrophoneFrame(scope: current.scope, grantID: current.grant,
-                                              sequence: block.sequence, frameCount: block.frameCount,
-                                              pcm: block.pcm) else { return }
+            if binding?.captureID == captureID { binding = nil }
+        }
+    }
+
+    func emit(_ block: IPadMicrophonePCMFrame, captureID: UUID) {
+        emitBatch([block], captureID: captureID)
+    }
+
+    func emitBatch(_ blocks: [IPadMicrophonePCMFrame], captureID: UUID) {
+        guard !blocks.isEmpty, blocks.count <= IPadMicrophonePCM.maxBatchPackets else { return }
+        lock.withLock { binding in
+            guard var current = binding, current.captureID == captureID, current.pending < 2 else { return }
+            var bytes = Data()
+            bytes.reserveCapacity(blocks.count * (StreamMessage.headerLength + MicrophoneWire.frameLimit))
+            for block in blocks {
+                guard let frame = MicrophoneFrame(scope: current.scope, grantID: current.grant,
+                                                  sequence: block.sequence, frameCount: block.frameCount,
+                                                  pcm: block.pcm) else { return }
+                let message = StreamMessage(kind: .microphoneFrame, timestamp: Date().timeIntervalSince1970,
+                                            isKeyframe: false, payload: frame.encoded())
+                bytes.append(message.serialized())
+            }
             current.pending += 1
             binding = current
-            let message = StreamMessage(kind: .microphoneFrame, timestamp: Date().timeIntervalSince1970,
-                                        isKeyframe: false, payload: frame.encoded())
             let generation = current.generation
-            send(current.connection, message.serialized()) { [weak self] in
-                self?.complete(generation: generation)
-            }
+            send(current.connection, bytes) { [weak self] in self?.complete(generation: generation) }
         }
     }
 

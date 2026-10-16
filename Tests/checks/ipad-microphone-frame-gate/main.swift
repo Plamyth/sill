@@ -58,4 +58,26 @@ precondition(recorder.packets.count == 4)
 recorder.packets[2].2()
 gate.emit(block(3), captureID: secondCapture)
 precondition(recorder.packets.count == 5 && recorder.packets[4].0 === second)
+
+gate.close()
+let batchCapture = UUID()
+gate.open(connection: second, scope: scope, grant: grant, captureID: batchCapture)
+gate.emitBatch((1...5).map { block(UInt64($0)) }, captureID: batchCapture)
+precondition(recorder.packets.count == 6)
+let batch = recorder.packets[5].1
+var offset = 0
+for sequence in 1...5 {
+    let remaining = Data(batch.dropFirst(offset))
+    let header = StreamMessage.parseHeader(remaining)!
+    precondition(header.kind == .microphoneFrame)
+    let start = offset + StreamMessage.headerLength
+    let end = start + header.payloadLength
+    precondition(end <= batch.count)
+    let frame = MicrophoneFrame(encoded: batch.subdata(in: start..<end))!
+    precondition(frame.scope == scope && frame.grantID == grant && frame.sequence == UInt64(sequence))
+    offset = end
+}
+precondition(offset == batch.count)
+gate.emitBatch((6...10).map { block(UInt64($0)) }, captureID: firstCapture)
+precondition(recorder.packets.count == 6)
 print("iPad microphone frame gate passed")

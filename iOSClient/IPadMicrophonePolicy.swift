@@ -129,7 +129,7 @@ struct IPadMicrophonePolicy {
 
     mutating func captureFailed(requestID: UUID, grant: UUID, from origin: ObjectIdentifier,
                                 reason: String) -> [Effect] {
-        guard peer == origin, phase == .capturing, startRequestID == requestID,
+        guard peer == origin, (phase == .capturing || phase == .live), startRequestID == requestID,
               grantID == grant, let scope else { return [] }
         phase = .failed(String(reason.prefix(160)))
         let stop = MicrophoneControl(operation: .stop, requestID: UUID(), scope: scope, grantID: grant)
