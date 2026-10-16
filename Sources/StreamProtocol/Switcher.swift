@@ -54,10 +54,15 @@ public struct WindowList: Codable {
     /// goes only to a host that says so.
     public var gestures: Int?
 
+    /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
+    /// a host that advertises it rejects unscoped input, except releases it already owes.
+    public var inputGeneration: String?
+
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
-                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil) {
+                hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil, inputGeneration: String? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
+        self.inputGeneration = inputGeneration
     }
 }
 

@@ -792,9 +792,12 @@ final class StreamClient: ObservableObject {
     /// A day. A sample beyond it is a broken clock, and clamping keeps an infinity away from `Int()`.
     private static let sampleCeilingMs = 86_400_000.0
 
+    /// Main thread, alongside `active`; captured before an event enters the network queue.
+    private var inputGeneration: String?
+
     // Pointer-move coalescing, all touched on `queue` only.
     private static let moveInterval = 0.008   // 125 Hz ceiling; a Pencil can report at 120+ Hz
-    private var pendingMove: InputEvent?
+    private var pendingMove: Data?
     private var lastMoveAt = 0.0              // CACurrentMediaTime
     private var moveFlushScheduled = false
 
@@ -2865,6 +2868,7 @@ final class StreamClient: ObservableObject {
         hostVersion = nil
         hostProtocol = nil
         hostGestures = nil
+        inputGeneration = nil
         remoteRoute = nil
         macInfo = nil
         macInfoSaved = false
@@ -3001,6 +3005,7 @@ final class StreamClient: ObservableObject {
     }
 
     func sendInput(_ event: InputEvent) {
+        let payload = SourceInput.payload(event, generation: inputGeneration)
         // Every input passes here, a hover and a flick's coast included: the tour's rule counts it
         // as something happening (StreamScreen.considerTour).
         lastInputAt = ProcessInfo.processInfo.systemUptime
@@ -3017,7 +3022,7 @@ final class StreamClient: ObservableObject {
             self.pointerNoteSent(event)
             guard case .pointer(.move, _, _) = event else {
                 self.flushPendingMove()
-                self.send(.input, Wire.encode(event))
+                self.send(.input, payload)
                 return
             }
             let now = CACurrentMediaTime()
@@ -3025,9 +3030,9 @@ final class StreamClient: ObservableObject {
             if now >= due {
                 self.pendingMove = nil
                 self.lastMoveAt = now
-                self.send(.input, Wire.encode(event))
+                self.send(.input, payload)
             } else {
-                self.pendingMove = event   // replaces any older pending move
+                self.pendingMove = payload   // replaces any older pending move, retaining its generation
                 if !self.moveFlushScheduled {
                     self.moveFlushScheduled = true
                     self.queue.asyncAfter(deadline: .now() + (due - now)) { [weak self] in
@@ -3079,7 +3084,7 @@ final class StreamClient: ObservableObject {
         guard let move = pendingMove else { return }
         pendingMove = nil
         lastMoveAt = CACurrentMediaTime()
-        send(.input, Wire.encode(move))
+        send(.input, move)
     }
 
     private func send(_ kind: StreamMessageKind, _ payload: Data) {
@@ -3395,6 +3400,7 @@ final class StreamClient: ObservableObject {
                 if self.macName != list.macName { self.macName = list.macName; self.loadWindowOrder() }
                 let previous = self.active
                 self.windows = list.windows
+                self.inputGeneration = list.inputGeneration
                 self.active = list.active
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))

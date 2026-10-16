@@ -143,8 +143,10 @@ package final class StreamCoordinator {
             set { lock.lock(); value = newValue; lock.unlock() }
         }
     }
+    private var inputGeneration = UUID().uuidString
     package private(set) var active: StreamSource = .none {
         didSet {
+            if active != oldValue { inputGeneration = UUID().uuidString }
             if case .window(let id) = active { catalog.activeWindowID = id } else { catalog.activeWindowID = nil }
             if active == .none { status.update { $0.stream = nil } }
             server.setStreaming(active != .none)   // link keepalive ticks while a source is live
@@ -892,11 +894,12 @@ package final class StreamCoordinator {
                 if let error { print("Launch failed: \(error.localizedDescription)") }
             }
         case .input:
-            guard let event = Wire.decode(InputEvent.self, from: message.payload) else { return }
+            let scoped = Wire.decode(SourceInput.self, from: message.payload)
+            guard let event = scoped?.event ?? Wire.decode(InputEvent.self, from: message.payload) else { return }
             let device = ObjectIdentifier(connection)
-            guard let rect = currentSourceRect() else {
-                // Nothing streams (between sources, or the stream stopped: the window closed under a
-                // drag): input has nowhere to land. The up of a key or a button the Mac has down still
+            guard !switching, scoped?.generation == inputGeneration, let rect = currentSourceRect() else {
+                // Stale or unscoped input, a switch in progress, or no stream: input has nowhere
+                // to land. The up of a key or a button the Mac has down still
                 // goes (DroppedInput), a button's where the pointer is (`.null`), so no modifier this
                 // device pressed stays down to make a later click a ⌘-click, and no button to make
                 // every later move a drag.
@@ -2236,7 +2239,7 @@ package final class StreamCoordinator {
         StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
-                                                      gestures: TrackpadGesture.generation)))
+                                                      gestures: TrackpadGesture.generation, inputGeneration: inputGeneration)))
     }
 
     private func broadcastList() { server.broadcast(listMessage()) }
