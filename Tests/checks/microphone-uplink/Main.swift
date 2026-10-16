@@ -550,6 +550,21 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         for item in batch.1 {
             expect(f.receiver.frame(item.frame, fingerprint: Data([1]), arrived: f.now), "actual-dispatch-frame")
         }
+        let framedBurst = (4001...4005).map { sequence in
+            StreamMessage(kind: .microphoneFrame, timestamp: 0, isKeyframe: false,
+                payload: packet(binding, grant: grantID, sequence: UInt64(sequence)).encoded())
+        }
+        connection.inbound = framedBurst.flatMap { message in
+            [Data(message.serialized().prefix(StreamMessage.headerLength)), message.payload]
+        }
+        reader.receiveLoop(client)
+        let framedBatch = h.microphoneIngress.take()
+        expect(framedBatch.1.map(\.frame.sequence) == Array(4001...4005).map(UInt64.init),
+               "framed-wire-burst-preserved")
+        for item in framedBatch.1 {
+            expect(f.receiver.frame(item.frame, fingerprint: Data([1]), arrived: f.now),
+                   "framed-wire-frame-admission")
+        }
         h.videoEpoch = VideoEpoch(generation: h.inputGeneration, source: .desktop,
             geometry: .init(x: 0, y: 0, width: 2, height: 2), width: 2, height: 2)
         expect(f.render?.isOpen == false, "same-source-epoch-revoke")
