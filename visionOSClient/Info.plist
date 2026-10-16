@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>직접 마이크 전송을 켠 경우에만 선택한 Mac으로 음성을 보냅니다. 연결이나 대상이 바뀌면 중지합니다.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_sill._tcp</string>
