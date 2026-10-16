@@ -424,6 +424,78 @@
 			<key>fileRef</key>
 			<string>B93E5D6A9925BD44846C21C4</string>
 		</dict>
+		<key>871BCB60CC24E02B9FBDBE5B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/IPadMicrophoneCapture.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>153EB174B1F3D7B5D8520064</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>871BCB60CC24E02B9FBDBE5B</string>
+		</dict>
+		<key>4FA4D86D25630E9B101E3F91</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/IPadMicrophonePCM.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>DCBF67BF6A5ADB8A52EBACEF</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>4FA4D86D25630E9B101E3F91</string>
+		</dict>
+		<key>74F957567B21004296A7A8F8</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/IPadMicrophonePolicy.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>2EE7E986523D977002850DB1</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>74F957567B21004296A7A8F8</string>
+		</dict>
+		<key>182110FA0F96BC35CDB69840</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/IPadMicrophoneFrameGate.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>093FAD9F1AFE6154567069A4</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>182110FA0F96BC35CDB69840</string>
+		</dict>
 		<key>B327B8A7477D1231996FCA1C</key>
 		<dict>
 			<key>isa</key>
@@ -712,6 +784,42 @@
 			<key>fileRef</key>
 			<string>12D80BE0415B83D3DDD7607D</string>
 		</dict>
+		<key>3E02C1765F12250E1E3D0CC7</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionMicrophoneCapture.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>C46E483069CD13375DE973F8</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>3E02C1765F12250E1E3D0CC7</string>
+		</dict>
+		<key>099E8A8CE07ADC8005F01F9F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/StreamClient+VisionMicrophone.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>149A7D906454AAC0F060EBC6</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>099E8A8CE07ADC8005F01F9F</string>
+		</dict>
 		<key>F079CE19974C6C61933DC047</key>
 		<dict>
 			<key>isa</key>
@@ -839,6 +947,10 @@
 				<string>D0CDFAA5EC20EF9D01550249</string>
 				<string>2236FD42AE3C1D42D4A3AB3E</string>
 				<string>B93E5D6A9925BD44846C21C4</string>
+				<string>871BCB60CC24E02B9FBDBE5B</string>
+				<string>4FA4D86D25630E9B101E3F91</string>
+				<string>74F957567B21004296A7A8F8</string>
+				<string>182110FA0F96BC35CDB69840</string>
 				<string>B327B8A7477D1231996FCA1C</string>
 				<string>A35A325A1D9AC8F8AE7E0E91</string>
 				<string>3454D9B9946EBD2F06842B49</string>
@@ -855,6 +967,8 @@
 				<string>256B0F03B37CA87A91C72FFF</string>
 				<string>871C3AB6569A4C63C1E9C978</string>
 				<string>12D80BE0415B83D3DDD7607D</string>
+				<string>3E02C1765F12250E1E3D0CC7</string>
+				<string>099E8A8CE07ADC8005F01F9F</string>
 				<string>F079CE19974C6C61933DC047</string>
 				<string>57225E96412900A09CA16381</string>
 				<string>F3944248DEC4A319BD3398CE</string>
@@ -895,6 +1009,10 @@
 				<string>871C870F57840B34ED357510</string>
 				<string>DC873941899B6BD7021EC8C8</string>
 				<string>EBC3B5C98416CCB54AD486D3</string>
+				<string>153EB174B1F3D7B5D8520064</string>
+				<string>DCBF67BF6A5ADB8A52EBACEF</string>
+				<string>2EE7E986523D977002850DB1</string>
+				<string>093FAD9F1AFE6154567069A4</string>
 				<string>B752A128F4045FB722367596</string>
 				<string>CD3BDEEBE03DDE64B75B7B65</string>
 				<string>5E0C7BD5E5E54E80D694B9B9</string>
@@ -911,6 +1029,8 @@
 				<string>5E4A1EC0F1B59D52EB290FC6</string>
 				<string>02B570258369E1E27D771386</string>
 				<string>B02287A7A145B6DA8AB586F9</string>
+				<string>C46E483069CD13375DE973F8</string>
+				<string>149A7D906454AAC0F060EBC6</string>
 				<string>331E11F67379528B562D146B</string>
 				<string>AC8D6597572DB8007CEC8C9F</string>
 				<string>AAF2C2DAF25BA42888B2B819</string>

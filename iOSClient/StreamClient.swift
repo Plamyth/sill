@@ -813,6 +813,7 @@ final class StreamClient: ObservableObject {
         set {
             #if os(visionOS)
             if link.connection !== newValue {
+                microphoneSetConnection(newValue)
                 resetVisionAudio()
                 visionMovePreparation = nil
                 _ = visionInputSession?.takeReleases()
@@ -934,7 +935,7 @@ final class StreamClient: ObservableObject {
 
     func setVisionPresentationForeground(_ foreground: Bool) {
         visionTextForeground = foreground
-        if !foreground { revokeVisionTextDrafts() }
+        if !foreground { revokeVisionTextDrafts(); microphoneBackgrounded() }
         displayView.setPresentationForeground(foreground)
     }
 
@@ -1028,12 +1029,21 @@ final class StreamClient: ObservableObject {
         }
     }
 
+    let visionAudioOwnerID = UUID()
+    @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
+    @Published var microphoneCleanupProblem: String?
+    @Published var microphoneReceipt: MicrophoneReceipt?
+    var microphonePolicy = IPadMicrophonePolicy()
+    let microphoneFrames = IPadMicrophoneFrameGate()
+    var microphoneCapture: VisionMicrophoneCapture?
+    var microphoneCaptureToken: UUID?
     private let visionAudioRoute = VisionAudioRoute()
-    lazy var visionAudio = VisionAudioController { [weak self] control in
+    lazy var visionAudio = VisionAudioController(send: { [weak self] control in
         self?.sendVisionAudio(control)
-    }
+    }, player: VisionAudioPlayer(ownerID: visionAudioOwnerID))
 
     private func resetVisionAudio() {
+        microphoneSourceWillChange()
         visionAudio.stop()
         visionAudioRoute.clear()
         visionAudio.update(.disconnected)
@@ -1261,6 +1271,7 @@ final class StreamClient: ObservableObject {
     private func wentToBackground() {
         #if os(visionOS)
         visionAudio.setForeground(false)
+        microphoneBackgrounded()
         #endif
         appInForeground = false
         reconnectCheck?.cancel()
@@ -3341,6 +3352,9 @@ final class StreamClient: ObservableObject {
         if let released = link.release(c) { fenceEnded(c, released, why: "the direct connection closed") }
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
+            #if os(visionOS)
+            self.microphoneSetConnection(nil)
+            #endif
             #if !os(visionOS)
             self.remoteAudioControl.setConnection(nil)
             #endif
@@ -3461,6 +3475,7 @@ final class StreamClient: ObservableObject {
     /// is not the person's doing.
     private func request(_ source: StreamSource) {
         #if os(visionOS)
+        microphoneSourceWillChange()
         visionAudio.stop()
         #else
         remoteAudioControl.sourceWillChange()
@@ -3895,6 +3910,9 @@ final class StreamClient: ObservableObject {
 
     /// On the network queue.
     private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
+        #if os(visionOS)
+        if receiveMicrophone(header, data, from: peer) { return }
+        #endif
         #if !os(visionOS)
         if receiveRemoteAudio(header, data, from: peer) { return }
         #endif
@@ -3976,6 +3994,10 @@ final class StreamClient: ObservableObject {
                 // Only from the current connection: a list queued by a replaced one must not
                 // describe the next session.
                 guard self.connection === from else { return }
+                #if os(visionOS)
+                self.microphoneSetConnection(peer)
+                if self.appInForeground { self.microphoneObserve(list, from: peer) }
+                #endif
                 #if !os(visionOS)
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
                 #endif

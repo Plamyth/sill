@@ -53,6 +53,7 @@ final class VisionAudioHardware: @unchecked Sendable {
         let graph: VisionAudioCaptureGraph
         let permitted: () -> Bool
         let stopped: (String) -> Void
+        let ready: (() -> Void)?
     }
 
     private let claims = OSAllocatedUnfairLock(initialState: Claims())
@@ -123,13 +124,13 @@ final class VisionAudioHardware: @unchecked Sendable {
     func beginCapture(owner: UUID, epoch: UUID, permitted: @escaping () -> Bool,
                       formatChanged: @escaping (AVAudioFormat) -> Void,
                       copyInput: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void,
-                      stopped: @escaping (String) -> Void) throws -> VisionAudioClaim {
+                      stopped: @escaping (String) -> Void, ready: (() -> Void)? = nil) throws -> VisionAudioClaim {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !transitioning, permitted(), driver.recordPermissionGranted,
               let claim = reserve(owner: owner, role: .capture, epoch: epoch) else { throw CancellationError() }
         capture = Capture(claim: claim,
                           graph: VisionAudioCaptureGraph(formatChanged: formatChanged, copyInput: copyInput),
-                          permitted: permitted, stopped: stopped)
+                          permitted: permitted, stopped: stopped, ready: ready)
         _ = try rebuild()
         return claim
     }
@@ -252,6 +253,12 @@ final class VisionAudioHardware: @unchecked Sendable {
                 return true
             }
             guard committed else { throw CancellationError() }
+            if let capture, let ready = capture.ready {
+                DispatchQueue.main.async { [weak self] in
+                    guard capture.permitted(), self?.isCommitted(capture.claim, generation: generation) == true else { return }
+                    ready()
+                }
+            }
             return true
         } catch {
             if error is GraphWait, playbackIsSuperseded() {

@@ -46,6 +46,7 @@ check(upsampled.count >= 4, "upsampled 100ms preserves complete output beyond on
 let largeUpsampled = convert(rate: 16_000, frames: 4_800)
 print("PROBE 16k4800 -> \(largeUpsampled.count) packets")
 check(largeUpsampled.count >= 14, "upsampled 300ms preserves complete output beyond one converter buffer")
+runAdapterChecks()
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)

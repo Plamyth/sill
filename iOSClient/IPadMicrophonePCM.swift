@@ -35,6 +35,8 @@ struct IPadMicrophonePCM {
         }
     }
 
+    mutating func discardPending() { pending.removeAll(keepingCapacity: true) }
+
     mutating func reset() {
         pending.removeAll(keepingCapacity: true)
         nextSequence = 1

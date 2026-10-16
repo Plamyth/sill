@@ -35,6 +35,12 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
         lock.withLock { $0 = nil }
     }
 
+    func close(captureID: UUID) {
+        lock.withLock { binding in
+            if binding?.captureID == captureID { binding = nil }
+        }
+    }
+
     func emit(_ block: IPadMicrophonePCMFrame, captureID: UUID) {
         lock.withLock { binding in
             guard var current = binding, current.captureID == captureID, current.pending < 2,

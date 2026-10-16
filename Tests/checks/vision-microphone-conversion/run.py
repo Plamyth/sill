@@ -9,7 +9,7 @@ def main():
     root, output = [Path(p).resolve() for p in sys.argv[1:3]]
     output.mkdir(exist_ok=True,parents=True)
     record={'scope':'Actual AVAudioConverter/PCM synthetic software buffers. No native engine, session, permissions, device or network.', 'commands':[], 'exitCode':2}
-    sources=[root/'iOSClient/IPadMicrophoneCapture.swift',root/'iOSClient/IPadMicrophonePCM.swift',root/'Tests/checks/vision-microphone-conversion/main.swift']
+    sources=[root/'iOSClient/IPadMicrophoneCapture.swift',root/'iOSClient/IPadMicrophonePCM.swift',root/'visionOSClient/VisionAudioBuffer.swift',root/'visionOSClient/VisionAudioHardware.swift',root/'visionOSClient/VisionMicrophoneCapture.swift',root/'Tests/checks/vision-microphone-conversion/CaptureChecks.swift',root/'Tests/checks/vision-microphone-conversion/main.swift']
     exe=output/'probe'
     commands=[['/usr/bin/xcrun','swiftc','-swift-version','5','-module-cache-path',str(output/'cache')]+list(map(str,sources))+['-o',str(exe)],[str(exe)]]
     try:
