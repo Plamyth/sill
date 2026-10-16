@@ -212,7 +212,13 @@ final class VisionAudioHardware: @unchecked Sendable {
         precondition(!transitioning)
         transitioning = true
         defer { transitioning = false }
-        claims.withLock { $0.generation = nil; $0.committed.removeAll() }
+        let revoked = claims.withLock { state -> Set<VisionAudioRole> in
+            state.generation = nil
+            state.committed.removeAll()
+            return state.revoked
+        }
+        if revoked.contains(.playback) { playback = nil }
+        if revoked.contains(.capture) { capture = nil }
         do {
             try driver.stop()
             guard playback != nil || capture != nil else {

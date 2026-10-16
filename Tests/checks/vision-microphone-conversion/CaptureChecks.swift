@@ -67,8 +67,8 @@ func runAdapterChecks() {
         }, closeFrames: { gate.withLock { $0 = false } }, failed: { _ in nativeFailures += 1 })
         do {
             d.duringStart = { feed(d.inputs.last!) }
-            try await capture.start { frame in
-                if gate.withLock({ $0 }) { frames.withLock { $0.append(frame) } }
+            try await capture.start { batch in
+                if gate.withLock({ $0 }) { frames.withLock { $0.append(contentsOf: batch) } }
             }
             check(frames.withLock { $0.isEmpty }, "capture readiness does not open transport before caller consent")
             gate.withLock { $0 = true }

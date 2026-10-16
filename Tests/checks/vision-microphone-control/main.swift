@@ -21,12 +21,12 @@ final class VisionMicrophoneCapture {
     static var pending: [CheckedContinuation<Void,Never>] = []
     let permitted: () -> Bool
     let closeFrames: @Sendable () -> Void
-    var emit: (@Sendable (IPadMicrophonePCMFrame) -> Void)?
+    var emit: (@Sendable ([IPadMicrophonePCMFrame]) -> Void)?
     init(hardware: Int, owner: UUID, permitted: @escaping () -> Bool,
          closeFrames: @escaping @Sendable () -> Void, failed: @escaping (String) -> Void) {
         self.permitted = permitted; self.closeFrames = closeFrames
     }
-    @MainActor func start(emit: @escaping @Sendable (IPadMicrophonePCMFrame) -> Void) async throws {
+    @MainActor func start(emit: @escaping @Sendable ([IPadMicrophonePCMFrame]) -> Void) async throws {
         guard permitted() else { throw CancellationError() }
         Self.starts += 1; Self.permissionCalls += 1
         if Self.delay { await withCheckedContinuation { Self.pending.append($0) } }
@@ -94,11 +94,11 @@ pump { client.microphonePhase == .live }
 check(client.microphonePhase == .live && VisionMicrophoneCapture.permissionCalls == 1, "matching live grant starts one explicit capture")
 let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Data(repeating: 0,count:1920))
 let oldEmit = client.microphoneCapture!.emit!
-oldEmit(frame)
+oldEmit([frame])
 check(frames(peer) == 1, "active scoped capture sends one frame")
 client.toggleVisionMicrophone()
 let stop = controls(peer).last!
-oldEmit(frame)
+oldEmit([frame])
 check(stop.operation == .stop && stop.grantID == grant && frames(peer) == 1,
       "stop closes frames before scoped stop control")
 reply(client,peer:peer,id:stop.requestID,scope:scope,phase:.off,grant:nil)
@@ -106,9 +106,9 @@ client.toggleVisionMicrophone()
 let nextStart = controls(peer).last!
 reply(client,peer:peer,id:nextStart.requestID,scope:scope,phase:.active,grant:UUID())
 pump { client.microphonePhase == .live }
-oldEmit(frame)
+oldEmit([frame])
 check(frames(peer) == 1, "late old producer cannot enter replacement capture")
-client.microphoneCapture!.emit!(frame)
+client.microphoneCapture!.emit!([frame])
 check(frames(peer) == 2, "replacement capture uses its own token")
 VisionMicrophoneCapture.stopFails = true
 client.toggleVisionMicrophone()
@@ -159,6 +159,53 @@ gate.emit(frame,captureID:newID); gate.emit(frame,captureID:newID)
 check(sent.withLock { $0.count == 2 }, "framegate limits pending network sends to two")
 gate.close(captureID:newID); gate.emit(frame,captureID:newID)
 check(sent.withLock { $0.count == 2 }, "current scoped close blocks all later frames")
+let batched = OSAllocatedUnfairLock(initialState: [Data]())
+let batchGate = IPadMicrophoneFrameGate(send: { _,bytes,_ in batched.withLock { $0.append(bytes) } })
+batchGate.open(connection: peer, scope: scope, grant: grant, captureID: newID)
+let burst = (1...5).map { IPadMicrophonePCMFrame(sequence: UInt64($0), frameCount: 960, pcm: frame.pcm) }
+batchGate.emitBatch(burst, captureID: newID)
+check(batched.withLock { $0.count == 1 }, "100ms burst uses one pending network batch")
+var bytes = batched.withLock { $0.first! }, sequences: [UInt64] = []
+while bytes.count >= StreamMessage.headerLength, let header = StreamMessage.parseHeader(bytes) {
+    let length = StreamMessage.headerLength + header.payloadLength
+    guard header.kind == .microphoneFrame, header.payloadLength <= MicrophoneWire.frameLimit,
+          bytes.count >= length,
+          let value = MicrophoneFrame(encoded: Data(bytes[StreamMessage.headerLength..<length])) else { break }
+    sequences.append(value.sequence)
+    bytes = Data(bytes.dropFirst(length))
+}
+check(bytes.isEmpty && sequences == [1,2,3,4,5], "framed batch preserves every100ms packet in original wire format")
+batchGate.emitBatch(burst,captureID:newID); batchGate.emitBatch(burst,captureID:newID)
+check(batched.withLock { $0.count == 2 }, "bounded pending count applies to complete hardware batches")
+let boundaryBytes = OSAllocatedUnfairLock(initialState: [Data]())
+let held = OSAllocatedUnfairLock(initialState: [@Sendable () -> Void]())
+let boundary = IPadMicrophoneFrameGate(send: { _,bytes,done in
+    boundaryBytes.withLock { $0.append(bytes) }; held.withLock { $0.append(done) }
+})
+boundary.open(connection:peer,scope:scope,grant:grant,captureID:newID)
+boundary.emitBatch([],captureID:newID)
+boundary.emitBatch([IPadMicrophonePCMFrame(sequence:1,frameCount:960,pcm:Data())],captureID:newID)
+let maximum = (1...IPadMicrophonePCM.maxBatchPackets).map { IPadMicrophonePCMFrame(sequence:UInt64($0),frameCount:960,pcm:frame.pcm) }
+boundary.emitBatch(maximum+[frame],captureID:newID)
+check(boundaryBytes.withLock { $0.isEmpty }, "invalid empty and oversized batches consume no send slot")
+boundary.emitBatch(maximum,captureID:newID)
+check(boundaryBytes.withLock { $0.count == 1 && $0[0].count == IPadMicrophonePCM.maxBatchPackets * 2047 }, "maximum batch respects exact wire byte bound")
+boundary.emitBatch(burst,captureID:newID)
+let firstDone = held.withLock { $0[0] }
+firstDone()
+boundary.emitBatch(burst,captureID:newID)
+check(boundaryBytes.withLock { $0.count == 3 }, "one batch completion restores exactly one send slot")
+let staleDone = held.withLock { $0[1] }
+boundary.close()
+let replacementID = UUID()
+boundary.open(connection:peer,scope:scope,grant:UUID(),captureID:replacementID)
+boundary.emitBatch(burst,captureID:replacementID); boundary.emitBatch(burst,captureID:replacementID)
+staleDone()
+boundary.emitBatch(burst,captureID:replacementID)
+check(boundaryBytes.withLock { $0.count == 5 }, "old completion cannot decrement replacement batch accounting")
+boundary.close(captureID:replacementID)
+boundary.emitBatch(burst,captureID:replacementID)
+check(boundaryBytes.withLock { $0.count == 5 }, "stop blocks complete later batches")
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)

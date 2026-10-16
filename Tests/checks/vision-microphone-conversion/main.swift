@@ -46,6 +46,12 @@ check(upsampled.count >= 4, "upsampled 100ms preserves complete output beyond on
 let largeUpsampled = convert(rate: 16_000, frames: 4_800)
 print("PROBE 16k4800 -> \(largeUpsampled.count) packets")
 check(largeUpsampled.count >= 14, "upsampled 300ms preserves complete output beyond one converter buffer")
+for (rate,count): (Double,AVAudioFrameCount) in [(8_000,800),(44_100,4_410),(192_000,15_360)] {
+    let output = convert(rate:rate,frames:count)
+    let complete = Int(floor(Double(count)*48_000/rate))/960
+    check(output.count >= max(1,complete-1), "resampler complete blocks survive \(rate)Hz")
+    check(output.allSatisfy { $0.frameCount == 960 && $0.pcm.count == 1920 }, "resampler wire bounds \(rate)Hz")
+}
 runAdapterChecks()
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")

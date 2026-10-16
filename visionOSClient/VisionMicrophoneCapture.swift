@@ -34,7 +34,7 @@ final class VisionMicrophoneCapture {
     }
 
     @MainActor
-    func start(emit: @escaping @Sendable (IPadMicrophonePCMFrame) -> Void) async throws {
+    func start(emit: @escaping @Sendable ([IPadMicrophonePCMFrame]) -> Void) async throws {
         guard attempt == nil, claim == nil, hardware.cleanupProblem == nil, permitted() else { throw CancellationError() }
         let token = UUID()
         attempt = token
@@ -61,7 +61,7 @@ final class VisionMicrophoneCapture {
                             value.conversionID = nil
                             return previous != nil
                         }
-                        guard let id = worker.begin(inputFormat: format, continuingStream: continuing, emit: emit) else {
+                        guard let id = worker.beginBatch(inputFormat: format, continuingStream: continuing, emit: emit) else {
                             self.formatProblem = "Vision 마이크 소리를 전송 형식으로 바꿀 수 없습니다."
                             return
                         }

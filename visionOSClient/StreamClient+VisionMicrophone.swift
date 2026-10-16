@@ -104,7 +104,7 @@ extension StreamClient {
                           self.microphonePolicy.scope == scope,
                           self.connection === c else { return }
                     do {
-                        try await capture.start { frame in frames.emit(frame, captureID: captureID) }
+                        try await capture.start { batch in frames.emitBatch(batch, captureID: captureID) }
                         guard self.microphoneCapture === capture,
                               self.microphoneCaptureToken == captureID,
                               self.connection === c else {

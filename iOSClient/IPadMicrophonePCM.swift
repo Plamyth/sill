@@ -1,7 +1,7 @@
 import Foundation
 
 /// One 20 ms, 48 kHz mono S16LE block. The transport binds it to a host grant and scope.
-struct IPadMicrophonePCMFrame: Equatable {
+struct IPadMicrophonePCMFrame: Equatable, Sendable {
     let sequence: UInt64
     let frameCount: Int
     let pcm: Data
@@ -11,6 +11,11 @@ struct IPadMicrophonePCMFrame: Equatable {
 struct IPadMicrophonePCM {
     static let sampleRate = 48_000
     static let framesPerPacket = 960
+    static let maxInputFrames = 16_384
+    static let minimumInputRate = 8_000
+    static let maximumInputRate = 192_000
+    static let maxConvertedFrames = maxInputFrames * sampleRate / minimumInputRate
+    static let maxBatchPackets = (maxConvertedFrames + framesPerPacket - 1) / framesPerPacket
 
     private var pending: [Int16] = []
     private var nextSequence: UInt64 = 1

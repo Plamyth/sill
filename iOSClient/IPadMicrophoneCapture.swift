@@ -107,12 +107,17 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var outputFormat: AVAudioFormat?
     private var packetizer = IPadMicrophonePCM()
-    private var emit: (@Sendable (IPadMicrophonePCMFrame) -> Void)?
+    private var emitBatch: (@Sendable ([IPadMicrophonePCMFrame]) -> Void)?
     private var activeCaptureID: UUID?
 
     func begin(inputFormat: AVAudioFormat, continuingStream: Bool = false,
                emit: @escaping @Sendable (IPadMicrophonePCMFrame) -> Void) -> UUID? {
-        guard inputFormat.sampleRate.isFinite, (8_000...192_000).contains(inputFormat.sampleRate),
+        beginBatch(inputFormat: inputFormat, continuingStream: continuingStream) { batch in batch.forEach(emit) }
+    }
+
+    func beginBatch(inputFormat: AVAudioFormat, continuingStream: Bool = false,
+                    emit: @escaping @Sendable ([IPadMicrophonePCMFrame]) -> Void) -> UUID? {
+        guard inputFormat.sampleRate.isFinite, (Double(IPadMicrophonePCM.minimumInputRate)...Double(IPadMicrophonePCM.maximumInputRate)).contains(inputFormat.sampleRate),
               (1...8).contains(inputFormat.channelCount),
               let output = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: Double(IPadMicrophonePCM.sampleRate),
@@ -123,14 +128,14 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
             self.converter = converter
             outputFormat = output
             if continuingStream { packetizer.discardPending() } else { packetizer.reset() }
-            self.emit = emit
+            emitBatch = emit
             activeCaptureID = captureID
         }
         return captureID
     }
 
     func enqueue(_ input: AVAudioPCMBuffer, captureID: UUID) {
-        guard input.frameLength > 0, input.frameLength <= 16_384 else { return }
+        guard input.frameLength > 0, input.frameLength <= AVAudioFrameCount(IPadMicrophonePCM.maxInputFrames) else { return }
         let accepted = pending.withLock { count -> Bool in
             guard count < 2 else { return false }
             count += 1
@@ -167,7 +172,7 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
     func end() {
         queue.sync {
             activeCaptureID = nil
-            emit = nil
+            emitBatch = nil
             converter = nil
             outputFormat = nil
             packetizer.reset()
@@ -175,27 +180,23 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
     }
 
     private func convert(_ input: AVAudioPCMBuffer) {
-        guard let converter, let outputFormat, let emit,
-              let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: 4_096) else { return }
+        guard let converter, let outputFormat, let emitBatch else { return }
+        let expanded = Int(ceil(Double(input.frameLength) * outputFormat.sampleRate / converter.inputFormat.sampleRate))
+        guard (1...IPadMicrophonePCM.maxConvertedFrames).contains(expanded),
+              let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(expanded)) else { return }
         var supplied = false
-        // At the minimum accepted 8 kHz, one bounded input expands to at most 24 output buffers.
-        for _ in 0..<32 {
-            output.frameLength = 0
-            var error: NSError?
-            let result = converter.convert(to: output, error: &error) { _, status in
-                guard !supplied else { status.pointee = .noDataNow; return nil }
-                supplied = true
-                status.pointee = .haveData
-                return input
-            }
-            guard error == nil, result != .error,
-                  let channel = output.floatChannelData?.pointee else { return }
-            if output.frameLength > 0 {
-                let samples = UnsafeBufferPointer(start: channel, count: Int(output.frameLength))
-                packetizer.append(samples, emit: emit)
-            }
-            if result == .endOfStream || output.frameLength == 0 ||
-                (result == .inputRanDry && output.frameLength < output.frameCapacity) { return }
+        var error: NSError?
+        let result = converter.convert(to: output, error: &error) { _, status in
+            guard !supplied else { status.pointee = .noDataNow; return nil }
+            supplied = true
+            status.pointee = .haveData
+            return input
         }
+        guard error == nil, result != .error,
+              let channel = output.floatChannelData?.pointee else { return }
+        let samples = UnsafeBufferPointer(start: channel, count: Int(output.frameLength))
+        var batch: [IPadMicrophonePCMFrame] = []
+        packetizer.append(samples) { batch.append($0) }
+        if !batch.isEmpty { emitBatch(batch) }
     }
 }
