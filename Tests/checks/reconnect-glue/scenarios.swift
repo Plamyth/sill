@@ -66,8 +66,13 @@ do {
 Clock.reset()
 do {
     let c = StreamClient(); c.seed(); c.macs = []; c.reconnectIfListed()
+    Clock.advance(3)
+    let activeConnector = c.remoteDial
+    check(activeConnector != nil && activeConnector?.cancelled == false && c.remoteDials == [103], "remote cancellation precondition has active connector at 103")
     let count = c.remoteDials.count
-    c.background(); Clock.advance(30)
+    c.background()
+    check(activeConnector?.cancelled == true && c.remoteDial == nil, "background immediately cancels retained active remote connector")
+    Clock.advance(30)
     check(c.remoteDial == nil && c.remoteDials.count == count && Clock.pending == 0, "background cancels automatic remote connector and retry chain")
     c.foreground()
     check(c.remoteDials.count == count + 1, "foreground resumes remote within original window")
@@ -105,6 +110,65 @@ do {
     check(c.browserHandle() === fresh && c.rows() == ["Mac"], "replaced browser callbacks cannot mutate current rows or life")
     Clock.advance(3.1)
     check(c.rows().isEmpty, "foreground keeps old rows only for bounded settle interval")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed()
+    let a = FoundMac(name: "A"); let b = FoundMac(name: "B")
+    c.macs = [a,b]; c.sightings.since = ["A": 90, "B": 95]
+    c.reconnectIfListed(); Clock.advance(350)
+    c.macs = [b,a]; c.reconnectIfListed(); Clock.advance(350)
+    let aStarts = c.rowStarts.filter { $0.id == a.id }.map(\.at)
+    let bStarts = c.rowStarts.filter { $0.id == b.id }.map(\.at)
+    check(aStarts.count == 12 && bStarts.count == 12, "same trusted Mac has independent 12 dial budgets for two continuously listed rows")
+    for rows in [[a,b], [b,a], [a,b], [b,a]] { c.macs = rows; c.reconnectIfListed() }
+    check(c.rowStarts.count == 24 && Clock.pending == 0, "reorder cannot revive either exhausted listing, observed \(c.rowStarts.count) starts")
+    c.sightings.since["A"] = Clock.now
+    c.macs = [a,b]; c.reconnectIfListed()
+    check(c.rowStarts.count == 25 && c.rowStarts.last?.id == a.id, "actual renewal resets only renewed listing A")
+    c.finishRowFailure()
+    c.macs = [b,a]; c.reconnectIfListed()
+    check(c.rowStarts.count == 25, "renewing A leaves continuously listed B exhausted, observed \(c.rowStarts.count) starts")
+    c.background(); c.foreground()
+    check(c.rowStarts.count == 26 && c.rowStarts.last?.id == b.id, "new foreground evidence resets B budget")
+    c.finishRowFailure()
+    c.macs = [a,b]; c.reconnectIfListed()
+    check(c.rowStarts.count == 27 && c.rowStarts.last?.id == a.id, "new foreground evidence also resets alternate A budget")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed()
+    let a = FoundMac(name: "A"); let b = FoundMac(name: "B")
+    c.macs = [a,b]; c.sightings.since = ["A": 90, "B": 95]
+    c.reconnectIfListed(); Clock.advance(1); c.finishRowFailure()
+    c.macs = [b,a]; c.reconnectIfListed()
+    check(c.rowStarts.map(\.id) == [a.id,b.id], "alternate listed endpoint can fail over immediately with its own budget")
+    Clock.advance(1); c.finishRowFailure(); c.macs = [a,b]; c.reconnectIfListed()
+    check(c.rowDials == [100,101], "A to B to A reorder retains A five second backoff, observed \(c.rowDials)")
+    Clock.advance(3)
+    check(c.rowStarts.filter { $0.id == a.id }.map(\.at) == [100,105], "A resumes at its original five second due event")
+    c.finishRowFailure()
+    c.macs = [b,a]; c.reconnectIfListed()
+    check(c.rowDials == [100,101,105], "B also retains its own five second backoff")
+    Clock.advance(1)
+    check(c.rowStarts.filter { $0.id == b.id }.map(\.at) == [101,106], "B resumes at its own due event")
+    c.finishRowFailure()
+    c.macs = [a,b]; c.reconnectIfListed(); Clock.advance(8)
+    check(c.rowDials == [100,101,105,106], "returning A retains ten second backoff")
+    Clock.advance(1); c.finishRowFailure()
+    c.macs = [b,a]; c.reconnectIfListed(); Clock.advance(1)
+    check(c.rowStarts.filter { $0.id == a.id }.map(\.at) == [100,105,115] && c.rowStarts.filter { $0.id == b.id }.map(\.at) == [101,106,116], "two listed endpoints retain independent ten second due events")
+    c.background(); Clock.advance(100)
+    check(Clock.pending == 0 && c.rowDials.count == 6, "background stops both listed budgets and due events")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed()
+    let a = FoundMac(name: "A"); let b = FoundMac(name: "B")
+    c.macs = [a,b]; c.sightings.since = ["A": 90, "B": 90]
+    c.reconnectIfListed(); Clock.advance(1); c.finishRowFailure()
+    c.macs = [b,a]; c.reconnectIfListed()
+    check(c.rowStarts.map(\.id) == [a.id,b.id], "equal listing timestamps do not conflate distinct row identities")
 }
 check(DiscoveryPolicy.rebuildBrowser(failedAt: nil, failures: 0, cameForward: true, foreground: false, now: Clock.now).rebuild == false,
       "browser policy also refuses inconsistent foreground evidence")

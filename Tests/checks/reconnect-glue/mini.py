@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from extract import ROOT, fixture
+from extract import ROOT, block, fixture
 
 label = sys.argv[1]
 out = ROOT / 'Tests/checks/reconnect-glue/receipts'
@@ -14,6 +14,20 @@ out.mkdir(exist_ok=True)
 if (out / (label + '.json')).exists():
     raise SystemExit('reconcile existing receipt before another attempt')
 files, extraction = fixture()
+if '--cancel-mutation' in sys.argv:
+    main = files['main.swift']
+    background = block(main, 'private func wentToBackground()')
+    call = '        cancelRemoteDial()\n'
+    if background.count(call) != 1:
+        raise SystemExit('expected exactly one production background cancellation call')
+    mutant = main.replace(background, background.replace(call, ''), 1)
+    files['cancel-mutant/main.swift'] = mutant
+    extraction['backgroundCancelMutation'] = {
+        'originalSHA256': hashlib.sha256(background.encode()).hexdigest(),
+        'mutantSHA256': hashlib.sha256(background.replace(call, '').encode()).hexdigest(),
+        'removed': call.strip(),
+        'scope': 'One call removed from extracted production lifecycle; connector cancellation is recorded by a stand-in.'
+    }
 paths = [ROOT / p for p in ['iOSClient/StreamClient.swift', 'iOSClient/StreamClient+Remote.swift', 'iOSClient/DiscoveryPolicy.swift']]
 if '--pointer' in sys.argv:
     for name in ['Sources/StreamProtocol/Input.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputFence.swift', 'visionOSClient/VisionTransition.swift', 'Tests/vision-pointer/main.swift']:
@@ -51,6 +65,8 @@ try:
  sources=[str(package/'DiscoveryPolicy.swift'),str(package/'main.swift')]
  if (package/'sleep.swift').exists(): sources.append(str(package/'sleep.swift'))
  commands=[['/usr/bin/xcrun','swiftc']+sources+['-o',str(output/'glue'),'-module-cache-path',cache],[str(output/'glue')]]
+ if (package/'cancel-mutant/main.swift').exists():
+  commands += [['/usr/bin/xcrun','swiftc',str(package/'DiscoveryPolicy.swift'),str(package/'cancel-mutant/main.swift'),str(package/'sleep.swift'),'-o',str(output/'cancel-mutant'),'-module-cache-path',cache],[str(output/'cancel-mutant')]]
  if (package/'Tests/vision-pointer/main.swift').exists():
   commands += [['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-module-name','StreamProtocol',str(package/'Sources/StreamProtocol/Input.swift'),'-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'Input.o'),'-module-cache-path',cache],['/usr/bin/xcrun','swiftc','-I',str(output),str(package/'visionOSClient/VisionPointer.swift'),str(package/'visionOSClient/VisionInputFence.swift'),str(package/'visionOSClient/VisionTransition.swift'),str(package/'Tests/vision-pointer/main.swift'),str(output/'Input.o'),'-o',str(output/'pointer'),'-module-cache-path',cache],[str(output/'pointer')]]
  record['commandExitCodes']=[]
@@ -62,7 +78,13 @@ try:
    os.killpg(child.pid,signal.SIGTERM)
    try: log,_=child.communicate(timeout=5)
    except subprocess.TimeoutExpired: os.killpg(child.pid,signal.SIGKILL);log,_=child.communicate(timeout=5)
-  sys.stdout.buffer.write(log);sys.stdout.flush();record['commandExitCodes'].append(child.returncode)
+  sys.stdout.buffer.write(log);sys.stdout.flush()
+  if command == [str(output/'cancel-mutant')]:
+   record['cancelMutationExitCode']=child.returncode
+   record['cancelMutationFailures']=[line for line in log.decode(errors='replace').splitlines() if line.startswith('FAIL ')]
+   record['cancelMutationDetected']=child.returncode==1 and b'PASS remote cancellation precondition has active connector at 103' in log and b'FAIL background immediately cancels retained active remote connector' in log
+   record['commandExitCodes'].append(0 if record['cancelMutationDetected'] else 2)
+  else: record['commandExitCodes'].append(child.returncode)
   if 'swiftc' in command and child.returncode: break
  record['exitCode']=max(record['commandExitCodes'])
  record['memorySourcesUnchanged']=all(hashlib.sha256((package/n).read_bytes()).hexdigest()==h for n,h in original.items())

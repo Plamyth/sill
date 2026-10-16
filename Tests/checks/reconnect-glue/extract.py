@@ -24,6 +24,7 @@ def fixture():
     for marker in ['struct Reconnect {', 'func scheduleReconnectRetry(', 'private func retryReconnect(']:
         if marker in stream:
             pieces[marker] = block(stream, marker)
+    pieces['cancelRemoteDial'] = block(remote, 'func cancelRemoteDial()')
     pieces['reconnectIfListed'] = block(remote, '@discardableResult\n    func reconnectIfListed()')
     marker = 'if !connected, goodbye == nil, reconnect != nil, let s, !s.route.isRemote'
     if marker in remote:

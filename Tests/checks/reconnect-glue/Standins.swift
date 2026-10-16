@@ -65,14 +65,17 @@ final class NWConnection {
     var state: State = .preparing
     func cancel() {}
 }
-final class RemoteConnector { func cancel() {} }
+final class RemoteConnector {
+    var cancelled = false
+    func cancel() { cancelled = true }
+}
 struct FoundMac {
-    enum Route { case network, direct }
+    enum Route: String { case network, direct }
     var route: Route = .network
     var name = "Mac"
     var macID: String? = "saved"
     var carriesTag = true
-    var id: String { name }
+    var id: String { "\(route.rawValue):\(name)" }
     var direct: Bool { route == .direct }
     var endpoint: String? = "fake"
 }
@@ -108,23 +111,26 @@ final class StreamClient {
     var hostName = "Mac"
     var rowDials: [Double] = []
     var remoteDials: [Double] = []
+    var rowStarts: [(id: String, at: Double)] = []
     var decision = DiscoveryPolicy.HomeDial.pinned
     static func serviceName(of result: NWBrowser.Result) -> String { result.name }
     func savedMac(_ id: String) -> SavedMac? { SavedMac() }
     func homeDecision(_ mac: FoundMac, macID: String?, tap: Bool) -> DiscoveryPolicy.HomeDial { decision }
-    func cancelRemoteDial() { remoteDial?.cancel(); remoteDial = nil }
     func dial(_ mac: FoundMac, macID: String?, tap: Bool) -> Bool {
         rowDials.append(Clock.now)
+        rowStarts.append((mac.id, Clock.now))
         let c = NWConnection()
         connection = c
+        session = Session(why: nil)
         armTimeout(c, name: mac.name)
         return true
     }
     func dialSaved(_ id: String, why: DialReason) {
         remoteDials.append(Clock.now)
-        remoteDial = RemoteConnector()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            guard let self, self.remoteDial != nil else { return }
+        let connector = RemoteConnector()
+        remoteDial = connector
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self, weak connector] in
+            guard let self, let connector, self.remoteDial === connector, !connector.cancelled else { return }
             self.remoteDial = nil
             if var r = self.reconnect {
                 r.remoteFailures += 1

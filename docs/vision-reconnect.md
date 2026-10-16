@@ -1,4 +1,38 @@
-# Vision reconnect candidate
+# Vision reconnect P2 review fixes
+
+Work key `vision-reconnect-reviewfix-20261016`. Exclusive worktree `work/sill-vision-reconnect-reviewfix`, branch `codex/vision-reconnect-reviewfix-20261016`, base `8aa995cf0d08fe290b4268fc7fa5767d2cfc1df0`. The previous writer is closed. This owner writes only the three allowed client files, this document, and `Tests/checks/reconnect-glue`. The original reconnect and signed-source worktrees are read-only.
+
+The procedure checklist below is for this fresh unit. The older report is retained under Historical candidate evidence. Its completed checks and receipts apply only to `8aa995c`, not these review fixes. Independent Avicenna reported two P2 findings. Parent core and kind changes remain open for independent review.
+
+## Procedure
+
+- [x] 1. Reproduce it yourself on the matching surface via the driver skill (Non-negotiables), even when a debug or instrumentation protocol says to ask the user to reproduce. Ask the user only with a stated, specific reason the control surface cannot reach the target, and only after driving it as far as it goes. If it won't reproduce directly, synthesize the trigger, tighten conditions, or instrument until it fires.
+- [x] 2. Binary-search the cause. Form the candidate hypotheses, then rule them out until one survives. Seed them with `how` over the affected subsystem and the **why** skill for regression history. Each pass, take the split that cuts the most remaining problem space, get runtime evidence, eliminate. When program state is unclear, add instrumentation or logging and read it as the code runs. Don't guess. Drive a long or stubborn hunt with Claude Code's `loop` skill. Confirm the surviving *mechanism* with runtime evidence before the step-3 architect/interrogate fan-out.
+- [ ] 3. Plan the fix. If it crosses a function boundary, `architect` first. Delegate implementation to a subagent using your configured bug-fix model (default in poteto-mode's Models section) with a specific scope.
+- [ ] 4. Verify on the same surface. The original repro now passes. "Inconclusive" or wrong-surface is not a pass. Flag it. Unit tests show branch behavior, not bug absence.
+- [ ] 5. Stage the commits so the failing repro lands before the fix in git history. See the **tdd** skill for the failing-test-first cadence when the bug has a cheap local test path. Skip it when the test would be expensive, integration-heavy, or unclear.
+- [ ] 6. Run **Opening a PR**.
+  skip: User prohibits push and PR. Deliver owned local commits for parent review.
+
+Throughput checkpoint. Preserve a failing two-row reproduction and a cancellation mutation receipt before any production edit, then commit them. Apply one typed listing budget change. Run glue, policy, cancellation mutation, and the prior 38 Vision checks in one sequential Mini heavy job using `mini.py`. Run one final unsigned XROS build with one compiler job for the changed production source. Each specific path permits the first attempt and two hypothesis-driven fixes. Reap all owned transport, runner, compiler, and test processes and remove RAM inputs and isolated Mini outputs. No application launch or installation is part of this unit.
+
+Ground. `reconnectIfListed` chooses the first matching row and compares only its timestamp with `Reconnect.rowListing`. Selection changes therefore erase the prior count and due time even while both rows remain listed. `cameForward` clears the selected counters. The lifecycle calls `cancelRemoteDial`, whose production body cancels the connector then clears its reference. The old fixture duplicated that helper and its cancellation scenario never reached the first dial at loss plus three seconds.
+
+Sketch and synthesis. A stable selection until disappearance would preserve the cap but suppress a legitimate alternate endpoint when discovery order changes. A typed `RowListing` containing `FoundMac.id` and optional listing timestamp, mapped to a `RowBudget` containing starts and last start time, preserves independent failover budgets. Select the map design. A new generation discards only that row's old budget. Foreground clears all row budgets. A computed selected `rowDials` preserves read compatibility without a second mutable counter. The existing due timer and remote loss window keep their owners.
+
+`poteto-mode`, bug-fix, `how`, `architect`, TDD, deslop, technical-writing, unslop, and Model the Domain apply. This runtime exposes no subagent dispatch. Grounding and the two design alternatives are sequential analysis, not independent review. The parent review gate remains open. Agree proceeds under the user's specified approach. Scrap is unnecessary unless the bounded fix contradicts the sketch.
+
+The strengthened cancellation fixture retains the active connector before background at time 103. It checks the retained connector's cancellation flag and cleared client reference immediately after background, before advancing the clock. The actual production cancellation helper is extracted verbatim. The connector and callback are stand-ins, so this covers lifecycle cancellation wiring and invocation only. It makes no network cancellation claim.
+
+`review-repro-02` was rejected before the runner by the occupied Mini heavy slot, exit 75. It created no RAM input or compiler. Another owner held the slot with a `CCRVerify` runner. Its work was left running. The corrected reproduction follows once the slot is free.
+
+`review-repro-01` compiles and demonstrates the exhausted-row restart and the targeted cancellation mutation. Its new in-flight row reorder assertions were invalid because production blocks selection while a home connection prepares. The corrected fixture sets the same nonremote session shape as production `connect` and calls the extracted `sessionEnded` failure branch before selecting the alternate row. This tests real failure-to-backoff behavior instead of manufacturing an automatic home session. No production change followed the first repro run.
+
+`review-repro-03` is the corrected failing reproduction on unchanged `8aa995c` production bytes. Glue reports `34/46 passed, 12 failed`. The decisive failures are `reorder cannot revive either exhausted listing, observed 25 starts` and `A to B to A reorder retains A five second backoff, observed [100.0, 101.0, 102.0]`. Policy remains 43/43. The mutation passes the active-connector precondition at 103, then fails `background immediately cancels retained active remote connector`, adding exactly that assertion to the baseline failures. Sender and receiver hashes match, production and RAM inputs are unchanged, RAM and output are removed, and all children were reaped. Mini swap moved from 9720 to 9748.12 MB while Orca process identities remained unchanged. This is an observation, not a performance attribution.
+
+## Historical candidate evidence
+
+### Original reconnect candidate
 
 Work key `vision-sill-reconnect-20261016`. Owner is this bounded reconnect worker. Exclusive worktree `work/sill-vision-reconnect`, branch `codex/vision-sill-reconnect-20261016`, base `62bc4c5884bf54f4eb729b71e082d0fa8d7d8609`. Updated 2026-10-16 08:54 KST.
 
