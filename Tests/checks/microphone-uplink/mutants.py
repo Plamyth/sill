@@ -1,4 +1,6 @@
 MUTANTS = [
+    ('terminal-reason', 'Sources/SillHost/HostMicrophoneReceiver.swift',
+     'if owned.retirementReason == nil {', 'if false {', 'prepare-error-terminal-reason'),
     ('block-owner', 'Sources/SillHost/HALMicrophoneSink.swift',
      'created.provider = { [context] _, _, frames, _, buffers in context.fill(frames: frames, buffers: buffers) }',
      'created.provider = { [weak context] _, _, frames, _, buffers in context?.fill(frames: frames, buffers: buffers) ?? noErr }',

@@ -31,6 +31,7 @@ final class HostMicrophoneReceiver {
         var preparePending = true
         var closing = false
         var stopRequest: UUID?
+        var retirementReason: String?
         var lastSequence: UInt64 = 0
         var admitted: UInt64 = 0
         var lastArrival: UInt64
@@ -221,11 +222,12 @@ final class HostMicrophoneReceiver {
 
     func revoke(peer: UUID? = nil, reason: String) {
         guard let owned = lease, peer == nil || owned.request.scope.peer == peer else { return }
+        if owned.retirementReason == nil { owned.retirementReason = String(reason.prefix(160)) }
         owned.render.close()
         guard phase != .cleanupFailed, phase != .retiring else { return }
         phase = .retiring
         watchdog?.cancel(); watchdog = nil
-        updateOutcomes(owned, reason: reason)
+        updateOutcomes(owned, reason: owned.retirementReason)
         if !owned.preparePending { Task { [self, owned] in await retire(owned) } }
     }
 
@@ -254,7 +256,7 @@ final class HostMicrophoneReceiver {
             updateOutcomes(owned, reason: error)
         } else {
             phase = .off
-            updateOutcomes(owned, reason: nil)
+            updateOutcomes(owned, reason: owned.retirementReason)
             lease = nil
         }
     }
