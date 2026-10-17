@@ -7,7 +7,7 @@ import StreamProtocol
 /// pointer goes, and the Apple Pencil is the mouse. Everything leaves here as an `InputEvent` whose
 /// position is a fraction of the *video frame*, not of this view — the video is drawn aspect-fit by
 /// `HEVCDisplayView`, so the letterbox has to be taken out before normalizing.
-final class InputOverlayView: UIView, UIKeyInput {
+final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     /// Pixel size of the streamed frame. Zero until the host's parameter sets arrive; input is
     /// ignored until then, since there is nothing on screen to aim at.
     var videoSize: CGSize = .zero
@@ -37,11 +37,11 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// True between the `.scrollGesture(.began)` this view sent and its `.ended`, so an end is
     /// never sent for a pan that could not begin (no video yet).
     private var scrollGestureOpen = false
+    private var fingerDragging = false
+    private enum EdgePan { case none, candidate, revealed }
+    private var edgePan: EdgePan = .none
     /// The coast after a flick.
     private let momentum = ScrollMomentum()
-    /// True once the hover in progress has shown itself to be a Pencil. Sticky for the session so a
-    /// Pencil reading zero for a moment at the bottom of its range does not flicker the pointer.
-    private var hoverIsPencil = false
     /// A three- or four-finger gesture this view decided, for the Mac (`StreamClient.sendGesture`,
     /// which checks this device's switch and the Mac's `gestures`, and shows the Desktop first while
     /// a window streams). True when it went.
@@ -72,12 +72,20 @@ final class InputOverlayView: UIView, UIKeyInput {
         // double-click, exactly as it would for a real mouse.
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         tap.numberOfTapsRequired = 1
+        tap.numberOfTouchesRequired = 1
         tap.allowedTouchTypes = directOnly
         addGestureRecognizer(tap)
 
+        let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap))
+        twoFingerTap.numberOfTouchesRequired = 2
+        twoFingerTap.allowedTouchTypes = directOnly
+        addGestureRecognizer(twoFingerTap)
+
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress))
         longPress.minimumPressDuration = 0.45
+        longPress.numberOfTouchesRequired = 1
         longPress.allowedTouchTypes = directOnly
+        longPress.delegate = self
         addGestureRecognizer(longPress)
 
         // One or two fingers scroll; the Mac gets the content delta, not a drag.
@@ -85,22 +93,23 @@ final class InputOverlayView: UIView, UIKeyInput {
         pan.minimumNumberOfTouches = 1
         pan.maximumNumberOfTouches = 2
         pan.allowedTouchTypes = directOnly
+        pan.delegate = self
         addGestureRecognizer(pan)
-
-        // Pencil hover on the iPads that support it, and the trackpad/mouse pointer everywhere.
-        let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover))
-        addGestureRecognizer(hover)
 
         // Three fingers or more: a gesture for the Mac, never a click, a right click or a scroll
         // (StrokeObserver, TrackpadGestures). It only watches: it takes no touch from the
         // recognizers above and delays none.
         scrollPan = pan
+        strokes.holding = { [weak self] in self?.fingerDragging ?? false }
         strokes.onSilenced = { [weak self] in self?.strokeSilenced() }
         strokes.onGesture = { [weak self] gesture, fingers in _ = self?.sendGesture(gesture, fingers) }
         addGestureRecognizer(strokes)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     // MARK: - Coordinates
 
@@ -136,8 +145,23 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// Single tap: put the pointer there first, then click. The move matters — the Mac's cursor is
     /// wherever the last event left it, and hover state (menus, tooltips) follows it.
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        #if DEBUG
+        recordPencilBoundary("finger-tap")
+        #endif
         guard !strokes.silent else { return }
         tap(at: gesture.location(in: self))
+    }
+
+    @objc private func handleTwoFingerTap(_ gesture: UITapGestureRecognizer) {
+        #if DEBUG
+        recordPencilBoundary("two-finger-tap")
+        #endif
+        guard !strokes.silent else { return }
+        let point = gesture.location(in: self)
+        setOwnPointer(nil, .none)
+        guard sendPointer(.move, at: point, clamped: false) != nil else { return }
+        sendPointer(.rightDown, at: point, clamped: false)
+        sendPointer(.rightUp, at: point, clamped: false)
     }
 
     /// A finger's tap at `point`, in this view: the pointer goes there, then clicks.
@@ -148,15 +172,31 @@ final class InputOverlayView: UIView, UIKeyInput {
         sendPointer(.leftUp, at: point, clamped: false)
     }
 
-    /// Long press: the right button, since there is no second finger to spare for it.
+    /// Hold one finger to keep the left button down while moving it, then release on lift.
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
-        guard !strokes.silent else { return }
-        guard gesture.state == .began else { return }
-        setOwnPointer(nil, .none)
         let point = gesture.location(in: self)
-        guard sendPointer(.move, at: point, clamped: false) != nil else { return }
-        sendPointer(.rightDown, at: point, clamped: false)
-        sendPointer(.rightUp, at: point, clamped: false)
+        switch gesture.state {
+        case .began:
+            guard !strokes.silent else { return }
+            momentum.stop()
+            if scrollGestureOpen {
+                scrollGestureOpen = false
+                let at = normalized(point, clamped: true) ?? (x: 0.5, y: 0.5)
+                send(.scrollGesture(.ended, x: at.x, y: at.y))
+            }
+            setOwnPointer(nil, .none)
+            guard sendPointer(.move, at: point, clamped: false) != nil else { return }
+            fingerDragging = true
+            sendPointer(.leftDown, at: point, clamped: false)
+        case .changed:
+            if fingerDragging { sendPointer(.move, at: point, clamped: true) }
+        case .ended, .cancelled, .failed:
+            guard fingerDragging else { return }
+            fingerDragging = false
+            sendPointer(.leftUp, at: point, clamped: true)
+        default:
+            break
+        }
     }
 
     /// Finger pan: scrolling, not dragging, shaped like a Mac trackpad gesture so the Mac
@@ -165,12 +205,31 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// Deltas are fractions of the video rect, natural sign (finger down = content down =
     /// positive dy).
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        if fingerDragging { return }
         guard !strokes.silent else { return }
         let rect = videoRect
         switch gesture.state {
         case .began:
             setOwnPointer(nil, .none)
             lastPanTranslation = .zero
+            let translation = gesture.translation(in: self)
+            let location = gesture.location(in: self)
+            let start = CGPoint(x: location.x - translation.x, y: location.y - translation.y)
+            #if DEBUG
+            recordPencilBoundary("pan-began-\(gesture.numberOfTouches)-bottom-\(Int(rect.maxY - start.y))")
+            #endif
+            // The video's bottom is well above the physical iPad edge in letterboxed layouts.
+            // Physical traces of the intended Dock swipe began 209...344 pt above this rect's
+            // bottom, so use the bottom portion of the streamed image, not the bezel edge.
+            if gesture.numberOfTouches == 2, rect.contains(start), rect.maxY - start.y <= max(360, rect.height * 0.42) {
+                edgePan = .candidate
+                #if DEBUG
+                recordPencilBoundary("dock-candidate")
+                #endif
+                momentum.stop()
+                return
+            }
+            edgePan = .none
             // A new pan while the last flick is still coasting ends the coast first, so the Mac
             // sees momentumEnded before this gesture's began. (touchesBegan has usually done it.)
             momentum.stop()
@@ -180,12 +239,40 @@ final class InputOverlayView: UIView, UIKeyInput {
         case .changed:
             guard rect.width > 0, rect.height > 0 else { return }
             let translation = gesture.translation(in: self)
+            switch edgePan {
+            case .candidate:
+                if translation.y <= -100, abs(translation.x) <= 60 {
+                    edgePan = .revealed
+                    #if DEBUG
+                    recordPencilBoundary("dock-reveal")
+                    #endif
+                    setOwnPointer(nil, .none)
+                    sendPointer(.move, at: CGPoint(x: rect.midX, y: rect.maxY - 2), clamped: true)
+                    return
+                }
+                if translation.y <= -18, abs(translation.x) <= 30 { return }
+                edgePan = .none
+                #if DEBUG
+                recordPencilBoundary("dock-scroll")
+                #endif
+                let at = normalized(gesture.location(in: self), clamped: true) ?? (x: 0.5, y: 0.5)
+                send(.scrollGesture(.began, x: at.x, y: at.y))
+                scrollGestureOpen = true
+            case .revealed:
+                return
+            case .none:
+                break
+            }
             let dx = (translation.x - lastPanTranslation.x) / rect.width
             let dy = (translation.y - lastPanTranslation.y) / rect.height
             lastPanTranslation = translation
             guard dx != 0 || dy != 0, let p = normalized(gesture.location(in: self), clamped: true) else { return }
             send(.scroll(x: p.x, y: p.y, dx: Double(dx), dy: Double(dy)))
         case .ended, .cancelled:
+            #if DEBUG
+            if case .candidate = edgePan { recordPencilBoundary("dock-no-trigger") }
+            #endif
+            edgePan = .none
             lastPanTranslation = .zero
             guard scrollGestureOpen else { return }
             scrollGestureOpen = false
@@ -195,6 +282,7 @@ final class InputOverlayView: UIView, UIKeyInput {
             // system gesture), and flinging the Mac's content then would be a surprise.
             if gesture.state == .ended { startMomentum(velocity: gesture.velocity(in: self), at: p) }
         default:
+            edgePan = .none
             lastPanTranslation = .zero
         }
     }
@@ -232,6 +320,9 @@ final class InputOverlayView: UIView, UIKeyInput {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        #if DEBUG
+        recordPencilBoundary(window == nil ? "overlay-detached" : "overlay-attached")
+        #endif
         if window == nil { momentum.stop(); releaseForwardedKeys() }
         #if DEBUG
         if window != nil {
@@ -260,24 +351,6 @@ final class InputOverlayView: UIView, UIKeyInput {
     }
     #endif
 
-    /// Pencil hover (and a trackpad pointer): cursor only, no buttons.
-    ///
-    /// Both send the same moves; they differ only in what drew this device's pointer: the Pencil's
-    /// position is kept (drawn only with Q2's flip), the iPad's own pointer keeps none, as iPadOS
-    /// draws it. Only a Pencil reports a height or a tilt (a trackpad or mouse pointer reads 0 for
-    /// both), which is how the two are told apart here.
-    @objc private func handleHover(_ gesture: UIHoverGestureRecognizer) {
-        switch gesture.state {
-        case .began, .changed:
-            if gesture.state == .began { hoverIsPencil = false }
-            if gesture.zOffset > 0 || gesture.altitudeAngle > 0 { hoverIsPencil = true }
-            let at = sendPointer(.move, at: gesture.location(in: self), clamped: true)
-            if hoverIsPencil { setOwnPointer(at, .pencil) } else { setOwnPointer(nil, .none) }
-        default:
-            hoverIsPencil = false
-        }
-    }
-
     // MARK: - Pencil
 
     // The Pencil is the left mouse button held down: touch down clicks, moving drags, lifting
@@ -298,13 +371,36 @@ final class InputOverlayView: UIView, UIKeyInput {
     /// Which button the current pointer press holds down, so the up matches the down.
     private var pointerButtonIsSecondary = false
 
+    #if DEBUG
+    private func recordPencilBoundary(_ label: String, touch: UITouch? = nil) {
+        let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ccr-pencil-boundaries.log")
+        let line = "\(ProcessInfo.processInfo.systemUptime) \(label) \(touch.map { String(describing: ObjectIdentifier($0)) } ?? "-")\n"
+        let bytes = Data(line.utf8)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: bytes)
+        } else if let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: bytes)
+            try? handle.close()
+        }
+    }
+    #endif
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        let fingers = touches.filter { $0.type == .direct }.count
+        if fingers > 0 { recordPencilBoundary("finger-began-\(fingers)") }
+        #endif
         // Any new touch stops a coasting flick, the way touching a moving list does on iOS (and
         // before the Pencil clicks on content that is still sliding).
         momentum.stop()
         guard let touch = Self.pointerTouch(in: touches) else {
             super.touchesBegan(touches, with: event); return
         }
+        #if DEBUG
+        if touch.type == .pencil { recordPencilBoundary("pencil-began", touch: touch) }
+        #endif
         let point = touch.location(in: self)
         guard let at = sendPointer(.move, at: point, clamped: false) else { return }
         ownPointer(at, for: touch)
@@ -322,17 +418,31 @@ final class InputOverlayView: UIView, UIKeyInput {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        let fingers = touches.filter { $0.type == .direct }.count
+        if fingers > 0 { recordPencilBoundary("finger-ended-\(fingers)") }
+        #endif
         guard let touch = Self.pointerTouch(in: touches) else {
             super.touchesEnded(touches, with: event); return
         }
+        #if DEBUG
+        if touch.type == .pencil { recordPencilBoundary("pencil-ended", touch: touch) }
+        #endif
         if let at = sendPointer(pointerButtonIsSecondary ? .rightUp : .leftUp, at: touch.location(in: self), clamped: true) { ownPointer(at, for: touch) }
         pointerButtonIsSecondary = false
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        let fingers = touches.filter { $0.type == .direct }.count
+        if fingers > 0 { recordPencilBoundary("finger-cancelled-\(fingers)") }
+        #endif
         guard let touch = Self.pointerTouch(in: touches) else {
             super.touchesCancelled(touches, with: event); return
         }
+        #if DEBUG
+        if touch.type == .pencil { recordPencilBoundary("pencil-cancelled", touch: touch) }
+        #endif
         // Never leave the button stuck down.
         if let at = sendPointer(pointerButtonIsSecondary ? .rightUp : .leftUp, at: touch.location(in: self), clamped: true) { ownPointer(at, for: touch) }
         pointerButtonIsSecondary = false

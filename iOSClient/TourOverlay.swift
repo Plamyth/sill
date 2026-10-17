@@ -188,6 +188,16 @@ final class TouchWatchRecognizer: UIGestureRecognizer, UIGestureRecognizerDelega
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldReceive touch: UITouch) -> Bool {
+        var target = touch.view
+        while let view = target {
+            if view is InputOverlayView || view is TrackpadSurface { return false }
+            target = view.superview
+        }
+        return true
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 }
 
