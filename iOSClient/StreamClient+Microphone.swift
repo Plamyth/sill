@@ -14,22 +14,27 @@ extension StreamClient {
     }
 
     func microphoneSetConnection(_ next: NWConnection?) {
+        recordMicrophoneDiagnostic("connection_observed", ["same": String(microphonePolicy.peer == next.map(ObjectIdentifier.init)), "connected": String(next != nil)])
         applyMicrophone(microphonePolicy.setConnection(next.map(ObjectIdentifier.init)))
     }
 
     func microphoneSourceWillChange() {
+        recordMicrophoneDiagnostic("source_change", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.sourceWillChange())
     }
 
     func microphoneBecameInactive() {
+        recordMicrophoneDiagnostic("inactive", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.inactive())
     }
 
     func microphoneInterrupted() {
+        recordMicrophoneDiagnostic("interruption_or_route", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.interrupted())
     }
 
     func microphoneBackgrounded() {
+        recordMicrophoneDiagnostic("background", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.backgrounded())
     }
 
@@ -41,8 +46,13 @@ extension StreamClient {
         guard header.kind == .microphoneState || header.kind == .microphoneReceipt else { return false }
         guard data.count <= MicrophoneWire.replyLimit else { return true }
         if header.kind == .microphoneState, let state = Wire.decode(MicrophoneState.self, from: data) {
+            let arrived = DispatchTime.now().uptimeNanoseconds
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.connection === peer else { return }
+                IPadMicrophoneDiagnostics.shared.attempt(self.microphonePolicy.startRequestID ?? state.requestID)
+                    .record("grant_phase_" + state.phase.rawValue, ["phaseBefore": String(describing: self.microphonePolicy.phase),
+                        "grantPresent": String(state.grantID != nil), "reason": state.reason ?? "none",
+                        "mainQueueDelayMilliseconds": String(Double(DispatchTime.now().uptimeNanoseconds - arrived) / 1_000_000)])
                 self.applyMicrophone(self.microphonePolicy.receive(state, from: ObjectIdentifier(peer)))
             }
         } else if header.kind == .microphoneReceipt, let receipt = Wire.decode(MicrophoneReceipt.self, from: data) {
@@ -61,6 +71,8 @@ extension StreamClient {
         for effect in effects {
             switch effect {
             case .requestPermission(let peer, let scope, let request):
+                let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(request)
+                diagnostics.record("permission_requested", ["phase": String(describing: microphonePolicy.phase)])
                 guard let c = connection, ObjectIdentifier(c) == peer else { continue }
                 Task { @MainActor [weak self] in
                     guard let self, self.connection === c,
@@ -72,6 +84,7 @@ extension StreamClient {
                         allowed = await AVCaptureDevice.requestAccess(for: .audio)
                     } else { allowed = true }
                     guard self.connection === c else { return }
+                    diagnostics.record("permission_result", ["allowed": String(allowed), "microphoneAvailable": String(IPadAudioSession.shared.microphoneAvailable), "phase": String(describing: self.microphonePolicy.phase)])
                     self.applyMicrophone(self.microphonePolicy.permissionResolved(allowed, requestID: request,
                         scope: scope, from: peer, microphoneAvailable: IPadAudioSession.shared.microphoneAvailable))
                 }
@@ -81,6 +94,8 @@ extension StreamClient {
                 microphoneCaptureToken = nil
                 retryMicrophoneCleanup()
             case .send(let peer, let control):
+                IPadMicrophoneDiagnostics.shared.attempt(microphonePolicy.startRequestID ?? control.requestID)
+                    .record("control_" + control.operation.rawValue, ["phase": String(describing: microphonePolicy.phase)])
                 if control.operation == .stop {
                     pendingStops.append((peer, control))
                 } else {
@@ -98,10 +113,12 @@ extension StreamClient {
                     }
                 }
             case .beginCapture(let peer, let scope, let request, let grant):
+                let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(request)
+                diagnostics.record("capture_begin_effect", ["scopeMatches": String(microphonePolicy.scope == scope), "capturePresent": String(microphoneCapture != nil), "cleanupProblem": String(microphoneCleanupProblem != nil)])
                 guard let c = connection, ObjectIdentifier(c) == peer,
                       microphonePolicy.scope == scope,
-                      microphoneCapture == nil, microphoneCleanupProblem == nil else { continue }
-                let capture = IPadMicrophoneCapture()
+                      microphoneCapture == nil, microphoneCleanupProblem == nil else { diagnostics.record("capture_begin_skipped"); continue }
+                let capture = IPadMicrophoneCapture(diagnostics: diagnostics)
                 let captureID = UUID()
                 microphoneCapture = capture
                 microphoneCaptureToken = captureID
@@ -115,7 +132,7 @@ extension StreamClient {
                           self.microphonePolicy.scope == scope,
                           self.connection === c else { return }
                     do {
-                        try await capture.start(emitBatch: { batch in frames.emitBatch(batch, captureID: captureID) })
+                        try await capture.start(emitBatch: { batch in frames.emitBatch(batch, captureID: captureID, diagnostics: diagnostics) })
                         guard self.microphoneCapture === capture,
                               self.microphoneCaptureToken == captureID,
                               self.connection === c else {
@@ -141,12 +158,20 @@ extension StreamClient {
             case .openFrames(let peer, let scope, let grant):
                 guard let c = connection, ObjectIdentifier(c) == peer,
                       let captureID = microphoneCaptureToken else { continue }
-                microphoneFrames.open(connection: c, scope: scope, grant: grant, captureID: captureID)
+                microphoneFrames.open(connection: c, scope: scope, grant: grant, captureID: captureID,
+                    diagnostics: microphonePolicy.startRequestID.map { IPadMicrophoneDiagnostics.shared.attempt($0) })
             }
         }
         for (peer, control) in pendingStops { sendMicrophoneControl(control, to: peer) }
         if microphonePhase != microphonePolicy.phase { microphonePhase = microphonePolicy.phase }
         if microphonePhase != .live { microphoneReceipt = nil }
+    }
+
+    private func recordMicrophoneDiagnostic(_ event: String, _ fields: [String: String] = [:]) {
+        guard let request = microphonePolicy.startRequestID else { return }
+        var values = fields
+        values["phase"] = String(describing: microphonePolicy.phase)
+        IPadMicrophoneDiagnostics.shared.attempt(request).record(event, values)
     }
 
     func requestMicrophoneReceipt() {
