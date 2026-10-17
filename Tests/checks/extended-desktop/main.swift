@@ -19,6 +19,39 @@ struct Checks {
     @MainActor static func main() async {
         let a = NWConnection(), b = NWConnection(), c = NWConnection()
         let aid = ObjectIdentifier(a), bid = ObjectIdentifier(b), cid = ObjectIdentifier(c)
+        let nativeViewport = Viewport(width: 1350, height: 890, scale: nil)
+        let native = ExtendedDesktop.Dimensions(viewport: nativeViewport)!
+        let nativeSize = CGSize(width: native.widthPt, height: native.heightPt)
+        let keyboard = Viewport(width: 1350, height: 540, scale: 1.5)
+        let portraitViewport = Viewport(width: 890, height: 1350, scale: 0.8)
+        let portrait = ExtendedDesktop.Dimensions(viewport: portraitViewport)!
+        expect(native.widthPt == 1350 && native.heightPt == 890 && native.scale == 2 &&
+            native.pixelWidth == 2700 && native.pixelHeight == 1780, "native panel uses 1350x890 points and 2700x1780 pixels")
+        expect(ExtendedDesktop.Dimensions(viewport: keyboard)?.scale == 2, "text scale does not change native display scale")
+        let invalidViewports = [
+            Viewport(width: .nan, height: 890, scale: nil),
+            Viewport(width: .infinity, height: 890, scale: nil),
+            Viewport(width: -.infinity, height: 890, scale: nil),
+            Viewport(width: 1350, height: .nan, scale: nil),
+            Viewport(width: 1350, height: .infinity, scale: nil),
+            Viewport(width: 1350, height: -.infinity, scale: nil),
+            Viewport(width: 0, height: 890, scale: nil),
+            Viewport(width: -1, height: 890, scale: nil),
+            Viewport(width: 319.9, height: 890, scale: nil),
+            Viewport(width: 2048.1, height: 890, scale: nil),
+            Viewport(width: 1350, height: 0, scale: nil),
+            Viewport(width: 1350, height: -1, scale: nil),
+            Viewport(width: 1350, height: 239.9, scale: nil),
+            Viewport(width: 1350, height: 2048.1, scale: nil)
+        ]
+        for viewport in invalidViewports {
+            expect(ExtendedDesktop.Dimensions(viewport: viewport) == nil, "invalid dimensions are refused before integer conversion")
+        }
+        for (width, height) in [(320.0, 240.0), (2048.0, 2048.0), (1350.4, 889.6)] {
+            let dimensions = ExtendedDesktop.Dimensions(viewport: Viewport(width: width, height: height, scale: nil))
+            expect(dimensions?.widthPt == Int(width.rounded()) && dimensions?.heightPt == Int(height.rounded()),
+                   "bounded point dimensions round to a native display mode")
+        }
 
         let waitingDisplay = VirtualDisplay()
         let waiting = Task { @MainActor in await AdapterWaitFixture.waitUntilOnline(waitingDisplay) }
@@ -52,13 +85,18 @@ struct Checks {
         }
 
         let rig = Rig(), desktop = rig.desktop
-        desktop.request(aid); desktop.request(aid); desktop.request(bid)
+        desktop.request(aid)
+        desktop.updateViewport(native, for: aid)
+        desktop.request(aid)
+        desktop.updateViewport(native, for: aid)
+        desktop.request(bid)
+        desktop.updateViewport(native, for: bid)
         expect(rig.displays.count == 1 && desktop.requesters.count == 2, "duplicate hello does not create another display")
         desktop.release(cid); desktop.release(aid)
         expect(desktop.phase == .creating && rig.displays[0].destroys == 0, "other session keeps in-flight display alive")
         await online(rig.displays[0])
         expect(desktop.displayID == 100 && rig.published.last! == 100, "publish only after ready")
-        desktop.request(cid)
+        desktop.request(cid); desktop.updateViewport(native, for: cid)
         expect(rig.displays.count == 1, "a ready display is reused")
         desktop.release(bid)
         expect(desktop.displayID == 100, "one remaining requester retains desktop")
@@ -67,13 +105,14 @@ struct Checks {
         expect(rig.displays[0].events == ["recover", "destroy"], "restore precedes exactly one resource destruction")
         desktop.release(cid)
         expect(rig.displays[0].destroys == 1, "duplicate disconnect is idempotent")
+        expect(desktop.dimensions == nil, "last release clears latched dimensions")
 
         let race = Rig(), rd = race.desktop
-        rd.request(aid); await settle()
+        rd.request(aid); rd.updateViewport(native, for: aid); await settle()
         let old = race.displays[0]
         rd.release(aid)
         expect(old.destroys == 1, "disconnect destroys resource before online wait completes")
-        rd.request(bid)
+        rd.request(bid); rd.updateViewport(native, for: bid)
         old.lost()
         expect(rd.phase == .creating && race.displays[1].destroys == 0, "stale termination does not remove replacement")
         await online(old)
@@ -86,12 +125,12 @@ struct Checks {
 
         for lateFailure in [false, true] {
             let configuring = Rig(), cd = configuring.desktop
-            cd.request(aid)
+            cd.request(aid); cd.updateViewport(native, for: aid)
             configuring.displays[0].blockConfiguration = true
             configuring.displays[0].configurationFails = lateFailure
             await online(configuring.displays[0])
             expect(configuring.displays[0].configuration != nil, "configuration may suspend")
-            cd.release(aid); cd.request(bid)
+            cd.release(aid); cd.request(bid); cd.updateViewport(native, for: bid)
             await online(configuring.displays[1])
             configuring.displays[0].configuration?.resume()
             await settle()
@@ -103,7 +142,7 @@ struct Checks {
         for failure in 0..<4 {
             let failed = Rig(), fd = failed.desktop
             failed.throwOnCreate = failure == 0
-            fd.request(aid)
+            fd.request(aid); fd.updateViewport(native, for: aid)
             if failure > 0 {
                 failed.displays[0].configurationFails = failure == 2
                 failed.displays[0].valid = failure != 3
@@ -111,20 +150,20 @@ struct Checks {
                 expect(failed.displays[0].destroys == 1, "failed creation releases its display")
             }
             expect(fd.displayID == nil && failed.failures.count == 1, "creation failure is bounded and unpublished")
-            fd.request(aid); fd.request(bid); await settle()
+            fd.request(aid); fd.updateViewport(native, for: aid); fd.request(bid); fd.updateViewport(native, for: bid); await settle()
             expect(failed.failures.count == 1 && failed.displays.count <= 1, "no hello retry loop within failed requester set")
             fd.release(aid); fd.release(bid)
             expect(fd.phase == .idle, "failed session resets only after all leave")
             failed.throwOnCreate = false
-            fd.request(cid); await online(failed.displays.last!)
+            fd.request(cid); fd.updateViewport(native, for: cid); await online(failed.displays.last!)
             expect(fd.phase == .ready, "a later session can retry once")
             fd.shutdown()
         }
 
         let lost = Rig(), ld = lost.desktop
-        ld.request(aid); await online(lost.displays[0])
+        ld.request(aid); ld.updateViewport(native, for: aid); await online(lost.displays[0])
         lost.displays[0].valid = false
-        ld.checkDisplay(); ld.checkDisplay(); lost.displays[0].lost(); ld.request(bid)
+        ld.checkDisplay(); ld.checkDisplay(); lost.displays[0].lost(); ld.request(bid); ld.updateViewport(native, for: bid)
         expect(ld.displayID == nil && lost.displays[0].destroys == 1 && lost.failures.count == 1,
                "topology loss cleans up once without automatic recreation")
         expect(lost.published.last! == nil && lost.displays.count == 1, "loss removes allowlist ID")
@@ -132,9 +171,9 @@ struct Checks {
 
         for pending in [false, true] {
             let exiting = Rig(), ed = exiting.desktop
-            ed.request(aid)
+            ed.request(aid); ed.updateViewport(native, for: aid)
             if !pending { await online(exiting.displays[0]) } else { await settle() }
-            ed.shutdown(); ed.shutdown(); ed.request(bid)
+            ed.shutdown(); ed.shutdown(); ed.request(bid); ed.updateViewport(native, for: bid)
             if pending { await online(exiting.displays[0]) }
             expect(ed.phase == .shutdown && ed.requesters.isEmpty && ed.displayID == nil, "shutdown is terminal even after late waits")
             expect(exiting.displays.count == 1 && exiting.displays[0].destroys == 1, "shutdown frees pending or ready display exactly once")
@@ -157,15 +196,121 @@ struct Checks {
             case 8: fixture.appKitLoop = false
             default: hello.device = "Android (SM-S911N)"
             }
+            fixture.updateExtendedDesktopViewport(nativeViewport, from: a)
             fixture.requestExtendedDesktop(for: a, hello: hello)
-            expect(auth.displays.isEmpty, "actual coordinator admission rejects unauthorized hello \(invalid)")
+            fixture.updateExtendedDesktopViewport(keyboard, from: a)
+            expect(auth.displays.isEmpty && auth.desktop.requesters.isEmpty,
+                   "actual coordinator admission rejects unauthorized hello with viewport \(invalid)")
         }
         a.state = .ready
         let auth = Rig(), fixture = CoordinatorFixture(auth.desktop)
         fixture.connections[aid] = a; fixture.routes[aid] = Route()
         fixture.requestExtendedDesktop(for: a, hello: Hello())
+        expect(auth.displays.isEmpty && auth.desktop.requesters == [aid], "authenticated hello waits for its own valid viewport")
+        for viewport in invalidViewports {
+            fixture.updateExtendedDesktopViewport(viewport, from: a)
+            expect(auth.displays.isEmpty && fixture.extendedDesktopViewports[aid] == nil,
+                   "invalid viewport leaves authenticated requester waiting")
+        }
+        fixture.updateExtendedDesktopViewport(nativeViewport, from: a)
         expect(auth.displays.count == 1 && auth.desktop.requesters == [aid], "actual coordinator admits authenticated connection identity")
-        await online(auth.displays[0]); auth.desktop.shutdown()
+        expect(auth.displays[0].dimensions == native, "coordinator passes native dimensions to resource factory")
+        fixture.requestExtendedDesktop(for: a, hello: Hello())
+        fixture.updateExtendedDesktopViewport(keyboard, from: a)
+        expect(auth.displays.count == 1 && auth.desktop.dimensions == native, "repeated hello and keyboard during creation keep the first mode")
+        await online(auth.displays[0])
+        fixture.updateExtendedDesktopViewport(keyboard, from: a)
+        fixture.updateExtendedDesktopViewport(portraitViewport, from: a)
+        fixture.requestExtendedDesktop(for: a, hello: Hello())
+        expect(auth.desktop.displayID == 100 && auth.displays.count == 1 && auth.desktop.dimensions == native,
+               "ready display keeps its ID and dimensions across keyboard and rotation updates")
+        fixture.disconnect(a)
+        expect(auth.desktop.dimensions == nil && fixture.extendedDesktopViewports.isEmpty,
+               "disconnect drops admission and connection viewport cache")
+        fixture.updateExtendedDesktopViewport(nativeViewport, from: a)
+        fixture.requestExtendedDesktop(for: a, hello: Hello())
+        expect(auth.displays.count == 1 && fixture.extendedDesktopViewports.isEmpty, "late disconnected viewport or hello cannot recreate or cache")
+        auth.desktop.shutdown()
+
+        for viewportFirst in [false, true] {
+            let arrivals = Rig(), coordinator = CoordinatorFixture(arrivals.desktop)
+            coordinator.connections[aid] = a; coordinator.routes[aid] = Route()
+            coordinator.connections[bid] = b; coordinator.routes[bid] = Route()
+            coordinator.updateExtendedDesktopViewport(portraitViewport, from: b)
+            coordinator.requestExtendedDesktop(for: b, hello: Hello(device: "Android"))
+            expect(arrivals.displays.isEmpty && arrivals.desktop.requesters.isEmpty,
+                   "another connection's cached viewport and ineligible hello cannot create")
+            if viewportFirst {
+                coordinator.updateExtendedDesktopViewport(nativeViewport, from: a)
+                coordinator.updateExtendedDesktopViewport(keyboard, from: a)
+                expect(arrivals.displays.isEmpty, "viewport before hello waits for same-connection authentication")
+                coordinator.requestExtendedDesktop(for: a, hello: Hello())
+            } else {
+                coordinator.requestExtendedDesktop(for: a, hello: Hello())
+                expect(arrivals.displays.isEmpty, "hello cannot borrow another connection's viewport")
+                coordinator.updateExtendedDesktopViewport(nativeViewport, from: a)
+            }
+            expect(arrivals.displays.count == 1 && arrivals.displays[0].dimensions == native,
+                   "both arrival orders use only the admitted connection's first valid viewport")
+            coordinator.requestExtendedDesktop(for: b, hello: Hello())
+            expect(arrivals.displays.count == 1 && arrivals.desktop.dimensions == native,
+                   "later authenticated requester shares the first creator's mode")
+            await online(arrivals.displays[0])
+            coordinator.disconnect(a)
+            coordinator.updateExtendedDesktopViewport(portraitViewport, from: b)
+            expect(arrivals.desktop.displayID == 100 && arrivals.desktop.dimensions == native,
+                   "remaining requester cannot resize the creator's display")
+            coordinator.disconnect(b)
+            coordinator.connections[cid] = c; coordinator.routes[cid] = Route()
+            coordinator.requestExtendedDesktop(for: c, hello: Hello())
+            expect(arrivals.displays.count == 1 && arrivals.desktop.dimensions == nil,
+                   "fresh hello after last release cannot reuse old dimensions")
+            coordinator.updateExtendedDesktopViewport(portraitViewport, from: c)
+            expect(arrivals.displays.count == 2 && arrivals.displays[1].dimensions == portrait,
+                   "a later session renegotiates rotation after the last release")
+            await online(arrivals.displays[1])
+            arrivals.desktop.shutdown()
+        }
+
+        let firstReady = Rig(), firstReadyCoordinator = CoordinatorFixture(firstReady.desktop)
+        firstReadyCoordinator.connections[aid] = a; firstReadyCoordinator.routes[aid] = Route()
+        firstReadyCoordinator.connections[bid] = b; firstReadyCoordinator.routes[bid] = Route()
+        firstReadyCoordinator.requestExtendedDesktop(for: a, hello: Hello())
+        firstReadyCoordinator.updateExtendedDesktopViewport(portraitViewport, from: b)
+        expect(firstReady.displays.isEmpty, "unadmitted viewport cannot fulfill another requester's hello")
+        firstReadyCoordinator.requestExtendedDesktop(for: b, hello: Hello())
+        firstReadyCoordinator.updateExtendedDesktopViewport(nativeViewport, from: a)
+        expect(firstReady.displays.count == 1 && firstReady.desktop.dimensions == portrait,
+               "first creator with both admission and viewport wins even when another hello arrived earlier")
+        await online(firstReady.displays[0])
+        firstReady.desktop.shutdown()
+
+        let trustRace = Rig(), trustCoordinator = CoordinatorFixture(trustRace.desktop)
+        trustCoordinator.connections[aid] = a; trustCoordinator.routes[aid] = Route()
+        trustCoordinator.remote?.paired = false
+        trustCoordinator.updateExtendedDesktopViewport(nativeViewport, from: a)
+        trustCoordinator.requestExtendedDesktop(for: a, hello: Hello())
+        expect(trustRace.displays.isEmpty && trustRace.desktop.requesters.isEmpty,
+               "cached viewport cannot bypass pairing admission")
+        trustCoordinator.remote?.paired = true
+        trustCoordinator.requestExtendedDesktop(for: a, hello: Hello())
+        expect(trustRace.displays.count == 1 && trustRace.desktop.dimensions == native,
+               "successful hello after pairing uses only that connection's cached viewport")
+        await online(trustRace.displays[0])
+        trustRace.desktop.shutdown()
+
+        let abandoned = Rig(), abandonedCoordinator = CoordinatorFixture(abandoned.desktop)
+        abandonedCoordinator.connections[aid] = a; abandonedCoordinator.routes[aid] = Route()
+        abandonedCoordinator.updateExtendedDesktopViewport(nativeViewport, from: a)
+        abandonedCoordinator.disconnect(a)
+        abandonedCoordinator.requestExtendedDesktop(for: a, hello: Hello())
+        expect(abandoned.displays.isEmpty && abandonedCoordinator.extendedDesktopViewports.isEmpty,
+               "disconnect before hello discards cached viewport")
+        abandonedCoordinator.connections[aid] = b
+        abandonedCoordinator.updateExtendedDesktopViewport(nativeViewport, from: a)
+        abandonedCoordinator.requestExtendedDesktop(for: a, hello: Hello())
+        expect(abandoned.displays.isEmpty && abandonedCoordinator.extendedDesktopViewports.isEmpty,
+               "mismatched live connection identity cannot cache or admit")
 
         for active in [false, true] {
             for sill in [false, true] {
@@ -192,14 +337,18 @@ struct Checks {
         expect(!catalog.displayInventory.contains(selection) && !catalog.displayInventory.select(selection), "stale desktop inventory cannot select after cleanup")
 
         let screens = [CGRect(x: -1920, y: -200, width: 1920, height: 1080), CGRect(x: 0, y: 0, width: 1512, height: 982)]
-        let origin = ExtendedDesktop.originRight(of: screens)!
-        let bounds = CGRect(origin: origin, size: CGSize(width: 1024, height: 768))
+        let origin = ExtendedDesktop.originRight(of: screens, size: nativeSize)!
+        let bounds = CGRect(origin: origin, size: nativeSize)
         expect(origin == CGPoint(x: 1512, y: 0) && screens.allSatisfy { !bounds.intersects($0) }, "right origin is disjoint from offset physical monitors")
-        expect(ExtendedDesktop.originRight(of: screens + [CGRect(x: 1512, y: 1500, width: 1280, height: 720)]) == CGPoint(x: 2792, y: 1500),
+        expect(ExtendedDesktop.originRight(of: screens + [CGRect(x: 1512, y: 1500, width: 1280, height: 720)], size: nativeSize) == CGPoint(x: 2792, y: 1500),
                "right display touches the edge even for a staggered arrangement")
-        expect(ExtendedDesktop.originRight(of: []) == nil, "no geometry cannot create display")
-        expect(ExtendedDesktop.originRight(of: [CGRect(x: Double(Int32.max), y: 0, width: 100, height: 100)]) == nil,
+        expect(ExtendedDesktop.originRight(of: [], size: nativeSize) == nil, "no geometry cannot create display")
+        expect(ExtendedDesktop.originRight(of: [CGRect(x: Double(Int32.max), y: 0, width: 100, height: 100)], size: nativeSize) == nil,
                "reject origin outside CoreGraphics range")
+        expect(ExtendedDesktop.originRight(of: [CGRect(x: Double(Int32.max) - 1300, y: 0, width: 1, height: 100)], size: nativeSize) == nil,
+               "right bound reserves the requested native width rather than the old 1024 points")
+        expect(ExtendedDesktop.originRight(of: [CGRect(x: 0, y: Double(Int32.max) - 850, width: 100, height: 1)], size: nativeSize) == nil,
+               "bottom bound reserves the requested native height rather than the old 768 points")
         expect(!ExtendedDesktop.ownsWindow(CGRect(x: 1450, y: 20, width: 80, height: 80), bounds: bounds), "physical-centered overlapping window is never recovered")
         expect(ExtendedDesktop.ownsWindow(CGRect(x: 1500, y: 20, width: 200, height: 100), bounds: bounds), "desktop-centered window may be recovered")
         expect(!ExtendedDesktop.ownsWindow(.zero, bounds: bounds), "empty window is never recovered")

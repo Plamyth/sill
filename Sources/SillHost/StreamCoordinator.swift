@@ -86,6 +86,7 @@ package final class StreamCoordinator {
     private let appKitLoop: Bool
     let stage: VirtualStage
     private lazy var extendedDesktop = ExtendedDesktop(catalog: catalog)
+    private var extendedDesktopViewports: [ObjectIdentifier: ExtendedDesktop.Dimensions] = [:]
     /// What the menu bar app shows. Written here, at the moment things happen; never read back.
     package let status: HostStatus
     /// Set by the signal handler: a select in flight when Ctrl-C lands must not stage anything new.
@@ -470,6 +471,7 @@ package final class StreamCoordinator {
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
                 let id = ObjectIdentifier(connection)
                 self.extendedDesktop.release(id)
+                self.extendedDesktopViewports[id] = nil
                 self.inputFence.leave(id)
                 self.gestureArrivals[id] = nil
                 self.routes[id] = nil
@@ -1051,6 +1053,7 @@ package final class StreamCoordinator {
             await controlRemoteAudio(request, from: connection)
         case .viewport:
             guard let v = Wire.decode(Viewport.self, from: message.payload) else { return }
+            updateExtendedDesktopViewport(v, from: connection)
             viewport = v
             let id = ObjectIdentifier(connection)
             clientFPS[id] = v.fps ?? 60
@@ -2054,6 +2057,17 @@ package final class StreamCoordinator {
             connected: connections[id] === connection && connection.state == .ready,
             encrypted: route?.encrypted == true, paired: paired, device: hello.device) else { return }
         extendedDesktop.request(id)
+        if let dimensions = extendedDesktopViewports[id] {
+            extendedDesktop.updateViewport(dimensions, for: id)
+        }
+    }
+
+    private func updateExtendedDesktopViewport(_ viewport: Viewport, from connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        guard !shuttingDown, connections[id] === connection, connection.state == .ready,
+              let dimensions = extendedDesktopViewports[id] ?? ExtendedDesktop.Dimensions(viewport: viewport) else { return }
+        extendedDesktopViewports[id] = dimensions
+        extendedDesktop.updateViewport(dimensions, for: id)
     }
 
     /// The window server removed the virtual display (sleep/wake, display arbitration). The stage
@@ -2082,6 +2096,7 @@ package final class StreamCoordinator {
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
         extendedDesktop.shutdown()
+        extendedDesktopViewports.removeAll()
         stage.release()
     }
 

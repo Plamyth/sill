@@ -39,9 +39,19 @@ final class CoordinatorFixture {
     var routes: [ObjectIdentifier: Route] = [:]
     var connections: [ObjectIdentifier: NWConnection] = [:]
     var remote: Trust? = Trust()
+    var extendedDesktopViewports: [ObjectIdentifier: ExtendedDesktop.Dimensions] = [:]
     let extendedDesktop: ExtendedDesktop
     init(_ desktop: ExtendedDesktop) { extendedDesktop = desktop }
     // COORDINATOR_METHOD
+    // VIEWPORT_METHOD
+
+    func disconnect(_ connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        extendedDesktop.release(id)
+        extendedDesktopViewports[id] = nil
+        connections[id] = nil
+        routes[id] = nil
+    }
 }
 
 @MainActor
@@ -60,6 +70,7 @@ final class CatalogFixture {
 @MainActor
 final class FakeDisplay {
     let id: UInt32
+    let dimensions: ExtendedDesktop.Dimensions
     let lost: @MainActor () -> Void
     var online: CheckedContinuation<Bool, Never>?
     var configuration: CheckedContinuation<Void, Never>?
@@ -70,7 +81,9 @@ final class FakeDisplay {
     var recoveries = 0
     var configured = 0
     var events: [String] = []
-    init(id: UInt32, lost: @escaping @MainActor () -> Void) { self.id = id; self.lost = lost }
+    init(id: UInt32, dimensions: ExtendedDesktop.Dimensions, lost: @escaping @MainActor () -> Void) {
+        self.id = id; self.dimensions = dimensions; self.lost = lost
+    }
     var resource: ExtendedDesktop.Resource {
         .init(id: id, waitUntilOnline: { await withCheckedContinuation { self.online = $0 } },
             configure: {
@@ -90,9 +103,9 @@ final class Rig {
     var published: [UInt32?] = []
     var failures: [String] = []
     var throwOnCreate = false
-    lazy var desktop = ExtendedDesktop(makeDisplay: { lost in
+    lazy var desktop = ExtendedDesktop(makeDisplay: { dimensions, lost in
         if self.throwOnCreate { throw TestFailure.creation }
-        let display = FakeDisplay(id: UInt32(self.displays.count + 100), lost: lost)
+        let display = FakeDisplay(id: UInt32(self.displays.count + 100), dimensions: dimensions, lost: lost)
         self.displays.append(display)
         return display.resource
     }, publishID: { self.published.append($0) }, reportFailure: { self.failures.append($0) })

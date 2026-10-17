@@ -30,12 +30,14 @@ catalog = (ROOT / 'Sources/SillHost/WindowCatalog.swift').read_text()
 desktop = (ROOT / 'Sources/SillHost/ExtendedDesktop.swift').read_text()
 admit = block(coordinator, 'private func requestExtendedDesktop(').replace('private func', 'func', 1)
 fixture = (HERE / 'Fixtures.swift').read_text().replace('// COORDINATOR_METHOD', admit)
+fixture = fixture.replace('// VIEWPORT_METHOD', block(coordinator, 'private func updateExtendedDesktopViewport(').replace('private func', 'func', 1))
 fixture = fixture.replace('// ONLINE_WAIT_METHOD', block(desktop, 'private static func waitUntilOnline(').replace('private static', 'static', 1))
 fixture = fixture.replace('// CATALOG_METHODS', '\n'.join(block(catalog, signature) for signature in [
     'func setExtendedDesktopDisplay(', 'static func admitsDisplay('
 ]))
 inputs = {
-    'ExtendedDesktop.swift': desktop.split('// MARK: macOS display adapter')[0],
+    'ExtendedDesktop.swift': desktop.split('// MARK: macOS display adapter')[0].replace('import StreamProtocol\n', ''),
+    'Viewport.swift': 'import Foundation\n' + block((ROOT / 'Sources/StreamProtocol/Viewport.swift').read_text(), 'public struct Viewport:'),
     'DisplayInventory.swift': (ROOT / 'Sources/SillHost/DisplayInventory.swift').read_text().replace('import StreamProtocol\n', ''),
     'Fixtures.swift': fixture,
     'main.swift': (HERE / 'main.swift').read_text(),
@@ -43,13 +45,22 @@ inputs = {
 
 assert 'self.requestExtendedDesktop(for: connection, hello: hello)' in block(coordinator, 'server.onClientHello =')
 assert 'self.extendedDesktop.release(id)' in block(coordinator, 'server.onClientDisconnected =')
+assert 'self.extendedDesktopViewports[id] = nil' in block(coordinator, 'server.onClientDisconnected =')
 assert 'extendedDesktop.shutdown()' in block(coordinator, 'package func shutdownForExit(')
+assert 'extendedDesktopViewports.removeAll()' in block(coordinator, 'package func shutdownForExit(')
+viewport_case = coordinator.split('case .viewport:', 1)[1].split('case .pairingWanted:', 1)[0]
+assert viewport_case.index('updateExtendedDesktopViewport(v, from: connection)') < viewport_case.index('viewport = v')
 assert 'extendedDesktop.checkDisplay()' in block(coordinator, 'private func displaysChanged(')
 assert 'ownedID: extendedDesktopID' in block(catalog, 'private func updateDisplays(')
 assert 'id == extendedDesktopID ? ExtendedDesktop.name' in block(catalog, 'private func updateDisplays(')
 assert 'CGConfigureDisplayMirrorOfDisplay(config, display.displayID, kCGNullDirectDisplay)' in desktop
 assert 'CGDisplayMirrorsDisplay(id) == kCGNullDirectDisplay' in desktop
-assert 'widthPt: 1024, heightPt: 768' in desktop and 'scale: 2, refreshHz: 60' in desktop
+assert 'widthPt: dimensions.widthPt, heightPt: dimensions.heightPt' in desktop
+assert 'scale: dimensions.scale, refreshHz: 60' in desktop
+assert 'CGSize(width: display.widthPt, height: display.heightPt)' in block(desktop, 'private static func configure(')
+valid = block(desktop, 'private static func valid(')
+assert 'CGSize(width: display.widthPt, height: display.heightPt)' in valid
+assert 'pixels.width == display.widthPt * display.scale && pixels.height == display.heightPt * display.scale' in valid
 assert 'attempted < 4, Date() < deadline' in desktop
 assert 'WindowSizer.axWindow' not in desktop
 assert 'extendedDesktop' not in block(coordinator, 'private func applyViewportToActiveWindow(')

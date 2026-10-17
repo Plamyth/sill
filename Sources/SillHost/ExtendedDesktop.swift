@@ -1,10 +1,26 @@
 import Foundation
 import CoreGraphics
+import StreamProtocol
 
 /// A desktop belongs to authenticated sessions, independently of the single-window stage.
 @MainActor
 final class ExtendedDesktop {
     static let name = "CCR Sill iPad 확장 화면"
+
+    struct Dimensions: Equatable {
+        let widthPt: Int
+        let heightPt: Int
+        let scale = 2
+        var pixelWidth: Int { widthPt * scale }
+        var pixelHeight: Int { heightPt * scale }
+
+        init?(viewport: Viewport) {
+            guard viewport.width.isFinite, viewport.height.isFinite,
+                  (320...2048).contains(viewport.width), (240...2048).contains(viewport.height) else { return nil }
+            widthPt = Int(viewport.width.rounded())
+            heightPt = Int(viewport.height.rounded())
+        }
+    }
 
     enum Phase: Equatable {
         case idle, creating, ready, failed(String), shutdown
@@ -21,14 +37,15 @@ final class ExtendedDesktop {
 
     private(set) var requesters: Set<ObjectIdentifier> = []
     private(set) var phase: Phase = .idle
+    private(set) var dimensions: Dimensions?
     private var generation: UInt64 = 0
     private var resource: Resource?
     private var creation: Task<Void, Never>?
-    private let makeDisplay: (@escaping @MainActor () -> Void) throws -> Resource
+    private let makeDisplay: (Dimensions, @escaping @MainActor () -> Void) throws -> Resource
     private let publishID: (UInt32?) -> Void
     private let reportFailure: (String) -> Void
 
-    init(makeDisplay: @escaping (@escaping @MainActor () -> Void) throws -> Resource,
+    init(makeDisplay: @escaping (Dimensions, @escaping @MainActor () -> Void) throws -> Resource,
          publishID: @escaping (UInt32?) -> Void, reportFailure: @escaping (String) -> Void) {
         self.makeDisplay = makeDisplay
         self.publishID = publishID
@@ -44,12 +61,18 @@ final class ExtendedDesktop {
     var displayID: UInt32? { phase == .ready ? resource?.id : nil }
 
     func request(_ requester: ObjectIdentifier) {
-        guard phase != .shutdown, requesters.insert(requester).inserted, phase == .idle else { return }
+        guard phase != .shutdown else { return }
+        requesters.insert(requester)
+    }
+
+    func updateViewport(_ dimensions: Dimensions, for requester: ObjectIdentifier) {
+        guard requesters.contains(requester), phase == .idle else { return }
+        self.dimensions = dimensions
         generation &+= 1
         let token = generation
         phase = .creating
         do {
-            let display = try makeDisplay { [weak self] in self?.lost(token: token) }
+            let display = try makeDisplay(dimensions) { [weak self] in self?.lost(token: token) }
             resource = display
             creation = Task { @MainActor [weak self] in
                 let online = await display.waitUntilOnline()
@@ -76,6 +99,7 @@ final class ExtendedDesktop {
 
     func release(_ requester: ObjectIdentifier) {
         guard requesters.remove(requester) != nil, requesters.isEmpty else { return }
+        dimensions = nil
         retire(to: .idle)
     }
 
@@ -85,6 +109,7 @@ final class ExtendedDesktop {
 
     func shutdown() {
         requesters.removeAll()
+        dimensions = nil
         retire(to: .shutdown)
     }
 
@@ -109,12 +134,12 @@ final class ExtendedDesktop {
         old?.destroy()
     }
 
-    static func originRight(of displays: [CGRect]) -> CGPoint? {
+    static func originRight(of displays: [CGRect], size: CGSize) -> CGPoint? {
         let usable = displays.filter { !$0.isEmpty && !$0.isInfinite && !$0.isNull }
         guard let right = usable.max(by: { $0.maxX < $1.maxX }),
               right.maxX.isFinite, right.minY.isFinite,
-              right.maxX >= Double(Int32.min), right.maxX < Double(Int32.max) - 1024,
-              right.minY >= Double(Int32.min), right.minY < Double(Int32.max) - 768 else { return nil }
+              right.maxX >= Double(Int32.min), right.maxX < Double(Int32.max) - size.width,
+              right.minY >= Double(Int32.min), right.minY < Double(Int32.max) - size.height else { return nil }
         return CGPoint(x: ceil(right.maxX), y: ceil(right.minY))
     }
 
@@ -132,11 +157,11 @@ extension ExtendedDesktop {
     enum Failure: Error { case screenRecordingOff, noPhysicalDisplay, configuration, verification, notListedBySCK }
 
     convenience init(catalog: WindowCatalog) {
-        self.init(makeDisplay: { lost in
+        self.init(makeDisplay: { dimensions, lost in
             guard CGPreflightScreenCaptureAccess() else { throw Failure.screenRecordingOff }
             guard !WindowCatalog.physicalDisplayIDs().isEmpty else { throw Failure.noPhysicalDisplay }
-            let display = try VirtualDisplay(name: Self.name, widthPt: 1024, heightPt: 768,
-                scale: 2, refreshHz: 60, vendorID: VirtualStage.vendorID, productID: 0x0002, serialNum: 1)
+            let display = try VirtualDisplay(name: Self.name, widthPt: dimensions.widthPt, heightPt: dimensions.heightPt,
+                scale: dimensions.scale, refreshHz: 60, vendorID: VirtualStage.vendorID, productID: 0x0002, serialNum: 1)
             let id = display.displayID
             var ownedBounds = CGRect.zero
             display.onTerminated = { Task { @MainActor in lost() } }
@@ -176,7 +201,8 @@ extension ExtendedDesktop {
         guard !physical.isEmpty else { throw Failure.noPhysicalDisplay }
         // Include other virtual screens so VirtualStage's eviction area cannot overlap this one.
         let others = WindowCatalog.onlineDisplayIDs().filter { $0 != display.displayID }
-        guard let origin = originRight(of: others.map { CGDisplayBounds($0) }) else { throw Failure.configuration }
+        guard let origin = originRight(of: others.map { CGDisplayBounds($0) },
+            size: CGSize(width: display.widthPt, height: display.heightPt)) else { throw Failure.configuration }
         var config: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&config) == .success, let config else { throw Failure.configuration }
         guard CGConfigureDisplayMirrorOfDisplay(config, display.displayID, kCGNullDirectDisplay) == .success,
@@ -200,8 +226,9 @@ extension ExtendedDesktop {
         let refreshHz = CGDisplayCopyDisplayMode(id)?.refreshRate ?? 0
         return id != 0 && display.isAlive && CGDisplayIsActive(id) != 0 &&
             CGDisplayMirrorsDisplay(id) == kCGNullDirectDisplay && CGDisplayIsInMirrorSet(id) == 0 &&
-            display.bounds.size == CGSize(width: 1024, height: 768) &&
-            pixels.width == 2048 && pixels.height == 1536 && abs(refreshHz - 60) < 0.5 && !physical.isEmpty &&
+            display.bounds.size == CGSize(width: display.widthPt, height: display.heightPt) &&
+            pixels.width == display.widthPt * display.scale && pixels.height == display.heightPt * display.scale &&
+            abs(refreshHz - 60) < 0.5 && !physical.isEmpty &&
             physical.allSatisfy { display.bounds.minX >= $0.maxX && !display.bounds.intersects($0) }
     }
 
