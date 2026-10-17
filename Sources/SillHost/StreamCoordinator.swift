@@ -85,6 +85,7 @@ package final class StreamCoordinator {
     /// The virtual display needs that loop too: without it the setting is forced off.
     private let appKitLoop: Bool
     let stage: VirtualStage
+    private lazy var extendedDesktop = ExtendedDesktop(catalog: catalog)
     /// What the menu bar app shows. Written here, at the moment things happen; never read back.
     package let status: HostStatus
     /// Set by the signal handler: a select in flight when Ctrl-C lands must not stage anything new.
@@ -468,6 +469,7 @@ package final class StreamCoordinator {
                 self.settingsArrivals[ObjectIdentifier(connection)] = nil
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
                 let id = ObjectIdentifier(connection)
+                self.extendedDesktop.release(id)
                 self.inputFence.leave(id)
                 self.gestureArrivals[id] = nil
                 self.routes[id] = nil
@@ -580,6 +582,7 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
+                self.requestExtendedDesktop(for: connection, hello: hello)
                 guard !name.isEmpty else { return }
                 self.status.update {
                     guard let i = $0.devices.firstIndex(where: { $0.id == id }), $0.devices[i].name == nil else { return }
@@ -2043,6 +2046,16 @@ package final class StreamCoordinator {
 
     // MARK: Virtual display lifecycle
 
+    private func requestExtendedDesktop(for connection: NWConnection, hello: Hello) {
+        let id = ObjectIdentifier(connection)
+        let route = routes[id]
+        let paired = route?.fingerprint.map { remote?.isPaired($0) == true } ?? false
+        guard !shuttingDown, ExtendedDesktop.eligible(appKitLoop: appKitLoop, synthetic: synthetic,
+            connected: connections[id] === connection && connection.state == .ready,
+            encrypted: route?.encrypted == true, paired: paired, device: hello.device) else { return }
+        extendedDesktop.request(id)
+    }
+
     /// The window server removed the virtual display (sleep/wake, display arbitration). The stage
     /// has already put the window back; stage it again, or after repeated losses give up on the
     /// virtual display for this run and stream the real window.
@@ -2068,6 +2081,7 @@ package final class StreamCoordinator {
         injector.releaseAll()
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
+        extendedDesktop.shutdown()
         stage.release()
     }
 
@@ -2365,6 +2379,7 @@ package final class StreamCoordinator {
 
     private func displaysChanged() {
         guard !synthetic else { return }
+        extendedDesktop.checkDisplay()
         if active == .desktop {
             videoEpoch = nil
             inputGeneration = UUID().uuidString

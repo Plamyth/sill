@@ -20,6 +20,7 @@ final class WindowCatalog {
     private(set) var windows: [SCWindow] = []
     private(set) var infos: [WindowInfo] = []
     private var displays: [SCDisplay] = []
+    private var extendedDesktopID: CGDirectDisplayID?
     private(set) var displayInventory = DisplayInventory()
     var display: SCDisplay? {
         guard let version = topology.version, version == inventoryTopologyVersion,
@@ -148,6 +149,15 @@ final class WindowCatalog {
     func selectDisplay(_ selection: DisplaySelection) -> Bool {
         guard let version = topology.version, version == inventoryTopologyVersion else { return false }
         return displayInventory.select(selection)
+    }
+
+    func setExtendedDesktopDisplay(_ id: CGDirectDisplayID?) {
+        guard extendedDesktopID != id else { return }
+        if let old = extendedDesktopID { displays.removeAll { $0.displayID == old } }
+        extendedDesktopID = id
+        displayInventory.invalidate()
+        onDisplaysChanged?()
+        if clientCount > 0 { Task { @MainActor [weak self] in await self?.refreshWindows() } }
     }
 
     func window(id: UInt32) -> SCWindow? { windows.first { $0.windowID == id } }
@@ -296,16 +306,17 @@ final class WindowCatalog {
     }
 
     private func updateDisplays(_ candidates: [SCDisplay]) {
-        let hardware = Self.hardwareDisplays()
+        let physical = Set(Self.physicalDisplayIDs())
         displays = candidates.filter { display in
             let id = display.displayID
-            return CGDisplayIsActive(id) != 0 && CGDisplayVendorNumber(id) != VirtualStage.vendorID &&
-                (CGDisplayIsBuiltin(id) != 0 || hardware.contains { $0.matches(id) })
+            return Self.admitsDisplay(id: id, active: CGDisplayIsActive(id) != 0,
+                sillVirtual: CGDisplayVendorNumber(id) == VirtualStage.vendorID,
+                physical: physical.contains(id), ownedID: extendedDesktopID)
         }.sorted { $0.displayID < $1.displayID }
         let infos = displays.enumerated().map { index, display in
             let id = display.displayID
             let screen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }
-            return DisplayInfo(id: id, name: screen?.localizedName ?? "모니터 \(index + 1)",
+            return DisplayInfo(id: id, name: id == extendedDesktopID ? ExtendedDesktop.name : screen?.localizedName ?? "모니터 \(index + 1)",
                                width: display.width, height: display.height, isMain: id == CGMainDisplayID())
         }
         let signatures = displays.map { display in
@@ -313,6 +324,26 @@ final class WindowCatalog {
             return "\(uuid.map { CFUUIDCreateString(nil, $0) as String } ?? "")/\(display.frame)"
         }
         if displayInventory.update(infos, signatures: signatures) { onDisplaysChanged?() }
+    }
+
+    static func admitsDisplay(id: UInt32, active: Bool, sillVirtual: Bool, physical: Bool, ownedID: UInt32?) -> Bool {
+        active && ((id != 0 && id == ownedID) || (!sillVirtual && physical))
+    }
+
+    static func onlineDisplayIDs() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
+        return Array(ids.prefix(Int(count)))
+    }
+
+    static func physicalDisplayIDs() -> [CGDirectDisplayID] {
+        let hardware = hardwareDisplays()
+        return onlineDisplayIDs().filter { id in
+            CGDisplayIsActive(id) != 0 && CGDisplayVendorNumber(id) != VirtualStage.vendorID &&
+                (CGDisplayIsBuiltin(id) != 0 || hardware.contains { $0.matches(id) })
+        }.sorted { $0 < $1 }
     }
 
     private struct HardwareDisplay {
