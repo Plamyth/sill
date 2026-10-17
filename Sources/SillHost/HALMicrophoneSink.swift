@@ -36,7 +36,9 @@ private final class NativeMicrophoneOutputUnit: HALMicrophoneOutputUnit {
     var outputEnabled: Bool { get { unit.isOutputEnabled } set { unit.isOutputEnabled = newValue } }
     var deviceID: AudioDeviceID { unit.deviceID }
     var format: AudioStreamBasicDescription? {
-        unit.inputBusses.count > 0 ? unit.inputBusses[0].format.streamDescription.pointee : nil
+        guard unit.inputBusses.count > 0 else { return nil }
+        let format = unit.inputBusses[0].format
+        return withExtendedLifetime(format) { format.streamDescription.pointee }
     }
     var maximumFrames: UInt32 { get { unit.maximumFramesToRender } set { unit.maximumFramesToRender = newValue } }
     var provider: AURenderPullInputBlock? { get { unit.outputProvider } set { unit.outputProvider = newValue } }
