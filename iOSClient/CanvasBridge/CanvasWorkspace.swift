@@ -23,7 +23,7 @@ struct CanvasWorkspace: View {
     @State private var canvasNoteSha: String?
     @State private var canvasVaultBlocked = false
     @State private var canvasSyncBusy = false
-    @State private var canvasVaultEnabled = false
+    @State private var canvasVaultEnabled = true
     @State private var vaultSceneID: UUID?
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
@@ -218,14 +218,6 @@ struct CanvasWorkspace: View {
     private var vaultSheet: some View {
         NavigationStack {
             VStack(spacing:0) {
-                if !canvasVaultEnabled {
-                    Button("현재 보관함에 Pencil 그림 연결") {
-                        canvasVaultEnabled = true
-                        vaultStatus = "현재 Obsidian 보관함에 그림을 연결했습니다."
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .padding(10)
-                }
                 if let note = vaultNote {
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
