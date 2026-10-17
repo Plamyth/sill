@@ -29,6 +29,10 @@ region = [line.strip() for line in screen[screen.index('struct StreamScreen: Vie
           if line.strip().startswith('.ignoresSafeArea(')]
 assert len(region) == 1
 fixture = (here / 'main.swift').read_text().replace('// PRODUCTION_TYPES', block(screen, 'enum DuoLayout {') + '\n' + block(screen, 'struct BarMetrics {'))
+layout = screen[screen.index('        GeometryReader { geo in'):screen.index('            let layout: TourLayout')]
+fixture = fixture.replace('// PRODUCTION_LAYOUT', '\n'.join(line.strip() for line in layout.splitlines()
+    if line.strip().startswith(('let layoutSize = ', 'let duo = '))))
+assert '.onChange(of: duo.isPortrait' in screen
 fixture = fixture.replace('/*PRODUCTION_SAFE_AREA*/', region[0])
 fixture = fixture.replace('// PRODUCTION_VIDEO_RECT', block(display, 'static func videoRect('))
 fixture = fixture.replace('// PRODUCTION_NORMALIZED', block(overlay, 'private func normalized('))

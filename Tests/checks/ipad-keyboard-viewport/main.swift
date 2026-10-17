@@ -10,6 +10,17 @@ struct UIDevice {
 
 // PRODUCTION_TYPES
 
+struct KeyboardGeometry {
+    struct Insets { let bottom: CGFloat }
+    let size: CGSize
+    let safeAreaInsets: Insets
+}
+func classifiedLayout(width: CGFloat, height: CGFloat, bottom: CGFloat) -> DuoLayout {
+    let geo = KeyboardGeometry(size: CGSize(width: width, height: height), safeAreaInsets: .init(bottom: bottom))
+    // PRODUCTION_LAYOUT
+    return duo
+}
+
 struct Proposal {
     let window: CGRect
     let keyboard: CGRect?
@@ -42,6 +53,17 @@ func expect(_ condition: @autoclosure () -> Bool, _ name: String) {
 }
 func near(_ lhs: Double, _ rhs: Double) -> Bool { abs(lhs - rhs) < 0.000001 }
 let window = CGRect(x: 0, y: 24, width: 1194, height: 810)
+for (width, fullHeight, visibleHeight, keyboardHeight) in [
+    (1366.0, 992.0, 532.0, 460.0),
+    (1024.0, 1334.0, 874.0, 460.0),
+    (500.0, 710.0, 400.0, 310.0)
+] {
+    expect(classifiedLayout(width: width, height: fullHeight, bottom: 0) ==
+           classifiedLayout(width: width, height: visibleHeight, bottom: keyboardHeight),
+           "keyboard preserves view branch and responder at \(width)x\(fullHeight)")
+}
+expect(classifiedLayout(width: 1366, height: 500, bottom: 0) == .outerLandscape,
+       "actual window resize still changes compact layout")
 let docked = CGRect(x: 0, y: 482, width: 1194, height: 352)
 let baseline = Proposal(window: window, keyboard: nil).proposed
 expect(baseline == window, "no keyboard preserves container-bottom extent")
