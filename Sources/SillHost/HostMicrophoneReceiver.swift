@@ -34,10 +34,11 @@ final class HostMicrophoneReceiver {
         var retirementReason: String?
         var lastSequence: UInt64 = 0
         var admitted: UInt64 = 0
+        let startedAt: UInt64
         var lastArrival: UInt64
         init(serial: UInt64, request: MicrophoneControl, owner: HostLocalOwnerGrant, now: UInt64, clock: @escaping () -> UInt64) {
             self.serial = serial; self.request = request; self.owner = owner
-            render = MicrophoneRenderBuffer(grant: owner, now: clock); lastArrival = now
+            render = MicrophoneRenderBuffer(grant: owner, now: clock); startedAt = now; lastArrival = now
         }
     }
     private struct Outcome {
@@ -157,6 +158,7 @@ final class HostMicrophoneReceiver {
         serial += 1
         let owned = Lease(serial: serial, request: request, owner: grant, now: now(), clock: now)
         lease = owned; phase = .preparing
+        print("mic.trace controlStart request=\(request.requestID) grant=\(owned.id) phase=\(phase) source=\(request.scope.source)")
         onRenderGate?(request, owned.id, owned.render)
         record(request, state(for: owned))
         if automaticWatchdog {
@@ -172,6 +174,9 @@ final class HostMicrophoneReceiver {
             let result = await prepare(owned.owner, owned.render)
             owned.preparePending = false
             owned.resource = result.resource
+            let completedAt = now()
+            let elapsedMs = Double(completedAt >= owned.startedAt ? completedAt - owned.startedAt : 0) / 1_000_000
+            print("mic.trace prepareComplete request=\(owned.request.requestID) grant=\(owned.id) elapsedMs=\(elapsedMs) phase=\(phase) renderOpen=\(owned.render.isOpen) renderAdmitted=\(owned.render.isAdmitted) resource=\(result.resource != nil) error=\(result.error != nil)")
             guard lease === owned, phase == .preparing, result.error == nil, result.resource != nil, live(owned) else {
                 owned.render.close()
                 if lease === owned, phase == .preparing {
@@ -232,6 +237,11 @@ final class HostMicrophoneReceiver {
               frame.sequence > owned.lastSequence, frame.sequence - owned.lastSequence <= 4096,
               owned.admitted < UInt64.max else { return false }
         guard owned.render.offer(frame, arrived: arrived, now: now()) else { return false }
+        if owned.admitted == 0 {
+            let acceptedAt = now()
+            let elapsedMs = Double(acceptedAt >= owned.startedAt ? acceptedAt - owned.startedAt : 0) / 1_000_000
+            print("mic.trace firstFrame request=\(owned.request.requestID) grant=\(owned.id) elapsedMs=\(elapsedMs) phase=\(phase) renderAdmitted=\(owned.render.isAdmitted)")
+        }
         owned.lastSequence = frame.sequence; owned.admitted += 1; owned.lastArrival = now()
         return true
     }
@@ -251,6 +261,9 @@ final class HostMicrophoneReceiver {
         guard let owned = lease, phase == .active || phase == .preparing else { return }
         let time = now()
         if !live(owned) || time < owned.lastArrival || time - owned.lastArrival > 2_000_000_000 {
+            let elapsedMs = Double(time >= owned.startedAt ? time - owned.startedAt : 0) / 1_000_000
+            let idleMs = Double(time >= owned.lastArrival ? time - owned.lastArrival : 0) / 1_000_000
+            print("mic.trace watchdogFailure request=\(owned.request.requestID) grant=\(owned.id) source=\(owned.request.scope.source) live=\(live(owned)) ownerValid=\(owned.owner.valid(at: time)) renderOpen=\(owned.render.isOpen) renderAdmitted=\(owned.render.isAdmitted) phase=\(phase) admitted=\(owned.admitted) elapsedMs=\(elapsedMs) idleMs=\(idleMs)")
             revoke(reason: "grant expired or ingress idle")
         } else if phase == .active, owned.resource?.runtimeValid() != true {
             revoke(reason: "destination changed")

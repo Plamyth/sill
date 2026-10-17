@@ -132,6 +132,13 @@ final class MicrophoneReplyMailbox: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: [ObjectIdentifier: Reply] = [:]
     private var scheduled = false
+    private var deliveryTracesRemaining = 64
+    func takeDeliveryTrace() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard deliveryTracesRemaining > 0 else { return false }
+        deliveryTracesRemaining -= 1
+        return true
+    }
     func offer(_ message: StreamMessage, connection: NWConnection, render: MicrophoneRenderBuffer?,
                queue: DispatchQueue, deliver: @escaping (StreamMessage, NWConnection, MicrophoneRenderBuffer?) -> Void) {
         lock.lock()

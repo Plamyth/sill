@@ -1576,8 +1576,16 @@ final class StreamServer {
             guard let self, let client = self.clients[ObjectIdentifier(connection)],
                   client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready else { return }
             if let render {
-                guard client.pendingBytes < 64_000 else { return }
-                render.sendEnabled(message.serialized(), to: connection)
+                let state = Wire.decode(MicrophoneState.self, from: message.payload)
+                let trace = self.microphoneReplies.takeDeliveryTrace()
+                let request = state?.requestID.uuidString ?? "unknown"
+                let grant = state?.grantID?.uuidString ?? "unknown"
+                guard client.pendingBytes < 64_000 else {
+                    if trace { print("mic.trace activeDelivery request=\(request) grant=\(grant) pendingBytes=\(client.pendingBytes) action=drop renderOpen=\(render.isOpen) renderAdmitted=\(render.isAdmitted) sendEnabled=notCalled") }
+                    return
+                }
+                let enabled = render.sendEnabled(message.serialized(), to: connection)
+                if trace { print("mic.trace activeDelivery request=\(request) grant=\(grant) pendingBytes=\(client.pendingBytes) action=send renderOpen=\(render.isOpen) renderAdmitted=\(render.isAdmitted) sendEnabled=\(enabled)") }
             } else { self.send(message.serialized(), to: client) }
         }
     }
