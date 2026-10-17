@@ -401,7 +401,7 @@ struct StreamScreen: View {
         // panel away. (Opening the panel closes them, the drawer and the keyboard.)
         .onChange(of: scaleOpen) { _, open in if open { setSettings(false) } }
         .onChange(of: windowMenu) { _, menu in if menu != nil { setSettings(false) } }
-        .ignoresSafeArea(edges: .bottom)
+        .ignoresSafeArea(UIDevice.current.userInterfaceIdiom == .pad ? .container : .all, edges: .bottom)
         .onAppear {
             // A fresh connection starts on the Desktop (the client asks for it as soon as the host
             // reports nothing streaming), so the drawer stays closed until the user opens it.
