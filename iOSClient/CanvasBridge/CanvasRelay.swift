@@ -2,6 +2,19 @@ import Foundation
 import Security
 
 struct CanvasRelay {
+    struct VaultEntry: Decodable, Identifiable {
+        let name: String
+        let path: String
+        let kind: String
+        var id: String { path }
+    }
+    struct VaultEntries: Decodable { let entries: [VaultEntry] }
+    struct VaultNote: Decodable {
+        let path: String
+        let text: String
+        let sha256: String
+        let modifiedAt: String
+    }
     struct DeliveryReadiness: Decodable { let available: Bool }
     struct InboxTarget: Decodable {
         let threadId: UUID
@@ -102,6 +115,32 @@ struct CanvasRelay {
 
     func controlRoomProjection() async throws -> ControlRoomProjection {
         try await response(request("/control-room/projection"),as:ControlRoomProjection.self)
+    }
+
+    private func vaultURL(_ endpoint: String, path: String) throws -> String {
+        guard let root = URL(string:address),
+              let url = URL(string:endpoint,relativeTo:root),
+              var components = URLComponents(url:url.absoluteURL,resolvingAgainstBaseURL:true) else {
+            throw URLError(.badURL)
+        }
+        components.queryItems = [URLQueryItem(name:"path",value:path)]
+        guard let result = components.url else { throw URLError(.badURL) }
+        return result.absoluteString
+    }
+
+    func vaultEntries(in directory: String) async throws -> [VaultEntry] {
+        let path = try vaultURL("/vault/entries",path:directory)
+        return try await response(request(path),as:VaultEntries.self).entries
+    }
+
+    func vaultNote(at path: String) async throws -> VaultNote {
+        try await response(request(vaultURL("/vault/note",path:path)),as:VaultNote.self)
+    }
+
+    func saveVaultNote(at path: String, baseSha256: String, text: String) async throws -> VaultNote {
+        let body = try JSONSerialization.data(withJSONObject:["baseSha256":baseSha256,"text":text])
+        return try await response(request(vaultURL("/vault/note",path:path),method:"PUT",body:body),
+                                  as:VaultNote.self)
     }
 
     func inboxTarget() async throws -> InboxTarget {

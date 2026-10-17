@@ -12,6 +12,13 @@ struct CanvasWorkspace: View {
     @State private var importOpen = false
     @State private var inspectorOpen = false
     @State private var dictationOpen = false
+    @State private var vaultOpen = false
+    @State private var vaultDirectory = ""
+    @State private var vaultEntries: [CanvasRelay.VaultEntry] = []
+    @State private var vaultNote: CanvasRelay.VaultNote?
+    @State private var vaultDraft = ""
+    @State private var vaultStatus = ""
+    @State private var vaultSaving = false
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
     @State private var expandedCard: ControlRoomCardReference?
@@ -100,6 +107,7 @@ struct CanvasWorkspace: View {
         .sheet(isPresented:$dictationOpen,onDismiss:{ dictation.cancel() }) {
             dictationSheet
         }
+        .sheet(isPresented:$vaultOpen) { vaultSheet }
         .sheet(item:$expandedCard) { reference in
             ControlRoomCardDetail(reference:reference,projection:readProjection,message:projectionMessage)
         }
@@ -166,6 +174,10 @@ struct CanvasWorkspace: View {
             Button("음성 설명",systemImage:"mic") { dictationOpen = true }
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
+            Button("Obsidian 노트",systemImage:"doc.text") {
+                vaultOpen = true
+                Task { await loadVaultEntries() }
+            }
             Button("연결",systemImage:"network") { connectionOpen = true }
             Button("가져오기") { importOpen = true }
             Button("내보내기") { exportOpen = true }
@@ -182,6 +194,105 @@ struct CanvasWorkspace: View {
         Label("고정 그림 수신함",systemImage:"tray.full")
             .font(.subheadline)
             .accessibilityIdentifier("canvasInboxLabel")
+    }
+
+    private var vaultSheet: some View {
+        NavigationStack {
+            VStack(spacing:0) {
+                if let note = vaultNote {
+                    Text(note.path).font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
+                    TextEditor(text:$vaultDraft)
+                        .font(.body.monospaced())
+                        .accessibilityIdentifier("obsidianMarkdownEditor")
+                } else {
+                    List(vaultEntries) { entry in
+                        Button {
+                            if entry.kind == "directory" {
+                                vaultDirectory = entry.path
+                                Task { await loadVaultEntries() }
+                            } else { Task { await openVaultNote(entry.path) } }
+                        } label: {
+                            Label(entry.name,systemImage:entry.kind == "directory" ? "folder" : "doc.text")
+                        }
+                    }
+                }
+                Text(vaultStatus).font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
+                    .padding(10)
+            }
+            .navigationTitle(vaultNote == nil ? "Obsidian 노트" : "노트 편집")
+            .toolbar {
+                ToolbarItem(placement:.topBarLeading) {
+                    if vaultNote != nil {
+                        Button("목록") { vaultNote = nil; vaultDraft = "" }
+                    } else if !vaultDirectory.isEmpty {
+                        Button("상위 폴더") {
+                            vaultDirectory = vaultDirectory.split(separator:"/").dropLast().joined(separator:"/")
+                            Task { await loadVaultEntries() }
+                        }
+                    }
+                }
+                ToolbarItem(placement:.topBarTrailing) {
+                    if vaultNote != nil {
+                        Button("저장") { Task { await saveVaultNote() } }
+                            .disabled(vaultSaving || vaultDraft == vaultNote?.text)
+                    } else {
+                        Button("새로고침",systemImage:"arrow.clockwise") {
+                            Task { await loadVaultEntries() }
+                        }
+                    }
+                }
+                ToolbarItem(placement:.confirmationAction) {
+                    Button("닫기") { vaultOpen = false }
+                }
+            }
+            .task(id:vaultNote?.path) {
+                guard let path = vaultNote?.path else { return }
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for:.seconds(2)) } catch { return }
+                    guard !Task.isCancelled, vaultOpen, vaultNote?.path == path else { return }
+                    do {
+                        let latest = try await relay.vaultNote(at:path)
+                        guard let loaded = vaultNote, loaded.path == path,
+                              latest.sha256 != loaded.sha256 else { continue }
+                        if vaultDraft == loaded.text {
+                            vaultNote = latest
+                            vaultDraft = latest.text
+                            vaultStatus = "Mac의 최신 수정 내용을 받았습니다."
+                        } else {
+                            vaultStatus = "Mac에서도 수정됐습니다. 현재 입력을 보존했으며 저장 전에 대조해야 합니다."
+                        }
+                    } catch { vaultStatus = "Mac 노트 확인 실패: \(error.localizedDescription)" }
+                }
+            }
+        }
+    }
+
+    private func loadVaultEntries() async {
+        do {
+            vaultEntries = try await relay.vaultEntries(in:vaultDirectory)
+            vaultStatus = "Mac Obsidian 보관함 · \(vaultEntries.count)개 항목"
+        } catch { vaultStatus = "노트 목록을 읽지 못했습니다: \(error.localizedDescription)" }
+    }
+
+    private func openVaultNote(_ path: String) async {
+        do {
+            let note = try await relay.vaultNote(at:path)
+            vaultNote = note
+            vaultDraft = note.text
+            vaultStatus = "Mac Obsidian 노트를 열었습니다."
+        } catch { vaultStatus = "노트를 열지 못했습니다: \(error.localizedDescription)" }
+    }
+
+    private func saveVaultNote() async {
+        guard let note = vaultNote else { return }
+        vaultSaving = true
+        defer { vaultSaving = false }
+        do {
+            let saved = try await relay.saveVaultNote(at:note.path,baseSha256:note.sha256,text:vaultDraft)
+            vaultNote = saved
+            vaultStatus = "Mac Obsidian 노트에 저장했습니다."
+        } catch { vaultStatus = "저장 실패: \(error.localizedDescription). 입력 내용은 유지됩니다." }
     }
 
     private func voicePIP(in size: CGSize) -> some View {
