@@ -135,13 +135,17 @@ final class StreamClient: ObservableObject {
         send: { [weak self] peer, request in self?.sendRemoteAudio(request, to: peer) },
         stop: { [weak self] in self?.remoteAudio.stop() },
         play: { [weak self] packet, requestID in
-            guard let self, let connection = self.connection else { return }
-            let origin = ObjectIdentifier(connection)
-            self.remoteAudio.receive(packet, subscription: requestID) { [weak self] event in
-                self?.remoteAudioControl.playerChanged(event, requestID: requestID, from: origin)
-            }
+            self?.playRemoteAudioPacket(packet, requestID: requestID)
         },
         changed: { [weak self] status in self?.remoteAudioStatus = status })
+
+    private func playRemoteAudioPacket(_ packet: Data, requestID: UUID) {
+        guard let connection else { return }
+        let origin = ObjectIdentifier(connection)
+        remoteAudio.receive(packet, subscription: requestID) { [weak self] event in
+            self?.remoteAudioControl.playerChanged(event, requestID: requestID, from: origin)
+        }
+    }
     #if os(iOS)
     @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
     @Published var microphoneReceipt: MicrophoneReceipt?
