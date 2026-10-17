@@ -1,0 +1,208 @@
+import CoreAudio
+import Foundation
+import StreamProtocol
+
+@MainActor
+package final class SillVirtualMicrophoneOwner: HostMicrophoneOriginalOwner {
+    private let ownerID = UUID()
+    private let routeGeneration = UUID()
+    private var grants: [UUID: HostLocalOwnerGrant] = [:]
+    private var activeLease: VirtualMicrophoneLease?
+
+    package init() {}
+
+    package func microphoneGrant(peer: UUID, source: StreamSource, inputGeneration: UUID,
+                                  videoEpoch: UUID, fingerprint: Data) -> HostLocalOwnerGrant? {
+        guard let target = VirtualMicrophoneRoute.discover(), source != .none,
+              !fingerprint.isEmpty else { return nil }
+        if let old = grants[peer] {
+            if old.scope.source == source, old.scope.inputGeneration == inputGeneration,
+               old.scope.videoEpoch == videoEpoch, old.fingerprint == fingerprint,
+               old.destination == target.destination,
+               old.valid(at: DispatchTime.now().uptimeNanoseconds) { return old }
+            old.revoke()
+        }
+        let scope = MicrophoneScope(peer: peer, source: source,
+            inputGeneration: inputGeneration, videoEpoch: videoEpoch,
+            destination: UUID(), capability: UUID())
+        let grant = HostLocalOwnerGrant(owner: ownerID, callGeneration: routeGeneration,
+            scope: scope, fingerprint: fingerprint, destination: target.destination,
+            expiresAt: .max)
+        grants[peer] = grant
+        return grant
+    }
+
+    package func prepareMicrophone(grant: HostLocalOwnerGrant,
+                                    render: MicrophoneRenderBuffer) async -> HostMicrophonePreparation {
+        guard grant.owner == ownerID, grant.callGeneration == routeGeneration,
+              grants[grant.scope.peer] === grant,
+              grant.valid(at: DispatchTime.now().uptimeNanoseconds),
+              let target = VirtualMicrophoneRoute.discover(),
+              target.destination == grant.destination else {
+            return HostMicrophonePreparation(resource: nil, error: "iPad 마이크 입력 대상이 변경되었습니다.")
+        }
+        guard activeLease == nil else {
+            return HostMicrophonePreparation(resource: nil, error: "다른 iPad 마이크 연결을 먼저 종료하세요.")
+        }
+        let activation = target.acquire()
+        guard let lease = activation.lease else {
+            return HostMicrophonePreparation(resource: nil,
+                error: activation.error ?? "Mac 가상 마이크가 이미 사용 중이거나 기본 입력을 전환할 수 없습니다.")
+        }
+        activeLease = lease
+        if let error = activation.error {
+            return HostMicrophonePreparation(
+                resource: LeasedMicrophoneSink(lease: lease, sink: nil, owner: self), error: error)
+        }
+        let result = await HALMicrophoneSink.prepare(grant: grant, render: render)
+        return HostMicrophonePreparation(
+            resource: LeasedMicrophoneSink(lease: lease, sink: result.resource, owner: self),
+            error: result.error)
+    }
+
+    package func restoreMicrophoneForExit() {
+        for grant in grants.values { grant.revoke() }
+        if let error = activeLease?.restore() { print("CCR Sill microphone restore: \(error)") }
+    }
+
+    fileprivate func finished(_ lease: VirtualMicrophoneLease) {
+        if activeLease === lease, lease.isClosed { activeLease = nil }
+    }
+}
+
+@MainActor
+private final class LeasedMicrophoneSink: HostMicrophoneSink {
+    let lease: VirtualMicrophoneLease
+    let sink: (any HostMicrophoneSink)?
+    weak var owner: SillVirtualMicrophoneOwner?
+    init(lease: VirtualMicrophoneLease, sink: (any HostMicrophoneSink)?, owner: SillVirtualMicrophoneOwner) {
+        self.lease = lease; self.sink = sink; self.owner = owner
+    }
+    func runtimeValid() -> Bool { lease.isCurrent && sink?.runtimeValid() == true }
+    func close() async -> String? {
+        let sinkError = await sink?.close()
+        let routeError = lease.restore()
+        owner?.finished(lease)
+        let errors = [sinkError, routeError].compactMap { $0 }
+        return errors.isEmpty ? nil : errors.joined(separator: "; ")
+    }
+    func retryClose() async -> String? {
+        let sinkError = await sink?.retryClose()
+        let routeError = lease.restore()
+        owner?.finished(lease)
+        let errors = [sinkError, routeError].compactMap { $0 }
+        return errors.isEmpty ? nil : errors.joined(separator: "; ")
+    }
+}
+
+@MainActor
+private struct VirtualMicrophoneRoute {
+    let device: AudioDeviceID
+    let destination: HostMicrophoneDestination
+
+    static func discover() -> Self? {
+        let candidates = (AudioInputHAL.devices() ?? []).compactMap { device -> Self? in
+            guard AudioInputHAL.number(device, kAudioDevicePropertyDeviceIsAlive) == 1,
+                  AudioInputHAL.number(device, kAudioDevicePropertyTransportType) == kAudioDeviceTransportTypeVirtual,
+                  AudioInputHAL.rate(device) == 48_000,
+                  let uid = AudioInputHAL.string(device, kAudioDevicePropertyDeviceUID),
+                  let plugin = AudioInputHAL.number(device, kAudioObjectPropertyOwner),
+                  AudioInputHAL.string(plugin, kAudioPlugInPropertyBundleID) == "audio.existential.BlackHole2ch",
+                  let destination = HostMicrophoneDestination(outputUID: uid, inputUID: uid,
+                    pluginBundleID: "audio.existential.BlackHole2ch",
+                    outputChannels: 2, inputChannels: 2, outputChannel: 0, inputChannel: 0)
+            else { return nil }
+            return Self(device: device, destination: destination)
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    func acquire() -> (lease: VirtualMicrophoneLease?, error: String?) {
+        guard let previous = AudioInputHAL.defaultInput(), previous != device,
+              AudioInputHAL.number(device, kAudioDevicePropertyDeviceIsRunningSomewhere) == 0,
+              AudioInputHAL.defaultInput() == previous else { return (nil, nil) }
+        let succeeded = AudioInputHAL.setDefaultInput(device)
+        guard AudioInputHAL.defaultInput() == device else { return (nil, "Mac 기본 입력 전환이 확인되지 않았습니다.") }
+        let lease = VirtualMicrophoneLease(previous: previous, device: device)
+        return (lease, succeeded ? nil : "Mac 기본 입력 전환 결과가 불확실해 복구합니다.")
+    }
+}
+
+@MainActor
+private final class VirtualMicrophoneLease {
+    let previous: AudioDeviceID
+    let device: AudioDeviceID
+    private var closed = false
+    var isClosed: Bool { closed }
+    init(previous: AudioDeviceID, device: AudioDeviceID) {
+        self.previous = previous; self.device = device
+    }
+    var isCurrent: Bool { !closed && AudioInputHAL.defaultInput() == device }
+    func restore() -> String? {
+        if closed { return nil }
+        guard AudioInputHAL.defaultInput() == device else { closed = true; return nil }
+        guard AudioInputHAL.setDefaultInput(previous),
+              AudioInputHAL.defaultInput() == previous else {
+            return "Mac 기본 마이크 복구에 실패했습니다. 사운드 입력 장치를 확인하세요."
+        }
+        closed = true
+        return nil
+    }
+}
+
+private enum AudioInputHAL {
+    private static let system = AudioObjectID(kAudioObjectSystemObject)
+    private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                   mElement: kAudioObjectPropertyElementMain)
+    }
+    static func devices() -> [AudioDeviceID]? {
+        var property = address(kAudioHardwarePropertyDevices)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &property, 0, nil, &size) == noErr,
+              size > 0, size <= 4096, size % UInt32(MemoryLayout<AudioDeviceID>.size) == 0 else { return nil }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard ids.withUnsafeMutableBytes({
+            AudioObjectGetPropertyData(system, &property, 0, nil, &size, $0.baseAddress!)
+        }) == noErr else { return nil }
+        return ids
+    }
+    static func number(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32? {
+        var property = address(selector)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(object, &property, 0, nil, &size, &value) == noErr,
+              size == MemoryLayout<UInt32>.size else { return nil }
+        return value
+    }
+    static func rate(_ device: AudioDeviceID) -> Float64? {
+        var property = address(kAudioDevicePropertyNominalSampleRate)
+        var value: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr,
+              size == MemoryLayout<Float64>.size else { return nil }
+        return value
+    }
+    static func string(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
+        var property = address(selector)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(object, &property, 0, nil, &size, &value) == noErr,
+              size == MemoryLayout<Unmanaged<CFString>?>.size, let value else { return nil }
+        return value.takeRetainedValue() as String
+    }
+    static func defaultInput() -> AudioDeviceID? {
+        guard let device = number(system, kAudioHardwarePropertyDefaultInputDevice),
+              device != kAudioObjectUnknown else { return nil }
+        return device
+    }
+    static func setDefaultInput(_ device: AudioDeviceID) -> Bool {
+        var property = address(kAudioHardwarePropertyDefaultInputDevice)
+        var settable = DarwinBoolean(false)
+        guard AudioObjectIsPropertySettable(system, &property, &settable) == noErr,
+              settable.boolValue else { return false }
+        var value = device
+        return AudioObjectSetPropertyData(system, &property, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &value) == noErr
+    }
+}

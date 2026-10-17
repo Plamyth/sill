@@ -58,9 +58,20 @@ package final class HostLocalOwnerGrant: @unchecked Sendable {
 package protocol HostMicrophoneOriginalOwner: AnyObject {
     func microphoneGrant(peer: UUID, source: StreamSource, inputGeneration: UUID, videoEpoch: UUID,
                          fingerprint: Data) -> HostLocalOwnerGrant?
+    func prepareMicrophone(grant: HostLocalOwnerGrant,
+                           render: MicrophoneRenderBuffer) async -> HostMicrophonePreparation
+    func restoreMicrophoneForExit()
 }
 
-final class MicrophoneRenderBuffer: @unchecked Sendable {
+extension HostMicrophoneOriginalOwner {
+    func prepareMicrophone(grant: HostLocalOwnerGrant,
+                           render: MicrophoneRenderBuffer) async -> HostMicrophonePreparation {
+        await HALMicrophoneSink.prepare(grant: grant, render: render)
+    }
+    func restoreMicrophoneForExit() {}
+}
+
+package final class MicrophoneRenderBuffer: @unchecked Sendable {
     private struct Storage {
         var open = true
         var admitted = false

@@ -13,7 +13,7 @@ extension HostMicrophoneSink {
 }
 
 @MainActor
-struct HostMicrophonePreparation {
+package struct HostMicrophonePreparation {
     let resource: (any HostMicrophoneSink)?
     let error: String?
 }
@@ -66,12 +66,14 @@ final class HostMicrophoneReceiver {
 
     init(provider: (any HostMicrophoneOriginalOwner)? = nil, capacity: Int = 128, serialLimit: UInt64 = .max,
          automaticWatchdog: Bool = true, backendAvailable: Bool = true, now: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
-         prepare: @escaping @MainActor (HostLocalOwnerGrant, MicrophoneRenderBuffer) async -> HostMicrophonePreparation = { grant, render in
-             await HALMicrophoneSink.prepare(grant: grant, render: render)
-         }) {
+         prepare: (@MainActor (HostLocalOwnerGrant, MicrophoneRenderBuffer) async -> HostMicrophonePreparation)? = nil) {
         self.provider = provider; self.capacity = max(2, min(capacity, 1024)); self.serialLimit = serialLimit
         self.automaticWatchdog = automaticWatchdog; self.backendAvailable = backendAvailable
-        self.now = now; self.prepare = prepare
+        self.now = now
+        self.prepare = prepare ?? { grant, render in
+            if let provider { return await provider.prepareMicrophone(grant: grant, render: render) }
+            return await HALMicrophoneSink.prepare(grant: grant, render: render)
+        }
     }
 
     func capability(peer: UUID, source: StreamSource, inputGeneration: UUID, videoEpoch: UUID,

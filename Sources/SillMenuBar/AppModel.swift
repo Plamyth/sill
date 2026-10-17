@@ -19,6 +19,7 @@ final class AppModel {
     /// as with the CLI's flag. No onboarding in this mode.
     let synthetic = CommandLine.arguments.contains("--synthetic")
     private(set) var coordinator: StreamCoordinator?
+    private let microphoneOwner = SillVirtualMicrophoneOwner()
     /// The coordinator could not be created (the listener refused its parameters). Shown in the
     /// menu; the app keeps running so the user can read it and quit.
     private(set) var startupError: String?
@@ -101,7 +102,8 @@ final class AppModel {
                 // "dev" does not parse): later devices can tell which Mac to update.
                 let c = try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
                                               homePairing: true, testHooks: !Self.bundled,
-                                              hostVersion: SillVersion(Self.version) != nil ? Self.version : nil)
+                                              hostVersion: SillVersion(Self.version) != nil ? Self.version : nil,
+                                              microphoneOwner: microphoneOwner)
                 c.keepRunningOnListenerFailure()
                 coordinator = c
                 // One path from the controls to the host, synchronous: the host's target equals

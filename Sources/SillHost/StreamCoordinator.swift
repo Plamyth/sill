@@ -40,6 +40,10 @@ package final class StreamCoordinator {
     private var prioritizeSpeed: Bool { config.prioritizeSpeed }
 
     private let microphoneIngress = MicrophoneIngress()
+    private let microphoneOwner: (any HostMicrophoneOriginalOwner)?
+    private lazy var audioHardwareRoutes = AudioHardwareRoutes()
+    private var audioRoutePublished: [ObjectIdentifier: UUID] = [:]
+    private var audioRouteArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
     private let microphoneReceiver: HostMicrophoneReceiver
     let server: StreamServer
     let catalog = WindowCatalog()
@@ -313,6 +317,7 @@ package final class StreamCoordinator {
         self.synthetic = synthetic
         self.appKitLoop = appKitLoop
         self.hostVersion = hostVersion
+        self.microphoneOwner = microphoneOwner
         microphoneReceiver = HostMicrophoneReceiver(provider: synthetic ? nil : microphoneOwner)
         let env = ProcessInfo.processInfo.environment
         let path = PointerTestHooks.pointerPath(synthetic: synthetic, environment: env)
@@ -397,7 +402,10 @@ package final class StreamCoordinator {
         menus.prepare = { [weak self] in await self?.focusForMenus() ?? true }
         menus.currentTarget = { [weak self] in self?.menuTarget() }
         menus.onSubscribersChanged = { [weak self] any in self?.watchFrontmostApp(any) }
-        catalog.onPolled = { [weak self] in self?.menusPolled() }
+        catalog.onPolled = { [weak self] in
+            self?.menusPolled()
+            self?.publishAudioRoutes()
+        }
 
         server.onClientConnected = { [weak self] connection, route, link in
             Task { @MainActor in
@@ -458,6 +466,8 @@ package final class StreamCoordinator {
                 self.inputFence.leave(id)
                 self.gestureArrivals[id] = nil
                 self.routes[id] = nil
+                self.audioRoutePublished[id] = nil
+                self.audioRouteArrivals[id] = nil
                 self.lastPairingWanted[id] = nil
                 self.connections[id] = nil
                 self.remoteAudioSubscribers.remove(id)
@@ -943,6 +953,8 @@ package final class StreamCoordinator {
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
         switch message.kind {
+        case .changeAudioRoute, .fetchAudioRoutes:
+            handleAudioRoute(message, from: connection)
         case .selectDisplay:
             guard let selection = Wire.decode(DisplaySelection.self, from: message.payload) else { return }
             // A monitor pick cannot queue behind an in-flight host restart.
@@ -2047,6 +2059,7 @@ package final class StreamCoordinator {
     /// dies of the signal with no goodbye, as before (`releaseKeysForExit`): its devices notice by
     /// liveness.
     package func shutdownForExit() {
+        microphoneOwner?.restoreMicrophoneForExit()
         injector.releaseAll()
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
@@ -2057,6 +2070,7 @@ package final class StreamCoordinator {
     /// every key and button a device holds down on the Mac goes up, and nothing else happens (no
     /// goodbye, nothing printed), as before.
     package func releaseKeysForExit() {
+        microphoneOwner?.restoreMicrophoneForExit()
         injector.releaseAll()
     }
 
@@ -2644,6 +2658,64 @@ package final class StreamCoordinator {
         remoteAudioState(false, requestID: request.requestID, reason: "capture changing", to: connection)
     }
 
+    private func audioRouteAuthorized(_ connection: NWConnection) -> Bool {
+        let id = ObjectIdentifier(connection)
+        let route = routes[id]
+        let paired = route?.fingerprint.map { remote?.isPaired($0) == true } ?? false
+        return AudioRoutingPolicy.authorized(encrypted: route?.encrypted == true, paired: paired,
+            connected: connections[id] === connection && connection.state == .ready,
+            synthetic: synthetic, shuttingDown: shuttingDown)
+    }
+
+    private func sendAudioRouteState(_ state: AudioRouteState, to connection: NWConnection) {
+        guard audioRouteAuthorized(connection) else { return }
+        let payload = Wire.encode(state)
+        guard payload.count <= AudioRoutingPolicy.maxStatePayload else { return }
+        server.send(StreamMessage(kind: .audioRoutes, timestamp: Date().timeIntervalSince1970,
+                                  isKeyframe: false, payload: payload), to: connection)
+        audioRoutePublished[ObjectIdentifier(connection)] = state.revision
+    }
+
+    private func publishAudioRoutes(_ observed: AudioRouteState? = nil) {
+        let peers = connections.values.filter { audioRouteAuthorized($0) }
+        guard !peers.isEmpty else { return }
+        let state = observed ?? audioHardwareRoutes.observe()
+        for connection in peers where audioRoutePublished[ObjectIdentifier(connection)] != state.revision {
+            sendAudioRouteState(state, to: connection)
+        }
+    }
+
+    private func handleAudioRoute(_ message: StreamMessage, from connection: NWConnection) {
+        guard audioRouteAuthorized(connection) else { return }
+        let id = ObjectIdentifier(connection)
+        let now = ProcessInfo.processInfo.systemUptime
+        var recent = (audioRouteArrivals[id] ?? []).filter { now - $0 < 1 }
+        guard recent.count < 4 else { return }
+        recent.append(now)
+        audioRouteArrivals[id] = recent
+        let reply: AudioRouteState
+        switch message.kind {
+        case .fetchAudioRoutes:
+            guard message.payload.isEmpty else { return }
+            reply = audioHardwareRoutes.observe()
+        case .changeAudioRoute:
+            guard message.payload.count <= AudioRoutingPolicy.maxSelectionPayload else { return }
+            if let request = Wire.decode(AudioRouteSelection.self, from: message.payload) {
+                reply = audioHardwareRoutes.select(request)
+            } else {
+                var invalid = audioHardwareRoutes.observe()
+                invalid.result = .invalid
+                reply = invalid
+            }
+        default: return
+        }
+        sendAudioRouteState(reply, to: connection)
+        var effective = reply
+        effective.answering = nil
+        effective.result = nil
+        publishAudioRoutes(effective)
+    }
+
     private func sendCatalog(to connection: NWConnection) {
         let now = Date().timeIntervalSince1970
         print("Catalog → \(connection.endpoint): \(catalog.infos.count) windows, \(catalog.allIcons.count) icons, \(catalog.installedApps.count) apps")
@@ -2662,6 +2734,9 @@ package final class StreamCoordinator {
         // Who this Mac is and how to reach it from afar (kind 18, signed), on both doors, only from
         // a host with an identity. An older device skips it too.
         if let info = remote?.macInfoMessage() { server.send(info, to: connection) }
+        if audioRouteAuthorized(connection) {
+            sendAudioRouteState(audioHardwareRoutes.observe(), to: connection)
+        }
         for (id, png) in catalog.allIcons {
             server.send(StreamMessage(kind: .appIcon, timestamp: now, isKeyframe: false,
                                       payload: ImageBlob.encodeIcon(bundleID: id, png: png)), to: connection)
