@@ -289,7 +289,8 @@ struct StreamScreen: View {
         // Which layout, and at which size — see `DuoLayout` for the thresholds and the Duo posture
         // behind each one.
         GeometryReader { geo in
-            let duo = DuoLayout.of(geo.size)
+            let layoutSize = CGSize(width: geo.size.width, height: geo.size.height + geo.safeAreaInsets.bottom)
+            let duo = DuoLayout.of(layoutSize)
             let layout: TourLayout = duo == .innerLandscape || duo == .outerLandscape ? .landscape
                 : (DuoLayout.drawsPhone(geo.size) ? .phone : .portrait)
             // The fold across this screen, in its own space (iOS 27.1 on the Duo; else as before).
@@ -312,7 +313,7 @@ struct StreamScreen: View {
                 .allowsHitTesting(!overlayShown && tour == nil)
                 // The pointer sprite follows the layout: the trackpad's arrow shows only in the
                 // laptop layout, and a rotation re-renders it at once; the Mac's arrow stays.
-                .onChange(of: DuoLayout.of(geo.size).isPortrait, initial: true) { _, portrait in
+                .onChange(of: duo.isPortrait, initial: true) { _, portrait in
                     client.setPointerLayout(portrait: portrait)
                 }
                 // The tour: a sibling above the layouts, as the pairing overlay is, and under it: an
@@ -337,7 +338,7 @@ struct StreamScreen: View {
             .onChange(of: layout, initial: true) { _, now in layoutChanged(to: now) }
             .onChange(of: geo.size, initial: true) { _, size in
                 IPadKeyboardDiagnostics.geometry(size, safeBottom: geo.safeAreaInsets.bottom,
-                    layout: String(describing: DuoLayout.of(size)), view: overlay.view)
+                    layout: String(describing: duo), view: overlay.view)
             }
             .background(TouchWatcher(watch: touches))
             // The layouts and the overlays share this screen's space, and so its fold; the inner
