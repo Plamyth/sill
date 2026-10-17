@@ -57,6 +57,7 @@ final class HostMicrophoneReceiver {
     private let prepare: @MainActor (HostLocalOwnerGrant, MicrophoneRenderBuffer) async -> HostMicrophonePreparation
     private let provider: (any HostMicrophoneOriginalOwner)?
     private var watchdog: Task<Void, Never>?
+    var availabilityChanged: (() -> Void)?
     var current: ((MicrophoneScope, Data) -> Bool)?
     var sendState: ((MicrophoneState, MicrophoneRenderBuffer?) -> Void)?
     var sendReceipt: ((MicrophoneReceipt) -> Void)?
@@ -78,7 +79,17 @@ final class HostMicrophoneReceiver {
 
     func capability(peer: UUID, source: StreamSource, inputGeneration: UUID, videoEpoch: UUID,
                     fingerprint: Data) -> MicrophoneCapability? {
-        guard backendAvailable, phase == .off, outcomes.count < capacity - 1, serial < serialLimit,
+        guard backendAvailable else { return nil }
+        if let owned = lease, phase == .preparing || phase == .active {
+            guard owned.request.scope.peer == peer, owned.owner.fingerprint == fingerprint,
+                  owned.request.scope.source == source, owned.request.scope.inputGeneration == inputGeneration,
+                  owned.request.scope.videoEpoch == videoEpoch, owned.owner.valid(at: now()),
+                  current?(owned.request.scope, fingerprint) == true else { return nil }
+            let scope = owned.request.scope
+            return MicrophoneCapability(peer: peer, destination: scope.destination, generation: scope.capability)
+        }
+        guard phase == .off,
+              outcomes.count < capacity - 1, serial < serialLimit,
               advertised[peer] != nil || advertised.count < 32,
               let grant = provider?.microphoneGrant(peer: peer, source: source, inputGeneration: inputGeneration,
                                                    videoEpoch: videoEpoch, fingerprint: fingerprint),
@@ -89,6 +100,8 @@ final class HostMicrophoneReceiver {
         advertised[peer] = grant
         return MicrophoneCapability(peer: peer, destination: grant.scope.destination, generation: grant.scope.capability)
     }
+
+    var cleanupGrantID: UUID? { phase == .cleanupFailed ? lease?.id : nil }
 
     func advertisedGrant(peer: UUID) -> HostLocalOwnerGrant? { advertised[peer] }
 
@@ -204,6 +217,7 @@ final class HostMicrophoneReceiver {
         guard phase == .cleanupFailed, let owned = lease, owned.id == grantID, !owned.closing else { return }
         phase = .retiring
         updateOutcomes(owned, reason: "explicit cleanup retry")
+        availabilityChanged?()
         Task { [self, owned] in await retire(owned, retry: true) }
     }
 
@@ -256,10 +270,12 @@ final class HostMicrophoneReceiver {
             owned.closing = false
             phase = .cleanupFailed
             updateOutcomes(owned, reason: error)
+            availabilityChanged?()
         } else {
             phase = .off
             updateOutcomes(owned, reason: owned.retirementReason)
             lease = nil
+            availabilityChanged?()
         }
     }
 

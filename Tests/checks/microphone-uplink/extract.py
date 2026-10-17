@@ -17,9 +17,9 @@ def fixture(root):
     root = Path(root).resolve()
     here = root / 'Tests/checks/microphone-uplink'
     paths = ['Sources/StreamProtocol/' + name + '.swift' for name in
-             ['StreamMessage', 'Switcher', 'MicrophoneUplink', 'Viewport', 'Compatibility', 'Input', 'Pointer', 'SafeText']]
+             ['StreamMessage', 'AudioRouting', 'Switcher', 'MicrophoneUplink', 'Viewport', 'Compatibility', 'Input', 'Pointer', 'SafeText']]
     paths += ['Sources/SillHost/' + name + '.swift' for name in
-              ['HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'MicrophoneIngress', 'PointerControl']]
+              ['SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'MicrophoneIngress', 'PointerControl']]
     files = {name: (root / name).read_text() for name in paths}
     for name in ['Network.swift', 'FakeHAL.swift', 'Main.swift']:
         files[name] = (here / name).read_text()
@@ -30,6 +30,11 @@ def fixture(root):
         'ROUTE': block(server, 'enum ClientRoute:'),
         'READER': block(server, 'private func receiveLoop('),
         'EGRESS': block(server, 'func sendMicrophone('),
+        'REPLAYCATALOG': block(server, 'private func replayCatalog('),
+        'CATALOG_EGRESS': block(server, 'func sendMicrophoneCatalog('),
+        'RECOVERY': block(coordinator, 'package func retryMicrophoneCleanup('),
+        'BROADCAST': block(coordinator, 'private func broadcastList('),
+        'PUBLISHCATALOG': block(coordinator, 'private func sendMicrophoneCatalog('),
         'PAIRED': block(remote, 'func isPaired('),
         'REMOVE': block(remote, 'package func remove('),
         'EPOCH': block(coordinator, 'private var videoEpoch:'),
@@ -56,4 +61,10 @@ def fixture(root):
                    'microphoneIngress.revoke()', 'microphoneReceiver.forgetCapabilities()', 'microphoneReceiver.revoke(reason: "source changed")']:
         assert marker in coordinator, marker
     assert coordinator.index('microphoneIngress.close(connection)') < coordinator.index('self.routes[id] = nil')
+    assert 'server.send(listMessage(), to: connection)' not in block(coordinator, 'private func sendCatalog(')
+    assert 'server.broadcast(listMessage())' not in block(coordinator, 'private func broadcastList(')
+    assert 'if client.catalogSent { replayCatalog(to: client) }' in block(server, 'private func took(')
+    ui = (root / 'Sources/SillMenuBar/SettingsPanes.swift').read_text()
+    assert 'coordinator.retryMicrophoneCleanup(grantID: grantID)' in ui
+    assert '.disabled(model.coordinator?.status.snapshot.microphoneCleanupGrantID == nil)' in ui
     return files, manifest

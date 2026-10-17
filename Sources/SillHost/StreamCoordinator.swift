@@ -353,6 +353,11 @@ package final class StreamCoordinator {
         // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
         server.setPeerToPeer(config.directWireless)
         stage = VirtualStage(sizer: sizer, catalog: catalog)
+        microphoneReceiver.availabilityChanged = { [weak self] in
+            guard let self else { return }
+            self.status.update { $0.microphoneCleanupGrantID = self.microphoneReceiver.cleanupGrantID }
+            self.broadcastList()
+        }
         microphoneReceiver.current = { [weak self] scope, fingerprint in
             self?.microphoneScopeIsCurrent(scope, fingerprint: fingerprint) == true
         }
@@ -2495,16 +2500,22 @@ package final class StreamCoordinator {
         return result
     }
 
+    package func retryMicrophoneCleanup(grantID: UUID) {
+        microphoneReceiver.retryCleanup(grantID: grantID)
+    }
+
     private func broadcastList() {
-        server.broadcast(listMessage())
         for connection in connections.values { sendMicrophoneCatalog(to: connection) }
     }
 
     private func sendMicrophoneCatalog(to connection: NWConnection) {
         let message = microphoneCatalog(to: connection)
-        guard let capability = Wire.decode(WindowList.self, from: message.payload)?.microphone,
-              let grant = microphoneReceiver.advertisedGrant(peer: capability.peer) else { return }
-        server.sendMicrophoneCatalog(message, to: connection, grant: grant)
+        if let capability = Wire.decode(WindowList.self, from: message.payload)?.microphone,
+           let grant = microphoneReceiver.advertisedGrant(peer: capability.peer) {
+            server.sendMicrophoneCatalog(message, to: connection, grant: grant)
+        } else {
+            server.send(message, to: connection)
+        }
     }
 
     private func microphoneConnection(peer: UUID) -> NWConnection? {
@@ -2720,7 +2731,6 @@ package final class StreamCoordinator {
         let now = Date().timeIntervalSince1970
         print("Catalog → \(connection.endpoint): \(catalog.infos.count) windows, \(catalog.allIcons.count) icons, \(catalog.installedApps.count) apps")
         connections[ObjectIdentifier(connection)] = connection
-        server.send(listMessage(), to: connection)
         sendMicrophoneCatalog(to: connection)
         // What the settings are, silently (the line above is the only one printed on connect). An
         // older device skips the kind. Recorded as what this connection was last sent, and only

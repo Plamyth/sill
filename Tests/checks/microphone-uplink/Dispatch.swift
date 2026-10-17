@@ -15,6 +15,9 @@ final class ReaderHarness {
         var lastHeardAt = 0.0
         var inputsRead = 0
         var pendingBytes = 0
+        var catalogSent = false
+        var latestCatalog: StreamMessage?
+        var microphoneCatalogGrant: HostLocalOwnerGrant?
         var presentationInput = false
         var device: String?
         var worstFrameAgeSincePrint = -1
@@ -32,12 +35,16 @@ final class ReaderHarness {
     var clients: [ObjectIdentifier: Client] = [:]
     let queue = DispatchQueue(label: "inert.mic.egress")
     let microphoneReplies = MicrophoneReplyMailbox()
+    var videoAdmission = VideoEpochAdmission.stopped
     func updateTicking() {}
     func took(_ hello: Hello, from: Client) {}
     static func medianAndWorst(_ value: Int, worst: Int?) -> String { "fixture" }
     func send(_ data: Data, to client: Client) { client.connection.sent.append(data) }
     // READER
     // EGRESS
+    // CATALOG_EGRESS
+    // REPLAYCATALOG
+    func send(_ message: StreamMessage, to connection: NWConnection) { connection.sent.append(message.serialized()) }
 }
 struct PairedFixture {
     let fingerprint: String
@@ -68,6 +75,10 @@ final class CloseHarness {
     }
 }
 @MainActor final class CoordinatorHarness {
+    let server = ReaderHarness()
+    // RECOVERY
+    // BROADCAST
+    // PUBLISHCATALOG
     let microphoneIngress = MicrophoneIngress()
     let microphoneReceiver: HostMicrophoneReceiver
     var connections: [ObjectIdentifier: NWConnection] = [:]

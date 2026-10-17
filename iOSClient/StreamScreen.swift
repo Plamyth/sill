@@ -50,6 +50,8 @@ struct IPadMicrophoneControl: View {
         return switch client.microphonePhase {
         case .unavailable: "이 Mac은 iPad 마이크 입력을 지원하지 않습니다."
         case .off: "꺼짐 · 탭하면 iPad 마이크를 Mac과 공유합니다."
+        case .authorizing: "iPad 마이크 권한을 확인하는 중 · 탭하면 취소합니다."
+        case .cleanupRequired: "Mac의 CCR Sill 설정에서 마이크 정리를 다시 시도하세요."
         case .requesting: "Mac의 입력 허용을 기다리는 중 · 탭하면 취소합니다."
         case .capturing: "iPad 마이크를 시작하는 중 · 탭하면 취소합니다."
         case .live: "켜짐 · 탭하면 마이크 공유를 중지합니다."
@@ -372,26 +374,27 @@ struct StreamScreen: View {
                 scaleOpen = false
                 windowMenu = nil
                 client.remoteAudioControl.backgrounded()
-                client.microphoneBackgrounded()
+                if phase == .background { client.microphoneBackgrounded() }
+                else { client.microphoneBecameInactive() }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .receive(on: RunLoop.main)) { note in
             let kind = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
             if kind == AVAudioSession.InterruptionType.began.rawValue {
-                client.microphoneSourceWillChange()
+                client.microphoneInterrupted()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
             .receive(on: RunLoop.main)) { note in
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
             if reason != AVAudioSession.RouteChangeReason.categoryChange.rawValue {
-                client.microphoneSourceWillChange()
+                client.microphoneInterrupted()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)
             .receive(on: RunLoop.main)) { _ in
-            client.microphoneSourceWillChange()
+            client.microphoneInterrupted()
         }
         // One thing open at a time: the Aa ruler and a thumbnail's traffic lights put the Settings
         // panel away. (Opening the panel closes them, the drawer and the keyboard.)

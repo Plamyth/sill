@@ -11,6 +11,8 @@ import StreamProtocol
 /// Not Sendable on purpose: it lives on the main actor with `HostStatus`, and marking these
 /// structs Sendable only produced warnings.
 package struct HostStatusSnapshot: Equatable {
+    package var microphoneCleanupGrantID: UUID?
+
     /// The listener and its Bonjour registration.
     package enum Network: Equatable {
         case starting

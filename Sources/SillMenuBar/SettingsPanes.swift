@@ -113,6 +113,15 @@ private struct GeneralPane: View {
                 }
             }
             Section {
+                Button("iPad 마이크 정리 다시 시도") {
+                    guard let coordinator = model.coordinator,
+                          let grantID = coordinator.status.snapshot.microphoneCleanupGrantID else { return }
+                    coordinator.retryMicrophoneCleanup(grantID: grantID)
+                }
+                .disabled(model.coordinator?.status.snapshot.microphoneCleanupGrantID == nil)
+                Footnote("마이크 중지나 기본 입력 복구에 실패했을 때 같은 입력 자원만 다시 정리합니다. 공유를 다시 시작하려면 iPad에서 켜세요.")
+            }
+            Section {
                 LabeledContent("Visible on your network as") { Text(networkName) }
             } footer: {
                 HStack(spacing: 4) {

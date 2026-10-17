@@ -122,7 +122,7 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         let catalogJSON = try! JSONSerialization.jsonObject(with: Wire.encode(catalog)) as! [String: Any]
         expect(catalog.microphone == nil && catalogJSON["microphone"] == nil, "nil-capability")
         var unknown = StreamMessage(kind: .microphoneFrame, timestamp: 0, isKeyframe: false, payload: Data()).serialized()
-        unknown[0] = 208
+        unknown[0] = 250
         expect(StreamMessage.parseHeader(unknown)?.kind == .unknown, "unknown-kind")
         expect(StreamMessage.clientPayloadLimit(for: .microphoneFrame) == MicrophoneWire.frameLimit, "reader-frame-cap")
         expect(StreamMessage.clientPayloadLimit(for: .microphoneControl) == MicrophoneWire.controlLimit, "reader-control-cap")
@@ -135,9 +135,13 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         absent.receiver.revoke(reason: "disconnect")
         expect(absent.prepares == 0, "absent-disconnect-no-io")
 
+        catalogReplayTests()
+        await pluginDiscoveryTests()
+        await cleanupRecoveryTests()
         let f = Fixture()
         let start = f.start(); f.receiver.control(start, fingerprint: Data([1])); await settle()
         expect(f.prepares == 1 && f.receiver.phase == .active, "duplicate-one-prepare")
+        expect(f.advertise()?.generation == f.binding.capability, "live-catalog-preserves-capability")
         let conflict = MicrophoneControl(operation: .start, requestID: start.requestID, scope: scope())
         f.receiver.control(conflict, fingerprint: Data([1]))
         expect(f.states.last?.reason == "request conflict", "request-conflict")
@@ -200,6 +204,12 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         _ = failure.start(); failure.receiver.revoke(reason: "duplicate"); await settle()
         expect(failure.receiver.phase == .cleanupFailed && failure.prepares == 1 && failure.sink.closes == 1, "cleanup-quarantine")
         expect(failure.advertise() == nil, "cleanup-no-capability")
+        failure.sink.closeError = nil
+        failure.receiver.retryCleanup(grantID: failure.receiver.cleanupGrantID!)
+        expect(failure.receiver.phase == .retiring && failure.advertise() == nil, "retiring-cleanup-no-capability")
+        await settle()
+        expect(failure.receiver.phase == .off && failure.advertise() != nil && failure.prepares == 1,
+               "cleanup-success-restores-capability-without-capture")
 
         let held = Fixture(); held.heldReplies = true
         _ = held.start(); await settle()
@@ -389,7 +399,7 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
             expect(error == nil && !ops.running && !ops.allocated && ops.callback == nil, "hal-partial-owned-cleanup")
             expect(name == "start" || !ops.trace.contains("start"), "hal-no-partial-start")
         }
-        for bad in 0..<6 {
+        for bad in 0..<8 {
             let ops = FakeHAL()
             if bad == 0 { ops.readbackMismatch = true }
             if bad == 1 { ops.unsupportedFormat = true }
@@ -397,6 +407,8 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
             if bad == 3 { ops.wrongPlugin = true }
             if bad == 4 { ops.wrongChannels = true }
             if bad == 5 { ops.wrongUID = true }
+            if bad == 6 { ops.missingMembership = true }
+            if bad == 7 { ops.wrongRate = true }
             let result = await HALMicrophoneSink.prepare(grant: grant, render: MicrophoneRenderBuffer(grant: grant), ops: ops.operations)
             expect(result.error != nil && !ops.trace.contains("start"), bad == 0 ? "hal-no-default-fallback" : "hal-identity-format-refusal")
             _ = await result.resource!.close()
@@ -466,6 +478,86 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         pause.release()
         let error = await close.value
         expect(error == nil && !result.resource!.runtimeValid() && !render.isOpen && !fake.running, "hal-late-validation-no-reopen")
+    }
+
+    @MainActor static func catalogReplayTests() {
+        let binding = scope()
+        let grant = ownerGrant(binding)
+        let reader = ReaderHarness(), connection = NWConnection()
+        let client = ReaderHarness.Client(connection)
+        client.route = .home(.loopback, peer: ClientRoute.Peer(fingerprint: Data([1]), name: nil, cableDevice: nil))
+        reader.clients[ObjectIdentifier(connection)] = client
+        let epoch = VideoEpoch(id: binding.videoEpoch, generation: binding.inputGeneration.uuidString, source: binding.source,
+            geometry: .init(x: 0, y: 0, width: 1, height: 1), width: 1, height: 1)
+        let list = WindowList(macName: "test", windows: [], active: binding.source,
+            inputGeneration: binding.inputGeneration.uuidString, videoEpoch: epoch,
+            microphone: MicrophoneCapability(peer: binding.peer, destination: binding.destination, generation: binding.capability))
+        let message = StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false, payload: Wire.encode(list))
+        reader.videoAdmission = .committed(epoch)
+        reader.sendMicrophoneCatalog(message, to: connection, grant: grant)
+        reader.queue.sync { reader.replayCatalog(to: client) }
+        expect(Wire.decode(WindowList.self, from: Data(connection.sent.last!.dropFirst(StreamMessage.headerLength)))?.microphone == list.microphone,
+               "hello-replay-preserves-current-peer-capability")
+        grant.revoke()
+        reader.queue.sync { reader.replayCatalog(to: client) }
+        expect(Wire.decode(WindowList.self, from: Data(connection.sent.last!.dropFirst(StreamMessage.headerLength)))?.microphone == nil,
+               "hello-replay-strips-revoked-capability")
+        let next = ownerGrant(binding)
+        reader.sendMicrophoneCatalog(message, to: connection, grant: next)
+        reader.queue.sync { reader.videoAdmission = .stopped; reader.replayCatalog(to: client) }
+        expect(Wire.decode(WindowList.self, from: Data(connection.sent.last!.dropFirst(StreamMessage.headerLength)))?.microphone == nil,
+               "hello-replay-strips-reset-epoch-capability")
+        let other = ReaderHarness.Client(NWConnection())
+        reader.queue.sync { reader.replayCatalog(to: other) }
+        expect(other.connection.sent.isEmpty, "hello-replay-does-not-copy-other-peer-cache")
+    }
+
+    @MainActor static func pluginDiscoveryTests() async {
+        let fake = FakeHAL(); fake.blackHole = true
+        let owner = SillVirtualMicrophoneOwner(ops: fake.operations)
+        let binding = scope()
+        let grant = owner.microphoneGrant(peer: binding.peer, source: binding.source,
+            inputGeneration: binding.inputGeneration, videoEpoch: binding.videoEpoch, fingerprint: Data([1]))
+        expect(grant?.destination.outputUID == "test.blackhole", "system-owner-blackhole-discovery")
+        expect(!fake.trace.contains("read:\(kAudioObjectPropertyOwner)"), "plugin-membership-not-object-owner")
+        let prepared = await HALMicrophoneSink.prepare(grant: grant!, render: MicrophoneRenderBuffer(grant: grant!), ops: fake.operations)
+        expect(prepared.error == nil && fake.selected == 96, "system-owner-hal-validation")
+        _ = await prepared.resource?.close()
+        fake.missingMembership = true
+        expect(owner.microphoneGrant(peer: UUID(), source: .desktop, inputGeneration: UUID(), videoEpoch: UUID(), fingerprint: Data([1])) == nil,
+               "plugin-must-list-exact-device")
+        fake.missingMembership = false; fake.wrongRate = true
+        expect(owner.microphoneGrant(peer: UUID(), source: .desktop, inputGeneration: UUID(), videoEpoch: UUID(), fingerprint: Data([1])) == nil,
+               "discovery-keeps-rate-fence")
+    }
+
+    @MainActor static func cleanupRecoveryTests() async {
+        let f = Fixture()
+        var availabilityChanges = 0
+        f.receiver.availabilityChanged = { availabilityChanges += 1 }
+        _ = f.start(); await settle()
+        f.sink.closeError = "restore failed"
+        _ = f.stop(); await settle()
+        expect(f.receiver.phase == .cleanupFailed && f.receiver.cleanupGrantID != nil, "cleanup-hidden-until-mac-action")
+        let retainedID = f.receiver.cleanupGrantID!
+        expect(f.advertise() == nil && availabilityChanges == 1, "cleanup-hidden-until-mac-action")
+        f.receiver.forgetCapabilities()
+        let next = scope()
+        f.owner.grant = ownerGrant(next)
+        let coordinator = CoordinatorHarness(f.receiver)
+        f.receiver.current = { scope, fp in scope == next && fp == Data([1]) }
+        expect(f.receiver.capability(peer: next.peer, source: next.source, inputGeneration: next.inputGeneration,
+            videoEpoch: next.videoEpoch, fingerprint: Data([1])) == nil, "reconnect-cannot-bypass-cleanup")
+        coordinator.retryMicrophoneCleanup(grantID: UUID()); await settle()
+        expect(f.sink.closes == 1, "wrong-mac-cleanup-id-no-effects")
+        f.sink.closeError = nil
+        coordinator.retryMicrophoneCleanup(grantID: retainedID); await settle()
+        expect(f.sink.closes == 2 && f.receiver.phase == .off && f.prepares == 1, "mac-explicit-cleanup-no-capture")
+        expect(f.receiver.cleanupGrantID == nil && availabilityChanges == 3, "mac-cleanup-status-cleared")
+        expect(f.receiver.capability(peer: next.peer, source: next.source, inputGeneration: next.inputGeneration,
+            videoEpoch: next.videoEpoch, fingerprint: Data([1]))?.peer == next.peer, "mac-cleanup-publishes-new-peer-capability")
+        coordinator.retryMicrophoneCleanup(grantID: retainedID); await settle()
+        expect(f.sink.closes == 2 && f.prepares == 1, "mac-cleanup-replay-no-effects")
     }
 
     @MainActor static func retainedBlockLifetime(_ grant: HostLocalOwnerGrant) async {
@@ -539,6 +631,16 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         h.drainMicrophoneIngress(); await settle()
         expect(f.prepares == 1 && ordinary == 0, "dispatch-bounded-before-task")
         let grantID = f.states.first(where: { $0.phase == .active })!.grantID!
+        let catalogClient = ReaderHarness.Client(connection)
+        catalogClient.route = h.routes[ObjectIdentifier(connection)]!
+        h.server.clients[ObjectIdentifier(connection)] = catalogClient
+        h.server.videoAdmission = .committed(h.videoEpoch!)
+        h.broadcastList()
+        h.server.queue.sync {}
+        expect(catalogClient.catalogSent, "first-peer-catalog-admits-client")
+        expect(Wire.decode(WindowList.self, from: catalogClient.latestCatalog!.payload)?.microphone == cap,
+               "live-broadcast-keeps-peer-capability")
+        expect(f.receiver.phase == .active, "live-broadcast-does-not-stop-owner")
         for seq in 1...4000 {
             h.microphoneIngress.offer(StreamMessage(kind: .microphoneFrame, timestamp: 0, isKeyframe: false,
                 payload: packet(binding, grant: grantID, sequence: UInt64(seq)).encoded()), from: connection, now: f.now)

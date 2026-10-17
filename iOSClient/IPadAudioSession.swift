@@ -14,6 +14,8 @@ final class IPadAudioSession {
 
     private init() {}
 
+    var microphoneAvailable: Bool { !coordinator.leases.needsMicrophone && coordinator.recoveryOwner == nil }
+
     func holds(leaseId: UUID) -> Bool { coordinator.holds(leaseId) }
 
     func acquire(_ role: IPadAudioLeaseState.Role, leaseId: UUID) throws {

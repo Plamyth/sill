@@ -91,37 +91,25 @@ final class HALMicrophoneContext: @unchecked Sendable {
     }
 }
 
-private actor HALMicrophoneWorker {
-    private enum Stage { case absent, created, allocationAttempted, startAttempted, stopped, deallocated }
-    private let ops: HALMicrophoneOperations
-    private let grant: HostLocalOwnerGrant
-    private let context: HALMicrophoneContext
-    private var unit: (any HALMicrophoneOutputUnit)?
-    private var stage = Stage.absent
-    private var cleanupError: String?
-    private var outputDevice = AudioDeviceID(kAudioObjectUnknown)
-    private var inputDevice = AudioDeviceID(kAudioObjectUnknown)
-    init(grant: HostLocalOwnerGrant, render: MicrophoneRenderBuffer, ops: HALMicrophoneOperations) {
-        self.grant = grant; self.ops = ops
-        context = HALMicrophoneContext(render: render, channels: grant.destination.outputChannels, channel: grant.destination.outputChannel)
-    }
-    private func check(_ status: OSStatus, _ stage: String) throws {
+struct HALMicrophoneDeviceRegistry {
+    let ops: HALMicrophoneOperations
+    func check(_ status: OSStatus, _ stage: String) throws {
         guard status == noErr else { throw HALMicrophoneFailure(description: "\(stage): \(status)") }
     }
-    private func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+    func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
                          scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal, into value: inout T) throws {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
         var size = UInt32(MemoryLayout<T>.size)
         try check(ops.objectGet(object, &address, 0, nil, &size, &value), "read \(selector)")
         guard size == MemoryLayout<T>.size else { throw HALMicrophoneFailure(description: "property size") }
     }
-    private func string(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) throws -> String {
+    func string(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) throws -> String {
         var value: CFString? = nil
         try read(object, selector, into: &value)
         guard let value else { throw HALMicrophoneFailure(description: "missing identity") }
         return value as String
     }
-    private func resolve(_ uid: String) throws -> AudioDeviceID {
+    func resolve(_ uid: String) throws -> AudioDeviceID {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var qualifier = uid as CFString
@@ -134,16 +122,15 @@ private actor HALMicrophoneWorker {
         guard device != kAudioObjectUnknown, size == MemoryLayout<AudioDeviceID>.size else { throw HALMicrophoneFailure(description: "unknown UID") }
         return device
     }
-    private func validate(_ device: AudioDeviceID, uid: String, scope: AudioObjectPropertyScope, channels: Int) throws {
+    func validate(_ device: AudioDeviceID, uid: String, scope: AudioObjectPropertyScope, channels: Int, pluginBundleID: String) throws {
         guard try string(device, kAudioDevicePropertyDeviceUID) == uid else { throw HALMicrophoneFailure(description: "UID mismatch") }
-        var transport: UInt32 = 0, owner: AudioObjectID = 0, alive: UInt32 = 0
+        var transport: UInt32 = 0, alive: UInt32 = 0
         var rate: Float64 = 0
         try read(device, kAudioDevicePropertyTransportType, into: &transport)
-        try read(device, kAudioObjectPropertyOwner, into: &owner)
         try read(device, kAudioDevicePropertyDeviceIsAlive, into: &alive)
         try read(device, kAudioDevicePropertyNominalSampleRate, into: &rate)
         guard transport == kAudioDeviceTransportTypeVirtual, alive == 1, rate == 48_000,
-              try string(owner, kAudioPlugInPropertyBundleID) == grant.destination.pluginBundleID else {
+              try devices(pluginBundleID: pluginBundleID).contains(device) else {
             throw HALMicrophoneFailure(description: "unapproved virtual endpoint")
         }
         var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
@@ -165,7 +152,51 @@ private actor HALMicrophoneWorker {
         let countChannels = buffers.reduce(0) { $0 + min(Int($1.mNumberChannels), 33) }
         guard countChannels == channels else { throw HALMicrophoneFailure(description: "channel mapping changed") }
     }
+    func devices(pluginBundleID: String) throws -> [AudioDeviceID] {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslateBundleIDToPlugIn,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var qualifier = pluginBundleID as CFString
+        var plugin = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        try withUnsafePointer(to: &qualifier) {
+            try check(ops.objectGet(AudioObjectID(kAudioObjectSystemObject), &address,
+                UInt32(MemoryLayout<CFString>.size), $0, &size, &plugin), "resolve plugin")
+        }
+        guard size == MemoryLayout<AudioObjectID>.size, plugin != kAudioObjectUnknown,
+              try string(plugin, kAudioPlugInPropertyBundleID) == pluginBundleID else {
+            throw HALMicrophoneFailure(description: "plugin identity mismatch")
+        }
+        address.mSelector = kAudioPlugInPropertyDeviceList
+        try check(ops.objectSize(plugin, &address, &size), "plugin devices size")
+        guard size > 0, size <= 4096, size % UInt32(MemoryLayout<AudioDeviceID>.size) == 0 else {
+            throw HALMicrophoneFailure(description: "plugin device list size")
+        }
+        let capacity = size
+        var devices = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        try devices.withUnsafeMutableBytes {
+            try check(ops.objectGet(plugin, &address, 0, nil, &size, $0.baseAddress!), "plugin devices")
+        }
+        guard size == capacity, Set(devices).count == devices.count, !devices.contains(kAudioObjectUnknown) else {
+            throw HALMicrophoneFailure(description: "plugin device list changed")
+        }
+        return devices
+    }
+}
 
+private actor HALMicrophoneWorker {
+    private enum Stage { case absent, created, allocationAttempted, startAttempted, stopped, deallocated }
+    private let ops: HALMicrophoneOperations
+    private let grant: HostLocalOwnerGrant
+    private let context: HALMicrophoneContext
+    private var unit: (any HALMicrophoneOutputUnit)?
+    private var stage = Stage.absent
+    private var cleanupError: String?
+    private var outputDevice = AudioDeviceID(kAudioObjectUnknown)
+    private var inputDevice = AudioDeviceID(kAudioObjectUnknown)
+    init(grant: HostLocalOwnerGrant, render: MicrophoneRenderBuffer, ops: HALMicrophoneOperations) {
+        self.grant = grant; self.ops = ops
+        context = HALMicrophoneContext(render: render, channels: grant.destination.outputChannels, channel: grant.destination.outputChannel)
+    }
 
     func open() -> String? {
         do {
@@ -173,10 +204,11 @@ private actor HALMicrophoneWorker {
                 throw HALMicrophoneFailure(description: "owner revoked")
             }
             let destination = grant.destination
-            outputDevice = try resolve(destination.outputUID)
-            inputDevice = try resolve(destination.inputUID)
-            try validate(outputDevice, uid: destination.outputUID, scope: kAudioObjectPropertyScopeOutput, channels: destination.outputChannels)
-            try validate(inputDevice, uid: destination.inputUID, scope: kAudioObjectPropertyScopeInput, channels: destination.inputChannels)
+            let registry = HALMicrophoneDeviceRegistry(ops: ops)
+            outputDevice = try registry.resolve(destination.outputUID)
+            inputDevice = try registry.resolve(destination.inputUID)
+            try registry.validate(outputDevice, uid: destination.outputUID, scope: kAudioObjectPropertyScopeOutput, channels: destination.outputChannels, pluginBundleID: destination.pluginBundleID)
+            try registry.validate(inputDevice, uid: destination.inputUID, scope: kAudioObjectPropertyScopeInput, channels: destination.inputChannels, pluginBundleID: destination.pluginBundleID)
             let created = try ops.create()
             unit = created; stage = .created
             guard !created.isRunning, !created.resourcesAllocated else { throw HALMicrophoneFailure(description: "new unit already active") }
@@ -221,8 +253,9 @@ private actor HALMicrophoneWorker {
               unit.isRunning, unit.resourcesAllocated, unit.deviceID == outputDevice,
               context.render.isOpen, grant.valid(at: context.render.monotonicNow()) else { return false }
         do {
-            try validate(outputDevice, uid: grant.destination.outputUID, scope: kAudioObjectPropertyScopeOutput, channels: grant.destination.outputChannels)
-            try validate(inputDevice, uid: grant.destination.inputUID, scope: kAudioObjectPropertyScopeInput, channels: grant.destination.inputChannels)
+            let registry = HALMicrophoneDeviceRegistry(ops: ops)
+            try registry.validate(outputDevice, uid: grant.destination.outputUID, scope: kAudioObjectPropertyScopeOutput, channels: grant.destination.outputChannels, pluginBundleID: grant.destination.pluginBundleID)
+            try registry.validate(inputDevice, uid: grant.destination.inputUID, scope: kAudioObjectPropertyScopeInput, channels: grant.destination.inputChannels, pluginBundleID: grant.destination.pluginBundleID)
             return true
         } catch { return false }
     }

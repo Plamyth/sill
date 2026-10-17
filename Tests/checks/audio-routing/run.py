@@ -10,6 +10,7 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
+microphone = '--microphone' in sys.argv
 label = sys.argv[1]
 if not re.fullmatch(r'[a-z0-9-]{1,48}', label):
     raise SystemExit('invalid receipt label')
@@ -40,13 +41,16 @@ assert 'self?.publishAudioRoutes()' in block(coordinator, 'catalog.onPolled =')
 assert 'sendAudioRouteState(audioHardwareRoutes.observe(), to: connection)' in block(coordinator, 'private func sendCatalog(')
 paths = sorted((ROOT / 'Sources').rglob('*'))
 paths = [p for p in paths if p.is_file()]
+if microphone:
+    paths += [p for folder in ['Tests/checks/microphone-uplink', 'Tests/checks/ipad-microphone-control', 'Tests/checks/ipad-microphone-frame-gate', 'Tests/checks/ipad-audio-lease', 'Tests/checks/ipad-audio-cleanup', 'iOSClient/Tests/audio-routes'] for p in (ROOT / folder).rglob('*') if p.is_file()]
+    paths += [ROOT / 'iOSClient' / name for name in ['IPadMicrophonePolicy.swift', 'IPadMicrophoneFrameGate.swift', 'IPadMicrophonePCM.swift', 'IPadAudioLeaseState.swift', 'IPadAudioLeaseCoordinator.swift', 'IPadAudioRoutePolicy.swift', 'IPadRemoteAudioController.swift', 'StreamClient+AudioRoutes.swift', 'MacAudioRouteSession.swift']]
 paths += [ROOT / 'Package.swift', HERE / 'main.swift', HERE / 'CoordinatorFixture.swift', HERE / 'remote.py', Path(__file__).resolve()]
 original = {str(p.relative_to(ROOT)): sha(p.read_bytes()) for p in paths}
-sources = {str(p.relative_to(ROOT)): p.read_bytes() for p in paths if p.suffix in ('.swift', '.h', '.m', '.c')}
+sources = {str(p.relative_to(ROOT)): p.read_bytes() for p in paths if p.suffix in ('.swift', '.h', '.m', '.c') or (microphone and p.suffix == '.py')}
 sources['Tests/checks/audio-routing/CoordinatorFixture.swift'] = fixture.encode()
 hashes = {name: sha(data) for name, data in sources.items()}
 payload = json.dumps({'source': {name: base64.b64encode(data).decode() for name, data in sources.items()},
-                      'hashes': hashes, 'hostCompile': '--host' in sys.argv}).encode()
+                      'hashes': hashes, 'hostCompile': '--host' in sys.argv, 'microphone': microphone}).encode()
 
 def containers():
     result = subprocess.run(['docker', '--context', 'cargo24-mini', 'ps', '-a', '--format', '{{.ID}} {{.Names}} {{.Status}}'],
@@ -84,7 +88,7 @@ except subprocess.TimeoutExpired:
     log, _ = process.communicate(timeout=30)
 (out / (label + '.log')).write_bytes(log)
 records = [line[len('RESULT_JSON '):] for line in log.decode(errors='replace').splitlines() if line.startswith('RESULT_JSON ')]
-record = {'taskKey': 'ccr-cross-device-mac-audio-20261016', 'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+record = {'taskKey': 'ipad-microphone-plugin-20261017' if microphone else 'ccr-cross-device-mac-audio-20261016', 'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
           'scope': 'Independent RAM-source policy/coordinator fixture and optional host compile. No source-guard task transfer acceptance; no live CoreAudio, host, sockets, or device execution.',
           'exitCode': process.returncode, 'transportReaped': process.poll() is not None,
           'inputSHA256': sha(payload), 'senderReceiverMatch': ('INPUT_SHA256 ' + sha(payload)).encode() in log,
@@ -96,9 +100,13 @@ record = {'taskKey': 'ccr-cross-device-mac-audio-20261016', 'sourceHEAD': subpro
 (out / (label + '.json')).write_text(json.dumps(record, indent=2) + '\n')
 seen = set()
 for line in log.decode(errors='replace').splitlines():
-    if line.startswith(('Audio routing:', 'FAIL ', 'Build of target:', 'RESULT_JSON ')) or 'error:' in line or 'warning:' in line:
-        if line not in seen:
+    if line.startswith(('Audio routing:', 'FAIL ', 'Build of target:')) or 'error:' in line or 'warning:' in line:
+        if len(line) < 2000 and line not in seen:
             print(line)
             seen.add(line)
+if record['remoteResult']:
+    remote = record['remoteResult']
+    mic = remote.get('microphone', {})
+    print(json.dumps({'microphoneExit': mic.get('exitCode'), 'assertions': mic.get('assertions'), 'mutationsCaught': mic.get('mutationsCaught'), 'mutationCount': mic.get('mutationCount'), 'error': mic.get('error'), 'iPadChecks': remote.get('iPadChecks'), 'sourceRemoved': remote.get('sourceRemoved')}))
 print(json.dumps({key: record[key] for key in ['exitCode', 'senderReceiverMatch', 'sourceUnchanged', 'transportReaped']}))
 sys.exit(process.returncode if record['sourceUnchanged'] and record['senderReceiverMatch'] and records else 2)

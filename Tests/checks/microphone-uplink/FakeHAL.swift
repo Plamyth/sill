@@ -23,6 +23,9 @@ final class FakeHAL: @unchecked Sendable {
         var wrongPlugin = false
         var wrongUID = false
         var wrongChannels = false
+        var missingMembership = false
+        var blackHole = false
+        var wrongRate = false
         var input = true
         var output = false
         var selected = AudioDeviceID(0)
@@ -46,6 +49,9 @@ final class FakeHAL: @unchecked Sendable {
     var wrongPlugin: Bool { get { access { $0.wrongPlugin } } set { access { $0.wrongPlugin = newValue } } }
     var wrongUID: Bool { get { access { $0.wrongUID } } set { access { $0.wrongUID = newValue } } }
     var wrongChannels: Bool { get { access { $0.wrongChannels } } set { access { $0.wrongChannels = newValue } } }
+    var missingMembership: Bool { get { access { $0.missingMembership } } set { access { $0.missingMembership = newValue } } }
+    var blackHole: Bool { get { access { $0.blackHole } } set { access { $0.blackHole = newValue } } }
+    var wrongRate: Bool { get { access { $0.wrongRate } } set { access { $0.wrongRate = newValue } } }
     var callback: AURenderPullInputBlock? { access { $0.provider } }
     var selected: AudioDeviceID { access { $0.selected } }
     var running: Bool { access { $0.running } }
@@ -112,29 +118,42 @@ final class FakeHAL: @unchecked Sendable {
             switch selector {
             case kAudioHardwarePropertyTranslateUIDToDevice:
                 let uid = qualifier!.assumingMemoryBound(to: CFString.self).pointee as String
-                output.assumingMemoryBound(to: AudioDeviceID.self).pointee = uid == "test.output" ? 41 : 42
+                output.assumingMemoryBound(to: AudioDeviceID.self).pointee = blackHole ? (uid == "test.blackhole" ? 96 : 0) : uid == "test.output" ? 41 : 42
                 size.pointee = 4
+            case kAudioHardwarePropertyTranslateBundleIDToPlugIn:
+                guard object == kAudioObjectSystemObject else { return -78 }
+                let bundle = qualifier!.assumingMemoryBound(to: CFString.self).pointee as String
+                guard bundle == (blackHole ? "audio.existential.BlackHole2ch" : "test.plugin") else { return -78 }
+                output.assumingMemoryBound(to: AudioObjectID.self).pointee = blackHole ? 34 : 70
+                size.pointee = 4
+            case kAudioPlugInPropertyDeviceList:
+                guard object == (blackHole ? 34 : 70) else { return -78 }
+                let ids: [AudioDeviceID] = missingMembership ? [999] : blackHole ? [96] : [41, 42]
+                ids.withUnsafeBufferPointer { output.copyMemory(from: $0.baseAddress!, byteCount: ids.count * 4) }
+                size.pointee = UInt32(ids.count * 4)
             case kAudioDevicePropertyDeviceUID:
-                output.assumingMemoryBound(to: CFString?.self).pointee = (wrongUID ? "wrong" : object == 41 ? "test.output" : "test.input") as CFString
+                output.assumingMemoryBound(to: CFString?.self).pointee = (wrongUID ? "wrong" : blackHole ? "test.blackhole" : object == 41 ? "test.output" : "test.input") as CFString
             case kAudioDevicePropertyTransportType:
                 output.assumingMemoryBound(to: UInt32.self).pointee = physicalTransport ? 0 : kAudioDeviceTransportTypeVirtual
             case kAudioObjectPropertyOwner:
-                output.assumingMemoryBound(to: AudioObjectID.self).pointee = 70
+                output.assumingMemoryBound(to: AudioObjectID.self).pointee = AudioObjectID(kAudioObjectSystemObject)
             case kAudioDevicePropertyDeviceIsAlive:
                 output.assumingMemoryBound(to: UInt32.self).pointee = 1
             case kAudioDevicePropertyNominalSampleRate:
-                output.assumingMemoryBound(to: Float64.self).pointee = 48_000
+                output.assumingMemoryBound(to: Float64.self).pointee = wrongRate ? 44_100 : 48_000
             case kAudioPlugInPropertyBundleID:
-                output.assumingMemoryBound(to: CFString?.self).pointee = (wrongPlugin ? "wrong" : "test.plugin") as CFString
+                guard object == (blackHole ? 34 : 70) else { return -78 }
+                output.assumingMemoryBound(to: CFString?.self).pointee = (wrongPlugin ? "wrong" : blackHole ? "audio.existential.BlackHole2ch" : "test.plugin") as CFString
             case kAudioDevicePropertyStreamConfiguration:
                 output.assumingMemoryBound(to: AudioBufferList.self).pointee = AudioBufferList(mNumberBuffers: 1,
                     mBuffers: AudioBuffer(mNumberChannels: wrongChannels ? 3 : 2, mDataByteSize: 0, mData: nil))
             default: return -78
             }
             return noErr
-        }, objectSize: { [self] _, _, size in
+        }, objectSize: { [self] _, address, size in
             let result = status("streamSize")
-            size.pointee = UInt32(MemoryLayout<AudioBufferList>.size)
+            size.pointee = address.pointee.mSelector == kAudioPlugInPropertyDeviceList
+                ? UInt32((missingMembership || blackHole ? 1 : 2) * 4) : UInt32(MemoryLayout<AudioBufferList>.size)
             return result
         }, create: { [self] in
             guard status("create") == noErr else { throw Failure() }

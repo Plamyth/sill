@@ -57,6 +57,8 @@ final class StreamServer {
         let connection: NWConnection
         /// Set only by the coordinator's first direct catalog, after source-fence admission.
         var catalogSent = false
+        var latestCatalog: StreamMessage?
+        var microphoneCatalogGrant: HostLocalOwnerGrant?
         var inflight = 0          // every message still unacknowledged (backpressure for delta drops)
         var inflightFrames = 0    // video frames only
         var oldestUnackedFrameAt: TimeInterval?   // last time a frame was drained, or queued from 0 (dead-peer detection)
@@ -143,7 +145,6 @@ final class StreamServer {
     private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
     private var videoAdmission = VideoEpochAdmission.stopped
-    private var latestCatalog: StreamMessage?
     /// A client was admitted (home door at `.ready`, remote door once paired and checked), with
     /// its route (which door, from where) and, for a home client, its link (ClientLink.route; nil
     /// when its connection does not say, and always for a remote session). Called on the network
@@ -1233,7 +1234,7 @@ final class StreamServer {
         if client.presentationInput {
             client.needsKeyframe = true
             client.awaitingFirstKeyframe = true
-            if client.catalogSent, let catalog = latestCatalog { send(catalog.serialized(), to: client) }
+            if client.catalogSent { replayCatalog(to: client) }
             onKeyframeNeeded?()
         }
         let c = client.connection
@@ -1353,8 +1354,9 @@ final class StreamServer {
         queue.async { [self] in
             guard videoAdmission == .preparing(epoch) else { return }
             videoAdmission = .committed(epoch)
-            latestCatalog = catalog
             for client in clients.values where client.catalogSent && client.connection.state == .ready {
+                client.latestCatalog = catalog
+                client.microphoneCatalogGrant = nil
                 send(catalog.serialized(), to: client)
             }
             requestKeyframe()
@@ -1399,7 +1401,8 @@ final class StreamServer {
             }
             if message.kind == .windowList {
                 client.catalogSent = true
-                latestCatalog = message
+                client.latestCatalog = message
+                client.microphoneCatalogGrant = nil
             }
             send(data, to: client)
         }
@@ -1535,14 +1538,36 @@ final class StreamServer {
         }
     }
 
+    private func replayCatalog(to client: Client) {
+        guard var message = client.latestCatalog else { return }
+        if let grant = client.microphoneCatalogGrant,
+           case .committed(let epoch) = videoAdmission, epoch.id == grant.scope.videoEpoch,
+           client.route.encrypted, client.route.fingerprint == grant.fingerprint,
+           grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, { send(message.serialized(), to: client) }) {
+            return
+        }
+        if var list = Wire.decode(WindowList.self, from: message.payload), list.microphone != nil {
+            list.microphone = nil
+            message.payload = Wire.encode(list)
+        }
+        client.microphoneCatalogGrant = nil
+        client.latestCatalog = message
+        send(message.serialized(), to: client)
+    }
+
     func sendMicrophoneCatalog(_ message: StreamMessage, to connection: NWConnection, grant: HostLocalOwnerGrant) {
         let data = message.serialized()
         queue.async { [self] in
-            guard let client = clients[ObjectIdentifier(connection)], client.catalogSent,
+            guard let client = clients[ObjectIdentifier(connection)],
                   client.route.encrypted, client.route.fingerprint == grant.fingerprint,
                   videoAdmission.current?.id == grant.scope.videoEpoch,
                   client.connection.state == .ready else { return }
-            _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) { send(data, to: client) }
+            _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) {
+                client.catalogSent = true
+                client.latestCatalog = message
+                client.microphoneCatalogGrant = grant
+                send(data, to: client)
+            }
         }
     }
 
@@ -1574,7 +1599,6 @@ final class StreamServer {
             let media = message.kind == .parameterSets || message.kind == .frame
             if media, !videoAdmission.admits(epoch) { return }
             let data = media ? PresentationMedia.serialize(message, epoch: epoch!) : message.serialized()
-            if message.kind == .windowList { latestCatalog = message }
             if message.kind == .parameterSets { lastParameterSets = data }
             if message.kind == .frame, message.isKeyframe { lastKeyframeAt = Date().timeIntervalSince1970 }
             var wantKeyframe = false
@@ -1607,6 +1631,7 @@ final class StreamServer {
                     Stats.shared.bump("net.sent")
                     client.sentThisSecond += 1
                 }
+                if message.kind == .windowList { client.latestCatalog = message; client.microphoneCatalogGrant = nil }
                 send(data, to: client, isFrame: message.kind == .frame)
             }
         }

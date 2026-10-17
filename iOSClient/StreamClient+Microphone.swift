@@ -1,5 +1,6 @@
 #if os(iOS)
 import Foundation
+import AVFoundation
 import Network
 import StreamProtocol
 
@@ -18,6 +19,14 @@ extension StreamClient {
 
     func microphoneSourceWillChange() {
         applyMicrophone(microphonePolicy.sourceWillChange())
+    }
+
+    func microphoneBecameInactive() {
+        applyMicrophone(microphonePolicy.inactive())
+    }
+
+    func microphoneInterrupted() {
+        applyMicrophone(microphonePolicy.interrupted())
     }
 
     func microphoneBackgrounded() {
@@ -51,6 +60,21 @@ extension StreamClient {
         var pendingStops: [(ObjectIdentifier, MicrophoneControl)] = []
         for effect in effects {
             switch effect {
+            case .requestPermission(let peer, let scope, let request):
+                guard let c = connection, ObjectIdentifier(c) == peer else { continue }
+                Task { @MainActor [weak self] in
+                    guard let self, self.connection === c,
+                          self.microphonePolicy.phase == .authorizing,
+                          self.microphonePolicy.startRequestID == request,
+                          self.microphonePolicy.scope == scope else { return }
+                    let allowed: Bool
+                    if IPadAudioSession.shared.microphoneAvailable {
+                        allowed = await AVCaptureDevice.requestAccess(for: .audio)
+                    } else { allowed = true }
+                    guard self.connection === c else { return }
+                    self.applyMicrophone(self.microphonePolicy.permissionResolved(allowed, requestID: request,
+                        scope: scope, from: peer, microphoneAvailable: IPadAudioSession.shared.microphoneAvailable))
+                }
             case .closeFrames:
                 microphoneFrames.close()
             case .stopCapture:

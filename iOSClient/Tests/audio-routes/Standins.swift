@@ -23,7 +23,15 @@ final class StreamClient {
         play: { [unowned self] _ in played += 1 }, changed: { _ in })
 
     func toggleRemoteAudio() { remoteAudioControl.toggle() }
-    func toggleIPadMicrophone() { microphoneEffects += microphonePolicy.toggle() }
+    func toggleIPadMicrophone() {
+        let effects = microphonePolicy.toggle()
+        microphoneEffects += effects
+        for effect in effects {
+            if case .requestPermission(let peer, let scope, let id) = effect {
+                microphoneEffects += microphonePolicy.permissionResolved(true, requestID: id, scope: scope, from: peer)
+            }
+        }
+    }
 
     func advertise(playback: Bool = true, microphone: Bool = true) {
         let id = ObjectIdentifier(connection!)

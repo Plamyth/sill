@@ -51,7 +51,7 @@ final class IPadMicrophoneCapture {
         generation = attempt
         defer { starting = false }
 
-        guard await AVCaptureDevice.requestAccess(for: .audio) else {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw CaptureError.permissionDenied
         }
         guard generation == attempt else { throw CancellationError() }

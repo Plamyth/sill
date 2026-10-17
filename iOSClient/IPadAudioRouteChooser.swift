@@ -217,6 +217,8 @@ struct IPadAudioRouteChooser: View {
         switch client.microphonePhase {
         case .unavailable: "사용할 수 없음"
         case .off: "꺼짐"
+        case .authorizing: "iPad 권한 확인 중"
+        case .cleanupRequired: "Mac 마이크 정리 필요"
         case .requesting: "Mac 동의 대기 중"
         case .capturing: "마이크 준비 중"
         case .live: "전송 중"
