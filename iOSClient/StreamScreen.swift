@@ -383,11 +383,6 @@ struct StreamScreen: View {
                 else { client.microphoneBecameInactive() }
             }
         }
-        .onReceive(Publishers.MergeMany(IPadKeyboardDiagnostics.notifications.map {
-            NotificationCenter.default.publisher(for: $0)
-        }).receive(on: RunLoop.main)) { note in
-            IPadKeyboardDiagnostics.notification(note, view: overlay.view)
-        }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .receive(on: RunLoop.main)) { note in
             let kind = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue

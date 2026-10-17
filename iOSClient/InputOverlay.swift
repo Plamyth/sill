@@ -72,6 +72,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     let keyboardDiagnosticID = UUID()
     private var lastKeyboardDiagnosticBounds: CGRect?
     private var keyboardDiagnosticBoundsSamples = 0
+    private var keyboardDiagnosticObservers: [NSObjectProtocol] = []
     var keyboardDiagnosticFields: [String: String] {
         ["view": keyboardDiagnosticID.uuidString, "attached": String(window != nil),
          "window": window.map { String(describing: ObjectIdentifier($0)) } ?? "nil",
@@ -175,9 +176,19 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         strokes.onSilenced = { [weak self] in self?.strokeSilenced() }
         strokes.onGesture = { [weak self] gesture, fingers in _ = self?.sendGesture(gesture, fingers) }
         addGestureRecognizer(strokes)
+        keyboardDiagnosticObservers = IPadKeyboardDiagnostics.notifications.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self, self.window != nil else { return }
+                IPadKeyboardDiagnostics.notification(note, view: self)
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        for observer in keyboardDiagnosticObservers { NotificationCenter.default.removeObserver(observer) }
+    }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
