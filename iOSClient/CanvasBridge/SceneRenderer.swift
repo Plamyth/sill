@@ -1,4 +1,3 @@
-import PencilKit
 import SwiftUI
 
 enum CanvasPalette {
@@ -11,18 +10,25 @@ enum CanvasPalette {
 
 enum SceneRenderer {
     @MainActor
-    static func png(scene: CanvasScene, drawing: PKDrawing) -> Data? {
+    static func png(scene: CanvasScene) -> Data? {
         let size = CGSize(width: scene.width, height: scene.height)
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { context in
             CanvasPalette.background.setFill()
             context.fill(CGRect(origin: .zero, size: size))
-            drawing.image(from: CGRect(origin: .zero, size: size), scale: 1)
-                .draw(in: CGRect(origin: .zero, size: size))
             let cg = context.cgContext
             cg.setLineWidth(4)
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
+            cg.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 1)
+            for stroke in scene.strokes {
+                guard let first = stroke.points.first else { continue }
+                cg.move(to: CGPoint(x: first.x, y: first.y))
+                for point in stroke.points.dropFirst() {
+                    cg.addLine(to: CGPoint(x: point.x, y: point.y))
+                }
+                cg.strokePath()
+            }
             for link in scene.links {
                 guard let from = scene.nodes.first(where: { $0.id == link.from })?.frame.center,
                       let to = scene.nodes.first(where: { $0.id == link.to })?.frame.center else { continue }

@@ -442,7 +442,7 @@ struct CanvasWorkspace: View {
                 return
             }
             guard localSha != syncedSceneSha,
-                  let image = SceneRenderer.png(scene:scene,drawing:drawing) else { return }
+                  let image = SceneRenderer.png(scene:scene) else { return }
             pendingSceneSha = localSha
             try saveCanvasVaultCheckpoint()
             let saved = try await relay.saveVaultCanvas(scene:scene,imagePNG:image,
@@ -706,7 +706,6 @@ struct CanvasWorkspace: View {
         store.sendBusy = true
         defer { store.sendBusy = false }
         let frozen = store.scene
-        let frozenDrawing = store.drawing
         let connection = relay
         let address = relayAddress
         do {
@@ -714,7 +713,7 @@ struct CanvasWorkspace: View {
                 await reconcile(pending)
                 return
             }
-            guard let image = SceneRenderer.png(scene:frozen,drawing:frozenDrawing) else {
+            guard let image = SceneRenderer.png(scene:frozen) else {
                 throw CanvasSendError.invalidPacket
             }
             let target = try await connection.inboxTarget()
