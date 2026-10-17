@@ -92,18 +92,16 @@ struct CanvasWorkspace: View {
             else { Task { await checkConnection() } }
         }
         .task { await checkConnection() }
-        .task(id:"\(store.scene.id.uuidString):\(store.scene.revision):\(relayAddress):\(canvasVaultEnabled)") {
-            guard canvasVaultEnabled, !relayToken.isEmpty,
-                  !store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
-                    !store.scene.links.isEmpty else { return }
+        .task(id:"\(store.scene.id.uuidString):\(relayAddress):\(relayToken):\(canvasVaultEnabled)") {
+            guard canvasVaultEnabled, !relayToken.isEmpty else { return }
             do { try await Task.sleep(for:.milliseconds(700)) } catch { return }
-            guard !Task.isCancelled else { return }
-            await refreshCanvasFromVault()
-            await synchronizeCanvasToVault()
             while !Task.isCancelled {
+                if !store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
+                    !store.scene.links.isEmpty {
+                    await refreshCanvasFromVault()
+                    await synchronizeCanvasToVault()
+                }
                 do { try await Task.sleep(for:.seconds(2)) } catch { return }
-                await refreshCanvasFromVault()
-                await synchronizeCanvasToVault()
             }
         }
         .task(id:ProjectionConnection(address:relayAddress,token:relayToken,active:scenePhase == .active)) {
