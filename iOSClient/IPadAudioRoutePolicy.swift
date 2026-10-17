@@ -11,7 +11,7 @@ enum IPadAudioRoutePolicy {
     enum Output: String, CaseIterable, Identifiable {
         case off, iPadPlayback
         var id: Self { self }
-        var title: String { self == .off ? "재생 안 함" : "이 iPad의 현재 출력 장치" }
+        var title: String { self == .off ? "재생 안 함" : "iPad 스피커·연결된 출력" }
     }
 
     struct Selection: Equatable {
@@ -37,8 +37,13 @@ enum IPadAudioRoutePolicy {
         var playback: Bool?
     }
 
+    struct Authorization: Equatable {
+        let id = UUID()
+        let context: Context
+    }
+
     enum Problem: LocalizedError {
-        case changedConnection, inputUnavailable, outputUnavailable, microphoneBusy, cleanupRequired
+        case changedConnection, inputUnavailable, outputUnavailable, microphoneBusy, cleanupRequired, permissionDenied
 
         var errorDescription: String? {
             switch self {
@@ -47,6 +52,7 @@ enum IPadAudioRoutePolicy {
             case .outputUnavailable: "현재 연결에서는 Mac 오디오를 재생할 수 없습니다."
             case .microphoneBusy: "마이크 중지가 확인된 뒤 다시 켜세요."
             case .cleanupRequired: "마이크 정리를 마친 뒤 다시 선택하세요."
+            case .permissionDenied: "iPad 설정에서 마이크 권한을 허용한 뒤 다시 선택하세요."
             }
         }
     }

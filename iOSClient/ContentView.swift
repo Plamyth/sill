@@ -63,7 +63,10 @@ struct ContentView: View {
         .onChange(of: client.active) { _, _ in client.offerInitialAudioRoutes() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { client.offerInitialAudioRoutes() }
-            else { client.audioRouteChooserPresented = false }
+            else if phase == .background {
+                client.audioRouteAuthorization = nil
+                client.audioRouteChooserPresented = false
+            } else if client.audioRouteAuthorization == nil { client.audioRouteChooserPresented = false }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             client.offerInitialAudioRoutes()

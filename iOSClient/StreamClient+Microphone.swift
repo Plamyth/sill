@@ -6,6 +6,7 @@ import StreamProtocol
 
 extension StreamClient {
     func toggleIPadMicrophone() {
+        audioRouteAuthorization = nil
         if microphoneCleanupProblem != nil {
             retryMicrophoneCleanup()
             return
@@ -14,11 +15,13 @@ extension StreamClient {
     }
 
     func microphoneSetConnection(_ next: NWConnection?) {
+        if microphonePolicy.peer != next.map(ObjectIdentifier.init) { audioRouteAuthorization = nil }
         recordMicrophoneDiagnostic("connection_observed", ["same": String(microphonePolicy.peer == next.map(ObjectIdentifier.init)), "connected": String(next != nil)])
         applyMicrophone(microphonePolicy.setConnection(next.map(ObjectIdentifier.init)))
     }
 
     func microphoneSourceWillChange() {
+        audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("source_change", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.sourceWillChange())
     }
@@ -29,17 +32,21 @@ extension StreamClient {
     }
 
     func microphoneInterrupted() {
+        audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("interruption_or_route", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.interrupted())
     }
 
     func microphoneBackgrounded() {
+        audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("background", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.backgrounded())
     }
 
     func microphoneObserve(_ list: WindowList, from peer: NWConnection) {
+        let previous = microphonePolicy.scope
         applyMicrophone(microphonePolicy.observe(list, from: ObjectIdentifier(peer)))
+        if previous != microphonePolicy.scope { audioRouteAuthorization = nil }
     }
 
     func receiveMicrophone(_ header: StreamHeader, _ data: Data, from peer: NWConnection) -> Bool {
@@ -80,7 +87,9 @@ extension StreamClient {
                           self.microphonePolicy.startRequestID == request,
                           self.microphonePolicy.scope == scope else { return }
                     let allowed: Bool
-                    if IPadAudioSession.shared.microphoneAvailable {
+                    if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+                        allowed = true
+                    } else if IPadAudioSession.shared.microphoneAvailable {
                         allowed = await AVCaptureDevice.requestAccess(for: .audio)
                     } else { allowed = true }
                     guard self.connection === c else { return }

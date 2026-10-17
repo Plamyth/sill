@@ -16,6 +16,9 @@ for suite in ["routes", "microphone", "lease"]:
         if suite == "routes":
             sources += [CLIENT / "IPadAudioRoutePolicy.swift", CLIENT / "IPadRemoteAudioController.swift", CLIENT / "IPadMicrophonePolicy.swift"]
             adapter = (CLIENT / "StreamClient+AudioRoutes.swift").read_text().replace("#if os(iOS)", "#if true")
+            adapter = adapter[:adapter.index("    @MainActor var audioRouteAppActive:")] + "}\n#endif\n"
+            adapter = adapter.replace("import UIKit\n", "").replace("import AVFoundation\n", "")
+            sources += [CLIENT / "IPadMicrophoneCapture.swift", CLIENT / "IPadMicrophonePCM.swift"]
             fixture = (HERE / "Standins.swift").read_text().replace("// EXTRACTED_ADAPTER", adapter)
             (out / "Adapter.swift").write_text(fixture.replace("import StreamProtocol\n", ""))
             test = HERE / "main.swift"
@@ -27,7 +30,7 @@ for suite in ["routes", "microphone", "lease"]:
             test = ROOT / "Tests/checks/ipad-audio-lease/main.swift"
         for path in sources + [test]:
             (out / path.name).write_text(path.read_text().replace("import StreamProtocol\n", ""))
-        subprocess.run(["swiftc", "-module-cache-path", str(CACHE),
+        subprocess.run(["swiftc", "-parse-as-library", "-module-cache-path", str(CACHE),
                         *map(str, sorted(out.glob("*.swift"))), "-o", str(out / "check")],
                        check=True, timeout=180, env=env)
         print(f"SUITE {suite}", flush=True)

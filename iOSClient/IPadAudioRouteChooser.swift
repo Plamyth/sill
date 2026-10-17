@@ -23,7 +23,19 @@ struct IPadAudioRouteChooser: View {
     var body: some View {
         NavigationStack {
             Form {
-                macRoutes
+                Section {
+                    Button("iPad 입력·출력 함께 사용") {
+                        selection = .init(input: .iPadMicrophone, output: .iPadPlayback)
+                        applySelection()
+                    }
+                    .disabled(context == nil || !client.audioRouteCapabilities.microphone ||
+                              !client.audioRouteCapabilities.playback || client.audioRouteAuthorization != nil)
+                    .accessibilityIdentifier("useIPadFullDuplex")
+                    LabeledContent("iPad 마이크", value: microphoneStatus)
+                    LabeledContent("iPad 스피커·연결된 출력", value: playbackStatus)
+                    if let reason = client.audioRoutePlaybackUnavailableReason { Text(reason).foregroundStyle(.secondary) }
+                } header: { Text("이 iPad의 입력·출력") }
+
                 Section {
                     Text("iPad 마이크 전송과 Mac 소리 재생은 이 iPad의 별도 동의입니다. Mac 시스템 기본 장치 선택과 관계없이 각각 적용합니다.")
                 }
@@ -55,8 +67,9 @@ struct IPadAudioRouteChooser: View {
                 Section {
                     LabeledContent("소리 소스", value: mac)
                     Picker("출력 대상", selection: $selection.output) {
-                        ForEach(client.audioRouteCapabilities.outputs) { output in
+                        ForEach(IPadAudioRoutePolicy.Output.allCases) { output in
                             Text(output.title).tag(output)
+                                .disabled(output != .off && !client.audioRouteCapabilities.playback)
                         }
                     }
                     .accessibilityIdentifier("audioRouteOutput")
@@ -69,8 +82,8 @@ struct IPadAudioRouteChooser: View {
                             IPadSystemOutputPicker()
                                 .frame(width: 44, height: 44)
                         }
-                    } else {
-                        Text("현재 연결에서는 Mac 오디오 재생을 지원하지 않습니다.")
+                    } else if let reason = client.audioRoutePlaybackUnavailableReason {
+                        Text(reason)
                             .foregroundStyle(.secondary)
                     }
                 } header: { Text("iPad 오디오 재생") }
@@ -83,16 +96,18 @@ struct IPadAudioRouteChooser: View {
                 }
                 Section {
                     Button("iPad 전송·재생 동의 적용") {
-                        do {
-                            try client.applyAudioRoutes(selection, context: context)
-                            problem = nil
-                        } catch { problem = error.localizedDescription }
+                        applySelection()
                     }
-                    .disabled(context == nil)
+                    .disabled(context == nil || client.audioRouteAuthorization != nil)
                     .accessibilityIdentifier("applyAudioRoutes")
+                    if client.audioRouteAuthorization != nil {
+                        ProgressView("iPad 마이크 권한 확인 중")
+                        Button("입력·출력 요청 취소") { client.audioRouteAuthorization = nil }
+                    }
                     Button("닫기") { dismiss() }
                         .disabled(client.macAudioRoutes.pending != nil)
                 }
+                macRoutes
             }
             .navigationTitle("오디오 입력·출력")
             .toolbar {
@@ -111,6 +126,7 @@ struct IPadAudioRouteChooser: View {
             readPorts()
             client.fetchMacAudioRoutes()
         }
+        .onDisappear { client.audioRouteAuthorization = nil }
         .onChange(of: client.audioRouteContext) { _, next in
             context = next
             selection = IPadAudioRoutePolicy.Selection()
@@ -232,8 +248,20 @@ struct IPadAudioRouteChooser: View {
         case .unavailable: "사용할 수 없음"
         case .off: "꺼짐"
         case .requesting: "Mac 동의 대기 중"
-        case .listening: "재생 중"
+        case .starting: "소리 연결 준비 중"
+        case .listening: "iPad에서 재생 중"
         case .failed(let reason): "실패: \(reason)"
+        }
+    }
+
+    private func applySelection() {
+        let chosen = selection
+        let displayed = context
+        Task { @MainActor in
+            do {
+                try await client.applyAudioRoutes(chosen, context: displayed)
+                problem = nil
+            } catch { problem = error.localizedDescription }
         }
     }
 

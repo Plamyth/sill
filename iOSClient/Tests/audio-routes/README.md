@@ -23,3 +23,19 @@ env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
 ```
 
 The native build verifies iOS compilation and linking. The focused tests verify client decisions through recorded effects. Neither verifies audible output, microphone permission UI, system output discovery, layout/touch behavior, or physical device acceptance. Installation and physical acceptance belong to the user.
+
+## Combined input and output
+
+The first section now offers **iPad 입력·출력 함께 사용** and both local statuses. The iPad microphone and **iPad 스피커·연결된 출력** selectors precede Mac system device settings. Unsupported output remains visible with a reason.
+
+The combined action checks microphone permission before requesting either direction, then validates the same peer/source/capability and active foreground. Denial, cancellation, changed context or background sends no new consent. Returning to the foreground never resumes a cancelled action.
+
+A playback ACK means local preparation is pending. The player reports readiness only after engine startup succeeds; failure is visible and unsubscribes without automatic retry. Metadata is appended to the existing bounded, PCM-free `Library/Application Support/CCR Sill/microphone-diagnostics.json` in the iPad app container.
+
+Focused checks run only on isolated Mini RAM input:
+
+```sh
+python3 Tests/checks/ipad-full-duplex/run.py /absolute/path/to/new-receipt-directory
+```
+
+They compile the production route adapter/controller and player startup body with fake permission, engine, session and network boundaries. Receipts include exact input hashes, source immutability and RAM/child cleanup. This is independent input validation, not source-guard task transfer, SDK build, audible playback or physical full duplex acceptance. Parent owns the SDK build and physical checks.

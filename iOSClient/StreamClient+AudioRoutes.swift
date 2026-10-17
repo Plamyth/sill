@@ -1,11 +1,20 @@
 #if os(iOS)
 import Foundation
+import AVFoundation
+import UIKit
 import StreamProtocol
 
 extension StreamClient {
     var audioRouteCapabilities: IPadAudioRoutePolicy.Capabilities {
         IPadAudioRoutePolicy.Capabilities(microphone: connected && microphonePolicy.scope != nil,
                                           playback: connected && active != .none && remoteAudioStatus.available)
+    }
+
+    var audioRoutePlaybackUnavailableReason: String? {
+        if !connected { return "Mac 연결 후 이 iPad의 출력 장치를 선택할 수 있습니다." }
+        if active == .none { return "Mac 화면을 선택한 뒤 이 iPad에서 소리를 재생할 수 있습니다." }
+        if !remoteAudioStatus.available { return "현재 Mac 연결에서 오디오 재생 지원을 알리지 않았습니다. Mac의 화면·시스템 오디오 기록 권한과 CCR Sill 버전을 확인하세요." }
+        return nil
     }
 
     var audioRouteSelection: IPadAudioRoutePolicy.Selection {
@@ -31,18 +40,47 @@ extension StreamClient {
         audioRouteChooserPresented = true
     }
 
-    func applyAudioRoutes(_ selection: IPadAudioRoutePolicy.Selection,
-                          context: IPadAudioRoutePolicy.Context?) throws {
-        guard connected, appInForeground, let context, context == audioRouteContext else {
+    @MainActor func applyAudioRoutes(_ selection: IPadAudioRoutePolicy.Selection,
+                          context: IPadAudioRoutePolicy.Context?) async throws {
+        audioRouteAuthorization = nil
+        guard connected, appInForeground, audioRouteAppActive, let context, context == audioRouteContext else {
             throw IPadAudioRoutePolicy.Problem.changedConnection
         }
-        let actions = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
+        var actions = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
                                                       current: audioRouteSelection,
                                                       canStartMicrophone: microphonePolicy.canStart,
                                                       cleanupRequired: microphoneCleanupProblem != nil)
+        if actions.microphone == true {
+            let authorization = IPadAudioRoutePolicy.Authorization(context: context)
+            audioRouteAuthorization = authorization
+            defer { if audioRouteAuthorization == authorization { audioRouteAuthorization = nil } }
+            let diagnostic = IPadMicrophoneDiagnostics.shared.attempt(authorization.id)
+            diagnostic.record("routes_permission_requested")
+            let allowed = await requestAudioRouteMicrophonePermission()
+            guard !Task.isCancelled, audioRouteAuthorization == authorization,
+                  connected, appInForeground, audioRouteAppActive, context == audioRouteContext else {
+                diagnostic.record("routes_permission_cancelled")
+                throw IPadAudioRoutePolicy.Problem.changedConnection
+            }
+            diagnostic.record("routes_permission_result", ["allowed": String(allowed)])
+            guard allowed else { throw IPadAudioRoutePolicy.Problem.permissionDenied }
+            actions = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
+                current: audioRouteSelection, canStartMicrophone: microphonePolicy.canStart,
+                cleanupRequired: microphoneCleanupProblem != nil)
+        }
         if let enabled = actions.microphone, !enabled { toggleIPadMicrophone() }
-        if actions.playback != nil { toggleRemoteAudio() }
         if let enabled = actions.microphone, enabled { toggleIPadMicrophone() }
+        if actions.playback != nil { toggleRemoteAudio() }
+    }
+
+    @MainActor var audioRouteAppActive: Bool { UIApplication.shared.applicationState == .active }
+
+    @MainActor func requestAudioRouteMicrophonePermission() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: return true
+        case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
+        default: return false
+        }
     }
 }
 #endif

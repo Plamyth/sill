@@ -8,6 +8,11 @@ final class StreamClient {
     var active = StreamSource.desktop
     var connection: RoutePeer? = RoutePeer()
     var audioRouteChooserPresented = false
+    var audioRouteAuthorization: IPadAudioRoutePolicy.Authorization?
+    var permissionAllowed = true
+    var permissionWaiter: CheckedContinuation<Bool, Never>?
+    var holdPermission = false
+    var appActive = true
     var audioRouteOffer = IPadAudioRouteOffer()
     var microphonePolicy = IPadMicrophonePolicy()
     var microphoneCleanupProblem: String?
@@ -20,10 +25,11 @@ final class StreamClient {
     lazy var remoteAudioControl = IPadRemoteAudioController(
         send: { [unowned self] _, request in playbackRequests.append(request) },
         stop: { [unowned self] in stopped += 1 },
-        play: { [unowned self] _ in played += 1 }, changed: { _ in })
+        play: { [unowned self] _, _ in played += 1 }, changed: { _ in })
 
-    func toggleRemoteAudio() { remoteAudioControl.toggle() }
+    func toggleRemoteAudio() { audioRouteAuthorization = nil; remoteAudioControl.toggle() }
     func toggleIPadMicrophone() {
+        audioRouteAuthorization = nil
         let effects = microphonePolicy.toggle()
         microphoneEffects += effects
         for effect in effects {
@@ -31,6 +37,12 @@ final class StreamClient {
                 microphoneEffects += microphonePolicy.permissionResolved(true, requestID: id, scope: scope, from: peer)
             }
         }
+    }
+
+    @MainActor var audioRouteAppActive: Bool { appActive }
+    @MainActor func requestAudioRouteMicrophonePermission() async -> Bool {
+        if holdPermission { return await withCheckedContinuation { permissionWaiter = $0 } }
+        return permissionAllowed
     }
 
     func advertise(playback: Bool = true, microphone: Bool = true) {

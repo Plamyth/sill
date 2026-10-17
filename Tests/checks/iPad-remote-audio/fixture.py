@@ -28,7 +28,7 @@ import StreamProtocol
 final class RemoteAudioPlayer {
     var packets: [Data] = []
     var stops = 0
-    func receive(_ packet: Data) { packets.append(packet) }
+    func receive(_ packet: Data, subscription: UUID, report: @escaping (IPadRemoteAudioController.PlaybackEvent) -> Void) { packets.append(packet) }
     func stop() { stops += 1 }
 }
 final class NWConnection {
@@ -43,6 +43,7 @@ final class SessionLink { var connection: NWConnection? }
 final class StreamClient {
     private let link = SessionLink()
     func microphoneBackgrounded() {}
+    func microphoneBecameInactive() {}
 '''
 fixture += properties.replace('    private let remoteAudio', '    let remoteAudio')
 fixture += connection + '''

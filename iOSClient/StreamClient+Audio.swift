@@ -5,6 +5,9 @@ import StreamProtocol
 
 extension StreamClient {
     func toggleRemoteAudio() {
+        #if os(iOS)
+        audioRouteAuthorization = nil
+        #endif
         remoteAudioControl.toggle()
         guard case .requesting(let requestID) = remoteAudioControl.status, let c = connection else { return }
         let origin = ObjectIdentifier(c)
@@ -29,6 +32,8 @@ extension StreamClient {
 
     func sendRemoteAudio(_ request: RemoteAudioSubscription, to peer: ObjectIdentifier) {
         guard let c = connection, ObjectIdentifier(c) == peer else { return }
+        IPadMicrophoneDiagnostics.shared.attempt(request.requestID)
+            .record(request.enabled ? "playback_requested" : "playback_stopped")
         let message = StreamMessage(kind: .remoteAudioControl, timestamp: Date().timeIntervalSince1970,
                                     isKeyframe: false, payload: Wire.encode(request))
         // SessionLink migrates queued input on handover. Audio consent must stay on its original peer.

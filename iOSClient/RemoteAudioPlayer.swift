@@ -19,8 +19,11 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     private var ownsPlaybackLease = false
     private let audioLeaseId = UUID()
 
-    func receive(_ packet: Data) {
+    func receive(_ packet: Data, subscription: UUID,
+                 report: @escaping (IPadRemoteAudioController.PlaybackEvent) -> Void) {
         let epoch = epochLock.withLock { $0 }
+        let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(subscription)
+        diagnostics.record("playback_first_packet")
         decodeQueue.async { [self] in
             guard epochLock.withLock({ $0 == epoch }) else { return }
             if let encoded = AudioPacket.unpackEncoded(packet) {
@@ -30,10 +33,12 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                                                cookie: encoded.cookie)
                 }
                 guard let decoded = decoder?.decode(encoded.packet) else { return }
-                append(decoded, rate: encoded.sampleRate, channels: encoded.channels, epoch: epoch)
+                append(decoded, rate: encoded.sampleRate, channels: encoded.channels, epoch: epoch,
+                       diagnostics: diagnostics, report: report)
             } else if let plain = AudioPacket.unpack(packet) {
                 let decoded = plain.samples.map { Float($0) / 32768 }
-                append(decoded, rate: plain.sampleRate, channels: plain.channels, epoch: epoch)
+                append(decoded, rate: plain.sampleRate, channels: plain.channels, epoch: epoch,
+                       diagnostics: diagnostics, report: report)
             }
         }
     }
@@ -67,7 +72,9 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         }
     }
 
-    private func append(_ incoming: [Float], rate newRate: Double, channels newChannels: Int, epoch: UInt64) {
+    private func append(_ incoming: [Float], rate newRate: Double, channels newChannels: Int, epoch: UInt64,
+                        diagnostics: IPadMicrophoneDiagnostics.Attempt,
+                        report: @escaping (IPadRemoteAudioController.PlaybackEvent) -> Void) {
         // Hold the epoch through append so a decode cannot refill the buffer after OFF cleared it.
         epochLock.withLock { current in
             guard current == epoch else { return }
@@ -84,7 +91,8 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.epochLock.withLock({ $0 == epoch }),
                           self.lock.withLock({ self.formatVersion == version }) else { return }
-                    self.restart(rate: newRate, channels: newChannels, version: version)
+                    self.restart(rate: newRate, channels: newChannels, version: version,
+                                 diagnostics: diagnostics, report: report)
                 }
             }
             let perMs = Int(newRate / 1000) * newChannels
@@ -98,12 +106,20 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         }
     }
 
-    private func restart(rate: Double, channels: Int, version: UInt64) {
+    private func restart(rate: Double, channels: Int, version: UInt64,
+                         diagnostics: IPadMicrophoneDiagnostics.Attempt,
+                         report: (IPadRemoteAudioController.PlaybackEvent) -> Void) {
         engine?.stop()
         engine = nil
+        report(.preparing)
+        diagnostics.record("playback_engine_setup", ["rate": String(rate), "channels": String(channels)])
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate,
                                          channels: AVAudioChannelCount(channels), interleaved: false)
-        else { return }
+        else {
+            diagnostics.record("playback_format_failed")
+            report(.failed("iPad 재생 형식을 준비할 수 없습니다."))
+            return
+        }
         do {
             try IPadAudioSession.shared.acquire(.remotePlayback,leaseId:audioLeaseId)
             ownsPlaybackLease = true
@@ -132,7 +148,12 @@ final class RemoteAudioPlayer: @unchecked Sendable {
             engine.attach(source)
             engine.connect(source, to: engine.mainMixerNode, format: format)
             try engine.start()
+            guard engine.isRunning else { throw NSError(domain: "CCR Sill Playback", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "iPad 재생 엔진이 실행되지 않았습니다."]) }
             self.engine = engine
+            diagnostics.record("playback_engine_ready", ["format": IPadMicrophoneDiagnostics.format(format),
+                "running": String(engine.isRunning)])
+            report(.ready)
         } catch {
             engine = nil
             ownsPlaybackLease = ownsPlaybackLease || IPadAudioSession.shared.holds(leaseId:audioLeaseId)
@@ -145,10 +166,8 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                         .error("Playback lease cleanup failed: \(String(describing: error), privacy: .public)")
                 }
             }
-            decodeQueue.async { [self] in
-                self.rate = 0
-                self.channels = 0
-            }
+            diagnostics.record("playback_engine_failed", ["error": error.localizedDescription])
+            report(.failed("iPad 재생을 시작하지 못했습니다. \(error.localizedDescription)"))
         }
     }
 }

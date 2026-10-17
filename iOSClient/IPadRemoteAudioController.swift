@@ -7,16 +7,21 @@ final class IPadRemoteAudioController {
         case unavailable
         case off
         case requesting(UUID)
+        case starting(UUID)
         case listening(UUID)
         case failed(String)
 
         var available: Bool { self != .unavailable }
         var requested: Bool {
             switch self {
-            case .requesting, .listening: return true
+            case .requesting, .starting, .listening: return true
             default: return false
             }
         }
+    }
+
+    enum PlaybackEvent {
+        case preparing, ready, failed(String)
     }
 
     private(set) var status: Status = .unavailable {
@@ -27,11 +32,11 @@ final class IPadRemoteAudioController {
     private var inputGeneration: String?
     private let send: (ObjectIdentifier, RemoteAudioSubscription) -> Void
     private let stop: () -> Void
-    private let play: (Data) -> Void
+    private let play: (Data, UUID) -> Void
     private let changed: (Status) -> Void
 
     init(send: @escaping (ObjectIdentifier, RemoteAudioSubscription) -> Void,
-         stop: @escaping () -> Void, play: @escaping (Data) -> Void,
+         stop: @escaping () -> Void, play: @escaping (Data, UUID) -> Void,
          changed: @escaping (Status) -> Void) {
         self.send = send
         self.stop = stop
@@ -75,11 +80,13 @@ final class IPadRemoteAudioController {
         }
         let requestID: UUID
         switch status {
-        case .requesting(let id), .listening(let id): requestID = id
+        case .requesting(let id), .starting(let id), .listening(let id): requestID = id
         default: return
         }
         guard answer.requestID == requestID else { return }
-        if answer.enabled { status = .listening(requestID) }
+        if answer.enabled {
+            if case .requesting = status { status = .starting(requestID) }
+        }
         else {
             stop()
             status = .failed(answer.reason ?? "Mac 오디오를 사용할 수 없습니다.")
@@ -87,8 +94,22 @@ final class IPadRemoteAudioController {
     }
 
     func receiveAudio(_ packet: Data, from origin: ObjectIdentifier) {
-        guard peer == origin, case .listening = status else { return }
-        play(packet)
+        guard peer == origin else { return }
+        switch status {
+        case .starting(let id), .listening(let id): play(packet, id)
+        default: return
+        }
+    }
+
+    func playerChanged(_ event: PlaybackEvent, requestID: UUID, from origin: ObjectIdentifier) {
+        guard peer == origin, status == .starting(requestID) || status == .listening(requestID) else { return }
+        switch event {
+        case .preparing: status = .starting(requestID)
+        case .ready: status = .listening(requestID)
+        case .failed(let reason):
+            revoke()
+            status = .failed(reason)
+        }
     }
 
     func expire(_ requestID: UUID, from origin: ObjectIdentifier) {

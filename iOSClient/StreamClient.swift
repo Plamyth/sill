@@ -134,7 +134,13 @@ final class StreamClient: ObservableObject {
     lazy var remoteAudioControl = IPadRemoteAudioController(
         send: { [weak self] peer, request in self?.sendRemoteAudio(request, to: peer) },
         stop: { [weak self] in self?.remoteAudio.stop() },
-        play: { [weak self] packet in self?.remoteAudio.receive(packet) },
+        play: { [weak self] packet, requestID in
+            guard let self, let connection = self.connection else { return }
+            let origin = ObjectIdentifier(connection)
+            self.remoteAudio.receive(packet, subscription: requestID) { [weak self] event in
+                self?.remoteAudioControl.playerChanged(event, requestID: requestID, from: origin)
+            }
+        },
         changed: { [weak self] status in self?.remoteAudioStatus = status })
     #if os(iOS)
     @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
@@ -146,6 +152,7 @@ final class StreamClient: ObservableObject {
     var microphoneCaptureToken: UUID?
     @Published var audioRouteChooserPresented = false
     var audioRouteOffer = IPadAudioRouteOffer()
+    @Published var audioRouteAuthorization: IPadAudioRoutePolicy.Authorization?
     @Published var macAudioRoutes = MacAudioRouteSession()
     #endif
     #endif
@@ -1437,6 +1444,9 @@ final class StreamClient: ObservableObject {
     private func wentToBackground() {
         #if os(visionOS)
         visionAudio.setForeground(false)
+        #endif
+        #if os(iOS)
+        audioRouteAuthorization = nil
         #endif
         appInForeground = false
         reconnectCheck?.cancel()

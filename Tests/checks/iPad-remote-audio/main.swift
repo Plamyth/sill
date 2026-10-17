@@ -29,7 +29,7 @@ private final class Probe {
     lazy var control = IPadRemoteAudioController(
         send: { [unowned self] in requests.append(($0, $1)) },
         stop: { [unowned self] in stops += 1 },
-        play: { [unowned self] in played.append($0) },
+        play: { [unowned self] packet, _ in played.append(packet) },
         changed: { [unowned self] in updates.append($0) })
     var id: ObjectIdentifier { ObjectIdentifier(peer) }
     var otherID: ObjectIdentifier { ObjectIdentifier(other) }
@@ -51,6 +51,7 @@ struct Check {
         timeout()
         await transport()
         await backgroundLifecycle()
+        await localReadiness()
         await playback()
         print("PASS \(checks) iPad audio behavior assertions")
     }
@@ -108,7 +109,7 @@ struct Check {
         expect(p.control.status == .requesting(second.requestID), "stale OFF cannot revoke new ON")
         p.ack(second)
         p.control.receive(RemoteAudioState(enabled: false, requestID: on.requestID), from: p.id)
-        expect(p.control.status == .listening(second.requestID), "old refusal cannot revoke current consent")
+        expect(p.control.status == .starting(second.requestID), "old refusal cannot revoke current consent")
         p.control.receive(RemoteAudioState(enabled: false, requestID: nil, reason: "Source changed"), from: p.id)
         expect(p.control.status == .failed("Source changed"), "host revocation stops playback")
         p.ack(second)
@@ -159,7 +160,7 @@ struct Check {
         p.packet(from: p.otherID)
         expect(p.played.count == 1, "replacement requires fresh tap and ACK")
         p.control.receive(list(), from: p.otherID)
-        expect(p.control.status == .listening(next.requestID), "repeated list preserves same source consent")
+        expect(p.control.status == .starting(next.requestID), "repeated list preserves same source consent")
     }
 
     static func timeout() {
@@ -179,7 +180,7 @@ struct Check {
         let next = p.last
         p.ack(next)
         p.control.expire(next.requestID, from: p.id)
-        expect(p.control.status == .listening(next.requestID), "ACK before deadline cancels timeout effect")
+        expect(p.control.status == .starting(next.requestID), "ACK before deadline cancels timeout effect")
         p.control.receive(RemoteAudioState(enabled: false, requestID: next.requestID, reason: "Capture failed"), from: p.id)
         expect(p.control.status == .failed("Capture failed"), "matching refusal is visible")
     }
@@ -256,7 +257,7 @@ struct Check {
         _ = c.receiveRemoteAudio(header(.remoteAudioState),
             Wire.encode(RemoteAudioState(enabled: true, requestID: id)), from: peer)
         await drain()
-        expect(c.remoteAudioStatus == .listening(id), "matching ACK enables before background")
+        expect(c.remoteAudioStatus == .starting(id), "matching ACK awaits local player before background")
         let screen = SceneHarness(client: c)
         let stops = c.remoteAudio.stops
         screen.changed(.background)
@@ -293,6 +294,53 @@ struct Check {
         await drain()
         expect(pendingClient.remoteAudioStatus == .off && pendingPeer.writes.count == 2,
                "foreground return does not reuse background consent")
+    }
+
+    @MainActor static func localReadiness() async {
+        let p = Probe(); p.available(); p.control.toggle(); let on = p.last
+        p.ack(on)
+        expect(p.control.status == .starting(on.requestID), "host ACK alone never claims local engine readiness")
+        p.control.playerChanged(.ready, requestID: on.requestID, from: p.otherID)
+        p.control.playerChanged(.ready, requestID: UUID(), from: p.id)
+        expect(p.control.status == .starting(on.requestID), "stale peer/subscription cannot report readiness")
+        p.control.playerChanged(.ready, requestID: on.requestID, from: p.id)
+        expect(p.control.status == .listening(on.requestID), "matching local engine success reports readiness")
+        p.ack(on)
+        expect(p.control.status == .listening(on.requestID), "duplicate host ACK preserves local readiness")
+        p.control.playerChanged(.failed("engine failed"), requestID: on.requestID, from: p.id)
+        expect(p.control.status == .failed("engine failed") && !p.last.enabled, "local failure is visible and revokes host subscription")
+        p.control.playerChanged(.ready, requestID: on.requestID, from: p.id)
+        expect(p.control.status == .failed("engine failed"), "late engine success cannot revive failed subscription")
+
+        let player = PlaybackProbe()
+        var events: [IPadRemoteAudioController.PlaybackEvent] = []
+        let packet = Array(repeating: Int16(100), count: 2400).withUnsafeBufferPointer {
+            AudioPacket.pack(sampleRate: 48000, channels: 1, samples: $0)
+        }
+        player.receive(packet, subscription: UUID()) { events.append($0) }
+        player.drainDecode(); await drain()
+        expect(events.count == 2, "real startup body reports preparing and ready")
+        if case .ready = events.last! {} else { fatalError("engine success missing ready") }
+        player.stop()
+        events.removeAll()
+        FakeAudioEngine.failStart = true
+        let starts = FakeAudioEngine.starts
+        player.receive(packet, subscription: UUID()) { event in
+            events.append(event)
+            if case .failed = event { player.stop() }
+        }
+        player.drainDecode(); await drain()
+        expect(events.count == 2 && player.currentEngine == nil, "real engine.start throw reports failure and never ready")
+        if case .failed = events.last! {} else { fatalError("startup error swallowed") }
+        player.drainDecode(); await drain()
+        expect(FakeAudioEngine.starts == starts + 1, "failed engine does not automatically retry")
+        FakeAudioEngine.failStart = false
+        events.removeAll()
+        player.receive(packet, subscription: UUID()) { events.append($0) }
+        player.drainDecode()
+        player.stop()
+        await drain()
+        expect(events.isEmpty, "startup queued before stop cannot report stale readiness")
     }
 
     @MainActor static func playback() async {

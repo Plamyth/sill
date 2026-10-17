@@ -11,6 +11,7 @@ xcrun swiftc -emit-library -emit-module -module-name StreamProtocol \
   -emit-module-path "$out/StreamProtocol.swiftmodule"
 xcrun swiftc -parse-as-library -I "$out" -L "$out" -lStreamProtocol \
   -Xlinker -rpath -Xlinker "$out" \
+  iOSClient/IPadMicrophoneCapture.swift iOSClient/IPadMicrophonePCM.swift \
   iOSClient/IPadRemoteAudioController.swift "$out/ClientFixture.swift" "$out/PlaybackFixture.swift" "$here/main.swift" -o "$out/check"
 "$out/check"
 if [[ "${1:-}" == "--mutants" ]]; then python3 "$here/mutants.py" "$root" "$out"; fi

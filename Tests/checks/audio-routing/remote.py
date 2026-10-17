@@ -121,13 +121,15 @@ try:
             'audio-cleanup': ['iOSClient/IPadAudioLeaseState.swift', 'iOSClient/IPadAudioLeaseCoordinator.swift', 'Tests/checks/ipad-audio-cleanup/main.swift']
         }
         adapter = (package / 'iOSClient/StreamClient+AudioRoutes.swift').read_text().replace('#if os(iOS)', '#if true')
+        adapter = adapter[:adapter.index('    @MainActor var audioRouteAppActive:')] + '}\n#endif\n'
+        adapter = adapter.replace('import UIKit\n', '').replace('import AVFoundation\n', '')
         fixture = (package / 'iOSClient/Tests/audio-routes/Standins.swift').read_text().replace('// EXTRACTED_ADAPTER', adapter)
         adapter_path = output / 'AudioRoutesAdapter.swift'
         adapter_path.write_text('import StreamProtocol\n' + fixture)
         adapter_test = output / 'audio-route-adapter-test/main.swift'
         adapter_test.parent.mkdir()
         adapter_test.write_text('import StreamProtocol\n' + (package / 'iOSClient/Tests/audio-routes/main.swift').read_text())
-        checks['audio-route-adapter'] = ['iOSClient/IPadMicrophonePolicy.swift', 'iOSClient/IPadAudioRoutePolicy.swift',
+        checks['audio-route-adapter'] = ['iOSClient/IPadMicrophoneCapture.swift', 'iOSClient/IPadMicrophonePCM.swift', 'iOSClient/IPadMicrophonePolicy.swift', 'iOSClient/IPadAudioRoutePolicy.swift',
             'iOSClient/IPadRemoteAudioController.swift', str(adapter_path), str(adapter_test)]
         record['iPadChecks'] = {}
         for name, paths in checks.items():

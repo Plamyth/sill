@@ -11,7 +11,8 @@ struct IPadRemoteAudioControl: View {
         case .unavailable: return "이 Mac은 iPad 오디오를 지원하지 않습니다."
         case .off: return "꺼짐 · 탭하면 iPad에서 듣습니다."
         case .requesting: return "연결 중 · 탭하면 취소합니다."
-        case .listening: return "켜짐 · 탭하면 중지합니다."
+        case .starting: return "소리 연결 준비 중 · 탭하면 취소합니다."
+        case .listening: return "iPad에서 재생 중 · 탭하면 중지합니다."
         case .failed(let reason): return "\(reason) 탭하면 다시 시도합니다."
         }
     }
