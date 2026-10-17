@@ -1,13 +1,84 @@
 import SwiftUI
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
+import os
 import StreamProtocol
+
+enum IPadKeyboardDiagnostics {
+    private struct State {
+        var attempt = UUID()
+        var count = 0
+        var geometry: [String: String] = [:]
+    }
+    private static let state = OSAllocatedUnfairLock(initialState: State())
+    private static let journal = IPadMicrophoneDiagnostics(fileURL: FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("CCR Sill/keyboard-diagnostics.json"))
+    static let notifications = [UIResponder.keyboardWillShowNotification, UIResponder.keyboardDidShowNotification,
+        UIResponder.keyboardWillHideNotification, UIResponder.keyboardDidHideNotification,
+        UIResponder.keyboardWillChangeFrameNotification]
+
+    static func beginToggle() -> UUID {
+        let snapshot = state.withLock { value -> (UUID, [String: String]) in
+            value.attempt = UUID()
+            value.count = 0
+            return (value.attempt, value.geometry)
+        }
+        record("root_at_toggle", snapshot.1, attempt: snapshot.0)
+        return snapshot.0
+    }
+
+    static func record(_ event: String, _ fields: @autoclosure () -> [String: String] = [:], attempt: UUID? = nil) {
+        let next = state.withLock { value -> (UUID, Int)? in
+            guard value.count < 32, attempt == nil || attempt == value.attempt else { return nil }
+            value.count += 1
+            return (value.attempt, value.count)
+        }
+        guard let next else { return }
+        journal.attempt(next.0).record("key_\(next.1)_\(event)", fields())
+    }
+
+    static func geometry(_ size: CGSize, safeBottom: CGFloat, layout: String, view: InputOverlayView?) {
+        let fields = ["rootSize": String(describing: size), "safeBottom": String(describing: safeBottom), "layout": layout]
+        let changedLayout = state.withLock { value -> Bool in
+            let changed = value.geometry["layout"] != layout
+            value.geometry = fields
+            return changed
+        }
+        if changedLayout {
+            record("geometry", fields.merging(view?.keyboardDiagnosticFields ?? ["view": "nil"]) { old, _ in old })
+        }
+    }
+
+    static func notification(_ note: Notification, view: InputOverlayView?) {
+        var fields = view?.keyboardDiagnosticFields ?? ["view": "nil"]
+        fields["notification"] = note.name.rawValue
+        fields["beginFrame"] = (note.userInfo?[UIResponder.keyboardFrameBeginUserInfoKey] as? NSValue).map { String(describing: $0.cgRectValue) } ?? "nil"
+        fields["endFrame"] = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue).map { String(describing: $0.cgRectValue) } ?? "nil"
+        if let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue,
+           let window = view?.window {
+            fields["endFrameInWindow"] = String(describing: window.convert(frame, from: window.screen.coordinateSpace))
+        }
+        fields["duration"] = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.stringValue ?? "nil"
+        record("notification", fields)
+    }
+}
 
 /// The touch layer over the streamed video. Direct-touch model: where you touch is where the Mac's
 /// pointer goes, and the Apple Pencil is the mouse. Everything leaves here as an `InputEvent` whose
 /// position is a fraction of the *video frame*, not of this view — the video is drawn aspect-fit by
 /// `HEVCDisplayView`, so the letterbox has to be taken out before normalizing.
 final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
+    let keyboardDiagnosticID = UUID()
+    private var lastKeyboardDiagnosticBounds: CGRect?
+    private var keyboardDiagnosticBoundsSamples = 0
+    var keyboardDiagnosticFields: [String: String] {
+        ["view": keyboardDiagnosticID.uuidString, "attached": String(window != nil),
+         "window": window.map { String(describing: ObjectIdentifier($0)) } ?? "nil",
+         "firstResponder": String(isFirstResponder), "bounds": String(describing: bounds),
+         "windowFrame": window.map { String(describing: convert(bounds, to: $0)) } ?? "nil",
+         "videoRect": String(describing: videoRect)]
+    }
     /// Pixel size of the streamed frame. Zero until the host's parameter sets arrive; input is
     /// ignored until then, since there is nothing on screen to aim at.
     var videoSize: CGSize = .zero
@@ -323,6 +394,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        IPadKeyboardDiagnostics.record(window == nil ? "view_detached" : "view_attached", keyboardDiagnosticFields)
         #if DEBUG
         recordPencilBoundary(window == nil ? "overlay-detached" : "overlay-attached")
         #endif
@@ -334,6 +406,15 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
             InputScript.overlay = nil
         }
         #endif
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if lastKeyboardDiagnosticBounds != bounds, keyboardDiagnosticBoundsSamples < 3 {
+            lastKeyboardDiagnosticBounds = bounds
+            keyboardDiagnosticBoundsSamples += 1
+            IPadKeyboardDiagnostics.record("input_bounds", keyboardDiagnosticFields)
+        }
     }
 
     #if DEBUG
@@ -524,13 +605,17 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     }
 
     override func becomeFirstResponder() -> Bool {
+        IPadKeyboardDiagnostics.record("become_begin", keyboardDiagnosticFields)
         let became = super.becomeFirstResponder()
+        IPadKeyboardDiagnostics.record("become_result", keyboardDiagnosticFields.merging(["result": String(became)]) { _, new in new })
         if became { onKeyboardShownChange?(true) }
         return became
     }
 
     override func resignFirstResponder() -> Bool {
+        IPadKeyboardDiagnostics.record("resign_begin", keyboardDiagnosticFields)
         let resigned = super.resignFirstResponder()
+        IPadKeyboardDiagnostics.record("resign_result", keyboardDiagnosticFields.merging(["result": String(resigned)]) { _, new in new })
         if resigned {
             releaseForwardedKeys()
             onKeyboardShownChange?(false)
@@ -611,11 +696,21 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
 /// Lets SwiftUI reach the overlay's first responder from the top bar's Keyboard button.
 final class InputOverlayProxy {
     weak var view: InputOverlayView?
-    func toggleKeyboard() { view?.toggleKeyboard() }
+    func toggleKeyboard() {
+        let attempt = IPadKeyboardDiagnostics.beginToggle()
+        IPadKeyboardDiagnostics.record("proxy_toggle", (view?.keyboardDiagnosticFields ?? ["view": "nil"])
+            .merging(["proxy": String(describing: ObjectIdentifier(self))]) { _, new in new })
+        view?.toggleKeyboard()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            IPadKeyboardDiagnostics.record("toggle_settled", self?.view?.keyboardDiagnosticFields ?? ["view": "nil"], attempt: attempt)
+        }
+    }
     /// Takes the keyboard down or puts it back, and with it hardware-key forwarding to the Mac: the
     /// overlay forwards keys only while it is first responder. The Settings panel takes it down
     /// while open, so Esc reaches its Done button instead of the Mac, and puts it back after.
     func setKeyboard(shown: Bool) {
+        IPadKeyboardDiagnostics.record("proxy_set", (view?.keyboardDiagnosticFields ?? ["view": "nil"])
+            .merging(["requestedShown": String(shown)]) { _, new in new })
         guard let view else { return }
         if shown {
             _ = view.becomeFirstResponder()
@@ -640,6 +735,9 @@ struct InputOverlay: UIViewRepresentable {
 
     func makeUIView(context: Context) -> InputOverlayView {
         let view = InputOverlayView(frame: .zero)
+        IPadKeyboardDiagnostics.record("view_created", view.keyboardDiagnosticFields)
+        IPadKeyboardDiagnostics.record("proxy_rebinding", ["oldView": proxy.view?.keyboardDiagnosticID.uuidString ?? "nil",
+            "newView": view.keyboardDiagnosticID.uuidString, "proxy": String(describing: ObjectIdentifier(proxy))])
         proxy.view = view
         return view
     }
@@ -654,11 +752,17 @@ struct InputOverlay: UIViewRepresentable {
         // Called straight from a UIKit text-input callback, never from inside a SwiftUI update,
         // so writing the binding here needs no hop.
         uiView.onModifiersConsumed = onModifiersConsumed
-        uiView.onKeyboardShownChange = { shown in
+        let viewID = uiView.keyboardDiagnosticID.uuidString
+        uiView.onKeyboardShownChange = { [weak proxy] shown in
             // Hops to the next runloop turn: resigning can happen inside a SwiftUI update
             // (a teardown, say), and writing the binding there is a "modifying state during
             // view update" warning waiting to happen.
-            DispatchQueue.main.async { isKeyboardShown = shown }
+            IPadKeyboardDiagnostics.record("binding_queued", ["view": viewID, "shown": String(shown)])
+            DispatchQueue.main.async { [weak proxy] in
+                IPadKeyboardDiagnostics.record("binding_applied", ["view": viewID, "shown": String(shown),
+                    "currentProxyView": proxy?.view?.keyboardDiagnosticID.uuidString ?? "nil"])
+                isKeyboardShown = shown
+            }
         }
     }
 }

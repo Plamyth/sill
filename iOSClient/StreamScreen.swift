@@ -335,6 +335,10 @@ struct StreamScreen: View {
             .coordinateSpace(.named(TourSpace.name))
             .onPreferenceChange(TourTargetsKey.self) { tourTargets = $0 }
             .onChange(of: layout, initial: true) { _, now in layoutChanged(to: now) }
+            .onChange(of: geo.size, initial: true) { _, size in
+                IPadKeyboardDiagnostics.geometry(size, safeBottom: geo.safeAreaInsets.bottom,
+                    layout: String(describing: DuoLayout.of(size)), view: overlay.view)
+            }
             .background(TouchWatcher(watch: touches))
             // The layouts and the overlays share this screen's space, and so its fold; the inner
             // display gives the picture the status bar's strip in every pose.
@@ -378,6 +382,11 @@ struct StreamScreen: View {
                 if phase == .background { client.microphoneBackgrounded() }
                 else { client.microphoneBecameInactive() }
             }
+        }
+        .onReceive(Publishers.MergeMany(IPadKeyboardDiagnostics.notifications.map {
+            NotificationCenter.default.publisher(for: $0)
+        }).receive(on: RunLoop.main)) { note in
+            IPadKeyboardDiagnostics.notification(note, view: overlay.view)
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
             .receive(on: RunLoop.main)) { note in
