@@ -37,6 +37,13 @@ struct IPadAudioRouteChooser: View {
                     LabeledContent("전달 대상", value: mac)
                     LabeledContent("현재 iPad 입력", value: inputPorts)
                     LabeledContent("iPad 마이크 상태", value: microphoneStatus)
+                    if client.microphonePhase == .live {
+                        Button("Mac 수신 상태 확인") { client.requestMicrophoneReceipt() }
+                        if let receipt = client.microphoneReceipt {
+                            LabeledContent("Mac 수신 패킷", value: receipt.admittedPackets.formatted())
+                            LabeledContent("가상 마이크 출력 샘플", value: receipt.renderedFrames.formatted())
+                        }
+                    }
                     if !client.audioRouteCapabilities.microphone {
                         Text("현재 연결에서는 iPad 마이크 전송을 지원하지 않습니다.")
                             .foregroundStyle(.secondary)

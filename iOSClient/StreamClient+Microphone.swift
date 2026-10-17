@@ -40,6 +40,7 @@ extension StreamClient {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.connection === peer else { return }
                 self.microphonePolicy.receive(receipt, from: ObjectIdentifier(peer))
+                self.microphoneReceipt = self.microphonePolicy.latestReceipt
             }
         }
         return true
@@ -121,6 +122,15 @@ extension StreamClient {
         }
         for (peer, control) in pendingStops { sendMicrophoneControl(control, to: peer) }
         if microphonePhase != microphonePolicy.phase { microphonePhase = microphonePolicy.phase }
+        if microphonePhase != .live { microphoneReceipt = nil }
+    }
+
+    func requestMicrophoneReceipt() {
+        guard microphonePolicy.phase == .live, let connection,
+              microphonePolicy.peer == ObjectIdentifier(connection),
+              let scope = microphonePolicy.scope, let grant = microphonePolicy.grantID else { return }
+        sendMicrophoneControl(MicrophoneControl(operation: .receipt, requestID: UUID(),
+                                               scope: scope, grantID: grant), to: ObjectIdentifier(connection))
     }
 
     private func sendMicrophoneControl(_ control: MicrophoneControl, to peer: ObjectIdentifier) {

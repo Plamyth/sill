@@ -138,6 +138,7 @@ final class StreamClient: ObservableObject {
         changed: { [weak self] status in self?.remoteAudioStatus = status })
     #if os(iOS)
     @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
+    @Published var microphoneReceipt: MicrophoneReceipt?
     @Published var microphoneCleanupProblem: String?
     var microphonePolicy = IPadMicrophonePolicy()
     let microphoneFrames = IPadMicrophoneFrameGate()
