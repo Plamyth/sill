@@ -15,6 +15,21 @@ struct CanvasRelay {
         let sha256: String
         let modifiedAt: String
     }
+    struct VaultCanvas: Decodable {
+        let path: String
+        let noteSha256: String
+        let sceneSha256: String
+        let imageSha256: String
+        let revision: Int
+        let sceneJSONBase64: String
+    }
+    struct VaultCanvasSaved: Decodable {
+        let path: String
+        let noteSha256: String
+        let sceneSha256: String
+        let imageSha256: String
+        let revision: Int
+    }
     struct DeliveryReadiness: Decodable { let available: Bool }
     struct InboxTarget: Decodable {
         let threadId: UUID
@@ -100,9 +115,11 @@ struct CanvasRelay {
 
     private func response<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
         let (data, raw) = try await session.data(for: request)
-        guard let http = raw as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+        guard let http = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard (200...299).contains(http.statusCode) else {
             let message = (try? JSONSerialization.jsonObject(with: data) as? [String:String])?["error"]
-            throw NSError(domain:"CanvasRelay",code:1,userInfo:[NSLocalizedDescriptionKey:message ?? "Mac 수신 오류"])
+            throw NSError(domain:"CanvasRelay",code:http.statusCode,
+                          userInfo:[NSLocalizedDescriptionKey:message ?? "Mac 수신 오류"])
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -141,6 +158,30 @@ struct CanvasRelay {
         let body = try JSONSerialization.data(withJSONObject:["baseSha256":baseSha256,"text":text])
         return try await response(request(vaultURL("/vault/note",path:path),method:"PUT",body:body),
                                   as:VaultNote.self)
+    }
+
+    func vaultCanvas(id: UUID) async throws -> VaultCanvas? {
+        do {
+            return try await response(request("/vault/canvas?id=\(id.uuidString.lowercased())"),
+                                      as:VaultCanvas.self)
+        } catch let error as NSError where error.domain == "CanvasRelay" && error.code == 404 {
+            return nil
+        }
+    }
+
+    func saveVaultCanvas(scene: CanvasScene, imagePNG: Data,
+                         baseSha256: String?) async throws -> VaultCanvasSaved {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let sceneBytes = try encoder.encode(scene)
+        let body = try JSONSerialization.data(withJSONObject:[
+            "revision":scene.revision,
+            "baseSha256":(baseSha256 as Any?) ?? NSNull(),
+            "sceneJSONBase64":sceneBytes.base64EncodedString(),
+            "imagePNGBase64":imagePNG.base64EncodedString()
+        ])
+        return try await response(request("/vault/canvas?id=\(scene.id.uuidString.lowercased())",
+                                          method:"PUT",body:body),as:VaultCanvasSaved.self)
     }
 
     func inboxTarget() async throws -> InboxTarget {

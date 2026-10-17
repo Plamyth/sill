@@ -19,6 +19,12 @@ struct CanvasWorkspace: View {
     @State private var vaultDraft = ""
     @State private var vaultStatus = ""
     @State private var vaultSaving = false
+    @State private var syncedSceneSha: String?
+    @State private var canvasNoteSha: String?
+    @State private var canvasVaultBlocked = false
+    @State private var canvasSyncBusy = false
+    @State private var canvasVaultEnabled = false
+    @State private var vaultSceneID: UUID?
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
     @State private var expandedCard: ControlRoomCardReference?
@@ -70,6 +76,19 @@ struct CanvasWorkspace: View {
             else { Task { await checkConnection() } }
         }
         .task { await checkConnection() }
+        .task(id:"\(store.scene.id.uuidString):\(store.scene.revision):\(relayAddress):\(canvasVaultEnabled)") {
+            guard canvasVaultEnabled, !relayToken.isEmpty,
+                  !store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
+                    !store.scene.links.isEmpty else { return }
+            do { try await Task.sleep(for:.milliseconds(700)) } catch { return }
+            guard !Task.isCancelled else { return }
+            await synchronizeCanvasToVault()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for:.seconds(2)) } catch { return }
+                await synchronizeCanvasToVault()
+                await refreshCanvasFromVault()
+            }
+        }
         .task(id:ProjectionConnection(address:relayAddress,token:relayToken,active:scenePhase == .active)) {
             readProjection = nil
             guard scenePhase == .active, !relayToken.isEmpty else {
@@ -199,6 +218,14 @@ struct CanvasWorkspace: View {
     private var vaultSheet: some View {
         NavigationStack {
             VStack(spacing:0) {
+                if !canvasVaultEnabled {
+                    Button("현재 보관함에 Pencil 그림 연결") {
+                        canvasVaultEnabled = true
+                        vaultStatus = "현재 Obsidian 보관함에 그림을 연결했습니다."
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(10)
+                }
                 if let note = vaultNote {
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
@@ -293,6 +320,85 @@ struct CanvasWorkspace: View {
             vaultNote = saved
             vaultStatus = "Mac Obsidian 노트에 저장했습니다."
         } catch { vaultStatus = "저장 실패: \(error.localizedDescription). 입력 내용은 유지됩니다." }
+    }
+
+    private func sceneBytes() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(store.scene)
+    }
+
+    private func synchronizeCanvasToVault() async {
+        if vaultSceneID != store.scene.id {
+            vaultSceneID = store.scene.id
+            syncedSceneSha = nil
+            canvasNoteSha = nil
+            canvasVaultBlocked = false
+        }
+        guard !canvasVaultBlocked, !canvasSyncBusy else { return }
+        canvasSyncBusy = true
+        defer { canvasSyncBusy = false }
+        do {
+            let scene = store.scene
+            let localSha = CanvasPacket.sha(try sceneBytes())
+            let remote = try await relay.vaultCanvas(id:scene.id)
+            if let remote {
+                if syncedSceneSha == nil {
+                    guard remote.sceneSha256 == localSha else {
+                        canvasVaultBlocked = true
+                        store.status = "Obsidian 그림과 iPad 원본이 다릅니다. 자동 덮어쓰기를 중단했습니다."
+                        return
+                    }
+                    syncedSceneSha = localSha
+                    canvasNoteSha = remote.noteSha256
+                    return
+                }
+                guard remote.noteSha256 == canvasNoteSha,
+                      remote.sceneSha256 == syncedSceneSha else {
+                    canvasVaultBlocked = true
+                    store.status = "Obsidian 그림이 다른 곳에서 수정됐습니다. iPad 원본을 보존했습니다."
+                    return
+                }
+            } else if canvasNoteSha != nil {
+                canvasVaultBlocked = true
+                store.status = "Obsidian 그림 파일이 없어졌습니다. 자동 재생성을 중단했습니다."
+                return
+            }
+            guard localSha != syncedSceneSha,
+                  let image = SceneRenderer.png(scene:scene,drawing:store.drawing) else { return }
+            let saved = try await relay.saveVaultCanvas(scene:scene,imagePNG:image,
+                                                        baseSha256:canvasNoteSha)
+            guard store.scene.id == scene.id else { return }
+            syncedSceneSha = saved.sceneSha256
+            canvasNoteSha = saved.noteSha256
+            store.status = "Pencil 그림과 구조 데이터가 Obsidian에 저장됐습니다."
+        } catch {
+            store.status = "Obsidian 그림 동기화 대기: \(error.localizedDescription)"
+        }
+    }
+
+    private func refreshCanvasFromVault() async {
+        guard !canvasVaultBlocked, !canvasSyncBusy, let syncedSceneSha, let canvasNoteSha,
+              vaultSceneID == store.scene.id else { return }
+        do {
+            guard let remote = try await relay.vaultCanvas(id:store.scene.id),
+                  remote.noteSha256 != canvasNoteSha else { return }
+            let localSha = CanvasPacket.sha(try sceneBytes())
+            guard localSha == syncedSceneSha,
+                  remote.sceneSha256 != syncedSceneSha,
+                  let bytes = Data(base64Encoded:remote.sceneJSONBase64) else {
+                canvasVaultBlocked = true
+                store.status = "Obsidian에서 그림이 바뀌었습니다. iPad 원본을 보존했습니다."
+                return
+            }
+            let imported = try JSONDecoder().decode(CanvasScene.self,from:bytes)
+            self.syncedSceneSha = remote.sceneSha256
+            self.canvasNoteSha = remote.noteSha256
+            try store.importScene(imported)
+            store.status = "Obsidian 그림의 최신 내용을 iPad에 반영했습니다."
+        } catch {
+            store.status = "Obsidian 그림 변경 확인 대기: \(error.localizedDescription)"
+        }
     }
 
     private func voicePIP(in size: CGSize) -> some View {
