@@ -98,9 +98,13 @@ final class CanvasStore: ObservableObject {
         case .started:
             status = "\(accepted.targetMode == "inbox" ? "고정 수신함" : "선택한 대화")에서 새 턴 시작 확인 · 턴 ID \(accepted.turnId.map { String($0.uuidString.prefix(8)) } ?? "미확인")"
         case .queued:
-            let continuity = accepted.sessionContinuity.status == "observed-same" ?
-                "음성 세션 전후 동일 관측" : "음성 세션 연속성 미확인"
-            status = "정확한 대화 대기열 접수 확인 · \(continuity) · 세션 내 전달 보장 아님"
+            if accepted.targetMode == "inbox" {
+                status = "고정 그림 수신함 대기열 접수 확인 · 대화 처리 대기"
+            } else {
+                let continuity = accepted.sessionContinuity.status == "observed-same" ?
+                    "음성 세션 전후 동일 관측" : "음성 세션 연속성 미확인"
+                status = "정확한 대화 대기열 접수 확인 · \(continuity) · 세션 내 전달 보장 아님"
+            }
         case .rejected:
             status = "전송 거부 · \(accepted.reason ?? "대화 또는 세션 확인 실패")"
         case .stored, .dispatching, .unknown:
