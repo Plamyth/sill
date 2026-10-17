@@ -30,7 +30,8 @@ for suite in ["routes", "microphone", "lease"]:
             test = ROOT / "Tests/checks/ipad-audio-lease/main.swift"
         for path in sources + [test]:
             (out / path.name).write_text(path.read_text().replace("import StreamProtocol\n", ""))
-        subprocess.run(["swiftc", "-parse-as-library", "-module-cache-path", str(CACHE),
+        parse_flags = ["-parse-as-library"] if suite == "routes" else []
+        subprocess.run(["swiftc", *parse_flags, "-module-cache-path", str(CACHE),
                         *map(str, sorted(out.glob("*.swift"))), "-o", str(out / "check")],
                        check=True, timeout=180, env=env)
         print(f"SUITE {suite}", flush=True)
