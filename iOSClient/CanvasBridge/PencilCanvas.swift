@@ -48,6 +48,8 @@ struct PencilCanvas: UIViewRepresentable {
         overlay.layer.addSublayer(hoverLayer)
 
         context.coordinator.canvas = canvas
+        canvas.drawing = store.drawing
+        context.coordinator.renderedModelDrawing = store.drawing
 
         let trace = PencilTraceRecognizer()
         trace.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
@@ -88,7 +90,10 @@ struct PencilCanvas: UIViewRepresentable {
     func updateUIView(_ host: UIView, context: Context) {
         guard let canvas = context.coordinator.canvas else { return }
         host.accessibilityValue = "확대 \(Int(store.zoom * 100))%"
-        if canvas.drawing != store.drawing { canvas.drawing = store.drawing }
+        if context.coordinator.renderedModelDrawing != store.drawing {
+            context.coordinator.renderedModelDrawing = store.drawing
+            if canvas.drawing != store.drawing { canvas.drawing = store.drawing }
+        }
         canvas.isUserInteractionEnabled = store.mode != .select
         switch store.mode {
         case .pen: canvas.tool = PKInkingTool(.pen, color: CanvasPalette.ink, width: 4)
@@ -103,12 +108,14 @@ struct PencilCanvas: UIViewRepresentable {
                              UIGestureRecognizerDelegate {
         let store: CanvasStore
         weak var canvas: PKCanvasView?
+        var renderedModelDrawing = PKDrawing()
         let previewLayer = CAShapeLayer()
         let hoverLayer = CAShapeLayer()
         private var previewPath = UIBezierPath()
         private var previewSession = 0
         private var hoverPoint: CGPoint?
         private var isDrawing = false
+        private var drawingChangeSerial = 0
         private var panStart = CanvasViewport()
         private var pinchStart = CanvasViewport()
         private var pinchAnchor = CGPoint.zero
@@ -199,7 +206,13 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            Task { @MainActor in store.updateDrawing(canvasView.drawing) }
+            drawingChangeSerial += 1
+            let serial = drawingChangeSerial
+            let drawing = canvasView.drawing
+            Task { @MainActor [weak self] in
+                guard let self, self.drawingChangeSerial == serial else { return }
+                self.store.updateDrawing(drawing)
+            }
         }
 
         func pencilInteraction(_ interaction: UIPencilInteraction,

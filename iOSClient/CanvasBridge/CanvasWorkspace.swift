@@ -15,7 +15,6 @@ struct CanvasWorkspace: View {
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
     @State private var expandedCard: ControlRoomCardReference?
-    @AppStorage("canvas.selectedThreadId") private var selectedThreadIdText = ""
     @State private var pipPlacement = VoicePIPPlacement()
     @State private var pipDragOrigin: CGPoint?
 
@@ -27,18 +26,6 @@ struct CanvasWorkspace: View {
     }
 
     private var relay: CanvasRelay { CanvasRelay(address:relayAddress,token:relayToken) }
-
-    private enum RecipientSelection {
-        case voice
-        case thread(UUID)
-        case invalid
-    }
-
-    private var recipientSelection: RecipientSelection {
-        guard !selectedThreadIdText.isEmpty else { return .voice }
-        guard let id = UUID(uuidString:selectedThreadIdText) else { return .invalid }
-        return .thread(id)
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -154,12 +141,12 @@ struct CanvasWorkspace: View {
                         .tint(store.mode == mode ? .blue : .gray)
                 }
                 toolsMenu
-                recipientMenu
+                inboxLabel
                 sendButton
             }.fixedSize(horizontal:true,vertical:false)
             HStack(spacing:8) {
                 toolsMenu
-                recipientMenu
+                inboxLabel
                 Spacer(minLength:0)
                 sendButton.labelStyle(.iconOnly)
             }
@@ -186,43 +173,15 @@ struct CanvasWorkspace: View {
     }
 
     private var sendButton: some View {
-        Button("현재 대화로 보내기",systemImage:"paperplane.fill") {
+        Button("그림 수신함으로 보내기",systemImage:"paperplane.fill") {
             Task { await send() }
         }.buttonStyle(.borderedProminent).disabled(store.sendBusy)
     }
 
-    private var recipientMenu: some View {
-        Menu {
-            Button("현재 음성 대화") { selectedThreadIdText = "" }
-                .disabled(store.displayedVoice == nil)
-            ForEach(readProjection?.currentGrid ?? []) { slot in
-                if let card = slot.availableCard, card.source == "codex",
-                   let id = UUID(uuidString:card.id) {
-                    Button("\(slot.index + 1) · \(card.displayTitle)") { selectedThreadIdText = id.uuidString }
-                }
-            }
-        } label: {
-            Label(selectedRecipientLabel,systemImage:"person.crop.square")
-        }
-        .accessibilityIdentifier("canvasRecipientMenu")
-    }
-
-    private var selectedRecipientLabel: String {
-        let selectedThreadId: UUID
-        switch recipientSelection {
-        case .voice:
-            return store.displayedVoice == nil ? "받는 대화 선택" : "현재 음성 대화"
-        case .invalid:
-            return "받는 대화 다시 선택"
-        case .thread(let id):
-            selectedThreadId = id
-        }
-        guard let slot = readProjection?.currentGrid.first(where: {
-            $0.availableCard?.source == "codex" &&
-            $0.availableCard?.id.lowercased() == selectedThreadId.uuidString.lowercased()
-        }), let card = slot.availableCard else { return "받는 대화 다시 선택" }
-        let title = card.displayTitle
-        return "\(slot.index + 1) · \(title.prefix(18))\(title.count > 18 ? "…" : "")"
+    private var inboxLabel: some View {
+        Label("고정 그림 수신함",systemImage:"tray.full")
+            .font(.subheadline)
+            .accessibilityIdentifier("canvasInboxLabel")
     }
 
     private func voicePIP(in size: CGSize) -> some View {
@@ -418,7 +377,7 @@ struct CanvasWorkspace: View {
                 TextField("Mac 수신 주소",text:$relayAddress)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                 SecureField("일회용 연결 토큰",text:$relayToken)
-                Text("현재 열린 음성 대화와 세션을 전송 직전에 다시 확인합니다. 접수 결과가 불명확하면 같은 패킷의 영수증만 조회합니다.")
+                Text("그림은 Mac의 고정 수신함으로 보냅니다. 음성 대화가 없어도 같은 곳에서 받습니다. 접수 결과가 불명확하면 같은 패킷의 영수증만 조회합니다.")
             }
             .navigationTitle("Mac 연결")
             .toolbar { ToolbarItem(placement:.confirmationAction) {
@@ -434,8 +393,6 @@ struct CanvasWorkspace: View {
         defer { store.sendBusy = false }
         let frozen = store.scene
         let frozenDrawing = store.drawing
-        let displayed = store.displayedVoice
-        let selected = recipientSelection
         let connection = relay
         let address = relayAddress
         do {
@@ -446,28 +403,9 @@ struct CanvasWorkspace: View {
             guard let image = SceneRenderer.png(scene:frozen,drawing:frozenDrawing) else {
                 throw CanvasSendError.invalidPacket
             }
-            let projection = try await connection.projection()
-            store.displayedVoice = projection.activeVoiceSession
-            let session: VoiceSession
-            let targetMode: String?
-            switch selected {
-            case .thread(let selected):
-                let current = try await connection.controlRoomProjection()
-                guard current.isFresh(), current.currentGrid.contains(where: { slot in
-                          slot.availableCard?.source == "codex" &&
-                          slot.availableCard?.id.lowercased() == selected.uuidString.lowercased()
-                      }) else { throw CanvasSendError.changedSession }
-                session = VoiceSession(threadId:selected,
-                    sessionId:"manual:\(selected.uuidString.lowercased())",
-                    observedAt:current.generatedAt)
-                targetMode = "selected-chat"
-            case .voice:
-                guard projection.activeVoiceSession != nil else { throw CanvasSendError.missingTarget }
-                session = try projection.session(matching:displayed)
-                targetMode = nil
-            case .invalid:
-                throw CanvasSendError.changedSession
-            }
+            let target = try await connection.inboxTarget()
+            let session = try target.session()
+            let targetMode = target.targetMode
             if let existing = try store.existingPacket(for:frozen,session:session) {
                 await reconcile(existing)
                 return
@@ -475,7 +413,7 @@ struct CanvasWorkspace: View {
             let readiness = try await connection.deliveryReadiness(threadId:session.threadId,
                 targetMode:targetMode)
             guard readiness.available else {
-                store.status = "전송 중단 · Mac 대화 연결 미준비. 그림은 캔버스에 남아 있고 대기열에는 추가하지 않았습니다."
+                store.status = "전송 대기 · 고정 수신 대화 연결 미준비. 그림은 캔버스에 남아 있습니다."
                 return
             }
             let packet = try store.preparePacket(scene:frozen,imagePNG:image,session:session,
@@ -508,10 +446,11 @@ struct CanvasWorkspace: View {
     private func checkConnection() async {
         guard !relayToken.isEmpty else { return }
         do {
-            store.displayedVoice = try await relay.projection().activeVoiceSession
+            _ = try await relay.inboxTarget().session()
+            store.displayedVoice = try? await relay.projection().activeVoiceSession
             if let pending = store.outbox.unresolved { await reconcile(pending) }
             else {
-                store.status = store.displayedVoice == nil ? "연결됨 · 열린 음성 세션 없음" : "Control Room 연결됨 · 현재 음성 세션 확인"
+                store.status = "Mac 그림 수신함 연결됨"
             }
         } catch {
             store.displayedVoice = nil

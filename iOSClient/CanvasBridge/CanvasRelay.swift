@@ -3,6 +3,21 @@ import Security
 
 struct CanvasRelay {
     struct DeliveryReadiness: Decodable { let available: Bool }
+    struct InboxTarget: Decodable {
+        let threadId: UUID
+        let sessionId: String
+        let targetMode: String
+        let title: String
+
+        func session() throws -> VoiceSession {
+            guard targetMode == "inbox",
+                  sessionId == "inbox:\(threadId.uuidString.lowercased())" else {
+                throw CanvasSendError.changedSession
+            }
+            return VoiceSession(threadId:threadId,sessionId:sessionId,
+                                observedAt:ISO8601DateFormatter().string(from:Date()))
+        }
+    }
     let address: String
     let token: String
     private let session: URLSession
@@ -87,6 +102,10 @@ struct CanvasRelay {
 
     func controlRoomProjection() async throws -> ControlRoomProjection {
         try await response(request("/control-room/projection"),as:ControlRoomProjection.self)
+    }
+
+    func inboxTarget() async throws -> InboxTarget {
+        try await response(request("/inbox/target"),as:InboxTarget.self)
     }
 
     func deliveryReadiness(threadId: UUID, targetMode: String?) async throws -> DeliveryReadiness {
