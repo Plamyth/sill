@@ -342,6 +342,42 @@ struct CanvasWorkspace: View {
         UserDefaults.standard.set(data,forKey:"canvasVaultCheckpoint")
     }
 
+    private func remoteCanvasIsPrefix(_ remote: CanvasRelay.VaultCanvas,
+                                      of local: CanvasScene, drawing: PKDrawing) -> Bool {
+        guard let bytes = Data(base64Encoded:remote.sceneJSONBase64),
+              let prior = try? JSONDecoder().decode(CanvasScene.self,from:bytes),
+              let priorDrawingData = Data(base64Encoded:prior.drawingBase64),
+              let priorDrawing = try? PKDrawing(data:priorDrawingData),
+              prior.id == local.id, prior.schemaVersion == local.schemaVersion,
+              prior.width == local.width, prior.height == local.height,
+              prior.revision < local.revision,
+              prior.strokes.count < local.strokes.count,
+              priorDrawing.strokes.count == prior.strokes.count,
+              drawing.strokes.count == local.strokes.count,
+              Array(local.strokes.prefix(prior.strokes.count)) == prior.strokes,
+              prior.nodes == local.nodes, prior.links == local.links,
+              prior.annotations == local.annotations,
+              drawing.strokes.count >= priorDrawing.strokes.count else { return false }
+        return zip(drawing.strokes,priorDrawing.strokes).allSatisfy { current, saved in
+            guard current.id == saved.id, current.randomSeed == saved.randomSeed,
+                  current.renderGroupID == saved.renderGroupID,
+                  current.renderState == nil, saved.renderState == nil,
+                  current.ink.inkType == saved.ink.inkType,
+                  current.ink.color.isEqual(saved.ink.color),
+                  current.transform == saved.transform,
+                  current.mask == nil, saved.mask == nil,
+                  current.path.creationDate == saved.path.creationDate,
+                  current.path.count == saved.path.count else { return false }
+            return zip(current.path,saved.path).allSatisfy { a,b in
+                a.location == b.location && a.timeOffset == b.timeOffset &&
+                a.size == b.size && a.opacity == b.opacity &&
+                a.force == b.force && a.azimuth == b.azimuth &&
+                a.altitude == b.altitude && a.secondaryScale == b.secondaryScale &&
+                a.threshold == b.threshold && a.lateralJitter == b.lateralJitter
+            }
+        }
+    }
+
     private func synchronizeCanvasToVault() async {
         if vaultSceneID != store.scene.id || vaultSyncAddress != relayAddress {
             vaultSceneID = store.scene.id
@@ -355,6 +391,7 @@ struct CanvasWorkspace: View {
         defer { canvasSyncBusy = false }
         do {
             let scene = store.scene
+            let drawing = store.drawing
             let localSha = CanvasPacket.sha(try sceneBytes())
             let remote = try await relay.vaultCanvas(id:scene.id)
             if let remote {
@@ -369,11 +406,15 @@ struct CanvasWorkspace: View {
                     saveCanvasVaultCheckpoint()
                     return
                 }
-                guard remote.noteSha256 == canvasNoteSha,
-                      remote.sceneSha256 == syncedSceneSha else {
-                    canvasVaultBlocked = true
-                    store.status = "Obsidian 그림이 다른 곳에서 수정됐습니다. iPad 원본을 보존했습니다."
-                    return
+                if remote.noteSha256 != canvasNoteSha || remote.sceneSha256 != syncedSceneSha {
+                    guard remoteCanvasIsPrefix(remote,of:scene,drawing:drawing) else {
+                        canvasVaultBlocked = true
+                        store.status = "Obsidian 그림이 다른 곳에서 수정됐습니다. iPad 원본을 보존했습니다."
+                        return
+                    }
+                    syncedSceneSha = remote.sceneSha256
+                    canvasNoteSha = remote.noteSha256
+                    saveCanvasVaultCheckpoint()
                 }
             } else if canvasNoteSha != nil {
                 canvasVaultBlocked = true
@@ -381,7 +422,7 @@ struct CanvasWorkspace: View {
                 return
             }
             guard localSha != syncedSceneSha,
-                  let image = SceneRenderer.png(scene:scene,drawing:store.drawing) else { return }
+                  let image = SceneRenderer.png(scene:scene,drawing:drawing) else { return }
             let saved = try await relay.saveVaultCanvas(scene:scene,imagePNG:image,
                                                         baseSha256:canvasNoteSha)
             guard store.scene.id == scene.id else { return }
@@ -401,8 +442,14 @@ struct CanvasWorkspace: View {
             guard let remote = try await relay.vaultCanvas(id:store.scene.id),
                   remote.noteSha256 != canvasNoteSha else { return }
             let localSha = CanvasPacket.sha(try sceneBytes())
-            guard localSha == syncedSceneSha,
-                  remote.sceneSha256 != syncedSceneSha,
+            if localSha != syncedSceneSha,
+               remoteCanvasIsPrefix(remote,of:store.scene,drawing:store.drawing) {
+                self.syncedSceneSha = remote.sceneSha256
+                self.canvasNoteSha = remote.noteSha256
+                saveCanvasVaultCheckpoint()
+                return
+            }
+            guard localSha == syncedSceneSha, remote.sceneSha256 != syncedSceneSha,
                   let bytes = Data(base64Encoded:remote.sceneJSONBase64) else {
                 canvasVaultBlocked = true
                 store.status = "Obsidian에서 그림이 바뀌었습니다. iPad 원본을 보존했습니다."
