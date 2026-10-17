@@ -4,8 +4,9 @@ import SwiftUI
 private struct CanvasVaultCheckpoint: Codable {
     let sceneID: UUID
     let address: String
-    let sceneSha: String
-    let noteSha: String
+    let sceneSha: String?
+    let noteSha: String?
+    let pendingSceneSha: String?
 }
 
 struct CanvasWorkspace: View {
@@ -28,6 +29,7 @@ struct CanvasWorkspace: View {
     @State private var vaultSaving = false
     @State private var syncedSceneSha: String?
     @State private var canvasNoteSha: String?
+    @State private var pendingSceneSha: String?
     @State private var canvasVaultBlocked = false
     @State private var canvasSyncBusy = false
     @State private var canvasVaultEnabled = true
@@ -43,13 +45,15 @@ struct CanvasWorkspace: View {
         if let connection = CanvasRelay.loadConnection() {
             _relayAddress = State(initialValue:connection.address)
             _relayToken = State(initialValue:connection.token)
-            if let data = UserDefaults.standard.data(forKey:"canvasVaultCheckpoint"),
+            let data = try? Data(contentsOf:Self.canvasVaultCheckpointURL())
+            if let data = data ?? UserDefaults.standard.data(forKey:"canvasVaultCheckpoint"),
                let checkpoint = try? JSONDecoder().decode(CanvasVaultCheckpoint.self,from:data),
                checkpoint.address == connection.address {
                 _vaultSceneID = State(initialValue:checkpoint.sceneID)
                 _vaultSyncAddress = State(initialValue:checkpoint.address)
                 _syncedSceneSha = State(initialValue:checkpoint.sceneSha)
                 _canvasNoteSha = State(initialValue:checkpoint.noteSha)
+                _pendingSceneSha = State(initialValue:checkpoint.pendingSceneSha)
             }
         }
     }
@@ -335,11 +339,22 @@ struct CanvasWorkspace: View {
         return try encoder.encode(store.scene)
     }
 
-    private func saveCanvasVaultCheckpoint() {
-        guard let sceneSha = syncedSceneSha, let noteSha = canvasNoteSha,
-              let data = try? JSONEncoder().encode(CanvasVaultCheckpoint(
-                sceneID:store.scene.id,address:relayAddress,sceneSha:sceneSha,noteSha:noteSha)) else { return }
-        UserDefaults.standard.set(data,forKey:"canvasVaultCheckpoint")
+    private static func canvasVaultCheckpointURL() throws -> URL {
+        guard let directory = FileManager.default.urls(for:.applicationSupportDirectory,
+                                                       in:.userDomainMask).first else {
+            throw CanvasSendError.outboxUnavailable
+        }
+        return directory.appendingPathComponent("CanvasVaultCheckpoint.json")
+    }
+
+    private func saveCanvasVaultCheckpoint() throws {
+        guard (syncedSceneSha != nil && canvasNoteSha != nil) || pendingSceneSha != nil else {
+            throw CanvasSendError.outboxUnavailable
+        }
+        let data = try JSONEncoder().encode(CanvasVaultCheckpoint(
+            sceneID:store.scene.id,address:relayAddress,sceneSha:syncedSceneSha,
+            noteSha:canvasNoteSha,pendingSceneSha:pendingSceneSha))
+        try CanvasLocalFile.write(data,to:Self.canvasVaultCheckpointURL())
     }
 
     private func remoteCanvasIsPrefix(_ remote: CanvasRelay.VaultCanvas,
@@ -384,6 +399,7 @@ struct CanvasWorkspace: View {
             vaultSyncAddress = relayAddress
             syncedSceneSha = nil
             canvasNoteSha = nil
+            pendingSceneSha = nil
             canvasVaultBlocked = false
         }
         guard !canvasVaultBlocked, !canvasSyncBusy else { return }
@@ -396,25 +412,29 @@ struct CanvasWorkspace: View {
             let remote = try await relay.vaultCanvas(id:scene.id)
             if let remote {
                 if syncedSceneSha == nil {
-                    guard remote.sceneSha256 == localSha else {
+                    guard remote.sceneSha256 == localSha ||
+                          remote.sceneSha256 == pendingSceneSha else {
                         canvasVaultBlocked = true
                         store.status = "Obsidian 그림과 iPad 원본이 다릅니다. 자동 덮어쓰기를 중단했습니다."
                         return
                     }
-                    syncedSceneSha = localSha
+                    syncedSceneSha = remote.sceneSha256
                     canvasNoteSha = remote.noteSha256
-                    saveCanvasVaultCheckpoint()
-                    return
+                    pendingSceneSha = nil
+                    try saveCanvasVaultCheckpoint()
                 }
                 if remote.noteSha256 != canvasNoteSha || remote.sceneSha256 != syncedSceneSha {
-                    guard remoteCanvasIsPrefix(remote,of:scene,drawing:drawing) else {
+                    guard remote.sceneSha256 == localSha ||
+                          remote.sceneSha256 == pendingSceneSha ||
+                          remoteCanvasIsPrefix(remote,of:scene,drawing:drawing) else {
                         canvasVaultBlocked = true
                         store.status = "Obsidian 그림이 다른 곳에서 수정됐습니다. iPad 원본을 보존했습니다."
                         return
                     }
                     syncedSceneSha = remote.sceneSha256
                     canvasNoteSha = remote.noteSha256
-                    saveCanvasVaultCheckpoint()
+                    pendingSceneSha = nil
+                    try saveCanvasVaultCheckpoint()
                 }
             } else if canvasNoteSha != nil {
                 canvasVaultBlocked = true
@@ -423,12 +443,15 @@ struct CanvasWorkspace: View {
             }
             guard localSha != syncedSceneSha,
                   let image = SceneRenderer.png(scene:scene,drawing:drawing) else { return }
+            pendingSceneSha = localSha
+            try saveCanvasVaultCheckpoint()
             let saved = try await relay.saveVaultCanvas(scene:scene,imagePNG:image,
                                                         baseSha256:canvasNoteSha)
             guard store.scene.id == scene.id else { return }
             syncedSceneSha = saved.sceneSha256
             canvasNoteSha = saved.noteSha256
-            saveCanvasVaultCheckpoint()
+            pendingSceneSha = nil
+            try saveCanvasVaultCheckpoint()
             store.status = "Pencil 그림과 구조 데이터가 Obsidian에 저장됐습니다."
         } catch {
             store.status = "Obsidian 그림 동기화 대기: \(error.localizedDescription)"
@@ -442,11 +465,18 @@ struct CanvasWorkspace: View {
             guard let remote = try await relay.vaultCanvas(id:store.scene.id),
                   remote.noteSha256 != canvasNoteSha else { return }
             let localSha = CanvasPacket.sha(try sceneBytes())
+            if remote.sceneSha256 == localSha || remote.sceneSha256 == pendingSceneSha {
+                self.syncedSceneSha = remote.sceneSha256
+                self.canvasNoteSha = remote.noteSha256
+                pendingSceneSha = nil
+                try saveCanvasVaultCheckpoint()
+                return
+            }
             if localSha != syncedSceneSha,
                remoteCanvasIsPrefix(remote,of:store.scene,drawing:store.drawing) {
                 self.syncedSceneSha = remote.sceneSha256
                 self.canvasNoteSha = remote.noteSha256
-                saveCanvasVaultCheckpoint()
+                try saveCanvasVaultCheckpoint()
                 return
             }
             guard localSha == syncedSceneSha, remote.sceneSha256 != syncedSceneSha,
@@ -460,7 +490,8 @@ struct CanvasWorkspace: View {
             store.saveNow()
             self.syncedSceneSha = remote.sceneSha256
             self.canvasNoteSha = remote.noteSha256
-            saveCanvasVaultCheckpoint()
+            pendingSceneSha = nil
+            try saveCanvasVaultCheckpoint()
             store.status = "Obsidian 그림의 최신 내용을 iPad에 반영했습니다."
         } catch {
             store.status = "Obsidian 그림 변경 확인 대기: \(error.localizedDescription)"
