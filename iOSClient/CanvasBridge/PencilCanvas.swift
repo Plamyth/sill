@@ -127,7 +127,6 @@ struct PencilCanvas: UIViewRepresentable {
             switch phase {
             case .began:
                 isDrawing = true
-                hoverPoint = nil
                 hoverLayer.isHidden = true
                 previewSession += 1
                 previewPath = UIBezierPath()
@@ -140,6 +139,8 @@ struct PencilCanvas: UIViewRepresentable {
                 previewLayer.path = previewPath.cgPath
             case .ended:
                 isDrawing = false
+                hoverPoint = point
+                updateHover()
                 let session = previewSession
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                     guard let self, self.previewSession == session else { return }
@@ -161,6 +162,9 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         fileprivate func updateHover() {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            defer { CATransaction.commit() }
             guard !isDrawing, let hoverPoint, store.mode == .pen || store.mode == .eraser else {
                 hoverLayer.isHidden = true
                 return
