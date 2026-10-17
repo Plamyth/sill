@@ -245,7 +245,8 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
                     recordPencilBoundary("dock-reveal")
                     #endif
                     setOwnPointer(nil, .none)
-                    sendPointer(.move, at: CGPoint(x: rect.midX, y: rect.maxY - 2), clamped: true)
+                    // Land inside the Dock's bottom-edge hot zone; y = 1 is outside the display.
+                    send(.pointer(.move, x: 0.5, y: 0.9985))
                     return
                 }
                 // A pan recognizer begins after only a few points. Keep the candidate alive
