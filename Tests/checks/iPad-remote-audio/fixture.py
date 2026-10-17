@@ -46,6 +46,11 @@ final class StreamClient {
     func microphoneBecameInactive() {}
 '''
 fixture += properties.replace('    private let remoteAudio', '    let remoteAudio')
+for line in client.splitlines():
+    if any('var ' + name in line for name in [
+        'displays:', 'activeDisplayID:', 'supportsDisplaySelection ',
+        'displayInventoryID:', 'desktopSelectionRequired ', 'displayCatalogPeer:']):
+        fixture += line.replace('@Published private(set) ', '') + '\n'
 fixture += connection + '''
     func connectionLost(_ peer: NWConnection, error: Error) {
         if connection === peer { connection = nil }
