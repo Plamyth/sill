@@ -12,6 +12,8 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     /// ignored until then, since there is nothing on screen to aim at.
     var videoSize: CGSize = .zero
     var send: (InputEvent) -> Void = { _ in }
+    /// Show the device's touch Dock. The Mac's auto-hide preference stays untouched.
+    var onDockSwipe: () -> Void = {}
     /// Fires when this view takes or loses first responder, i.e. when the software keyboard shows
     /// or hides (including when the user dismisses it themselves).
     var onKeyboardShownChange: ((Bool) -> Void)?
@@ -245,8 +247,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
                     recordPencilBoundary("dock-reveal")
                     #endif
                     setOwnPointer(nil, .none)
-                    // Land inside the Dock's bottom-edge hot zone; y = 1 is outside the display.
-                    send(.pointer(.move, x: 0.5, y: 0.9985))
+                    onDockSwipe()
                     return
                 }
                 // A pan recognizer begins after only a few points. Keep the candidate alive
@@ -627,6 +628,7 @@ final class InputOverlayProxy {
 struct InputOverlay: UIViewRepresentable {
     let videoSize: CGSize
     let send: (InputEvent) -> Void
+    var onDockSwipe: () -> Void = {}
     /// `StreamClient.setOwnPointer`; see `InputOverlayView.setOwnPointer`.
     let setOwnPointer: (CGPoint?, PointerPresence.Origin) -> Void
     let proxy: InputOverlayProxy
@@ -645,6 +647,7 @@ struct InputOverlay: UIViewRepresentable {
     func updateUIView(_ uiView: InputOverlayView, context: Context) {
         uiView.videoSize = videoSize
         uiView.send = send
+        uiView.onDockSwipe = onDockSwipe
         uiView.setOwnPointer = setOwnPointer
         uiView.latchedModifiers = latchedModifiers
         uiView.sendGesture = sendGesture

@@ -2462,7 +2462,23 @@ package final class StreamCoordinator {
                                                       displays: synthetic ? nil : catalog.displayInventory.infos,
                                                       displayInventoryID: synthetic ? nil : catalog.displayInventory.revision,
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
-                                                      desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection)))
+                                                      desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
+                                                      dockApps: synthetic ? nil : dockApps())))
+    }
+
+    /// Read only the current user's Dock app tiles; no Dock preference is changed.
+    private func dockApps() -> [AppInfo] {
+        var result = [AppInfo(name: "Finder", bundleID: "com.apple.finder")]
+        var seen: Set<String> = ["com.apple.finder"]
+        let tiles = UserDefaults(suiteName: "com.apple.dock")?.array(forKey: "persistent-apps") as? [[String: Any]] ?? []
+        for tile in tiles {
+            guard let data = tile["tile-data"] as? [String: Any],
+                  let bundleID = data["bundle-identifier"] as? String,
+                  !bundleID.isEmpty, seen.insert(bundleID).inserted else { continue }
+            let name = data["file-label"] as? String ?? bundleID
+            result.append(AppInfo(name: name, bundleID: bundleID))
+        }
+        return result
     }
 
     private func broadcastList() {

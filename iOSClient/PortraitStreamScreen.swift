@@ -137,6 +137,7 @@ struct PortraitStreamScreen: View {
     @ObservedObject var client: StreamClient
     var metrics: PortraitMetrics = .regular
     @Binding var drawerOpen: Bool
+    @Binding var dockOpen: Bool
     @Binding var keyboardShown: Bool
     @Binding var textScale: Double?
     @Binding var scaleOpen: Bool
@@ -421,6 +422,7 @@ struct PortraitStreamScreen: View {
             StreamView(client: client)
             InputOverlay(videoSize: client.videoSize,
                          send: { client.sendInput($0) },
+                         onDockSwipe: { dockOpen = true },
                          setOwnPointer: { client.setOwnPointer($0, from: $1) },
                          proxy: overlay,
                          isKeyboardShown: $keyboardShown,
@@ -430,6 +432,12 @@ struct PortraitStreamScreen: View {
         }
         .background(Palette.panel)
         .overlay(alignment: .top) { LinkLineView(text: linkLine) }
+        .overlay(alignment: .bottom) {
+            if dockOpen {
+                RemoteDock(client: client, close: { dockOpen = false })
+                    .padding(10)
+            }
+        }
         .clipShape(streamShape)
         .overlay(streamShape.strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
         .onGeometryChange(for: CGSize.self, of: { $0.size }, action: onPanelSize)

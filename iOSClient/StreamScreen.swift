@@ -190,6 +190,7 @@ struct StreamScreen: View {
     @ObservedObject var client: StreamClient
     @State private var canvasOpen = false
     @State private var drawerOpen = false
+    @State private var dockOpen = false
     @State private var keyboardShown = false
     /// Modifiers held down by the portrait key row until the next key, character or click uses
     /// them. Lives up here so rotating the iPad does not drop a half-typed shortcut.
@@ -960,7 +961,7 @@ struct StreamScreen: View {
     }
 
     private func portrait(metrics: PortraitMetrics) -> some View {
-        PortraitStreamScreen(client: client, metrics: metrics, drawerOpen: $drawerOpen,
+        PortraitStreamScreen(client: client, metrics: metrics, drawerOpen: $drawerOpen, dockOpen: $dockOpen,
                              keyboardShown: $keyboardShown,
                              textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
                              latched: $latched, overlay: overlay,
@@ -986,6 +987,7 @@ struct StreamScreen: View {
                 // Same frame as the video, so a touch maps straight onto the streamed frame.
                 InputOverlay(videoSize: client.videoSize,
                              send: { client.sendInput($0) },
+                             onDockSwipe: { dockOpen = true },
                              setOwnPointer: { client.setOwnPointer($0, from: $1) },
                              proxy: overlay,
                              isKeyboardShown: $keyboardShown,
@@ -1001,6 +1003,13 @@ struct StreamScreen: View {
             .onGeometryChange(for: CGSize.self, of: { $0.size }, action: { panelSize = $0 })
             .tourTarget(.stream)
             .padding(8)
+
+            if dockOpen {
+                RemoteDock(client: client, close: { dockOpen = false })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 18)
+            }
 
             // The dim comes after the overlay on purpose: with the drawer open a tap on the dim
             // closes the drawer instead of clicking the Mac.
@@ -1041,6 +1050,73 @@ struct StreamScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A stable touch surface for the Mac's pinned Dock apps. The host supplies Dock order; the iPad
+/// owns presentation so macOS auto-hide and another pointer cannot remove it mid-tap.
+struct RemoteDock: View {
+    @ObservedObject var client: StreamClient
+    let close: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(client.dockApps) { app in
+                        Menu {
+                            Button("열기") { open(app) }
+                            let windows = client.windows.filter { $0.bundleID == app.bundleID }
+                            if !windows.isEmpty {
+                                ForEach(windows) { window in
+                                    Button(window.title.isEmpty ? app.name : window.title) {
+                                        client.select(.window(window.id))
+                                        close()
+                                    }
+                                }
+                            }
+                        } label: {
+                            VStack(spacing: 3) {
+                                AppIcon(image: client.icons[app.bundleID], name: app.name,
+                                        size: 44, radius: 10, fontSize: 13)
+                                Text(app.name)
+                                    .font(.system(size: 10))
+                                    .lineLimit(1)
+                                    .frame(width: 60)
+                            }
+                            .foregroundStyle(Palette.text)
+                            .frame(width: 64, height: 67)
+                        }
+                        .accessibilityLabel("\(app.name) Dock 메뉴")
+                    }
+                }
+            }
+            if client.dockApps.isEmpty {
+                Text("Mac Dock 항목을 불러오는 중")
+                    .font(.caption)
+                    .foregroundStyle(Palette.text)
+            }
+            Button(action: close) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(Palette.text)
+                    .frame(width: 44, height: 60)
+            }
+            .accessibilityLabel("Dock 닫기")
+        }
+        .padding(10)
+        .background(Palette.bar.opacity(0.96), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.white.opacity(0.18)))
+        .shadow(color: .black.opacity(0.55), radius: 18, y: 8)
+    }
+
+    private func open(_ app: AppInfo) {
+        if let window = client.windows.first(where: { $0.bundleID == app.bundleID }) {
+            client.select(.window(window.id))
+        } else {
+            client.launch(bundleID: app.bundleID)
+        }
+        close()
     }
 }
 

@@ -262,6 +262,7 @@ final class StreamClient: ObservableObject {
     // Switcher catalog, as the host sends it. Published on main.
     @Published var macName = ""
     @Published var windows: [WindowInfo] = []          // front to back, in the host's order
+    @Published var dockApps: [AppInfo] = []
     /// The device's own arrangement of the bar (press, hold and drag), persisted per Mac. Windows
     /// the user has not arranged follow in the host's order.
     @Published private(set) var windowOrder: [UInt32] = []
@@ -1061,6 +1062,7 @@ final class StreamClient: ObservableObject {
             cancelVisionInputs()
         }
         windows = list.windows
+        dockApps = list.dockApps ?? []
         active = list.active
         visionInputBinding = binding
         switch binding {
@@ -3640,6 +3642,7 @@ final class StreamClient: ObservableObject {
         self.status = status
         macName = ""
         windows = []
+        dockApps = []
         active = .none
         thumbnails = [:]
         icons = [:]
@@ -4260,6 +4263,7 @@ final class StreamClient: ObservableObject {
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
                 #else
                 self.windows = list.windows
+                self.dockApps = list.dockApps ?? []
                 self.inputGeneration = list.inputGeneration
                 self.active = list.active
                 #endif

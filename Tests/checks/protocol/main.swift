@@ -480,6 +480,11 @@ let oldAudioList = WindowList(macName: "Mac", windows: [], active: .none)
 let newAudioList = WindowList(macName: "Mac", windows: [], active: .none, remoteAudio: 1)
 check("audio capability absent on old host", Wire.decode(WindowList.self, from: Wire.encode(oldAudioList))?.remoteAudio == nil)
 check("audio capability is explicit", Wire.decode(WindowList.self, from: Wire.encode(newAudioList))?.remoteAudio == 1)
+let dockList = WindowList(macName: "Mac", windows: [], active: .desktop,
+                          dockApps: [AppInfo(name: "Finder", bundleID: "com.apple.finder")])
+check("legacy host omits Dock catalog", Wire.decode(WindowList.self, from: Wire.encode(oldAudioList))?.dockApps == nil)
+check("Dock catalog survives wire round trip",
+      Wire.decode(WindowList.self, from: Wire.encode(dockList))?.dockApps == dockList.dockApps)
 let audioRequest = RemoteAudioSubscription(enabled: true)
 check("audio subscription round trip", Wire.decode(RemoteAudioSubscription.self,
       from: Wire.encode(audioRequest)) == audioRequest)
