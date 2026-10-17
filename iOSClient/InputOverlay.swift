@@ -64,12 +64,9 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         // reach touchesBegan/Moved/Ended below intact.
         let directOnly = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
 
-        // One tap recognizer, no double-tap recognizer, and deliberately no `require(toFail:)`.
-        // Requiring a double tap to fail first delays *every* click by UIKit's double-tap window
-        // (~0.35 s), which is the worst thing you can do to the primary interaction of a remote
-        // desktop. Instead each tap sends its own down/up immediately; two quick taps therefore
-        // arrive as two quick down/up pairs and the host's own click timing turns them into a
-        // double-click, exactly as it would for a real mouse.
+        // One tap recognizer, no double-tap recognizer. Two quick single taps still become a Mac
+        // double-click. A two-finger chord must win before the one-finger click is sent, or a
+        // right-click over the Dock can launch the app beneath the first finger.
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         tap.numberOfTapsRequired = 1
         tap.numberOfTouchesRequired = 1
@@ -80,6 +77,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         twoFingerTap.numberOfTouchesRequired = 2
         twoFingerTap.allowedTouchTypes = directOnly
         addGestureRecognizer(twoFingerTap)
+        tap.require(toFail: twoFingerTap)
 
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress))
         longPress.minimumPressDuration = 0.45
@@ -250,7 +248,10 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
                     sendPointer(.move, at: CGPoint(x: rect.midX, y: rect.maxY - 2), clamped: true)
                     return
                 }
-                if translation.y <= -18, abs(translation.x) <= 30 { return }
+                // A pan recognizer begins after only a few points. Keep the candidate alive
+                // until the stroke has a clear direction; otherwise the first tiny update
+                // turns an intended Dock swipe into a scroll.
+                if translation.y < 20, abs(translation.x) <= 60 { return }
                 edgePan = .none
                 #if DEBUG
                 recordPencilBoundary("dock-scroll")
