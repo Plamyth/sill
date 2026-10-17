@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(StreamProtocol)
 import StreamProtocol
+#endif
 
 var checks = 0
 var failures = 0

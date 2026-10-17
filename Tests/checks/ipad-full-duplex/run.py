@@ -15,7 +15,7 @@ paths = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
 paths += [root / 'iOSClient' / name for name in ['IPadMicrophoneCapture.swift', 'IPadMicrophonePCM.swift',
     'IPadMicrophonePolicy.swift', 'IPadAudioRoutePolicy.swift', 'IPadRemoteAudioController.swift',
     'StreamClient+AudioRoutes.swift', 'StreamClient+Audio.swift', 'StreamClient.swift', 'StreamScreen.swift',
-    'IPadAudioRouteChooser.swift', 'ContentView.swift', 'StreamClient+Microphone.swift', 'RemoteAudioPlayer.swift']]
+    'IPadAudioRouteChooser.swift', 'HostSettingsPanel.swift', 'ContentView.swift', 'StreamClient+Microphone.swift', 'RemoteAudioPlayer.swift']]
 paths += [root / folder / name for folder, names in {
     'iOSClient/Tests/audio-routes': ['main.swift', 'Standins.swift'],
     'Tests/checks/iPad-remote-audio': ['main.swift', 'fixture.py', 'player-fixture.py', 'player-standins.swift'],
