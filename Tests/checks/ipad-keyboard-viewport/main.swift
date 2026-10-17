@@ -1,0 +1,87 @@
+import Foundation
+import CoreGraphics
+import SwiftUI
+
+struct UIDevice {
+    enum Idiom { case pad, phone }
+    static var current = UIDevice(userInterfaceIdiom: .pad)
+    var userInterfaceIdiom: Idiom
+}
+
+// PRODUCTION_TYPES
+
+struct Proposal {
+    let window: CGRect
+    let keyboard: CGRect?
+    func ignoresSafeArea(_ regions: SafeAreaRegions = .all, edges: Edge.Set = .all) -> CGRect {
+        guard !regions.contains(.keyboard), edges.contains(.bottom), let keyboard,
+              keyboard.minX <= window.minX, keyboard.maxX >= window.maxX,
+              keyboard.maxY >= window.maxY, keyboard.minY < window.maxY else { return window }
+        return CGRect(x: window.minX, y: window.minY, width: window.width,
+                      height: max(0, keyboard.minY - window.minY))
+    }
+    var proposed: CGRect { self/*PRODUCTION_SAFE_AREA*/ }
+}
+
+struct HEVCDisplayView {
+    // PRODUCTION_VIDEO_RECT
+}
+struct InputProbe {
+    let bounds: CGRect
+    let videoSize: CGSize
+    private var videoRect: CGRect { HEVCDisplayView.videoRect(in: bounds, videoSize: videoSize) }
+    // PRODUCTION_NORMALIZED
+    func point(_ point: CGPoint, clamped: Bool) -> (x: Double, y: Double)? { normalized(point, clamped: clamped) }
+}
+
+var checks = 0
+var failures = 0
+func expect(_ condition: @autoclosure () -> Bool, _ name: String) {
+    checks += 1
+    if !condition() { failures += 1; print("FAIL \(name)") }
+}
+func near(_ lhs: Double, _ rhs: Double) -> Bool { abs(lhs - rhs) < 0.000001 }
+let window = CGRect(x: 0, y: 24, width: 1194, height: 810)
+let docked = CGRect(x: 0, y: 482, width: 1194, height: 352)
+let baseline = Proposal(window: window, keyboard: nil).proposed
+expect(baseline == window, "no keyboard preserves container-bottom extent")
+expect(SafeAreaRegions.all.contains(.keyboard), "default all region includes keyboard")
+
+for keyboard in [docked, CGRect(x: 0, y: 510, width: 1194, height: 324),
+                 CGRect(x: 0, y: 790, width: 1194, height: 44)] {
+    let visible = Proposal(window: window, keyboard: keyboard).proposed
+    let layout = DuoLayout.of(visible.size)
+    let bar = layout == .outerLandscape ? BarMetrics.compact : BarMetrics.regular
+    let panel = CGRect(x: visible.minX + 8, y: visible.minY + bar.height + 8,
+                       width: visible.width - 16, height: visible.height - bar.height - 16)
+    for video in [CGSize(width: 1920, height: 1080), CGSize(width: 1600, height: 1000), CGSize(width: 900, height: 1600)] {
+        let bounds = CGRect(origin: .zero, size: panel.size)
+        let rect = HEVCDisplayView.videoRect(in: bounds, videoSize: video)
+        let screenVideo = rect.offsetBy(dx: panel.minX, dy: panel.minY)
+        expect(screenVideo.maxY <= keyboard.minY, "entire video remains above docked keyboard top \(keyboard.minY)")
+        expect(panel.maxY <= keyboard.minY, "shared panel/viewport ends above docked keyboard")
+        let input = InputProbe(bounds: bounds, videoSize: video)
+        for (x, y) in [(0.0, 0.0), (0.5, 0.5), (0.95, 0.9), (0.999, 0.999)] {
+            let point = CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+            let mapped = input.point(point, clamped: false)
+            expect(mapped.map { near($0.x, x) && near($0.y, y) } == true,
+                   "resized video and input normalize the same visible point")
+        }
+        if rect.minX > 0 {
+            expect(input.point(CGPoint(x: rect.minX / 2, y: rect.midY), clamped: false) == nil,
+                   "letterbox tap remains rejected after keyboard resize")
+        }
+    }
+    print("synthetic keyboardTop=\(keyboard.minY), proposedHeight=\(visible.height), panel=\(panel)")
+}
+for keyboard: CGRect? in [nil, CGRect(x: 740, y: 510, width: 320, height: 250),
+                         CGRect(x: 740, y: 584, width: 320, height: 250),
+                         CGRect(x: 0, y: 834, width: 1194, height: 352)] {
+    expect(Proposal(window: window, keyboard: keyboard).proposed == baseline,
+           "hardware, floating, bottom-adjacent floating, or hidden keyboard does not reserve full-width space")
+}
+UIDevice.current.userInterfaceIdiom = .phone
+expect(Proposal(window: window, keyboard: docked).proposed == window,
+       "phone retains intentional keyboard-over-trackpad behavior")
+print("\(checks - failures)/\(checks) synthetic keyboard geometry checks passed; \(failures) failed")
+exit(failures == 0 ? 0 : 1)
