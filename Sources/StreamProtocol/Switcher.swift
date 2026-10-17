@@ -4,7 +4,29 @@ import Foundation
 public enum StreamSource: Codable, Hashable {
     case none
     case window(UInt32)   // CGWindowID, stable for the life of the window
-    case desktop          // the Mac's main display
+    case desktop          // one Mac display; its selection is carried separately
+}
+
+public struct DisplayInfo: Codable, Equatable, Identifiable {
+    public var id: UInt32
+    public var name: String
+    public var width: Int
+    public var height: Int
+    public var isMain: Bool
+
+    public init(id: UInt32, name: String, width: Int, height: Int, isMain: Bool) {
+        self.id = id; self.name = name; self.width = width; self.height = height; self.isMain = isMain
+    }
+}
+
+/// Valid only for this host's current inventory. Display IDs are never saved across reconnects.
+public struct DisplaySelection: Codable, Equatable {
+    public var displayID: UInt32
+    public var inventoryID: UUID
+
+    public init(displayID: UInt32, inventoryID: UUID) {
+        self.displayID = displayID; self.inventoryID = inventoryID
+    }
 }
 
 /// One on-screen Mac window, as the client sees it. WindowList order is stable: first seen first.
@@ -64,10 +86,18 @@ public struct WindowList: Codable {
     public var presentationInput: Int?
     public var videoEpoch: VideoEpoch?
     public var microphone: MicrophoneCapability?
+    /// Version 1 permits kind 211. Absent on hosts without monitor selection.
+    public var displaySelection: Int?
+    public var displays: [DisplayInfo]?
+    public var displayInventoryID: UUID?
+    public var activeDisplayID: UInt32?
+    public var desktopSelectionRequired: Bool?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
-                remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil) {
+                remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
+                displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
+                activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
@@ -75,6 +105,11 @@ public struct WindowList: Codable {
         self.presentationInput = presentationInput
         self.videoEpoch = videoEpoch
         self.microphone = microphone
+        self.displaySelection = displaySelection
+        self.displays = displays
+        self.displayInventoryID = displayInventoryID
+        self.activeDisplayID = activeDisplayID
+        self.desktopSelectionRequired = desktopSelectionRequired
     }
 }
 

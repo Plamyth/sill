@@ -297,6 +297,16 @@ final class StreamClient: ObservableObject {
     @Published var thumbnails: [UInt32: UIImage] = [:] // by window ID
     @Published var icons: [String: UIImage] = [:]      // by bundle ID
     @Published var apps: [AppInfo] = []                // installed apps, for "All apps"
+    @Published private(set) var displays: [DisplayInfo] = []
+    @Published private(set) var activeDisplayID: UInt32?
+    @Published private(set) var supportsDisplaySelection = false
+    private var displayInventoryID: UUID?
+    private var desktopSelectionRequired = false
+    private var displayCatalogPeer: ObjectIdentifier?
+    var displaySelectionReady: Bool {
+        connected && supportsDisplaySelection && displayInventoryID != nil &&
+            connection.map(ObjectIdentifier.init) == displayCatalogPeer
+    }
 
     // The Mac's streaming settings (kinds 16 and 17; see the Host settings section below and
     // HostSettingsLedger.swift). Published on main.
@@ -844,6 +854,14 @@ final class StreamClient: ObservableObject {
     var connection: NWConnection? {
         get { link.connection }
         set {
+            if link.connection !== newValue {
+                displays = []
+                activeDisplayID = nil
+                supportsDisplaySelection = false
+                displayInventoryID = nil
+                desktopSelectionRequired = false
+                displayCatalogPeer = nil
+            }
             #if os(visionOS)
             if link.connection !== newValue {
                 resetVisionAudio()
@@ -3583,6 +3601,12 @@ final class StreamClient: ObservableObject {
         notice = nil
         hostVersion = nil
         hostProtocol = nil
+        displays = []
+        activeDisplayID = nil
+        supportsDisplaySelection = false
+        displayInventoryID = nil
+        desktopSelectionRequired = false
+        displayCatalogPeer = nil
         hostGestures = nil
         inputGeneration = nil
         remoteRoute = nil
@@ -3641,6 +3665,24 @@ final class StreamClient: ObservableObject {
     func select(_ source: StreamSource) {
         noteAction()
         request(source)
+    }
+
+    func selectDisplay(_ display: DisplayInfo) {
+        guard displaySelectionReady, let peer = connection, let displayInventoryID,
+              displays.contains(where: { $0.id == display.id }) else { return }
+        noteAction()
+        #if os(visionOS)
+        visionAudio.stop()
+        #else
+        remoteAudioControl.sourceWillChange()
+        #if os(iOS)
+        microphoneSourceWillChange()
+        #endif
+        #endif
+        choicesSent += 1
+        let message = StreamMessage(kind: .selectDisplay, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
+                                    payload: Wire.encode(DisplaySelection(displayID: display.id, inventoryID: displayInventoryID)))
+        _ = link.send(message.serialized(), onlyOn: peer)
     }
 
     /// Asks the host to stream this source: the person's pick (`select`), or this device's own
@@ -4185,6 +4227,12 @@ final class StreamClient: ObservableObject {
                 if self.hostVersion != list.hostVersion { self.hostVersion = list.hostVersion }
                 if self.hostProtocol != list.protocol { self.hostProtocol = list.protocol }
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }
+                self.supportsDisplaySelection = list.displaySelection == 1
+                self.displays = self.supportsDisplaySelection ? list.displays ?? [] : []
+                self.displayInventoryID = self.supportsDisplaySelection ? list.displayInventoryID : nil
+                self.activeDisplayID = self.supportsDisplaySelection ? list.activeDisplayID : nil
+                self.desktopSelectionRequired = list.desktopSelectionRequired == true
+                self.displayCatalogPeer = ObjectIdentifier(peer)
                 if !self.sessionListed {
                     self.sessionListed = true
                     #if DEBUG
@@ -4222,7 +4270,7 @@ final class StreamClient: ObservableObject {
                 // what this device was watching is picked again (`resumeSource`).
                 if let resume = self.resumeSource {
                     self.resumeSource = nil
-                    if list.active == .none, !Self.noAutoDesktop {
+                    if list.active == .none, !Self.noAutoDesktop, !self.desktopSelectionRequired {
                         var pick = resume
                         if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
                         #if DEBUG
@@ -4236,7 +4284,7 @@ final class StreamClient: ObservableObject {
                 // connection, and again when the window being watched has closed. Not when a pick
                 // failed (the host still lists the window): that is the user's to retry. At most
                 // once every 10 s, so a host that cannot start the Desktop does not loop.
-                if list.active == .none, Date().timeIntervalSince(self.lastAutoDesktop) > 10, !Self.noAutoDesktop {
+                if list.active == .none, Date().timeIntervalSince(self.lastAutoDesktop) > 10, !Self.noAutoDesktop, !self.desktopSelectionRequired {
                     switch previous {
                     case .none:
                         self.lastAutoDesktop = Date()
@@ -4251,7 +4299,7 @@ final class StreamClient: ObservableObject {
                         let choices = self.choicesSent
                         let wait = 2 + Double(self.lastRttMaxMs ?? 0) / 1000
                         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-                            guard let self, self.connected, self.active == .none, self.choicesSent == choices,
+                            guard let self, self.connected, self.active == .none, !self.desktopSelectionRequired, self.choicesSent == choices,
                                   !self.windows.contains(where: { $0.id == id }) else { return }
                             self.lastAutoDesktop = Date()
                             self.request(.desktop)

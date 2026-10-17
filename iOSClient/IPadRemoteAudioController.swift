@@ -24,6 +24,7 @@ final class IPadRemoteAudioController {
     }
     private var peer: ObjectIdentifier?
     private var source: StreamSource = .none
+    private var inputGeneration: String?
     private let send: (ObjectIdentifier, RemoteAudioSubscription) -> Void
     private let stop: () -> Void
     private let play: (Data) -> Void
@@ -43,13 +44,15 @@ final class IPadRemoteAudioController {
         revoke()
         peer = next
         source = .none
+        inputGeneration = nil
         status = .unavailable
     }
 
     func receive(_ list: WindowList, from origin: ObjectIdentifier) {
         guard peer == origin else { return }
-        if source != list.active || list.remoteAudio != 1 { revoke() }
+        if source != list.active || inputGeneration != list.inputGeneration || list.remoteAudio != 1 { revoke() }
         source = list.active
+        inputGeneration = list.inputGeneration
         if list.remoteAudio != 1 { status = .unavailable }
         else if status == .unavailable { status = .off }
     }

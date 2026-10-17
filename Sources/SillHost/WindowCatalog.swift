@@ -4,6 +4,8 @@ import ScreenCaptureKit
 import ImageIO
 import UniformTypeIdentifiers
 import StreamProtocol
+import IOKit
+import IOKit.graphics
 
 /// Knows what is on the Mac: the on-screen windows, a small JPEG thumbnail of each, app icons,
 /// and the installed apps for the drawer. Everything here runs on the main actor; callbacks fire
@@ -17,7 +19,16 @@ import StreamProtocol
 final class WindowCatalog {
     private(set) var windows: [SCWindow] = []
     private(set) var infos: [WindowInfo] = []
-    private(set) var display: SCDisplay?
+    private var displays: [SCDisplay] = []
+    private(set) var displayInventory = DisplayInventory()
+    var display: SCDisplay? {
+        guard let version = topology.version, version == inventoryTopologyVersion,
+              let selection = displayInventory.current else { return nil }
+        return displays.first { $0.displayID == selection.displayID && CGDisplayIsActive($0.displayID) != 0 }
+    }
+    var onDisplaysChanged: (() -> Void)?
+    private let topology = DisplayTopology()
+    private var inventoryTopologyVersion: UInt64?
     private(set) var installedApps: [AppInfo] = []
     /// This process as ScreenCaptureKit lists it, from the last look: the Desktop stream leaves it
     /// out, so Sill's own windows (the pairing code above all) never reach a device. Nil when it
@@ -78,11 +89,6 @@ final class WindowCatalog {
     /// because its contents are the ones changing. Nil is fine: it is then treated like any other.
     var activeWindowID: UInt32?
 
-    /// `--virtual-display`: the Desktop source must capture the Mac's real main display, never the
-    /// virtual one. `SCShareableContent.displays` order is not guaranteed once a second display
-    /// exists, so pick by ID. Off by default: the default path keeps `displays.first`.
-    var preferMainDisplay = false
-
     /// `--virtual-display`: the window the coordinator has moved onto the virtual display. Set right
     /// after a successful placement, cleared on release. If ScreenCaptureKit stops treating it as
     /// on-screen there (unverified), it is fetched from the full window list so its tile stays in
@@ -127,8 +133,21 @@ final class WindowCatalog {
     func start() {
         guard !started else { return }
         started = true
+        topology.onChange = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.displayInventory.invalidate()
+                self.onDisplaysChanged?()
+                await self.refreshWindows()
+            }
+        }
         scanInstalledApps()
         if clientCount > 0 { startPolling() }
+    }
+
+    func selectDisplay(_ selection: DisplaySelection) -> Bool {
+        guard let version = topology.version, version == inventoryTopologyVersion else { return false }
+        return displayInventory.select(selection)
     }
 
     func window(id: UInt32) -> SCWindow? { windows.first { $0.windowID == id } }
@@ -163,7 +182,7 @@ final class WindowCatalog {
     /// without Screen Recording the call never returned once a virtual display existed (it returns
     /// promptly, with no windows, without one). The virtual-display paths use this so a hang there
     /// costs seconds and a fallback, not the coordinator's `switching` flag for good. The default
-    /// path's `refreshWindows` keeps the plain call it always had.
+    /// catalog also uses this bound so a monitor selection cannot wait forever for inventory.
     nonisolated static func shareableContent(excludingDesktopWindows: Bool, onScreenWindowsOnly: Bool, timeout: TimeInterval) async -> SCShareableContent? {
         final class Once: @unchecked Sendable {
             private let lock = NSLock(); private var done = false
@@ -226,10 +245,12 @@ final class WindowCatalog {
 
     // MARK: Windows
 
-    func refreshWindows() async {
+    @discardableResult
+    func refreshWindows() async -> Bool {
         refreshSeq += 1
         let seq = refreshSeq
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return }
+        guard let topologyVersion = topology.version else { return false }
+        guard let content = await Self.shareableContent(excludingDesktopWindows: false, onScreenWindowsOnly: true, timeout: 3) else { return false }
         // The staged window, if the on-screen list dropped it: one extra SCShareableContent call per
         // poll, and only then. Fetched before the sequence check so its await cannot let an older
         // refresh overwrite a newer one.
@@ -239,12 +260,11 @@ final class WindowCatalog {
             pinned = all.windows.first { $0.windowID == id && !Self.isOwn($0) }
             if pinned != nil { print("Catalog: the staged window \(id) is not in the on-screen list; pinned it from the full list.") }
         }
-        guard seq > appliedSeq else { return }      // a newer refresh already landed; don't go backwards
+        guard seq > appliedSeq, topology.version == topologyVersion else { return false }
         appliedSeq = seq
+        inventoryTopologyVersion = topologyVersion
         ownApplication = content.applications.first { $0.processID == Self.ownPID }
-        display = preferMainDisplay
-            ? (content.displays.first { $0.displayID == CGMainDisplayID() } ?? content.displays.first)
-            : content.displays.first
+        updateDisplays(content.displays)
         var visible = content.windows.filter { w in
             guard let app = w.owningApplication, !app.applicationName.isEmpty else { return false }
             return w.windowLayer == 0                                  // drops widgets, wallpaper, backstop
@@ -272,6 +292,64 @@ final class WindowCatalog {
             infos = newInfos
             onWindowsChanged?(newInfos)
         }
+        return true
+    }
+
+    private func updateDisplays(_ candidates: [SCDisplay]) {
+        let hardware = Self.hardwareDisplays()
+        displays = candidates.filter { display in
+            let id = display.displayID
+            return CGDisplayIsActive(id) != 0 && CGDisplayVendorNumber(id) != VirtualStage.vendorID &&
+                (CGDisplayIsBuiltin(id) != 0 || hardware.contains { $0.matches(id) })
+        }.sorted { $0.displayID < $1.displayID }
+        let infos = displays.enumerated().map { index, display in
+            let id = display.displayID
+            let screen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }
+            return DisplayInfo(id: id, name: screen?.localizedName ?? "모니터 \(index + 1)",
+                               width: display.width, height: display.height, isMain: id == CGMainDisplayID())
+        }
+        let signatures = displays.map { display in
+            let uuid = CGDisplayCreateUUIDFromDisplayID(display.displayID)?.takeRetainedValue()
+            return "\(uuid.map { CFUUIDCreateString(nil, $0) as String } ?? "")/\(display.frame)"
+        }
+        if displayInventory.update(infos, signatures: signatures) { onDisplaysChanged?() }
+    }
+
+    private struct HardwareDisplay {
+        let vendor: UInt32
+        let product: UInt32
+        let serial: UInt32?
+
+        func matches(_ id: CGDirectDisplayID) -> Bool {
+            vendor == CGDisplayVendorNumber(id) && product == CGDisplayModelNumber(id) &&
+                (serial == nil || serial == 0 || serial == CGDisplaySerialNumber(id))
+        }
+    }
+
+    /// Hardware registry entries keep Sidecar, AirPlay and software displays out of the chooser.
+    private static func hardwareDisplays() -> [HardwareDisplay] {
+        var result: [HardwareDisplay] = []
+        for serviceClass in ["IODisplayConnect", "IOMobileFramebuffer"] {
+            var iterator: io_iterator_t = 0
+            guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(serviceClass), &iterator) == KERN_SUCCESS else { continue }
+            defer { IOObjectRelease(iterator) }
+            while case let service = IOIteratorNext(iterator), service != 0 {
+                defer { IOObjectRelease(service) }
+                if serviceClass == "IODisplayConnect",
+                   let info = IODisplayCreateInfoDictionary(service, 0)?.takeRetainedValue() as? [String: Any],
+                   let vendor = info["DisplayVendorID"] as? NSNumber, let product = info["DisplayProductID"] as? NSNumber {
+                    result.append(HardwareDisplay(vendor: vendor.uint32Value, product: product.uint32Value,
+                                                  serial: (info["DisplaySerialNumber"] as? NSNumber)?.uint32Value))
+                } else if let attributes = IORegistryEntryCreateCFProperty(service, "DisplayAttributes" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any],
+                          let productAttributes = attributes["ProductAttributes"] as? [String: Any],
+                          let vendor = productAttributes["LegacyManufacturerID"] as? NSNumber,
+                          let product = productAttributes["ProductID"] as? NSNumber {
+                    result.append(HardwareDisplay(vendor: vendor.uint32Value, product: product.uint32Value,
+                                                  serial: (productAttributes["SerialNumber"] as? NSNumber)?.uint32Value))
+                }
+            }
+        }
+        return result
     }
 
     /// Thumbnail cadence, per window: every pass (2 s) if its `WindowInfo` changed since its last
@@ -389,5 +467,44 @@ final class WindowCatalog {
         image.draw(in: NSRect(x: 0, y: 0, width: size, height: size), from: .zero, operation: .copy, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+/// The counter changes on the CoreGraphics callback thread, before the main actor handles loss.
+private final class DisplayTopology: @unchecked Sendable {
+    private let lock = NSLock()
+    private var counter: UInt64 = 0
+    private var configuring = false
+    private var registered = false
+    private var handler: (@Sendable () -> Void)?
+    var onChange: (@Sendable () -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return handler }
+        set { lock.lock(); defer { lock.unlock() }; handler = newValue }
+    }
+    var version: UInt64? {
+        lock.lock(); defer { lock.unlock() }
+        return registered && !configuring ? counter : nil
+    }
+
+    private static let callback: CGDisplayReconfigurationCallBack = { _, flags, context in
+        guard let context else { return }
+        let topology = Unmanaged<DisplayTopology>.fromOpaque(context).takeUnretainedValue()
+        topology.lock.lock()
+        topology.counter &+= 1
+        topology.configuring = flags.contains(.beginConfigurationFlag)
+        let onChange = topology.handler
+        topology.lock.unlock()
+        onChange?()
+    }
+
+    init() {
+        let result = CGDisplayRegisterReconfigurationCallback(Self.callback, Unmanaged.passUnretained(self).toOpaque())
+        lock.lock()
+        registered = result == .success
+        lock.unlock()
+    }
+
+    deinit {
+        if registered { CGDisplayRemoveReconfigurationCallback(Self.callback, Unmanaged.passUnretained(self).toOpaque()) }
     }
 }

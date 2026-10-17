@@ -1205,9 +1205,8 @@ private struct TopBar: View {
                 .allowsHitTesting(!scaleOpen)
                 .tourTarget(.keyboard)
 
-            button(open: client.active == .desktop, symbol: "desktopcomputer", label: "데스크탑",
-                   accessibilityLabel: "Mac 데스크탑 전체 표시",
-                   action: { client.select(.desktop) })
+            MacDisplayChooser(client: client, width: metrics.buttonWidth, height: metrics.buttonHeight,
+                              spacing: metrics.buttonSpacing)
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
@@ -1291,6 +1290,63 @@ struct BarButton<Content: View>: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct MacDisplayChooser: View {
+    @ObservedObject var client: StreamClient
+    var width: CGFloat
+    var height: CGFloat
+    var spacing: CGFloat
+    var iconSize: CGFloat = 22
+    var radius: CGFloat = 16
+
+    private var selected: Bool { client.active == .desktop }
+    private var currentName: String {
+        guard selected, let id = client.activeDisplayID else { return "선택 안 됨" }
+        return client.displays.first { $0.id == id }?.name ?? "선택 안 됨"
+    }
+
+    private var label: some View {
+        VStack(spacing: spacing) {
+            Image(systemName: "desktopcomputer").font(.system(size: iconSize))
+                .foregroundStyle(selected ? Palette.accent : Palette.text)
+            Text(client.supportsDisplaySelection ? "모니터" : "데스크탑")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(selected ? Palette.accent : Palette.barLabel)
+                .lineLimit(1).minimumScaleFactor(0.85)
+        }
+        .frame(width: width, height: height)
+        .background(RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(selected ? Palette.controlOpen : Palette.control))
+    }
+
+    var body: some View {
+        Group {
+            if client.supportsDisplaySelection {
+                Menu {
+                    Text("Mac 모니터 선택")
+                    if !client.displaySelectionReady { Text("모니터 목록을 갱신하는 중입니다.") }
+                    else if client.displays.isEmpty { Text("연결된 모니터가 없습니다.") }
+                    ForEach(Array(client.displays.enumerated()), id: \.element.id) { index, display in
+                        Button { client.selectDisplay(display) } label: {
+                            let title = "\(index + 1). \(display.name) · \(display.width)×\(display.height)\(display.isMain ? " · 주 모니터" : "")"
+                            if selected && client.activeDisplayID == display.id {
+                                Label(title, systemImage: "checkmark")
+                            } else { Text(title) }
+                        }
+                        .disabled(!client.displaySelectionReady)
+                    }
+                } label: { label }
+                .accessibilityLabel("Mac 모니터 선택")
+                .accessibilityValue(currentName)
+            } else {
+                Button { client.select(.desktop) } label: { label }
+                    .accessibilityLabel("Mac 데스크탑 전체 표시")
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("macDisplayChooser")
     }
 }
 

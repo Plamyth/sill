@@ -12,6 +12,12 @@ final class InputOverlayView {
     // OVERLAY_DRAIN
 }
 final class StreamClient {
+    var displays: [DisplayInfo] = []
+    var activeDisplayID: UInt32?
+    var supportsDisplaySelection = false
+    var displayInventoryID: UUID?
+    var desktopSelectionRequired = false
+    var displayCatalogPeer: ObjectIdentifier?
     enum MoveKind { case fromDirect, toCable, toWifi, fromRemote }
     struct Move { let connection: NWConnection }
     static var noAutoDesktop = true

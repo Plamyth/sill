@@ -46,6 +46,7 @@ final class GeometryGesture {
     func input(_ event: InputEvent) { inputs += 1 }
 }
 final class GeometryHost {
+    var desktopScope: String?
     var inputFence = SourceInputFence<ObjectIdentifier>()
     let gestureChords = GeometryGesture()
     var focusEffects = 0

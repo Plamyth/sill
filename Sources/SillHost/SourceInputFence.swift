@@ -4,13 +4,21 @@ import StreamProtocol
 /// connection can echo a generation; stopping a stream never releases a legacy connection's pin.
 struct SourceInputFence<Peer: Hashable> {
     private var scoped: [Peer: Bool] = [:]
-    private var pinnedSource: StreamSource?
+    private struct Target: Equatable {
+        let source: StreamSource
+        let desktopScope: String?
+        init(_ source: StreamSource, _ desktopScope: String?) {
+            self.source = source
+            self.desktopScope = source == .desktop ? desktopScope : nil
+        }
+    }
+    private var pinnedSource: Target?
 
-    mutating func join(_ peer: Peer, source: StreamSource, switching: Bool) -> Bool {
+    mutating func join(_ peer: Peer, source: StreamSource, switching: Bool, desktopScope: String? = nil) -> Bool {
         // A joining legacy client must not see the old catalog halfway through a source switch.
         guard !switching, scoped[peer] == nil else { return false }
         scoped[peer] = false
-        sourceChanged(to: source)
+        sourceChanged(to: source, desktopScope: desktopScope)
         return true
     }
 
@@ -27,16 +35,16 @@ struct SourceInputFence<Peer: Hashable> {
         releasePinIfScoped()
     }
 
-    mutating func sourceChanged(to source: StreamSource) {
-        if scoped.values.contains(false), pinnedSource == nil, source != .none { pinnedSource = source }
+    mutating func sourceChanged(to source: StreamSource, desktopScope: String? = nil) {
+        if scoped.values.contains(false), pinnedSource == nil, source != .none { pinnedSource = Target(source, desktopScope) }
     }
 
-    func allowsSelection(_ source: StreamSource) -> Bool {
+    func allowsSelection(_ source: StreamSource, desktopScope: String? = nil) -> Bool {
         guard let pinnedSource else { return true }
-        return source == .none || source == pinnedSource
+        return source == .none || Target(source, desktopScope) == pinnedSource
     }
 
-    mutating func accepts(_ peer: Peer, generation: String?, current: String, source: StreamSource) -> Bool {
+    mutating func accepts(_ peer: Peer, generation: String?, current: String, source: StreamSource, desktopScope: String? = nil) -> Bool {
         guard let supportsScoped = scoped[peer] else { return false }
         if let generation {
             guard generation == current else { return false }
@@ -44,7 +52,7 @@ struct SourceInputFence<Peer: Hashable> {
             negotiate(peer, supportsScoped: true)
             return true
         }
-        return !supportsScoped && source != .none && source == pinnedSource
+        return !supportsScoped && source != .none && Target(source, desktopScope) == pinnedSource
     }
 
     private mutating func releasePinIfScoped() {

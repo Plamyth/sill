@@ -167,6 +167,7 @@ package final class StreamCoordinator {
     private enum GeometryRecovery { case idle, scheduled(UUID) }
     private var geometryRecovery = GeometryRecovery.idle
     private var inputFence = SourceInputFence<ObjectIdentifier>()
+    private var desktopScope: String? { DisplayInventory.scope(catalog.displayInventory.current) }
     package private(set) var active: StreamSource = .none {
         didSet {
             if active != oldValue {
@@ -175,7 +176,7 @@ package final class StreamCoordinator {
                 microphoneReceiver.revoke(reason: "source changed")
                 inputGeneration = UUID().uuidString
             }
-            inputFence.sourceChanged(to: active)
+            inputFence.sourceChanged(to: active, desktopScope: desktopScope)
             if case .window(let id) = active { catalog.activeWindowID = id } else { catalog.activeWindowID = nil }
             if active == .none { status.update { $0.stream = nil } }
             server.setStreaming(active != .none)   // link keepalive ticks while a source is live
@@ -386,7 +387,7 @@ package final class StreamCoordinator {
         // The identity's TXT record (its tag, and `p` on a TLS home door) must be in the first
         // registration: set before `server.start()`.
         remote?.attach(server: server, status: status, macName: macName, requirePairing: config.requirePairing)
-        catalog.preferMainDisplay = virtualDisplay   // the Desktop source must never capture the virtual display
+        catalog.onDisplaysChanged = { [weak self] in self?.displaysChanged() }
         stage.onLost = { [weak self] in Task { @MainActor in await self?.stageLost() } }
         status.update { $0.synthetic = synthetic; $0.virtualDisplayOn = config.virtualDisplay }
         // Every change of the snapshot re-publishes the devices' settings state (deduplicated, so
@@ -402,7 +403,7 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 let id = ObjectIdentifier(connection)
-                guard self.inputFence.join(id, source: self.active, switching: self.switching) else {
+                guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
                     return
                 }
@@ -828,7 +829,6 @@ package final class StreamCoordinator {
             || old.requirePairing != next.requirePairing {
             remote?.apply(next)
         }
-        catalog.preferMainDisplay = next.virtualDisplay   // the Desktop source must never capture the virtual display
         if old.virtualDisplay && !next.virtualDisplay {
             stage.release()        // idempotent: select has already sent a staged window home
             status.update { $0.lastStageFailure = nil }
@@ -943,6 +943,11 @@ package final class StreamCoordinator {
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
         switch message.kind {
+        case .selectDisplay:
+            guard let selection = Wire.decode(DisplaySelection.self, from: message.payload) else { return }
+            // A monitor pick cannot queue behind an in-flight host restart.
+            guard !switching else { broadcastList(); return }
+            await select(.desktop, displaySelection: selection)
         case .selectSource:
             guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return }
             // A window picked comes forward on the Mac, which closes a view a gesture opened; the
@@ -988,7 +993,7 @@ package final class StreamCoordinator {
             let rect = requiresPresentation ? presentationInputRect(scoped) : currentSourceRect()
             guard !switching,
                   !requiresPresentation || (scoped?.generation == videoEpoch?.generation && scoped?.videoEpoch != nil && scoped?.videoEpoch == videoEpoch?.id),
-                  inputFence.accepts(device, generation: scoped?.generation, current: inputGeneration, source: active),
+                  inputFence.accepts(device, generation: scoped?.generation, current: inputGeneration, source: active, desktopScope: desktopScope),
                   let rect else {
                 // Stale input, a switch in progress, or no stream: input has nowhere
                 // to land. The up of a key or a button the Mac has down still
@@ -1308,18 +1313,10 @@ package final class StreamCoordinator {
     /// restarts leave Mac focus where it is, and so does staging a window on the virtual display.
     /// One exception: a staged window that comes home because the virtual display was turned off
     /// comes forward too, whichever select commits that change (see `cameHome`).
-    func select(_ source: StreamSource, bringForward: Bool = false) async {
+    func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil) async {
         guard !switching, !shuttingDown else { return }
-        guard inputFence.allowsSelection(source) else {
-            print("Source change paused: older Sill clients must disconnect or update before selecting another source.")
-            broadcastList()
-            return
-        }
         switching = true
-        videoEpoch = nil
-        server.resetForNewStream()
         restartOf = (source == active && source != .none) ? source : nil
-        await revokeRemoteAudio(reason: "source changed")
         defer {
             switching = false
             for connection in connections.values { sendMicrophoneCatalog(to: connection) }
@@ -1352,10 +1349,38 @@ package final class StreamCoordinator {
             // Settings, or a flip between the home and the away quality, that came in meanwhile; a
             // no-op when the pick's select commits them first.
             if pendingConfig != nil || (awayWanted != awayRunning && flipWait == nil) { Task { @MainActor in await self.applyPending() } }
+            if active == .desktop, !synthetic, catalog.display == nil {
+                Task { @MainActor in
+                    guard !self.switching, self.active == .desktop, self.catalog.display == nil else { return }
+                    await self.select(.none)
+                }
+            }
             // A stream that did not start (its window gone, capture refused): nothing streams, so
             // the links have nothing to be judged at.
             if active == .none { judgeLinks(nil) }
         }
+
+        // A fresh, bounded inventory read must succeed before changing a desktop pipeline.
+        if source == .desktop, !synthetic {
+            let refreshed = await catalog.refreshWindows()
+            guard refreshed, !shuttingDown,
+                  let selection = displaySelection ?? catalog.displayInventory.current,
+                  catalog.displayInventory.contains(selection),
+                  inputFence.allowsSelection(source, desktopScope: DisplayInventory.scope(selection)),
+                  catalog.selectDisplay(selection) else { broadcastList(); return }
+        }
+        guard inputFence.allowsSelection(source, desktopScope: desktopScope) else {
+            print("Source change paused: older Sill clients must disconnect or update before selecting another source.")
+            broadcastList()
+            return
+        }
+        if source == .desktop {
+            inputGeneration = UUID().uuidString
+            for device in connections.keys { injector.releaseInput(of: device) }
+        }
+        videoEpoch = nil
+        server.resetForNewStream()
+        await revokeRemoteAudio(reason: "source changed")
 
         await capture.stop()
         await syntheticCapture.stop()
@@ -1556,6 +1581,7 @@ package final class StreamCoordinator {
 
     private func startPipeline(source: StreamSource, filter: SCContentFilter?, sourceRect: CGRect?, width: Int, height: Int, describe: String,
                                title: String, kind: HostStatusSnapshot.Stream.Kind) async throws {
+        let desktopSelection = source == .desktop && !synthetic ? catalog.displayInventory.current : nil
         guard let bounds = currentSourceRect(source: source, fresh: true) else { throw PipelineEpochError.missingGeometry }
         let generation = source == active ? inputGeneration : UUID().uuidString
         let windowGeometry: VideoEpoch.Geometry?
@@ -1589,6 +1615,13 @@ package final class StreamCoordinator {
         } else {
             syntheticCapture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
             syntheticCapture.start(width: width, height: height, fps: fps)
+        }
+        if let desktopSelection {
+            guard catalog.displayInventory.current == desktopSelection,
+                  catalog.display != nil, currentSourceRect(source: source, fresh: true) == bounds else {
+                await capture.stop()
+                throw PipelineEpochError.missingGeometry
+            }
         }
         encoder = enc
         active = source
@@ -2311,6 +2344,24 @@ package final class StreamCoordinator {
         broadcastList()
     }
 
+    private func displaysChanged() {
+        guard !synthetic else { return }
+        if active == .desktop {
+            videoEpoch = nil
+            inputGeneration = UUID().uuidString
+            server.resetForNewStream()
+            pointer.setGeometry(nil, fps: fps)
+        }
+        broadcastList()
+        Task { @MainActor in
+            guard self.catalog.displayInventory.requiresSelection else { return }
+            await self.revokeRemoteAudio(reason: "Mac 모니터 구성이 변경되었습니다. 모니터를 다시 선택해 주세요.")
+            // A switch in flight rechecks before commit and stops an invalid desktop in its defer.
+            guard !self.switching, self.active == .desktop, self.catalog.display == nil else { return }
+            await self.select(.none)
+        }
+    }
+
     private var encoderWidth: Int { encoder?.width ?? 0 }
     private var encoderHeight: Int { encoder?.height ?? 0 }
 
@@ -2406,7 +2457,12 @@ package final class StreamCoordinator {
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
                                                       gestures: TrackpadGesture.generation,
                                                       remoteAudio: synthetic ? nil : 1,
-                                                      inputGeneration: inputGeneration, presentationInput: 1, videoEpoch: videoEpoch)))
+                                                      inputGeneration: inputGeneration, presentationInput: 1, videoEpoch: videoEpoch,
+                                                      displaySelection: synthetic ? nil : 1,
+                                                      displays: synthetic ? nil : catalog.displayInventory.infos,
+                                                      displayInventoryID: synthetic ? nil : catalog.displayInventory.revision,
+                                                      activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
+                                                      desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection)))
     }
 
     private func broadcastList() {
