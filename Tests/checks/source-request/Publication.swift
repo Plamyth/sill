@@ -18,11 +18,18 @@ struct Route {
     let isRemote = false
 }
 final class HostLocalOwnerGrant {
-    struct Scope { let videoEpoch: UUID }
+    struct Scope {
+        let videoEpoch: UUID
+        let source: StreamSource
+        let inputGeneration: UUID
+    }
     let fingerprint = Data([1])
     let scope: Scope
     var valid = true
-    init(_ epoch: UUID) { scope = Scope(videoEpoch: epoch) }
+    init(_ epoch: VideoEpoch) {
+        scope = Scope(videoEpoch: epoch.id, source: epoch.source,
+                      inputGeneration: UUID(uuidString: epoch.generation)!)
+    }
     func whileValid(at: UInt64, _ body: () -> Void) -> Bool {
         guard valid else { return false }; body(); return true
     }
@@ -96,6 +103,46 @@ final class PublicationServer {
                 server.queue.sync { server.replayCatalog(to: client) }
                 expect(client.connection.packets.count == sent + 2, "current ordinary catalog and cached replay both reach recording wire")
             }
+        }
+        for replay in [false, true] {
+            let server = PublicationServer(), client = Client()
+            client.presentationInput = true
+            server.clients[ObjectIdentifier(client.connection)] = client
+            let generation = UUID()
+            let epoch = VideoEpoch(generation: generation.uuidString, source: .desktop,
+                geometry: .init(x: 0, y: 0, width: 100, height: 100), width: 100, height: 100)
+            server.videoAdmission = .committed(epoch)
+            let grant = HostLocalOwnerGrant(epoch), id = UUID(), inventory = UUID()
+            let message = StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false,
+                payload: Wire.encode(WindowList(macName: "test", windows: [], active: .desktop,
+                    selectionRevision: "source:77", inputGeneration: generation.uuidString,
+                    videoEpoch: epoch, microphone: .init(peer: UUID(), destination: UUID(), generation: UUID()),
+                    displays: [.init(id: 91, name: "fixture", width: 100, height: 100, isMain: true)],
+                    displayInventoryID: inventory, activeDisplayID: 91,
+                    audioPrivacy: .init(version: 2, protected: true), catalogRefresh: 1, responseRequestID: id)))
+            let admission = SourcePublicationAdmission()
+            if replay {
+                server.sendCatalog(message, to: client.connection, admission: admission, grant: grant)
+                server.queue.sync {}
+                client.connection.packets.removeAll()
+                grant.valid = false
+                server.queue.sync { server.replayCatalog(to: client) }
+            } else {
+                server.queue.suspend()
+                server.sendCatalog(message, to: client.connection, admission: admission, grant: grant)
+                grant.valid = false
+                server.queue.resume(); server.queue.sync {}
+            }
+            let lists = client.connection.packets.compactMap {
+                Wire.decode(WindowList.self, from: Data($0.dropFirst(StreamMessage.headerLength)))
+            }
+            expect(lists.count == 1, "query expiry must still answer, actual count=\(lists.count), replay=\(replay)")
+            expect(lists.first?.responseRequestID == id && lists.first?.microphone == nil &&
+                   lists.first?.audioPrivacy == nil,
+                   "query expiry response keeps correlation and strips stale microphone/protection, replay=\(replay)")
+            expect(lists.first?.selectionRevision == "source:77" && lists.first?.displayInventoryID == inventory &&
+                   lists.first?.activeDisplayID == 91,
+                   "query fallback preserves source CAS and display inventory, replay=\(replay)")
         }
         print("PUBLICATION_CHECKS total=\(checks) failed=\(failed)")
         if failed > 0 { exit(1) }

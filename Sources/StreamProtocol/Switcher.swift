@@ -94,6 +94,11 @@ public struct AppInfo: Codable, Hashable, Identifiable {
     public init(name: String, bundleID: String) { self.name = name; self.bundleID = bundleID }
 }
 
+public struct FetchCatalog: Codable, Equatable {
+    public let requestID: UUID
+    public init(requestID: UUID) { self.requestID = requestID }
+}
+
 public struct WindowList: Codable {
     public var macName: String
     public var windows: [WindowInfo]
@@ -120,6 +125,8 @@ public struct WindowList: Codable {
     /// Nil from older hosts; older devices ignore this field.
     public var remoteAudio: Int?
     public var audioPrivacy: AudioPrivacyState?
+    public var catalogRefresh: Int?
+    public var responseRequestID: UUID?
 
     /// The dedicated source-intent CAS, independent of video and input generations.
     public var selectionRevision: String?
@@ -144,12 +151,15 @@ public struct WindowList: Codable {
                 remoteAudio: Int? = nil, selectionRevision: String? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
-                dockApps: [AppInfo]? = nil, audioPrivacy: AudioPrivacyState? = nil) {
+                dockApps: [AppInfo]? = nil, audioPrivacy: AudioPrivacyState? = nil,
+                catalogRefresh: Int? = nil, responseRequestID: UUID? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
         self.selectionRevision = selectionRevision
         self.audioPrivacy = audioPrivacy
+        self.catalogRefresh = catalogRefresh
+        self.responseRequestID = responseRequestID
         self.inputGeneration = inputGeneration
         self.presentationInput = presentationInput
         self.videoEpoch = videoEpoch
