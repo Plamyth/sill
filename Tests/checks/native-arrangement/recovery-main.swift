@@ -444,6 +444,63 @@ import CoreGraphics
                    "same-source/\(human) automatic request respects human admission and internal restart semantics")
         }
 
+        let automaticReplay = make()
+        automaticReplay.active = .window(801)
+        let startOne = PhaseBarrier()
+        let humanDelivery = PhaseBarrier()
+        let automaticDelivery = PhaseBarrier()
+        automaticReplay.capture.startBarrier = startOne
+        automaticReplay.replayBarrier = humanDelivery
+        automaticReplay.deliveryBarriers[4] = automaticDelivery
+        let restartOne = Task { @MainActor in await automaticReplay.select(.window(801)) }
+        await startOne.reached()
+        await automaticReplay.handlePick(.window(802))
+        automaticReplay.capture.startBarrier = nil
+        startOne.resume()
+        await restartOne.value
+        await humanDelivery.reached()
+        let startTwo = PhaseBarrier()
+        automaticReplay.capture.startBarrier = startTwo
+        let restartTwo = Task { @MainActor in await automaticReplay.select(.window(801)) }
+        await startTwo.reached()
+        await automaticReplay.handlePick(.desktop)
+        automaticReplay.capture.startBarrier = nil
+        startTwo.resume()
+        await restartTwo.value
+        await settle()
+        let humanStart = PhaseBarrier()
+        automaticReplay.capture.startBarrier = humanStart
+        humanDelivery.resume()
+        await humanStart.reached()
+        automaticDelivery.resume()
+        await settle()
+        automaticReplay.capture.startBarrier = nil
+        humanStart.resume()
+        await settle()
+        expect(automaticReplay.active == .window(802) && automaticReplay.committed.last == .window(802),
+               "automatic replay cannot inherit a pending human sequence and override its window")
+
+        let automaticRefresh = make()
+        let originalStart = PhaseBarrier()
+        automaticRefresh.capture.startBarrier = originalStart
+        let originalRequest = Task { @MainActor in await automaticRefresh.select(.desktop) }
+        await originalStart.reached()
+        automaticRefresh.catalog.displayInventory.invalidate(preservingDisplay:13)
+        automaticRefresh.displaysChanged()
+        await settle()
+        automaticRefresh.capture.startBarrier = nil
+        originalStart.resume()
+        await originalRequest.value
+        expect(automaticRefresh.active == .none && automaticRefresh.videoEpoch == nil,
+               "automatic refresh repro starts with an invalidated owned pipeline")
+        automaticRefresh.catalog.refreshResult = false
+        await automaticRefresh.handlePick(.desktop)
+        automaticRefresh.catalog.refreshResult = true
+        refill(automaticRefresh)
+        await settle()
+        expect(automaticRefresh.active == .desktop && automaticRefresh.videoEpoch != nil,
+               "automatic refresh refusal preserves owned recovery until validated refill")
+
         print("RECOVERY_CHECKS total=\(checks) failed=\(failures)")
         if failures != 0 { exit(1) }
     }

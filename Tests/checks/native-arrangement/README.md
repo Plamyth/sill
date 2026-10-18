@@ -1,5 +1,34 @@
 # Native display arrangement checks
 
+## Automatic-request provenance follow-up
+
+Owner `01a13ace-e372-7ed1-9946-149df37ee1c3` continues from independently
+rejected `cbf97075546081b7f7dece0f9e4048b38e179bf1` in the exclusive
+`codex/recovery-automatic-origin-20261019` worktree. The scope is the coordinator
+and this focused harness. Existing SDK/native/device gates stay closed.
+
+The disproved premise is that a matching human sequence also authorizes an
+automatic request to cancel recovery or to replay as that human request. Two
+new controlled schedules check an automatic replay racing a drained human pick,
+and an automatic refresh refusal between owned invalidation and valid refill.
+
+The caller trace distinguishes explicit display selection, explicit window/none
+picks, automatic client Desktop requests, and internal pipeline restarts.
+`bringForward` and an optional sequence alone lose the automatic origin during
+deferred delivery. The first design would drop every automatic request during
+any transition. That breaks the existing gesture-driven Desktop request during
+an internal window restart. The selected design retains request origin in a
+typed pick and tracks whether the latest admitted human sequence has settled.
+Automatic requests cannot borrow an unsettled human sequence, and only human
+intent cancels owned recovery. Last-client departure must cancel unsettled
+intent so a later client can select afresh.
+
+Grounding and the two sketches are a sequential parent pass. They are not an
+independent review. Before implementation, the new tests must fail against
+the unchanged candidate. Acceptance requires those schedules, the previous
+158 recovery assertions, native arrangement and monitor regressions, followed
+by a fresh independent verdict and the parent's exact SDK/native validation.
+
 Owner task `ipad-native-arrangement-20261018` remains on branch
 `codex/ipad-native-arrangement-20261018`, based on
 `5c4c4d4b791e21d7a9a1b594d9ca2b876f088c90`.

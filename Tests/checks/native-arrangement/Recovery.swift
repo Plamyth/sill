@@ -94,6 +94,7 @@ import CoreGraphics
     var committed = [StreamSource]()
     var audioBarrier: PhaseBarrier?
     var replayBarrier: PhaseBarrier?
+    var deliveryBarriers: [Int: PhaseBarrier] = [:]
     var pickDeliveries = 0
     private var pickObserver: (Int, CheckedContinuation<Void, Never>)?
     func picksDelivered(_ count: Int) async {
@@ -102,6 +103,7 @@ import CoreGraphics
     }
     func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil) async {
         pickDeliveries += 1
+        if let barrier = deliveryBarriers[pickDeliveries] { await barrier.suspend() }
         if pickDeliveries == 2, let replayBarrier { await replayBarrier.suspend() }
         await productionHandlePick(source, intentSequence: intentSequence)
         if let (count, observer) = pickObserver, pickDeliveries >= count {
