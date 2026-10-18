@@ -129,7 +129,13 @@ enum RemoteRoute: Equatable {
 /// Frame callbacks fire on the network queue; published state hops to main.
 final class StreamClient: ObservableObject {
     #if !os(visionOS)
+    #if os(iOS)
+    let audioAdmission = IPadAudioAdmission()
+    var audioCatalogAdmission: IPadAudioAdmission.Ticket?
+    private lazy var remoteAudio = RemoteAudioPlayer(admission: audioAdmission)
+    #else
     private let remoteAudio = RemoteAudioPlayer()
+    #endif
     @Published private(set) var remoteAudioStatus: IPadRemoteAudioController.Status = .unavailable
     lazy var remoteAudioControl = IPadRemoteAudioController(
         send: { [weak self] peer, request in self?.sendRemoteAudio(request, to: peer) },
@@ -145,7 +151,12 @@ final class StreamClient: ObservableObject {
         #endif
         guard let connection else { return }
         let origin = ObjectIdentifier(connection)
-        remoteAudio.receive(packet, subscription: requestID) { [weak self] event in
+        #if os(iOS)
+        let admission = audioCatalogAdmission
+        #else
+        let admission: IPadAudioAdmission.Ticket? = nil
+        #endif
+        remoteAudio.receive(packet, subscription: requestID, admission: admission) { [weak self] event in
             self?.remoteAudioControl.playerChanged(event, requestID: requestID, from: origin)
         }
     }
@@ -154,7 +165,7 @@ final class StreamClient: ObservableObject {
     @Published var microphoneReceipt: MicrophoneReceipt?
     @Published var microphoneCleanupProblem: String?
     var microphonePolicy = IPadMicrophonePolicy()
-    let microphoneFrames = IPadMicrophoneFrameGate()
+    lazy var microphoneFrames = IPadMicrophoneFrameGate(admission: audioAdmission)
     var microphoneCapture: IPadMicrophoneCapture?
     var microphoneCaptureToken: UUID?
     var desiredAudio = IPadDesiredAudio()
@@ -4358,6 +4369,9 @@ final class StreamClient: ObservableObject {
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
             let from: NWConnection? = peer
+            #if os(iOS)
+            let audioTicket = audioAdmission.observe(list, from: ObjectIdentifier(peer))
+            #endif
             #if os(visionOS)
             guard connection === peer else { return }
             observeVisionInputCatalog(list, from: peer)
@@ -4369,10 +4383,14 @@ final class StreamClient: ObservableObject {
                 // describe the next session.
                 guard self.connection === from else { return }
                 #if !os(visionOS)
-                self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
                 #if os(iOS)
-                self.microphoneObserve(list, from: peer)
-                self.desiredAudioObserve(list, from: peer)
+                if self.admitAudioCatalog(audioTicket) {
+                    self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
+                    self.microphoneObserve(list, from: peer)
+                    self.desiredAudioObserve(list, from: peer)
+                }
+                #else
+                self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
                 #endif
                 #endif
                 // A remote session, and one at home over TLS, is connected at its first window list,

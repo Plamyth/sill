@@ -12,7 +12,7 @@ output = Path(sys.argv[1]).resolve()
 output.mkdir(parents=True, exist_ok=True)
 if (output / 'result.json').exists(): raise SystemExit('reconcile existing attempt before retry')
 paths = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
-paths += [root / 'iOSClient' / name for name in ['IPadMicrophoneCapture.swift', 'IPadMicrophonePCM.swift',
+paths += [root / 'iOSClient' / name for name in ['IPadToolbarVisibility.swift', 'IPadAudioAdmission.swift', 'IPadMicrophoneCapture.swift', 'IPadMicrophonePCM.swift',
     'IPadMicrophonePolicy.swift', 'IPadAudioRoutePolicy.swift', 'IPadRemoteAudioController.swift',
     'StreamClient+AudioRoutes.swift', 'StreamClient+Audio.swift', 'StreamClient.swift', 'StreamScreen.swift',
     'IPadAudioRouteChooser.swift', 'HostSettingsPanel.swift', 'ContentView.swift', 'StreamClient+Microphone.swift', 'RemoteAudioPlayer.swift']]

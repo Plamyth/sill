@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D6000001000000000000A001 /* IPadAudioAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6000001000000000000F001 /* IPadAudioAdmission.swift */; };
 		D5000001000000000000A001 /* IPadDesiredAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5000001000000000000F001 /* IPadDesiredAudio.swift */; };
 		D5000001000000000000A002 /* StreamClient+DesiredAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5000001000000000000F002 /* StreamClient+DesiredAudio.swift */; };
 		D4000001000000000000A007 /* IPadToolbarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4000001000000000000F007 /* IPadToolbarVisibility.swift */; };
@@ -84,6 +85,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		D6000001000000000000F001 /* IPadAudioAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAudioAdmission.swift; sourceTree = "<group>"; };
 		D5000001000000000000F001 /* IPadDesiredAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadDesiredAudio.swift; sourceTree = "<group>"; };
 		D5000001000000000000F002 /* StreamClient+DesiredAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+DesiredAudio.swift"; sourceTree = "<group>"; };
 		D4000001000000000000F007 /* IPadToolbarVisibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadToolbarVisibility.swift; sourceTree = "<group>"; };
@@ -196,6 +198,7 @@
 				C3000001000000000000F001 /* RemoteAudioPlayer.swift */,
 				C3000001000000000000F004 /* IPadAudioSession.swift */,
 				D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */,
+				D6000001000000000000F001 /* IPadAudioAdmission.swift */,
 				D5000001000000000000F001 /* IPadDesiredAudio.swift */,
 				D5000001000000000000F002 /* StreamClient+DesiredAudio.swift */,
 				D4000001000000000000F007 /* IPadToolbarVisibility.swift */,
@@ -384,6 +387,7 @@
 				C3000001000000000000A001 /* RemoteAudioPlayer.swift in Sources */,
 				C3000001000000000000A004 /* IPadAudioSession.swift in Sources */,
 				D4000001000000000000A001 /* IPadAudioRoutePolicy.swift in Sources */,
+				D6000001000000000000A001 /* IPadAudioAdmission.swift in Sources */,
 				D5000001000000000000A001 /* IPadDesiredAudio.swift in Sources */,
 				D5000001000000000000A002 /* StreamClient+DesiredAudio.swift in Sources */,
 				D4000001000000000000A007 /* IPadToolbarVisibility.swift in Sources */,

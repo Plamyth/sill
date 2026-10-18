@@ -28,7 +28,7 @@ import StreamProtocol
 final class RemoteAudioPlayer {
     var packets: [Data] = []
     var stops = 0
-    func receive(_ packet: Data, subscription: UUID, report: @escaping (IPadRemoteAudioController.PlaybackEvent) -> Void) { packets.append(packet) }
+    func receive(_ packet: Data, subscription: UUID, admission: IPadAudioAdmission.Ticket? = nil, report: @escaping (IPadRemoteAudioController.PlaybackEvent) -> Void) { packets.append(packet) }
     func stop() { stops += 1 }
 }
 final class NWConnection {
@@ -42,6 +42,11 @@ final class NWConnection {
 final class SessionLink { var connection: NWConnection? }
 final class StreamClient {
     private let link = SessionLink()
+    var selectionRevision: String?
+    var sourceCatalogEpoch: UUID?
+    var resumeOpportunity: UUID?
+    var scheduledAutomaticTicket: UUID?
+    func beginAutomaticConnectionOpportunity() {}
     func microphoneBackgrounded() {}
     func microphoneBecameInactive() {}
 '''
@@ -72,6 +77,9 @@ enum ScenePhase { case active, inactive, background }
 @MainActor final class SceneHarness {
     let client: StreamClient
     var scaleOpen = true
+    var menuOpen = true
+    var displayMenuOpen = true
+    var toolbar = IPadToolbarVisibility()
     var windowMenu: Int? = 1
     init(client: StreamClient) { self.client = client }
     func changed(_ phase: ScenePhase) {
@@ -79,6 +87,7 @@ enum ScenePhase { case active, inactive, background }
     }
 }
 '''
+fixture += (root / 'iOSClient/IPadToolbarVisibility.swift').read_text()
 (out / 'ClientFixture.swift').write_text(fixture)
 
 checks = {
@@ -87,12 +96,14 @@ checks = {
     'audio adapter is called by handle': 'if receiveRemoteAudio(header, data, from: peer) { return }',
     'window lists retain origin': 'let from: NWConnection? = peer',
     'window lists update capability and source': 'self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))',
-    'source selection revokes before send': 'private func request(_ source: StreamSource) {\n        remoteAudioControl.sourceWillChange()',
+    'source selection revokes before send': 'remoteAudioControl.sourceWillChange()',
     'teardown clears consent': 'remoteAudioControl.setConnection(nil)',
     'handover clears consent': 'remoteAudioControl.setConnection(ObjectIdentifier(c))',
 }
 for name, needle in checks.items():
     assert needle in client, name
+request = body_after('    private func request(')
+assert request.index('remoteAudioControl.sourceWillChange()') < request.index('let payload =')
 assert 'remoteAudio.receive(data)' not in client
 panel = (root / 'iOSClient/HostSettingsPanel.swift').read_text()
 assert 'IPadRemoteAudioControl(client: client)' in panel

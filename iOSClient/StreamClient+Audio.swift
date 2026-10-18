@@ -23,8 +23,14 @@ extension StreamClient {
 
     func receiveRemoteAudio(_ header: StreamHeader, _ data: Data, from origin: NWConnection) -> Bool {
         guard header.kind == .audio || header.kind == .remoteAudioState else { return false }
+        #if os(iOS)
+        let admission = audioAdmission.ticket(for: ObjectIdentifier(origin))
+        #endif
         DispatchQueue.main.async {
             guard self.connection === origin else { return }
+            #if os(iOS)
+            guard self.audioAdmission.isCurrent(admission) else { return }
+            #endif
             let peer = ObjectIdentifier(origin)
             #if os(iOS)
             guard self.desiredAudioPermits(.playback) else {
