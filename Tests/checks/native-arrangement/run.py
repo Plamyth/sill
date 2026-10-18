@@ -77,7 +77,7 @@ if args.suite == 'recovery':
 """)
     fixture = fixture.replace('// PIPELINE_VALIDATION', validation)
     fixture = fixture.replace('// DISPLAYS_CHANGED', block(coordinator, 'private func displaysChanged(').replace('private func','func',1))
-    fixture = fixture.replace('// HANDLE_PICK', block(coordinator, 'private func handlePick(').replace('private func','func',1))
+    fixture = fixture.replace('// HANDLE_PICK', block(coordinator, 'private func handlePick(').replace('private func handlePick', 'private func productionHandlePick', 1))
     fixture = fixture.replace('// OWNED_RECOVERY', recovery)
     inputs = {'Recovery.swift': fixture, 'main.swift': (here/'recovery-main.swift').read_text(),
         'DisplayInventory.swift': inventory.read_text().replace('import StreamProtocol\n',''),

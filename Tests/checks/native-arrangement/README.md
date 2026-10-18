@@ -149,3 +149,10 @@ Receipts are in the routed Development-Archives folders named
 `native-arrangement-recovery-final-20261018`,
 `native-arrangement-recovery-native-20261018` and
 `native-arrangement-recovery-monitor-20261018`.
+
+## Recovery premise round 2
+
+Task `recovery-premise-round2-20261018` starts at `a5a958b5e0dff487855d68522b4fe49ac3cd1b60` in an exclusive worktree.
+Premise under direct test: owned recovery intent can be inferred from active/current after asynchronous topology and cleanup, and queued user picks need retention only while restartOf is nonnil.
+The red tests split inventory invalidation, startup completion, and inventory refill. A second test suspends failed refresh and audio shutdown independently, then observes the prior select defer delivering its queued pick during cleanup.
+The fixture wraps the unchanged production handlePick in a delivery counter. Production select guards, full stop/audio prefix and defer, recovery methods, post-start validation, DisplayInventory, and SourceInputFence are extracted verbatim. Encoder/filter creation and commit publication remain controlled boundaries.

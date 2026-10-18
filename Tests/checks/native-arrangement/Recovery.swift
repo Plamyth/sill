@@ -1,12 +1,33 @@
 import Foundation
 import CoreGraphics
 
+@MainActor final class PhaseBarrier {
+    private(set) var entered = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    func suspend() async {
+        entered = true
+        await withCheckedContinuation { waiter = $0 }
+    }
+    func resume() { let w = waiter; waiter = nil; w?.resume() }
+    func reached() async {
+        for _ in 0..<100_000 {
+            if entered { return }
+            await Task.yield()
+        }
+        fatalError("phase barrier was not reached")
+    }
+}
 @MainActor final class Catalog {
     var displayInventory = DisplayInventory()
     var clientCount = 1
     var display: UInt32? { displayInventory.current?.displayID }
     var bounds = CGRect(x: 3432, y: 0, width: 1350, height: 976)
-    func refreshWindows() async -> Bool { true }
+    var refreshBarrier: PhaseBarrier?
+    var refreshResult = true
+    func refreshWindows() async -> Bool {
+        if let refreshBarrier { await refreshBarrier.suspend() }
+        return refreshResult
+    }
     func selectDisplay(_ selection: DisplaySelection) -> Bool { displayInventory.select(selection) }
 }
 @MainActor final class Capture {
@@ -16,7 +37,11 @@ import CoreGraphics
     var pauseStarts = Set<Int>()
     var waiter: CheckedContinuation<Void, Never>?
     var starts = 0
-    func stop() async { running = false }
+    var stopBarrier: PhaseBarrier?
+    func stop() async {
+        if let stopBarrier { await stopBarrier.suspend() }
+        running = false
+    }
     func start() async {
         starts += 1
         if pauseNext || pauseStarts.contains(starts) {
@@ -61,12 +86,21 @@ import CoreGraphics
     var fps = 60
     var audioLive = true
     var committed = [StreamSource]()
+    var audioBarrier: PhaseBarrier?
+    var pickDeliveries = 0
+    func handlePick(_ source: StreamSource) async {
+        pickDeliveries += 1
+        await productionHandlePick(source)
+    }
     func broadcastList() {}
     func sendMicrophoneCatalog(to connection: Int) {}
     func judgeLinks(_ value: Int?) {}
     func applyViewportToActiveWindow() async {}
     func applyPending() async {}
-    func revokeRemoteAudio(reason: String) async { audioLive = false }
+    func revokeRemoteAudio(reason: String) async {
+        if let audioBarrier { await audioBarrier.suspend() }
+        audioLive = false
+    }
     func currentSourceRect(source: StreamSource, fresh: Bool) -> CGRect? { catalog.bounds }
     enum PipelineEpochError: Error { case missingGeometry }
     func startPipeline(source: StreamSource) async throws {

@@ -126,6 +126,50 @@ import CoreGraphics
         expect(lost.active == .none && !lost.capture.running && !lost.audioLive && lost.capture.starts == 1,
                "actual display loss cancels queued restore and keeps capture stopped")
 
+        func refill(_ c: RecoveryCoordinator) {
+            c.catalog.bounds.origin.x = -1350
+            c.catalog.displayInventory.update(c.catalog.displayInventory.infos, signatures:["owned"],
+                                             frames:[c.catalog.bounds], preservingDisplay:13)
+            c.displaysChanged()
+        }
+        let lateRefill = make()
+        lateRefill.capture.pauseNext = true
+        let startup = Task { @MainActor in await lateRefill.select(.desktop) }
+        for _ in 0..<100_000 where lateRefill.capture.waiter == nil { await Task.yield() }
+        expect(lateRefill.capture.waiter != nil, "invalidation repro holds actual pipeline validation await")
+        lateRefill.catalog.displayInventory.invalidate(preservingDisplay:13)
+        lateRefill.displaysChanged()
+        await settle()
+        lateRefill.capture.resume()
+        await startup.value
+        expect(lateRefill.active == .none && lateRefill.videoEpoch == nil,
+               "startup rejects invalid inventory before refill")
+        refill(lateRefill)
+        await settle()
+        expect(lateRefill.active == .desktop && lateRefill.videoEpoch != nil && lateRefill.capture.starts == 2,
+               "invalidation then startup return then refill preserves owned recovery intent")
+
+        let cleanupPick = make()
+        let refresh = PhaseBarrier()
+        let shutdown = PhaseBarrier()
+        cleanupPick.catalog.refreshBarrier = refresh
+        cleanupPick.catalog.refreshResult = false
+        move(cleanupPick, x:-1350)
+        await refresh.reached()
+        await cleanupPick.handlePick(.window(123))
+        cleanupPick.audioBarrier = shutdown
+        refresh.resume()
+        await shutdown.reached()
+        for _ in 0..<100_000 where cleanupPick.pickDeliveries < 2 { await Task.yield() }
+        expect(cleanupPick.pickDeliveries == 2 && cleanupPick.switching,
+               "prior select defer delivers queued pick during suspended cleanup")
+        cleanupPick.audioBarrier = nil
+        cleanupPick.catalog.refreshBarrier = nil
+        shutdown.resume()
+        await settle()
+        expect(cleanupPick.active == .window(123) && cleanupPick.committed.last == .window(123),
+               "failed refresh queued window pick survives suspended audio shutdown")
+
         print("RECOVERY_CHECKS total=\(checks) failed=\(failures)")
         if failures != 0 { exit(1) }
     }
