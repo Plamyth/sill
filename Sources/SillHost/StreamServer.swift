@@ -1427,18 +1427,30 @@ final class StreamServer {
         queue.async { [self] in
             admission.publish {
                 guard message.kind == .windowList, let client = clients[ObjectIdentifier(connection)],
+                      client.connection === connection,
                       client.connection.state == .ready else { return }
+                var outgoing = message
+                var boundGrant = grant
                 let publish = {
                     client.catalogSent = true
-                    client.latestCatalog = message
+                    client.latestCatalog = outgoing
                     client.catalogAdmission = admission
-                    client.microphoneCatalogGrant = grant
-                    self.send(message.serialized(), to: client)
+                    client.microphoneCatalogGrant = boundGrant
+                    self.send(outgoing.serialized(), to: client)
                 }
                 if let grant {
                     guard client.route.encrypted, client.route.fingerprint == grant.fingerprint,
-                          videoAdmission.current?.id == grant.scope.videoEpoch else { return }
-                    _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, publish)
+                          videoAdmission.current?.id == grant.scope.videoEpoch,
+                          videoAdmission.current?.source == grant.scope.source,
+                          videoAdmission.current?.generation == grant.scope.inputGeneration.uuidString else { return }
+                    if grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, publish) { return }
+                    guard var list = Wire.decode(WindowList.self, from: outgoing.payload),
+                          list.responseRequestID != nil else { return }
+                    list.microphone = nil
+                    list.audioPrivacy = nil
+                    outgoing.payload = Wire.encode(list)
+                    boundGrant = nil
+                    publish()
                 } else {
                     publish()
                 }
@@ -1606,12 +1618,14 @@ final class StreamServer {
             guard var message = client.latestCatalog else { return }
             if let grant = client.microphoneCatalogGrant,
                case .committed(let epoch) = videoAdmission, epoch.id == grant.scope.videoEpoch,
+               epoch.source == grant.scope.source, epoch.generation == grant.scope.inputGeneration.uuidString,
                client.route.encrypted, client.route.fingerprint == grant.fingerprint,
                grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, { send(message.serialized(), to: client) }) {
                 return
             }
             if var list = Wire.decode(WindowList.self, from: message.payload), list.microphone != nil {
                 list.microphone = nil
+                list.audioPrivacy = nil
                 message.payload = Wire.encode(list)
             }
             client.microphoneCatalogGrant = nil

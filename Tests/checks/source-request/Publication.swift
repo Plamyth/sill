@@ -13,8 +13,8 @@ final class NWConnection {
     }
 }
 struct Route {
-    let encrypted = true
-    let fingerprint: Data? = Data([1])
+    var encrypted = true
+    var fingerprint: Data? = Data([1])
     let isRemote = false
 }
 final class HostLocalOwnerGrant {
@@ -22,21 +22,25 @@ final class HostLocalOwnerGrant {
         let videoEpoch: UUID
         let source: StreamSource
         let inputGeneration: UUID
+        let peer: UUID
+        let destination = UUID()
+        let capability = UUID()
     }
     let fingerprint = Data([1])
     let scope: Scope
     var valid = true
-    init(_ epoch: VideoEpoch) {
+    init(_ epoch: VideoEpoch, peer: UUID = UUID()) {
         scope = Scope(videoEpoch: epoch.id, source: epoch.source,
-                      inputGeneration: UUID(uuidString: epoch.generation)!)
+                      inputGeneration: UUID(uuidString: epoch.generation)!, peer: peer)
     }
+    func valid(at: UInt64) -> Bool { valid }
     func whileValid(at: UInt64, _ body: () -> Void) -> Bool {
         guard valid else { return false }; body(); return true
     }
 }
 final class Client {
     let connection = NWConnection()
-    let route = Route()
+    var route = Route()
     var catalogSent = true
     var latestCatalog: StreamMessage?
     var catalogAdmission: SourcePublicationAdmission?
@@ -65,6 +69,7 @@ final class PublicationServer {
     var clients: [ObjectIdentifier: Client] = [:]
     // PUBLICATION_METHODS
 }
+// QUERY_FIXTURE
 @main struct Checks {
     static func main() {
         var checks = 0, failed = 0
@@ -144,6 +149,34 @@ final class PublicationServer {
                    lists.first?.activeDisplayID == 91,
                    "query fallback preserves source CAS and display inventory, replay=\(replay)")
         }
+        for stale in ["source", "generation", "epoch", "plain", "pin", "admission"] {
+            let server = PublicationServer(), client = Client()
+            server.clients[ObjectIdentifier(client.connection)] = client
+            let epoch = VideoEpoch(generation: UUID().uuidString, source: .desktop,
+                geometry: .init(x: 0, y: 0, width: 100, height: 100), width: 100, height: 100)
+            server.videoAdmission = .committed(epoch)
+            let admission = SourcePublicationAdmission(), grant = HostLocalOwnerGrant(epoch)
+            let message = StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false,
+                payload: Wire.encode(WindowList(macName: "fixture", windows: [], active: .desktop,
+                    inputGeneration: epoch.generation, videoEpoch: epoch, responseRequestID: UUID())))
+            server.queue.suspend()
+            server.sendCatalog(message, to: client.connection, admission: admission, grant: grant)
+            switch stale {
+            case "source":
+                server.videoAdmission = .committed(.init(id: epoch.id, generation: epoch.generation, source: .window(73),
+                    geometry: epoch.geometry, width: 100, height: 100))
+            case "generation":
+                server.videoAdmission = .committed(.init(id: epoch.id, generation: UUID().uuidString, source: .desktop,
+                    geometry: epoch.geometry, width: 100, height: 100))
+            case "epoch": server.videoAdmission = .stopped
+            case "plain": client.route.encrypted = false
+            case "pin": client.route.fingerprint = Data([2])
+            default: admission.invalidate()
+            }
+            server.queue.resume(); server.queue.sync {}
+            expect(client.connection.packets.isEmpty, "queued query cannot cross stale \(stale) boundary")
+        }
+        queryChecks(expect)
         print("PUBLICATION_CHECKS total=\(checks) failed=\(failed)")
         if failed > 0 { exit(1) }
     }

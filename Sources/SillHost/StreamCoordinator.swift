@@ -1152,6 +1152,8 @@ package final class StreamCoordinator {
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
         guard inputFence.contains(ObjectIdentifier(connection)) else { return }
         switch message.kind {
+        case .fetchCatalog:
+            refreshCatalog(message, from: connection)
         case .changeAudioRoute, .fetchAudioRoutes:
             handleAudioRoute(message, from: connection)
         case .selectDisplay, .selectSource, .launchApp:
@@ -2777,7 +2779,35 @@ package final class StreamCoordinator {
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
                                                       dockApps: synthetic ? nil : dockApps(),
-                                                      audioPrivacy: audioPrivacy?.state)))
+                                                      audioPrivacy: audioPrivacy?.state, catalogRefresh: synthetic ? nil : 1)))
+    }
+
+    private func refreshCatalog(_ message: StreamMessage, from connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        guard message.payload.count <= StreamMessage.clientPayloadLimit(for: .fetchCatalog),
+              let query = Wire.decode(FetchCatalog.self, from: message.payload),
+              connections[id] === connection, let route = routes[id], route.encrypted,
+              let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
+              !synthetic, !shuttingDown else { return }
+        var response = listMessage()
+        guard var list = Wire.decode(WindowList.self, from: response.payload) else { return }
+        list.responseRequestID = query.requestID
+        var existingGrant: HostLocalOwnerGrant?
+        // A query reads cached protection and grants; verify() can schedule HAL repair.
+        if audioPrivacy?.state.version == 2, audioPrivacy?.state.protected == true,
+           !switching, let epoch = videoEpoch,
+           let peer = microphoneIngress.peer(connection),
+           let grant = microphoneReceiver.advertisedGrant(peer: peer.id),
+           grant.fingerprint == fingerprint, grant.valid(at: DispatchTime.now().uptimeNanoseconds),
+           grant.scope.peer == peer.id, grant.scope.videoEpoch == epoch.id,
+           grant.scope.source == active, epoch.source == active,
+           grant.scope.inputGeneration == UUID(uuidString: inputGeneration), epoch.generation == inputGeneration {
+            list.microphone = MicrophoneCapability(peer: peer.id, destination: grant.scope.destination,
+                                                  generation: grant.scope.capability)
+            existingGrant = grant
+        }
+        response.payload = Wire.encode(list)
+        server.sendCatalog(response, to: connection, admission: sourcePublicationAdmission, grant: existingGrant)
     }
 
     /// Read only the current user's Dock app tiles; no Dock preference is changed.
