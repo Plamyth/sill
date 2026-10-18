@@ -91,11 +91,11 @@ struct IPadAudioRouteChooser: View {
                 Section {
                     Text("실제 마이크와 출력 장치는 iPad의 현재 오디오 경로를 사용합니다. 일부 Bluetooth 장치는 입력을 바꾸면 출력도 함께 바뀝니다.")
                         .foregroundStyle(.secondary)
-                    Text("선택은 인증된 Mac별로 기억합니다. Mac 음소거 보호와 화면 제어권을 확인한 연결에서만 자동으로 다시 사용합니다. 마이크 권한은 자동으로 요청하지 않습니다.")
+                    Text("선택은 인증된 Mac별로 기억합니다. Mac의 오디오 보호와 새 연결 승인을 확인하면 다시 사용합니다. 그림판을 열어도 사용할 수 있으며 마이크 권한은 자동으로 요청하지 않습니다.")
                         .foregroundStyle(.secondary)
                     Text(client.audioPrivacyState?.version == 1 && client.audioPrivacyState?.protected == true
-                         ? "Mac이 내장 마이크·스피커 음소거와 가상 오디오 경로를 확인했습니다. 연결이 끊겨도 Mac 음소거를 해제하지 않습니다."
-                         : "Mac 음소거 보호가 확인되지 않았습니다. 자동으로 다시 켜지 않으며, 이전 Mac에서는 직접 켜야 합니다.")
+                         ? "Mac이 현재 오디오 보호 상태를 보고했습니다. 연결이 끊겨도 Mac 음소거를 해제하지 않습니다."
+                         : "Mac 오디오 보호가 확인되지 않아 iPad 입출력을 시작할 수 없습니다. Mac 앱의 보호 상태와 버전을 확인하세요.")
                         .foregroundStyle(.secondary)
                     LabeledContent("다시 연결할 때 마이크", value: client.desiredAudioSelection.microphone ? "사용 기억됨" : "사용 안 함")
                     LabeledContent("다시 연결할 때 재생", value: client.desiredAudioSelection.playback ? "사용 기억됨" : "사용 안 함")

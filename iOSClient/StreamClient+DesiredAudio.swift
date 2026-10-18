@@ -31,7 +31,8 @@ extension StreamClient {
     }
 
     func suspendDesiredAudio(preserveManualPermission: Bool = false) {
-        let keepAuthorization = preserveManualPermission && !audioAutomaticDirections.contains(.microphone)
+        let keepAuthorization = preserveManualPermission &&
+            (audioRouteAuthorization != nil || !audioAutomaticDirections.contains(.microphone))
         if !keepAuthorization {
             audioRouteAuthorization = nil
             audioPendingMicrophonePermission = nil
@@ -86,7 +87,7 @@ extension StreamClient {
         desiredAudio.observeMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
         guard foreground else {
             if remoteAudioStatus.requested || microphonePolicy.phase.canStop || microphoneCaptureToken != nil {
-                suspendDesiredAudio()
+                suspendDesiredAudio(preserveManualPermission: UIApplication.shared.applicationState == .inactive)
             }
             return
         }
@@ -133,7 +134,7 @@ final class IPadAudioResumeObserver {
         observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification,
             object: nil, queue: .main) { [weak client] _ in
                 client?.desiredAudio.observeForeground(false)
-                client?.suspendDesiredAudio()
+                client?.suspendDesiredAudio(preserveManualPermission: true)
             })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main) { [weak client] _ in
