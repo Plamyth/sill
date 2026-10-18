@@ -104,7 +104,7 @@ private final class PrivacyCoordinatorFixture {
     init(_ privacy: HostAudioPrivacy?) {
         audioPrivacy = privacy
         privacy?.changed = { [weak self] state in self?.audioPrivacyChanged(state) }
-        privacy?.revokeForLocalReturn = { [weak self] in await self?.prepareLocalAudioReturn() ?? false }
+        // PRODUCTION_REVOCATION
     }
     private func broadcastList() { broadcasts += 1 }
     private func listMessage() -> StreamMessage {
@@ -190,13 +190,13 @@ func coordinatorChecks(_ privacy: HostAudioPrivacy) async {
 @MainActor
 func serverDrainChecks() async {
     let fake = PrivacyFakeHAL()
-    let privacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations), clearLatch: { true }, authenticateLocal: { true })
+    let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: fake.operations), clearLatch: { true }, authenticateLocal: { true })
     expect(privacy.armAndVerify(), "production boundary restore fixture armed")
     await PrivacyCoordinatorFixture(privacy).localReturnCheck(fake)
     privacy.stop()
 
     let staleFake = PrivacyFakeHAL()
-    let stale = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: staleFake.operations), clearLatch: { true }, authenticateLocal: { true })
+    let stale = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: staleFake.operations), clearLatch: { true }, authenticateLocal: { true })
     var acknowledgement: CheckedContinuation<Bool, Never>?
     stale.revokeForLocalReturn = { await withCheckedContinuation { acknowledgement = $0 } }
     expect(stale.armAndVerify(), "post-auth generation fixture armed")
@@ -221,5 +221,91 @@ func serverDrainChecks() async {
     stalledServer.queue.sync {
         let callbacks = stalledPeer.completions; stalledPeer.completions.removeAll()
         callbacks.forEach { $0() }
+    }
+}
+
+@MainActor
+func nativeStartupChecks() async {
+    for succeeds in [false, true] {
+        let fake = PrivacyFakeHAL()
+        let original = fake.snapshot
+        let startup = NativeAudioStartup()
+        var authCalls = 0
+        let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants,
+            hal: CoreAudioPrivacyHAL(ops: fake.operations), latched: true,
+            localState: try! LocalAudioState(original), clearLatch: { true },
+            authenticateLocal: { authCalls += 1; return true }, nativeStartup: startup)
+        expect(privacy.reconcile(), "startup reconciles persisted latch before construction \(succeeds)")
+        let before = fake.writes.count
+        var completed = false
+        let request = Task { @MainActor in
+            let result = await privacy.requestLocalReturn()
+            completed = true
+            return result
+        }
+        for _ in 0..<40 { await Task.yield() }
+        expect(!completed && authCalls == 0 && fake.writes.count == before,
+               "cold request yields while initializing without spurious authentication \(succeeds)")
+        var coordinator: PrivacyCoordinatorFixture?
+        var peer: BoundaryConnection?
+        do {
+            coordinator = try startup.construct {
+                if !succeeds { throw PrivacyFakeHAL.Failure() }
+                return PrivacyCoordinatorFixture(privacy)
+            }
+            let connection = BoundaryConnection()
+            peer = connection
+            let server = coordinator!.server
+            server.queue.sync { server.clients[ObjectIdentifier(connection)] = BoundaryServer.Client(connection) }
+            server.setRemoteAudio(true, for: connection, afterSequence: 0)
+            server.broadcastRemoteAudio(Data([1]), epoch: 0, sequence: 1)
+            expect(server.queue.sync { connection.completions.count } == 1, "startup success holds actual submitted native audio")
+        } catch {
+            expect(!succeeds && privacy.revokeForLocalReturn == nil,
+                   "proven construction failure has no native coordinator or callback")
+        }
+        if let coordinator, let peer {
+            for _ in 0..<40 { if coordinator.physicalAudioRoutesRetired { break }; await Task.yield() }
+            expect(authCalls == 1 && !completed && fake.writes.count == before && coordinator.physicalAudioRoutesRetired,
+                   "created coordinator must acknowledge its actual extracted barrier before restore")
+            coordinator.server.queue.sync {
+                let callbacks = peer.completions
+                peer.completions.removeAll()
+                callbacks.forEach { $0() }
+            }
+        }
+        let restored = await request.value
+        expect(restored && authCalls == 1 && !privacy.latched && fake.snapshot == original,
+               "verified all fake participants restore after resolved startup \(succeeds)")
+        privacy.stop()
+    }
+
+    let fake = PrivacyFakeHAL()
+    let startup = NativeAudioStartup()
+    startup.construct { () }
+    let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants,
+        hal: CoreAudioPrivacyHAL(ops: fake.operations), clearLatch: { true },
+        authenticateLocal: { true }, nativeStartup: startup)
+    expect(privacy.armAndVerify(), "missing created-coordinator barrier fixture armed")
+    let before = fake.writes.count
+    let missing = await privacy.requestLocalReturn()
+    expect(!missing && privacy.latched && fake.writes.count == before,
+           "created coordinator with nil callback never acknowledges quiescence")
+    privacy.stop()
+
+    for coverage in [LocalAudioReturnCoverage.unknown, .nativeCoordinatorOnly] {
+        let device = PrivacyFakeHAL()
+        let original = try! LocalAudioState(device.snapshot)
+        device.safe()
+        var authCalls = 0, barrierCalls = 0
+        let blocked = HostAudioPrivacy(localReturnCoverage: coverage,
+            hal: CoreAudioPrivacyHAL(ops: device.operations), latched: true, localState: original,
+            clearLatch: { true }, authenticateLocal: { authCalls += 1; return true })
+        blocked.revokeForLocalReturn = { barrierCalls += 1; return true }
+        let refused = await blocked.requestLocalReturn()
+        expect(!refused && blocked.latched && blocked.localReturnUnavailableReason != nil &&
+               authCalls == 0 && barrierCalls == 0 && device.reads == 0 && device.writes.isEmpty,
+               "unverified participant coverage refuses before OS authentication or any HAL access")
+        blocked.stop()
     }
 }

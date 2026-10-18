@@ -12,7 +12,7 @@ func expect(_ condition: @autoclosure () -> Bool, _ label: String) {
 struct HostAudioPrivacyChecks {
     @MainActor static func guardFor(_ fake: PrivacyFakeHAL, latched: Bool = false,
                                    persist: @escaping () -> Bool = { true }, localState: LocalAudioState? = nil) -> HostAudioPrivacy {
-        HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations), latched: latched, persist: persist, localState: localState)
+        HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: fake.operations), latched: latched, persist: persist, localState: localState)
     }
 
     @MainActor static func main() async {
@@ -132,6 +132,7 @@ struct HostAudioPrivacyChecks {
         await localReturnChecks()
         await adversarialLocalReturnChecks()
         await serverDrainChecks()
+        await nativeStartupChecks()
         await endpointChecks()
         await eventChecks()
         await ownerChecks()
@@ -312,7 +313,7 @@ struct HostAudioPrivacyChecks {
         var latch = false
         var accepted = false
         var authCalls = 0
-        let privacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations), persist: { latch = true; return true },
+        let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: fake.operations), persist: { latch = true; return true },
             saveLocal: { saved = $0; return true }, clearLatch: { latch = false; return true },
             authenticateLocal: { authCalls += 1; return accepted })
         privacy.revokeForLocalReturn = { true }
@@ -339,7 +340,7 @@ struct HostAudioPrivacyChecks {
 
         let staleFake = PrivacyFakeHAL()
         var completion: CheckedContinuation<Bool, Never>?
-        let stale = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: staleFake.operations), clearLatch: { true },
+        let stale = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: staleFake.operations), clearLatch: { true },
             authenticateLocal: { await withCheckedContinuation { completion = $0 } })
         stale.revokeForLocalReturn = { true }
         expect(stale.armAndVerify(), "stale auth fixture armed")
@@ -355,7 +356,7 @@ struct HostAudioPrivacyChecks {
         stale.stop()
 
         let missingFake = PrivacyFakeHAL()
-        let missing = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: missingFake.operations), clearLatch: { true },
+        let missing = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: missingFake.operations), clearLatch: { true },
             authenticateLocal: { true })
         missing.revokeForLocalReturn = { true }
         expect(missing.armAndVerify(), "missing original fixture armed")
@@ -372,7 +373,7 @@ struct HostAudioPrivacyChecks {
         unsupported.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "DN32-LIVE", transport: .other,
             plugin: nil, inputChannels: 32, outputChannels: 32))
         let unchanged = unsupported.snapshot
-        let unsupportedPrivacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: unsupported.operations),
+        let unsupportedPrivacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: unsupported.operations),
             clearLatch: { true }, authenticateLocal: { true })
         var stopped = false
         unsupportedPrivacy.revokeForLocalReturn = { stopped = true; return true }
@@ -383,7 +384,7 @@ struct HostAudioPrivacyChecks {
                "authenticated return clears failed protection when originals are already unchanged")
         unsupportedPrivacy.stop()
         let capture = PrivacyFakeHAL()
-        let noJournal = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: capture.operations), saveLocal: { _ in false })
+        let noJournal = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: capture.operations), saveLocal: { _ in false })
         expect(!noJournal.armAndVerify() && noJournal.latched && capture.writes.isEmpty, "failed first journal capture cannot mutate hardware")
         expect(!noJournal.armAndVerify() && !noJournal.reconcile() && capture.writes.isEmpty, "retry cannot snapshot protected state or bypass missing journal")
         noJournal.stop()
@@ -417,7 +418,7 @@ struct HostAudioPrivacyChecks {
         let fake = PrivacyFakeHAL()
         var journal: LocalAudioState?
         var allowSave = true
-        let privacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations),
+        let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: fake.operations),
             saveLocal: { if allowSave { journal = $0 }; return allowSave }, clearLatch: { true }, authenticateLocal: { true })
         privacy.revokeForLocalReturn = { true }
         expect(privacy.armAndVerify(), "cleanup interruption fixture armed")
@@ -431,7 +432,7 @@ struct HostAudioPrivacyChecks {
         privacy.stop()
 
         let observing = PrivacyFakeHAL()
-        let observer = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: observing.operations), clearLatch: { true }, authenticateLocal: { true })
+        let observer = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: observing.operations), clearLatch: { true }, authenticateLocal: { true })
         observer.revokeForLocalReturn = { true }
         expect(observer.armAndVerify(), "observer removal fixture armed")
         observing.removalFailure = true
@@ -447,7 +448,7 @@ struct HostAudioPrivacyChecks {
             var data: Data?
             var syncOK = true
             let store = LocalAudioJournal(data: nil, store: { data = $0 }, load: { data }, synchronize: { syncOK })
-            let guarder = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: device.operations),
+            let guarder = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: device.operations),
                 persist: { store.write(latched: true, original: store.original) },
                 saveLocal: { store.write(latched: $0 != nil, original: $0) },
                 clearLatch: {

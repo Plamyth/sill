@@ -115,14 +115,19 @@ package final class HostAudioPrivacy {
     private var returningLocal = false
     private var persistenceHealthy = true
     var revokeForLocalReturn: (() async -> Bool)?
+    private let nativeStartup: NativeAudioStartup?
+    private let localReturnCoverage: LocalAudioReturnCoverage
+    package var localReturnUnavailableReason: String? { localReturnCoverage.unavailableReason }
 
-    init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
+    init(localReturnCoverage: LocalAudioReturnCoverage = .unknown,
+         hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
          localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
          clearLatch: @escaping () -> Bool = { false }, authenticateLocal: @escaping () async -> Bool = { false },
-         cancelAuthentication: @escaping () -> Void = {}) {
+         cancelAuthentication: @escaping () -> Void = {}, nativeStartup: NativeAudioStartup? = nil) {
         self.hal = hal; self.latched = latched; self.persist = persist
         self.localState = localState; self.saveLocal = saveLocal; self.clearLatch = clearLatch
         self.authenticateLocal = authenticateLocal; self.cancelAuthentication = cancelAuthentication
+        self.nativeStartup = nativeStartup; self.localReturnCoverage = localReturnCoverage
     }
 
     @discardableResult
@@ -233,6 +238,9 @@ package final class HostAudioPrivacy {
 
     /// This request owns authentication. Callers cannot supply an authentication result.
     package func requestLocalReturn() async -> Bool {
+        guard localReturnUnavailableReason == nil else { return false }
+        // A cold menu/URL request waits without consuming an authentication attempt.
+        await nativeStartup?.waitUntilInitialized()
         guard latched, persistenceHealthy, !returningLocal, let original = localState, original.isValid else { return false }
         returningLocal = true
         defer {
@@ -244,7 +252,15 @@ package final class HostAudioPrivacy {
         guard await authenticateLocal(), localReturnID == request, latched else { return false }
         pending?.cancel(); pending = nil
         publish(AudioPrivacyState(protected: false, reason: "인증된 로컬 입출력으로 복귀 중입니다."))
-        guard let revokeForLocalReturn, await revokeForLocalReturn(),
+        let quiescent: Bool
+        if let nativeStartup {
+            quiescent = await nativeStartup.quiesce(using: revokeForLocalReturn)
+        } else if let revokeForLocalReturn {
+            quiescent = await revokeForLocalReturn()
+        } else {
+            quiescent = false
+        }
+        guard quiescent,
               localReturnID == request, latched, persistenceHealthy else { return false }
         // A failed removal invalidates the HAL generation even when listeners remain registered.
         watching = false

@@ -255,14 +255,15 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
 
 extension HostAudioPrivacy {
     /// Only the branded production AppModel opts in. Legacy CLI and synthetic callers stay inert.
-    package convenience init(defaults: UserDefaults) {
+    package convenience init(defaults: UserDefaults, nativeStartup: NativeAudioStartup) {
         let journal = LocalAudioJournal(defaults: defaults)
         let authentication = LocalAudioAuthentication()
-        self.init(hal: CoreAudioPrivacyHAL(ops: .native), latched: journal.latched,
+        self.init(localReturnCoverage: .nativeCoordinatorOnly, hal: CoreAudioPrivacyHAL(ops: .native), latched: journal.latched,
             persist: { journal.write(latched: true, original: journal.original) },
             localState: journal.original, saveLocal: { original in
                 journal.write(latched: original != nil, original: original)
             }, clearLatch: { journal.write(latched: false, original: nil) },
-            authenticateLocal: { await authentication.evaluate() }, cancelAuthentication: { authentication.cancel() })
+            authenticateLocal: { await authentication.evaluate() }, cancelAuthentication: { authentication.cancel() },
+            nativeStartup: nativeStartup)
     }
 }

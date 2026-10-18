@@ -159,8 +159,8 @@ enum MenuBuilder {
                        update: update).map { entry in
             guard entry.action == .returnLocalAudio else { return entry }
             var entry = entry
-            entry.subtitle = model.localAudioReturnNotice
-            entry.enabled = !model.localAudioReturnPending
+            entry.subtitle = model.localAudioReturnUnavailableReason ?? model.localAudioReturnNotice
+            entry.enabled = !model.localAudioReturnPending && model.localAudioReturnUnavailableReason == nil
             return entry
         }
     }

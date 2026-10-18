@@ -179,7 +179,7 @@ The scoped playbook disposition is recorded here because there is no task-list t
    execution and commits because this worker may not run tests. Regression sources accompany fixes.
 6. Run Opening a PR. Skip under the no network/push instruction. Return one clean local commit.
 
-`requestLocalReturn()` requires a coordinator revocation callback. Its authenticated generation,
+`requestLocalReturn()` requires an acknowledged native ownership boundary. Its authenticated generation,
 latch and persistence health are checked again after the await. `prepareLocalAudioReturn()`
 revokes microphone authority and pending subscriptions, retires physical-route authority, and
 awaits `StreamServer.drainRemoteAudio()`. That method closes the network epoch and waits for
@@ -229,3 +229,35 @@ network, HAL calls, device operations, tests, builds or pushes ran in this corre
 report was sent under the explicit network prohibition. DN32/HDMI without writable master mute
 still refuse complete protection. Sentry overlay, input protection and independent display
 monitoring remain unimplemented. No acoustic zero-gap guarantee is claimed.
+
+## Native startup ownership and participant coverage correction
+
+Base `d52cd9d0abbe9c1dbb3f9cd95021de85b34f4c33`. This exclusive local codeunit uses
+Pstack poteto Bug fix and architect with a sequential design comparison under the explicit
+no-children restriction. Ponytail full reuses the existing coordinator callback and drain barrier.
+An AppModel-only catch callback was rejected because cold requests would still lack an explicit
+initializing owner. The selected small `NativeAudioStartup` lives in the existing return file.
+
+AppModel owns startup from initialization, passes that same owner to production privacy, and
+wraps only the throwing coordinator constructor. A cold request with verified participant coverage
+waits asynchronously before authentication. Successful construction still requires the actual
+coordinator callback. Proven failure before native participants is the sole empty-native
+acknowledgement. A missing callback after successful construction remains a refusal.
+
+Native quiescence does not cover S23's independent `audio-session.js` / `audio-router.py` path.
+Coverage defaults to unknown. The production factory explicitly declares native-coordinator-only
+coverage. Both refuse local return before OS authentication or HAL access in the request, and
+the production menu displays the Korean unavailability reason. Startup reconciliation continues
+to enforce existing protection. No common registration service or S23 protocol was added.
+Production remains closed until actual S23 participant authority and proof are connected.
+
+Existing injected checks explicitly declare verified all-fake-participant coverage without changing
+their assertions or version 2 physical endpoint rules. Added fixtures exercise both construction
+outcomes, a pending cold request, a real extracted coordinator/server drain on success, missing
+callback refusal after construction, and unknown/native-only coverage refusal. The emitter asserts
+actual AppModel/factory/menu wiring and extracts the production callback assignment.
+
+Source/diff inspection only. Tests, builds, HAL, devices, network, messages, children and pushes
+are prohibited for this codeunit and were not run. Parent Mini/full-SDK execution and fresh
+independent review remain required for the returned exact commit. The reported 174-pass baseline
+belongs to the base revision and is not a result for this correction. No product was deployed.

@@ -1,6 +1,68 @@
 import Foundation
 import LocalAuthentication
 
+package enum LocalAudioReturnCoverage {
+    case unknown
+    case nativeCoordinatorOnly
+    case verifiedAllParticipants
+
+    var unavailableReason: String? {
+        switch self {
+        case .unknown:
+            return "전체 오디오 참여자의 중지 권한을 확인하지 못해 로컬 복귀를 사용할 수 없습니다."
+        case .nativeCoordinatorOnly:
+            return "S23 독립 오디오 경로의 중지 권한이 연결되지 않아 전체 오디오 종료를 확인할 수 없습니다. 로컬 복귀를 사용할 수 없습니다."
+        case .verifiedAllParticipants: return nil
+        }
+    }
+}
+
+/// Owns the interval before StreamCoordinator installs its real revocation barrier.
+@MainActor
+package final class NativeAudioStartup {
+    private enum State { case initializing, coordinatorCreated, failedBeforeParticipants }
+    private var state = State.initializing
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    package init() {}
+
+    /// The constructor must throw only before any native audio participant can start.
+    package func construct<T>(_ make: () throws -> T) rethrows -> T {
+        precondition(state == .initializing)
+        do {
+            let coordinator = try make()
+            finish(.coordinatorCreated)
+            return coordinator
+        } catch {
+            finish(.failedBeforeParticipants)
+            throw error
+        }
+    }
+
+    func waitUntilInitialized() async {
+        guard state == .initializing else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func quiesce(using barrier: (() async -> Bool)?) async -> Bool {
+        await waitUntilInitialized()
+        switch state {
+        case .failedBeforeParticipants: return true
+        case .coordinatorCreated:
+            guard let barrier else { return false }
+            return await barrier()
+        case .initializing: return false
+        }
+    }
+
+    private func finish(_ next: State) {
+        state = next
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+}
+
 struct LocalAudioState: Codable, Equatable {
     struct Device: Codable, Equatable {
         let uid: String

@@ -20,9 +20,11 @@ final class AppModel {
     let synthetic = CommandLine.arguments.contains("--synthetic")
     private(set) var coordinator: StreamCoordinator?
     private let audioPrivacy: HostAudioPrivacy?
+    private let nativeAudioStartup: NativeAudioStartup
     private let microphoneOwner: SillVirtualMicrophoneOwner
     private(set) var localAudioReturnNotice = "Touch ID 또는 Mac 로그인 암호로 인증합니다."
     private(set) var localAudioReturnPending = false
+    var localAudioReturnUnavailableReason: String? { audioPrivacy?.localReturnUnavailableReason }
     /// The coordinator could not be created (the listener refused its parameters). Shown in the
     /// menu; the app keeps running so the user can read it and quit.
     private(set) var startupError: String?
@@ -68,10 +70,12 @@ final class AppModel {
     @ObservationIgnored private var presentationExpiryAt: Date?
 
     init() {
+        let nativeAudioStartup = NativeAudioStartup()
+        self.nativeAudioStartup = nativeAudioStartup
         let production = Self.bundled && Bundle.main.bundleIdentifier == "com.ambrion.sillcanvas.mac"
             && Bundle.main.bundleURL.path == "/Applications/CCR Sill.app"
             && !CommandLine.arguments.contains("--synthetic")
-        let privacy = production ? HostAudioPrivacy(defaults: .standard) : nil
+        let privacy = production ? HostAudioPrivacy(defaults: .standard, nativeStartup: nativeAudioStartup) : nil
         audioPrivacy = privacy
         microphoneOwner = SillVirtualMicrophoneOwner(privacy: privacy)
         let settings = HostSettings()
@@ -94,6 +98,10 @@ final class AppModel {
 
     func requestLocalAudioReturn() {
         guard !localAudioReturnPending, let audioPrivacy else { return }
+        if let reason = localAudioReturnUnavailableReason {
+            localAudioReturnNotice = reason
+            return
+        }
         localAudioReturnPending = true
         localAudioReturnNotice = "로컬 입출력 복귀를 인증하고 있습니다."
         Task { @MainActor in
@@ -121,10 +129,12 @@ final class AppModel {
                 settings.config.requirePairing = launchRequirePairing(remote)
                 // The window lists carry this Sill's version, when it has one (the bare binary's
                 // "dev" does not parse): later devices can tell which Mac to update.
-                let c = try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
+                let c = try nativeAudioStartup.construct {
+                    try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
                                               homePairing: true, testHooks: !Self.bundled,
                                               hostVersion: SillVersion(Self.version) != nil ? Self.version : nil,
                                               microphoneOwner: microphoneOwner, audioPrivacy: audioPrivacy)
+                }
                 c.keepRunningOnListenerFailure()
                 coordinator = c
                 // One path from the controls to the host, synchronous: the host's target equals
