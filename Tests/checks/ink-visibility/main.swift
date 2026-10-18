@@ -134,7 +134,8 @@ import AppKit
         let legacy = try JSONDecoder().decode(CanvasScene.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
         check(legacy.schemaVersion == 1 && legacy.strokes[0].visibility == nil &&
               legacy.strokes[0].points == lastScene.strokes[0].points, "legacy schema 1 decodes with unverified visibility and retained provenance")
-        check(legacy.strokes[0].visiblePointSegments.isEmpty, "legacy unverified fallback does not assume all points visible")
+        check(legacy.strokes[0].visiblePointSegments == [legacy.strokes[0].points],
+              "legacy unknown visibility retains best-effort fallback points")
         var knownFull = legacy.strokes[0]
         knownFull.visibility = .init(kind: .full)
         var knownEmpty = legacy.strokes[0]
@@ -143,6 +144,21 @@ import AppKit
               "known full, masked empty and legacy unknown remain distinct")
         let legacyReencoded = try JSONSerialization.jsonObject(with: encoder.encode(legacy.strokes[0])) as! [String: Any]
         check(legacyReencoded["visibility"] == nil, "legacy optional visibility stays omitted on encode")
+
+        var structuralLegacy = CanvasScene()
+        structuralLegacy.width = 128
+        structuralLegacy.height = 100
+        structuralLegacy.strokes = [InkStroke(id: UUID(), points: stride(from: 10, through: 110, by: 20).map {
+            InkPoint(x: Double($0), y: 30, pressure: 1)
+        }, createdAt: Date(timeIntervalSince1970: 1))]
+        let restoredLegacy = try JSONDecoder().decode(CanvasScene.self, from: encoder.encode(structuralLegacy))
+        let legacyRuns = restoredLegacy.strokes[0].visiblePointSegments
+        check(restoredLegacy.drawingBase64.isEmpty && restoredLegacy.strokes[0].visibility == nil &&
+              legacyRuns.map { $0.map(\.x) } == [[10, 30, 50, 70, 90, 110]] &&
+              legacyRuns.flatMap { $0 }.allSatisfy { $0.y == 30 },
+              "structure-only legacy PNG fixture retains its full y30 fallback across x60")
+        check(knownEmpty.visiblePointSegments.isEmpty,
+              "known masked-empty never falls back to retained legacy provenance")
 
         let curvedControls = points.enumerated().map { i, point in
             PKStrokePoint(location: CGPoint(x: point.location.x, y: [40, 70, 10, 70, 40][i]),
