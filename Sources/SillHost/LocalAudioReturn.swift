@@ -49,6 +49,7 @@ struct LocalAudioState: Codable, Equatable {
 @MainActor
 final class LocalAudioAuthentication {
     private var context: LAContext?
+    private var attemptID: UUID?
     private var completion: CheckedContinuation<Bool, Never>?
     private var expiry: Task<Void, Never>?
 
@@ -61,6 +62,8 @@ final class LocalAudioAuthentication {
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
         self.context = context
+        let attempt = UUID()
+        attemptID = attempt
         return await withCheckedContinuation { continuation in
             completion = continuation
             expiry = Task { [weak self] in
@@ -68,9 +71,9 @@ final class LocalAudioAuthentication {
                 if !Task.isCancelled { self?.finish(false) }
             }
             context.evaluatePolicy(.deviceOwnerAuthentication,
-                localizedReason: "Mac의 로컬 마이크와 스피커로 복귀") { [weak self, weak context] accepted, _ in
+                localizedReason: "Mac의 로컬 마이크와 스피커로 복귀") { [weak self] accepted, _ in
                 Task { @MainActor in
-                    guard let self, let context, self.context === context else { return }
+                    guard let self, self.attemptID == attempt else { return }
                     self.finish(accepted)
                 }
             }
@@ -82,6 +85,7 @@ final class LocalAudioAuthentication {
         completion = nil
         let old = context
         context = nil
+        attemptID = nil
         expiry?.cancel(); expiry = nil
         old?.invalidate()
         continuation?.resume(returning: accepted)

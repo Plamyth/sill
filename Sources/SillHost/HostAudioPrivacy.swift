@@ -147,8 +147,9 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
     }
 
     func restoreLocal(_ original: LocalAudioState) -> Bool {
-        guard original.isValid, var snapshot = try? read(),
-              (try? snapshot.plan().isEmpty) == true,
+        guard original.isValid, var snapshot = try? read() else { return false }
+        if original.matches(snapshot) { return true }
+        guard (try? snapshot.plan().isEmpty) == true,
               Set(snapshot.devices.map(\.uid)) == Set(original.devices.map(\.uid)) else { return false }
         // Store UIDs and control addresses, never a numeric device ID for a later setter.
         var changes: [(String, AudioObjectPropertySelector, AudioObjectPropertyScope, UInt32?)] = []

@@ -346,7 +346,7 @@ struct HostAudioPrivacyChecks {
         let task = Task { @MainActor in await stale.requestLocalReturn() }
         for _ in 0..<20 { if completion != nil { break }; await Task.yield() }
         expect(completion != nil, "pending native authentication reached its boundary")
-        expect(stale.armAndVerify(), "new remote admission invalidates pending local-return ticket")
+        expect(!stale.armAndVerify(), "new remote admission invalidates the ticket without readiness during local return")
         let staleWrites = staleFake.writes.count
         completion?.resume(returning: true)
         let staleResult = await task.value
@@ -368,6 +368,20 @@ struct HostAudioPrivacyChecks {
     }
 
     @MainActor static func adversarialLocalReturnChecks() async {
+        let unsupported = PrivacyFakeHAL()
+        unsupported.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "DN32-LIVE", transport: .other,
+            plugin: nil, inputChannels: 32, outputChannels: 32))
+        let unchanged = unsupported.snapshot
+        let unsupportedPrivacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: unsupported.operations),
+            clearLatch: { true }, authenticateLocal: { true })
+        var stopped = false
+        unsupportedPrivacy.revokeForLocalReturn = { stopped = true; return true }
+        expect(!unsupportedPrivacy.armAndVerify() && unsupported.writes.isEmpty,
+               "unsupported physical endpoint refuses protection before mutation")
+        let unchangedReturn = await unsupportedPrivacy.requestLocalReturn()
+        expect(unchangedReturn && stopped && !unsupportedPrivacy.latched && unsupported.writes.isEmpty && unsupported.snapshot == unchanged,
+               "authenticated return clears failed protection when originals are already unchanged")
+        unsupportedPrivacy.stop()
         let capture = PrivacyFakeHAL()
         let noJournal = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: capture.operations), saveLocal: { _ in false })
         expect(!noJournal.armAndVerify() && noJournal.latched && capture.writes.isEmpty, "failed first journal capture cannot mutate hardware")
