@@ -4,7 +4,7 @@ import StreamProtocol
 
 @MainActor
 func expect(_ condition: @autoclosure () -> Bool, _ label: String) {
-    if !condition() { fatalError("FAIL " + label) }
+    if !condition() { fputs("FAIL " + label + "\n", stderr); exit(1) }
     print("PASS " + label)
 }
 
@@ -37,6 +37,16 @@ struct HostAudioPrivacyChecks {
         let relaunched = guardFor(fake, latched: durable)
         expect(relaunched.reconcile() && fake.writes == writes, "persisted latch protects before any new connection")
         relaunched.stop()
+
+        let stoppedFake = PrivacyFakeHAL(), stopped = guardFor(stoppedFake)
+        expect(stopped.armAndVerify(), "late callback fixture starts protected")
+        stoppedFake.snapshot.input = 10
+        stoppedFake.fire(kAudioHardwarePropertyDefaultInputDevice)
+        stopped.stop()
+        let stoppedWrites = stoppedFake.writes
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        expect(stoppedFake.writes == stoppedWrites && !stopped.state.protected,
+               "queued callback after stop cannot rearm observers or write hardware")
 
         for index in 1...5 {
             let failed = PrivacyFakeHAL(); failed.failSetter = index

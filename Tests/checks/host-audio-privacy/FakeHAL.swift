@@ -52,7 +52,7 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             size.pointee = UInt32(value.count * 4); return noErr
         }
         switch property.mSelector {
-        case kAudioHardwarePropertyDevices: return array(snapshot.devices.map(\.id))
+        case kAudioHardwarePropertyDevices where object == kAudioObjectSystemObject: return array(snapshot.devices.map(\.id))
         case kAudioHardwarePropertyDefaultInputDevice: return number(snapshot.input)
         case kAudioHardwarePropertyDefaultOutputDevice: return number(snapshot.output)
         case kAudioHardwarePropertyDefaultSystemOutputDevice: return number(snapshot.systemOutput)
@@ -94,7 +94,7 @@ final class PrivacyFakeHAL: @unchecked Sendable {
         }, objectSize: { [self] object, property, size in
             lock.lock(); defer { lock.unlock() }
             switch property.pointee.mSelector {
-            case kAudioHardwarePropertyDevices: size.pointee = UInt32(snapshot.devices.count * 4)
+            case kAudioHardwarePropertyDevices where object == kAudioObjectSystemObject: size.pointee = UInt32(snapshot.devices.count * 4)
             case kAudioPlugInPropertyDeviceList: size.pointee = UInt32(pluginDevices(object).count * 4)
             case kAudioDevicePropertyStreamConfiguration:
                 let noInput = snapshot.devices.first(where: { $0.id == object })?.inputChannels == 0
