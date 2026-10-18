@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>NSMicrophoneUsageDescription</key>
-    <string>직접 마이크 전송을 켠 경우에만 선택한 Mac으로 음성을 보냅니다. 연결이나 대상이 바뀌면 중지합니다.</string>
+    <string>마이크 전송을 켜면 선택한 Mac으로 음성을 보냅니다. 같은 저장된 Mac에 다시 연결하면 허용한 전송을 재개합니다. 앱이 비활성화되거나 연결이 끊기면 전송을 중지합니다.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_sill._tcp</string>

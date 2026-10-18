@@ -79,16 +79,17 @@ struct SillVisionWorkspace: View {
                             openMacAudioChooser()
                         }
                         .disabled(!audioControlsAllowed)
-                        Button(client.visionAudio.presentation.phase.grant == nil
-                               ? "Mac 소리를 Vision Pro에서도 재생" : "Vision Pro 소리 중지") {
+                        Button(client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired
+                               ? "Mac 소리 중지" : "Mac 소리 켜기") {
                             withWindowOwnership {
-                                if client.visionAudio.presentation.phase.grant != nil { client.visionAudio.stop() }
-                                else if audioControlsAllowed { client.visionAudio.enable() }
+                                if client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired {
+                                    client.setVisionAudioDesired(false, direction: .playback)
+                                } else if audioControlsAllowed { client.setVisionAudioDesired(true, direction: .playback) }
                             }
                         }
-                        .disabled(client.visionAudio.presentation.phase.grant == nil &&
+                        .disabled(!client.visionPlaybackDesired && client.visionAudio.presentation.phase.grant == nil &&
                                   (!audioControlsAllowed || !client.visionAudio.presentation.canEnable))
-                        Text("Vision Pro에서 재생해도 Mac의 출력 장치는 유지합니다.")
+                        Text(client.visionAudioPrivacyMessage)
                         Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
                     }
                     Button("연결 해제") { requestTransition(.disconnect) }
@@ -124,7 +125,7 @@ struct SillVisionWorkspace: View {
                         Text("Mac 화면 정보를 기다리는 중입니다. 입력은 확인 후 사용할 수 있습니다.").font(.caption)
                     }
                 }
-                VisionAudioControls(audio: client.visionAudio,
+                VisionAudioControls(client: client, audio: client.visionAudio,
                                     allowStart: audioControlsAllowed,
                                     admit: withWindowOwnership)
                 VisionMicrophoneControls(client: client,
@@ -168,7 +169,7 @@ struct SillVisionWorkspace: View {
                       client.visionAudio.presentation.availability == state.availability else { return }
                 if case .available(let scope) = state.availability,
                    state.canEnable, audioControlsAllowed,
-                   !audioOfferAnswered, !audioOfferShown, !macAudioShown, !macAudioOfferShown {
+                   !client.visionPlaybackDesired, !audioOfferAnswered, !audioOfferShown, !macAudioShown, !macAudioOfferShown {
                     audioOfferScope = scope
                     audioOfferShown = true
                 } else if state.availability != audioOfferScope.map(VisionAudioState.Availability.available) {
@@ -238,7 +239,7 @@ struct SillVisionWorkspace: View {
                     guard audioControlsAllowed, !macAudioModalShown, let scope = audioOfferScope,
                           client.visionAudio.presentation.availability == .available(scope),
                           client.visionAudio.presentation.canEnable else { return }
-                    if client.visionAudio.enable(expectedScope: scope) { audioOfferAnswered = true }
+                    if client.setVisionAudioDesired(true, direction: .playback, expectedScope: scope) { audioOfferAnswered = true }
                 }
                 audioOfferScope = nil
             }
@@ -247,7 +248,7 @@ struct SillVisionWorkspace: View {
                 audioOfferScope = nil
             }
         } message: {
-            Text("Mac의 현재 입출력 장치는 유지합니다. 오디오 메뉴에서 언제든 Vision Pro의 소리 재생을 바꿀 수 있습니다.")
+            Text(client.visionAudioPrivacyMessage)
         }
         .confirmationDialog("같은 Mac에 연결된 iPad 화면도 바뀔 수 있습니다.", isPresented: $changingSource) {
             Button("Mac 전체 화면 표시") { requestTransition(.desktop) }
@@ -427,7 +428,10 @@ struct SillVisionWorkspace: View {
 
     private func updateInputAdmission() {
         guard session.owns(lease) else { return }
-        input.allowed = inputAllowed; session.refresh()
+        input.allowed = inputAllowed
+        client.visionAudioIntentModal = macAudioModalShown || displayChooserShown || transitions.isPending ||
+            inputSuspended || draftShown || recoveryShown
+        session.refresh()
     }
 
     private func withWindowOwnership(_ action: () -> Void) {
@@ -498,16 +502,20 @@ struct SillVisionWorkspace: View {
 }
 
 private struct VisionAudioControls: View {
+    @ObservedObject var client: StreamClient
     @ObservedObject var audio: VisionAudioController
     let allowStart: Bool
     let admit: (() -> Void) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            let running = audio.presentation.phase.grant != nil
+            let running = audio.presentation.phase.grant != nil || client.visionPlaybackDesired
             Button(running ? "Mac 소리 중지" : "Mac 소리 켜기",
                    systemImage: running ? "speaker.slash" : "speaker.wave.2") {
-                admit { if running { audio.stop() } else if allowStart { audio.enable() } }
+                admit {
+                    if running { client.setVisionAudioDesired(false, direction: .playback) }
+                    else if allowStart { client.setVisionAudioDesired(true, direction: .playback) }
+                }
             }
             .disabled(!running && (!audio.presentation.canEnable || !allowStart || audio.cleanupProblem != nil))
             .accessibilityHint(running ? "즉시 소리를 중지합니다." : "이 버튼은 Mac 소리 수신만 켭니다. 마이크 전송은 별도입니다.")
@@ -532,7 +540,7 @@ private struct VisionAudioControls: View {
             case .disconnected: return "Mac 연결 후 사용할 수 있습니다."
             case .unsupported: return "현재 Mac 호스트는 소리 전송을 지원하지 않습니다."
             case .noSource: return "Mac 화면을 선택하면 소리를 켤 수 있습니다."
-            case .available: return "Mac 소리 꺼짐 · 연결이 바뀌면 다시 켜야 합니다."
+            case .available: return client.visionAudioPrivacyMessage
             }
         }
     }
@@ -545,11 +553,15 @@ private struct VisionMicrophoneControls: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            let stopping = client.microphonePhase.canStop
+            let stopping = client.microphonePhase.canStop || client.visionMicrophoneDesired
             let cleanup = client.microphoneCleanupProblem != nil
             Button(cleanup ? "마이크 정리 다시 시도" : stopping ? "Vision 마이크 중지" : "Vision 마이크 보내기",
                    systemImage: stopping ? "mic.slash" : "mic") {
-                admit { if cleanup || stopping || allowStart { client.toggleVisionMicrophone() } }
+                admit {
+                    if cleanup { client.toggleVisionMicrophone() }
+                    else if stopping { client.setVisionAudioDesired(false, direction: .microphone) }
+                    else if allowStart { client.setVisionAudioDesired(true, direction: .microphone) }
+                }
             }
             .disabled(!cleanup && !stopping && (!allowStart || !client.visionMicrophoneCanStart || client.visionAudio.cleanupProblem != nil))
             .accessibilityHint(cleanup ? "기존 마이크 자원만 정리합니다. 다시 녹음하지 않습니다." :

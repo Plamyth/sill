@@ -49,6 +49,18 @@ extension StreamClient {
             scope: scope, grantID: grant), to: ObjectIdentifier(c))
     }
 
+    func stopVisionMicrophoneActual() {
+        invalidateMicrophoneAuthorization()
+        applyMicrophone(microphonePolicy.backgrounded())
+    }
+
+    #if os(visionOS)
+    func startVisionMicrophoneAutomatically() {
+        guard visionMicrophoneCanStart, AVAudioApplication.shared.recordPermission == .granted else { return }
+        applyMicrophone(microphonePolicy.toggle(), automatic: true)
+    }
+    #endif
+
     func toggleVisionMicrophone() {
         if microphoneCleanupProblem != nil {
             retryMicrophoneCleanup(explicit: true)
@@ -150,7 +162,7 @@ extension StreamClient {
             microphonePolicy.startRequestID == authorization.requestID
     }
 
-    private func applyMicrophone(_ effects: [IPadMicrophonePolicy.Effect]) {
+    private func applyMicrophone(_ effects: [IPadMicrophonePolicy.Effect], automatic: Bool = false) {
         dispatchPrecondition(condition: .onQueue(.main))
         if let authorization = microphoneAuthorization, !microphoneAuthorizationIsCurrent(authorization) {
             invalidateMicrophoneAuthorization()
@@ -164,6 +176,13 @@ extension StreamClient {
                       ObjectIdentifier(c) == peer else { continue }
                 microphoneAuthorization = VisionMicrophoneAuthorization(connection: c, lease: lease,
                     scope: scope, requestID: request)
+                #if os(visionOS)
+                if automatic {
+                    microphoneAuthorization?.result = .resolved(AVAudioApplication.shared.recordPermission == .granted)
+                    consumeMicrophoneAuthorization()
+                    continue
+                }
+                #endif
                 requestVisionMicrophonePermission { [weak self] allowed in
                     DispatchQueue.main.async {
                         guard let self, var authorization = self.microphoneAuthorization,

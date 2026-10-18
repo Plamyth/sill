@@ -998,7 +998,7 @@ final class StreamClient: ObservableObject {
     }
 
     private func visionPresentationChanged(_ ticket: VisionPresentation.Ticket?) {
-        defer { confirmVisionDisplayPresentation() }
+        defer { confirmVisionDisplayPresentation(); reconcileVisionAudioIntent() }
         if let ticket, let peer = connection, ObjectIdentifier(peer) == ticket.peer,
            case .awaitingPresentation(let epoch) = visionInputBinding, epoch == ticket.epoch {
             guard link.setInputPermit(ticket.id, epoch: ticket.epoch.id) else { return }
@@ -1077,6 +1077,16 @@ final class StreamClient: ObservableObject {
     lazy var visionMacAudioRoutes = VisionMacAudioController(transport: visionMacAudioTransport,
         authorize: { [weak self] scope in self?.visionMacAudioScopeIsCurrent(scope) == true })
 
+    @Published var visionRemoteAudioIntent = VisionRemoteAudioIntent.load(.standard)
+    @Published var visionAudioPrivacy: AudioPrivacyState?
+    var visionAudioPrivacyBlocked = false
+    var visionAudioPrivacyRevision: UInt64 = 0
+    var visionAudioIntentConnection = UUID()
+    var visionAudioIntentForeground = UUID()
+    var visionAudioIntentSuspended = true
+    var visionAudioIntentModal = false
+    var visionAudioIntentCatalog: WindowList?
+    var visionAudioIntentNeedsMicrophoneCatalog = true
     let visionAudioOwnerID = UUID()
     @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
     @Published var microphoneCleanupProblem: String?
@@ -1097,6 +1107,13 @@ final class StreamClient: ObservableObject {
     }, player: VisionAudioPlayer(ownerID: visionAudioOwnerID))
 
     private func resetVisionAudio() {
+        visionAudioIntentConnection = UUID()
+        visionAudioPrivacy = nil
+        visionAudioPrivacyBlocked = false
+        visionAudioIntentNeedsMicrophoneCatalog = true
+        visionAudioIntentCatalog = nil
+        visionAudioIntentSuspended = true
+        visionAudioIntentForeground = UUID()
         revokeVisionMacAudioRoutes()
         microphoneSourceWillChange()
         visionAudio.stop()
@@ -4190,6 +4207,10 @@ final class StreamClient: ObservableObject {
             let from: NWConnection? = peer
             #if os(visionOS)
             guard connection === peer else { return }
+            if list.audioPrivacy?.protected == false {
+                visionAudio.stop()
+                microphoneFrames.close()
+            }
             observeVisionInputCatalog(list, from: peer)
             let availability = visionAudioRoute.observe(peer, source: list.active, supported: list.remoteAudio == 1)
             visionAudio.update(availability)
@@ -4201,6 +4222,8 @@ final class StreamClient: ObservableObject {
                 #if os(visionOS)
                 self.microphoneSetConnection(peer)
                 self.microphoneObserve(list, from: peer)
+                self.visionAudioIntentCatalog = list
+                self.observeVisionAudioPrivacy(list)
                 #endif
                 #if !os(visionOS)
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
@@ -4241,6 +4264,7 @@ final class StreamClient: ObservableObject {
                 #if os(visionOS)
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
                 self.observeVisionDisplays(list, from: peer)
+                self.reconcileVisionAudioIntent()
                 #else
                 self.windows = list.windows
                 self.inputGeneration = list.inputGeneration
@@ -4990,7 +5014,7 @@ extension StreamClient {
             owningWindow: lease != nil, foreground: foreground && appInForeground)
     }
 
-    private var authenticatedVisionMacAudioPeer: ObjectIdentifier? {
+    var authenticatedVisionMacAudioPeer: ObjectIdentifier? {
         guard connected, let connection, let session, let id = session.macID,
               macInfoSaved, let verified = macInfoVerified, verified.info.macID == id,
               let saved = savedMacs.first(where: { $0.macID == id }),

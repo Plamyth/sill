@@ -31,6 +31,7 @@ final class VisionAppSession: ObservableObject {
             client.$pairing.map { _ in () }.eraseToAnyPublisher(),
             client.$visionInputBinding.map { _ in () }.eraseToAnyPublisher(),
             client.$visionDisplaySelection.map { _ in () }.eraseToAnyPublisher(),
+            client.$microphonePhase.map { _ in () }.eraseToAnyPublisher(),
             client.$active.map { _ in () }.eraseToAnyPublisher(),
             input.$moving.map { _ in () }.eraseToAnyPublisher(),
         ]
@@ -100,6 +101,7 @@ final class VisionAppSession: ObservableObject {
 
     func refresh() {
         client.updateVisionMacAudioRoutes(lease: windowLease, foreground: foreground)
+        client.reconcileVisionAudioIntent()
         let bootstrap = client.visionCableBootstrap
         let mode: VisionAutoConnectStatus.StartupMode
         switch launch {
