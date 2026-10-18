@@ -201,11 +201,13 @@ final class CanvasStore: ObservableObject {
         scene.moveNode(selectedNode, to: CanvasPoint(x: Double(point.x), y: Double(point.y)))
     }
 
-    func proposeHandwriting() async {
-        guard !drawing.strokes.isEmpty else { status = "인식할 획이 없습니다."; return }
+    func proposeHandwriting(recognize: (PKDrawing) async -> String? = { drawing in
         let recognizer = PKStrokeRecognizer()
         await recognizer.updateDrawing(drawing)
-        guard let text = await recognizer.recognizedText(), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return await recognizer.recognizedText()
+    }) async {
+        guard !drawing.strokes.isEmpty else { status = "인식할 획이 없습니다."; return }
+        guard let text = await recognize(drawing), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { status = "글자 후보를 찾지 못했습니다. 원본 획은 유지했습니다."; return }
         let bounds = drawing.bounds
         let id = scene.addNode(kind: .note,
