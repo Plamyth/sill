@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'microphone-uplink'))
-from extract import fixture as host_fixture
+from extract import block, fixture as host_fixture
 
 def fixture(root):
     files, manifest = host_fixture(root)
@@ -17,7 +17,18 @@ def fixture(root):
     here = root / 'Tests/checks/vision-microphone-pipeline'
     files['Network.swift'] = (here/'Network.swift').read_text()
     files['Main.swift'] = (here/'Main.swift').read_text()
-    names = ['Sources/StreamProtocol/'+n+'.swift' for n in ['AudioPacket','HostSettings','AudioRouting']]
+    coordinator = (root / 'Sources/SillHost/StreamCoordinator.swift').read_text()
+    availability = block(coordinator, 'microphoneReceiver.availabilityChanged =')
+    publication = block(coordinator, 'private func sendMicrophoneCatalog(to').replace('private ', '')
+    dispatch = files['Dispatch.swift'].replace(
+        '@MainActor final class CoordinatorHarness {',
+        '@MainActor final class CoordinatorHarness {\n    let server = CatalogPublicationServer()')
+    dispatch += ('\nextension CoordinatorHarness {\nfunc installAvailabilityHook() {\n' + availability
+                 + '\n}\n' + publication + '\n}\n')
+    files['Dispatch.swift'] = dispatch
+    manifest['boundary:availability'] = hashlib.sha256(availability.encode()).hexdigest()
+    manifest['boundary:publication'] = hashlib.sha256(publication.encode()).hexdigest()
+    names = ['Sources/StreamProtocol/'+n+'.swift' for n in ['AudioPacket','HostSettings','AudioRouting','AudioPrivacy']]
     names += ['visionOSClient/'+n+'.swift' for n in ['VisionAudioBuffer','VisionAudioHardware','VisionMicrophoneCapture','VisionCableBootstrap']]
     names += ['iOSClient/'+n+'.swift' for n in ['IPadMicrophonePCM','IPadMicrophoneCapture','IPadMicrophonePolicy','IPadMicrophoneFrameGate']]
     names += ['Tests/checks/vision-microphone-control/Client.swift']

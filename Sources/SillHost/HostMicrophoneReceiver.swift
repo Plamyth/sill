@@ -57,6 +57,7 @@ final class HostMicrophoneReceiver {
     private let prepare: @MainActor (HostLocalOwnerGrant, MicrophoneRenderBuffer) async -> HostMicrophonePreparation
     private let provider: (any HostMicrophoneOriginalOwner)?
     private var watchdog: Task<Void, Never>?
+    var availabilityChanged: (() -> Void)?
     var current: ((MicrophoneScope, Data) -> Bool)?
     var sendState: ((MicrophoneState, MicrophoneRenderBuffer?) -> Void)?
     var sendReceipt: ((MicrophoneReceipt) -> Void)?
@@ -258,6 +259,7 @@ final class HostMicrophoneReceiver {
             phase = .off
             updateOutcomes(owned, reason: owned.retirementReason)
             lease = nil
+            availabilityChanged?()
         }
     }
 

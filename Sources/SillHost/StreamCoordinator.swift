@@ -344,6 +344,10 @@ package final class StreamCoordinator {
         // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
         server.setPeerToPeer(config.directWireless)
         stage = VirtualStage(sizer: sizer, catalog: catalog)
+        microphoneReceiver.availabilityChanged = { [weak self] in
+            guard let self else { return }
+            for connection in self.connections.values { self.sendMicrophoneCatalog(to: connection) }
+        }
         microphoneReceiver.current = { [weak self] scope, fingerprint in
             self?.microphoneScopeIsCurrent(scope, fingerprint: fingerprint) == true
         }
@@ -957,7 +961,12 @@ package final class StreamCoordinator {
                 list.microphone = MicrophoneCapability(peer: peer.id, destination: grant.scope.destination,
                                                       generation: grant.scope.capability)
                 response.payload = Wire.encode(list)
-                server.sendMicrophoneCatalog(response, to: connection, grant: grant)
+                var fallbackList = list
+                fallbackList.microphone = nil
+                fallbackList.audioPrivacy = nil
+                var fallback = response
+                fallback.payload = Wire.encode(fallbackList)
+                server.sendMicrophoneCatalog(response, to: connection, grant: grant, fallback: fallback)
             } else {
                 response.payload = Wire.encode(list)
                 server.send(response, to: connection)

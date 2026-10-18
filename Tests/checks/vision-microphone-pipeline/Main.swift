@@ -17,12 +17,22 @@ import StreamProtocol
 }
 @MainActor final class Owner: HostMicrophoneOriginalOwner {
     var grant: HostLocalOwnerGrant?
+    var privacyAllowsGrant = true
     func microphoneGrant(peer: UUID, source: StreamSource, inputGeneration: UUID,
-                         videoEpoch: UUID, fingerprint: Data) -> HostLocalOwnerGrant? { grant }
+                         videoEpoch: UUID, fingerprint: Data) -> HostLocalOwnerGrant? { privacyAllowsGrant ? grant : nil }
 }
 @MainActor final class Sink: HostMicrophoneSink {
     func close() async -> String? { nil }
     func runtimeValid() -> Bool { true }
+}
+@MainActor final class CatalogPublicationServer {
+    var sent: [WindowList] = []
+    func sendMicrophoneCatalog(_ message: StreamMessage, to connection: NWConnection, grant: HostLocalOwnerGrant) {
+        _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) { send(message, to: connection) }
+    }
+    func send(_ message: StreamMessage, to connection: NWConnection) {
+        sent.append(Wire.decode(WindowList.self, from: message.payload)!)
+    }
 }
 @MainActor final class Pipeline {
     let connection = NWConnection()
@@ -170,6 +180,27 @@ import StreamProtocol
         await until({ p.deliverReplies(); return p.client.microphonePhase == .live },
                     "actual host state enables actual client capture")
         expect(p.receiver.phase == .active && permissionRequests.withLock { $0 == 1 }, "one permission precedes host grant without capture reauthorization")
+        let successorConnection = NWConnection()
+        let successorPeer = p.host.microphoneIngress.authorize(successorConnection, fingerprint: Data([1]))!
+        p.host.connections[ObjectIdentifier(successorConnection)] = successorConnection
+        p.host.routes[ObjectIdentifier(successorConnection)] = p.host.routes[ObjectIdentifier(p.connection)]
+        let previousGrant = p.owner.grant!
+        let successorScope = MicrophoneScope(peer: successorPeer.id, source: previousGrant.scope.source,
+            inputGeneration: previousGrant.scope.inputGeneration, videoEpoch: previousGrant.scope.videoEpoch,
+            destination: UUID(), capability: UUID())
+        p.owner.grant = HostLocalOwnerGrant(owner: UUID(), callGeneration: UUID(), scope: successorScope,
+            fingerprint: Data([1]), destination: previousGrant.destination, expiresAt: .max)
+        expect(Wire.decode(WindowList.self, from: p.host.microphoneCatalog(to: successorConnection).payload)?.microphone == nil &&
+               p.receiver.advertisedGrant(peer: successorPeer.id) == nil,
+               "second peer joining active owner has no advertised grant")
+        p.host.installAvailabilityHook()
+        var idleCallbacks = 0
+        let publishAvailability = p.receiver.availabilityChanged!
+        p.receiver.availabilityChanged = {
+            idleCallbacks += 1
+            expect(p.receiver.phase == .off, "availability callback follows actual idle transition")
+            publishAvailability()
+        }
         p.client.microphoneCleanupProblem = "inert cleanup refusal"
         p.client.requestVisionMicrophoneReceipt()
         expect(p.clientMessages().isEmpty, "cleanup uncertainty blocks receipt action")
@@ -243,16 +274,28 @@ import StreamProtocol
         p.client.toggleVisionMicrophone()
         let stop = p.clientMessages()
         p.feed(stop)
-        expect(!p.render.isOpen && p.pull(960, time: p.clock).allSatisfy { $0 == 0 },
+        expect(!p.render.isOpen && idleCallbacks == 0 && p.pull(960, time: p.clock).allSatisfy { $0 == 0 },
                "actual stop revokes queued render before actor drain")
         p.host.drainMicrophoneIngress()
         await until({ p.receiver.phase == .off }, "host stop cleanup finishes")
+        expect(idleCallbacks == 1 && p.host.server.sent.count == 1 &&
+               p.host.server.sent.first?.microphone?.peer == successorPeer.id &&
+               p.receiver.advertisedGrant(peer: successorPeer.id) === p.owner.grant,
+               "one retirement event publishes normal owner capability for waiting peer without a query")
         p.feed(final); p.host.drainMicrophoneIngress()
         expect(p.pull(960, time: p.clock).allSatisfy { $0 == 0 }, "late exact old grant cannot render after stop")
         expect(p.client.microphoneCapture == nil && VisionAudioSharedHardware.shared.cleanupProblem == nil,
                "actual capture cleanup leaves no shared graph owner")
         p.client.requestVisionMicrophoneReceipt()
         expect(p.clientMessages().isEmpty, "stopped receipt action sends nothing")
+        p.receiver.control(MicrophoneControl(operation: .start, requestID: UUID(), scope: successorScope), fingerprint: Data([1]))
+        await until({ p.receiver.phase == .active }, "published successor capability starts the waiting peer")
+        expect(idleCallbacks == 1, "new owner preparation does not repeat idle publication")
+        p.owner.privacyAllowsGrant = false
+        p.receiver.revoke(reason: "fixture complete")
+        await until({ p.receiver.phase == .off }, "successor cleanup finishes")
+        expect(idleCallbacks == 2, "each completed retirement publishes once")
+        expect(p.host.server.sent.count == 1, "idle publication respects provider privacy denial during local return")
         print("RESULT_ASSERTIONS \(assertions)")
     }
 }

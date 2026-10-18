@@ -1532,14 +1532,18 @@ final class StreamServer {
         }
     }
 
-    func sendMicrophoneCatalog(_ message: StreamMessage, to connection: NWConnection, grant: HostLocalOwnerGrant) {
+    func sendMicrophoneCatalog(_ message: StreamMessage, to connection: NWConnection, grant: HostLocalOwnerGrant,
+                               fallback: StreamMessage? = nil) {
         let data = message.serialized()
         queue.async { [self] in
-            guard let client = clients[ObjectIdentifier(connection)], client.catalogSent,
+            guard let client = clients[ObjectIdentifier(connection)], client.connection === connection, client.catalogSent,
                   client.route.encrypted, client.route.fingerprint == grant.fingerprint,
                   videoAdmission.current?.id == grant.scope.videoEpoch,
+                  videoAdmission.current?.source == grant.scope.source,
+                  videoAdmission.current?.generation == grant.scope.inputGeneration.uuidString,
                   client.connection.state == .ready else { return }
-            _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) { send(data, to: client) }
+            let sent = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) { send(data, to: client) }
+            if !sent, let fallback { send(fallback.serialized(), to: client) }
         }
     }
 
