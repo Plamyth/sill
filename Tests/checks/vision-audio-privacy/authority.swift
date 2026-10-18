@@ -9,6 +9,8 @@ func checkAuthority() {
     model.update(a, context: ca); model.update(b, context: cb); model.update(c, context: cc)
     model.setDesired(true, direction: .playback, hostKey: ca.hostKey!, preferred: a)
     check(model.advance(cleanupReady: true) == nil && model.owner == a, "manual enable elects current window")
+    check(model.request(a, direction: .playback) == nil, "initial election requires correlated readback")
+    model.observedCatalog(a, epoch: model.epoch, scope: ca.scope!)
     let old = model.request(a, direction: .playback)!
     check(model.request(b, direction: .playback) == nil, "same Mac has one elected request owner")
     check(model.request(c, direction: .playback) == nil, "different Mac has no inherited intent")
@@ -28,7 +30,7 @@ func checkAuthority() {
     _ = model.advance(cleanupReady: true)
     check(model.owner == b, "surviving same Mac window is elected after cleanup")
     check(model.request(b, direction: .microphone) == nil, "handoff requires fresh host capabilities")
-    model.observedCatalog(b)
+    model.observedCatalog(b, epoch: model.epoch, scope: cb.scope!)
     let successor = model.request(b, direction: .microphone)!
     check(model.isCurrent(successor), "fresh recipient scope can request its own grant")
     check(model.request(b, direction: .microphone) == nil, "one automatic attempt per authority and scope")
@@ -37,14 +39,14 @@ func checkAuthority() {
     model.update(b, context: cb)
     check(model.advance(cleanupReady: true) == b, "connection replacement revokes old owner first")
     check(!model.isCurrent(successor), "old connection callback cannot authorize reconnect")
-    _ = model.advance(cleanupReady: true); model.observedCatalog(b)
+    _ = model.advance(cleanupReady: true); model.observedCatalog(b, epoch: model.epoch, scope: cb.scope!)
     check(model.request(b, direction: .microphone) != nil, "new connection gets one fresh attempt")
     check(model.request(b, direction: .playback) == nil, "explicit STOP survives reconnect")
     model.setDesired(true, direction: .playback, hostKey: cc.hostKey!, preferred: c)
     check(model.advance(cleanupReady: false) == b, "different Mac manual enable transfers physical owner")
     _ = model.advance(cleanupReady: false)
     check(model.owner == nil, "different Mac also waits for physical cleanup")
-    _ = model.advance(cleanupReady: true); model.observedCatalog(c)
+    _ = model.advance(cleanupReady: true); model.observedCatalog(c, epoch: model.epoch, scope: cc.scope!)
     check(model.owner == c && model.request(c, direction: .playback) != nil, "different Mac owns independent preferences")
     check(!model.intent.desired(.microphone, hostKey: cc.hostKey), "microphone preference never crosses verified Macs")
     cc.protected = false; model.update(c, context: cc)
@@ -63,6 +65,8 @@ func checkAuthority() {
     _ = again.advance(cleanupReady: true); _ = again.advance(cleanupReady: true)
     again.setDesired(true, direction: .playback, hostKey: "verified-mac-a", preferred: a)
     _ = again.advance(cleanupReady: true)
-    check(again.request(a, direction: .playback, manual: true) != nil,
-          "manual reenable on unchanged current source does not wait for an unsolicited catalog")
+    check(again.request(a, direction: .playback, manual: true) == nil,
+          "manual reenable waits for its explicit catalog query")
+    again.observedCatalog(a, epoch: again.epoch, scope: again.contexts[a]!.scope!)
+    check(again.request(a, direction: .playback, manual: true) != nil, "manual reenable follows readback")
 }

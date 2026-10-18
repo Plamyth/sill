@@ -4264,12 +4264,7 @@ final class StreamClient: ObservableObject {
             let from: NWConnection? = peer
             #if os(visionOS)
             guard connection === peer else { return }
-            if list.audioPrivacy?.protected == false || visionWireSource != list.active ||
-                visionWireBinding?.binding.epoch?.id != list.videoEpoch?.id {
-                VisionAudioSharedHardware.shared.revoke(owner: visionAudioOwnerID)
-                visionAudio.stop()
-                microphoneFrames.close()
-            }
+            receiveVisionAudioCatalogBarrier(list)
             observeVisionInputCatalog(list, from: peer)
             let availability = visionAudioRoute.observe(peer, source: list.active, supported: list.remoteAudio == 1)
             visionAudio.update(availability)
@@ -4283,7 +4278,6 @@ final class StreamClient: ObservableObject {
                 self.microphoneObserve(list, from: peer)
                 self.visionAudioIntentCatalog = list
                 self.observeVisionAudioPrivacy(list)
-                VisionRemoteAudioStore.shared.observedCatalog(self)
                 #endif
                 #if !os(visionOS)
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
@@ -4324,6 +4318,7 @@ final class StreamClient: ObservableObject {
                 #if os(visionOS)
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
                 self.observeVisionDisplays(list, from: peer)
+                self.receiveVisionAudioCatalogAcknowledgement(list, from: peer)
                 self.reconcileVisionAudioIntent()
                 #else
                 self.windows = list.windows
@@ -5059,6 +5054,34 @@ private extension Data {
 
 #if os(visionOS)
 extension StreamClient {
+    func receiveVisionAudioCatalogBarrier(_ list: WindowList) {
+        if list.audioPrivacy?.version != 2 || list.audioPrivacy?.protected != true ||
+            visionWireSource != list.active || visionWireBinding?.binding.epoch?.id != list.videoEpoch?.id {
+            VisionAudioSharedHardware.shared.revoke(owner: visionAudioOwnerID)
+            visionAudio.stop()
+            microphoneFrames.close()
+        }
+    }
+
+    func receiveVisionAudioCatalogAcknowledgement(_ list: WindowList, from peer: NWConnection) {
+        guard connection === peer else { return }
+        VisionRemoteAudioStore.shared.observedCatalog(self, list: list, peer: ObjectIdentifier(peer))
+    }
+
+    var visionAudioCatalogPeer: ObjectIdentifier? { authenticatedVisionMacAudioPeer }
+
+    func requestVisionAudioCatalog(_ requestID: UUID, scope: VisionRemoteAudioIntent.Scope) {
+        guard let peer = connection, visionAudioCatalogPeer == ObjectIdentifier(peer),
+              visionAudioIntentContext.scope == scope else { return }
+        let message = StreamMessage(kind: .fetchCatalog, timestamp: Date().timeIntervalSince1970,
+                                    isKeyframe: false, payload: Wire.encode(FetchCatalog(requestID: requestID)))
+        queue.async { [weak self] in
+            guard let self, self.connection === peer,
+                  self.visionWireBinding?.binding.epoch?.id == scope.video else { return }
+            peer.send(content: message.serialized(), completion: .contentProcessed { _ in })
+        }
+    }
+
     func updateVisionMacAudioRoutes(lease: VisionWindowLease?, foreground: Bool) {
         let scope: VisionMacAudioScope?
         if foreground, appInForeground, connected, let lease, let peer = connection,

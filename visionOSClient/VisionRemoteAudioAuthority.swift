@@ -21,8 +21,6 @@ struct VisionRemoteAudioAuthority {
     private var ownerScope: Intent.Scope?
     private var attempted: Set<Attempt> = []
     private var freshCatalog = false
-    private var hasOwned = false
-    private var lastOwner: UUID?
 
     init(intent: Intent = Intent()) { self.intent = intent }
 
@@ -57,19 +55,18 @@ struct VisionRemoteAudioAuthority {
             contexts.keys.sorted { $0.uuidString < $1.uuidString }.first { eligible($0) }
         guard let candidate else { return nil }
         owner = candidate
-        freshCatalog = !hasOwned || (preferred == candidate && lastOwner == candidate &&
-            ownerScope == contexts[candidate]?.scope)
+        freshCatalog = false
         ownerScope = contexts[candidate]?.scope
-        lastOwner = candidate
         epoch = UUID()
-        hasOwned = true
         preferred = nil
         attempted.removeAll()
         return nil
     }
 
-    mutating func observedCatalog(_ id: UUID) {
-        if owner == id { freshCatalog = true }
+    mutating func observedCatalog(_ id: UUID, epoch: UUID, scope: Intent.Scope) {
+        guard owner == id, self.epoch == epoch, ownerScope == scope,
+              contexts[id]?.scope == scope, contexts[id]?.eligible == true else { return }
+        freshCatalog = true
     }
 
     mutating func request(_ id: UUID, direction: Intent.Direction, manual: Bool = false) -> Ticket? {
@@ -117,6 +114,16 @@ final class VisionRemoteAudioStore {
     private var clients: [UUID: Client] = [:]
     private var refreshing = false
     private var permissionOwner: UUID?
+    private struct CatalogRefresh {
+        let requestID: UUID
+        let owner: UUID
+        let epoch: UUID
+        let scope: VisionRemoteAudioIntent.Scope
+        let peer: ObjectIdentifier
+    }
+    private var catalogEpoch: UUID?
+    private var pendingCatalog: CatalogRefresh?
+    private var pendingManual: [VisionRemoteAudioIntent.Direction: (VisionRemoteAudioAuthority.Ticket, VisionAudioScope?)] = [:]
 
     func beginPermission(_ id: UUID) -> Bool {
         guard permissionOwner == nil else { return false }
@@ -192,8 +199,14 @@ final class VisionRemoteAudioStore {
         refresh()
     }
 
-    func observedCatalog(_ client: StreamClient) {
-        model.observedCatalog(client.visionAudioOwnerID)
+    func observedCatalog(_ client: StreamClient, list: WindowList, peer: ObjectIdentifier) {
+        guard let pending = pendingCatalog, list.responseRequestID == pending.requestID,
+              pending.peer == peer, pending.owner == client.visionAudioOwnerID,
+              client.visionAudioCatalogPeer == peer, model.owner == pending.owner,
+              model.epoch == pending.epoch, client.visionAudioIntentContext.scope == pending.scope else { return }
+        pendingCatalog = nil
+        model.update(pending.owner, context: client.visionAudioIntentContext)
+        model.observedCatalog(pending.owner, epoch: pending.epoch, scope: pending.scope)
     }
 
     @discardableResult
@@ -218,19 +231,40 @@ final class VisionRemoteAudioStore {
         if previousOwner != model.owner {
             NotificationCenter.default.post(name: Self.changed, object: nil)
         }
+        if catalogEpoch != model.epoch {
+            pendingCatalog = nil
+            pendingManual.removeAll()
+        }
         guard let owner = model.owner, let client = clients[owner]?.value else { return false }
+        if catalogEpoch != model.epoch {
+            catalogEpoch = model.epoch
+            if client.visionAudioIntentCatalog?.catalogRefresh == 1,
+               let peer = client.visionAudioCatalogPeer, let scope = client.visionAudioIntentContext.scope {
+                let pending = CatalogRefresh(requestID: UUID(), owner: owner, epoch: model.epoch, scope: scope, peer: peer)
+                pendingCatalog = pending
+                client.requestVisionAudioCatalog(pending.requestID, scope: scope)
+            }
+        }
+        if let manual, manual.0 == owner, let context = model.contexts[owner],
+           let key = context.hostKey, let scope = context.scope {
+            pendingManual[manual.1] = (.init(owner: owner, epoch: model.epoch,
+                request: .init(hostKey: key, scope: scope, direction: manual.1,
+                    revision: model.intent.desiredRevision(manual.1, hostKey: key))), manual.2)
+        }
         var admitted = false
         for direction in VisionRemoteAudioIntent.Direction.allCases {
-            let isManual = manual?.0 == owner && manual?.1 == direction
+            let savedManual = pendingManual[direction]
+            let isManual = savedManual.map { model.isCurrent($0.0) } == true
             guard let ticket = model.request(owner, direction: direction, manual: isManual),
                   model.isCurrent(ticket), client.visionAudioIntentContext.eligible else { continue }
+            pendingManual.removeValue(forKey: direction)
             if direction == .playback {
-                let enabled = client.visionAudio.enable(expectedScope: isManual ? manual?.2 : nil)
+                let enabled = client.visionAudio.enable(expectedScope: isManual ? savedManual?.1 : nil)
                 if isManual { admitted = enabled }
             } else if isManual { client.toggleVisionMicrophone(); admitted = true }
             else { client.startVisionMicrophoneAutomatically() }
         }
-        return admitted
+        return admitted || (manual?.0 == owner && pendingCatalog != nil)
     }
 }
 #endif

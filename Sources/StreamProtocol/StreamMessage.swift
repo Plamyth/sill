@@ -80,6 +80,7 @@ public enum StreamMessageKind: UInt8 {
     case changeAudioRoute = 209  // paired TLS client → host: AudioRouteSelection, explicit CAS only
     case fetchAudioRoutes = 210  // paired TLS client → host, empty: refresh without changing defaults
     case selectDisplay = 211     // client → host: DisplaySelection, only with displaySelection == 1
+    case fetchCatalog = 212
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -109,6 +110,7 @@ public struct StreamMessage {
         switch kind {
         case .changeAudioRoute: return AudioRoutingPolicy.maxSelectionPayload
         case .fetchAudioRoutes: return 0
+        case .fetchCatalog: return 256
         case .audioRoutes: return -1
         case .microphoneControl: return 2048
         case .microphoneFrame: return 2033
@@ -120,7 +122,7 @@ public struct StreamMessage {
     public static func hostPayloadLimit(for kind: StreamMessageKind) -> Int {
         switch kind {
         case .audioRoutes: return AudioRoutingPolicy.maxStatePayload
-        case .changeAudioRoute, .fetchAudioRoutes: return -1
+        case .changeAudioRoute, .fetchAudioRoutes, .fetchCatalog: return -1
         case .microphoneState, .microphoneReceipt: return 4096
         case .microphoneControl, .microphoneFrame: return 0
         default: return kind == .frame || kind == .epochFrame ? maxFramePayload : maxOtherHostPayload

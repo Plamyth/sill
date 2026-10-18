@@ -1,5 +1,19 @@
 import Foundation
 
+final class FixtureQueue {
+    var work: [() -> Void] = []
+    func async(execute: @escaping () -> Void) { work.append(execute) }
+    func drain() { let pending = work; work.removeAll(); pending.forEach { $0() } }
+}
+final class NWConnection {
+    enum Completion { case contentProcessed((Error?) -> Void) }
+    var sent: [Data] = []
+    func send(content: Data?, completion: Completion) {
+        if let content { sent.append(content) }
+    }
+}
+struct FixtureEpoch { let id: UUID }
+struct FixtureBinding { let epoch: FixtureEpoch? }
 struct VisionAudioScope: Equatable { let id = UUID() }
 final class InertHardware {
     var isIdle = true
@@ -24,6 +38,30 @@ final class StreamClient {
     let visionAudioOwnerID = UUID()
     let visionAudio = InertPlayback()
     var context: VisionRemoteAudioIntent.Context
+    let queue = FixtureQueue()
+    var connection: NWConnection? = NWConnection()
+    var authenticatedVisionMacAudioPeer: ObjectIdentifier? { connection.map(ObjectIdentifier.init) }
+    var visionWireBinding: (binding: FixtureBinding, unused: Bool)? {
+        context.scope.map { (FixtureBinding(epoch: FixtureEpoch(id: $0.video)), false) }
+    }
+    var visionAudioIntentCatalog: WindowList? = WindowList(macName: "fixture", windows: [], active: .desktop, catalogRefresh: 1)
+    func receiveCatalog(_ list: WindowList, from peer: NWConnection) {
+        guard connection === peer else { return }
+        visionAudioIntentCatalog = list
+        receiveVisionAudioCatalogAcknowledgement(list, from: peer)
+        store.refresh()
+    }
+    func respondToQuery() {
+        queue.drain()
+        guard let peer = connection, let bytes = peer.sent.last,
+              let header = StreamMessage.parseHeader(bytes), header.kind == .fetchCatalog,
+              let query = Wire.decode(FetchCatalog.self, from: Data(bytes.dropFirst(StreamMessage.headerLength))) else {
+            fatalError("missing actual catalog query")
+        }
+        var list = visionAudioIntentCatalog!
+        list.responseRequestID = query.requestID
+        receiveCatalog(Wire.decode(WindowList.self, from: Wire.encode(list))!, from: peer)
+    }
     var microphoneAuthorization: UUID?
     var visionAudioPrivacyBlocked = false
     var microphoneStarts = 0, microphoneStops = 0

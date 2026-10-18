@@ -940,6 +940,28 @@ package final class StreamCoordinator {
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
         switch message.kind {
+        case .fetchCatalog:
+            let id = ObjectIdentifier(connection)
+            guard message.payload.count <= StreamMessage.clientPayloadLimit(for: .fetchCatalog),
+                  let query = Wire.decode(FetchCatalog.self, from: message.payload),
+                  connections[id] === connection, let route = routes[id], route.encrypted,
+                  let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
+                  !synthetic, !shuttingDown else { return }
+            var response = listMessage()
+            guard var list = Wire.decode(WindowList.self, from: response.payload) else { return }
+            list.responseRequestID = query.requestID
+            if let peer = microphoneIngress.peer(connection),
+               let grant = microphoneReceiver.advertisedGrant(peer: peer.id),
+               grant.fingerprint == fingerprint, grant.valid(at: DispatchTime.now().uptimeNanoseconds),
+               microphoneScopeIsCurrent(grant.scope, fingerprint: fingerprint) {
+                list.microphone = MicrophoneCapability(peer: peer.id, destination: grant.scope.destination,
+                                                      generation: grant.scope.capability)
+                response.payload = Wire.encode(list)
+                server.sendMicrophoneCatalog(response, to: connection, grant: grant)
+            } else {
+                response.payload = Wire.encode(list)
+                server.send(response, to: connection)
+            }
         case .selectSource:
             guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return }
             // A window picked comes forward on the Mac, which closes a view a gesture opened; the
@@ -2403,7 +2425,8 @@ package final class StreamCoordinator {
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
                                                       gestures: TrackpadGesture.generation,
                                                       remoteAudio: synthetic ? nil : 1,
-                                                      inputGeneration: inputGeneration, presentationInput: 1, videoEpoch: videoEpoch)))
+                                                      inputGeneration: inputGeneration, presentationInput: 1, videoEpoch: videoEpoch,
+                                                      catalogRefresh: 1)))
     }
 
     private func broadcastList() {

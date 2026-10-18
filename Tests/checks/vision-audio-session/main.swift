@@ -41,7 +41,8 @@ final class FakeGraph: VisionAudioGraphDriving {
     func deactivate() throws { deactivations += 1; if failDeactivate { throw SyntheticError() } }
 }
 enum VisionAudioSharedHardware {
-    static let shared = VisionAudioHardware(driver: FakeGraph())
+    static let graph = FakeGraph()
+    static let shared = VisionAudioHardware(driver: graph)
 }
 let format = VisionAudioFormat(rate: 48_000, channels: 1)!
 func render(_ graph: VisionAudioPlaybackGraph?) -> Float {
@@ -271,13 +272,72 @@ func runPlayerChecks() throws {
     player.retryCleanup()
     check(player.cleanupProblem == nil, "real player explicit cleanup recovers shared owner")
 }
+final class BarrierPlayback {
+    var stopAction: () -> Void = {}
+    func stop() { stopAction() }
+}
+final class BarrierFrames {
+    var open = true
+    func close() { open = false }
+}
+struct BarrierEpoch { let id: UUID }
+struct BarrierBinding { let epoch: BarrierEpoch? }
+final class StreamClient {
+    let visionAudioOwnerID = UUID()
+    let visionAudio = BarrierPlayback()
+    let microphoneFrames = BarrierFrames()
+    let visionWireSource = StreamSource.desktop
+    var visionWireBinding: (binding: BarrierBinding, unused: Bool)?
+}
+func runCatalogBarrierChecks() throws {
+    let hw = VisionAudioSharedHardware.shared, graph = VisionAudioSharedHardware.graph
+    let invalid: [AudioPrivacyState?] = [nil, .init(version: 1, protected: true),
+        .init(version: 3, protected: true), .init(version: 2, protected: false)]
+    for privacy in invalid {
+        let client = StreamClient()
+        let epoch = VideoEpoch(generation: UUID().uuidString, source: .desktop,
+            geometry: .init(x: 0, y: 0, width: 100, height: 100), width: 100, height: 100)
+        client.visionWireBinding = (BarrierBinding(epoch: BarrierEpoch(id: epoch.id)), false)
+        let speaker = reserve(hw, owner: client.visionAudioOwnerID)
+        try start(hw, speaker)
+        var copies = 0
+        let microphone = try hw.beginCapture(owner: client.visionAudioOwnerID, epoch: UUID(),
+            permitted: { true }, formatChanged: { _ in }, copyInput: { _, _ in copies += 1 }, stopped: { _ in })
+        let output = graph.outputs.last!, capture = graph.inputs.last!
+        check(render(output) > 0, "playback claim committed before metadata downgrade")
+        input(capture)
+        let before = copies
+        var cleaned = false
+        client.visionAudio.stopAction = {
+            DispatchQueue.main.async {
+                _ = hw.close(speaker)
+                _ = hw.close(microphone)
+                cleaned = true
+            }
+        }
+        let list = WindowList(macName: "fixture", windows: [], active: .desktop,
+            videoEpoch: epoch, audioPrivacy: privacy)
+        let network = DispatchQueue(label: "fixture.catalog.receive")
+        network.sync { client.receiveVisionAudioCatalogBarrier(list) }
+        check(!cleaned && !hw.isIdle, "main cleanup remains pending after receive returns")
+        check(!hw.matches(speaker, version: 1) && render(output) == 0,
+            "same epoch invalid privacy revokes actual playback claim before main drains")
+        input(capture)
+        check(copies == before && !client.microphoneFrames.open,
+            "same epoch invalid privacy revokes actual capture claim and closes frame gate")
+        drain { cleaned }
+        check(cleaned && hw.isIdle, "main cleanup eventually releases both reserved roles")
+    }
+}
 do {
     switch CommandLine.arguments.dropFirst().first {
+    case "catalog": try runCatalogBarrierChecks()
     case "review": try runReviewRegressions()
     case "hardware": try runHardwareChecks()
     case "failure": try runFailureChecks()
     case nil:
-        try runReviewRegressions()
+        try runCatalogBarrierChecks()
+        if failures == 0 { try runReviewRegressions() }
         if failures == 0 { try runHardwareChecks() }
         if failures == 0 { try runFailureChecks() }
         if failures == 0 { try runPlayerChecks() }

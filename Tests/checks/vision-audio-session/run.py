@@ -41,14 +41,21 @@ def main():
         code, log = run(command, label)
         if code: raise RuntimeError(label+'\n'+log[-6000:])
         return log
-    protocol = [root/'Sources/StreamProtocol'/n for n in ['AudioPacket.swift','StreamMessage.swift']]
+    protocol = [root/'Sources/StreamProtocol'/n for n in ['AudioPacket.swift','StreamMessage.swift','AudioRouting.swift','Switcher.swift','AudioPrivacy.swift']]
+    client_source = (root/'iOSClient/StreamClient.swift').read_text()
+    begin = client_source.index('    func receiveVisionAudioCatalogBarrier(')
+    end = client_source.index('    func receiveVisionAudioCatalogAcknowledgement(', begin)
+    barrier_source = client_source[begin:end]
+    barrier = output/'CatalogBarrier.swift'
+    barrier.write_text('import Foundation\nimport StreamProtocol\nextension StreamClient {\n' + barrier_source + '}\n')
+    record['catalogBarrierSHA256'] = hashlib.sha256(barrier_source.encode()).hexdigest()
     sources = [root/'visionOSClient'/n for n in ['VisionAudioBuffer.swift','VisionAudioHardware.swift','VisionAudioPlayer.swift']]
     main = root/'Tests/checks/vision-audio-session/main.swift'
     try:
         require(base+['-parse-as-library','-whole-module-optimization','-emit-module','-emit-object','-module-name','StreamProtocol']+list(map(str,protocol))+['-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'StreamProtocol.o')], 'protocol-compile')
         def compile_run(paths, label, scenario=None):
             exe = output/label
-            require(base+['-I',str(output)]+list(map(str,paths))+[str(main),str(output/'StreamProtocol.o'),'-o',str(exe)], label+'-compile')
+            require(base+['-I',str(output)]+list(map(str,paths))+[str(barrier),str(main),str(output/'StreamProtocol.o'),'-o',str(exe)], label+'-compile')
             return run([str(exe)]+([scenario] if scenario else []), label+'-runtime')
         code, log = compile_run(sources, 'baseline')
         if code: raise RuntimeError('baseline runtime\n'+log)

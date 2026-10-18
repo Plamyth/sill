@@ -18,13 +18,23 @@ command = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-pat
 source = (root / 'visionOSClient/VisionRemoteAudioAuthority.swift').read_text()
 store = source[source.index('final class VisionRemoteAudioStore {'):source.rindex('\n#endif')]
 (output / 'Store.swift').write_text('import Foundation\n' + store)
+client = (root / 'iOSClient/StreamClient.swift').read_text()
+start = client.index('    func receiveVisionAudioCatalogAcknowledgement(')
+end = client.index('    func updateVisionMacAudioRoutes(', start)
+transport = client[start:end]
+# Bind the production singleton call to this fixture's isolated store; method bodies are otherwise unchanged.
+transport = transport.replace('VisionRemoteAudioStore.shared', 'store')
+(output / 'CatalogTransport.swift').write_text('import Foundation\nextension StreamClient {\n' + transport + '}\n')
 (output / 'main.swift').write_bytes((root / 'Tests/checks/vision-audio-privacy/adapter-main.swift').read_bytes())
 adapter = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-path', str(output / 'cache'),
            str(root / 'visionOSClient/VisionRemoteAudioIntent.swift'),
            str(root / 'visionOSClient/VisionRemoteAudioAuthority.swift'), str(output / 'Store.swift'),
-           str(root / 'Tests/checks/vision-audio-privacy/adapter.swift'), str(output / 'main.swift'),
+           str(root / 'Tests/checks/vision-audio-privacy/adapter.swift'), str(output / 'CatalogTransport.swift'),
+           *[str(root / 'Sources/StreamProtocol' / name) for name in
+             ['StreamMessage.swift', 'Switcher.swift', 'AudioPrivacy.swift', 'AudioRouting.swift']], str(output / 'main.swift'),
            '-o', str(output / 'adapter')]
 result = {'scope': __doc__, 'commands': [], 'exitCode': 1,
+          'catalogTransportSHA256': hashlib.sha256(transport.encode()).hexdigest(),
           'storeSHA256': hashlib.sha256(store.encode()).hexdigest(),
           'adapterBoundary': 'Actual shared store copied verbatim. Inert StreamClient, player, microphone and hardware cleanup readback; no native graph, transport, OS permission or UI acceptance.'}
 for label, args in [('compile', command), ('policy', [str(exe)]),
