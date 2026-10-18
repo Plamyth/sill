@@ -73,10 +73,13 @@ if args.suite == 'recovery':
     pick += block(coordinator, 'private func cancelSourcePicks(').replace('private func', 'func', 1)
     pick += '\n' + block(coordinator, 'private func reserveSourceIntent(').replace('private func', 'func', 1)
     pick += '\n' + block(coordinator, 'private func stopIfStillEmpty(').replace('private func', 'func', 1)
+    pick += '\n' + block(coordinator, 'private func rejectSourceIntent(').replace('private func', 'func', 1).replace('self.videoEpoch?.id', 'self.videoEpoch')
     fixture = fixture.replace('// SOURCE_PICK', pick)
-    fixture = fixture.replace('// SELECT_PREFIX', prefix + """
-        if source == .none { active = .none; return }
+    cancelled = block(select, 'guard current() else {\n            active = .none')
+    fixture = fixture.replace('// SELECT_PREFIX', prefix + cancelled + "\n" + """
+        if source == .none { active = .none; selectionTerminated = true; return }
         do { try await startPipeline(source: source) } catch { active = .none }
+        selectionTerminated = true
         broadcastList()
     }
 """)

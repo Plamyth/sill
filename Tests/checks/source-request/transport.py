@@ -15,7 +15,7 @@ LABEL = SUITE
 def augment_review(inputs, block, root, here):
     if SUITE=='host':
         original=(root/'Sources/SillHost/StreamServer.swift').read_text()
-        methods='\n'.join(block(original,s) for s in ['func resetForNewStream()', 'func prepareVideo(', 'func commitVideo('])
+        methods='\n'.join(block(original,s) for s in ['func resetForNewStream()', 'func prepareVideo(', 'func isVideoCommitted(', 'func commitVideo('])
         server='''final class WireConnection { enum State { case ready }; var state = State.ready }
 final class VideoClient { var needsKeyframe=false; var awaitingFirstKeyframe=false; var catalogSent=true; let connection=WireConnection(); var latestCatalog: StreamMessage?; var catalogAdmission: SourcePublicationAdmission?; var microphoneCatalogGrant: Int? }
 final class Server {
@@ -25,6 +25,7 @@ final class Server {
     var clients: [Int: VideoClient]=[:]
     var committed: [StreamSource]=[]
     var prepared=0
+    func drain() { queue.sync {} }
     func send(_ data: Data, to client: VideoClient) {}
     func broadcast(_ message: StreamMessage, epoch: UUID) {}
 '''+methods.replace('            videoAdmission = .preparing(epoch)','            prepared += 1\n            videoAdmission = .preparing(epoch)').replace('            videoAdmission = .committed(epoch)','            committed.append(epoch.source)\n            videoAdmission = .committed(epoch)')+'\n}\n'
@@ -214,7 +215,26 @@ def augment(inputs, block, root, here):
            print("FAIL \\(rejection) must drain the unpublished predecessor and publish completed None")
           }
          }
-         print("QUEUE_INGRESS_CHECKS total=9 failed=\\(failures)")
+         let late = AdmissionHost(); late.join(peer)
+         late.receive(.init(source:.window(81),origin:.human),peer:peer)
+         for _ in 0..<200 { await Task.yield() }
+         late.server.drain()
+         let priorEpoch = late.videoEpoch?.id
+         if priorEpoch == nil || late.server.videoAdmission.current?.id != priorEpoch {
+          print("FIXTURE_PRECONDITION_FAILED committed predecessor before held readback"); exit(2)
+         }
+         late.server.queue.suspend()
+         late.launch("missing",peer:peer)
+         for _ in 0..<200 { await Task.yield() }
+         late.receive(.init(source:.window(82),origin:.human),peer:peer)
+         for _ in 0..<200 { await Task.yield() }
+         late.server.queue.resume(); late.server.drain()
+         for _ in 0..<200 { await Task.yield() }
+         late.server.drain()
+         if late.active != .window(82) || late.videoEpoch?.id != late.server.videoAdmission.current?.id {
+          failures += 1; print("FAIL late committed-epoch readback cannot replace a newer human selection")
+         }
+         print("QUEUE_INGRESS_CHECKS total=12 failed=\\(failures)")
          if failures > 0 { exit(1) }
         }
        }

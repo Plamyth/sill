@@ -41,7 +41,7 @@ if args.suite == 'host':
     coordinator = (root/'Sources/SillHost/StreamCoordinator.swift').read_text()
     methods = '\n'.join(block(coordinator, signature) for signature in [
         'private func reserveSourceIntent(', 'private func admissionIsCurrent(', 'private func admitSourceMessage(',
-        'private func sourcePeerDeparted(', 'private func stopIfStillEmpty(', 'private func expirePendingLaunch(', 'private func launchCompleted(', 'private func reconcilePendingLaunch(', 'private func cancelSourcePicks(', 'private func handlePick(', 'func select(_ source:', 'private func startPipeline('])
+        'private func sourcePeerDeparted(', 'private func rejectSourceIntent(', 'private func stopIfStillEmpty(', 'private func expirePendingLaunch(', 'private func launchCompleted(', 'private func reconcilePendingLaunch(', 'private func cancelSourcePicks(', 'private func handlePick(', 'func select(_ source:', 'private func startPipeline('])
     declarations = '\n'.join(block(coordinator, signature) for signature in [
         'private struct PendingLaunch', 'enum PickOrigin', 'private struct SourcePick', 'private enum OwnedDesktopRecovery', 'private enum PipelineEpochError'])
     launch = 'if await reconcilePendingLaunch(infos) { return }'

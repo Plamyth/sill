@@ -1020,6 +1020,26 @@ package final class StreamCoordinator {
             sourceAdmissionPeer = nil
         } else {
             cancelSourcePicks()
+            rejectSourceIntent(pickSequence)
+        }
+    }
+
+    private func rejectSourceIntent(_ sequence: UInt64) {
+        guard admissionIsCurrent(sequence, peer: nil) else { return }
+        pendingLaunch = nil
+        Task { @MainActor in
+            guard self.admissionIsCurrent(sequence, peer: nil), self.pendingLaunch == nil else { return }
+            if let epoch = self.videoEpoch?.id,
+               await self.server.isVideoCommitted(epoch) {
+                guard self.admissionIsCurrent(sequence, peer: nil), self.pendingLaunch == nil else { return }
+                if !self.switching, self.videoEpoch?.id == epoch, self.active != .none {
+                    self.settledPickSequence = sequence
+                    self.broadcastList()
+                    return
+                }
+            }
+            guard self.admissionIsCurrent(sequence, peer: nil), self.pendingLaunch == nil else { return }
+            await self.select(.none, intentSequence: sequence)
         }
     }
 
@@ -1031,9 +1051,7 @@ package final class StreamCoordinator {
     private func expirePendingLaunch(sequence: UInt64) {
         guard let pending = pendingLaunch, pending.pick.sequence == sequence,
               admissionIsCurrent(sequence, peer: pending.pick.peer) else { return }
-        pendingLaunch = nil
-        settledPickSequence = sequence
-        broadcastList()
+        rejectSourceIntent(sequence)
     }
 
     private func launchCompleted(sequence: UInt64, failed: Bool) async {
@@ -1092,7 +1110,7 @@ package final class StreamCoordinator {
             let sequence = reserveSourceIntent(peer: peer)
             let pick = SourcePick(source: .none, displaySelection: nil, sequence: sequence, origin: .human, peer: peer)
             guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: request.bundleID) else {
-                settledPickSequence = sequence; broadcastList(); return true
+                rejectSourceIntent(sequence); return true
             }
             pendingLaunch = PendingLaunch(bundleID: request.bundleID, pick: pick)
             Task { @MainActor [weak self] in
@@ -1486,7 +1504,7 @@ package final class StreamCoordinator {
         }
         var admittedSequence = intentSequence
         if let intentSequence {
-            guard admissionIsCurrent(intentSequence, peer: admissionPeer), catalog.clientCount > 0 else { return }
+            guard admissionIsCurrent(intentSequence, peer: admissionPeer), catalog.clientCount > 0 || source == .none else { return }
         } else if bringForward || displaySelection != nil {
             admittedSequence = reserveSourceIntent()
         }
@@ -1502,6 +1520,7 @@ package final class StreamCoordinator {
         func current() -> Bool { admissionIsCurrent(executionSequence, peer: admissionPeer) }
         guard current() else { return }
         let publicationAdmission = sourcePublicationAdmission
+        var selectionTerminated = false
         switching = true
         if source == .desktop, active == .desktop || ownedDesktopRecovery == .restarting {
             restartOf = .desktop
@@ -1509,7 +1528,7 @@ package final class StreamCoordinator {
             restartOf = (admittedSequence == nil && source == active && source != .none) ? source : nil
         }
         defer {
-            if let admittedSequence, admittedSequence == pickSequence {
+            if selectionTerminated, let admittedSequence, admittedSequence == pickSequence {
                 settledPickSequence = admittedSequence
             }
             switching = false
@@ -1517,6 +1536,7 @@ package final class StreamCoordinator {
             restartOf = nil
             var pick = pickArrivedWhileSwitching
             pickArrivedWhileSwitching = nil
+            if catalog.clientCount == 0 { pick = nil; cancelSourcePicks() }
             // Requests that arrived mid-switch, applied now that `switching` is clear again (every
             // return path, including the early ones). A last client leaving wins over a viewport
             // and over a queued pick: there is nobody left to fit the window to or stream to.
@@ -1528,7 +1548,6 @@ package final class StreamCoordinator {
                     Task { @MainActor in await self.stopIfStillEmpty(sequence: sequence) }
                 }
             }
-            if catalog.clientCount == 0 { pick = nil; cancelSourcePicks() }
             if let pick, pick.origin == .human || pick.source != active || pick.displaySelection != nil {
                 // The pick's own select fits the latest viewport. Run after it has started, the
                 // viewport tail would resize the old window, which `active` still names mid-switch.
@@ -1570,11 +1589,16 @@ package final class StreamCoordinator {
                   let selection = displaySelection ?? catalog.displayInventory.current,
                   catalog.displayInventory.contains(selection),
                   inputFence.allowsSelection(source, desktopScope: DisplayInventory.scope(selection)),
-                  catalog.selectDisplay(selection) else { broadcastList(admission: publicationAdmission); return }
+                  catalog.selectDisplay(selection) else {
+                if current(), let admittedSequence { rejectSourceIntent(admittedSequence) }
+                broadcastList(admission: publicationAdmission)
+                return
+            }
         }
         guard current() else { return }
         guard inputFence.allowsSelection(source, desktopScope: desktopScope) else {
             print("Source change paused: older Sill clients must disconnect or update before selecting another source.")
+            if let admittedSequence { rejectSourceIntent(admittedSequence) }
             broadcastList(admission: publicationAdmission)
             return
         }
@@ -1585,12 +1609,8 @@ package final class StreamCoordinator {
         videoEpoch = nil
         server.resetForNewStream()
         await revokeRemoteAudio(reason: "source changed")
-        guard current() else { return }
-
         await capture.stop()
-        guard current() else { return }
         await syntheticCapture.stop()
-        guard current() else { return }
         capture.onFrame = nil; syntheticCapture.onFrame = nil   // both queues drained: let the old encoder go
         rectCache = nil
         // Input held for the old source must not replay into the new one, but what acts on the whole
@@ -1611,6 +1631,11 @@ package final class StreamCoordinator {
             }
         }
         encoder = nil                  // deinit invalidates the VT session
+        guard current() else {
+            active = .none
+            broadcastList()
+            return
+        }
         // New settings take effect here, between pipelines, before the rate, the scale and the
         // stage are worked out for the next one.
         var leftStage = false
@@ -1674,6 +1699,7 @@ package final class StreamCoordinator {
         switch source {
         case .none:
             active = .none
+            selectionTerminated = true
             broadcastList(admission: publicationAdmission)
             return
         case .window(let id):
@@ -1683,7 +1709,7 @@ package final class StreamCoordinator {
             guard current() else { return }
             guard let w = found else {
                 if virtualDisplay { stage.release() }
-                active = .none; broadcastList(admission: publicationAdmission); return
+                active = .none; selectionTerminated = true; broadcastList(admission: publicationAdmission); return
             }
             print("Selecting window \(w.windowID) \(w.owningApplication?.applicationName ?? "?") — \(w.title ?? "") frame \(w.frame) onScreen \(w.isOnScreen) active \(w.isActive)")
             picked = w
@@ -1738,7 +1764,7 @@ package final class StreamCoordinator {
                 describe = "a synthetic test pattern\(useSoftwareEncoder ? " (software encoder)" : "")"
                 title = "Test Pattern"; kind = .testPattern
             } else {
-                guard let d = catalog.display else { active = .none; broadcastList(admission: publicationAdmission); return }
+                guard let d = catalog.display else { active = .none; selectionTerminated = true; broadcastList(admission: publicationAdmission); return }
                 // Sill's own windows (Settings, Log, the pairing window with its code) never go out
                 // in a Desktop stream. Fixed here at pipeline start: a running SCStream is never
                 // reconfigured, so a host that can show a pairing code (remote access) looks for
@@ -1789,6 +1815,7 @@ package final class StreamCoordinator {
                 active = .none
             }
         }
+        selectionTerminated = true
         broadcastList(admission: publicationAdmission)
         // Mid-switch requests (a viewport, the last client leaving) are applied by the defer.
     }

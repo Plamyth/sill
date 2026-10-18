@@ -78,6 +78,7 @@ import Foundation
         goodLaunch.launch("app.a", peer: peer)
         let originalRevision = goodLaunch.selectionRevision
         await goodLaunch.completeLaunch([WindowInfo(id: 1, title: "ready", appName: "A", bundleID: "app.a", width: 640, height: 480)])
+        goodLaunch.server.drain()
         expect(goodLaunch.selectionRevision == originalRevision && goodLaunch.server.committed == [.window(1)], "legitimate launch completes using its original admission")
         let gone = AdmissionHost(); gone.join(peer)
         gone.receive(.init(source: .window(1), origin: .automatic, selectionRevision: gone.selectionRevision), peer: peer)
@@ -107,6 +108,7 @@ import Foundation
         let beforeLaunch = missingLaunch.selectionRevision
         missingLaunch.launch("missing", peer: peer)
         missingLaunch.receive(.init(source: .window(1), origin: .automatic, selectionRevision: beforeLaunch), peer: peer)
+        await settle()
         expect(missingLaunch.pickSequence == 1 && missingLaunch.settledPickSequence == 1, "failed explicit launch invalidates old automatic revision")
         var events: [Int] = []
         let ingress = CoordinatorIngress()
@@ -128,6 +130,7 @@ import Foundation
         NSWorkspace.shared.completions.last?(1, nil); await settle()
         expect(noWindow.pendingLaunch != nil, "no-window launch retains original admission before deadline")
         noWindow.launchExpired()
+        await settle()
         expect(noWindow.pendingLaunch == nil && noWindow.settledPickSequence == noWindow.pickSequence,
                "no-window deadline releases global input settlement without another admission")
         let kept = AdmissionHost(); kept.join(peer); kept.join(otherPeer)
@@ -144,6 +147,15 @@ import Foundation
         staleStop.catalog.clientCount = 1; staleStop.join(otherPeer)
         await staleStop.stopEmpty(sequence: emptySequence)
         expect(staleStop.active == .window(1), "buffered new-client count prevents deferred zero-client stop")
+        let retained = AdmissionHost(); retained.join(peer)
+        retained.receive(.init(source: .window(7), origin: .human), peer: peer)
+        await settle(); retained.server.drain()
+        let retainedEpoch = retained.videoEpoch?.id
+        retained.launch("missing", peer: peer)
+        await settle(); retained.server.drain()
+        expect(retained.active == .window(7) && retained.videoEpoch?.id == retainedEpoch && retained.capture.running &&
+               retained.settledPickSequence == retained.pickSequence,
+               "a rejected explicit launch preserves an actually committed predecessor")
         for phase in ["inventory", "audio"] {
             let empty = AdmissionHost(); empty.join(peer)
             empty.receive(.init(source: .window(7), origin: .human), peer: peer)

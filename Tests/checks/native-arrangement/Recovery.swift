@@ -58,7 +58,11 @@ import CoreGraphics
     }
     func resume() { let w = waiter; waiter = nil; w?.resume() }
 }
-@MainActor final class Server { func resetForNewStream() {} }
+@MainActor final class Server {
+    var committedEpoch: UUID?
+    func resetForNewStream() { committedEpoch = nil }
+    func isVideoCommitted(_ epoch: UUID) async -> Bool { committedEpoch == epoch }
+}
 @MainActor final class Pointer { func setGeometry(_ geometry: Int?, fps: Int) {} }
 @MainActor final class Extended { func checkDisplay() {} }
 @MainActor final class Injector { func releaseInput(of device: Int) {} }
@@ -133,6 +137,7 @@ import CoreGraphics
         // PIPELINE_VALIDATION
         active = source
         videoEpoch = UUID()
+        server.committedEpoch = videoEpoch
         committed.append(source)
     }
     // OWNED_RECOVERY

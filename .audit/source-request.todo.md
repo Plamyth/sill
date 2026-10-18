@@ -16,3 +16,8 @@ Premise tested: automatic source requests are Desktop-only. Actual resume sends 
 - [ ] Exact full SDK and native source restoration and left/above arrangement acceptance.
 
 The archived original interrupted snapshot is source-publication-completion-dirty-snapshot-20261019. The first recovery run failed at fixture compilation and is retained. No installed host or client includes this source-request completion family.
+
+- [x] Preserve b627b83 before correcting Kepler's terminal reconciliation failures.
+- [x] Reuse completed None transition and server queue readback rather than a second global pipeline ledger.
+- [x] Host66, queued-server12, reconnect9 and existing recovery164 pass after the correction.
+- [ ] Fresh independent source review of the terminal reconciliation correction. Kepler's8dec149 verdict remains NOT CLEAR.

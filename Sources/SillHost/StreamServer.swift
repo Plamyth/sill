@@ -1367,6 +1367,14 @@ final class StreamServer {
         }
     }
 
+    func isVideoCommitted(_ epoch: UUID) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                continuation.resume(returning: videoAdmission.current?.id == epoch)
+            }
+        }
+    }
+
     func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission,
                      requestKeyframe: @escaping () -> Void) {
         queue.async { [self] in

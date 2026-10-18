@@ -97,11 +97,14 @@ struct HostStatusSnapshot {
 @MainActor final class Server {
     var committed: [StreamSource] = []
     var prepared = 0
-    func prepareVideo(_ epoch: VideoEpoch) { prepared += 1 }
-    func resetForNewStream() {}
+    var committedEpoch: UUID?
+    func drain() {}
+    func prepareVideo(_ epoch: VideoEpoch) { prepared += 1; committedEpoch = nil }
+    func resetForNewStream() { committedEpoch = nil }
+    func isVideoCommitted(_ epoch: UUID) async -> Bool { committedEpoch == epoch }
     func broadcast(_ message: StreamMessage, epoch: UUID) {}
     func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission, keyframe: () -> Void) {
-        admission.publish { committed.append(epoch.source) }
+        admission.publish { committed.append(epoch.source); committedEpoch = epoch.id }
     }
 }
 @MainActor final class Injector {
