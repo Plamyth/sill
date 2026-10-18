@@ -198,12 +198,12 @@ package final class StreamCoordinator {
     /// the encoder fallback, a lost display): the source being restarted. Nil during a switch to
     /// another source.
     private var restartOf: StreamSource?
-    /// A device's pick of a different source that came in during that restart (`handlePick`);
-    /// taken by select's defer. Never set during a switch to another source: the device's automatic
-    /// Desktop request can land then (StreamClient's window list handling) and must not override
-    /// the user's pick.
+    /// Latest window or none pick received during a transition, taken by select's defer.
+    /// Desktop requests only queue during restarts because older clients send them automatically.
     private var pickArrivedWhileSwitching: StreamSource?
-    private enum OwnedDesktopRecovery { case idle, pending(DisplaySelection), restarting }
+    private enum OwnedDesktopRecovery: Equatable {
+        case idle, awaitingInventory, pending(DisplaySelection), restarting
+    }
     private var ownedDesktopRecovery = OwnedDesktopRecovery.idle
     /// The client's last stream panel size and text scale. One stream, so with several clients
     /// the last one to report wins.
@@ -1312,20 +1312,14 @@ package final class StreamCoordinator {
 
     /// A pick from a device's switcher, and one that waited out a restart (select's defer): one
     /// rule for both, so a queued pick is not lost to a select that starts before its Task runs.
-    /// While the active source restarts (a settings change, a resize, a rate change, the encoder
-    /// fallback, a lost display), the pick waits for it and runs once it is done: the newest
-    /// wins, and a pick of the source being restarted needs nothing. During a switch to another
-    /// source it is dropped, as before this rule existed: the device's automatic Desktop request
-    /// can land then and must not override the user's pick.
-    ///
-    /// The host cannot tell that request from a Desktop tap. The device holds it back when the
-    /// user has picked since the watched window closed (StreamClient's window list); an older
-    /// device, or a pick made before the device heard of the close, can still let it land during
-    /// a restart that follows the user's pick, and then it is queued like the user's own.
+    /// Window and none picks retain user intent across every transition, including failed-restart
+    /// cleanup. Automatic Desktop requests from older clients only queue during source restarts.
     private func handlePick(_ source: StreamSource) async {
         if source != .desktop { ownedDesktopRecovery = .idle }
         if switching {
-            if let r = restartOf, source != r { pickArrivedWhileSwitching = source }
+            if source != .desktop || (restartOf != nil && source != restartOf) {
+                pickArrivedWhileSwitching = source
+            }
             return
         }
         await select(source, bringForward: true)
@@ -2420,14 +2414,17 @@ package final class StreamCoordinator {
     private func displaysChanged() {
         guard !synthetic else { return }
         extendedDesktop.checkDisplay()
-        if active == .desktop || (switching && restartOf == .desktop) {
+        if active == .desktop || (switching && restartOf == .desktop) || ownedDesktopRecovery == .awaitingInventory {
             videoEpoch = nil
             inputGeneration = UUID().uuidString
             server.resetForNewStream()
             pointer.setGeometry(nil, fps: fps)
-            if let selection = catalog.displayInventory.current,
-               !switching || restartOf == .desktop, pickArrivedWhileSwitching == nil {
-                ownedDesktopRecovery = .pending(selection)
+            if !switching || restartOf == .desktop, pickArrivedWhileSwitching == nil {
+                if let selection = catalog.displayInventory.current {
+                    ownedDesktopRecovery = .pending(selection)
+                } else if catalog.displayInventory.isRefreshingSelection {
+                    ownedDesktopRecovery = .awaitingInventory
+                }
             }
         }
         broadcastList()

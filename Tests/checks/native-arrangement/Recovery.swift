@@ -4,17 +4,18 @@ import CoreGraphics
 @MainActor final class PhaseBarrier {
     private(set) var entered = false
     private var waiter: CheckedContinuation<Void, Never>?
+    private var observers: [CheckedContinuation<Void, Never>] = []
     func suspend() async {
         entered = true
+        let ready = observers
+        observers.removeAll()
+        for observer in ready { observer.resume() }
         await withCheckedContinuation { waiter = $0 }
     }
     func resume() { let w = waiter; waiter = nil; w?.resume() }
     func reached() async {
-        for _ in 0..<100_000 {
-            if entered { return }
-            await Task.yield()
-        }
-        fatalError("phase barrier was not reached")
+        if entered { return }
+        await withCheckedContinuation { observers.append($0) }
     }
 }
 @MainActor final class Catalog {
@@ -37,6 +38,7 @@ import CoreGraphics
     var pauseStarts = Set<Int>()
     var waiter: CheckedContinuation<Void, Never>?
     var starts = 0
+    var startBarrier: PhaseBarrier?
     var stopBarrier: PhaseBarrier?
     func stop() async {
         if let stopBarrier { await stopBarrier.suspend() }
@@ -44,6 +46,7 @@ import CoreGraphics
     }
     func start() async {
         starts += 1
+        if let startBarrier { await startBarrier.suspend() }
         if pauseNext || pauseStarts.contains(starts) {
             pauseNext = false
             await withCheckedContinuation { waiter = $0 }
@@ -88,9 +91,18 @@ import CoreGraphics
     var committed = [StreamSource]()
     var audioBarrier: PhaseBarrier?
     var pickDeliveries = 0
+    private var pickObserver: (Int, CheckedContinuation<Void, Never>)?
+    func picksDelivered(_ count: Int) async {
+        if pickDeliveries >= count { return }
+        await withCheckedContinuation { pickObserver = (count, $0) }
+    }
     func handlePick(_ source: StreamSource) async {
         pickDeliveries += 1
         await productionHandlePick(source)
+        if let (count, observer) = pickObserver, pickDeliveries >= count {
+            pickObserver = nil
+            observer.resume()
+        }
     }
     func broadcastList() {}
     func sendMicrophoneCatalog(to connection: Int) {}

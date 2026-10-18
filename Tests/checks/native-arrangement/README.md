@@ -152,7 +152,80 @@ Receipts are in the routed Development-Archives folders named
 
 ## Recovery premise round 2
 
-Task `recovery-premise-round2-20261018` starts at `a5a958b5e0dff487855d68522b4fe49ac3cd1b60` in an exclusive worktree.
-Premise under direct test: owned recovery intent can be inferred from active/current after asynchronous topology and cleanup, and queued user picks need retention only while restartOf is nonnil.
-The red tests split inventory invalidation, startup completion, and inventory refill. A second test suspends failed refresh and audio shutdown independently, then observes the prior select defer delivering its queued pick during cleanup.
-The fixture wraps the unchanged production handlePick in a delivery counter. Production select guards, full stop/audio prefix and defer, recovery methods, post-start validation, DisplayInventory, and SourceInputFence are extracted verbatim. Encoder/filter creation and commit publication remain controlled boundaries.
+Task `recovery-premise-round2-20261018` starts at
+`a5a958b5e0dff487855d68522b4fe49ac3cd1b60` in the exclusive branch
+`codex/recovery-premise-round2-20261018`. The parent owns independent Feynman
+review, full SDK validation, native UI, integration and release. This worker uses
+pstack 0.9.93 poteto-mode, its Bug fix playbook, Attack the Premise, How,
+Architect and Model the Domain. The user prohibits nested agents, so grounding
+and the two design sketches are sequential and are not independent review.
+
+The tested premise is that owned recovery intent can be inferred from
+active/current after asynchronous topology and cleanup, and queued user picks
+need retention only while restartOf is nonnil. Red commit `d62533a` precedes all
+product edits. Its compiled run reports `RECOVERY_CHECKS total=23 failed=2`.
+The two failing terminal assertions are:
+
+- `invalidation then startup return then refill preserves owned recovery intent`
+- `failed refresh queued window pick survives suspended audio shutdown`
+
+The first trace invalidates inventory, holds capture startup at a continuation,
+lets startup return and reject its stale revision, then completes inventory
+refill. Invalidation removed current before the callback recorded intent. After
+startup sets active to none, the refill callback no longer recognizes its owner.
+The second trace holds refresh, queues a scoped window pick, returns refresh
+failure, suspends cleanup, and observes the previous select defer delivering its
+queued task during that suspension. Cleanup has nil restartOf, so the old rule
+drops the pick. These traces directly contradict both parts of the premise.
+
+The Architect comparison considered a unified serial transition queue against
+durable intent plus wider pick admission. A unified queue requires migrating the
+other select callers and still needs durable intent because inventory callbacks
+change state independently. The smaller design extends OwnedDesktopRecovery
+with awaitingInventory. That state survives active becoming none until refill,
+explicit user intent, actual display loss, or departure cancels recovery.
+No DisplayInventory or store edit is needed.
+
+A failed intermediate experiment retained restarting through cleanup. Its
+23-check run still failed the queued-pick assertion because the explicit pick
+correctly cancels recovery during refresh. That lifecycle change was removed.
+The final rule removes the restartOf admission condition for window and none
+picks across transitions, including owned cleanup. The production selectSource
+handler documents that clients only emit automatic Desktop requests. Desktop
+requests retain the existing restart-only queue rule. This adds no boolean and
+preserves the existing authentication and SourceInputFence behavior.
+
+The fixture extracts production select guards, the entire audio/capture stop
+prefix and defer, handlePick, displaysChanged, recoverOwnedDesktop, and the
+post-capture desktop selection/geometry validation. Inventory, wire types and
+SourceInputFence are actual source. The unchanged handler has a wrapper that
+observes task delivery without changing its logic. Continuations control capture
+startup, refresh, audio shutdown, capture shutdown and queued-pick observation.
+Terminal assertions use the existing bounded actor-yield drain. Encoder/filter
+creation, platform capture, source selection tail and epoch publication are
+controlled boundaries. The auth ingress, full SDK and native callback machinery
+are outside this fixture.
+
+Final results are `RECOVERY_CHECKS total=104 failed=0`,
+`ARRANGEMENT_CHECKS total=39 failed=0` and `MONITOR_SELECTION_CHECKS total=39`.
+Recovery covers both failure orders, failed refresh with audio/capture shutdown,
+scoped and legacy peers, explicit none, disconnect, no pick, latest human pick,
+actual display loss and ordinary-switch automatic Desktop suppression. Sender
+and receiver hashes match, input source is unchanged, children are reaped and
+all owned RAM volumes are removed. These are independent pure checks in Mini
+RAM, not codex-source-guard transfer acceptance or native SDK/application proof.
+
+Receipts under `/Volumes/BT-Workspace/Development-Archives/BT_CCR-Sill-Obsidian/`
+are `recovery-round2-red-20261018`, `recovery-round2-green-20261018` for the
+rejected intermediate experiment, `recovery-round2-matrix-20261018` for the
+84-check matrix, and final `recovery-round2-final-20261018`,
+`recovery-round2-native-20261018`, `recovery-round2-monitor-20261018`.
+The final product and harness hashes are verified against these receipts before
+commit. The commit itself does not claim a new SDK or native run.
+
+The original a5 worktree and canonical checkout were never written by this
+worker. Mac 137, Sill 14, Family 2 ink transform, CanvasStore, installed apps,
+devices, live audio and other chats are outside this worker's effects. No push,
+PR, merge, SDK build, native UI, installation or independent review is performed.
+The parent must test this exact source in its SDK/native paths and conduct the
+next independent review before integration or release.

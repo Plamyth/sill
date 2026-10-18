@@ -133,14 +133,16 @@ import CoreGraphics
             c.displaysChanged()
         }
         let lateRefill = make()
-        lateRefill.capture.pauseNext = true
+        let startupBarrier = PhaseBarrier()
+        lateRefill.capture.startBarrier = startupBarrier
         let startup = Task { @MainActor in await lateRefill.select(.desktop) }
-        for _ in 0..<100_000 where lateRefill.capture.waiter == nil { await Task.yield() }
-        expect(lateRefill.capture.waiter != nil, "invalidation repro holds actual pipeline validation await")
+        await startupBarrier.reached()
+        expect(startupBarrier.entered, "invalidation repro holds actual pipeline validation await")
         lateRefill.catalog.displayInventory.invalidate(preservingDisplay:13)
         lateRefill.displaysChanged()
         await settle()
-        lateRefill.capture.resume()
+        lateRefill.capture.startBarrier = nil
+        startupBarrier.resume()
         await startup.value
         expect(lateRefill.active == .none && lateRefill.videoEpoch == nil,
                "startup rejects invalid inventory before refill")
@@ -150,6 +152,9 @@ import CoreGraphics
                "invalidation then startup return then refill preserves owned recovery intent")
 
         let cleanupPick = make()
+        expect(cleanupPick.inputFence.join(9, source:.desktop, switching:false, desktopScope:cleanupPick.desktopScope),
+               "scoped pick peer joins original source")
+        cleanupPick.inputFence.negotiate(9, supportsScoped:true)
         let refresh = PhaseBarrier()
         let shutdown = PhaseBarrier()
         cleanupPick.catalog.refreshBarrier = refresh
@@ -160,7 +165,7 @@ import CoreGraphics
         cleanupPick.audioBarrier = shutdown
         refresh.resume()
         await shutdown.reached()
-        for _ in 0..<100_000 where cleanupPick.pickDeliveries < 2 { await Task.yield() }
+        await cleanupPick.picksDelivered(2)
         expect(cleanupPick.pickDeliveries == 2 && cleanupPick.switching,
                "prior select defer delivers queued pick during suspended cleanup")
         cleanupPick.audioBarrier = nil
@@ -169,6 +174,105 @@ import CoreGraphics
         await settle()
         expect(cleanupPick.active == .window(123) && cleanupPick.committed.last == .window(123),
                "failed refresh queued window pick survives suspended audio shutdown")
+
+        for outcome in ["none", "disconnect", "legacy", "window", "loss"] {
+            let c = make()
+            expect(c.inputFence.join(11, source:.desktop, switching:false, desktopScope:c.desktopScope),
+                   "inventory-gap/\(outcome) peer joins")
+            if outcome != "legacy" { c.inputFence.negotiate(11, supportsScoped:true) }
+            let start = PhaseBarrier()
+            c.capture.startBarrier = start
+            let task = Task { @MainActor in await c.select(.desktop) }
+            await start.reached()
+            c.catalog.displayInventory.invalidate(preservingDisplay:13)
+            c.displaysChanged()
+            c.capture.startBarrier = nil
+            start.resume()
+            await task.value
+            expect(c.active == .none && c.videoEpoch == nil,
+                   "inventory-gap/\(outcome) invalid startup completes before refill")
+            if outcome == "none" { await c.handlePick(.none) }
+            if outcome == "window" { await c.handlePick(.window(204)) }
+            if outcome == "disconnect" {
+                c.inputFence.leave(11)
+                c.catalog.clientCount = 0
+            }
+            if outcome == "loss" {
+                c.catalog.displayInventory.update([], signatures:[], frames:[], preservingDisplay:13)
+                c.displaysChanged()
+            } else { refill(c) }
+            await settle()
+            expect(c.active == (outcome == "window" ? .window(204) : .none),
+                   "inventory-gap/\(outcome) refill respects cancellation or input fence")
+            expect(c.capture.starts == (outcome == "window" ? 2 : 1),
+                   "inventory-gap/\(outcome) cannot resurrect desktop after cancellation")
+        }
+
+        for boundary in ["audio", "capture"] {
+            for outcome in ["window", "none", "disconnect", "legacy", "no-pick", "latest"] {
+                let c = make()
+                let legacyPeer = outcome == "legacy"
+                expect(c.inputFence.join(10, source:.desktop, switching:false, desktopScope:c.desktopScope),
+                       "\(boundary)/\(outcome) peer joins")
+                if !legacyPeer { c.inputFence.negotiate(10, supportsScoped:true) }
+                let oldGeneration = c.inputGeneration
+                let refresh = PhaseBarrier()
+                let stop = PhaseBarrier()
+                c.catalog.refreshBarrier = refresh
+                c.catalog.refreshResult = false
+                move(c, x:-1350)
+                await refresh.reached()
+                if outcome != "no-pick" { await c.handlePick(.window(201)) }
+                if boundary == "audio" { c.audioBarrier = stop } else { c.capture.stopBarrier = stop }
+                refresh.resume()
+                await stop.reached()
+                if outcome != "no-pick" {
+                    await c.picksDelivered(2)
+                    expect(c.pickDeliveries == 2, "\(boundary)/\(outcome) queued task arrived inside cleanup")
+                }
+                if outcome == "none" { await c.handlePick(.none) }
+                if outcome == "latest" { await c.handlePick(.window(202)) }
+                if outcome == "disconnect" {
+                    c.inputFence.leave(10)
+                    c.catalog.clientCount = 0
+                    c.deselectWhenSettled = true
+                }
+                c.audioBarrier = nil
+                c.capture.stopBarrier = nil
+                c.catalog.refreshBarrier = nil
+                stop.resume()
+                await settle()
+                let expected: StreamSource = outcome == "latest" ? .window(202) : (outcome == "window" ? .window(201) : .none)
+                expect(c.active == expected, "\(boundary)/\(outcome) failed refresh keeps latest permitted intent")
+                expect(!c.inputFence.accepts(10, generation:oldGeneration, current:c.inputGeneration,
+                                             source:c.active, desktopScope:c.desktopScope),
+                       "\(boundary)/\(outcome) old input epoch stays fenced")
+                if expected == .none {
+                    expect(!c.capture.running && !c.audioLive && c.videoEpoch == nil && c.capture.starts == 0,
+                           "\(boundary)/\(outcome) cleanup has no pipeline or audio")
+                }
+                if legacyPeer {
+                    expect(!c.inputFence.allowsSelection(.window(201)), "legacy pin survives cleanup")
+                    c.inputFence.leave(10)
+                    expect(c.inputFence.allowsSelection(.window(201)), "disconnect alone releases legacy pin")
+                }
+            }
+        }
+        let ordinary = make()
+        ordinary.active = .window(301)
+        ordinary.capture.startBarrier = PhaseBarrier()
+        let ordinarySwitch = Task { @MainActor in await ordinary.select(.window(302), bringForward:true) }
+        await ordinary.capture.startBarrier!.reached()
+        await ordinary.handlePick(.desktop)
+        expect(ordinary.pickArrivedWhileSwitching == nil,
+               "automatic desktop request still cannot override ordinary window switch")
+        await ordinary.handlePick(.window(303))
+        let ordinaryBarrier = ordinary.capture.startBarrier!
+        ordinary.capture.startBarrier = nil
+        ordinaryBarrier.resume()
+        await ordinarySwitch.value
+        await settle()
+        expect(ordinary.active == .window(303), "latest human window pick survives ordinary transition")
 
         print("RECOVERY_CHECKS total=\(checks) failed=\(failures)")
         if failures != 0 { exit(1) }
