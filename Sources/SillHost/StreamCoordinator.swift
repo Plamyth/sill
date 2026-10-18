@@ -194,13 +194,16 @@ package final class StreamCoordinator {
     private var rectCache: (id: CGWindowID, rect: CGRect, at: CFAbsoluteTime)?
     private var pendingLaunch: String?
     private var switching = false
-    /// A restart of the active source is in flight (a settings change, a resize, a rate change,
-    /// the encoder fallback, a lost display): the source being restarted. Nil during a switch to
-    /// another source.
+    /// Desktop recovery or an internal restart of the active source. User window picks
+    /// leave this nil even when they select the current window.
     private var restartOf: StreamSource?
-    /// Latest window or none pick received during a transition, taken by select's defer.
-    /// Desktop requests only queue during restarts because older clients send them automatically.
-    private var pickArrivedWhileSwitching: StreamSource?
+    private struct SourcePick {
+        let source: StreamSource
+        let displaySelection: DisplaySelection?
+        let sequence: UInt64
+    }
+    private var pickSequence: UInt64 = 0
+    private var pickArrivedWhileSwitching: SourcePick?
     private enum OwnedDesktopRecovery: Equatable {
         case idle, awaitingInventory, pending(DisplaySelection), restarting
     }
@@ -969,8 +972,6 @@ package final class StreamCoordinator {
             handleAudioRoute(message, from: connection)
         case .selectDisplay:
             guard let selection = Wire.decode(DisplaySelection.self, from: message.payload) else { return }
-            // A monitor pick cannot queue behind an in-flight host restart.
-            guard !switching else { broadcastList(); return }
             await select(.desktop, displaySelection: selection)
         case .selectSource:
             guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return }
@@ -1310,19 +1311,14 @@ package final class StreamCoordinator {
 
     // MARK: Source switching
 
-    /// A pick from a device's switcher, and one that waited out a restart (select's defer): one
-    /// rule for both, so a queued pick is not lost to a select that starts before its Task runs.
-    /// Window and none picks retain user intent across every transition, including failed-restart
-    /// cleanup. Automatic Desktop requests from older clients only queue during source restarts.
-    private func handlePick(_ source: StreamSource) async {
-        if source != .desktop { ownedDesktopRecovery = .idle }
-        if switching {
-            if source != .desktop || (restartOf != nil && source != restartOf) {
-                pickArrivedWhileSwitching = source
-            }
+    /// Automatic Desktop requests must pass admission before they can affect user intent.
+    private func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil) async {
+        if intentSequence == nil, source == .desktop {
+            guard !switching || (restartOf != nil && source != restartOf && pickArrivedWhileSwitching == nil) else { return }
+            await select(source, bringForward: true, intentSequence: pickSequence)
             return
         }
-        await select(source, bringForward: true)
+        await select(source, bringForward: true, intentSequence: intentSequence)
     }
 
     /// Streams `source` in place of whatever streams now. Also how the host restarts the current
@@ -1333,14 +1329,29 @@ package final class StreamCoordinator {
     /// restarts leave Mac focus where it is, and so does staging a window on the virtual display.
     /// One exception: a staged window that comes home because the virtual display was turned off
     /// comes forward too, whichever select commits that change (see `cameHome`).
-    func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil) async {
-        guard !switching, !shuttingDown else { return }
-        if bringForward || displaySelection != nil { ownedDesktopRecovery = .idle }
+    func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil,
+                intentSequence: UInt64? = nil) async {
+        guard !shuttingDown else { return }
+        var admittedSequence = intentSequence
+        if let intentSequence {
+            guard intentSequence == pickSequence, catalog.clientCount > 0 else { return }
+        } else if bringForward || displaySelection != nil {
+            pickSequence += 1
+            admittedSequence = pickSequence
+            pickArrivedWhileSwitching = nil
+        }
+        if admittedSequence != nil { ownedDesktopRecovery = .idle }
+        guard !switching else {
+            if let admittedSequence {
+                pickArrivedWhileSwitching = SourcePick(source: source, displaySelection: displaySelection, sequence: admittedSequence)
+            }
+            return
+        }
         switching = true
-        if source == .desktop, case .restarting = ownedDesktopRecovery {
+        if source == .desktop, active == .desktop || ownedDesktopRecovery == .restarting {
             restartOf = .desktop
         } else {
-            restartOf = (source == active && source != .none) ? source : nil
+            restartOf = (admittedSequence == nil && source == active && source != .none) ? source : nil
         }
         defer {
             switching = false
@@ -1359,14 +1370,17 @@ package final class StreamCoordinator {
                 }
             }
             if catalog.clientCount == 0 { pick = nil }
-            if let pick, pick != active {
+            if let pick, pick.source != active || pick.displaySelection != nil {
                 // The pick's own select fits the latest viewport. Run after it has started, the
                 // viewport tail would resize the old window, which `active` still names mid-switch.
                 viewportArrivedWhileSwitching = false
-                // Through the handler's rule again, not straight to `select`: another restart can
-                // start before this Task runs (a viewport's new rate, an encoder hang, a lost
-                // display), and `select` would drop the pick; the rule queues it behind that one.
-                Task { @MainActor in await self.handlePick(pick) }
+                Task { @MainActor in
+                    if let selection = pick.displaySelection {
+                        await self.select(pick.source, displaySelection: selection, intentSequence: pick.sequence)
+                    } else {
+                        await self.handlePick(pick.source, intentSequence: pick.sequence)
+                    }
+                }
             } else if viewportArrivedWhileSwitching {
                 viewportArrivedWhileSwitching = false
                 Task { @MainActor in await self.applyViewportToActiveWindow() }
@@ -2414,12 +2428,12 @@ package final class StreamCoordinator {
     private func displaysChanged() {
         guard !synthetic else { return }
         extendedDesktop.checkDisplay()
-        if active == .desktop || (switching && restartOf == .desktop) || ownedDesktopRecovery == .awaitingInventory {
+        if active == .desktop || (switching && restartOf == .desktop) || ownedDesktopRecovery != .idle {
             videoEpoch = nil
             inputGeneration = UUID().uuidString
             server.resetForNewStream()
             pointer.setGeometry(nil, fps: fps)
-            if !switching || restartOf == .desktop, pickArrivedWhileSwitching == nil {
+            if !switching || restartOf == .desktop || ownedDesktopRecovery != .idle, pickArrivedWhileSwitching == nil {
                 if let selection = catalog.displayInventory.current {
                     ownedDesktopRecovery = .pending(selection)
                 } else if catalog.displayInventory.isRefreshingSelection {

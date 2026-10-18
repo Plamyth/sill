@@ -82,7 +82,7 @@ import CoreGraphics
     var switching = false
     var shuttingDown = false
     var restartOf: StreamSource?
-    var pickArrivedWhileSwitching: StreamSource?
+    // SOURCE_PICK
     var deselectWhenSettled = false
     var viewportArrivedWhileSwitching = false
     var pendingConfig: Int?
@@ -100,10 +100,10 @@ import CoreGraphics
         if pickDeliveries >= count { return }
         await withCheckedContinuation { pickObserver = (count, $0) }
     }
-    func handlePick(_ source: StreamSource) async {
+    func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil) async {
         pickDeliveries += 1
         if pickDeliveries == 2, let replayBarrier { await replayBarrier.suspend() }
-        await productionHandlePick(source)
+        await productionHandlePick(source, intentSequence: intentSequence)
         if let (count, observer) = pickObserver, pickDeliveries >= count {
             pickObserver = nil
             observer.resume()

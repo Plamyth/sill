@@ -326,6 +326,124 @@ import CoreGraphics
         expect(replayed.active == .window(403) && replayed.committed.last == .window(403),
                "old A replay after new B admission cannot replace B")
 
+        for outcome in ["window", "third", "none", "display", "mac", "automatic", "failure", "fence", "disconnect"] {
+            let c = make()
+            c.active = .window(500)
+            let first = PhaseBarrier()
+            let replay = PhaseBarrier()
+            c.capture.startBarrier = first
+            c.replayBarrier = replay
+            let starting = Task { @MainActor in await c.select(.window(501), bringForward:true) }
+            await first.reached()
+            await c.handlePick(.window(502))
+            c.capture.startBarrier = nil
+            first.resume()
+            await starting.value
+            await replay.reached()
+            var expected = StreamSource.window(503)
+            if outcome == "none" {
+                await c.handlePick(.none)
+                expected = .none
+            } else if outcome == "fence" {
+                expect(c.inputFence.join(15, source:c.active, switching:false, desktopScope:c.desktopScope), "replay/fence legacy joins")
+                await c.handlePick(.window(503))
+                expected = .window(501)
+            } else if outcome == "disconnect" {
+                c.catalog.clientCount = 0
+                await c.select(.none)
+                expected = .none
+            } else {
+                let next = PhaseBarrier()
+                c.capture.startBarrier = next
+                if outcome == "failure" { c.capture.failStarts = [2]; expected = .none }
+                let selection = c.catalog.displayInventory.current!
+                let newer = Task { @MainActor in
+                    if outcome == "display" { await c.select(.desktop, displaySelection:selection) }
+                    else if outcome == "mac" { await c.select(.window(503), bringForward:true) }
+                    else { await c.handlePick(.window(503)) }
+                }
+                await next.reached()
+                if outcome == "display" { expected = .desktop }
+                if outcome == "third" { await c.handlePick(.window(504)); expected = .window(504) }
+                if outcome == "automatic" {
+                    let sequence = c.pickSequence
+                    await c.handlePick(.desktop)
+                    expect(c.pickSequence == sequence, "automatic Desktop during ordinary transition does not admit intent")
+                }
+                replay.resume()
+                await settle()
+                c.capture.startBarrier = nil
+                next.resume()
+                await newer.value
+            }
+            replay.resume()
+            await settle()
+            expect(c.active == expected, "replay/\(outcome) respects newest admitted intent")
+            expect(!c.committed.contains(.window(502)), "replay/\(outcome) superseded A never commits")
+            if outcome == "failure" {
+                expect(c.capture.starts == 2 && !c.capture.running && c.videoEpoch == nil,
+                       "capture start throws at boundary without stale replay or published epoch")
+            }
+        }
+        for boundary in ["audio", "capture"] {
+            for outcome in ["none", "window", "display", "loss", "disconnect", "failure", "fence"] {
+                let c = make()
+                if outcome == "fence" { _ = c.inputFence.join(16, source:.desktop, switching:false, desktopScope:c.desktopScope) }
+                let refresh = PhaseBarrier()
+                let stop = PhaseBarrier()
+                c.catalog.refreshBarrier = refresh
+                c.catalog.refreshResult = false
+                move(c, x:-1350)
+                await refresh.reached()
+                c.catalog.displayInventory.invalidate(preservingDisplay:13)
+                c.displaysChanged()
+                if boundary == "audio" { c.audioBarrier = stop } else { c.capture.stopBarrier = stop }
+                refresh.resume()
+                await stop.reached()
+                c.catalog.refreshBarrier = nil
+                c.catalog.refreshResult = true
+                refill(c)
+                if outcome == "none" { await c.handlePick(.none) }
+                if outcome == "window" { await c.handlePick(.window(601)) }
+                if outcome == "display" { await c.select(.desktop, displaySelection:c.catalog.displayInventory.current!) }
+                if outcome == "disconnect" { c.catalog.clientCount = 0; c.deselectWhenSettled = true }
+                if outcome == "loss" {
+                    c.catalog.displayInventory.invalidate(preservingDisplay:13)
+                    c.catalog.displayInventory.update([], signatures:[], frames:[], preservingDisplay:13)
+                    c.displaysChanged()
+                }
+                if outcome == "failure" { c.capture.failStarts = [1] }
+                c.audioBarrier = nil
+                c.capture.stopBarrier = nil
+                stop.resume()
+                await settle()
+                let expected: StreamSource = outcome == "window" ? .window(601) : (outcome == "display" ? .desktop : .none)
+                expect(c.active == expected, "refill/\(boundary)/\(outcome) preserves cancellation and fences")
+                if expected == .none {
+                    expect(!c.capture.running && c.videoEpoch == nil && !c.audioLive,
+                           "refill/\(boundary)/\(outcome) publishes no epoch and leaves no live capture or audio")
+                }
+            }
+        }
+
+        for human in [true, false] {
+            let c = make()
+            c.active = .window(701)
+            let start = PhaseBarrier()
+            c.capture.startBarrier = start
+            let selecting = Task { @MainActor in await c.select(.window(701), bringForward:human) }
+            await start.reached()
+            let sequence = c.pickSequence
+            await c.handlePick(.desktop)
+            expect(c.pickSequence == sequence, "same-source/\(human) automatic Desktop never increments user sequence")
+            c.capture.startBarrier = nil
+            start.resume()
+            await selecting.value
+            await settle()
+            expect(c.active == (human ? .window(701) : .desktop),
+                   "same-source/\(human) automatic request respects human admission and internal restart semantics")
+        }
+
         print("RECOVERY_CHECKS total=\(checks) failed=\(failures)")
         if failures != 0 { exit(1) }
     }

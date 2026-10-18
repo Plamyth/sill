@@ -256,3 +256,61 @@ Throughput checkpoint: one product file, existing focused fixture and README,
 Mini RAM pure checks within 20 minutes. No UI, devices, SDK build, installation,
 audio effects, other chats, Pages or nested agents. Independent review and the
 parent SDK/native CG/touch gates remain required.
+
+Red commit `2bac56a` reports `RECOVERY_CHECKS total=109 failed=3` before
+product edits. Both cleanup boundaries fail to recover after validated refill.
+The old A task also replaces newer B. The first expanded fixed run passes
+154 checks. An added same-source human pick then disproves another use of
+restartOf as caller identity: `RECOVERY_CHECKS total=158 failed=1`. The fix
+keeps restartOf nil for admitted human window picks, including a pick of the
+current window, and retains internal restart behavior. This adds no lifecycle
+flag. Automatic Desktop requests do not advance the user sequence.
+
+SourcePick stores the admitted sequence, source and optional display token.
+Select admits human intent before the switching guard. It rejects stale replay
+before any mutation and preserves the sequence through the deferred task.
+Explicit kind 211 display selection reaches the same admission path during a
+transition. Automatic Desktop requests pass their existing restart admission
+rule before touching state and cannot replace an already queued human pick.
+Internal restarts and cleanup do not allocate a user sequence. A replay also
+checks that clients remain before it can start a pipeline.
+
+The refill callback advances existing owned recovery intent even while none
+cleanup is suspended and restartOf is nil. It cannot infer that intent from
+active after cleanup. Pending, awaiting and restarting remain the existing
+recovery states; a separate transition queue is unnecessary.
+
+The fixture now throws on selected capture start calls. Its real select entry
+guards, stop prefix, complete defer, handlePick, recoverOwnedDesktop and
+displaysChanged are extracted unchanged except private visibility and handler
+observation. Actual inventory, wire selection types and SourceInputFence are
+compiled. Capture start, platform pipeline construction, commit and the select
+error tail remain controlled boundaries. Throwing fixture coverage is not a
+real SCK failure test. Direct display tests exercise production select admission;
+authenticated network decoding remains a parent gate.
+
+The original 104 recovery assertions remain. New checks cover the exact two
+orders at audio and capture shutdown, stale A replay behind B, third C, explicit
+none, direct Mac pick, display pick, automatic Desktop, throwing capture,
+legacy fence refusal, disconnect, actual loss and refresh/cleanup overlap.
+All receipts record sender hashes, receiver input hashes, immutable inputs,
+reaped children and detached owned RAM. These independent pure checks do not
+pass the codex-source-guard same-task transfer gate.
+
+Parent-provided baselines remain outside this change: host 137, installed iPad
+15 from source 0dd, and existing 329/189 results. They were not rerun or updated.
+The parent retains independent CLEAR, full SDK and native CG/touch validation.
+This worker performs no UI, device, SDK build, install, live audio, Page write,
+other-chat operation, push, PR or merge.
+
+Final recovery reports `RECOVERY_CHECKS total=158 failed=0`. The final native
+and monitor suites report 39 checks each. Fresh final receipts are in
+`/Volumes/BT-Workspace/Development-Archives/BT_CCR-Sill-Obsidian/` under
+`recovery-durable-intent-final-20261019`,
+`recovery-durable-intent-final-native-20261019` and
+`recovery-durable-intent-final-monitor-20261019`. The original premise red
+receipt is `recovery-durable-intent-20261019`, and the same-source admission red
+receipt is `recovery-durable-intent-admission-red-20261019`.
+`recovery-durable-intent-evidence-20261019` holds the task disposition,
+commit binding, changed-file SHA-256 manifest and patch. The commit binding
+checks final source bytes against every final execution receipt.
