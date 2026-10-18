@@ -167,8 +167,9 @@ final class CanvasStore: ObservableObject {
         changed.strokes = next.strokes.map { stroke in
             InkStroke(id: stroke.id,
                 points: stroke.path.map { point in
-                    InkPoint(x: Double(point.location.x), y: Double(point.location.y),
-                             pressure: Double(point.force))
+                    let location = point.location.applying(stroke.transform)
+                    return InkPoint(x: Double(location.x), y: Double(location.y),
+                                    pressure: Double(point.force))
                 }, createdAt: stroke.path.creationDate)
         }
         changed.revision += 1
