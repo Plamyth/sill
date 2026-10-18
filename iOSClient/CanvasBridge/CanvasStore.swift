@@ -12,13 +12,21 @@ enum CanvasMode: String, CaseIterable {
 @MainActor
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
-        didSet { scheduleSave() }
+        didSet { handwritingRequest = nil; scheduleSave() }
     }
-    @Published var mode: CanvasMode = .pen
-    @Published var selectedNode: UUID?
+    @Published var mode: CanvasMode = .pen {
+        didSet { handwritingRequest = nil }
+    }
+    @Published var selectedNode: UUID? {
+        didSet { handwritingRequest = nil }
+    }
     @Published var status = "Pencil로 그린 뒤 구조를 확인하세요."
-    @Published var proposalText = ""
-    @Published var proposedNode: UUID?
+    @Published var proposalText = "" {
+        didSet { handwritingRequest = nil }
+    }
+    @Published var proposedNode: UUID? {
+        didSet { handwritingRequest = nil }
+    }
     @Published var displayedVoice: VoiceSession?
     @Published private(set) var outbox = CanvasOutbox()
     @Published var sendBusy = false
@@ -27,9 +35,12 @@ final class CanvasStore: ObservableObject {
     @Published var viewport = CanvasViewport()
     var zoom: Double { viewport.zoom }
     var pan: CGSize { viewport.pan }
-    var drawing = PKDrawing()
+    var drawing = PKDrawing() {
+        didSet { handwritingRequest = nil }
+    }
     var linkStart: UUID?
     private var saveTask: Task<Void,Never>?
+    private var handwritingRequest: UUID?
 
     init() {
         if let restored = Self.restoreScene() {
@@ -206,14 +217,20 @@ final class CanvasStore: ObservableObject {
         await recognizer.updateDrawing(drawing)
         return await recognizer.recognizedText()
     }) async {
-        guard !drawing.strokes.isEmpty else { status = "인식할 획이 없습니다."; return }
-        guard let text = await recognize(drawing), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let request = UUID()
+        handwritingRequest = request
+        let sourceDrawing = drawing
+        guard !sourceDrawing.strokes.isEmpty else { status = "인식할 획이 없습니다."; return }
+        let recognized = await recognize(sourceDrawing)
+        guard handwritingRequest == request else { return }
+        handwritingRequest = nil
+        guard let text = recognized, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { status = "글자 후보를 찾지 못했습니다. 원본 획은 유지했습니다."; return }
-        let bounds = drawing.bounds
+        let bounds = sourceDrawing.bounds
         let id = scene.addNode(kind: .note,
             at: CanvasPoint(x: Double(bounds.midX), y: Double(bounds.midY)),
             text: text, confidence: .proposal,
-            sourceStrokeIds: drawing.strokes.map(\.id))
+            sourceStrokeIds: sourceDrawing.strokes.map(\.id))
         proposedNode = id
         proposalText = text
         mode = .select

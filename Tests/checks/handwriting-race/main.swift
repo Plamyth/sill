@@ -111,11 +111,12 @@ struct HandwritingRaceCheck {
         for action in ["selection", "proposal text", "tool", "same scene import"] {
             let editing = store(original)
             editing.addNode(.note)
+            editing.addNode(.note)
             let gate = SuspendedRecognition()
             let task = Task { await editing.proposeHandwriting(recognize: gate.recognize) }
             await gate.waitForInput()
             switch action {
-            case "selection": editing.select(UUID())
+            case "selection": editing.select(editing.scene.nodes.first!.id)
             case "proposal text": editing.proposalText = "user's correction"
             case "tool": editing.mode = .eraser
             default: try editing.importScene(editing.scene)

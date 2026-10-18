@@ -42,7 +42,7 @@ if code == 0:
     home = output / 'home'
     home.mkdir(exist_ok=True)
     env = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home))
-    result = run([str(output / 'check')], env, 90)
+    result = run([str(output / 'check'), *sys.argv[2:]], env, 90)
     (output / 'runtime.log').write_text(result.stdout)
     print(result.stdout, end='')
     code = result.returncode
