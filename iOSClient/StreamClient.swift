@@ -870,6 +870,7 @@ final class StreamClient: ObservableObject {
     var visionDisplaySubmission: SessionLink.Submission?
     var visionDisplayDeadline: DispatchWorkItem?
     var visionDisplayLink: SessionLink { link }
+    var visionWindowRetired = false
     var visionStartupStarted = false
     var visionStartupForeground = false
     @Published var visionCableBootstrap = VisionCableBootstrap<FoundMac>(launch: .ordinary)
@@ -1351,12 +1352,13 @@ final class StreamClient: ObservableObject {
         guard row != nil || token == target.token else { return }
         stopSavedMacAutoConnect()
         startupAutoConnection = .attempted
+        guard beginVisionSavedMacReconnect(saved) else { return }
         if let row {
             if !dialRow(row, macID: target.macID, trust: .saved(pin: target.pin), tagNamed: true, tap: false) {
                 status = "저장된 기기 키를 사용할 수 없습니다. Vision Pro의 잠금을 해제한 뒤 앱을 다시 열어 주세요."
             }
         } else {
-            dialSaved(target.macID, why: .launchArgument)
+            dialSaved(target.macID, why: .automatic)
         }
     }
     #endif
@@ -1425,6 +1427,9 @@ final class StreamClient: ObservableObject {
     /// a listed row is dialled at once. Only after the app was seen going to the background. Main
     /// thread.
     private func cameForward() {
+        #if os(visionOS)
+        guard !visionWindowRetired else { return }
+        #endif
         let wasInBackground = !appInForeground
         appInForeground = true
         #if os(visionOS)
@@ -3523,6 +3528,39 @@ final class StreamClient: ObservableObject {
             self?.startReading(c)
         }
     }
+
+    #if os(visionOS)
+    func retireVisionWindow() {
+        guard !visionWindowRetired else { return }
+        visionWindowRetired = true
+        appInForeground = false
+        visionStartupForeground = false
+        browsing = false
+        admitVisionDisplays(lease: nil, foreground: false)
+        disconnect()
+        cancelPairing()
+        for work in [reconnectCheck, discoveryRecheck, afterPairingWatch,
+                     networkLife.rebuildWork, networkLife.settleWork,
+                     nearbyLife.rebuildWork, nearbyLife.settleWork,
+                     settingsExpiry, menusExpiry, lingerRender] {
+            work?.cancel()
+        }
+        reconnectCheck = nil
+        discoveryRecheck = nil
+        afterPairingWatch = nil
+        networkLife.rebuildWork = nil
+        networkLife.settleWork = nil
+        nearbyLife.rebuildWork = nil
+        nearbyLife.settleWork = nil
+        networkBrowser?.cancel()
+        networkBrowser = nil
+        nearbyBrowser?.cancel()
+        nearbyBrowser = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        queue.async { self.stopMeasuring() }
+    }
+    #endif
 
     /// The user chose to leave. No reconnect.
     func disconnect() {

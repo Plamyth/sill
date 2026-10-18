@@ -41,6 +41,16 @@ final class VisionAppSession: ObservableObject {
         }
     }
 
+    deinit {
+        let client = client
+        let input = input
+        DispatchQueue.main.async {
+            input.allowed = false
+            input.releaseAll()
+            client.retireVisionWindow()
+        }
+    }
+
     func claim(_ window: UUID) {
         if windowLease == nil { windowLease = VisionWindowLease(window: window) }
         client.admitVisionDisplays(lease: windowLease, foreground: foreground)

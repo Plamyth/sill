@@ -728,7 +728,7 @@ enum DiscoveryPolicy {
     /// After this many dials of a listing that did not connect, the status line says the Mac may be
     /// asleep (`reconnectLine`): about 20 s after the loss.
     static let reconnectQuietAfter = 3
-    /// After this many the dials of that listing stop (about 4.6 minutes): each dial through a sleep
+    /// Bounded reconnects stop after this many dials (about 4.6 minutes): each dial through a sleep
     /// proxy can wake the Mac. The row listed afresh, the app's return from the background, or a tap
     /// starts again.
     static let reconnectDials = 12
@@ -736,7 +736,7 @@ enum DiscoveryPolicy {
     /// Whether the automatic reconnect dials its Mac's listed row now, or when to look again, after
     /// `failed` dials of this listing that did not connect, the last of them started at `lastDialAt`:
     /// the first at once; each next `reconnectRetry` after the last started; none after
-    /// `reconnectDials`; none in the background, whose end looks again. Which row, and when a
+    /// `reconnectDials` for bounded lifetimes; none in the background, whose end looks again. Which row, and when a
     /// Direct row or a row after a goodbye `quit` may be taken at all, is `reconnectRow`'s.
     enum ReconnectLifetime: Equatable { case bounded, whileRequested }
 
@@ -775,7 +775,7 @@ enum DiscoveryPolicy {
 
     /// A saved Mac that no browser lists shows as a Remote row once the network has had this long.
     static let remoteWait = 3.0
-    /// After a session ends by itself, automatic remote dials stop this long after the loss.
+    /// Bounded automatic remote dials stop this long after the loss.
     static let redialWindow = 120.0
     /// A failed automatic remote dial is tried again after 2, 4, 8, then every 10 s.
     static let remoteRetry: [Double] = [2, 4, 8, 10]
@@ -791,7 +791,7 @@ enum DiscoveryPolicy {
 
     /// Whether an automatic remote dial of a lost saved Mac is due now, or when to look again. Never
     /// while a network or Direct row lists it (the row takes it), never once `redialWindow` has
-    /// passed. Due `remoteWait` after the loss (`directWait`, the wait an automatic reconnect gives
+    /// passed for a bounded lifetime. Due `remoteWait` after the loss (`directWait`, the wait an automatic reconnect gives
     /// a Direct row, for a Mac remembered with Direct Wireless on), and not within `networkGrace` of
     /// the network last listing it, the moment its row went (`NetworkSightings.leftAt`; a Mac the
     /// network listed moments ago is taken to be blinking, not gone) unless this device's path

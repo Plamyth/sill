@@ -67,6 +67,10 @@ def emit(root, output):
                    'func rememberAuthenticatedMac(', 'private func trySavedMacAutoConnect(',
                    'private func tryVisionSavedMacAutoConnect(', 'func homeDecision(', 'func wiredDial(']:
         pieces[marker] = vision(block(stream, marker))
+    for marker in ['func retireVisionWindow()', 'func disconnect()']:
+        pieces[marker] = vision(block(stream, marker))
+    for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()']:
+        pieces[marker] = vision(block(remote, marker))
     adapter = (root / 'visionOSClient/StreamClient+VisionAutoConnect.swift').read_text()
     pieces['considerVisionCableBootstrap'] = block(adapter, 'func considerVisionCableBootstrap(')
     pieces['stopVisionCableBootstrap'] = block(adapter, 'func stopVisionCableBootstrap(')
@@ -85,6 +89,7 @@ def emit(root, output):
     body = body.replace('/* REAL_DIAL_TYPES */', target_types)
     body = body.replace('/* REAL_ROW */', block(stream, 'struct FoundMac:'))
     body = body.replace('/* REAL_ASK */', block(home, 'struct HomeAsk:'))
+    body = body.replace('/* REAL_RECONNECT */', block(stream, 'struct Reconnect {'))
     body += '\n' + (root / 'Tests/checks/vision-autoconnect/scenarios.swift').read_text()
     (output / 'main.swift').write_text(body)
     primitive_markers = {

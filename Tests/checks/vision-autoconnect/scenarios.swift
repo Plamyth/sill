@@ -169,7 +169,7 @@ let away = savedStartup()
 let awayTimer = armRemote(away)
 check("no Bonjour cold start waits through discovery grace", away.remoteAttempts.isEmpty && away.sessionPins.isEmpty)
 awayTimer.performEvenIfCancelled()
-check("deadline hands the trusted saved ID to existing one-shot remote dial", away.remoteAttempts.count == 1 && away.remoteAttempts[0].0 == result.macID && away.remoteAttempts[0].1 == .launchArgument)
+check("deadline hands the trusted saved ID to automatic recovery", away.remoteAttempts.count == 1 && away.remoteAttempts[0].0 == result.macID && away.remoteAttempts[0].1 == .automatic)
 check("offline cold start retains a recovery intent", away.reconnect != nil)
 away.remoteDial = nil
 awayTimer.performEvenIfCancelled(); away.discoveryChanged(); away.armSavedMacAutoConnect()
@@ -234,7 +234,8 @@ for occupied in 0..<8 {
     switch occupied {
     case 0: client.connected = true
     case 1: client.connection = NWConnection()
-    case 2: client.reconnect = 1
+    case 2: client.reconnect = .init(macID: result.macID, bonjourName: nil, name: "fixture", lostAt: 0,
+                                   pathAtLoss: "fixture", remoteAllowed: true, rememberedDirect: false)
     case 3: client.remoteDial = RemoteConnector()
     case 4: client.pairingDial = RemoteConnector()
     case 5: client.pairing = .working
@@ -338,9 +339,24 @@ let closedClient = closingWindow!.client
 weak var closedOwner = closingWindow
 closingWindow!.claim(UUID())
 closingWindow!.start(foreground: true)
+let closedConnection = NWConnection()
+let closedBrowser = FixtureResource(), closedNearby = FixtureResource(), closedMonitor = FixtureResource()
+let closedRemoteDial = RemoteConnector(), closedPairingDial = RemoteConnector()
+closedClient.transport.connection = closedConnection
+closedClient.transport.networkBrowser = closedBrowser
+closedClient.transport.nearbyBrowser = closedNearby
+closedClient.transport.pathMonitor = closedMonitor
+closedClient.transport.remoteDial = closedRemoteDial
+closedClient.transport.pairingDial = closedPairingDial
+let closedRetry = DispatchWorkItem {}
+closedClient.transport.reconnectCheck = closedRetry
 closingWindow = nil
 DispatchQueue.main.drain()
 check("discarding a native window retires its own transport", closedOwner == nil && closedClient.retired)
+check("scene retirement cancels the actual connection and pending dials", closedConnection.cancelled && closedRemoteDial.cancelled && closedPairingDial.cancelled)
+check("scene retirement cancels both browsers and the path monitor", closedBrowser.cancelled && closedNearby.cancelled && closedMonitor.cancelled)
+closedClient.transport.retireVisionWindow()
+check("scene retirement is idempotent", closedClient.transport.measurementStops == 1)
 check("discarding a different window does not retire a survivor", !concurrentOwner.client.retired && concurrentOwner.owns(concurrentLease))
 print("RESULT_ASSERTIONS \(assertions) FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)

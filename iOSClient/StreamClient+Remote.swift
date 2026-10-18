@@ -257,6 +257,9 @@ extension StreamClient {
     /// Watches the device's path, to tell "the Mac blinked" from "this device left home" after a
     /// loss (DiscoveryPolicy.remoteDialDue).
     func startPathMonitor() {
+        #if os(visionOS)
+        guard !visionWindowRetired else { return }
+        #endif
         guard pathMonitor == nil else { return }
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
@@ -569,6 +572,18 @@ extension StreamClient {
     /// The automatic reconnect after a session with this Mac ended on its own (§7.4). `afterQuit`:
     /// the session ended with goodbye `quit`, so the Mac's row that is going is left alone for
     /// DiscoveryPolicy.quitWait (`reconnectIfListed`); never for a notice.
+    #if os(visionOS)
+    @discardableResult
+    func beginVisionSavedMacReconnect(_ saved: SavedMac) -> Bool {
+        guard !visionWindowRetired, appInForeground, visionStartupForeground,
+              !connected, connection == nil, reconnect == nil,
+              let current = SavedMacs.automaticTarget(savedMacs, preferredID: saved.macID),
+              current.fingerprintData == saved.fingerprintData else { return false }
+        reconnect = lostReconnect(session: nil, saved: current, name: displayName(current.macID), remoteAllowed: true)
+        return true
+    }
+    #endif
+
     private func lostReconnect(session s: Session?, saved: SavedMac?, name: String, remoteAllowed: Bool,
                                afterQuit: Bool = false) -> Reconnect {
         let bonjour = s?.bonjourName ?? saved?.bonjourName
@@ -585,7 +600,8 @@ extension StreamClient {
     /// the Mac `networkGrace` ago or more (DiscoveryPolicy.reconnectRow: its row blinks off while its
     /// listener is replaced, and a Mac back at home can show on awdl0 first); then, for a saved
     /// Mac, a remote dial when DiscoveryPolicy.remoteDialDue says so, again after 2, 4, 8, then
-    /// every 10 s, and none 120 s after the loss. A row that appears while an automatic remote dial
+    /// every 10 s. Bounded lifetimes stop 120 s after the loss; requested trusted Vision sessions
+    /// remain eligible until cancelled. A row that appears while an automatic remote dial
     /// has no window list yet takes over from it; an established remote session is never moved.
     /// Unsaved Macs keep the old rule, by exact Bonjour name: two Macs can share a computer name
     /// ("MacBook Pro" and "MacBook Pro (2)"), and stripping the suffix would rejoin the wrong one.

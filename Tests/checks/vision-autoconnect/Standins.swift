@@ -13,7 +13,18 @@ final class NWConnection {
     func cancel() { cancelled = true }
 }
 struct RemoteIdentity {}
-final class RemoteConnector { func cancel() {} }
+final class RemoteConnector {
+    var cancelled = false
+    func cancel() { cancelled = true }
+}
+final class FixtureResource {
+    var cancelled = false
+    func cancel() { cancelled = true }
+}
+struct FixtureBrowserLife {
+    var rebuildWork: DispatchWorkItem?
+    var settleWork: DispatchWorkItem?
+}
 enum DeviceIdentity {
     static var available = true
     static func existing() -> RemoteIdentity? { available ? RemoteIdentity() : nil }
@@ -95,7 +106,8 @@ final class StreamClient {
     enum PairingPhase: Equatable { case idle, working }
     enum HomeExchange { case answer(PairResult, SymmetricKey?), noAnswer }
     enum Route { case network, remote; var isRemote: Bool { self == .remote } }
-    struct Session { var macID: String?; var route: Route; var home: DiscoveryPolicy.HomeTrust? }
+    struct Session { var macID: String?; var route: Route; var home: DiscoveryPolicy.HomeTrust?; var bonjourName: String? = nil }
+    /* REAL_RECONNECT */
     static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
     static let deviceWord = "Apple Vision Pro"
     static let debugBuild = false
@@ -108,7 +120,7 @@ final class StreamClient {
     var macs: [FoundMac] = []
     var connected = false
     var connection: NWConnection?
-    var reconnect: Int?
+    var reconnect: Reconnect?
     var remoteDial: RemoteConnector?
     var pairingDial: RemoteConnector?
     var homeDialer: HomeDialer?
@@ -116,6 +128,24 @@ final class StreamClient {
     var pairing = PairingPhase.idle
     var pairingAttempt = 0
     var appInForeground = true
+    var visionWindowRetired = false
+    var browsing = false
+    var networkBrowser: FixtureResource?
+    var nearbyBrowser: FixtureResource?
+    var pathMonitor: FixtureResource?
+    var networkLife = FixtureBrowserLife()
+    var nearbyLife = FixtureBrowserLife()
+    var reconnectCheck: DispatchWorkItem?
+    var discoveryRecheck: DispatchWorkItem?
+    var afterPairingWatch: DispatchWorkItem?
+    var settingsExpiry: DispatchWorkItem?
+    var menusExpiry: DispatchWorkItem?
+    var lingerRender: DispatchWorkItem?
+    var pathSignature = "fixture"
+    var directWirelessMacs: Set<String> = []
+    var measurementStops = 0
+    func stopMeasuring() { measurementStops += 1 }
+    func admitVisionDisplays(lease: VisionWindowLease?, foreground: Bool) {}
     var visionStartupStarted = true
     var visionStartupForeground = true
     var localNetworkDenied = false
@@ -133,7 +163,7 @@ final class StreamClient {
     var sentCable: [Bool?] = []
     var sessionPins: [Data] = []
     var sessionRows: [FoundMac] = []
-    enum DialReason { case launchArgument }
+    enum DialReason { case launchArgument, automatic }
     var remoteAttempts: [(String, DialReason)] = []
     var writes = 0
     var identityCalls = 0
@@ -186,7 +216,8 @@ enum HostConfigDefaults { static let remotePort = 5318 }
 enum RemoteTLS { static let dialTimeout = 5 }
 final class FixtureLaunchClient {
     var retired = false
-    func retireVisionWindow() { retired = true }
+    let transport = StreamClient(.ordinary)
+    func retireVisionWindow() { transport.retireVisionWindow(); retired = true }
     func admitVisionDisplays(lease: VisionWindowLease?, foreground: Bool) {}
     let visionAudio = FixtureAudio()
     let bootstrap = VisionCableBootstrap<Int>(launch: .cable(.init(pin: Data(repeating: 1, count: 32), service: "fixture")))
@@ -210,6 +241,7 @@ enum ScenePhase { case active, inactive, background }
 final class FixtureInput {
     var allowed = true
     func bind(_ client: FixtureLaunchClient) {}
+    func releaseAll() {}
 }
 final class FixtureStats { func attach(to client: FixtureLaunchClient) {} }
 final class FixtureAppOwner {
