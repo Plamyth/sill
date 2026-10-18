@@ -47,12 +47,14 @@ enum SceneRenderer {
                 inkImage.draw(in: bounds)
             } else {
                 for stroke in scene.strokes {
-                    guard let first = stroke.points.first else { continue }
-                    cg.move(to: CGPoint(x: first.x, y: first.y))
-                    for point in stroke.points.dropFirst() {
-                        cg.addLine(to: CGPoint(x: point.x, y: point.y))
+                    for points in stroke.visiblePointSegments {
+                        guard let first = points.first else { continue }
+                        cg.move(to: CGPoint(x: first.x, y: first.y))
+                        for point in points.dropFirst() {
+                            cg.addLine(to: CGPoint(x: point.x, y: point.y))
+                        }
+                        cg.strokePath()
                     }
-                    cg.strokePath()
                 }
             }
             for link in scene.links {

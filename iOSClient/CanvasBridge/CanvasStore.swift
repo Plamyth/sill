@@ -165,12 +165,30 @@ final class CanvasStore: ObservableObject {
         var changed = scene
         changed.drawingBase64 = next.dataRepresentation().base64EncodedString()
         changed.strokes = next.strokes.map { stroke in
-            InkStroke(id: stroke.id,
-                points: stroke.path.map { point in
-                    let location = point.location.applying(stroke.transform)
-                    return InkPoint(x: Double(location.x), y: Double(location.y),
-                                    pressure: Double(point.force))
-                }, createdAt: stroke.path.creationDate)
+            func worldPoint(_ point: PKStrokePoint) -> InkPoint {
+                let location = point.location.applying(stroke.transform)
+                return InkPoint(x: Double(location.x), y: Double(location.y),
+                                pressure: Double(point.force))
+            }
+            let ranges = stroke.maskedPathRanges
+            let full = stroke.mask == nil || (ranges.count == 1 &&
+                ranges[0].lowerBound == 0 && ranges[0].upperBound == CGFloat(stroke.path.count - 1))
+            let visibility = InkStroke.Visibility(kind: full ? .full : .masked,
+                visibleSegments: full ? [] : ranges.map { range in
+                    var points = [worldPoint(stroke.path.interpolatedPoint(at: range.lowerBound))]
+                    let firstInterior = Int(floor(range.lowerBound)) + 1
+                    let endInterior = Int(ceil(range.upperBound))
+                    if firstInterior < endInterior {
+                        points += (firstInterior..<endInterior).map { worldPoint(stroke.path[$0]) }
+                    }
+                    if range.upperBound > range.lowerBound {
+                        points.append(worldPoint(stroke.path.interpolatedPoint(at: range.upperBound)))
+                    }
+                    return InkStroke.Visibility.Segment(lowerBound: Double(range.lowerBound),
+                        upperBound: Double(range.upperBound), worldPoints: points)
+                })
+            return InkStroke(id: stroke.id, points: stroke.path.map(worldPoint),
+                createdAt: stroke.path.creationDate, visibility: visibility)
         }
         changed.revision += 1
         scene = changed
