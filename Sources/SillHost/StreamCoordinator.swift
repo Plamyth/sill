@@ -43,6 +43,7 @@ package final class StreamCoordinator {
     private let microphoneOwner: (any HostMicrophoneOriginalOwner)?
     private let audioPrivacy: HostAudioPrivacy?
     private lazy var audioHardwareRoutes = AudioHardwareRoutes()
+    private var physicalAudioRoutesRetired = false
     private var audioRoutePublished: [ObjectIdentifier: UUID] = [:]
     private var audioRouteArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
     private let microphoneReceiver: HostMicrophoneReceiver
@@ -359,6 +360,10 @@ package final class StreamCoordinator {
         server.setPeerToPeer(config.directWireless)
         stage = VirtualStage(sizer: sizer, catalog: catalog)
         self.audioPrivacy?.changed = { [weak self] state in self?.audioPrivacyChanged(state) }
+        self.audioPrivacy?.revokeForLocalReturn = { [weak self] in
+            guard let self else { return false }
+            return await self.prepareLocalAudioReturn()
+        }
         microphoneReceiver.availabilityChanged = { [weak self] in
             guard let self else { return }
             self.status.update { $0.microphoneCleanupGrantID = self.microphoneReceiver.cleanupGrantID }
@@ -422,7 +427,8 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 // This callback follows the server's connection authorization, before any catalog.
-                if !self.synthetic { _ = self.audioPrivacy?.armAndVerify() }
+                if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
+                   self.remote?.isPaired(fingerprint) == true { _ = self.audioPrivacy?.armAndVerify() }
                 let id = ObjectIdentifier(connection)
                 guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
@@ -2623,6 +2629,23 @@ package final class StreamCoordinator {
         broadcastList()
     }
 
+    private func prepareLocalAudioReturn() async -> Bool {
+        physicalAudioRoutesRetired = true
+        microphoneIngress.revoke()
+        microphoneReceiver.forgetCapabilities()
+        microphoneReceiver.revoke(reason: "로컬 입출력으로 복귀 중입니다.")
+        remoteAudioSubscribers.removeAll()
+        remoteAudioRequests.removeAll()
+        remoteAudioActions.removeAll()
+        let drained = await withCheckedContinuation { continuation in
+            server.drainRemoteAudio { continuation.resume(returning: $0) }
+        }
+        guard drained else { return false }
+        stopRemoteAudioIfIdle()
+        await remoteAudioLifecycle.waitUntilIdle()
+        return true
+    }
+
     private func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil,
                                   to connection: NWConnection) {
         server.send(StreamMessage(kind: .remoteAudioState, timestamp: Date().timeIntervalSince1970,
@@ -2781,7 +2804,7 @@ package final class StreamCoordinator {
         case .changeAudioRoute:
             guard message.payload.count <= AudioRoutingPolicy.maxSelectionPayload else { return }
             if let request = Wire.decode(AudioRouteSelection.self, from: message.payload) {
-                if audioPrivacy?.latched == true {
+                if audioPrivacy?.latched == true || physicalAudioRoutesRetired {
                     // The physical-route catalog cannot select either approved virtual target.
                     // Reject before select(), whose failure path could restore a physical default.
                     _ = audioPrivacyReady()

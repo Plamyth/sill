@@ -29,6 +29,8 @@ final class PrivacyFakeHAL: @unchecked Sendable {
     var emptyInputConfiguration = false
     var zeroInputBuffers = false
     var beforeSet: (() -> Void)?
+    var afterSet: (() -> Void)?
+    var removalFailure = false
     private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
     var listenerCount: Int { listeners.count }
     private let lock = NSRecursiveLock()
@@ -144,6 +146,7 @@ final class PrivacyFakeHAL: @unchecked Sendable {
                     else { snapshot.devices[index].outputMuted = value == 1 }
                 }
             }
+            afterSet?()
             return noErr
         }, addListener: { [self] object, address, _, callback in
             if listenerFailure { return -1 }
@@ -152,6 +155,7 @@ final class PrivacyFakeHAL: @unchecked Sendable {
                 address.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output) { return -1 }
             listeners.append((object, address.pointee, callback)); return noErr
         }, removeListener: { [self] object, address, _, _ in
+            if removalFailure { return -1 }
             listeners.removeAll { $0.0 == object && $0.1.mSelector == address.pointee.mSelector && $0.1.mScope == address.pointee.mScope }
             return noErr
         })

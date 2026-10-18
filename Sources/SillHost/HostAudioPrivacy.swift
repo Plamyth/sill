@@ -147,36 +147,52 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
     }
 
     func restoreLocal(_ original: LocalAudioState) -> Bool {
-        guard original.version == 1, Set(original.devices.map(\.uid)).count == original.devices.count,
-              var snapshot = try? read() else { return false }
-        var changes: [(AudioObjectID, AudioObjectPropertyAddress, UInt32)] = []
+        guard original.isValid, var snapshot = try? read(),
+              (try? snapshot.plan().isEmpty) == true,
+              Set(snapshot.devices.map(\.uid)) == Set(original.devices.map(\.uid)) else { return false }
+        // Store UIDs and control addresses, never a numeric device ID for a later setter.
+        var changes: [(String, AudioObjectPropertySelector, AudioObjectPropertyScope, UInt32?)] = []
         for saved in original.devices {
             guard let device = snapshot.devices.first(where: { $0.uid == saved.uid }),
+                  device.transport == saved.transport, device.plugin == saved.plugin,
                   device.inputChannels == saved.inputChannels, device.outputChannels == saved.outputChannels else { return false }
             for (scope, value, current) in [(kAudioObjectPropertyScopeInput, saved.inputMuted, device.inputMuted),
                                             (kAudioObjectPropertyScopeOutput, saved.outputMuted, device.outputMuted)] {
                 guard let value else { continue }
                 guard current != nil else { return false }
-                changes.append((device.id, address(kAudioDevicePropertyMute, scope), value ? 1 : 0))
+                changes.append((saved.uid, kAudioDevicePropertyMute, scope, value ? 1 : 0))
             }
         }
-        for (selector, uid, input) in [(kAudioHardwarePropertyDefaultInputDevice, original.inputUID, true),
-                                       (kAudioHardwarePropertyDefaultOutputDevice, original.outputUID, false),
-                                       (kAudioHardwarePropertyDefaultSystemOutputDevice, original.systemOutputUID, false)] {
-            guard let device = snapshot.devices.first(where: { $0.uid == uid }),
-                  (input ? device.inputChannels : device.outputChannels) > 0 else { return false }
-            changes.append((system, address(selector), device.id))
-        }
-        for (object, originalProperty, _) in changes {
-            var property = originalProperty
-            guard canWrite(object, &property) else { return false }
-        }
-        for (object, originalProperty, originalValue) in changes {
-            guard let before = try? read(), before == snapshot else { return false }
-            var property = originalProperty, value = originalValue
-            guard canWrite(object, &property), ops.set(object, &property, 4, &value) == noErr,
-                  let after = try? read() else { return false }
-            snapshot = after
+        changes += [(original.inputUID, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, nil),
+                    (original.outputUID, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, nil),
+                    (original.systemOutputUID, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyScopeGlobal, nil)]
+        for (uid, selector, scope, muteValue) in changes {
+            guard let before = try? read(), before == snapshot,
+                  let index = before.devices.firstIndex(where: { $0.uid == uid }),
+                  let resolved = try? registry.resolve(uid), resolved == before.devices[index].id else { return false }
+            var expected = before
+            let object: AudioObjectID
+            var value: UInt32
+            if let muteValue {
+                object = resolved; value = muteValue
+                if scope == kAudioObjectPropertyScopeInput { expected.devices[index].inputMuted = value == 1 }
+                else { expected.devices[index].outputMuted = value == 1 }
+            } else {
+                object = system; value = resolved
+                switch selector {
+                case kAudioHardwarePropertyDefaultInputDevice: expected.input = resolved
+                case kAudioHardwarePropertyDefaultOutputDevice: expected.output = resolved
+                default: expected.systemOutput = resolved
+                }
+            }
+            var property = address(selector, scope)
+            guard canWrite(object, &property),
+                  let final = try? read(), final == before,
+                  (try? registry.resolve(uid)) == resolved else { return false }
+            if expected == before { continue }
+            guard ops.set(object, &property, 4, &value) == noErr,
+                  let after = try? read(), after == expected else { return false }
+            snapshot = expected
         }
         return original.matches(snapshot)
     }
@@ -239,24 +255,13 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
 extension HostAudioPrivacy {
     /// Only the branded production AppModel opts in. Legacy CLI and synthetic callers stay inert.
     package convenience init(defaults: UserDefaults) {
-        let key = "CCRHostAudioPrivacyLatched.v1"
-        let originalKey = "CCRHostAudioOriginalLocalState.v1"
-        let original = defaults.data(forKey: originalKey).flatMap { try? JSONDecoder().decode(LocalAudioState.self, from: $0) }
+        let journal = LocalAudioJournal(defaults: defaults)
         let authentication = LocalAudioAuthentication()
-        self.init(hal: CoreAudioPrivacyHAL(ops: .native), latched: defaults.bool(forKey: key), persist: {
-            defaults.set(true, forKey: key)
-            return defaults.synchronize() && defaults.bool(forKey: key)
-        }, localState: original, saveLocal: { state in
-            if let state {
-                guard let data = try? JSONEncoder().encode(state) else { return false }
-                defaults.set(data, forKey: originalKey)
-                return defaults.synchronize() && defaults.data(forKey: originalKey) == data
-            }
-            defaults.removeObject(forKey: originalKey)
-            return defaults.synchronize() && defaults.object(forKey: originalKey) == nil
-        }, clearLatch: {
-            defaults.set(false, forKey: key)
-            return defaults.synchronize() && !defaults.bool(forKey: key)
-        }, authenticateLocal: { await authentication.evaluate() }, cancelAuthentication: { authentication.cancel() })
+        self.init(hal: CoreAudioPrivacyHAL(ops: .native), latched: journal.latched,
+            persist: { journal.write(latched: true, original: journal.original) },
+            localState: journal.original, saveLocal: { original in
+                journal.write(latched: original != nil, original: original)
+            }, clearLatch: { journal.write(latched: false, original: nil) },
+            authenticateLocal: { await authentication.evaluate() }, cancelAuthentication: { authentication.cancel() })
     }
 }

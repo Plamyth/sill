@@ -152,3 +152,80 @@ version 2 wire default and preserve explicit version 1 decoding. The worker only
 source and diffs. All test execution, the exact Mini suite, full SDK compilation, and independent
 review belong to the parent. No native HAL, device, network, build, test, or push was executed
 by this worker. Local return, muted taps, and shield changes are outside this unit.
+
+## Accepted local-return review corrections, 2026-10-19
+
+This correction starts at `20121ea` on `codex/authenticated-local-audio-20261019`.
+The worker exclusively owns this checkout until return. The parent owns exact Mini execution,
+SDK compilation, native/device observations, and a fresh independent review. Earlier 121/139
+check receipts and the earlier full SillMenuBar compile apply only to their original sources.
+No new test or compilation result is claimed here.
+
+Pstack uses the Bug fix path with sequential how/architect source analysis. The compared
+persistence designs were compensating independent preference keys and a single typed envelope.
+Model the Domain selected the envelope. Ponytail full reuses UserDefaults, DispatchGroup,
+the existing capture lifecycle, HAL registry, authentication generation, and test extractor.
+No dependency or new runtime is added.
+
+The scoped playbook disposition is recorded here because there is no task-list tool.
+
+1. Reproduce it yourself on the matching surface via the driver skill. Skip runtime reproduction
+   under the explicit no HAL/device/test/build instruction. The seven accepted source findings
+   define the adversarial triggers below.
+2. Binary-search the cause. Complete by tracing the actual guard, coordinator and server bodies.
+3. Plan the fix. Complete with sequential design comparison. Children and messages are prohibited.
+4. Verify on the same surface. Pending parent execution. The worker only inspects source and diffs.
+5. Stage the commits so the failing repro lands before the fix in git history. Skip separate red
+   execution and commits because this worker may not run tests. Regression sources accompany fixes.
+6. Run Opening a PR. Skip under the no network/push instruction. Return one clean local commit.
+
+`requestLocalReturn()` requires a coordinator revocation callback. Its authenticated generation,
+latch and persistence health are checked again after the await. `prepareLocalAudioReturn()`
+revokes microphone authority and pending subscriptions, retires physical-route authority, and
+awaits `StreamServer.drainRemoteAudio()`. That method closes the network epoch and waits for
+all already-submitted audio `.contentProcessed` callbacks. A five-second timeout returns failure.
+No restore setter is permitted before a successful acknowledgement. Capture teardown uses the
+existing lifecycle. This boundary does not prove that device playback or acoustic buffers are empty.
+
+Restore operations store UID, master scope and default selector rather than future numeric IDs.
+Each step resolves the UID again and compares the complete observed snapshot with the preceding
+authorized snapshot. After a setter, only its exact expected single-property delta is accepted.
+UID reuse, unrelated default/mute changes, transport/plugin changes or hotplug stop the restore
+before another restore setter. Failure retains the latch and attempts protection only when its
+original journal and durable state remain valid.
+
+`LocalAudioState` version 2 retains transport/plugin identity in addition to original UIDs,
+master input/output mutes, channel counts and all three defaults. Identity-incomplete version 1
+originals are refused rather than silently upgraded from the protected hardware state.
+`CCRHostAudioPrivacyJournal.v2` is the authoritative single preference value. Its typed envelope
+contains the latch and original state together. Old keys are read only as migration input when
+no envelope exists. Missing/malformed original state under a latch cannot reach HAL writes,
+on startup, reconciliation, or another arm. A failed clear reasserts the original protected
+envelope and synchronizes it before any repair may advertise ready. Failed reassertion leaves
+an explicit persistence fault with readiness and hardware repair disabled.
+
+Every fresh unlatched arm captures current originals, even if an old completed journal remains.
+A successful clear records local mode and discards the original together. Cleanup failure cannot
+make the next arm reuse stale mutes. Failed listener removal marks observation unhealthy before
+calling HAL, keeps the latch, and schedules one bounded repair. It never treats the invalidated
+listener generation as healthy.
+
+Existing paired peers cannot select physical routes after local return. A new explicitly trusted,
+encrypted paired connection may arm remote protection again; existing remote audio requests
+cannot do so. The physical-route denial remains active across local return and rearm.
+
+The extractor now includes actual server `setRemoteAudio`, `resetRemoteAudio`, `drainRemoteAudio`,
+`broadcastRemoteAudio`, and raw `send` bodies, plus actual coordinator preparation, revocation,
+stop and state methods. Only connection/send-completion and capture adapters are substituted.
+The fixture holds an actual extracted send completion across the local-return request, then
+releases it to exercise the acknowledgement. Added injected cases cover post-await generation
+changes, setter UID reuse, hotplug, unrelated selector change, transport replacement, failed
+clear and failed durable rollback, failed first capture/restart, stale completed journals,
+listener removal/repair, and post-return paired physical-route refusal. The manifest records
+hashes for the extracted server bodies as well as coordinator bodies and full copied sources.
+
+BLOCKED independent review until the parent reviews the new exact commit. No children, messages,
+network, HAL calls, device operations, tests, builds or pushes ran in this correction. No Space
+report was sent under the explicit network prohibition. DN32/HDMI without writable master mute
+still refuse complete protection. Sentry overlay, input protection and independent display
+monitoring remain unimplemented. No acoustic zero-gap guarantee is claimed.

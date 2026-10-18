@@ -5,7 +5,7 @@ enum PrivacyAudioScope: Hashable { case input, output }
 enum PrivacyAudioDefault: CaseIterable, Equatable { case input, output, systemOutput }
 
 struct PrivacyAudioDevice: Equatable {
-    enum Transport: Equatable { case builtIn, virtual, other }
+    enum Transport: String, Codable { case builtIn, virtual, other }
     let id: UInt32
     let uid: String
     let transport: Transport
@@ -113,6 +113,8 @@ package final class HostAudioPrivacy {
     private let cancelAuthentication: () -> Void
     private var localReturnID = UUID()
     private var returningLocal = false
+    private var persistenceHealthy = true
+    var revokeForLocalReturn: (() async -> Bool)?
 
     init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
          localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
@@ -127,9 +129,11 @@ package final class HostAudioPrivacy {
     package func armAndVerify() -> Bool {
         invalidateLocalReturn()
         let wasLatched = latched
-        guard persist() else { fail(.persistence); return false }
+        persistenceHealthy = persist()
+        guard persistenceHealthy else { fail(.persistence); return false }
         latched = true
-        if !wasLatched && localState == nil {
+        if !wasLatched {
+            localState = nil
             guard let snapshot = try? hal.read(), let original = try? LocalAudioState(snapshot),
                   saveLocal(original) else { fail(.persistence); return false }
             localState = original
@@ -140,7 +144,7 @@ package final class HostAudioPrivacy {
     /// Readback is mandatory at each admission boundary. A mismatch revokes before repair.
     @discardableResult
     package func verify() -> Bool {
-        guard latched, watching else { return false }
+        guard latched, watching, persistenceHealthy, !returningLocal, localState?.isValid == true else { return false }
         do {
             let snapshot = try hal.read()
             guard try snapshot.plan().isEmpty else { fail(.readback); schedule(); return false }
@@ -152,7 +156,8 @@ package final class HostAudioPrivacy {
 
     @discardableResult
     package func reconcile() -> Bool {
-        guard latched, !reconciling else { return false }
+        guard latched, !reconciling, persistenceHealthy, !returningLocal else { return false }
+        guard localState?.isValid == true else { fail(.persistence); return false }
         reconciling = true
         defer { reconciling = false }
         do {
@@ -228,25 +233,43 @@ package final class HostAudioPrivacy {
 
     /// This request owns authentication. Callers cannot supply an authentication result.
     package func requestLocalReturn() async -> Bool {
-        guard latched, !returningLocal, let original = localState else { return false }
+        guard latched, persistenceHealthy, !returningLocal, let original = localState, original.isValid else { return false }
         returningLocal = true
-        defer { returningLocal = false }
+        defer {
+            returningLocal = false
+            if latched && !state.protected { schedule() }
+        }
         let request = UUID()
         localReturnID = request
         guard await authenticateLocal(), localReturnID == request, latched else { return false }
         pending?.cancel(); pending = nil
-        guard hal.observe(nil, changed: nil) else { fail(.listeners); return false }
-        watching = false
         publish(AudioPrivacyState(protected: false, reason: "인증된 로컬 입출력으로 복귀 중입니다."))
-        guard hal.restoreLocal(original), let restored = try? hal.read(), original.matches(restored),
-              clearLatch() else {
+        guard let revokeForLocalReturn, await revokeForLocalReturn(),
+              localReturnID == request, latched, persistenceHealthy else { return false }
+        // A failed removal invalidates the HAL generation even when listeners remain registered.
+        watching = false
+        guard hal.observe(nil, changed: nil) else {
+            fail(.listeners)
+            schedule()
+            return false
+        }
+        guard hal.restoreLocal(original), let restored = try? hal.read(), original.matches(restored) else {
             fail(.readback)
+            returningLocal = false
             _ = reconcile()
             return false
         }
+        guard clearLatch() else {
+            persistenceHealthy = persist()
+            fail(.persistence)
+            returningLocal = false
+            if persistenceHealthy { _ = reconcile() }
+            return false
+        }
         latched = false
+        localState = nil
         publish(AudioPrivacyState(protected: false, reason: "인증 후 로컬 입출력으로 복귀했습니다."))
-        if saveLocal(nil) { localState = nil }
+        _ = saveLocal(nil)
         return true
     }
 }

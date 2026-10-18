@@ -30,6 +30,8 @@ app = (ROOT / 'Sources/SillMenuBar/AppModel.swift').read_text()
 owner = (ROOT / 'Sources/SillHost/SillVirtualMicrophoneOwner.swift').read_text()
 connection = block(coordinator, 'server.onClientConnected =')
 assert connection.index('armAndVerify()') < connection.index('self.sendCatalog(to: connection)')
+assert connection.index('route.encrypted') < connection.index('armAndVerify()')
+assert connection.index('self.remote?.isPaired(fingerprint) == true') < connection.index('armAndVerify()')
 assert app.index('audioPrivacy?.reconcile()') < app.index('let c = try StreamCoordinator(')
 assert 'self.audioPrivacy = synthetic ? nil : audioPrivacy' in coordinator
 assert 'audioPrivacy: HostAudioPrivacy? = nil' in coordinator
@@ -39,13 +41,20 @@ assert 'AudioObjectSetPropertyData' not in owner and 'previous' not in owner
 
 methods = [block(coordinator, 'private func ' + name + '(') for name in [
     'audioPrivacyReady', 'audioPrivacyChanged', 'microphoneCatalog', 'canEnableRemoteAudio',
-    'audioRouteAuthorized', 'sendAudioRouteState', 'publishAudioRoutes', 'handleAudioRoute'
+    'audioRouteAuthorized', 'sendAudioRouteState', 'publishAudioRoutes', 'handleAudioRoute',
+    'prepareLocalAudioReturn', 'revokeRemoteAudio', 'stopRemoteAudioIfIdle', 'remoteAudioState'
 ]]
 fixture = (HERE / 'CoordinatorFixture.swift').read_text()
+server = (ROOT / 'Sources/SillHost/StreamServer.swift').read_text()
+server_methods = [block(server, marker) for marker in [
+    'func setRemoteAudio(', 'func resetRemoteAudio(', 'func drainRemoteAudio(',
+    'func broadcastRemoteAudio(', 'private func send(_ raw:'
+]]
+fixture = fixture.replace('    // PRODUCTION_SERVER_BOUNDARIES', '\n\n'.join(server_methods).replace('NWConnection', 'BoundaryConnection'))
 fixture = fixture.replace('    // PRODUCTION_BOUNDARIES', '\n\n'.join(methods).replace('NWConnection', 'BoundaryConnection'))
 source = {str(p.relative_to(ROOT)): p.read_bytes() for p in (ROOT / 'Sources/StreamProtocol').glob('*.swift')}
 for name in ['HostAudioPrivacy', 'HostAudioPrivacyModel', 'LocalAudioReturn', 'SillVirtualMicrophoneOwner', 'HALMicrophoneSink',
-             'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'AudioHardwareRoutes']:
+             'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'AudioHardwareRoutes', 'RemoteAudioCaptureLifecycle']:
     path = ROOT / 'Sources/SillHost' / (name + '.swift')
     source[str(path.relative_to(ROOT))] = path.read_bytes()
 files = {}
@@ -65,6 +74,7 @@ let package = Package(name: "HostAudioPrivacyChecks", platforms: [.macOS(.v14)],
 manifest = {
     'base': '0dd10d1f9463001531416f37d756214b0ff32456',
     'productionSHA256': {name: hashlib.sha256(data).hexdigest() for name, data in source.items()},
+    'serverBodiesSHA256': [hashlib.sha256(data.encode()).hexdigest() for data in server_methods],
     'coordinatorBodiesSHA256': [hashlib.sha256(data.encode()).hexdigest() for data in methods],
     'emittedSHA256': {name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
     'scope': 'Injected HAL and substituted transport only. No native hardware calls or source-guard acceptance.'

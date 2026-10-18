@@ -139,6 +139,7 @@ final class StreamServer {
         init(_ c: NWConnection) { connection = c }
     }
 
+    private let remoteAudioDrain = DispatchGroup()
     /// The network queue: both doors, their connections, the verify blocks and the timers.
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
@@ -1431,6 +1432,21 @@ final class StreamServer {
         }
     }
 
+    /// Acknowledges the closed epoch only after all submitted audio sends finish processing.
+    /// A stalled connection refuses local restoration rather than weakening this boundary.
+    func drainRemoteAudio(completion: @escaping (Bool) -> Void) {
+        resetRemoteAudio { [self] _ in
+            var finished = false
+            let finish: (Bool) -> Void = { success in
+                guard !finished else { return }
+                finished = true
+                completion(success)
+            }
+            remoteAudioDrain.notify(queue: queue) { finish(true) }
+            queue.asyncAfter(deadline: .now() + 5) { finish(false) }
+        }
+    }
+
     /// Only current opt-in clients receive sound. Stale capture callbacks and congested links
     /// are dropped before touching NWConnection's ordered send queue.
     func broadcastRemoteAudio(_ payload: Data, epoch: UInt64, sequence: UInt64) {
@@ -1441,7 +1457,7 @@ final class StreamServer {
             for client in clients.values where client.remoteAudioEnabled &&
                 sequence > client.remoteAudioAfterSequence && client.connection.state == .ready {
                 guard client.pendingBytes < 512_000 else { continue }
-                send(data, to: client)
+                send(data, to: client, audio: true)
             }
         }
     }
@@ -1760,7 +1776,7 @@ final class StreamServer {
     /// No eviction while the connect burst (catalog + first keyframe) is still draining.
     private static let graceAfterConnect: TimeInterval = 8.0
 
-    private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
+    private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false, audio: Bool = false) {
         var raw = raw
         if let header = StreamMessage.parseHeader(raw), header.kind == .windowList,
            var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
@@ -1795,7 +1811,9 @@ final class StreamServer {
             client.inflightFrames += 1
             if client.oldestUnackedFrameAt == nil { client.oldestUnackedFrameAt = now }
         }
-        client.connection.send(content: data, completion: .contentProcessed { [weak client] _ in
+        if audio { remoteAudioDrain.enter() }
+        client.connection.send(content: data, completion: .contentProcessed { [remoteAudioDrain, weak client] _ in
+            if audio { remoteAudioDrain.leave() }
             guard let client else { return }
             client.inflight -= 1
             client.pendingBytes -= data.count
