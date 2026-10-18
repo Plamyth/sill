@@ -59,12 +59,12 @@ struct InkStroke: Codable, Identifiable, Equatable {
     var createdAt: Date
     var visibility: Visibility? = nil
 
-    // Legacy points have no verified mask. Raw PKDrawing remains the visual authority.
+    // Legacy points are a best-effort fallback; nil visibility still means unknown.
     var visiblePointSegments: [[InkPoint]] {
         switch visibility?.kind {
         case .full: return [points]
         case .masked: return visibility?.visibleSegments.map(\.worldPoints) ?? []
-        case nil: return []
+        case nil: return [points]
         }
     }
 }
