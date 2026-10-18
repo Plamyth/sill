@@ -75,6 +75,8 @@ def emit(root, output):
     owner = (root / 'visionOSClient/VisionAppSession.swift').read_text()
     owner_methods = '\n'.join(block(owner, marker) for marker in ['func claim(', 'func owns(', 'func release(',
         'func setScenePhase(', 'func suspendPresentation(', 'func start(', 'func setForeground('])
+    if 'deinit {' in owner:
+        owner_methods += '\n' + block(owner, 'deinit {')
     body = body.replace('/* REAL_OWNER_METHODS */', owner_methods)
     for marker in ['private func dialTarget(', 'private func ended(']:
         pieces[marker] = vision(block(home, marker))

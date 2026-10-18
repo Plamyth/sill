@@ -185,6 +185,8 @@ enum HostConfigDefaults { static let remotePort = 5318 }
 
 enum RemoteTLS { static let dialTimeout = 5 }
 final class FixtureLaunchClient {
+    var retired = false
+    func retireVisionWindow() { retired = true }
     func admitVisionDisplays(lease: VisionWindowLease?, foreground: Bool) {}
     let visionAudio = FixtureAudio()
     let bootstrap = VisionCableBootstrap<Int>(launch: .cable(.init(pin: Data(repeating: 1, count: 32), service: "fixture")))

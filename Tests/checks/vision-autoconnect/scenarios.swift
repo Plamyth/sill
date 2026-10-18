@@ -170,6 +170,7 @@ let awayTimer = armRemote(away)
 check("no Bonjour cold start waits through discovery grace", away.remoteAttempts.isEmpty && away.sessionPins.isEmpty)
 awayTimer.performEvenIfCancelled()
 check("deadline hands the trusted saved ID to existing one-shot remote dial", away.remoteAttempts.count == 1 && away.remoteAttempts[0].0 == result.macID && away.remoteAttempts[0].1 == .launchArgument)
+check("offline cold start retains a recovery intent", away.reconnect != nil)
 away.remoteDial = nil
 awayTimer.performEvenIfCancelled(); away.discoveryChanged(); away.armSavedMacAutoConnect()
 check("remote failure cannot rearm a cold-start attempt", away.remoteAttempts.count == 1 && away.identityCalls == 0 && away.sentMethods.isEmpty)
@@ -332,5 +333,14 @@ check("persistent reconnect retains increasing retry spacing", DiscoveryPolicy.r
     failed: 50, lastDialAt: 1000, foreground: true, now: 1001, lifetime: .whileRequested).recheckAt == 1030)
 check("legacy bounded retry behavior remains", !DiscoveryPolicy.redialRow(
     failed: 50, lastDialAt: 1000, foreground: true, now: 1030).dial)
+var closingWindow: FixtureAppOwner? = FixtureAppOwner()
+let closedClient = closingWindow!.client
+weak var closedOwner = closingWindow
+closingWindow!.claim(UUID())
+closingWindow!.start(foreground: true)
+closingWindow = nil
+DispatchQueue.main.drain()
+check("discarding a native window retires its own transport", closedOwner == nil && closedClient.retired)
+check("discarding a different window does not retire a survivor", !concurrentOwner.client.retired && concurrentOwner.owns(concurrentLease))
 print("RESULT_ASSERTIONS \(assertions) FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)
