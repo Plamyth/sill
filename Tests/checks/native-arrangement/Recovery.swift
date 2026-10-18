@@ -79,6 +79,9 @@ import CoreGraphics
     var videoEpoch: UUID? = UUID()
     var inputGeneration = "old"
     var synthetic = false
+    var sourceAdmissionPeer: ObjectIdentifier?
+    var pendingLaunch: String?
+    func admissionIsCurrent(_ sequence: UInt64, peer: ObjectIdentifier?) -> Bool { !shuttingDown && sequence == pickSequence }
     var switching = false
     var shuttingDown = false
     var restartOf: StreamSource?
@@ -101,11 +104,11 @@ import CoreGraphics
         if pickDeliveries >= count { return }
         await withCheckedContinuation { pickObserver = (count, $0) }
     }
-    func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil, origin: PickOrigin? = nil) async {
+    func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil, origin: PickOrigin? = nil, admissionPeer: ObjectIdentifier? = nil) async {
         pickDeliveries += 1
         if let barrier = deliveryBarriers[pickDeliveries] { await barrier.suspend() }
         if pickDeliveries == 2, let replayBarrier { await replayBarrier.suspend() }
-        await productionHandlePick(source, intentSequence: intentSequence, origin: origin)
+        await productionHandlePick(source, intentSequence: intentSequence, origin: origin ?? (source == .desktop ? .automatic : .human), admissionPeer: admissionPeer)
         if let (count, observer) = pickObserver, pickDeliveries >= count {
             pickObserver = nil
             observer.resume()

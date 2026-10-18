@@ -1,0 +1,120 @@
+import Foundation
+
+@main struct Checks {
+    @MainActor static func main() async throws {
+        var checks = 0
+        var failures = 0
+        func expect(_ ok: Bool, _ label: String) {
+            checks += 1
+            if !ok { failures += 1; print("FAIL \(label)") }
+        }
+        func settle() async { for _ in 0..<100 { await Task.yield() } }
+        let peer = NSObject()
+        let otherPeer = NSObject()
+        for source in [StreamSource.none, .desktop, .window(42)] {
+            for origin in [SourceRequest.Origin.human, .automatic] {
+                let request = SourceRequest(source: source, origin: origin, selectionRevision: "host:0")
+                let data = Wire.encode(request)
+                expect(Wire.decode(StreamSource.self, from: data) == source, "old source decoder accepts same-root modern payload")
+                expect(Wire.decode(SourceRequest.self, from: data) == request, "modern exact roundtrip")
+            }
+            expect(Wire.decode(SourceRequest.self, from: Wire.encode(source))?.origin == nil, "old payload has unknown provenance")
+        }
+        for metadata in ["\"selectionOrigin\":null", "\"selectionOrigin\":\"unknown\"", "\"selectionOrigin\":\"automatic\"", "\"selectionRevision\":\"host:0\"", "\"selectionOrigin\":\"automatic\",\"selectionRevision\":null", "\"selectionOrigin\":\"human\",\"selectionRevision\":42", "\"selectionOrigin\":\"automatic\",\"selectionRevision\":\"\""] {
+            let data = Data(("{\"none\":{}," + metadata + "}").utf8)
+            expect(Wire.decode(SourceRequest.self, from: data) == nil, "malformed metadata never downgrades to legacy")
+        }
+        for human in [StreamSource.none, .window(999), .window(42), .desktop] {
+            let host = AdmissionHost(); host.join(peer); host.join(otherPeer)
+            let revision = host.selectionRevision
+            host.receive(.init(source: human, origin: .human, selectionRevision: "old-human-catalog"), peer: peer)
+            let afterHuman = host.selectionRevision
+            host.receive(.init(source: .window(1), origin: .automatic, selectionRevision: revision), peer: otherPeer)
+            expect(host.selectionRevision == afterHuman && afterHuman != revision, "explicit intent including None and failure renews CAS before suspension")
+            await settle()
+            expect(!host.server.committed.contains(.window(1)), "old cross-client automatic cannot publish after explicit intent")
+        }
+        let duplicate = AdmissionHost(); duplicate.join(peer); duplicate.join(otherPeer)
+        let revision = duplicate.selectionRevision
+        duplicate.receive(.init(source: .window(1), origin: .automatic, selectionRevision: revision), peer: peer)
+        let consumed = duplicate.selectionRevision
+        duplicate.receive(.init(source: .window(2), origin: .automatic, selectionRevision: revision), peer: otherPeer)
+        await settle()
+        expect(duplicate.selectionRevision == consumed && duplicate.server.committed == [.window(1)], "one CAS consumption admits at most one automatic request")
+        let denied = AdmissionHost()
+        denied.receive(.init(source: .window(1), origin: .human), peer: peer)
+        expect(denied.pickSequence == 0 && denied.audioChanges == 0, "unauthenticated peer cannot invalidate work")
+
+        for phase in ["inventory", "audio", "stop", "start", "stage", "fallback"] {
+            let host = AdmissionHost(); host.join(peer)
+            let barrier = Barrier()
+            let automatic: StreamSource
+            switch phase {
+            case "inventory": host.catalog.refreshBarrier = barrier; automatic = .desktop
+            case "audio": host.audioBarrier = barrier; automatic = .window(1)
+            case "stop": host.capture.stopBarrier = barrier; automatic = .window(1)
+            case "fallback": host.virtualDisplay = true; host.capture.startBarrier = barrier; host.capture.failNextStart = true; automatic = .window(1)
+            case "stage": host.virtualDisplay = true; host.stage.prepareBarrier = barrier; automatic = .window(1)
+            default: host.capture.startBarrier = barrier; automatic = .window(1)
+            }
+            host.receive(.init(source: automatic, origin: .automatic, selectionRevision: host.selectionRevision), peer: peer)
+            await barrier.reached()
+            host.receive(.init(source: .window(2), origin: .human), peer: peer)
+            host.catalog.refreshBarrier = nil; host.audioBarrier = nil; host.capture.stopBarrier = nil
+            host.capture.startBarrier = nil; host.stage.prepareBarrier = nil
+            barrier.resume()
+            await settle()
+            expect(host.server.committed == [.window(2)], "superseded automatic cannot commit at full pipeline \(phase)")
+            expect(phase == "start" || !host.raised.contains(1), "superseded automatic cannot raise after \(phase), except focus already performed before start")
+        }
+        let launch = AdmissionHost(); launch.join(peer)
+        launch.launch("app.a", peer: peer)
+        let launchRevision = launch.selectionRevision
+        launch.receive(.init(source: .window(2), origin: .human), peer: peer)
+        await launch.completeLaunch([WindowInfo(id: 1, title: "late", appName: "A", bundleID: "app.a", width: 640, height: 480)])
+        await settle()
+        expect(launch.selectionRevision != launchRevision && launch.server.committed == [.window(2)], "late launch A retains admission and cannot replace B")
+        let goodLaunch = AdmissionHost(); goodLaunch.join(peer)
+        goodLaunch.launch("app.a", peer: peer)
+        let originalRevision = goodLaunch.selectionRevision
+        await goodLaunch.completeLaunch([WindowInfo(id: 1, title: "ready", appName: "A", bundleID: "app.a", width: 640, height: 480)])
+        expect(goodLaunch.selectionRevision == originalRevision && goodLaunch.server.committed == [.window(1)], "legitimate launch completes using its original admission")
+        let gone = AdmissionHost(); gone.join(peer)
+        gone.receive(.init(source: .window(1), origin: .automatic, selectionRevision: gone.selectionRevision), peer: peer)
+        gone.inputFence.leave(ObjectIdentifier(peer))
+        await settle()
+        expect(gone.server.committed.isEmpty && gone.audioChanges == 0, "peer removed before execution cannot publish or tear down audio")
+        let legacy = AdmissionHost(); legacy.join(peer)
+        let block = Barrier(); legacy.capture.startBarrier = block
+        legacy.receive(.init(source: .window(1), origin: .human), peer: peer)
+        await block.reached()
+        let legacyRevision = legacy.selectionRevision
+        legacy.receive(.init(source: .window(2)), peer: peer)
+        expect(legacy.selectionRevision == legacyRevision, "legacy window drops during ordinary modern transition")
+        legacy.capture.startBarrier = nil; block.resume(); await settle()
+        expect(legacy.server.committed == [.window(1)], "legacy packet cannot replace unsettled modern human")
+        let active = AdmissionHost(); active.join(peer)
+        active.receive(.init(source: .window(1), origin: .human), peer: peer)
+        await settle()
+        let activeRevision = active.selectionRevision
+        active.receive(.init(source: .window(2), origin: .automatic, selectionRevision: activeRevision), peer: peer)
+        expect(active.selectionRevision == activeRevision, "automatic requires eligible idle or internal recovery state")
+        let malformed = AdmissionHost(); malformed.join(peer)
+        _ = malformed.admitSourceMessage(StreamMessage(kind: .selectSource, timestamp: 0, isKeyframe: false,
+            payload: Data("{\"window\":{\"_0\":1},\"selectionOrigin\":null}".utf8)), from: peer)
+        expect(malformed.pickSequence == 0 && malformed.gestureChords.forgotten == 0, "malformed modern request has no admission or gesture effects")
+        let missingLaunch = AdmissionHost(); missingLaunch.join(peer)
+        let beforeLaunch = missingLaunch.selectionRevision
+        missingLaunch.launch("missing", peer: peer)
+        missingLaunch.receive(.init(source: .window(1), origin: .automatic, selectionRevision: beforeLaunch), peer: peer)
+        expect(missingLaunch.pickSequence == 1 && missingLaunch.settledPickSequence == 1, "failed explicit launch invalidates old automatic revision")
+        var events: [Int] = []
+        let ingress = CoordinatorIngress()
+        ingress.submit { events.append(1) }
+        ingress.submit { events.append(2) }
+        await settle()
+        expect(events == [1,2], "single ingress delivers synchronous admission in network event order")
+        print("SOURCE_REQUEST_HOST_CHECKS total=\(checks) failed=\(failures)")
+        if failures > 0 { exit(1) }
+    }
+}
