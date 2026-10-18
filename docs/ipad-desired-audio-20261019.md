@@ -12,7 +12,7 @@ No HEVC renderer, input overlay, StreamScreen, SessionLink, host, Vision, painti
 
 ## Authority and lifecycle
 
-Both manual and automatic admission require the authenticated Mac identity and saved pin, a current peer with a fresh protected version-1 privacy catalog, saved explicit desired state, foreground application state, and the existing valid source/generation/videoEpoch audio scope. The epoch identifies the audio session scope. It does not require displayed video. Missing, legacy, false, or unsupported privacy blocks both paths as in f854.
+Both manual and automatic admission require the authenticated Mac identity and saved pin, a current peer with a fresh protected version-2 privacy catalog, saved explicit desired state, foreground application state, and the existing valid source/generation/videoEpoch audio scope. The epoch identifies the audio session scope. It does not require displayed video. Missing, legacy, false, or unsupported privacy blocks both paths as in f854.
 
 The unchanged typed microphone policy requires the exact peer, scope, request, and fresh host grant before capture and frames open. Capture completions also check the direction revision. The unchanged playback controller requires its actual subscription request ACK before receiving audio, and ignores old request IDs. This change does not substitute a local preference for either host response.
 

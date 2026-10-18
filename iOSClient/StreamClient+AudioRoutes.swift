@@ -6,14 +6,14 @@ import StreamProtocol
 
 extension StreamClient {
     var audioRouteCapabilities: IPadAudioRoutePolicy.Capabilities {
-        let protected = audioPrivacyState?.version == 1 && audioPrivacyState?.protected == true
+        let protected = audioPrivacyState?.version == 2 && audioPrivacyState?.protected == true
         return IPadAudioRoutePolicy.Capabilities(microphone: connected && protected && microphonePolicy.scope != nil,
                                                  playback: connected && protected && active != .none && remoteAudioStatus.available)
     }
 
     var audioRoutePlaybackUnavailableReason: String? {
         if !connected { return "Mac 연결 후 이 iPad의 출력 장치를 선택할 수 있습니다." }
-        if audioPrivacyState?.version != 1 || audioPrivacyState?.protected != true {
+        if audioPrivacyState?.version != 2 || audioPrivacyState?.protected != true {
             return "Mac의 마이크·스피커 보호 상태를 확인한 뒤 iPad 오디오를 사용할 수 있습니다. Mac 앱 업데이트가 필요할 수 있습니다."
         }
         if active == .none { return "Mac 화면을 선택한 뒤 이 iPad에서 소리를 재생할 수 있습니다." }

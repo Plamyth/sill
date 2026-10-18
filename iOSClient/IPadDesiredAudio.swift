@@ -85,7 +85,7 @@ struct IPadDesiredAudio {
         let previousPrivacy = privacy
         if let state = list.audioPrivacy {
             sawPrivacy = true
-            privacy = state.version == 1 && state.protected ? .protected : .blocked
+            privacy = state.version == 2 && state.protected ? .protected : .blocked
         } else { privacy = sawPrivacy ? .blocked : .legacy }
         let next: Scope?
         if let epoch = list.videoEpoch,

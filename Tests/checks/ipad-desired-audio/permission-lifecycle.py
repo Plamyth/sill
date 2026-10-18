@@ -14,18 +14,7 @@ def sources(root):
  var active = StreamSource.desktop
  var permissionWaiter: CheckedContinuation<Bool, Never>?
  var audioRouteAppActive: Bool { UIApplication.shared.applicationState == .active }
- var audioRouteContext: IPadAudioRoutePolicy.Context? {
-  connection.map { .init(peer: ObjectIdentifier($0), source: active, microphone: microphonePolicy.scope) }
- }
- var audioRouteCapabilities: IPadAudioRoutePolicy.Capabilities {
-  let protected = audioPrivacyState?.version == 1 && audioPrivacyState?.protected == true
-  return .init(microphone: connected && protected && microphonePolicy.scope != nil,
-               playback: connected && protected && active != .none && remoteAudioStatus.available)
- }
- var audioRouteSelection: IPadAudioRoutePolicy.Selection {
-  .init(input: microphonePolicy.phase.canStop ? .iPadMicrophone : .off,
-        output: remoteAudioStatus.requested ? .iPadPlayback : .off)
- }
+ var microphonePhase: IPadMicrophonePolicy.Phase { microphonePolicy.phase }
  @MainActor func requestAudioRouteMicrophonePermission() async -> Bool {
   await withCheckedContinuation { permissionWaiter = $0 }
  }''')
@@ -49,9 +38,19 @@ final class IPadMicrophoneDiagnostics {
     desired = (root / 'iOSClient/StreamClient+DesiredAudio.swift').read_text()
     desired = desired[desired.index('extension StreamClient'):desired.rindex('#endif')]
     routes = (root / 'iOSClient/StreamClient+AudioRoutes.swift').read_text()
+    def block(signature):
+        start = routes.index(signature)
+        end = routes.index('{', start) + 1
+        depth = 1
+        while depth:
+            depth += (routes[end] == '{') - (routes[end] == '}')
+            end += 1
+        return routes[start:end]
     start = routes.index('@MainActor func applyAudioRoutes(')
     end = routes.index('@MainActor var audioRouteAppActive', start)
-    adapter = standins + desired + '\nextension StreamClient {\n' + routes[start:end] + '\n}\n'
+    properties = '\n'.join(block(signature) for signature in [
+        'var audioRouteCapabilities:', 'var audioRouteContext:', 'var audioRouteSelection:'])
+    adapter = standins + desired + '\nextension StreamClient {\n' + properties + '\n' + routes[start:end] + '\n}\n'
     return {'Adapter.swift': adapter, 'main.swift': MAIN}
 
 
@@ -71,7 +70,7 @@ import StreamProtocol
     geometry: .init(x: 0, y: 0, width: 800, height: 600), width: 800, height: 600)
    let list = WindowList(macName: "fixture", windows: [], active: .desktop, remoteAudio: 1,
     inputGeneration: generation.uuidString, videoEpoch: epoch,
-    microphone: .init(peer: UUID(), destination: UUID(), generation: UUID()), audioPrivacy: .init(protected: true))
+    microphone: .init(peer: UUID(), destination: UUID(), generation: UUID()), audioPrivacy: .init(version: 2, protected: true))
    client.connection = peer
    client.desiredAudioSetConnection(peer)
    _ = client.microphonePolicy.setConnection(ObjectIdentifier(peer))
@@ -85,7 +84,8 @@ import StreamProtocol
    let pending = Task { @MainActor in
     try await client.applyAudioRoutes(.init(input: .iPadMicrophone, output: .iPadPlayback), context: context)
    }
-   while client.permissionWaiter == nil { await Task.yield() }
+   for _ in 0..<1000 where client.permissionWaiter == nil { await Task.yield() }
+   check(client.permissionWaiter != nil, "chooser reaches the real permission boundary")
    UIApplication.shared.applicationState = .inactive
    NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
    client.reconcileDesiredAudio()
@@ -100,7 +100,7 @@ import StreamProtocol
     UIApplication.shared.applicationState = .background
     NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
    } else {
-    var blocked = list; blocked.audioPrivacy = .init(protected: false)
+    var blocked = list; blocked.audioPrivacy = .init(version: 2, protected: false)
     client.desiredAudioObserve(blocked, from: peer)
    }
    UIApplication.shared.applicationState = .active

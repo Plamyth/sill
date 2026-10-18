@@ -93,7 +93,7 @@ struct IPadAudioRouteChooser: View {
                         .foregroundStyle(.secondary)
                     Text("선택은 인증된 Mac별로 기억합니다. Mac의 오디오 보호와 새 연결 승인을 확인하면 다시 사용합니다. 그림판을 열어도 사용할 수 있으며 마이크 권한은 자동으로 요청하지 않습니다.")
                         .foregroundStyle(.secondary)
-                    Text(client.audioPrivacyState?.version == 1 && client.audioPrivacyState?.protected == true
+                    Text(client.audioPrivacyState?.version == 2 && client.audioPrivacyState?.protected == true
                          ? "Mac이 현재 오디오 보호 상태를 보고했습니다. 연결이 끊겨도 Mac 음소거를 해제하지 않습니다."
                          : "Mac 오디오 보호가 확인되지 않아 iPad 입출력을 시작할 수 없습니다. Mac 앱의 보호 상태와 버전을 확인하세요.")
                         .foregroundStyle(.secondary)

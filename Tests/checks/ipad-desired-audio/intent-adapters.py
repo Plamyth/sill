@@ -73,7 +73,7 @@ let scope = MicrophoneScope(peer: UUID(), source: .desktop, inputGeneration: gen
  videoEpoch: epoch.id, destination: UUID(), capability: UUID())
 let catalog = WindowList(macName: "fixture", windows: [], active: .desktop, remoteAudio: 1,
  inputGeneration: generation.uuidString, videoEpoch: epoch,
- microphone: .init(peer: scope.peer, destination: scope.destination, generation: scope.capability), audioPrivacy: .init(protected: true))
+ microphone: .init(peer: scope.peer, destination: scope.destination, generation: scope.capability), audioPrivacy: .init(version: 2, protected: true))
 client.connection = peer
 client.desiredAudioSetConnection(peer)
 _ = client.microphonePolicy.setConnection(ObjectIdentifier(peer))

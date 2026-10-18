@@ -38,7 +38,7 @@ checks = {
         ["git", "show", base + ":iOSClient/IPadMicrophonePolicy.swift"], cwd=root),
     "no permission request in automatic adapter": "requestAccess" not in adapter and "allowPermissionPrompt: !automatically" in adapter,
     "permission request has an explicit manual flag": "else if allowPermissionPrompt &&" in mic,
-    "new or missing unsafe privacy blocks starts": "state.version == 1 && state.protected" in model and "sawPrivacy ? .blocked : .legacy" in model,
+    "new or missing unsafe privacy blocks starts": "state.version == 2 && state.protected" in model and "sawPrivacy ? .blocked : .legacy" in model,
     "privacy catalog is bound to its actual peer": "guard connection === peer else { return }" in block(adapter, "func desiredAudioObserve"),
     "privacy failure stops both directions": "if desiredAudio.privacy != .protected { suspendDesiredAudio() }" in adapter and all(
         part in block(adapter, "func suspendDesiredAudio") for part in ["remoteAudioControl.backgrounded()", "microphonePolicy.backgrounded()"]),
