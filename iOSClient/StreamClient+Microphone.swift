@@ -1,43 +1,50 @@
 #if os(iOS)
 import Foundation
 import AVFoundation
+import UIKit
 import Network
 import StreamProtocol
 
 extension StreamClient {
     func toggleIPadMicrophone() {
-        audioRouteAuthorization = nil
         if microphoneCleanupProblem != nil {
+            if microphonePhase.canStop { setDesiredAudio(.microphone, enabled: false) }
             retryMicrophoneCleanup()
             return
         }
-        applyMicrophone(microphonePolicy.toggle())
+        setDesiredAudio(.microphone, enabled: !microphonePhase.canStop)
     }
 
     func microphoneSetConnection(_ next: NWConnection?) {
+        desiredAudioSetConnection(next)
         if microphonePolicy.peer != next.map(ObjectIdentifier.init) { audioRouteAuthorization = nil }
         recordMicrophoneDiagnostic("connection_observed", ["same": String(microphonePolicy.peer == next.map(ObjectIdentifier.init)), "connected": String(next != nil)])
         applyMicrophone(microphonePolicy.setConnection(next.map(ObjectIdentifier.init)))
     }
 
     func microphoneSourceWillChange() {
+        suspendDesiredAudio()
+        desiredAudio.sourceWillChange()
         audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("source_change", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.sourceWillChange())
     }
 
     func microphoneBecameInactive() {
+        suspendDesiredAudio(preserveManualPermission: true)
         recordMicrophoneDiagnostic("inactive", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.inactive())
     }
 
     func microphoneInterrupted() {
+        suspendDesiredAudio()
         audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("interruption_or_route", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.interrupted())
     }
 
     func microphoneBackgrounded() {
+        suspendDesiredAudio()
         audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("background", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.backgrounded())
@@ -61,6 +68,7 @@ extension StreamClient {
                         "grantPresent": String(state.grantID != nil), "reason": state.reason ?? "none",
                         "mainQueueDelayMilliseconds": String(Double(DispatchTime.now().uptimeNanoseconds - arrived) / 1_000_000)])
                 self.applyMicrophone(self.microphonePolicy.receive(state, from: ObjectIdentifier(peer)))
+                self.reconcileDesiredAudio()
             }
         } else if header.kind == .microphoneReceipt, let receipt = Wire.decode(MicrophoneReceipt.self, from: data) {
             DispatchQueue.main.async { [weak self] in
@@ -72,36 +80,60 @@ extension StreamClient {
         return true
     }
 
-    private func applyMicrophone(_ effects: [IPadMicrophonePolicy.Effect]) {
+    func applyMicrophone(_ effects: [IPadMicrophonePolicy.Effect], allowPermissionPrompt: Bool = true) {
         dispatchPrecondition(condition: .onQueue(.main))
         var pendingStops: [(ObjectIdentifier, MicrophoneControl)] = []
         for effect in effects {
             switch effect {
             case .requestPermission(let peer, let scope, let request):
+                guard desiredAudioPermits(.microphone) else {
+                    applyMicrophone(microphonePolicy.permissionResolved(false, requestID: request, scope: scope, from: peer))
+                    continue
+                }
+                let revision = desiredAudio.revision(for: .microphone)
                 let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(request)
                 diagnostics.record("permission_requested", ["phase": String(describing: microphonePolicy.phase)])
                 guard let c = connection, ObjectIdentifier(c) == peer else { continue }
                 Task { @MainActor [weak self] in
-                    guard let self, self.connection === c,
+                    guard let self else { return }
+                    guard self.connection === c,
                           self.microphonePolicy.phase == .authorizing,
                           self.microphonePolicy.startRequestID == request,
-                          self.microphonePolicy.scope == scope else { return }
+                          self.microphonePolicy.scope == scope,
+                          self.desiredAudio.revision(for: .microphone) == revision,
+                          self.desiredAudioPermits(.microphone) else {
+                        self.applyMicrophone(self.microphonePolicy.permissionResolved(false,
+                            requestID: request, scope: scope, from: peer))
+                        return
+                    }
                     let allowed: Bool
                     if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
                         allowed = true
-                    } else if IPadAudioSession.shared.microphoneAvailable {
+                    } else if allowPermissionPrompt && IPadAudioSession.shared.microphoneAvailable {
                         allowed = await AVCaptureDevice.requestAccess(for: .audio)
-                    } else { allowed = true }
-                    guard self.connection === c else { return }
+                    } else { allowed = false }
                     diagnostics.record("permission_result", ["allowed": String(allowed), "microphoneAvailable": String(IPadAudioSession.shared.microphoneAvailable), "phase": String(describing: self.microphonePolicy.phase)])
-                    self.applyMicrophone(self.microphonePolicy.permissionResolved(allowed, requestID: request,
-                        scope: scope, from: peer, microphoneAvailable: IPadAudioSession.shared.microphoneAvailable))
+                    let finish: () -> Void = { [weak self] in
+                        guard let self else { return }
+                        guard self.connection === c, self.desiredAudioPermits(.microphone),
+                              self.desiredAudio.revision(for: .microphone) == revision,
+                              self.microphonePolicy.startRequestID == request else {
+                            self.applyMicrophone(self.microphonePolicy.permissionResolved(false,
+                                requestID: request, scope: scope, from: peer))
+                            return
+                        }
+                        self.applyMicrophone(self.microphonePolicy.permissionResolved(allowed, requestID: request,
+                            scope: scope, from: peer, microphoneAvailable: IPadAudioSession.shared.microphoneAvailable))
+                    }
+                    if allowPermissionPrompt && UIApplication.shared.applicationState == .inactive {
+                        self.audioPendingMicrophonePermission = finish
+                    } else { finish(); self.reconcileDesiredAudio() }
                 }
             case .closeFrames:
                 microphoneFrames.close()
             case .stopCapture:
                 microphoneCaptureToken = nil
-                retryMicrophoneCleanup()
+                if microphoneCleanupProblem == nil { retryMicrophoneCleanup() }
             case .send(let peer, let control):
                 IPadMicrophoneDiagnostics.shared.attempt(microphonePolicy.startRequestID ?? control.requestID)
                     .record("control_" + control.operation.rawValue, ["phase": String(describing: microphonePolicy.phase)])
@@ -122,31 +154,60 @@ extension StreamClient {
                     }
                 }
             case .beginCapture(let peer, let scope, let request, let grant):
+                let revision = desiredAudio.revision(for: .microphone)
                 let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(request)
                 diagnostics.record("capture_begin_effect", ["scopeMatches": String(microphonePolicy.scope == scope), "capturePresent": String(microphoneCapture != nil), "cleanupProblem": String(microphoneCleanupProblem != nil)])
                 guard let c = connection, ObjectIdentifier(c) == peer,
+                      desiredAudioPermits(.microphone),
+                      microphonePolicy.phase == .capturing,
+                      microphonePolicy.startRequestID == request,
+                      microphonePolicy.grantID == grant,
                       microphonePolicy.scope == scope,
-                      microphoneCapture == nil, microphoneCleanupProblem == nil else { diagnostics.record("capture_begin_skipped"); continue }
+                      microphoneCapture == nil, microphoneCleanupProblem == nil else {
+                    diagnostics.record("capture_begin_skipped")
+                    applyMicrophone(microphonePolicy.captureFailed(requestID: request, grant: grant, from: peer,
+                        reason: "오디오 연결이나 화면 제어권이 바뀌어 마이크 시작을 취소했습니다."))
+                    continue
+                }
                 let capture = IPadMicrophoneCapture(diagnostics: diagnostics)
                 let captureID = UUID()
                 microphoneCapture = capture
                 microphoneCaptureToken = captureID
                 let frames = microphoneFrames
                 Task { @MainActor [weak self] in
-                    guard let self, self.microphoneCapture === capture,
+                    guard let self else { return }
+                    guard self.microphoneCapture === capture,
                           self.microphoneCaptureToken == captureID,
                           self.microphonePolicy.phase == .capturing,
                           self.microphonePolicy.startRequestID == request,
                           self.microphonePolicy.grantID == grant,
                           self.microphonePolicy.scope == scope,
-                          self.connection === c else { return }
+                          self.desiredAudio.revision(for: .microphone) == revision,
+                          self.desiredAudioPermits(.microphone),
+                          self.connection === c else {
+                        self.applyMicrophone(self.microphonePolicy.captureFailed(requestID: request,
+                            grant: grant, from: peer, reason: "마이크 시작 전에 연결 상태가 바뀌었습니다."))
+                        return
+                    }
                     do {
                         try await capture.start(emitBatch: { batch in frames.emitBatch(batch, captureID: captureID, diagnostics: diagnostics) })
                         guard self.microphoneCapture === capture,
                               self.microphoneCaptureToken == captureID,
+                              self.microphonePolicy.phase == .capturing,
+                              self.microphonePolicy.startRequestID == request,
+                              self.microphonePolicy.grantID == grant,
+                              self.microphonePolicy.scope == scope,
+                              self.desiredAudio.revision(for: .microphone) == revision,
+                              self.desiredAudioPermits(.microphone),
                               self.connection === c else {
                             do { try capture.stop() }
                             catch { self.recordMicrophoneCleanup(capture, error: error) }
+                            if self.microphoneCapture === capture && self.microphoneCleanupProblem == nil {
+                                self.microphoneCapture = nil
+                                self.microphoneCaptureToken = nil
+                            }
+                            self.applyMicrophone(self.microphonePolicy.captureFailed(requestID: request,
+                                grant: grant, from: peer, reason: "마이크 시작 중 연결 상태가 바뀌었습니다."))
                             return
                         }
                         self.applyMicrophone(self.microphonePolicy.captureStarted(requestID: request,
@@ -166,6 +227,9 @@ extension StreamClient {
                 }
             case .openFrames(let peer, let scope, let grant):
                 guard let c = connection, ObjectIdentifier(c) == peer,
+                      desiredAudioPermits(.microphone),
+                      microphonePolicy.phase == .live,
+                      microphonePolicy.scope == scope, microphonePolicy.grantID == grant,
                       let captureID = microphoneCaptureToken else { continue }
                 microphoneFrames.open(connection: c, scope: scope, grant: grant, captureID: captureID,
                     diagnostics: microphonePolicy.startRequestID.map { IPadMicrophoneDiagnostics.shared.attempt($0) })
@@ -193,6 +257,7 @@ extension StreamClient {
 
     private func sendMicrophoneControl(_ control: MicrophoneControl, to peer: ObjectIdentifier) {
         guard let c = connection, ObjectIdentifier(c) == peer else { return }
+        if control.operation == .start && !desiredAudioPermits(.microphone) { return }
         let message = StreamMessage(kind: .microphoneControl, timestamp: Date().timeIntervalSince1970,
                                     isKeyframe: false, payload: Wire.encode(control))
         c.send(content: message.serialized(), completion: .contentProcessed { [weak self] error in

@@ -6,8 +6,13 @@ import StreamProtocol
 extension StreamClient {
     func toggleRemoteAudio() {
         #if os(iOS)
-        audioRouteAuthorization = nil
+        setDesiredAudio(.playback, enabled: !remoteAudioStatus.requested)
+        #else
+        beginRemoteAudioRequest()
         #endif
+    }
+
+    func beginRemoteAudioRequest() {
         remoteAudioControl.toggle()
         guard case .requesting(let requestID) = remoteAudioControl.status, let c = connection else { return }
         let origin = ObjectIdentifier(c)
@@ -21,6 +26,12 @@ extension StreamClient {
         DispatchQueue.main.async {
             guard self.connection === origin else { return }
             let peer = ObjectIdentifier(origin)
+            #if os(iOS)
+            guard self.desiredAudioPermits(.playback) else {
+                self.remoteAudioControl.sourceWillChange()
+                return
+            }
+            #endif
             if header.kind == .audio {
                 self.remoteAudioControl.receiveAudio(data, from: peer)
             } else if let state = Wire.decode(RemoteAudioState.self, from: data) {
@@ -32,6 +43,9 @@ extension StreamClient {
 
     func sendRemoteAudio(_ request: RemoteAudioSubscription, to peer: ObjectIdentifier) {
         guard let c = connection, ObjectIdentifier(c) == peer else { return }
+        #if os(iOS)
+        if request.enabled && !desiredAudioPermits(.playback) { return }
+        #endif
         IPadMicrophoneDiagnostics.shared.attempt(request.requestID)
             .record(request.enabled ? "playback_requested" : "playback_stopped")
         let message = StreamMessage(kind: .remoteAudioControl, timestamp: Date().timeIntervalSince1970,
