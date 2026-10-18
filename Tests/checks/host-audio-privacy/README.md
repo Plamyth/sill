@@ -112,3 +112,43 @@ HDMI input configurations with zero bytes or zero buffers are accepted as zero i
 The fake HAL suite exercises both shapes. Plug-in device-list and bundle-ID listeners supplement
 the device/default/control listeners. All UID translation, plugin translation, membership,
 transport, liveness and format reads still flow through the injected registry operations.
+
+## Endpoint coverage correction, 2026-10-19
+
+This section supersedes the built-in-only coverage and version descriptions above.
+The earlier 86 passing checks on the built-in-only implementation do not prove protection of
+all audio endpoints. Parent-reported Mini receipt `endpoints-red-01` reproduced the failures
+in tests at `47617430f7c70c40525072532eea3880128159c4`. The worker did not rerun that receipt.
+
+`AudioPrivacyState` now defaults to version 2. The optional catalog field and its schema stay
+the same. An explicitly encoded version 1 remains version 1 after decoding and only describes
+the previous built-in coverage. Version 2 covers audio endpoint master mutes and validated
+BlackHole defaults. It does not describe Sentry, display protection, or input protection.
+
+`PrivacyAudioSnapshot.plan()` exempts only the exact validated BlackHole 2-channel and
+16-channel devices. Every other live endpoint with input or output channels needs a readable,
+writable master mute for each active direction. This includes USB, HDMI, and other virtual or
+aggregate devices. A nil mute prevents any planned writes and returns a Korean reason with
+the offending UID and direction. CoreAudio reads external master controls and installs their
+mute, identity, stream-configuration, and device-change listeners. Existing H1 observation
+generation checks remain in place. The final guarded write still re-reads the current plan
+and checks writability before setting a master mute.
+
+The existing optional mute fields represent verified writable master control readback.
+The architect comparison considered those fields versus a new per-channel coverage model.
+Ponytail full chose the existing fields and native master mute operations. No channel fallback,
+volume-zero fallback, new dependency, or separate protection owner is introduced.
+
+The parent's read-only native probe found no master or per-channel mute or volume control on
+DN32 input32/output32 or HDMI output2. Those endpoints must report `protected=false`.
+Refusing protection does not silence existing hardware, and the guard does not partially
+apply a plan when an unsupported direction is present. Physical and OS acoustic proof remain
+OPEN, including timing gaps between property readback, OS changes, and audio callbacks.
+
+The added injected tests cover external input and output mute listeners, unmute revocation and
+repair, failed/read-only/missing master controls, unsuccessful setter readback, stale commands,
+other virtual endpoint coverage, and stale external observation callbacks. They also pin the
+version 2 wire default and preserve explicit version 1 decoding. The worker only inspected
+source and diffs. All test execution, the exact Mini suite, full SDK compilation, and independent
+review belong to the parent. No native HAL, device, network, build, test, or push was executed
+by this worker. Local return, muted taps, and shield changes are outside this unit.

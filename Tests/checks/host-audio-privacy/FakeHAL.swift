@@ -22,6 +22,9 @@ final class PrivacyFakeHAL: @unchecked Sendable {
     var wrongPlugin = false
     var wrongResolution = false
     var writable = true
+    var readOnlyMutes: [PrivacyAudioWrite] = []
+    var failedMuteReads: [PrivacyAudioWrite] = []
+    var rejectedMuteListener: PrivacyAudioWrite?
     var listenerFailure = false
     var emptyInputConfiguration = false
     var zeroInputBuffers = false
@@ -77,6 +80,9 @@ final class PrivacyFakeHAL: @unchecked Sendable {
         case kAudioDevicePropertyNominalSampleRate:
             output.storeBytes(of: Float64(48_000), as: Float64.self); size.pointee = 8; return noErr
         case kAudioDevicePropertyMute:
+            guard property.mElement == kAudioObjectPropertyElementMain,
+                  !failedMuteReads.contains(.mute(object,
+                    property.mScope == kAudioObjectPropertyScopeInput ? .input : .output)) else { return -1 }
             guard let value = property.mScope == kAudioObjectPropertyScopeInput ? device.inputMuted : device.outputMuted else { return -1 }
             return number(value ? 1 : 0)
         case kAudioDevicePropertyStreamConfiguration:
@@ -108,8 +114,11 @@ final class PrivacyFakeHAL: @unchecked Sendable {
     }
 
     var operations: HostAudioPrivacyOperations {
-        HostAudioPrivacyOperations(read: microphoneOperations, settable: { [self] _, _, value in
-            value.pointee = DarwinBoolean(writable); return noErr
+        HostAudioPrivacyOperations(read: microphoneOperations, settable: { [self] object, property, value in
+            let readOnly = property.pointee.mSelector == kAudioDevicePropertyMute &&
+                readOnlyMutes.contains(.mute(object,
+                    property.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output))
+            value.pointee = DarwinBoolean(writable && !readOnly); return noErr
         }, set: { [self] object, property, size, input in
             lock.lock(); defer { lock.unlock() }
             beforeSet?()
@@ -138,6 +147,9 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             return noErr
         }, addListener: { [self] object, address, _, callback in
             if listenerFailure { return -1 }
+            if address.pointee.mSelector == kAudioDevicePropertyMute,
+               rejectedMuteListener == .mute(object,
+                address.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output) { return -1 }
             listeners.append((object, address.pointee, callback)); return noErr
         }, removeListener: { [self] object, address, _, _ in
             listeners.removeAll { $0.0 == object && $0.1.mSelector == address.pointee.mSelector && $0.1.mScope == address.pointee.mScope }
@@ -157,6 +169,10 @@ final class PrivacyFakeHAL: @unchecked Sendable {
         }
     }
     func safe() { for write in (try? snapshot.plan()) ?? [] { apply(write) } }
+    func isListening(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                     _ scope: AudioObjectPropertyScope) -> Bool {
+        listeners.contains { $0.0 == object && $0.1.mSelector == selector && $0.1.mScope == scope }
+    }
     func fire(_ selector: AudioObjectPropertySelector, object: AudioObjectID? = nil) {
         for (id, original, callback) in listeners where original.mSelector == selector && (object == nil || object == id) {
             var property = original

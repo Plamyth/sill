@@ -29,7 +29,7 @@ struct HostAudioPrivacyChecks {
         expect(privacy.armAndVerify() && durable && privacy.latched, "arm latches and verifies")
         expect(fake.writes == [.mute(10, .input), .mute(10, .output), .select(.input, 20),
                                .select(.output, 30), .select(.systemOutput, 30)], "only built-in mutes and three virtual defaults written")
-        expect(privacy.state == AudioPrivacyState(protected: true) && privacy.verify(), "version one ready is actual readback")
+        expect(privacy.state == AudioPrivacyState(version: 2, protected: true) && privacy.verify(), "version two ready is actual endpoint readback")
         let writes = fake.writes
         expect(privacy.armAndVerify() && fake.writes == writes, "already safe defaults require no writes")
         privacy.stop()
@@ -130,6 +130,7 @@ struct HostAudioPrivacyChecks {
                "persistence failure stops before native boundary")
         noPersistence.stop()
         await localReturnChecks()
+        await endpointChecks()
         await eventChecks()
         await ownerChecks()
         wireChecks()
@@ -138,6 +139,113 @@ struct HostAudioPrivacyChecks {
         await coordinatorChecks(boundaryPrivacy)
         boundaryPrivacy.stop()
         print("Host audio privacy: all injected checks passed; no native hardware calls")
+    }
+
+    @MainActor static func endpointChecks() async {
+        for scope in [PrivacyAudioScope.input, .output] {
+            let direction = scope == .input ? "입력" : "출력"
+            for mode in 0..<3 {
+                let fake = PrivacyFakeHAL()
+                fake.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "external-USB", transport: .other,
+                    plugin: nil, inputChannels: 32, outputChannels: 32, inputMuted: true, outputMuted: true))
+                switch mode {
+                case 0: fake.readOnlyMutes = [.mute(50, scope)]
+                case 1: fake.failedMuteReads = [.mute(50, scope)]
+                default:
+                    if scope == .input { fake.snapshot.devices[3].inputMuted = nil }
+                    else { fake.snapshot.devices[3].outputMuted = nil }
+                }
+                let privacy = guardFor(fake)
+                expect(!privacy.armAndVerify() && !privacy.state.protected && fake.writes.isEmpty &&
+                       privacy.state.reason?.contains("external-USB") == true &&
+                       privacy.state.reason?.contains(direction) == true,
+                       "external \(direction) missing readback or writable master refuses privacy \(mode)")
+                privacy.stop()
+            }
+
+            let fake = PrivacyFakeHAL()
+            fake.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "external-USB", transport: .other,
+                plugin: nil, inputChannels: 2, outputChannels: 2, inputMuted: false, outputMuted: false))
+            let hal = CoreAudioPrivacyHAL(ops: fake.operations)
+            let original = try! hal.read()
+            expect((try? original.plan().contains(.mute(50, scope))) == true,
+                   "external \(direction) master is included in allowed writes")
+            fake.readOnlyMutes = [.mute(50, scope)]
+            expect(!hal.write(.mute(50, scope)) && fake.writes.isEmpty,
+                   "stale external \(direction) command rejected after master becomes read-only")
+            fake.readOnlyMutes = []; fake.failedMuteReads = [.mute(50, scope)]
+            expect(!hal.write(.mute(50, scope)) && fake.writes.isEmpty,
+                   "stale external \(direction) command rejected after readback loss")
+            fake.failedMuteReads = []
+            fake.snapshot.devices[3] = PrivacyAudioDevice(id: 50, uid: "external-USB", transport: .other,
+                plugin: nil, inputChannels: scope == .input ? 0 : 2, outputChannels: scope == .output ? 0 : 2,
+                inputMuted: false, outputMuted: false)
+            expect(!hal.write(.mute(50, scope)) && fake.writes.isEmpty,
+                   "stale external \(direction) command rejected after direction disappears")
+
+            let observed = PrivacyFakeHAL()
+            observed.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "external-USB", transport: .other,
+                plugin: nil, inputChannels: 2, outputChannels: 2, inputMuted: false, outputMuted: false))
+            observed.rejectedMuteListener = .mute(50, scope)
+            let unobserved = guardFor(observed)
+            expect(!unobserved.armAndVerify() && !unobserved.state.protected && observed.writes.isEmpty,
+                   "external \(direction) mute listener installation is mandatory")
+            unobserved.stop()
+        }
+
+        let fake = PrivacyFakeHAL()
+        fake.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "external-USB", transport: .other,
+            plugin: nil, inputChannels: 2, outputChannels: 2, inputMuted: false, outputMuted: false))
+        let privacy = guardFor(fake)
+        var states: [AudioPrivacyState] = []
+        privacy.changed = { states.append($0) }
+        expect(privacy.armAndVerify() && fake.snapshot.devices[3].inputMuted == true &&
+               fake.snapshot.devices[3].outputMuted == true, "external masters require successful setter readback")
+        for scope in [PrivacyAudioScope.input, .output] {
+            let halScope = scope == .input ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput
+            expect(fake.isListening(50, kAudioDevicePropertyMute, halScope) &&
+                   fake.isListening(50, kAudioDevicePropertyStreamConfiguration, halScope),
+                   "external \(scope) mute and stream configuration observed")
+            let count = states.count
+            if scope == .input { fake.snapshot.devices[3].inputMuted = false }
+            else { fake.snapshot.devices[3].outputMuted = false }
+            fake.fire(kAudioDevicePropertyMute, object: 50)
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            expect(states.dropFirst(count).contains(where: { !$0.protected }) && privacy.state.protected &&
+                   fake.snapshot.devices[3].inputMuted == true && fake.snapshot.devices[3].outputMuted == true,
+                   "external \(scope) unmute event revokes then remutes through readback")
+        }
+        fake.failedMuteReads = [.mute(50, .output)]
+        expect(!privacy.verify() && !privacy.state.protected && privacy.state.reason?.contains("external-USB") == true,
+               "external readback loss revokes existing protected state")
+        privacy.stop()
+
+        let generations = PrivacyFakeHAL()
+        generations.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "external-USB", transport: .other,
+            plugin: nil, inputChannels: 2, outputChannels: 2, inputMuted: true, outputMuted: true))
+        let hal = CoreAudioPrivacyHAL(ops: generations.operations)
+        let snapshot = try! hal.read()
+        var oldEvents = 0, newEvents = 0
+        expect(hal.observe(snapshot, changed: { oldEvents += 1 }), "external observation generation installed")
+        generations.fire(kAudioDevicePropertyMute, object: 50)
+        expect(hal.observe(snapshot, changed: { newEvents += 1 }), "external observation generation replaced")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        expect(oldEvents == 0 && newEvents == 0, "queued external callback cannot cross observation generations")
+        generations.fire(kAudioDevicePropertyMute, object: 50)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        expect(newEvents == 2, "current external input and output listeners deliver changes")
+        expect(hal.observe(nil, changed: nil), "external observation generation cleaned up")
+
+        for index in [3, 4] {
+            let lying = PrivacyFakeHAL()
+            lying.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "external-USB", transport: .other,
+                plugin: nil, inputChannels: 2, outputChannels: 2, inputMuted: false, outputMuted: false))
+            lying.ignoreSetter = index
+            let noReadback = guardFor(lying)
+            expect(!noReadback.armAndVerify() && !noReadback.state.protected && lying.writes.count == index,
+                   "external master setter without readback refuses privacy at operation \(index)")
+            noReadback.stop()
+        }
     }
 
     @MainActor static func eventChecks() async {
@@ -188,6 +296,10 @@ struct HostAudioPrivacyChecks {
             plugin: nil, inputChannels: 2, outputChannels: 2))
         expect(!privacy.reconcile() && !privacy.state.protected,
                "unknown virtual or aggregate routes cannot bypass endpoint coverage")
+        fake.snapshot.devices[fake.snapshot.devices.count - 1].inputMuted = false
+        fake.snapshot.devices[fake.snapshot.devices.count - 1].outputMuted = false
+        expect(privacy.reconcile() && fake.writes.contains(.mute(70, .input)) &&
+               fake.writes.contains(.mute(70, .output)), "other virtual endpoints require both master mutes")
         privacy.stop()
     }
 
@@ -280,10 +392,14 @@ struct HostAudioPrivacyChecks {
 
     @MainActor static func wireChecks() {
         let status = AudioPrivacyState(protected: true)
-        expect(Wire.decode(AudioPrivacyState.self, from: Wire.encode(status)) == status, "privacy status roundtrips")
+        expect(status.version == 2 && Wire.decode(AudioPrivacyState.self, from: Wire.encode(status)) == status,
+               "version two privacy status roundtrips")
+        let legacy = AudioPrivacyState(version: 1, protected: true)
+        expect(Wire.decode(AudioPrivacyState.self, from: Wire.encode(legacy))?.version == 1 && legacy != status,
+               "legacy built-in-only status retains version one without upgrading coverage")
         let old = WindowList(macName: "시험", windows: [], active: .none)
         expect(Wire.decode(WindowList.self, from: Wire.encode(old))?.audioPrivacy == nil, "old catalog decodes with absent privacy field")
         let new = WindowList(macName: "시험", windows: [], active: .none, audioPrivacy: status)
-        expect(Wire.decode(WindowList.self, from: Wire.encode(new))?.audioPrivacy == status, "optional version one catalog status")
+        expect(Wire.decode(WindowList.self, from: Wire.encode(new))?.audioPrivacy == status, "optional version two catalog status")
     }
 }

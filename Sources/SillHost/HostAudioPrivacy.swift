@@ -114,8 +114,8 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
             result.append(PrivacyAudioDevice(id: id, uid: uid,
                 transport: builtIn ? .builtIn : transport == kAudioDeviceTransportTypeVirtual ? .virtual : .other,
                 plugin: owners.first?.0, inputChannels: input, outputChannels: output,
-                inputMuted: builtIn && input > 0 ? mute(id, kAudioObjectPropertyScopeInput) : nil,
-                outputMuted: builtIn && output > 0 ? mute(id, kAudioObjectPropertyScopeOutput) : nil))
+                inputMuted: input > 0 ? mute(id, kAudioObjectPropertyScopeInput) : nil,
+                outputMuted: output > 0 ? mute(id, kAudioObjectPropertyScopeOutput) : nil))
         }
         guard try ids(system, kAudioHardwarePropertyDevices) == devices,
               try scalar(system, kAudioHardwarePropertyDefaultInputDevice) == defaults.input,
@@ -195,13 +195,13 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         var properties = [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice,
             kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultSystemOutputDevice]
             .map { (system, address($0)) }
-        for device in snapshot?.devices ?? [] where device.transport != .other {
+        for device in snapshot?.devices ?? [] {
             properties += [kAudioDevicePropertyDeviceIsAlive, kAudioDevicePropertyDeviceUID,
                 kAudioDevicePropertyTransportType, kAudioDevicePropertyNominalSampleRate]
                 .map { (device.id, address($0)) }
             for scope in [kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput] {
                 properties.append((device.id, address(kAudioDevicePropertyStreamConfiguration, scope)))
-                if device.transport == .builtIn,
+                if (scope == kAudioObjectPropertyScopeInput ? device.inputMuted : device.outputMuted) != nil,
                    (scope == kAudioObjectPropertyScopeInput ? device.inputChannels : device.outputChannels) > 0 {
                     properties.append((device.id, address(kAudioDevicePropertyMute, scope)))
                 }

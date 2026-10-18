@@ -46,12 +46,12 @@ struct PrivacyAudioSnapshot: Equatable {
         guard builtIns.contains(where: { $0.inputChannels > 0 }),
               builtIns.contains(where: { $0.outputChannels > 0 }) else { throw PrivacyAudioFailure.builtInMute }
         var writes: [PrivacyAudioWrite] = []
-        for device in builtIns {
+        for device in devices where device.id != inputDevice.id && device.id != outputDevice.id {
             for scope in [PrivacyAudioScope.input, .output] {
                 let channels = scope == .input ? device.inputChannels : device.outputChannels
                 guard channels > 0 else { continue }
                 guard let muted = scope == .input ? device.inputMuted : device.outputMuted else {
-                    throw PrivacyAudioFailure.builtInMute
+                    throw PrivacyAudioFailure.endpointMute(uid: device.uid, scope: scope)
                 }
                 if !muted { writes.append(.mute(device.id, scope)) }
             }
@@ -71,10 +71,14 @@ enum PrivacyAudioWrite: Equatable {
 
 enum PrivacyAudioFailure: Error {
     case virtualIdentity, builtInMute, readback, setter, listeners, persistence
+    case endpointMute(uid: String, scope: PrivacyAudioScope)
     var reason: String {
         switch self {
         case .virtualIdentity: return "BlackHole 2/16채널 장치의 고유 식별자와 플러그인을 확인할 수 없습니다."
         case .builtInMute: return "Mac 내장 마이크와 스피커의 전체 음소거를 확인할 수 없습니다."
+        case .endpointMute(let uid, let scope):
+            let direction = scope == .input ? "입력" : "출력"
+            return "오디오 장치 \(uid)의 \(direction) 전체 음소거를 읽고 제어할 수 없어 보호를 보장할 수 없습니다."
         case .readback: return "Mac 오디오 보호 설정을 다시 읽어 확인하지 못했습니다."
         case .setter: return "Mac 오디오 보호 설정을 적용하지 못했습니다."
         case .listeners: return "Mac 오디오 장치 변경 감시를 시작하지 못했습니다."
