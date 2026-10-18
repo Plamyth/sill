@@ -29,6 +29,7 @@ cp Packaging/Info.plist "$stage/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLName string com.ambrion.sillcanvas.local-audio' "$stage/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array' "$stage/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string ccrsill' "$stage/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Add :CCRLocalAudioReturnVersion integer 1' "$stage/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git rev-list --count HEAD)" "$stage/Contents/Info.plist"
 printf 'APPL????' > "$stage/Contents/PkgInfo"
 codesign --force --options runtime --timestamp=none --entitlements Packaging/SillDebug.entitlements \
