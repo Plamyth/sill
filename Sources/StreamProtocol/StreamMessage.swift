@@ -79,6 +79,7 @@ public enum StreamMessageKind: UInt8 {
     case audioRoutes = 208       // host → paired TLS client: AudioRouteState, Mac global defaults
     case changeAudioRoute = 209  // paired TLS client → host: AudioRouteSelection, explicit CAS only
     case fetchAudioRoutes = 210  // paired TLS client → host, empty: refresh without changing defaults
+    case selectDisplay = 211     // client → host: DisplaySelection, only with displaySelection == 1
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 

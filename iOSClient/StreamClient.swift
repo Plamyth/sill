@@ -839,6 +839,7 @@ final class StreamClient: ObservableObject {
             #if os(visionOS)
             if newValue != nil { stopSavedMacAutoConnect() }
             if link.connection !== newValue {
+                bindVisionDisplays(to: newValue)
                 microphoneSetConnection(newValue)
                 resetVisionAudio()
                 visionMovePreparation = nil
@@ -864,6 +865,11 @@ final class StreamClient: ObservableObject {
     private let link = SessionLink()
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     #if os(visionOS)
+    @Published var visionDisplaySelection = VisionDisplaySelection()
+    var visionDisplayPeer: NWConnection?
+    var visionDisplaySubmission: SessionLink.Submission?
+    var visionDisplayDeadline: DispatchWorkItem?
+    var visionDisplayLink: SessionLink { link }
     var visionStartupStarted = false
     var visionStartupForeground = false
     @Published var visionCableBootstrap = VisionCableBootstrap<FoundMac>(launch: .ordinary)
@@ -900,7 +906,7 @@ final class StreamClient: ObservableObject {
     }
 
     func captureVisionTextTarget() -> VisionTextTarget? {
-        guard visionTextForeground, connected, moving == nil, visionMovePreparation == nil,
+        guard !visionDisplaySelection.inputBlocked, visionTextForeground, connected, moving == nil, visionMovePreparation == nil,
               active != .none, visionInputBinding.isConfirmed,
               let peer = connection, let permit = visionInputPermit else { return nil }
         let sourceLabel: String
@@ -992,6 +998,7 @@ final class StreamClient: ObservableObject {
     }
 
     private func visionPresentationChanged(_ ticket: VisionPresentation.Ticket?) {
+        defer { confirmVisionDisplayPresentation() }
         if let ticket, let peer = connection, ObjectIdentifier(peer) == ticket.peer,
            case .awaitingPresentation(let epoch) = visionInputBinding, epoch == ticket.epoch {
             guard link.setInputPermit(ticket.id, epoch: ticket.epoch.id) else { return }
@@ -1083,7 +1090,10 @@ final class StreamClient: ObservableObject {
     var requestVisionMicrophonePermission: (@escaping (Bool) -> Void) -> Void = StreamClient.requestVisionRecordPermission
     private let visionAudioRoute = VisionAudioRoute()
     lazy var visionAudio = VisionAudioController(send: { [weak self] control in
-        self?.sendVisionAudio(control)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !control.enabled || !self.visionDisplaySelection.inputBlocked else { return }
+            self.sendVisionAudio(control)
+        }
     }, player: VisionAudioPlayer(ownerID: visionAudioOwnerID))
 
     private func resetVisionAudio() {
@@ -1435,6 +1445,7 @@ final class StreamClient: ObservableObject {
 
     private func wentToBackground(preservingMicrophoneAuthorization: Bool = false) {
         #if os(visionOS)
+        admitVisionDisplays(lease: visionDisplaySelection.lease, foreground: false)
         if preservingMicrophoneAuthorization { microphoneApplicationActive(false) }
         else { microphoneBackgrounded() }
         revokeVisionMacAudioRoutes(foreground: false)
@@ -2753,6 +2764,7 @@ final class StreamClient: ObservableObject {
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
         // only until the fence's pong (`deliver`), or stops at once without a fence.
         #if os(visionOS)
+        bindVisionDisplays(to: c)
         resetVisionAudio()
         visionInputBinding = .awaitingCatalog
         #endif
@@ -3664,6 +3676,8 @@ final class StreamClient: ObservableObject {
     /// is not the person's doing.
     private func request(_ source: StreamSource) {
         #if os(visionOS)
+        if source == .desktop && visionDisplaySelection.blocksDesktopRequest { return }
+        guard !visionDisplaySelection.inputBlocked else { return }
         microphoneSourceWillChange()
         visionAudio.stop()
         #else
@@ -3744,7 +3758,7 @@ final class StreamClient: ObservableObject {
 
     func sendInput(_ event: InputEvent) {
         #if os(visionOS)
-        guard visionMovePreparation == nil, let expected = connection else { return }
+        guard !visionDisplaySelection.inputBlocked, visionMovePreparation == nil, let expected = connection else { return }
         guard let input = visionInputBinding.capture(event), let permit = visionInputPermit else { return }
         lastInputAt = ProcessInfo.processInfo.systemUptime
         let bytes = Self.visionInputBytes(input)
@@ -4226,6 +4240,7 @@ final class StreamClient: ObservableObject {
                 let previous = self.active
                 #if os(visionOS)
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
+                self.observeVisionDisplays(list, from: peer)
                 #else
                 self.windows = list.windows
                 self.inputGeneration = list.inputGeneration
@@ -4234,6 +4249,12 @@ final class StreamClient: ObservableObject {
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))
                 self.thumbnails = self.thumbnails.filter { live.contains($0.key) }
+                #if os(visionOS)
+                if self.visionDisplaySelection.blocksDesktopRequest {
+                    self.resumeSource = nil
+                    return
+                }
+                #endif
                 // The first list after a move without a fence: if the Mac stopped the stream meanwhile,
                 // what this device was watching is picked again (`resumeSource`).
                 if let resume = self.resumeSource {

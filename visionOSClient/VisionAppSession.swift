@@ -30,6 +30,7 @@ final class VisionAppSession: ObservableObject {
             client.$localNetworkDenied.map { _ in () }.eraseToAnyPublisher(),
             client.$pairing.map { _ in () }.eraseToAnyPublisher(),
             client.$visionInputBinding.map { _ in () }.eraseToAnyPublisher(),
+            client.$visionDisplaySelection.map { _ in () }.eraseToAnyPublisher(),
             client.$active.map { _ in () }.eraseToAnyPublisher(),
             input.$moving.map { _ in () }.eraseToAnyPublisher(),
         ]
@@ -42,6 +43,7 @@ final class VisionAppSession: ObservableObject {
 
     func claim(_ window: UUID) {
         if windowLease == nil { windowLease = VisionWindowLease(window: window) }
+        client.admitVisionDisplays(lease: windowLease, foreground: foreground)
     }
 
     func owns(_ lease: VisionWindowLease) -> Bool { windowLease == lease }
@@ -88,6 +90,7 @@ final class VisionAppSession: ObservableObject {
 
     func setForeground(_ active: Bool) {
         foreground = active
+        client.admitVisionDisplays(lease: windowLease, foreground: active)
         client.visionStartupForeground = active
         client.visionAudio.setForeground(active)
         client.setVisionPresentationForeground(active)

@@ -33,7 +33,10 @@ extension StreamClient {
     #endif
 
     var visionMicrophoneCanStart: Bool {
-        microphoneAdmission.active && microphoneAuthorization == nil && microphonePolicy.canStart &&
+        #if os(visionOS)
+        if visionDisplaySelection.inputBlocked { return false }
+        #endif
+        return microphoneAdmission.active && microphoneAuthorization == nil && microphonePolicy.canStart &&
             microphoneCapture == nil && microphoneCleanupProblem == nil &&
             VisionAudioSharedHardware.shared.cleanupProblem == nil
     }

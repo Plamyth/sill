@@ -1054,6 +1054,60 @@
 			<key>fileRef</key>
 			<string>45367E63B25A435BCF4C0237</string>
 		</dict>
+		<key>DAAC04120B2C84FEAE04DCCA</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionDisplaySelection.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>2D8EDDCB8DC3AE39E9AC602F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>DAAC04120B2C84FEAE04DCCA</string>
+		</dict>
+		<key>22F88B8FE5619E195EDF306A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/StreamClient+VisionDisplaySelection.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>64ED039BE88BFAC833997639</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>22F88B8FE5619E195EDF306A</string>
+		</dict>
+		<key>505936BB69A49546F2464573</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionDisplayChooser.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>8BA2911306AF7E40ADECE888</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>505936BB69A49546F2464573</string>
+		</dict>
 		<key>96ED5C5789B174A01557791C</key>
 		<dict>
 			<key>isa</key>
@@ -1162,6 +1216,9 @@
 				<string>F4B97C3DCE8264FBF8CFAB26</string>
 				<string>1F1548F2952FADA5E99255D6</string>
 				<string>45367E63B25A435BCF4C0237</string>
+				<string>DAAC04120B2C84FEAE04DCCA</string>
+				<string>22F88B8FE5619E195EDF306A</string>
+				<string>505936BB69A49546F2464573</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
 			</array>
@@ -1234,6 +1291,9 @@
 				<string>61CBD8FEE241841E22C2EEE4</string>
 				<string>7748DBD153CAC047DEB83D40</string>
 				<string>5B607DCE6240AE7BCB5CB3AD</string>
+				<string>2D8EDDCB8DC3AE39E9AC602F</string>
+				<string>64ED039BE88BFAC833997639</string>
+				<string>8BA2911306AF7E40ADECE888</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1334,7 +1394,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>10</string>
+				<string>11</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>
@@ -1401,7 +1461,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>10</string>
+				<string>11</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>

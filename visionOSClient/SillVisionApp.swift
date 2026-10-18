@@ -56,6 +56,7 @@ struct SillVisionWorkspace: View {
     @AppStorage("ccrVisionAudioOfferAnswered") private var audioOfferAnswered = false
     @State private var audioOfferShown = false
     @State private var audioOfferScope: VisionAudioScope?
+    @State private var displayChooserShown = false
     @State private var macAudioShown = false
     @State private var macAudioOfferShown = false
 
@@ -81,13 +82,12 @@ struct SillVisionWorkspace: View {
                         Button(client.visionAudio.presentation.phase.grant == nil
                                ? "Mac 소리를 Vision Pro에서도 재생" : "Vision Pro 소리 중지") {
                             withWindowOwnership {
-                                guard phase == .active, !transitions.isPending, !inputSuspended else { return }
-                                if client.visionAudio.presentation.phase.grant == nil { client.visionAudio.enable() }
-                                else { client.visionAudio.stop() }
+                                if client.visionAudio.presentation.phase.grant != nil { client.visionAudio.stop() }
+                                else if audioControlsAllowed { client.visionAudio.enable() }
                             }
                         }
-                        .disabled(!audioControlsAllowed ||
-                                  (client.visionAudio.presentation.phase.grant == nil && !client.visionAudio.presentation.canEnable))
+                        .disabled(client.visionAudio.presentation.phase.grant == nil &&
+                                  (!audioControlsAllowed || !client.visionAudio.presentation.canEnable))
                         Text("Vision Pro에서 재생해도 Mac의 출력 장치는 유지합니다.")
                         Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
                     }
@@ -100,6 +100,15 @@ struct SillVisionWorkspace: View {
             if client.connected {
                 screen
                 controls
+                HStack {
+                    Button("전체 화면", action: openDisplayChooser)
+                        .accessibilityHint("연결된 Mac의 모니터를 선택합니다. 이전 호스트는 기존 전체 화면 동작을 사용합니다.")
+                    if client.visionDisplaySelection.pending != nil {
+                        Button("모니터 요청 취소") { withWindowOwnership { client.cancelVisionDisplaySelection() } }
+                    } else if client.visionDisplaySelection.inputBlocked && !displayChooserShown {
+                        Text("입력 중지 · 모니터를 다시 선택하거나 연결을 해제하세요.").font(.caption)
+                    }
+                }
                 HStack {
                     Button("누른 입력 해제") { withWindowOwnership { input.releaseAll() } }
                         .accessibilityHint("이 Vision 앱이 누른 키와 드래그를 해제합니다.")
@@ -116,10 +125,10 @@ struct SillVisionWorkspace: View {
                     }
                 }
                 VisionAudioControls(audio: client.visionAudio,
-                                    allowStart: phase == .active && !transitions.isPending && !inputSuspended,
+                                    allowStart: audioControlsAllowed,
                                     admit: withWindowOwnership)
                 VisionMicrophoneControls(client: client,
-                                         allowStart: phase == .active && !transitions.isPending && !inputSuspended,
+                                         allowStart: audioControlsAllowed,
                                          admit: withWindowOwnership)
             } else {
                 hosts
@@ -190,6 +199,23 @@ struct SillVisionWorkspace: View {
             clearDraft()
             session.suspendPresentation()
             releaseInput()
+        }
+        .sheet(isPresented: $displayChooserShown, onDismiss: {
+            withWindowOwnership {
+                client.cancelVisionDisplaySelection()
+                client.setVisionDisplayModal(false)
+                updateInputAdmission()
+            }
+        }) {
+            VisionDisplayChooser(client: client, choose: { command in
+                withWindowOwnership {
+                    guard phase == .active, !transitions.isPending else { return }
+                    clearDraft()
+                    _ = client.selectVisionDisplay(command)
+                    updateInputAdmission()
+                }
+            }, cancel: { withWindowOwnership { client.cancelVisionDisplaySelection() } },
+               close: { displayChooserShown = false })
         }
         .sheet(isPresented: $recoveryShown) { recoveryForm }
         .sheet(isPresented: $macAudioShown) {
@@ -304,7 +330,7 @@ struct SillVisionWorkspace: View {
                             }
                         })
                 if client.active == .none {
-                    Button("Mac 전체 화면 표시") { changingSource = true }
+                    Button("Mac 전체 화면 표시", action: openDisplayChooser)
                 }
             }
             .onChange(of: geo.size, initial: true) { _, _ in
@@ -330,7 +356,6 @@ struct SillVisionWorkspace: View {
                     VisionKeyPalette(input: input, desktop: client.active == .desktop, admit: withWindowOwnership)
                         .disabled(!client.visionInputBinding.isConfirmed)
                 }
-            Button("전체 화면") { changingSource = true }
             if let measured = client.linkStats {
                 Text("\(measured.fps) fps · RTT \(measured.rtt.map { String($0.median) } ?? "측정 전") ms")
                     .font(.caption.monospacedDigit())
@@ -352,14 +377,32 @@ struct SillVisionWorkspace: View {
 
     private var audioControlsAllowed: Bool {
         session.owns(lease) && phase == .active && client.connected &&
-        !transitions.isPending && !inputSuspended && !draftShown && !recoveryShown
+        !transitions.isPending && !inputSuspended && !draftShown && !recoveryShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !audioOfferShown && !macAudioModalShown
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var macAudioModalShown: Bool { macAudioShown || macAudioOfferShown }
+
+    private func openDisplayChooser() {
+        withWindowOwnership {
+            guard phase == .active, client.connected, !transitions.isPending else { return }
+            if client.visionDisplaySelection.legacyDesktopAllowed {
+                changingSource = true
+                return
+            }
+            clearDraft()
+            keysShown = false
+            audioOfferShown = false; audioOfferScope = nil
+            macAudioShown = false; macAudioOfferShown = false
+            client.setVisionDisplayModal(true)
+            displayChooserShown = true
+            updateInputAdmission()
+            releaseInput()
+        }
+    }
 
     private func openMacAudioChooser() {
         withWindowOwnership {
@@ -413,6 +456,19 @@ struct SillVisionWorkspace: View {
 
     private func requestTransition(_ action: VisionTransition.Action) {
         guard session.owns(lease) else { return }
+        if action == .disconnect && client.visionDisplaySelection.inputBlocked {
+            clearDraft()
+            client.cancelVisionDisplaySelection()
+            transitions.cancel()
+            releaseInput()
+            client.disconnect()
+            return
+        }
+        if action == .desktop && !client.visionDisplaySelection.legacyDesktopAllowed {
+            openDisplayChooser()
+            return
+        }
+        if action == .disconnect { client.cancelVisionDisplaySelection() }
         clearDraft()
         client.revokeVisionTextDrafts()
         client.visionAudio.stop()

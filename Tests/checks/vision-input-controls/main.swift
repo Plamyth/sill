@@ -341,4 +341,17 @@ resumeClient.resumeCatalog(catalog(.desktop, "already-streaming"))
 check(resumeClient.requested.isEmpty && resumeClient.resumeSource == nil,
       "active host consumes resume without replacing its source")
 StreamClient.noAutoDesktop = true
+let displayGate = StreamClient(), displayGateInput = VisionInputSession(), displayGatePeer = NWConnection()
+displayGateInput.bind(displayGate); displayGateInput.allowed = true
+displayGate.connection = displayGatePeer; seedLegacy(displayGate, displayGatePeer)
+check(displayGateInput.canSend, "display transition gate starts from usable input")
+displayGate.visionDisplaySelection.inputBlocked = true
+displayGateInput.press(.enter)
+displayGate.sendInput(.text("blocked display input")); displayGate.queue.sync {}
+check(!displayGateInput.canSend && inputs(displayGatePeer).isEmpty, "display transition blocks controls and direct native input")
+displayGate.visionDisplaySelection.inputBlocked = false
+displayGateInput.press(.enter); displayGate.queue.sync {}
+check(events(displayGatePeer).count == 2, "confirmed display gate can restore ordinary native controls")
+print("RESULT_ASSERTIONS \(checks)")
+
 print("Vision controls \(checks)/\(checks)")

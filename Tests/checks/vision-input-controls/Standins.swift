@@ -12,6 +12,13 @@ final class InputOverlayView {
     // OVERLAY_DRAIN
 }
 final class StreamClient {
+    var visionStartupStarted = false
+    func stopSavedMacAutoConnect() {}
+    func microphoneSetConnection(_ peer: NWConnection?) {}
+    struct DisplayAdmission { var inputBlocked = false }
+    var visionDisplaySelection = DisplayAdmission()
+    func bindVisionDisplays(to peer: NWConnection?) {}
+    func confirmVisionDisplayPresentation() {}
     enum MoveKind { case fromDirect, toCable, toWifi, fromRemote }
     struct Move { let connection: NWConnection }
     static var noAutoDesktop = true
