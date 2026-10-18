@@ -43,9 +43,30 @@ struct InkPoint: Codable, Equatable {
 }
 
 struct InkStroke: Codable, Identifiable, Equatable {
+    struct Visibility: Codable, Equatable {
+        enum Kind: String, Codable { case full, masked }
+        struct Segment: Codable, Equatable {
+            var lowerBound: Double
+            var upperBound: Double
+            var worldPoints: [InkPoint]
+        }
+        var kind: Kind
+        var visibleSegments: [Segment] = []
+    }
+
     var id: UUID
     var points: [InkPoint]
     var createdAt: Date
+    var visibility: Visibility? = nil
+
+    // Legacy points are a best-effort fallback; nil visibility still means unknown.
+    var visiblePointSegments: [[InkPoint]] {
+        switch visibility?.kind {
+        case .full: return [points]
+        case .masked: return visibility?.visibleSegments.map(\.worldPoints) ?? []
+        case nil: return [points]
+        }
+    }
 }
 
 struct CanvasNode: Codable, Identifiable, Equatable {

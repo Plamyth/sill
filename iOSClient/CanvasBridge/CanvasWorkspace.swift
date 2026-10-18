@@ -554,10 +554,12 @@ struct CanvasWorkspace: View {
 
     private func strokeView(_ stroke: InkStroke) -> some View {
         Path { path in
-            guard let first = stroke.points.first else { return }
-            path.move(to:CGPoint(x:first.x,y:first.y))
-            for point in stroke.points.dropFirst() {
-                path.addLine(to:CGPoint(x:point.x,y:point.y))
+            for points in stroke.visiblePointSegments {
+                guard let first = points.first else { continue }
+                path.move(to:CGPoint(x:first.x,y:first.y))
+                for point in points.dropFirst() {
+                    path.addLine(to:CGPoint(x:point.x,y:point.y))
+                }
             }
         }
         .stroke(Color(uiColor:CanvasPalette.ink),
