@@ -41,6 +41,7 @@ package final class StreamCoordinator {
 
     private let microphoneIngress = MicrophoneIngress()
     private let microphoneOwner: (any HostMicrophoneOriginalOwner)?
+    private let audioPrivacy: HostAudioPrivacy?
     private lazy var audioHardwareRoutes = AudioHardwareRoutes()
     private var audioRoutePublished: [ObjectIdentifier: UUID] = [:]
     private var audioRouteArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
@@ -312,7 +313,8 @@ package final class StreamCoordinator {
     /// version for the window lists, when it has one that parses.
     package init(config: HostConfig, synthetic: Bool = false, appKitLoop: Bool, remote: RemoteAccess? = nil,
                  homePairing: Bool = false, testHooks: Bool = true, hostVersion: String? = nil,
-                 microphoneOwner: (any HostMicrophoneOriginalOwner)? = nil) throws {
+                 microphoneOwner: (any HostMicrophoneOriginalOwner)? = nil,
+                 audioPrivacy: HostAudioPrivacy? = nil) throws {
         var config = config.validated()
         if !appKitLoop { config.virtualDisplay = false }
         self.config = config
@@ -320,6 +322,7 @@ package final class StreamCoordinator {
         self.appKitLoop = appKitLoop
         self.hostVersion = hostVersion
         self.microphoneOwner = microphoneOwner
+        self.audioPrivacy = synthetic ? nil : audioPrivacy
         microphoneReceiver = HostMicrophoneReceiver(provider: synthetic ? nil : microphoneOwner)
         let env = ProcessInfo.processInfo.environment
         let path = PointerTestHooks.pointerPath(synthetic: synthetic, environment: env)
@@ -355,6 +358,7 @@ package final class StreamCoordinator {
         // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
         server.setPeerToPeer(config.directWireless)
         stage = VirtualStage(sizer: sizer, catalog: catalog)
+        self.audioPrivacy?.changed = { [weak self] state in self?.audioPrivacyChanged(state) }
         microphoneReceiver.availabilityChanged = { [weak self] in
             guard let self else { return }
             self.status.update { $0.microphoneCleanupGrantID = self.microphoneReceiver.cleanupGrantID }
@@ -417,6 +421,8 @@ package final class StreamCoordinator {
         server.onClientConnected = { [weak self] connection, route, link in
             Task { @MainActor in
                 guard let self else { return }
+                // This callback follows the server's connection authorization, before any catalog.
+                if !self.synthetic { _ = self.audioPrivacy?.armAndVerify() }
                 let id = ObjectIdentifier(connection)
                 guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
@@ -2092,6 +2098,7 @@ package final class StreamCoordinator {
     /// liveness.
     package func shutdownForExit() {
         microphoneOwner?.restoreMicrophoneForExit()
+        audioPrivacy?.stop()
         injector.releaseAll()
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
@@ -2105,6 +2112,7 @@ package final class StreamCoordinator {
     /// goodbye, nothing printed), as before.
     package func releaseKeysForExit() {
         microphoneOwner?.restoreMicrophoneForExit()
+        audioPrivacy?.stop()
         injector.releaseAll()
     }
 
@@ -2512,7 +2520,8 @@ package final class StreamCoordinator {
                                                       displayInventoryID: synthetic ? nil : catalog.displayInventory.revision,
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
-                                                      dockApps: synthetic ? nil : dockApps())))
+                                                      dockApps: synthetic ? nil : dockApps(),
+                                                      audioPrivacy: audioPrivacy?.state)))
     }
 
     /// Read only the current user's Dock app tiles; no Dock preference is changed.
@@ -2553,7 +2562,7 @@ package final class StreamCoordinator {
     }
 
     private func microphoneScopeIsCurrent(_ scope: MicrophoneScope, fingerprint: Data) -> Bool {
-        guard !synthetic, !switching, !shuttingDown, let epoch = videoEpoch,
+        guard audioPrivacyReady(), !synthetic, !switching, !shuttingDown, let epoch = videoEpoch,
               epoch.id == scope.videoEpoch, epoch.source == active, scope.source == active,
               UUID(uuidString: inputGeneration) == scope.inputGeneration, epoch.generation == inputGeneration,
               let connection = microphoneConnection(peer: scope.peer),
@@ -2563,12 +2572,15 @@ package final class StreamCoordinator {
     }
 
     private func microphoneCatalog(to connection: NWConnection) -> StreamMessage {
+        let ready = audioPrivacyReady()
         var message = listMessage()
-        guard let peer = microphoneIngress.peer(connection), let epoch = videoEpoch,
+        guard ready, let peer = microphoneIngress.peer(connection), let epoch = videoEpoch,
               let generation = UUID(uuidString: inputGeneration),
               var list = Wire.decode(WindowList.self, from: message.payload) else { return message }
         list.microphone = microphoneReceiver.capability(peer: peer.id, source: active,
             inputGeneration: generation, videoEpoch: epoch.id, fingerprint: peer.fingerprint)
+        list.audioPrivacy = audioPrivacy?.state
+        if list.audioPrivacy?.protected != true { list.microphone = nil }
         message.payload = Wire.encode(list)
         return message
     }
@@ -2587,6 +2599,28 @@ package final class StreamCoordinator {
         for frame in frames where microphoneScopeIsCurrent(frame.frame.scope, fingerprint: frame.peer.fingerprint) {
             _ = microphoneReceiver.frame(frame.frame, fingerprint: frame.peer.fingerprint, arrived: frame.arrived)
         }
+    }
+
+    private func audioPrivacyReady() -> Bool {
+        !synthetic && audioPrivacy?.verify() == true
+    }
+
+    private func audioPrivacyChanged(_ state: AudioPrivacyState) {
+        if !state.protected {
+            // Close transport/render gates synchronously, before capture teardown can suspend.
+            microphoneIngress.revoke()
+            microphoneReceiver.forgetCapabilities()
+            microphoneReceiver.revoke(reason: state.reason ?? "Mac 오디오 보호가 해제되었습니다.")
+            for id in remoteAudioSubscribers {
+                if let connection = connections[id] { server.setRemoteAudio(false, for: connection) }
+            }
+            remoteAudioRequests.removeAll()
+            remoteAudioActions.removeAll()
+            Task { @MainActor [weak self] in
+                await self?.revokeRemoteAudio(reason: state.reason ?? "Mac 오디오 보호를 확인하지 못했습니다.")
+            }
+        }
+        broadcastList()
     }
 
     private func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil,
@@ -2622,7 +2656,7 @@ package final class StreamCoordinator {
 
     private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID, action: UInt64,
                                       epoch: UInt64? = nil) -> Bool {
-        !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
+        audioPrivacyReady() && !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
         routes[id] != nil && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
         (epoch == nil || epoch == remoteAudioEpoch)
     }
@@ -2641,8 +2675,13 @@ package final class StreamCoordinator {
             stopRemoteAudioIfIdle()
             return
         }
+        guard audioPrivacyReady() else {
+            remoteAudioState(false, requestID: request.requestID,
+                reason: audioPrivacy?.state.reason ?? "Mac 오디오 보호 상태를 확인할 수 없습니다.", to: connection)
+            return
+        }
         guard canEnableRemoteAudio(id, requestID: request.requestID, action: action) else {
-            remoteAudioState(false, requestID: request.requestID, reason: "source unavailable", to: connection)
+            remoteAudioState(false, requestID: request.requestID, reason: "오디오를 보낼 화면을 사용할 수 없습니다.", to: connection)
             return
         }
         // A stop can be scheduled while the capture-queue boundary is pending. Retry
@@ -2651,7 +2690,7 @@ package final class StreamCoordinator {
             guard await remoteAudioLifecycle.waitToStart(if: {
                 self.canEnableRemoteAudio(id, requestID: request.requestID, action: action)
             }) else {
-                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                remoteAudioState(false, requestID: request.requestID, reason: "오디오 요청이 변경되었습니다.", to: connection)
                 return
             }
             let epoch = remoteAudioEpoch
@@ -2668,17 +2707,17 @@ package final class StreamCoordinator {
                     }
                     let started = await remoteAudioLifecycle.settleStart(start)
                     guard started else {
-                        remoteAudioState(false, requestID: request.requestID, reason: "capture unavailable", to: connection)
+                        remoteAudioState(false, requestID: request.requestID, reason: "Mac 오디오 캡처를 시작할 수 없습니다.", to: connection)
                         return
                     }
                 } else {
-                    remoteAudioState(false, requestID: request.requestID, reason: "source unavailable", to: connection)
+                    remoteAudioState(false, requestID: request.requestID, reason: "오디오를 보낼 화면을 사용할 수 없습니다.", to: connection)
                     return
                 }
             }
             guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
                                        epoch: epoch) else {
-                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                remoteAudioState(false, requestID: request.requestID, reason: "오디오 요청이 변경되었습니다.", to: connection)
                 return
             }
             if remoteAudioLifecycle.isStopping || !remoteAudioCapture.hasStream { continue }
@@ -2686,7 +2725,7 @@ package final class StreamCoordinator {
             let boundary = await remoteAudioCapture.subscriptionBoundary()
             guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
                                        epoch: epoch) else {
-                remoteAudioState(false, requestID: request.requestID, reason: "request superseded", to: connection)
+                remoteAudioState(false, requestID: request.requestID, reason: "오디오 요청이 변경되었습니다.", to: connection)
                 return
             }
             if remoteAudioLifecycle.isStopping || !remoteAudioCapture.hasStream { continue }
@@ -2696,7 +2735,7 @@ package final class StreamCoordinator {
             remoteAudioState(true, requestID: request.requestID, to: connection)
             return
         }
-        remoteAudioState(false, requestID: request.requestID, reason: "capture changing", to: connection)
+        remoteAudioState(false, requestID: request.requestID, reason: "Mac 오디오 캡처가 변경 중입니다.", to: connection)
     }
 
     private func audioRouteAuthorized(_ connection: NWConnection) -> Bool {
@@ -2742,7 +2781,17 @@ package final class StreamCoordinator {
         case .changeAudioRoute:
             guard message.payload.count <= AudioRoutingPolicy.maxSelectionPayload else { return }
             if let request = Wire.decode(AudioRouteSelection.self, from: message.payload) {
-                reply = audioHardwareRoutes.select(request)
+                if audioPrivacy?.latched == true {
+                    // The physical-route catalog cannot select either approved virtual target.
+                    // Reject before select(), whose failure path could restore a physical default.
+                    _ = audioPrivacyReady()
+                    var denied = audioHardwareRoutes.observe()
+                    denied.answering = request.requestID
+                    denied.result = .unavailable
+                    reply = denied
+                } else {
+                    reply = audioHardwareRoutes.select(request)
+                }
             } else {
                 var invalid = audioHardwareRoutes.observe()
                 invalid.result = .invalid

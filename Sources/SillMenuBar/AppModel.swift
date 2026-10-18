@@ -19,7 +19,8 @@ final class AppModel {
     /// as with the CLI's flag. No onboarding in this mode.
     let synthetic = CommandLine.arguments.contains("--synthetic")
     private(set) var coordinator: StreamCoordinator?
-    private let microphoneOwner = SillVirtualMicrophoneOwner()
+    private let audioPrivacy: HostAudioPrivacy?
+    private let microphoneOwner: SillVirtualMicrophoneOwner
     /// The coordinator could not be created (the listener refused its parameters). Shown in the
     /// menu; the app keeps running so the user can read it and quit.
     private(set) var startupError: String?
@@ -65,6 +66,12 @@ final class AppModel {
     @ObservationIgnored private var presentationExpiryAt: Date?
 
     init() {
+        let production = Self.bundled && Bundle.main.bundleIdentifier == "com.ambrion.sillcanvas.mac"
+            && Bundle.main.bundleURL.path == "/Applications/CCR Sill.app"
+            && !CommandLine.arguments.contains("--synthetic")
+        let privacy = production ? HostAudioPrivacy(defaults: .standard) : nil
+        audioPrivacy = privacy
+        microphoneOwner = SillVirtualMicrophoneOwner(privacy: privacy)
         let settings = HostSettings()
         self.settings = settings
         permissions = PermissionsModel(settings: settings)
@@ -96,6 +103,7 @@ final class AppModel {
                 // pairing) goes into the first Bonjour registration, and the home door speaks TLS
                 // with it. A keychain failure leaves the home door closed and remote access
                 // unavailable, not the app (docs/home-pairing-plan.md §6.1).
+                if audioPrivacy?.latched == true { _ = audioPrivacy?.reconcile() }
                 let remote = makeRemoteAccess()
                 settings.config.requirePairing = launchRequirePairing(remote)
                 // The window lists carry this Sill's version, when it has one (the bare binary's
@@ -103,7 +111,7 @@ final class AppModel {
                 let c = try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
                                               homePairing: true, testHooks: !Self.bundled,
                                               hostVersion: SillVersion(Self.version) != nil ? Self.version : nil,
-                                              microphoneOwner: microphoneOwner)
+                                              microphoneOwner: microphoneOwner, audioPrivacy: audioPrivacy)
                 c.keepRunningOnListenerFailure()
                 coordinator = c
                 // One path from the controls to the host, synchronous: the host's target equals
