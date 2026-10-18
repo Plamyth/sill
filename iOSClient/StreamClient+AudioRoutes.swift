@@ -101,6 +101,19 @@ extension StreamClient {
             let diagnostic = IPadMicrophoneDiagnostics.shared.attempt(authorization.id)
             diagnostic.record("routes_permission_requested")
             let allowed = await requestAudioRouteMicrophonePermission()
+            if allowed, !Task.isCancelled, audioRouteAuthorization == authorization,
+               UIApplication.shared.applicationState == .inactive {
+                await withTaskCancellationHandler {
+                    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                        audioPendingMicrophonePermission = { continuation.resume() }
+                    }
+                } onCancel: { [weak self] in
+                    Task { @MainActor in
+                        guard let self, self.audioRouteAuthorization == authorization else { return }
+                        self.finishPendingAudioPermission()
+                    }
+                }
+            }
             guard !Task.isCancelled, audioRouteAuthorization == authorization,
                   connected, appInForeground, audioRouteAppActive, context == audioRouteContext else {
                 diagnostic.record("routes_permission_cancelled")

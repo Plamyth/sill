@@ -16,7 +16,7 @@ extension StreamClient {
         guard desiredAudio.peer != peer else { return }
         desiredAudio.bind(peer)
         audioPrivacyState = nil
-        audioPendingMicrophonePermission = nil
+        finishPendingAudioPermission()
         desiredAudioSelection = desiredAudio.selection
         audioAutomaticDirections.removeAll()
     }
@@ -35,7 +35,6 @@ extension StreamClient {
             (audioRouteAuthorization != nil || !audioAutomaticDirections.contains(.microphone))
         if !keepAuthorization {
             audioRouteAuthorization = nil
-            audioPendingMicrophonePermission = nil
         }
         if keepAuthorization && microphonePolicy.phase == .authorizing { desiredAudio.invalidate(.playback) }
         else { desiredAudio.invalidate() }
@@ -43,13 +42,20 @@ extension StreamClient {
         remoteAudioControl.backgrounded()
         if keepAuthorization && microphonePolicy.phase == .authorizing { microphoneFrames.close() }
         else { applyMicrophone(microphonePolicy.backgrounded()) }
+        if !keepAuthorization { finishPendingAudioPermission() }
+    }
+
+    func finishPendingAudioPermission() {
+        let finish = audioPendingMicrophonePermission
+        audioPendingMicrophonePermission = nil
+        finish?()
     }
 
     func setDesiredAudio(_ direction: IPadDesiredAudio.Direction, enabled: Bool) {
         refreshDesiredAudioIdentity()
         audioRouteAuthorization = nil
-        if direction == .microphone { audioPendingMicrophonePermission = nil }
         desiredAudio.set(direction, desired: enabled)
+        if direction == .microphone { finishPendingAudioPermission() }
         desiredAudioSelection = desiredAudio.selection
         if let identity = desiredAudio.identity {
             desiredAudioStore.save(desiredAudio.selection, for: identity)

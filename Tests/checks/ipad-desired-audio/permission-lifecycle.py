@@ -63,7 +63,9 @@ import StreamProtocol
    checks += 1
    if !value { print("FAIL " + label); exit(1) }
   }
-  for event in ["allow-before-active", "allow", "allow-after-failed-auto", "off", "source", "background", "privacy"] {
+  for event in ["allow-before-active", "allow", "allow-after-failed-auto", "off", "source", "background", "privacy",
+                "off-after-result", "source-after-result", "background-after-result", "privacy-after-result",
+                "peer-after-result", "cancel-after-result"] {
    UIApplication.shared.applicationState = .active
    let client = StreamClient(), peer = NWConnection(), generation = UUID()
    let epoch = VideoEpoch(generation: generation.uuidString, source: .desktop,
@@ -89,23 +91,27 @@ import StreamProtocol
    UIApplication.shared.applicationState = .inactive
    NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
    client.reconcileDesiredAudio()
+   if event == "allow-before-active" || event.hasSuffix("-after-result") {
+    client.permissionWaiter?.resume(returning: true); client.permissionWaiter = nil
+    for _ in 0..<1000 where client.audioPendingMicrophonePermission == nil { await Task.yield() }
+    check(client.audioPendingMicrophonePermission != nil, "OS result waits for foreground without opening media")
+   }
    check(client.microphoneAttempts == 0 && client.subscriptions.filter(\\.enabled).isEmpty,
          "permission inactivity keeps both actual media paths closed")
    if event.hasPrefix("allow") {
     check(client.audioRouteAuthorization != nil, "manual chooser intent survives its OS permission alert")
-   } else if event == "off" { client.cancelDesiredAudioRequest() }
-   else if event == "source" { client.desiredAudio.sourceWillChange(); client.suspendDesiredAudio() }
-   else if event == "background" {
+   } else if event.hasPrefix("off") { client.cancelDesiredAudioRequest() }
+   else if event.hasPrefix("source") { client.desiredAudio.sourceWillChange(); client.suspendDesiredAudio() }
+   else if event.hasPrefix("peer") {
+    client.connection = NWConnection(); client.desiredAudioSetConnection(client.connection)
+   } else if event.hasPrefix("cancel") { pending.cancel() }
+   else if event.hasPrefix("background") {
     client.appInForeground = false
     UIApplication.shared.applicationState = .background
     NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
    } else {
     var blocked = list; blocked.audioPrivacy = .init(version: 2, protected: false)
     client.desiredAudioObserve(blocked, from: peer)
-   }
-   if event == "allow-before-active" {
-    client.permissionWaiter?.resume(returning: true); client.permissionWaiter = nil
-    for _ in 0..<20 { await Task.yield() }
    }
    UIApplication.shared.applicationState = .active
    client.appInForeground = true
