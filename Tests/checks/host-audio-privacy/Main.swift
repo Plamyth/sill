@@ -163,13 +163,30 @@ struct HostAudioPrivacyChecks {
         expect(privacy.verify() && fake.snapshot.devices[0].inputMuted == true, "hotplug revalidates devices and remutes built-in input")
         fake.snapshot.devices.append(PrivacyAudioDevice(id: 50, uid: "DN32-LIVE", transport: .other,
             plugin: nil, inputChannels: 32, outputChannels: 32))
-        expect(privacy.reconcile(), "external direct-device silence is outside protected built-in scope")
+        expect(!privacy.reconcile() && !privacy.state.protected,
+               "DN32 without any physical mute refuses complete privacy")
+        fake.snapshot.devices[fake.snapshot.devices.count - 1].inputMuted = false
+        fake.snapshot.devices[fake.snapshot.devices.count - 1].outputMuted = false
+        expect(privacy.reconcile() && fake.writes.contains(.mute(50, .input)) &&
+               fake.writes.contains(.mute(50, .output)), "writable USB input and output are both muted")
+        fake.snapshot.devices[fake.snapshot.devices.count - 1].outputMuted = false
+        fake.fire(kAudioDevicePropertyMute, object: 50)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        expect(privacy.verify() && fake.snapshot.devices.last?.outputMuted == true,
+               "external USB unmute event remutes before readiness")
         fake.snapshot.devices.append(PrivacyAudioDevice(id: 60, uid: "HDMI", transport: .other,
             plugin: nil, inputChannels: 0, outputChannels: 2))
+        expect(!privacy.reconcile() && !privacy.state.protected,
+               "HDMI with no mute is not silently exempted")
+        fake.snapshot.devices[fake.snapshot.devices.count - 1].outputMuted = false
         fake.emptyInputConfiguration = true
         expect(privacy.reconcile(), "HDMI zero-byte input configuration is not an overall read failure")
         fake.emptyInputConfiguration = false; fake.zeroInputBuffers = true
         expect(privacy.reconcile(), "HDMI zero-input-buffer list is accepted")
+        fake.snapshot.devices.append(PrivacyAudioDevice(id: 70, uid: "unverified-aggregate", transport: .virtual,
+            plugin: nil, inputChannels: 2, outputChannels: 2))
+        expect(!privacy.reconcile() && !privacy.state.protected,
+               "unknown virtual or aggregate routes cannot bypass endpoint coverage")
         privacy.stop()
     }
 
