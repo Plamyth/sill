@@ -77,8 +77,8 @@ state.bind(ObjectIdentifier(a))
 state.set(.microphone, desired: true)
 state.observe(catalog(nil), microphone: micScope, from: ObjectIdentifier(a))
 expect(state.privacy == .legacy && starts(&state).isEmpty, "legacy host never auto starts")
-expect(state.permits(.microphone, automatic: false, foreground: true, presented: false,
-                     fullControl: false, microphoneAuthorized: false), "legacy manual permission flow remains available")
+expect(!state.permits(.microphone, automatic: false, foreground: true, presented: false,
+                     fullControl: false, microphoneAuthorized: false), "legacy manual start cannot bypass host privacy")
 state.observe(catalog(), microphone: micScope, from: ObjectIdentifier(a))
 expect(starts(&state).isEmpty, "privacy alone cannot authenticate a peer")
 

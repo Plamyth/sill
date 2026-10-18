@@ -113,7 +113,7 @@ struct IPadDesiredAudio {
 
     func permits(_ direction: Direction, automatic: Bool, foreground: Bool,
                  presented: Bool, fullControl: Bool, microphoneAuthorized: Bool) -> Bool {
-        guard peer != nil, selection[direction], foreground, privacy != .blocked else { return false }
+        guard peer != nil, selection[direction], foreground, privacy == .protected else { return false }
         guard automatic else { return true }
         return identity != nil && scope != nil && privacy == .protected && presented && fullControl &&
             (direction != .microphone || (microphoneAuthorized && scope?.microphone != nil))

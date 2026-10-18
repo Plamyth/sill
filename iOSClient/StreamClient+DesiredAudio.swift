@@ -28,7 +28,7 @@ extension StreamClient {
         audioPrivacyState = list.audioPrivacy
         desiredAudio.observe(list, microphone: microphonePolicy.scope, from: ObjectIdentifier(peer))
         if oldScope != desiredAudio.scope { audioPresentation.reset() }
-        if desiredAudio.privacy == .blocked { suspendDesiredAudio() }
+        if desiredAudio.privacy != .protected { suspendDesiredAudio() }
     }
 
     func suspendDesiredAudio(preserveManualPermission: Bool = false) {

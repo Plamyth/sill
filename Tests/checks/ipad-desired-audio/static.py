@@ -40,14 +40,14 @@ checks = {
     "permission request has an explicit manual flag": "else if allowPermissionPrompt &&" in mic,
     "new or missing unsafe privacy blocks starts": "state.version == 1 && state.protected" in model and "sawPrivacy ? .blocked : .legacy" in model,
     "privacy catalog is bound to its actual peer": "guard connection === peer else { return }" in block(adapter, "func desiredAudioObserve"),
-    "privacy failure stops both directions": "if desiredAudio.privacy == .blocked { suspendDesiredAudio() }" in adapter and all(
+    "privacy failure stops both directions": "if desiredAudio.privacy != .protected { suspendDesiredAudio() }" in adapter and all(
         part in block(adapter, "func suspendDesiredAudio") for part in ["remoteAudioControl.backgrounded()", "microphonePolicy.backgrounded()"]),
     "automatic budget includes identity scope and direction": "Attempt(identity: identity, scope: scope, direction: direction)" in model,
-    "actual UI input binding gates automatic resume": all(part in adapter for part in [
+    "adapter contains the reviewed input geometry heuristic": all(part in adapter for part in [
         "window?.hitTest(point, with: nil) as? InputOverlayView", "overlay?.videoSize == videoSize",
         "overlay?.superview === view.superview",
         "!inputPaused && !moveUnderWay", "desiredAudioInputGeneration.flatMap(UUID.init(uuidString:)) == scope?.generation"]),
-    "actual display layer readiness gates presentation": all(part in adapter + model for part in [
+    "adapter connects readiness to the reviewed presentation model": all(part in adapter + model for part in [
         "layer.isReadyForDisplay", "layer.requiresFlushToResumeDecoding", "sawNotReady && sawKeyframe"]),
     "current source and input generation are applied before reconcile": re.search(
         r"self.inputGeneration = list.inputGeneration\s+self.active = list.active\s+#if os\(iOS\)\s+self.reconcileDesiredAudio\(\)", client) is not None,
