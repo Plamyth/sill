@@ -1032,7 +1032,7 @@ package final class StreamCoordinator {
             if let epoch = self.videoEpoch?.id,
                await self.server.isVideoCommitted(epoch) {
                 guard self.admissionIsCurrent(sequence, peer: nil), self.pendingLaunch == nil else { return }
-                if !self.switching, self.videoEpoch?.id == epoch, self.active != .none {
+                if self.videoEpoch?.id == epoch, self.active != .none {
                     self.settledPickSequence = sequence
                     self.broadcastList()
                     return

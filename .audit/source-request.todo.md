@@ -21,3 +21,9 @@ The archived original interrupted snapshot is source-publication-completion-dirt
 - [x] Reuse completed None transition and server queue readback rather than a second global pipeline ledger.
 - [x] Host66, queued-server12, reconnect9 and existing recovery164 pass after the correction.
 - [ ] Fresh independent source review of the terminal reconciliation correction. Kepler's8dec149 verdict remains NOT CLEAR.
+
+- [x] Kant closed the original three P1 schedules at f5b265f and found one P2 for an intact predecessor during an obsolete inventory wait.
+- [x] Commit2162fa5 preserves the new host68 red with1 failure for a missing launch during that wait.
+- [x] Preserve the committed epoch when its local identity is unchanged, even while the obsolete request still owns switching. Teardown clears the local epoch before its first suspension.
+- [x] Corrected host68, queued-server12 and recovery164 pass in owned Mini RAM inputs. No SDK or native acceptance is implied.
+- [ ] Fresh independent review of this corrected committed-predecessor overlap.
