@@ -3537,6 +3537,9 @@ final class StreamClient: ObservableObject {
         visionStartupForeground = false
         browsing = false
         admitVisionDisplays(lease: nil, foreground: false)
+        connection?.stateUpdateHandler = nil
+        connection?.pathUpdateHandler = nil
+        connection?.viabilityUpdateHandler = nil
         disconnect()
         cancelPairing()
         for work in [reconnectCheck, discoveryRecheck, afterPairingWatch,

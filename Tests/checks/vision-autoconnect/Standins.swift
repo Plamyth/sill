@@ -10,6 +10,8 @@ enum NWEndpoint: Hashable {
 final class NWConnection {
     var cancelled = false
     var stateUpdateHandler: ((Int) -> Void)?
+    var pathUpdateHandler: ((Int) -> Void)?
+    var viabilityUpdateHandler: ((Bool) -> Void)?
     func cancel() { cancelled = true }
 }
 struct RemoteIdentity {}
@@ -137,7 +139,6 @@ final class StreamClient {
     var nearbyLife = FixtureBrowserLife()
     var reconnectCheck: DispatchWorkItem?
     var discoveryRecheck: DispatchWorkItem?
-    var afterPairingWatch: DispatchWorkItem?
     var settingsExpiry: DispatchWorkItem?
     var menusExpiry: DispatchWorkItem?
     var lingerRender: DispatchWorkItem?
@@ -189,7 +190,7 @@ final class StreamClient {
     func markNewKey(_ id: String) { savedMacs = SavedMacs.markingNewKey(id, in: savedMacs) ?? savedMacs }
     func updateDiscovery() {}
     func discoveryChanged() { trySavedMacAutoConnect(); considerVisionCableBootstrap() }
-    func tearDown(status: String, restartSearch: Bool) { self.status = status; connected = false }
+    func tearDown(status: String, restartSearch: Bool = true) { self.status = status; connected = false }
     func dialRow(_ row: FoundMac, macID: String?, trust: DiscoveryPolicy.HomeTrust, tagNamed: Bool, tap: Bool = false) -> Bool {
         guard DeviceIdentity.existing() != nil, case .saved(let pin) = trust else { return false }
         sessionPins.append(pin)
