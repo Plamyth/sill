@@ -63,7 +63,7 @@ import StreamProtocol
    checks += 1
    if !value { print("FAIL " + label); exit(1) }
   }
-  for event in ["allow", "allow-after-failed-auto", "off", "source", "background", "privacy"] {
+  for event in ["allow-before-active", "allow", "allow-after-failed-auto", "off", "source", "background", "privacy"] {
    UIApplication.shared.applicationState = .active
    let client = StreamClient(), peer = NWConnection(), generation = UUID()
    let epoch = VideoEpoch(generation: generation.uuidString, source: .desktop,
@@ -102,6 +102,10 @@ import StreamProtocol
    } else {
     var blocked = list; blocked.audioPrivacy = .init(version: 2, protected: false)
     client.desiredAudioObserve(blocked, from: peer)
+   }
+   if event == "allow-before-active" {
+    client.permissionWaiter?.resume(returning: true); client.permissionWaiter = nil
+    for _ in 0..<20 { await Task.yield() }
    }
    UIApplication.shared.applicationState = .active
    client.appInForeground = true
