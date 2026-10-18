@@ -146,6 +146,41 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         return ops.set(object, &property, UInt32(MemoryLayout<UInt32>.size), &value) == noErr
     }
 
+    func restoreLocal(_ original: LocalAudioState) -> Bool {
+        guard original.version == 1, Set(original.devices.map(\.uid)).count == original.devices.count,
+              var snapshot = try? read() else { return false }
+        var changes: [(AudioObjectID, AudioObjectPropertyAddress, UInt32)] = []
+        for saved in original.devices {
+            guard let device = snapshot.devices.first(where: { $0.uid == saved.uid }),
+                  device.inputChannels == saved.inputChannels, device.outputChannels == saved.outputChannels else { return false }
+            for (scope, value, current) in [(kAudioObjectPropertyScopeInput, saved.inputMuted, device.inputMuted),
+                                            (kAudioObjectPropertyScopeOutput, saved.outputMuted, device.outputMuted)] {
+                guard let value else { continue }
+                guard current != nil else { return false }
+                changes.append((device.id, address(kAudioDevicePropertyMute, scope), value ? 1 : 0))
+            }
+        }
+        for (selector, uid, input) in [(kAudioHardwarePropertyDefaultInputDevice, original.inputUID, true),
+                                       (kAudioHardwarePropertyDefaultOutputDevice, original.outputUID, false),
+                                       (kAudioHardwarePropertyDefaultSystemOutputDevice, original.systemOutputUID, false)] {
+            guard let device = snapshot.devices.first(where: { $0.uid == uid }),
+                  (input ? device.inputChannels : device.outputChannels) > 0 else { return false }
+            changes.append((system, address(selector), device.id))
+        }
+        for (object, originalProperty, _) in changes {
+            var property = originalProperty
+            guard canWrite(object, &property) else { return false }
+        }
+        for (object, originalProperty, originalValue) in changes {
+            guard let before = try? read(), before == snapshot else { return false }
+            var property = originalProperty, value = originalValue
+            guard canWrite(object, &property), ops.set(object, &property, 4, &value) == noErr,
+                  let after = try? read() else { return false }
+            snapshot = after
+        }
+        return original.matches(snapshot)
+    }
+
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool {
         observationID = nil
         var retained: [Listener] = []
@@ -205,9 +240,23 @@ extension HostAudioPrivacy {
     /// Only the branded production AppModel opts in. Legacy CLI and synthetic callers stay inert.
     package convenience init(defaults: UserDefaults) {
         let key = "CCRHostAudioPrivacyLatched.v1"
+        let originalKey = "CCRHostAudioOriginalLocalState.v1"
+        let original = defaults.data(forKey: originalKey).flatMap { try? JSONDecoder().decode(LocalAudioState.self, from: $0) }
+        let authentication = LocalAudioAuthentication()
         self.init(hal: CoreAudioPrivacyHAL(ops: .native), latched: defaults.bool(forKey: key), persist: {
             defaults.set(true, forKey: key)
             return defaults.synchronize() && defaults.bool(forKey: key)
-        })
+        }, localState: original, saveLocal: { state in
+            if let state {
+                guard let data = try? JSONEncoder().encode(state) else { return false }
+                defaults.set(data, forKey: originalKey)
+                return defaults.synchronize() && defaults.data(forKey: originalKey) == data
+            }
+            defaults.removeObject(forKey: originalKey)
+            return defaults.synchronize() && defaults.object(forKey: originalKey) == nil
+        }, clearLatch: {
+            defaults.set(false, forKey: key)
+            return defaults.synchronize() && !defaults.bool(forKey: key)
+        }, authenticateLocal: { await authentication.evaluate() }, cancelAuthentication: { authentication.cancel() })
     }
 }

@@ -21,6 +21,8 @@ final class AppModel {
     private(set) var coordinator: StreamCoordinator?
     private let audioPrivacy: HostAudioPrivacy?
     private let microphoneOwner: SillVirtualMicrophoneOwner
+    private(set) var localAudioReturnNotice = "Touch ID 또는 Mac 로그인 암호로 인증합니다."
+    private(set) var localAudioReturnPending = false
     /// The coordinator could not be created (the listener refused its parameters). Shown in the
     /// menu; the app keeps running so the user can read it and quit.
     private(set) var startupError: String?
@@ -89,6 +91,17 @@ final class AppModel {
 
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unbundled" }
+
+    func requestLocalAudioReturn() {
+        guard !localAudioReturnPending, let audioPrivacy else { return }
+        localAudioReturnPending = true
+        localAudioReturnNotice = "로컬 입출력 복귀를 인증하고 있습니다."
+        Task { @MainActor in
+            let restored = await audioPrivacy.requestLocalReturn()
+            localAudioReturnPending = false
+            localAudioReturnNotice = restored ? "로컬 입출력으로 복귀했습니다." : "인증 또는 기존 장치 복원을 확인하지 못했습니다."
+        }
+    }
 
     /// Starts the host: the same coordinator as the CLI, under the AppKit loop that is already
     /// running, asking for no permission at launch. Never exits on an error.

@@ -129,6 +129,7 @@ struct HostAudioPrivacyChecks {
         expect(!noPersistence.armAndVerify() && !noPersistence.latched && unsaved.reads == 0,
                "persistence failure stops before native boundary")
         noPersistence.stop()
+        await localReturnChecks()
         await eventChecks()
         await ownerChecks()
         wireChecks()
@@ -188,6 +189,65 @@ struct HostAudioPrivacyChecks {
         expect(!privacy.reconcile() && !privacy.state.protected,
                "unknown virtual or aggregate routes cannot bypass endpoint coverage")
         privacy.stop()
+    }
+
+    @MainActor static func localReturnChecks() async {
+        let fake = PrivacyFakeHAL()
+        let before = fake.snapshot
+        var saved: LocalAudioState?
+        var latch = false
+        var accepted = false
+        var authCalls = 0
+        let privacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations), persist: { latch = true; return true },
+            saveLocal: { saved = $0; return true }, clearLatch: { latch = false; return true },
+            authenticateLocal: { authCalls += 1; return accepted })
+        expect(privacy.armAndVerify() && saved == (try? LocalAudioState(before)), "original local UIDs and mutes saved before protection")
+        let original = saved
+        expect(privacy.armAndVerify() && saved == original, "repeated remote admission preserves original local state")
+        let mutations = fake.writes.count
+        let denied = await privacy.requestLocalReturn()
+        expect(!denied && fake.writes.count == mutations && latch, "denied authentication never restores devices")
+        accepted = true
+        var revokedBeforeRestore = false
+        privacy.changed = { if !$0.protected { revokedBeforeRestore = true } }
+        fake.beforeSet = { expect(revokedBeforeRestore, "remote authority revoked before any local restore setter") }
+        let restored = await privacy.requestLocalReturn()
+        expect(restored && fake.snapshot == before && !latch && !privacy.latched && saved == nil,
+               "authenticated return restores exact local UIDs and mutes and clears durable latch")
+        let restoredWrites = fake.writes.count
+        expect(!privacy.verify() && fake.writes.count == restoredWrites, "connected remote retry cannot revive audio after local return")
+        let alreadyLocal = await privacy.requestLocalReturn()
+        expect(!alreadyLocal && authCalls == 2, "already local mode does not ask for authentication again")
+        fake.beforeSet = nil
+        expect(privacy.armAndVerify() && saved == original, "a fresh remote admission captures the restored local state")
+        privacy.stop()
+
+        let staleFake = PrivacyFakeHAL()
+        var completion: CheckedContinuation<Bool, Never>?
+        let stale = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: staleFake.operations), clearLatch: { true },
+            authenticateLocal: { await withCheckedContinuation { completion = $0 } })
+        expect(stale.armAndVerify(), "stale auth fixture armed")
+        let task = Task { @MainActor in await stale.requestLocalReturn() }
+        for _ in 0..<20 { if completion != nil { break }; await Task.yield() }
+        expect(completion != nil, "pending native authentication reached its boundary")
+        expect(stale.armAndVerify(), "new remote admission invalidates pending local-return ticket")
+        let staleWrites = staleFake.writes.count
+        completion?.resume(returning: true)
+        let staleResult = await task.value
+        expect(!staleResult && staleFake.writes.count == staleWrites && stale.latched,
+               "late successful authentication cannot restore a superseded session")
+        stale.stop()
+
+        let missingFake = PrivacyFakeHAL()
+        let missing = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: missingFake.operations), clearLatch: { true },
+            authenticateLocal: { true })
+        expect(missing.armAndVerify(), "missing original fixture armed")
+        missingFake.snapshot.devices.removeFirst()
+        let missingWrites = missingFake.writes.count
+        let missingResult = await missing.requestLocalReturn()
+        expect(!missingResult && missingFake.writes.count == missingWrites && missing.latched,
+               "missing original UID refuses restoration without choosing a fallback")
+        missing.stop()
     }
 
     @MainActor static func grant(_ owner: SillVirtualMicrophoneOwner) -> HostLocalOwnerGrant? {

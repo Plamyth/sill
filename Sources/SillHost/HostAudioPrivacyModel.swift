@@ -89,6 +89,7 @@ protocol HostAudioPrivacyHAL: AnyObject {
     func write(_ change: PrivacyAudioWrite) -> Bool
     /// Replaces this owner's listeners. A nil callback removes only this owner's listeners.
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool
+    func restoreLocal(_ state: LocalAudioState) -> Bool
 }
 
 @MainActor
@@ -101,16 +102,34 @@ package final class HostAudioPrivacy {
     private var reconciling = false
     private var pending: Task<Void, Never>?
     private var watching = false
+    private var localState: LocalAudioState?
+    private let saveLocal: (LocalAudioState?) -> Bool
+    private let clearLatch: () -> Bool
+    private let authenticateLocal: () async -> Bool
+    private let cancelAuthentication: () -> Void
+    private var localReturnID = UUID()
+    private var returningLocal = false
 
-    init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true }) {
+    init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
+         localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
+         clearLatch: @escaping () -> Bool = { false }, authenticateLocal: @escaping () async -> Bool = { false },
+         cancelAuthentication: @escaping () -> Void = {}) {
         self.hal = hal; self.latched = latched; self.persist = persist
+        self.localState = localState; self.saveLocal = saveLocal; self.clearLatch = clearLatch
+        self.authenticateLocal = authenticateLocal; self.cancelAuthentication = cancelAuthentication
     }
 
     @discardableResult
     package func armAndVerify() -> Bool {
-        // Persist before the first HAL write, including when a connection is refused later.
+        invalidateLocalReturn()
+        let wasLatched = latched
         guard persist() else { fail(.persistence); return false }
         latched = true
+        if !wasLatched && localState == nil {
+            guard let snapshot = try? hal.read(), let original = try? LocalAudioState(snapshot),
+                  saveLocal(original) else { fail(.persistence); return false }
+            localState = original
+        }
         return reconcile()
     }
 
@@ -162,6 +181,7 @@ package final class HostAudioPrivacy {
     }
 
     private func propertyChanged() {
+        invalidateLocalReturn()
         // Even a transient failure cancels existing grants. Repair never revives them.
         _ = verify()
         schedule()
@@ -190,9 +210,39 @@ package final class HostAudioPrivacy {
 
     /// Stops observation only. The durable latch and all safe defaults/mutes survive exit.
     package func stop() {
+        invalidateLocalReturn()
         pending?.cancel(); pending = nil
         _ = hal.observe(nil, changed: nil)
         watching = false
         publish(AudioPrivacyState(protected: false, reason: "Mac 오디오 보호 감시가 종료되었습니다."))
+    }
+
+    private func invalidateLocalReturn() {
+        localReturnID = UUID()
+        cancelAuthentication()
+    }
+
+    /// This request owns authentication. Callers cannot supply an authentication result.
+    package func requestLocalReturn() async -> Bool {
+        guard latched, !returningLocal, let original = localState else { return false }
+        returningLocal = true
+        defer { returningLocal = false }
+        let request = UUID()
+        localReturnID = request
+        guard await authenticateLocal(), localReturnID == request, latched else { return false }
+        pending?.cancel(); pending = nil
+        guard hal.observe(nil, changed: nil) else { fail(.listeners); return false }
+        watching = false
+        publish(AudioPrivacyState(protected: false, reason: "인증된 로컬 입출력으로 복귀 중입니다."))
+        guard hal.restoreLocal(original), let restored = try? hal.read(), original.matches(restored),
+              clearLatch() else {
+            fail(.readback)
+            _ = reconcile()
+            return false
+        }
+        latched = false
+        publish(AudioPrivacyState(protected: false, reason: "인증 후 로컬 입출력으로 복귀했습니다."))
+        if saveLocal(nil) { localState = nil }
+        return true
     }
 }

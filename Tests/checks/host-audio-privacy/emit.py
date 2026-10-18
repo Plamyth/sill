@@ -44,7 +44,7 @@ methods = [block(coordinator, 'private func ' + name + '(') for name in [
 fixture = (HERE / 'CoordinatorFixture.swift').read_text()
 fixture = fixture.replace('    // PRODUCTION_BOUNDARIES', '\n\n'.join(methods).replace('NWConnection', 'BoundaryConnection'))
 source = {str(p.relative_to(ROOT)): p.read_bytes() for p in (ROOT / 'Sources/StreamProtocol').glob('*.swift')}
-for name in ['HostAudioPrivacy', 'HostAudioPrivacyModel', 'SillVirtualMicrophoneOwner', 'HALMicrophoneSink',
+for name in ['HostAudioPrivacy', 'HostAudioPrivacyModel', 'LocalAudioReturn', 'SillVirtualMicrophoneOwner', 'HALMicrophoneSink',
              'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'AudioHardwareRoutes']:
     path = ROOT / 'Sources/SillHost' / (name + '.swift')
     source[str(path.relative_to(ROOT))] = path.read_bytes()

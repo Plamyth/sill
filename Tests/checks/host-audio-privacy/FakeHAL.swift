@@ -118,7 +118,7 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             let change: PrivacyAudioWrite
             switch property.pointee.mSelector {
             case kAudioDevicePropertyMute:
-                guard value == 1 else { return -1 }
+                guard value <= 1 else { return -1 }
                 change = .mute(object, property.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output)
             case kAudioHardwarePropertyDefaultInputDevice: change = .select(.input, value)
             case kAudioHardwarePropertyDefaultOutputDevice: change = .select(.output, value)
@@ -127,7 +127,14 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             }
             writes.append(change)
             if failSetter == writes.count { return -1 }
-            if ignoreSetter != writes.count { apply(change) }
+            if ignoreSetter != writes.count {
+                apply(change)
+                if case .mute(let id, let scope) = change,
+                   let index = snapshot.devices.firstIndex(where: { $0.id == id }) {
+                    if scope == .input { snapshot.devices[index].inputMuted = value == 1 }
+                    else { snapshot.devices[index].outputMuted = value == 1 }
+                }
+            }
             return noErr
         }, addListener: { [self] object, address, _, callback in
             if listenerFailure { return -1 }
