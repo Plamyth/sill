@@ -601,6 +601,15 @@ extension StreamClient {
         reconnectCheck?.cancel()
         reconnectCheck = nil
         guard appInForeground, !connected, !moveUnderWay, var r = reconnect else { return false }
+        let lifetime: DiscoveryPolicy.ReconnectLifetime
+        #if os(visionOS)
+        if let id = r.macID, let saved = savedMac(id), saved.fingerprintData != nil,
+           saved.revoked != true, saved.newKey != true {
+            lifetime = .whileRequested
+        } else { lifetime = .bounded }
+        #else
+        lifetime = .bounded
+        #endif
         let now = ProcessInfo.processInfo.systemUptime
         let dialingAutomatically = remoteDial != nil || session?.why == .automatic
         guard connection == nil || dialingAutomatically else { return false }
@@ -636,8 +645,8 @@ extension StreamClient {
                 // Only a renewed record retires that row's old budget. Selection order is not evidence.
                 r.rowBudgets = r.rowBudgets.filter { $0.key.id != listing.id || $0.key == listing }
                 var budget = r.rowBudgets[listing] ?? Reconnect.RowBudget()
-                let line = DiscoveryPolicy.reconnectLine(mac: r.name, failed: budget.dials, direct: mac.direct)
-                let due = DiscoveryPolicy.redialRow(failed: budget.dials, lastDialAt: budget.lastDialAt, foreground: appInForeground, now: now)
+                let line = DiscoveryPolicy.reconnectLine(mac: r.name, failed: budget.dials, direct: mac.direct, lifetime: lifetime)
+                let due = DiscoveryPolicy.redialRow(failed: budget.dials, lastDialAt: budget.lastDialAt, foreground: appInForeground, now: now, lifetime: lifetime)
                 guard due.dial else {
                     // Listed, and not dialled now: the line for the dials so far ("…may be asleep…",
                     // "Stopped trying…"), and the next look. No remote dial while a row lists the Mac.
@@ -683,20 +692,21 @@ extension StreamClient {
         }
         var wake = choice.recheckAt
         if let id = r.macID, r.remoteAllowed, savedMac(id) != nil, !dialingAutomatically {
-            if now >= r.lostAt + DiscoveryPolicy.redialWindow {
+            if lifetime == .bounded, now >= r.lostAt + DiscoveryPolicy.redialWindow {
                 r.remoteAllowed = false
                 reconnect = r
                 status = "Stopped trying to reach \(r.name). Tap it to try again."
             } else {
                 let due = DiscoveryPolicy.remoteDialDue(listed: network != nil || direct != nil, lostAt: r.lostAt,
                                                         networkLeftAt: savedSightings.leftAt[id], rememberedDirect: r.rememberedDirect,
-                                                        pathChangedSinceLoss: pathSignature != r.pathAtLoss, now: now)
+                                                        pathChangedSinceLoss: pathSignature != r.pathAtLoss, now: now, lifetime: lifetime)
                 if due.dial, now >= r.nextRemoteAt {
                     dialSaved(id, why: .automatic)
                     return true
                 }
                 let next = due.dial ? r.nextRemoteAt : due.recheckAt
-                wake = [wake, next, r.lostAt + DiscoveryPolicy.redialWindow].compactMap { $0 }.min()
+                let expiry = lifetime == .bounded ? r.lostAt + DiscoveryPolicy.redialWindow : nil
+                wake = [wake, next, expiry].compactMap { $0 }.min()
             }
         }
         if let at = wake {
