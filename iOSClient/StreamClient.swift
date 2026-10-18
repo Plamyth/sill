@@ -704,6 +704,103 @@ final class StreamClient: ObservableObject {
     /// it stops the stream (a staged window goes home). The new connection's first window list picks
     /// it again if nothing streams, the Desktop for a window that has gone. Nil otherwise.
     private var resumeSource: StreamSource?
+    private struct AutomaticSourceTicket: Equatable {
+        let intent: UInt64
+        let peer: ObjectIdentifier
+        let host: String?
+        let revision: String?
+    }
+    private struct AutomaticConnectionOpportunity {
+        let intent: UInt64
+        let peer: ObjectIdentifier
+        let host: String?
+        enum Observation { case awaitingCatalog, catalog(String?) }
+        let observation: Observation
+        func accepts(_ revision: String?) -> Bool {
+            switch observation {
+            case .awaitingCatalog: return true
+            case .catalog(let original): return original == revision
+            }
+        }
+        init(intent: UInt64, peer: ObjectIdentifier, host: String?, observation: Observation = .awaitingCatalog) {
+            self.intent = intent; self.peer = peer; self.host = host; self.observation = observation
+        }
+    }
+    private var explicitSourceIntent: UInt64 = 0
+    private var automaticSourceIntent: UInt64? = 0
+    private var selectionRevision: String?
+    private var sourceCatalogEpoch: UUID?
+    private var resumeOpportunity: AutomaticConnectionOpportunity?
+    private var scheduledAutomaticTicket: AutomaticSourceTicket?
+    private var automaticSubmission: SessionLink.Submission?
+
+    private enum ExpectedSourceIntent {
+        case source(StreamSource), display(UInt32), launch(String)
+        func matches(_ list: WindowList) -> Bool {
+            switch self {
+            case .source(let source): return source != .none && list.active == source
+            case .display(let id): return list.active == .desktop && list.activeDisplayID == id
+            case .launch(let bundle):
+                guard case .window(let id) = list.active else { return false }
+                return list.windows.contains { $0.id == id && $0.bundleID == bundle }
+            }
+        }
+    }
+    private var expectedSourceIntent: (choice: ExpectedSourceIntent, revision: String?, epoch: UUID?)?
+
+    private func observeSourceIntent(_ list: WindowList) {
+        guard let expected = expectedSourceIntent,
+              list.selectionRevision == nil || list.selectionRevision != expected.revision,
+              expected.choice.matches(list) else { return }
+        if list.selectionRevision != nil {
+            guard let epoch = list.videoEpoch, epoch.isValid, epoch.source == list.active,
+                  epoch.id != expected.epoch else { return }
+        }
+        // A successful explicit choice creates a new closed-window recovery opportunity.
+        automaticSourceIntent = explicitSourceIntent
+        expectedSourceIntent = nil
+    }
+
+    private func noteSourceIntent() {
+        if let automaticSubmission { link.cancel(automaticSubmission) }
+        automaticSubmission = nil
+        explicitSourceIntent &+= 1
+        automaticSourceIntent = nil
+        expectedSourceIntent = nil
+        resumeSource = nil
+        resumeOpportunity = nil
+        scheduledAutomaticTicket = nil
+    }
+
+    private func beginAutomaticConnectionOpportunity(peer: NWConnection? = nil) {
+        if let automaticSubmission { link.cancel(automaticSubmission) }
+        automaticSubmission = nil
+        automaticSourceIntent = expectedSourceIntent == nil ? explicitSourceIntent : nil
+        scheduledAutomaticTicket = nil
+        resumeOpportunity = peer.flatMap { peer in
+            guard automaticSourceIntent == explicitSourceIntent else { return nil }
+            return AutomaticConnectionOpportunity(intent: explicitSourceIntent, peer: ObjectIdentifier(peer), host: sessionHost)
+        }
+    }
+
+    private func automaticTicket(peer: NWConnection, list: WindowList) -> AutomaticSourceTicket? {
+        guard automaticSourceIntent == explicitSourceIntent, scheduledAutomaticTicket == nil else { return nil }
+        return AutomaticSourceTicket(intent: explicitSourceIntent, peer: ObjectIdentifier(peer),
+                                     host: list.launchID, revision: list.selectionRevision)
+    }
+
+    private func requestAutomatic(_ source: StreamSource, ticket: AutomaticSourceTicket) {
+        guard let peer = connection, ObjectIdentifier(peer) == ticket.peer,
+              explicitSourceIntent == ticket.intent,
+              automaticSourceIntent == ticket.intent || scheduledAutomaticTicket == ticket,
+              sessionHost == ticket.host, selectionRevision == ticket.revision else { return }
+        let submission = SessionLink.Submission { _ in }
+        automaticSubmission = submission
+        request(source, origin: .automatic, revision: ticket.revision, onlyOn: peer, submission: submission)
+        expectedSourceIntent = (.source(source), ticket.revision, sourceCatalogEpoch)
+        automaticSourceIntent = nil
+        scheduledAutomaticTicket = nil
+    }
     #if DEBUG
     /// The reason last printed as "path: kept: …", so that each prints once.
     private var lastKept: DiscoveryPolicy.Keep?
@@ -870,6 +967,11 @@ final class StreamClient: ObservableObject {
         get { link.connection }
         set {
             if link.connection !== newValue {
+                beginAutomaticConnectionOpportunity()
+                selectionRevision = nil
+                sourceCatalogEpoch = nil
+                resumeOpportunity = nil
+                scheduledAutomaticTicket = nil
                 displays = []
                 activeDisplayID = nil
                 supportsDisplaySelection = false
@@ -2784,7 +2886,8 @@ final class StreamClient: ObservableObject {
             let released = link.adopt(c)
             old.forceCancel()
             closeSoon(released?.close ?? [])
-            resumeSource = active == .none ? nil : active
+            beginAutomaticConnectionOpportunity(peer: c)
+            resumeSource = automaticSourceIntent == explicitSourceIntent && active != .none ? active : nil
             #if DEBUG
             let waiting = (released?.waiting ?? 0) > 0 ? " (\(released!.waiting) wait for an earlier hand-over's fence)" : ""
             print("path: no fence (the old connection\(reconnected ? " is gone" : "'s path is gone")): \(released?.held ?? 0) held messages went out on the new connection\(waiting)")
@@ -3684,11 +3787,15 @@ final class StreamClient: ObservableObject {
     /// The person's pick (a thumbnail, Desktop, the Apps list): the host streams this source and
     /// answers with a fresh window list. It counts for the tour as something happening.
     func select(_ source: StreamSource) {
+        noteSourceIntent()
+        expectedSourceIntent = (.source(source), selectionRevision, sourceCatalogEpoch)
         noteAction()
-        request(source)
+        request(source, origin: .human)
     }
 
     func selectDisplay(_ display: DisplayInfo) {
+        noteSourceIntent()
+        expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch)
         guard displaySelectionReady, let peer = connection, let displayInventoryID,
               displays.contains(where: { $0.id == display.id }) else { return }
         noteAction()
@@ -3709,7 +3816,9 @@ final class StreamClient: ObservableObject {
     /// Asks the host to stream this source: the person's pick (`select`), or this device's own
     /// request (the Desktop on a connection's first list, a pick made again after a move), which
     /// is not the person's doing.
-    private func request(_ source: StreamSource) {
+    private func request(_ source: StreamSource, origin: SourceRequest.Origin = .human,
+                         revision: String? = nil, onlyOn peer: NWConnection? = nil,
+                         submission: SessionLink.Submission? = nil) {
         #if os(visionOS)
         visionAudio.stop()
         #else
@@ -3719,7 +3828,12 @@ final class StreamClient: ObservableObject {
         #endif
         #endif
         choicesSent += 1
-        send(.selectSource, Wire.encode(source))
+        let payload = Wire.encode(SourceRequest(source: source, origin: origin == .automatic && revision == nil ? nil : origin,
+                                                selectionRevision: revision))
+        if let peer {
+            let message = StreamMessage(kind: .selectSource, timestamp: Date().timeIntervalSince1970, isKeyframe: false, payload: payload)
+            _ = link.send(message.serialized(), onlyOn: peer, submission: submission)
+        } else { send(.selectSource, payload) }
         #if DEBUG
         // Layout harness (mock, no connection): show the pick locally so taps can be checked.
         if connection == nil { DispatchQueue.main.async { self.active = source } }
@@ -3771,6 +3885,8 @@ final class StreamClient: ObservableObject {
 
     /// Ask the host to launch an installed app; the host selects its first window itself.
     func launch(bundleID: String) {
+        noteSourceIntent()
+        expectedSourceIntent = (.launch(bundleID), selectionRevision, sourceCatalogEpoch)
         noteAction()
         choicesSent += 1   // the host picks the launched app's window: a choice, like a pick
         send(.launchApp, Wire.encode(LaunchApp(bundleID: bundleID)))
@@ -4245,6 +4361,9 @@ final class StreamClient: ObservableObject {
                 // The host this session runs on, which a move to the network must reach again
                 // (`moveProbed`); its first list is what lets a move start.
                 self.sessionHost = list.launchID
+                self.observeSourceIntent(list)
+                self.sourceCatalogEpoch = list.videoEpoch?.id
+                self.selectionRevision = list.selectionRevision
                 if self.hostVersion != list.hostVersion { self.hostVersion = list.hostVersion }
                 if self.hostProtocol != list.protocol { self.hostProtocol = list.protocol }
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }
@@ -4291,26 +4410,40 @@ final class StreamClient: ObservableObject {
                 // The first list after a move without a fence: if the Mac stopped the stream meanwhile,
                 // what this device was watching is picked again (`resumeSource`).
                 if let resume = self.resumeSource {
-                    self.resumeSource = nil
-                    if list.active == .none, !Self.noAutoDesktop, !self.desktopSelectionRequired {
-                        var pick = resume
-                        if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
-                        #if DEBUG
-                        print("path: nothing streams on the new connection: picking \(pick) again")
-                        #endif
-                        self.request(pick)
-                        return
+                    if let opportunity = self.resumeOpportunity,
+                       opportunity.intent == self.explicitSourceIntent,
+                       opportunity.peer == ObjectIdentifier(peer), opportunity.host == list.launchID,
+                       opportunity.accepts(list.selectionRevision),
+                       !Self.noAutoDesktop, !self.desktopSelectionRequired {
+                        if list.active == .none, let ticket = self.automaticTicket(peer: peer, list: list) {
+                            self.resumeSource = nil
+                            self.resumeOpportunity = nil
+                            var pick = resume
+                            if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
+                            self.requestAutomatic(pick, ticket: ticket)
+                            return
+                        } else if list.active == resume {
+                            self.resumeOpportunity = AutomaticConnectionOpportunity(intent: opportunity.intent,
+                                peer: opportunity.peer, host: opportunity.host, observation: .catalog(list.selectionRevision))
+                        } else {
+                            self.resumeSource = nil
+                            self.resumeOpportunity = nil
+                        }
+                    } else {
+                        self.resumeSource = nil
+                        self.resumeOpportunity = nil
+                        self.automaticSourceIntent = nil
                     }
                 }
                 // The device starts on the Desktop, never on an empty panel: on the first list of a
                 // connection, and again when the window being watched has closed. Not when a pick
                 // failed (the host still lists the window): that is the user's to retry. At most
                 // once every 10 s, so a host that cannot start the Desktop does not loop.
-                if list.active == .none, Date().timeIntervalSince(self.lastAutoDesktop) > 10, !Self.noAutoDesktop, !self.desktopSelectionRequired {
+                if let ticket = self.automaticTicket(peer: peer, list: list), list.active == .none, Date().timeIntervalSince(self.lastAutoDesktop) > 10, !Self.noAutoDesktop, !self.desktopSelectionRequired {
                     switch previous {
                     case .none:
                         self.lastAutoDesktop = Date()
-                        self.request(.desktop)
+                        self.requestAutomatic(.desktop, ticket: ticket)
                     case .window(let id) where !list.windows.contains(where: { $0.id == id }):
                         // A window can drop off the list for a second or two (a Space change,
                         // full screen): only a window still gone after that has really closed.
@@ -4318,13 +4451,14 @@ final class StreamClient: ObservableObject {
                         // could reach the host after that choice has started and replace it.
                         // Two seconds plus the worst recent round trip: from afar the host's next
                         // list, which would bring the window back, takes that much longer.
+                        self.scheduledAutomaticTicket = ticket
                         let choices = self.choicesSent
                         let wait = 2 + Double(self.lastRttMaxMs ?? 0) / 1000
                         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
                             guard let self, self.connected, self.active == .none, !self.desktopSelectionRequired, self.choicesSent == choices,
                                   !self.windows.contains(where: { $0.id == id }) else { return }
                             self.lastAutoDesktop = Date()
-                            self.request(.desktop)
+                            self.requestAutomatic(.desktop, ticket: ticket)
                         }
                     default:
                         break

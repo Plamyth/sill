@@ -2,6 +2,22 @@ import Foundation
 import Network
 import StreamProtocol
 
+final class SourcePublicationAdmission: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = true
+
+    func invalidate() {
+        lock.lock(); defer { lock.unlock() }
+        current = false
+    }
+
+    func publish(_ body: () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        guard current else { return }
+        body()
+    }
+}
+
 /// Advertises _sill._tcp over Bonjour and pushes messages to every connected client.
 /// Slow clients drop delta frames rather than building a queue (that queue is latency).
 ///
@@ -58,6 +74,7 @@ final class StreamServer {
         /// Set only by the coordinator's first direct catalog, after source-fence admission.
         var catalogSent = false
         var latestCatalog: StreamMessage?
+        var catalogAdmission: SourcePublicationAdmission?
         var microphoneCatalogGrant: HostLocalOwnerGrant?
         var inflight = 0          // every message still unacknowledged (backpressure for delta drops)
         var inflightFrames = 0    // video frames only
@@ -1350,16 +1367,28 @@ final class StreamServer {
         }
     }
 
-    func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, requestKeyframe: @escaping () -> Void) {
-        queue.async { [self] in
-            guard videoAdmission == .preparing(epoch) else { return }
-            videoAdmission = .committed(epoch)
-            for client in clients.values where client.catalogSent && client.connection.state == .ready {
-                client.latestCatalog = catalog
-                client.microphoneCatalogGrant = nil
-                send(catalog.serialized(), to: client)
+    func isVideoCommitted(_ epoch: UUID) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                continuation.resume(returning: videoAdmission.current?.id == epoch)
             }
-            requestKeyframe()
+        }
+    }
+
+    func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission,
+                     requestKeyframe: @escaping () -> Void) {
+        queue.async { [self] in
+            admission.publish {
+                guard videoAdmission == .preparing(epoch) else { return }
+                videoAdmission = .committed(epoch)
+                for client in clients.values where client.catalogSent && client.connection.state == .ready {
+                    client.latestCatalog = catalog
+                    client.catalogAdmission = admission
+                    client.microphoneCatalogGrant = nil
+                    send(catalog.serialized(), to: client)
+                }
+                requestKeyframe()
+            }
         }
     }
 
@@ -1382,7 +1411,7 @@ final class StreamServer {
     /// built for a connection the server has just forgotten, before the coordinator hears it left).
     /// Thread-safe.
     func send(each messages: [(NWConnection, StreamMessage)]) {
-        let items = messages.map { (ObjectIdentifier($0.0), $0.1.serialized()) }
+        let items = messages.filter { $0.1.kind != .windowList }.map { (ObjectIdentifier($0.0), $0.1.serialized()) }
         queue.async { [self] in
             for (id, data) in items {
                 guard let client = clients[id], client.connection.state == .ready else { continue }
@@ -1391,19 +1420,36 @@ final class StreamServer {
         }
     }
 
-    /// One message to one client (catalog on connect). Thread-safe.
+    /// Source catalogs require their original admission through queue execution and replay.
+    func sendCatalog(_ message: StreamMessage, to connection: NWConnection, admission: SourcePublicationAdmission,
+                     grant: HostLocalOwnerGrant? = nil) {
+        queue.async { [self] in
+            admission.publish {
+                guard message.kind == .windowList, let client = clients[ObjectIdentifier(connection)],
+                      client.connection.state == .ready else { return }
+                let publish = {
+                    client.catalogSent = true
+                    client.latestCatalog = message
+                    client.catalogAdmission = admission
+                    client.microphoneCatalogGrant = grant
+                    self.send(message.serialized(), to: client)
+                }
+                if let grant {
+                    guard client.route.encrypted, client.route.fingerprint == grant.fingerprint,
+                          videoAdmission.current?.id == grant.scope.videoEpoch else { return }
+                    _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, publish)
+                } else {
+                    publish()
+                }
+            }
+        }
+    }
+
     func send(_ message: StreamMessage, to connection: NWConnection) {
+        guard message.kind != .windowList else { return }
         let data = message.serialized()
         queue.async { [self] in
-            guard let client = clients[ObjectIdentifier(connection)] else {
-                print("send: no client for \(connection.endpoint) (\(clients.count) known)")
-                return
-            }
-            if message.kind == .windowList {
-                client.catalogSent = true
-                client.latestCatalog = message
-                client.microphoneCatalogGrant = nil
-            }
+            guard let client = clients[ObjectIdentifier(connection)] else { return }
             send(data, to: client)
         }
     }
@@ -1539,35 +1585,22 @@ final class StreamServer {
     }
 
     private func replayCatalog(to client: Client) {
-        guard var message = client.latestCatalog else { return }
-        if let grant = client.microphoneCatalogGrant,
-           case .committed(let epoch) = videoAdmission, epoch.id == grant.scope.videoEpoch,
-           client.route.encrypted, client.route.fingerprint == grant.fingerprint,
-           grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, { send(message.serialized(), to: client) }) {
-            return
-        }
-        if var list = Wire.decode(WindowList.self, from: message.payload), list.microphone != nil {
-            list.microphone = nil
-            message.payload = Wire.encode(list)
-        }
-        client.microphoneCatalogGrant = nil
-        client.latestCatalog = message
-        send(message.serialized(), to: client)
-    }
-
-    func sendMicrophoneCatalog(_ message: StreamMessage, to connection: NWConnection, grant: HostLocalOwnerGrant) {
-        let data = message.serialized()
-        queue.async { [self] in
-            guard let client = clients[ObjectIdentifier(connection)],
-                  client.route.encrypted, client.route.fingerprint == grant.fingerprint,
-                  videoAdmission.current?.id == grant.scope.videoEpoch,
-                  client.connection.state == .ready else { return }
-            _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) {
-                client.catalogSent = true
-                client.latestCatalog = message
-                client.microphoneCatalogGrant = grant
-                send(data, to: client)
+        guard let admission = client.catalogAdmission else { return }
+        admission.publish {
+            guard var message = client.latestCatalog else { return }
+            if let grant = client.microphoneCatalogGrant,
+               case .committed(let epoch) = videoAdmission, epoch.id == grant.scope.videoEpoch,
+               client.route.encrypted, client.route.fingerprint == grant.fingerprint,
+               grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, { send(message.serialized(), to: client) }) {
+                return
             }
+            if var list = Wire.decode(WindowList.self, from: message.payload), list.microphone != nil {
+                list.microphone = nil
+                message.payload = Wire.encode(list)
+            }
+            client.microphoneCatalogGrant = nil
+            client.latestCatalog = message
+            send(message.serialized(), to: client)
         }
     }
 
@@ -1603,6 +1636,7 @@ final class StreamServer {
 
     /// Thread-safe: hops onto the network queue.
     func broadcast(_ message: StreamMessage, epoch: UUID? = nil) {
+        guard message.kind != .windowList else { return }
         queue.async { [self] in
             let media = message.kind == .parameterSets || message.kind == .frame
             if media, !videoAdmission.admits(epoch) { return }
@@ -1639,7 +1673,6 @@ final class StreamServer {
                     Stats.shared.bump("net.sent")
                     client.sentThisSecond += 1
                 }
-                if message.kind == .windowList { client.latestCatalog = message; client.microphoneCatalogGrant = nil }
                 send(data, to: client, isFrame: message.kind == .frame)
             }
         }

@@ -58,6 +58,7 @@ final class EpochDisplay {
     host = (here / 'Host.swift').read_text().replace('// CLIENT', block(server, 'private final class Client {').replace('private ', ''))
     host = host.replace('// METHODS', '\n'.join(block(server, marker).replace('private ', '') for marker in methods))
     files['Host.swift'] = host
+    files['Host.swift'] += '\n' + block(server, 'final class SourcePublicationAdmission')
     coordinator = (root / 'Sources/SillHost/StreamCoordinator.swift').read_text()
     geometry_methods = ['private enum GeometryRecovery {', 'private enum Held {', 'private func currentSourceRect(',
                         'private static func epochGeometry(', 'private func presentationInputRect(',

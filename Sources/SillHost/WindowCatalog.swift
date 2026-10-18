@@ -137,7 +137,7 @@ final class WindowCatalog {
         topology.onChange = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                self.displayInventory.invalidate()
+                self.displayInventory.invalidate(preservingDisplay: self.extendedDesktopID)
                 self.onDisplaysChanged?()
                 await self.refreshWindows()
             }
@@ -321,9 +321,10 @@ final class WindowCatalog {
         }
         let signatures = displays.map { display in
             let uuid = CGDisplayCreateUUIDFromDisplayID(display.displayID)?.takeRetainedValue()
-            return "\(uuid.map { CFUUIDCreateString(nil, $0) as String } ?? "")/\(display.frame)"
+            return uuid.map { CFUUIDCreateString(nil, $0) as String } ?? ""
         }
-        if displayInventory.update(infos, signatures: signatures) { onDisplaysChanged?() }
+        if displayInventory.update(infos, signatures: signatures, frames: displays.map(\.frame),
+                                   preservingDisplay: extendedDesktopID) { onDisplaysChanged?() }
     }
 
     static func admitsDisplay(id: UInt32, active: Bool, sillVirtual: Bool, physical: Bool, ownedID: UInt32?) -> Bool {

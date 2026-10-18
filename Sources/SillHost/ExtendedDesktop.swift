@@ -176,8 +176,12 @@ extension ExtendedDesktop {
                         content.displays.contains(where: { $0.displayID == id }) else { throw Failure.notListedBySCK }
                     try Task.checkCancellation()
                 },
-                isValid: { Self.valid(display) },
-                recoverWindows: { Self.recoverWindows(in: ownedBounds) },
+                isValid: {
+                    guard Self.valid(display) else { return false }
+                    ownedBounds = display.bounds
+                    return true
+                },
+                recoverWindows: { Self.recoverWindows(in: Self.recoveryBounds(display, lastKnown: ownedBounds)) },
                 destroy: { display.onTerminated = nil; display.destroy() })
         }, publishID: { [weak catalog] in catalog?.setExtendedDesktopDisplay($0) },
         reportFailure: { print("iPad extended desktop unavailable: \($0). Physical monitors remain available; reconnect to try again.") })
@@ -201,6 +205,7 @@ extension ExtendedDesktop {
     private static func configure(_ display: VirtualDisplay) async throws {
         let physical = WindowCatalog.physicalDisplayIDs()
         guard !physical.isEmpty else { throw Failure.noPhysicalDisplay }
+        if valid(display) { return }
         // Include other virtual screens so VirtualStage's eviction area cannot overlap this one.
         let others = WindowCatalog.onlineDisplayIDs().filter { $0 != display.displayID }
         guard let origin = originRight(of: others.map { CGDisplayBounds($0) },
@@ -231,7 +236,12 @@ extension ExtendedDesktop {
             display.bounds.size == CGSize(width: display.widthPt, height: display.heightPt) &&
             pixels.width == display.widthPt * display.scale && pixels.height == display.heightPt * display.scale &&
             abs(refreshHz - 60) < 0.5 && !physical.isEmpty &&
-            physical.allSatisfy { display.bounds.minX >= $0.maxX && !display.bounds.intersects($0) }
+            !display.bounds.isInfinite && !display.bounds.isNull &&
+            physical.allSatisfy { !display.bounds.intersects($0) }
+    }
+
+    private static func recoveryBounds(_ display: VirtualDisplay, lastKnown: CGRect) -> CGRect {
+        valid(display) ? display.bounds : lastKnown
     }
 
     private static func recoverWindows(in bounds: CGRect) {
