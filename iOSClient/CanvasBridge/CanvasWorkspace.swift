@@ -442,7 +442,7 @@ struct CanvasWorkspace: View {
                 return
             }
             guard localSha != syncedSceneSha,
-                  let image = SceneRenderer.png(scene:scene) else { return }
+                  let image = await SceneRenderer.png(scene:scene) else { return }
             pendingSceneSha = localSha
             try saveCanvasVaultCheckpoint()
             let saved = try await relay.saveVaultCanvas(scene:scene,imagePNG:image,
@@ -523,7 +523,9 @@ struct CanvasWorkspace: View {
             ZStack(alignment:.topLeading) {
                 Color(uiColor:CanvasPalette.background)
                 PencilCanvas(store:store)
-                ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
+                if store.scene.drawingBase64.isEmpty {
+                    ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
+                }
                 ForEach(store.scene.links) { link in linkView(link) }
                 ForEach(store.scene.nodes) { node in nodeView(node) }
                 ForEach(store.scene.annotations) { note in annotationView(note) }
@@ -713,7 +715,7 @@ struct CanvasWorkspace: View {
                 await reconcile(pending)
                 return
             }
-            guard let image = SceneRenderer.png(scene:frozen) else {
+            guard let image = await SceneRenderer.png(scene:frozen) else {
                 throw CanvasSendError.invalidPacket
             }
             let target = try await connection.inboxTarget()

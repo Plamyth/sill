@@ -1,4 +1,5 @@
 import SwiftUI
+import PencilKit
 
 enum CanvasPalette {
     static let background = UIColor.black
@@ -10,8 +11,29 @@ enum CanvasPalette {
 
 enum SceneRenderer {
     @MainActor
-    static func png(scene: CanvasScene) -> Data? {
+    static func png(scene: CanvasScene) async -> Data? {
+        let drawing: PKDrawing?
+        if scene.drawingBase64.isEmpty {
+            drawing = nil
+        } else {
+            guard let data = Data(base64Encoded: scene.drawingBase64),
+                  let decoded = try? PKDrawing(data: data) else { return nil }
+            drawing = decoded
+        }
         let size = CGSize(width: scene.width, height: scene.height)
+        let bounds = CGRect(origin: .zero, size: size)
+        let scale = UIScreen.main.scale
+        let inkImage: UIImage?
+        if let drawing {
+            guard let bitmap = CGContext(data: nil, width: Int(ceil(size.width * scale)),
+                height: Int(ceil(size.height * scale)), bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            bitmap.scaleBy(x: scale, y: scale)
+            await drawing.draw(in: bitmap, frame: bounds, from: bounds, darkUserInterfaceStyle: false)
+            guard let rendered = bitmap.makeImage() else { return nil }
+            inkImage = UIImage(cgImage: rendered, scale: scale, orientation: .up)
+        } else { inkImage = nil }
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { context in
             CanvasPalette.background.setFill()
@@ -21,13 +43,17 @@ enum SceneRenderer {
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
             cg.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 1)
-            for stroke in scene.strokes {
-                guard let first = stroke.points.first else { continue }
-                cg.move(to: CGPoint(x: first.x, y: first.y))
-                for point in stroke.points.dropFirst() {
-                    cg.addLine(to: CGPoint(x: point.x, y: point.y))
+            if let inkImage {
+                inkImage.draw(in: bounds)
+            } else {
+                for stroke in scene.strokes {
+                    guard let first = stroke.points.first else { continue }
+                    cg.move(to: CGPoint(x: first.x, y: first.y))
+                    for point in stroke.points.dropFirst() {
+                        cg.addLine(to: CGPoint(x: point.x, y: point.y))
+                    }
+                    cg.strokePath()
                 }
-                cg.strokePath()
             }
             for link in scene.links {
                 guard let from = scene.nodes.first(where: { $0.id == link.from })?.frame.center,

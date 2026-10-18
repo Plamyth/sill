@@ -13,6 +13,7 @@ struct PencilCanvas: UIViewRepresentable {
         host.backgroundColor = CanvasPalette.background
 
         let canvas = PKCanvasView(frame: host.bounds)
+        canvas.overrideUserInterfaceStyle = .light
         canvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvas.delegate = context.coordinator
         canvas.backgroundColor = CanvasPalette.background

@@ -40,8 +40,10 @@ brightness control on the transparent native image and failed two fixture
 controls. Those two failures are not product evidence.
 
 The native image control reads alpha because PencilKit adapts monochrome ink
-to the current appearance. Export must use the canvas dark appearance and
-preserve its masks, brush and transform. Structural-only legacy input remains
+to the current appearance. The fixed black canvas uses literal base colors. PKCanvasView therefore
+uses a light interface override and async native CGContext drawing uses
+darkUserInterfaceStyle=false. The surrounding app UI remains dark. This
+preserves masks, brush and transforms without inverting existing white ink. Structural-only legacy input remains
 a polyline. This is an appearance correction, not an agent-visible glyph map.
 
 A second native design agent was refused at the global agent capacity limit.
@@ -61,3 +63,34 @@ source backups and restore them after the final experiment.
 
 Red receipts are IpadNativeInkRender97.xcresult and
 ipad-native-ink-render97-20261019.log under the routed project archive.
+
+
+The rendering contract is async png(scene:). Both production callers freeze a
+CanvasScene value and await it. Native async drawing owns its bitmap context;
+no UIGraphics global context remains pushed across suspension. The product
+iPad target is iOS27, while the public draw API is available since iOS26.
+
+Runs98 through102 preserved masks but showed that dark native rendering turns
+white base ink black; black becomes white and red remains red. Run103 passed
+the ten original pixel controls after using literal base colors. Run104 moved
+the stroke to y30 and found a vertical inversion at y70. A second manual
+CoreGraphics flip was the cause. The strengthened fixture checks the native
+coordinates, red color, both mask sides, erased gap, malformed/invalid drawing,
+empty-native-versus-stale-points, and structural-only legacy input.
+
+ProbeApp's two-argument synchronous overload returns nil only to compile the
+unentered old diagnostic CanvasWorkspace. The test calls the one-argument
+actual async production method. It is not a compatibility shim in the product.
+
+
+Final foreground iPad105 passed all12 pixel/format assertions. Native controls
+show both mask sides and no gap. The exported white stroke is [255,255,255,255]
+at y30, the erased gap is [0,0,0,255], mirrored y70 is empty, and red remains
+[255,0,0,255]. Empty-native and invalid-data controls pass. This is the exact
+production renderer in the diagnostic app. CanvasWorkspace/PencilCanvas are
+source changes still requiring independent review, full target compile and
+installed UI acceptance. The user drawing was not read or changed by the probe.
+
+The native API already maps drawing coordinates into the bitmap. The extra
+manual vertical flip found by run104 was removed, rather than adjusting the
+expected coordinates. Run105 is the final candidate proof, not an installation.

@@ -22,6 +22,8 @@ final class CanvasBridgeUITests: XCTestCase {
         XCTAssertTrue(result.label.contains("\"malformedRefused\":true"))
         XCTAssertTrue(result.label.contains("\"invalidDrawingRefused\":true"))
         XCTAssertTrue(result.label.contains("\"emptyDrawingGapInk\":false"))
+        XCTAssertTrue(result.label.contains("\"exportMirroredInk\":false"))
+        XCTAssertTrue(result.label.contains("\"redInkExportRGBA\":[255,0,0,255]"))
     }
 
 }
