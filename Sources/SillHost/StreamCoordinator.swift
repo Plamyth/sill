@@ -1372,9 +1372,10 @@ package final class StreamCoordinator {
             // Settings, or a flip between the home and the away quality, that came in meanwhile; a
             // no-op when the pick's select commits them first.
             if pendingConfig != nil || (awayWanted != awayRunning && flipWait == nil) { Task { @MainActor in await self.applyPending() } }
-            if active == .desktop, !synthetic, catalog.display == nil {
+            if active == .desktop, !synthetic, catalog.display == nil, !catalog.displayInventory.isRefreshingSelection {
                 Task { @MainActor in
-                    guard !self.switching, self.active == .desktop, self.catalog.display == nil else { return }
+                    guard !self.switching, self.active == .desktop, self.catalog.display == nil,
+                          !self.catalog.displayInventory.isRefreshingSelection else { return }
                     await self.select(.none)
                 }
             }
@@ -2403,6 +2404,12 @@ package final class StreamCoordinator {
         }
         broadcastList()
         Task { @MainActor in
+            guard !self.catalog.displayInventory.isRefreshingSelection else { return }
+            if !self.catalog.displayInventory.requiresSelection, self.active == .desktop, self.videoEpoch == nil {
+                guard !self.switching else { return }
+                await self.select(.desktop, bringForward: false)
+                return
+            }
             guard self.catalog.displayInventory.requiresSelection else { return }
             await self.revokeRemoteAudio(reason: "Mac 모니터 구성이 변경되었습니다. 모니터를 다시 선택해 주세요.")
             // A switch in flight rechecks before commit and stops an invalid desktop in its defer.
