@@ -253,8 +253,9 @@ func runPlayerChecks() throws {
         check(render(graph) > 0, "real player render uses admitted PCM")
         let mic = try hw.beginCapture(owner: owner, epoch: UUID(), permitted: { true }, formatChanged: { _ in }, copyInput: { _, _ in }, stopped: { _ in })
         check(d.profiles.last == .microphone && d.outputs.last! != nil, "real player shares its session with capture seam")
+        let duplexOutput = d.outputs.last!
         player.stop()
-        check(render(d.outputs.last!) == 0, "real player stop immediately zeros render before main cleanup")
+        check(render(duplexOutput) == 0, "real player stop immediately zeros retained render callback")
         drain { d.outputs.last! == nil }
         check(d.outputs.last! == nil && d.inputs.last! != nil, "real player cleanup retains capture role")
         _ = hw.close(mic)
