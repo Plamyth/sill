@@ -32,7 +32,7 @@ client = client.replace('// EXPECTED_SOURCE', block(text, 'private enum Expected
 client = client.replace('// AUTOMATIC_TICKET', '\n'.join(block(text, s).replace('private ','') for s in ['private struct AutomaticSourceTicket', 'private struct AutomaticConnectionOpportunity']))
 client = client.replace('// RESUME_SOURCE',block(text,'if let resume = self.resumeSource'))
 client = client.replace('// IDLE_FALLBACK',block(text,'if let ticket = self.automaticTicket'))
-inputs = {name:(root/'Sources/StreamProtocol'/name).read_text() for name in ['Switcher.swift','StreamMessage.swift','AudioRouting.swift']}
+inputs = {name:(root/'Sources/StreamProtocol'/name).read_text() for name in ['Switcher.swift','AudioPrivacy.swift','StreamMessage.swift','AudioRouting.swift']}
 inputs['Client.swift'] = client
 inputs['main.swift'] = (here/'main.swift').read_text()
 inputs['SessionLink.swift'] = (root/'iOSClient/SessionLink.swift').read_text().replace('import Network\n','')

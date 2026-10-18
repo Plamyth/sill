@@ -52,6 +52,7 @@ final class Client {
 final class PublicationServer {
     static let remoteDeadAfter = 30.0, deadAfter = 30.0, remoteGrace = 30.0, graceAfterConnect = 30.0
     let queue = DispatchQueue(label: "actual.publication")
+    let remoteAudioDrain = DispatchGroup()
     var videoAdmission = VideoEpochAdmission.stopped
     var lastParameterSets: Data?
     var clients: [ObjectIdentifier: Client] = [:]
@@ -71,7 +72,8 @@ final class PublicationServer {
                 let old = SourcePublicationAdmission(), current = SourcePublicationAdmission()
                 func catalog(_ source: StreamSource, _ revision: String) -> StreamMessage {
                     StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false,
-                        payload: Wire.encode(WindowList(macName: "test", windows: [], active: source, selectionRevision: revision)))
+                        payload: Wire.encode(WindowList(macName: "test", windows: [], active: source, selectionRevision: revision,
+                            audioPrivacy: AudioPrivacyState(version: 2, protected: false, reason: "revoked"))))
                 }
                 server.queue.suspend()
                 server.sendCatalog(catalog(.window(71), "old"), to: client.connection, admission: old)
@@ -81,6 +83,8 @@ final class PublicationServer {
                 let lists = client.connection.packets.compactMap { Wire.decode(WindowList.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
                 expect(lists.count == 1 && lists[0].active == newer && lists[0].selectionRevision == "new",
                        "actual send boundary refuses queued obsolete catalog for legacy and presentation peers")
+                expect(lists.first?.audioPrivacy == AudioPrivacyState(version: 2, protected: false, reason: "revoked"),
+                       "current source catalog preserves privacy revocation through actual send encoding")
                 expect(client.latestCatalog.flatMap { Wire.decode(WindowList.self, from: $0.payload) }?.active == newer,
                        "obsolete queued catalog cannot replace cached current snapshot")
                 let sent = client.connection.packets.count

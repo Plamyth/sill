@@ -245,7 +245,7 @@ def augment(inputs, block, root, here):
                  'private func replayCatalog(', 'private func send(_ raw:']
         methods = '\n'.join(block(product, name).replace('private ', '') for name in names)
         fixture = (here/'Publication.swift').read_text().replace('// PUBLICATION_METHODS', methods)
-        keep = ['Switcher.swift', 'StreamMessage.swift', 'AudioRouting.swift', 'SourcePublicationAdmission.swift']
+        keep = ['Switcher.swift', 'AudioPrivacy.swift', 'StreamMessage.swift', 'AudioRouting.swift', 'SourcePublicationAdmission.swift']
         selected = {name: inputs[name] for name in keep}
         inputs.clear(); inputs.update(selected)
         inputs['main.swift'] = fixture

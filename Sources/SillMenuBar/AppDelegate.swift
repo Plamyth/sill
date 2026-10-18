@@ -68,6 +68,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.count == 1, let url = urls.first,
+              url.scheme == "ccrsill", url.host == "audio", url.path == "/local",
+              url.user == nil, url.password == nil, url.port == nil,
+              url.query == nil, url.fragment == nil else { return }
+        model.requestLocalAudioReturn()
+    }
+
     /// Quit ⌘Q, logout and Screen Recording's "Quit & Reopen" all arrive here from the event loop.
     /// The streamed window goes home and the virtual display goes away before AppKit exits. A
     /// window in a full-screen Space on the virtual display cannot be moved, so it is taken out of

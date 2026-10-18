@@ -19,7 +19,12 @@ final class AppModel {
     /// as with the CLI's flag. No onboarding in this mode.
     let synthetic = CommandLine.arguments.contains("--synthetic")
     private(set) var coordinator: StreamCoordinator?
-    private let microphoneOwner = SillVirtualMicrophoneOwner()
+    private let audioPrivacy: HostAudioPrivacy?
+    private let nativeAudioStartup: NativeAudioStartup
+    private let microphoneOwner: SillVirtualMicrophoneOwner
+    private(set) var localAudioReturnNotice = "Touch ID 또는 Mac 로그인 암호로 인증합니다."
+    private(set) var localAudioReturnPending = false
+    var localAudioReturnUnavailableReason: String? { audioPrivacy?.localReturnUnavailableReason }
     /// The coordinator could not be created (the listener refused its parameters). Shown in the
     /// menu; the app keeps running so the user can read it and quit.
     private(set) var startupError: String?
@@ -65,6 +70,14 @@ final class AppModel {
     @ObservationIgnored private var presentationExpiryAt: Date?
 
     init() {
+        let nativeAudioStartup = NativeAudioStartup()
+        self.nativeAudioStartup = nativeAudioStartup
+        let production = Self.bundled && Bundle.main.bundleIdentifier == "com.ambrion.sillcanvas.mac"
+            && Bundle.main.bundleURL.path == "/Applications/CCR Sill.app"
+            && !CommandLine.arguments.contains("--synthetic")
+        let privacy = production ? HostAudioPrivacy(defaults: .standard, nativeStartup: nativeAudioStartup) : nil
+        audioPrivacy = privacy
+        microphoneOwner = SillVirtualMicrophoneOwner(privacy: privacy)
         let settings = HostSettings()
         self.settings = settings
         permissions = PermissionsModel(settings: settings)
@@ -83,6 +96,21 @@ final class AppModel {
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unbundled" }
 
+    func requestLocalAudioReturn() {
+        guard !localAudioReturnPending, let audioPrivacy else { return }
+        if let reason = localAudioReturnUnavailableReason {
+            localAudioReturnNotice = reason
+            return
+        }
+        localAudioReturnPending = true
+        localAudioReturnNotice = "로컬 입출력 복귀를 인증하고 있습니다."
+        Task { @MainActor in
+            let restored = await audioPrivacy.requestLocalReturn()
+            localAudioReturnPending = false
+            localAudioReturnNotice = restored ? "로컬 입출력으로 복귀했습니다." : "인증 또는 기존 장치 복원을 확인하지 못했습니다."
+        }
+    }
+
     /// Starts the host: the same coordinator as the CLI, under the AppKit loop that is already
     /// running, asking for no permission at launch. Never exits on an error.
     func start() {
@@ -96,14 +124,17 @@ final class AppModel {
                 // pairing) goes into the first Bonjour registration, and the home door speaks TLS
                 // with it. A keychain failure leaves the home door closed and remote access
                 // unavailable, not the app (docs/home-pairing-plan.md §6.1).
+                if audioPrivacy?.latched == true { _ = audioPrivacy?.reconcile() }
                 let remote = makeRemoteAccess()
                 settings.config.requirePairing = launchRequirePairing(remote)
                 // The window lists carry this Sill's version, when it has one (the bare binary's
                 // "dev" does not parse): later devices can tell which Mac to update.
-                let c = try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
+                let c = try nativeAudioStartup.construct {
+                    try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
                                               homePairing: true, testHooks: !Self.bundled,
                                               hostVersion: SillVersion(Self.version) != nil ? Self.version : nil,
-                                              microphoneOwner: microphoneOwner)
+                                              microphoneOwner: microphoneOwner, audioPrivacy: audioPrivacy)
+                }
                 c.keepRunningOnListenerFailure()
                 coordinator = c
                 // One path from the controls to the host, synchronous: the host's target equals

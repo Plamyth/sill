@@ -94,18 +94,6 @@ public struct AppInfo: Codable, Hashable, Identifiable {
     public init(name: String, bundleID: String) { self.name = name; self.bundleID = bundleID }
 }
 
-public struct AudioPrivacyState: Codable, Equatable, Sendable {
-    public var version: Int
-    public var protected: Bool
-    public var reason: String?
-
-    public init(version: Int = 1, protected: Bool, reason: String? = nil) {
-        self.version = version
-        self.protected = protected
-        self.reason = reason
-    }
-}
-
 public struct WindowList: Codable {
     public var macName: String
     public var windows: [WindowInfo]

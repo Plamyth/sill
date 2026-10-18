@@ -18,7 +18,7 @@ struct MenuEntry: Equatable {
         case setDirectWireless(Bool)
         case setMaxFPS(Int), setBitrate(Int), setCaptureScale(CGFloat)
         case toggleLaunchAtLogin
-        case showLog, showSettings, quit
+        case showLog, showSettings, quit, returnLocalAudio
         /// Settings on one tab (Remote Access…); the plain `showSettings` stays for ⌘,. (Swift
         /// allows no second case named `showSettings`.)
         case showSettingsTab(SettingsTab)
@@ -81,6 +81,7 @@ enum MenuBuilder {
                                   subtitle: UpdatePolicy.menuSubtitle(running: update.running), action: .openUpdate(update.offer.url)))
         }
         menu.append(.separator)
+        menu.append(MenuEntry(kind: .item, title: "인증 후 로컬 입출력으로 복귀…", action: .returnLocalAudio))
 
         menu.append(MenuEntry(kind: .item, title: "Virtual Display", subtitle: p.virtualDisplayNote,
                               checked: config.virtualDisplay, action: .setVirtualDisplay(!config.virtualDisplay)))
@@ -155,7 +156,13 @@ enum MenuBuilder {
                                           accessibility: model.permissions.accessibility)
         let update = model.updates.offer.flatMap { offer in model.updates.runningVersion.map { (offer: offer, running: $0) } }
         return entries(presentation: model.presentation, config: model.settings.config, login: login, permissions: permissions,
-                       update: update)
+                       update: update).map { entry in
+            guard entry.action == .returnLocalAudio else { return entry }
+            var entry = entry
+            entry.subtitle = model.localAudioReturnUnavailableReason ?? model.localAudioReturnNotice
+            entry.enabled = !model.localAudioReturnPending && model.localAudioReturnUnavailableReason == nil
+            return entry
+        }
     }
 
     /// The menu as text, for the previews: "✓" checked, "⚠" attention, "(off)" disabled.
@@ -295,6 +302,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .setCaptureScale(let scale): model.settings.config.captureScale = scale
         case .toggleLaunchAtLogin: model.loginItem.set(!model.loginItem.isOn)
         case .showLog: model.showLog?()
+        case .returnLocalAudio: model.requestLocalAudioReturn()
         case .showSettings: model.showSettings?(nil)
         case .showSettingsTab(let tab): model.showSettings?(tab)
         case .showPairing: model.pairDevice()
