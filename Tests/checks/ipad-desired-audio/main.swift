@@ -18,7 +18,7 @@ private let epoch = VideoEpoch(generation: generation.uuidString, source: .deskt
 private let micScope = MicrophoneScope(peer: UUID(), source: .desktop, inputGeneration: generation,
     videoEpoch: epoch.id, destination: UUID(), capability: UUID())
 
-private func catalog(_ privacy: AudioPrivacyState? = .init(protected: true), epoch: VideoEpoch = epoch) -> WindowList {
+private func catalog(_ privacy: AudioPrivacyState? = .init(version: 2, protected: true), epoch: VideoEpoch = epoch) -> WindowList {
     WindowList(macName: "Test", windows: [], active: epoch.source, remoteAudio: 1,
         inputGeneration: epoch.generation, videoEpoch: epoch,
         microphone: .init(peer: micScope.peer, destination: micScope.destination, generation: micScope.capability),
@@ -41,6 +41,11 @@ private func starts(_ state: inout IPadDesiredAudio, foreground: Bool = true, pe
 }
 
 var state = ready()
+state.observe(catalog(.init(version: 1, protected: true)), microphone: micScope, from: ObjectIdentifier(a))
+expect(!state.permits(.microphone, automatic: false, foreground: true, microphoneAuthorized: true) &&
+       !state.permits(.playback, automatic: false, foreground: true, microphoneAuthorized: true) && starts(&state).isEmpty,
+       "old built-in-only privacy cannot authorize all-endpoint audio")
+state = ready()
 expect(starts(&state) == [.microphone, .playback], "fresh protected paired scope admits each direction")
 expect(starts(&state).isEmpty, "failure or repeated catalog cannot busy loop")
 state.observe(catalog(), microphone: micScope, from: ObjectIdentifier(a))
@@ -60,7 +65,7 @@ state = ready()
 expect(starts(&state, foreground: false).isEmpty, "background blocks both directions")
 state = ready()
 expect(starts(&state, permission: false) == [.playback], "unapproved OS microphone cannot auto start")
-for privacy in [AudioPrivacyState(protected: false), .init(version: 2, protected: true)] {
+for privacy in [AudioPrivacyState(version: 2, protected: false), .init(version: 3, protected: true)] {
     state = ready()
     state.observe(catalog(privacy), microphone: micScope, from: ObjectIdentifier(a))
     expect(state.privacy == .blocked && starts(&state).isEmpty, "unsafe privacy blocks automatic starts")
