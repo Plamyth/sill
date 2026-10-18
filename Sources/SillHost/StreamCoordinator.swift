@@ -197,12 +197,15 @@ package final class StreamCoordinator {
     /// Desktop recovery or an internal restart of the active source. User window picks
     /// leave this nil even when they select the current window.
     private var restartOf: StreamSource?
+    enum PickOrigin { case human, automatic }
     private struct SourcePick {
         let source: StreamSource
         let displaySelection: DisplaySelection?
         let sequence: UInt64
+        let origin: PickOrigin
     }
     private var pickSequence: UInt64 = 0
+    private var settledPickSequence: UInt64 = 0
     private var pickArrivedWhileSwitching: SourcePick?
     private enum OwnedDesktopRecovery: Equatable {
         case idle, awaitingInventory, pending(DisplaySelection), restarting
@@ -510,6 +513,7 @@ package final class StreamCoordinator {
                 guard let self else { return }
                 let wasEmpty = self.catalog.clientCount == 0
                 self.catalog.clientCount = count          // the catalog idles itself at 0
+                if count == 0 { self.cancelSourcePicks() }
                 // Nobody is watching: stop capturing and encoding. The next client picks afresh.
                 if count == 0 { self.viewport = nil; self.clientFPS = [:] }   // the next device starts from scratch
                 if count == 0 { self.gestureChords.forget() }                 // and did not open a view it could close
@@ -1311,14 +1315,17 @@ package final class StreamCoordinator {
 
     // MARK: Source switching
 
-    /// Automatic Desktop requests must pass admission before they can affect user intent.
-    private func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil) async {
-        if intentSequence == nil, source == .desktop {
-            guard !switching || (restartOf != nil && source != restartOf && pickArrivedWhileSwitching == nil) else { return }
-            await select(source, bringForward: true, intentSequence: pickSequence)
-            return
-        }
-        await select(source, bringForward: true, intentSequence: intentSequence)
+    private func cancelSourcePicks() {
+        pickSequence += 1
+        settledPickSequence = pickSequence
+        pickArrivedWhileSwitching = nil
+        ownedDesktopRecovery = .idle
+    }
+
+    private func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil, origin: PickOrigin? = nil) async {
+        let origin = origin ?? (source == .desktop ? .automatic : .human)
+        let sequence = intentSequence ?? (origin == .automatic ? pickSequence : nil)
+        await select(source, bringForward: true, intentSequence: sequence, pickOrigin: origin)
     }
 
     /// Streams `source` in place of whatever streams now. Also how the host restarts the current
@@ -1330,8 +1337,12 @@ package final class StreamCoordinator {
     /// One exception: a staged window that comes home because the virtual display was turned off
     /// comes forward too, whichever select commits that change (see `cameHome`).
     func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil,
-                intentSequence: UInt64? = nil) async {
+                intentSequence: UInt64? = nil, pickOrigin: PickOrigin = .human) async {
         guard !shuttingDown else { return }
+        if pickOrigin == .automatic {
+            guard settledPickSequence == pickSequence, ownedDesktopRecovery == .idle,
+                  !switching || (restartOf != nil && source != restartOf && pickArrivedWhileSwitching == nil) else { return }
+        }
         var admittedSequence = intentSequence
         if let intentSequence {
             guard intentSequence == pickSequence, catalog.clientCount > 0 else { return }
@@ -1340,10 +1351,11 @@ package final class StreamCoordinator {
             admittedSequence = pickSequence
             pickArrivedWhileSwitching = nil
         }
-        if admittedSequence != nil { ownedDesktopRecovery = .idle }
+        if admittedSequence != nil, pickOrigin == .human { ownedDesktopRecovery = .idle }
         guard !switching else {
             if let admittedSequence {
-                pickArrivedWhileSwitching = SourcePick(source: source, displaySelection: displaySelection, sequence: admittedSequence)
+                pickArrivedWhileSwitching = SourcePick(source: source, displaySelection: displaySelection,
+                                                      sequence: admittedSequence, origin: pickOrigin)
             }
             return
         }
@@ -1354,6 +1366,9 @@ package final class StreamCoordinator {
             restartOf = (admittedSequence == nil && source == active && source != .none) ? source : nil
         }
         defer {
+            if let admittedSequence, pickOrigin == .human, admittedSequence == pickSequence {
+                settledPickSequence = admittedSequence
+            }
             switching = false
             for connection in connections.values { sendMicrophoneCatalog(to: connection) }
             restartOf = nil
@@ -1369,8 +1384,8 @@ package final class StreamCoordinator {
                     Task { @MainActor in await self.select(.none) }
                 }
             }
-            if catalog.clientCount == 0 { pick = nil }
-            if let pick, pick.source != active || pick.displaySelection != nil {
+            if catalog.clientCount == 0 { pick = nil; cancelSourcePicks() }
+            if let pick, pick.origin == .human || pick.source != active || pick.displaySelection != nil {
                 // The pick's own select fits the latest viewport. Run after it has started, the
                 // viewport tail would resize the old window, which `active` still names mid-switch.
                 viewportArrivedWhileSwitching = false
@@ -1378,7 +1393,7 @@ package final class StreamCoordinator {
                     if let selection = pick.displaySelection {
                         await self.select(pick.source, displaySelection: selection, intentSequence: pick.sequence)
                     } else {
-                        await self.handlePick(pick.source, intentSequence: pick.sequence)
+                        await self.handlePick(pick.source, intentSequence: pick.sequence, origin: pick.origin)
                     }
                 }
             } else if viewportArrivedWhileSwitching {

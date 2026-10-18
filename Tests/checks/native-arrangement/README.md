@@ -29,6 +29,22 @@ the unchanged candidate. Acceptance requires those schedules, the previous
 158 recovery assertions, native arrangement and monitor regressions, followed
 by a fresh independent verdict and the parent's exact SDK/native validation.
 
+Red commit `a846b09` retained the first two schedules before product edits and
+reported161 checks with2 failures. The initial fix passed163 checks, then an
+additional same-target admission check failed at164 checks. An admitted human
+pick that already matches the just-committed source must still finish its own
+delivery; otherwise it remains unsettled and blocks later automatic requests.
+The final replay rule processes that explicit pick. Final Mini RAM checks pass
+164 recovery,39 arrangement and39 monitor checks with matching transport hashes,
+unchanged sender inputs, child cleanup and detached RAM volumes. These remain
+controlled policy checks, not SDK, native capture or physical acceptance.
+
+`PickOrigin` survives every queued replay. Automatic requests require the latest
+human sequence to have settled and cannot cancel owned recovery. Last-client
+departure invalidates queued and already-drained picks before a new client
+arrives. Reconnect and settled-human positive controls preserve legitimate
+automatic Desktop use. No input fence or authentication rule changed.
+
 Owner task `ipad-native-arrangement-20261018` remains on branch
 `codex/ipad-native-arrangement-20261018`, based on
 `5c4c4d4b791e21d7a9a1b594d9ca2b876f088c90`.

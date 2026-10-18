@@ -69,7 +69,8 @@ if args.suite == 'recovery':
     pipeline = block(coordinator, 'private func startPipeline(')
     validation = block(pipeline, 'if let desktopSelection {')
     fixture = (here/'Recovery.swift').read_text()
-    pick = block(coordinator, 'private struct SourcePick').replace('private struct', 'struct', 1) + '\nvar pickSequence: UInt64 = 0\nvar pickArrivedWhileSwitching: SourcePick?\n'
+    pick = block(coordinator, 'enum PickOrigin') + '\n' + block(coordinator, 'private struct SourcePick').replace('private struct', 'struct', 1) + '\nvar pickSequence: UInt64 = 0\nvar settledPickSequence: UInt64 = 0\nvar pickArrivedWhileSwitching: SourcePick?\n'
+    pick += block(coordinator, 'private func cancelSourcePicks(').replace('private func', 'func', 1)
     fixture = fixture.replace('// SOURCE_PICK', pick)
     fixture = fixture.replace('// SELECT_PREFIX', prefix + """
         if source == .none { active = .none; return }

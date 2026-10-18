@@ -501,6 +501,52 @@ import CoreGraphics
         expect(automaticRefresh.active == .desktop && automaticRefresh.videoEpoch != nil,
                "automatic refresh refusal preserves owned recovery until validated refill")
 
+        let reconnect = make()
+        reconnect.active = .window(901)
+        let oldStart = PhaseBarrier()
+        let oldDelivery = PhaseBarrier()
+        reconnect.capture.startBarrier = oldStart
+        reconnect.replayBarrier = oldDelivery
+        let oldSwitch = Task { @MainActor in await reconnect.select(.window(902), bringForward:true) }
+        await oldStart.reached()
+        await reconnect.handlePick(.window(903))
+        reconnect.capture.startBarrier = nil
+        oldStart.resume()
+        await oldSwitch.value
+        await oldDelivery.reached()
+        reconnect.catalog.clientCount = 0
+        reconnect.cancelSourcePicks()
+        await reconnect.select(.none)
+        reconnect.catalog.clientCount = 1
+        await reconnect.handlePick(.desktop)
+        oldDelivery.resume()
+        await settle()
+        expect(reconnect.active == .desktop && !reconnect.committed.contains(.window(903)),
+               "last-client cancellation invalidates drained picks and permits fresh automatic Desktop")
+
+        let settled = make()
+        settled.active = .window(951)
+        await settled.handlePick(.window(952))
+        let settledSequence = settled.pickSequence
+        await settled.handlePick(.desktop)
+        expect(settled.active == .desktop && settled.pickSequence == settledSequence,
+               "automatic Desktop remains usable after a human window pick has fully settled")
+
+        let sameTarget = make()
+        sameTarget.active = .window(971)
+        let sameStart = PhaseBarrier()
+        sameTarget.capture.startBarrier = sameStart
+        let sameSwitch = Task { @MainActor in await sameTarget.select(.window(972), bringForward:true) }
+        await sameStart.reached()
+        await sameTarget.handlePick(.window(972))
+        sameTarget.capture.startBarrier = nil
+        sameStart.resume()
+        await sameSwitch.value
+        await settle()
+        await sameTarget.handlePick(.desktop)
+        expect(sameTarget.active == .desktop,
+               "queued human pick matching the committed source settles before a later automatic request")
+
         print("RECOVERY_CHECKS total=\(checks) failed=\(failures)")
         if failures != 0 { exit(1) }
     }

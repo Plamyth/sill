@@ -101,11 +101,11 @@ import CoreGraphics
         if pickDeliveries >= count { return }
         await withCheckedContinuation { pickObserver = (count, $0) }
     }
-    func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil) async {
+    func handlePick(_ source: StreamSource, intentSequence: UInt64? = nil, origin: PickOrigin? = nil) async {
         pickDeliveries += 1
         if let barrier = deliveryBarriers[pickDeliveries] { await barrier.suspend() }
         if pickDeliveries == 2, let replayBarrier { await replayBarrier.suspend() }
-        await productionHandlePick(source, intentSequence: intentSequence)
+        await productionHandlePick(source, intentSequence: intentSequence, origin: origin)
         if let (count, observer) = pickObserver, pickDeliveries >= count {
             pickObserver = nil
             observer.resume()
