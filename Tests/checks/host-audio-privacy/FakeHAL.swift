@@ -150,8 +150,8 @@ final class PrivacyFakeHAL: @unchecked Sendable {
         }
     }
     func safe() { for write in (try? snapshot.plan()) ?? [] { apply(write) } }
-    func fire(_ selector: AudioObjectPropertySelector) {
-        for (_, original, callback) in listeners where original.mSelector == selector {
+    func fire(_ selector: AudioObjectPropertySelector, object: AudioObjectID? = nil) {
+        for (id, original, callback) in listeners where original.mSelector == selector && (object == nil || object == id) {
             var property = original
             withUnsafePointer(to: &property) { callback(1, $0) }
         }
