@@ -501,7 +501,7 @@ struct StreamScreen: View {
     private var toolbarEnabled: Bool { UIDevice.current.userInterfaceIdiom == .pad }
     private var toolbarShown: Bool { !toolbarEnabled || toolbar.visible }
     private var toolbarPinned: Bool {
-        drawerOpen || settingsOpen || windowMenu != nil || scaleOpen || menuOpen || displayMenuOpen ||
+        !pictureReady || drawerOpen || settingsOpen || windowMenu != nil || scaleOpen || menuOpen || displayMenuOpen ||
         tour != nil || overlayShown || canvasOpen || dockOpen || client.audioRouteChooserPresented || voiceOverEnabled
     }
 
