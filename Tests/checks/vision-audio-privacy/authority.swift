@@ -1,0 +1,68 @@
+import Foundation
+
+func checkAuthority() {
+    typealias Authority = VisionRemoteAudioAuthority
+    let a = UUID(), b = UUID(), c = UUID()
+    var ca = ready(), cb = ready(), cc = ready()
+    cc.hostKey = "verified-mac-b"
+    var model = Authority()
+    model.update(a, context: ca); model.update(b, context: cb); model.update(c, context: cc)
+    model.setDesired(true, direction: .playback, hostKey: ca.hostKey!, preferred: a)
+    check(model.advance(cleanupReady: true) == nil && model.owner == a, "manual enable elects current window")
+    let old = model.request(a, direction: .playback)!
+    check(model.request(b, direction: .playback) == nil, "same Mac has one elected request owner")
+    check(model.request(c, direction: .playback) == nil, "different Mac has no inherited intent")
+    model.setDesired(true, direction: .microphone, hostKey: cb.hostKey!, preferred: a)
+    check(model.isCurrent(old), "microphone update does not clobber playback callback")
+    let microphone = model.request(a, direction: .microphone)!
+    model.setDesired(false, direction: .playback, hostKey: cb.hostKey!, preferred: b)
+    check(!model.isCurrent(old), "STOP in another window invalidates old playback work")
+    check(model.isCurrent(microphone), "playback STOP preserves microphone direction")
+    check(!model.intent.desired(.playback, hostKey: cb.hostKey), "STOP is shared by same verified Mac")
+    check(model.intent.desired(.microphone, hostKey: cb.hostKey), "direction race preserves independent true")
+    model.update(a, context: nil)
+    check(model.advance(cleanupReady: false) == a && model.owner == nil, "closed owner revokes before election")
+    check(!model.isCurrent(microphone), "closed owner callback is stale")
+    _ = model.advance(cleanupReady: false)
+    check(model.owner == nil && model.retiring == a, "physical cleanup barrier blocks survivor")
+    _ = model.advance(cleanupReady: true)
+    check(model.owner == b, "surviving same Mac window is elected after cleanup")
+    check(model.request(b, direction: .microphone) == nil, "handoff requires fresh host capabilities")
+    model.observedCatalog(b)
+    let successor = model.request(b, direction: .microphone)!
+    check(model.isCurrent(successor), "fresh recipient scope can request its own grant")
+    check(model.request(b, direction: .microphone) == nil, "one automatic attempt per authority and scope")
+    cb.scope = .init(connection: UUID(), window: cb.scope!.window, admission: cb.scope!.admission,
+        video: cb.scope!.video, foreground: cb.scope!.foreground, privacy: 1)
+    model.update(b, context: cb)
+    check(model.advance(cleanupReady: true) == b, "connection replacement revokes old owner first")
+    check(!model.isCurrent(successor), "old connection callback cannot authorize reconnect")
+    _ = model.advance(cleanupReady: true); model.observedCatalog(b)
+    check(model.request(b, direction: .microphone) != nil, "new connection gets one fresh attempt")
+    check(model.request(b, direction: .playback) == nil, "explicit STOP survives reconnect")
+    model.setDesired(true, direction: .playback, hostKey: cc.hostKey!, preferred: c)
+    check(model.advance(cleanupReady: false) == b, "different Mac manual enable transfers physical owner")
+    _ = model.advance(cleanupReady: false)
+    check(model.owner == nil, "different Mac also waits for physical cleanup")
+    _ = model.advance(cleanupReady: true); model.observedCatalog(c)
+    check(model.owner == c && model.request(c, direction: .playback) != nil, "different Mac owns independent preferences")
+    check(!model.intent.desired(.microphone, hostKey: cc.hostKey), "microphone preference never crosses verified Macs")
+    cc.protected = false; model.update(c, context: cc)
+    check(model.advance(cleanupReady: true) == c, "privacy withdrawal revokes actual owner")
+    _ = model.advance(cleanupReady: true)
+    check(model.owner == b, "only eligible protected survivor can be elected")
+    ca.foreground = false; cb.foreground = false
+    model.update(a, context: ca); model.update(b, context: cb)
+    _ = model.advance(cleanupReady: true); _ = model.advance(cleanupReady: true)
+    check(model.owner == nil, "inactive scenes cannot acquire physical ownership")
+    var again = Authority()
+    again.update(a, context: ready())
+    again.setDesired(true, direction: .playback, hostKey: "verified-mac-a", preferred: a)
+    _ = again.advance(cleanupReady: true)
+    again.setDesired(false, direction: .playback, hostKey: "verified-mac-a", preferred: b)
+    _ = again.advance(cleanupReady: true); _ = again.advance(cleanupReady: true)
+    again.setDesired(true, direction: .playback, hostKey: "verified-mac-a", preferred: a)
+    _ = again.advance(cleanupReady: true)
+    check(again.request(a, direction: .playback, manual: true) != nil,
+          "manual reenable on unchanged current source does not wait for an unsolicited catalog")
+}

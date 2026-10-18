@@ -60,7 +60,8 @@ for occupied in 0..<7 {
     switch occupied {
     case 0: client.connected = true
     case 1: client.connection = NWConnection()
-    case 2: client.reconnect = 1
+    case 2: client.reconnect = .init(macID: result.macID, bonjourName: nil, name: "fixture", lostAt: 0,
+                                   pathAtLoss: "fixture", remoteAllowed: true, rememberedDirect: false)
     case 3: client.pairing = .working
     case 4: client.remoteDial = RemoteConnector()
     case 5: client.pairingDial = RemoteConnector()
@@ -169,7 +170,8 @@ let away = savedStartup()
 let awayTimer = armRemote(away)
 check("no Bonjour cold start waits through discovery grace", away.remoteAttempts.isEmpty && away.sessionPins.isEmpty)
 awayTimer.performEvenIfCancelled()
-check("deadline hands the trusted saved ID to existing one-shot remote dial", away.remoteAttempts.count == 1 && away.remoteAttempts[0].0 == result.macID && away.remoteAttempts[0].1 == .launchArgument)
+check("deadline hands the trusted saved ID to automatic recovery", away.remoteAttempts.count == 1 && away.remoteAttempts[0].0 == result.macID && away.remoteAttempts[0].1 == .automatic)
+check("offline cold start retains a recovery intent", away.reconnect != nil)
 away.remoteDial = nil
 awayTimer.performEvenIfCancelled(); away.discoveryChanged(); away.armSavedMacAutoConnect()
 check("remote failure cannot rearm a cold-start attempt", away.remoteAttempts.count == 1 && away.identityCalls == 0 && away.sentMethods.isEmpty)
@@ -233,7 +235,8 @@ for occupied in 0..<8 {
     switch occupied {
     case 0: client.connected = true
     case 1: client.connection = NWConnection()
-    case 2: client.reconnect = 1
+    case 2: client.reconnect = .init(macID: result.macID, bonjourName: nil, name: "fixture", lostAt: 0,
+                                   pathAtLoss: "fixture", remoteAllowed: true, rememberedDirect: false)
     case 3: client.remoteDial = RemoteConnector()
     case 4: client.pairingDial = RemoteConnector()
     case 5: client.pairing = .working
@@ -279,6 +282,11 @@ let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(proofO
 check("receipt schema has only allowlisted fields", Set(encoded.keys) == Set(["schema", "build", "startupMode", "phase", "savedMacCount", "expectedMacMatched", "connected", "catalogReceived", "presentationReady", "inputReady", "reasonFixed"]))
 check("paired snapshot does not imply connection, presentation or input", encoded["connected"] as? Bool == false && encoded["presentationReady"] as? Bool == false && encoded["inputReady"] as? Bool == false)
 let owner = FixtureAppOwner()
+let concurrentOwner = FixtureAppOwner()
+let concurrentWindow = UUID()
+concurrentOwner.claim(concurrentWindow)
+concurrentOwner.start(foreground: true)
+let concurrentLease = concurrentOwner.windowLease!
 let firstWindow = UUID(), otherWindow = UUID()
 owner.claim(firstWindow)
 owner.start(foreground: false)
@@ -294,6 +302,8 @@ owner.release(otherWindow)
 check("another window cannot revoke ownership", owner.windowOwner == firstWindow)
 owner.release(firstWindow)
 check("owner release closes foreground input admission", owner.windowOwner == nil && !owner.input.allowed && !owner.foreground)
+check("closing one window preserves another window's live admission", concurrentOwner.owns(concurrentLease) && concurrentOwner.foreground)
+check("concurrent window starts its own transport once", concurrentOwner.client.calls == ["startRemote", "armSavedMacAutoConnect", "startBrowsing"])
 check("background after startup permanently cancels its pending bootstrap", owner.client.bootstrap.phase == .stopped(.foregroundRequired))
 owner.claim(otherWindow)
 check("new window rejects an old asynchronous owner's lease", !owner.owns(firstLease))
@@ -314,5 +324,44 @@ owner.setScenePhase(.background)
 check("owner distinguishes true scene background", owner.client.microphoneScenes.last?.1 == .background)
 owner.release(firstWindow)
 check("owner release passes nil microphone lease", owner.client.microphoneScenes.last?.0 == nil && owner.client.microphoneScenes.last?.1 == .background)
+check("trusted requested row keeps reconnecting beyond twelve attempts", DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: true, now: 1030, lifetime: .whileRequested).dial)
+check("trusted requested remote keeps reconnecting after two minutes", DiscoveryPolicy.remoteDialDue(
+    listed: false, lostAt: 0, networkLeftAt: nil, rememberedDirect: false,
+    pathChangedSinceLoss: false, now: 600, lifetime: .whileRequested).dial)
+check("persistent reconnect still pauses in the background", !DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: false, now: 1030, lifetime: .whileRequested).dial)
+check("persistent reconnect retains increasing retry spacing", DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: true, now: 1001, lifetime: .whileRequested).recheckAt == 1030)
+check("legacy bounded retry behavior remains", !DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: true, now: 1030).dial)
+var closingWindow: FixtureAppOwner? = FixtureAppOwner()
+let closedClient = closingWindow!.client
+weak var closedOwner = closingWindow
+closingWindow!.claim(UUID())
+closingWindow!.start(foreground: true)
+let closedConnection = NWConnection()
+closedConnection.stateUpdateHandler = { _ in }
+closedConnection.pathUpdateHandler = { _ in }
+closedConnection.viabilityUpdateHandler = { _ in }
+let closedBrowser = FixtureResource(), closedNearby = FixtureResource(), closedMonitor = FixtureResource()
+let closedRemoteDial = RemoteConnector(), closedPairingDial = RemoteConnector()
+closedClient.transport.connection = closedConnection
+closedClient.transport.networkBrowser = closedBrowser
+closedClient.transport.nearbyBrowser = closedNearby
+closedClient.transport.pathMonitor = closedMonitor
+closedClient.transport.remoteDial = closedRemoteDial
+closedClient.transport.pairingDial = closedPairingDial
+let closedRetry = DispatchWorkItem {}
+closedClient.transport.reconnectCheck = closedRetry
+closingWindow = nil
+DispatchQueue.main.drain()
+check("discarding a native window retires its own transport", closedOwner == nil && closedClient.retired)
+check("scene retirement cancels the actual connection and pending dials", closedConnection.cancelled && closedRemoteDial.cancelled && closedPairingDial.cancelled)
+check("scene retirement clears transport callbacks", closedConnection.stateUpdateHandler == nil && closedConnection.pathUpdateHandler == nil && closedConnection.viabilityUpdateHandler == nil)
+check("scene retirement cancels both browsers and the path monitor", closedBrowser.cancelled && closedNearby.cancelled && closedMonitor.cancelled)
+closedClient.transport.retireVisionWindow()
+check("scene retirement is idempotent", closedClient.transport.measurementStops == 1)
+check("discarding a different window does not retire a survivor", !concurrentOwner.client.retired && concurrentOwner.owns(concurrentLease))
 print("RESULT_ASSERTIONS \(assertions) FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)

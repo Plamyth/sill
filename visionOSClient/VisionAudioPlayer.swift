@@ -102,11 +102,16 @@ final class VisionAudioPlayer: @unchecked Sendable {
         guard let ticket else { return }
         let output = output
         output.revoke(ticket)
-        DispatchQueue.main.async {
+        let close = {
+            #if os(visionOS)
+            defer { DispatchQueue.main.async { VisionRemoteAudioStore.shared.refresh() } }
+            #endif
             if let error = output.close(ticket) {
                 VisionAudioProcess.log.error("Playback cleanup failed: \(error, privacy: .public)")
             }
         }
+        if Thread.isMainThread { close() }
+        else { DispatchQueue.main.async(execute: close) }
     }
 
     private static let secondsPerTick: Double = {

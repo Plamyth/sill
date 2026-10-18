@@ -9,7 +9,7 @@ final class VisionAppSession: ObservableObject {
     @Published private(set) var windowLease: VisionWindowLease?
     var windowOwner: UUID? { windowLease?.window }
     @Published private(set) var message = "Mac 연결을 준비하고 있습니다."
-    private let writer = VisionAutoConnectStatusWriter()
+    private let writer = VisionAutoConnectStatusWriter(identifier: UUID())
     private var observation: AnyCancellable?
     private var started = false
     private var foreground = false
@@ -39,6 +39,16 @@ final class VisionAppSession: ObservableObject {
             guard let self, self.started else { return }
             if self.client.localNetworkDenied { self.client.stopVisionCableBootstrap(.permissionRequired) }
             self.refresh()
+        }
+    }
+
+    deinit {
+        let client = client
+        let input = input
+        DispatchQueue.main.async {
+            input.allowed = false
+            input.releaseAll()
+            client.retireVisionWindow()
         }
     }
 

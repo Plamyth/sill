@@ -257,6 +257,9 @@ extension StreamClient {
     /// Watches the device's path, to tell "the Mac blinked" from "this device left home" after a
     /// loss (DiscoveryPolicy.remoteDialDue).
     func startPathMonitor() {
+        #if os(visionOS)
+        guard !visionWindowRetired else { return }
+        #endif
         guard pathMonitor == nil else { return }
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
@@ -569,6 +572,18 @@ extension StreamClient {
     /// The automatic reconnect after a session with this Mac ended on its own (§7.4). `afterQuit`:
     /// the session ended with goodbye `quit`, so the Mac's row that is going is left alone for
     /// DiscoveryPolicy.quitWait (`reconnectIfListed`); never for a notice.
+    #if os(visionOS)
+    @discardableResult
+    func beginVisionSavedMacReconnect(_ saved: SavedMac) -> Bool {
+        guard !visionWindowRetired, appInForeground, visionStartupForeground,
+              !connected, connection == nil, reconnect == nil,
+              let current = SavedMacs.automaticTarget(savedMacs, preferredID: saved.macID),
+              current.fingerprintData == saved.fingerprintData else { return false }
+        reconnect = lostReconnect(session: nil, saved: current, name: displayName(current.macID), remoteAllowed: true)
+        return true
+    }
+    #endif
+
     private func lostReconnect(session s: Session?, saved: SavedMac?, name: String, remoteAllowed: Bool,
                                afterQuit: Bool = false) -> Reconnect {
         let bonjour = s?.bonjourName ?? saved?.bonjourName
@@ -585,7 +600,8 @@ extension StreamClient {
     /// the Mac `networkGrace` ago or more (DiscoveryPolicy.reconnectRow: its row blinks off while its
     /// listener is replaced, and a Mac back at home can show on awdl0 first); then, for a saved
     /// Mac, a remote dial when DiscoveryPolicy.remoteDialDue says so, again after 2, 4, 8, then
-    /// every 10 s, and none 120 s after the loss. A row that appears while an automatic remote dial
+    /// every 10 s. Bounded lifetimes stop 120 s after the loss; requested trusted Vision sessions
+    /// remain eligible until cancelled. A row that appears while an automatic remote dial
     /// has no window list yet takes over from it; an established remote session is never moved.
     /// Unsaved Macs keep the old rule, by exact Bonjour name: two Macs can share a computer name
     /// ("MacBook Pro" and "MacBook Pro (2)"), and stripping the suffix would rejoin the wrong one.
@@ -601,6 +617,15 @@ extension StreamClient {
         reconnectCheck?.cancel()
         reconnectCheck = nil
         guard appInForeground, !connected, !moveUnderWay, var r = reconnect else { return false }
+        let lifetime: DiscoveryPolicy.ReconnectLifetime
+        #if os(visionOS)
+        if let id = r.macID, let saved = savedMac(id), saved.fingerprintData != nil,
+           saved.revoked != true, saved.newKey != true {
+            lifetime = .whileRequested
+        } else { lifetime = .bounded }
+        #else
+        lifetime = .bounded
+        #endif
         let now = ProcessInfo.processInfo.systemUptime
         let dialingAutomatically = remoteDial != nil || session?.why == .automatic
         guard connection == nil || dialingAutomatically else { return false }
@@ -636,8 +661,8 @@ extension StreamClient {
                 // Only a renewed record retires that row's old budget. Selection order is not evidence.
                 r.rowBudgets = r.rowBudgets.filter { $0.key.id != listing.id || $0.key == listing }
                 var budget = r.rowBudgets[listing] ?? Reconnect.RowBudget()
-                let line = DiscoveryPolicy.reconnectLine(mac: r.name, failed: budget.dials, direct: mac.direct)
-                let due = DiscoveryPolicy.redialRow(failed: budget.dials, lastDialAt: budget.lastDialAt, foreground: appInForeground, now: now)
+                let line = DiscoveryPolicy.reconnectLine(mac: r.name, failed: budget.dials, direct: mac.direct, lifetime: lifetime)
+                let due = DiscoveryPolicy.redialRow(failed: budget.dials, lastDialAt: budget.lastDialAt, foreground: appInForeground, now: now, lifetime: lifetime)
                 guard due.dial else {
                     // Listed, and not dialled now: the line for the dials so far ("…may be asleep…",
                     // "Stopped trying…"), and the next look. No remote dial while a row lists the Mac.
@@ -683,20 +708,21 @@ extension StreamClient {
         }
         var wake = choice.recheckAt
         if let id = r.macID, r.remoteAllowed, savedMac(id) != nil, !dialingAutomatically {
-            if now >= r.lostAt + DiscoveryPolicy.redialWindow {
+            if lifetime == .bounded, now >= r.lostAt + DiscoveryPolicy.redialWindow {
                 r.remoteAllowed = false
                 reconnect = r
                 status = "Stopped trying to reach \(r.name). Tap it to try again."
             } else {
                 let due = DiscoveryPolicy.remoteDialDue(listed: network != nil || direct != nil, lostAt: r.lostAt,
                                                         networkLeftAt: savedSightings.leftAt[id], rememberedDirect: r.rememberedDirect,
-                                                        pathChangedSinceLoss: pathSignature != r.pathAtLoss, now: now)
+                                                        pathChangedSinceLoss: pathSignature != r.pathAtLoss, now: now, lifetime: lifetime)
                 if due.dial, now >= r.nextRemoteAt {
                     dialSaved(id, why: .automatic)
                     return true
                 }
                 let next = due.dial ? r.nextRemoteAt : due.recheckAt
-                wake = [wake, next, r.lostAt + DiscoveryPolicy.redialWindow].compactMap { $0 }.min()
+                let expiry = lifetime == .bounded ? r.lostAt + DiscoveryPolicy.redialWindow : nil
+                wake = [wake, next, expiry].compactMap { $0 }.min()
             }
         }
         if let at = wake {

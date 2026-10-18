@@ -28,6 +28,7 @@ final class StreamClient {
     var microphoneStops = 0
     var choicesSent = 0
     var active = StreamSource.none
+    var visionAudioIntentAwaitingSource: StreamSource?
     func revokeVisionTextDrafts() { draftRevocations += 1 }
     func microphoneSourceWillChange() { microphoneStops += 1 }
     func afterVisionInputRelease(_ completion: @escaping (Bool) -> Void) { releaseCallbacks.append(completion) }

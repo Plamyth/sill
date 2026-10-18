@@ -85,11 +85,21 @@ final class VisionAudioHardware: @unchecked Sendable {
         }
     }
 
+    func revoke(owner: UUID) {
+        claims.withLock { state in
+            guard state.lease.owner == owner else { return }
+            state.generation = nil
+            state.revoked.formUnion(state.reserved.keys)
+            state.committed.removeAll()
+        }
+    }
+
     func cleanupProblem(owner: UUID) -> String? {
         claims.withLock { $0.lease.owner == owner ? $0.problem : nil }
     }
 
     var cleanupProblem: String? { claims.withLock { $0.problem } }
+    var isIdle: Bool { claims.withLock { $0.lease.owner == nil && $0.problem == nil } }
 
     func retryCleanup() {
         guard let owner = claims.withLock({ $0.problem == nil ? nil : $0.lease.owner }) else { return }
@@ -179,6 +189,9 @@ final class VisionAudioHardware: @unchecked Sendable {
                 _ = state.lease.release(owner)
             }
             Array(problemHandlers.values).forEach { $0(nil) }
+            #if os(visionOS)
+            DispatchQueue.main.async { VisionRemoteAudioStore.shared.refresh() }
+            #endif
             return nil
         } catch {
             quarantine(error.localizedDescription)

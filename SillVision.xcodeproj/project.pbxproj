@@ -802,6 +802,24 @@
 			<key>fileRef</key>
 			<string>068F9C25A6FEED66D8ECAD45</string>
 		</dict>
+		<key>C3822BB52DF2F7089A489F94</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionRemoteAudioAuthority.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>BB502B8112B3BB055EBEB8F8</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>C3822BB52DF2F7089A489F94</string>
+		</dict>
 		<key>0C6D16372AD58DE724D8AF23</key>
 		<dict>
 			<key>isa</key>
@@ -1220,6 +1238,7 @@
 				<string>D23FBB0746C0D214E1B85F0F</string>
 				<string>3CF9EEA601827A088871BACC</string>
 				<string>068F9C25A6FEED66D8ECAD45</string>
+				<string>C3822BB52DF2F7089A489F94</string>
 				<string>0C6D16372AD58DE724D8AF23</string>
 				<string>F1C4E8501A537755FC17C59B</string>
 				<string>AE15723CA61DB321A16717AE</string>
@@ -1296,6 +1315,7 @@
 				<string>6CC43938824CF9AE932BEF5B</string>
 				<string>EE2BDC3589587CDA3DA71281</string>
 				<string>374865A0798851D67E9FA6D6</string>
+				<string>BB502B8112B3BB055EBEB8F8</string>
 				<string>DB5D04E8041B0FC9FF58D895</string>
 				<string>A4C79F788B3CA044B6655ABE</string>
 				<string>BC739450E2D039089A4BACA9</string>

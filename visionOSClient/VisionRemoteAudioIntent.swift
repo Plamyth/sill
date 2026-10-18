@@ -49,6 +49,7 @@ struct VisionRemoteAudioIntent {
     }
     private(set) var desires: [String: Desire]
     private(set) var revision: UInt64 = 0
+    private var directionRevisions: [String: [Direction: UInt64]] = [:]
     private var connection: UUID?
     private var attempted: Set<Attempt> = []
     static let defaultsKey = "VisionRemoteAudioIntent.v1"
@@ -68,10 +69,15 @@ struct VisionRemoteAudioIntent {
     }
     mutating func setDesired(_ enabled: Bool, direction: Direction, hostKey: String) {
         revision &+= 1
+        directionRevisions[hostKey, default: [:]][direction] = revision
         if desires[hostKey] == nil, desires.count >= 64, let evicted = desires.keys.sorted().first {
             desires.removeValue(forKey: evicted)
+            directionRevisions.removeValue(forKey: evicted)
         }
         desires[hostKey, default: Desire()][direction] = enabled
+    }
+    func desiredRevision(_ direction: Direction, hostKey: String) -> UInt64 {
+        directionRevisions[hostKey]?[direction] ?? 0
     }
     mutating func consume(_ direction: Direction, scope: Scope?) {
         if let scope {
@@ -90,11 +96,11 @@ struct VisionRemoteAudioIntent {
                   (direction == .playback ? context.playbackAvailable :
                     (context.microphoneAvailable && context.recordPermissionGranted)),
                   attempted.insert(Attempt(scope: scope, direction: direction)).inserted else { return nil }
-            return Request(hostKey: hostKey, scope: scope, direction: direction, revision: revision)
+            return Request(hostKey: hostKey, scope: scope, direction: direction, revision: desiredRevision(direction, hostKey: hostKey))
         }
     }
     func isCurrent(_ request: Request, context: Context) -> Bool {
-        context.eligible && request.revision == revision && request.hostKey == context.hostKey &&
+        context.eligible && request.revision == desiredRevision(request.direction, hostKey: request.hostKey) && request.hostKey == context.hostKey &&
             request.scope == context.scope && desired(request.direction, hostKey: context.hostKey)
     }
 }
@@ -117,19 +123,19 @@ extension StreamClient {
         if visionAudioPrivacy?.protected != true { return "Mac 음소거 보호를 확인하지 못해 오디오를 중지했습니다." }
         return "Mac은 음소거를 유지합니다. 허용한 오디오는 같은 저장된 Mac에 다시 연결할 때만 자동 재개합니다."
     }
-    var visionPlaybackDesired: Bool { visionRemoteAudioIntent.desired(.playback, hostKey: visionAudioTrustedHostKey) }
-    var visionMicrophoneDesired: Bool { visionRemoteAudioIntent.desired(.microphone, hostKey: visionAudioTrustedHostKey) }
+    var visionPlaybackDesired: Bool { VisionRemoteAudioStore.shared.model.intent.desired(.playback, hostKey: visionAudioTrustedHostKey) }
+    var visionMicrophoneDesired: Bool { VisionRemoteAudioStore.shared.model.intent.desired(.microphone, hostKey: visionAudioTrustedHostKey) }
 
-    private var visionAudioIntentContext: VisionRemoteAudioIntent.Context {
+    var visionAudioIntentContext: VisionRemoteAudioIntent.Context {
         var context = VisionRemoteAudioIntent.Context()
         context.hostKey = visionAudioTrustedHostKey
-        context.connected = connected
+        context.connected = connected && !visionWindowRetired
         context.authenticated = context.hostKey != nil
         context.foreground = visionStartupForeground && appInForeground && microphoneAdmission.active &&
             visionDisplaySelection.foreground
-        context.inputBlocked = visionDisplaySelection.inputBlocked || visionAudioIntentModal
+        context.inputBlocked = visionDisplaySelection.inputBlocked || visionAudioIntentModal || visionAudioIntentWithdrawing
         context.privacyVersion = visionAudioPrivacy?.version
-        context.protected = visionAudioPrivacy?.protected == true
+        context.protected = visionAudioPrivacy?.protected == true && !visionAudioPrivacyBlocked
         context.cleanupReady = microphoneCleanupProblem == nil && visionAudio.cleanupProblem == nil &&
             VisionAudioSharedHardware.shared.cleanupProblem == nil
         context.playbackAvailable = visionAudio.presentation.canEnable
@@ -149,25 +155,15 @@ extension StreamClient {
     func setVisionAudioDesired(_ enabled: Bool, direction: VisionRemoteAudioIntent.Direction,
                                expectedScope: VisionAudioScope? = nil) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
-        let context = visionAudioIntentContext
-        if let key = context.hostKey {
-            visionRemoteAudioIntent.setDesired(enabled, direction: direction, hostKey: key)
-            visionRemoteAudioIntent.consume(direction, scope: context.scope)
-            visionRemoteAudioIntent.persist(.standard)
-        }
-        if !enabled {
-            if direction == .playback { visionAudio.stop() }
-            else { stopVisionMicrophoneActual() }
-            return true
-        }
-        guard context.eligible, !visionAudioPrivacyBlocked else { return false }
-        if direction == .playback { return visionAudio.enable(expectedScope: expectedScope) }
-        guard visionMicrophoneCanStart else { return false }
-        toggleVisionMicrophone()
-        return true
+        return VisionRemoteAudioStore.shared.setDesired(enabled, client: self,
+            direction: direction, expectedScope: expectedScope)
     }
 
     func observeVisionAudioPrivacy(_ list: WindowList) {
+        if visionAudioIntentAwaitingSource == nil || visionAudioIntentAwaitingSource == list.active {
+            visionAudioIntentWithdrawing = false
+            visionAudioIntentAwaitingSource = nil
+        }
         let wasProtected = visionAudioPrivacy?.version == 1 && visionAudioPrivacy?.protected == true
         visionAudioPrivacy = list.audioPrivacy
         if list.audioPrivacy?.version == 1, list.audioPrivacy?.protected == true {
@@ -177,8 +173,7 @@ extension StreamClient {
         if list.audioPrivacy?.protected == false ||
             (wasProtected && (list.audioPrivacy?.version != 1 || list.audioPrivacy?.protected != true)) {
             visionAudioPrivacyBlocked = true
-            visionAudio.stop()
-            stopVisionMicrophoneActual()
+            VisionRemoteAudioStore.shared.withdrawPrivacy(self)
         }
     }
 
@@ -193,11 +188,13 @@ extension StreamClient {
                 visionAudioIntentSuspended = true
                 visionAudioIntentForeground = UUID()
                 visionAudioIntentNeedsMicrophoneCatalog = true
+                VisionAudioSharedHardware.shared.revoke(owner: visionAudioOwnerID)
                 visionAudio.stop()
                 if microphonePolicy.phase != .authorizing || microphoneAdmission.scene != .inactive {
                     stopVisionMicrophoneActual()
                 }
             }
+            VisionRemoteAudioStore.shared.refresh()
             return
         }
         visionAudioIntentSuspended = false
@@ -208,13 +205,7 @@ extension StreamClient {
             if microphonePolicy.scope == nil { microphoneObserve(list, from: peer) }
             context = visionAudioIntentContext
         }
-        let requests = visionRemoteAudioIntent.requests(context)
-        for request in requests where visionRemoteAudioIntent.isCurrent(request, context: visionAudioIntentContext) {
-            switch request.direction {
-            case .playback: _ = visionAudio.enable()
-            case .microphone: startVisionMicrophoneAutomatically()
-            }
-        }
+        VisionRemoteAudioStore.shared.refresh()
     }
 }
 #endif

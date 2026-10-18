@@ -38,6 +38,14 @@ def vision(source):
 
 
 def emit(root, output):
+    view = (root / 'visionOSClient/SillVisionApp.swift').read_text()
+    app = block(view, 'struct SillVisionApp: App')
+    window = block(view, 'private struct SillVisionWindow: View')
+    if '@StateObject private var session = VisionAppSession()' in app or \
+       '@StateObject private var session = VisionAppSession()' not in window:
+        raise AssertionError('Each native window must own its session, stream view and input')
+    if 'openWindow(id: "mac")' not in view or 'WindowGroup(id: "mac")' not in app:
+        raise AssertionError('Native concurrent Mac window action missing')
     stream = (root / 'iOSClient/StreamClient.swift').read_text()
     home = (root / 'iOSClient/StreamClient+Home.swift').read_text()
     remote = (root / 'iOSClient/StreamClient+Remote.swift').read_text()
@@ -59,6 +67,10 @@ def emit(root, output):
                    'func rememberAuthenticatedMac(', 'private func trySavedMacAutoConnect(',
                    'private func tryVisionSavedMacAutoConnect(', 'func homeDecision(', 'func wiredDial(']:
         pieces[marker] = vision(block(stream, marker))
+    for marker in ['func retireVisionWindow()', 'func disconnect()']:
+        pieces[marker] = vision(block(stream, marker))
+    for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()', 'func cancelRemoteDial()']:
+        pieces[marker] = vision(block(remote, marker))
     adapter = (root / 'visionOSClient/StreamClient+VisionAutoConnect.swift').read_text()
     pieces['considerVisionCableBootstrap'] = block(adapter, 'func considerVisionCableBootstrap(')
     pieces['stopVisionCableBootstrap'] = block(adapter, 'func stopVisionCableBootstrap(')
@@ -67,6 +79,8 @@ def emit(root, output):
     owner = (root / 'visionOSClient/VisionAppSession.swift').read_text()
     owner_methods = '\n'.join(block(owner, marker) for marker in ['func claim(', 'func owns(', 'func release(',
         'func setScenePhase(', 'func suspendPresentation(', 'func start(', 'func setForeground('])
+    if 'deinit {' in owner:
+        owner_methods += '\n' + block(owner, 'deinit {')
     body = body.replace('/* REAL_OWNER_METHODS */', owner_methods)
     for marker in ['private func dialTarget(', 'private func ended(']:
         pieces[marker] = vision(block(home, marker))
@@ -75,6 +89,7 @@ def emit(root, output):
     body = body.replace('/* REAL_DIAL_TYPES */', target_types)
     body = body.replace('/* REAL_ROW */', block(stream, 'struct FoundMac:'))
     body = body.replace('/* REAL_ASK */', block(home, 'struct HomeAsk:'))
+    body = body.replace('/* REAL_RECONNECT */', block(stream, 'struct Reconnect {'))
     body += '\n' + (root / 'Tests/checks/vision-autoconnect/scenarios.swift').read_text()
     (output / 'main.swift').write_text(body)
     primitive_markers = {

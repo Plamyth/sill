@@ -3,17 +3,16 @@ import StreamProtocol
 
 @main
 struct SillVisionApp: App {
-    @StateObject private var session = VisionAppSession()
     var body: some Scene {
-        WindowGroup {
-            SillVisionWindow(session: session)
+        WindowGroup(id: "mac") {
+            SillVisionWindow()
         }
         .defaultSize(width: 1280, height: 800)
     }
 }
 
 private struct SillVisionWindow: View {
-    @ObservedObject var session: VisionAppSession
+    @StateObject private var session = VisionAppSession()
     @State private var window = UUID()
 
     var body: some View {
@@ -23,9 +22,7 @@ private struct SillVisionWindow: View {
             }
             else {
                 VStack(spacing: 16) {
-                    Text("Mac 화면은 한 번에 하나의 CCR Sill 창에서 사용할 수 있습니다.")
-                    Button("이 창에서 연결 계속") { session.claim(window) }
-                        .disabled(session.windowOwner != nil)
+                    ProgressView("Mac 연결을 준비하고 있습니다.")
                 }.padding(30)
             }
         }
@@ -39,6 +36,7 @@ struct SillVisionWorkspace: View {
     let lease: VisionWindowLease
     @ObservedObject private var client: StreamClient
     @Environment(\.scenePhase) private var phase
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var input: VisionInputSession
     @State private var mode = VisionPointer.Mode.pointer
     @State private var keyboardShown = false
@@ -72,6 +70,8 @@ struct SillVisionWorkspace: View {
             HStack {
                 Text(client.macName.isEmpty ? "CCR Sill" : client.macName).font(.headline)
                 Spacer()
+                Button("Mac 창 추가") { openWindow(id: "mac") }
+                    .accessibilityHint("현재 창을 유지하고 Mac 화면을 사용할 새 창을 엽니다.")
                 Text(session.message).font(.caption).lineLimit(2)
                 if client.connected {
                     Menu("오디오") {

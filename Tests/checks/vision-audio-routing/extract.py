@@ -19,7 +19,7 @@ def fixture(root):
     view = (root / 'visionOSClient/SillVisionApp.swift').read_text()
     lease = (root / 'visionOSClient/VisionCableBootstrap.swift').read_text()
     input_source = (root / 'visionOSClient/VisionInputSession.swift').read_text()
-    fields = client[client.index('    private var visionMacAudioConnectionEpoch'):client.index('    let visionAudioOwnerID')]
+    fields = client[client.index('    private var visionMacAudioConnectionEpoch'):client.index('    @Published var visionAudioPrivacy:')]
     adapter = block(client, 'extension StreamClient {\n    func updateVisionMacAudioRoutes(')
     pieces = {'fields': fields, 'adapter': adapter, 'lease': block(lease, 'struct VisionWindowLease:')}
     before = 'authorize: { [weak self] scope in self?.visionMacAudioScopeIsCurrent(scope) == true })'

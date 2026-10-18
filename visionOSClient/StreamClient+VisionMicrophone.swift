@@ -76,8 +76,14 @@ extension StreamClient {
     }
 
     func microphoneSourceWillChange() {
+        #if os(visionOS)
+        visionAudioIntentWithdrawing = true
+        #endif
         invalidateMicrophoneAuthorization()
         applyMicrophone(microphonePolicy.sourceWillChange())
+        #if os(visionOS)
+        VisionRemoteAudioStore.shared.refresh()
+        #endif
     }
 
     func microphoneBackgrounded() {
@@ -103,6 +109,9 @@ extension StreamClient {
             applyMicrophone(microphonePolicy.inactive())
         }
         if scene == .active { consumeMicrophoneAuthorization() }
+        #if os(visionOS)
+        VisionRemoteAudioStore.shared.refresh()
+        #endif
     }
 
     func microphoneObserve(_ list: WindowList, from peer: NWConnection) {
@@ -149,6 +158,12 @@ extension StreamClient {
             return
         }
         microphoneAuthorization = nil
+        #if os(visionOS)
+        guard VisionRemoteAudioStore.shared.permits(self, direction: .microphone) else {
+            applyMicrophone(microphonePolicy.backgrounded())
+            return
+        }
+        #endif
         applyMicrophone(microphonePolicy.permissionResolved(allowed, requestID: authorization.requestID,
             scope: authorization.scope, from: ObjectIdentifier(authorization.connection),
             microphoneAvailable: microphoneCapture == nil && microphoneCleanupProblem == nil &&
@@ -174,6 +189,12 @@ extension StreamClient {
                 guard microphoneAuthorization == nil, microphoneAdmission.active,
                       let lease = microphoneAdmission.lease, let c = connection,
                       ObjectIdentifier(c) == peer else { continue }
+                #if os(visionOS)
+                if !automatic, !VisionRemoteAudioStore.shared.beginPermission(visionAudioOwnerID) {
+                    applyMicrophone(microphonePolicy.backgrounded())
+                    continue
+                }
+                #endif
                 microphoneAuthorization = VisionMicrophoneAuthorization(connection: c, lease: lease,
                     scope: scope, requestID: request)
                 #if os(visionOS)
@@ -183,8 +204,14 @@ extension StreamClient {
                     continue
                 }
                 #endif
+                #if os(visionOS)
+                let permissionOwner = visionAudioOwnerID
+                #endif
                 requestVisionMicrophonePermission { [weak self] allowed in
                     DispatchQueue.main.async {
+                        #if os(visionOS)
+                        defer { VisionRemoteAudioStore.shared.endPermission(permissionOwner) }
+                        #endif
                         guard let self, var authorization = self.microphoneAuthorization,
                               authorization.connection === c, authorization.requestID == request else { return }
                         switch authorization.result {
@@ -220,6 +247,12 @@ extension StreamClient {
                     }
                 }
             case .beginCapture(let peer, let scope, let request, let grant):
+                #if os(visionOS)
+                guard VisionRemoteAudioStore.shared.permits(self, direction: .microphone) else {
+                    applyMicrophone(microphonePolicy.backgrounded())
+                    continue
+                }
+                #endif
                 guard microphoneAdmission.active,
                       let lease = microphoneAdmission.lease,
                       let c = connection, ObjectIdentifier(c) == peer,
@@ -234,6 +267,9 @@ extension StreamClient {
                 let capture = VisionMicrophoneCapture(hardware: VisionAudioSharedHardware.shared,
                     owner: visionAudioOwnerID, permitted: { [weak self] in
                         guard let self else { return false }
+                        #if os(visionOS)
+                        guard VisionRemoteAudioStore.shared.permits(self, direction: .microphone) else { return false }
+                        #endif
                         return self.microphoneAdmission.active && self.microphoneAdmission.lease == lease &&
                             self.microphoneCaptureToken == captureID && self.connection === c &&
                             self.microphonePolicy.scope == scope && self.microphonePolicy.startRequestID == request &&

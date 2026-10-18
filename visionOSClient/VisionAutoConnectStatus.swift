@@ -21,13 +21,18 @@ struct VisionAutoConnectStatus: Codable, Equatable {
 
 final class VisionAutoConnectStatusWriter {
     private var previous: VisionAutoConnectStatus?
+    private let filename: String
+
+    init(identifier: UUID? = nil) {
+        filename = identifier.map { "CCRAutoConnectStatus-\($0.uuidString).json" } ?? "CCRAutoConnectStatus.json"
+    }
 
     func write(_ snapshot: VisionAutoConnectStatus) {
         guard snapshot != previous,
               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
               let data = try? JSONEncoder().encode(snapshot) else { return }
-        let url = documents.appendingPathComponent("CCRAutoConnectStatus.json")
-        let temporary = documents.appendingPathComponent("CCRAutoConnectStatus.json.tmp")
+        let url = documents.appendingPathComponent(filename)
+        let temporary = documents.appendingPathComponent(filename + ".tmp")
         let manager = FileManager.default
         do {
             if manager.fileExists(atPath: temporary.path) { try manager.removeItem(at: temporary) }

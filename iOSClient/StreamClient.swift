@@ -870,6 +870,7 @@ final class StreamClient: ObservableObject {
     var visionDisplaySubmission: SessionLink.Submission?
     var visionDisplayDeadline: DispatchWorkItem?
     var visionDisplayLink: SessionLink { link }
+    var visionWindowRetired = false
     var visionStartupStarted = false
     var visionStartupForeground = false
     @Published var visionCableBootstrap = VisionCableBootstrap<FoundMac>(launch: .ordinary)
@@ -1077,13 +1078,14 @@ final class StreamClient: ObservableObject {
     lazy var visionMacAudioRoutes = VisionMacAudioController(transport: visionMacAudioTransport,
         authorize: { [weak self] scope in self?.visionMacAudioScopeIsCurrent(scope) == true })
 
-    @Published var visionRemoteAudioIntent = VisionRemoteAudioIntent.load(.standard)
     @Published var visionAudioPrivacy: AudioPrivacyState?
     var visionAudioPrivacyBlocked = false
     var visionAudioPrivacyRevision: UInt64 = 0
     var visionAudioIntentConnection = UUID()
     var visionAudioIntentForeground = UUID()
     var visionAudioIntentSuspended = true
+    var visionAudioIntentWithdrawing = false
+    var visionAudioIntentAwaitingSource: StreamSource?
     var visionAudioIntentModal = false
     var visionAudioIntentCatalog: WindowList?
     var visionAudioIntentNeedsMicrophoneCatalog = true
@@ -1101,7 +1103,8 @@ final class StreamClient: ObservableObject {
     private let visionAudioRoute = VisionAudioRoute()
     lazy var visionAudio = VisionAudioController(send: { [weak self] control in
         DispatchQueue.main.async { [weak self] in
-            guard let self, !control.enabled || !self.visionDisplaySelection.inputBlocked else { return }
+            guard let self, !control.enabled || (!self.visionDisplaySelection.inputBlocked &&
+                VisionRemoteAudioStore.shared.permits(self, direction: .playback)) else { return }
             self.sendVisionAudio(control)
         }
     }, player: VisionAudioPlayer(ownerID: visionAudioOwnerID))
@@ -1119,6 +1122,7 @@ final class StreamClient: ObservableObject {
         visionAudio.stop()
         visionAudioRoute.clear()
         visionAudio.update(.disconnected)
+        VisionRemoteAudioStore.shared.refresh()
     }
 
     private func sendVisionAudio(_ control: VisionAudioControl) {
@@ -1205,6 +1209,10 @@ final class StreamClient: ObservableObject {
     /// DEBUG: saved Macs seeded for this run by `-Sill.savedMacs '<JSON>'`; nothing is written back.
     private(set) var savedMacsSeeded = false
 
+    private var lifecycleObservers: [NSObjectProtocol] = []
+
+    deinit { lifecycleObservers.forEach(NotificationCenter.default.removeObserver) }
+
     init() {
         // The hello is built here, on the main thread: it reads UIDevice (the device's name), which
         // the network queue, where connections become ready and send it, must not be first to touch.
@@ -1233,24 +1241,27 @@ final class StreamClient: ObservableObject {
         #endif
         #if os(visionOS)
         _ = visionAudio
-        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        VisionRemoteAudioStore.shared.register(self)
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: VisionRemoteAudioStore.changed,
+            object: nil, queue: .main) { [weak self] _ in self?.objectWillChange.send() })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
             self?.cameForward()
-        }
-        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.wentToBackground(preservingMicrophoneAuthorization: true)
-        }
-        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.wentToBackground()
-        }
+        })
         #else
-        NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
             self?.cameForward()
-        }
-        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.wentToBackground()
-        }
+        })
         #endif
     }
 
@@ -1368,12 +1379,13 @@ final class StreamClient: ObservableObject {
         guard row != nil || token == target.token else { return }
         stopSavedMacAutoConnect()
         startupAutoConnection = .attempted
+        guard beginVisionSavedMacReconnect(saved) else { return }
         if let row {
             if !dialRow(row, macID: target.macID, trust: .saved(pin: target.pin), tagNamed: true, tap: false) {
                 status = "저장된 기기 키를 사용할 수 없습니다. Vision Pro의 잠금을 해제한 뒤 앱을 다시 열어 주세요."
             }
         } else {
-            dialSaved(target.macID, why: .launchArgument)
+            dialSaved(target.macID, why: .automatic)
         }
     }
     #endif
@@ -1442,6 +1454,10 @@ final class StreamClient: ObservableObject {
     /// a listed row is dialled at once. Only after the app was seen going to the background. Main
     /// thread.
     private func cameForward() {
+        #if os(visionOS)
+        defer { VisionRemoteAudioStore.shared.refresh() }
+        guard !visionWindowRetired else { return }
+        #endif
         let wasInBackground = !appInForeground
         appInForeground = true
         #if os(visionOS)
@@ -1462,6 +1478,7 @@ final class StreamClient: ObservableObject {
 
     private func wentToBackground(preservingMicrophoneAuthorization: Bool = false) {
         #if os(visionOS)
+        defer { VisionRemoteAudioStore.shared.refresh() }
         admitVisionDisplays(lease: visionDisplaySelection.lease, foreground: false)
         if preservingMicrophoneAuthorization { microphoneApplicationActive(false) }
         else { microphoneBackgrounded() }
@@ -3541,6 +3558,45 @@ final class StreamClient: ObservableObject {
         }
     }
 
+    #if os(visionOS)
+    func retireVisionWindow() {
+        guard !visionWindowRetired else { return }
+        visionWindowRetired = true
+        lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+        lifecycleObservers.removeAll()
+        VisionRemoteAudioStore.shared.retire(self)
+        appInForeground = false
+        visionStartupForeground = false
+        browsing = false
+        admitVisionDisplays(lease: nil, foreground: false)
+        connection?.stateUpdateHandler = nil
+        connection?.pathUpdateHandler = nil
+        connection?.viabilityUpdateHandler = nil
+        disconnect()
+        cancelPairing()
+        for work in [reconnectCheck, discoveryRecheck, afterPairingWatch,
+                     networkLife.rebuildWork, networkLife.settleWork,
+                     nearbyLife.rebuildWork, nearbyLife.settleWork,
+                     settingsExpiry, menusExpiry, lingerRender] {
+            work?.cancel()
+        }
+        reconnectCheck = nil
+        discoveryRecheck = nil
+        afterPairingWatch = nil
+        networkLife.rebuildWork = nil
+        networkLife.settleWork = nil
+        nearbyLife.rebuildWork = nil
+        nearbyLife.settleWork = nil
+        networkBrowser?.cancel()
+        networkBrowser = nil
+        nearbyBrowser?.cancel()
+        nearbyBrowser = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        queue.async { self.stopMeasuring() }
+    }
+    #endif
+
     /// The user chose to leave. No reconnect.
     func disconnect() {
         #if os(visionOS)
@@ -3695,6 +3751,7 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         if source == .desktop && visionDisplaySelection.blocksDesktopRequest { return }
         guard !visionDisplaySelection.inputBlocked else { return }
+        visionAudioIntentAwaitingSource = source
         microphoneSourceWillChange()
         visionAudio.stop()
         #else
@@ -4207,7 +4264,9 @@ final class StreamClient: ObservableObject {
             let from: NWConnection? = peer
             #if os(visionOS)
             guard connection === peer else { return }
-            if list.audioPrivacy?.protected == false {
+            if list.audioPrivacy?.protected == false || visionWireSource != list.active ||
+                visionWireBinding?.binding.epoch?.id != list.videoEpoch?.id {
+                VisionAudioSharedHardware.shared.revoke(owner: visionAudioOwnerID)
                 visionAudio.stop()
                 microphoneFrames.close()
             }
@@ -4224,6 +4283,7 @@ final class StreamClient: ObservableObject {
                 self.microphoneObserve(list, from: peer)
                 self.visionAudioIntentCatalog = list
                 self.observeVisionAudioPrivacy(list)
+                VisionRemoteAudioStore.shared.observedCatalog(self)
                 #endif
                 #if !os(visionOS)
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))

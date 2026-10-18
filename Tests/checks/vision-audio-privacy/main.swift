@@ -81,4 +81,5 @@ check(loaded.desires == model.desires, "desired map survives process recreation 
 var bounded = VisionRemoteAudioIntent()
 for index in 0..<70 { bounded.setDesired(true, direction: .playback, hostKey: "mac-\(index)") }
 check(bounded.desires.count == 64, "persistent map is bounded")
+checkAuthority()
 print("RESULT_ASSERTIONS \(checks)")
