@@ -114,6 +114,36 @@ import Foundation
         ingress.submit { events.append(2) }
         await settle()
         expect(events == [1,2], "single ingress delivers synchronous admission in network event order")
+        let stable = AdmissionHost(); stable.join(peer); stable.join(otherPeer)
+        stable.catalog.infos = [WindowInfo(id: 1, title: "stable", appName: "A", bundleID: "app.a", width: 640, height: 480)]
+        stable.launch("app.a", peer: peer)
+        NSWorkspace.shared.completions.last?(1, nil)
+        await settle()
+        expect(stable.pendingLaunch == nil && stable.settledPickSequence == stable.pickSequence,
+               "successful unchanged inventory settles original launch through workspace completion and refresh")
+        expect(stable.server.committed == [.window(1)] && stable.inputFence.contains(ObjectIdentifier(otherPeer)),
+               "unchanged launch keeps other peer admitted and restores global settlement input guard")
+        let noWindow = AdmissionHost(); noWindow.join(peer); noWindow.join(otherPeer)
+        noWindow.launch("app.empty", peer: peer)
+        NSWorkspace.shared.completions.last?(1, nil); await settle()
+        expect(noWindow.pendingLaunch != nil, "no-window launch retains original admission before deadline")
+        noWindow.launchExpired()
+        expect(noWindow.pendingLaunch == nil && noWindow.settledPickSequence == noWindow.pickSequence,
+               "no-window deadline releases global input settlement without another admission")
+        let kept = AdmissionHost(); kept.join(peer); kept.join(otherPeer)
+        kept.receive(.init(source: .window(1), origin: .human), peer: peer); await settle()
+        let settledAdmission = kept.sourcePublicationAdmission
+        let settledRevision = kept.selectionRevision
+        kept.departed(peer)
+        var published = false; settledAdmission.publish { published = true }
+        expect(published && kept.selectionRevision == settledRevision && kept.active == .window(1),
+               "departed origin does not blanket-revoke settled shared stream")
+        let staleStop = AdmissionHost(); staleStop.join(peer); staleStop.active = .window(1)
+        staleStop.catalog.clientCount = 0; staleStop.cancelSourcePicksForTest()
+        let emptySequence = staleStop.pickSequence
+        staleStop.catalog.clientCount = 1; staleStop.join(otherPeer)
+        await staleStop.stopEmpty(sequence: emptySequence)
+        expect(staleStop.active == .window(1), "buffered new-client count prevents deferred zero-client stop")
         print("SOURCE_REQUEST_HOST_CHECKS total=\(checks) failed=\(failures)")
         if failures > 0 { exit(1) }
     }

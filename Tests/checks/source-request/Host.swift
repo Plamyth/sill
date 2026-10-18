@@ -54,6 +54,7 @@ final class HEVCEncoder {
     var display: Display? { displayInventory.current.map { Display(displayID: $0.displayID) } }
     var refreshBarrier: Barrier?
     var refreshResult = true
+    var infos: [WindowInfo] = []
     var ownApplication: App? = App()
     func refreshWindows() async -> Bool { if let refreshBarrier { await refreshBarrier.suspend() }; return refreshResult }
     func selectDisplay(_ selection: DisplaySelection) -> Bool { displayInventory.select(selection) }
@@ -115,8 +116,9 @@ struct HostStatusSnapshot {
     final class OpenConfiguration { var activates = true }
     static let shared = NSWorkspace()
     var opened: [URL] = []
+    var completions: [(Int?, Error?) -> Void] = []
     func urlForApplication(withBundleIdentifier id: String) -> URL? { id == "missing" ? nil : URL(fileURLWithPath: "/" + id) }
-    func openApplication(at url: URL, configuration: OpenConfiguration, completion: @escaping (Int?, Error?) -> Void) { opened.append(url) }
+    func openApplication(at url: URL, configuration: OpenConfiguration, completion: @escaping (Int?, Error?) -> Void) { opened.append(url); completions.append(completion) }
 }
 @MainActor final class AdmissionHost {
     // HOST_TYPES
@@ -200,13 +202,19 @@ struct HostStatusSnapshot {
     struct Quality { init(bitrate: Int, fps: Int, captureScale: Double) {} }
     enum LinkJudge { typealias Quality = AdmissionHost.Quality }
     func judgeLinks(_ quality: Quality?) {}
-    func broadcastList() {}
+    func broadcastList(admission: SourcePublicationAdmission? = nil) {}
     func listMessage() -> StreamMessage { .init(kind: .windowList, timestamp: 0, isKeyframe: false, payload: Data()) }
-    func sendMicrophoneCatalog(to peer: NSObject) {}
+    func sendMicrophoneCatalog(to peer: NSObject, admission: SourcePublicationAdmission? = nil) {}
     func recoverOwnedDesktop() async {}
     func applyViewportToActiveWindow() async {}
     func applyPending() async {}
     func encoderHung(_ encoder: HEVCEncoder) async {}
     func revokeRemoteAudio(reason: String) async { if let audioBarrier { await audioBarrier.suspend() }; audioChanges += 1 }
+    func cancelSourcePicksForTest() { cancelSourcePicks() }
+    func launchExpired() { expirePendingLaunch(sequence: pickSequence) }
+    func departed(_ peer: NSObject) {
+        let id = ObjectIdentifier(peer); inputFence.leave(id); sourcePeerDeparted(id); connections[id] = nil
+    }
+    func stopEmpty(sequence: UInt64) async { await stopIfStillEmpty(sequence: sequence) }
     // HOST_METHODS
 }

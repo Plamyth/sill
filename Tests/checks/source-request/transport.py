@@ -3,7 +3,8 @@ import subprocess
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--suite', choices=['client', 'host', 'reconnect', 'queue'], required=True)
+parser.add_argument('--suite', choices=['client', 'host', 'reconnect', 'queue', 'publication'], required=True)
+parser.add_argument('--preflight', action='store_true')
 parser.add_argument('--output', required=True)
 args = parser.parse_args()
 ROOT = Path(__file__).resolve().parents[3]
@@ -16,7 +17,7 @@ def augment_review(inputs, block, root, here):
         original=(root/'Sources/SillHost/StreamServer.swift').read_text()
         methods='\n'.join(block(original,s) for s in ['func resetForNewStream()', 'func prepareVideo(', 'func commitVideo('])
         server='''final class WireConnection { enum State { case ready }; var state = State.ready }
-final class VideoClient { var needsKeyframe=false; var awaitingFirstKeyframe=false; var catalogSent=true; let connection=WireConnection(); var latestCatalog: StreamMessage?; var microphoneCatalogGrant: Int? }
+final class VideoClient { var needsKeyframe=false; var awaitingFirstKeyframe=false; var catalogSent=true; let connection=WireConnection(); var latestCatalog: StreamMessage?; var catalogAdmission: SourcePublicationAdmission?; var microphoneCatalogGrant: Int? }
 final class Server {
     let queue=DispatchQueue(label:"review.actual-server")
     var videoAdmission=VideoEpochAdmission.stopped
@@ -124,6 +125,23 @@ def augment(inputs, block, root, here):
       await settle()
       print("COUNTEREXAMPLE reconnect hostRevision=\\(host.selectionRevision) ticketRevision=\\(String(describing:requests.first?.selectionRevision)) active=\\(host.active) committed=\\(host.server.committed)")
       expect(host.server.committed == [.window(1001)],"genuine unfenced reconnect must restore remembered window across host zero-client cancellation")
+      let delayed = Client(); delayed.active = .window(1001)
+      let replacement = NWConnection(); delayed.moveWithoutFence(to: replacement)
+      var first = list; first.active = .window(1001)
+      delayed.deliverIdleCatalog(first)
+      expect(delayed.resumeSource == .window(1001) && replacement.packets.isEmpty,
+             "first nonidle catalog retains current lifecycle opportunity without submission")
+      first.active = .none; delayed.deliverIdleCatalog(first)
+      let delayedRequests = replacement.packets.compactMap { Wire.decode(SourceRequest.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+      expect(delayedRequests.count == 1 && delayedRequests[0].source == .window(1001),
+             "later idle catalog at same lifecycle revision restores remembered window exactly once")
+      let superseded = Client(); superseded.active = .window(1001)
+      let changedPeer = NWConnection(); superseded.moveWithoutFence(to: changedPeer)
+      first.active = .window(1001); superseded.deliverIdleCatalog(first)
+      first.active = .none; first.selectionRevision = "new-human-intent"
+      superseded.deliverIdleCatalog(first)
+      expect(changedPeer.packets.isEmpty && superseded.resumeOpportunity == nil,
+             "nonidle opportunity cannot rebase after newer host intent")
       let before=new.packets.count
       list.selectionRevision=host.selectionRevision
       client.deliverIdleCatalog(list)
@@ -172,6 +190,16 @@ def augment(inputs, block, root, here):
         }
        }
        '''
+    elif mode == 'publication':
+        product = (root/'Sources/SillHost/StreamServer.swift').read_text()
+        names = ['func resetForNewStream()', 'func prepareVideo(', 'func commitVideo(', 'func sendCatalog(',
+                 'private func replayCatalog(', 'private func send(_ raw:']
+        methods = '\n'.join(block(product, name).replace('private ', '') for name in names)
+        fixture = (here/'Publication.swift').read_text().replace('// PUBLICATION_METHODS', methods)
+        keep = ['Switcher.swift', 'StreamMessage.swift', 'AudioRouting.swift', 'SourcePublicationAdmission.swift']
+        selected = {name: inputs[name] for name in keep}
+        inputs.clear(); inputs.update(selected)
+        inputs['main.swift'] = fixture
     snapshot = OUT / 'inputs'
     snapshot.mkdir()
     for name, value in inputs.items():
@@ -196,5 +224,5 @@ code = code.replace('paths = [source,', "paths = [root/'iOSClient/SessionLink.sw
 code = code.replace("runner = runner.replace(\"not name.endswith('.swift')\"", "runner = runner.replace('stdout=subprocess.DEVNULL, timeout=20', 'stdout=subprocess.DEVNULL, timeout=60')\nrunner = runner.replace(\"not name.endswith('.swift')\"", 1)
 sys_suite = 'client' if SUITE == 'client' else 'host'
 import sys
-sys.argv = [str(program), '--suite', sys_suite, '--output', str(OUT)]
+sys.argv = [str(program), '--suite', sys_suite, '--output', str(OUT)] + (['--preflight'] if args.preflight else [])
 exec(compile(code, str(program), 'exec'), {'__file__': str(program), 'augment': augment})

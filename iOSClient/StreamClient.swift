@@ -714,6 +714,17 @@ final class StreamClient: ObservableObject {
         let intent: UInt64
         let peer: ObjectIdentifier
         let host: String?
+        enum Observation { case awaitingCatalog, catalog(String?) }
+        let observation: Observation
+        func accepts(_ revision: String?) -> Bool {
+            switch observation {
+            case .awaitingCatalog: return true
+            case .catalog(let original): return original == revision
+            }
+        }
+        init(intent: UInt64, peer: ObjectIdentifier, host: String?, observation: Observation = .awaitingCatalog) {
+            self.intent = intent; self.peer = peer; self.host = host; self.observation = observation
+        }
     }
     private var explicitSourceIntent: UInt64 = 0
     private var automaticSourceIntent: UInt64? = 0
@@ -4399,20 +4410,29 @@ final class StreamClient: ObservableObject {
                 // The first list after a move without a fence: if the Mac stopped the stream meanwhile,
                 // what this device was watching is picked again (`resumeSource`).
                 if let resume = self.resumeSource {
-                    self.resumeSource = nil
-                    let opportunity = self.resumeOpportunity
-                    self.resumeOpportunity = nil
-                    if list.active == .none, !Self.noAutoDesktop, !self.desktopSelectionRequired,
-                       let opportunity, opportunity.intent == self.explicitSourceIntent,
+                    if let opportunity = self.resumeOpportunity,
+                       opportunity.intent == self.explicitSourceIntent,
                        opportunity.peer == ObjectIdentifier(peer), opportunity.host == list.launchID,
-                       let ticket = self.automaticTicket(peer: peer, list: list) {
-                        var pick = resume
-                        if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
-                        #if DEBUG
-                        print("path: nothing streams on the new connection: picking \(pick) again")
-                        #endif
-                        self.requestAutomatic(pick, ticket: ticket)
-                        return
+                       opportunity.accepts(list.selectionRevision),
+                       !Self.noAutoDesktop, !self.desktopSelectionRequired {
+                        if list.active == .none, let ticket = self.automaticTicket(peer: peer, list: list) {
+                            self.resumeSource = nil
+                            self.resumeOpportunity = nil
+                            var pick = resume
+                            if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
+                            self.requestAutomatic(pick, ticket: ticket)
+                            return
+                        } else if list.active == resume {
+                            self.resumeOpportunity = AutomaticConnectionOpportunity(intent: opportunity.intent,
+                                peer: opportunity.peer, host: opportunity.host, observation: .catalog(list.selectionRevision))
+                        } else {
+                            self.resumeSource = nil
+                            self.resumeOpportunity = nil
+                        }
+                    } else {
+                        self.resumeSource = nil
+                        self.resumeOpportunity = nil
+                        self.automaticSourceIntent = nil
                     }
                 }
                 // The device starts on the Desktop, never on an empty panel: on the first list of a

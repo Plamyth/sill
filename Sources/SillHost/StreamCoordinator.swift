@@ -508,7 +508,7 @@ package final class StreamCoordinator {
                 self.extendedDesktop.release(id)
                 self.extendedDesktopViewports[id] = nil
                 self.inputFence.leave(id)
-                if self.sourceAdmissionPeer == id { self.cancelSourcePicks() }
+                self.sourcePeerDeparted(id)
                 self.gestureArrivals[id] = nil
                 self.routes[id] = nil
                 self.audioRoutePublished[id] = nil
@@ -552,7 +552,8 @@ package final class StreamCoordinator {
                 } else if self.switching {
                     self.deselectWhenSettled = true     // `select` would refuse it now; its tail applies it
                 } else if self.active != .none {
-                    Task { @MainActor in await self.select(.none) }
+                    let sequence = self.pickSequence
+                    Task { @MainActor in await self.stopIfStillEmpty(sequence: sequence) }
                 }
             }
         }
@@ -1013,6 +1014,47 @@ package final class StreamCoordinator {
         return pickSequence
     }
 
+    private func sourcePeerDeparted(_ peer: ObjectIdentifier) {
+        guard sourceAdmissionPeer == peer else { return }
+        if settledPickSequence == pickSequence, !switching, pendingLaunch == nil {
+            sourceAdmissionPeer = nil
+        } else {
+            cancelSourcePicks()
+        }
+    }
+
+    private func stopIfStillEmpty(sequence: UInt64) async {
+        guard catalog.clientCount == 0, pickSequence == sequence else { return }
+        await select(.none)
+    }
+
+    private func expirePendingLaunch(sequence: UInt64) {
+        guard let pending = pendingLaunch, pending.pick.sequence == sequence,
+              admissionIsCurrent(sequence, peer: pending.pick.peer) else { return }
+        pendingLaunch = nil
+        settledPickSequence = sequence
+        broadcastList()
+    }
+
+    private func launchCompleted(sequence: UInt64, failed: Bool) async {
+        guard let pending = pendingLaunch, pending.pick.sequence == sequence,
+              admissionIsCurrent(sequence, peer: pending.pick.peer) else { return }
+        if failed { expirePendingLaunch(sequence: sequence); return }
+        _ = await catalog.refreshWindows()
+        guard pendingLaunch?.pick.sequence == sequence, admissionIsCurrent(sequence, peer: pending.pick.peer) else { return }
+        _ = await reconcilePendingLaunch(catalog.infos)
+    }
+
+    private func reconcilePendingLaunch(_ infos: [WindowInfo]) async -> Bool {
+        guard let pending = pendingLaunch,
+              admissionIsCurrent(pending.pick.sequence, peer: pending.pick.peer),
+              let window = infos.first(where: { $0.bundleID == pending.bundleID }) else { return false }
+        pendingLaunch = nil
+        await select(.window(window.id), bringForward: true, intentSequence: pending.pick.sequence,
+                     pickOrigin: pending.pick.origin, admissionPeer: pending.pick.peer)
+        return true
+    }
+
     private func admissionIsCurrent(_ sequence: UInt64, peer: ObjectIdentifier?) -> Bool {
         !shuttingDown && sequence == pickSequence && (peer.map { inputFence.contains($0) } ?? true)
     }
@@ -1053,16 +1095,16 @@ package final class StreamCoordinator {
                 settledPickSequence = sequence; broadcastList(); return true
             }
             pendingLaunch = PendingLaunch(bundleID: request.bundleID, pick: pick)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                self?.expirePendingLaunch(sequence: sequence)
+            }
             gestureChords.forget()
             let config = NSWorkspace.OpenConfiguration()
             config.activates = false
             NSWorkspace.shared.openApplication(at: url, configuration: config) { [weak self] _, error in
-                guard error != nil else { return }
                 Task { @MainActor in
-                    guard let self, self.admissionIsCurrent(sequence, peer: peer) else { return }
-                    self.pendingLaunch = nil
-                    self.settledPickSequence = sequence
-                    self.broadcastList()
+                    await self?.launchCompleted(sequence: sequence, failed: error != nil)
                 }
             }
             return true
@@ -1459,6 +1501,7 @@ package final class StreamCoordinator {
         let executionSequence = admittedSequence ?? pickSequence
         func current() -> Bool { admissionIsCurrent(executionSequence, peer: admissionPeer) }
         guard current() else { return }
+        let publicationAdmission = sourcePublicationAdmission
         switching = true
         if source == .desktop, active == .desktop || ownedDesktopRecovery == .restarting {
             restartOf = .desktop
@@ -1470,7 +1513,7 @@ package final class StreamCoordinator {
                 settledPickSequence = admittedSequence
             }
             switching = false
-            for connection in connections.values { sendMicrophoneCatalog(to: connection) }
+            for connection in connections.values { sendMicrophoneCatalog(to: connection, admission: publicationAdmission) }
             restartOf = nil
             var pick = pickArrivedWhileSwitching
             pickArrivedWhileSwitching = nil
@@ -1481,7 +1524,8 @@ package final class StreamCoordinator {
                 deselectWhenSettled = false
                 if catalog.clientCount == 0, active != .none {
                     viewportArrivedWhileSwitching = false
-                    Task { @MainActor in await self.select(.none) }
+                    let sequence = pickSequence
+                    Task { @MainActor in await self.stopIfStillEmpty(sequence: sequence) }
                 }
             }
             if catalog.clientCount == 0 { pick = nil; cancelSourcePicks() }
@@ -1526,12 +1570,12 @@ package final class StreamCoordinator {
                   let selection = displaySelection ?? catalog.displayInventory.current,
                   catalog.displayInventory.contains(selection),
                   inputFence.allowsSelection(source, desktopScope: DisplayInventory.scope(selection)),
-                  catalog.selectDisplay(selection) else { broadcastList(); return }
+                  catalog.selectDisplay(selection) else { broadcastList(admission: publicationAdmission); return }
         }
         guard current() else { return }
         guard inputFence.allowsSelection(source, desktopScope: desktopScope) else {
             print("Source change paused: older Sill clients must disconnect or update before selecting another source.")
-            broadcastList()
+            broadcastList(admission: publicationAdmission)
             return
         }
         if source == .desktop {
@@ -1630,7 +1674,7 @@ package final class StreamCoordinator {
         switch source {
         case .none:
             active = .none
-            broadcastList()
+            broadcastList(admission: publicationAdmission)
             return
         case .window(let id):
             // On the virtual display the window may have left the on-screen list; look it up fully.
@@ -1639,7 +1683,7 @@ package final class StreamCoordinator {
             guard current() else { return }
             guard let w = found else {
                 if virtualDisplay { stage.release() }
-                active = .none; broadcastList(); return
+                active = .none; broadcastList(admission: publicationAdmission); return
             }
             print("Selecting window \(w.windowID) \(w.owningApplication?.applicationName ?? "?") — \(w.title ?? "") frame \(w.frame) onScreen \(w.isOnScreen) active \(w.isActive)")
             picked = w
@@ -1694,7 +1738,7 @@ package final class StreamCoordinator {
                 describe = "a synthetic test pattern\(useSoftwareEncoder ? " (software encoder)" : "")"
                 title = "Test Pattern"; kind = .testPattern
             } else {
-                guard let d = catalog.display else { active = .none; broadcastList(); return }
+                guard let d = catalog.display else { active = .none; broadcastList(admission: publicationAdmission); return }
                 // Sill's own windows (Settings, Log, the pairing window with its code) never go out
                 // in a Desktop stream. Fixed here at pipeline start: a running SCStream is never
                 // reconfigured, so a host that can show a pairing code (remote access) looks for
@@ -1745,7 +1789,7 @@ package final class StreamCoordinator {
                 active = .none
             }
         }
-        broadcastList()
+        broadcastList(admission: publicationAdmission)
         // Mid-switch requests (a viewport, the last client leaving) are applied by the defer.
     }
 
@@ -2503,13 +2547,7 @@ package final class StreamCoordinator {
     private func windowsChanged(_ infos: [WindowInfo]) async {
         // The pointer's rectangle follows the catalog: the Desktop's display, a window's bounds.
         defer { pointer.setGeometry(pointerGeometry(), fps: fps) }
-        if let pending = pendingLaunch, let w = infos.first(where: { $0.bundleID == pending.bundleID }) {
-            pendingLaunch = nil
-            guard admissionIsCurrent(pending.pick.sequence, peer: pending.pick.peer) else { return }
-            await select(.window(w.id), bringForward: true, intentSequence: pending.pick.sequence,
-                         pickOrigin: pending.pick.origin, admissionPeer: pending.pick.peer)   // launched from the device to use it: a pick
-            return
-        }
+        if await reconcilePendingLaunch(infos) { return }
         if case .window(let id) = active {
             guard let w = infos.first(where: { $0.id == id }) else {
                 // Alive on the virtual display even if the on-screen list dropped it.
@@ -2719,17 +2757,18 @@ package final class StreamCoordinator {
         microphoneReceiver.retryCleanup(grantID: grantID)
     }
 
-    private func broadcastList() {
-        for connection in connections.values { sendMicrophoneCatalog(to: connection) }
+    private func broadcastList(admission: SourcePublicationAdmission? = nil) {
+        for connection in connections.values { sendMicrophoneCatalog(to: connection, admission: admission) }
     }
 
-    private func sendMicrophoneCatalog(to connection: NWConnection) {
+    private func sendMicrophoneCatalog(to connection: NWConnection, admission: SourcePublicationAdmission? = nil) {
+        let admission = admission ?? sourcePublicationAdmission
         let message = microphoneCatalog(to: connection)
         if let capability = Wire.decode(WindowList.self, from: message.payload)?.microphone,
            let grant = microphoneReceiver.advertisedGrant(peer: capability.peer) {
-            server.sendMicrophoneCatalog(message, to: connection, grant: grant)
+            server.sendCatalog(message, to: connection, admission: admission, grant: grant)
         } else {
-            server.send(message, to: connection)
+            server.sendCatalog(message, to: connection, admission: admission)
         }
     }
 

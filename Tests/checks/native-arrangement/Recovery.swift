@@ -115,8 +115,8 @@ import CoreGraphics
             observer.resume()
         }
     }
-    func broadcastList() {}
-    func sendMicrophoneCatalog(to connection: Int) {}
+    func broadcastList(admission: SourcePublicationAdmission? = nil) {}
+    func sendMicrophoneCatalog(to connection: Int, admission: SourcePublicationAdmission? = nil) {}
     func judgeLinks(_ value: Int?) {}
     func applyViewportToActiveWindow() async {}
     func applyPending() async {}

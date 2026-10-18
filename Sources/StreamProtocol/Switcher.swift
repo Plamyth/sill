@@ -58,7 +58,9 @@ public struct DisplayInfo: Codable, Equatable, Identifiable {
     }
 }
 
-/// Valid only for this host's current inventory. Display IDs are never saved across reconnects.
+/// Human display choice, valid only for this host's current inventory.
+/// Automatic display restore is unsupported. Kind 211 has no typed origin/revision admission.
+/// Display IDs are never saved across reconnects.
 public struct DisplaySelection: Codable, Equatable {
     public var displayID: UInt32
     public var inventoryID: UUID

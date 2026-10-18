@@ -2,11 +2,13 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', required=True)
+parser.add_argument('--preflight', action='store_true')
 parser.add_argument('--suite', choices=['client','host'], default='client')
 args = parser.parse_args()
 out = Path(args.output)
@@ -39,11 +41,10 @@ if args.suite == 'host':
     coordinator = (root/'Sources/SillHost/StreamCoordinator.swift').read_text()
     methods = '\n'.join(block(coordinator, signature) for signature in [
         'private func reserveSourceIntent(', 'private func admissionIsCurrent(', 'private func admitSourceMessage(',
-        'private func cancelSourcePicks(', 'private func handlePick(', 'func select(_ source:', 'private func startPipeline('])
+        'private func sourcePeerDeparted(', 'private func stopIfStillEmpty(', 'private func expirePendingLaunch(', 'private func launchCompleted(', 'private func reconcilePendingLaunch(', 'private func cancelSourcePicks(', 'private func handlePick(', 'func select(_ source:', 'private func startPipeline('])
     declarations = '\n'.join(block(coordinator, signature) for signature in [
         'private struct PendingLaunch', 'enum PickOrigin', 'private struct SourcePick', 'private enum OwnedDesktopRecovery', 'private enum PipelineEpochError'])
-    launch_method = block(coordinator, 'private func windowsChanged(')
-    launch = launch_method[launch_method.index('if let pending ='):launch_method.index('        if case .window')]
+    launch = 'if await reconcilePendingLaunch(infos) { return }'
     host = (here/'Host.swift').read_text().replace('// HOST_METHODS', methods.replace('NWConnection','NSObject').replace('private func admitSourceMessage','func admitSourceMessage')).replace('// HOST_TYPES', declarations.replace('private ','')).replace('// LAUNCH_COMPLETION', launch)
     inputs['Host.swift'] = host
     inputs.pop('Client.swift')
@@ -66,7 +67,14 @@ runner = runner.replace('command += [str(mount / name) for name in hashes]', 'co
 runner = runner.replace('    ok = run(command, timeout=100)', '    parsed = all(run(["/usr/bin/xcrun", "swiftc", "-frontend", "-parse", str(mount / name)], timeout=20) for name in hashes if name.endswith(".swiftparse"))\n    ok = run(command, timeout=100) if parsed else False')
 paths = [root/'iOSClient/SessionLink.swift', root/'Sources/SillHost/StreamServer.swift', source, root/'Sources/SillHost/StreamCoordinator.swift'] + list(here.glob('*.swift')) + [here/'run.py', here.parent/'extended-desktop/remote.py'] + list((root/'Sources/StreamProtocol').glob('*.swift'))
 before = {str(p.relative_to(root)):sha(p.read_bytes()) for p in paths}
-p = subprocess.run(['/Users/ambrion/.local/bin/mini','heavy','--cwd','/private/tmp','--','python3','-B','-c',runner],input=payload,capture_output=True,timeout=240)
+if args.preflight:
+    import sys
+    (out/'inputs').mkdir(exist_ok=True)
+    for name, value in inputs.items(): (out/'inputs'/name).write_text(value)
+    (out/'preflight.json').write_text(json.dumps({'sourceHashes': before, 'inputHashes': hashes, 'runtime': 'pending'}, indent=2)+'\n')
+    print('PREFLIGHT '+str(out/'preflight.json'))
+    raise SystemExit(0)
+p = subprocess.run(['/Users/ambrion/.local/bin/mini','heavy','--cwd','/private/tmp','--','python3','-B','-c',runner],input=payload,capture_output=True,timeout=240,env=dict(os.environ, CODEX_THREAD_ID='01a13ace-e372-7ed1-9946-149df37ee1c3'))
 log = (p.stdout + p.stderr).decode(errors='replace')
 (out/'run.log').write_text(log)
 records = [json.loads(line[12:]) for line in log.splitlines() if line.startswith('RESULT_JSON ')]
