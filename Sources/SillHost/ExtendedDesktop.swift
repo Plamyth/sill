@@ -15,10 +15,12 @@ final class ExtendedDesktop {
         var pixelHeight: Int { heightPt * scale }
 
         init?(viewport: Viewport) {
-            guard viewport.width.isFinite, viewport.height.isFinite,
-                  (320...2048).contains(viewport.width), (240...2048).contains(viewport.height) else { return nil }
-            widthPt = Int(viewport.width.rounded())
-            heightPt = Int(viewport.height.rounded())
+            let width = viewport.extendedDesktop?.width ?? viewport.width
+            let height = viewport.extendedDesktop?.height ?? viewport.height
+            guard width.isFinite, height.isFinite,
+                  (320...2048).contains(width), (240...2048).contains(height) else { return nil }
+            widthPt = Int(width.rounded())
+            heightPt = Int(height.rounded())
         }
     }
 

@@ -4,8 +4,8 @@ import Foundation
 /// Mac window sized to it. Milestone 3's fallback path: rather than a virtual display, the host
 /// resizes the real window through Accessibility.
 ///
-/// `scale` is device points per Mac point for text. nil means "leave the Mac window alone"
-/// (the default today). 1.0 fits the window to the panel at 1:1 points; 1.5 makes the window a
+/// `scale` is device points per Mac point for text. nil leaves a regular Mac window alone;
+/// a staged window uses 1.0 for nil. 1.0 fits the window to the panel at 1:1 points; 1.5 makes the window a
 /// third smaller in Mac points so its content renders a third larger on the device; 0.8 the
 /// reverse. Apps have minimum window sizes; the host clamps and streams whatever it actually got.
 public struct Viewport: Codable, Hashable {
@@ -21,8 +21,39 @@ public struct Viewport: Codable, Hashable {
     /// pipeline when that changes.
     public var fps: Int?
 
-    public init(width: Double, height: Double, scale: Double?, localCursor: Bool? = nil, fps: Int? = nil) {
+    /// Native extended-desktop allocation in Mac points, independent of panel size and Aa scale.
+    /// Older hosts ignore this field and use the actual panel dimensions as before.
+    public var extendedDesktop: ExtendedDesktopSize?
+
+    public struct ExtendedDesktopSize: Codable, Hashable {
+        public let width: Double
+        public let height: Double
+
+        public init?(width: Double, height: Double) {
+            guard width.isFinite, height.isFinite,
+                  (320...2048).contains(width), (240...2048).contains(height) else { return nil }
+            self.width = width
+            self.height = height
+        }
+
+        private enum CodingKeys: String, CodingKey { case width, height }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            let width = try values.decode(Double.self, forKey: .width)
+            let height = try values.decode(Double.self, forKey: .height)
+            guard let size = Self(width: width, height: height) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                    debugDescription: "Extended desktop dimensions are outside the supported range"))
+            }
+            self = size
+        }
+    }
+
+    public init(width: Double, height: Double, scale: Double?, localCursor: Bool? = nil, fps: Int? = nil,
+                extendedDesktop: ExtendedDesktopSize? = nil) {
         self.width = width; self.height = height; self.scale = scale; self.localCursor = localCursor; self.fps = fps
+        self.extendedDesktop = extendedDesktop
     }
 }
 

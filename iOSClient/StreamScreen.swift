@@ -189,6 +189,19 @@ enum DuoLayout {
 
 // MARK: - Screen
 
+enum IPadViewportSizing {
+    static let panelPadding: CGFloat = 8
+
+    static func initialSurface(panel: CGSize, available: CGSize, isPad: Bool) -> CGSize? {
+        guard panel.width > 0, panel.height > 0 else { return nil }
+        guard isPad else { return panel }
+        guard available.width > 0, available.height > 0 else { return nil }
+        guard available.width > available.height else { return panel }
+        return CGSize(width: available.width - 2 * panelPadding,
+                      height: available.height - 2 * panelPadding)
+    }
+}
+
 struct StreamScreen: View {
     @ObservedObject var client: StreamClient
     @State private var canvasOpen = false
@@ -232,6 +245,8 @@ struct StreamScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The stream panel's size in points, reported by whichever layout is showing.
     @State private var panelSize: CGSize = .zero
+    /// Layout space before the toolbar and keyboard, used only to provision the virtual display.
+    @State private var availableSize: CGSize = .zero
     /// The viewport send waiting out its debounce, if any.
     @State private var pendingViewport: Task<Void, Never>? = nil
     /// The line over the stream while the link cannot carry the quality (docs/remote-bundle-plan.md
@@ -356,6 +371,13 @@ struct StreamScreen: View {
             .duoFold(posture, size: geo.size, screen: "stream screen")
             .duoStatusBar(posture, size: geo.size)
         }
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onChange(of: geo.size, initial: true) { _, size in availableSize = size }
+            }
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+        }
         .background(Color.black)
         .fullScreenCover(isPresented: $canvasOpen) {
             VStack(spacing: 0) {
@@ -443,6 +465,7 @@ struct StreamScreen: View {
         }
         // Rotation animates, and a Mac window resize restarts the stream, so let the size settle.
         .onChange(of: panelSize) { _, _ in sendViewport(after: 0.25) }
+        .onChange(of: availableSize) { _, _ in sendViewport(after: 0.25) }
         // Same wait for Aa: cycling from Off to 0.8× passes three sizes nobody wants the Mac to try.
         .onChange(of: textScale) { _, _ in sendViewport(after: 0.25) }
         // The stream rate follows the panel (`StreamClient.wantedFPS`): re-send when Low Power Mode
@@ -567,7 +590,8 @@ struct StreamScreen: View {
 
     /// Tells the host the panel size and text scale, now or after `delay` seconds. A newer call
     /// replaces a pending one, so a burst of changes sends only the last. Nothing goes out until the
-    /// panel has been measured, or while disconnected.
+    /// panel has been measured, or while disconnected. The first iPad viewport also carries the
+    /// native allocation, including the toolbar's space in landscape, without changing panel sizing.
     private func sendViewport(after delay: Double = 0) {
         pendingViewport?.cancel()
         pendingViewport = Task { @MainActor in
@@ -577,6 +601,14 @@ struct StreamScreen: View {
             }
             guard client.connected, panelSize.width > 0, panelSize.height > 0 else { return }
             let fps = StreamClient.wantedFPS(remote: client.awayCapsFrameRate)
+            var nativeSize: Viewport.ExtendedDesktopSize?
+            if client.lastViewport == nil {
+                guard let initial = IPadViewportSizing.initialSurface(
+                    panel: panelSize, available: availableSize, isPad: toolbarEnabled) else { return }
+                if toolbarEnabled {
+                    nativeSize = .init(width: Double(initial.width), height: Double(initial.height))
+                }
+            }
             #if DEBUG
             print("viewport: \(Self.points(panelSize.width))×\(Self.points(panelSize.height)) pt, scale "
                   + (textScale.map { TextScaleControl.label($0) } ?? "none") + ", \(fps) fps")
@@ -584,7 +616,7 @@ struct StreamScreen: View {
             client.sendViewport(Viewport(width: Double(panelSize.width),
                                          height: Double(panelSize.height),
                                          scale: textScale,
-                                         fps: fps))
+                                         fps: fps, extendedDesktop: nativeSize))
         }
     }
 
@@ -1086,7 +1118,7 @@ struct StreamScreen: View {
             // The panel itself, inside the padding: the size the host fits the Mac window to.
             .onGeometryChange(for: CGSize.self, of: { $0.size }, action: { panelSize = $0 })
             .tourTarget(.stream)
-            .padding(8)
+            .padding(IPadViewportSizing.panelPadding)
 
             if dockOpen {
                 RemoteDock(client: client, close: { dockOpen = false })

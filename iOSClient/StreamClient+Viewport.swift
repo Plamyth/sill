@@ -15,10 +15,12 @@ extension StreamClient {
     /// A viewport that leaves `localCursor` nil (StreamScreen measures panels and knows nothing
     /// about pointers) gets the current flag filled in, so a rotation or an Aa change never puts
     /// the Mac cursor back under a client-drawn one. Remembers what went out in `lastViewport`.
+    /// The session's first native allocation stays with every panel report and transport replay.
     /// A no-op on the wire without a connection. Main thread.
     func sendViewport(_ v: Viewport) {
         var v = v
         if v.localCursor == nil { v.localCursor = localCursorState.wanted }
+        v.extendedDesktop = lastViewport?.extendedDesktop ?? v.extendedDesktop
         lastViewport = v
         send(.viewport, payload: Wire.encode(v))
     }
