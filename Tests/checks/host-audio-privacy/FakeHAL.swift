@@ -27,6 +27,7 @@ final class PrivacyFakeHAL: @unchecked Sendable {
     var zeroInputBuffers = false
     var beforeSet: (() -> Void)?
     private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+    var listenerCount: Int { listeners.count }
     private let lock = NSRecursiveLock()
 
     private func bundle(_ id: AudioObjectID) -> String { "audio.existential.BlackHole\(id == 1002 ? 2 : 16)ch" }

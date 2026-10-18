@@ -25,6 +25,7 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
     }
     private let ops: HostAudioPrivacyOperations
     private var listeners: [Listener] = []
+    private var observationID: UUID?
     private let system = AudioObjectID(kAudioObjectSystemObject)
     init(ops: HostAudioPrivacyOperations) { self.ops = ops }
 
@@ -146,6 +147,7 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
     }
 
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool {
+        observationID = nil
         var retained: [Listener] = []
         for var listener in listeners {
             if ops.removeListener(listener.object, &listener.address, .main, listener.block) != noErr { retained.append(listener) }
@@ -153,6 +155,8 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         listeners = retained
         guard retained.isEmpty else { return false }
         guard let changed else { return true }
+        let observationID = UUID()
+        self.observationID = observationID
         var properties = [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice,
             kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultSystemOutputDevice]
             .map { (system, address($0)) }
@@ -184,7 +188,12 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         }
         for (object, originalProperty) in properties {
             var property = originalProperty
-            let block: AudioObjectPropertyListenerBlock = { _, _ in Task { @MainActor in changed() } }
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    guard self?.observationID == observationID else { return }
+                    changed()
+                }
+            }
             guard ops.addListener(object, &property, .main, block) == noErr else { return false }
             listeners.append(Listener(object: object, address: property, block: block))
         }

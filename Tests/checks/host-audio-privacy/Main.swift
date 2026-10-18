@@ -44,9 +44,43 @@ struct HostAudioPrivacyChecks {
         stoppedFake.fire(kAudioHardwarePropertyDefaultInputDevice)
         stopped.stop()
         let stoppedWrites = stoppedFake.writes
+        let stoppedReads = stoppedFake.reads
         try? await Task.sleep(nanoseconds: 250_000_000)
-        expect(stoppedFake.writes == stoppedWrites && !stopped.state.protected,
+        expect(stoppedFake.writes == stoppedWrites && stoppedFake.reads == stoppedReads &&
+               stoppedFake.listenerCount == 0 && !stopped.state.protected,
                "queued callback after stop cannot rearm observers or write hardware")
+        expect(stopped.reconcile() && stopped.verify(), "explicit reconciliation resumes stopped observation")
+        stopped.stop()
+        expect(stopped.armAndVerify() && stopped.verify(), "explicit arm resumes stopped observation")
+        stopped.stop()
+
+        let pendingFake = PrivacyFakeHAL(), pendingPrivacy = guardFor(pendingFake)
+        expect(pendingPrivacy.armAndVerify(), "pending repair fixture starts protected")
+        pendingFake.snapshot.input = 10
+        expect(!pendingPrivacy.verify(), "readback mismatch schedules a pending repair")
+        pendingPrivacy.stop()
+        let pendingReads = pendingFake.reads, pendingWrites = pendingFake.writes
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        expect(pendingFake.reads == pendingReads && pendingFake.writes == pendingWrites &&
+               pendingFake.listenerCount == 0 && !pendingPrivacy.state.protected,
+               "stop cancels an already scheduled repair without restoring hardware")
+
+        let observationFake = PrivacyFakeHAL()
+        let observationHAL = CoreAudioPrivacyHAL(ops: observationFake.operations)
+        var oldEvents = 0, newEvents = 0
+        expect(observationHAL.observe(nil, changed: { oldEvents += 1 }), "observation generation fixture installed")
+        observationFake.fire(kAudioHardwarePropertyDevices)
+        expect(observationHAL.observe(nil, changed: nil), "observation generation fixture stopped")
+        expect(observationHAL.observe(nil, changed: { newEvents += 1 }), "observation generation fixture restarted")
+        observationFake.fire(kAudioHardwarePropertyDevices)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        expect(oldEvents == 0 && newEvents == 1, "queued old observation cannot enter a restarted lifecycle")
+        expect(observationHAL.observe(nil, changed: { newEvents += 1 }), "observation replacement fixture installed")
+        observationFake.fire(kAudioHardwarePropertyDevices)
+        expect(observationHAL.observe(nil, changed: { newEvents += 1 }), "observation replaced before callback delivery")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        expect(newEvents == 1, "replaced observation discards its queued callbacks")
+        expect(observationHAL.observe(nil, changed: nil), "observation generation fixture cleaned up")
 
         for index in 1...5 {
             let failed = PrivacyFakeHAL(); failed.failSetter = index
