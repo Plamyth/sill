@@ -186,7 +186,36 @@ def augment(inputs, block, root, here):
          print("QUEUE_INGRESS preparedBeforeHuman=\\(preparedBeforeHuman) newerAdmission=\\(newer) commits=\\(host.server.committed)")
          if !preparedBeforeHuman || !newer { print("FIXTURE_PRECONDITION_FAILED"); exit(2) }
          if host.server.committed.contains(.window(71)) { print("FAIL already-read human ingress admits before obsolete queued video publication"); print("QUEUE_INGRESS_CHECKS total=3 failed=1"); exit(1) }
-         print("QUEUE_INGRESS_CHECKS total=3 failed=0")
+         var failures = 0
+         for rejection in ["missing-launch", "stale-display"] {
+          let rejected = AdmissionHost(); rejected.join(peer)
+          let sequence = rejected.reserveForReview(peer:ObjectIdentifier(peer))
+          let events = CoordinatorIngress(); let held = DispatchSemaphore(value:0)
+          let reject: @MainActor () -> Void = {
+           if rejection == "missing-launch" { rejected.launch("missing", peer:peer) }
+           else {
+            _ = rejected.admitSourceMessage(.init(kind:.selectDisplay,timestamp:0,isKeyframe:false,
+             payload:Wire.encode(DisplaySelection(displayID:13,inventoryID:UUID()))),from:peer)
+           }
+          }
+          rejected.server.queue.async { events.submit(reject); rejected.server.queue.suspend(); held.signal() }
+          held.wait()
+          await rejected.select(.window(71),bringForward:true,intentSequence:sequence,pickOrigin:.automatic,
+                                admissionPeer:ObjectIdentifier(peer))
+          let prepared = rejected.active == .window(71)
+          for _ in 0..<200 { await Task.yield() }
+          let superseded = rejected.pickSequence > sequence
+          rejected.server.queue.resume(); rejected.server.queue.sync {}
+          for _ in 0..<200 { await Task.yield() }
+          rejected.server.queue.sync {}
+          if !prepared || !superseded { print("FIXTURE_PRECONDITION_FAILED \\(rejection)"); exit(2) }
+          if rejected.active != .none || rejected.videoEpoch != nil || rejected.capture.running || rejected.server.videoAdmission != .stopped {
+           failures += 1
+           print("FAIL \\(rejection) must drain the unpublished predecessor and publish completed None")
+          }
+         }
+         print("QUEUE_INGRESS_CHECKS total=9 failed=\\(failures)")
+         if failures > 0 { exit(1) }
         }
        }
        '''

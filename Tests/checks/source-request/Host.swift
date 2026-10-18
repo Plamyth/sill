@@ -170,6 +170,7 @@ struct HostStatusSnapshot {
     var remote: Int?
     var audioBarrier: Barrier?
     var audioChanges = 0
+    var publishedCatalogs: [(source: StreamSource, epoch: UUID?)] = []
     var raised: [UInt32] = []
     enum Held { case input(Int, CGRect, ObjectIdentifier, VideoEpoch?), chord(UInt16, UInt64), disconnect(ObjectIdentifier) }
     var heldInput: [Held] = []
@@ -202,9 +203,13 @@ struct HostStatusSnapshot {
     struct Quality { init(bitrate: Int, fps: Int, captureScale: Double) {} }
     enum LinkJudge { typealias Quality = AdmissionHost.Quality }
     func judgeLinks(_ quality: Quality?) {}
-    func broadcastList(admission: SourcePublicationAdmission? = nil) {}
+    func broadcastList(admission: SourcePublicationAdmission? = nil) {
+        (admission ?? sourcePublicationAdmission).publish { publishedCatalogs.append((active, videoEpoch?.id)) }
+    }
     func listMessage() -> StreamMessage { .init(kind: .windowList, timestamp: 0, isKeyframe: false, payload: Data()) }
-    func sendMicrophoneCatalog(to peer: NSObject, admission: SourcePublicationAdmission? = nil) {}
+    func sendMicrophoneCatalog(to peer: NSObject, admission: SourcePublicationAdmission? = nil) {
+        broadcastList(admission: admission)
+    }
     func recoverOwnedDesktop() async {}
     func applyViewportToActiveWindow() async {}
     func applyPending() async {}

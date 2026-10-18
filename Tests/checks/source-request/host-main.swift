@@ -144,6 +144,37 @@ import Foundation
         staleStop.catalog.clientCount = 1; staleStop.join(otherPeer)
         await staleStop.stopEmpty(sequence: emptySequence)
         expect(staleStop.active == .window(1), "buffered new-client count prevents deferred zero-client stop")
+        for phase in ["inventory", "audio"] {
+            let empty = AdmissionHost(); empty.join(peer)
+            empty.receive(.init(source: .window(7), origin: .human), peer: peer)
+            await settle()
+            let barrier = Barrier()
+            if phase == "inventory" { empty.catalog.refreshBarrier = barrier }
+            else { empty.audioBarrier = barrier }
+            empty.receive(.init(source: phase == "inventory" ? .desktop : .window(8), origin: .human), peer: peer)
+            await barrier.reached()
+            empty.departed(peer)
+            empty.catalog.clientCount = 0
+            empty.deselectWhenSettled = true
+            empty.cancelSourcePicksForTest()
+            empty.catalog.refreshBarrier = nil; empty.audioBarrier = nil
+            barrier.resume(); await settle()
+            expect(empty.active == .none && empty.videoEpoch == nil && !empty.capture.running,
+                   "last client during \(phase) drains the old capture and completes None")
+        }
+        let abandoned = AdmissionHost(); abandoned.join(peer); abandoned.join(otherPeer)
+        abandoned.catalog.clientCount = 2
+        abandoned.receive(.init(source: .window(7), origin: .human), peer: peer)
+        await settle()
+        let stopping = Barrier(); abandoned.capture.stopBarrier = stopping
+        abandoned.receive(.init(source: .window(8), origin: .human), peer: peer)
+        await stopping.reached()
+        abandoned.departed(peer); abandoned.catalog.clientCount = 1
+        abandoned.capture.stopBarrier = nil; stopping.resume(); await settle()
+        expect(abandoned.active == .none && abandoned.videoEpoch == nil && !abandoned.capture.running,
+               "choosing peer departure finishes interrupted teardown for the remaining peer")
+        expect(abandoned.publishedCatalogs.last?.source == StreamSource.none && abandoned.publishedCatalogs.last?.epoch == nil,
+               "remaining peer receives completed None after interrupted teardown")
         print("SOURCE_REQUEST_HOST_CHECKS total=\(checks) failed=\(failures)")
         if failures > 0 { exit(1) }
     }
