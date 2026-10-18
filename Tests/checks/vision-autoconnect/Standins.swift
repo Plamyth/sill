@@ -176,7 +176,6 @@ final class StreamClient {
     func savedMac(_ id: String) -> SavedMac? { savedMacs.first { $0.macID == id } }
     func persistSavedMacs() { writes += 1 }
     func displayName(_ id: String) -> String { savedMac(id)?.name ?? "Mac" }
-    func cancelRemoteDial() { remoteDial = nil }
     func cableCheck(_ connection: NWConnection, allowTestOverride: Bool = true) -> DiscoveryPolicy.CableCheck {
         allowedTestOverride = allowTestOverride
         return DiscoveryPolicy.CableCheck(cable: cable, console: "fixture")

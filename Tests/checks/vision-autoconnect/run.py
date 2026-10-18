@@ -69,7 +69,7 @@ def emit(root, output):
         pieces[marker] = vision(block(stream, marker))
     for marker in ['func retireVisionWindow()', 'func disconnect()']:
         pieces[marker] = vision(block(stream, marker))
-    for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()']:
+    for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()', 'func cancelRemoteDial()']:
         pieces[marker] = vision(block(remote, marker))
     adapter = (root / 'visionOSClient/StreamClient+VisionAutoConnect.swift').read_text()
     pieces['considerVisionCableBootstrap'] = block(adapter, 'func considerVisionCableBootstrap(')
