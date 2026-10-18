@@ -34,7 +34,7 @@ struct VisionRemoteAudioIntent {
         var recordPermissionGranted = false
         var eligible: Bool {
             hostKey != nil && scope != nil && connected && authenticated && foreground && presented &&
-                !inputBlocked && privacyVersion == 1 && protected && cleanupReady
+                !inputBlocked && privacyVersion == 2 && protected && cleanupReady
         }
     }
     struct Request: Equatable {
@@ -117,7 +117,7 @@ extension StreamClient {
         return SHA256.hash(data: pin).map { String(format: "%02x", $0) }.joined()
     }
     var visionAudioPrivacyMessage: String {
-        if visionAudioPrivacy?.version != 1 {
+        if visionAudioPrivacy?.version != 2 {
             return "Mac 음소거 보호를 지원하는 호스트로 업데이트하면 오디오를 사용할 수 있습니다."
         }
         if visionAudioPrivacy?.protected != true { return "Mac 음소거 보호를 확인하지 못해 오디오를 중지했습니다." }
@@ -164,14 +164,14 @@ extension StreamClient {
             visionAudioIntentWithdrawing = false
             visionAudioIntentAwaitingSource = nil
         }
-        let wasProtected = visionAudioPrivacy?.version == 1 && visionAudioPrivacy?.protected == true
+        let wasProtected = visionAudioPrivacy?.version == 2 && visionAudioPrivacy?.protected == true
         visionAudioPrivacy = list.audioPrivacy
-        if list.audioPrivacy?.version == 1, list.audioPrivacy?.protected == true {
+        if list.audioPrivacy?.version == 2, list.audioPrivacy?.protected == true {
             if !wasProtected { visionAudioPrivacyRevision &+= 1 }
             visionAudioPrivacyBlocked = false
         }
         if list.audioPrivacy?.protected == false ||
-            (wasProtected && (list.audioPrivacy?.version != 1 || list.audioPrivacy?.protected != true)) {
+            (wasProtected && (list.audioPrivacy?.version != 2 || list.audioPrivacy?.protected != true)) {
             visionAudioPrivacyBlocked = true
             VisionRemoteAudioStore.shared.withdrawPrivacy(self)
         }
@@ -182,7 +182,7 @@ extension StreamClient {
         var context = visionAudioIntentContext
         let suspended = !context.connected || !context.foreground || context.inputBlocked ||
             !visionInputBinding.isConfirmed ||
-            (visionAudioPrivacy?.version == 1 && !context.authenticated)
+            (visionAudioPrivacy?.version == 2 && !context.authenticated)
         if suspended {
             if !visionAudioIntentSuspended {
                 visionAudioIntentSuspended = true

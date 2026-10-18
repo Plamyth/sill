@@ -11,7 +11,7 @@ func ready() -> VisionRemoteAudioIntent.Context {
     context.scope = .init(connection: UUID(), window: UUID(), admission: UUID(), video: UUID(), foreground: UUID(), privacy: 1)
     context.connected = true; context.authenticated = true; context.foreground = true
     context.presented = true; context.inputBlocked = false
-    context.privacyVersion = 1; context.protected = true; context.cleanupReady = true
+    context.privacyVersion = 2; context.protected = true; context.cleanupReady = true
     context.playbackAvailable = true; context.microphoneAvailable = true; context.recordPermissionGranted = true
     return context
 }
@@ -37,7 +37,8 @@ let denied: [(String, (inout VisionRemoteAudioIntent.Context) -> Void)] = [
     ("saved Mac", { $0.hostKey = nil }), ("full lease", { $0.scope = nil }),
     ("foreground", { $0.foreground = false }), ("presented video", { $0.presented = false }),
     ("display input", { $0.inputBlocked = true }), ("old host", { $0.privacyVersion = nil }),
-    ("unknown privacy version", { $0.privacyVersion = 2 }), ("privacy lost", { $0.protected = false }),
+    ("built-in-only privacy version", { $0.privacyVersion = 1 }),
+    ("unknown privacy version", { $0.privacyVersion = 3 }), ("privacy lost", { $0.protected = false }),
     ("native cleanup", { $0.cleanupReady = false })
 ]
 for (name, deny) in denied {

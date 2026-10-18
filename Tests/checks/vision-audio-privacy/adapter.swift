@@ -38,7 +38,7 @@ final class StreamClient {
         context.hostKey = key
         context.scope = .init(connection: UUID(), window: UUID(), admission: UUID(), video: UUID(), foreground: UUID(), privacy: 1)
         context.connected = true; context.authenticated = true; context.foreground = true
-        context.presented = true; context.inputBlocked = false; context.privacyVersion = 1
+        context.presented = true; context.inputBlocked = false; context.privacyVersion = 2
         context.protected = true; context.cleanupReady = true; context.playbackAvailable = true
         context.microphoneAvailable = true; context.recordPermissionGranted = true
     }
