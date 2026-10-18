@@ -14,6 +14,11 @@ func check(_ value: @autoclosure () -> Bool, _ name: String) {
 }
 @main struct AudioRouteChecks {
 @MainActor static func main() async throws {
+if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--cold-store" {
+    let c = StreamClient(defaults: UserDefaults(suiteName: CommandLine.arguments[2])!)
+    c.advertise(); c.offerInitialAudioRoutes()
+    exit(!c.audioRouteChooserPresented && c.playbackRequests.isEmpty && c.microphoneRequests.isEmpty ? 0 : 1)
+}
 typealias P = IPadAudioRoutePolicy
 let off = P.Selection()
 let input = P.Selection(input: .iPadMicrophone)
@@ -39,13 +44,15 @@ for mic in [false, true] {
 }
 do {
     var offer = IPadAudioRouteOffer()
-    check(!offer.offer(connected: false, hasSource: true, foreground: true), "disconnected screen never offers routes")
-    check(!offer.offer(connected: true, hasSource: false, foreground: true), "first catalog waits for a real stream source")
-    check(!offer.offer(connected: true, hasSource: true, foreground: false), "background never offers routes")
-    check(offer.offer(connected: true, hasSource: true, foreground: true), "first admitted foreground source offers once")
-    check(!offer.offer(connected: true, hasSource: true, foreground: true), "repeated catalog does not reopen chooser")
-    _ = offer.offer(connected: false, hasSource: false, foreground: true)
-    check(offer.offer(connected: true, hasSource: true, foreground: true), "new connection gets a fresh choice")
+    let identity = IPadAudioRouteAcknowledgments.Identity(macID: "mac-a", pin: Data(repeating: 1, count: 32))!
+    check(!offer.offer(identity: nil, acknowledged: false, hasSource: true, supported: true, foreground: true), "unverified screen never offers routes")
+    check(!offer.offer(identity: identity, acknowledged: false, hasSource: false, supported: true, foreground: true), "first catalog waits for a real stream source")
+    check(!offer.offer(identity: identity, acknowledged: false, hasSource: true, supported: false, foreground: true), "unsupported host never forces off-only onboarding")
+    check(!offer.offer(identity: identity, acknowledged: false, hasSource: true, supported: true, foreground: false), "background never offers routes")
+    check(offer.offer(identity: identity, acknowledged: false, hasSource: true, supported: true, foreground: true), "first verified foreground source offers once")
+    check(!offer.offer(identity: identity, acknowledged: false, hasSource: true, supported: true, foreground: true), "repeated catalog does not reopen chooser")
+    offer = IPadAudioRouteOffer()
+    check(!offer.offer(identity: identity, acknowledged: true, hasSource: true, supported: true, foreground: true), "acknowledgment survives a new connection offer state")
 }
 do {
     let c = StreamClient(); c.advertise(); c.offerInitialAudioRoutes(); c.showAudioRoutes()
@@ -124,8 +131,8 @@ do {
 }
 do {
     let c = StreamClient(); c.advertise(playback: false, microphone: false); c.offerInitialAudioRoutes()
-    check(c.audioRouteChooserPresented && c.audioRouteCapabilities.inputs == [.off] && c.audioRouteCapabilities.outputs == [.off],
-          "unsupported host gets an honest off-only first chooser")
+    check(!c.audioRouteChooserPresented && c.audioRouteCapabilities.inputs == [.off] && c.audioRouteCapabilities.outputs == [.off],
+          "unsupported host skips automatic off-only chooser")
     c.audioRouteChooserPresented = false; c.offerInitialAudioRoutes()
     check(!c.audioRouteChooserPresented, "dismissing without applying does not prompt again")
     c.showAudioRoutes()
@@ -189,6 +196,109 @@ do {
     check(c.audioRoutePlaybackUnavailableReason != nil, "unadvertised playback has a reason")
     c.advertise()
     check(c.audioRoutePlaybackUnavailableReason == nil, "supported output clears unavailable reason")
+}
+
+do {
+    let domain = "CCR.AudioRoutes.Persistence.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: domain)!
+    defer { defaults.removePersistentDomain(forName: domain) }
+    let first = StreamClient(defaults: defaults); first.advertise(); first.offerInitialAudioRoutes()
+    let identity = first.audioRouteTrustedMac!
+    check(first.audioRouteChooserPresented, "fresh verified supported trust offers onboarding")
+    first.acknowledgeAudioRoutes(identity: identity, context: first.audioRouteContext)
+    let bytes = defaults.data(forKey: IPadAudioRouteAcknowledgments.key)
+    first.acknowledgeAudioRoutes(identity: identity, context: first.audioRouteContext)
+    check(defaults.data(forKey: IPadAudioRouteAcknowledgments.key) == bytes, "repeated dismissal acknowledgment is idempotent")
+    defaults.synchronize()
+    let cold = Process()
+    cold.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+    cold.arguments = ["--cold-store", domain]
+    try cold.run(); cold.waitUntilExit()
+    check(cold.terminationStatus == 0, "separate cold process reads persisted acknowledgment without restoring media")
+    first.connected = false; first.audioRouteChooserPresented = false; first.audioRouteOffer = IPadAudioRouteOffer()
+    first.connected = true; first.connection = RoutePeer(); first.advertise(); first.offerInitialAudioRoutes()
+    check(!first.audioRouteChooserPresented, "same verified Mac reconnect does not repeat acknowledged sheet")
+    let relaunched = StreamClient(defaults: UserDefaults(suiteName: domain)!); relaunched.advertise(); relaunched.offerInitialAudioRoutes()
+    check(!relaunched.audioRouteChooserPresented, "fresh client and store instance retain acknowledgment across cold launch")
+    check(relaunched.playbackRequests.isEmpty && relaunched.microphoneRequests.isEmpty, "cold launch acknowledgment restores no media grant")
+    relaunched.showAudioRoutes()
+    check(relaunched.audioRouteChooserPresented, "manual chooser remains available after acknowledgment")
+    relaunched.audioRouteChooserPresented = false
+    relaunched.savedMacs = [.init(macID: "mac-a", fingerprintData: Data(repeating: 2, count: 32))]
+    relaunched.offerInitialAudioRoutes()
+    check(relaunched.audioRouteChooserPresented, "new host pin gets a fresh explanation")
+    relaunched.acknowledgeAudioRoutes(identity: identity, context: relaunched.audioRouteContext)
+    check(!relaunched.audioRouteAcknowledgments.contains(relaunched.audioRouteTrustedMac!), "stale sheet cannot acknowledge a changed pin")
+    relaunched.audioRouteChooserPresented = false
+    relaunched.session = .init(macID: "mac-b")
+    relaunched.savedMacs = [.init(macID: "mac-b", fingerprintData: identity.pin)]
+    relaunched.offerInitialAudioRoutes()
+    check(relaunched.audioRouteChooserPresented, "different Mac ID with same pin has independent acknowledgment")
+    for payload in [Data("broken".utf8), Data("{\"version\":2,\"identities\":[]}".utf8),
+                    Data("{\"version\":1,\"identities\":[{\"macID\":\"mac-a\",\"pin\":\"AQ==\"}]}".utf8)] {
+        defaults.set(payload, forKey: IPadAudioRouteAcknowledgments.key)
+        let fresh = StreamClient(defaults: defaults); fresh.advertise(); fresh.offerInitialAudioRoutes()
+        check(fresh.audioRouteChooserPresented, "malformed or unsupported storage version does not suppress onboarding")
+    }
+    check(IPadAudioRouteAcknowledgments.Identity(macID: " ", pin: identity.pin) == nil,
+          "blank identity cannot persist acknowledgment")
+    check(IPadAudioRouteAcknowledgments.Identity(macID: "mac-a", pin: Data()) == nil,
+          "missing pin cannot persist acknowledgment")
+}
+for event in 0..<5 {
+    let c = StreamClient(); c.advertise()
+    let identity = c.audioRouteTrustedMac!
+    let displayed = c.audioRouteContext
+    switch event {
+    case 0: c.trusted = false
+    case 1: c.connected = false
+    case 2: c.connection = RoutePeer(); c.advertise()
+    case 3: c.appActive = false
+    default: c.appInForeground = false
+    }
+    c.acknowledgeAudioRoutes(identity: identity, context: displayed)
+    check(!c.audioRouteAcknowledgments.contains(identity), "trust loss, teardown, peer swap or scene dismissal cannot acknowledge")
+    check(c.playbackRequests.isEmpty && c.microphoneRequests.isEmpty, "acknowledgment guard sends no consent effects")
+}
+do {
+    let c = StreamClient(); c.advertise(); c.trusted = false; c.offerInitialAudioRoutes()
+    check(!c.audioRouteChooserPresented, "capabilities without verified identity do not automatically offer")
+    c.trusted = true; c.offerInitialAudioRoutes()
+    check(c.audioRouteChooserPresented, "late verified identity can offer without a new source event")
+    c.audioRouteChooserPresented = false; c.offerInitialAudioRoutes(); c.offerInitialAudioRoutes()
+    check(!c.audioRouteChooserPresented, "repeated foreground callbacks cannot duplicate an unacknowledged offer in-session")
+}
+do {
+    let c = StreamClient(); c.audioRouteAcknowledgmentEnabled = false; c.advertise(playback: false, microphone: false)
+    c.offerInitialAudioRoutes()
+    check(c.audioRouteChooserPresented, "iPhone keeps its prior per-connection offer even on unsupported host")
+    let identity = c.audioRouteTrustedMac!
+    c.acknowledgeAudioRoutes(identity: identity, context: c.audioRouteContext)
+    check(!c.audioRouteAcknowledgments.contains(identity), "iPhone never writes the iPad acknowledgment")
+    c.audioRouteChooserPresented = false; c.connected = false; c.offerInitialAudioRoutes()
+    c.connected = true; c.offerInitialAudioRoutes()
+    check(c.audioRouteChooserPresented, "iPhone reconnect retains its existing fresh-choice behavior")
+}
+do {
+    let c = StreamClient(); c.advertise(); c.offerInitialAudioRoutes()
+    let identity = c.audioRouteTrustedMac!
+    c.dismissAudioRoutesByUser()
+    check(!c.audioRouteChooserPresented && c.audioRouteAcknowledgments.contains(identity), "interactive dismissal acknowledges the displayed verified identity")
+    check(c.playbackRequests.isEmpty && c.microphoneRequests.isEmpty, "dismissal never requests media")
+}
+do {
+    let c = StreamClient(); c.advertise(); c.offerInitialAudioRoutes()
+    let identity = c.audioRouteTrustedMac!
+    c.audioRouteChooserPresented = false
+    c.appActive = true
+    check(!c.audioRouteAcknowledgments.contains(identity), "programmatic scene dismissal cannot acknowledge even after foreground returns")
+}
+do {
+    let c = StreamClient(); c.advertise(); c.showAudioRoutes()
+    let identity = c.audioRouteTrustedMac!
+    c.connection = RoutePeer(); c.advertise()
+    c.dismissAudioRoutesByUser()
+    check(!c.audioRouteAcknowledgments.contains(identity), "interactive dismissal cannot transfer the displayed peer across reconnect")
 }
 
 print("\(checks - failures)/\(checks) audio route checks passed; \(failures) failed")

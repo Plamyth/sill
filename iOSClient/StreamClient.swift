@@ -156,6 +156,8 @@ final class StreamClient: ObservableObject {
     var microphoneCaptureToken: UUID?
     @Published var audioRouteChooserPresented = false
     var audioRouteOffer = IPadAudioRouteOffer()
+    var audioRouteAcknowledgments = IPadAudioRouteAcknowledgments()
+    var audioRoutePresentation: IPadAudioRoutePolicy.Presentation?
     @Published var audioRouteAuthorization: IPadAudioRoutePolicy.Authorization?
     @Published var macAudioRoutes = MacAudioRouteSession()
     #endif
@@ -3589,6 +3591,7 @@ final class StreamClient: ObservableObject {
     func tearDown(status: String, restartSearch: Bool = true) {
         #if os(iOS)
         audioRouteChooserPresented = false
+        audioRoutePresentation = nil
         audioRouteOffer = IPadAudioRouteOffer()
         macRouteTransport.reset()
         macAudioRoutes.bind(nil)

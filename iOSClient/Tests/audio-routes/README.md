@@ -8,7 +8,17 @@ python3 iOSClient/Tests/audio-routes/run.py
 
 The route suite compiles the real `IPadAudioRoutePolicy`, `IPadAudioRouteOffer`, playback consent controller, microphone policy, and complete `StreamClient+AudioRoutes` adapter. A client stand-in records network consent effects. It never opens AVAudioEngine, Keychain, or a network connection.
 
-The checks cover independent input/output choices, capability filtering, one offer per connection, inert menu opening, explicit consent, repeated application, late ACKs, stale peers/sources/microphone scopes, foreground checks, cleanup failures, and bounded microphone stop handling. The same runner executes the existing microphone cancellation and audio lease suites without changing their source.
+The checks cover independent input/output choices, capability filtering, inert menu opening, explicit consent, repeated application, late ACKs, stale peers/sources/microphone scopes, foreground checks, cleanup failures, and bounded microphone stop handling. The same runner executes the existing microphone cancellation and audio lease suites without changing their source.
+
+iPad onboarding stores only an acknowledgment for a verified Mac ID and host pin. The adapter checks reconnect, a fresh store instance, a separate cold process, changed identity/pin, malformed storage, interactive dismissal and programmatic scene dismissal. No media grant is persisted. Unsupported and unverified iPad hosts do not force an automatic chooser. The iPhone retains its prior offer per connection.
+
+Toolbar state checks run separately:
+
+```sh
+env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer python3 iOSClient/Tests/toolbar-visibility/run.py
+```
+
+They check idle, activity, pinned panels, VoiceOver policy, deferred hide/reveal while a remote touch is held, and disabled iPhone behavior. Actual hit testing, layout, first responder and drag continuity require the parent's combined SDK build and iPad review. These pure checks do not open the UI.
 
 Compiler inputs and executables use temporary directories below this directory. The compiler cache reuses the previous iOSClient test cache. No host or Vision source is compiled.
 

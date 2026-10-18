@@ -28,16 +28,54 @@ extension StreamClient {
                                            microphone: microphonePolicy.scope)
     }
 
-    func offerInitialAudioRoutes() {
-        if audioRouteOffer.offer(connected: connected, hasSource: active != .none, foreground: appInForeground) {
-            audioRouteChooserPresented = true
+    var audioRouteTrustedMac: IPadAudioRouteAcknowledgments.Identity? {
+        guard authenticatedMacAudioRoutePeer != nil, let id = session?.macID,
+              let pin = savedMacs.first(where: { $0.macID == id })?.fingerprintData else { return nil }
+        return IPadAudioRouteAcknowledgments.Identity(macID: id, pin: pin)
+    }
+
+    @MainActor func offerInitialAudioRoutes() {
+        if !audioRouteAcknowledgmentEnabled {
+            if audioRouteOffer.offerForPhone(connected: connected, hasSource: active != .none,
+                                             foreground: appInForeground) { presentAudioRoutes() }
+            return
+        }
+        let identity = audioRouteTrustedMac
+        if audioRouteOffer.offer(identity: identity,
+                                 acknowledged: identity.map(audioRouteAcknowledgments.contains) ?? false,
+                                 hasSource: active != .none,
+                                 supported: audioRouteCapabilities.microphone || audioRouteCapabilities.playback,
+                                 foreground: appInForeground && audioRouteAppActive) {
+            presentAudioRoutes()
         }
     }
 
-    func showAudioRoutes() {
+    @MainActor func showAudioRoutes() {
         guard connected, appInForeground else { return }
-        _ = audioRouteOffer.offer(connected: connected, hasSource: true, foreground: appInForeground)
+        if audioRouteAcknowledgmentEnabled { audioRouteOffer.openedManually(identity: audioRouteTrustedMac) }
+        else { _ = audioRouteOffer.offerForPhone(connected: connected, hasSource: true, foreground: appInForeground) }
+        presentAudioRoutes()
+    }
+
+    private func presentAudioRoutes() {
+        audioRoutePresentation = audioRouteContext.map {
+            IPadAudioRoutePolicy.Presentation(identity: audioRouteTrustedMac, context: $0)
+        }
         audioRouteChooserPresented = true
+    }
+
+    @MainActor func dismissAudioRoutesByUser() {
+        acknowledgeAudioRoutes(identity: audioRoutePresentation?.identity, context: audioRoutePresentation?.context)
+        audioRouteAuthorization = nil
+        audioRouteChooserPresented = false
+    }
+
+    @MainActor func acknowledgeAudioRoutes(identity: IPadAudioRouteAcknowledgments.Identity?,
+                                context: IPadAudioRoutePolicy.Context?) {
+        guard audioRouteAcknowledgmentEnabled, appInForeground, audioRouteAppActive,
+              let identity, identity == audioRouteTrustedMac,
+              let context, context.peer == audioRouteContext?.peer else { return }
+        audioRouteAcknowledgments.acknowledge(identity)
     }
 
     @MainActor func applyAudioRoutes(_ selection: IPadAudioRoutePolicy.Selection,
@@ -74,6 +112,7 @@ extension StreamClient {
     }
 
     @MainActor var audioRouteAppActive: Bool { UIApplication.shared.applicationState == .active }
+    @MainActor var audioRouteAcknowledgmentEnabled: Bool { UIDevice.current.userInterfaceIdiom == .pad }
 
     @MainActor func requestAudioRouteMicrophonePermission() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {

@@ -3,16 +3,45 @@ import Foundation
 final class RoutePeer {}
 
 final class StreamClient {
+    struct Session { var macID: String? }
+    struct SavedMac { let macID: String; let fingerprintData: Data? }
+    var session: Session? = Session(macID: "mac-a")
+    var savedMacs = [SavedMac(macID: "mac-a", fingerprintData: Data(repeating: 1, count: 32))]
+    var trusted = true
+    var authenticatedMacAudioRoutePeer: ObjectIdentifier? {
+        guard connected, trusted, let connection else { return nil }
+        return ObjectIdentifier(connection)
+    }
+    let audioRouteAcknowledgments: IPadAudioRouteAcknowledgments
+    private let defaultsDomain: String?
+
+    init(defaults: UserDefaults? = nil) {
+        if let defaults {
+            audioRouteAcknowledgments = IPadAudioRouteAcknowledgments(defaults: defaults)
+            defaultsDomain = nil
+        } else {
+            let domain = "CCR.AudioRoutes.Tests.\(UUID().uuidString)"
+            defaultsDomain = domain
+            audioRouteAcknowledgments = IPadAudioRouteAcknowledgments(defaults: UserDefaults(suiteName: domain)!)
+        }
+    }
+
+    deinit {
+        if let defaultsDomain { audioRouteAcknowledgments.defaults.removePersistentDomain(forName: defaultsDomain) }
+    }
+
     var connected = true
     var appInForeground = true
     var active = StreamSource.desktop
     var connection: RoutePeer? = RoutePeer()
     var audioRouteChooserPresented = false
+    var audioRoutePresentation: IPadAudioRoutePolicy.Presentation?
     var audioRouteAuthorization: IPadAudioRoutePolicy.Authorization?
     var permissionAllowed = true
     var permissionWaiter: CheckedContinuation<Bool, Never>?
     var holdPermission = false
     var appActive = true
+    var audioRouteAcknowledgmentEnabled = true
     var audioRouteOffer = IPadAudioRouteOffer()
     var microphonePolicy = IPadMicrophonePolicy()
     var microphoneCleanupProblem: String?

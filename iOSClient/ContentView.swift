@@ -61,6 +61,8 @@ struct ContentView: View {
             MacMenuHub.shared.menusChanged(client)
         }
         .onChange(of: client.active) { _, _ in client.offerInitialAudioRoutes() }
+        .onChange(of: client.macInfoSaved) { _, _ in client.offerInitialAudioRoutes() }
+        .onChange(of: client.audioRouteCapabilities) { _, _ in client.offerInitialAudioRoutes() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { client.offerInitialAudioRoutes() }
             else if phase == .background {
@@ -71,7 +73,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             client.offerInitialAudioRoutes()
         }
-        .sheet(isPresented: $client.audioRouteChooserPresented) { IPadAudioRouteChooser(client: client) }
+        .sheet(isPresented: Binding(get: { client.audioRouteChooserPresented }, set: { presented in
+            if !presented, client.audioRouteChooserPresented { client.dismissAudioRoutesByUser() }
+        })) { IPadAudioRouteChooser(client: client) }
         #endif
         // sill://pair from the Camera, Messages or `xcrun simctl openurl`: a confirmation first.
         .onOpenURL { client.handleOpenURL($0) }

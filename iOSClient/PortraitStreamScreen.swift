@@ -155,6 +155,8 @@ struct PortraitStreamScreen: View {
     let settingsTransition: (_ anchor: UnitPoint) -> AnyTransition
     /// The stream panel's size in points, for the viewport `StreamScreen` sends the host.
     let onPanelSize: (CGSize) -> Void
+    var toolbarShown = true
+    var displayMenuChanged: (Bool) -> Void = { _ in }
     /// Pair This iPad… in the panel (see `StreamScreen.openPairingOverlay`).
     var pairThisDevice: () -> Void = {}
     /// The line over the stream while the link cannot carry the quality, as StreamScreen shows it
@@ -184,13 +186,15 @@ struct PortraitStreamScreen: View {
         // open flat at the picture's own shape (docs/iphone-duo-plan.md, (b1) and (b2)).
         let split = DuoPosture.portraitSplit(size, duoFold, aspect: client.duoPaneAspect(textScale: textScale),
                                              controls: metrics.controlsHeight)
-        let half = split.picture
+        let reclaimed = toolbarShown ? 0 : metrics.barHeight + metrics.rowGap
+        let half = split.picture + reclaimed
+        let controlsTop = split.controls + reclaimed
         return ZStack(alignment: .topLeading) {
             Color.black
 
-            VStack(spacing: split.controls - half) {
+            VStack(spacing: split.controls - split.picture) {
                 picturePane.padding(8).frame(height: half)
-                controls(width: size.width).frame(height: size.height - split.controls)
+                controls(width: size.width).frame(height: size.height - controlsTop)
             }
 
             // Same order as landscape: the dim goes over the stream so a tap with the drawer
@@ -203,7 +207,7 @@ struct PortraitStreamScreen: View {
                     .frame(maxHeight: .infinity)
                     .padding(.leading, 22)
                     // Hangs from just under the window bar, so the button that opened it stays visible.
-                    .padding(.top, split.controls + metrics.padTop + metrics.barHeight + 8)
+                    .padding(.top, controlsTop + metrics.padTop + metrics.barHeight + 8)
                     .padding(.bottom, metrics.padBottom)
                     .transition(.opacity)
             }
@@ -214,7 +218,7 @@ struct PortraitStreamScreen: View {
             // halves, as the drawer's dim does, so a tap anywhere outside closes the panel first
             // and never reaches the Mac.
             if settingsOpen {
-                let top = split.controls + metrics.padTop + metrics.barHeight + 8
+                let top = controlsTop + metrics.padTop + metrics.barHeight + 8
                 catcher
 
                 settingsPanel
@@ -233,9 +237,16 @@ struct PortraitStreamScreen: View {
     }
 
     private func controls(width: CGFloat) -> some View {
-        VStack(spacing: metrics.rowGap) {
+        VStack(spacing: 0) {
             windowBar(width: width - 2 * metrics.padSide)
+                .frame(height: toolbarShown ? metrics.barHeight : 0)
+                .clipped()
+                .opacity(toolbarShown ? 1 : 0)
+                .allowsHitTesting(toolbarShown)
+                .accessibilityHidden(!toolbarShown)
+                .padding(.bottom, toolbarShown ? metrics.rowGap : 0)
             keyRow(.full)
+                .padding(.bottom, metrics.rowGap)
             trackpad(verticalSpan: nil)
         }
         .padding(.top, metrics.padTop)
@@ -508,7 +519,8 @@ struct PortraitStreamScreen: View {
 
     private func desktopButton(width: CGFloat? = nil) -> some View {
         MacDisplayChooser(client: client, width: width ?? metrics.buttonWidth, height: metrics.buttonHeight,
-                          spacing: metrics.buttonSpacing, iconSize: metrics.buttonIcon, radius: metrics.buttonRadius)
+                          spacing: metrics.buttonSpacing, iconSize: metrics.buttonIcon, radius: metrics.buttonRadius,
+                          onOpenChange: displayMenuChanged)
     }
 
     /// Leave's old slot: Disconnect is the Settings panel's pinned last row now.

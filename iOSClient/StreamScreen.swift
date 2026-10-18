@@ -194,6 +194,10 @@ struct StreamScreen: View {
     @State private var canvasOpen = false
     @State private var drawerOpen = false
     @State private var dockOpen = false
+    @State private var toolbar = IPadToolbarVisibility(now: ProcessInfo.processInfo.systemUptime)
+    @State private var toolbarTouches = TouchWatch()
+    @State private var menuOpen = false
+    @State private var displayMenuOpen = false
     @State private var keyboardShown = false
     /// Modifiers held down by the portrait key row until the next key, character or click uses
     /// them. Lives up here so rotating the iPad does not drop a half-typed shortcut.
@@ -316,6 +320,13 @@ struct StreamScreen: View {
                 .onChange(of: duo.isPortrait, initial: true) { _, portrait in
                     client.setPointerLayout(portrait: portrait)
                 }
+                if toolbarEnabled && !toolbarPinned {
+                    toolbarToggle
+                        .padding(8)
+                        .padding(.top, !duo.isPortrait && toolbar.visible
+                                 ? (duo == .innerLandscape ? BarMetrics.regular.height : BarMetrics.compact.height) : 0)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                }
                 // The tour: a sibling above the layouts, as the pairing overlay is, and under it: an
                 // outside link puts the tour aside until the overlay has closed.
                 if let run = tour, !overlayShown {
@@ -337,6 +348,9 @@ struct StreamScreen: View {
             .onPreferenceChange(TourTargetsKey.self) { tourTargets = $0 }
             .onChange(of: layout, initial: true) { _, now in layoutChanged(to: now) }
             .background(TouchWatcher(watch: touches))
+            .background {
+                if toolbarEnabled { ToolbarTouchWatcher(watch: toolbarTouches) }
+            }
             // The layouts and the overlays share this screen's space, and so its fold; the inner
             // display gives the picture the status bar's strip in every pose.
             .duoFold(posture, size: geo.size, screen: "stream screen")
@@ -371,10 +385,15 @@ struct StreamScreen: View {
             if link != nil { openLinkOverlay() }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active, toolbar.visible {
+                toolbar = IPadToolbarVisibility(now: ProcessInfo.processInfo.systemUptime)
+            }
             // A gesture cut short by a scene change never ends: put the transient UI away.
             if phase != .active {
                 scaleOpen = false
                 windowMenu = nil
+                menuOpen = false
+                displayMenuOpen = false
                 client.remoteAudioControl.backgrounded()
                 if phase == .background { client.microphoneBackgrounded() }
                 else { client.microphoneBecameInactive() }
@@ -459,6 +478,56 @@ struct StreamScreen: View {
             tourWait?.cancel()
             tourWait = nil
         }
+        .task(id: ToolbarMonitoring(enabled: toolbarEnabled, foreground: scenePhase == .active,
+                                    pinned: toolbarPinned, polling: toolbar.needsPolling)) {
+            updateToolbar()
+            guard toolbarEnabled, scenePhase == .active else { return }
+            while !Task.isCancelled && toolbar.needsPolling && (!toolbarPinned || !toolbar.visible) {
+                do { try await Task.sleep(for: .milliseconds(250)) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                updateToolbar()
+            }
+        }
+    }
+
+    private struct ToolbarMonitoring: Hashable {
+        let enabled: Bool
+        let foreground: Bool
+        let pinned: Bool
+        let polling: Bool
+    }
+
+    private var toolbarEnabled: Bool { UIDevice.current.userInterfaceIdiom == .pad }
+    private var toolbarShown: Bool { !toolbarEnabled || toolbar.visible }
+    private var toolbarPinned: Bool {
+        drawerOpen || settingsOpen || windowMenu != nil || scaleOpen || menuOpen || displayMenuOpen ||
+        tour != nil || overlayShown || canvasOpen || dockOpen || client.audioRouteChooserPresented || voiceOverEnabled
+    }
+
+    private func updateToolbar() {
+        let activity = [toolbarTouches.lastTouchAt, client.lastInputAt, client.lastActionAt].compactMap { $0 }.max()
+        toolbar.update(now: ProcessInfo.processInfo.systemUptime, lastActivity: activity,
+                       touchesDown: toolbarTouches.down > 0, enabled: toolbarEnabled,
+                       foreground: scenePhase == .active, pinned: toolbarPinned)
+    }
+
+    private var toolbarToggle: some View {
+        Button {
+            toolbar.toggle(now: ProcessInfo.processInfo.systemUptime,
+                           touchesDown: toolbarTouches.down > 0, pinned: toolbarPinned)
+        } label: {
+            Image(systemName: toolbar.visible ? "chevron.up" : "line.3.horizontal")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Palette.text)
+                .frame(width: 44, height: 44)
+                .background(Palette.bar.opacity(0.92), in: RoundedRectangle(cornerRadius: 12))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(toolbar.visible ? "상단 메뉴 숨기기" : "상단 메뉴 표시")
+        .accessibilityHint("Mac 입력을 보내지 않고 메뉴 표시를 바꿉니다.")
+        .accessibilityIdentifier("iPadToolbarToggle")
     }
 
     // MARK: The link's line
@@ -643,6 +712,7 @@ struct StreamScreen: View {
     /// down, so it comes back, but only when the pull-down goes: raised now, the software keyboard
     /// would come up, and key focus move, under the open menu.
     private func menusOpened() {
+        menuOpen = true
         keyboardAfterMenus = settingsOpen && keyboardBeforeSettings
         #if DEBUG
         if settingsOpen { print("menus: the pull-down opened over the Settings panel, which closes; the keyboard " + (keyboardAfterMenus ? "comes back when the pull-down goes" : "was down before it")) }
@@ -653,6 +723,7 @@ struct StreamScreen: View {
     }
 
     private func menusClosed() {
+        menuOpen = false
         #if DEBUG
         if keyboardAfterMenus { print("menus: the pull-down went; the keyboard back up, as before the Settings panel") }
         #endif
@@ -960,7 +1031,13 @@ struct StreamScreen: View {
                    openCanvas: { canvasOpen = true },
                    toggleKeyboard: { overlay.toggleKeyboard() },
                    setSettings: { setSettings($0, restoreKeyboard: $1) },
-                   menusOpened: menusOpened, menusClosed: menusClosed)
+                   menusOpened: menusOpened, menusClosed: menusClosed,
+                   displayMenuChanged: { displayMenuOpen = $0 })
+                .frame(height: toolbarShown ? bar.height : 0)
+                .clipped()
+                .opacity(toolbarShown ? 1 : 0)
+                .allowsHitTesting(toolbarShown)
+                .accessibilityHidden(!toolbarShown)
             contentArea(bar: bar)
         }
     }
@@ -976,6 +1053,8 @@ struct StreamScreen: View {
                              openCanvas: { canvasOpen = true },
                              settingsTransition: { settingsTransition(anchor: $0) },
                              onPanelSize: { panelSize = $0 },
+                             toolbarShown: toolbarShown,
+                             displayMenuChanged: { displayMenuOpen = $0 },
                              pairThisDevice: openPairingOverlay,
                              linkLine: shownLinkLine,
                              takeTour: takeTour)
@@ -1232,6 +1311,7 @@ private struct TopBar: View {
     /// The Menus pull-down opened and went (see `StreamScreen.menusOpened`).
     let menusOpened: () -> Void
     let menusClosed: () -> Void
+    let displayMenuChanged: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: metrics.gap) {
@@ -1287,7 +1367,7 @@ private struct TopBar: View {
                 .tourTarget(.keyboard)
 
             MacDisplayChooser(client: client, width: metrics.buttonWidth, height: metrics.buttonHeight,
-                              spacing: metrics.buttonSpacing)
+                              spacing: metrics.buttonSpacing, onOpenChange: displayMenuChanged)
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
@@ -1381,6 +1461,8 @@ struct MacDisplayChooser: View {
     var spacing: CGFloat
     var iconSize: CGFloat = 22
     var radius: CGFloat = 16
+    var onOpenChange: (Bool) -> Void = { _ in }
+    @State private var pickerOpen = false
 
     private var selected: Bool { client.active == .desktop }
     private var currentName: String {
@@ -1405,22 +1487,24 @@ struct MacDisplayChooser: View {
     var body: some View {
         Group {
             if client.supportsDisplaySelection {
-                Menu {
-                    Text("Mac 모니터 선택")
-                    if !client.displaySelectionReady { Text("모니터 목록을 갱신하는 중입니다.") }
-                    else if client.displays.isEmpty { Text("연결된 모니터가 없습니다.") }
-                    ForEach(Array(client.displays.enumerated()), id: \.element.id) { index, display in
-                        Button { client.selectDisplay(display) } label: {
-                            let title = "\(index + 1). \(display.name) · \(display.width)×\(display.height)\(display.isMain ? " · 주 모니터" : "")"
-                            if selected && client.activeDisplayID == display.id {
-                                Label(title, systemImage: "checkmark")
-                            } else { Text(title) }
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    Button { pickerOpen = true } label: { label }
+                        .popover(isPresented: $pickerOpen) {
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 12) { displayChoices }
+                                    .buttonStyle(.bordered)
+                                    .padding()
+                            }
+                            .frame(minWidth: 280, idealHeight: 320)
+                            .presentationCompactAdaptation(.popover)
                         }
-                        .disabled(!client.displaySelectionReady)
-                    }
-                } label: { label }
-                .accessibilityLabel("Mac 모니터 선택")
-                .accessibilityValue(currentName)
+                        .accessibilityLabel("Mac 모니터 선택")
+                        .accessibilityValue(currentName)
+                } else {
+                    Menu { displayChoices } label: { label }
+                        .accessibilityLabel("Mac 모니터 선택")
+                        .accessibilityValue(currentName)
+                }
             } else {
                 Button { client.select(.desktop) } label: { label }
                     .accessibilityLabel("Mac 데스크탑 전체 표시")
@@ -1428,7 +1512,46 @@ struct MacDisplayChooser: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("macDisplayChooser")
+        .onChange(of: pickerOpen) { _, open in onOpenChange(open) }
+        .onDisappear { if pickerOpen { pickerOpen = false; onOpenChange(false) } }
     }
+
+    @ViewBuilder private var displayChoices: some View {
+        Text("Mac 모니터 선택")
+        if !client.displaySelectionReady { Text("모니터 목록을 갱신하는 중입니다.") }
+        else if client.displays.isEmpty { Text("연결된 모니터가 없습니다.") }
+        ForEach(Array(client.displays.enumerated()), id: \.element.id) { index, display in
+            Button {
+                client.selectDisplay(display)
+                pickerOpen = false
+            } label: {
+                let title = "\(index + 1). \(display.name) · \(display.width)×\(display.height)\(display.isMain ? " · 주 모니터" : "")"
+                if selected && client.activeDisplayID == display.id {
+                    Label(title, systemImage: "checkmark")
+                } else { Text(title) }
+            }
+            .disabled(!client.displaySelectionReady)
+        }
+    }
+}
+
+/// The existing passive recognizer, including remote touches, without changing the tour's filter.
+private struct ToolbarTouchWatcher: UIViewRepresentable {
+    let watch: TouchWatch
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> TouchWatcher.Anchor {
+        let anchor = TouchWatcher.Anchor(watch: watch)
+        anchor.recognizer.delegate = context.coordinator
+        return anchor
+    }
+    func updateUIView(_ anchor: TouchWatcher.Anchor, context: Context) { anchor.recognizer.watch = watch }
+    static func dismantleUIView(_ anchor: TouchWatcher.Anchor, coordinator: Coordinator) { anchor.detach() }
 }
 
 // MARK: - Text size control

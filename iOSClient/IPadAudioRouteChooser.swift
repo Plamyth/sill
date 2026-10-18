@@ -9,6 +9,7 @@ struct IPadAudioRouteChooser: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selection = IPadAudioRoutePolicy.Selection()
     @State private var context: IPadAudioRoutePolicy.Context?
+    @State private var acknowledgedMac: IPadAudioRouteAcknowledgments.Identity?
     @State private var problem: String?
     @State private var macProblem: String?
     @State private var macInputUID = ""
@@ -104,7 +105,7 @@ struct IPadAudioRouteChooser: View {
                         ProgressView("iPad 마이크 권한 확인 중")
                         Button("입력·출력 요청 취소") { client.audioRouteAuthorization = nil }
                     }
-                    Button("닫기") { dismiss() }
+                    Button("닫기", action: close)
                         .disabled(client.macAudioRoutes.pending != nil)
                 }
                 macRoutes
@@ -112,7 +113,7 @@ struct IPadAudioRouteChooser: View {
             .navigationTitle("오디오 입력·출력")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("닫기") { dismiss() }
+                    Button("닫기", action: close)
                         .disabled(client.macAudioRoutes.pending != nil)
                 }
             }
@@ -121,6 +122,7 @@ struct IPadAudioRouteChooser: View {
         .preferredColorScheme(.dark)
         .onAppear {
             context = client.audioRouteContext
+            acknowledgedMac = client.audioRoutePresentation?.identity
             selection = client.audioRouteSelection
             macCatalogToken = client.macAudioRoutes.catalogToken
             readPorts()
@@ -257,12 +259,20 @@ struct IPadAudioRouteChooser: View {
     private func applySelection() {
         let chosen = selection
         let displayed = context
+        let identity = acknowledgedMac
+        client.acknowledgeAudioRoutes(identity: identity, context: displayed)
         Task { @MainActor in
             do {
                 try await client.applyAudioRoutes(chosen, context: displayed)
                 problem = nil
             } catch { problem = error.localizedDescription }
         }
+    }
+
+    private func close() {
+        client.audioRouteAuthorization = nil
+        client.acknowledgeAudioRoutes(identity: acknowledgedMac, context: context)
+        dismiss()
     }
 
     private func readPorts() {

@@ -42,6 +42,11 @@ enum IPadAudioRoutePolicy {
         let context: Context
     }
 
+    struct Presentation {
+        let identity: IPadAudioRouteAcknowledgments.Identity?
+        let context: Context
+    }
+
     enum Problem: LocalizedError {
         case changedConnection, inputUnavailable, outputUnavailable, microphoneBusy, cleanupRequired, permissionDenied
 
@@ -71,12 +76,70 @@ enum IPadAudioRoutePolicy {
 }
 
 struct IPadAudioRouteOffer {
-    private var offered = false
+    private var offered: IPadAudioRouteAcknowledgments.Identity?
+    private var phoneOffered = false
 
-    mutating func offer(connected: Bool, hasSource: Bool, foreground: Bool) -> Bool {
-        if !connected { offered = false; return false }
-        guard !offered, hasSource, foreground else { return false }
-        offered = true
+    mutating func offerForPhone(connected: Bool, hasSource: Bool, foreground: Bool) -> Bool {
+        if !connected { phoneOffered = false; return false }
+        guard !phoneOffered, hasSource, foreground else { return false }
+        phoneOffered = true
         return true
+    }
+
+    mutating func offer(identity: IPadAudioRouteAcknowledgments.Identity?, acknowledged: Bool,
+                        hasSource: Bool, supported: Bool, foreground: Bool) -> Bool {
+        guard let identity, !acknowledged, offered != identity,
+              hasSource, supported, foreground else { return false }
+        offered = identity
+        return true
+    }
+
+    mutating func openedManually(identity: IPadAudioRouteAcknowledgments.Identity?) {
+        offered = identity
+    }
+}
+
+/// This record acknowledges an explanation. It contains no media selection or permission grant.
+struct IPadAudioRouteAcknowledgments {
+    struct Identity: Codable, Equatable {
+        let macID: String
+        let pin: Data
+
+        init?(macID: String, pin: Data) {
+            guard !macID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  macID.utf8.count <= 256, pin.count == 32 else { return nil }
+            self.macID = macID
+            self.pin = pin
+        }
+    }
+
+    private struct Record: Codable {
+        let version: Int
+        var identities: [Identity]
+    }
+
+    static let key = "iPadAudioRouteAcknowledgments.v1"
+    let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    private var identities: [Identity] {
+        guard let data = defaults.data(forKey: Self.key),
+              let record = try? JSONDecoder().decode(Record.self, from: data), record.version == 1,
+              record.identities.allSatisfy({ Identity(macID: $0.macID, pin: $0.pin) != nil }) else { return [] }
+        return record.identities
+    }
+
+    func contains(_ identity: Identity) -> Bool { identities.contains(identity) }
+
+    func acknowledge(_ identity: Identity) {
+        var next = identities
+        guard !next.contains(identity) else { return }
+        // A new trust pin replaces the old acknowledgment for this Mac.
+        next.removeAll { $0.macID == identity.macID }
+        next.append(identity)
+        if let data = try? JSONEncoder().encode(Record(version: 1, identities: next)) {
+            defaults.set(data, forKey: Self.key)
+        }
     }
 }

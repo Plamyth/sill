@@ -1,0 +1,179 @@
+SUITE routes
+PASS input choices are exactly the advertised paths
+PASS output choices are exactly the advertised paths
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported selection is rejected
+PASS unsupported selection is rejected
+PASS unsupported selection is rejected
+PASS input choices are exactly the advertised paths
+PASS output choices are exactly the advertised paths
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported selection is rejected
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported selection is rejected
+PASS input choices are exactly the advertised paths
+PASS output choices are exactly the advertised paths
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported selection is rejected
+PASS unsupported selection is rejected
+PASS input choices are exactly the advertised paths
+PASS output choices are exactly the advertised paths
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unsupported direction cannot create an action plan
+PASS input selection does not depend on output
+PASS output selection does not depend on input
+PASS unverified screen never offers routes
+PASS first catalog waits for a real stream source
+PASS unsupported host never forces off-only onboarding
+PASS background never offers routes
+PASS first verified foreground source offers once
+PASS repeated catalog does not reopen chooser
+PASS acknowledgment survives a new connection offer state
+PASS first connection and menu open the same chooser
+PASS opening chooser never sends consent
+PASS new capability starts with both directions off
+PASS confirming both off has no effect
+PASS output-only choice requests playback once
+PASS output-only choice never opens microphone
+PASS requesting playback does not bypass host ACK
+PASS repeated apply cannot toggle pending playback off
+PASS explicit output off revokes immediately
+PASS late playback ACK after off never re-enables output
+PASS input-only choice requests microphone consent once
+PASS input-only choice does not enable playback
+PASS microphone request does not bypass host ACK
+PASS repeated apply cannot cancel pending input
+PASS input off cancels pending microphone start
+PASS cancelled microphone ACK cannot start capture
+PASS input and output can be requested together
+PASS changing output preserves selected microphone consent
+PASS unsupported direction rejects the entire apply before side effects
+PASS unsupported target cannot partially enable another direction
+PASS unsupported direction rejects the entire apply before side effects
+PASS unsupported target cannot partially enable another direction
+PASS stale peer, source, grant scope, background, or disconnected context cannot apply
+PASS stale context has no consent side effects
+PASS stale peer, source, grant scope, background, or disconnected context cannot apply
+PASS stale context has no consent side effects
+PASS stale peer, source, grant scope, background, or disconnected context cannot apply
+PASS stale context has no consent side effects
+PASS stale peer, source, grant scope, background, or disconnected context cannot apply
+PASS stale context has no consent side effects
+PASS stale peer, source, grant scope, background, or disconnected context cannot apply
+PASS stale context has no consent side effects
+PASS stale peer, source, grant scope, background, or disconnected context cannot apply
+PASS stale context has no consent side effects
+PASS cleanup failure prevents combined input start
+PASS cleanup refusal cannot partially start playback
+PASS stop awaiting ACK cannot start another microphone grant
+PASS stopping microphone remains bounded
+PASS unsupported host skips automatic off-only chooser
+PASS dismissing without applying does not prompt again
+PASS menu reopens without enabling unsupported routes
+PASS manual chooser consumes the first connection offer
+PASS permission denial rejects combined action
+PASS permission denial has no partial playback or microphone effect
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS stale permission result is rejected
+PASS invalidated permission sends neither direction
+PASS foreground return never restarts invalidated intent
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS stale permission result is rejected
+PASS invalidated permission sends neither direction
+PASS foreground return never restarts invalidated intent
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS stale permission result is rejected
+PASS invalidated permission sends neither direction
+PASS foreground return never restarts invalidated intent
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS stale permission result is rejected
+PASS invalidated permission sends neither direction
+PASS foreground return never restarts invalidated intent
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS stale permission result is rejected
+PASS invalidated permission sends neither direction
+PASS foreground return never restarts invalidated intent
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS stale permission result is rejected
+PASS invalidated permission sends neither direction
+PASS foreground return never restarts invalidated intent
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS stale permission result is rejected
+PASS invalidated permission sends neither direction
+PASS foreground return never restarts invalidated intent
+PASS combined action waits at permission boundary
+PASS permission prompt cannot revoke a prematurely started playback
+PASS only unchanged foreground action can complete
+PASS permission success starts both existing operations exactly once
+PASS replacement off prevents stale combined start
+PASS disconnected output has a reason
+PASS missing source output has a reason
+PASS unadvertised playback has a reason
+PASS supported output clears unavailable reason
+PASS fresh verified supported trust offers onboarding
+PASS repeated dismissal acknowledgment is idempotent
+PASS separate cold process reads persisted acknowledgment without restoring media
+PASS same verified Mac reconnect does not repeat acknowledged sheet
+PASS fresh client and store instance retain acknowledgment across cold launch
+PASS cold launch acknowledgment restores no media grant
+PASS manual chooser remains available after acknowledgment
+PASS new host pin gets a fresh explanation
+PASS stale sheet cannot acknowledge a changed pin
+PASS different Mac ID with same pin has independent acknowledgment
+PASS malformed or unsupported storage version does not suppress onboarding
+PASS malformed or unsupported storage version does not suppress onboarding
+PASS malformed or unsupported storage version does not suppress onboarding
+PASS blank identity cannot persist acknowledgment
+PASS missing pin cannot persist acknowledgment
+PASS trust loss, teardown, peer swap or scene dismissal cannot acknowledge
+PASS acknowledgment guard sends no consent effects
+PASS trust loss, teardown, peer swap or scene dismissal cannot acknowledge
+PASS acknowledgment guard sends no consent effects
+PASS trust loss, teardown, peer swap or scene dismissal cannot acknowledge
+PASS acknowledgment guard sends no consent effects
+PASS trust loss, teardown, peer swap or scene dismissal cannot acknowledge
+PASS acknowledgment guard sends no consent effects
+PASS trust loss, teardown, peer swap or scene dismissal cannot acknowledge
+PASS acknowledgment guard sends no consent effects
+PASS capabilities without verified identity do not automatically offer
+PASS late verified identity can offer without a new source event
+PASS repeated foreground callbacks cannot duplicate an unacknowledged offer in-session
+PASS iPhone keeps its prior per-connection offer even on unsupported host
+PASS iPhone never writes the iPad acknowledgment
+PASS iPhone reconnect retains its existing fresh-choice behavior
+PASS interactive dismissal acknowledges the displayed verified identity
+PASS dismissal never requests media
+PASS programmatic scene dismissal cannot acknowledge even after foreground returns
+PASS interactive dismissal cannot transfer the displayed peer across reconnect
+172/172 audio route checks passed; 0 failed
+SUITE microphone
+iPad microphone owner and cancellation policy passed
+Permission precedes host start; cleanup guidance survives nil catalog until fresh capability; recovery requires opt-in
+SUITE lease
+iPad audio lease: two players retain output; dictation and uplink exclude each other; final release closes session
