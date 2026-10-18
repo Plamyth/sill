@@ -23,8 +23,10 @@ list.microphone = MicrophoneCapability(peer:UUID(),destination:UUID(),generation
 client.microphoneObserve(list,from:peer)
 check(peer.sent.isEmpty && permissionRequests.withLock { $0 == 0 }, "actual client capability observation is inert")
 client.toggleVisionMicrophone()
+pump { !peer.sent.isEmpty }
 let start = Wire.decode(MicrophoneControl.self,from:Data(peer.sent.last!.dropFirst(StreamMessage.headerLength)))!
-check(permissionRequests.withLock { $0 == 0 }, "actual client waits for matching host grant before permission")
+check(permissionRequests.withLock { $0 == 1 } && client.microphoneCapture == nil,
+      "actual client authorizes before host start and waits for matching host grant before capture")
 let grant = UUID(), response = MicrophoneState(requestID:start.requestID,scope:start.scope,phase:.active,grantID:grant)
 let body = Wire.encode(response)
 let header = StreamMessage.parseHeader(StreamMessage(kind:.microphoneState,timestamp:0,isKeyframe:false,payload:body).serialized())!
@@ -59,7 +61,7 @@ client.microphoneBackgrounded()
 let before = peer.sent.count
 input?.copyInput(buffer,AVAudioTime(sampleTime:4800,atRate:48_000))
 RunLoop.main.run(until:Date().addingTimeInterval(0.03))
-check(client.microphoneCapture == nil && client.microphonePhase == .unavailable && peer.sent.count == before,
+check(client.microphoneCapture == nil && client.microphonePhase == .stopping && peer.sent.count == before,
       "actual background closes converter and frame transport against late input")
 check(permissionRequests.withLock { $0 == 1 } && VisionAudioSharedHardware.shared.cleanupProblem == nil,
       "actual capture shutdown does not reauthorize or quarantine healthy hardware")

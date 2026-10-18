@@ -129,7 +129,7 @@ struct SillVisionWorkspace: View {
         .frame(minWidth: 700, minHeight: 500)
         .task {
             guard session.owns(lease) else { return }
-            session.start(foreground: phase == .active); updateInputAdmission()
+            session.setScenePhase(phase); updateInputAdmission()
         }
         .onChange(of: inputAllowed) { _, _ in updateInputAdmission() }
         .onChange(of: macAudioModalShown) { _, shown in
@@ -170,7 +170,7 @@ struct SillVisionWorkspace: View {
         }
         .onChange(of: phase, initial: true) { _, value in
             guard session.owns(lease) else { return }
-            session.start(foreground: value == .active)
+            session.setScenePhase(value)
             if value != .active { clearDraft(); releaseInput() }
         }
         .onChange(of: client.connected) { _, connected in
@@ -188,7 +188,7 @@ struct SillVisionWorkspace: View {
         .onDisappear {
             guard session.owns(lease) else { return }
             clearDraft()
-            session.setForeground(false)
+            session.suspendPresentation()
             releaseInput()
         }
         .sheet(isPresented: $recoveryShown) { recoveryForm }
@@ -495,7 +495,7 @@ private struct VisionMicrophoneControls: View {
                    systemImage: stopping ? "mic.slash" : "mic") {
                 admit { if cleanup || stopping || allowStart { client.toggleVisionMicrophone() } }
             }
-            .disabled(!cleanup && !stopping && (!allowStart || !client.microphonePolicy.canStart || client.visionAudio.cleanupProblem != nil))
+            .disabled(!cleanup && !stopping && (!allowStart || !client.visionMicrophoneCanStart || client.visionAudio.cleanupProblem != nil))
             .accessibilityHint(cleanup ? "기존 마이크 자원만 정리합니다. 다시 녹음하지 않습니다." :
                 stopping ? "즉시 음성 전송을 중지합니다." : "직접 허용하면 Vision 마이크를 현재 선택한 Mac으로 전송합니다.")
             Button("수신 확인", systemImage: "checkmark.circle") {
@@ -513,13 +513,16 @@ private struct VisionMicrophoneControls: View {
         switch client.microphonePhase {
         case .unavailable: return "이 Mac 연결은 마이크 입력을 지원하지 않습니다."
         case .off: return "Vision 마이크 꺼짐"
+        case .authorizing: return "Vision 마이크 권한을 확인합니다."
         case .requesting: return "선택한 Mac의 마이크 입력 허용을 기다립니다."
         case .capturing: return "Vision 마이크를 준비합니다."
         case .live:
             return (client.microphoneReceipt?.admittedPackets ?? 0) > 0 ?
                 "마지막 조회에서 Mac 수신 확인 · 실제 통화 입력은 별도 확인" : "전송 허용됨 · 수신 확인을 눌러 조회하세요."
         case .stopping: return "음성 전송을 중지했습니다. Mac의 정리 확인을 기다립니다."
-        case .failed(let problem): return problem
+        case .cleanupRequired: return "Mac 마이크 정리가 확인되지 않았습니다. 화면 목록을 새로고침하거나 다시 연결한 뒤 직접 시작하세요."
+        case .failed(let problem):
+            return problem == "iPad 마이크 권한이 필요합니다." ? "Vision 마이크 권한이 필요합니다." : problem
         }
     }
 }

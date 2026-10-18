@@ -1334,7 +1334,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>9</string>
+				<string>10</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>
@@ -1401,7 +1401,7 @@
 				<key>XROS_DEPLOYMENT_TARGET</key>
 				<string>2.5</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>9</string>
+				<string>10</string>
 				<key>MARKETING_VERSION</key>
 				<string>0.5.1</string>
 				<key>CODE_SIGN_STYLE</key>

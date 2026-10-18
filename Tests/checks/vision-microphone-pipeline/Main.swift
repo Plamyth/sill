@@ -162,12 +162,14 @@ import StreamProtocol
         p.client.requestVisionMicrophoneReceipt()
         expect(p.clientMessages().isEmpty, "inactive receipt action sends nothing")
         p.client.toggleVisionMicrophone()
+        await until({ p.connection.sent.contains { StreamMessage.parseHeader($0)?.kind == .microphoneControl } },
+                    "permission completes before actual client start")
         let start = p.clientMessages()
         expect(start.count == 1, "actual client sends one start")
         p.feed(start); p.host.drainMicrophoneIngress()
         await until({ p.deliverReplies(); return p.client.microphonePhase == .live },
                     "actual host state enables actual client capture")
-        expect(p.receiver.phase == .active && permissionRequests.withLock { $0 == 1 }, "one permission follows host grant")
+        expect(p.receiver.phase == .active && permissionRequests.withLock { $0 == 1 }, "one permission precedes host grant without capture reauthorization")
         p.client.microphoneCleanupProblem = "inert cleanup refusal"
         p.client.requestVisionMicrophoneReceipt()
         expect(p.clientMessages().isEmpty, "cleanup uncertainty blocks receipt action")

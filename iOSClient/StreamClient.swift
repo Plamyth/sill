@@ -970,7 +970,7 @@ final class StreamClient: ObservableObject {
         visionTextForeground = foreground
         if !foreground {
             if visionStartupStarted { stopSavedMacAutoConnect() }
-            revokeVisionTextDrafts(); microphoneBackgrounded()
+            revokeVisionTextDrafts()
         }
         displayView.setPresentationForeground(foreground)
     }
@@ -1078,6 +1078,9 @@ final class StreamClient: ObservableObject {
     let microphoneFrames = IPadMicrophoneFrameGate()
     var microphoneCapture: VisionMicrophoneCapture?
     var microphoneCaptureToken: UUID?
+    var microphoneAdmission = VisionMicrophoneAdmission(applicationActive: UIApplication.shared.applicationState == .active)
+    @Published var microphoneAuthorization: VisionMicrophoneAuthorization?
+    var requestVisionMicrophonePermission: (@escaping (Bool) -> Void) -> Void = StreamClient.requestVisionRecordPermission
     private let visionAudioRoute = VisionAudioRoute()
     lazy var visionAudio = VisionAudioController(send: { [weak self] control in
         self?.sendVisionAudio(control)
@@ -1208,6 +1211,9 @@ final class StreamClient: ObservableObject {
             self?.cameForward()
         }
         NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.wentToBackground(preservingMicrophoneAuthorization: true)
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.wentToBackground()
         }
         #else
@@ -1411,6 +1417,9 @@ final class StreamClient: ObservableObject {
     private func cameForward() {
         let wasInBackground = !appInForeground
         appInForeground = true
+        #if os(visionOS)
+        microphoneApplicationActive(true)
+        #endif
         guard wasInBackground else { return }
         if browsing {
             rebuildIfDue(.network, cameForward: true)
@@ -1424,11 +1433,12 @@ final class StreamClient: ObservableObject {
         discoveryChanged()
     }
 
-    private func wentToBackground() {
+    private func wentToBackground(preservingMicrophoneAuthorization: Bool = false) {
         #if os(visionOS)
+        if preservingMicrophoneAuthorization { microphoneApplicationActive(false) }
+        else { microphoneBackgrounded() }
         revokeVisionMacAudioRoutes(foreground: false)
         visionAudio.setForeground(false)
-        microphoneBackgrounded()
         #endif
         appInForeground = false
         #if os(visionOS)
@@ -4176,7 +4186,7 @@ final class StreamClient: ObservableObject {
                 guard self.connection === from else { return }
                 #if os(visionOS)
                 self.microphoneSetConnection(peer)
-                if self.appInForeground { self.microphoneObserve(list, from: peer) }
+                self.microphoneObserve(list, from: peer)
                 #endif
                 #if !os(visionOS)
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))

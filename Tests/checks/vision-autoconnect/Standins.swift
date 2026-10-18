@@ -195,9 +195,15 @@ final class FixtureLaunchClient {
     func armSavedMacAutoConnect() { calls.append("armSavedMacAutoConnect") }
     func startBrowsing() { calls.append("startBrowsing") }
     func setVisionPresentationForeground(_ active: Bool) {}
+    var microphoneScenes: [(VisionWindowLease?, VisionMicrophoneAdmission.Scene)] = []
+    func microphoneSceneChanged(lease: VisionWindowLease?, scene: VisionMicrophoneAdmission.Scene) {
+        microphoneScenes.append((lease, scene))
+    }
     func stopVisionCableBootstrap(_ reason: VisionCableBootstrapReason) { bootstrap.stop(reason) }
 }
 final class FixtureAudio { func setForeground(_ active: Bool) {} }
+enum VisionMicrophoneAdmission { enum Scene { case active, inactive, background } }
+enum ScenePhase { case active, inactive, background }
 final class FixtureInput {
     var allowed = true
     func bind(_ client: FixtureLaunchClient) {}

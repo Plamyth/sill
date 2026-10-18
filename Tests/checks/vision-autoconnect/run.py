@@ -65,7 +65,8 @@ def emit(root, output):
     body = (root / 'Tests/checks/vision-autoconnect/Standins.swift').read_text()
     body = body.replace('/* REAL_CLIENT_METHODS */', '\n'.join(pieces.values()))
     owner = (root / 'visionOSClient/VisionAppSession.swift').read_text()
-    owner_methods = '\n'.join(block(owner, marker) for marker in ['func claim(', 'func owns(', 'func release(', 'func start(', 'func setForeground('])
+    owner_methods = '\n'.join(block(owner, marker) for marker in ['func claim(', 'func owns(', 'func release(',
+        'func setScenePhase(', 'func suspendPresentation(', 'func start(', 'func setForeground('])
     body = body.replace('/* REAL_OWNER_METHODS */', owner_methods)
     for marker in ['private func dialTarget(', 'private func ended(']:
         pieces[marker] = vision(block(home, marker))

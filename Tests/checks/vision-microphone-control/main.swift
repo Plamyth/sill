@@ -14,7 +14,8 @@ func pump(_ until: () -> Bool) {
 }
 func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.015)) }
 struct FakeFailure: LocalizedError { var errorDescription: String? { "injected capture cleanup failure" } }
-enum VisionAudioSharedHardware { static let shared = 0 }
+struct InertHardware { var cleanupProblem: String? }
+enum VisionAudioSharedHardware { static var shared = InertHardware() }
 final class VisionMicrophoneCapture {
     static var permissionCalls = 0, starts = 0, stops = 0, retries = 0
     static var delay = false, stopFails = false
@@ -22,13 +23,13 @@ final class VisionMicrophoneCapture {
     let permitted: () -> Bool
     let closeFrames: @Sendable () -> Void
     var emit: (@Sendable ([IPadMicrophonePCMFrame]) -> Void)?
-    init(hardware: Int, owner: UUID, permitted: @escaping () -> Bool,
+    init(hardware: InertHardware, owner: UUID, permitted: @escaping () -> Bool,
          closeFrames: @escaping @Sendable () -> Void, failed: @escaping (String) -> Void) {
         self.permitted = permitted; self.closeFrames = closeFrames
     }
     @MainActor func start(emit: @escaping @Sendable ([IPadMicrophonePCMFrame]) -> Void) async throws {
         guard permitted() else { throw CancellationError() }
-        Self.starts += 1; Self.permissionCalls += 1
+        Self.starts += 1
         if Self.delay { await withCheckedContinuation { Self.pending.append($0) } }
         guard permitted() else { throw CancellationError() }
         self.emit = emit
@@ -50,6 +51,13 @@ final class StreamClient {
     let microphoneFrames = IPadMicrophoneFrameGate()
     var microphoneCapture: VisionMicrophoneCapture?
     var microphoneCaptureToken: UUID?
+    var microphoneAdmission = VisionMicrophoneAdmission(lease: VisionWindowLease(window: UUID()),
+        scene: .active, applicationActive: true)
+    var microphoneAuthorization: VisionMicrophoneAuthorization?
+    var requestVisionMicrophonePermission: (@escaping (Bool) -> Void) -> Void = { completion in
+        VisionMicrophoneCapture.permissionCalls += 1
+        completion(true)
+    }
     func connectionLost(_ c: NWConnection, error: NWError) {}
 }
 func catalog(_ capability: MicrophoneCapability?, generation: UUID = UUID()) -> WindowList {
@@ -84,8 +92,10 @@ client.microphoneObserve(catalog(capability),from:peer)
 check(client.microphonePhase == .off && peer.sent.isEmpty && VisionMicrophoneCapture.starts == 0,
       "capability observation never starts microphone")
 client.toggleVisionMicrophone()
+pump { !controls(peer).isEmpty }
 let start = controls(peer).last!, scope = start.scope, grant = UUID()
-check(start.operation == .start && VisionMicrophoneCapture.permissionCalls == 0, "explicit start waits for host before permission")
+check(start.operation == .start && VisionMicrophoneCapture.permissionCalls == 1 && VisionMicrophoneCapture.starts == 0,
+      "permission resolves before host start and capture waits for ACK")
 reply(client,peer:peer,id:UUID(),scope:scope,phase:.active,grant:grant)
 reply(client,peer:other,id:start.requestID,scope:scope,phase:.active,grant:grant)
 check(VisionMicrophoneCapture.starts == 0 && client.microphoneCapture == nil && client.microphonePhase == .requesting, "wrong request and peer cannot begin capture")
@@ -106,6 +116,7 @@ check(stop.operation == .stop && stop.grantID == grant && frames(peer) == 1,
       "stop closes frames before scoped stop control")
 reply(client,peer:peer,id:stop.requestID,scope:scope,phase:.off,grant:nil)
 client.toggleVisionMicrophone()
+pump { controls(peer).last?.operation == .start }
 let nextStart = controls(peer).last!
 reply(client,peer:peer,id:nextStart.requestID,scope:scope,phase:.active,grant:UUID())
 pump { client.microphonePhase == .live }
@@ -128,6 +139,7 @@ let pendingClient = StreamClient(), pendingPeer = NWConnection()
 pendingClient.connection = pendingPeer; pendingClient.microphoneSetConnection(pendingPeer)
 pendingClient.microphoneObserve(catalog(capability),from:pendingPeer)
 pendingClient.toggleVisionMicrophone()
+pump { !controls(pendingPeer).isEmpty }
 let pendingStart = controls(pendingPeer).last!
 VisionMicrophoneCapture.delay = true
 reply(pendingClient,peer:pendingPeer,id:pendingStart.requestID,scope:pendingStart.scope,phase:.active,grant:UUID())
@@ -136,14 +148,15 @@ pendingClient.microphoneBackgrounded()
 VisionMicrophoneCapture.delay = false
 VisionMicrophoneCapture.pending.removeFirst().resume()
 settle()
-check(pendingClient.microphonePhase == .unavailable && pendingClient.microphoneCapture == nil && frames(pendingPeer) == 0,
-      "permission continuation after background cannot open transmission")
+check(pendingClient.microphonePhase == .stopping && pendingClient.microphoneCapture == nil && frames(pendingPeer) == 0,
+      "capture continuation after background cannot open transmission")
 
 var policy = IPadMicrophonePolicy()
 _ = policy.setConnection(ObjectIdentifier(peer))
 let list = catalog(capability)
 _ = policy.observe(list,from:ObjectIdentifier(peer))
 _ = policy.toggle(); let request = policy.startRequestID!, boundScope = policy.scope!
+_ = policy.permissionResolved(true,requestID:request,scope:boundScope,from:ObjectIdentifier(peer))
 _ = policy.receive(MicrophoneState(requestID:request,scope:boundScope,phase:.active,grantID:grant),from:ObjectIdentifier(peer))
 _ = policy.captureStarted(requestID:request,grant:grant,from:ObjectIdentifier(peer))
 let failed = policy.captureFailed(requestID:request,grant:grant,from:ObjectIdentifier(peer),reason:"injected live failure")
@@ -209,6 +222,157 @@ check(boundaryBytes.withLock { $0.count == 5 }, "old completion cannot decrement
 boundary.close(captureID:replacementID)
 boundary.emitBatch(burst,captureID:replacementID)
 check(boundaryBytes.withLock { $0.count == 5 }, "stop blocks complete later batches")
+
+final class AuthorizationFixture {
+    let peer = NWConnection()
+    let client = StreamClient()
+    let list = catalog(MicrophoneCapability(peer: UUID(), destination: UUID(), generation: UUID()))
+    let lease: VisionWindowLease
+    var callbacks: [(Bool) -> Void] = []
+    init() {
+        lease = client.microphoneAdmission.lease!
+        client.connection = peer
+        client.microphoneSetConnection(peer)
+        client.microphoneObserve(list, from: peer)
+        client.requestVisionMicrophonePermission = { [weak self] completion in self?.callbacks.append(completion) }
+    }
+    func restoreAdmission() {
+        client.connection = peer
+        client.microphoneSetConnection(peer)
+        client.microphoneObserve(list, from: peer)
+        client.microphoneSceneChanged(lease: lease, scene: .active)
+        client.microphoneApplicationActive(true)
+    }
+    var starts: [MicrophoneControl] { controls(peer).filter { $0.operation == .start } }
+}
+
+let delayed = AuthorizationFixture(), capturesBeforePermission = VisionMicrophoneCapture.starts
+delayed.client.toggleVisionMicrophone()
+check(delayed.callbacks.count == 1 && delayed.starts.isEmpty && delayed.client.microphonePhase == .authorizing,
+      "delayed OS permission emits no host start")
+delayed.client.microphoneSceneChanged(lease: delayed.lease, scene: .inactive)
+delayed.client.microphoneApplicationActive(false)
+delayed.callbacks[0](true); settle()
+delayed.callbacks[0](false); settle()
+check(delayed.starts.isEmpty && VisionMicrophoneCapture.starts == capturesBeforePermission &&
+      delayed.client.microphonePhase == .authorizing,
+      "inactive stores first permission result without starting host or capture")
+delayed.client.microphoneSceneChanged(lease: delayed.lease, scene: .active)
+check(delayed.starts.isEmpty, "scene active alone cannot bypass UIApplication inactivity")
+delayed.client.microphoneApplicationActive(true)
+check(delayed.starts.count == 1 && delayed.callbacks.count == 1 && delayed.client.microphonePhase == .requesting,
+      "original admission consumes stored permission once when fully active")
+delayed.callbacks[0](true); settle()
+check(delayed.starts.count == 1, "duplicate resolved permission cannot start host twice")
+let delayedStart = delayed.starts[0]
+delayed.client.microphoneSceneChanged(lease: delayed.lease, scene: .inactive)
+reply(delayed.client, peer: delayed.peer, id: delayedStart.requestID, scope: delayedStart.scope, phase: .active, grant: UUID())
+check(VisionMicrophoneCapture.starts == capturesBeforePermission && delayed.client.microphoneCapture == nil && frames(delayed.peer) == 0,
+      "host ACK while inactive cannot begin capture or open frames")
+
+let inactiveBoundary = AuthorizationFixture()
+inactiveBoundary.client.toggleVisionMicrophone(); inactiveBoundary.callbacks[0](true); settle()
+let inactiveStart = inactiveBoundary.starts[0], beforeInactiveACK = VisionMicrophoneCapture.starts
+inactiveBoundary.client.microphoneAdmission.applicationActive = false
+reply(inactiveBoundary.client, peer: inactiveBoundary.peer, id: inactiveStart.requestID,
+      scope: inactiveStart.scope, phase: .active, grant: UUID())
+check(inactiveBoundary.client.microphoneCapture == nil && VisionMicrophoneCapture.starts == beforeInactiveACK &&
+      controls(inactiveBoundary.peer).last?.operation == .stop,
+      "capture boundary rechecks active admission even before lifecycle reduction")
+
+let deniedPermission = AuthorizationFixture()
+deniedPermission.client.toggleVisionMicrophone()
+deniedPermission.callbacks[0](false); settle()
+check(deniedPermission.starts.isEmpty && deniedPermission.client.microphonePhase == .failed("iPad 마이크 권한이 필요합니다.") &&
+      deniedPermission.client.microphoneCapture == nil, "denied OS permission never reaches host or capture")
+deniedPermission.client.microphoneApplicationActive(true)
+check(deniedPermission.callbacks.count == 1 && deniedPermission.starts.isEmpty,
+      "foreground does not retry denied consent")
+
+for event in ["cancel", "peer", "source", "window", "background", "scene-background"] {
+    let fixture = AuthorizationFixture()
+    fixture.client.toggleVisionMicrophone()
+    let request = fixture.client.microphonePolicy.startRequestID!
+    let callback = fixture.callbacks[0]
+    switch event {
+    case "cancel": fixture.client.toggleVisionMicrophone()
+    case "peer":
+        let replacement = NWConnection()
+        fixture.client.connection = replacement
+        fixture.client.microphoneSetConnection(replacement)
+    case "source": fixture.client.microphoneObserve(catalog(capability), from: fixture.peer)
+    case "window":
+        fixture.client.microphoneSceneChanged(lease: VisionWindowLease(window: fixture.lease.window), scene: .active)
+    case "background": fixture.client.microphoneBackgrounded()
+    default: fixture.client.microphoneSceneChanged(lease: fixture.lease, scene: .background)
+    }
+    fixture.restoreAdmission()
+    fixture.client.toggleVisionMicrophone()
+    check(fixture.callbacks.count == 1 && fixture.starts.isEmpty && !fixture.client.visionMicrophoneCanStart,
+          "\(event) retains outstanding OS slot and prevents concurrent permission prompts")
+    callback(true); settle()
+    check(fixture.starts.isEmpty && fixture.client.microphoneAuthorization == nil,
+          "\(event) drains delayed permission without starting host")
+    fixture.client.toggleVisionMicrophone()
+    check(fixture.callbacks.count == 2 && fixture.client.microphonePolicy.startRequestID != request,
+          "\(event) permits only a fresh explicit toggle after request drain")
+    callback(true); settle()
+    check(fixture.starts.isEmpty && fixture.client.microphoneAuthorization != nil,
+          "\(event) old duplicate cannot consume replacement authorization")
+    fixture.callbacks[1](false); settle()
+}
+
+let unavailable = AuthorizationFixture()
+unavailable.client.toggleVisionMicrophone()
+VisionAudioSharedHardware.shared.cleanupProblem = "inert cleanup quarantine"
+unavailable.callbacks[0](true); settle()
+check(unavailable.starts.isEmpty && unavailable.client.microphoneCapture == nil &&
+      unavailable.client.microphonePhase == .failed("다른 기능에서 이미 마이크를 사용 중입니다."),
+      "hardware cleanup is rechecked when permission resolves")
+VisionAudioSharedHardware.shared.cleanupProblem = nil
+
+let lateCapture = AuthorizationFixture()
+lateCapture.client.toggleVisionMicrophone(); lateCapture.callbacks[0](true); settle()
+let lateStart = lateCapture.starts[0], lateGrant = UUID()
+VisionMicrophoneCapture.delay = true
+reply(lateCapture.client, peer: lateCapture.peer, id: lateStart.requestID, scope: lateStart.scope, phase: .active, grant: lateGrant)
+pump { !VisionMicrophoneCapture.pending.isEmpty }
+lateCapture.client.microphoneSceneChanged(lease: lateCapture.lease, scene: .inactive)
+VisionMicrophoneCapture.delay = false
+VisionMicrophoneCapture.pending.removeFirst().resume(); settle()
+check(lateCapture.client.microphoneCapture == nil && frames(lateCapture.peer) == 0,
+      "capture readiness after inactivity cannot open frames")
+
+let readinessBoundary = AuthorizationFixture()
+readinessBoundary.client.toggleVisionMicrophone(); readinessBoundary.callbacks[0](true); settle()
+let readinessStart = readinessBoundary.starts[0]
+VisionMicrophoneCapture.delay = true
+reply(readinessBoundary.client, peer: readinessBoundary.peer, id: readinessStart.requestID,
+      scope: readinessStart.scope, phase: .active, grant: UUID())
+pump { !VisionMicrophoneCapture.pending.isEmpty }
+readinessBoundary.client.microphoneAdmission.scene = .inactive
+VisionMicrophoneCapture.delay = false
+VisionMicrophoneCapture.pending.removeFirst().resume(); settle()
+check(readinessBoundary.client.microphoneCapture == nil && frames(readinessBoundary.peer) == 0 &&
+      controls(readinessBoundary.peer).last?.operation == .stop,
+      "capture completion rechecks admission and retires host before opening frames")
+
+let hostCleanup = AuthorizationFixture()
+hostCleanup.client.toggleVisionMicrophone(); hostCleanup.callbacks[0](true); settle()
+let cleanupStart = hostCleanup.starts[0]
+reply(hostCleanup.client, peer: hostCleanup.peer, id: cleanupStart.requestID, scope: cleanupStart.scope, phase: .cleanupFailed, grant: nil)
+hostCleanup.client.toggleVisionMicrophone()
+hostCleanup.client.microphoneBackgrounded()
+check(hostCleanup.client.microphonePhase == .cleanupRequired && hostCleanup.starts.count == 1 && hostCleanup.callbacks.count == 1,
+      "host cleanupRequired survives toggle and background without reauthorization")
+hostCleanup.restoreAdmission()
+check(hostCleanup.client.microphonePhase == .off && hostCleanup.starts.count == 1 && hostCleanup.callbacks.count == 1,
+      "fresh host catalog recovers cleanup without claiming recording restarted")
+hostCleanup.client.toggleVisionMicrophone()
+check(hostCleanup.callbacks.count == 2 && hostCleanup.starts.count == 1,
+      "host cleanup recovery still requires explicit permission before next start")
+hostCleanup.callbacks[1](false); settle()
+
 print("RESULT_ASSERTIONS \(checks)")
 print("RESULT_FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)

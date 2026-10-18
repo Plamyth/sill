@@ -36,10 +36,10 @@ def main():
         require(base+['-parse-as-library','-whole-module-optimization','-emit-module','-emit-object','-module-name',name]+list(map(str,paths))+['-emit-module-path',str(output/(name+'.swiftmodule')),'-o',str(output/(name+'.o'))],name+'-compile')
     try:
         module('Network',[root/'Tests/checks/vision-microphone-control/Network.swift'])
-        module('StreamProtocol',[root/'Sources/StreamProtocol'/(n+'.swift') for n in ['StreamMessage','AudioPacket','Switcher','MicrophoneUplink','Input','Viewport','HostSettings','Compatibility']])
+        module('StreamProtocol',[root/'Sources/StreamProtocol'/(n+'.swift') for n in ['StreamMessage','AudioPacket','Switcher','MicrophoneUplink','Input','Viewport','HostSettings','Compatibility','AudioRouting']])
         objects=[str(output/'Network.o'),str(output/'StreamProtocol.o')]
         control=[root/'iOSClient'/(n+'.swift') for n in ['IPadMicrophonePCM','IPadMicrophonePolicy','IPadMicrophoneFrameGate']]
-        control += [root/'visionOSClient/StreamClient+VisionMicrophone.swift',root/'Tests/checks/vision-microphone-control/main.swift']
+        control += [root/'visionOSClient/VisionCableBootstrap.swift',root/'visionOSClient/StreamClient+VisionMicrophone.swift',root/'Tests/checks/vision-microphone-control/main.swift']
         generated=output/'generated';generated.mkdir()
         main=generated/'main.swift';main.write_text('import Foundation\nexit(runDuplexRegression())\n')
         duplex=[root/'visionOSClient'/(n+'.swift') for n in ['VisionAudioBuffer','VisionAudioHardware','VisionAudioPlayer','VisionAudioState','VisionAudioController','VisionMicrophoneCapture']]
@@ -61,8 +61,8 @@ def main():
         if original.count(old)!=1:raise RuntimeError('actual permission boundary anchor')
         adapted=original.replace(old,'}, requestPermission: testPermission, closeFrames: { frames.close(captureID: captureID) }',1)
         glue=actual/'Glue.swift';glue.write_text(adapted)
-        record['actualFactoryBoundary']={'sourceSHA256':hashlib.sha256(original.encode()).hexdigest(),'emittedSHA256':hashlib.sha256(adapted.encode()).hexdigest(),'substitution':'Only requestPermission argument inserted at native capture constructor. Actual bodies and actual capture, worker, policy, framegate, hardware unchanged.'}
-        actualSources=[root/'visionOSClient'/(n+'.swift') for n in ['VisionAudioBuffer','VisionAudioHardware','VisionMicrophoneCapture']]
+        record['actualFactoryBoundary']={'sourceSHA256':hashlib.sha256(original.encode()).hexdigest(),'emittedSHA256':hashlib.sha256(adapted.encode()).hexdigest(),'substitution':'Capture requestPermission seam injected as an inert permission check; OS authorization is supplied by the inert StreamClient factory. Actual adapter/capture/worker/policy/framegate/hardware bodies unchanged.'}
+        actualSources=[root/'visionOSClient'/(n+'.swift') for n in ['VisionAudioBuffer','VisionAudioHardware','VisionMicrophoneCapture','VisionCableBootstrap']]
         actualSources += [root/'iOSClient'/(n+'.swift') for n in ['IPadMicrophonePCM','IPadMicrophoneCapture','IPadMicrophonePolicy','IPadMicrophoneFrameGate']]
         actualSources += [root/'Tests/checks/vision-microphone-control/Client.swift',glue,main2]
         code,log=compile_run(actualSources,'actualclient')

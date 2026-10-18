@@ -20,7 +20,7 @@ enum VisionAudioSharedHardware {
     static let shared = VisionAudioHardware(driver:graph)
 }
 let permissionRequests = OSAllocatedUnfairLock(initialState:0)
-func testPermission() async -> Bool { permissionRequests.withLock { $0 += 1 }; return true }
+func testPermission() async -> Bool { true }
 final class StreamClient {
     var connection: NWConnection?
     let visionAudioOwnerID = UUID()
@@ -31,5 +31,12 @@ final class StreamClient {
     let microphoneFrames = IPadMicrophoneFrameGate()
     var microphoneCapture: VisionMicrophoneCapture?
     var microphoneCaptureToken: UUID?
+    var microphoneAdmission = VisionMicrophoneAdmission(lease: VisionWindowLease(window: UUID()),
+        scene: .active, applicationActive: true)
+    var microphoneAuthorization: VisionMicrophoneAuthorization?
+    var requestVisionMicrophonePermission: (@escaping (Bool) -> Void) -> Void = { completion in
+        permissionRequests.withLock { $0 += 1 }
+        completion(true)
+    }
     func connectionLost(_ c: NWConnection, error: NWError) {}
 }

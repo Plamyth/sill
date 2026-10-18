@@ -23,7 +23,7 @@ final class VisionMicrophoneCapture {
     private var formatProblem: String?
 
     init(hardware: VisionAudioHardware, owner: UUID, permitted: @escaping () -> Bool,
-         requestPermission: @escaping () async -> Bool = { await AVAudioApplication.requestRecordPermission() },
+         requestPermission: @escaping () async -> Bool = { AVAudioApplication.shared.recordPermission == .granted },
          closeFrames: @escaping @Sendable () -> Void, failed: @escaping (String) -> Void) {
         self.hardware = hardware
         self.owner = owner

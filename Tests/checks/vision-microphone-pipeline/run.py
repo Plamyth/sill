@@ -17,8 +17,8 @@ def fixture(root):
     here = root / 'Tests/checks/vision-microphone-pipeline'
     files['Network.swift'] = (here/'Network.swift').read_text()
     files['Main.swift'] = (here/'Main.swift').read_text()
-    names = ['Sources/StreamProtocol/'+n+'.swift' for n in ['AudioPacket','HostSettings']]
-    names += ['visionOSClient/'+n+'.swift' for n in ['VisionAudioBuffer','VisionAudioHardware','VisionMicrophoneCapture']]
+    names = ['Sources/StreamProtocol/'+n+'.swift' for n in ['AudioPacket','HostSettings','AudioRouting']]
+    names += ['visionOSClient/'+n+'.swift' for n in ['VisionAudioBuffer','VisionAudioHardware','VisionMicrophoneCapture','VisionCableBootstrap']]
     names += ['iOSClient/'+n+'.swift' for n in ['IPadMicrophonePCM','IPadMicrophoneCapture','IPadMicrophonePolicy','IPadMicrophoneFrameGate']]
     names += ['Tests/checks/vision-microphone-control/Client.swift']
     for name in names: files[name] = (root/name).read_text()

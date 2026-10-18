@@ -49,8 +49,25 @@ final class VisionAppSession: ObservableObject {
     func release(_ window: UUID) {
         guard windowOwner == window else { return }
         windowLease = nil
-        setForeground(false)
+        suspendPresentation()
         input.allowed = false
+    }
+
+    func setScenePhase(_ phase: ScenePhase) {
+        let scene: VisionMicrophoneAdmission.Scene
+        switch phase {
+        case .active: scene = .active
+        case .inactive: scene = .inactive
+        case .background: scene = .background
+        @unknown default: scene = .background
+        }
+        client.microphoneSceneChanged(lease: windowLease, scene: scene)
+        start(foreground: phase == .active)
+    }
+
+    func suspendPresentation() {
+        client.microphoneSceneChanged(lease: nil, scene: .background)
+        setForeground(false)
     }
 
     func start(foreground: Bool) {

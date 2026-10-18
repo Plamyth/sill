@@ -5,17 +5,18 @@ import StreamProtocol
 /// observing a capability never requests permission or starts capture on its own.
 struct IPadMicrophonePolicy {
     enum Phase: Equatable {
-        case unavailable, off, requesting, capturing, live, stopping, failed(String)
+        case unavailable, off, authorizing, requesting, capturing, live, stopping, cleanupRequired, failed(String)
 
         var canStop: Bool {
             switch self {
-            case .requesting, .capturing, .live: true
+            case .authorizing, .requesting, .capturing, .live: true
             default: false
             }
         }
     }
 
     enum Effect: Equatable {
+        case requestPermission(ObjectIdentifier, MicrophoneScope, UUID)
         case closeFrames
         case send(ObjectIdentifier, MicrophoneControl)
         case stopCapture
@@ -23,6 +24,7 @@ struct IPadMicrophonePolicy {
         case openFrames(ObjectIdentifier, MicrophoneScope, UUID)
     }
 
+    private(set) var hostCleanupRequired = false
     private(set) var phase: Phase = .unavailable
     private(set) var peer: ObjectIdentifier?
     private(set) var scope: MicrophoneScope?
@@ -32,7 +34,7 @@ struct IPadMicrophonePolicy {
     private(set) var latestReceipt: MicrophoneReceipt?
 
     var canStart: Bool {
-        guard scope != nil else { return false }
+        guard scope != nil, !hostCleanupRequired else { return false }
         if phase == .off { return true }
         if case .failed = phase { return stopRequestID == nil }
         return false
@@ -40,6 +42,7 @@ struct IPadMicrophonePolicy {
 
     mutating func setConnection(_ next: ObjectIdentifier?) -> [Effect] {
         guard peer != next else { return [] }
+        hostCleanupRequired = false
         let effects = revoke()
         peer = next
         return effects
@@ -58,10 +61,12 @@ struct IPadMicrophonePolicy {
                                    destination: capability.destination,
                                    capability: capability.generation)
         } else { next = nil }
-        guard next != scope else { return [] }
+        let recovered = hostCleanupRequired && next != nil
+        if recovered { hostCleanupRequired = false }
+        guard next != scope || recovered else { return [] }
         let effects = revoke()
         scope = next
-        phase = next == nil ? .unavailable : .off
+        phase = hostCleanupRequired ? .cleanupRequired : next == nil ? .unavailable : .off
         return effects
     }
 
@@ -73,8 +78,20 @@ struct IPadMicrophonePolicy {
         stopRequestID = nil
         grantID = nil
         latestReceipt = nil
+        phase = .authorizing
+        return [.requestPermission(peer, scope, id)]
+    }
+
+    mutating func permissionResolved(_ allowed: Bool, requestID: UUID, scope expected: MicrophoneScope,
+                                     from origin: ObjectIdentifier, microphoneAvailable: Bool = true) -> [Effect] {
+        guard peer == origin, scope == expected, phase == .authorizing, startRequestID == requestID else { return [] }
+        guard allowed && microphoneAvailable else {
+            phase = .failed(microphoneAvailable ? "iPad 마이크 권한이 필요합니다." : "다른 기능에서 이미 마이크를 사용 중입니다.")
+            startRequestID = nil
+            return []
+        }
         phase = .requesting
-        return [.send(peer, MicrophoneControl(operation: .start, requestID: id, scope: scope))]
+        return [.send(origin, MicrophoneControl(operation: .start, requestID: requestID, scope: expected))]
     }
 
     mutating func receive(_ state: MicrophoneState, from origin: ObjectIdentifier) -> [Effect] {
@@ -92,10 +109,11 @@ struct IPadMicrophonePolicy {
             phase = .capturing
             return [.beginCapture(peer, scope, state.requestID, grant)]
         case .retiring:
-            guard phase == .capturing || phase == .live || phase == .stopping else { return [] }
+            guard phase == .requesting || phase == .capturing || phase == .live || phase == .stopping else { return [] }
             phase = .stopping
             return [.closeFrames, .stopCapture]
         case .off:
+            hostCleanupRequired = false
             guard phase != .off && phase != .unavailable else { return [] }
             if let reason = state.reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
                 phase = .failed(String(reason.prefix(160)))
@@ -106,14 +124,16 @@ struct IPadMicrophonePolicy {
             stopRequestID = nil
             grantID = nil
             return [.closeFrames, .stopCapture]
-        case .refused, .cleanupFailed:
-            phase = .failed(String((state.reason ?? "Mac microphone unavailable").prefix(160)))
-            if state.phase == .refused {
-                startRequestID = nil
-                stopRequestID = nil
-            } else {
-                stopRequestID = state.requestID
-            }
+        case .refused:
+            phase = .failed(String((state.reason ?? "Mac 마이크를 사용할 수 없습니다.").prefix(160)))
+            startRequestID = nil
+            stopRequestID = nil
+            grantID = nil
+            return [.closeFrames, .stopCapture]
+        case .cleanupFailed:
+            hostCleanupRequired = true
+            phase = .cleanupRequired
+            stopRequestID = state.requestID
             grantID = nil
             return [.closeFrames, .stopCapture]
         }
@@ -140,7 +160,7 @@ struct IPadMicrophonePolicy {
     mutating func startTimedOut(_ requestID: UUID, from origin: ObjectIdentifier) -> [Effect] {
         guard peer == origin, phase == .requesting, startRequestID == requestID,
               let scope else { return [] }
-        phase = .failed("Mac microphone did not answer.")
+        phase = .failed("Mac 마이크가 응답하지 않았습니다.")
         // Lost start ACK: only the original start ID with nil grant may cancel it.
         stopRequestID = requestID
         return [.closeFrames,
@@ -150,7 +170,7 @@ struct IPadMicrophonePolicy {
 
     mutating func stopTimedOut(_ requestID: UUID, from origin: ObjectIdentifier) -> [Effect] {
         guard peer == origin, phase == .stopping, stopRequestID == requestID else { return [] }
-        phase = .failed("Mac microphone stop was not confirmed. Reconnect to recover.")
+        phase = .failed("Mac 마이크 중지가 확인되지 않았습니다. 다시 연결한 뒤 시도하세요.")
         return [.closeFrames, .stopCapture]
     }
 
@@ -161,9 +181,22 @@ struct IPadMicrophonePolicy {
     }
 
     mutating func sourceWillChange() -> [Effect] { revoke() }
-    mutating func backgrounded() -> [Effect] { revoke() }
+    mutating func backgrounded() -> [Effect] {
+        if phase.canStop { return stopByUser() }
+        return [.closeFrames, .stopCapture]
+    }
+    mutating func inactive() -> [Effect] {
+        if phase == .authorizing { return [] }
+        return backgrounded()
+    }
+    mutating func interrupted() -> [Effect] { backgrounded() }
 
     private mutating func stopByUser() -> [Effect] {
+        if phase == .authorizing {
+            phase = .off
+            startRequestID = nil
+            return [.closeFrames, .stopCapture]
+        }
         guard let peer, let scope, let startRequestID else { return [] }
         let control: MicrophoneControl
         if let grantID {
@@ -182,7 +215,7 @@ struct IPadMicrophonePolicy {
 
     private mutating func revoke() -> [Effect] {
         let effects: [Effect]
-        if phase.canStop, let peer, let scope, let startRequestID {
+        if phase.canStop, phase != .authorizing, let peer, let scope, let startRequestID {
             let stop: MicrophoneControl
             if let grantID {
                 stop = MicrophoneControl(operation: .stop, requestID: UUID(),
@@ -193,7 +226,7 @@ struct IPadMicrophonePolicy {
             }
             effects = [.closeFrames, .send(peer, stop), .stopCapture]
         } else { effects = [.closeFrames, .stopCapture] }
-        phase = .unavailable
+        phase = hostCleanupRequired ? .cleanupRequired : .unavailable
         scope = nil
         startRequestID = nil
         stopRequestID = nil
