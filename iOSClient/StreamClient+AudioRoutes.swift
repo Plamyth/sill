@@ -84,10 +84,12 @@ extension StreamClient {
         guard connected, appInForeground, audioRouteAppActive, let context, context == audioRouteContext else {
             throw IPadAudioRoutePolicy.Problem.changedConnection
         }
-        var actions = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
+        let actions = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
                                                       current: audioRouteSelection,
                                                       canStartMicrophone: microphonePolicy.canStart,
                                                       cleanupRequired: microphoneCleanupProblem != nil)
+        if selection.input == .off { setDesiredAudio(.microphone, enabled: false) }
+        if selection.output == .off { setDesiredAudio(.playback, enabled: false) }
         if actions.microphone == true {
             let authorization = IPadAudioRoutePolicy.Authorization(context: context)
             audioRouteAuthorization = authorization
@@ -102,13 +104,12 @@ extension StreamClient {
             }
             diagnostic.record("routes_permission_result", ["allowed": String(allowed)])
             guard allowed else { throw IPadAudioRoutePolicy.Problem.permissionDenied }
-            actions = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
+            _ = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
                 current: audioRouteSelection, canStartMicrophone: microphonePolicy.canStart,
                 cleanupRequired: microphoneCleanupProblem != nil)
         }
-        if let enabled = actions.microphone, !enabled { toggleIPadMicrophone() }
-        if let enabled = actions.microphone, enabled { toggleIPadMicrophone() }
-        if actions.playback != nil { toggleRemoteAudio() }
+        if selection.input != .off { setDesiredAudio(.microphone, enabled: true) }
+        if selection.output != .off { setDesiredAudio(.playback, enabled: true) }
     }
 
     @MainActor var audioRouteAppActive: Bool { UIApplication.shared.applicationState == .active }

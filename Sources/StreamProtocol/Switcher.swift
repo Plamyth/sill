@@ -53,6 +53,18 @@ public struct AppInfo: Codable, Hashable, Identifiable {
     public init(name: String, bundleID: String) { self.name = name; self.bundleID = bundleID }
 }
 
+public struct AudioPrivacyState: Codable, Equatable, Sendable {
+    public var version: Int
+    public var protected: Bool
+    public var reason: String?
+
+    public init(version: Int = 1, protected: Bool, reason: String? = nil) {
+        self.version = version
+        self.protected = protected
+        self.reason = reason
+    }
+}
+
 public struct WindowList: Codable {
     public var macName: String
     public var windows: [WindowInfo]
@@ -78,6 +90,7 @@ public struct WindowList: Codable {
     /// This fork's optional remote sound path. A device sends kind 200 only when this is 1.
     /// Nil from older hosts; older devices ignore this field.
     public var remoteAudio: Int?
+    public var audioPrivacy: AudioPrivacyState?
 
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
@@ -100,10 +113,11 @@ public struct WindowList: Codable {
                 remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
-                dockApps: [AppInfo]? = nil) {
+                dockApps: [AppInfo]? = nil, audioPrivacy: AudioPrivacyState? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
+        self.audioPrivacy = audioPrivacy
         self.inputGeneration = inputGeneration
         self.presentationInput = presentationInput
         self.videoEpoch = videoEpoch

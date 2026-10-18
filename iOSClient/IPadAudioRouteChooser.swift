@@ -91,8 +91,14 @@ struct IPadAudioRouteChooser: View {
                 Section {
                     Text("실제 마이크와 출력 장치는 iPad의 현재 오디오 경로를 사용합니다. 일부 Bluetooth 장치는 입력을 바꾸면 출력도 함께 바뀝니다.")
                         .foregroundStyle(.secondary)
-                    Text("이 화면을 닫거나 연결이 바뀌어도 마이크와 재생을 자동으로 켜지 않습니다.")
+                    Text("선택은 인증된 Mac별로 기억합니다. Mac 음소거 보호와 화면 제어권을 확인한 연결에서만 자동으로 다시 사용합니다. 마이크 권한은 자동으로 요청하지 않습니다.")
                         .foregroundStyle(.secondary)
+                    Text(client.audioPrivacyState?.version == 1 && client.audioPrivacyState?.protected == true
+                         ? "Mac이 내장 마이크·스피커 음소거와 가상 오디오 경로를 확인했습니다. 연결이 끊겨도 Mac 음소거를 해제하지 않습니다."
+                         : "Mac 음소거 보호가 확인되지 않았습니다. 자동으로 다시 켜지 않으며, 이전 Mac에서는 직접 켜야 합니다.")
+                        .foregroundStyle(.secondary)
+                    LabeledContent("다시 연결할 때 마이크", value: client.desiredAudioSelection.microphone ? "사용 기억됨" : "사용 안 함")
+                    LabeledContent("다시 연결할 때 재생", value: client.desiredAudioSelection.playback ? "사용 기억됨" : "사용 안 함")
                     if let problem { Text(problem).foregroundStyle(.red).accessibilityIdentifier("audioRouteProblem") }
                 }
                 Section {
@@ -103,7 +109,7 @@ struct IPadAudioRouteChooser: View {
                     .accessibilityIdentifier("applyAudioRoutes")
                     if client.audioRouteAuthorization != nil {
                         ProgressView("iPad 마이크 권한 확인 중")
-                        Button("입력·출력 요청 취소") { client.audioRouteAuthorization = nil }
+                        Button("입력·출력 요청 취소") { client.cancelDesiredAudioRequest() }
                     }
                     Button("닫기", action: close)
                         .disabled(client.macAudioRoutes.pending != nil)

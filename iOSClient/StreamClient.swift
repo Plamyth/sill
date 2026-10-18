@@ -140,6 +140,9 @@ final class StreamClient: ObservableObject {
         changed: { [weak self] status in self?.remoteAudioStatus = status })
 
     private func playRemoteAudioPacket(_ packet: Data, requestID: UUID) {
+        #if os(iOS)
+        guard desiredAudioPermits(.playback) else { return }
+        #endif
         guard let connection else { return }
         let origin = ObjectIdentifier(connection)
         remoteAudio.receive(packet, subscription: requestID) { [weak self] event in
@@ -154,6 +157,15 @@ final class StreamClient: ObservableObject {
     let microphoneFrames = IPadMicrophoneFrameGate()
     var microphoneCapture: IPadMicrophoneCapture?
     var microphoneCaptureToken: UUID?
+    var desiredAudio = IPadDesiredAudio()
+    let desiredAudioStore = IPadDesiredAudioStore()
+    @Published var desiredAudioSelection = IPadDesiredAudio.Selection()
+    var audioAutomaticDirections: Set<IPadDesiredAudio.Direction> = []
+    var audioPresentation = IPadAudioPresentation()
+    var audioResumeObserver: IPadAudioResumeObserver?
+    var audioPendingMicrophonePermission: (() -> Void)?
+    @Published var audioPrivacyState: AudioPrivacyState?
+    var desiredAudioInputGeneration: String? { inputGeneration }
     @Published var audioRouteChooserPresented = false
     var audioRouteOffer = IPadAudioRouteOffer()
     var audioRouteAcknowledgments = IPadAudioRouteAcknowledgments()
@@ -428,6 +440,9 @@ final class StreamClient: ObservableObject {
     /// Main thread.
     var inputPaused = false {
         didSet {
+            #if os(iOS)
+            if oldValue != inputPaused { reconcileDesiredAudio() }
+            #endif
             guard oldValue, !inputPaused, pointerMoveOwed else { return }
             pointerMoveOwed = false
             presence.follow(pointerFeed.current)
@@ -4218,6 +4233,12 @@ final class StreamClient: ObservableObject {
             }
             #else
             onFrame?(data, header.isKeyframe)
+            #if os(iOS)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.connection === peer else { return }
+                self.reconcileDesiredAudio(keyframe: header.isKeyframe)
+            }
+            #endif
             #endif
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
@@ -4236,6 +4257,7 @@ final class StreamClient: ObservableObject {
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
                 #if os(iOS)
                 self.microphoneObserve(list, from: peer)
+                self.desiredAudioObserve(list, from: peer)
                 #endif
                 #endif
                 // A remote session, and one at home over TLS, is connected at its first window list,
@@ -4284,6 +4306,9 @@ final class StreamClient: ObservableObject {
                 self.dockApps = list.dockApps ?? []
                 self.inputGeneration = list.inputGeneration
                 self.active = list.active
+                #if os(iOS)
+                self.reconcileDesiredAudio()
+                #endif
                 #endif
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))
@@ -4379,6 +4404,9 @@ final class StreamClient: ObservableObject {
             DispatchQueue.main.async {
                 guard self.connection === from else { return }
                 self.receiveMacInfo(signed, endpoint: from?.endpoint, connectionKey: key)
+                #if os(iOS)
+                self.reconcileDesiredAudio()
+                #endif
             }
         case .goodbye:
             // Why the Mac is about to close this connection: the words, and whether to reconnect
