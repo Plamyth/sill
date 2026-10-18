@@ -203,6 +203,8 @@ package final class StreamCoordinator {
     /// Desktop request can land then (StreamClient's window list handling) and must not override
     /// the user's pick.
     private var pickArrivedWhileSwitching: StreamSource?
+    private enum OwnedDesktopRecovery { case idle, pending(DisplaySelection), restarting }
+    private var ownedDesktopRecovery = OwnedDesktopRecovery.idle
     /// The client's last stream panel size and text scale. One stream, so with several clients
     /// the last one to report wins.
     private var viewport: Viewport?
@@ -1321,6 +1323,7 @@ package final class StreamCoordinator {
     /// device, or a pick made before the device heard of the close, can still let it land during
     /// a restart that follows the user's pick, and then it is queued like the user's own.
     private func handlePick(_ source: StreamSource) async {
+        if source != .desktop { ownedDesktopRecovery = .idle }
         if switching {
             if let r = restartOf, source != r { pickArrivedWhileSwitching = source }
             return
@@ -1338,8 +1341,13 @@ package final class StreamCoordinator {
     /// comes forward too, whichever select commits that change (see `cameHome`).
     func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil) async {
         guard !switching, !shuttingDown else { return }
+        if bringForward || displaySelection != nil { ownedDesktopRecovery = .idle }
         switching = true
-        restartOf = (source == active && source != .none) ? source : nil
+        if source == .desktop, case .restarting = ownedDesktopRecovery {
+            restartOf = .desktop
+        } else {
+            restartOf = (source == active && source != .none) ? source : nil
+        }
         defer {
             switching = false
             for connection in connections.values { sendMicrophoneCatalog(to: connection) }
@@ -1382,6 +1390,9 @@ package final class StreamCoordinator {
             // A stream that did not start (its window gone, capture refused): nothing streams, so
             // the links have nothing to be judged at.
             if active == .none { judgeLinks(nil) }
+            if case .pending = ownedDesktopRecovery {
+                Task { @MainActor in await self.recoverOwnedDesktop() }
+            }
         }
 
         // A fresh, bounded inventory read must succeed before changing a desktop pipeline.
@@ -2393,24 +2404,40 @@ package final class StreamCoordinator {
         broadcastList()
     }
 
+    private func recoverOwnedDesktop() async {
+        guard !switching, !shuttingDown,
+              case .pending(let selection) = ownedDesktopRecovery else { return }
+        ownedDesktopRecovery = .idle
+        guard catalog.clientCount > 0, active == .desktop || active == .none,
+              catalog.displayInventory.current == selection else { return }
+        ownedDesktopRecovery = .restarting
+        await select(.desktop)
+        if case .restarting = ownedDesktopRecovery { ownedDesktopRecovery = .idle }
+        // A legacy scope pin or a refused refresh can leave the old pipeline alive without video.
+        if !switching, active == .desktop, videoEpoch == nil { await select(.none) }
+    }
+
     private func displaysChanged() {
         guard !synthetic else { return }
         extendedDesktop.checkDisplay()
-        if active == .desktop {
+        if active == .desktop || (switching && restartOf == .desktop) {
             videoEpoch = nil
             inputGeneration = UUID().uuidString
             server.resetForNewStream()
             pointer.setGeometry(nil, fps: fps)
+            if let selection = catalog.displayInventory.current,
+               !switching || restartOf == .desktop, pickArrivedWhileSwitching == nil {
+                ownedDesktopRecovery = .pending(selection)
+            }
         }
         broadcastList()
         Task { @MainActor in
             guard !self.catalog.displayInventory.isRefreshingSelection else { return }
-            if !self.catalog.displayInventory.requiresSelection, self.active == .desktop, self.videoEpoch == nil {
-                guard !self.switching else { return }
-                await self.select(.desktop, bringForward: false)
+            if !self.catalog.displayInventory.requiresSelection {
+                await self.recoverOwnedDesktop()
                 return
             }
-            guard self.catalog.displayInventory.requiresSelection else { return }
+            self.ownedDesktopRecovery = .idle
             await self.revokeRemoteAudio(reason: "Mac 모니터 구성이 변경되었습니다. 모니터를 다시 선택해 주세요.")
             // A switch in flight rechecks before commit and stops an invalid desktop in its defer.
             guard !self.switching, self.active == .desktop, self.catalog.display == nil else { return }

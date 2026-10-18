@@ -94,3 +94,58 @@ must confirm that transient CG state does not trigger the genuine loss path.
 
 No UI, device, application build, installation, restart, privilege, pairing,
 canonical source, CanvasStore or other chat action belongs to this worker.
+
+
+## Recovery fix round from c7770dc
+
+Task `native-arrangement-recovery-20261018` uses an exclusive worktree and branch
+`codex/native-arrangement-recovery-20261018`. Product changes are limited to
+`StreamCoordinator.swift`. `DisplayInventory` and `SourceInputFence` are unchanged.
+
+Red commit `0c4c10b` runs the production `select` entry guards, stop/audio-revoke
+prefix and complete defer, production `handlePick` and `displaysChanged`, and the
+production post-capture desktop-selection/geometry validation. Inventory and
+legacy input fences are actual source. Encoder/filter creation, capture start,
+commit publication and failure reporting are controlled boundaries. A continuation
+holds capture startup while real inventory revisions and user requests change.
+This is an extracted control-flow test, not a full coordinator or native SDK build.
+The red run compiled successfully and reported `RECOVERY_CHECKS total=11 failed=2`.
+The failures were live capture/audio after a legacy scope refusal, and no restart
+after a retained geometry refresh during suspended capture startup.
+
+The how pass traced invalidation to a new inventory revision, then to the legacy
+pin refusal before capture stop. It also traced selection rejection after the
+capture await to `.none`, after the topology callback had dropped recovery.
+The architect comparison rejected reuse of the source-only pick slot because it
+cannot carry the inventory revision and conflates recovery with later user intent.
+Model the Domain produced `OwnedDesktopRecovery`: idle, pending a validated
+`DisplaySelection`, or restarting. The switching tail drains pending recovery.
+A restart refused before cleanup explicitly selects `.none`, using the existing
+stop and audio-revoke path. No input-fence rule is relaxed.
+
+The restarting state also identifies restoration from `.none` as a desktop restart.
+User window/none picks cancel recovery and use the existing latest-pick queue,
+including picks received during restoration itself. Another geometry revision
+while restoring queues its new token. Last-client departure and actual inventory
+loss cancel restoration. The focused suite covers these boundaries.
+
+Run the recovery suite with a fresh routed archive path:
+
+```sh
+python3 Tests/checks/native-arrangement/run.py --suite recovery --output ABSOLUTE_ROUTED_PATH
+```
+
+The original native suite retains its select stub and covers adapter/lifecycle
+and restart decisions only. The recovery suite supplies the production guards
+and controlled delayed pipeline that the original fixture lacked. This round
+performs no full SDK build, native UI/device test, install, restart, real audio
+operation, source transfer acceptance, independent agent review, push or PR.
+The parent retains those review/integration and physical validation gates.
+
+The final recovery suite reports `RECOVERY_CHECKS total=18 failed=0`, including
+later user picks during the original restart and during restoration from `.none`.
+The native regression reports `ARRANGEMENT_CHECKS total=39 failed=0`.
+Receipts are in the routed Development-Archives folders named
+`native-arrangement-recovery-final-20261018`,
+`native-arrangement-recovery-native-20261018` and
+`native-arrangement-recovery-monitor-20261018`.

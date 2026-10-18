@@ -59,6 +59,73 @@ import CoreGraphics
         await settle()
         expect(picked.active == .window(42) && picked.committed == [.window(42)], "late user window selection overrides queued desktop restore")
         expect(picked.capture.starts == 2, "cancelled restore does not start another desktop pipeline")
+        let restoring = make()
+        restoring.capture.pauseNext = true
+        restoring.capture.pauseStarts = [2]
+        let original = Task { @MainActor in await restoring.select(.desktop) }
+        for _ in 0..<100 where restoring.capture.waiter == nil { await Task.yield() }
+        move(restoring,x:-1350)
+        await settle()
+        restoring.capture.resume()
+        await original.value
+        await settle()
+        expect(restoring.capture.starts == 2 && restoring.capture.waiter != nil, "queued restore reaches its delayed capture start")
+        await restoring.handlePick(.window(84))
+        restoring.capture.resume()
+        await settle()
+        expect(restoring.active == .window(84), "user pick during queued restore wins after capture completes")
+
+        let repeated = make()
+        repeated.capture.pauseNext = true
+        repeated.capture.pauseStarts = [2]
+        let first = Task { @MainActor in await repeated.select(.desktop) }
+        for _ in 0..<100 where repeated.capture.waiter == nil { await Task.yield() }
+        move(repeated,x:-1350)
+        await settle()
+        repeated.capture.resume()
+        await first.value
+        await settle()
+        expect(repeated.capture.starts == 2 && repeated.capture.waiter != nil, "second geometry event occurs during restoration")
+        move(repeated,x:0)
+        await settle()
+        repeated.capture.resume()
+        await settle()
+        expect(repeated.active == .desktop && repeated.videoEpoch != nil && repeated.capture.starts == 3,
+               "geometry refresh during queued restore recovers latest revision")
+
+        legacy.inputFence.leave(7)
+        await legacy.select(.desktop)
+        expect(legacy.active == .desktop && legacy.videoEpoch != nil, "disconnect releases legacy pin and permits explicit fresh selection")
+
+        let leaving = make()
+        leaving.capture.pauseNext = true
+        let lastClient = Task { @MainActor in await leaving.select(.desktop) }
+        for _ in 0..<100 where leaving.capture.waiter == nil { await Task.yield() }
+        move(leaving,x:-1350)
+        await settle()
+        leaving.catalog.clientCount = 0
+        leaving.deselectWhenSettled = true
+        leaving.capture.resume()
+        await lastClient.value
+        await settle()
+        expect(leaving.active == .none && leaving.capture.starts == 1, "last client leaving cancels pending restoration")
+
+        let lost = make()
+        lost.capture.pauseNext = true
+        let lostStart = Task { @MainActor in await lost.select(.desktop) }
+        for _ in 0..<100 where lost.capture.waiter == nil { await Task.yield() }
+        move(lost,x:-1350)
+        await settle()
+        lost.catalog.displayInventory.invalidate(preservingDisplay:13)
+        lost.catalog.displayInventory.update([],signatures:[],frames:[],preservingDisplay:13)
+        lost.displaysChanged()
+        await settle()
+        lost.capture.resume()
+        await lostStart.value
+        await settle()
+        expect(lost.active == .none && !lost.capture.running && !lost.audioLive && lost.capture.starts == 1,
+               "actual display loss cancels queued restore and keeps capture stopped")
+
         print("RECOVERY_CHECKS total=\(checks) failed=\(failures)")
         if failures != 0 { exit(1) }
     }

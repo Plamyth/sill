@@ -13,12 +13,13 @@ import CoreGraphics
     var onFrame: Int?
     var running = true
     var pauseNext = false
+    var pauseStarts = Set<Int>()
     var waiter: CheckedContinuation<Void, Never>?
     var starts = 0
     func stop() async { running = false }
     func start() async {
         starts += 1
-        if pauseNext {
+        if pauseNext || pauseStarts.contains(starts) {
             pauseNext = false
             await withCheckedContinuation { waiter = $0 }
         }

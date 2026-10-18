@@ -56,6 +56,7 @@ let fixturekCGNullDirectDisplay: UInt32 = 0
 enum Source { case none, desktop }
 @MainActor final class CatalogFixture {
     var displayInventory = DisplayInventory()
+    var clientCount = 1
     var display: UInt32? { displayInventory.current?.displayID }
 }
 @MainActor final class ServerFixture {
@@ -78,6 +79,9 @@ enum Source { case none, desktop }
     let catalog = CatalogFixture()
     let fps = 60
     var switching = false
+    var shuttingDown = false
+    var restartOf: Source?
+    var pickArrivedWhileSwitching: Source?
     var restarts = 0
     var stops = 0
     func broadcastList() {}

@@ -43,7 +43,11 @@ inputs={'Fixtures.swift':fixture,'main.swift':(here/'main.swift').read_text(),
     'DesktopLifecycle.swift':text.split('// MARK: macOS display adapter')[0].replace('import StreamProtocol\n',''),
     'Viewport.swift':'import Foundation\n'+block((root/'Sources/StreamProtocol/Viewport.swift').read_text(),'public struct Viewport:')}
 coordinator=(root/'Sources/SillHost/StreamCoordinator.swift').read_text()
-fixture=fixture.replace('// COORDINATOR_ADAPTER',block(coordinator,'private func displaysChanged(').replace('private func','func',1))
+recovery = ''
+if 'private enum OwnedDesktopRecovery' in coordinator:
+    recovery = block(coordinator, 'private enum OwnedDesktopRecovery') + '\nprivate var ownedDesktopRecovery = OwnedDesktopRecovery.idle\n'
+    recovery += block(coordinator, 'private func recoverOwnedDesktop(')
+fixture=fixture.replace('// COORDINATOR_ADAPTER', recovery + '\n' + block(coordinator,'private func displaysChanged(').replace('private func','func',1))
 inputs['Fixtures.swift']=fixture
 assert 'ownedBounds = display.bounds' in block(text,'isValid: {')
 catalog=(root/'Sources/SillHost/WindowCatalog.swift').read_text()
@@ -74,11 +78,6 @@ if args.suite == 'recovery':
     fixture = fixture.replace('// PIPELINE_VALIDATION', validation)
     fixture = fixture.replace('// DISPLAYS_CHANGED', block(coordinator, 'private func displaysChanged(').replace('private func','func',1))
     fixture = fixture.replace('// HANDLE_PICK', block(coordinator, 'private func handlePick(').replace('private func','func',1))
-    marker = 'private enum OwnedDesktopRecovery'
-    recovery = ''
-    if marker in coordinator:
-        recovery = block(coordinator, marker) + '\n' + 'private var ownedDesktopRecovery = OwnedDesktopRecovery.idle\n'
-        recovery += block(coordinator, 'private func recoverOwnedDesktop(')
     fixture = fixture.replace('// OWNED_RECOVERY', recovery)
     inputs = {'Recovery.swift': fixture, 'main.swift': (here/'recovery-main.swift').read_text(),
         'DisplayInventory.swift': inventory.read_text().replace('import StreamProtocol\n',''),
@@ -94,6 +93,8 @@ runner=runner[:start]+runner[end:]
 source_paths=[source,inventory,root/'Sources/SillHost/WindowCatalog.swift',root/'Sources/SillHost/StreamCoordinator.swift']
 source_paths += list(here.glob('*.swift')) + [here/'run.py',here.parent/'extended-desktop/remote.py']
 source_paths += [root/'Sources/StreamProtocol/Viewport.swift',root/'Sources/StreamProtocol/Switcher.swift']
+if args.suite == 'recovery':
+    source_paths += [root/'Sources/SillHost/SourceInputFence.swift']
 if args.suite == 'monitor-selection':
     source_paths += list((root/'Sources/StreamProtocol').glob('*.swift'))
     source_paths += [root/'Sources/SillHost/SourceInputFence.swift',here.parent/'monitor-selection/main.swift']
