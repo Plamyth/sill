@@ -94,3 +94,21 @@ installed UI acceptance. The user drawing was not read or changed by the probe.
 The native API already maps drawing coordinates into the bitmap. The extra
 manual vertical flip found by run104 was removed, rather than adjusting the
 expected coordinates. Run105 is the final candidate proof, not an installation.
+
+
+Independent review of0ad7726 found that the new render suspension could save
+sceneA through a newly selected connectionY and mutate its checkpoint. The
+owned lifecycle correction captures connection/address/token/scene and CAS,
+checks cancellation and identity after every await, and checks busy before
+resetting shared synchronization state. Same-scene editing may retain a valid
+frozen earlier revision; changed-scene/connection/enable/CAS work is refused.
+
+VaultLifecycle.swift extracts the actual production method into a controlled
+iPad runner fixture. Remote calls, render and checkpoint writes are recording
+boundaries. Run110 of rejected0ad7726 executes40 assertions and fails17,
+including old render writes after scene/address/token changes, cancellation,
+disabling, CAS change, superseded read and response. Run109 had an invalid
+fixture baseline and was stopped; it is not product red. No live relay or
+Obsidian file is written by this controlled fixture. Run111 applies the same
+fixture to the correction and passes all40 assertions. The model and boundary
+stand-ins do not certify real network cancellation or full SwiftUI view timing.

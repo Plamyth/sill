@@ -394,6 +394,7 @@ struct CanvasWorkspace: View {
     }
 
     private func synchronizeCanvasToVault() async {
+        guard !canvasSyncBusy, !Task.isCancelled else { return }
         if vaultSceneID != store.scene.id || vaultSyncAddress != relayAddress {
             vaultSceneID = store.scene.id
             vaultSyncAddress = relayAddress
@@ -402,14 +403,23 @@ struct CanvasWorkspace: View {
             pendingSceneSha = nil
             canvasVaultBlocked = false
         }
-        guard !canvasVaultBlocked, !canvasSyncBusy else { return }
+        guard !canvasVaultBlocked else { return }
         canvasSyncBusy = true
         defer { canvasSyncBusy = false }
+        let scene = store.scene
+        let connection = relay
+        let address = relayAddress
+        let token = relayToken
+        func current() -> Bool {
+            !Task.isCancelled && canvasVaultEnabled && !canvasVaultBlocked &&
+                store.scene.id == scene.id && relayAddress == address && relayToken == token &&
+                vaultSceneID == scene.id && vaultSyncAddress == address
+        }
         do {
-            let scene = store.scene
             let drawing = store.drawing
             let localSha = CanvasPacket.sha(try sceneBytes())
-            let remote = try await relay.vaultCanvas(id:scene.id)
+            let remote = try await connection.vaultCanvas(id:scene.id)
+            guard current() else { return }
             if let remote {
                 if syncedSceneSha == nil {
                     guard remote.sceneSha256 == localSha ||
@@ -441,19 +451,22 @@ struct CanvasWorkspace: View {
                 store.status = "Obsidian 그림 파일이 없어졌습니다. 자동 재생성을 중단했습니다."
                 return
             }
-            guard localSha != syncedSceneSha,
-                  let image = await SceneRenderer.png(scene:scene) else { return }
+            guard localSha != syncedSceneSha else { return }
+            let baseSha = canvasNoteSha
+            guard let image = await SceneRenderer.png(scene:scene), current(),
+                  canvasNoteSha == baseSha else { return }
             pendingSceneSha = localSha
             try saveCanvasVaultCheckpoint()
-            let saved = try await relay.saveVaultCanvas(scene:scene,imagePNG:image,
-                                                        baseSha256:canvasNoteSha)
-            guard store.scene.id == scene.id else { return }
+            let saved = try await connection.saveVaultCanvas(scene:scene,imagePNG:image,
+                                                             baseSha256:baseSha)
+            guard current(), canvasNoteSha == baseSha else { return }
             syncedSceneSha = saved.sceneSha256
             canvasNoteSha = saved.noteSha256
             pendingSceneSha = nil
             try saveCanvasVaultCheckpoint()
             store.status = "Pencil 그림과 구조 데이터가 Obsidian에 저장됐습니다."
         } catch {
+            guard current() else { return }
             store.status = "Obsidian 그림 동기화 대기: \(error.localizedDescription)"
         }
     }

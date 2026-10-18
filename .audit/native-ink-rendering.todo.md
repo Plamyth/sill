@@ -10,3 +10,6 @@ Throughput checkpoint: parent owns this disjoint ink worktree and physical rende
 - [x] Same physical controls plus asymmetric coordinates and red color pass on final iPad105.
 - [ ] Independent correctness review before integration, full client build and installed UI acceptance.
 - [ ] Separate agent-visible mask and glyph correspondence remains open.
+
+- [x] Review0ad7726 NOT CLEAR async vault lifecycle. Actual-method controlled iPad110 red40/17 and correction111 green40/0.
+- [ ] Fresh independent review of the corrected exact head before full target build/install.
