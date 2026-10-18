@@ -42,8 +42,14 @@ struct IPadDesiredAudio {
         let identity: Identity
         let scope: Scope
         let direction: Direction
+        let lifecycle: UUID
+        let permission: UUID?
     }
 
+    private var foreground = false
+    private var lifecycle = UUID()
+    private var microphoneAuthorization: Bool?
+    private var permissionCycle = UUID()
     private(set) var peer: ObjectIdentifier?
     private(set) var identity: Identity?
     private(set) var selection = Selection()
@@ -111,29 +117,53 @@ struct IPadDesiredAudio {
         for item in direction.map({ [$0] }) ?? Direction.allCases { revisions[item] = UUID() }
     }
 
-    func permits(_ direction: Direction, automatic: Bool, foreground: Bool,
-                 presented: Bool, fullControl: Bool, microphoneAuthorized: Bool) -> Bool {
-        guard peer != nil, selection[direction], foreground, privacy == .protected else { return false }
-        guard automatic else { return true }
-        return identity != nil && scope != nil && privacy == .protected && presented && fullControl &&
-            (direction != .microphone || (microphoneAuthorized && scope?.microphone != nil))
+    mutating func observeForeground(_ active: Bool) {
+        guard foreground != active else { return }
+        foreground = active
+        if active { lifecycle = UUID(); attempts.removeAll() }
+        invalidate()
     }
 
-    mutating func takeAutomaticStarts(foreground: Bool, presented: Bool, fullControl: Bool,
-                                      microphoneAuthorized: Bool, microphoneCanStart: Bool,
-                                      playbackCanStart: Bool) -> [Direction] {
+    mutating func observeMicrophoneAuthorization(_ authorized: Bool) {
+        guard microphoneAuthorization != authorized else { return }
+        let hadAuthorization = microphoneAuthorization != nil
+        microphoneAuthorization = authorized
+        guard hadAuthorization else { return }
+        permissionCycle = UUID()
+        attempts = attempts.filter { $0.direction != .microphone }
+        invalidate(.microphone)
+    }
+
+    private func attempt(_ direction: Direction, identity: Identity, scope: Scope) -> Attempt {
+        Attempt(identity: identity, scope: scope, direction: direction, lifecycle: lifecycle,
+                permission: direction == .microphone ? permissionCycle : nil)
+    }
+
+    func permits(_ direction: Direction, automatic: Bool, foreground: Bool,
+                 microphoneAuthorized: Bool) -> Bool {
+        guard peer != nil, identity != nil, let scope, selection[direction], foreground,
+              privacy == .protected else { return false }
+        if direction == .microphone {
+            guard scope.microphone != nil else { return false }
+            if automatic && !microphoneAuthorized { return false }
+        }
+        return true
+    }
+
+    mutating func takeAutomaticStarts(foreground: Bool, microphoneAuthorized: Bool,
+                                      microphoneCanStart: Bool, playbackCanStart: Bool) -> [Direction] {
         guard let identity, let scope else { return [] }
         return Direction.allCases.filter { direction in
             guard direction == .microphone ? microphoneCanStart : playbackCanStart,
-                  permits(direction, automatic: true, foreground: foreground, presented: presented,
-                          fullControl: fullControl, microphoneAuthorized: microphoneAuthorized) else { return false }
-            return attempts.insert(Attempt(identity: identity, scope: scope, direction: direction)).inserted
+                  permits(direction, automatic: true, foreground: foreground,
+                          microphoneAuthorized: microphoneAuthorized) else { return false }
+            return attempts.insert(attempt(direction, identity: identity, scope: scope)).inserted
         }
     }
 
     mutating func markManualAttempt(_ direction: Direction) {
         guard let identity, let scope else { return }
-        attempts.insert(Attempt(identity: identity, scope: scope, direction: direction))
+        attempts.insert(attempt(direction, identity: identity, scope: scope))
     }
 }
 
@@ -169,27 +199,5 @@ struct IPadDesiredAudioStore {
         if let data = try? JSONEncoder().encode(Archive(version: 1, records: Array(next.suffix(128)))) {
             defaults.set(data, forKey: Self.key)
         }
-    }
-}
-
-/// A reused layer's old ready image cannot admit a new source. Wait for its readiness cycle.
-struct IPadAudioPresentation {
-    private var scope: IPadDesiredAudio.Scope?
-    private var sawNotReady = false
-    private var sawKeyframe = false
-
-    mutating func reset() {
-        scope = nil
-        sawNotReady = false
-        sawKeyframe = false
-    }
-
-    mutating func observe(scope: IPadDesiredAudio.Scope?, ready: Bool, keyframe: Bool = false,
-                          healthy: Bool, attached: Bool) -> Bool {
-        if self.scope != scope { reset(); self.scope = scope }
-        guard scope != nil, healthy else { reset(); return false }
-        if !ready { sawNotReady = true }
-        if keyframe && attached { sawKeyframe = true }
-        return attached && ready && sawNotReady && sawKeyframe
     }
 }

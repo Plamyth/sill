@@ -25,7 +25,6 @@ extension StreamClient {
     func microphoneSourceWillChange() {
         suspendDesiredAudio()
         desiredAudio.sourceWillChange()
-        audioPresentation.reset()
         audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("source_change", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.sourceWillChange())
@@ -69,6 +68,7 @@ extension StreamClient {
                         "grantPresent": String(state.grantID != nil), "reason": state.reason ?? "none",
                         "mainQueueDelayMilliseconds": String(Double(DispatchTime.now().uptimeNanoseconds - arrived) / 1_000_000)])
                 self.applyMicrophone(self.microphonePolicy.receive(state, from: ObjectIdentifier(peer)))
+                self.reconcileDesiredAudio()
             }
         } else if header.kind == .microphoneReceipt, let receipt = Wire.decode(MicrophoneReceipt.self, from: data) {
             DispatchQueue.main.async { [weak self] in
@@ -127,7 +127,7 @@ extension StreamClient {
                     }
                     if allowPermissionPrompt && UIApplication.shared.applicationState == .inactive {
                         self.audioPendingMicrophonePermission = finish
-                    } else { finish() }
+                    } else { finish(); self.reconcileDesiredAudio() }
                 }
             case .closeFrames:
                 microphoneFrames.close()

@@ -161,7 +161,6 @@ final class StreamClient: ObservableObject {
     let desiredAudioStore = IPadDesiredAudioStore()
     @Published var desiredAudioSelection = IPadDesiredAudio.Selection()
     var audioAutomaticDirections: Set<IPadDesiredAudio.Direction> = []
-    var audioPresentation = IPadAudioPresentation()
     var audioResumeObserver: IPadAudioResumeObserver?
     var audioPendingMicrophonePermission: (() -> Void)?
     @Published var audioPrivacyState: AudioPrivacyState?
@@ -4236,7 +4235,7 @@ final class StreamClient: ObservableObject {
             #if os(iOS)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.connection === peer else { return }
-                self.reconcileDesiredAudio(keyframe: header.isKeyframe)
+                self.reconcileDesiredAudio()
             }
             #endif
             #endif

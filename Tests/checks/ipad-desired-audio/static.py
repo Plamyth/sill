@@ -42,13 +42,11 @@ checks = {
     "privacy catalog is bound to its actual peer": "guard connection === peer else { return }" in block(adapter, "func desiredAudioObserve"),
     "privacy failure stops both directions": "if desiredAudio.privacy != .protected { suspendDesiredAudio() }" in adapter and all(
         part in block(adapter, "func suspendDesiredAudio") for part in ["remoteAudioControl.backgrounded()", "microphonePolicy.backgrounded()"]),
-    "automatic budget includes identity scope and direction": "Attempt(identity: identity, scope: scope, direction: direction)" in model,
-    "adapter contains the reviewed input geometry heuristic": all(part in adapter for part in [
-        "window?.hitTest(point, with: nil) as? InputOverlayView", "overlay?.videoSize == videoSize",
-        "overlay?.superview === view.superview",
-        "!inputPaused && !moveUnderWay", "desiredAudioInputGeneration.flatMap(UUID.init(uuidString:)) == scope?.generation"]),
-    "adapter connects readiness to the reviewed presentation model": all(part in adapter + model for part in [
-        "layer.isReadyForDisplay", "layer.requiresFlushToResumeDecoding", "sawNotReady && sawKeyframe"]),
+    "automatic budget includes identity scope and direction": "Attempt(identity: identity, scope: scope, direction: direction, lifecycle: lifecycle," in model,
+    "audio adapter has no video or pointer authority dependency": not any(part in adapter for part in [
+        "hitTest(", "fullControl", "readDesiredAudioPresentation", "displayView", "InputOverlayView"]),
+    "failure budget is renewed only by explicit lifecycle or authorization transitions": all(part in model for part in [
+        "observeForeground", "guard foreground != active", "observeMicrophoneAuthorization", "permissionCycle"]),
     "current source and input generation are applied before reconcile": re.search(
         r"self.inputGeneration = list.inputGeneration\s+self.active = list.active\s+#if os\(iOS\)\s+self.reconcileDesiredAudio\(\)", client) is not None,
     "capture begin rechecks desire phase request grant and scope": all(part in mic.split("case .beginCapture", 1)[1].split("case .openFrames", 1)[0] for part in [
@@ -67,7 +65,7 @@ checks = {
     "chooser cancellation clears both saved directions": "client.cancelDesiredAudioRequest()" in read("iOSClient/IPadAudioRouteChooser.swift") and all(
         part in block(adapter, "func cancelDesiredAudioRequest") for part in [
             "setDesiredAudio(.microphone, enabled: false)", "setDesiredAudio(.playback, enabled: false)"]),
-    "active scene and key window are required": "window?.isKeyWindow == true" in adapter and "window?.windowScene?.activationState == .foregroundActive" in adapter,
+    "foreground is actual application state without video attachment": "UIApplication.shared.applicationState == .active" in adapter and "desiredAudio.observeForeground(foreground)" in adapter,
     "automatic cleanup does not retry a recorded failure": "if microphoneCleanupProblem == nil { retryMicrophoneCleanup() }" in mic,
     "denied async starts settle the current policy": mic.count("microphonePolicy.permissionResolved(false") == 3 and
         "capture_begin_skipped" in mic and "마이크 시작 전에 연결 상태가 바뀌었습니다." in mic and "마이크 시작 중 연결 상태가 바뀌었습니다." in mic,

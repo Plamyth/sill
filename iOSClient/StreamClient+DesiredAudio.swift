@@ -19,7 +19,6 @@ extension StreamClient {
         audioPendingMicrophonePermission = nil
         desiredAudioSelection = desiredAudio.selection
         audioAutomaticDirections.removeAll()
-        audioPresentation.reset()
     }
 
     func desiredAudioObserve(_ list: WindowList, from peer: NWConnection) {
@@ -27,7 +26,7 @@ extension StreamClient {
         let oldScope = desiredAudio.scope
         audioPrivacyState = list.audioPrivacy
         desiredAudio.observe(list, microphone: microphonePolicy.scope, from: ObjectIdentifier(peer))
-        if oldScope != desiredAudio.scope { audioPresentation.reset() }
+        if oldScope != desiredAudio.scope { suspendDesiredAudio() }
         if desiredAudio.privacy != .protected { suspendDesiredAudio() }
     }
 
@@ -77,16 +76,17 @@ extension StreamClient {
         desiredAudioSelection = desiredAudio.selection
     }
 
-    func reconcileDesiredAudio(keyframe: Bool = false) {
+    func reconcileDesiredAudio() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard connected, let connection, desiredAudio.peer == ObjectIdentifier(connection) else { return }
         if audioResumeObserver == nil { audioResumeObserver = IPadAudioResumeObserver(client: self) }
         refreshDesiredAudioIdentity()
-        let gate = readDesiredAudioPresentation(keyframe: keyframe)
         let foreground = appInForeground && UIApplication.shared.applicationState == .active
+        desiredAudio.observeForeground(foreground)
+        desiredAudio.observeMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
         guard foreground else {
             if remoteAudioStatus.requested || microphonePolicy.phase.canStop || microphoneCaptureToken != nil {
-                suspendDesiredAudio(preserveManualPermission: UIApplication.shared.applicationState == .inactive)
+                suspendDesiredAudio()
             }
             return
         }
@@ -96,7 +96,6 @@ extension StreamClient {
             else { remoteAudioControl.sourceWillChange() }
         }
         let starts = desiredAudio.takeAutomaticStarts(foreground: foreground,
-            presented: gate.presented, fullControl: gate.fullControl,
             microphoneAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
             microphoneCanStart: microphonePolicy.canStart && microphoneCleanupProblem == nil && IPadAudioSession.shared.microphoneAvailable,
             playbackCanStart: remoteAudioStatus.available && !remoteAudioStatus.requested)
@@ -106,11 +105,9 @@ extension StreamClient {
     func desiredAudioPermits(_ direction: IPadDesiredAudio.Direction) -> Bool {
         let automatic = audioAutomaticDirections.contains(direction)
         guard let connection, desiredAudio.peer == ObjectIdentifier(connection), desiredAudio.selection[direction] else { return false }
-        if automatic && desiredAudio.identity != desiredAudioIdentity { return false }
-        let gate = automatic ? readDesiredAudioPresentation() : (presented: false, fullControl: false)
+        guard desiredAudio.identity == desiredAudioIdentity else { return false }
         return desiredAudio.permits(direction, automatic: automatic,
             foreground: appInForeground && UIApplication.shared.applicationState == .active,
-            presented: gate.presented, fullControl: gate.fullControl,
             microphoneAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
     }
 
@@ -126,26 +123,6 @@ extension StreamClient {
             beginRemoteAudioRequest()
         }
     }
-
-    private func readDesiredAudioPresentation(keyframe: Bool = false) -> (presented: Bool, fullControl: Bool) {
-        let view = displayView
-        guard let layer = view.layer as? AVSampleBufferDisplayLayer else { return (false, false) }
-        let window = view.window
-        let attached = window?.isKeyWindow == true && window?.windowScene?.activationState == .foregroundActive &&
-            !view.isHidden && view.alpha > 0
-        let point = view.convert(CGPoint(x: view.bounds.midX, y: view.bounds.midY), to: window)
-        let overlay = window?.hitTest(point, with: nil) as? InputOverlayView
-        let scope = desiredAudio.scope
-        let fullControl = attached && overlay?.window === window && overlay?.superview === view.superview &&
-            overlay?.videoSize == videoSize &&
-            videoSize.width > 0 && videoSize.height > 0 && !inputPaused && !moveUnderWay &&
-            active == scope?.source && desiredAudioInputGeneration.flatMap(UUID.init(uuidString:)) == scope?.generation &&
-            overlay != nil
-        let presented = audioPresentation.observe(scope: scope, ready: layer.isReadyForDisplay,
-            keyframe: keyframe, healthy: layer.status != .failed && !layer.requiresFlushToResumeDecoding,
-            attached: attached)
-        return (presented, fullControl)
-    }
 }
 
 final class IPadAudioResumeObserver {
@@ -153,18 +130,16 @@ final class IPadAudioResumeObserver {
 
     init(client: StreamClient) {
         let center = NotificationCenter.default
-        let layer = client.displayView.layer
-        for name in [NSNotification.Name.AVSampleBufferDisplayLayerReadyForDisplayDidChange,
-                     .AVSampleBufferDisplayLayerFailedToDecode,
-                     .AVSampleBufferDisplayLayerRequiresFlushToResumeDecodingDidChange] {
-            observers.append(center.addObserver(forName: name, object: layer, queue: .main) { [weak client] _ in
-                client?.reconcileDesiredAudio()
-            })
-        }
         observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification,
-            object: nil, queue: .main) { [weak client] _ in client?.suspendDesiredAudio(preserveManualPermission: true) })
+            object: nil, queue: .main) { [weak client] _ in
+                client?.desiredAudio.observeForeground(false)
+                client?.suspendDesiredAudio()
+            })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification,
-            object: nil, queue: .main) { [weak client] _ in client?.suspendDesiredAudio() })
+            object: nil, queue: .main) { [weak client] _ in
+                client?.desiredAudio.observeForeground(false)
+                client?.suspendDesiredAudio()
+            })
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification,
             object: nil, queue: .main) { [weak client] _ in
                 DispatchQueue.main.async { [weak client] in
