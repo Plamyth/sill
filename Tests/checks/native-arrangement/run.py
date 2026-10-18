@@ -8,7 +8,7 @@ import subprocess
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--output',required=True)
-parser.add_argument('--suite',choices=['native','monitor-selection'],default='native')
+parser.add_argument('--suite',choices=['native','monitor-selection','recovery'],default='native')
 args=parser.parse_args()
 out=Path(args.output)
 if not out.is_absolute() or out.exists(): raise SystemExit('fresh routed output path required')
@@ -59,6 +59,31 @@ if args.suite == 'monitor-selection':
     regression=regression.split('let peer = NSObject()',1)[0]
     regression+='print("MONITOR_SELECTION_CHECKS total=\\(checks)")\n'
     inputs['main.swift']='import Foundation\n@main struct RegressionChecks { @MainActor static func main() {\n'+regression+'\n} }\n'
+if args.suite == 'recovery':
+    select = block(coordinator, 'func select(_ source:')
+    prefix = select[:select.index('        rectCache = nil')]
+    pipeline = block(coordinator, 'private func startPipeline(')
+    validation = block(pipeline, 'if let desktopSelection {')
+    fixture = (here/'Recovery.swift').read_text()
+    fixture = fixture.replace('// SELECT_PREFIX', prefix + """
+        if source == .none { active = .none; return }
+        do { try await startPipeline(source: source) } catch { active = .none }
+        broadcastList()
+    }
+""")
+    fixture = fixture.replace('// PIPELINE_VALIDATION', validation)
+    fixture = fixture.replace('// DISPLAYS_CHANGED', block(coordinator, 'private func displaysChanged(').replace('private func','func',1))
+    fixture = fixture.replace('// HANDLE_PICK', block(coordinator, 'private func handlePick(').replace('private func','func',1))
+    marker = 'private enum OwnedDesktopRecovery'
+    recovery = ''
+    if marker in coordinator:
+        recovery = block(coordinator, marker) + '\n' + 'private var ownedDesktopRecovery = OwnedDesktopRecovery.idle\n'
+        recovery += block(coordinator, 'private func recoverOwnedDesktop(')
+    fixture = fixture.replace('// OWNED_RECOVERY', recovery)
+    inputs = {'Recovery.swift': fixture, 'main.swift': (here/'recovery-main.swift').read_text(),
+        'DisplayInventory.swift': inventory.read_text().replace('import StreamProtocol\n',''),
+        'SourceInputFence.swift': (root/'Sources/SillHost/SourceInputFence.swift').read_text().replace('import StreamProtocol\n',''),
+        'DisplayTypes.swift': 'import Foundation\n' + block(protocol, 'public enum StreamSource:') + '\n' + block(protocol, 'public struct DisplayInfo:') + '\n' + block(protocol, 'public struct DisplaySelection:')}
 sha=lambda b:hashlib.sha256(b).hexdigest()
 hashes={k:sha(v.encode()) for k,v in inputs.items()}
 payload=json.dumps({'sources':{k:base64.b64encode(v.encode()).decode() for k,v in inputs.items()},'hashes':hashes}).encode()
