@@ -2,6 +2,22 @@ import Foundation
 import Network
 import StreamProtocol
 
+final class SourcePublicationAdmission: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = true
+
+    func invalidate() {
+        lock.lock(); defer { lock.unlock() }
+        current = false
+    }
+
+    func publish(_ body: () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        guard current else { return }
+        body()
+    }
+}
+
 /// Advertises _sill._tcp over Bonjour and pushes messages to every connected client.
 /// Slow clients drop delta frames rather than building a queue (that queue is latency).
 ///
@@ -1350,16 +1366,19 @@ final class StreamServer {
         }
     }
 
-    func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, requestKeyframe: @escaping () -> Void) {
+    func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission,
+                     requestKeyframe: @escaping () -> Void) {
         queue.async { [self] in
-            guard videoAdmission == .preparing(epoch) else { return }
-            videoAdmission = .committed(epoch)
-            for client in clients.values where client.catalogSent && client.connection.state == .ready {
-                client.latestCatalog = catalog
-                client.microphoneCatalogGrant = nil
-                send(catalog.serialized(), to: client)
+            admission.publish {
+                guard videoAdmission == .preparing(epoch) else { return }
+                videoAdmission = .committed(epoch)
+                for client in clients.values where client.catalogSent && client.connection.state == .ready {
+                    client.latestCatalog = catalog
+                    client.microphoneCatalogGrant = nil
+                    send(catalog.serialized(), to: client)
+                }
+                requestKeyframe()
             }
-            requestKeyframe()
         }
     }
 

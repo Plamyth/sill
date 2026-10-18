@@ -47,21 +47,7 @@ final class Server {
 '''
         inputs['main.swift']=m.replace('        print("SOURCE_REQUEST_HOST_CHECKS',extra+'        print("SOURCE_REQUEST_HOST_CHECKS',1)
     elif SUITE=='client':
-        h=inputs['Client.swift']
-        a=h.index('final class Link'); b=h.index('@MainActor final class Client',a)
-        h=h[:a]+'''final class NWConnection: NSObject, @unchecked Sendable {
-    enum SendCompletion { case contentProcessed((Error?)->Void) }
-    var packets: [Data]=[]
-    func send(content: Data?, completion: SendCompletion) { if let content { packets.append(content) }; if case .contentProcessed(let done)=completion { done(nil) } }
-}
-typealias Link=SessionLink
-'''+h[b:]
-        h=h.replace('var connection: NSObject? = NSObject()', 'var connection: NWConnection? { get {link.connection} set {link.connection=newValue} }\n    init() { link.connection=NWConnection() }')
-        h=h.replace('link.packets.compactMap', '(link.connection?.packets ?? []).compactMap').replace('NSObject','NWConnection')
-        h=h.replace('final class NWConnection: NWConnection,','final class NWConnection: NSObject,')
-        h=h.replace('sent.append((kind,payload))', 'link.send(StreamMessage(kind:kind,timestamp:0,isKeyframe:false,payload:payload).serialized())')
-        inputs['Client.swift']=h
-        inputs['SessionLink.swift']=(root/'iOSClient/SessionLink.swift').read_text().replace('import Network\n','')
+        inputs['SessionLink.swift'] = (root/'iOSClient/SessionLink.swift').read_text().replace('import Network\n','')
         m=inputs['main.swift'].replace('NSObject()','NWConnection()')
         extra='''
         let held=Client(); held.active = .none
@@ -77,6 +63,21 @@ typealias Link=SessionLink
         expect(!sentHeld.contains { $0.origin == .automatic },"explicit intent must invalidate automatic packet still held by actual SessionLink")
         print("COUNTEREXAMPLE delayed-stale-audio currentRevision=\\(String(describing:closing.selectionRevision)) sentRevision=\\(String(describing:automatic.first?.selectionRevision)) teardownCalls=\\(closing.remoteAudioControl.changes)")
         expect(closing.remoteAudioControl.changes == 0,"real delayed callback must not revoke audio for a revision already known stale")
+        for choice in ["window", "display", "launch"] {
+            let client = Client(); client.active = .none
+            let peer = client.connection!
+            _ = client.link.hold(peer)
+            client.requestAutomatic(.desktop, ticket: client.automaticTicket(peer: peer, list: list)!)
+            switch choice {
+            case "window": client.select(.window(1002))
+            case "display": client.selectDisplay(client.displays[0])
+            default: client.launch(bundleID: "test.new")
+            }
+            _ = client.link.unhold(peer)
+            let requests = peer.packets.compactMap { Wire.decode(SourceRequest.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+            expect(!requests.contains { $0.origin == .automatic }, "every explicit entry point cancels held automatic submission")
+            expect(peer.packets.count == 1, "held explicit choice is preserved exactly once")
+        }
 
 '''
         inputs['main.swift']=m.replace('        print("SOURCE_REQUEST_CLIENT_CHECKS',extra+'        print("SOURCE_REQUEST_CLIENT_CHECKS',1)
@@ -90,16 +91,14 @@ def augment(inputs, block, root, here):
     augment_review(inputs, block, root, here)
     SUITE = mode
     if mode == 'reconnect':
-        h=inputs['Client.swift'].replace('func send(content:', 'func forceCancel() {}\n    func send(content:')
+        h=inputs['Client.swift']
         product=(root/'iOSClient/StreamClient.swift').read_text()
         start=product.index('            let released = link.adopt(c)')
         end=product.index('            #if DEBUG',start)
         move=product[start:end]
         move='    func moveWithoutFence(to c: NWConnection) {\n        let old=connection!\n'+move+'    }\n    func closeSoon(_ peers: [NWConnection]) {}\n'
-        h=h.replace('    // CLIENT_METHODS','    // CLIENT_METHODS')
         at=h.rfind('\n}')
         inputs['Client.swift']=h[:at]+'\n'+move+h[at:]
-        inputs['Host.swift']=inputs['Host.swift'].replace('    // HOST_METHODS','    // HOST_METHODS')
         at=inputs['Host.swift'].rfind('\n}')
         inputs['Host.swift']=inputs['Host.swift'][:at]+'''\n    func lastPeerDeparted() { catalog.clientCount=0; cancelSourcePicks() }\n'''+inputs['Host.swift'][at:]
         inputs['main.swift']='''import Foundation
@@ -129,6 +128,15 @@ def augment(inputs, block, root, here):
       list.selectionRevision=host.selectionRevision
       client.deliverIdleCatalog(list)
       expect(new.packets.count == before,"rejected resume consumes eligibility and no later catalog retries")
+      for choice in ["none", "failed"] {
+       let interrupted = Client(); interrupted.active = .window(1001)
+       let replacement = NWConnection()
+       interrupted.moveWithoutFence(to: replacement)
+       interrupted.select(choice == "none" ? .none : .window(999))
+       interrupted.deliverIdleCatalog(list)
+       let requests = replacement.packets.compactMap { Wire.decode(SourceRequest.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+       expect(!requests.contains { $0.origin == .automatic }, "new-peer opportunity cannot survive intervening explicit intent")
+      }
       print("RECONNECT_COMPOSITION_CHECKS total=\\(checks) failed=\\(failed)")
       if failed>0 { exit(1) }
      }
@@ -174,9 +182,12 @@ def client_input(block, root, here):
     text = (root/'iOSClient/StreamClient.swift').read_text()
     signatures = ['func select(_ source:', 'func selectDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(']
     methods = '\n'.join(block(text, s) for s in signatures)
-    client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', '').replace('NWConnection', 'NSObject'))
+    client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', ''))
     for marker, signature in [('// EXPECTED_SOURCE', 'private enum ExpectedSourceIntent'), ('// AUTOMATIC_TICKET', 'private struct AutomaticSourceTicket'), ('// RESUME_SOURCE', 'if let resume = self.resumeSource'), ('// IDLE_FALLBACK', 'if let ticket = self.automaticTicket')]:
-        client = client.replace(marker, block(text, signature).replace('private ', ''))
+        replacement = block(text, signature).replace('private ', '')
+        if marker == '// AUTOMATIC_TICKET':
+            replacement += '\n' + block(text, 'private struct AutomaticConnectionOpportunity').replace('private ', '')
+        client = client.replace(marker, replacement)
     return client
 
 program = ROOT/'Tests/checks/source-request/run.py'

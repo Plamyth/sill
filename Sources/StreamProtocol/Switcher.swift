@@ -118,10 +118,11 @@ public struct WindowList: Codable {
     /// Nil from older hosts; older devices ignore this field.
     public var remoteAudio: Int?
 
+    /// The dedicated source-intent CAS, independent of video and input generations.
+    public var selectionRevision: String?
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
     /// original input format until they disconnect or negotiate scoped input.
-    public var selectionRevision: String?
     public var inputGeneration: String?
     public var presentationInput: Int?
     public var videoEpoch: VideoEpoch?

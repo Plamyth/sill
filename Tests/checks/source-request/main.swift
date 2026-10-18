@@ -14,7 +14,7 @@ import Foundation
         for choice in ["window","display","launch","none"] {
             let client = Client()
             client.resumeSource = .window(1001)
-            client.resumeTicket = client.automaticTicket(peer: client.connection!, list: list)
+            client.beginAutomaticConnectionOpportunity(peer: client.connection)
             switch choice {
             case "window": client.select(.window(1002))
             case "display": client.selectDisplay(client.displays[0])
@@ -29,13 +29,13 @@ import Foundation
         }
         let reconnect = Client()
         reconnect.resumeSource = .window(1001)
-        reconnect.resumeTicket = reconnect.automaticTicket(peer: reconnect.connection!, list: list)
+        reconnect.beginAutomaticConnectionOpportunity(peer: reconnect.connection)
         reconnect.deliverIdleCatalog(list)
         expect(reconnect.allSent.contains { $0.0 == .selectSource && Wire.decode(StreamSource.self,from:$0.1) == .window(1001) },
                "idle handover with no newer explicit choice still restores its window")
         let missing = Client()
         missing.resumeSource = .window(999)
-        missing.resumeTicket = missing.automaticTicket(peer: missing.connection!, list: list)
+        missing.beginAutomaticConnectionOpportunity(peer: missing.connection)
         missing.deliverIdleCatalog(list)
         expect(missing.allSent.contains { $0.0 == .selectSource && Wire.decode(StreamSource.self,from:$0.1) == .desktop },
                "missing restored window retains Desktop fallback")
@@ -54,7 +54,7 @@ import Foundation
         expect(cancelled.allSent.count == 1, "explicit None prevents first-idle and delayed ticket rebasing")
         let replaced = Client()
         let oldTicket = replaced.automaticTicket(peer: replaced.connection!, list: list)!
-        replaced.connection = NSObject()
+        replaced.connection = NWConnection()
         replaced.sessionHost = list.launchID
         replaced.requestAutomatic(.desktop, ticket: oldTicket)
         expect(replaced.allSent.isEmpty && replaced.remoteAudioControl.changes == 0, "old peer ticket cannot send or tear down audio")
@@ -94,8 +94,8 @@ import Foundation
         expect(closing.allSent.isEmpty, "a second idle catalog cannot bypass the closed-window delay")
         try await Task.sleep(for: .milliseconds(2200))
         let automatic = closing.allSent.compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
-        expect(automatic.count == 1 && automatic[0].selectionRevision == list.selectionRevision,
-               "real delayed fallback retains original revision without rebase")
+        expect(automatic.isEmpty && closing.scheduledAutomaticTicket?.revision == list.selectionRevision,
+               "real delayed fallback refuses a known stale revision without rebase")
         let refusedDisplay = Client()
         refusedDisplay.displaySelectionReady = false
         refusedDisplay.selectDisplay(refusedDisplay.displays[0])

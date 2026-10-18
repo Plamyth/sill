@@ -99,7 +99,9 @@ struct HostStatusSnapshot {
     func prepareVideo(_ epoch: VideoEpoch) { prepared += 1 }
     func resetForNewStream() {}
     func broadcast(_ message: StreamMessage, epoch: UUID) {}
-    func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, keyframe: () -> Void) { committed.append(epoch.source) }
+    func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission, keyframe: () -> Void) {
+        admission.publish { committed.append(epoch.source) }
+    }
 }
 @MainActor final class Injector {
     func releaseInput(of device: ObjectIdentifier) {}
@@ -132,6 +134,7 @@ struct HostStatusSnapshot {
     var launchID = "host"
     var selectionRevision: String { "\(launchID):\(pickSequence)" }
     var pickSequence: UInt64 = 0
+    var sourcePublicationAdmission = SourcePublicationAdmission()
     var settledPickSequence: UInt64 = 0
     var pickArrivedWhileSwitching: SourcePick?
     var sourceAdmissionPeer: ObjectIdentifier?

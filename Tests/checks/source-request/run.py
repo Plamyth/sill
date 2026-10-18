@@ -25,15 +25,17 @@ def block(text, signature):
         end += 1
     return text[start:end]
 methods = '\n'.join(block(text,s) for s in ['func select(_ source:', 'func selectDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity('])
-client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ','').replace('NWConnection','NSObject'))
+client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ',''))
 client = client.replace('// EXPECTED_SOURCE', block(text, 'private enum ExpectedSourceIntent').replace('private ',''))
-client = client.replace('// AUTOMATIC_TICKET', block(text, 'private struct AutomaticSourceTicket').replace('private ',''))
+client = client.replace('// AUTOMATIC_TICKET', '\n'.join(block(text, s).replace('private ','') for s in ['private struct AutomaticSourceTicket', 'private struct AutomaticConnectionOpportunity']))
 client = client.replace('// RESUME_SOURCE',block(text,'if let resume = self.resumeSource'))
 client = client.replace('// IDLE_FALLBACK',block(text,'if let ticket = self.automaticTicket'))
 inputs = {name:(root/'Sources/StreamProtocol'/name).read_text() for name in ['Switcher.swift','StreamMessage.swift','AudioRouting.swift']}
 inputs['Client.swift'] = client
 inputs['main.swift'] = (here/'main.swift').read_text()
+inputs['SessionLink.swift'] = (root/'iOSClient/SessionLink.swift').read_text().replace('import Network\n','')
 if args.suite == 'host':
+    inputs.pop('SessionLink.swift')
     coordinator = (root/'Sources/SillHost/StreamCoordinator.swift').read_text()
     methods = '\n'.join(block(coordinator, signature) for signature in [
         'private func reserveSourceIntent(', 'private func admissionIsCurrent(', 'private func admitSourceMessage(',
@@ -51,6 +53,7 @@ if args.suite == 'host':
     inputs['ProductCoordinator.swiftparse'] = coordinator
     inputs['ProductClient.swiftparse'] = text
     inputs['Ingress.swift'] = 'import Foundation\n' + block(coordinator, 'private final class CoordinatorIngress').replace('private final class', 'final class', 1)
+    inputs['SourcePublicationAdmission.swift'] = 'import Foundation\n' + block((root/'Sources/SillHost/StreamServer.swift').read_text(), 'final class SourcePublicationAdmission')
 sha = lambda data: hashlib.sha256(data).hexdigest()
 hashes = {name:sha(value.encode()) for name,value in inputs.items()}
 payload = json.dumps({'sources':{name:base64.b64encode(value.encode()).decode() for name,value in inputs.items()},'hashes':hashes}).encode()
@@ -61,13 +64,13 @@ runner = runner[:start] + runner[end:]
 runner = runner.replace("not name.endswith('.swift')", "not name.endswith(('.swift', '.swiftparse'))")
 runner = runner.replace('command += [str(mount / name) for name in hashes]', 'command += [str(mount / name) for name in hashes if name.endswith(".swift")]')
 runner = runner.replace('    ok = run(command, timeout=100)', '    parsed = all(run(["/usr/bin/xcrun", "swiftc", "-frontend", "-parse", str(mount / name)], timeout=20) for name in hashes if name.endswith(".swiftparse"))\n    ok = run(command, timeout=100) if parsed else False')
-paths = [source, root/'Sources/SillHost/StreamCoordinator.swift'] + list(here.glob('*.swift')) + [here/'run.py', here.parent/'extended-desktop/remote.py'] + list((root/'Sources/StreamProtocol').glob('*.swift'))
+paths = [root/'iOSClient/SessionLink.swift', root/'Sources/SillHost/StreamServer.swift', source, root/'Sources/SillHost/StreamCoordinator.swift'] + list(here.glob('*.swift')) + [here/'run.py', here.parent/'extended-desktop/remote.py'] + list((root/'Sources/StreamProtocol').glob('*.swift'))
 before = {str(p.relative_to(root)):sha(p.read_bytes()) for p in paths}
 p = subprocess.run(['/Users/ambrion/.local/bin/mini','heavy','--cwd','/private/tmp','--','python3','-B','-c',runner],input=payload,capture_output=True,timeout=240)
-log = p.stdout.decode(errors='replace')
+log = (p.stdout + p.stderr).decode(errors='replace')
 (out/'run.log').write_text(log)
 records = [json.loads(line[12:]) for line in log.splitlines() if line.startswith('RESULT_JSON ')]
-receipt = {'suite':args.suite,'scope':'actual client entry/request/resume/fallback or full host select/startPipeline/ingress admission with launch completion branch; mocked OS/transport/audio boundaries; Mini RAM independent test, not SDK/native/sourceguard transfer acceptance','head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),'sourceHashes':before,'sourceUnchanged':all(sha(p.read_bytes()) == before[str(p.relative_to(root))] for p in paths),'transportHashMatched':'INPUT_SHA256 '+sha(payload) in log,'inputHashes':hashes,'remote':records[-1] if records else None,'exit':p.returncode}
+receipt = {'suite':args.suite,'scope':'actual client methods and SessionLink or full host selection/admission/pipeline; controlled OS/audio/wire endpoints; Mini RAM independent test, not SDK/native/sourceguard transfer acceptance','head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),'sourceHashes':before,'sourceUnchanged':all(sha(p.read_bytes()) == before[str(p.relative_to(root))] for p in paths),'transportHashMatched':'INPUT_SHA256 '+sha(payload) in log,'inputHashes':hashes,'remote':records[-1] if records else None,'exit':p.returncode}
 (out/'result.json').write_text(json.dumps(receipt,indent=2)+'\n')
 print(log)
 print('RECEIPT '+str(out/'result.json'))

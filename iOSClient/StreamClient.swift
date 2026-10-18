@@ -710,12 +710,18 @@ final class StreamClient: ObservableObject {
         let host: String?
         let revision: String?
     }
+    private struct AutomaticConnectionOpportunity {
+        let intent: UInt64
+        let peer: ObjectIdentifier
+        let host: String?
+    }
     private var explicitSourceIntent: UInt64 = 0
     private var automaticSourceIntent: UInt64? = 0
     private var selectionRevision: String?
     private var sourceCatalogEpoch: UUID?
-    private var resumeTicket: AutomaticSourceTicket?
+    private var resumeOpportunity: AutomaticConnectionOpportunity?
     private var scheduledAutomaticTicket: AutomaticSourceTicket?
+    private var automaticSubmission: SessionLink.Submission?
 
     private enum ExpectedSourceIntent {
         case source(StreamSource), display(UInt32), launch(String)
@@ -745,17 +751,25 @@ final class StreamClient: ObservableObject {
     }
 
     private func noteSourceIntent() {
+        if let automaticSubmission { link.cancel(automaticSubmission) }
+        automaticSubmission = nil
         explicitSourceIntent &+= 1
         automaticSourceIntent = nil
         expectedSourceIntent = nil
         resumeSource = nil
-        resumeTicket = nil
+        resumeOpportunity = nil
         scheduledAutomaticTicket = nil
     }
 
-    private func beginAutomaticConnectionOpportunity() {
+    private func beginAutomaticConnectionOpportunity(peer: NWConnection? = nil) {
+        if let automaticSubmission { link.cancel(automaticSubmission) }
+        automaticSubmission = nil
         automaticSourceIntent = expectedSourceIntent == nil ? explicitSourceIntent : nil
         scheduledAutomaticTicket = nil
+        resumeOpportunity = peer.flatMap { peer in
+            guard automaticSourceIntent == explicitSourceIntent else { return nil }
+            return AutomaticConnectionOpportunity(intent: explicitSourceIntent, peer: ObjectIdentifier(peer), host: sessionHost)
+        }
     }
 
     private func automaticTicket(peer: NWConnection, list: WindowList) -> AutomaticSourceTicket? {
@@ -768,9 +782,10 @@ final class StreamClient: ObservableObject {
         guard let peer = connection, ObjectIdentifier(peer) == ticket.peer,
               explicitSourceIntent == ticket.intent,
               automaticSourceIntent == ticket.intent || scheduledAutomaticTicket == ticket,
-              sessionHost == ticket.host else { return }
-        // Old hosts cannot enforce CAS. Local ticket cancellation still applies.
-        request(source, origin: .automatic, revision: ticket.revision, onlyOn: peer)
+              sessionHost == ticket.host, selectionRevision == ticket.revision else { return }
+        let submission = SessionLink.Submission { _ in }
+        automaticSubmission = submission
+        request(source, origin: .automatic, revision: ticket.revision, onlyOn: peer, submission: submission)
         expectedSourceIntent = (.source(source), ticket.revision, sourceCatalogEpoch)
         automaticSourceIntent = nil
         scheduledAutomaticTicket = nil
@@ -944,7 +959,7 @@ final class StreamClient: ObservableObject {
                 beginAutomaticConnectionOpportunity()
                 selectionRevision = nil
                 sourceCatalogEpoch = nil
-                resumeTicket = nil
+                resumeOpportunity = nil
                 scheduledAutomaticTicket = nil
                 displays = []
                 activeDisplayID = nil
@@ -2860,10 +2875,8 @@ final class StreamClient: ObservableObject {
             let released = link.adopt(c)
             old.forceCancel()
             closeSoon(released?.close ?? [])
-            beginAutomaticConnectionOpportunity()
+            beginAutomaticConnectionOpportunity(peer: c)
             resumeSource = automaticSourceIntent == explicitSourceIntent && active != .none ? active : nil
-            resumeTicket = AutomaticSourceTicket(intent: explicitSourceIntent, peer: ObjectIdentifier(c),
-                                                 host: sessionHost, revision: selectionRevision)
             #if DEBUG
             let waiting = (released?.waiting ?? 0) > 0 ? " (\(released!.waiting) wait for an earlier hand-over's fence)" : ""
             print("path: no fence (the old connection\(reconnected ? " is gone" : "'s path is gone")): \(released?.held ?? 0) held messages went out on the new connection\(waiting)")
@@ -3793,7 +3806,8 @@ final class StreamClient: ObservableObject {
     /// request (the Desktop on a connection's first list, a pick made again after a move), which
     /// is not the person's doing.
     private func request(_ source: StreamSource, origin: SourceRequest.Origin = .human,
-                         revision: String? = nil, onlyOn peer: NWConnection? = nil) {
+                         revision: String? = nil, onlyOn peer: NWConnection? = nil,
+                         submission: SessionLink.Submission? = nil) {
         #if os(visionOS)
         visionAudio.stop()
         #else
@@ -3807,7 +3821,7 @@ final class StreamClient: ObservableObject {
                                                 selectionRevision: revision))
         if let peer {
             let message = StreamMessage(kind: .selectSource, timestamp: Date().timeIntervalSince1970, isKeyframe: false, payload: payload)
-            _ = link.send(message.serialized(), onlyOn: peer)
+            _ = link.send(message.serialized(), onlyOn: peer, submission: submission)
         } else { send(.selectSource, payload) }
         #if DEBUG
         // Layout harness (mock, no connection): show the pick locally so taps can be checked.
@@ -4386,10 +4400,12 @@ final class StreamClient: ObservableObject {
                 // what this device was watching is picked again (`resumeSource`).
                 if let resume = self.resumeSource {
                     self.resumeSource = nil
-                    let ticket = self.resumeTicket
-                    self.resumeTicket = nil
+                    let opportunity = self.resumeOpportunity
+                    self.resumeOpportunity = nil
                     if list.active == .none, !Self.noAutoDesktop, !self.desktopSelectionRequired,
-                       let ticket {
+                       let opportunity, opportunity.intent == self.explicitSourceIntent,
+                       opportunity.peer == ObjectIdentifier(peer), opportunity.host == list.launchID,
+                       let ticket = self.automaticTicket(peer: peer, list: list) {
                         var pick = resume
                         if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
                         #if DEBUG

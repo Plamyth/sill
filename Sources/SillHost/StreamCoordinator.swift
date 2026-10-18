@@ -231,6 +231,7 @@ package final class StreamCoordinator {
     private var selectionRevision: String { "\(launchID):\(pickSequence)" }
     private var sourceAdmissionPeer: ObjectIdentifier?
     private var pickSequence: UInt64 = 0
+    private var sourcePublicationAdmission = SourcePublicationAdmission()
     private var settledPickSequence: UInt64 = 0
     private var pickArrivedWhileSwitching: SourcePick?
     private enum OwnedDesktopRecovery: Equatable {
@@ -1002,6 +1003,8 @@ package final class StreamCoordinator {
     // MARK: Client messages
 
     private func reserveSourceIntent(peer: ObjectIdentifier? = nil) -> UInt64 {
+        sourcePublicationAdmission.invalidate()
+        sourcePublicationAdmission = SourcePublicationAdmission()
         pickSequence &+= 1
         sourceAdmissionPeer = peer
         pickArrivedWhileSwitching = nil
@@ -1400,6 +1403,8 @@ package final class StreamCoordinator {
     // MARK: Source switching
 
     private func cancelSourcePicks() {
+        sourcePublicationAdmission.invalidate()
+        sourcePublicationAdmission = SourcePublicationAdmission()
         sourceAdmissionPeer = nil
         pickSequence &+= 1
         pendingLaunch = nil
@@ -1749,6 +1754,7 @@ package final class StreamCoordinator {
     private func startPipeline(source: StreamSource, filter: SCContentFilter?, sourceRect: CGRect?, width: Int, height: Int, describe: String,
                                title: String, kind: HostStatusSnapshot.Stream.Kind, admissionSequence: UInt64, admissionPeer: ObjectIdentifier?) async throws {
         guard admissionIsCurrent(admissionSequence, peer: admissionPeer) else { throw PipelineEpochError.superseded }
+        let publicationAdmission = sourcePublicationAdmission
         let desktopSelection = source == .desktop && !synthetic ? catalog.displayInventory.current : nil
         guard let bounds = currentSourceRect(source: source, fresh: true) else { throw PipelineEpochError.missingGeometry }
         let generation = source == active ? inputGeneration : UUID().uuidString
@@ -1801,7 +1807,7 @@ package final class StreamCoordinator {
         active = source
         inputGeneration = generation
         videoEpoch = epoch
-        server.commitVideo(epoch, catalog: listMessage()) { [weak enc] in enc?.requestKeyframe() }
+        server.commitVideo(epoch, catalog: listMessage(), admission: publicationAdmission) { [weak enc] in enc?.requestKeyframe() }
         print("Streaming \(describe) at \(width)×\(height), \(fps) fps, \(streamBitrate / 1_000_000) Mbps")
         status.update {
             $0.stream = HostStatusSnapshot.Stream(kind: kind, title: title, width: width, height: height, fps: fps,
@@ -2246,6 +2252,7 @@ package final class StreamCoordinator {
         injector.releaseAll()
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
+        sourcePublicationAdmission.invalidate()
         extendedDesktop.shutdown()
         extendedDesktopViewports.removeAll()
         stage.release()

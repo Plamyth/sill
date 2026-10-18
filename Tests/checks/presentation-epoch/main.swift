@@ -78,7 +78,7 @@ host.broadcast(message(.frame, idr, key: true), epoch: a.id); host.drain()
 check(legacy.sent.isEmpty && modern.sent.isEmpty && remote.sent.isEmpty, "precommit encoder media has zero client effects")
 var keyframeRequests = 0
 var keyframeSawCatalog = false
-host.commitVideo(a, catalog: message(.windowList, Wire.encode(catalog(a)))) { keyframeRequests += 1; keyframeSawCatalog = messages(modern).first?.kind == .windowList }
+host.commitVideo(a, catalog: message(.windowList, Wire.encode(catalog(a))), admission: SourcePublicationAdmission()) { keyframeRequests += 1; keyframeSawCatalog = messages(modern).first?.kind == .windowList }
 host.drain()
 check(keyframeRequests == 1 && keyframeSawCatalog && messages(modern).first?.kind == .windowList, "commit publishes catalog before keyframe request")
 let preHello = Wire.decode(WindowList.self, from: messages(legacy).first!.payload)!
@@ -91,7 +91,7 @@ check(messages(remote).filter { $0.kind == .epochFrame }.count == 1 && messages(
 let beforeStale = modern.sent.count
 host.prepareVideo(b); host.drain()
 host.broadcast(message(.frame, idr, key: true), epoch: a.id); host.drain()
-host.commitVideo(b, catalog: message(.windowList, Wire.encode(catalog(b)))) { keyframeRequests += 1 }; host.drain()
+host.commitVideo(b, catalog: message(.windowList, Wire.encode(catalog(b))), admission: SourcePublicationAdmission()) { keyframeRequests += 1 }; host.drain()
 host.broadcast(message(.frame, idr, key: true), epoch: a.id)
 host.broadcast(message(.frame, idr, key: true)); host.drain()
 check(modern.sent.count == beforeStale + 1, "stale callback cannot bypass missing keyframe state")

@@ -87,6 +87,8 @@ if args.suite == 'recovery':
         'DisplayInventory.swift': inventory.read_text().replace('import StreamProtocol\n',''),
         'SourceInputFence.swift': (root/'Sources/SillHost/SourceInputFence.swift').read_text().replace('import StreamProtocol\n',''),
         'DisplayTypes.swift': 'import Foundation\n' + block(protocol, 'public enum StreamSource:') + '\n' + block(protocol, 'public struct DisplayInfo:') + '\n' + block(protocol, 'public struct DisplaySelection:')}
+if args.suite == 'recovery':
+    inputs['SourcePublicationAdmission.swift'] = 'import Foundation\n' + block((root/'Sources/SillHost/StreamServer.swift').read_text(), 'final class SourcePublicationAdmission')
 sha=lambda b:hashlib.sha256(b).hexdigest()
 hashes={k:sha(v.encode()) for k,v in inputs.items()}
 payload=json.dumps({'sources':{k:base64.b64encode(v.encode()).decode() for k,v in inputs.items()},'hashes':hashes}).encode()
@@ -94,7 +96,7 @@ runner=(here.parent/'extended-desktop/remote.py').read_text()
 start=runner.index("    collision = subprocess.run(")
 end=runner.index("    disk = subprocess.check_output(",start)
 runner=runner[:start]+runner[end:]
-source_paths=[source,inventory,root/'Sources/SillHost/WindowCatalog.swift',root/'Sources/SillHost/StreamCoordinator.swift']
+source_paths=[root/'Sources/SillHost/StreamServer.swift',source,inventory,root/'Sources/SillHost/WindowCatalog.swift',root/'Sources/SillHost/StreamCoordinator.swift']
 source_paths += list(here.glob('*.swift')) + [here/'run.py',here.parent/'extended-desktop/remote.py']
 source_paths += [root/'Sources/StreamProtocol/Viewport.swift',root/'Sources/StreamProtocol/Switcher.swift']
 if args.suite == 'recovery':

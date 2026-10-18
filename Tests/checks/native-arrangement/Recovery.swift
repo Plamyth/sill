@@ -79,6 +79,7 @@ import CoreGraphics
     var videoEpoch: UUID? = UUID()
     var inputGeneration = "old"
     var synthetic = false
+    var sourcePublicationAdmission = SourcePublicationAdmission()
     var sourceAdmissionPeer: ObjectIdentifier?
     var pendingLaunch: String?
     func admissionIsCurrent(_ sequence: UInt64, peer: ObjectIdentifier?) -> Bool { !shuttingDown && sequence == pickSequence }

@@ -15,8 +15,12 @@ Throughput checkpoint: one writer, four independent Mini RAM schedules, then the
 - [x] Reproduce it yourself on the matching surface via the driver skill.
 - [x] Binary-search the cause.
 - [x] Plan the fix.
-- [ ] Verify on the same surface.
+- [ ] Verify on the same surface. blocked: Mini SSH exit255 before compilation; Tailscale reports offline.
 - [x] Stage the commits so the failing repro lands before the fix in git history.
 - [ ] Run Opening a PR. skip: this unit is local corrections for parent independent review; no publish authorized.
 
 Architect phases Ground and Sketch complete. Agree has no user checkpoint. Implement and final verification remain. Scrap only if the selected shape cannot preserve the contract. Independent CLEAR remains the parent's gate.
+
+The root correction is a candidate pending runtime validation. How traced SessionLink.cancel/endedLocked, actual commitVideo, private send and HEVCEncoder.requestKeyframe. The publication body has no synchronous hop to the main actor. Model the Domain kept new-peer opportunity separate from revision-bearing ticket. Attack the Premise produced the first committed runtime reds. Architect retained main-actor CAS ownership and carried cancellation to the queue. Prove It Works prevents claiming success from Python syntax or the pre-fix baseline. Deslop and the scoped comments pass were sequential; no nested independent reviewer ran. The obsolete cancellation comment was removed, the public selectionRevision comment was corrected, and no new correctness suppression was added. The lock class uses unchecked Sendable because both private shared fields are protected by its NSLock.
+
+Remaining source boundary: generic catalog/media publications outside commitVideo are not newly fenced by this patch. Runtime tests of revised Swift and the original 23/53/164/39/39 suites, actual NWConnection lifecycle, active-source side effects, full launch completion, controller-integrated effects and native acceptance are pending. No parent independent CLEAR is claimed. The budget is a limit, not acceptance evidence.
