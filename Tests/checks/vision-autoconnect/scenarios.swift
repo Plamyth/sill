@@ -321,5 +321,16 @@ owner.setScenePhase(.background)
 check("owner distinguishes true scene background", owner.client.microphoneScenes.last?.1 == .background)
 owner.release(firstWindow)
 check("owner release passes nil microphone lease", owner.client.microphoneScenes.last?.0 == nil && owner.client.microphoneScenes.last?.1 == .background)
+check("trusted requested row keeps reconnecting beyond twelve attempts", DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: true, now: 1030, lifetime: .whileRequested).dial)
+check("trusted requested remote keeps reconnecting after two minutes", DiscoveryPolicy.remoteDialDue(
+    listed: false, lostAt: 0, networkLeftAt: nil, rememberedDirect: false,
+    pathChangedSinceLoss: false, now: 600, lifetime: .whileRequested).dial)
+check("persistent reconnect still pauses in the background", !DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: false, now: 1030, lifetime: .whileRequested).dial)
+check("persistent reconnect retains increasing retry spacing", DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: true, now: 1001, lifetime: .whileRequested).recheckAt == 1030)
+check("legacy bounded retry behavior remains", !DiscoveryPolicy.redialRow(
+    failed: 50, lastDialAt: 1000, foreground: true, now: 1030).dial)
 print("RESULT_ASSERTIONS \(assertions) FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)

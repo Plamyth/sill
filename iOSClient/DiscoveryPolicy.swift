@@ -738,7 +738,10 @@ enum DiscoveryPolicy {
     /// the first at once; each next `reconnectRetry` after the last started; none after
     /// `reconnectDials`; none in the background, whose end looks again. Which row, and when a
     /// Direct row or a row after a goodbye `quit` may be taken at all, is `reconnectRow`'s.
-    static func redialRow(failed: Int, lastDialAt: Double?, foreground: Bool, now: Double) -> (dial: Bool, recheckAt: Double?) {
+    enum ReconnectLifetime { case bounded, whileRequested }
+
+    static func redialRow(failed: Int, lastDialAt: Double?, foreground: Bool, now: Double,
+                         lifetime: ReconnectLifetime = .bounded) -> (dial: Bool, recheckAt: Double?) {
         guard foreground, failed < reconnectDials else { return (false, nil) }
         guard failed > 0, let last = lastDialAt else { return (true, nil) }
         let due = last + reconnectRetry[min(failed, reconnectRetry.count) - 1]
@@ -750,7 +753,8 @@ enum DiscoveryPolicy {
     /// after `reconnectQuietAfter` that the Mac may be asleep, through every later dial (VoiceOver
     /// hears it once), and after `reconnectDials` that the dials stopped, in the words the remote
     /// path's end uses.
-    static func reconnectLine(mac: String, failed: Int, direct: Bool) -> String {
+    static func reconnectLine(mac: String, failed: Int, direct: Bool,
+                              lifetime: ReconnectLifetime = .bounded) -> String {
         if failed >= reconnectDials { return "Stopped trying to reach \(mac). Tap it to try again." }
         if failed >= reconnectQuietAfter {
             return "\(mac) isn\u{2019}t answering. It may be asleep. Sill keeps trying, or tap it to try now."
@@ -793,7 +797,8 @@ enum DiscoveryPolicy {
     /// network listed moments ago is taken to be blinking, not gone) unless this device's path
     /// changed since the loss (it left home, or Wi‑Fi became cellular).
     static func remoteDialDue(listed: Bool, lostAt: Double, networkLeftAt: Double?, rememberedDirect: Bool,
-                              pathChangedSinceLoss: Bool, now: Double) -> (dial: Bool, recheckAt: Double?) {
+                              pathChangedSinceLoss: Bool, now: Double,
+                              lifetime: ReconnectLifetime = .bounded) -> (dial: Bool, recheckAt: Double?) {
         guard !listed, now < lostAt + redialWindow else { return (false, nil) }
         var due = lostAt + (rememberedDirect ? directWait : remoteWait)
         if !pathChangedSinceLoss, let left = networkLeftAt { due = max(due, left + networkGrace) }
