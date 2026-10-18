@@ -38,6 +38,14 @@ def vision(source):
 
 
 def emit(root, output):
+    view = (root / 'visionOSClient/SillVisionApp.swift').read_text()
+    app = block(view, 'struct SillVisionApp: App')
+    window = block(view, 'private struct SillVisionWindow: View')
+    if '@StateObject private var session = VisionAppSession()' in app or \
+       '@StateObject private var session = VisionAppSession()' not in window:
+        raise AssertionError('Each native window must own its session, stream view and input')
+    if 'openWindow(id: "mac")' not in view or 'WindowGroup(id: "mac")' not in app:
+        raise AssertionError('Native concurrent Mac window action missing')
     stream = (root / 'iOSClient/StreamClient.swift').read_text()
     home = (root / 'iOSClient/StreamClient+Home.swift').read_text()
     remote = (root / 'iOSClient/StreamClient+Remote.swift').read_text()
