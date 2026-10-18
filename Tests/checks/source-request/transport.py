@@ -1,0 +1,189 @@
+import argparse
+import subprocess
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--suite', choices=['client', 'host', 'reconnect', 'queue'], required=True)
+parser.add_argument('--output', required=True)
+args = parser.parse_args()
+ROOT = Path(__file__).resolve().parents[3]
+OUT = Path(args.output)
+SUITE = args.suite
+LABEL = SUITE
+
+def augment_review(inputs, block, root, here):
+    if SUITE=='host':
+        original=(root/'Sources/SillHost/StreamServer.swift').read_text()
+        methods='\n'.join(block(original,s) for s in ['func resetForNewStream()', 'func prepareVideo(', 'func commitVideo('])
+        server='''final class WireConnection { enum State { case ready }; var state = State.ready }
+final class VideoClient { var needsKeyframe=false; var awaitingFirstKeyframe=false; var catalogSent=true; let connection=WireConnection(); var latestCatalog: StreamMessage?; var microphoneCatalogGrant: Int? }
+final class Server {
+    let queue=DispatchQueue(label:"review.actual-server")
+    var videoAdmission=VideoEpochAdmission.stopped
+    var lastParameterSets: Int?
+    var clients: [Int: VideoClient]=[:]
+    var committed: [StreamSource]=[]
+    var prepared=0
+    func send(_ data: Data, to client: VideoClient) {}
+    func broadcast(_ message: StreamMessage, epoch: UUID) {}
+'''+methods.replace('            videoAdmission = .preparing(epoch)','            prepared += 1\n            videoAdmission = .preparing(epoch)').replace('            videoAdmission = .committed(epoch)','            committed.append(epoch.source)\n            videoAdmission = .committed(epoch)')+'\n}\n'
+        h=inputs['Host.swift']; start=h.index('@MainActor final class Server'); end=h.index('@MainActor final class Injector',start)
+        inputs['Host.swift']=h[:start]+server+h[end:]
+        m=inputs['main.swift']
+        m=m.replace('func settle() async { for _ in 0..<100 { await Task.yield() } }', 'func settle() async { for _ in 0..<100 { await Task.yield() }; try? await Task.sleep(for: .milliseconds(25)) }')
+        extra='''
+        let commitRace=AdmissionHost(); commitRace.join(peer)
+        commitRace.server.queue.suspend()
+        commitRace.receive(.init(source:.window(71),origin:.automatic,selectionRevision:commitRace.selectionRevision),peer:peer)
+        await settle()
+        expect(commitRace.active == .window(71), "precondition old automatic completed capture before async server commit")
+        commitRace.receive(.init(source:.window(72),origin:.human),peer:peer)
+        let humanRevision=commitRace.selectionRevision
+        commitRace.server.queue.resume()
+        commitRace.server.queue.sync {}
+        print("COUNTEREXAMPLE commit-after-human revision=\\(humanRevision) committed=\\(commitRace.server.committed)")
+        expect(!commitRace.server.committed.contains(.window(71)),"network-queue commit must recheck immutable admission after newer human admission")
+        await settle()
+'''
+        inputs['main.swift']=m.replace('        print("SOURCE_REQUEST_HOST_CHECKS',extra+'        print("SOURCE_REQUEST_HOST_CHECKS',1)
+    elif SUITE=='client':
+        h=inputs['Client.swift']
+        a=h.index('final class Link'); b=h.index('@MainActor final class Client',a)
+        h=h[:a]+'''final class NWConnection: NSObject, @unchecked Sendable {
+    enum SendCompletion { case contentProcessed((Error?)->Void) }
+    var packets: [Data]=[]
+    func send(content: Data?, completion: SendCompletion) { if let content { packets.append(content) }; if case .contentProcessed(let done)=completion { done(nil) } }
+}
+typealias Link=SessionLink
+'''+h[b:]
+        h=h.replace('var connection: NSObject? = NSObject()', 'var connection: NWConnection? { get {link.connection} set {link.connection=newValue} }\n    init() { link.connection=NWConnection() }')
+        h=h.replace('link.packets.compactMap', '(link.connection?.packets ?? []).compactMap').replace('NSObject','NWConnection')
+        h=h.replace('final class NWConnection: NWConnection,','final class NWConnection: NSObject,')
+        h=h.replace('sent.append((kind,payload))', 'link.send(StreamMessage(kind:kind,timestamp:0,isKeyframe:false,payload:payload).serialized())')
+        inputs['Client.swift']=h
+        inputs['SessionLink.swift']=(root/'iOSClient/SessionLink.swift').read_text().replace('import Network\n','')
+        m=inputs['main.swift'].replace('NSObject()','NWConnection()')
+        extra='''
+        let held=Client(); held.active = .none
+        let hp=held.connection!
+        _=held.link.hold(hp)
+        let ht=held.automaticTicket(peer:hp,list:list)!
+        held.requestAutomatic(.window(1001),ticket:ht)
+        held.select(.none)
+        expect(hp.packets.isEmpty,"precondition automatic packet remains in actual SessionLink hold")
+        _=held.link.unhold(hp)
+        let sentHeld=hp.packets.compactMap { Wire.decode(SourceRequest.self,from:Data($0.dropFirst(StreamMessage.headerLength))) }
+        print("COUNTEREXAMPLE held-after-None origins=\\(sentHeld.map { String(describing:$0.origin) }) sources=\\(sentHeld.map(\\.source))")
+        expect(!sentHeld.contains { $0.origin == .automatic },"explicit intent must invalidate automatic packet still held by actual SessionLink")
+        print("COUNTEREXAMPLE delayed-stale-audio currentRevision=\\(String(describing:closing.selectionRevision)) sentRevision=\\(String(describing:automatic.first?.selectionRevision)) teardownCalls=\\(closing.remoteAudioControl.changes)")
+        expect(closing.remoteAudioControl.changes == 0,"real delayed callback must not revoke audio for a revision already known stale")
+
+'''
+        inputs['main.swift']=m.replace('        print("SOURCE_REQUEST_CLIENT_CHECKS',extra+'        print("SOURCE_REQUEST_CLIENT_CHECKS',1)
+
+def augment(inputs, block, root, here):
+    global SUITE
+    mode = SUITE
+    SUITE = 'client' if mode == 'reconnect' else 'host' if mode == 'queue' else mode
+    if mode == 'reconnect':
+        inputs['Client.swift'] = client_input(block, root, here)
+    augment_review(inputs, block, root, here)
+    SUITE = mode
+    if mode == 'reconnect':
+        h=inputs['Client.swift'].replace('func send(content:', 'func forceCancel() {}\n    func send(content:')
+        product=(root/'iOSClient/StreamClient.swift').read_text()
+        start=product.index('            let released = link.adopt(c)')
+        end=product.index('            #if DEBUG',start)
+        move=product[start:end]
+        move='    func moveWithoutFence(to c: NWConnection) {\n        let old=connection!\n'+move+'    }\n    func closeSoon(_ peers: [NWConnection]) {}\n'
+        h=h.replace('    // CLIENT_METHODS','    // CLIENT_METHODS')
+        at=h.rfind('\n}')
+        inputs['Client.swift']=h[:at]+'\n'+move+h[at:]
+        inputs['Host.swift']=inputs['Host.swift'].replace('    // HOST_METHODS','    // HOST_METHODS')
+        at=inputs['Host.swift'].rfind('\n}')
+        inputs['Host.swift']=inputs['Host.swift'][:at]+'''\n    func lastPeerDeparted() { catalog.clientCount=0; cancelSourcePicks() }\n'''+inputs['Host.swift'][at:]
+        inputs['main.swift']='''import Foundation
+    @main struct Composition {
+     @MainActor static func main() async throws {
+      var checks=0; var failed=0
+      func expect(_ good: Bool,_ label: String) { checks += 1; if !good { failed += 1; print("FAIL " + label) } }
+      func settle() async { for _ in 0..<100 { await Task.yield() } }
+      let client=Client(); client.selectionRevision="host:0"; client.sessionHost="host"; client.active = .window(1001)
+      let old=client.connection!; let new=NWConnection()
+      let host=AdmissionHost(); host.active = .window(1001); host.join(old)
+      host.inputFence.leave(ObjectIdentifier(old)); host.connections.removeValue(forKey:ObjectIdentifier(old))
+      host.lastPeerDeparted()
+      await host.select(.none)
+      expect(host.selectionRevision != client.selectionRevision,"precondition real host cancel increments dedicated CAS at last departure")
+      host.catalog.clientCount=1; host.join(new)
+      client.moveWithoutFence(to:new)
+      var list=WindowList(macName:"fixture",windows:[WindowInfo(id:1001,title:"old",appName:"fixture",bundleID:"test",width:640,height:480)],active:.none,launchID:"host",selectionRevision:host.selectionRevision)
+      client.deliverIdleCatalog(list)
+      let requests=new.packets.compactMap { Wire.decode(SourceRequest.self,from:Data($0.dropFirst(StreamMessage.headerLength))) }
+      expect(requests.count == 1 && requests[0].source == .window(1001),"precondition actual unfenced handover emits remembered window")
+      for request in requests { host.receive(request,peer:new) }
+      await settle()
+      print("COUNTEREXAMPLE reconnect hostRevision=\\(host.selectionRevision) ticketRevision=\\(String(describing:requests.first?.selectionRevision)) active=\\(host.active) committed=\\(host.server.committed)")
+      expect(host.server.committed == [.window(1001)],"genuine unfenced reconnect must restore remembered window across host zero-client cancellation")
+      let before=new.packets.count
+      list.selectionRevision=host.selectionRevision
+      client.deliverIdleCatalog(list)
+      expect(new.packets.count == before,"rejected resume consumes eligibility and no later catalog retries")
+      print("RECONNECT_COMPOSITION_CHECKS total=\\(checks) failed=\\(failed)")
+      if failed>0 { exit(1) }
+     }
+    }
+    '''
+    elif mode == 'queue':
+        h = inputs['Host.swift']
+        at = h.rfind('\n}')
+        inputs['Host.swift'] = h[:at] + '\n func reserveForReview(peer:ObjectIdentifier)->UInt64 { reserveSourceIntent(peer:peer) }\n' + h[at:]
+        inputs['main.swift']='''import Foundation
+       @main struct Check {
+        @MainActor static func main() async {
+         let host=AdmissionHost(); let peer=NSObject(); host.join(peer)
+         let seq=host.reserveForReview(peer:ObjectIdentifier(peer))
+         let ingress=CoordinatorIngress(); let read=DispatchSemaphore(value:0)
+         let human: @MainActor ()->Void = { host.receive(.init(source:.window(72),origin:.human),peer:peer) }
+         host.server.queue.async {
+          ingress.submit(human)
+          host.server.queue.suspend()
+          read.signal()
+         }
+         read.wait()
+         await host.select(.window(71),bringForward:true,intentSequence:seq,pickOrigin:.automatic,admissionPeer:ObjectIdentifier(peer))
+         let preparedBeforeHuman=host.active == .window(71)
+         for _ in 0..<100 { await Task.yield() }
+         let newer=host.pickSequence > seq
+         host.server.queue.resume()
+         host.server.queue.sync {}
+         print("QUEUE_INGRESS preparedBeforeHuman=\\(preparedBeforeHuman) newerAdmission=\\(newer) commits=\\(host.server.committed)")
+         if !preparedBeforeHuman || !newer { print("FIXTURE_PRECONDITION_FAILED"); exit(2) }
+         if host.server.committed.contains(.window(71)) { print("FAIL already-read human ingress admits before obsolete queued video publication"); print("QUEUE_INGRESS_CHECKS total=3 failed=1"); exit(1) }
+         print("QUEUE_INGRESS_CHECKS total=3 failed=0")
+        }
+       }
+       '''
+    snapshot = OUT / 'inputs'
+    snapshot.mkdir()
+    for name, value in inputs.items():
+        (snapshot / name).write_text(value)
+
+
+def client_input(block, root, here):
+    text = (root/'iOSClient/StreamClient.swift').read_text()
+    signatures = ['func select(_ source:', 'func selectDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(']
+    methods = '\n'.join(block(text, s) for s in signatures)
+    client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', '').replace('NWConnection', 'NSObject'))
+    for marker, signature in [('// EXPECTED_SOURCE', 'private enum ExpectedSourceIntent'), ('// AUTOMATIC_TICKET', 'private struct AutomaticSourceTicket'), ('// RESUME_SOURCE', 'if let resume = self.resumeSource'), ('// IDLE_FALLBACK', 'if let ticket = self.automaticTicket')]:
+        client = client.replace(marker, block(text, signature).replace('private ', ''))
+    return client
+
+program = ROOT/'Tests/checks/source-request/run.py'
+code = program.read_text().replace('sha = lambda data:', 'augment(inputs, block, root, here)\nsha = lambda data:', 1)
+code = code.replace('paths = [source,', "paths = [root/'iOSClient/SessionLink.swift', root/'Sources/SillHost/StreamServer.swift', root/'Tests/checks/source-request/transport.py', source,", 1)
+code = code.replace("runner = runner.replace(\"not name.endswith('.swift')\"", "runner = runner.replace('stdout=subprocess.DEVNULL, timeout=20', 'stdout=subprocess.DEVNULL, timeout=60')\nrunner = runner.replace(\"not name.endswith('.swift')\"", 1)
+sys_suite = 'client' if SUITE == 'client' else 'host'
+import sys
+sys.argv = [str(program), '--suite', sys_suite, '--output', str(OUT)]
+exec(compile(code, str(program), 'exec'), {'__file__': str(program), 'augment': augment})
