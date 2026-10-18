@@ -14,11 +14,20 @@ extension StreamClient {
     func desiredAudioSetConnection(_ connection: NWConnection?) {
         let peer = connection.map(ObjectIdentifier.init)
         guard desiredAudio.peer != peer else { return }
+        audioAdmission.bind(peer)
+        audioCatalogAdmission = nil
         desiredAudio.bind(peer)
         audioPrivacyState = nil
         finishPendingAudioPermission()
         desiredAudioSelection = desiredAudio.selection
         audioAutomaticDirections.removeAll()
+    }
+
+    func admitAudioCatalog(_ ticket: IPadAudioAdmission.Ticket?) -> Bool {
+        guard audioAdmission.isCurrent(ticket) else { return false }
+        if audioCatalogAdmission != ticket { suspendDesiredAudio() }
+        audioCatalogAdmission = ticket
+        return true
     }
 
     func desiredAudioObserve(_ list: WindowList, from peer: NWConnection) {
@@ -110,6 +119,9 @@ extension StreamClient {
     }
 
     func desiredAudioPermits(_ direction: IPadDesiredAudio.Direction) -> Bool {
+        guard let current = connection,
+              audioAdmission.ticket(for: ObjectIdentifier(current)) == audioCatalogAdmission,
+              audioCatalogAdmission != nil else { return false }
         let automatic = audioAutomaticDirections.contains(direction)
         guard let connection, desiredAudio.peer == ObjectIdentifier(connection), desiredAudio.selection[direction] else { return false }
         guard desiredAudio.identity == desiredAudioIdentity else { return false }

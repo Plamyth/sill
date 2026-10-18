@@ -33,6 +33,8 @@ final class Frames { func close() {} }
 final class StreamClient {
  struct Trusted { let macID: String; let pin: Data }
  var audioRouteTrustedMac: Trusted? = Trusted(macID: "fixture", pin: Data(repeating: 7, count: 32))
+ let audioAdmission = IPadAudioAdmission()
+ var audioCatalogAdmission: IPadAudioAdmission.Ticket?
  var desiredAudio = IPadDesiredAudio()
  let suite = "IntentAdapter." + UUID().uuidString
  lazy var desiredAudioStore = IPadDesiredAudioStore(defaults: UserDefaults(suiteName: suite)!)
@@ -58,6 +60,10 @@ final class StreamClient {
   for effect in effects { if case .requestPermission = effect { microphoneAttempts += 1 } }
  }
  func beginRemoteAudioRequest() { remoteAudioControl.toggle() }
+ func fixtureObserve(_ list: WindowList, from peer: NWConnection) {
+  let ticket = audioAdmission.observe(list, from: ObjectIdentifier(peer))
+  if admitAudioCatalog(ticket) { desiredAudioObserve(list, from: peer) }
+ }
  deinit { UserDefaults.standard.removePersistentDomain(forName: suite) }
 }
 '''
@@ -81,7 +87,7 @@ _ = client.microphonePolicy.observe(catalog, from: ObjectIdentifier(peer))
 client.remoteAudioControl.setConnection(ObjectIdentifier(peer))
 client.remoteAudioControl.receive(catalog, from: ObjectIdentifier(peer))
 client.desiredAudioStore.save(.init(microphone: true, playback: true), for: client.desiredAudioIdentity!)
-client.desiredAudioObserve(catalog, from: peer)
+client.fixtureObserve(catalog, from: peer)
 client.reconcileDesiredAudio()
 check(client.microphoneAttempts == 1 && client.subscriptions.filter(\\.enabled).count == 1, "drawing without a renderer resumes audio intent")
 client.reconcileDesiredAudio()
@@ -100,7 +106,7 @@ client.reconcileDesiredAudio()
 check(client.microphoneAttempts == 2 && !client.desiredAudio.selection.microphone, "explicit OFF survives lifecycle renewal")
 var unknown = catalog
 unknown.audioPrivacy = nil
-client.desiredAudioObserve(unknown, from: peer)
+client.fixtureObserve(unknown, from: peer)
 check(!client.desiredAudioPermits(.microphone) && !client.desiredAudioPermits(.playback), "unknown privacy cannot be bypassed")
 print("PASS 5 actual desired-audio adapter checks with inert audio effects, no video objects")
 '''
@@ -108,7 +114,7 @@ for name, text in [("Adapter.swift", standins + adapter), ("main.swift", main)]:
     (out / name).write_text(text)
 command = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-I", str(out), "-L", str(out), "-lStreamProtocol",
            "-Xlinker", "-rpath", "-Xlinker", str(out), str(out / "Adapter.swift"),
-           str(root / "iOSClient/IPadDesiredAudio.swift"), str(root / "iOSClient/IPadMicrophonePolicy.swift"),
+           str(root / "iOSClient/IPadDesiredAudio.swift"), str(root / "iOSClient/IPadAudioAdmission.swift"), str(root / "iOSClient/IPadMicrophonePolicy.swift"),
            str(root / "iOSClient/IPadRemoteAudioController.swift"), str(out / "main.swift"), "-o", str(out / "intent-adapters")]
 subprocess.run(command, check=True, timeout=90)
 subprocess.run([str(out / "intent-adapters")], check=True, timeout=20)

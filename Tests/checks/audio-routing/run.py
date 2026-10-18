@@ -43,7 +43,7 @@ paths = sorted((ROOT / 'Sources').rglob('*'))
 paths = [p for p in paths if p.is_file()]
 if microphone:
     paths += [p for folder in ['Tests/checks/microphone-uplink', 'Tests/checks/ipad-microphone-control', 'Tests/checks/ipad-microphone-frame-gate', 'Tests/checks/ipad-audio-lease', 'Tests/checks/ipad-audio-cleanup', 'iOSClient/Tests/audio-routes'] for p in (ROOT / folder).rglob('*') if p.is_file()]
-    paths += [ROOT / 'iOSClient' / name for name in ['IPadMicrophoneCapture.swift', 'IPadMicrophonePolicy.swift', 'IPadMicrophoneFrameGate.swift', 'IPadMicrophonePCM.swift', 'IPadAudioLeaseState.swift', 'IPadAudioLeaseCoordinator.swift', 'IPadAudioRoutePolicy.swift', 'IPadRemoteAudioController.swift', 'StreamClient+AudioRoutes.swift', 'MacAudioRouteSession.swift']]
+    paths += [ROOT / 'iOSClient' / name for name in ['IPadAudioAdmission.swift', 'IPadMicrophoneCapture.swift', 'IPadMicrophonePolicy.swift', 'IPadMicrophoneFrameGate.swift', 'IPadMicrophonePCM.swift', 'IPadAudioLeaseState.swift', 'IPadAudioLeaseCoordinator.swift', 'IPadAudioRoutePolicy.swift', 'IPadRemoteAudioController.swift', 'StreamClient+AudioRoutes.swift', 'MacAudioRouteSession.swift']]
 paths += [ROOT / 'Package.swift', HERE / 'main.swift', HERE / 'CoordinatorFixture.swift', HERE / 'remote.py', Path(__file__).resolve()]
 original = {str(p.relative_to(ROOT)): sha(p.read_bytes()) for p in paths}
 sources = {str(p.relative_to(ROOT)): p.read_bytes() for p in paths if p.suffix in ('.swift', '.h', '.m', '.c') or (microphone and p.suffix == '.py')}

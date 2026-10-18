@@ -5,6 +5,10 @@ import StreamProtocol
 /// Pull-based playback for short kind-33 packets. Network decoding never runs on the UI or
 /// render threads. A new stream format or a disconnect invalidates the old render callback.
 final class RemoteAudioPlayer: @unchecked Sendable {
+    private let admission: IPadAudioAdmission?
+
+    init(admission: IPadAudioAdmission? = nil) { self.admission = admission }
+
     private let decodeQueue = DispatchQueue(label: "sill.remote-audio.decode", qos: .userInitiated)
     private let lock = OSAllocatedUnfairLock()
     private let epochLock = OSAllocatedUnfairLock(initialState: UInt64(0))
@@ -19,8 +23,9 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     private var ownsPlaybackLease = false
     private let audioLeaseId = UUID()
 
-    func receive(_ packet: Data, subscription: UUID,
+    func receive(_ packet: Data, subscription: UUID, admission ticket: IPadAudioAdmission.Ticket? = nil,
                  report: @escaping (IPadRemoteAudioController.PlaybackEvent) -> Void) {
+        if let admission, !admission.withAdmission(ticket, {}) { return }
         let epoch = epochLock.withLock { $0 }
         let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(subscription)
         diagnostics.record("playback_first_packet")
@@ -33,11 +38,11 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                                                cookie: encoded.cookie)
                 }
                 guard let decoded = decoder?.decode(encoded.packet) else { return }
-                append(decoded, rate: encoded.sampleRate, channels: encoded.channels, epoch: epoch,
+                append(decoded, rate: encoded.sampleRate, channels: encoded.channels, epoch: epoch, admission: ticket,
                        diagnostics: diagnostics, report: report)
             } else if let plain = AudioPacket.unpack(packet) {
                 let decoded = plain.samples.map { Float($0) / 32768 }
-                append(decoded, rate: plain.sampleRate, channels: plain.channels, epoch: epoch,
+                append(decoded, rate: plain.sampleRate, channels: plain.channels, epoch: epoch, admission: ticket,
                        diagnostics: diagnostics, report: report)
             }
         }
@@ -73,40 +78,45 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     }
 
     private func append(_ incoming: [Float], rate newRate: Double, channels newChannels: Int, epoch: UInt64,
+                        admission ticket: IPadAudioAdmission.Ticket?,
                         diagnostics: IPadMicrophoneDiagnostics.Attempt,
                         report: @escaping (IPadRemoteAudioController.PlaybackEvent) -> Void) {
-        // Hold the epoch through append so a decode cannot refill the buffer after OFF cleared it.
-        epochLock.withLock { current in
-            guard current == epoch else { return }
-            if rate != newRate || channels != newChannels {
-                rate = newRate
-                channels = newChannels
-                let version = lock.withLock { () -> UInt64 in
-                    formatVersion &+= 1
-                    samples.removeAll(keepingCapacity: true)
-                    readIndex = 0
-                    playing = false
-                    return formatVersion
+        let append = { [self] in
+            epochLock.withLock { current in
+                guard current == epoch else { return }
+                if rate != newRate || channels != newChannels {
+                    rate = newRate
+                    channels = newChannels
+                    let version = lock.withLock { () -> UInt64 in
+                        formatVersion &+= 1
+                        samples.removeAll(keepingCapacity: true)
+                        readIndex = 0
+                        playing = false
+                        return formatVersion
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.epochLock.withLock({ $0 == epoch }),
+                              self.lock.withLock({ self.formatVersion == version }) else { return }
+                        if let admission = self.admission, !admission.withAdmission(ticket, {}) { return }
+                        self.restart(rate: newRate, channels: newChannels, version: version, admission: ticket,
+                                     diagnostics: diagnostics, report: report)
+                    }
                 }
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.epochLock.withLock({ $0 == epoch }),
-                          self.lock.withLock({ self.formatVersion == version }) else { return }
-                    self.restart(rate: newRate, channels: newChannels, version: version,
-                                 diagnostics: diagnostics, report: report)
+                let perMs = Int(newRate / 1000) * newChannels
+                lock.withLock {
+                    if readIndex > 48_000 * 8 { samples.removeFirst(readIndex); readIndex = 0 }
+                    samples.append(contentsOf: incoming)
+                    let buffered = samples.count - readIndex
+                    if !playing && buffered >= 40 * perMs { playing = true }
+                    if buffered > 150 * perMs { readIndex = samples.count - 60 * perMs }
                 }
-            }
-            let perMs = Int(newRate / 1000) * newChannels
-            lock.withLock {
-                if readIndex > 48_000 * 8 { samples.removeFirst(readIndex); readIndex = 0 }
-                samples.append(contentsOf: incoming)
-                let buffered = samples.count - readIndex
-                if !playing && buffered >= 40 * perMs { playing = true }
-                if buffered > 150 * perMs { readIndex = samples.count - 60 * perMs }
             }
         }
+        if let admission { admission.withAdmission(ticket, append) }
+        else { append() }
     }
 
-    private func restart(rate: Double, channels: Int, version: UInt64,
+    private func restart(rate: Double, channels: Int, version: UInt64, admission ticket: IPadAudioAdmission.Ticket?,
                          diagnostics: IPadMicrophoneDiagnostics.Attempt,
                          report: (IPadRemoteAudioController.PlaybackEvent) -> Void) {
         engine?.stop()
@@ -130,19 +140,26 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                     for channel in output { if let data = channel.mData { memset(data, 0, Int(channel.mDataByteSize)) } }
                     return noErr
                 }
-                self.lock.withLock {
-                    for frame in 0..<Int(frames) {
-                        let ready = self.formatVersion == version && self.playing &&
-                                    self.samples.count - self.readIndex >= channels
-                        for channel in 0..<output.count {
-                            let destination = output[channel].mData!.assumingMemoryBound(to: Float.self)
-                            destination[frame] = ready && channel < channels ?
-                                self.samples[self.readIndex + channel] : 0
+                let render = {
+                    self.lock.withLock {
+                        for frame in 0..<Int(frames) {
+                            let ready = self.formatVersion == version && self.playing &&
+                                        self.samples.count - self.readIndex >= channels
+                            for channel in 0..<output.count {
+                                let destination = output[channel].mData!.assumingMemoryBound(to: Float.self)
+                                destination[frame] = ready && channel < channels ?
+                                    self.samples[self.readIndex + channel] : 0
+                            }
+                            if ready { self.readIndex += channels }
+                            else if self.playing && self.formatVersion == version { self.playing = false }
                         }
-                        if ready { self.readIndex += channels }
-                        else if self.playing && self.formatVersion == version { self.playing = false }
                     }
                 }
+                if let admission = self.admission {
+                    if !admission.withAdmission(ticket, render) {
+                        for channel in output { if let data = channel.mData { memset(data, 0, Int(channel.mDataByteSize)) } }
+                    }
+                } else { render() }
                 return noErr
             }
             engine.attach(source)

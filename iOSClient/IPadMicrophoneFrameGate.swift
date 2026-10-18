@@ -15,23 +15,33 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
         let captureID: UUID
         let generation: UUID
         let diagnostics: IPadMicrophoneDiagnostics.Attempt?
+        let admission: IPadAudioAdmission.Ticket?
         var pending = 0
     }
 
     private let lock = OSAllocatedUnfairLock(initialState: Optional<Binding>.none)
     private let send: Send
+    private let admission: IPadAudioAdmission?
 
-    init(send: @escaping Send = { connection, bytes, done in
+    init(admission: IPadAudioAdmission? = nil, send: @escaping Send = { connection, bytes, done in
         connection.send(content: bytes, completion: .contentProcessed { _ in done() })
     }) {
         self.send = send
+        self.admission = admission
     }
 
     func open(connection: NWConnection, scope: MicrophoneScope, grant: UUID, captureID: UUID,
+              admission ticket: IPadAudioAdmission.Ticket? = nil,
               diagnostics: IPadMicrophoneDiagnostics.Attempt? = nil) {
-        diagnostics?.record("gate_open")
-        lock.withLock { $0 = Binding(connection: connection, scope: scope,
-                                     grant: grant, captureID: captureID, generation: UUID(), diagnostics: diagnostics) }
+        let open = {
+            diagnostics?.record("gate_open")
+            self.lock.withLock { $0 = Binding(connection: connection, scope: scope,
+                grant: grant, captureID: captureID, generation: UUID(), diagnostics: diagnostics, admission: ticket) }
+        }
+        if let admission {
+            guard ticket?.peer == ObjectIdentifier(connection) else { return }
+            admission.withAdmission(ticket, open)
+        } else { open() }
     }
 
     func close() {
@@ -54,27 +64,33 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
             diagnostics?.record("gate_drop_batch_size", ["packets": String(blocks.count)])
             return
         }
-        lock.withLock { binding in
-            guard var current = binding else { diagnostics?.record("gate_drop_unbound"); return }
-            let log = diagnostics ?? current.diagnostics
-            guard current.captureID == captureID else { log?.record("gate_drop_capture_mismatch"); return }
-            guard current.pending < 2 else { log?.record("gate_drop_backpressure"); return }
-            var bytes = Data()
-            bytes.reserveCapacity(blocks.count * (StreamMessage.headerLength + MicrophoneWire.frameLimit))
-            for block in blocks {
-                guard let frame = MicrophoneFrame(scope: current.scope, grantID: current.grant,
-                                                  sequence: block.sequence, frameCount: block.frameCount,
-                                                  pcm: block.pcm) else { log?.record("gate_drop_invalid_frame"); return }
-                let message = StreamMessage(kind: .microphoneFrame, timestamp: Date().timeIntervalSince1970,
-                                            isKeyframe: false, payload: frame.encoded())
-                bytes.append(message.serialized())
+        let ticket = lock.withLock { $0?.admission }
+        let emit = { [self] in
+            lock.withLock { binding in
+                guard var current = binding else { diagnostics?.record("gate_drop_unbound"); return }
+                let log = diagnostics ?? current.diagnostics
+                guard current.admission == ticket else { return }
+                guard current.captureID == captureID else { log?.record("gate_drop_capture_mismatch"); return }
+                guard current.pending < 2 else { log?.record("gate_drop_backpressure"); return }
+                var bytes = Data()
+                bytes.reserveCapacity(blocks.count * (StreamMessage.headerLength + MicrophoneWire.frameLimit))
+                for block in blocks {
+                    guard let frame = MicrophoneFrame(scope: current.scope, grantID: current.grant,
+                                                      sequence: block.sequence, frameCount: block.frameCount,
+                                                      pcm: block.pcm) else { log?.record("gate_drop_invalid_frame"); return }
+                    let message = StreamMessage(kind: .microphoneFrame, timestamp: Date().timeIntervalSince1970,
+                                                isKeyframe: false, payload: frame.encoded())
+                    bytes.append(message.serialized())
+                }
+                current.pending += 1
+                binding = current
+                let generation = current.generation
+                log?.record("first_gate_send", ["packets": String(blocks.count), "bytes": String(bytes.count), "sequence": String(blocks[0].sequence), "pending": String(current.pending)])
+                send(current.connection, bytes) { [weak self] in self?.complete(generation: generation) }
             }
-            current.pending += 1
-            binding = current
-            let generation = current.generation
-            log?.record("first_gate_send", ["packets": String(blocks.count), "bytes": String(bytes.count), "sequence": String(blocks[0].sequence), "pending": String(current.pending)])
-            send(current.connection, bytes) { [weak self] in self?.complete(generation: generation) }
         }
+        if let admission { admission.withAdmission(ticket, emit) }
+        else { emit() }
     }
 
     private func complete(generation: UUID) {

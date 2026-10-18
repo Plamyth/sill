@@ -28,12 +28,31 @@ if new:
     marker = '    func admitAudioCatalog('
     a=desired.index(marker); b=desired.index('\n    func ', a+len(marker))
     fixture += desired[a:b] + '\n'
+    fixture += '''    func desiredAudioPermits(_ direction: IPadDesiredAudio.Direction) -> Bool {
+        guard let connection else { return false }
+        return audioCatalogAdmission != nil && audioAdmission.ticket(for: ObjectIdentifier(connection)) == audioCatalogAdmission
+    }
+'''
+    audio = select_platform((root/'iOSClient/StreamClient+Audio.swift').read_text(), vision=False, ios=True)
+    a = audio.index('    func receiveRemoteAudio('); b = audio.index('    func sendRemoteAudio(', a)
+    fixture += audio[a:b]
+    fixture += '''    var microphonePolicy = IPadMicrophonePolicy()
+    var microphoneReceipt: MicrophoneReceipt?
+    var grants = 0
+    func applyMicrophone(_ effects: [IPadMicrophonePolicy.Effect]) {
+        for effect in effects { if case .beginCapture = effect { grants += 1 } }
+    }
+    func reconcileDesiredAudio() {}
+'''
+    mic = select_platform((root/'iOSClient/StreamClient+Microphone.swift').read_text(), vision=False, ios=True)
+    a = mic.index('    func receiveMicrophone('); b = mic.index('    func applyMicrophone(', a)
+    fixture += mic[a:b]
+
+
 fixture += prefix + '            }\n    }\n}\n'
 (out/'ClientFixture.swift').write_text(fixture)
 subprocess.run(['python3','-B',str(root/'Tests/checks/iPad-remote-audio/player-fixture.py'),str(root),str(out)],check=True)
 p=out/'PlaybackFixture.swift'
-s=p.read_text().replace('    var currentEngine:', '    var currentEngine:')
-p.write_text(s)
 logger=(root/'iOSClient/IPadMicrophoneCapture.swift').read_text().split('/// Native capture only.')[0]
 a=logger.index('    static let shared ='); b=logger.index('    let fileURL:',a)
 logger=logger[:a]+'    static let shared = IPadMicrophoneDiagnostics(fileURL: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("diagnostics.json"))\n'+logger[b:]
@@ -67,13 +86,13 @@ final class FakeAudioEngine {
 }
 '''
 s=p.read_text(); s=s.replace(standins[a:b],render);p.write_text(s)
-flags=['-swift-version','5','-module-cache-path',str(out/'cache')]
+flags=['-swift-version','5','-whole-module-optimization','-module-cache-path',str((out/'cache').resolve())]
 protocol=sorted(map(str,(root/'Sources/StreamProtocol').glob('*.swift')))
 def run(command):
-    r=subprocess.run(command); 
+    r=subprocess.run(command)
     if r.returncode: sys.exit(r.returncode)
 run(['/usr/bin/xcrun','swiftc',*flags,'-emit-library','-emit-module','-module-name','StreamProtocol',*protocol,'-emit-module-path',str(out/'StreamProtocol.swiftmodule'),'-o',str(out/'libStreamProtocol.dylib')])
 files=['IPadMicrophonePCM.swift','IPadMicrophoneFrameGate.swift','IPadRemoteAudioController.swift']
-if new: files+=['IPadAudioAdmission.swift']
+if new: files+=['IPadAudioAdmission.swift','IPadDesiredAudio.swift','IPadMicrophonePolicy.swift']
 run(['/usr/bin/xcrun','swiftc',*flags,'-parse-as-library',*(['-D','ADMISSION'] if new else []),'-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out),*[str(root/'iOSClient'/f) for f in files],str(out/'Diagnostics.swift'),str(out/'ClientFixture.swift'),str(out/'PlaybackFixture.swift'),str(Path(__file__).with_name('main.swift')),'-o',str(out/'check')])
 run([str(out/'check'),str(out)])

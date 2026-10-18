@@ -88,7 +88,7 @@ try:
     for name in ['fixture.py', 'player-fixture.py']:
         check(name, ['python3', '-B', str(mount / 'Tests/checks/iPad-remote-audio' / name), str(mount), str(output)], 20)
     check('playback-compile', ['/usr/bin/xcrun', 'swiftc', '-parse-as-library', *flags, *link,
-        str(mount / 'iOSClient/IPadRemoteAudioController.swift'), str(output / 'Diagnostics.swift'),
+        str(mount / 'iOSClient/IPadAudioAdmission.swift'), str(mount / 'iOSClient/IPadRemoteAudioController.swift'), str(output / 'Diagnostics.swift'),
         str(output / 'ClientFixture.swift'), str(output / 'PlaybackFixture.swift'),
         str(mount / 'Tests/checks/iPad-remote-audio/main.swift'), '-o', str(output / 'playback')])
     check('playback', [str(output / 'playback'), str(output)], 30)

@@ -79,7 +79,7 @@ import StreamProtocol
    _ = client.microphonePolicy.observe(list, from: ObjectIdentifier(peer))
    client.remoteAudioControl.setConnection(ObjectIdentifier(peer))
    client.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
-   client.desiredAudioObserve(list, from: peer)
+   client.fixtureObserve(list, from: peer)
    client.reconcileDesiredAudio()
    if event == "allow-after-failed-auto" { client.audioAutomaticDirections.insert(.microphone) }
    let context = client.audioRouteContext
@@ -111,7 +111,7 @@ import StreamProtocol
     NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
    } else {
     var blocked = list; blocked.audioPrivacy = .init(version: 2, protected: false)
-    client.desiredAudioObserve(blocked, from: peer)
+    client.fixtureObserve(blocked, from: peer)
    }
    UIApplication.shared.applicationState = .active
    client.appInForeground = true

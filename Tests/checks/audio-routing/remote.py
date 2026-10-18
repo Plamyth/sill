@@ -116,7 +116,7 @@ try:
         link = ['-I', str(output), '-L', str(output), '-lStreamProtocol', '-Xlinker', '-rpath', '-Xlinker', str(output)]
         checks = {
             'microphone-policy': ['iOSClient/IPadMicrophonePolicy.swift', 'Tests/checks/ipad-microphone-control/main.swift'],
-            'microphone-gate': ['iOSClient/IPadMicrophoneCapture.swift', 'iOSClient/IPadMicrophonePCM.swift', 'iOSClient/IPadMicrophoneFrameGate.swift', 'Tests/checks/ipad-microphone-frame-gate/main.swift'],
+            'microphone-gate': ['iOSClient/IPadAudioAdmission.swift', 'iOSClient/IPadMicrophoneCapture.swift', 'iOSClient/IPadMicrophonePCM.swift', 'iOSClient/IPadMicrophoneFrameGate.swift', 'Tests/checks/ipad-microphone-frame-gate/main.swift'],
             'audio-lease': ['iOSClient/IPadAudioLeaseState.swift', 'Tests/checks/ipad-audio-lease/main.swift'],
             'audio-cleanup': ['iOSClient/IPadAudioLeaseState.swift', 'iOSClient/IPadAudioLeaseCoordinator.swift', 'Tests/checks/ipad-audio-cleanup/main.swift']
         }

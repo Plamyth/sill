@@ -61,8 +61,10 @@ extension StreamClient {
         guard data.count <= MicrophoneWire.replyLimit else { return true }
         if header.kind == .microphoneState, let state = Wire.decode(MicrophoneState.self, from: data) {
             let arrived = DispatchTime.now().uptimeNanoseconds
+            let admission = audioAdmission.ticket(for: ObjectIdentifier(peer))
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.connection === peer else { return }
+                if state.phase == .active && !self.audioAdmission.isCurrent(admission) { return }
                 IPadMicrophoneDiagnostics.shared.attempt(self.microphonePolicy.startRequestID ?? state.requestID)
                     .record("grant_phase_" + state.phase.rawValue, ["phaseBefore": String(describing: self.microphonePolicy.phase),
                         "grantPresent": String(state.grantID != nil), "reason": state.reason ?? "none",
@@ -232,7 +234,7 @@ extension StreamClient {
                       microphonePolicy.scope == scope, microphonePolicy.grantID == grant,
                       let captureID = microphoneCaptureToken else { continue }
                 microphoneFrames.open(connection: c, scope: scope, grant: grant, captureID: captureID,
-                    diagnostics: microphonePolicy.startRequestID.map { IPadMicrophoneDiagnostics.shared.attempt($0) })
+                    admission: audioCatalogAdmission, diagnostics: microphonePolicy.startRequestID.map { IPadMicrophoneDiagnostics.shared.attempt($0) })
             }
         }
         for (peer, control) in pendingStops { sendMicrophoneControl(control, to: peer) }
