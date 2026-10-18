@@ -156,6 +156,26 @@ import Foundation
         expect(retained.active == .window(7) && retained.videoEpoch?.id == retainedEpoch && retained.capture.running &&
                retained.settledPickSequence == retained.pickSequence,
                "a rejected explicit launch preserves an actually committed predecessor")
+        for rejection in ["missing-launch", "stale-display"] {
+            let overlap = AdmissionHost(); overlap.join(peer)
+            overlap.receive(.init(source: .window(7), origin: .human), peer: peer)
+            await settle(); overlap.server.drain()
+            let epoch = overlap.videoEpoch?.id
+            let audioChanges = overlap.audioChanges
+            let inventory = Barrier(); overlap.catalog.refreshBarrier = inventory
+            overlap.receive(.init(source: .desktop, origin: .human), peer: peer)
+            await inventory.reached()
+            if rejection == "missing-launch" { overlap.launch("missing", peer: peer) }
+            else {
+                _ = overlap.admitSourceMessage(.init(kind: .selectDisplay, timestamp: 0, isKeyframe: false,
+                    payload: Wire.encode(DisplaySelection(displayID: 13, inventoryID: UUID()))), from: peer)
+            }
+            await settle(); overlap.server.drain()
+            overlap.catalog.refreshBarrier = nil; inventory.resume(); await settle(); overlap.server.drain()
+            expect(overlap.active == .window(7) && overlap.videoEpoch?.id == epoch && overlap.capture.running &&
+                   overlap.audioChanges == audioChanges && overlap.settledPickSequence == overlap.pickSequence,
+                   "\(rejection) during obsolete inventory wait preserves intact committed video and audio")
+        }
         for phase in ["inventory", "audio"] {
             let empty = AdmissionHost(); empty.join(peer)
             empty.receive(.init(source: .window(7), origin: .human), peer: peer)
