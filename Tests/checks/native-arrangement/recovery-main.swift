@@ -274,6 +274,58 @@ import CoreGraphics
         await settle()
         expect(ordinary.active == .window(303), "latest human window pick survives ordinary transition")
 
+        for boundary in ["audio", "capture"] {
+            let c = make()
+            let refresh = PhaseBarrier()
+            let stop = PhaseBarrier()
+            c.catalog.refreshBarrier = refresh
+            c.catalog.refreshResult = false
+            move(c, x:-1350)
+            await refresh.reached()
+            c.catalog.displayInventory.invalidate(preservingDisplay:13)
+            c.displaysChanged()
+            if boundary == "audio" { c.audioBarrier = stop } else { c.capture.stopBarrier = stop }
+            refresh.resume()
+            await stop.reached()
+            expect(c.switching && c.restartOf == nil, "refill/\(boundary) holds none cleanup after failed refresh")
+            c.catalog.refreshBarrier = nil
+            c.catalog.refreshResult = true
+            refill(c)
+            await settle()
+            c.audioBarrier = nil
+            c.capture.stopBarrier = nil
+            stop.resume()
+            await settle()
+            expect(c.active == .desktop && c.videoEpoch != nil && c.capture.running,
+                   "refill/\(boundary) validated inventory during suspended cleanup restarts desktop")
+        }
+
+        let replayed = make()
+        let firstStart = PhaseBarrier()
+        let replay = PhaseBarrier()
+        replayed.active = .window(400)
+        replayed.capture.startBarrier = firstStart
+        replayed.replayBarrier = replay
+        let firstPick = Task { @MainActor in await replayed.select(.window(401), bringForward:true) }
+        await firstStart.reached()
+        await replayed.handlePick(.window(402))
+        replayed.capture.startBarrier = nil
+        firstStart.resume()
+        await firstPick.value
+        await replay.reached()
+        let newerStart = PhaseBarrier()
+        replayed.capture.startBarrier = newerStart
+        let newerPick = Task { @MainActor in await replayed.handlePick(.window(403)) }
+        await newerStart.reached()
+        replay.resume()
+        await settle()
+        replayed.capture.startBarrier = nil
+        newerStart.resume()
+        await newerPick.value
+        await settle()
+        expect(replayed.active == .window(403) && replayed.committed.last == .window(403),
+               "old A replay after new B admission cannot replace B")
+
         print("RECOVERY_CHECKS total=\(checks) failed=\(failures)")
         if failures != 0 { exit(1) }
     }

@@ -44,13 +44,16 @@ import CoreGraphics
         if let stopBarrier { await stopBarrier.suspend() }
         running = false
     }
-    func start() async {
+    var failStarts = Set<Int>()
+    enum Failure: Error { case refused }
+    func start() async throws {
         starts += 1
         if let startBarrier { await startBarrier.suspend() }
         if pauseNext || pauseStarts.contains(starts) {
             pauseNext = false
             await withCheckedContinuation { waiter = $0 }
         }
+        if failStarts.contains(starts) { throw Failure.refused }
         running = true
     }
     func resume() { let w = waiter; waiter = nil; w?.resume() }
@@ -90,6 +93,7 @@ import CoreGraphics
     var audioLive = true
     var committed = [StreamSource]()
     var audioBarrier: PhaseBarrier?
+    var replayBarrier: PhaseBarrier?
     var pickDeliveries = 0
     private var pickObserver: (Int, CheckedContinuation<Void, Never>)?
     func picksDelivered(_ count: Int) async {
@@ -98,6 +102,7 @@ import CoreGraphics
     }
     func handlePick(_ source: StreamSource) async {
         pickDeliveries += 1
+        if pickDeliveries == 2, let replayBarrier { await replayBarrier.suspend() }
         await productionHandlePick(source)
         if let (count, observer) = pickObserver, pickDeliveries >= count {
             pickObserver = nil
@@ -118,7 +123,7 @@ import CoreGraphics
     func startPipeline(source: StreamSource) async throws {
         let desktopSelection = source == .desktop ? catalog.displayInventory.current : nil
         let bounds = catalog.bounds
-        await capture.start()
+        try await capture.start()
         // PIPELINE_VALIDATION
         active = source
         videoEpoch = UUID()

@@ -229,3 +229,30 @@ devices, live audio and other chats are outside this worker's effects. No push,
 PR, merge, SDK build, native UI, installation or independent review is performed.
 The parent must test this exact source in its SDK/native paths and conduct the
 next independent review before integration or release.
+
+## Durable intent recovery round 3
+
+Task `recovery-durable-intent-20261019` starts at
+`e4fe5ffab7a43b7ec115d97f444076469decc72a` in its exclusive worktree.
+The failed shared premise is: "active/restartOf after await can reconstruct
+intent and replayed source can be a fresh user request." The two controlled
+schedules below test that premise before product edits.
+
+How traces inventory callbacks independently of the select transaction. Why
+uses local history e4fe5ff and 210e904, which widened pick retention but still
+reconstructed intent after awaits. Preserve authentication, source fences,
+last-client departure, genuine loss and explicit cancellation. Change admission
+and replay identity. Avoid new lifecycle flags and a second transition owner.
+
+Architect compares two designs sequentially because nested agents are prohibited.
+A unified transition queue would move every internal restart, cleanup and user
+caller under a new owner, while still needing identity for admitted intent and
+inventory revisions. The bounded alternative stores a pick with its admission
+sequence and optional explicit display token, rejects stale replay, and records
+validated refill independently of the active transition. Model the Domain keeps
+user intent distinct from automatic Desktop requests and internal cleanup.
+
+Throughput checkpoint: one product file, existing focused fixture and README,
+Mini RAM pure checks within 20 minutes. No UI, devices, SDK build, installation,
+audio effects, other chats, Pages or nested agents. Independent review and the
+parent SDK/native CG/touch gates remain required.
