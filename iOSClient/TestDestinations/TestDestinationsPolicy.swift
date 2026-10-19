@@ -2,7 +2,7 @@ import Foundation
 import StreamProtocol
 
 enum TestDestinationsError: Error, LocalizedError, Equatable {
-    case missing, malformed, stale, changed, unsafeURL, unavailable, relayMissing, connection, externalLogin
+    case missing, malformed, catalogUnavailable, stale, changed, unsafeURL, unavailable, relayMissing, connection, externalLogin
 
     var errorDescription: String? { message }
 
@@ -10,6 +10,7 @@ enum TestDestinationsError: Error, LocalizedError, Equatable {
         switch self {
         case .missing: return "테스트 목록이 아직 전달되지 않았습니다."
         case .malformed: return "테스트 목록 형식이 올바르지 않습니다."
+        case .catalogUnavailable: return "테스트 목록 설정을 읽을 수 없습니다. Mac에서 연결 설정을 확인하세요."
         case .stale: return "테스트 목록의 확인 시간이 지났습니다. 새로고침하세요."
         case .changed: return "선택한 대상의 프로젝트·주소·담당자·이동 허용 범위가 바뀌었습니다. 목록에서 다시 선택하세요."
         case .unsafeURL: return "안전하게 열 수 없는 테스트 주소입니다."
@@ -22,9 +23,10 @@ enum TestDestinationsError: Error, LocalizedError, Equatable {
 }
 
 enum TestDestinationsEnvelope: Decodable {
-    case missing, malformed, catalog(TestDestinationCatalog)
+    case missing, malformed, unavailable, catalog(TestDestinationCatalog)
 
     private enum CodingKeys: String, CodingKey { case testDestinations }
+    private enum StateKeys: String, CodingKey { case state }
 
     init(from decoder: Decoder) throws {
         let fields = try decoder.container(keyedBy: CodingKeys.self)
@@ -33,6 +35,14 @@ enum TestDestinationsEnvelope: Decodable {
             return
         }
         do {
+            let stateFields = try fields.nestedContainer(keyedBy: StateKeys.self, forKey: .testDestinations)
+            if stateFields.contains(.state) {
+                switch try stateFields.decode(String.self, forKey: .state) {
+                case "ready": break
+                case "unavailable": self = .unavailable; return
+                default: self = .malformed; return
+                }
+            }
             self = .catalog(try fields.decode(TestDestinationCatalog.self, forKey: .testDestinations))
         } catch {
             self = .malformed
@@ -43,6 +53,7 @@ enum TestDestinationsEnvelope: Decodable {
         switch self {
         case .missing: throw TestDestinationsError.missing
         case .malformed: throw TestDestinationsError.malformed
+        case .unavailable: throw TestDestinationsError.catalogUnavailable
         case .catalog(let catalog):
             try TestDestinationsPolicy.validate(catalog, now: now)
             return catalog
