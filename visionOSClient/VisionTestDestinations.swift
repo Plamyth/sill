@@ -18,7 +18,7 @@ struct VisionTestDestinations {
 
     enum PageStatus: Equatable {
         case notOpened, loading, responseReceived(Int), displaying(Int), response(Int)
-        case failed, navigationDenied, authenticationDenied
+        case failed, navigationDenied, authenticationDenied, resourceFilterFailed
     }
 
     struct Origin: Equatable {
@@ -114,7 +114,28 @@ struct VisionTestDestinations {
     }
 
     func isCurrent(_ selected: Selection) -> Bool {
-        selection == selected && openingURL(for: selected.entry, from: selected.binding) == selected.url
+        guard selection == selected, binding == selected.binding,
+              let current = catalog?.entries.first(where: { $0.id == selected.entry.id }),
+              current.projectId == selected.entry.projectId,
+              current.projectLabel == selected.entry.projectLabel,
+              current.url == selected.entry.url, current.owner == selected.entry.owner,
+              current.redirectOrigins == selected.entry.redirectOrigins else { return false }
+        return openingURL(for: current, from: selected.binding) == selected.url
+    }
+
+    func resourceRuleListJSON(for selected: Selection) -> String? {
+        guard isCurrent(selected), let redirects = try? selected.entry.validatedRedirectOrigins() else { return nil }
+        var rules: [[String: Any]] = [["trigger": ["url-filter": ".*"], "action": ["type": "block"]]]
+        for url in [selected.url] + redirects {
+            let origin = Origin(url)
+            let host = NSRegularExpression.escapedPattern(for: origin.host)
+            let port = origin.port == 443 ? "(:443)?" : ":\(origin.port)"
+            rules.append(["trigger": ["url-filter": "^https://\(host)\(port)([/?#].*)?$",
+                                       "url-filter-is-case-sensitive": false],
+                          "action": ["type": "ignore-previous-rules"]])
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: rules) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     func allowsNavigation(to url: URL, for selected: Selection) -> Bool {
@@ -127,8 +148,15 @@ struct VisionTestDestinations {
         return Origin(safeURL) == selected.origin || origins.contains { Origin($0) == Origin(safeURL) }
     }
 
+    @discardableResult
+    mutating func revalidate(_ selected: Selection) -> Bool {
+        guard selection == selected else { return false }
+        guard isCurrent(selected) else { close(); return false }
+        return true
+    }
+
     mutating func report(_ status: PageStatus, for selected: Selection) {
-        guard isCurrent(selected) else { return }
+        guard revalidate(selected) else { return }
         pageStatus = status
     }
 

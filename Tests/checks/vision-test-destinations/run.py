@@ -49,6 +49,16 @@ def main():
     # Inert fixture runs on main. Only enclosing platform/actor declarations are excluded;
     # delegate and store method bodies remain verbatim from the production view source.
     view_bodies = 'import Foundation\nimport StreamProtocol\n' + body(view, 'final class VisionTestDestinationStores:') + '\n' + body(view, 'final class Coordinator:')
+    view_bodies += '''
+struct VisionWebViewFixture {
+    @Binding var model: VisionTestDestinations
+    let selection: VisionTestDestinations.Selection
+    let store: WKWebsiteDataStore
+    typealias Context = FixtureContext
+'''
+    for marker in ['func makeCoordinator()', 'func makeUIView(context:', 'func updateUIView(', 'static func dismantleUIView(']:
+        view_bodies += body(view, marker) + '\n'
+    view_bodies += '}\n'
     (output / 'Client.swift').write_text(fixture)
     (output / 'ViewBodies.swift').write_text(view_bodies)
     record = {'scope': __doc__, 'sourceSHA256': hashes, 'commands': [], 'exitCode': 2,

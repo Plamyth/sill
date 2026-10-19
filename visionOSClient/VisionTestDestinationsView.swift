@@ -93,6 +93,7 @@ struct VisionTestDestinationsView: View {
         case .failed: return "기기에서 페이지를 열지 못했습니다. Mac의 도달 가능 관측과 별개입니다."
         case .navigationDenied: return "등록되지 않은 출처 이동·새 창·다운로드는 허용하지 않습니다."
         case .authenticationDenied: return "웹 인증 요청을 차단했습니다. Mac의 인증 정보나 쿠키를 가져오지 않습니다."
+        case .resourceFilterFailed: return "웹 리소스 출처 제한을 준비하지 못해 페이지를 열지 않았습니다. 목록에서 다시 선택하세요."
         }
     }
 
@@ -155,17 +156,17 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         view.allowsLinkPreview = false
         view.allowsBackForwardNavigationGestures = false
         view.accessibilityLabel = "프로젝트 테스트 웹 화면"
-        if model.isCurrent(selection) { view.load(URLRequest(url: selection.url)) }
+        context.coordinator.prepare(view)
         return view
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
         context.coordinator.model = $model
-        if !model.isCurrent(selection) { view.stopLoading() }
+        context.coordinator.revalidate(view)
     }
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
-        view.stopLoading()
+        coordinator.stop(view)
         view.navigationDelegate = nil
         view.uiDelegate = nil
     }
@@ -174,17 +175,71 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         var model: Binding<VisionTestDestinations>
         let selection: VisionTestDestinations.Selection
         private var responseCode: Int?
+        private enum ResourceState {
+            case idle, compiling, ready(WKContentRuleList), closed
+        }
+        private var resourceState: ResourceState = .idle
+        private let ruleListStore: WKContentRuleListStore = .default()
+        private let ruleListIdentifier = "ccr-vision-test-\(UUID().uuidString)"
 
         init(model: Binding<VisionTestDestinations>, selection: VisionTestDestinations.Selection) {
             self.model = model
             self.selection = selection
         }
 
+        func prepare(_ webView: WKWebView) {
+            guard case .idle = resourceState else { return }
+            guard model.wrappedValue.revalidate(selection),
+                  let json = model.wrappedValue.resourceRuleListJSON(for: selection) else {
+                resourceState = .closed
+                model.wrappedValue.report(.resourceFilterFailed, for: selection)
+                return
+            }
+            resourceState = .compiling
+            let store = ruleListStore
+            let identifier = ruleListIdentifier
+            store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: json) { [weak self, weak webView] list, error in
+                guard let self, let webView, case .compiling = self.resourceState,
+                      self.model.wrappedValue.revalidate(self.selection) else {
+                    self?.resourceState = .closed
+                    webView?.stopLoading()
+                    store.removeContentRuleList(forIdentifier: identifier) { _ in }
+                    return
+                }
+                guard error == nil, let list else {
+                    self.resourceState = .closed
+                    self.model.wrappedValue.report(.resourceFilterFailed, for: self.selection)
+                    store.removeContentRuleList(forIdentifier: identifier) { _ in }
+                    return
+                }
+                webView.configuration.userContentController.add(list)
+                self.resourceState = .ready(list)
+                webView.load(URLRequest(url: self.selection.url))
+            }
+        }
+
+        func revalidate(_ webView: WKWebView) {
+            if !model.wrappedValue.revalidate(selection) { stop(webView) }
+        }
+
+        func stop(_ webView: WKWebView) {
+            model.wrappedValue.revalidate(selection)
+            webView.stopLoading()
+            if case .ready(let list) = resourceState {
+                webView.configuration.userContentController.remove(list)
+                ruleListStore.removeContentRuleList(forIdentifier: ruleListIdentifier) { _ in }
+            }
+            // 진행 중 컴파일의 저장 식별자는 완료 콜백에서 정리한다.
+            resourceState = .closed
+        }
+
         private func allowed(_ url: URL?) -> Bool {
-            url.map { model.wrappedValue.allowsNavigation(to: $0, for: selection) } == true
+            guard case .ready = resourceState, model.wrappedValue.revalidate(selection) else { return false }
+            return url.map { model.wrappedValue.allowsNavigation(to: $0, for: selection) } == true
         }
 
         private func report(_ status: VisionTestDestinations.PageStatus) {
+            guard case .ready = resourceState else { return }
             model.wrappedValue.report(status, for: selection)
         }
 
@@ -216,6 +271,10 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard case .ready = resourceState, model.wrappedValue.revalidate(selection) else {
+                webView.stopLoading()
+                return
+            }
             responseCode = nil
             report(.loading)
         }
@@ -230,6 +289,7 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard allowed(webView.url) else { webView.stopLoading(); report(.navigationDenied); return }
             if let responseCode { report(.displaying(responseCode)) }
         }
 
@@ -242,6 +302,7 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         }
 
         private func failed(_ error: Error) {
+            guard model.wrappedValue.revalidate(selection) else { return }
             let code = (error as NSError).code
             if code == NSURLErrorCancelled { return }
             if code == NSURLErrorUserCancelledAuthentication, model.wrappedValue.pageStatus == .authenticationDenied { return }
@@ -252,8 +313,17 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
                      completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-               model.wrappedValue.isCurrent(selection) {
+            let space = challenge.protectionSpace
+            var origin = URLComponents()
+            origin.scheme = space.protocol
+            origin.host = space.host
+            guard (1...65535).contains(space.port) else {
+                report(.authenticationDenied)
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            origin.port = space.port
+            if allowed(origin.url), space.authenticationMethod == NSURLAuthenticationMethodServerTrust {
                 completionHandler(.performDefaultHandling, nil)
             } else {
                 report(.authenticationDenied)

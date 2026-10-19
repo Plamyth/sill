@@ -186,7 +186,7 @@ now = reference.addingTimeInterval(45.001)
 check(!model.open(freshEntry, from: peer) && !model.isCurrent(expiring), "older than 45 seconds cannot open or remain current")
 check(!model.allowsNavigation(to: expiring.url, for: expiring), "navigation rechecks freshness after opening")
 model.report(.response(200), for: expiring)
-check(model.pageStatus == .loading, "late success cannot revive expired selection")
+check(model.selection == nil && model.pageStatus == .notOpened, "만료 후 늦은 성공 콜백은 선택을 해제하고 페이지를 되살리지 않는다")
 now = reference.addingTimeInterval(-0.001)
 check(!model.open(freshEntry, from: peer), "future checkedAt cannot execute even within clock skew")
 now = reference
@@ -242,11 +242,46 @@ var refreshed = freshCatalog
 refreshed.observedAt = "2026-10-20T09:01:00Z"
 model.observe(refreshed, from: peer)
 check(model.selection == selected, "catalog observation time does not invent an entry freshness update")
+now = reference.addingTimeInterval(40)
+refreshed.entries[0].checkedAt = "2026-10-20T09:00:40Z"
+refreshed.entries[0].embed = .unknown
+refreshed.entries[0].reason = "새 관측"
+model.report(.displaying(200), for: selected)
+model.observe(refreshed, from: peer)
+check(model.selection?.id == selected.id && model.pageStatus == .displaying(200) && model.storageEpoch == retainedEpoch,
+      "확인 시각과 호환 관측 갱신은 선택 UUID와 페이지 상태 및 로그인 범위를 유지한다")
+now = reference.addingTimeInterval(70)
+check(model.isCurrent(selected) && model.allowsNavigation(to: selected.url, for: selected),
+      "처음 선택한 관측이 만료되어도 최신 카탈로그의 신선한 관측으로 콜백 권한을 확인한다")
+model.report(.response(200), for: selected)
+check(model.pageStatus == .response(200), "갱신 후 기존 페이지 콜백이 같은 선택에 결과를 반영한다")
 refreshed.entries[0].projectLabel = "수정된 프로젝트"
 model.observe(refreshed, from: peer)
 check(model.selection == nil, "current catalog label replacement invalidates open selection")
 model.report(.response(200), for: selected)
 check(model.pageStatus == .notOpened, "old page callback cannot revive replaced selection")
+now = reference
+for change in ["id", "projectId", "projectLabel", "url", "owner", "redirectOrigins", "stale", "unreachable", "unknown"] {
+    model.observe(freshCatalog, from: peer)
+    model.open(freshEntry, from: peer)
+    let previous = model.selection!
+    var changed = freshCatalog
+    switch change {
+    case "id": changed.entries[0].id = "다른 항목"
+    case "projectId": changed.entries[0].projectId = "다른 프로젝트"
+    case "projectLabel": changed.entries[0].projectLabel = "다른 이름"
+    case "url": changed.entries[0].url = "https://example.test/changed"
+    case "owner": changed.entries[0].owner = "다른 담당"
+    case "redirectOrigins": changed.entries[0].redirectOrigins = ["https://login.example.test"]
+    case "stale": changed.entries[0].checkedAt = "2026-10-20T08:59:00Z"
+    case "unreachable": changed.entries[0].reachability = .unreachable
+    default: changed.entries[0].reachability = .unknown
+    }
+    model.observe(changed, from: peer)
+    model.report(.response(200), for: previous)
+    check(model.selection == nil && model.pageStatus == .notOpened && !model.isCurrent(previous),
+          "실제 권한 변경이나 유효하지 않은 관측은 기존 페이지 선택을 해제한다: \(change)")
+}
 var redirectCatalog = freshCatalog
 redirectCatalog.entries[0].redirectOrigins = redirects
 model.observe(redirectCatalog, from: peer)
