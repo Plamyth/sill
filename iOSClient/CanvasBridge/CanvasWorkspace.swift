@@ -85,9 +85,10 @@ struct CanvasWorkspace: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
-        .onDisappear { dictation.cancel(); store.saveNow() }
+        .onDisappear { dictation.cancel(); store.cancelLink(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
+                store.cancelLink()
                 store.saveNow()
                 dictation.cancel()
             }
@@ -221,6 +222,8 @@ struct CanvasWorkspace: View {
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("음성 설명",systemImage:"mic") { dictationOpen = true }
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
+            Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
+            if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("Obsidian 노트",systemImage:"doc.text") {
                 vaultOpen = true
@@ -654,6 +657,18 @@ struct CanvasWorkspace: View {
                 TextField("내용",text:Binding(get:{node.text},set:{ _ in }))
                     .disabled(true)
                 Text("출처 획 \(node.sourceStrokeIds.count)개")
+                let parentLink = store.scene.links.first(where:{ $0.kind == .parentChild && $0.to == id })
+                if let parent = store.scene.nodes.first(where:{ $0.id == parentLink?.from }) {
+                    Text("상위 요소 · \(parent.text.isEmpty ? "이름 없는 요소" : parent.text)")
+                        .accessibilityIdentifier("canvasHierarchyParent")
+                    Button("상위 연결 해제") { store.unlinkFromParent() }.frame(minHeight:44)
+                }
+                let childIDs = Set(store.scene.links.filter { $0.kind == .parentChild && $0.from == id }.map(\.to))
+                let children = store.scene.nodes.filter { childIDs.contains($0.id) }
+                Text("하위 요소 \(children.count)개").accessibilityIdentifier("canvasHierarchyChildren")
+                ForEach(children) { child in
+                    Text(child.text.isEmpty ? "이름 없는 요소" : child.text).font(.caption)
+                }
                 if let reference = node.vaultNote {
                     Text(reference.cacheTruncated == true ? "원본 일부 미리보기 · \(reference.path)" :
                         "저장된 원본의 표시 캐시 · \(reference.path)").font(.caption)

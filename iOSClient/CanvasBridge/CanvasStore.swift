@@ -111,6 +111,9 @@ final class CanvasInkHistory: ObservableObject {
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
+            if oldValue.id != scene.id || linkStart.map({ from in !scene.nodes.contains(where:{ $0.id == from }) }) == true {
+                clearPendingLink()
+            }
             if oldValue.id != scene.id { invalidateNoteScene(); inkHistory.invalidate() }
             else if let context = noteContext, !noteContextIsCurrent(context) { invalidateNoteRequests() }
             handwritingRequest = nil
@@ -118,11 +121,17 @@ final class CanvasStore: ObservableObject {
         }
     }
     @Published var mode: CanvasMode = .pen {
-        didSet { handwritingRequest = nil }
+        didSet {
+            if oldValue != mode { clearPendingLink() }
+            handwritingRequest = nil
+        }
     }
     @Published var eraserStyle: CanvasEraserStyle = .partial
     @Published var selectedNode: UUID? {
-        didSet { handwritingRequest = nil }
+        didSet {
+            if oldValue != selectedNode { clearPendingLink() }
+            handwritingRequest = nil
+        }
     }
     @Published var status = "Pencil로 그린 뒤 구조를 확인하세요."
     @Published var proposalText = "" {
@@ -150,7 +159,8 @@ final class CanvasStore: ObservableObject {
             inkHistory.invalidate()
         }
     }
-    var linkStart: UUID?
+    @Published private(set) var linkStart: UUID?
+    private var linkKind: CanvasLink.Kind = .general
     private var saveTask: Task<Void,Never>?
     private var handwritingRequest: UUID?
     @Published private(set) var vaultNote: VaultNoteSnapshot?
@@ -757,18 +767,66 @@ final class CanvasStore: ObservableObject {
     }
 
     func select(_ id: UUID) {
-        if let from = linkStart, from != id {
-            _ = scene.connect(from, to: id)
-            linkStart = nil
-            status = "화살표 관계를 추가했습니다."
+        let from = linkStart
+        let kind = linkKind
+        clearPendingLink()
+        guard scene.nodes.contains(where:{ $0.id == id }) else {
+            status = "요소가 없어 연결하지 않았습니다."
+            return
+        }
+        if let from {
+            if from == id {
+                status = "연결을 취소했습니다."
+            } else {
+                let connected = kind == .parentChild ? scene.connectAsChild(parent:from,child:id) :
+                    scene.connect(from,to:id)
+                status = connected ? (kind == .parentChild ? "상위·하위 요소를 연결했습니다." : "화살표 관계를 추가했습니다.") :
+                    "연결하지 않았습니다. 요소가 없거나 기존 상위 연결·순환 관계와 충돌합니다."
+            }
         }
         selectedNode = id
     }
 
     func beginLink() {
-        guard let selectedNode else { return }
+        beginLink(kind:.general)
+    }
+
+    func beginChildLink() {
+        beginLink(kind:.parentChild)
+    }
+
+    private func beginLink(kind: CanvasLink.Kind) {
+        clearPendingLink()
+        guard let selectedNode, scene.nodes.contains(where:{ $0.id == selectedNode }) else {
+            status = "먼저 연결을 시작할 요소를 선택하세요."
+            return
+        }
+        mode = .select
+        linkKind = kind
         linkStart = selectedNode
-        status = "연결할 두 번째 요소를 탭하세요."
+        status = kind == .parentChild ? "하위로 연결할 요소를 탭하세요. 같은 요소를 다시 탭하면 취소합니다." :
+            "연결할 두 번째 요소를 탭하세요. 같은 요소를 다시 탭하면 취소합니다."
+    }
+
+    private func clearPendingLink() {
+        linkStart = nil
+        linkKind = .general
+    }
+
+    func cancelLink() {
+        guard linkStart != nil else { return }
+        clearPendingLink()
+        status = "연결을 취소했습니다."
+    }
+
+    func unlinkFromParent() {
+        clearPendingLink()
+        guard let selectedNode, scene.nodes.contains(where:{ $0.id == selectedNode }) else { return }
+        let removed = scene.links.contains(where:{ $0.kind == .parentChild && $0.to == selectedNode })
+        guard removed else { status = "해제할 상위 연결이 없습니다."; return }
+        scene.links.removeAll(where:{ $0.kind == .parentChild && $0.to == selectedNode })
+        scene.revision += 1
+        status = "상위 연결을 해제했습니다. 요소와 원문은 보존됐습니다."
     }
 
     func moveSelected(to point: CGPoint) {

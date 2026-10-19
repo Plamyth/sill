@@ -385,6 +385,60 @@ final class NoteProtocol: URLProtocol {
         let invalidHash = VaultNoteSnapshot(path:original.path,text:"tamper",sha256:original.sha256,modifiedAt:"now")
         do { _ = try invalidHash.validated(at:original.path); check(false,"bad hash") }
         catch { check(true,"mismatched cache hash refused") }
+        let hierarchy = store()
+        let parent = hierarchy.scene.addNode(kind:.note,at:CanvasPoint(x:0,y:0),text:"Parent")
+        let child = hierarchy.scene.addNode(kind:.note,at:CanvasPoint(x:300,y:0),text:"Child")
+        let other = hierarchy.scene.addNode(kind:.note,at:CanvasPoint(x:600,y:0),text:"Other")
+        hierarchy.scene.nodes[0].vaultNote = VaultNoteReference(path:original.path,sha256:original.sha256,relayAddress:"http://test")
+        let preservedNodes = hierarchy.scene.nodes
+        let preservedDrawing = hierarchy.scene.drawingBase64
+        hierarchy.selectedNode = parent
+        hierarchy.beginChildLink()
+        check(hierarchy.mode == .select && hierarchy.linkStart == parent,"child action selects existing parent and enters element mode")
+        hierarchy.select(child)
+        check(hierarchy.scene.links.count == 1 && hierarchy.scene.links[0].kind == .parentChild &&
+            hierarchy.scene.links[0].from == parent && hierarchy.scene.links[0].to == child,
+            "selecting child commits semantic hierarchy")
+        check(hierarchy.linkStart == nil && hierarchy.selectedNode == child,"successful hierarchy consumes pending action")
+        check(hierarchy.scene.nodes == preservedNodes && hierarchy.scene.drawingBase64 == preservedDrawing && hierarchy.scene.strokes.isEmpty,
+            "hierarchy action preserves source references, node data and ink")
+        let beforeCycle = hierarchy.scene
+        hierarchy.beginChildLink(); hierarchy.select(parent)
+        check(hierarchy.scene == beforeCycle && hierarchy.status.contains("연결하지 않았습니다"),"cycle rejected without false success or scene mutation")
+        hierarchy.selectedNode = other; hierarchy.beginChildLink(); hierarchy.select(child)
+        check(hierarchy.scene == beforeCycle,"second parent rejected atomically")
+        hierarchy.selectedNode = parent; hierarchy.beginChildLink(); hierarchy.select(UUID())
+        check(hierarchy.scene == beforeCycle && hierarchy.linkStart == nil,"missing target cancels pending command without mutation")
+        hierarchy.beginChildLink(); hierarchy.cancelLink()
+        check(hierarchy.linkStart == nil && hierarchy.scene == beforeCycle,"explicit cancel preserves scene")
+        hierarchy.beginChildLink(); hierarchy.select(parent)
+        check(hierarchy.linkStart == nil && hierarchy.scene == beforeCycle,"same element tap cancels rather than latching")
+        hierarchy.beginChildLink(); hierarchy.mode = .pen
+        check(hierarchy.linkStart == nil,"leaving element mode cancels connection")
+        hierarchy.beginChildLink(); hierarchy.selectedNode = other
+        check(hierarchy.linkStart == nil,"selection changed outside select cancels pending command")
+        hierarchy.selectedNode = child; hierarchy.beginLink(); hierarchy.select(parent)
+        check(hierarchy.scene.links.count == 2 && hierarchy.scene.links.last?.kind == nil,
+            "ordinary reverse arrow keeps legacy general semantics")
+        let beforeUnlinkRevision = hierarchy.scene.revision
+        hierarchy.selectedNode = child; hierarchy.unlinkFromParent()
+        check(hierarchy.scene.links.count == 1 && hierarchy.scene.links[0].kind == nil &&
+            hierarchy.scene.links[0].from == child && hierarchy.scene.links[0].to == parent,
+            "unlink removes hierarchy only and preserves ordinary relation")
+        check(hierarchy.scene.revision == beforeUnlinkRevision + 1 && hierarchy.scene.nodes == preservedNodes &&
+            hierarchy.scene.drawingBase64 == preservedDrawing,"unlink increments revision once and preserves original data")
+        let noParent = hierarchy.scene
+        hierarchy.unlinkFromParent()
+        check(hierarchy.scene == noParent,"unlink without parent is no-op")
+        hierarchy.selectedNode = parent; hierarchy.beginChildLink()
+        hierarchy.scene.nodes.removeAll { $0.id == parent }
+        check(hierarchy.linkStart == nil,"removed source cancels pending command")
+        hierarchy.selectedNode = child; hierarchy.beginChildLink()
+        var imported = CanvasScene(); imported.drawingBase64 = PKDrawing().dataRepresentation().base64EncodedString()
+        try hierarchy.importScene(imported)
+        check(hierarchy.linkStart == nil && hierarchy.selectedNode == nil,"scene import invalidates pending connection and selection")
+        hierarchy.selectedNode = UUID(); hierarchy.beginChildLink()
+        check(hierarchy.linkStart == nil,"missing selected source does not arm connection")
         try await checkBlockExcerpts(check)
         print("RESULT \(checks) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
