@@ -187,14 +187,19 @@ struct CanvasScene: Codable, Equatable {
         guard change.sceneId == id else { return false }
         let annotationIds = change.annotations.map(\.id)
         let proposalIds = change.proposedNodes.map(\.id)
+        let proposedLinks = change.proposedLinks ?? []
+        let linkIds = proposedLinks.map(\.id)
         guard Set(annotationIds).count == annotationIds.count,
-              Set(proposalIds).count == proposalIds.count else { return false }
+              Set(proposalIds).count == proposalIds.count,
+              Set(linkIds).count == linkIds.count else { return false }
         if change.baseRevision < revision {
-            guard !annotationIds.isEmpty || !proposalIds.isEmpty else { return false }
+            guard !annotationIds.isEmpty || !proposalIds.isEmpty || !linkIds.isEmpty else { return false }
             if change.annotations.allSatisfy({ incoming in
                 annotations.first(where: { $0.id == incoming.id }) == incoming
             }) && change.proposedNodes.allSatisfy({ incoming in
                 nodes.first(where: { $0.id == incoming.id }) == incoming
+            }) && proposedLinks.allSatisfy({ incoming in
+                links.first(where: { $0.id == incoming.id }) == incoming
             }) { return true }
             guard let sent, sent.id == id, sent.revision == change.baseRevision,
                   sent.schemaVersion == schemaVersion,
@@ -208,19 +213,24 @@ struct CanvasScene: Codable, Equatable {
         guard change.baseRevision <= revision else { return false }
         let existingIds = Set(nodes.map(\.id))
         let existingAnnotationIds = Set(annotations.map(\.id))
+        let existingLinkIds = Set(links.map(\.id))
         let originalStrokes = change.baseRevision == revision ? strokes : sent?.strokes ?? []
         let sentStrokeIds = Set(originalStrokes.map(\.id))
         guard change.annotations.allSatisfy({ !existingAnnotationIds.contains($0.id) }),
+              proposedLinks.allSatisfy({ !existingLinkIds.contains($0.id) }),
               change.proposedNodes.allSatisfy({ $0.vaultNote == nil && $0.confidence == .proposal && !existingIds.contains($0.id) &&
                   $0.sourceStrokeIds.allSatisfy(sentStrokeIds.contains) }) else {
             return false
         }
         let availableIds = existingIds.union(proposalIds)
-        guard change.annotations.allSatisfy({ $0.nodeId.map(availableIds.contains) ?? true }) else {
+        guard change.annotations.allSatisfy({ $0.nodeId.map(availableIds.contains) ?? true }),
+              proposedLinks.allSatisfy({ $0.from != $0.to && availableIds.contains($0.from) &&
+                  availableIds.contains($0.to) }) else {
             return false
         }
         annotations.append(contentsOf: change.annotations)
         nodes.append(contentsOf: change.proposedNodes)
+        links.append(contentsOf: proposedLinks)
         revision += 1
         return true
     }
@@ -231,6 +241,7 @@ struct AgentRevision: Codable {
     var baseRevision: Int
     var annotations: [CanvasAnnotation]
     var proposedNodes: [CanvasNode]
+    var proposedLinks: [CanvasLink]? = nil
 }
 
 struct VoiceSession: Codable, Equatable {
