@@ -500,7 +500,7 @@ private struct VisionSentryOrnament: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Button("Sentry 보호 켜기", systemImage: "lock.shield", action: activate)
+                Button("센츄리 보호 켜기", systemImage: "lock.shield", action: activate)
                     .disabled(!allowActivation || !snapshot.canActivate)
                     .accessibilityHint("현재 Mac의 로그인 세션에서 현장 화면과 일반 입력 보호를 요청합니다. 제스처와 오디오 설정은 유지됩니다.")
                 Text(snapshot.message).font(.caption)

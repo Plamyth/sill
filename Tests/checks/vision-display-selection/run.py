@@ -16,6 +16,8 @@ import subprocess
 import sys
 import time
 
+PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compatibility', 'Sentry']
+
 
 def block(source, marker):
     start = source.index(marker)
@@ -88,7 +90,7 @@ def prepare(root):
         'SwiftUI.swift': (root / 'Tests/checks/vision-input-controls/SwiftUI.swift').read_text()}
     for path in ['visionOSClient/VisionDisplaySelection.swift', 'visionOSClient/StreamClient+VisionDisplaySelection.swift',
                  'iOSClient/SessionLink.swift', 'Tests/checks/vision-display-selection/main.swift'] + [
-                     'Sources/StreamProtocol/' + name + '.swift' for name in ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compatibility']]:
+                     'Sources/StreamProtocol/' + name + '.swift' for name in PROTOCOL]:
         files[path] = (root / path).read_text()
     manifest = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in files.items()}
     manifest['productionStorage'] = hashlib.sha256(storage.encode()).hexdigest()
@@ -149,7 +151,7 @@ def main():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents)
         modules = [('Network', ['Network.swift']), ('SwiftUI', ['SwiftUI.swift']), ('StreamProtocol', [
-            'Sources/StreamProtocol/' + name + '.swift' for name in ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compatibility']])]
+            'Sources/StreamProtocol/' + name + '.swift' for name in PROTOCOL])]
         for name, paths in modules:
             run(base + ['-parse-as-library', '-whole-module-optimization', '-emit-module', '-emit-object', '-module-name', name] +
                 [str(generated / path) for path in paths] + ['-emit-module-path', str(output / (name + '.swiftmodule')),

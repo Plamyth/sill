@@ -18,16 +18,16 @@ final class VisionSentryController {
         }
 
         var message: String {
-            if pendingID != nil { return "Sentry 활성화 요청의 Mac 확인을 기다립니다." }
-            if problem == .timedOut { return "Sentry 응답 시간 초과 · 현재 보호 상태 미확인" }
-            if problem == .sendCancelled { return "Sentry 요청을 보내지 못했습니다. 현재 보호 상태 미확인" }
-            if case .rejected(_)? = problem { return "Mac이 Sentry 요청을 수락하지 않았습니다." }
+            if pendingID != nil { return "센츄리 활성화 요청의 Mac 확인을 기다립니다." }
+            if problem == .timedOut { return "센츄리 응답 시간 초과 · 현재 보호 상태 미확인" }
+            if problem == .sendCancelled { return "센츄리 요청을 보내지 못했습니다. 현재 보호 상태 미확인" }
+            if case .rejected(_)? = problem { return "Mac이 센츄리 요청을 수락하지 않았습니다." }
             switch state?.phase {
-            case .inactive: return "Sentry 꺼짐 · Mac의 현재 로그인 세션 보호를 켤 수 있습니다."
-            case .pending: return "Mac이 Sentry 보호를 준비하고 있습니다. 보호 완료는 확인되지 않았습니다."
+            case .inactive: return "센츄리 꺼짐 · Mac의 현재 로그인 세션 보호를 켤 수 있습니다."
+            case .pending: return "Mac이 센츄리 보호를 준비하고 있습니다. 보호 완료는 확인되지 않았습니다."
             case .userSessionProtected: return "Mac 보고 · 현재 로그인 세션의 화면·일반 입력 보호 중"
-            case .blocked: return "Mac이 Sentry 보호 완료를 확인하지 못했습니다."
-            case nil: return "현재 Mac의 Sentry 보호 상태 미확인"
+            case .blocked: return "Mac이 센츄리 보호 완료를 확인하지 못했습니다."
+            case nil: return "현재 Mac의 센츄리 보호 상태 미확인"
             }
         }
     }
@@ -85,12 +85,15 @@ final class VisionSentryController {
         lock.lock(); defer { lock.unlock() }
         guard peer == sender else { return }
         guard trusted, let next = Catalog(list) else { clearLocked(); return }
-        if let old = catalog {
-            if old.state.hostBootID != next.state.hostBootID || old.state.sessionID != next.state.sessionID {
-                retiredRevisions = []
-            } else if old.state.revision != next.state.revision {
+        if let old = catalog,
+           old.state.hostBootID != next.state.hostBootID || old.state.sessionID != next.state.sessionID {
+            retiredRevisions = []
+        }
+        guard !retiredRevisions.contains(next.state.revision) else { clearLocked(); return }
+        if let old = catalog, old.state.hostBootID == next.state.hostBootID,
+           old.state.sessionID == next.state.sessionID {
+            if old.state.revision != next.state.revision {
                 retiredRevisions.insert(old.state.revision)
-                guard !retiredRevisions.contains(next.state.revision) else { clearLocked(); return }
             } else if old.state != next.state {
                 clearLocked(); return
             }
@@ -147,7 +150,6 @@ final class VisionSentryController {
               state.phase != .userSessionProtected || state.requested,
               state.phase != .pending || state.requested else { return }
         finishLocked()
-        // A response is a readback only while the command's catalog is still current.
         if state.revision != pending.activation.revision { retiredRevisions.insert(pending.activation.revision) }
         catalog?.state = state
         value.state = state

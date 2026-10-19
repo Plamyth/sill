@@ -21,6 +21,7 @@ PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compat
 def prepare(root):
     stream = (root / 'iOSClient/StreamClient.swift').read_text()
     view = (root / 'visionOSClient/SillVisionApp.swift').read_text()
+    controller = (root / 'visionOSClient/VisionSentryController.swift').read_text()
     adapter = (root / 'visionOSClient/StreamClient+VisionSentry.swift').read_text()
     storage = stream[stream.index('    @Published var visionSentrySnapshot ='):stream.index('    var visionSentryTrusted:')]
     stub = (root / 'Tests/checks/vision-sentry/Standins.swift').read_text().replace(
@@ -40,6 +41,8 @@ def prepare(root):
         'no withdrawn account contract consumption': all(name not in adapter + storage for name in
             ['accountScope', 'accountEpoch', 'catalogRevision', 'projectionKind']),
         'local return and OS limits visible in Korean': 'Mac에서 새로 시스템 인증' in view and '전원 버튼·운영체제 보안 화면' in view,
+        'Sentry product copy localized': 'Button("센츄리 보호 켜기"' in view and
+            re.search(r'"[^"\n]*Sentry[^"\n]*"', controller + view) is None,
     }
     project = plistlib.loads((root / 'SillVision.xcodeproj/project.pbxproj').read_bytes())['objects']
     for name in ['VisionSentryController', 'StreamClient+VisionSentry']:

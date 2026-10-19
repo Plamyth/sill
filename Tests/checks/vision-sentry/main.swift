@@ -125,6 +125,49 @@ check(!unsupported.snapshot.available && unsupported.snapshot.state == nil, "uns
 unsupported.observe(list(protected), from: pa); unsupported.invalidateCatalog(from: pa)
 check(!unsupported.snapshot.available && unsupported.snapshot.state == nil, "undecodable catalog clears known protection")
 
+for invalidation in ["stale", "missing", "unsupported", "undecodable"] {
+    let protectedA = state(.userSessionProtected), blockedB = state(.blocked)
+    let replay = model(protectedA)
+    replay.observe(list(blockedB), from: pa)
+    check(replay.snapshot.state == blockedB, "valid replacement reports blocked \(invalidation)")
+    switch invalidation {
+    case "stale": replay.observe(list(protectedA), from: pa)
+    case "missing": replay.observe(list(nil), from: pa)
+    case "unsupported": replay.observe(list(future), from: pa)
+    default: replay.invalidateCatalog(from: pa)
+    }
+    check(replay.snapshot == VisionSentryController.Snapshot(), "catalog invalidation remains unknown \(invalidation)")
+    for attempt in 1...2 {
+        replay.observe(list(protectedA), from: pa)
+        check(replay.snapshot == VisionSentryController.Snapshot(),
+              "retired protection stays rejected without a catalog \(invalidation) attempt \(attempt)")
+    }
+    replay.observe(list(blockedB), from: pa)
+    check(replay.snapshot.state == blockedB && replay.snapshot.available && replay.snapshot.canActivate,
+          "invalid replacement never retires current blocked revision \(invalidation)")
+}
+for scope in ["boot", "session"] {
+    let protectedA = state(.userSessionProtected), blockedB = state(.blocked)
+    let authority = model(protectedA)
+    authority.observe(list(blockedB), from: pa)
+    let replacement = state(.userSessionProtected, revision: protectedA.revision,
+                            host: scope == "boot" ? UUID() : boot,
+                            sessionID: scope == "session" ? UUID() : session)
+    authority.observe(list(replacement), from: pa)
+    check(authority.snapshot.state == replacement && authority.snapshot.available,
+          "current peer retains authority to replace \(scope) scope")
+}
+let inconsistent = model(protected)
+inconsistent.observe(list(state(.blocked, revision: protected.revision)), from: pa)
+check(inconsistent.snapshot == VisionSentryController.Snapshot(), "inconsistent current revision clears status")
+inconsistent.observe(list(protected), from: pa)
+check(inconsistent.snapshot.state == protected, "inconsistent replacement does not retire current revision")
+let reboundRevision = model(protected)
+reboundRevision.observe(list(state(.blocked)), from: pa)
+reboundRevision.bind(pb, trusted: true)
+reboundRevision.observe(list(protected), from: pb)
+check(reboundRevision.snapshot.state == protected, "new peer binding clears retired revisions")
+
 func client() -> (StreamClient, NWConnection) {
     let c = StreamClient(), peer = NWConnection()
     c.connection = peer
