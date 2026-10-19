@@ -442,6 +442,10 @@ final class CanvasStore: ObservableObject {
         } catch {
             guard noteContext == context, noteContextIsCurrent(context),
                   noteRequest == nil || noteRequest == request else { return }
+            guard pendingBlockEdit != nil else {
+                vaultStatus = "문단 형식 확인: \(error.localizedDescription). 입력은 보존했으며 저장 요청은 보내지 않았습니다."
+                return
+            }
             let failure = error as NSError
             let reason = failure.domain == "CanvasRelay" && failure.code == 409 ?
                 "원문 변경 또는 작업 결과 불일치" : "통신 또는 원문 검증 실패"

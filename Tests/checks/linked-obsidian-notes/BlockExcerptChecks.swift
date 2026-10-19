@@ -302,6 +302,18 @@ private func checkLinkedBlockEditing(_ check: (Bool,String) -> Void) async throw
         return VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:"edit-1",
             disposition:disposition,quoteSha256:CanvasPacket.sha(Data(edit.replacementText.utf8)),note:saved)
     }
+    let invalidDraft = await store()
+    check(invalidDraft.beginLinkedBlockEdit(),"unsupported draft starts in a valid linked editor")
+    invalidDraft.vaultBlockDraft = " invalid leading indentation"
+    var invalidDispatched = false
+    await invalidDraft.saveLinkedBlock(replace:{ _,_,edit in
+        invalidDispatched = true
+        return try result(edit)
+    },load:{ _ in original })
+    check(!invalidDispatched && !invalidDraft.vaultBlockHasPendingSave &&
+          invalidDraft.vaultBlockDraft == " invalid leading indentation" &&
+          invalidDraft.vaultStatus.contains("저장 요청은 보내지 않았습니다"),
+          "local paragraph rejection preserves draft without claiming a dispatched pending operation")
     let s = await store()
     let before = s.scene
     check(s.beginLinkedBlockEdit() && s.vaultBlockDraft == "문단 e\u{301} 👩🏽‍💻\n둘째 줄" && !s.vaultDirty,
