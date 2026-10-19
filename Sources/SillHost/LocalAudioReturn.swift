@@ -1,30 +1,44 @@
 import Foundation
 import LocalAuthentication
 
-package enum LocalAudioReturnCoverage {
-    case unknown
-    case nativeCoordinatorOnly
-    case verifiedAllParticipants
-
-    var unavailableReason: String? {
-        switch self {
-        case .unknown:
-            return "전체 오디오 참여자의 중지 권한을 확인하지 못해 로컬 복귀를 사용할 수 없습니다."
-        case .nativeCoordinatorOnly:
-            return "S23 독립 오디오 경로의 중지 권한이 연결되지 않아 전체 오디오 종료를 확인할 수 없습니다. 로컬 복귀를 사용할 수 없습니다."
-        case .verifiedAllParticipants: return nil
-        }
-    }
-}
-
 /// Owns the interval before StreamCoordinator installs its real revocation barrier.
 @MainActor
 package final class NativeAudioStartup {
     private enum State { case initializing, coordinatorCreated, failedBeforeParticipants }
     private var state = State.initializing
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
-    package init() {}
+    let participants = LocalAudioParticipantRegistry()
+    private let bootId = UUID()
+    private var request: LocalAudioParticipantRequest?
+    private var acknowledged = false
+    var revoke: (() async -> Bool)?
+    var readFacts: (() -> LocalAudioParticipantFacts)?
+
+    package init() {
+        participants.register(.native, bootId: bootId, control: .init(fenceAndQuiesce: { [weak self] request in
+            guard let self else { return .init(request, state: .unknown, facts: .unknown) }
+            if let prior = self.request {
+                guard prior == request else { return .init(request, state: .blocked, facts: .unknown) }
+                return self.receipt(request)
+            }
+            self.request = request
+            self.acknowledged = await self.quiesce(using: self.revoke)
+            return self.receipt(request)
+        }, inspect: { [weak self] id in
+            guard let self, let request = self.request, request.operationId == id else { return nil }
+            return self.receipt(request)
+        }))
+    }
+
+    private func receipt(_ request: LocalAudioParticipantRequest) -> LocalAudioParticipantReceipt {
+        let facts: LocalAudioParticipantFacts
+        if state == .failedBeforeParticipants {
+            facts = .init(admissionFenced: participants.isFenced, startsSettled: true, mediaDetached: true,
+                          callbacksDrained: true, buffersEmpty: true, workersExited: true)
+        } else { facts = readFacts?() ?? .unknown }
+        return .init(request, state: acknowledged && facts.quiescent ? .quiescent : .unknown, facts: facts)
+    }
 
     /// The constructor must throw only before any native audio participant can start.
     package func construct<T>(_ make: () throws -> T) rethrows -> T {
@@ -41,7 +55,12 @@ package final class NativeAudioStartup {
 
     func waitUntilInitialized() async {
         guard state == .initializing else { return }
-        await withCheckedContinuation { waiters.append($0) }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { waiters[id] = $0 }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.waiters.removeValue(forKey: id)?.resume() }
+        }
     }
 
     func quiesce(using barrier: (() async -> Bool)?) async -> Bool {
@@ -57,7 +76,7 @@ package final class NativeAudioStartup {
 
     private func finish(_ next: State) {
         state = next
-        let pending = waiters
+        let pending = Array(waiters.values)
         waiters.removeAll()
         pending.forEach { $0.resume() }
     }
@@ -117,14 +136,14 @@ final class LocalAudioAuthentication {
 
     func cancel() { finish(false) }
 
-    func evaluate() async -> Bool {
+    func evaluate(operationId: UUID) async -> Bool {
         guard completion == nil else { return false }
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 0
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
         self.context = context
-        let attempt = UUID()
+        let attempt = operationId
         attemptID = attempt
         return await withCheckedContinuation { continuation in
             completion = continuation

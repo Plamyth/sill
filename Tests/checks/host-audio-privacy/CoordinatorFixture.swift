@@ -1,7 +1,7 @@
 import Foundation
 import StreamProtocol
 
-private final class BoundaryConnection {
+final class BoundaryConnection {
     enum State { case ready }
     let state = State.ready
     let endpoint = "injected"
@@ -12,18 +12,23 @@ private final class BoundaryConnection {
         if case .contentProcessed(let callback) = completion { completions.append { callback(nil) } }
     }
 }
-private struct BoundaryRoute { let encrypted = true; let fingerprint: Data? = Data([1]) }
-private final class BoundaryTrust { func isPaired(_ fingerprint: Data) -> Bool { fingerprint == Data([1]) } }
-private final class BoundaryIngress {
+struct BoundaryRoute { let encrypted = true; let fingerprint: Data? = Data([1]) }
+final class BoundaryTrust { func isPaired(_ fingerprint: Data) -> Bool { fingerprint == Data([1]) } }
+final class BoundaryIngress {
     var revoked = 0
+    var localReturnDetached: Bool { revoked > 0 }
     func revoke() { revoked += 1 }
     func peer(_ connection: BoundaryConnection) -> (id: UUID, fingerprint: Data)? { (UUID(), Data([1])) }
 }
-private final class BoundaryMicrophone {
+@MainActor
+final class BoundaryMicrophone {
     var revoked = 0
     var forgotten = 0
     var capabilities = 0
-    func revoke(reason: String) { revoked += 1 }
+    var actual: HostMicrophoneReceiver?
+    var retirementComplete: Bool { actual?.retirementComplete ?? true }
+    func waitForRetirement() async -> Bool { await actual?.waitForRetirement() ?? true }
+    func revoke(reason: String) { revoked += 1; actual?.revoke(reason: reason) }
     func forgetCapabilities() { forgotten += 1 }
     func capability(peer: UUID, source: StreamSource, inputGeneration: UUID, videoEpoch: UUID,
                     fingerprint: Data) -> MicrophoneCapability? {
@@ -31,7 +36,7 @@ private final class BoundaryMicrophone {
         return MicrophoneCapability(peer: peer, destination: UUID(), generation: UUID())
     }
 }
-private final class BoundaryServer {
+final class BoundaryServer {
     final class Client {
         let connection: BoundaryConnection
         var remoteAudioEnabled = false
@@ -58,11 +63,14 @@ private final class BoundaryServer {
     // PRODUCTION_SERVER_BOUNDARIES
 }
 @MainActor
-private final class BoundaryCapture {
+final class BoundaryCapture {
     var stops = 0
-    func stop() async { stops += 1 }
+    var hasStream: Bool { stops == 0 }
+    var retirementConfirmed: Bool { stops > 0 }
+    var onStop: (() async -> Void)?
+    func stop() async { stops += 1; await onStop?() }
 }
-private final class BoundaryHardware: AudioRouteHardware {
+final class BoundaryHardware: AudioRouteHardware {
     var writes = 0
     func read() throws -> AudioRouteInventory {
         AudioRouteInventory(endpoints: [AudioRouteEndpoint(uid: "physical", name: "물리 장치", input: true, output: true)],
@@ -73,7 +81,7 @@ private final class BoundaryHardware: AudioRouteHardware {
 }
 
 @MainActor
-private final class PrivacyCoordinatorFixture {
+final class PrivacyCoordinatorFixture {
     let audioPrivacy: HostAudioPrivacy?
     var synthetic = false
     var switching = false
@@ -95,6 +103,7 @@ private final class PrivacyCoordinatorFixture {
     var remoteAudioActions: [ObjectIdentifier: UInt64] = [:]
     var remoteAudioEpoch: UInt64 = 0
     var physicalAudioRoutesRetired = false
+    var localAudioReturnDrained = false
     var remoteAudioRunning = false
     let remoteAudioCapture = BoundaryCapture()
     let remoteAudioLifecycle = RemoteAudioCaptureLifecycle()
@@ -105,6 +114,7 @@ private final class PrivacyCoordinatorFixture {
         audioPrivacy = privacy
         privacy?.changed = { [weak self] state in self?.audioPrivacyChanged(state) }
         // PRODUCTION_REVOCATION
+        privacy?.inspectForLocalReturn = { [weak self] in self?.localAudioReturnFacts() ?? .unknown }
     }
     private func broadcastList() { broadcasts += 1 }
     private func listMessage() -> StreamMessage {
@@ -190,13 +200,13 @@ func coordinatorChecks(_ privacy: HostAudioPrivacy) async {
 @MainActor
 func serverDrainChecks() async {
     let fake = PrivacyFakeHAL()
-    let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: fake.operations), clearLatch: { true }, authenticateLocal: { true })
+    let privacy = fixturePrivacy( hal: CoreAudioPrivacyHAL(ops: fake.operations), clearLatch: { true }, authenticateLocal: { _ in true })
     expect(privacy.armAndVerify(), "production boundary restore fixture armed")
     await PrivacyCoordinatorFixture(privacy).localReturnCheck(fake)
     privacy.stop()
 
     let staleFake = PrivacyFakeHAL()
-    let stale = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants, hal: CoreAudioPrivacyHAL(ops: staleFake.operations), clearLatch: { true }, authenticateLocal: { true })
+    let stale = fixturePrivacy( hal: CoreAudioPrivacyHAL(ops: staleFake.operations), clearLatch: { true }, authenticateLocal: { _ in true })
     var acknowledgement: CheckedContinuation<Bool, Never>?
     stale.revokeForLocalReturn = { await withCheckedContinuation { acknowledgement = $0 } }
     expect(stale.armAndVerify(), "post-auth generation fixture armed")
@@ -231,10 +241,10 @@ func nativeStartupChecks() async {
         let original = fake.snapshot
         let startup = NativeAudioStartup()
         var authCalls = 0
-        let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants,
+        let privacy = fixturePrivacy(
             hal: CoreAudioPrivacyHAL(ops: fake.operations), latched: true,
             localState: try! LocalAudioState(original), clearLatch: { true },
-            authenticateLocal: { authCalls += 1; return true }, nativeStartup: startup)
+            authenticateLocal: { _ in authCalls += 1; return true }, nativeStartup: startup)
         expect(privacy.reconcile(), "startup reconciles persisted latch before construction \(succeeds)")
         let before = fake.writes.count
         var completed = false
@@ -283,9 +293,9 @@ func nativeStartupChecks() async {
     let fake = PrivacyFakeHAL()
     let startup = NativeAudioStartup()
     startup.construct { () }
-    let privacy = HostAudioPrivacy(localReturnCoverage: .verifiedAllParticipants,
+    let privacy = fixturePrivacy(
         hal: CoreAudioPrivacyHAL(ops: fake.operations), clearLatch: { true },
-        authenticateLocal: { true }, nativeStartup: startup)
+        authenticateLocal: { _ in true }, nativeStartup: startup)
     expect(privacy.armAndVerify(), "missing created-coordinator barrier fixture armed")
     let before = fake.writes.count
     let missing = await privacy.requestLocalReturn()
@@ -293,14 +303,15 @@ func nativeStartupChecks() async {
            "created coordinator with nil callback never acknowledges quiescence")
     privacy.stop()
 
-    for coverage in [LocalAudioReturnCoverage.unknown, .nativeCoordinatorOnly] {
+    for nativeOnly in [false, true] {
         let device = PrivacyFakeHAL()
         let original = try! LocalAudioState(device.snapshot)
         device.safe()
         var authCalls = 0, barrierCalls = 0
-        let blocked = HostAudioPrivacy(localReturnCoverage: coverage,
+        let blocked = HostAudioPrivacy(
             hal: CoreAudioPrivacyHAL(ops: device.operations), latched: true, localState: original,
-            clearLatch: { true }, authenticateLocal: { authCalls += 1; return true })
+            clearLatch: { true }, authenticateLocal: { _ in authCalls += 1; return true })
+        if !nativeOnly { blocked.participants.unregister(.native) }
         blocked.revokeForLocalReturn = { barrierCalls += 1; return true }
         let refused = await blocked.requestLocalReturn()
         expect(!refused && blocked.latched && blocked.localReturnUnavailableReason != nil &&

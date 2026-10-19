@@ -258,12 +258,12 @@ extension HostAudioPrivacy {
     package convenience init(defaults: UserDefaults, nativeStartup: NativeAudioStartup) {
         let journal = LocalAudioJournal(defaults: defaults)
         let authentication = LocalAudioAuthentication()
-        self.init(localReturnCoverage: .nativeCoordinatorOnly, hal: CoreAudioPrivacyHAL(ops: .native), latched: journal.latched,
+        self.init(hal: CoreAudioPrivacyHAL(ops: .native), latched: journal.latched,
             persist: { journal.write(latched: true, original: journal.original) },
             localState: journal.original, saveLocal: { original in
                 journal.write(latched: original != nil, original: original)
             }, clearLatch: { journal.write(latched: false, original: nil) },
-            authenticateLocal: { await authentication.evaluate() }, cancelAuthentication: { authentication.cancel() },
+            authenticateLocal: { attempt in await authentication.evaluate(operationId: attempt) }, cancelAuthentication: { authentication.cancel() },
             nativeStartup: nativeStartup)
     }
 }

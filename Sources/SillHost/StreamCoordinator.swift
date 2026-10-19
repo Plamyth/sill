@@ -58,6 +58,7 @@ package final class StreamCoordinator {
     private let audioPrivacy: HostAudioPrivacy?
     private lazy var audioHardwareRoutes = AudioHardwareRoutes()
     private var physicalAudioRoutesRetired = false
+    private var localAudioReturnDrained = false
     private var audioRoutePublished: [ObjectIdentifier: UUID] = [:]
     private var audioRouteArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
     private let microphoneReceiver: HostMicrophoneReceiver
@@ -398,6 +399,9 @@ package final class StreamCoordinator {
         self.audioPrivacy?.revokeForLocalReturn = { [weak self] in
             guard let self else { return false }
             return await self.prepareLocalAudioReturn()
+        }
+        self.audioPrivacy?.inspectForLocalReturn = { [weak self] in
+            self?.localAudioReturnFacts() ?? .unknown
         }
         microphoneReceiver.availabilityChanged = { [weak self] in
             guard let self else { return }
@@ -2924,7 +2928,24 @@ package final class StreamCoordinator {
         guard drained else { return false }
         stopRemoteAudioIfIdle()
         await remoteAudioLifecycle.waitUntilIdle()
-        return true
+        guard await microphoneReceiver.waitForRetirement(), !Task.isCancelled else { return false }
+        let finallyDrained = await withCheckedContinuation { continuation in
+            server.drainRemoteAudio { continuation.resume(returning: $0) }
+        }
+        guard finallyDrained, !Task.isCancelled else { return false }
+        localAudioReturnDrained = true
+        return localAudioReturnFacts().quiescent
+    }
+
+    private func localAudioReturnFacts() -> LocalAudioParticipantFacts {
+        let retired = microphoneReceiver.retirementComplete
+        let captureStopped = remoteAudioLifecycle.isIdle && remoteAudioCapture.retirementConfirmed && !remoteAudioCapture.hasStream && !remoteAudioRunning
+        return .init(admissionFenced: physicalAudioRoutesRetired && audioPrivacy?.participants.isFenced == true,
+            startsSettled: retired && remoteAudioLifecycle.isIdle,
+            mediaDetached: retired && captureStopped && microphoneIngress.localReturnDetached && remoteAudioSubscribers.isEmpty,
+            callbacksDrained: retired && captureStopped && localAudioReturnDrained,
+            buffersEmpty: retired && microphoneIngress.localReturnDetached && localAudioReturnDrained && remoteAudioRequests.isEmpty && remoteAudioActions.isEmpty,
+            workersExited: retired && captureStopped)
     }
 
     private func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil,

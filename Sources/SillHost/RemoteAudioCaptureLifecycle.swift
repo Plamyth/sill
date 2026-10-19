@@ -20,6 +20,8 @@ final class RemoteAudioCaptureLifecycle {
 
     init(onCleared: (() -> Void)? = nil) { self.onCleared = onCleared }
 
+    var isIdle: Bool { current == nil && currentStart == nil }
+
     var isStopping: Bool { current != nil }
 
     func acquireStart(_ operation: @escaping @MainActor () async -> Bool) -> Start {
@@ -37,9 +39,12 @@ final class RemoteAudioCaptureLifecycle {
 
     func scheduleStop(_ operation: @escaping @MainActor () async -> Void) {
         guard current == nil else { return }
-        let pendingStart = currentStart?.task
+        let pendingStart = currentStart
         let stop = Stop(id: UUID(), task: Task {
-            _ = await pendingStart?.value
+            if let pendingStart {
+                _ = await pendingStart.task.value
+                if self.currentStart?.id == pendingStart.id { self.currentStart = nil }
+            }
             await operation()
         })
         current = stop

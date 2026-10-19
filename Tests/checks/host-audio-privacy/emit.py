@@ -46,8 +46,10 @@ revocation = block(coordinator, 'self.audioPrivacy?.revokeForLocalReturn =')
 assert 'guard let self else { return false }' in revocation
 assert 'return await self.prepareLocalAudioReturn()' in revocation
 assert constructor.index('server = try StreamServer(') < constructor.index(revocation)
+assert 'self.audioPrivacy?.inspectForLocalReturn =' in constructor
+assert 'self?.localAudioReturnFacts() ?? .unknown' in constructor
 factory = block((ROOT / 'Sources/SillHost/HostAudioPrivacy.swift').read_text(), 'package convenience init(defaults:')
-assert 'localReturnCoverage: .nativeCoordinatorOnly' in factory
+assert 'localReturnCoverage' not in factory
 assert 'nativeStartup: nativeStartup' in factory and 'verifiedAllParticipants' not in app + factory + coordinator
 menu = (ROOT / 'Sources/SillMenuBar/StatusItemController.swift').read_text()
 assert 'entry.subtitle = model.localAudioReturnUnavailableReason ?? model.localAudioReturnNotice' in menu
@@ -63,7 +65,7 @@ assert 'AudioObjectSetPropertyData' not in owner and 'previous' not in owner
 methods = [block(coordinator, 'private func ' + name + '(') for name in [
     'audioPrivacyReady', 'audioPrivacyChanged', 'microphoneCatalog', 'canEnableRemoteAudio',
     'audioRouteAuthorized', 'sendAudioRouteState', 'publishAudioRoutes', 'handleAudioRoute',
-    'prepareLocalAudioReturn', 'revokeRemoteAudio', 'stopRemoteAudioIfIdle', 'remoteAudioState'
+    'prepareLocalAudioReturn', 'localAudioReturnFacts', 'revokeRemoteAudio', 'stopRemoteAudioIfIdle', 'remoteAudioState'
 ]]
 fixture = (HERE / 'CoordinatorFixture.swift').read_text()
 fixture = fixture.replace('        // PRODUCTION_REVOCATION', revocation.replace('self.audioPrivacy?', 'privacy?'))
@@ -75,8 +77,8 @@ server_methods = [block(server, marker) for marker in [
 fixture = fixture.replace('    // PRODUCTION_SERVER_BOUNDARIES', '\n\n'.join(server_methods).replace('NWConnection', 'BoundaryConnection'))
 fixture = fixture.replace('    // PRODUCTION_BOUNDARIES', '\n\n'.join(methods).replace('NWConnection', 'BoundaryConnection'))
 source = {str(p.relative_to(ROOT)): p.read_bytes() for p in (ROOT / 'Sources/StreamProtocol').glob('*.swift')}
-for name in ['HostAudioPrivacy', 'HostAudioPrivacyModel', 'LocalAudioReturn', 'SillVirtualMicrophoneOwner', 'HALMicrophoneSink',
-             'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'AudioHardwareRoutes', 'RemoteAudioCaptureLifecycle']:
+for name in ['HostAudioPrivacy', 'HostAudioPrivacyModel', 'LocalAudioReturn', 'LocalAudioParticipants', 'SillVirtualMicrophoneOwner', 'HALMicrophoneSink',
+             'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'AudioHardwareRoutes', 'RemoteAudioCaptureLifecycle', 'SystemAudioCapture']:
     path = ROOT / 'Sources/SillHost' / (name + '.swift')
     source[str(path.relative_to(ROOT))] = path.read_bytes()
 files = {}
@@ -84,7 +86,7 @@ for name, data in source.items():
     folder = 'StreamProtocol' if '/StreamProtocol/' in name else 'HostPrivacyChecks'
     files['Sources/' + folder + '/' + Path(name).name] = data
 files['Sources/HostPrivacyChecks/CoordinatorFixture.swift'] = fixture.encode()
-for name in ['FakeHAL.swift', 'Main.swift']:
+for name in ['FakeHAL.swift', 'Main.swift', 'ParticipantFixture.swift']:
     files['Sources/HostPrivacyChecks/' + name] = (HERE / name).read_bytes()
 files['Package.swift'] = b'''// swift-tools-version:5.9
 import PackageDescription

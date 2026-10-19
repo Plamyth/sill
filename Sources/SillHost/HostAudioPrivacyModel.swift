@@ -109,25 +109,30 @@ package final class HostAudioPrivacy {
     private var localState: LocalAudioState?
     private let saveLocal: (LocalAudioState?) -> Bool
     private let clearLatch: () -> Bool
-    private let authenticateLocal: () async -> Bool
+    private let authenticateLocal: (UUID) async -> Bool
     private let cancelAuthentication: () -> Void
     private var localReturnID = UUID()
     private var returningLocal = false
+    private var authenticatingLocal = false
+    private var privacyGeneration = UUID()
     private var persistenceHealthy = true
     var revokeForLocalReturn: (() async -> Bool)?
-    private let nativeStartup: NativeAudioStartup?
-    private let localReturnCoverage: LocalAudioReturnCoverage
-    package var localReturnUnavailableReason: String? { localReturnCoverage.unavailableReason }
+    private let nativeStartup: NativeAudioStartup
+    var participants: LocalAudioParticipantRegistry { nativeStartup.participants }
+    var inspectForLocalReturn: (() -> LocalAudioParticipantFacts)?
+    package var localReturnUnavailableReason: String? { participants.unavailableReason }
 
-    init(localReturnCoverage: LocalAudioReturnCoverage = .unknown,
-         hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
+    init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
          localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
-         clearLatch: @escaping () -> Bool = { false }, authenticateLocal: @escaping () async -> Bool = { false },
+         clearLatch: @escaping () -> Bool = { false }, authenticateLocal: @escaping (UUID) async -> Bool = { _ in false },
          cancelAuthentication: @escaping () -> Void = {}, nativeStartup: NativeAudioStartup? = nil) {
         self.hal = hal; self.latched = latched; self.persist = persist
         self.localState = localState; self.saveLocal = saveLocal; self.clearLatch = clearLatch
         self.authenticateLocal = authenticateLocal; self.cancelAuthentication = cancelAuthentication
-        self.nativeStartup = nativeStartup; self.localReturnCoverage = localReturnCoverage
+        let startup = nativeStartup ?? NativeAudioStartup()
+        self.nativeStartup = startup
+        startup.revoke = { [weak self] in await self?.revokeForLocalReturn?() ?? false }
+        startup.readFacts = { [weak self] in self?.inspectForLocalReturn?() ?? .unknown }
     }
 
     @discardableResult
@@ -149,7 +154,7 @@ package final class HostAudioPrivacy {
     /// Readback is mandatory at each admission boundary. A mismatch revokes before repair.
     @discardableResult
     package func verify() -> Bool {
-        guard latched, watching, persistenceHealthy, !returningLocal, localState?.isValid == true else { return false }
+        guard latched, watching, persistenceHealthy, !returningLocal, !participants.isFenced, localState?.isValid == true else { return false }
         do {
             let snapshot = try hal.read()
             guard try snapshot.plan().isEmpty else { fail(.readback); schedule(); return false }
@@ -233,35 +238,49 @@ package final class HostAudioPrivacy {
 
     private func invalidateLocalReturn() {
         localReturnID = UUID()
+        privacyGeneration = UUID()
         cancelAuthentication()
     }
 
     /// This request owns authentication. Callers cannot supply an authentication result.
-    package func requestLocalReturn() async -> Bool {
-        guard localReturnUnavailableReason == nil else { return false }
-        // A cold menu/URL request waits without consuming an authentication attempt.
-        await nativeStartup?.waitUntilInitialized()
-        guard latched, persistenceHealthy, !returningLocal, let original = localState, original.isValid else { return false }
-        returningLocal = true
+    package func requestLocalReturn(budgetMilliseconds: Int = 30_000) async -> Bool {
+        guard (1...30_000).contains(budgetMilliseconds), localReturnUnavailableReason == nil else { return false }
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
+        guard await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
+            await self.nativeStartup.waitUntilInitialized(); return true
+        }) == true else { return false }
+        guard !Task.isCancelled, ContinuousClock.now < deadline, localReturnUnavailableReason == nil,
+              latched, persistenceHealthy, !returningLocal, !authenticatingLocal,
+              let original = localState, original.isValid else { return false }
+        authenticatingLocal = true
         defer {
+            authenticatingLocal = false
             returningLocal = false
             if latched && !state.protected { schedule() }
         }
         let request = UUID()
+        let generation = privacyGeneration
+        let membership = participants.snapshot
         localReturnID = request
-        guard await authenticateLocal(), localReturnID == request, latched else { return false }
+        let authenticated = await LocalAudioCompletion<Bool>.wait(until: deadline) {
+            guard !Task.isCancelled, ContinuousClock.now < deadline, self.localReturnID == request,
+                  self.privacyGeneration == generation, self.participants.matches(membership),
+                  self.localReturnUnavailableReason == nil, self.latched, self.persistenceHealthy else { return false }
+            return await self.authenticateLocal(request)
+        }
+        guard authenticated == true, !Task.isCancelled, ContinuousClock.now < deadline, localReturnID == request,
+              privacyGeneration == generation, participants.matches(membership), latched, persistenceHealthy else {
+            cancelAuthentication()
+            return false
+        }
+        returningLocal = true
         pending?.cancel(); pending = nil
         publish(AudioPrivacyState(version: 2, protected: false, reason: "인증된 로컬 입출력으로 복귀 중입니다."))
-        let quiescent: Bool
-        if let nativeStartup {
-            quiescent = await nativeStartup.quiesce(using: revokeForLocalReturn)
-        } else if let revokeForLocalReturn {
-            quiescent = await revokeForLocalReturn()
-        } else {
-            quiescent = false
-        }
-        guard quiescent,
-              localReturnID == request, latched, persistenceHealthy else { return false }
+        guard await participants.fenceAndQuiesce(operationId: request, privacyGeneration: generation,
+                    membership: membership, budgetMilliseconds: budgetMilliseconds, deadline: deadline),
+              await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
+              localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
+              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
         // A failed removal invalidates the HAL generation even when listeners remain registered.
         watching = false
         guard hal.observe(nil, changed: nil) else {
@@ -269,6 +288,11 @@ package final class HostAudioPrivacy {
             schedule()
             return false
         }
+        guard localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
+              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
+              let beforeRestore = try? hal.read(), original.matches(beforeRestore) || (try? beforeRestore.plan().isEmpty) == true,
+              localReturnID == request, privacyGeneration == generation,
+              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
         guard hal.restoreLocal(original), let restored = try? hal.read(), original.matches(restored) else {
             fail(.readback)
             returningLocal = false

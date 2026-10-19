@@ -284,3 +284,27 @@ checks cover privacy revocation and source revision together at the actual send 
 Native Mac and full iPad SDK builds passed locally without signing, installation or launch.
 These results require parent independent review before canonical integration and do not
 establish physical silence, S23 coverage, source-guard migration or live acceptance.
+
+
+## Local-return participant v1 source candidate
+
+The `codex/local-audio-participants-20261019` unit supersedes the coverage-enum description
+above: no verified coverage flag survives. NativeAudioStartup registers native.sill through
+constructor callbacks; the actual factory and coordinator use that registry. s23.audio.relay
+is also required and has no production authenticated connector, so local return remains
+unavailable before OS authentication/HAL restoration. Baseline fixtures now register inert
+fake owners explicitly rather than enabling a success enum.
+
+Pending authentication preserves verify/reconcile; one operation UUID is passed into the
+OS authentication attempt and the participant requests. The separate privacy generation
+still rotates on the existing invalidations. The whole caller deadline covers startup,
+authentication, quiesce and fresh inspection. The registry fence persists after cancellation,
+uncertainty and completion. Listener repair can recover HAL protection without admitting audio.
+
+The actual prepare path waits microphone sink retirement and capture lifecycle completion,
+then performs a final server drain after producers stop. System capture retirement also
+requires successful stop completion and its callback queue barrier. The source-only regression
+suite is `Tests/checks/local-audio-participants/run.py ROOT OUTPUT`; it adds timeout, cancellation,
+late sink/capture/server callbacks, membership/boot changes, Codable interop and lifecycle cases
+to all existing host checks. No tests/builds were executed by this worker. Parent Mini checks,
+full SDK compilation and independent review remain necessary for this exact source.
