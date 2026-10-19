@@ -156,7 +156,7 @@ struct CanvasRelay {
         let body = try JSONSerialization.data(withJSONObject:["baseSha256":baseSha256,"text":text])
         let saved = try await response(request(vaultURL("/vault/note",path:path),method:"PUT",body:body),
                                        as:VaultNote.self).validated(at:path)
-        guard saved.text == text else { throw URLError(.badServerResponse) }
+        guard saved.text.utf8.elementsEqual(text.utf8) else { throw URLError(.badServerResponse) }
         return saved
     }
 
