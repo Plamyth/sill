@@ -259,10 +259,9 @@ struct PortraitStreamScreen: View {
     /// Keyboard button (it is in the key row) but with the Aa control, whose ruler opens centred on
     /// it; the strip's end and the Desktop button fade while it is open. `width`: the bar's row.
     private func windowBar(width: CGFloat) -> some View {
-        // Apps, Menus, Aa, Desktop, Settings, and the strip: Menus only where the row holds it and
-        // still a whole thumbnail (not in a 320 pt Slide Over).
-        let menusFit = MacMenuButton.fits(width: width, buttons: UIDevice.current.userInterfaceIdiom == .pad ? 7 : 5, buttonWidth: metrics.buttonWidth, gap: 12,
-                                          thumbWidth: metrics.thumbWidth)
+        let layout = IPadToolbarLayout(width: width, baseButtons: 4, buttonWidth: metrics.buttonWidth,
+                                      gap: 12, thumbWidth: metrics.thumbWidth,
+                                      isPad: UIDevice.current.userInterfaceIdiom == .pad)
         return HStack(spacing: 12) {
             appsButton()
 
@@ -271,7 +270,7 @@ struct PortraitStreamScreen: View {
                 .allowsHitTesting(!scaleOpen)
 
             // The Mac's menus, as in the landscape bar: only while the Mac sent some.
-            if client.menus.hasMenus, menusFit {
+            if client.menus.hasMenus, layout.menusInline {
                 MacMenuButton(client: client, width: metrics.buttonWidth, height: metrics.buttonHeight,
                               radius: metrics.buttonRadius, iconSize: metrics.buttonIcon, spacing: metrics.buttonSpacing,
                               onOpen: menusOpened, onClose: menusClosed)
@@ -280,7 +279,7 @@ struct PortraitStreamScreen: View {
                     .transition(.opacity)
             }
 
-            if UIDevice.current.userInterfaceIdiom == .pad {
+            if layout.workspaceInline {
                 BarButton(open: false, width: metrics.buttonWidth, height: metrics.buttonHeight,
                           radius: metrics.buttonRadius, accessibilityLabel: "그림판 열기",
                           action: openCanvas) {
@@ -309,7 +308,18 @@ struct PortraitStreamScreen: View {
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
-            settingsButton()
+            Group {
+                if UIDevice.current.userInterfaceIdiom == .pad, !layout.workspaceInline {
+                    IPadWorkspaceMenu(width: metrics.buttonWidth, height: metrics.buttonHeight,
+                                      radius: metrics.buttonRadius, iconSize: metrics.buttonIcon,
+                                      spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,
+                                      openSettings: { setSettings(!settingsOpen, true) },
+                                      openCanvas: openCanvas, openTestDestinations: openTestDestinations)
+                        .tourTarget(.settings)
+                } else {
+                    settingsButton()
+                }
+            }
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
         }

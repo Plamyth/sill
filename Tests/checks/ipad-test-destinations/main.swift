@@ -32,6 +32,12 @@ struct TestDestinationsChecks {
         } catch { preconditionFailure("Unexpected error: \(error)") }
     }
 
+    static func refusesShared(_ work: () throws -> Void) {
+        do { try work(); preconditionFailure("Shared URL policy accepted an unsafe address") }
+        catch let error as TestDestinationCatalog.ValidationError { precondition(error == .unsafeURL) }
+        catch { preconditionFailure("Unexpected shared policy error: \(error)") }
+    }
+
     @MainActor static func wait(_ condition: () -> Bool) async {
         for _ in 0..<1000 {
             if condition() { return }
@@ -41,6 +47,7 @@ struct TestDestinationsChecks {
     }
 
     @MainActor static func main() async throws {
+        checkToolbarBounds()
         let now = Date()
         let timestamp = ISO8601DateFormatter().string(from: now)
         let first = entry(checkedAt: timestamp)
@@ -56,6 +63,38 @@ struct TestDestinationsChecks {
         let emptyJSON = String(data: try JSONEncoder().encode(empty), encoding: .utf8)!
         let decodedEmpty = try envelope("{\"otherExistingField\":false,\"testDestinations\":\(emptyJSON)}").validated(now: now)
         precondition(decodedEmpty.entries.isEmpty)
+        for candidate in [empty, catalog] {
+            let fields = try JSONSerialization.jsonObject(with: JSONEncoder().encode(candidate)) as! [String: Any]
+            func withState(_ state: Any?) throws -> TestDestinationsEnvelope {
+                var value = fields
+                value["state"] = state
+                let data = try JSONSerialization.data(withJSONObject: ["testDestinations": value])
+                return try JSONDecoder().decode(TestDestinationsEnvelope.self, from: data)
+            }
+            for state: String? in [nil, "ready"] {
+                let decoded = try withState(state).validated(now: now)
+                precondition(decoded == candidate, "Ready and valid legacy catalogs must preserve entries")
+            }
+            guard case .unavailable = try withState("unavailable") else {
+                preconditionFailure("Unavailable producer state became a ready catalog")
+            }
+            refuses(.catalogUnavailable) { _ = try withState("unavailable").validated(now: now) }
+            for state: Any in ["malformed", "unknown", 1, true, NSNull(), ["ready"], ["state": "ready"]] {
+                guard case .malformed = try withState(state) else {
+                    preconditionFailure("Invalid producer state became a ready catalog: \(state)")
+                }
+                refuses(.malformed, context: String(describing: state)) { _ = try withState(state).validated(now: now) }
+            }
+        }
+        guard case .unavailable = try envelope("{\"testDestinations\":{\"state\":\"unavailable\"}}") else {
+            preconditionFailure("Unavailable state required a fake empty catalog")
+        }
+        refuses(.catalogUnavailable) {
+            _ = try envelope("{\"testDestinations\":{\"state\":\"unavailable\"}}").validated(now: now)
+        }
+        refuses(.malformed) {
+            _ = try envelope("{\"testDestinations\":{\"state\":\"ready\"}}").validated(now: now)
+        }
         var stale = catalog
         stale.observedAt = ISO8601DateFormatter().string(from: now.addingTimeInterval(-46))
         refuses(.stale) { try TestDestinationsPolicy.validate(stale, now: now) }
@@ -138,6 +177,30 @@ struct TestDestinationsChecks {
         }
         _ = try TestDestinationTarget(entry(url: "http://192.168.45.4:8080/app", checkedAt: timestamp), now: now)
         _ = try TestDestinationTarget(entry(url: "https://confirmed-mac.local/app", checkedAt: timestamp), now: now)
+        for host in ["127.0.0.1", "0.1.2.3", "169.254.169.254", "0177.0.0.1", "192.168.001.2",
+                     "[::ffff:127.0.0.1]", "[::ffff:0.1.2.3]", "[::ffff:169.254.169.254]",
+                     "[::ffff:a9fe:a9fe]", "[::169.254.169.254]", "[::a9fe:a9fe]"] {
+            let unsafe = entry(url: "https://\(host)/app", checkedAt: timestamp)
+            refusesShared { _ = try unsafe.validatedURL() }
+            refusesShared { try TestDestinationCatalog(observedAt: timestamp, entries: [unsafe]).validate() }
+            refuses(.unsafeURL, context: host) { _ = try TestDestinationTarget(unsafe, now: now) }
+            precondition(!target.allows(URL(string: unsafe.url)!))
+            var redirect = first
+            redirect.redirectOrigins = ["https://\(host)"]
+            refusesShared { _ = try redirect.validatedRedirectOrigins() }
+            refusesShared { try TestDestinationCatalog(observedAt: timestamp, entries: [redirect]).validate() }
+            refuses(.unsafeURL, context: host) { _ = try TestDestinationTarget(redirect, now: now) }
+        }
+        for host in ["192.168.45.4", "169.253.169.254", "169.255.169.254", "[::ffff:192.168.45.4]",
+                     "[::ffff:c0a8:2d04]", "[::192.168.45.4]", "[2001:db8::1]"] {
+            var allowed = entry(url: "https://\(host)/app", checkedAt: timestamp)
+            _ = try allowed.validatedURL()
+            allowed.redirectOrigins = ["https://\(host)"]
+            _ = try allowed.validatedRedirectOrigins()
+            try TestDestinationCatalog(observedAt: timestamp, entries: [allowed]).validate()
+            let allowedTarget = try TestDestinationTarget(allowed, now: now)
+            precondition(allowedTarget.allows(URL(string: "https://\(host)/next")!))
+        }
         let suite = "ipad-test-destinations-checks.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -195,6 +258,6 @@ struct TestDestinationsChecks {
         probes.pending[2].resume(returning: nil)
         for _ in 0..<10 { await Task.yield() }
         precondition(probeModel.selection == nil, "Dismissal must discard pending HEAD results")
-        print("iPad test destination policy and cancellation checks passed")
+        print("iPad test destination policy, toolbar bounds and cancellation checks passed")
     }
 }

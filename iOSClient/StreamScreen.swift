@@ -1062,14 +1062,15 @@ struct StreamScreen: View {
     private func landscape(bar plain: BarMetrics, width: CGFloat, fold: FoldInfo) -> some View {
         // The book pose (docs/iphone-duo-plan.md, (a)): nothing on the fold's band; elsewhere as before.
         let (bar, stripWidth) = plain.clearing(fold, width: width)
+        let layout = IPadToolbarLayout(width: width - 2 * bar.padding, baseButtons: 5,
+                                      buttonWidth: bar.buttonWidth, gap: bar.gap, thumbWidth: bar.thumbWidth,
+                                      isPad: UIDevice.current.userInterfaceIdiom == .pad)
         return VStack(spacing: 0) {
             TopBar(client: client, metrics: bar, stripWidth: stripWidth, drawerOpen: $drawerOpen,
                    keyboardShown: $keyboardShown,
                    textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
                    settingsOpen: settingsOpen,
-                   // Apps, Menus, Aa, Keyboard, Desktop, Settings, and the strip.
-                   menusFit: MacMenuButton.fits(width: width - 2 * bar.padding, buttons: UIDevice.current.userInterfaceIdiom == .pad ? 8 : 6, buttonWidth: bar.buttonWidth,
-                                                gap: bar.gap, thumbWidth: bar.thumbWidth),
+                   menusFit: layout.menusInline, workspaceInline: layout.workspaceInline,
                    openCanvas: { workspace = .canvas },
                    openTestDestinations: { workspace = .testDestinations },
                    toggleKeyboard: { overlay.toggleKeyboard() },
@@ -1333,6 +1334,53 @@ struct BarMetrics {
                                     showsTextSize: true, settingsWidth: 340)
 }
 
+struct IPadToolbarLayout {
+    let workspaceInline: Bool
+    let menusInline: Bool
+
+    init(width: CGFloat, baseButtons: Int, buttonWidth: CGFloat, gap: CGFloat, thumbWidth: CGFloat, isPad: Bool) {
+        workspaceInline = isPad && MacMenuButton.fits(width: width, buttons: baseButtons + 2,
+                                                     buttonWidth: buttonWidth, gap: gap, thumbWidth: thumbWidth)
+        menusInline = MacMenuButton.fits(width: width, buttons: baseButtons + (workspaceInline ? 2 : 0) + 1,
+                                        buttonWidth: buttonWidth, gap: gap, thumbWidth: thumbWidth)
+    }
+}
+
+struct IPadWorkspaceMenu: View {
+    let width: CGFloat
+    let height: CGFloat
+    var radius: CGFloat = 16
+    var iconSize: CGFloat = 22
+    let spacing: CGFloat
+    let settingsOpen: Bool
+    let openSettings: () -> Void
+    let openCanvas: () -> Void
+    let openTestDestinations: () -> Void
+
+    var body: some View {
+        Menu {
+            Button(settingsOpen ? "설정 닫기" : "설정", systemImage: "gearshape", action: openSettings)
+            Button("그림판", systemImage: "pencil.tip.crop.circle", action: openCanvas)
+                .accessibilityIdentifier("openCanvasBridge")
+            Button("프로젝트 테스트", systemImage: "globe", action: openTestDestinations)
+                .accessibilityIdentifier("openTestDestinations")
+        } label: {
+            VStack(spacing: spacing) {
+                Image(systemName: "ellipsis.circle").font(.system(size: iconSize))
+                    .foregroundStyle(Palette.text)
+                Text("더 보기").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Palette.barLabel)
+            }
+            .frame(width: width, height: height)
+            .background(RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(settingsOpen ? Palette.controlOpen : Palette.control))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("더 보기. 설정, 그림판, 프로젝트 테스트")
+        .accessibilityIdentifier("workspaceOverflow")
+    }
+}
+
 private struct TopBar: View {
     @ObservedObject var client: StreamClient
     let metrics: BarMetrics
@@ -1347,6 +1395,7 @@ private struct TopBar: View {
     let settingsOpen: Bool
     /// Whether the bar holds the Menus button and still a whole thumbnail (`MacMenuButton.fits`).
     let menusFit: Bool
+    let workspaceInline: Bool
     let openCanvas: () -> Void
     let openTestDestinations: () -> Void
     let toggleKeyboard: () -> Void
@@ -1388,7 +1437,7 @@ private struct TopBar: View {
                     .transition(.opacity)
             }
 
-            if UIDevice.current.userInterfaceIdiom == .pad {
+            if workspaceInline {
                 button(open: false, symbol: "pencil.tip.crop.circle", label: "그림판",
                        accessibilityLabel: "그림판 열기", action: openCanvas)
                     .accessibilityIdentifier("openCanvasBridge")
@@ -1421,10 +1470,18 @@ private struct TopBar: View {
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
-            // Leave's old slot: Disconnect is the Settings panel's pinned last row now.
-            button(open: settingsOpen, symbol: "gearshape", label: "설정",
-                   accessibilityLabel: settingsOpen ? "설정 닫기" : "\(client.macName.isEmpty ? "Mac" : client.macName) 설정",
-                   action: { setSettings(!settingsOpen, true) })
+            Group {
+                if UIDevice.current.userInterfaceIdiom == .pad, !workspaceInline {
+                    IPadWorkspaceMenu(width: metrics.buttonWidth, height: metrics.buttonHeight,
+                                      spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,
+                                      openSettings: { setSettings(!settingsOpen, true) },
+                                      openCanvas: openCanvas, openTestDestinations: openTestDestinations)
+                } else {
+                    button(open: settingsOpen, symbol: "gearshape", label: "설정",
+                           accessibilityLabel: settingsOpen ? "설정 닫기" : "\(client.macName.isEmpty ? "Mac" : client.macName) 설정",
+                           action: { setSettings(!settingsOpen, true) })
+                }
+            }
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
                 .tourTarget(.settings)
