@@ -192,6 +192,29 @@ final class NoteProtocol: URLProtocol {
         check(foreignReads == 0 && foreign.vaultNote == nil,
             "linked node cannot silently bind to a different relay")
 
+        let healthy = store()
+        await healthy.openVaultNote(original.path) { _ in original }
+        _ = healthy.attachOpenedVaultNote()
+        var foreignNode = healthy.scene.nodes[0]
+        foreignNode.id = UUID()
+        foreignNode.vaultNote = VaultNoteReference(path:original.path,sha256:original.sha256,relayAddress:"http://foreign")
+        healthy.scene.nodes.append(foreignNode)
+        var rejectedReads = 0
+        await healthy.openVaultNote(original.path,nodeID:foreignNode.id) { _ in rejectedReads += 1; return fresh }
+        check(rejectedReads == 0 && healthy.vaultNote?.sha256 == original.sha256 && !healthy.vaultBlocked,
+            "rejected foreign-node open preserves the existing clean editor")
+        healthy.vaultDraft = "healthy editor remains writable"
+        check(healthy.vaultCanSave,"rejected open cannot invalidate the previous editor context")
+        var healthyWrites = 0
+        let healthySave = snapshot(healthy.vaultDraft)
+        await healthy.saveVaultNote { _,base,_ in
+            healthyWrites += 1
+            check(base == original.sha256,"preserved editor keeps its original CAS base")
+            return healthySave
+        }
+        check(healthyWrites == 1 && healthy.vaultNote?.sha256 == healthySave.sha256 && !healthy.vaultDirty,
+            "original editor saves successfully after a rejected foreign open")
+
         let recovery = store()
         await recovery.openVaultNote(original.path) { _ in original }
         let recoveryID = recovery.attachOpenedVaultNote()!
