@@ -250,10 +250,37 @@ struct CanvasWorkspace: View {
                 if let note = store.vaultNote {
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
-                    TextEditor(text:$store.vaultDraft)
-                        .font(.body.monospaced())
+                    VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection)
+                        .frame(minHeight:150)
                         .disabled(store.vaultLoading)
                         .accessibilityIdentifier("obsidianMarkdownEditor")
+                    VStack(alignment:.leading,spacing:6) {
+                        if let id = store.vaultLinkedBlockID {
+                            Text("연결 블록 ^\(id)").font(.caption).textSelection(.enabled)
+                        }
+                        Text(store.vaultExcerptMessage).font(.footnote)
+                        Button { Task { await excerptVaultBlock() } } label: {
+                            Text("선택 문단 발췌").frame(maxWidth:.infinity,minHeight:44)
+                        }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(store.vaultSelectedBlock == nil)
+                            .accessibilityHint("선택한 일반 문단을 고유한 원본 표식으로 연결합니다.")
+                        Button {
+                            if store.attachOpenedVaultNote() != nil, store.closeVaultEditor() { vaultOpen = false }
+                        } label: {
+                            Text("전체 노트 연결").frame(maxWidth:.infinity,minHeight:44)
+                        }.disabled(!store.vaultCanAttach)
+                        if store.vaultBlocked && !store.vaultDirty {
+                            Button { Task { await openVaultNote(note.path) } } label: {
+                                Text("원본 다시 읽기").frame(maxWidth:.infinity,minHeight:44)
+                            }
+                        }
+                        if store.vaultDirty {
+                            Button(role:.destructive) { vaultDiscardOpen = true } label: {
+                                Text("입력 버리고 닫기").frame(maxWidth:.infinity,minHeight:44)
+                            }.disabled(store.vaultSaving)
+                        }
+                    }.padding(.horizontal)
                 } else if store.vaultLoading {
                     ProgressView("원본 노트를 읽는 중입니다.")
                 } else {
@@ -275,7 +302,7 @@ struct CanvasWorkspace: View {
             .toolbar {
                 ToolbarItem(placement:.topBarLeading) {
                     if store.vaultNote != nil {
-                        Button("목록") { _ = store.closeVaultEditor() }
+                        Button("목록") { _ = store.closeVaultEditor() }.frame(minWidth:44,minHeight:44)
                     } else if !vaultDirectory.isEmpty {
                         Button("상위 폴더") {
                             vaultDirectory = vaultDirectory.split(separator:"/").dropLast().joined(separator:"/")
@@ -284,19 +311,9 @@ struct CanvasWorkspace: View {
                     }
                 }
                 ToolbarItemGroup(placement:.topBarTrailing) {
-                    if let note = store.vaultNote {
-                        Button("캔버스에 연결") {
-                            if store.attachOpenedVaultNote() != nil, store.closeVaultEditor() { vaultOpen = false }
-                        }.disabled(!store.vaultCanAttach)
+                    if store.vaultNote != nil {
                         Button("저장") { Task { await saveVaultNote() } }
-                            .disabled(!store.vaultCanSave)
-                        if store.vaultBlocked && !store.vaultDirty {
-                            Button("원본 다시 읽기") { Task { await openVaultNote(note.path) } }
-                        }
-                        if store.vaultDirty {
-                            Button("입력 버리고 닫기",role:.destructive) { vaultDiscardOpen = true }
-                                .disabled(store.vaultSaving)
-                        }
+                            .frame(minWidth:44,minHeight:44).disabled(!store.vaultCanSave)
                     } else {
                         Button("새로고침",systemImage:"arrow.clockwise") { Task { await loadVaultEntries() } }
                             .disabled(store.vaultLoading)
@@ -305,7 +322,7 @@ struct CanvasWorkspace: View {
                 ToolbarItem(placement:.confirmationAction) {
                     Button("닫기") {
                         if store.closeVaultEditor() { vaultOpen = false }
-                    }
+                    }.frame(minWidth:44,minHeight:44)
                 }
             }
             .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving)
@@ -343,6 +360,15 @@ struct CanvasWorkspace: View {
         await store.saveVaultNote { path, sha, text in
             try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
         }
+    }
+
+    private func excerptVaultBlock() async {
+        store.setNoteConnection(address:relayAddress,token:relayToken)
+        let connection = relay
+        let id = await store.excerptSelectedVaultBlock(save: { path,sha,text in
+            try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
+        },load:connection.vaultNote)
+        if id != nil && !store.vaultDirty && store.closeVaultEditor() { vaultOpen = false }
     }
 
     private func sceneBytes() throws -> Data {
@@ -631,13 +657,15 @@ struct CanvasWorkspace: View {
                 if let reference = node.vaultNote {
                     Text(reference.cacheTruncated == true ? "원본 일부 미리보기 · \(reference.path)" :
                         "저장된 원본의 표시 캐시 · \(reference.path)").font(.caption)
+                    if let id = reference.blockID { Text("블록 ^\(id)").font(.caption).textSelection(.enabled) }
+                    Text(reference.sourceStateLabel).font(.caption)
                     Button("원본 노트 편집") {
                         inspectorOpen = false
                         Task {
                             await openVaultNote(reference.path,nodeID:id)
                             vaultOpen = true
                         }
-                    }
+                    }.frame(minHeight:44)
                 } else {
                     Button("내용 수정") {
                         store.proposedNode = id
@@ -822,6 +850,57 @@ struct CanvasWorkspace: View {
     }
 }
 
+private struct VaultMarkdownEditor: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var selection: NSRange
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.delegate = context.coordinator
+        view.font = UIFontMetrics.default.scaledFont(for:.monospacedSystemFont(ofSize:17,weight:.regular))
+        view.adjustsFontForContentSizeCategory = true
+        view.autocorrectionType = .no
+        view.smartQuotesType = .no
+        view.smartDashesType = .no
+        view.smartInsertDeleteType = .no
+        view.accessibilityLabel = "Obsidian Markdown 원본 편집기"
+        view.accessibilityIdentifier = "obsidianMarkdownEditor"
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.parent = self
+        view.isEditable = context.environment.isEnabled
+        guard view.markedTextRange == nil else { return }
+        context.coordinator.updating = true
+        defer { context.coordinator.updating = false }
+        if !view.text.utf8.elementsEqual(text.utf8) { view.text = text }
+        let start = max(0,min(selection.location,text.utf16.count))
+        let range = NSRange(location:start,length:max(0,min(selection.length,text.utf16.count - start)))
+        if view.selectedRange != range {
+            view.selectedRange = range
+            view.scrollRangeToVisible(range)
+        }
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: VaultMarkdownEditor
+        var updating = false
+        init(_ parent: VaultMarkdownEditor) { self.parent = parent }
+        func textViewDidChange(_ view: UITextView) {
+            guard !updating else { return }
+            parent.text = view.text
+            parent.selection = view.selectedRange
+        }
+        func textViewDidChangeSelection(_ view: UITextView) {
+            guard !updating else { return }
+            parent.selection = view.selectedRange
+        }
+    }
+}
+
 private struct CanvasInkHistoryButtons: View {
     @ObservedObject var history: CanvasInkHistory
 
@@ -862,8 +941,15 @@ private struct NodeTile: View {
     @State private var dragOrigin: CanvasPoint?
 
     var body: some View {
-        Text(node.text.isEmpty ? "내용 입력" : node.text)
-            .font(.title3).frame(width:node.frame.width,height:node.frame.height)
+        VStack(spacing:4) {
+            Text(node.text.isEmpty ? "내용 입력" : node.text).font(.title3)
+                .lineLimit(node.vaultNote == nil ? nil : 3)
+            if let reference = node.vaultNote {
+                Text(reference.blockID.map { "^\($0)" } ?? reference.path).font(.caption).lineLimit(1)
+                Text(reference.sourceStateLabel).font(.caption2).lineLimit(2)
+            }
+        }
+            .frame(width:node.frame.width,height:node.frame.height)
             .foregroundStyle(Color(uiColor:CanvasPalette.nodeText))
             .background(Color(uiColor:CanvasPalette.nodeFill),
                         in:RoundedRectangle(cornerRadius:14))
@@ -872,6 +958,7 @@ private struct NodeTile: View {
                     store.selectedNode == node.id ? Color(uiColor:CanvasPalette.link) : .gray,
                     lineWidth:3))
             .onTapGesture { store.select(node.id) }
+            .accessibilityElement(children:.combine)
             .gesture(DragGesture().onChanged { value in
                 if dragOrigin == nil { dragOrigin = CanvasPoint(x:node.frame.x,y:node.frame.y) }
                 guard let dragOrigin else { return }

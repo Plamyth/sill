@@ -70,10 +70,26 @@ struct InkStroke: Codable, Identifiable, Equatable {
 }
 
 struct VaultNoteReference: Codable, Equatable {
+    enum SourceState: String, Codable { case current, changed, missing, ambiguous, unsupported, unavailable }
     let path: String
     var sha256: String
     let relayAddress: String
     var cacheTruncated: Bool? = nil
+    var blockID: String? = nil
+    var sourceState: SourceState? = nil
+    var observedSha256: String? = nil
+    var quoteSha256: String? = nil
+
+    var sourceStateLabel: String {
+        switch sourceState {
+        case .current: return "원본 확인됨 · 표시 텍스트는 캐시입니다."
+        case .changed: return "원본 변경됨 · 최신 표시 캐시입니다."
+        case .missing: return "출처 없음 · 마지막 확인 발췌를 유지합니다."
+        case .ambiguous: return "블록 ID 중복 · 마지막 확인 발췌를 유지합니다."
+        case .unsupported: return "지원하지 않는 블록 · 마지막 확인 발췌를 유지합니다."
+        case .unavailable, nil: return "원본 확인 필요 · 저장된 표시 캐시입니다."
+        }
+    }
 
     static func validPath(_ path: String) -> Bool {
         !path.isEmpty && path.count <= 1024 && path.hasSuffix(".md") &&
@@ -84,6 +100,153 @@ struct VaultNoteReference: Codable, Equatable {
     }
 }
 
+enum VaultBlockError: LocalizedError {
+    case unsupported, ambiguous, missing, selection
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupported: return "일반 문단만 발췌할 수 있습니다. 복합 블록이나 분리된 표식은 지원하지 않습니다."
+        case .ambiguous: return "같은 블록 ID가 여러 곳에 있어 출처를 확정할 수 없습니다."
+        case .missing: return "원본에서 블록 표식을 찾지 못했습니다. 저장된 발췌는 유지합니다."
+        case .selection: return "한 문단 안을 누르거나 해당 문단의 텍스트를 선택하세요."
+        }
+    }
+}
+
+struct VaultExcerptBlock: Equatable {
+    let byteRange: Range<Int>
+    let utf16Range: NSRange
+    let quote: String
+    let blockID: String?
+
+    func selection(in text: String) -> NSRange? {
+        guard Range(utf16Range,in:text) != nil else { return nil }
+        return utf16Range
+    }
+}
+
+struct VaultMarkdownBlocks {
+    private struct Line {
+        let range: Range<Int>
+        let utf16Range: NSRange
+        let text: String
+        let excluded: Bool
+        var blank: Bool { text.trimmingCharacters(in:.whitespaces).isEmpty }
+    }
+    let text: String
+    private let blocks: [VaultExcerptBlock]
+    private let markers: [String:Int]
+
+    init(_ text: String) {
+        self.text = text
+        let bytes = Array(text.utf8)
+        var lines: [Line] = []
+        var start = 0
+        var utf16Offset = 0
+        var fence: (UInt8, Int)?
+        var frontmatter = false
+        let opaqueDocument = text.contains("<") || text.contains("%%") || text.contains("$$")
+        while start < bytes.count {
+            let end = bytes[start...].firstIndex(of:10) ?? bytes.count
+            let contentEnd = end > start && bytes[end - 1] == 13 ? end - 1 : end
+            let line = String(decoding:bytes[start..<contentEnd],as:UTF8.self)
+            let trimmed = line.trimmingCharacters(in:.whitespaces)
+            var excluded = opaqueDocument || frontmatter || fence != nil
+            if start == 0 && (trimmed == "---" || trimmed == "\u{feff}---") {
+                frontmatter = true
+                excluded = true
+            } else if frontmatter && (trimmed == "---" || trimmed == "...") {
+                frontmatter = false
+            } else if !frontmatter, let first = trimmed.utf8.first, first == 96 || first == 126 {
+                let count = trimmed.utf8.prefix(while:{ $0 == first }).count
+                if count >= 3 {
+                    excluded = true
+                    if let open = fence {
+                        if open.0 == first && count >= open.1 && trimmed.utf8.count == count { fence = nil }
+                    } else { fence = (first,count) }
+                }
+            }
+            lines.append(Line(range:start..<contentEnd,utf16Range:NSRange(location:utf16Offset,length:line.utf16.count),
+                              text:line,excluded:excluded))
+            utf16Offset += line.utf16.count + (end - contentEnd) + (end < bytes.count ? 1 : 0)
+            start = end + 1
+        }
+        let marker = try! NSRegularExpression(pattern:"(?:^|[ \\t])\\^([A-Za-z0-9-]+)(?=[ \\t]*\\r?$)",
+                                               options:.anchorsMatchLines)
+        let ns = text as NSString
+        var counts: [String:Int] = [:]
+        for match in marker.matches(in:text,range:NSRange(location:0,length:ns.length)) {
+            counts[ns.substring(with:match.range(at:1)),default:0] += 1
+        }
+        markers = counts
+        let structural = try! NSRegularExpression(pattern:"^(?:[ #>+*\\-_=~`!\\[\\\\:]|[0-9]+[.)](?:[ \\t]|$))")
+        var parsed: [VaultExcerptBlock] = []
+        var cursor = 0
+        while cursor < lines.count {
+            if lines[cursor].blank { cursor += 1; continue }
+            let lower = cursor
+            while cursor < lines.count && !lines[cursor].blank { cursor += 1 }
+            let chunk = Array(lines[lower..<cursor])
+            guard !chunk.contains(where: { $0.excluded }), let first = chunk.first, let last = chunk.last else { continue }
+            var quoteEnd = last.range.upperBound
+            var id: String?
+            let lastText = last.text as NSString
+            if let match = marker.firstMatch(in:last.text,range:NSRange(location:0,length:lastText.length)),
+               match.range.location > 0 {
+                id = lastText.substring(with:match.range(at:1))
+                quoteEnd = last.range.lowerBound + lastText.substring(to:match.range.location).utf8.count
+            }
+            let quote = String(decoding:bytes[first.range.lowerBound..<quoteEnd],as:UTF8.self)
+            let plainLines = quote.components(separatedBy:"\n")
+            guard plainLines.allSatisfy({ raw in
+                let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
+                return !line.isEmpty && !line.hasPrefix("\u{feff}") && !line.hasSuffix(" ") && !line.hasSuffix("\t") &&
+                    !line.contains(where:{ "\t\r^`|<>[\\".contains($0) }) &&
+                    structural.firstMatch(in:line,range:NSRange(location:0,length:(line as NSString).length)) == nil
+            }) else { continue }
+            var following = cursor
+            while following < lines.count && lines[following].blank { following += 1 }
+            if following < lines.count && lines[following].text.hasPrefix("^") { continue }
+            parsed.append(VaultExcerptBlock(byteRange:first.range.lowerBound..<last.range.upperBound,
+                                            utf16Range:NSRange(location:first.utf16Range.location,
+                                                length:NSMaxRange(last.utf16Range) - first.utf16Range.location),
+                                            quote:quote,blockID:id))
+        }
+        blocks = parsed
+    }
+
+    func selected(_ selection: NSRange) throws -> VaultExcerptBlock {
+        guard selection.location >= 0, selection.length >= 0,
+              selection.location <= text.utf16.count, selection.length <= text.utf16.count - selection.location,
+              Range(selection,in:text) != nil else { throw VaultBlockError.selection }
+        guard let block = blocks.first(where:{ block in
+            let range = block.utf16Range
+            return selection.location >= range.location && selection.location <= NSMaxRange(range) &&
+                NSMaxRange(selection) <= NSMaxRange(range)
+        }) else { throw VaultBlockError.unsupported }
+        if let id = block.blockID, markers[id] != 1 { throw VaultBlockError.ambiguous }
+        return block
+    }
+
+    func resolve(_ id: String) throws -> VaultExcerptBlock {
+        guard markers[id,default:0] > 0 else { throw VaultBlockError.missing }
+        guard markers[id] == 1 else { throw VaultBlockError.ambiguous }
+        guard let block = blocks.first(where:{ $0.blockID == id }) else { throw VaultBlockError.unsupported }
+        return block
+    }
+
+    func anchored(_ block: VaultExcerptBlock) throws -> (text: String, blockID: String) {
+        guard blocks.contains(block) else { throw VaultBlockError.selection }
+        if let id = block.blockID { _ = try resolve(id); return (text,id) }
+        let id = "sill-" + UUID().uuidString.lowercased()
+        let bytes = Array(text.utf8)
+        let insertion = Array(" ^\(id)".utf8)
+        guard bytes.count + insertion.count <= 1024 * 1024 else { throw URLError(.dataLengthExceedsMaximum) }
+        return (String(decoding:bytes[..<block.byteRange.upperBound] + insertion + bytes[block.byteRange.upperBound...],
+                       as:UTF8.self),id)
+    }
+}
+
 struct VaultNoteSnapshot: Decodable, Equatable {
     let path: String
     let text: String
@@ -91,6 +254,10 @@ struct VaultNoteSnapshot: Decodable, Equatable {
     let modifiedAt: String
 
     var preview: String {
+        Self.preview(text)
+    }
+
+    static func preview(_ text: String) -> String {
         var bytes = Data(text.utf8.prefix(512))
         while !bytes.isEmpty {
             if let text = String(data:bytes,encoding:.utf8) { return text }

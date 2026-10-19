@@ -157,6 +157,7 @@ final class CanvasStore: ObservableObject {
     @Published var vaultDraft = "" {
         didSet { noteEditGeneration &+= 1 }
     }
+    @Published var vaultSelection = NSRange(location:0,length:0)
     @Published var vaultStatus = ""
     @Published private(set) var vaultSaving = false
     @Published private(set) var vaultLoading = false
@@ -177,6 +178,7 @@ final class CanvasStore: ObservableObject {
         var editorGeneration: UInt64
         let path: String
         let nodeID: UUID?
+        let blockID: String?
     }
     private var noteContext: NoteContext?
 
@@ -188,6 +190,18 @@ final class CanvasStore: ObservableObject {
     var vaultCanAttach: Bool {
         vaultNote != nil && !vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
+    }
+    var vaultLinkedBlockID: String? { noteContext?.blockID }
+    var vaultSelectedBlock: VaultExcerptBlock? {
+        guard vaultCanAttach, let note = vaultNote else { return nil }
+        return try? VaultMarkdownBlocks(note.text).selected(vaultSelection)
+    }
+    var vaultExcerptMessage: String {
+        guard vaultCanAttach, let note = vaultNote else { return "저장된 최신 원본에서 문단을 선택하세요." }
+        do {
+            let block = try VaultMarkdownBlocks(note.text).selected(vaultSelection)
+            return block.blockID.map { "기존 표식 ^\($0)을 사용합니다." } ?? "선택 문단 끝에 새 블록 표식만 저장합니다."
+        } catch { return error.localizedDescription }
     }
 
     func setNoteConnection(address: String, token: String) {
@@ -220,7 +234,8 @@ final class CanvasStore: ObservableObject {
               context.editorGeneration == noteEditorGeneration, !noteToken.isEmpty else { return false }
         if let id = context.nodeID {
             guard let ref = scene.nodes.first(where: { $0.id == id })?.vaultNote,
-                  ref.path == context.path, ref.relayAddress == noteAddress else { return false }
+                  ref.path == context.path, ref.relayAddress == noteAddress,
+                  ref.blockID == context.blockID else { return false }
         }
         return true
     }
@@ -237,6 +252,7 @@ final class CanvasStore: ObservableObject {
         noteContext = nil
         vaultNote = nil
         vaultDraft = ""
+        vaultSelection = NSRange(location:0,length:0)
         vaultLoading = false
         vaultBlocked = false
         return true
@@ -255,7 +271,8 @@ final class CanvasStore: ObservableObject {
         let linkedNodeID = nodeID ?? (noteContext?.path == path ? noteContext?.nodeID : nil)
         var context = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
             connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
-            path:path,nodeID:linkedNodeID)
+            path:path,nodeID:linkedNodeID,
+            blockID:linkedNodeID.flatMap { id in scene.nodes.first(where:{ $0.id == id })?.vaultNote?.blockID })
         guard noteContextIsCurrent(context) else {
             vaultStatus = "연결한 노트의 경로 또는 서버가 바뀌었습니다. 자동 재연결하지 않았습니다."
             return
@@ -290,6 +307,7 @@ final class CanvasStore: ObservableObject {
             noteRequest = nil
             vaultStatus = "Mac Obsidian 원본을 열었습니다."
             refreshNoteCache(note)
+            focusOpenedBlock(note)
         } catch {
             guard !Task.isCancelled, noteRequest == request, noteContext == context,
                   noteContextIsCurrent(context) else { return }
@@ -298,6 +316,97 @@ final class CanvasStore: ObservableObject {
             vaultBlocked = true
             vaultStatus = "원본을 열지 못했습니다: \(error.localizedDescription). 자동 생성하지 않습니다."
         }
+    }
+
+    private func focusOpenedBlock(_ note: VaultNoteSnapshot) {
+        vaultSelection = NSRange(location:0,length:0)
+        guard let id = noteContext?.blockID else { return }
+        do {
+            let block = try VaultMarkdownBlocks(note.text).resolve(id)
+            if let range = block.selection(in:note.text) { vaultSelection = range }
+            vaultStatus = "연결 블록 ^\(id)을 선택했습니다."
+        } catch {
+            vaultSelection = NSRange(location:NSNotFound,length:0)
+            vaultStatus = "연결 블록 ^\(id) · \(error.localizedDescription)"
+        }
+    }
+
+    @discardableResult
+    func excerptSelectedVaultBlock(save: (String, String, String) async throws -> VaultNoteSnapshot,
+                                   load: (String) async throws -> VaultNoteSnapshot) async -> UUID? {
+        guard vaultCanAttach, let base = vaultNote, let context = noteContext else { return nil }
+        do {
+            let markdown = VaultMarkdownBlocks(base.text)
+            let block = try markdown.selected(vaultSelection)
+            let anchor = try markdown.anchored(block)
+            if block.blockID != nil { return attachVaultBlock(block,note:base) }
+            let request = UUID(), editGeneration = noteEditGeneration
+            noteRequest = request
+            vaultSaving = true
+            defer {
+                if noteRequest == request {
+                    noteRequest = nil
+                    vaultSaving = false
+                    vaultBlocked = true
+                }
+            }
+            func current() -> Bool {
+                !Task.isCancelled && noteRequest == request && noteContext == context &&
+                    noteContextIsCurrent(context) && vaultNote?.sha256 == base.sha256
+            }
+            do {
+                let saved = try await save(base.path,base.sha256,anchor.text).validated(at:base.path)
+                guard saved.text.utf8.elementsEqual(anchor.text.utf8) else { throw URLError(.badServerResponse) }
+            } catch {
+                // A lost PUT response is reconciled by reading the same marker, never another write.
+            }
+            guard current() else { return nil }
+            noteReadSequence &+= 1
+            let readSequence = noteReadSequence
+            do {
+                let saved = try await load(base.path).validated(at:base.path)
+                guard current() else { return nil }
+                guard saved.text.utf8.elementsEqual(anchor.text.utf8),
+                      readSequence >= acceptedNoteReads[base.path,default:0] else { throw URLError(.badServerResponse) }
+                let confirmed = try VaultMarkdownBlocks(saved.text).resolve(anchor.blockID)
+                acceptedNoteReads[base.path] = readSequence
+                vaultNote = saved
+                if noteEditGeneration == editGeneration {
+                    vaultDraft = saved.text
+                    vaultSelection = confirmed.selection(in:saved.text) ?? NSRange(location:0,length:0)
+                } else {
+                    vaultBlocked = true
+                }
+                refreshNoteCache(saved)
+                let id = attachVaultBlock(confirmed,note:saved)
+                vaultStatus = vaultBlocked ? "블록 저장과 발췌를 확인했습니다. 이후 입력은 보존했으며 원본을 다시 확인해야 합니다." :
+                    "블록 ^\(anchor.blockID) 저장과 원본 재조회를 확인해 발췌했습니다."
+                noteRequest = nil
+                vaultSaving = false
+                return id
+            } catch {
+                guard current() else { return nil }
+                vaultBlocked = true
+                vaultStatus = "블록 저장 결과를 확인하지 못했습니다: \(error.localizedDescription). 입력을 보존했습니다. 원본 다시 읽기 후 같은 표식을 확인하세요."
+                return nil
+            }
+        } catch {
+            vaultStatus = error.localizedDescription
+            return nil
+        }
+    }
+
+    private func attachVaultBlock(_ block: VaultExcerptBlock, note: VaultNoteSnapshot) -> UUID {
+        let preview = VaultNoteSnapshot.preview(block.quote)
+        let id = scene.addNode(kind:.note,at:CanvasPoint(x:700-pan.width,y:430-pan.height),text:preview)
+        scene.nodes[scene.nodes.count - 1].vaultNote = VaultNoteReference(path:note.path,sha256:note.sha256,
+            relayAddress:noteAddress,cacheTruncated:!preview.utf8.elementsEqual(block.quote.utf8),
+            blockID:block.blockID,sourceState:.current,observedSha256:note.sha256,
+            quoteSha256:CanvasPacket.sha(Data(block.quote.utf8)))
+        selectedNode = id
+        mode = .select
+        vaultStatus = "선택 블록을 원본 표식과 연결했습니다."
+        return id
     }
 
     func saveVaultNote(save: (String, String, String) async throws -> VaultNoteSnapshot) async {
@@ -353,13 +462,34 @@ final class CanvasStore: ObservableObject {
 
     private func refreshNoteCache(_ note: VaultNoteSnapshot, expected: [UUID:VaultNoteReference]? = nil) {
         var next = scene
-        let preview = note.preview
+        let blocks = VaultMarkdownBlocks(note.text)
         for index in next.nodes.indices {
             guard var ref = next.nodes[index].vaultNote, ref.path == note.path,
                   ref.relayAddress == noteAddress,
                   expected.map({ $0[next.nodes[index].id] == ref }) ?? true else { continue }
+            ref.observedSha256 = note.sha256
+            let source: String
+            if let id = ref.blockID {
+                do { source = try blocks.resolve(id).quote }
+                catch {
+                    switch error as? VaultBlockError {
+                    case .ambiguous: ref.sourceState = .ambiguous
+                    case .unsupported: ref.sourceState = .unsupported
+                    default: ref.sourceState = .missing
+                    }
+                    next.nodes[index].vaultNote = ref
+                    continue
+                }
+            } else { source = note.text }
+            let preview = VaultNoteSnapshot.preview(source)
+            let quoteSHA = ref.blockID == nil ? nil : CanvasPacket.sha(Data(source.utf8))
+            let changed = (ref.quoteSha256 != nil ? ref.quoteSha256 != quoteSHA :
+                !preview.utf8.elementsEqual(next.nodes[index].text.utf8)) ||
+                (ref.sourceState == .changed && ref.sha256 == note.sha256)
             ref.sha256 = note.sha256
-            ref.cacheTruncated = preview != note.text
+            ref.cacheTruncated = !preview.utf8.elementsEqual(source.utf8)
+            ref.sourceState = changed ? .changed : .current
+            ref.quoteSha256 = quoteSHA
             next.nodes[index].vaultNote = ref
             next.nodes[index].text = preview
         }
@@ -403,6 +533,7 @@ final class CanvasStore: ObservableObject {
                     vaultLoading = false
                     noteRequest = nil
                     vaultStatus = "Mac의 최신 원본을 열었습니다."
+                    focusOpenedBlock(latest)
                     continue
                 }
                 guard !vaultLoading, let base, latest.sha256 != base.sha256 else { continue }
@@ -410,6 +541,7 @@ final class CanvasStore: ObservableObject {
                     vaultNote = latest
                     vaultDraft = latest.text
                     vaultStatus = "Mac의 최신 수정 내용을 받았습니다."
+                    focusOpenedBlock(latest)
                 } else {
                     vaultBlocked = true
                     vaultStatus = "Mac에서도 수정됐습니다. 현재 입력은 보존했으며 자동 덮어쓰기를 중단했습니다."
@@ -418,6 +550,15 @@ final class CanvasStore: ObservableObject {
                 guard !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
                       noteConnectionGeneration == connectionGeneration else { return }
                 guard readSequence >= acceptedNoteReads[path,default:0] else { continue }
+                var next = scene
+                for index in next.nodes.indices {
+                    guard var ref = next.nodes[index].vaultNote, ref.path == path,
+                          ref.relayAddress == noteAddress, references[next.nodes[index].id] == ref else { continue }
+                    let failure = error as NSError
+                    ref.sourceState = failure.domain == "CanvasRelay" && failure.code == 404 ? .missing : .unavailable
+                    next.nodes[index].vaultNote = ref
+                }
+                if next != scene { next.revision += 1; scene = next }
                 if let context, noteContext == context, noteContextIsCurrent(context),
                    context.path == path, noteRequest == request, !vaultSaving, !vaultLoading,
                    vaultNote?.sha256 == base?.sha256, noteEditGeneration == editGeneration {

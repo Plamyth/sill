@@ -14,21 +14,53 @@ import AppKit
 }
 
 final class NoteProtocol: URLProtocol {
+    private struct Put: Decodable { let baseSha256: String; let text: String }
     static var status = 200
     static var text = "# 原本\r\n한글 👩🏽‍💻 e\u{301}\n"
     static var calls: [String] = []
+    static var cas = false
+    static var loseResponse = false
+    static var conflict = false
+    static var writes = 0
+    static var authenticated = true
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let method = request.httpMethod ?? "GET"
         Self.calls.append(method)
+        Self.authenticated = Self.authenticated && request.value(forHTTPHeaderField:"X-Canvas-Token") == "test-token"
+        var status = Self.status
+        if Self.cas && method == "PUT" {
+            var body = request.httpBody ?? Data()
+            if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating:0,count:4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer,maxLength:buffer.count)
+                    if count <= 0 { break }
+                    body.append(contentsOf:buffer.prefix(count))
+                }
+            }
+            let value = try! JSONDecoder().decode(Put.self,from:body)
+            if Self.conflict { Self.text += "\nMac intervened" }
+            if value.baseSha256 != CanvasPacket.sha(Data(Self.text.utf8)) { status = 409 }
+            else {
+                Self.text = value.text
+                Self.writes += 1
+                if Self.loseResponse {
+                    client!.urlProtocol(self,didFailWithError:URLError(.networkConnectionLost))
+                    return
+                }
+            }
+        }
         let path = URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems!.first!.value!
         let data: Data
-        if Self.status == 200 {
+        if status == 200 {
             data = try! JSONSerialization.data(withJSONObject:["path":path,"text":Self.text,
                 "sha256":CanvasPacket.sha(Data(Self.text.utf8)),"modifiedAt":"2026-10-19T00:00:00Z"])
         } else { data = Data("{\"error\":\"conflict or missing\"}".utf8) }
-        client!.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:Self.status,
+        client!.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:status,
             httpVersion:nil,headerFields:nil)!,cacheStoragePolicy:.notAllowed)
         client!.urlProtocol(self,didLoad:data)
         client!.urlProtocolDidFinishLoading(self)
@@ -353,6 +385,7 @@ final class NoteProtocol: URLProtocol {
         let invalidHash = VaultNoteSnapshot(path:original.path,text:"tamper",sha256:original.sha256,modifiedAt:"now")
         do { _ = try invalidHash.validated(at:original.path); check(false,"bad hash") }
         catch { check(true,"mismatched cache hash refused") }
+        try await checkBlockExcerpts(check)
         print("RESULT \(checks) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
