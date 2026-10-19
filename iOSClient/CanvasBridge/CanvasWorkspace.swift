@@ -23,10 +23,8 @@ struct CanvasWorkspace: View {
     @State private var vaultOpen = false
     @State private var vaultDirectory = ""
     @State private var vaultEntries: [CanvasRelay.VaultEntry] = []
-    @State private var vaultNote: CanvasRelay.VaultNote?
-    @State private var vaultDraft = ""
     @State private var vaultStatus = ""
-    @State private var vaultSaving = false
+    @State private var vaultDiscardOpen = false
     @State private var syncedSceneSha: String?
     @State private var canvasNoteSha: String?
     @State private var pendingSceneSha: String?
@@ -95,16 +93,23 @@ struct CanvasWorkspace: View {
             }
             else { Task { await checkConnection() } }
         }
-        .task { await checkConnection() }
+        .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:relayToken) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .task {
+            store.setNoteConnection(address:relayAddress,token:relayToken)
+            await checkConnection()
+        }
         .task(id:"\(store.scene.id.uuidString):\(relayAddress):\(relayToken):\(canvasVaultEnabled)") {
-            guard canvasVaultEnabled, !relayToken.isEmpty else { return }
+            guard !relayToken.isEmpty else { return }
             do { try await Task.sleep(for:.milliseconds(700)) } catch { return }
             while !Task.isCancelled {
-                if !store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
-                    !store.scene.links.isEmpty {
+                if canvasVaultEnabled && (!store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
+                    !store.scene.links.isEmpty) {
                     await refreshCanvasFromVault()
                     await synchronizeCanvasToVault()
                 }
+                let connection = relay
+                await store.refreshVaultNotes(load:connection.vaultNote)
                 do { try await Task.sleep(for:.seconds(2)) } catch { return }
             }
         }
@@ -237,12 +242,15 @@ struct CanvasWorkspace: View {
     private var vaultSheet: some View {
         NavigationStack {
             VStack(spacing:0) {
-                if let note = vaultNote {
+                if let note = store.vaultNote {
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
-                    TextEditor(text:$vaultDraft)
+                    TextEditor(text:$store.vaultDraft)
                         .font(.body.monospaced())
+                        .disabled(store.vaultLoading)
                         .accessibilityIdentifier("obsidianMarkdownEditor")
+                } else if store.vaultLoading {
+                    ProgressView("원본 노트를 읽는 중입니다.")
                 } else {
                     List(vaultEntries) { entry in
                         Button {
@@ -255,14 +263,14 @@ struct CanvasWorkspace: View {
                         }
                     }
                 }
-                Text(vaultStatus).font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
-                    .padding(10)
+                Text(store.vaultStatus.isEmpty ? vaultStatus : store.vaultStatus)
+                    .font(.footnote).frame(maxWidth:.infinity,alignment:.leading).padding(10)
             }
-            .navigationTitle(vaultNote == nil ? "Obsidian 노트" : "노트 편집")
+            .navigationTitle(store.vaultNote == nil ? "Obsidian 노트" : "노트 편집")
             .toolbar {
                 ToolbarItem(placement:.topBarLeading) {
-                    if vaultNote != nil {
-                        Button("목록") { vaultNote = nil; vaultDraft = "" }
+                    if store.vaultNote != nil {
+                        Button("목록") { _ = store.closeVaultEditor() }
                     } else if !vaultDirectory.isEmpty {
                         Button("상위 폴더") {
                             vaultDirectory = vaultDirectory.split(separator:"/").dropLast().joined(separator:"/")
@@ -270,67 +278,66 @@ struct CanvasWorkspace: View {
                         }
                     }
                 }
-                ToolbarItem(placement:.topBarTrailing) {
-                    if vaultNote != nil {
+                ToolbarItemGroup(placement:.topBarTrailing) {
+                    if let note = store.vaultNote {
+                        Button("캔버스에 연결") {
+                            if store.attachOpenedVaultNote() != nil, store.closeVaultEditor() { vaultOpen = false }
+                        }.disabled(!store.vaultCanAttach)
                         Button("저장") { Task { await saveVaultNote() } }
-                            .disabled(vaultSaving || vaultDraft == vaultNote?.text)
-                    } else {
-                        Button("새로고침",systemImage:"arrow.clockwise") {
-                            Task { await loadVaultEntries() }
+                            .disabled(!store.vaultCanSave)
+                        if store.vaultBlocked && !store.vaultDirty {
+                            Button("원본 다시 읽기") { Task { await openVaultNote(note.path) } }
                         }
+                        if store.vaultDirty {
+                            Button("입력 버리고 닫기",role:.destructive) { vaultDiscardOpen = true }
+                                .disabled(store.vaultSaving)
+                        }
+                    } else {
+                        Button("새로고침",systemImage:"arrow.clockwise") { Task { await loadVaultEntries() } }
+                            .disabled(store.vaultLoading)
                     }
                 }
                 ToolbarItem(placement:.confirmationAction) {
-                    Button("닫기") { vaultOpen = false }
+                    Button("닫기") {
+                        if store.closeVaultEditor() { vaultOpen = false }
+                    }
                 }
             }
-            .task(id:vaultNote?.path) {
-                guard let path = vaultNote?.path else { return }
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for:.seconds(2)) } catch { return }
-                    guard !Task.isCancelled, vaultOpen, vaultNote?.path == path else { return }
-                    do {
-                        let latest = try await relay.vaultNote(at:path)
-                        guard let loaded = vaultNote, loaded.path == path,
-                              latest.sha256 != loaded.sha256 else { continue }
-                        if vaultDraft == loaded.text {
-                            vaultNote = latest
-                            vaultDraft = latest.text
-                            vaultStatus = "Mac의 최신 수정 내용을 받았습니다."
-                        } else {
-                            vaultStatus = "Mac에서도 수정됐습니다. 현재 입력을 보존했으며 저장 전에 대조해야 합니다."
-                        }
-                    } catch { vaultStatus = "Mac 노트 확인 실패: \(error.localizedDescription)" }
+            .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving)
+            .alert("저장하지 않은 입력을 버릴까요?",isPresented:$vaultDiscardOpen) {
+                Button("입력 버리고 닫기",role:.destructive) {
+                    if store.closeVaultEditor(discard:true) { vaultOpen = false }
                 }
+                Button("계속 편집",role:.cancel) {}
+            } message: {
+                Text("현재 입력만 버립니다. Obsidian 원본은 변경하지 않습니다.")
             }
         }
     }
 
     private func loadVaultEntries() async {
+        let directory = vaultDirectory, address = relayAddress, token = relayToken
         do {
-            vaultEntries = try await relay.vaultEntries(in:vaultDirectory)
-            vaultStatus = "Mac Obsidian 보관함 · \(vaultEntries.count)개 항목"
+            let entries = try await relay.vaultEntries(in:directory)
+            guard !Task.isCancelled, vaultDirectory == directory,
+                  relayAddress == address, relayToken == token else { return }
+            vaultEntries = entries
+            vaultStatus = "Mac Obsidian 보관함 · \(entries.count)개 항목"
         } catch { vaultStatus = "노트 목록을 읽지 못했습니다: \(error.localizedDescription)" }
     }
 
-    private func openVaultNote(_ path: String) async {
-        do {
-            let note = try await relay.vaultNote(at:path)
-            vaultNote = note
-            vaultDraft = note.text
-            vaultStatus = "Mac Obsidian 노트를 열었습니다."
-        } catch { vaultStatus = "노트를 열지 못했습니다: \(error.localizedDescription)" }
+    private func openVaultNote(_ path: String, nodeID: UUID? = nil) async {
+        store.setNoteConnection(address:relayAddress,token:relayToken)
+        let connection = relay
+        await store.openVaultNote(path,nodeID:nodeID,load:connection.vaultNote)
     }
 
     private func saveVaultNote() async {
-        guard let note = vaultNote else { return }
-        vaultSaving = true
-        defer { vaultSaving = false }
-        do {
-            let saved = try await relay.saveVaultNote(at:note.path,baseSha256:note.sha256,text:vaultDraft)
-            vaultNote = saved
-            vaultStatus = "Mac Obsidian 노트에 저장했습니다."
-        } catch { vaultStatus = "저장 실패: \(error.localizedDescription). 입력 내용은 유지됩니다." }
+        store.setNoteConnection(address:relayAddress,token:relayToken)
+        let connection = relay
+        await store.saveVaultNote { path, sha, text in
+            try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
+        }
     }
 
     private func sceneBytes() throws -> Data {
@@ -616,9 +623,20 @@ struct CanvasWorkspace: View {
                 TextField("내용",text:Binding(get:{node.text},set:{ _ in }))
                     .disabled(true)
                 Text("출처 획 \(node.sourceStrokeIds.count)개")
-                Button("내용 수정") {
-                    store.proposedNode = id
-                    store.proposalText = node.text
+                if let reference = node.vaultNote {
+                    Text("저장된 원본의 표시 캐시 · \(reference.path)").font(.caption)
+                    Button("원본 노트 편집") {
+                        inspectorOpen = false
+                        Task {
+                            await openVaultNote(reference.path,nodeID:id)
+                            vaultOpen = true
+                        }
+                    }
+                } else {
+                    Button("내용 수정") {
+                        store.proposedNode = id
+                        store.proposalText = node.text
+                    }
                 }
             } else {
                 Text("요소를 탭하면 텍스트와 출처를 볼 수 있습니다.").foregroundStyle(.secondary)

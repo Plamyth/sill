@@ -9,12 +9,7 @@ struct CanvasRelay {
         var id: String { path }
     }
     struct VaultEntries: Decodable { let entries: [VaultEntry] }
-    struct VaultNote: Decodable {
-        let path: String
-        let text: String
-        let sha256: String
-        let modifiedAt: String
-    }
+    typealias VaultNote = VaultNoteSnapshot
     struct VaultCanvas: Decodable {
         let path: String
         let noteSha256: String
@@ -151,13 +146,18 @@ struct CanvasRelay {
     }
 
     func vaultNote(at path: String) async throws -> VaultNote {
-        try await response(request(vaultURL("/vault/note",path:path)),as:VaultNote.self)
+        try await response(request(vaultURL("/vault/note",path:path)),as:VaultNote.self).validated(at:path)
     }
 
     func saveVaultNote(at path: String, baseSha256: String, text: String) async throws -> VaultNote {
+        guard VaultNoteReference.validPath(path), baseSha256.count == 64,
+              baseSha256.allSatisfy({ "0123456789abcdef".contains($0) }),
+              text.utf8.count <= 1024 * 1024 else { throw URLError(.badURL) }
         let body = try JSONSerialization.data(withJSONObject:["baseSha256":baseSha256,"text":text])
-        return try await response(request(vaultURL("/vault/note",path:path),method:"PUT",body:body),
-                                  as:VaultNote.self)
+        let saved = try await response(request(vaultURL("/vault/note",path:path),method:"PUT",body:body),
+                                       as:VaultNote.self).validated(at:path)
+        guard saved.text == text else { throw URLError(.badServerResponse) }
+        return saved
     }
 
     func vaultCanvas(id: UUID) async throws -> VaultCanvas? {

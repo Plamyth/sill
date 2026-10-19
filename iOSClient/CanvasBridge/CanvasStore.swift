@@ -12,7 +12,12 @@ enum CanvasMode: String, CaseIterable {
 @MainActor
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
-        didSet { handwritingRequest = nil; scheduleSave() }
+        didSet {
+            if oldValue.id != scene.id { invalidateNoteScene() }
+            else if let context = noteContext, !noteContextIsCurrent(context) { invalidateNoteRequests() }
+            handwritingRequest = nil
+            scheduleSave()
+        }
     }
     @Published var mode: CanvasMode = .pen {
         didSet { handwritingRequest = nil }
@@ -41,6 +46,253 @@ final class CanvasStore: ObservableObject {
     var linkStart: UUID?
     private var saveTask: Task<Void,Never>?
     private var handwritingRequest: UUID?
+    @Published private(set) var vaultNote: VaultNoteSnapshot?
+    @Published var vaultDraft = "" {
+        didSet { noteEditGeneration &+= 1 }
+    }
+    @Published var vaultStatus = ""
+    @Published private(set) var vaultSaving = false
+    @Published private(set) var vaultLoading = false
+    @Published private(set) var vaultBlocked = false
+    private var noteAddress = ""
+    private var noteToken = ""
+    private var noteConnectionGeneration: UInt64 = 0
+    private var noteSceneGeneration: UInt64 = 0
+    private var noteEditorGeneration: UInt64 = 0
+    private var noteEditGeneration: UInt64 = 0
+    private var noteRequest: UUID?
+    private struct NoteContext: Equatable {
+        let sceneID: UUID
+        let sceneGeneration: UInt64
+        let connectionGeneration: UInt64
+        let editorGeneration: UInt64
+        let path: String
+        let nodeID: UUID?
+    }
+    private var noteContext: NoteContext?
+
+    var vaultDirty: Bool { vaultDraft != (vaultNote?.text ?? "") }
+    var vaultCanSave: Bool {
+        vaultNote != nil && vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        noteContext.map(noteContextIsCurrent) == true
+    }
+    var vaultCanAttach: Bool {
+        vaultNote != nil && !vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        noteContext.map(noteContextIsCurrent) == true
+    }
+
+    func setNoteConnection(address: String, token: String) {
+        guard address != noteAddress || token != noteToken else { return }
+        noteAddress = address
+        noteToken = token
+        noteConnectionGeneration &+= 1
+        invalidateNoteRequests()
+    }
+
+    private func invalidateNoteRequests() {
+        noteRequest = nil
+        vaultLoading = false
+        vaultSaving = false
+        if vaultNote != nil {
+            vaultBlocked = true
+            vaultStatus = "장면 또는 연결이 바뀌었습니다. 입력은 보존했으며 원본을 다시 열어야 합니다."
+        }
+    }
+
+    private func invalidateNoteScene() {
+        noteSceneGeneration &+= 1
+        invalidateNoteRequests()
+    }
+
+    private func noteContextIsCurrent(_ context: NoteContext) -> Bool {
+        guard context.sceneID == scene.id, context.sceneGeneration == noteSceneGeneration,
+              context.connectionGeneration == noteConnectionGeneration,
+              context.editorGeneration == noteEditorGeneration, !noteToken.isEmpty else { return false }
+        if let id = context.nodeID {
+            guard let ref = scene.nodes.first(where: { $0.id == id })?.vaultNote,
+                  ref.path == context.path, ref.relayAddress == noteAddress else { return false }
+        }
+        return true
+    }
+
+    @discardableResult
+    func closeVaultEditor(discard: Bool = false) -> Bool {
+        guard !vaultSaving, !vaultDirty || discard else {
+            vaultStatus = vaultSaving ? "저장 결과를 기다려 주세요. 입력은 유지됩니다." :
+                "저장하지 않은 입력이 있습니다. 저장하거나 입력 버리기를 선택하세요."
+            return false
+        }
+        noteEditorGeneration &+= 1
+        noteRequest = nil
+        noteContext = nil
+        vaultNote = nil
+        vaultDraft = ""
+        vaultLoading = false
+        vaultBlocked = false
+        return true
+    }
+
+    func openVaultNote(_ path: String, nodeID: UUID? = nil,
+                       load: (String) async throws -> VaultNoteSnapshot) async {
+        guard !vaultDirty, !vaultSaving else {
+            vaultStatus = "현재 입력을 먼저 저장하거나 명시적으로 버려 주세요."
+            return
+        }
+        guard VaultNoteReference.validPath(path), !noteToken.isEmpty else {
+            vaultStatus = "노트 경로 또는 Mac 연결을 확인하세요."
+            return
+        }
+        noteEditorGeneration &+= 1
+        let context = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
+            connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
+            path:path,nodeID:nodeID)
+        guard noteContextIsCurrent(context) else {
+            vaultStatus = "연결한 노트의 경로 또는 서버가 바뀌었습니다. 자동 재연결하지 않았습니다."
+            return
+        }
+        noteContext = context
+        vaultNote = nil
+        vaultDraft = ""
+        let request = UUID()
+        let editGeneration = noteEditGeneration
+        noteRequest = request
+        vaultLoading = true
+        vaultBlocked = false
+        defer {
+            if noteRequest == request {
+                vaultLoading = false
+                noteRequest = nil
+            }
+        }
+        do {
+            let note = try await load(path).validated(at:path)
+            guard !Task.isCancelled, noteRequest == request, noteContext == context,
+                  noteContextIsCurrent(context), noteEditGeneration == editGeneration else { return }
+            vaultNote = note
+            vaultDraft = note.text
+            vaultLoading = false
+            noteRequest = nil
+            vaultStatus = "Mac Obsidian 원본을 열었습니다."
+            refreshNoteCache(note)
+        } catch {
+            guard !Task.isCancelled, noteRequest == request, noteContext == context,
+                  noteContextIsCurrent(context) else { return }
+            vaultLoading = false
+            noteRequest = nil
+            vaultBlocked = true
+            vaultStatus = "원본을 열지 못했습니다: \(error.localizedDescription). 자동 생성하지 않습니다."
+        }
+    }
+
+    func saveVaultNote(save: (String, String, String) async throws -> VaultNoteSnapshot) async {
+        guard vaultCanSave, let context = noteContext, let base = vaultNote else { return }
+        let request = UUID()
+        let submitted = vaultDraft
+        let editGeneration = noteEditGeneration
+        noteRequest = request
+        vaultSaving = true
+        defer {
+            if noteRequest == request {
+                vaultSaving = false
+                noteRequest = nil
+                vaultBlocked = true
+            }
+        }
+        do {
+            let saved = try await save(base.path,base.sha256,submitted).validated(at:base.path)
+            guard saved.text == submitted else { throw URLError(.badServerResponse) }
+            guard !Task.isCancelled, noteRequest == request, noteContext == context,
+                  noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256 else { return }
+            vaultNote = saved
+            if noteEditGeneration == editGeneration { vaultDraft = saved.text }
+            vaultSaving = false
+            noteRequest = nil
+            refreshNoteCache(saved)
+            vaultStatus = vaultDirty ? "제출한 내용은 저장됐습니다. 이후 입력은 아직 저장하지 않았습니다." :
+                "Mac Obsidian 원본에 저장했습니다."
+        } catch {
+            guard !Task.isCancelled, noteRequest == request, noteContext == context,
+                  noteContextIsCurrent(context) else { return }
+            vaultSaving = false
+            noteRequest = nil
+            vaultBlocked = true
+            vaultStatus = "저장 실패 또는 결과 미확인: \(error.localizedDescription). 입력을 보존했습니다. 원본을 다시 확인하세요."
+        }
+    }
+
+    @discardableResult
+    func attachOpenedVaultNote() -> UUID? {
+        guard vaultCanAttach, let note = vaultNote else { return nil }
+        let id = scene.addNode(kind:.note,at:CanvasPoint(x:700-pan.width,y:430-pan.height),text:note.text)
+        scene.nodes[scene.nodes.count - 1].vaultNote = VaultNoteReference(
+            path:note.path,sha256:note.sha256,relayAddress:noteAddress)
+        selectedNode = id
+        mode = .select
+        vaultStatus = "원본 노트를 캔버스에 연결했습니다. 표시 텍스트는 저장된 원본의 캐시입니다."
+        return id
+    }
+
+    private func refreshNoteCache(_ note: VaultNoteSnapshot, expected: [UUID:VaultNoteReference]? = nil) {
+        var next = scene
+        for index in next.nodes.indices {
+            guard var ref = next.nodes[index].vaultNote, ref.path == note.path,
+                  ref.relayAddress == noteAddress,
+                  expected.map({ $0[next.nodes[index].id] == ref }) ?? true else { continue }
+            ref.sha256 = note.sha256
+            next.nodes[index].vaultNote = ref
+            next.nodes[index].text = note.text
+        }
+        guard next != scene else { return }
+        next.revision += 1
+        scene = next
+    }
+
+    func refreshVaultNotes(load: (String) async throws -> VaultNoteSnapshot) async {
+        guard !noteToken.isEmpty else { return }
+        let sceneID = scene.id, sceneGeneration = noteSceneGeneration
+        let connectionGeneration = noteConnectionGeneration
+        let references = scene.nodes.reduce(into:[UUID:VaultNoteReference]()) { result,node in
+            if let reference = node.vaultNote { result[node.id] = reference }
+        }
+        var paths = Set(references.values.filter { $0.relayAddress == noteAddress }.map(\.path))
+        if let context = noteContext, noteContextIsCurrent(context), vaultNote != nil { paths.insert(context.path) }
+        for path in paths.sorted() {
+            guard VaultNoteReference.validPath(path) else { continue }
+            let context = noteContext
+            let base = vaultNote
+            let editGeneration = noteEditGeneration
+            let editorGeneration = noteEditorGeneration
+            let request = noteRequest
+            do {
+                let latest = try await load(path).validated(at:path)
+                guard !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
+                      noteConnectionGeneration == connectionGeneration else { return }
+                refreshNoteCache(latest,expected:references)
+                guard let context, noteContext == context, noteContextIsCurrent(context),
+                      editorGeneration == noteEditorGeneration, context.path == path,
+                      noteRequest == request, !vaultSaving, !vaultLoading,
+                      vaultNote?.sha256 == base?.sha256, noteEditGeneration == editGeneration,
+                      let base, latest.sha256 != base.sha256 else { continue }
+                if !vaultDirty && !vaultBlocked {
+                    vaultNote = latest
+                    vaultDraft = latest.text
+                    vaultStatus = "Mac의 최신 수정 내용을 받았습니다."
+                } else {
+                    vaultBlocked = true
+                    vaultStatus = "Mac에서도 수정됐습니다. 현재 입력은 보존했으며 자동 덮어쓰기를 중단했습니다."
+                }
+            } catch {
+                guard !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
+                      noteConnectionGeneration == connectionGeneration else { return }
+                if let context, noteContext == context, noteContextIsCurrent(context),
+                   context.path == path, noteRequest == request, !vaultSaving, !vaultLoading {
+                    vaultBlocked = true
+                    vaultStatus = "원본 확인 실패: \(error.localizedDescription). 입력은 보존하며 자동 생성하지 않습니다."
+                }
+                status = "연결된 노트 확인 실패 · \(path) · 저장된 표시 캐시는 유지됩니다."
+            }
+        }
+    }
 
     init() {
         if let restored = Self.restoreScene() {
@@ -258,17 +510,22 @@ final class CanvasStore: ObservableObject {
 
     func confirmProposal() {
         guard let proposedNode else { return }
-        _ = scene.confirmNode(proposedNode, text: proposalText.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard scene.confirmNode(proposedNode, text: proposalText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            status = "연결된 노트는 원본 노트 편집에서 수정하세요."
+            return
+        }
         self.proposedNode = nil
         status = "수정한 글자를 확정했습니다. 원본 획 출처는 남겼습니다."
     }
 
     func importScene(_ imported: CanvasScene) throws {
+        guard !vaultDirty, !vaultSaving else { throw CocoaError(.userCancelled) }
         guard imported.schemaVersion == 1, imported.width > 0, imported.height > 0,
               imported.nodes.count < 1000, imported.strokes.count < 10000 else {
             throw CocoaError(.fileReadCorruptFile)
         }
         let next = try PKDrawing(data: Data(base64Encoded: imported.drawingBase64) ?? Data())
+        invalidateNoteScene()
         scene = imported
         drawing = next
         selectedNode = nil
