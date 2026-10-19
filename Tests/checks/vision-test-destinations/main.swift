@@ -26,6 +26,29 @@ check(Set(encoded.keys) == ["schema", "observedAt", "entries"], "no fabricated w
 let encodedEntry = (encoded["entries"] as! [[String: Any]])[0]
 check(encodedEntry["projectId"] != nil && encodedEntry["projectID"] == nil, "lower camel projectId encoded")
 
+check(entry.redirectOrigins.isEmpty, "omitted redirect origins decode as empty")
+let redirects = ["https://login.example.test", "https://Macbook.local:8443"]
+var redirectEntry = entry
+redirectEntry.redirectOrigins = redirects
+check((try? redirectEntry.validatedRedirectOrigins())?.count == 2, "exact HTTPS and nonloopback LAN redirect origins allowed")
+let redirectRoundTrip = try decoder.decode(TestDestinationCatalog.Entry.self, from: encoder.encode(redirectEntry))
+check(redirectRoundTrip == redirectEntry,
+      "redirect origin registration survives wire round trip")
+for origin in ["http://login.example.test", "https://login.example.test/", "https://login.example.test/path",
+               "https://login.example.test?", "https://login.example.test#", "https://user@login.example.test",
+               "https://localhost", "https://127.0.0.1", "https://[::1]", "https://*.example.test",
+               "https://login.example.test:0", "https://login.example.test\\@localhost"] {
+    redirectEntry.redirectOrigins = [origin]
+    check(rejects { _ = try redirectEntry.validatedRedirectOrigins() }, "unsafe redirect origin rejected \(origin)")
+}
+redirectEntry.redirectOrigins = (0..<8).map { "https://login\($0).example.test" }
+check((try? redirectEntry.validatedRedirectOrigins())?.count == 8, "eight redirect origins accepted")
+redirectEntry.redirectOrigins.append("https://ninth.example.test")
+check(rejects { _ = try redirectEntry.validatedRedirectOrigins() }, "ninth redirect origin rejected")
+var invalidRedirectCatalog = catalog
+invalidRedirectCatalog.entries[0] = redirectEntry
+check(TestDestinationCatalog.Projection(invalidRedirectCatalog).catalog == nil, "invalid redirect origins invalidate projection")
+
 func replacingEntry(_ change: (inout TestDestinationCatalog.Entry) -> Void) -> TestDestinationCatalog {
     var value = catalog
     change(&value.entries[0])
