@@ -461,6 +461,36 @@ for pair in phasePairs {
     check(VisionPointer.Sample(event)?.phase == pair.1, "actual adapter distinguishes native ended and cancelled")
 }
 check(VisionPointer.Sample(.init(id: 19, timestamp: 10, kind: .pointer, location: .zero, phase: .active)) == nil, "native hover pointer is never treated as a pinch")
+let continuityClient = StreamClient(), continuityInput = VisionInputSession(), continuityPeer = NWConnection()
+continuityInput.bind(continuityClient); continuityInput.setGeometry(testGeometry); continuityInput.allowed = true
+continuityClient.connection = continuityPeer; seedLegacy(continuityClient, continuityPeer)
+continuityInput.magnify(2, at: CGPoint(x: 750, y: 250), time: 0, geometry: testGeometry, revision: continuityInput.gestureRevision)
+continuityInput.finishGesture(revision: continuityInput.gestureRevision)
+let continuityTicket = continuityInput.gestureRevision
+continuityInput.toggle(.option)
+continuityInput.spatial([nativeSample(50, 1, 750, 250)], geometry: testGeometry, revision: continuityTicket)
+continuityInput.spatial([nativeSample(50, 1.1, 850, 450)], geometry: testGeometry, revision: continuityTicket)
+continuityInput.spatial([nativeSample(50, 1.2, 2000, 2000)], geometry: testGeometry, revision: continuityTicket)
+continuityInput.spatial([nativeSample(50, 1.3, 2200, 2100), nativeSample(50, 1.25, 2100, 2050)], geometry: testGeometry, revision: continuityTicket)
+continuityInput.spatial([nativeSample(50, 1.4, 2200, 2100, .ended), nativeSample(50, 1.5, 750, 250)], geometry: testGeometry, revision: continuityTicket)
+continuityInput.spatial([nativeSample(50, 1.6, 750, 250, .ended)], geometry: testGeometry, revision: continuityTicket)
+continuityClient.queue.sync {}
+check(events(continuityPeer) == [.pointer(.move, x: 0.75, y: 0.25)] + KeyChord.modifiersDown(.option) + [
+    .scrollGesture(.began, x: 0.75, y: 0.25), .scroll(x: 0.75, y: 0.25, dx: 0.1, dy: 0.2),
+    .scroll(x: 0.75, y: 0.25, dx: 1.15, dy: 1.55), .scroll(x: 0.75, y: 0.25, dx: 0.2, dy: 0.1),
+    .scrollGesture(.ended, x: 0.75, y: 0.25)] + KeyChord.modifiersUp(.option),
+    "actual session preserves raw zoomed outside scroll and ignores stale and retired batch tails")
+continuityInput.finishGesture(revision: continuityTicket)
+let dragTicket = continuityInput.gestureRevision
+let beforeOrderedDrag = events(continuityPeer).count
+continuityInput.spatial([nativeSample(51, 2, 750, 250)], geometry: testGeometry, revision: dragTicket)
+continuityInput.spatial([nativeSample(51, 2.8, 950, 650), nativeSample(51, 2.7, 3000, 3000)], geometry: testGeometry, revision: dragTicket)
+continuityInput.spatial([nativeSample(51, 2.9, 3000, 3000, .cancelled)], geometry: testGeometry, revision: dragTicket)
+continuityClient.queue.sync {}
+check(Array(events(continuityPeer).dropFirst(beforeOrderedDrag)) == [
+    .pointer(.move, x: 0.75, y: 0.25), .pointer(.leftDown, x: 0.75, y: 0.25),
+    .pointer(.move, x: 0.85, y: 0.45), .pointer(.leftUp, x: 0.85, y: 0.45)],
+    "actual session drag and cancellation retain newest bounded inverse target within a batch")
 print("RESULT_ASSERTIONS \(checks)")
 
 print("Vision controls \(checks)/\(checks)")

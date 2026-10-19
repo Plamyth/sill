@@ -57,7 +57,7 @@ _ = feed(&pointer, [sample(3, 1)], modifiers: .control)
 check(feed(&pointer, [sample(3, 1.8, 502, 501, .ended)]) == KeyChord.modifiersDown(.control) + [.pointer(.rightDown, x: 0.5, y: 0.5), .pointer(.rightUp, x: 0.5, y: 0.5)] + KeyChord.modifiersUp(.control), "stationary held release is a balanced contextual click")
 _ = feed(&pointer, [sample(4, 2)])
 let scroll = feed(&pointer, [sample(4, 2.1, 500, 600)])
-check(scroll == [.scrollGesture(.began, x: 0.5, y: 0.5), .scroll(x: 0.5, y: 0.5, dx: 0, dy: 0.6 - 0.5)], "immediate downward motion starts natural scroll with no button down")
+check(scroll == [.scrollGesture(.began, x: 0.5, y: 0.5), .scroll(x: 0.5, y: 0.5, dx: 0, dy: 0.1)], "immediate downward motion starts natural scroll with no button down")
 check(feed(&pointer, [sample(4, 3, 600, 700)]).count == 1, "scroll cannot turn into drag after hold deadline")
 check(feed(&pointer, [sample(4, 3.1, 600, 700, .ended)]) == [.scrollGesture(.ended, x: 0.5, y: 0.5)], "scroll ends at original target without trailing click")
 _ = feed(&pointer, [sample(5, 4)], modifiers: [.command, .shift])
@@ -106,6 +106,104 @@ check(scaled.receive([sample(31, 31.1, 750, 250, .ended)], geometry: geometry, v
 var edge = VisionPointer()
 _ = feed(&edge, [sample(32, 0, 999, 500)])
 check(feed(&edge, [sample(32, 0.1, 1001, 500, .ended)]).isEmpty, "stationary release outside viewport cannot click clamped content")
+var continuityFailures: [String] = []
+func continuityCheck(_ ok: Bool, _ label: String) {
+    count += 1
+    FileHandle.standardError.write(Data("\(ok ? "PASS" : "FAIL") \(label)\n".utf8))
+    if !ok { continuityFailures.append(label) }
+}
+for scale in [CGFloat(1), 2, 4] {
+    let zoom = viewport.magnified(by: scale, at: anchor, in: geometry)!
+    var scrolling = VisionPointer()
+    _ = scrolling.receive([sample(40, 0, 750, 250)], geometry: geometry, viewport: zoom, modifiers: .option)
+    continuityCheck(scrolling.receive([sample(40, 0.1, 850, 450)], geometry: geometry, viewport: zoom) ==
+        KeyChord.modifiersDown(.option) + [.scrollGesture(.began, x: 0.75, y: 0.25),
+            .scroll(x: 0.75, y: 0.25, dx: 0.1, dy: 0.2)],
+        "raw initial scroll delta is independent of zoom \(scale) and keeps inverse target")
+    continuityCheck(scrolling.receive([sample(40, 0.2, 2000, 2000)], geometry: geometry, viewport: zoom) ==
+        [.scroll(x: 0.75, y: 0.25, dx: 1.15, dy: 1.55)],
+        "scroll crosses image edge without saturation at zoom \(scale)")
+    continuityCheck(scrolling.receive([sample(40, 0.3, 2200, 2100)], geometry: geometry, viewport: zoom) ==
+        [.scroll(x: 0.75, y: 0.25, dx: 0.2, dy: 0.1)],
+        "scroll continues beyond image edge at zoom \(scale)")
+    continuityCheck(scrolling.receive([sample(40, 0.4, 2100, 1900, .ended)], geometry: geometry, viewport: zoom) ==
+        [.scroll(x: 0.75, y: 0.25, dx: -0.1, dy: -0.2), .scrollGesture(.ended, x: 0.75, y: 0.25)] + KeyChord.modifiersUp(.option),
+        "terminal raw motion keeps direction and balances modifiers at zoom \(scale)")
+}
+for scale in [CGFloat(1), 2] {
+    let zoom = viewport.magnified(by: scale, at: CGPoint(x: 60, y: 70), in: fitted)!
+    var letterboxed = VisionPointer()
+    _ = letterboxed.receive([sample(41, 0, 60, 70)], geometry: fitted, viewport: zoom)
+    continuityCheck(letterboxed.receive([sample(41, 0.1, 80, 80)], geometry: fitted, viewport: zoom) ==
+        [.scrollGesture(.began, x: 0.5, y: 0.5), .scroll(x: 0.5, y: 0.5, dx: 0.2, dy: 0.2)],
+        "raw delta uses fitted width and height at nonzero origin and zoom \(scale)")
+}
+var ordered = VisionPointer()
+_ = feed(&ordered, [sample(42, 0)], modifiers: .command)
+continuityCheck(feed(&ordered, [sample(42, 0.8, 600, 700), sample(42, 0.7, 900, 900)]) ==
+    KeyChord.modifiersDown(.command) + [.pointer(.leftDown, x: 0.5, y: 0.5), .pointer(.move, x: 0.6, y: 0.7)],
+    "same batch stale active cannot rewind a drag")
+continuityCheck(feed(&ordered, [sample(42, 0.75, 800, 800)]).isEmpty,
+    "same batch stale active cannot lower the next batch timestamp floor")
+continuityCheck(feed(&ordered, [sample(42, 0.9, 900, 900, .cancelled)]) ==
+    [.pointer(.leftUp, x: 0.6, y: 0.7)] + KeyChord.modifiersUp(.command),
+    "drag cancellation releases at newest accepted point after stale batch")
+var orderedScroll = VisionPointer()
+_ = feed(&orderedScroll, [sample(43, 0)])
+continuityCheck(feed(&orderedScroll, [sample(43, 0.2, 700, 600), sample(43, 0.1, 600, 550, .ended)]) ==
+    [.scrollGesture(.began, x: 0.5, y: 0.5), .scroll(x: 0.5, y: 0.5, dx: 0.2, dy: 0.1)],
+    "same batch stale terminal cannot end a newer scroll")
+continuityCheck(feed(&orderedScroll, [sample(43, 0.3, 800, 700)]) ==
+    [.scroll(x: 0.5, y: 0.5, dx: 0.1, dy: 0.1)],
+    "scroll remains live after stale terminal")
+for phase in [VisionPointer.Sample.Phase.ended, .cancelled] {
+    var retiredBatch = VisionPointer()
+    _ = feed(&retiredBatch, [sample(44, 0)])
+    let terminal: [InputEvent] = phase == .ended
+        ? [.pointer(.leftDown, x: 0.5, y: 0.5), .pointer(.leftUp, x: 0.5, y: 0.5)] : []
+    continuityCheck(feed(&retiredBatch, [sample(44, 0.1, 500, 500, phase), sample(44, 0.2)]) == terminal && retiredBatch.isIdle,
+        "same batch \(phase) retires ID before a later active")
+    continuityCheck(feed(&retiredBatch, [sample(44, 0.3, 500, 500, .ended)]).isEmpty,
+        "same batch retired ID cannot produce a later duplicate click after \(phase)")
+}
+var boundedDrag = VisionPointer()
+_ = boundedDrag.receive([sample(45, 0, 750, 250)], geometry: geometry, viewport: enlarged)
+continuityCheck(boundedDrag.receive([sample(45, 0.8, 3000, -3000)], geometry: geometry, viewport: enlarged) ==
+    [.pointer(.leftDown, x: 0.75, y: 0.25), .pointer(.move, x: 1, y: 0)] &&
+    boundedDrag.cancel() == [.pointer(.leftUp, x: 1, y: 0)],
+    "zoomed drag remains bounded by inverse transform")
+var interruptedScroll = VisionPointer()
+_ = interruptedScroll.receive([sample(46, 0, 750, 250)], geometry: geometry, viewport: enlarged, modifiers: .shift)
+_ = interruptedScroll.receive([sample(46, 0.1, 2000, 2000)], geometry: geometry, viewport: enlarged)
+continuityCheck(interruptedScroll.receive([sample(47, 0.2)], geometry: geometry, viewport: enlarged) ==
+    [.scrollGesture(.ended, x: 0.75, y: 0.25)] + KeyChord.modifiersUp(.shift),
+    "second hand cancels zoomed outside scroll with balanced modifiers")
+continuityCheck(interruptedScroll.receive([sample(46, 0.3, 2200, 2200, .ended), sample(47, 0.3, 500, 500, .ended)],
+    geometry: geometry, viewport: enlarged).isEmpty,
+    "both hands remain inert after zoomed outside scroll cancellation")
+let tinyGeometry = VisionPointer.Geometry(bounds: CGRect(x: 0, y: 0, width: 1e-308, height: 1e-308), video: CGSize(width: 1, height: 1))
+var tinyScroll = VisionPointer()
+continuityCheck(tinyScroll.receive([sample(48, 0, 5e-309, 5e-309)], geometry: tinyGeometry, viewport: viewport, modifiers: .option) ==
+    [.pointer(.move, x: 0.5, y: 0.5)], "tiny positive fitted rectangle admits its finite center")
+continuityCheck(tinyScroll.receive([sample(48, 0.1, 16, 16)], geometry: tinyGeometry, viewport: viewport).isEmpty,
+    "nonfinite initial raw quotient cancels before modifier or scroll begin")
+continuityCheck(tinyScroll.receive([sample(48, 0.2, 5e-309, 5e-309, .ended)], geometry: tinyGeometry, viewport: viewport).isEmpty &&
+    tinyScroll.cancel().isEmpty, "initial raw quotient overflow leaves no click or release debt")
+var extremeScroll = VisionPointer()
+_ = feed(&extremeScroll, [sample(49, 0)], modifiers: [.command, .shift])
+_ = feed(&extremeScroll, [sample(49, 0.1, 600, 600)])
+let farMotion = feed(&extremeScroll, [sample(49, 0.2, -CGFloat.greatestFiniteMagnitude, 600)])
+continuityCheck(farMotion.count == 1 && farMotion.allSatisfy {
+    if case let .scroll(_, _, dx, dy) = $0 { return dx.isFinite && dy.isFinite }
+    return false
+}, "large finite raw delta remains usable before overflow")
+continuityCheck(feed(&extremeScroll, [sample(49, 0.3, CGFloat.greatestFiniteMagnitude, 600)]) ==
+    [.scrollGesture(.ended, x: 0.5, y: 0.5)] + KeyChord.modifiersUp([.command, .shift]),
+    "nonfinite raw subtraction ends live scroll before balanced modifier release")
+continuityCheck(feed(&extremeScroll, [sample(49, 0.4)]).isEmpty &&
+    feed(&extremeScroll, [sample(49, 0.5, 500, 500, .ended)]).isEmpty && extremeScroll.cancel().isEmpty,
+    "raw subtraction overflow suppresses tails without duplicate releases")
+check(continuityFailures.isEmpty, continuityFailures.joined(separator: "; "))
 check(VisionPointer.isRelease(.key(hidUsage: 227, down: false, modifiers: 0)), "inactive hardware key-up is admitted")
 check(!VisionPointer.isRelease(.key(hidUsage: 227, down: true, modifiers: 0)), "inactive key-down is refused")
 check(VisionPointer.isRelease(.pointer(.leftUp, x: 0.5, y: 0.5)), "gesture cancellation may release when inactive")

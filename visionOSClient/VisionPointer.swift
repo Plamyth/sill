@@ -62,6 +62,14 @@ struct VisionPointer {
         let anchor: CGPoint
         let modifiers: KeyModifiers
         var last: CGPoint
+        var lastRaw: CGPoint
+
+        func scroll(to location: CGPoint, in rect: CGRect) -> InputEvent? {
+            let dx = (location.x - lastRaw.x) / rect.width
+            let dy = (location.y - lastRaw.y) / rect.height
+            guard dx.isFinite, dy.isFinite else { return nil }
+            return .scroll(x: anchor.x, y: anchor.y, dx: dx, dy: dy)
+        }
     }
     private enum Stroke {
         case idle
@@ -103,6 +111,7 @@ struct VisionPointer {
         var events = competing ? cancel() : []
         if competing { stroke = .suppressed }
         for sample in fresh {
+            guard !retired.contains(sample.id), sample.timestamp >= (live[sample.id] ?? -.infinity) else { continue }
             let known = live[sample.id] != nil
             if sample.phase == .active { live[sample.id] = sample.timestamp }
             else { live.removeValue(forKey: sample.id); retired.insert(sample.id) }
@@ -112,25 +121,28 @@ struct VisionPointer {
                 guard sample.phase == .active, !known,
                       let p = viewport.point(sample.location, in: geometry) else { stroke = .suppressed; continue }
                 stroke = .pending(Contact(id: sample.id, began: sample.timestamp, origin: sample.location,
-                                          anchor: p, modifiers: modifiers, last: p))
+                                          anchor: p, modifiers: modifiers, last: p, lastRaw: sample.location))
                 events.append(.pointer(.move, x: p.x, y: p.y))
                 continue
             }
-            guard let p = viewport.point(sample.location, in: geometry, clamp: true) else { events += cancel(); continue }
+            guard let p = viewport.point(sample.location, in: geometry, clamp: true),
+                  let rect = geometry.fittedRect else { events += cancel(); continue }
             switch stroke {
             case .pending(var contact):
                 guard contact.id == sample.id else { events += cancel(); continue }
                 let elapsed = sample.timestamp - contact.began
                 let moved = hypot(sample.location.x - contact.origin.x, sample.location.y - contact.origin.y) >= Self.movementThreshold
                 if moved {
-                    events += KeyChord.modifiersDown(contact.modifiers)
                     if elapsed < Self.holdDuration {
-                        events += [.scrollGesture(.began, x: contact.anchor.x, y: contact.anchor.y),
-                                   .scroll(x: contact.anchor.x, y: contact.anchor.y, dx: p.x - contact.anchor.x, dy: p.y - contact.anchor.y)]
+                        guard let scroll = contact.scroll(to: sample.location, in: rect) else { events += cancel(); continue }
+                        events += KeyChord.modifiersDown(contact.modifiers)
+                            + [.scrollGesture(.began, x: contact.anchor.x, y: contact.anchor.y), scroll]
                         contact.last = p
+                        contact.lastRaw = sample.location
                         stroke = .scrolling(contact)
                     } else {
-                        events += [.pointer(.leftDown, x: contact.anchor.x, y: contact.anchor.y), .pointer(.move, x: p.x, y: p.y)]
+                        events += KeyChord.modifiersDown(contact.modifiers)
+                            + [.pointer(.leftDown, x: contact.anchor.x, y: contact.anchor.y), .pointer(.move, x: p.x, y: p.y)]
                         contact.last = p
                         stroke = .dragging(contact)
                     }
@@ -145,10 +157,12 @@ struct VisionPointer {
                     stroke = .idle
                 }
             case .scrolling(var contact):
-                if p != contact.last {
-                    events.append(.scroll(x: contact.anchor.x, y: contact.anchor.y, dx: p.x - contact.last.x, dy: p.y - contact.last.y))
+                if sample.location != contact.lastRaw {
+                    guard let scroll = contact.scroll(to: sample.location, in: rect) else { events += cancel(); continue }
+                    events.append(scroll)
                 }
                 contact.last = p
+                contact.lastRaw = sample.location
                 stroke = .scrolling(contact)
             case .dragging(var contact):
                 if p != contact.last { events.append(.pointer(.move, x: p.x, y: p.y)) }
