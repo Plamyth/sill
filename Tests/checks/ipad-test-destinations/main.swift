@@ -17,6 +17,20 @@ private final class ProbeQueue {
     }
 }
 
+private final class ProbeFixture: URLProtocol {
+    static var status = 405
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "example.test" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        precondition(request.httpMethod == "HEAD")
+        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status,
+                                       httpVersion: "HTTP/1.1", headerFields: [:])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 @main
 struct TestDestinationsChecks {
     static func entry(project: String = "project-a", url: String = "https://example.test/app",
@@ -52,6 +66,23 @@ struct TestDestinationsChecks {
         let timestamp = ISO8601DateFormatter().string(from: now)
         let first = entry(checkedAt: timestamp)
         let catalog = TestDestinationCatalog(observedAt: timestamp, entries: [first])
+        let probeConfiguration = URLSessionConfiguration.ephemeral
+        probeConfiguration.protocolClasses = [ProbeFixture.self]
+        for status in [200, 405, 501] {
+            ProbeFixture.status = status
+            let notice = try await TestDestinationProbe.check(TestDestinationTarget(first, now: now), configuration: probeConfiguration)
+            precondition(notice == nil, "Unsupported HEAD must allow the permitted page navigation")
+        }
+        ProbeFixture.status = 503
+        do {
+            _ = try await TestDestinationProbe.check(TestDestinationTarget(first, now: now), configuration: probeConfiguration)
+            preconditionFailure("Unavailable server must not be accepted")
+        } catch let error as URLError { precondition(error.code == .cannotConnectToHost) }
+        ProbeFixture.status = 401
+        let loginNotice = try await TestDestinationProbe.check(TestDestinationTarget(first, now: now), configuration: probeConfiguration)
+        precondition(loginNotice != nil)
+
+
         let envelope: (String) throws -> TestDestinationsEnvelope = {
             try JSONDecoder().decode(TestDestinationsEnvelope.self, from: Data($0.utf8))
         }

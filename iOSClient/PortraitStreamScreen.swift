@@ -158,6 +158,7 @@ struct PortraitStreamScreen: View {
     let onPanelSize: (CGSize) -> Void
     var toolbarShown = true
     var displayMenuChanged: (Bool) -> Void = { _ in }
+    var workspaceMenuChanged: (Bool) -> Void = { _ in }
     /// Pair This iPad… in the panel (see `StreamScreen.openPairingOverlay`).
     var pairThisDevice: () -> Void = {}
     /// The line over the stream while the link cannot carry the quality, as StreamScreen shows it
@@ -314,7 +315,8 @@ struct PortraitStreamScreen: View {
                                       radius: metrics.buttonRadius, iconSize: metrics.buttonIcon,
                                       spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,
                                       openSettings: { setSettings(!settingsOpen, true) },
-                                      openCanvas: openCanvas, openTestDestinations: openTestDestinations)
+                                      openCanvas: openCanvas, openTestDestinations: openTestDestinations,
+                                      onOpenChange: workspaceMenuChanged)
                         .tourTarget(.settings)
                 } else {
                     settingsButton()

@@ -177,11 +177,21 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
     public struct Projection: Codable, Equatable, Sendable {
         public var catalog: TestDestinationCatalog?
 
+        private enum StateKey: String, CodingKey { case state }
+
         public init(_ catalog: TestDestinationCatalog?) {
             self.catalog = catalog.flatMap { (try? $0.validate()) != nil ? $0 : nil }
         }
 
         public init(from decoder: Decoder) throws {
+            guard let values = try? decoder.container(keyedBy: StateKey.self) else {
+                self.init(nil)
+                return
+            }
+            if values.contains(.state), (try? values.decode(String.self, forKey: .state)) != "ready" {
+                self.init(nil)
+                return
+            }
             self.init(try? TestDestinationCatalog(from: decoder))
         }
 

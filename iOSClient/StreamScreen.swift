@@ -215,6 +215,7 @@ struct StreamScreen: View {
     @State private var toolbar = IPadToolbarVisibility(now: ProcessInfo.processInfo.systemUptime)
     @State private var toolbarTouches = TouchWatch()
     @State private var menuOpen = false
+    @State private var workspaceMenuOpen = false
     @State private var displayMenuOpen = false
     @State private var keyboardShown = false
     /// Modifiers held down by the portrait key row until the next key, character or click uses
@@ -534,7 +535,7 @@ struct StreamScreen: View {
     private var toolbarEnabled: Bool { UIDevice.current.userInterfaceIdiom == .pad }
     private var toolbarShown: Bool { !toolbarEnabled || toolbar.visible }
     private var toolbarPinned: Bool {
-        !pictureReady || drawerOpen || settingsOpen || windowMenu != nil || scaleOpen || menuOpen || displayMenuOpen ||
+        !pictureReady || drawerOpen || settingsOpen || windowMenu != nil || scaleOpen || menuOpen || workspaceMenuOpen || displayMenuOpen ||
         tour != nil || overlayShown || workspace != nil || dockOpen || client.audioRouteChooserPresented || voiceOverEnabled
     }
 
@@ -1076,7 +1077,8 @@ struct StreamScreen: View {
                    toggleKeyboard: { overlay.toggleKeyboard() },
                    setSettings: { setSettings($0, restoreKeyboard: $1) },
                    menusOpened: menusOpened, menusClosed: menusClosed,
-                   displayMenuChanged: { displayMenuOpen = $0 })
+                   displayMenuChanged: { displayMenuOpen = $0 },
+                   workspaceMenuChanged: { workspaceMenuOpen = $0 })
                 .frame(height: toolbarShown ? bar.height : 0)
                 .clipped()
                 .opacity(toolbarShown ? 1 : 0)
@@ -1100,6 +1102,7 @@ struct StreamScreen: View {
                              onPanelSize: { panelSize = $0 },
                              toolbarShown: toolbarShown,
                              displayMenuChanged: { displayMenuOpen = $0 },
+                             workspaceMenuChanged: { workspaceMenuOpen = $0 },
                              pairThisDevice: openPairingOverlay,
                              linkLine: shownLinkLine,
                              takeTour: takeTour)
@@ -1357,27 +1360,58 @@ struct IPadWorkspaceMenu: View {
     let openCanvas: () -> Void
     let openTestDestinations: () -> Void
 
+    let onOpenChange: (Bool) -> Void
+
     var body: some View {
-        Menu {
-            Button(settingsOpen ? "설정 닫기" : "설정", systemImage: "gearshape", action: openSettings)
-            Button("그림판", systemImage: "pencil.tip.crop.circle", action: openCanvas)
-                .accessibilityIdentifier("openCanvasBridge")
-            Button("프로젝트 테스트", systemImage: "globe", action: openTestDestinations)
-                .accessibilityIdentifier("openTestDestinations")
-        } label: {
-            VStack(spacing: spacing) {
-                Image(systemName: "ellipsis.circle").font(.system(size: iconSize))
-                    .foregroundStyle(Palette.text)
-                Text("더 보기").font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Palette.barLabel)
-            }
-            .frame(width: width, height: height)
-            .background(RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(settingsOpen ? Palette.controlOpen : Palette.control))
+        VStack(spacing: spacing) {
+            Image(systemName: "ellipsis.circle").font(.system(size: iconSize))
+                .foregroundStyle(Palette.text)
+            Text("더 보기").font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Palette.barLabel)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("더 보기. 설정, 그림판, 프로젝트 테스트")
-        .accessibilityIdentifier("workspaceOverflow")
+        .frame(width: width, height: height)
+        .background(RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(settingsOpen ? Palette.controlOpen : Palette.control))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .overlay {
+            IPadWorkspaceMenuTrigger(settingsOpen: settingsOpen, openSettings: openSettings,
+                openCanvas: openCanvas, openTestDestinations: openTestDestinations,
+                onOpenChange: onOpenChange)
+        }
+        .onDisappear { onOpenChange(false) }
+    }
+}
+
+private struct IPadWorkspaceMenuTrigger: UIViewRepresentable {
+    let settingsOpen: Bool
+    let openSettings: () -> Void
+    let openCanvas: () -> Void
+    let openTestDestinations: () -> Void
+    let onOpenChange: (Bool) -> Void
+
+    func makeUIView(context: Context) -> MacMenuTriggerButton {
+        let button = MacMenuTriggerButton(type: .custom)
+        button.showsMenuAsPrimaryAction = true
+        button.preferredMenuElementOrder = .fixed
+        button.backgroundColor = .clear
+        button.isAccessibilityElement = true
+        button.accessibilityTraits = .button
+        button.accessibilityLabel = "더 보기. 설정, 그림판, 프로젝트 테스트"
+        button.accessibilityIdentifier = "workspaceOverflow"
+        updateUIView(button, context: context)
+        return button
+    }
+
+    func updateUIView(_ button: MacMenuTriggerButton, context: Context) {
+        button.onOpenChange = { open in DispatchQueue.main.async { onOpenChange(open) } }
+        let title = settingsOpen ? "설정 닫기" : "설정"
+        guard button.menu?.children.first?.title != title else { return }
+        button.menu = UIMenu(children: [
+            UIAction(title: title, image: UIImage(systemName: "gearshape")) { _ in openSettings() },
+            UIAction(title: "그림판", image: UIImage(systemName: "pencil.tip.crop.circle")) { _ in openCanvas() },
+            UIAction(title: "프로젝트 테스트", image: UIImage(systemName: "globe")) { _ in openTestDestinations() }
+        ])
     }
 }
 
@@ -1406,6 +1440,7 @@ private struct TopBar: View {
     let menusOpened: () -> Void
     let menusClosed: () -> Void
     let displayMenuChanged: (Bool) -> Void
+    let workspaceMenuChanged: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: metrics.gap) {
@@ -1475,7 +1510,8 @@ private struct TopBar: View {
                     IPadWorkspaceMenu(width: metrics.buttonWidth, height: metrics.buttonHeight,
                                       spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,
                                       openSettings: { setSettings(!settingsOpen, true) },
-                                      openCanvas: openCanvas, openTestDestinations: openTestDestinations)
+                                      openCanvas: openCanvas, openTestDestinations: openTestDestinations,
+                                      onOpenChange: workspaceMenuChanged)
                 } else {
                     button(open: settingsOpen, symbol: "gearshape", label: "설정",
                            accessibilityLabel: settingsOpen ? "설정 닫기" : "\(client.macName.isEmpty ? "Mac" : client.macName) 설정",

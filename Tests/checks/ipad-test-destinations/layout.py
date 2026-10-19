@@ -24,7 +24,12 @@ assert "if UIDevice.current.userInterfaceIdiom == .pad, !workspaceInline {" in s
 assert "if UIDevice.current.userInterfaceIdiom == .pad, !layout.workspaceInline {" in portrait
 assert "IPadWorkspaceMenu(" in block(screen, "private struct TopBar: View")
 assert "IPadWorkspaceMenu(" in block(portrait, "private func windowBar(")
-assert "Menu {" in block(screen, "struct IPadWorkspaceMenu: View")
+assert "IPadWorkspaceMenuTrigger(" in block(screen, "struct IPadWorkspaceMenu: View")
+assert "workspaceMenuOpen ||" in block(screen, "private var toolbarPinned:")
+assert "onOpenChange: workspaceMenuChanged" in block(screen, "private struct TopBar: View")
+assert "onOpenChange: workspaceMenuChanged" in block(portrait, "private func windowBar(")
+assert screen.count("workspaceMenuChanged: { workspaceMenuOpen = $0 }") == 2
+assert "MacMenuTriggerButton" in block(screen, "private struct IPadWorkspaceMenuTrigger:")
 types = [block(screen, "struct IPadToolbarLayout {"), block(screen, "struct BarMetrics {")]
 types.append(block(portrait, "struct PortraitMetrics {").split("    static let phone = PortraitMetrics(")[0] + "}")
 types.append("struct MacMenuButton {" + block(menus, "static func fits(") + "}")

@@ -18,8 +18,8 @@ struct TestDestinationProbe {
         }
     }
 
-    static func check(_ target: TestDestinationTarget) async throws -> String? {
-        let configuration = URLSessionConfiguration.ephemeral
+    static func check(_ target: TestDestinationTarget,
+                      configuration: URLSessionConfiguration = .ephemeral) async throws -> String? {
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
         configuration.urlCache = nil
@@ -41,7 +41,7 @@ struct TestDestinationProbe {
             }
             guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             switch http.statusCode {
-            case 200...299: return nil
+            case 200...299, 405, 501: return nil
             case 401, 403: return "로그인이 필요합니다. 이 프로젝트에 저장된 로그인만 사용합니다."
             case 300...399:
                 guard let location = http.value(forHTTPHeaderField: "Location"),
@@ -75,7 +75,7 @@ final class TestDestinationsModel: ObservableObject {
     private var requestID = UUID()
 
     init(fetch: @escaping () async throws -> TestDestinationCatalog,
-         probe: @escaping (TestDestinationTarget) async throws -> String? = TestDestinationProbe.check) {
+         probe: @escaping (TestDestinationTarget) async throws -> String? = { try await TestDestinationProbe.check($0) }) {
         self.fetch = fetch
         self.probe = probe
     }
