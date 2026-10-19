@@ -36,6 +36,11 @@ import AppKit
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let store = CanvasStore()
+        check(store.eraserStyle == .partial && store.eraserStyle.tool.eraserType == .fixedWidthBitmap &&
+              near(Double(store.eraserStyle.tool.width), 20), "default partial eraser matches the visible 20-point cursor")
+        store.eraserStyle = .stroke
+        check(store.eraserStyle.tool.eraserType == .vector, "whole-stroke erasing remains selectable")
+        store.eraserStyle = .partial
         var lastScene = CanvasScene()
         for (transformName, transform) in [
             ("identity", CGAffineTransform.identity),

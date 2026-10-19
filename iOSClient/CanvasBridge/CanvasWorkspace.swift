@@ -211,6 +211,9 @@ struct CanvasWorkspace: View {
             Picker("그리기 도구",selection:$store.mode) {
                 ForEach(CanvasMode.allCases,id:\.self) { Text($0.rawValue).tag($0) }
             }
+            Picker("지우기 방식", selection: $store.eraserStyle) {
+                ForEach(CanvasEraserStyle.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
             Button("글자 인식") { Task { await store.proposeHandwriting() } }

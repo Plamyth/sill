@@ -98,7 +98,7 @@ struct PencilCanvas: UIViewRepresentable {
         canvas.isUserInteractionEnabled = store.mode != .select
         switch store.mode {
         case .pen: canvas.tool = PKInkingTool(.pen, color: CanvasPalette.ink, width: 4)
-        case .eraser: canvas.tool = PKEraserTool(.vector)
+        case .eraser: canvas.tool = store.eraserStyle.tool
         case .lasso: canvas.tool = PKLassoTool()
         case .select: break
         }

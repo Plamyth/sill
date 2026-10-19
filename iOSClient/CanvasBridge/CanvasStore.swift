@@ -9,6 +9,18 @@ enum CanvasMode: String, CaseIterable {
     case select = "요소 이동"
 }
 
+enum CanvasEraserStyle: String, CaseIterable {
+    case partial = "부분 지우기"
+    case stroke = "획 전체 지우기"
+
+    var tool: PKEraserTool {
+        switch self {
+        case .partial: return PKEraserTool(.fixedWidthBitmap, width: 20)
+        case .stroke: return PKEraserTool(.vector)
+        }
+    }
+}
+
 @MainActor
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
@@ -22,6 +34,7 @@ final class CanvasStore: ObservableObject {
     @Published var mode: CanvasMode = .pen {
         didSet { handwritingRequest = nil }
     }
+    @Published var eraserStyle: CanvasEraserStyle = .partial
     @Published var selectedNode: UUID? {
         didSet { handwritingRequest = nil }
     }
