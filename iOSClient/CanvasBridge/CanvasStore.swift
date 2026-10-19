@@ -111,9 +111,12 @@ final class CanvasInkHistory: ObservableObject {
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
-            if oldValue.id != scene.id || linkStart.map({ from in !scene.nodes.contains(where:{ $0.id == from }) }) == true {
+            let visible = scene.visibility.nodeIDs
+            if oldValue.id != scene.id || linkStart.map({ !visible.contains($0) }) == true {
                 clearPendingLink()
             }
+            if selectedNode.map({ !visible.contains($0) }) == true { selectedNode = nil }
+            if proposedNode.map({ !visible.contains($0) }) == true { proposedNode = nil }
             if oldValue.id != scene.id { invalidateNoteScene(); inkHistory.invalidate() }
             else if let context = noteContext, !noteContextIsCurrent(context) { invalidateNoteRequests() }
             handwritingRequest = nil
@@ -129,6 +132,7 @@ final class CanvasStore: ObservableObject {
     @Published var eraserStyle: CanvasEraserStyle = .partial
     @Published var selectedNode: UUID? {
         didSet {
+            if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
             if oldValue != selectedNode { clearPendingLink() }
             handwritingRequest = nil
         }
@@ -770,8 +774,9 @@ final class CanvasStore: ObservableObject {
         let from = linkStart
         let kind = linkKind
         clearPendingLink()
-        guard scene.nodes.contains(where:{ $0.id == id }) else {
-            status = "요소가 없어 연결하지 않았습니다."
+        let visible = scene.visibility.nodeIDs
+        guard visible.contains(id), from.map(visible.contains) ?? true else {
+            status = "표시 중인 요소가 아니어서 선택하거나 연결하지 않았습니다."
             return
         }
         if let from {
@@ -797,7 +802,7 @@ final class CanvasStore: ObservableObject {
 
     private func beginLink(kind: CanvasLink.Kind) {
         clearPendingLink()
-        guard let selectedNode, scene.nodes.contains(where:{ $0.id == selectedNode }) else {
+        guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode) else {
             status = "먼저 연결을 시작할 요소를 선택하세요."
             return
         }
@@ -819,6 +824,14 @@ final class CanvasStore: ObservableObject {
         status = "연결을 취소했습니다."
     }
 
+    func toggleSelectedChildren() {
+        clearPendingLink()
+        guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode),
+              scene.toggleChildren(of: selectedNode) else { return }
+        let collapsed = scene.nodes.first { $0.id == selectedNode }?.isCollapsed == true
+        status = collapsed ? "하위 요소를 접었습니다. 원본 데이터는 보존됩니다." : "하위 요소를 펼쳤습니다."
+    }
+
     func unlinkFromParent() {
         clearPendingLink()
         guard let selectedNode, scene.nodes.contains(where:{ $0.id == selectedNode }) else { return }
@@ -830,7 +843,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func moveSelected(to point: CGPoint) {
-        guard let selectedNode else { return }
+        guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode) else { return }
         scene.moveNode(selectedNode, to: CanvasPoint(x: Double(point.x), y: Double(point.y)))
     }
 

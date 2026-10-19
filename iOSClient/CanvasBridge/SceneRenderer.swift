@@ -12,6 +12,7 @@ enum CanvasPalette {
 enum SceneRenderer {
     @MainActor
     static func png(scene: CanvasScene) async -> Data? {
+        let visible = scene.visibility
         let drawing: PKDrawing?
         if scene.drawingBase64.isEmpty {
             drawing = nil
@@ -57,7 +58,7 @@ enum SceneRenderer {
                     }
                 }
             }
-            for link in scene.links {
+            for link in scene.links where visible.linkIDs.contains(link.id) {
                 guard let from = scene.nodes.first(where: { $0.id == link.from })?.frame.center,
                       let to = scene.nodes.first(where: { $0.id == link.to })?.frame.center else { continue }
                 let a = CGPoint(x: from.x, y: from.y)
@@ -73,7 +74,7 @@ enum SceneRenderer {
                     cg.move(to: b); cg.addLine(to: end); cg.strokePath()
                 }
             }
-            for node in scene.nodes {
+            for node in scene.nodes where visible.nodeIDs.contains(node.id) {
                 let frame = CGRect(x: node.frame.x, y: node.frame.y,
                                    width: node.frame.width, height: node.frame.height)
                 CanvasPalette.nodeFill.setFill()
@@ -89,7 +90,7 @@ enum SceneRenderer {
                 ]
                 (node.text as NSString).draw(in: frame.insetBy(dx: 16, dy: 16), withAttributes: attributes)
             }
-            for note in scene.annotations {
+            for note in scene.annotations where visible.annotationIDs.contains(note.id) {
                 guard let node = scene.nodes.first(where: { $0.id == note.nodeId }) else { continue }
                 let x = node.frame.x, y = node.frame.y + node.frame.height + 8
                 let frame = CGRect(x: x, y: y, width: 300, height: 80)

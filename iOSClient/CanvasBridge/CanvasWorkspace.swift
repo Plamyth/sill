@@ -223,6 +223,7 @@ struct CanvasWorkspace: View {
             Button("음성 설명",systemImage:"mic") { dictationOpen = true }
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
+            foldButton
             if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("Obsidian 노트",systemImage:"doc.text") {
@@ -233,6 +234,20 @@ struct CanvasWorkspace: View {
             Button("가져오기") { importOpen = true }
             Button("내보내기") { exportOpen = true }
         }
+    }
+
+    private var foldButton: some View {
+        let node = store.scene.nodes.first { $0.id == store.selectedNode }
+        let collapsed = node?.isCollapsed == true
+        return Button { store.toggleSelectedChildren() } label: {
+            Label(collapsed ? "하위 요소 펼치기" : "하위 요소 접기",
+                  systemImage: collapsed ? "chevron.down" : "chevron.right")
+                .frame(minWidth:44,minHeight:44)
+        }
+        .disabled(node.map { !store.scene.canToggleChildren(of:$0.id) } ?? true)
+        .accessibilityValue(collapsed ? "접힘" : "펼침")
+        .accessibilityHint("하위 요소의 표시만 바꾸며 원본 획과 연결을 보존합니다.")
+        .accessibilityIdentifier("canvasHierarchyFold")
     }
 
     private var sendButton: some View {
@@ -573,16 +588,17 @@ struct CanvasWorkspace: View {
     }
 
     private var canvas: some View {
-        GeometryReader { _ in
+        let visible = store.scene.visibility
+        return GeometryReader { _ in
             ZStack(alignment:.topLeading) {
                 Color(uiColor:CanvasPalette.background)
                 PencilCanvas(store:store)
                 if store.scene.drawingBase64.isEmpty {
                     ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
                 }
-                ForEach(store.scene.links) { link in linkView(link) }
-                ForEach(store.scene.nodes) { node in nodeView(node) }
-                ForEach(store.scene.annotations) { note in annotationView(note) }
+                ForEach(store.scene.links.filter { visible.linkIDs.contains($0.id) }) { link in linkView(link) }
+                ForEach(store.scene.nodes.filter { visible.nodeIDs.contains($0.id) }) { node in nodeView(node) }
+                ForEach(store.scene.annotations.filter { visible.annotationIDs.contains($0.id) }) { note in annotationView(note) }
             }
             .frame(width:store.scene.width,height:store.scene.height)
             .scaleEffect(store.zoom,anchor:.topLeading)
@@ -666,6 +682,7 @@ struct CanvasWorkspace: View {
                 let childIDs = Set(store.scene.links.filter { $0.kind == .parentChild && $0.from == id }.map(\.to))
                 let children = store.scene.nodes.filter { childIDs.contains($0.id) }
                 Text("하위 요소 \(children.count)개").accessibilityIdentifier("canvasHierarchyChildren")
+                foldButton
                 ForEach(children) { child in
                     Text(child.text.isEmpty ? "이름 없는 요소" : child.text).font(.caption)
                 }
@@ -692,7 +709,9 @@ struct CanvasWorkspace: View {
             }
             Divider()
             Text("에이전트 주석 \(store.scene.annotations.count)개")
-            ForEach(store.scene.annotations) { note in
+            ForEach(store.scene.annotations.filter {
+                $0.nodeId == nil || store.scene.visibility.annotationIDs.contains($0.id)
+            }) { note in
                 Text("\(note.author): \(note.text)").font(.caption)
             }
             if let voice = store.displayedVoice {
@@ -975,11 +994,13 @@ private struct NodeTile: View {
             .onTapGesture { store.select(node.id) }
             .accessibilityElement(children:.combine)
             .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")
+            .accessibilityValue(node.isCollapsed == true ? "하위 요소 접힘" : "하위 요소 펼침")
             .gesture(DragGesture().onChanged { value in
+                guard store.scene.visibility.nodeIDs.contains(node.id) else { return }
                 if dragOrigin == nil { dragOrigin = CanvasPoint(x:node.frame.x,y:node.frame.y) }
                 guard let dragOrigin else { return }
                 store.selectedNode = node.id
-                store.scene.moveNode(node.id,to:CanvasPoint(
+                store.moveSelected(to:CGPoint(
                     x:dragOrigin.x+value.translation.width/store.zoom,
                     y:dragOrigin.y+value.translation.height/store.zoom))
             }.onEnded { _ in dragOrigin = nil })

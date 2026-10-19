@@ -287,6 +287,7 @@ struct CanvasNode: Codable, Identifiable, Equatable {
     var confidence: Confidence
     var sourceStrokeIds: [UUID]
     var vaultNote: VaultNoteReference? = nil
+    var isCollapsed: Bool? = nil
 }
 
 struct CanvasLink: Codable, Identifiable, Equatable {
@@ -317,6 +318,56 @@ struct CanvasScene: Codable, Equatable {
     var nodes: [CanvasNode] = []
     var links: [CanvasLink] = []
     var annotations: [CanvasAnnotation] = []
+
+    struct Visibility: Equatable {
+        let nodeIDs: Set<UUID>
+        let linkIDs: Set<UUID>
+        let annotationIDs: Set<UUID>
+    }
+
+    var visibility: Visibility {
+        let nodeIDs = Set(nodes.map(\.id))
+        var hierarchy = links.filter { $0.kind == .parentChild }
+        if !Self.validHierarchy(hierarchy, nodeIds: nodeIDs) {
+            let ordered = hierarchy.sorted {
+                ($0.id.uuidString, $0.from.uuidString, $0.to.uuidString) <
+                    ($1.id.uuidString, $1.from.uuidString, $1.to.uuidString)
+            }
+            hierarchy = []
+            for link in ordered where Self.validHierarchy(hierarchy + [link], nodeIds: nodeIDs) {
+                hierarchy.append(link)
+            }
+        }
+        let children = Dictionary(grouping: hierarchy, by: \.from)
+        var hidden = Set<UUID>()
+        var pending = nodes.filter { $0.isCollapsed == true }
+            .flatMap { children[$0.id, default: []].map(\.to) }
+        while let node = pending.popLast() {
+            guard hidden.insert(node).inserted else { continue }
+            pending.append(contentsOf: children[node, default: []].map(\.to))
+        }
+        let visible = nodeIDs.subtracting(hidden)
+        return Visibility(nodeIDs: visible,
+            linkIDs: Set(links.filter { visible.contains($0.from) && visible.contains($0.to) }.map(\.id)),
+            annotationIDs: Set(annotations.filter { $0.nodeId.map(visible.contains) == true }.map(\.id)))
+    }
+
+    func canToggleChildren(of id: UUID) -> Bool {
+        nodes.contains { $0.id == id && $0.isCollapsed == true } ||
+            links.contains { link in
+                link.kind == .parentChild && link.from == id && link.to != id &&
+                    nodes.contains { $0.id == link.to }
+            }
+    }
+
+    @discardableResult
+    mutating func toggleChildren(of id: UUID) -> Bool {
+        guard let index = nodes.firstIndex(where: { $0.id == id }),
+              canToggleChildren(of: id) else { return false }
+        nodes[index].isCollapsed = nodes[index].isCollapsed != true
+        revision += 1
+        return true
+    }
 
     mutating func addNode(kind: CanvasNode.Kind, at point: CanvasPoint, text: String = "",
                           confidence: CanvasNode.Confidence = .confirmed,
