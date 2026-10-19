@@ -119,6 +119,7 @@ struct PencilCanvas: UIViewRepresentable {
             coordinator.store.saveNow()
         }
         coordinator.store.inkHistory.detach(canvas.inkUndoManager)
+        coordinator.canvas = nil
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate,
@@ -134,13 +135,27 @@ struct PencilCanvas: UIViewRepresentable {
         private var previewSession = 0
         private var hoverPoint: CGPoint?
         private var isDrawing = false
+        private var usingTool = false
+        private var backgroundObserver: NSObjectProtocol?
         private var drawingChangeSerial = 0
         private var panStart = CanvasViewport()
         private var pinchStart = CanvasViewport()
         private var pinchAnchor = CGPoint.zero
         private var pinchCenter = CGPoint.zero
 
-        init(store: CanvasStore) { self.store = store }
+        init(store: CanvasStore) {
+            self.store = store
+            super.init()
+            backgroundObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.flushPendingDrawing(save: true) }
+            }
+        }
+
+        deinit {
+            if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+        }
 
         func replaceDrawingFromStore() {
             guard let canvas else { return }
@@ -157,6 +172,7 @@ struct PencilCanvas: UIViewRepresentable {
             renderedModelDrawing = store.drawing
             renderedGeneration = store.inkHistory.generation
             isDrawing = false
+            usingTool = false
             previewSession += 1
             previewLayer.path = nil
             replacingDrawing = false
@@ -252,6 +268,7 @@ struct PencilCanvas: UIViewRepresentable {
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
             drawingChangeSerial += 1
+            guard !usingTool else { return }
             let serial = drawingChangeSerial
             let generation = renderedGeneration
             let drawing = canvasView.drawing
@@ -266,12 +283,26 @@ struct PencilCanvas: UIViewRepresentable {
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
             guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            drawingChangeSerial += 1
+            usingTool = true
             store.inkHistory.setUsingTool(true)
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
             guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            flushPendingDrawing()
+            usingTool = false
             store.inkHistory.setUsingTool(false)
+        }
+
+        func flushPendingDrawing(save: Bool = false) {
+            guard let canvas, !replacingDrawing,
+                  renderedGeneration == store.inkHistory.generation else { return }
+            drawingChangeSerial += 1
+            renderedModelDrawing = canvas.drawing
+            store.updateDrawing(canvas.drawing)
+            store.inkHistory.scheduleRefresh()
+            if save { store.saveNow() }
         }
 
         func pencilInteraction(_ interaction: UIPencilInteraction,

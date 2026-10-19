@@ -474,7 +474,7 @@ struct CanvasWorkspace: View {
     }
 
     private func synchronizeCanvasToVault() async {
-        guard !canvasSyncBusy, !Task.isCancelled else { return }
+        guard !canvasSyncBusy, !Task.isCancelled, !store.inkHistory.usingTool else { return }
         if vaultSceneID != store.scene.id || vaultSyncAddress != relayAddress {
             vaultSceneID = store.scene.id
             vaultSyncAddress = relayAddress
@@ -492,6 +492,7 @@ struct CanvasWorkspace: View {
         let token = relayToken
         func current() -> Bool {
             !Task.isCancelled && canvasVaultEnabled && !canvasVaultBlocked &&
+                !store.inkHistory.usingTool &&
                 store.scene.id == scene.id && relayAddress == address && relayToken == token &&
                 vaultSceneID == scene.id && vaultSyncAddress == address
         }
@@ -552,10 +553,11 @@ struct CanvasWorkspace: View {
     }
 
     private func refreshCanvasFromVault() async {
-        guard !canvasVaultBlocked, !canvasSyncBusy, let syncedSceneSha, let canvasNoteSha,
+        guard !store.inkHistory.usingTool, !canvasVaultBlocked, !canvasSyncBusy, let syncedSceneSha, let canvasNoteSha,
               vaultSceneID == store.scene.id, vaultSyncAddress == relayAddress else { return }
         do {
             guard let remote = try await relay.vaultCanvas(id:store.scene.id),
+                  !store.inkHistory.usingTool,
                   remote.noteSha256 != canvasNoteSha else { return }
             let localSha = CanvasPacket.sha(try sceneBytes())
             if remote.sceneSha256 == localSha || remote.sceneSha256 == pendingSceneSha {

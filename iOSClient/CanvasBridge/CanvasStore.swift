@@ -32,7 +32,7 @@ final class CanvasInkHistory: ObservableObject {
     private(set) var generation = UUID()
     private weak var manager: UndoManager?
     private var observers: [NSObjectProtocol] = []
-    private var usingTool = false
+    private(set) var usingTool = false
     private var refreshScheduled = false
     private var refreshing = false
 

@@ -108,6 +108,41 @@ enum InkUndoChecks {
         editorManager.endUndoGrouping()
         let full = PKDrawing(strokes: [PKStroke(ink: ink, path: path)])
         let partial = PKDrawing(strokes: [PKStroke(ink: ink, path: path, mask: mask)])
+#if canImport(UIKit)
+        let activeFixture = InkUndoFixture()
+        let activeRevision = activeFixture.store.scene.revision
+        activeFixture.coordinator.canvasViewDidBeginUsingTool(activeFixture.canvas)
+        activeFixture.apply(full)
+        await settle()
+        activeFixture.apply(partial)
+        await settle()
+        check(activeFixture.canvas.drawing == partial && activeFixture.store.drawing.strokes.isEmpty &&
+              activeFixture.store.scene.revision == activeRevision,
+              "native in-progress ink stays on canvas without serializing scene on each drawing callback")
+        activeFixture.coordinator.canvasViewDidEndUsingTool(activeFixture.canvas)
+        let committedBeforeSync = activeFixture.store.scene
+        check(!activeFixture.store.inkHistory.usingTool && activeFixture.store.drawing == partial &&
+              committedBeforeSync.revision == activeRevision + 1 &&
+              committedBeforeSync.drawingBase64 == partial.dataRepresentation().base64EncodedString(),
+              "tool-end publishes latest ink before an already-waiting vault refresh can resume")
+        await settle()
+        check(activeFixture.store.drawing == partial && activeFixture.store.scene.revision == activeRevision + 1,
+              "tool end commits the latest native drawing once with partial eraser mask intact")
+        activeFixture.coordinator.canvasViewDidBeginUsingTool(activeFixture.canvas)
+        activeFixture.apply(full)
+        activeFixture.coordinator.flushPendingDrawing(save: true)
+        let activeSaved = try JSONDecoder().decode(CanvasScene.self,
+            from: Data(contentsOf: support.appendingPathComponent("CanvasScene.json")))
+        check(activeFixture.store.drawing == full && activeSaved == activeFixture.store.scene,
+              "background flush saves unfinished native ink through the existing autosave format")
+        activeFixture.apply(partial)
+        activeFixture.store.drawing = PKDrawing()
+        activeFixture.coordinator.flushPendingDrawing(save: true)
+        await settle()
+        check(activeFixture.store.drawing.strokes.isEmpty,
+              "external replacement rejects old unfinished ink at the background flush boundary")
+        PencilCanvas.dismantleUIView(UIView(), coordinator: activeFixture.coordinator)
+#endif
         fixture.apply(full)
         await settle()
         let fullPNG = await png(scene: store.scene)
@@ -240,6 +275,7 @@ enum InkUndoChecks {
         PencilCanvas.dismantleUIView(UIView(), coordinator: fixture.coordinator)
         await settle()
         check(store.drawing == partial, "teardown cannot flush stale local ink over an external replacement")
+        fixture.coordinator.canvas = fixture.canvas
         fixture.canvas.delegate = fixture.coordinator
         history.attach(manager)
         fixture.replaceFromStore()
