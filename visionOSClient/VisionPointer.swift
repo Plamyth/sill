@@ -2,16 +2,79 @@ import Foundation
 import CoreGraphics
 import StreamProtocol
 
+struct VisionViewport: Equatable {
+    private(set) var scale: CGFloat = 1
+    private(set) var offset = CGSize.zero
+
+    func point(_ point: CGPoint, in geometry: VisionPointer.Geometry, clamp: Bool = false) -> CGPoint? {
+        guard let rect = geometry.fittedRect, point.x.isFinite, point.y.isFinite,
+              clamp || geometry.bounds.contains(point) else { return nil }
+        let x = geometry.bounds.midX + (point.x - geometry.bounds.midX - offset.width) / scale
+        let y = geometry.bounds.midY + (point.y - geometry.bounds.midY - offset.height) / scale
+        guard clamp || rect.contains(CGPoint(x: x, y: y)) else { return nil }
+        return CGPoint(x: min(1, max(0, (x - rect.minX) / rect.width)),
+                       y: min(1, max(0, (y - rect.minY) / rect.height)))
+    }
+
+    func magnified(by factor: CGFloat, at anchor: CGPoint, in geometry: VisionPointer.Geometry) -> Self? {
+        guard factor.isFinite, factor > 0, point(anchor, in: geometry) != nil,
+              let rect = geometry.fittedRect else { return nil }
+        let next = min(4, max(1, scale * factor))
+        let ratio = next / scale
+        let dx = anchor.x - geometry.bounds.midX, dy = anchor.y - geometry.bounds.midY
+        let limitX = max(0, (rect.width * next - geometry.bounds.width) / 2)
+        let limitY = max(0, (rect.height * next - geometry.bounds.height) / 2)
+        var result = self
+        result.scale = next
+        result.offset = CGSize(width: min(limitX, max(-limitX, dx - (dx - offset.width) * ratio)),
+                               height: min(limitY, max(-limitY, dy - (dy - offset.height) * ratio)))
+        return result
+    }
+}
+
 struct VisionPointer {
-    enum Mode: String, CaseIterable { case pointer = "포인터", right = "오른쪽 클릭", scroll = "스크롤" }
+    struct Geometry: Equatable {
+        let bounds: CGRect
+        let video: CGSize
+
+        var fittedRect: CGRect? {
+            guard [bounds.minX, bounds.minY, bounds.width, bounds.height, video.width, video.height].allSatisfy(\.isFinite),
+                  bounds.width > 0, bounds.height > 0, video.width > 0, video.height > 0 else { return nil }
+            let ratio = min(bounds.width / video.width, bounds.height / video.height)
+            let width = video.width * ratio, height = video.height * ratio
+            guard width.isFinite, height.isFinite, width > 0, height > 0 else { return nil }
+            return CGRect(x: bounds.midX - width / 2, y: bounds.midY - height / 2, width: width, height: height)
+        }
+    }
+
+    struct Sample {
+        enum Phase: Equatable { case active, ended, cancelled }
+        let id: AnyHashable
+        let timestamp: TimeInterval
+        let location: CGPoint
+        let phase: Phase
+    }
+
+    private struct Contact {
+        let id: AnyHashable
+        let began: TimeInterval
+        let origin: CGPoint
+        let anchor: CGPoint
+        let modifiers: KeyModifiers
+        var last: CGPoint
+    }
     private enum Stroke {
         case idle
-        case dragging(CGPoint)
-        case scrolling(anchor: CGPoint, last: CGPoint)
-        case cancelled
+        case pending(Contact)
+        case scrolling(Contact)
+        case dragging(Contact)
+        case suppressed
     }
     private var stroke = Stroke.idle
-    private var modifiers: KeyModifiers = []
+    private var live: [AnyHashable: TimeInterval] = [:]
+    private var retired: Set<AnyHashable> = []
+    static let holdDuration: TimeInterval = 0.65
+    static let movementThreshold: CGFloat = 8
 
     var isIdle: Bool { if case .idle = stroke { return true }; return false }
 
@@ -23,62 +86,96 @@ struct VisionPointer {
         }
     }
 
-    static func point(_ point: CGPoint, bounds: CGRect, video: CGSize, clamp: Bool = false) -> CGPoint? {
-        guard [point.x, point.y, bounds.minX, bounds.minY, bounds.width, bounds.height, video.width, video.height].allSatisfy(\.isFinite) else { return nil }
-        guard video.width > 0, video.height > 0, bounds.width > 0, bounds.height > 0 else { return nil }
-        let ratio = min(bounds.width / video.width, bounds.height / video.height)
-        let width = video.width * ratio, height = video.height * ratio
-        let rect = CGRect(x: bounds.midX - width / 2, y: bounds.midY - height / 2, width: width, height: height)
-        guard clamp || rect.contains(point) else { return nil }
-        return CGPoint(x: min(1, max(0, (point.x - rect.minX) / width)),
-                       y: min(1, max(0, (point.y - rect.minY) / height)))
-    }
-
-    mutating func tap(_ p: CGPoint, mode: Mode, modifiers: KeyModifiers = []) -> [InputEvent] {
-        guard case .idle = stroke, mode != .scroll else { return [] }
-        let down: PointerAction = mode == .right ? .rightDown : .leftDown
-        let up: PointerAction = mode == .right ? .rightUp : .leftUp
-        return KeyChord.modifiersDown(modifiers)
-            + [.pointer(down, x: p.x, y: p.y), .pointer(up, x: p.x, y: p.y)]
-            + KeyChord.modifiersUp(modifiers)
-    }
-
-    mutating func drag(from start: CGPoint, to p: CGPoint, mode: Mode, modifiers: KeyModifiers = []) -> [InputEvent] {
-        switch stroke {
-        case .idle:
-            if mode == .scroll {
-                self.modifiers = modifiers
-                stroke = .scrolling(anchor: start, last: p)
-                return KeyChord.modifiersDown(modifiers) + [.scrollGesture(.began, x: start.x, y: start.y),
-                        .scroll(x: start.x, y: start.y, dx: p.x - start.x, dy: p.y - start.y)]
+    mutating func receive(_ samples: [Sample], geometry: Geometry, viewport: VisionViewport,
+                          modifiers: KeyModifiers = []) -> [InputEvent] {
+        if samples.contains(where: { !$0.timestamp.isFinite || !$0.location.x.isFinite || !$0.location.y.isFinite }) {
+            let releases = cancel()
+            stroke = .suppressed
+            for sample in samples {
+                if sample.phase == .active { live[sample.id] = live[sample.id] ?? -.infinity }
+                else { live.removeValue(forKey: sample.id); retired.insert(sample.id) }
             }
-            guard mode == .pointer else { return [] }
-            self.modifiers = modifiers
-            stroke = .dragging(p)
-            return KeyChord.modifiersDown(modifiers) + [.pointer(.leftDown, x: start.x, y: start.y), .pointer(.move, x: p.x, y: p.y)]
-        case .dragging:
-            stroke = .dragging(p)
-            return [.pointer(.move, x: p.x, y: p.y)]
-        case .scrolling(let anchor, let last):
-            stroke = .scrolling(anchor: anchor, last: p)
-            return [.scroll(x: anchor.x, y: anchor.y, dx: p.x - last.x, dy: p.y - last.y)]
-        case .cancelled: return []
+            if live.isEmpty { stroke = .idle }
+            return releases
         }
+        let fresh = samples.filter { !retired.contains($0.id) && $0.timestamp.isFinite && $0.timestamp >= (live[$0.id] ?? -.infinity) }
+        let competing = Set(fresh.map(\.id)).union(live.keys).count > 1
+        var events = competing ? cancel() : []
+        if competing { stroke = .suppressed }
+        for sample in fresh {
+            let known = live[sample.id] != nil
+            if sample.phase == .active { live[sample.id] = sample.timestamp }
+            else { live.removeValue(forKey: sample.id); retired.insert(sample.id) }
+            if case .suppressed = stroke { continue }
+            if sample.phase == .cancelled { events += cancel(); continue }
+            if case .idle = stroke {
+                guard sample.phase == .active, !known,
+                      let p = viewport.point(sample.location, in: geometry) else { stroke = .suppressed; continue }
+                stroke = .pending(Contact(id: sample.id, began: sample.timestamp, origin: sample.location,
+                                          anchor: p, modifiers: modifiers, last: p))
+                events.append(.pointer(.move, x: p.x, y: p.y))
+                continue
+            }
+            guard let p = viewport.point(sample.location, in: geometry, clamp: true) else { events += cancel(); continue }
+            switch stroke {
+            case .pending(var contact):
+                guard contact.id == sample.id else { events += cancel(); continue }
+                let elapsed = sample.timestamp - contact.began
+                let moved = hypot(sample.location.x - contact.origin.x, sample.location.y - contact.origin.y) >= Self.movementThreshold
+                if moved {
+                    events += KeyChord.modifiersDown(contact.modifiers)
+                    if elapsed < Self.holdDuration {
+                        events += [.scrollGesture(.began, x: contact.anchor.x, y: contact.anchor.y),
+                                   .scroll(x: contact.anchor.x, y: contact.anchor.y, dx: p.x - contact.anchor.x, dy: p.y - contact.anchor.y)]
+                        contact.last = p
+                        stroke = .scrolling(contact)
+                    } else {
+                        events += [.pointer(.leftDown, x: contact.anchor.x, y: contact.anchor.y), .pointer(.move, x: p.x, y: p.y)]
+                        contact.last = p
+                        stroke = .dragging(contact)
+                    }
+                } else if sample.phase == .ended {
+                    if viewport.point(sample.location, in: geometry) != nil {
+                        let right = elapsed >= Self.holdDuration
+                        events += KeyChord.modifiersDown(contact.modifiers)
+                            + [.pointer(right ? .rightDown : .leftDown, x: contact.anchor.x, y: contact.anchor.y),
+                               .pointer(right ? .rightUp : .leftUp, x: contact.anchor.x, y: contact.anchor.y)]
+                            + KeyChord.modifiersUp(contact.modifiers)
+                    }
+                    stroke = .idle
+                }
+            case .scrolling(var contact):
+                if p != contact.last {
+                    events.append(.scroll(x: contact.anchor.x, y: contact.anchor.y, dx: p.x - contact.last.x, dy: p.y - contact.last.y))
+                }
+                contact.last = p
+                stroke = .scrolling(contact)
+            case .dragging(var contact):
+                if p != contact.last { events.append(.pointer(.move, x: p.x, y: p.y)) }
+                contact.last = p
+                stroke = .dragging(contact)
+            case .idle, .suppressed: break
+            }
+            if sample.phase == .ended { events += finishStroke() }
+        }
+        if live.isEmpty { stroke = .idle }
+        return events
     }
 
-    mutating func end() -> [InputEvent] {
-        defer { stroke = .idle; modifiers = [] }
+    private mutating func finishStroke() -> [InputEvent] {
+        defer { stroke = .idle }
         switch stroke {
-        case .idle, .cancelled: return []
-        case .dragging(let p): return [.pointer(.leftUp, x: p.x, y: p.y)] + KeyChord.modifiersUp(modifiers)
-        case .scrolling(let anchor, _): return [.scrollGesture(.ended, x: anchor.x, y: anchor.y)] + KeyChord.modifiersUp(modifiers)
+        case .dragging(let contact):
+            return [.pointer(.leftUp, x: contact.last.x, y: contact.last.y)] + KeyChord.modifiersUp(contact.modifiers)
+        case .scrolling(let contact):
+            return [.scrollGesture(.ended, x: contact.anchor.x, y: contact.anchor.y)] + KeyChord.modifiersUp(contact.modifiers)
+        case .idle, .pending, .suppressed: return []
         }
     }
 
     mutating func cancel() -> [InputEvent] {
-        guard !isIdle else { return [] }
-        let releases = end()
-        stroke = .cancelled
+        let releases = finishStroke()
+        if !live.isEmpty { stroke = .suppressed }
         return releases
     }
 }

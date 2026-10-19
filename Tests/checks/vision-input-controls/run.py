@@ -37,7 +37,7 @@ def main():
         for name, sources in groups:
             run(base + ['-parse-as-library', '-emit-module', '-emit-object', '-whole-module-optimization', '-module-name', name] +
                 list(map(str, sources)) + ['-emit-module-path', str(output / (name + '.swiftmodule')), '-o', str(output / (name + '.o'))], 'compile-' + name)
-        names = ['Client.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift',
+        names = ['Client.swift', 'SpatialAdapter.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift',
                  'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift',
                  'visionOSClient/VisionTextDraft.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift',
                  'Tests/checks/vision-input-controls/SourceInputFence.swift', 'main.swift']
@@ -45,6 +45,13 @@ def main():
             [str(output / (name + '.o')) for name, _ in groups] + ['-o', str(output / 'checks')], 'compile-checks')
         log = run([str(output / 'checks')], 'runtime-checks')
         record['assertions'] = int(re.search(r'RESULT_ASSERTIONS (\d+)', log)[1])
+        pointer_sources = ['iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift',
+                           'visionOSClient/VisionInputFence.swift', 'visionOSClient/VisionTransition.swift',
+                           'Tests/vision-pointer/main.swift']
+        run(base + ['-I', str(output)] + [str(generated / name) for name in pointer_sources] +
+            [str(output / 'StreamProtocol.o'), '-o', str(output / 'pointer-checks')], 'compile-pointer')
+        pointer_log = run([str(output / 'pointer-checks')], 'runtime-pointer')
+        record['pointerAssertions'] = int(re.search(r'Vision input: (\d+) behavioral checks', pointer_log)[1])
         record['generatedInputsUnchanged'] = all((generated / n).read_text() == value for n, value in files.items())
         record['exitCode'] = 0 if record['generatedInputsUnchanged'] else 2
     except Exception as error:

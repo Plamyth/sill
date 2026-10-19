@@ -38,7 +38,6 @@ struct SillVisionWorkspace: View {
     @Environment(\.scenePhase) private var phase
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var input: VisionInputSession
-    @State private var mode = VisionPointer.Mode.pointer
     @State private var keyboardShown = false
     @State private var keysShown = false
     @State private var code = ""
@@ -46,7 +45,6 @@ struct SillVisionWorkspace: View {
     @State private var addMac = false
     @State private var recoveryShown = false
     @State private var changingSource = false
-    @GestureState private var dragging = false
     @State private var transitions = VisionTransition()
     @State private var inputSuspended = false
     @State private var textDraft: VisionTextDraft<StreamClient.VisionTextTarget>?
@@ -101,6 +99,8 @@ struct SillVisionWorkspace: View {
             if client.connected {
                 screen
                 controls
+                Text("짧게 집기: 클릭 · 바로 이동: 스크롤 · 길게 집었다 놓기: 오른쪽 클릭 · 길게 집은 뒤 이동: 드래그\n두 손 집기: 이 화면 확대·축소, Mac 앱 배율은 유지됩니다.")
+                    .font(.caption).multilineTextAlignment(.center)
                 HStack {
                     Button("전체 화면", action: openDisplayChooser)
                         .accessibilityHint("연결된 Mac의 모니터를 선택합니다. 이전 호스트는 기존 전체 화면 동작을 사용합니다.")
@@ -193,8 +193,6 @@ struct SillVisionWorkspace: View {
         .onChange(of: client.visionTextScope) { _, _ in
             if let textDraft, client.captureVisionTextTarget() != textDraft.target { clearDraft() }
         }
-        .onChange(of: mode) { _, _ in releaseInput() }
-        .onChange(of: dragging) { _, value in withWindowOwnership { if !value { input.endGesture() } } }
         .onDisappear {
             guard session.owns(lease) else { return }
             clearDraft()
@@ -305,37 +303,19 @@ struct SillVisionWorkspace: View {
         GeometryReader { geo in
             ZStack {
                 StreamView(client: client)
+                    .scaleEffect(input.viewport.scale, anchor: .center)
+                    .offset(input.viewport.offset)
                 InputOverlay(videoSize: client.videoSize, send: { event in withWindowOwnership { input.overlayInput(event) } },
                              setOwnPointer: { point, origin in withWindowOwnership { client.setOwnPointer(point, from: origin) } }, proxy: input.keyboard,
                              isKeyboardShown: $keyboardShown, latchedModifiers: input.latched,
                              onModifiersConsumed: { withWindowOwnership { input.consumeLatch() } })
                     .allowsHitTesting(false)
-                Color.clear.contentShape(Rectangle())
-                    .gesture(SpatialTapGesture().exclusively(before: DragGesture(minimumDistance: 5))
-                        .updating($dragging) { value, state, _ in
-                            if case .second = value { state = true }
-                        }
-                        .onChanged { value in
-                            guard case .second(let drag) = value else { return }
-                            let bounds = CGRect(origin: .zero, size: geo.size)
-                            guard let start = VisionPointer.point(drag.startLocation, bounds: bounds, video: client.videoSize),
-                                  let p = VisionPointer.point(drag.location, bounds: bounds, video: client.videoSize, clamp: true) else { return }
-                            withWindowOwnership { input.drag(from: start, to: p, mode: mode) }
-                        }
-                        .onEnded { value in
-                            switch value {
-                            case .first(let tap):
-                                guard let p = VisionPointer.point(tap.location, bounds: CGRect(origin: .zero, size: geo.size), video: client.videoSize) else { return }
-                                withWindowOwnership { input.tap(p, mode: mode) }
-                            case .second: withWindowOwnership { input.endGesture() }
-                            }
-                        })
+                VisionSpatialInput(input: input,
+                                   geometry: VisionPointer.Geometry(bounds: CGRect(origin: .zero, size: geo.size), video: client.videoSize),
+                                   admit: withWindowOwnership)
                 if client.active == .none {
                     Button("Mac 전체 화면 표시", action: openDisplayChooser)
                 }
-            }
-            .onChange(of: geo.size, initial: true) { _, _ in
-                releaseInput()
             }
         }
         .background(.black)
@@ -345,9 +325,9 @@ struct SillVisionWorkspace: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
-            Picker("조작", selection: $mode) {
-                ForEach(VisionPointer.Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }.pickerStyle(.segmented)
+            Button("화면 배율 초기화") { withWindowOwnership { input.resetViewport() } }
+                .disabled(input.viewport.scale == 1)
+                .accessibilityHint("Mac 앱의 배율은 바꾸지 않고 이 화면만 원래 크기로 돌립니다.")
             Button("키보드") { withWindowOwnership { input.keyboard.view?.toggleKeyboard() } }
             Button("입력 초안") { openDraft() }
                 .accessibilityHint("Mac 입력을 잠시 멈추고 로컬 초안을 편집합니다. 시스템 키보드 받아쓰기도 사용할 수 있습니다.")

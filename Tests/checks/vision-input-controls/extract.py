@@ -45,6 +45,9 @@ def fixture():
     for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()
     files['Tests/checks/vision-input-controls/SourceInputFence.swift'] = (ROOT / 'Sources/SillHost/SourceInputFence.swift').read_text()
+    spatial = (ROOT / 'visionOSClient/VisionSpatialInput.swift').read_text()
+    files['SpatialAdapter.swift'] = 'import SwiftUI\n' + block(spatial, 'extension VisionPointer.Sample {') + '\n'
+    pieces['spatialAdapter'] = files['SpatialAdapter.swift']
     files['visionOSClient/VisionTextDraft.swift'] = (ROOT / 'visionOSClient/VisionTextDraft.swift').read_text()
     pieces['sourceInputFence'] = files['Tests/checks/vision-input-controls/SourceInputFence.swift']
     for path in ['Tests/vision-pointer/main.swift','visionOSClient/VisionInputFence.swift','visionOSClient/VisionTransition.swift','Tests/checks/fence/main.swift']:
