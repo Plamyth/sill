@@ -87,6 +87,8 @@ let rejectedURLs = [
     "http://2130706433/screen", "http://0x7f000001/screen", "http://0177.0.0.1/screen",
     "http://[::1]/screen", "http://[0:0:0:0:0:0:0:1]/screen",
     "http://[::ffff:127.0.0.1]/screen", "http://[::ffff:7f00:1]/screen",
+    "http://[::ffff:169.254.169.254]/screen", "https://[::ffff:a9fe:a9fe]/screen",
+    "http://[::169.254.1.2]/screen", "http://00127.0.0.1/screen", "http://169.0254.1.2/screen",
     "http://0.0.0.0/screen", "http://[::]/screen", "http://169.254.1.2/screen",
     "https://person:secret@example.test/screen", "https://person@example.test/screen",
     "https://@example.test/screen", "file:///screen", "javascript:alert(1)",
@@ -123,6 +125,19 @@ for malformed in ["null", "42", "[]", "{}", "\"wrong\"",
 let absent = try decoder.decode(Carrier.self, from: Data("{\"marker\":\"preserved\"}".utf8))
 check(absent.testDestinations == nil, "old carrier without field decodes")
 let projected = TestDestinationCatalog.Projection(catalog)
+for state: Any in ["unavailable", "malformed", "future", NSNull(), 42] {
+    var object = encoded
+    object["state"] = state
+    let data = try JSONSerialization.data(withJSONObject: ["marker": "preserved", "testDestinations": object])
+    let carrier = try decoder.decode(Carrier.self, from: data)
+    check(carrier.marker == "preserved" && carrier.testDestinations?.catalog == nil,
+          "explicit producer failure or invalid state cannot become a confirmed empty catalog")
+}
+var readyObject = encoded
+readyObject["state"] = "ready"
+let readyProjection = try decoder.decode(TestDestinationCatalog.Projection.self,
+    from: JSONSerialization.data(withJSONObject: readyObject))
+check(readyProjection.catalog == catalog, "explicit ready producer state preserves catalog")
 let projectionObject = try JSONSerialization.jsonObject(with: encoder.encode(projected)) as! [String: Any]
 check(projectionObject["schema"] as? String == catalog.schema && projectionObject["catalog"] == nil,
       "projection emits raw catalog without wrapper")

@@ -108,7 +108,7 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
                 let mappedPrefix = bytes.prefix(10).allSatisfy { $0 == 0 } && bytes[10] == 255 && bytes[11] == 255
                 if bytes.allSatisfy({ $0 == 0 }) ||
                     (bytes.prefix(15).allSatisfy({ $0 == 0 }) && bytes[15] == 1) ||
-                    ((zeroPrefix || mappedPrefix) && (bytes[12] == 127 || bytes[12] == 0)) ||
+                    ((zeroPrefix || mappedPrefix) && !Self.allowsIPv4(first: bytes[12], second: bytes[13])) ||
                     (bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80) {
                     throw ValidationError.unsafeURL
                 }
@@ -121,12 +121,18 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
                 let numeric = labels.allSatisfy { $0.allSatisfy(\.isNumber) || $0.hasPrefix("0x") }
                 if numeric {
                     var address = in_addr()
-                    guard labels.count == 4, inet_pton(AF_INET, name, &address) == 1,
-                          labels[0] != "127", labels[0] != "0",
-                          !(labels[0] == "169" && labels[1] == "254") else { throw ValidationError.unsafeURL }
+                    guard labels.count == 4,
+                          labels.allSatisfy({ UInt8($0).map(String.init) == String($0) }),
+                          inet_pton(AF_INET, name, &address) == 1 else { throw ValidationError.unsafeURL }
+                    let bytes = withUnsafeBytes(of: &address) { Array($0) }
+                    guard Self.allowsIPv4(first: bytes[0], second: bytes[1]) else { throw ValidationError.unsafeURL }
                 }
             }
             return result
+        }
+
+        private static func allowsIPv4(first: UInt8, second: UInt8) -> Bool {
+            first != 127 && first != 0 && !(first == 169 && second == 254)
         }
     }
 
@@ -171,11 +177,21 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
     public struct Projection: Codable, Equatable, Sendable {
         public var catalog: TestDestinationCatalog?
 
+        private enum StateKey: String, CodingKey { case state }
+
         public init(_ catalog: TestDestinationCatalog?) {
             self.catalog = catalog.flatMap { (try? $0.validate()) != nil ? $0 : nil }
         }
 
         public init(from decoder: Decoder) throws {
+            guard let values = try? decoder.container(keyedBy: StateKey.self) else {
+                self.init(nil)
+                return
+            }
+            if values.contains(.state), (try? values.decode(String.self, forKey: .state)) != "ready" {
+                self.init(nil)
+                return
+            }
             self.init(try? TestDestinationCatalog(from: decoder))
         }
 
