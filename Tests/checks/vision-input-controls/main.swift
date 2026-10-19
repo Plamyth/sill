@@ -491,6 +491,7 @@ check(Array(events(continuityPeer).dropFirst(beforeOrderedDrag)) == [
     .pointer(.move, x: 0.75, y: 0.25), .pointer(.leftDown, x: 0.75, y: 0.25),
     .pointer(.move, x: 0.85, y: 0.45), .pointer(.leftUp, x: 0.85, y: 0.45)],
     "actual session drag and cancellation retain newest bounded inverse target within a batch")
+runLifecycleTests()
 print("RESULT_ASSERTIONS \(checks)")
 
 print("Vision controls \(checks)/\(checks)")

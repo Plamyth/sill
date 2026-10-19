@@ -8,6 +8,8 @@ from swift_platform import select_platform
 ROOT = Path(__file__).resolve().parents[3]
 
 def block(text, marker):
+    if text.count(marker) != 1:
+        raise ValueError('expected one extraction marker: ' + marker)
     start = text.index(marker)
     opening = text.index('{', start)
     depth, end = 1, opening + 1
@@ -48,6 +50,21 @@ def fixture():
     spatial = (ROOT / 'visionOSClient/VisionSpatialInput.swift').read_text()
     files['SpatialAdapter.swift'] = 'import SwiftUI\n' + block(spatial, 'extension VisionPointer.Sample {') + '\n'
     pieces['spatialAdapter'] = files['SpatialAdapter.swift']
+    callbacks = (Path(__file__).parent / 'Lifecycle.swift').read_text()
+    for name, marker in {
+        'CHANGED': '.onChanged {', 'ENDED': '.onEnded {',
+        'RECOGNIZING': '.onChange(of: recognizing) {',
+        'GEOMETRY': '.onChange(of: geometry, initial: true) {',
+        'DISAPPEAR': '.onDisappear {',
+    }.items():
+        extracted = block(spatial, marker)
+        closure = extracted[extracted.index('{'):]
+        pieces['callback.' + name] = closure
+        token = 'CALLBACK_' + name
+        assert callbacks.count(token) == 1, token
+        callbacks = callbacks.replace(token, closure)
+    files['SpatialCallbacks.swift'] = callbacks
+    files['LifecycleTests.swift'] = (Path(__file__).parent / 'LifecycleTests.swift').read_text()
     files['visionOSClient/VisionTextDraft.swift'] = (ROOT / 'visionOSClient/VisionTextDraft.swift').read_text()
     pieces['sourceInputFence'] = files['Tests/checks/vision-input-controls/SourceInputFence.swift']
     for path in ['Tests/vision-pointer/main.swift','visionOSClient/VisionInputFence.swift','visionOSClient/VisionTransition.swift','Tests/checks/fence/main.swift']:

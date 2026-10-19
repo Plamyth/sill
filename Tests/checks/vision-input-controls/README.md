@@ -1,0 +1,11 @@
+# Source coupled gesture lifecycle checks
+
+`run.py WORKTREE FRESH_OUTPUT` runs this worktree's extracted input controls and pointer checks with a 600 second suite deadline. Keep output in the development archive path returned by `storage-route` for CCR-Vision. Each command records its arguments, exit status, process group cleanup and log. `manifest-before.json` and `manifest-after.json` bind production Swift and project inputs, harness inputs, emitted files and extracted closures by SHA256.
+
+`extract.py` requires unique source markers and inserts five complete, unchanged closures from `VisionSpatialInput.swift` into `Lifecycle.swift`. Optional contact and magnification DTOs provide only callback values. The adapter stores the View revision and admission state. Actual production `VisionInputSession`, `VisionPointer`, transport methods and release debt implement gesture behavior.
+
+`LifecycleTests.swift` invokes those closures through an inert scheduler. It covers click, scroll, hold, drag, magnification arbitration, contact tails, duplicate ends, recognition reset, disappearance, admission and stale callbacks across geometry, source and revision changes. Cancellation must avoid phantom input and balance transmitted releases. Synthetic cancellation orders do not have to produce a click.
+
+Five new compiled mutants exercise callback dispatch order, terminal cleanup, disappearance, recognition reset and revision capture. Each must fail at its named behavioral witness. The existing six transport mutants remain available to the remote runner; this local suite does not compile them again. `test_runner.py` checks local and remote compile lists and all remote mutant substitutions without running Mini or creating a RAM disk. It also reproduces leader exit and timeout with a remaining descendant and checks process group cleanup.
+
+This fixture does not prove SwiftUI recognizer scheduling, real gesture values, visionOS SDK compilation, device behavior or host delivery. The remote entry point is retained for compatibility; this unit validates its command inputs only. Signed SDK source comparison and independent review belong to the original owner after this writer releases the worktree.
