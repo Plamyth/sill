@@ -191,12 +191,14 @@ struct CanvasWorkspace: View {
                         .buttonStyle(.borderedProminent)
                         .tint(store.mode == mode ? .blue : .gray)
                 }
+                CanvasInkHistoryButtons(history: store.inkHistory)
                 toolsMenu
                 inboxLabel
                 sendButton
             }.fixedSize(horizontal:true,vertical:false)
             HStack(spacing:8) {
                 toolsMenu
+                CanvasInkHistoryButtons(history: store.inkHistory).labelStyle(.iconOnly)
                 inboxLabel
                 Spacer(minLength:0)
                 sendButton.labelStyle(.iconOnly)
@@ -820,6 +822,28 @@ struct CanvasWorkspace: View {
     }
 }
 
+private struct CanvasInkHistoryButtons: View {
+    @ObservedObject var history: CanvasInkHistory
+
+    var body: some View {
+        Group {
+            Button { history.undo() } label: {
+                Label("실행 취소", systemImage: "arrow.uturn.backward")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+                .disabled(!history.availability.canUndo)
+                .accessibilityLabel("잉크 실행 취소")
+                .accessibilityIdentifier("canvasInkUndo")
+            Button { history.redo() } label: {
+                Label("다시 실행", systemImage: "arrow.uturn.forward")
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+                .disabled(!history.availability.canRedo)
+                .accessibilityLabel("잉크 다시 실행")
+                .accessibilityIdentifier("canvasInkRedo")
+        }
+    }
+}
 
 private struct ProjectionConnection: Hashable {
     let address: String

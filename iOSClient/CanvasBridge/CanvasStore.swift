@@ -22,10 +22,96 @@ enum CanvasEraserStyle: String, CaseIterable {
 }
 
 @MainActor
+final class CanvasInkHistory: ObservableObject {
+    struct Availability: Equatable {
+        var canUndo = false
+        var canRedo = false
+    }
+
+    @Published private(set) var availability = Availability()
+    private(set) var generation = UUID()
+    private weak var manager: UndoManager?
+    private var observers: [NSObjectProtocol] = []
+    private var usingTool = false
+    private var refreshScheduled = false
+    private var refreshing = false
+
+    func attach(_ manager: UndoManager) {
+        if let previous = self.manager { detach(previous) }
+        self.manager = manager
+        invalidate()
+        for name in [NSNotification.Name.NSUndoManagerDidOpenUndoGroup, .NSUndoManagerDidCloseUndoGroup,
+                     .NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: manager,
+                queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.scheduleRefresh() }
+                })
+        }
+        scheduleRefresh()
+    }
+
+    func detach(_ manager: UndoManager) {
+        guard self.manager === manager else { return }
+        invalidate()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll()
+        self.manager = nil
+    }
+
+    func invalidate() {
+        generation = UUID()
+        manager?.removeAllActions()
+        usingTool = false
+        scheduleRefresh()
+    }
+
+    func setUsingTool(_ active: Bool) {
+        usingTool = active
+        if active {
+            if availability != Availability() { availability = Availability() }
+        } else { scheduleRefresh() }
+    }
+
+    func undo() {
+        guard let manager, !usingTool, !manager.isUndoing, !manager.isRedoing,
+              manager.groupingLevel <= 1, manager.canUndo else { return }
+        manager.undo()
+        scheduleRefresh()
+    }
+
+    func redo() {
+        guard let manager, !usingTool, !manager.isUndoing, !manager.isRedoing,
+              manager.groupingLevel == 0, manager.canRedo else { return }
+        manager.redo()
+        scheduleRefresh()
+    }
+
+    func scheduleRefresh() {
+        guard !refreshScheduled, !refreshing else { return }
+        refreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refreshScheduled = false
+            self.refreshing = true
+            defer { self.refreshing = false }
+            let next: Availability
+            if let manager = self.manager, !self.usingTool, !manager.isUndoing,
+               !manager.isRedoing, manager.groupingLevel <= 1 {
+                next = Availability(canUndo: manager.canUndo,
+                    canRedo: manager.groupingLevel == 0 && manager.canRedo)
+            } else { next = Availability() }
+            if self.availability != next { self.availability = next }
+        }
+    }
+
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+}
+
+@MainActor
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
-            if oldValue.id != scene.id { invalidateNoteScene() }
+            if oldValue.id != scene.id { invalidateNoteScene(); inkHistory.invalidate() }
             else if let context = noteContext, !noteContextIsCurrent(context) { invalidateNoteRequests() }
             handwritingRequest = nil
             scheduleSave()
@@ -53,8 +139,16 @@ final class CanvasStore: ObservableObject {
     @Published var viewport = CanvasViewport()
     var zoom: Double { viewport.zoom }
     var pan: CGSize { viewport.pan }
-    var drawing = PKDrawing() {
-        didSet { handwritingRequest = nil }
+    let inkHistory = CanvasInkHistory()
+    private var storedDrawing = PKDrawing()
+    var drawing: PKDrawing {
+        get { storedDrawing }
+        set {
+            objectWillChange.send()
+            storedDrawing = newValue
+            handwritingRequest = nil
+            inkHistory.invalidate()
+        }
     }
     var linkStart: UUID?
     private var saveTask: Task<Void,Never>?
@@ -460,7 +554,8 @@ final class CanvasStore: ObservableObject {
 
     func updateDrawing(_ next: PKDrawing) {
         guard drawing != next else { return }
-        drawing = next
+        storedDrawing = next
+        handwritingRequest = nil
         var changed = scene
         changed.drawingBase64 = next.dataRepresentation().base64EncodedString()
         changed.strokes = next.strokes.map { stroke in

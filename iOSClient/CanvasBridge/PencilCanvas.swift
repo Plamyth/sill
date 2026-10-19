@@ -3,6 +3,11 @@ import SwiftUI
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 
+final class CanvasInkView: PKCanvasView {
+    let inkUndoManager = UndoManager()
+    override var undoManager: UndoManager? { inkUndoManager }
+}
+
 struct PencilCanvas: UIViewRepresentable {
     @ObservedObject var store: CanvasStore
 
@@ -12,7 +17,7 @@ struct PencilCanvas: UIViewRepresentable {
         let host = UIView()
         host.backgroundColor = CanvasPalette.background
 
-        let canvas = PKCanvasView(frame: host.bounds)
+        let canvas = CanvasInkView(frame: host.bounds)
         canvas.overrideUserInterfaceStyle = .light
         canvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvas.delegate = context.coordinator
@@ -49,8 +54,8 @@ struct PencilCanvas: UIViewRepresentable {
         overlay.layer.addSublayer(hoverLayer)
 
         context.coordinator.canvas = canvas
-        canvas.drawing = store.drawing
-        context.coordinator.renderedModelDrawing = store.drawing
+        store.inkHistory.attach(canvas.inkUndoManager)
+        context.coordinator.replaceDrawingFromStore()
 
         let trace = PencilTraceRecognizer()
         trace.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
@@ -91,9 +96,9 @@ struct PencilCanvas: UIViewRepresentable {
     func updateUIView(_ host: UIView, context: Context) {
         guard let canvas = context.coordinator.canvas else { return }
         host.accessibilityValue = "확대 \(Int(store.zoom * 100))%"
-        if context.coordinator.renderedModelDrawing != store.drawing {
-            context.coordinator.renderedModelDrawing = store.drawing
-            if canvas.drawing != store.drawing { canvas.drawing = store.drawing }
+        if context.coordinator.renderedGeneration != store.inkHistory.generation ||
+           context.coordinator.renderedModelDrawing != store.drawing {
+            context.coordinator.replaceDrawingFromStore()
         }
         canvas.isUserInteractionEnabled = store.mode != .select
         switch store.mode {
@@ -105,11 +110,24 @@ struct PencilCanvas: UIViewRepresentable {
         context.coordinator.updateHover()
     }
 
+    static func dismantleUIView(_ host: UIView, coordinator: Coordinator) {
+        guard let canvas = coordinator.canvas else { return }
+        canvas.delegate = nil
+        if coordinator.renderedGeneration == coordinator.store.inkHistory.generation,
+           canvas.drawing != coordinator.store.drawing {
+            coordinator.store.updateDrawing(canvas.drawing)
+            coordinator.store.saveNow()
+        }
+        coordinator.store.inkHistory.detach(canvas.inkUndoManager)
+    }
+
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate,
                              UIGestureRecognizerDelegate {
         let store: CanvasStore
-        weak var canvas: PKCanvasView?
+        weak var canvas: CanvasInkView?
         var renderedModelDrawing = PKDrawing()
+        var renderedGeneration = UUID()
+        private var replacingDrawing = false
         let previewLayer = CAShapeLayer()
         let hoverLayer = CAShapeLayer()
         private var previewPath = UIBezierPath()
@@ -123,6 +141,27 @@ struct PencilCanvas: UIViewRepresentable {
         private var pinchCenter = CGPoint.zero
 
         init(store: CanvasStore) { self.store = store }
+
+        func replaceDrawingFromStore() {
+            guard let canvas else { return }
+            replacingDrawing = true
+            drawingChangeSerial += 1
+            let manager = canvas.inkUndoManager
+            manager.disableUndoRegistration()
+            let enabled = canvas.drawingGestureRecognizer.isEnabled
+            canvas.drawingGestureRecognizer.isEnabled = false
+            canvas.drawing = store.drawing
+            canvas.drawingGestureRecognizer.isEnabled = enabled
+            manager.enableUndoRegistration()
+            manager.removeAllActions()
+            renderedModelDrawing = store.drawing
+            renderedGeneration = store.inkHistory.generation
+            isDrawing = false
+            previewSession += 1
+            previewLayer.path = nil
+            replacingDrawing = false
+            store.inkHistory.scheduleRefresh()
+        }
 
         fileprivate func sample(_ point: CGPoint, phase: PencilTraceRecognizer.Phase) {
             switch phase {
@@ -211,13 +250,28 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
             drawingChangeSerial += 1
             let serial = drawingChangeSerial
+            let generation = renderedGeneration
             let drawing = canvasView.drawing
             Task { @MainActor [weak self] in
-                guard let self, self.drawingChangeSerial == serial else { return }
+                guard let self, self.drawingChangeSerial == serial,
+                      self.store.inkHistory.generation == generation else { return }
+                self.renderedModelDrawing = drawing
                 self.store.updateDrawing(drawing)
+                self.store.inkHistory.scheduleRefresh()
             }
+        }
+
+        func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            store.inkHistory.setUsingTool(true)
+        }
+
+        func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            store.inkHistory.setUsingTool(false)
         }
 
         func pencilInteraction(_ interaction: UIPencilInteraction,
