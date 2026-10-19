@@ -290,10 +290,13 @@ struct CanvasNode: Codable, Identifiable, Equatable {
 }
 
 struct CanvasLink: Codable, Identifiable, Equatable {
+    enum Kind: String, Codable { case general, parentChild }
+
     var id: UUID
     var from: UUID
     var to: UUID
     var label: String
+    var kind: Kind? = nil
 }
 
 struct CanvasAnnotation: Codable, Identifiable, Equatable {
@@ -338,6 +341,35 @@ struct CanvasScene: Codable, Equatable {
               nodes.contains(where: { $0.id == to }) else { return false }
         links.append(CanvasLink(id: UUID(), from: from, to: to, label: label))
         revision += 1
+        return true
+    }
+
+    mutating func connectAsChild(parent: UUID, child: UUID, label: String = "") -> Bool {
+        let link = CanvasLink(id: UUID(), from: parent, to: child, label: label, kind: .parentChild)
+        guard Self.validHierarchy(links + [link], nodeIds: Set(nodes.map(\.id))) else { return false }
+        links.append(link)
+        revision += 1
+        return true
+    }
+
+    private static func validHierarchy(_ links: [CanvasLink], nodeIds: Set<UUID>) -> Bool {
+        var parents: [UUID: UUID] = [:]
+        for link in links where link.kind == .parentChild {
+            guard link.from != link.to, nodeIds.contains(link.from), nodeIds.contains(link.to),
+                  parents[link.to] == nil else { return false }
+            parents[link.to] = link.from
+        }
+        var checked = Set<UUID>()
+        for node in parents.keys {
+            var path = Set<UUID>()
+            var cursor = node
+            while !checked.contains(cursor) {
+                guard path.insert(cursor).inserted else { return false }
+                guard let parent = parents[cursor] else { break }
+                cursor = parent
+            }
+            checked.formUnion(path)
+        }
         return true
     }
 
@@ -392,7 +424,8 @@ struct CanvasScene: Codable, Equatable {
         let availableIds = existingIds.union(proposalIds)
         guard change.annotations.allSatisfy({ $0.nodeId.map(availableIds.contains) ?? true }),
               proposedLinks.allSatisfy({ $0.from != $0.to && availableIds.contains($0.from) &&
-                  availableIds.contains($0.to) }) else {
+                  availableIds.contains($0.to) }),
+              Self.validHierarchy(links + proposedLinks, nodeIds: availableIds) else {
             return false
         }
         annotations.append(contentsOf: change.annotations)
