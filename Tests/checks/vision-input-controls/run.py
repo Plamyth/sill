@@ -1,3 +1,4 @@
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import os
@@ -10,48 +11,165 @@ import time
 
 from extract import ROOT, block, fixture
 
+DEVELOPER_DIR = '/Applications/Xcode.app/Contents/Developer'
+
+
+@dataclass(frozen=True)
+class Process:
+    pid: int
+    parent: int
+    group: int
+    state: str
+    started: str
+    command: str
+
+    @property
+    def identity(self):
+        return self.pid, self.started, self.command
+
+
+def process_table():
+    result = subprocess.run(['/bin/ps', '-ww', '-axo', 'pid=,ppid=,pgid=,stat=,lstart=,args='],
+                            capture_output=True, text=True, check=True, timeout=5)
+    table = {}
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 9)
+        if len(parts) != 10:
+            raise ValueError('incomplete process identity from ps')
+        item = Process(int(parts[0]), int(parts[1]), int(parts[2]), parts[3],
+                       ' '.join(parts[4:9]), parts[9])
+        if not item.state.startswith('Z'):
+            table[item.pid] = item
+    if not table:
+        raise ValueError('empty process table from ps')
+    return table
+
+
+def compiler_output_bound(item, output):
+    if output is None:
+        return False
+    args = item.command.split()
+    executable = Path(args[0])
+    compiler_bin = Path(DEVELOPER_DIR) / 'Toolchains/XcodeDefault.xctoolchain/usr/bin'
+    if executable.parent != compiler_bin or executable.name not in {'swiftc', 'swift-frontend', 'swift-driver', 'clang', 'clang++', 'ld'}:
+        return False
+    for flag, value in zip(args, args[1:]):
+        if flag in {'-o', '-module-cache-path', '-emit-module-path'}:
+            path = Path(value)
+            if path.is_absolute() and '..' not in path.parts and output in path.parents:
+                return True
+    return False
+
+
+def owned_processes(table, group, owned, output):
+    selected = {pid: item for pid, item in table.items()
+                if item.group == group or item.identity in owned or compiler_output_bound(item, output)}
+    while True:
+        children = {pid: item for pid, item in table.items() if item.parent in selected and pid not in selected}
+        if not children:
+            break
+        selected.update(children)
+    owned.update({item.identity: item for item in selected.values()})
+    return selected
+
 
 def hashes(paths):
     return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in paths.items()}
 
 
 def group_members(group):
-    result = subprocess.run(['/bin/ps', '-axo', 'pid=,pgid=,stat='],
-                            capture_output=True, text=True, check=True, timeout=5)
-    return [int(parts[0]) for line in result.stdout.splitlines()
-            if len(parts := line.split()) == 3 and int(parts[1]) == group and not parts[2].startswith('Z')]
+    return [item.pid for item in process_table().values() if item.group == group]
 
 
-def cleanup_group(group):
-    initial = group_members(group)
-    for action, seconds in [(signal.SIGTERM, 1), (signal.SIGKILL, 1)]:
-        if not group_members(group):
-            break
-        try:
-            os.killpg(group, action)
-        except ProcessLookupError:
-            break
-        deadline = time.monotonic() + seconds
-        while group_members(group) and time.monotonic() < deadline:
-            time.sleep(0.05)
-    return {'initial': initial, 'remaining': group_members(group)}
-
-
-def execute(command, timeout):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               text=True, start_new_session=True)
-    timed_out = False
+def cleanup_group(group, owned, output):
+    record = {'initial': [], 'remaining': None, 'detachedInitial': [], 'detachedRemaining': None,
+              'verified': False, 'signals': []}
     try:
-        log, _ = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+        live = owned_processes(process_table(), group, owned, output)
+        record['initial'] = [p.pid for p in live.values() if p.group == group]
+        record['detachedInitial'] = [asdict(p) for p in live.values() if p.group != group]
+        for action in [signal.SIGTERM, signal.SIGKILL]:
+            live = owned_processes(process_table(), group, owned, output)
+            members = [p for p in live.values() if p.group == group]
+            if members:
+                checked = process_table()
+                current = [p for p in checked.values() if p.group == group]
+                if any(p.identity not in {m.identity for m in members} for p in current):
+                    raise RuntimeError('process group identity changed before signal')
+                if current:
+                    try:
+                        os.killpg(group, action)
+                        record['signals'].append({'group': group, 'signal': action.name,
+                                                  'identities': [asdict(p) for p in current]})
+                    except ProcessLookupError:
+                        pass
+            for item in live.values():
+                if item.group == group:
+                    continue
+                current = process_table().get(item.pid)
+                if current is not None and current.identity == item.identity:
+                    try:
+                        os.kill(item.pid, action)
+                        record['signals'].append({'pid': item.pid, 'signal': action.name,
+                                                  'identity': asdict(current)})
+                    except ProcessLookupError:
+                        pass
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                live = owned_processes(process_table(), group, owned, output)
+                if not live:
+                    break
+                time.sleep(0.05)
+            if not live:
+                break
+        live = owned_processes(process_table(), group, owned, output)
+        record['remaining'] = [p.pid for p in live.values() if p.group == group]
+        record['detachedRemaining'] = [asdict(p) for p in live.values() if p.group != group]
+        record['verified'] = not live
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        record['error'] = str(error)
+    record['ownedIdentities'] = [asdict(p) for p in owned.values()]
+    return record
+
+
+def execute(command, timeout, output=None):
+    environment = dict(os.environ, DEVELOPER_DIR=DEVELOPER_DIR)
+    if output is not None:
+        environment['VISION_RUNNER_TEST_OUTPUT'] = str(output)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, start_new_session=True, env=environment)
+    owned = {}
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    log = ''
+    observation_error = None
+    try:
+        while True:
+            owned_processes(process_table(), process.pid, owned, output)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                log, _ = process.communicate(timeout=min(0.1, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        observation_error = str(error)
     finally:
-        cleanup = cleanup_group(process.pid)
-        process.wait(timeout=5)
-    if timed_out:
-        log, _ = process.communicate(timeout=5)
+        cleanup = cleanup_group(process.pid, owned, output)
+        try:
+            log, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            cleanup['verified'] = False
+            cleanup['error'] = 'owned command did not close after cleanup'
+        if observation_error is not None:
+            cleanup['verified'] = False
+            cleanup['observationError'] = observation_error
     return log, {'pid': process.pid, 'exitCode': process.returncode, 'reaped': process.poll() is not None,
-                 'timedOut': timed_out, 'processGroup': cleanup}
+                 'timedOut': timed_out, 'developerDir': DEVELOPER_DIR,
+                 'ownershipOutput': str(output) if output is not None else None, 'processGroup': cleanup}
 
 
 def callback_mutants(source):
@@ -87,6 +205,8 @@ def main():
     root, output = [Path(p).resolve() for p in sys.argv[1:3]]
     if root != ROOT:
         raise SystemExit('source root must match this worktree: ' + str(ROOT))
+    if any(character.isspace() for character in str(output)):
+        raise SystemExit('output path must not contain whitespace for exact process argument binding')
     if output == root or root in output.parents or (output.exists() and any(output.iterdir())):
         raise SystemExit('use a fresh output outside source')
     output.mkdir(parents=True, exist_ok=True)
@@ -112,18 +232,20 @@ def main():
     (output / 'manifest-before.json').write_text(json.dumps(before, indent=2) + '\n')
     record = {'scope': 'Verbatim production View callback bodies, session, reducer and transport with inert callback scheduler and Network/SwiftUI DTOs. No SwiftUI recognizer ordering, device or host delivery proof.',
               'sourceRoot': str(root), 'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
+              'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip(),
+              'developerDir': DEVELOPER_DIR,
               'extractionSHA256': extraction, 'commands': [], 'exitCode': 2}
     base = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-package-name', 'sill', '-module-cache-path', str(output / 'cache')]
 
     def run(command, label, witness=None):
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if remaining <= 15:
             raise TimeoutError('600 second suite deadline')
-        log, result = execute(command, timeout=min(90, remaining))
+        log, result = execute(command, timeout=min(90, remaining - 15), output=output)
         (output / (label + '.log')).write_text(log)
         record['commands'].append({'label': label, 'argv': command, **result})
-        if result['processGroup']['remaining']:
-            raise RuntimeError(label + ' left live process group descendants')
+        if not result['processGroup']['verified']:
+            raise RuntimeError(label + ' owned process cleanup unverified')
         if witness is not None:
             caught = not result['timedOut'] and result['exitCode'] != 0 and ('Precondition failed: ' + witness) in log
             record.setdefault('mutants', []).append({'name': label, 'witness': witness, 'caught': caught})
@@ -134,6 +256,13 @@ def main():
         return log
 
     try:
+        record['toolchain'] = {
+            'developerDir': DEVELOPER_DIR,
+            'globalSelected': run(['/usr/bin/env', '-u', 'DEVELOPER_DIR', '/usr/bin/xcode-select', '-p'], 'global-toolchain').strip(),
+            'swiftc': run(['/usr/bin/xcrun', '--find', 'swiftc'], 'child-swiftc').strip(),
+            'sdk': run(['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path'], 'child-sdk').strip(),
+            'version': run(['/usr/bin/xcrun', 'swiftc', '--version'], 'child-swift-version').strip(),
+        }
         run([sys.executable, '-B', str(Path(__file__).parent / 'test_extract.py')], 'extraction-contract')
         run([sys.executable, '-B', str(Path(__file__).parent / 'test_runner.py')], 'runner-contract')
         static_log = run([sys.executable, '-B', str(Path(__file__).parent / 'static.py')], 'static')
@@ -176,7 +305,10 @@ def main():
              'emittedSHA256': hashes(emitted), 'extractionSHA256': after_extraction}
     (output / 'manifest-after.json').write_text(json.dumps(after, indent=2) + '\n')
     record['sourceAndEmittedUnchanged'] = before == after and files == after_files
-    record['childrenReaped'] = all(command['reaped'] and not command['processGroup']['remaining'] for command in record['commands'])
+    record['childrenReaped'] = bool(record['commands']) and all(
+        command['reaped'] and command['processGroup']['verified'] and
+        command['processGroup']['remaining'] == [] and command['processGroup']['detachedRemaining'] == []
+        for command in record['commands'])
     record['elapsedSeconds'] = time.monotonic() - started
     if not record['sourceAndEmittedUnchanged'] or not record['childrenReaped']:
         record['exitCode'] = 2
