@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import StreamProtocol
 
 var ruleEvents: [String] = []
@@ -389,7 +390,7 @@ private func runRuleLifecycleChecks(catalog: TestDestinationCatalog, now: Date) 
     check(view.configuration.userContentController.lists.count == 1 && view.configuration.userContentController.lists[0] === unrelated &&
           Array(ruleEvents.suffix(2)) == ["컨트롤러 제거:\(ownID)", "저장소 제거:\(ownID)"],
           "자기 규칙만 컨트롤러에서 제거한 뒤 자기 저장 식별자를 정리한다")
-    delegate.webView(view, didReceive: trust) { disposition = $0 }
+    delegate.webView(view, didReceive: trust) { value, _ in disposition = value }
     check(disposition == .cancelAuthenticationChallenge, "해체된 페이지는 신뢰 요청을 승인하지 않는다")
 
     let (failedBinding, _, failedDelegate, failedView) = scene(clock: { now })
