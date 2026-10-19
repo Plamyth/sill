@@ -69,6 +69,46 @@ struct InkStroke: Codable, Identifiable, Equatable {
     }
 }
 
+struct VaultNoteReference: Codable, Equatable {
+    let path: String
+    var sha256: String
+    let relayAddress: String
+    var cacheTruncated: Bool? = nil
+
+    static func validPath(_ path: String) -> Bool {
+        !path.isEmpty && path.count <= 1024 && path.hasSuffix(".md") &&
+        !path.contains("\\") && !path.contains("\0") &&
+        path.split(separator:"/",omittingEmptySubsequences:false).allSatisfy {
+            !$0.isEmpty && !$0.hasPrefix(".")
+        }
+    }
+}
+
+struct VaultNoteSnapshot: Decodable, Equatable {
+    let path: String
+    let text: String
+    let sha256: String
+    let modifiedAt: String
+
+    var preview: String {
+        var bytes = Data(text.utf8.prefix(512))
+        while !bytes.isEmpty {
+            if let text = String(data:bytes,encoding:.utf8) { return text }
+            bytes.removeLast()
+        }
+        return ""
+    }
+
+    func validated(at expected: String) throws -> Self {
+        guard path == expected, VaultNoteReference.validPath(path),
+              text.utf8.count <= 1024 * 1024,
+              CanvasPacket.sha(Data(text.utf8)) == sha256 else {
+            throw URLError(.badServerResponse)
+        }
+        return self
+    }
+}
+
 struct CanvasNode: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case note, box }
     enum Confidence: String, Codable { case confirmed, proposal }
@@ -79,6 +119,7 @@ struct CanvasNode: Codable, Identifiable, Equatable {
     var text: String
     var confidence: Confidence
     var sourceStrokeIds: [UUID]
+    var vaultNote: VaultNoteReference? = nil
 }
 
 struct CanvasLink: Codable, Identifiable, Equatable {
@@ -134,7 +175,8 @@ struct CanvasScene: Codable, Equatable {
     }
 
     mutating func confirmNode(_ id: UUID, text: String) -> Bool {
-        guard let index = nodes.firstIndex(where: { $0.id == id }) else { return false }
+        guard let index = nodes.firstIndex(where: { $0.id == id }),
+              nodes[index].vaultNote == nil else { return false }
         nodes[index].text = text
         nodes[index].confidence = .confirmed
         revision += 1
@@ -169,7 +211,7 @@ struct CanvasScene: Codable, Equatable {
         let originalStrokes = change.baseRevision == revision ? strokes : sent?.strokes ?? []
         let sentStrokeIds = Set(originalStrokes.map(\.id))
         guard change.annotations.allSatisfy({ !existingAnnotationIds.contains($0.id) }),
-              change.proposedNodes.allSatisfy({ $0.confidence == .proposal && !existingIds.contains($0.id) &&
+              change.proposedNodes.allSatisfy({ $0.vaultNote == nil && $0.confidence == .proposal && !existingIds.contains($0.id) &&
                   $0.sourceStrokeIds.allSatisfy(sentStrokeIds.contains) }) else {
             return false
         }
