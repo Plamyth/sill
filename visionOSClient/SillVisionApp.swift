@@ -167,6 +167,8 @@ struct SillVisionWorkspace: View {
             session.setScenePhase(phase); updateInputAdmission()
         }
         .onChange(of: inputAllowed) { _, _ in updateInputAdmission() }
+        .onChange(of: recoveryShown) { _, _ in updateInputAdmission() }
+        .onChange(of: changingSource) { _, _ in updateInputAdmission() }
         .onChange(of: macAudioModalShown) { _, shown in
             if shown {
                 audioOfferShown = false
@@ -391,11 +393,11 @@ struct SillVisionWorkspace: View {
 
     private var audioControlsAllowed: Bool {
         session.owns(lease) && phase == .active && client.connected &&
-        !transitions.isPending && !inputSuspended && !draftShown && !recoveryShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
+        !transitions.isPending && !inputSuspended && !draftShown && !recoveryShown && !changingSource && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !recoveryShown && !changingSource && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var macAudioModalShown: Bool { macAudioShown || macAudioOfferShown }
@@ -443,7 +445,7 @@ struct SillVisionWorkspace: View {
         guard session.owns(lease) else { return }
         input.allowed = inputAllowed
         client.visionAudioIntentModal = macAudioModalShown || displayChooserShown || transitions.isPending ||
-            inputSuspended || draftShown || testDestinationsShown || recoveryShown
+            inputSuspended || draftShown || testDestinationsShown || recoveryShown || changingSource
         session.refresh()
     }
 
