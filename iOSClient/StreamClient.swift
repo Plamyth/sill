@@ -839,6 +839,7 @@ final class StreamClient: ObservableObject {
             #if os(visionOS)
             if newValue != nil { stopSavedMacAutoConnect() }
             if link.connection !== newValue {
+                bindVisionSentry(to: newValue)
                 bindVisionDisplays(to: newValue)
                 microphoneSetConnection(newValue)
                 resetVisionAudio()
@@ -865,6 +866,16 @@ final class StreamClient: ObservableObject {
     private let link = SessionLink()
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     #if os(visionOS)
+    @Published var visionSentrySnapshot = VisionSentryController.Snapshot()
+    let visionSentry = VisionSentryController()
+    var visionSentryDeadline: DispatchWorkItem?
+    var visionSentryLink: SessionLink { link }
+    var visionSentryTrusted: Bool {
+        guard let session else { return false }
+        if session.route.isRemote { return true }
+        if case .saved(_)? = session.home { return true }
+        return false
+    }
     @Published var visionDisplaySelection = VisionDisplaySelection()
     var visionDisplayPeer: NWConnection?
     var visionDisplaySubmission: SessionLink.Submission?
@@ -2798,6 +2809,7 @@ final class StreamClient: ObservableObject {
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
         // only until the fence's pong (`deliver`), or stops at once without a fence.
         #if os(visionOS)
+        bindVisionSentry(to: c)
         bindVisionDisplays(to: c)
         resetVisionAudio()
         visionInputBinding = .awaitingCatalog
@@ -3627,6 +3639,7 @@ final class StreamClient: ObservableObject {
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
             #if os(visionOS)
+            self.bindVisionSentry(to: nil)
             self.microphoneSetConnection(nil)
             #endif
             #if !os(visionOS)
@@ -3663,6 +3676,7 @@ final class StreamClient: ObservableObject {
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
         #if os(visionOS)
+        bindVisionSentry(to: nil)
         resetVisionAudio()
         visionInputSession?.releaseAll()
         visionInputBinding = .awaitingCatalog
@@ -4260,10 +4274,16 @@ final class StreamClient: ObservableObject {
             onFrame?(data, header.isKeyframe)
             #endif
         case .windowList:
-            guard let list = Wire.decode(WindowList.self, from: data) else { return }
+            guard let list = Wire.decode(WindowList.self, from: data) else {
+                #if os(visionOS)
+                invalidateVisionSentryCatalog(from: peer)
+                #endif
+                return
+            }
             let from: NWConnection? = peer
             #if os(visionOS)
             guard connection === peer else { return }
+            observeVisionSentry(list, from: peer)
             receiveVisionAudioCatalogBarrier(list)
             observeVisionInputCatalog(list, from: peer)
             let availability = visionAudioRoute.observe(peer, source: list.active, supported: list.remoteAudio == 1)
@@ -4393,6 +4413,10 @@ final class StreamClient: ObservableObject {
             DispatchQueue.main.async { self.cursorShape = CursorShape(image: image, hotspot: hotspot, size: size) }
         case .macPointer:
             receivePointer(data)
+        case .sentryState:
+            #if os(visionOS)
+            receiveVisionSentry(data, from: peer)
+            #endif
         case .hostSettings:
             guard let state = Wire.decode(HostSettingsState.self, from: data) else { return }
             let from: NWConnection? = peer

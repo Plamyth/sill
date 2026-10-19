@@ -137,6 +137,17 @@ struct SillVisionWorkspace: View {
         }
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
+        .ornament(attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
+            if session.owns(lease), client.connected, client.active != .none, client.visionSentrySnapshot.available {
+                VisionSentryOrnament(snapshot: client.visionSentrySnapshot,
+                                     allowActivation: phase == .active && !transitions.isPending) {
+                    withWindowOwnership {
+                        guard phase == .active, !transitions.isPending else { return }
+                        client.activateVisionSentry()
+                    }
+                }
+            }
+        }
         .task {
             guard session.owns(lease) else { return }
             session.setScenePhase(phase); updateInputAdmission()
@@ -478,6 +489,35 @@ struct SillVisionWorkspace: View {
             case nil: break
             }
         }
+    }
+}
+
+private struct VisionSentryOrnament: View {
+    let snapshot: VisionSentryController.Snapshot
+    let allowActivation: Bool
+    let activate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button("Sentry 보호 켜기", systemImage: "lock.shield", action: activate)
+                    .disabled(!allowActivation || !snapshot.canActivate)
+                    .accessibilityHint("현재 Mac의 로그인 세션에서 현장 화면과 일반 입력 보호를 요청합니다. 제스처와 오디오 설정은 유지됩니다.")
+                Text(snapshot.message).font(.caption)
+            }
+            if let reason = snapshot.state?.reason { Text(reason).font(.caption) }
+            if case .some(.rejected(.some(let reason))) = snapshot.problem { Text(reason).font(.caption) }
+            Text("보호 범위는 현재 Mac 로그인 세션의 화면과 일반 키보드·마우스 입력입니다. 전원 버튼·운영체제 보안 화면·다른 로그인 세션은 보장하지 않습니다.")
+                .font(.caption)
+            ForEach(Array((snapshot.state?.limitations ?? []).enumerated()), id: \.offset) { _, limitation in
+                Text(limitation).font(.caption)
+            }
+            Text("VPN·인터넷 연결의 자동 활성화는 Mac이 결정합니다. 연결을 끊어도 Mac의 보호는 해제되지 않습니다. 현장 복귀는 Mac에서 새로 시스템 인증해야 합니다.")
+                .font(.caption)
+        }
+        .padding(16)
+        .frame(width: 620)
+        .glassBackgroundEffect()
     }
 }
 

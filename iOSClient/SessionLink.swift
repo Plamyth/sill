@@ -49,9 +49,13 @@ final class SessionLink {
         private let lock = NSLock()
         private var outcome: Outcome?
         private var claimed = false
+        private let deadline: TimeInterval?
         private let terminal: (Outcome) -> Void
 
-        init(terminal: @escaping (Outcome) -> Void) { self.terminal = terminal }
+        init(deadline: TimeInterval? = nil, terminal: @escaping (Outcome) -> Void) {
+            self.deadline = deadline
+            self.terminal = terminal
+        }
 
         fileprivate func claim() -> Bool {
             lock.lock(); defer { lock.unlock() }
@@ -63,6 +67,12 @@ final class SessionLink {
         fileprivate func submit(_ send: () -> Void) -> Bool {
             lock.lock()
             guard outcome == nil else { lock.unlock(); return false }
+            if let deadline, ProcessInfo.processInfo.systemUptime >= deadline {
+                outcome = .cancelled
+                lock.unlock()
+                notify(.cancelled)
+                return false
+            }
             send()
             outcome = .submitted
             lock.unlock()

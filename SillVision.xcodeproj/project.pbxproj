@@ -1162,6 +1162,42 @@
 			<key>fileRef</key>
 			<string>505936BB69A49546F2464573</string>
 		</dict>
+		<key>9FB141513285023003F08664</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionSentryController.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>81ADD1BEF5B2C3D271813467</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>9FB141513285023003F08664</string>
+		</dict>
+		<key>AE23D0164904EA516E6E1CA4</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/StreamClient+VisionSentry.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>507B4D6B9FA988CA1B34035D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>AE23D0164904EA516E6E1CA4</string>
+		</dict>
 		<key>96ED5C5789B174A01557791C</key>
 		<dict>
 			<key>isa</key>
@@ -1276,6 +1312,8 @@
 				<string>DAAC04120B2C84FEAE04DCCA</string>
 				<string>22F88B8FE5619E195EDF306A</string>
 				<string>505936BB69A49546F2464573</string>
+				<string>9FB141513285023003F08664</string>
+				<string>AE23D0164904EA516E6E1CA4</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
 			</array>
@@ -1354,6 +1392,8 @@
 				<string>2D8EDDCB8DC3AE39E9AC602F</string>
 				<string>64ED039BE88BFAC833997639</string>
 				<string>8BA2911306AF7E40ADECE888</string>
+				<string>81ADD1BEF5B2C3D271813467</string>
+				<string>507B4D6B9FA988CA1B34035D</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>

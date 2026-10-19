@@ -81,6 +81,8 @@ public enum StreamMessageKind: UInt8 {
     case fetchAudioRoutes = 210  // paired TLS client → host, empty: refresh without changing defaults
     case selectDisplay = 211     // client → host: DisplaySelection, only with displaySelection == 1
     case fetchCatalog = 212
+    case activateSentry = 213    // paired TLS client → host: SentryActivation, activation only
+    case sentryState = 214       // host → paired TLS client: SentryResponse
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -111,6 +113,8 @@ public struct StreamMessage {
         case .changeAudioRoute: return AudioRoutingPolicy.maxSelectionPayload
         case .fetchAudioRoutes: return 0
         case .fetchCatalog: return 256
+        case .activateSentry: return 512
+        case .sentryState: return -1
         case .audioRoutes: return -1
         case .microphoneControl: return 2048
         case .microphoneFrame: return 2033
@@ -123,7 +127,8 @@ public struct StreamMessage {
         switch kind {
         case .audioRoutes: return AudioRoutingPolicy.maxStatePayload
         case .changeAudioRoute, .fetchAudioRoutes, .fetchCatalog: return -1
-        case .microphoneState, .microphoneReceipt: return 4096
+        case .microphoneState, .microphoneReceipt, .sentryState: return 4096
+        case .activateSentry: return -1
         case .microphoneControl, .microphoneFrame: return 0
         default: return kind == .frame || kind == .epochFrame ? maxFramePayload : maxOtherHostPayload
         }
