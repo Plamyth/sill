@@ -61,6 +61,8 @@ final class CanvasStore: ObservableObject {
     private var noteEditorGeneration: UInt64 = 0
     private var noteEditGeneration: UInt64 = 0
     private var noteRequest: UUID?
+    private var noteReadSequence: UInt64 = 0
+    private var acceptedNoteReads: [String:UInt64] = [:]
     private struct NoteContext: Equatable {
         let sceneID: UUID
         let sceneGeneration: UInt64
@@ -91,6 +93,7 @@ final class CanvasStore: ObservableObject {
 
     private func invalidateNoteRequests() {
         noteRequest = nil
+        acceptedNoteReads.removeAll()
         vaultLoading = false
         vaultSaving = false
         if vaultNote != nil {
@@ -142,10 +145,11 @@ final class CanvasStore: ObservableObject {
             vaultStatus = "노트 경로 또는 Mac 연결을 확인하세요."
             return
         }
+        let linkedNodeID = nodeID ?? (noteContext?.path == path ? noteContext?.nodeID : nil)
         noteEditorGeneration &+= 1
         let context = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
             connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
-            path:path,nodeID:nodeID)
+            path:path,nodeID:linkedNodeID)
         guard noteContextIsCurrent(context) else {
             vaultStatus = "연결한 노트의 경로 또는 서버가 바뀌었습니다. 자동 재연결하지 않았습니다."
             return
@@ -156,6 +160,8 @@ final class CanvasStore: ObservableObject {
         let request = UUID()
         let editGeneration = noteEditGeneration
         noteRequest = request
+        noteReadSequence &+= 1
+        let readSequence = noteReadSequence
         vaultLoading = true
         vaultBlocked = false
         defer {
@@ -167,7 +173,9 @@ final class CanvasStore: ObservableObject {
         do {
             let note = try await load(path).validated(at:path)
             guard !Task.isCancelled, noteRequest == request, noteContext == context,
-                  noteContextIsCurrent(context), noteEditGeneration == editGeneration else { return }
+                  noteContextIsCurrent(context), noteEditGeneration == editGeneration,
+                  readSequence >= acceptedNoteReads[path,default:0] else { return }
+            acceptedNoteReads[path] = readSequence
             vaultNote = note
             vaultDraft = note.text
             vaultLoading = false
@@ -223,9 +231,10 @@ final class CanvasStore: ObservableObject {
     @discardableResult
     func attachOpenedVaultNote() -> UUID? {
         guard vaultCanAttach, let note = vaultNote else { return nil }
-        let id = scene.addNode(kind:.note,at:CanvasPoint(x:700-pan.width,y:430-pan.height),text:note.text)
+        let preview = note.preview
+        let id = scene.addNode(kind:.note,at:CanvasPoint(x:700-pan.width,y:430-pan.height),text:preview)
         scene.nodes[scene.nodes.count - 1].vaultNote = VaultNoteReference(
-            path:note.path,sha256:note.sha256,relayAddress:noteAddress)
+            path:note.path,sha256:note.sha256,relayAddress:noteAddress,cacheTruncated:preview != note.text)
         selectedNode = id
         mode = .select
         vaultStatus = "원본 노트를 캔버스에 연결했습니다. 표시 텍스트는 저장된 원본의 캐시입니다."
@@ -234,13 +243,15 @@ final class CanvasStore: ObservableObject {
 
     private func refreshNoteCache(_ note: VaultNoteSnapshot, expected: [UUID:VaultNoteReference]? = nil) {
         var next = scene
+        let preview = note.preview
         for index in next.nodes.indices {
             guard var ref = next.nodes[index].vaultNote, ref.path == note.path,
                   ref.relayAddress == noteAddress,
                   expected.map({ $0[next.nodes[index].id] == ref }) ?? true else { continue }
             ref.sha256 = note.sha256
+            ref.cacheTruncated = preview != note.text
             next.nodes[index].vaultNote = ref
-            next.nodes[index].text = note.text
+            next.nodes[index].text = preview
         }
         guard next != scene else { return }
         next.revision += 1
@@ -263,16 +274,28 @@ final class CanvasStore: ObservableObject {
             let editGeneration = noteEditGeneration
             let editorGeneration = noteEditorGeneration
             let request = noteRequest
+            noteReadSequence &+= 1
+            let readSequence = noteReadSequence
             do {
                 let latest = try await load(path).validated(at:path)
                 guard !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
                       noteConnectionGeneration == connectionGeneration else { return }
+                guard readSequence >= acceptedNoteReads[path,default:0] else { continue }
+                acceptedNoteReads[path] = readSequence
                 refreshNoteCache(latest,expected:references)
                 guard let context, noteContext == context, noteContextIsCurrent(context),
                       editorGeneration == noteEditorGeneration, context.path == path,
-                      noteRequest == request, !vaultSaving, !vaultLoading,
-                      vaultNote?.sha256 == base?.sha256, noteEditGeneration == editGeneration,
-                      let base, latest.sha256 != base.sha256 else { continue }
+                      noteRequest == request, !vaultSaving,
+                      vaultNote?.sha256 == base?.sha256, noteEditGeneration == editGeneration else { continue }
+                if vaultLoading && base == nil && !vaultDirty {
+                    vaultNote = latest
+                    vaultDraft = latest.text
+                    vaultLoading = false
+                    noteRequest = nil
+                    vaultStatus = "Mac의 최신 원본을 열었습니다."
+                    continue
+                }
+                guard !vaultLoading, let base, latest.sha256 != base.sha256 else { continue }
                 if !vaultDirty && !vaultBlocked {
                     vaultNote = latest
                     vaultDraft = latest.text
@@ -384,7 +407,7 @@ final class CanvasStore: ObservableObject {
 
     private static func restoreScene() -> (scene: CanvasScene, drawing: PKDrawing)? {
         guard let url = sceneURL(),let data = try? Data(contentsOf:url),
-              data.count <= 4*1024*1024,
+              data.count <= sceneByteLimit,
               let scene = try? JSONDecoder().decode(CanvasScene.self,from:data),
               scene.schemaVersion == 1,
               let drawingData = Data(base64Encoded:scene.drawingBase64) else { return nil }
@@ -407,9 +430,15 @@ final class CanvasStore: ObservableObject {
     func saveNow() {
         saveTask?.cancel()
         guard let url = Self.sceneURL(),let data = try? JSONEncoder().encode(scene) else { return }
+        guard data.count <= Self.sceneByteLimit else {
+            status = "칠판 저장 크기 한도를 넘었습니다. 마지막 정상 저장본을 유지했습니다."
+            return
+        }
         do { try CanvasLocalFile.write(data,to:url) }
         catch { status = "칠판 자동 저장 실패: \(error.localizedDescription)" }
     }
+
+    private static let sceneByteLimit = 4*1024*1024
 
     func updateDrawing(_ next: PKDrawing) {
         guard drawing != next else { return }

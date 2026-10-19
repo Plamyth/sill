@@ -624,7 +624,8 @@ struct CanvasWorkspace: View {
                     .disabled(true)
                 Text("출처 획 \(node.sourceStrokeIds.count)개")
                 if let reference = node.vaultNote {
-                    Text("저장된 원본의 표시 캐시 · \(reference.path)").font(.caption)
+                    Text(reference.cacheTruncated == true ? "원본 일부 미리보기 · \(reference.path)" :
+                        "저장된 원본의 표시 캐시 · \(reference.path)").font(.caption)
                     Button("원본 노트 편집") {
                         inspectorOpen = false
                         Task {

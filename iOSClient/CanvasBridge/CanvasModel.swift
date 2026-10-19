@@ -73,6 +73,7 @@ struct VaultNoteReference: Codable, Equatable {
     let path: String
     var sha256: String
     let relayAddress: String
+    var cacheTruncated: Bool? = nil
 
     static func validPath(_ path: String) -> Bool {
         !path.isEmpty && path.count <= 1024 && path.hasSuffix(".md") &&
@@ -88,6 +89,15 @@ struct VaultNoteSnapshot: Decodable, Equatable {
     let text: String
     let sha256: String
     let modifiedAt: String
+
+    var preview: String {
+        var bytes = Data(text.utf8.prefix(512))
+        while !bytes.isEmpty {
+            if let text = String(data:bytes,encoding:.utf8) { return text }
+            bytes.removeLast()
+        }
+        return ""
+    }
 
     func validated(at expected: String) throws -> Self {
         guard path == expected, VaultNoteReference.validPath(path),

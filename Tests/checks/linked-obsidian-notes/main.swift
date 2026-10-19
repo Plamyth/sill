@@ -192,6 +192,68 @@ final class NoteProtocol: URLProtocol {
         check(foreignReads == 0 && foreign.vaultNote == nil,
             "linked node cannot silently bind to a different relay")
 
+        let recovery = store()
+        await recovery.openVaultNote(original.path) { _ in original }
+        let recoveryID = recovery.attachOpenedVaultNote()!
+        _ = recovery.closeVaultEditor()
+        await recovery.openVaultNote(original.path,nodeID:recoveryID) { _ in original }
+        recovery.setNoteConnection(address:"http://different",token:"other-token")
+        var recoveryReads = 0
+        await recovery.openVaultNote(original.path) { _ in recoveryReads += 1; return fresh }
+        check(recoveryReads == 0 && recovery.vaultBlocked && recovery.vaultDraft == original.text,
+            "read-original recovery retains linked node ownership across relay changes")
+
+        let reopening = store(), openingGate = NoteGate()
+        await reopening.openVaultNote(original.path) { _ in original }
+        let reopenedID = reopening.attachOpenedVaultNote()!
+        _ = reopening.closeVaultEditor()
+        let opening = Task { await reopening.openVaultNote(original.path,nodeID:reopenedID,load:openingGate.load) }
+        await openingGate.wait()
+        await reopening.refreshVaultNotes { _ in fresh }
+        openingGate.finish(original); await opening.value
+        check(reopening.scene.nodes[0].text == fresh.text && reopening.vaultDraft == fresh.text,
+            "older editor GET cannot regress a newer polled source or editor")
+
+        let repolling = store(), stalePollGate = NoteGate()
+        await repolling.openVaultNote(original.path) { _ in original }
+        let repollID = repolling.attachOpenedVaultNote()!
+        _ = repolling.closeVaultEditor()
+        let stalePoll = Task { await repolling.refreshVaultNotes(load:stalePollGate.load) }
+        await stalePollGate.wait()
+        await repolling.openVaultNote(original.path,nodeID:repollID) { _ in fresh }
+        stalePollGate.finish(original); await stalePoll.value
+        check(repolling.scene.nodes[0].text == fresh.text && repolling.vaultDraft == fresh.text,
+            "older poll cannot regress a newer editor read")
+
+        let unicode = store(), unicodeNote = snapshot(String(repeating:"한글 👩🏽‍💻",count:100))
+        await unicode.openVaultNote(unicodeNote.path) { _ in unicodeNote }
+        _ = unicode.attachOpenedVaultNote()
+        let preview = unicode.scene.nodes[0]
+        check(preview.text.utf8.count <= 512 && unicodeNote.text.hasPrefix(preview.text) &&
+            preview.vaultNote?.cacheTruncated == true && unicode.vaultDraft == unicodeNote.text,
+            "bounded Unicode preview is marked while editor retains the complete source")
+
+        let large = store()
+        for index in 0..<5 {
+            let note = snapshot(String(repeating:"x",count:900*1024),path:"Notes/large-\(index).md")
+            await large.openVaultNote(note.path) { _ in note }
+            _ = large.attachOpenedVaultNote()
+            _ = large.closeVaultEditor()
+        }
+        large.saveNow()
+        let restoredLarge = CanvasStore()
+        check(restoredLarge.scene == large.scene && restoredLarge.scene.nodes.count == 5,
+            "five valid large linked notes remain restorable with their scene identity")
+        check(try JSONEncoder().encode(large.scene).count < 1024*1024,
+            "linked display previews do not serialize entire large source notes")
+        let sceneFile = support.appendingPathComponent("CanvasScene.json")
+        let retainedBytes = try Data(contentsOf:sceneFile)
+        large.scene.nodes.append(CanvasNode(id:UUID(),kind:.note,frame:frame,
+            text:String(repeating:"z",count:5*1024*1024),confidence:.confirmed,sourceStrokeIds:[]))
+        large.saveNow()
+        check(try Data(contentsOf:sceneFile) == retainedBytes,
+            "unrestorable scene cannot overwrite the last valid saved scene")
+
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [NoteProtocol.self]
         let relay = CanvasRelay(address:"http://test",token:"test-token",session:URLSession(configuration:config))
