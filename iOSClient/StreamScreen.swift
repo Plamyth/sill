@@ -202,9 +202,14 @@ enum IPadViewportSizing {
     }
 }
 
+private enum IPadWorkspace: String, Identifiable {
+    case canvas, testDestinations
+    var id: String { rawValue }
+}
+
 struct StreamScreen: View {
     @ObservedObject var client: StreamClient
-    @State private var canvasOpen = false
+    @State private var workspace: IPadWorkspace?
     @State private var drawerOpen = false
     @State private var dockOpen = false
     @State private var toolbar = IPadToolbarVisibility(now: ProcessInfo.processInfo.systemUptime)
@@ -379,19 +384,24 @@ struct StreamScreen: View {
             .ignoresSafeArea(.keyboard, edges: .bottom)
         }
         .background(Color.black)
-        .fullScreenCover(isPresented: $canvasOpen) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("그림판")
-                    Spacer()
-                    Button("Mac 화면") { canvasOpen = false }
-                        .accessibilityIdentifier("closeCanvasBridge")
+        .fullScreenCover(item: $workspace) { destination in
+            switch destination {
+            case .canvas:
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("그림판")
+                        Spacer()
+                        Button("Mac 화면") { workspace = nil }
+                            .accessibilityIdentifier("closeCanvasBridge")
+                    }
+                    .padding(12)
+                    CanvasWorkspace()
                 }
-                .padding(12)
-                CanvasWorkspace()
+                .background(Color.black.ignoresSafeArea())
+                .preferredColorScheme(.dark)
+            case .testDestinations:
+                TestDestinationsView()
             }
-            .background(Color.black.ignoresSafeArea())
-            .preferredColorScheme(.dark)
         }
         .overlayPreferenceValue(WindowMenuAnchorKey.self) { anchor in
             if let anchor, let id = windowMenu, let window = client.windows.first(where: { $0.id == id }) {
@@ -525,7 +535,7 @@ struct StreamScreen: View {
     private var toolbarShown: Bool { !toolbarEnabled || toolbar.visible }
     private var toolbarPinned: Bool {
         !pictureReady || drawerOpen || settingsOpen || windowMenu != nil || scaleOpen || menuOpen || displayMenuOpen ||
-        tour != nil || overlayShown || canvasOpen || dockOpen || client.audioRouteChooserPresented || voiceOverEnabled
+        tour != nil || overlayShown || workspace != nil || dockOpen || client.audioRouteChooserPresented || voiceOverEnabled
     }
 
     private func updateToolbar() {
@@ -1058,9 +1068,10 @@ struct StreamScreen: View {
                    textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
                    settingsOpen: settingsOpen,
                    // Apps, Menus, Aa, Keyboard, Desktop, Settings, and the strip.
-                   menusFit: MacMenuButton.fits(width: width - 2 * bar.padding, buttons: 6, buttonWidth: bar.buttonWidth,
+                   menusFit: MacMenuButton.fits(width: width - 2 * bar.padding, buttons: UIDevice.current.userInterfaceIdiom == .pad ? 8 : 6, buttonWidth: bar.buttonWidth,
                                                 gap: bar.gap, thumbWidth: bar.thumbWidth),
-                   openCanvas: { canvasOpen = true },
+                   openCanvas: { workspace = .canvas },
+                   openTestDestinations: { workspace = .testDestinations },
                    toggleKeyboard: { overlay.toggleKeyboard() },
                    setSettings: { setSettings($0, restoreKeyboard: $1) },
                    menusOpened: menusOpened, menusClosed: menusClosed,
@@ -1082,7 +1093,8 @@ struct StreamScreen: View {
                              settingsOpen: settingsOpen,
                              setSettings: { setSettings($0, restoreKeyboard: $1) },
                              menusOpened: menusOpened, menusClosed: menusClosed,
-                             openCanvas: { canvasOpen = true },
+                             openCanvas: { workspace = .canvas },
+                             openTestDestinations: { workspace = .testDestinations },
                              settingsTransition: { settingsTransition(anchor: $0) },
                              onPanelSize: { panelSize = $0 },
                              toolbarShown: toolbarShown,
@@ -1336,6 +1348,7 @@ private struct TopBar: View {
     /// Whether the bar holds the Menus button and still a whole thumbnail (`MacMenuButton.fits`).
     let menusFit: Bool
     let openCanvas: () -> Void
+    let openTestDestinations: () -> Void
     let toggleKeyboard: () -> Void
     /// Opens or closes the Settings panel; the second argument says whether closing puts the
     /// keyboard back (see `StreamScreen.setSettings`).
@@ -1379,6 +1392,11 @@ private struct TopBar: View {
                 button(open: false, symbol: "pencil.tip.crop.circle", label: "그림판",
                        accessibilityLabel: "그림판 열기", action: openCanvas)
                     .accessibilityIdentifier("openCanvasBridge")
+                    .opacity(scaleOpen ? 0 : 1)
+                    .allowsHitTesting(!scaleOpen)
+                button(open: false, symbol: "globe", label: "테스트",
+                       accessibilityLabel: "프로젝트 테스트 열기", action: openTestDestinations)
+                    .accessibilityIdentifier("openTestDestinations")
                     .opacity(scaleOpen ? 0 : 1)
                     .allowsHitTesting(!scaleOpen)
             }

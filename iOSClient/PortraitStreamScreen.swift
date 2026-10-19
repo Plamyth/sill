@@ -151,6 +151,7 @@ struct PortraitStreamScreen: View {
     let menusOpened: () -> Void
     let menusClosed: () -> Void
     let openCanvas: () -> Void
+    let openTestDestinations: () -> Void
     /// The panel's open and close motion, scaled about the given point (see `StreamScreen`).
     let settingsTransition: (_ anchor: UnitPoint) -> AnyTransition
     /// The stream panel's size in points, for the viewport `StreamScreen` sends the host.
@@ -260,7 +261,7 @@ struct PortraitStreamScreen: View {
     private func windowBar(width: CGFloat) -> some View {
         // Apps, Menus, Aa, Desktop, Settings, and the strip: Menus only where the row holds it and
         // still a whole thumbnail (not in a 320 pt Slide Over).
-        let menusFit = MacMenuButton.fits(width: width, buttons: 5, buttonWidth: metrics.buttonWidth, gap: 12,
+        let menusFit = MacMenuButton.fits(width: width, buttons: UIDevice.current.userInterfaceIdiom == .pad ? 7 : 5, buttonWidth: metrics.buttonWidth, gap: 12,
                                           thumbWidth: metrics.thumbWidth)
         return HStack(spacing: 12) {
             appsButton()
@@ -292,6 +293,11 @@ struct PortraitStreamScreen: View {
                 .accessibilityIdentifier("openCanvasBridge")
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
+                barButton(open: false, symbol: "globe", label: "테스트",
+                          accessibilityLabel: "프로젝트 테스트 열기", action: openTestDestinations)
+                    .accessibilityIdentifier("openTestDestinations")
+                    .opacity(scaleOpen ? 0 : 1)
+                    .allowsHitTesting(!scaleOpen)
             }
 
             TextScaleControl(scale: $textScale, open: $scaleOpen,

@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import StreamProtocol
 
 struct CanvasRelay {
     struct VaultEntry: Decodable, Identifiable {
@@ -127,6 +128,11 @@ struct CanvasRelay {
 
     func controlRoomProjection() async throws -> ControlRoomProjection {
         try await response(request("/control-room/projection"),as:ControlRoomProjection.self)
+    }
+
+    func testDestinations() async throws -> TestDestinationCatalog {
+        let envelope = try await response(request("/control-room/projection"), as: TestDestinationsEnvelope.self)
+        return try envelope.validated()
     }
 
     private func vaultURL(_ endpoint: String, path: String) throws -> String {
