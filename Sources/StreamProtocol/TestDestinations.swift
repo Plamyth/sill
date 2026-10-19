@@ -8,6 +8,7 @@ import Glibc
 public struct TestDestinationCatalog: Codable, Equatable, Sendable {
     public static let supportedSchema = "ccr-test-destinations/v1"
     public static let maximumEntries = 256
+    public static let maximumRedirectOrigins = 8
 
     public enum Reachability: String, Codable, Sendable {
         case reachable, unreachable, unknown
@@ -18,7 +19,7 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
     }
 
     public enum ValidationError: Error, Equatable, Sendable {
-        case unsupportedSchema, tooManyEntries, duplicateID, emptyField, invalidTimestamp, unsafeURL
+        case unsupportedSchema, tooManyEntries, duplicateID, emptyField, invalidTimestamp, unsafeURL, tooManyRedirectOrigins
     }
 
     public struct Entry: Codable, Equatable, Sendable {
@@ -32,10 +33,11 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
         public var embed: Embed
         public var checkedAt: String?
         public var reason: String?
+        public var redirectOrigins: [String]
 
         public init(id: String, projectId: String, projectLabel: String, label: String,
                     url: String, owner: String, reachability: Reachability, embed: Embed,
-                    checkedAt: String? = nil, reason: String? = nil) {
+                    checkedAt: String? = nil, reason: String? = nil, redirectOrigins: [String] = []) {
             self.id = id
             self.projectId = projectId
             self.projectLabel = projectLabel
@@ -46,6 +48,41 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
             self.embed = embed
             self.checkedAt = checkedAt
             self.reason = reason
+            self.redirectOrigins = redirectOrigins
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, projectId, projectLabel, label, url, owner, reachability, embed, checkedAt, reason, redirectOrigins
+        }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(id: try values.decode(String.self, forKey: .id),
+                      projectId: try values.decode(String.self, forKey: .projectId),
+                      projectLabel: try values.decode(String.self, forKey: .projectLabel),
+                      label: try values.decode(String.self, forKey: .label),
+                      url: try values.decode(String.self, forKey: .url),
+                      owner: try values.decode(String.self, forKey: .owner),
+                      reachability: try values.decode(Reachability.self, forKey: .reachability),
+                      embed: try values.decode(Embed.self, forKey: .embed),
+                      checkedAt: try values.decodeIfPresent(String.self, forKey: .checkedAt),
+                      reason: try values.decodeIfPresent(String.self, forKey: .reason),
+                      redirectOrigins: try values.decodeIfPresent([String].self, forKey: .redirectOrigins) ?? [])
+        }
+
+        public func validatedRedirectOrigins() throws -> [URL] {
+            guard redirectOrigins.count <= TestDestinationCatalog.maximumRedirectOrigins else {
+                throw ValidationError.tooManyRedirectOrigins
+            }
+            return try redirectOrigins.map { origin in
+                var candidate = self
+                candidate.url = origin
+                let result = try candidate.validatedURL()
+                guard let components = URLComponents(string: origin),
+                      components.scheme?.lowercased() == "https", components.path.isEmpty,
+                      components.query == nil, components.fragment == nil else { throw ValidationError.unsafeURL }
+                return result
+            }
         }
 
         public func validatedURL() throws -> URL {
@@ -117,6 +154,7 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
                 throw ValidationError.invalidTimestamp
             }
             _ = try entry.validatedURL()
+            _ = try entry.validatedRedirectOrigins()
         }
     }
 
