@@ -974,6 +974,7 @@ private struct NodeTile: View {
                     lineWidth:3))
             .onTapGesture { store.select(node.id) }
             .accessibilityElement(children:.combine)
+            .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")
             .gesture(DragGesture().onChanged { value in
                 if dragOrigin == nil { dragOrigin = CanvasPoint(x:node.frame.x,y:node.frame.y) }
                 guard let dragOrigin else { return }
