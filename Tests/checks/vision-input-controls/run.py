@@ -28,9 +28,19 @@ class Process:
         return self.pid, self.started, self.command
 
 
-def process_table():
+def time_left(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('owned process deadline exhausted')
+    return remaining
+
+
+def process_table(deadline=None):
+    timeout = min(5, time_left(deadline)) if deadline is not None else 5
     result = subprocess.run(['/bin/ps', '-ww', '-axo', 'pid=,ppid=,pgid=,stat=,lstart=,args='],
-                            capture_output=True, text=True, check=True, timeout=5)
+                            capture_output=True, text=True, check=True, timeout=timeout)
+    if deadline is not None:
+        time_left(deadline)
     table = {}
     for line in result.stdout.splitlines():
         parts = line.split(None, 9)
@@ -81,23 +91,33 @@ def group_members(group):
     return [item.pid for item in process_table().values() if item.group == group]
 
 
-def cleanup_group(group, owned, output):
+def cleanup_group(group, owned, output, deadline=None):
+    if deadline is None:
+        deadline = time.monotonic() + 15
     record = {'initial': [], 'remaining': None, 'detachedInitial': [], 'detachedRemaining': None,
               'verified': False, 'signals': []}
+
+    def scan():
+        time_left(deadline)
+        table = process_table(deadline)
+        time_left(deadline)
+        return table
+
     try:
-        live = owned_processes(process_table(), group, owned, output)
+        live = owned_processes(scan(), group, owned, output)
         record['initial'] = [p.pid for p in live.values() if p.group == group]
         record['detachedInitial'] = [asdict(p) for p in live.values() if p.group != group]
         for action in [signal.SIGTERM, signal.SIGKILL]:
-            live = owned_processes(process_table(), group, owned, output)
+            live = owned_processes(scan(), group, owned, output)
             members = [p for p in live.values() if p.group == group]
             if members:
-                checked = process_table()
+                checked = scan()
                 current = [p for p in checked.values() if p.group == group]
                 if any(p.identity not in {m.identity for m in members} for p in current):
                     raise RuntimeError('process group identity changed before signal')
                 if current:
                     try:
+                        time_left(deadline)
                         os.killpg(group, action)
                         record['signals'].append({'group': group, 'signal': action.name,
                                                   'identities': [asdict(p) for p in current]})
@@ -106,23 +126,24 @@ def cleanup_group(group, owned, output):
             for item in live.values():
                 if item.group == group:
                     continue
-                current = process_table().get(item.pid)
+                current = scan().get(item.pid)
                 if current is not None and current.identity == item.identity:
                     try:
+                        time_left(deadline)
                         os.kill(item.pid, action)
                         record['signals'].append({'pid': item.pid, 'signal': action.name,
                                                   'identity': asdict(current)})
                     except ProcessLookupError:
                         pass
-            deadline = time.monotonic() + 1
-            while time.monotonic() < deadline:
-                live = owned_processes(process_table(), group, owned, output)
+            wait_until = min(deadline, time.monotonic() + 1)
+            while time.monotonic() < wait_until:
+                live = owned_processes(scan(), group, owned, output)
                 if not live:
                     break
-                time.sleep(0.05)
+                time.sleep(min(0.05, time_left(deadline)))
             if not live:
                 break
-        live = owned_processes(process_table(), group, owned, output)
+        live = owned_processes(scan(), group, owned, output)
         record['remaining'] = [p.pid for p in live.values() if p.group == group]
         record['detachedRemaining'] = [asdict(p) for p in live.values() if p.group != group]
         record['verified'] = not live
@@ -132,21 +153,28 @@ def cleanup_group(group, owned, output):
     return record
 
 
-def execute(command, timeout, output=None):
+def execute(command, timeout, output=None, deadline=None):
+    command_deadline = time.monotonic() + timeout
+    if deadline is None:
+        deadline = command_deadline + 15
+    command_deadline = min(command_deadline, deadline)
     environment = dict(os.environ, DEVELOPER_DIR=DEVELOPER_DIR)
     if output is not None:
         environment['VISION_RUNNER_TEST_OUTPUT'] = str(output)
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                text=True, start_new_session=True, env=environment)
     owned = {}
-    deadline = time.monotonic() + timeout
     timed_out = False
     log = ''
     observation_error = None
     try:
         while True:
-            owned_processes(process_table(), process.pid, owned, output)
-            remaining = deadline - time.monotonic()
+            remaining = command_deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            owned_processes(process_table(deadline), process.pid, owned, output)
+            remaining = command_deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break
@@ -158,10 +186,10 @@ def execute(command, timeout, output=None):
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         observation_error = str(error)
     finally:
-        cleanup = cleanup_group(process.pid, owned, output)
+        cleanup = cleanup_group(process.pid, owned, output, deadline)
         try:
-            log, _ = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
+            log, _ = process.communicate(timeout=min(5, time_left(deadline)))
+        except (subprocess.TimeoutExpired, TimeoutError):
             cleanup['verified'] = False
             cleanup['error'] = 'owned command did not close after cleanup'
         if observation_error is not None:
@@ -241,7 +269,7 @@ def main():
         remaining = deadline - time.monotonic()
         if remaining <= 15:
             raise TimeoutError('600 second suite deadline')
-        log, result = execute(command, timeout=min(90, remaining - 15), output=output)
+        log, result = execute(command, timeout=min(90, remaining - 15), output=output, deadline=deadline)
         (output / (label + '.log')).write_text(log)
         record['commands'].append({'label': label, 'argv': command, **result})
         if not result['processGroup']['verified']:

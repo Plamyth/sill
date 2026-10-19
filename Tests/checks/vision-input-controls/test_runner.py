@@ -204,6 +204,17 @@ class RunnerContract(unittest.TestCase):
         self.assertLessEqual(clock[0], 15.0)
         self.assertEqual(requested, [5, 5, 5, 3.0])
 
+    def test_expired_shared_deadline_starts_no_query_or_signal(self):
+        with patch('run.time.monotonic', return_value=100), patch('run.subprocess.run') as query, \
+                patch('run.os.kill') as kill, patch('run.os.killpg') as killpg:
+            result = cleanup_group(99999, {}, None, deadline=99)
+        query.assert_not_called()
+        kill.assert_not_called()
+        killpg.assert_not_called()
+        self.assertFalse(result['verified'])
+        self.assertIsNone(result['remaining'])
+        self.assertIn('deadline exhausted', result['error'])
+
 
 if __name__ == '__main__':
     unittest.main()
