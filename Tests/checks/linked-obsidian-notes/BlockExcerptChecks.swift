@@ -276,7 +276,7 @@ private func checkLinkedBlockEditing(_ check: (Bool,String) -> Void) async throw
         VaultNoteSnapshot(path:"Notes/semantic.md",text:text,
             sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"now")
     }
-    let original = note("# 원본\r\n\r\n문단 e\u{301} 👩🏽‍💻\r\n둘째 줄 ^edit-1\r\n\r\n끝\n")
+    let original = note("# 원본\r\n\r\n문단 e\u{301} 👩🏽‍💻\r\n둘째 줄 ^edit-1\r\n\r\n끝\r\n")
     let replacement = "수정한 글자 👩🏽‍💻\r\n다음 줄"
     let expected = try VaultMarkdownBlocks(original.text).replacing("edit-1",with:replacement)
     check(Array(expected.utf8) == Array(original.text.replacingOccurrences(of:"문단 e\u{301} 👩🏽‍💻\r\n둘째 줄",with:replacement).utf8),
@@ -286,15 +286,15 @@ private func checkLinkedBlockEditing(_ check: (Bool,String) -> Void) async throw
             check(false,"unsupported block replacement rejected: \(invalid)")
         } catch { check(true,"unsupported block replacement rejected: \(invalid)") }
     }
-    func store() async -> CanvasStore {
+    func store(_ source: VaultNoteSnapshot = original) async -> CanvasStore {
         let s = CanvasStore()
         s.scene = CanvasScene()
         s.setNoteConnection(address:"http://test",token:"test-token")
-        await s.openVaultNote(original.path) { _ in original }
-        s.vaultSelection = (original.text as NSString).range(of:"문단")
-        let id = await s.excerptSelectedVaultBlock(save:{ _,_,_ in throw URLError(.badURL) },load:{ _ in original })!
+        await s.openVaultNote(source.path) { _ in source }
+        s.vaultSelection = (source.text as NSString).range(of:"문단")
+        let id = await s.excerptSelectedVaultBlock(save:{ _,_,_ in throw URLError(.badURL) },load:{ _ in source })!
         _ = s.closeVaultEditor()
-        await s.openVaultNote(original.path,nodeID:id) { _ in original }
+        await s.openVaultNote(source.path,nodeID:id) { _ in source }
         return s
     }
     func result(_ edit: VaultBlockEdit, disposition: String = "committed") throws -> VaultBlockEditResult {
@@ -320,6 +320,32 @@ private func checkLinkedBlockEditing(_ check: (Bool,String) -> Void) async throw
     check(s.scene.nodes.first?.id == before.nodes.first?.id && s.scene.nodes.first?.frame == before.nodes.first?.frame &&
           s.scene.strokes == before.strokes && s.scene.drawingBase64 == before.drawingBase64 && s.scene.links == before.links,
           "semantic editing preserves node identity, layout, ink and relations")
+    let fresh = note(expected.replacingOccurrences(of:"수정한 글자",with:"Mac에서 바뀐 글자"))
+    await s.openVaultNote(original.path) { _ in fresh }
+    check(!s.vaultBlockEditing && s.vaultBlockDraft.isEmpty && !s.vaultDirty && !s.vaultBlockCanSave,
+          "clean reload exits semantic mode and cannot rebase an old block draft onto fresh source")
+    check(s.beginLinkedBlockEdit() && s.vaultBlockDraft.contains("Mac에서 바뀐 글자"),
+          "reopening block edit seeds the fresh source quote")
+
+    let single = note("# 제목\r\n\r\n문단 ^edit-1\r\n\r\n뒤\r\n")
+    let expanded = await store(single)
+    check(expanded.beginLinkedBlockEdit(),"single-line CRLF quote is editable")
+    expanded.vaultBlockDraft = "문단\n추가 줄"
+    await expanded.saveLinkedBlock(replace:{ _,_,edit in
+        check(edit.replacementText == "문단\r\n추가 줄",
+              "multiline expansion inherits whole-note CRLF even when old quote has no newline")
+        let saved = note(try VaultMarkdownBlocks(single.text).replacing("edit-1",with:edit.replacementText))
+        return VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:"edit-1",
+            disposition:"committed",quoteSha256:CanvasPacket.sha(Data(edit.replacementText.utf8)),note:saved)
+    },load:{ _ in note("# 제목\r\n\r\n문단\r\n추가 줄 ^edit-1\r\n\r\n뒤\r\n") })
+    check(!expanded.vaultDirty && !expanded.vaultBlockHasPendingSave,"CRLF expansion confirms without a rejected pending operation")
+    let mixed = note("문단 ^edit-1\r\n\r\n뒤\n")
+    let rejected = await store(mixed)
+    check(!rejected.beginLinkedBlockEdit() && !rejected.vaultBlockHasPendingSave,
+          "mixed source newlines are rejected before edit or pending write")
+    do { _ = try VaultMarkdownBlocks(mixed.text).replacing("edit-1",with:"변경")
+        check(false,"pure model rejects mixed source newlines")
+    } catch { check(true,"pure model rejects mixed source newlines") }
     let edit = submitted!
     let forged = VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:"edit-1",
         disposition:"committed",quoteSha256:CanvasPacket.sha(Data(replacement.utf8)),note:note(expected + "forged"))

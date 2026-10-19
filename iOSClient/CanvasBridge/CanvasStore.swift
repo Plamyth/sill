@@ -208,7 +208,7 @@ final class CanvasStore: ObservableObject {
     private var vaultBlockTextChanged: Bool {
         guard let note = vaultNote, let id = vaultLinkedBlockID,
               let block = try? VaultMarkdownBlocks(note.text).resolve(id) else { return vaultBlockEditing }
-        return !canonicalBlockText(vaultBlockDraft,original:block.quote).utf8.elementsEqual(block.quote.utf8)
+        return !canonicalBlockText(vaultBlockDraft,original:note.text).utf8.elementsEqual(block.quote.utf8)
     }
     var vaultBlockCanSave: Bool {
         vaultBlockEditing && (pendingBlockEdit != nil || vaultBlockTextChanged) &&
@@ -322,6 +322,9 @@ final class CanvasStore: ObservableObject {
         noteContext = context
         pendingExcerptAnchor = pending.map { (context:context,id:$0) }
         vaultNote = nil
+        vaultBlockEditing = false
+        vaultBlockDraft = ""
+        pendingBlockEdit = nil
         vaultDraft = ""
         let request = UUID()
         let editGeneration = noteEditGeneration
@@ -383,6 +386,7 @@ final class CanvasStore: ObservableObject {
         guard vaultCanAttach, let note = vaultNote, let id = vaultLinkedBlockID else { return false }
         do {
             let block = try VaultMarkdownBlocks(note.text).resolve(id)
+            _ = try VaultMarkdownBlocks(note.text).replacing(id,with:block.quote)
             vaultBlockDraft = block.quote.replacingOccurrences(of:"\r\n",with:"\n")
             vaultBlockSelection = NSRange(location:0,length:0)
             pendingBlockEdit = nil
@@ -400,7 +404,7 @@ final class CanvasStore: ObservableObject {
         do {
             let block = try VaultMarkdownBlocks(base.text).resolve(blockID)
             let submitted = pendingBlockEdit ?? VaultBlockEdit(base:base,block:block,
-                text:canonicalBlockText(vaultBlockDraft,original:block.quote))
+                text:canonicalBlockText(vaultBlockDraft,original:base.text))
             _ = try VaultMarkdownBlocks(base.text).replacing(blockID,with:submitted.replacementText)
             pendingBlockEdit = submitted
             let draftAtSubmission = vaultBlockDraft
@@ -427,7 +431,7 @@ final class CanvasStore: ObservableObject {
             vaultDraft = saved.text
             // A retry may resolve an earlier submission while newer typing remains unsaved.
             if vaultBlockDraft.utf8.elementsEqual(draftAtSubmission.utf8),
-               canonicalBlockText(vaultBlockDraft,original:block.quote).utf8.elementsEqual(submitted.replacementText.utf8) {
+               canonicalBlockText(vaultBlockDraft,original:base.text).utf8.elementsEqual(submitted.replacementText.utf8) {
                 vaultBlockDraft = submitted.replacementText.replacingOccurrences(of:"\r\n",with:"\n")
             }
             pendingBlockEdit = nil

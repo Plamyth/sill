@@ -247,6 +247,15 @@ struct VaultMarkdownBlocks {
     }
 
     func replacing(_ id: String, with replacement: String) throws -> String {
+        let sourceLF = text.replacingOccurrences(of:"\r\n",with:"\n")
+        let replacementLF = replacement.replacingOccurrences(of:"\r\n",with:"\n")
+        guard !sourceLF.contains("\r"), !replacementLF.contains("\r") else { throw VaultBlockError.unsupported }
+        if text.contains("\r\n") {
+            guard !text.replacingOccurrences(of:"\r\n",with:"").contains("\n"),
+                  !replacement.replacingOccurrences(of:"\r\n",with:"").contains("\n") else { throw VaultBlockError.unsupported }
+        } else {
+            guard !replacement.contains("\r\n") else { throw VaultBlockError.unsupported }
+        }
         let block = try resolve(id)
         let candidate = try VaultMarkdownBlocks(replacement + " ^" + id).resolve(id)
         guard candidate.quote.utf8.elementsEqual(replacement.utf8) else { throw VaultBlockError.unsupported }
