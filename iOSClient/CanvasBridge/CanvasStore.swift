@@ -73,7 +73,7 @@ final class CanvasStore: ObservableObject {
     }
     private var noteContext: NoteContext?
 
-    var vaultDirty: Bool { vaultDraft != (vaultNote?.text ?? "") }
+    var vaultDirty: Bool { !vaultDraft.utf8.elementsEqual((vaultNote?.text ?? "").utf8) }
     var vaultCanSave: Bool {
         vaultNote != nil && vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
@@ -208,9 +208,11 @@ final class CanvasStore: ObservableObject {
         }
         do {
             let saved = try await save(base.path,base.sha256,submitted).validated(at:base.path)
-            guard saved.text == submitted else { throw URLError(.badServerResponse) }
+            guard saved.text.utf8.elementsEqual(submitted.utf8) else { throw URLError(.badServerResponse) }
             guard !Task.isCancelled, noteRequest == request, noteContext == context,
                   noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256 else { return }
+            noteReadSequence &+= 1
+            acceptedNoteReads[base.path] = noteReadSequence
             vaultNote = saved
             if noteEditGeneration == editGeneration { vaultDraft = saved.text }
             vaultSaving = false
@@ -307,8 +309,10 @@ final class CanvasStore: ObservableObject {
             } catch {
                 guard !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
                       noteConnectionGeneration == connectionGeneration else { return }
+                guard readSequence >= acceptedNoteReads[path,default:0] else { continue }
                 if let context, noteContext == context, noteContextIsCurrent(context),
-                   context.path == path, noteRequest == request, !vaultSaving, !vaultLoading {
+                   context.path == path, noteRequest == request, !vaultSaving, !vaultLoading,
+                   vaultNote?.sha256 == base?.sha256, noteEditGeneration == editGeneration {
                     vaultBlocked = true
                     vaultStatus = "원본 확인 실패: \(error.localizedDescription). 입력은 보존하며 자동 생성하지 않습니다."
                 }

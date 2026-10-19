@@ -225,6 +225,43 @@ final class NoteProtocol: URLProtocol {
         check(repolling.scene.nodes[0].text == fresh.text && repolling.vaultDraft == fresh.text,
             "older poll cannot regress a newer editor read")
 
+        let savedAfterPoll = store(), obsoleteFailure = NoteGate()
+        await savedAfterPoll.openVaultNote(original.path) { _ in original }
+        let obsoletePoll = Task { await savedAfterPoll.refreshVaultNotes(load:obsoleteFailure.load) }
+        await obsoleteFailure.wait()
+        savedAfterPoll.vaultDraft = "saved after polling began"
+        let acknowledged = snapshot(savedAfterPoll.vaultDraft)
+        await savedAfterPoll.saveVaultNote { _,_,_ in acknowledged }
+        obsoleteFailure.fail(); await obsoletePoll.value
+        await savedAfterPoll.refreshVaultNotes { _ in acknowledged }
+        savedAfterPoll.vaultDraft = "next edit"
+        check(!savedAfterPoll.vaultBlocked && savedAfterPoll.vaultCanSave,
+            "obsolete poll failure cannot block an acknowledged save and next edit")
+
+        let readAfterPoll = store(), supersededFailure = NoteGate()
+        await readAfterPoll.openVaultNote(original.path) { _ in original }
+        let supersededPoll = Task { await readAfterPoll.refreshVaultNotes(load:supersededFailure.load) }
+        await supersededFailure.wait()
+        await readAfterPoll.refreshVaultNotes { _ in original }
+        supersededFailure.fail(); await supersededPoll.value
+        check(!readAfterPoll.vaultBlocked,
+            "older failed poll cannot poison a newer accepted read with the same SHA")
+
+        let normalization = store()
+        let composed = snapshot("é"), decomposed = snapshot("e\u{301}")
+        await normalization.openVaultNote(composed.path) { _ in composed }
+        normalization.vaultDraft = decomposed.text
+        check(normalization.vaultDirty && !normalization.closeVaultEditor(),
+            "normalization-only byte changes remain dirty and cannot be silently closed")
+
+        let normalizedSave = store()
+        await normalizedSave.openVaultNote(original.path) { _ in original }
+        normalizedSave.vaultDraft = composed.text
+        await normalizedSave.saveVaultNote { _,_,_ in decomposed }
+        check(normalizedSave.vaultBlocked && normalizedSave.vaultNote?.sha256 == original.sha256 &&
+            normalizedSave.vaultDraft.utf8.elementsEqual(composed.text.utf8),
+            "store rejects canonically equal save acknowledgements with different UTF-8 bytes")
+
         let unicode = store(), unicodeNote = snapshot(String(repeating:"한글 👩🏽‍💻",count:100))
         await unicode.openVaultNote(unicodeNote.path) { _ in unicodeNote }
         _ = unicode.attachOpenedVaultNote()
@@ -257,6 +294,12 @@ final class NoteProtocol: URLProtocol {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [NoteProtocol.self]
         let relay = CanvasRelay(address:"http://test",token:"test-token",session:URLSession(configuration:config))
+        NoteProtocol.status = 200; NoteProtocol.text = decomposed.text
+        do {
+            _ = try await relay.saveVaultNote(at:original.path,baseSha256:original.sha256,text:composed.text)
+            check(false,"Relay rejects normalized save acknowledgement bytes")
+        } catch { check(true,"Relay rejects normalized save acknowledgement bytes") }
+        NoteProtocol.text = original.text
         let api = store()
         NoteProtocol.status = 200; NoteProtocol.calls = []
         await api.openVaultNote(original.path,load:relay.vaultNote)
