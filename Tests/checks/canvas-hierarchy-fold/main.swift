@@ -140,6 +140,33 @@ import UIKit
         check(saved == remote && CanvasStore().scene == remote, "existing isolated autosave and restore retain collapsed scene losslessly")
         try store.importScene(remote)
         check(store.scene == remote && store.selectedNode == nil, "existing import retains flags and all descendants")
+        var structuredOnly = remote
+        structuredOnly.drawingBase64 = ""
+        structuredOnly.strokes = []
+        try store.importScene(structuredOnly)
+        check(store.scene == structuredOnly && store.drawing.strokes.isEmpty,
+              "structured-only remote scene imports with an empty native drawing")
+        var legacyInk = structuredOnly
+        legacyInk.strokes = base.strokes
+        try store.importScene(legacyInk)
+        check(store.scene == legacyInk && store.drawing.strokes.isEmpty,
+              "empty native archive preserves legacy stroke data and relationships")
+        store.select(a.id)
+        let beforeInvalid = store.scene
+        let drawingBeforeInvalid = store.drawing
+        for invalid in ["%%%", Data("invalid archive".utf8).base64EncodedString()] {
+            var corrupt = structuredOnly
+            corrupt.drawingBase64 = invalid
+            corrupt.revision += 1
+            do {
+                try store.importScene(corrupt)
+                check(false, "corrupt native drawing must fail import")
+            } catch {
+                check(store.scene == beforeInvalid && store.drawing == drawingBeforeInvalid && store.selectedNode == a.id,
+                      "corrupt drawing rejected atomically without clearing local selection or data")
+            }
+        }
+        try store.importScene(remote)
         var hiddenAgent = remote
         check(hiddenAgent.apply(AgentRevision(sceneId: remote.id,baseRevision: remote.revision,
             annotations: [CanvasAnnotation(id: UUID(),nodeId: c.id,text: "숨긴 뒤 추가",author: "agent")],proposedNodes: [])),
