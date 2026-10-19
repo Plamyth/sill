@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compatibility', 'Sentry']
+PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compatibility', 'Sentry', 'TestDestinations']
 
 
 def block(source, marker):

@@ -17,7 +17,7 @@ def fixture(root):
     root = Path(root).resolve()
     here = root / 'Tests/checks/microphone-uplink'
     paths = ['Sources/StreamProtocol/' + name + '.swift' for name in
-             ['StreamMessage', 'Switcher', 'MicrophoneUplink', 'Viewport', 'Compatibility', 'Input', 'Pointer', 'SafeText']]
+             ['StreamMessage', 'Switcher', 'MicrophoneUplink', 'Viewport', 'Compatibility', 'Input', 'Pointer', 'SafeText', 'AudioRouting', 'AudioPrivacy', 'Sentry', 'TestDestinations']]
     paths += ['Sources/SillHost/' + name + '.swift' for name in
               ['HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'MicrophoneIngress', 'PointerControl']]
     files = {name: (root / name).read_text() for name in paths}

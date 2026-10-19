@@ -140,7 +140,13 @@ final class StreamClient: ObservableObject {
     /// The connect screen's rows (DiscoveryPolicy.rows): every Mac the network browser lists, then
     /// those seen only over peer-to-peer Wi-Fi.
     @Published var macs: [FoundMac] = []
-    @Published var connected = false
+    @Published var connected = false {
+        didSet {
+            #if os(visionOS)
+            if !connected { visionTestDestinations.bind(nil) }
+            #endif
+        }
+    }
     /// The nearby (peer-to-peer) browser runs: the status line says so, or under the hint the line
     /// in Search Nearby's place.
     @Published var searchingNearby = false
@@ -167,7 +173,13 @@ final class StreamClient: ObservableObject {
 
     // Remote access (StreamClient+Remote.swift). Published on main; the DEBUG harness seeds them.
     /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
-    @Published var savedMacs: [SavedMac] = []
+    @Published var savedMacs: [SavedMac] = [] {
+        didSet {
+            #if os(visionOS)
+            reconcileVisionTestDestinationAuthentication()
+            #endif
+        }
+    }
 
     #if os(iOS) || os(visionOS)
     #if os(visionOS)
@@ -198,10 +210,22 @@ final class StreamClient: ObservableObject {
     /// panel's Away from home group and never saved.
     @Published var macInfo: MacInfo?
     /// This connection's Mac is a saved one: its kind 18 verified against the saved pin.
-    @Published var macInfoSaved = false
+    @Published var macInfoSaved = false {
+        didSet {
+            #if os(visionOS)
+            reconcileVisionTestDestinationAuthentication()
+            #endif
+        }
+    }
     /// This connection's latest kind 18 when its signature checked, with the key that signed it:
     /// what tells a pairing made over this session (the overlay) whether it paired this very Mac.
-    var macInfoVerified: (info: MacInfo, fingerprint: Data)?
+    var macInfoVerified: (info: MacInfo, fingerprint: Data)? {
+        didSet {
+            #if os(visionOS)
+            reconcileVisionTestDestinationAuthentication()
+            #endif
+        }
+    }
     /// When this connection's first kind 18 arrived (the panel hides Away from home without one).
     @Published var macInfoAt: Date?
     /// Pairing, as the Add a Mac card, the home card and the overlay show it.
@@ -741,7 +765,13 @@ final class StreamClient: ObservableObject {
         /// The endpoint dialed (the DEBUG move and path tests start from it).
         var endpoint: NWEndpoint? = nil
     }
-    var session: Session?
+    var session: Session? {
+        didSet {
+            #if os(visionOS)
+            reconcileVisionTestDestinationAuthentication()
+            #endif
+        }
+    }
 
     /// The row a session at home was dialed from.
     struct HomeRow: Equatable {
@@ -841,6 +871,7 @@ final class StreamClient: ObservableObject {
             if link.connection !== newValue {
                 bindVisionSentry(to: newValue)
                 bindVisionDisplays(to: newValue)
+                bindVisionTestDestinations(to: newValue)
                 microphoneSetConnection(newValue)
                 resetVisionAudio()
                 visionMovePreparation = nil
@@ -866,6 +897,9 @@ final class StreamClient: ObservableObject {
     private let link = SessionLink()
     let queue = DispatchQueue(label: "sill.net", qos: .userInteractive)
     #if os(visionOS)
+    @Published var visionTestDestinations = VisionTestDestinations()
+    var visionTestDestinationPeer: NWConnection?
+    var visionTestDestinationGeneration = UUID()
     @Published var visionSentrySnapshot = VisionSentryController.Snapshot()
     let visionSentry = VisionSentryController()
     var visionSentryDeadline: DispatchWorkItem?
@@ -2811,6 +2845,7 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         bindVisionSentry(to: c)
         bindVisionDisplays(to: c)
+        bindVisionTestDestinations(to: c)
         resetVisionAudio()
         visionInputBinding = .awaitingCatalog
         #endif
@@ -3640,6 +3675,7 @@ final class StreamClient: ObservableObject {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
             #if os(visionOS)
             self.bindVisionSentry(to: nil)
+            self.bindVisionTestDestinations(to: nil)
             self.microphoneSetConnection(nil)
             #endif
             #if !os(visionOS)
@@ -3677,6 +3713,7 @@ final class StreamClient: ObservableObject {
     func tearDown(status: String, restartSearch: Bool = true) {
         #if os(visionOS)
         bindVisionSentry(to: nil)
+        bindVisionTestDestinations(to: nil)
         resetVisionAudio()
         visionInputSession?.releaseAll()
         visionInputBinding = .awaitingCatalog
@@ -4277,6 +4314,7 @@ final class StreamClient: ObservableObject {
             guard let list = Wire.decode(WindowList.self, from: data) else {
                 #if os(visionOS)
                 invalidateVisionSentryCatalog(from: peer)
+                invalidateVisionTestDestinations(from: peer)
                 #endif
                 return
             }
@@ -4336,6 +4374,7 @@ final class StreamClient: ObservableObject {
                 if self.macName != list.macName { self.macName = list.macName; self.loadWindowOrder() }
                 let previous = self.active
                 #if os(visionOS)
+                self.observeVisionTestDestinations(list, from: peer)
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
                 self.observeVisionDisplays(list, from: peer)
                 self.receiveVisionAudioCatalogAcknowledgement(list, from: peer)

@@ -7,9 +7,14 @@ import UIKit
 @MainActor
 struct VisionTestDestinationsView: View {
     @Binding var model: VisionTestDestinations
+    @ObservedObject var stores: VisionTestDestinationStores
     let close: () -> Void
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in content }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("프로젝트 테스트 화면").font(.title2)
@@ -30,7 +35,8 @@ struct VisionTestDestinationsView: View {
                     Button("목록으로") { model.close() }
                 }
                 Text(pageMessage).accessibilityLabel(pageMessage)
-                VisionTestDestinationWebView(model: $model, selection: selected)
+                VisionTestDestinationWebView(model: $model, selection: selected,
+                                             store: stores.store(projectID: selected.entry.projectId, epoch: model.storageEpoch))
                     .id(selected.id)
                     .accessibilityLabel("선택한 프로젝트 테스트 웹 화면")
             } else if !model.entries.isEmpty {
@@ -42,6 +48,11 @@ struct VisionTestDestinationsView: View {
                         Text(verbatim: entry.url).font(.caption).textSelection(.enabled)
                         Text(reachabilityMessage(entry)).font(.caption)
                         Text(embedMessage(entry)).font(.caption)
+                        if entry.reachability == .reachable,
+                           model.binding.flatMap({ model.openingURL(for: entry, from: $0) }) == nil {
+                            Text("HTTPS 접속 확인 정보가 없거나 확인 시각이 유효하지 않아 열 수 없습니다. 확인 정보는 45초 동안 유효합니다.")
+                                .font(.caption)
+                        }
                         Text(entry.checkedAt.map { "Mac 확인 시각: \($0)" } ?? "Mac 확인 시각 미확인")
                             .font(.caption)
                         if let reason = entry.reason, !reason.isEmpty { Text(verbatim: reason).font(.caption) }
@@ -58,6 +69,7 @@ struct VisionTestDestinationsView: View {
         .padding(24)
         .frame(minWidth: 660, minHeight: 500)
         .onDisappear { model.close() }
+        .onChange(of: model.storageEpoch, initial: true) { _, epoch in stores.synchronize(epoch) }
     }
 
     private var catalogMessage: String {
@@ -79,7 +91,7 @@ struct VisionTestDestinationsView: View {
         case .displaying(let code): return "기기에서 HTTP \(code) 페이지를 표시하기 시작했습니다."
         case .response(let code): return "기기에서 HTTP \(code) 페이지 표시를 마쳤습니다. 업무 완료 여부는 화면에서 확인하세요."
         case .failed: return "기기에서 페이지를 열지 못했습니다. Mac의 도달 가능 관측과 별개입니다."
-        case .navigationDenied: return "다른 출처 이동·새 창·다운로드는 허용하지 않습니다."
+        case .navigationDenied: return "등록되지 않은 출처 이동·새 창·다운로드는 허용하지 않습니다."
         case .authenticationDenied: return "웹 인증 요청을 차단했습니다. Mac의 인증 정보나 쿠키를 가져오지 않습니다."
         }
     }
@@ -102,15 +114,39 @@ struct VisionTestDestinationsView: View {
 }
 
 @MainActor
+final class VisionTestDestinationStores: ObservableObject {
+    private var epoch: UUID?
+    private var projects: [String: WKWebsiteDataStore] = [:]
+
+    func synchronize(_ next: UUID) {
+        guard epoch != next else { return }
+        for store in projects.values {
+            store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
+        }
+        projects.removeAll()
+        epoch = next
+    }
+
+    func store(projectID: String, epoch: UUID) -> WKWebsiteDataStore {
+        synchronize(epoch)
+        if let store = projects[projectID] { return store }
+        let store = WKWebsiteDataStore.nonPersistent()
+        projects[projectID] = store
+        return store
+    }
+}
+
+@MainActor
 private struct VisionTestDestinationWebView: UIViewRepresentable {
     @Binding var model: VisionTestDestinations
     let selection: VisionTestDestinations.Selection
+    let store: WKWebsiteDataStore
 
     func makeCoordinator() -> Coordinator { Coordinator(model: $model, selection: selection) }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        configuration.websiteDataStore = store
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         let view = WKWebView(frame: .zero, configuration: configuration)
@@ -132,8 +168,6 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         view.stopLoading()
         view.navigationDelegate = nil
         view.uiDelegate = nil
-        view.configuration.websiteDataStore.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-                                                       modifiedSince: .distantPast) {}
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {

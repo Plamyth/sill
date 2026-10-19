@@ -1,7 +1,12 @@
 import Foundation
 import StreamProtocol
 
-struct VisionTestDestinations: Equatable {
+struct VisionTestDestinations {
+    static let maximumObservationAge: TimeInterval = 45
+    private let clock: () -> Date
+    private(set) var storageEpoch = UUID()
+
+    init(clock: @escaping () -> Date = Date.init) { self.clock = clock }
     struct PeerBinding: Equatable, Sendable {
         let peerID: String
         let generation: UUID
@@ -58,7 +63,7 @@ struct VisionTestDestinations: Equatable {
         let next = next.flatMap { $0.peerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         guard binding != next else { return }
         binding = next
-        catalog = nil
+        invalidate()
         catalogStatus = next == nil ? .disconnected : .unavailable
         close()
     }
@@ -66,20 +71,38 @@ struct VisionTestDestinations: Equatable {
     @discardableResult
     mutating func observe(_ next: TestDestinationCatalog?, from source: PeerBinding) -> Bool {
         guard binding == source else { return false }
+        guard let next else {
+            invalidate()
+            catalogStatus = .unavailable
+            return true
+        }
+        guard next.schema == TestDestinationCatalog.supportedSchema else {
+            invalidate()
+            catalogStatus = .unsupported
+            return true
+        }
+        guard (try? next.validate()) != nil else {
+            invalidate()
+            catalogStatus = .invalid
+            return true
+        }
         catalog = next
-        if let next {
-            if next.schema != TestDestinationCatalog.supportedSchema { catalogStatus = .unsupported }
-            else if (try? next.validate()) == nil { catalogStatus = .invalid }
-            else { catalogStatus = next.entries.isEmpty ? .empty : .available }
-        } else { catalogStatus = .unavailable }
+        catalogStatus = next.entries.isEmpty ? .empty : .available
+        if next.entries.isEmpty { invalidate(status: .empty); catalog = next }
         if let selection, !isCurrent(selection) { close() }
         return true
     }
 
     func openingURL(for entry: TestDestinationCatalog.Entry, from source: PeerBinding) -> URL? {
         guard binding == source, catalogStatus == .available,
-              catalog?.entries.contains(entry) == true, entry.reachability == .reachable else { return nil }
-        return try? entry.validatedURL()
+              catalog?.entries.contains(entry) == true, entry.reachability == .reachable,
+              !entry.projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !entry.projectLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let checkedAt = entry.checkedAt, let checked = Self.timestamp(checkedAt),
+              (0...Self.maximumObservationAge).contains(clock().timeIntervalSince(checked)),
+              let url = try? entry.validatedURL(), url.scheme?.lowercased() == "https",
+              (try? entry.validatedRedirectOrigins()) != nil else { return nil }
+        return url
     }
 
     @discardableResult
@@ -99,12 +122,29 @@ struct VisionTestDestinations: Equatable {
         var candidate = selected.entry
         candidate.url = url.absoluteString
         guard let safeURL = try? candidate.validatedURL() else { return false }
-        return Origin(safeURL) == selected.origin
+        guard safeURL.scheme?.lowercased() == "https" else { return false }
+        let origins = (try? selected.entry.validatedRedirectOrigins()) ?? []
+        return Origin(safeURL) == selected.origin || origins.contains { Origin($0) == Origin(safeURL) }
     }
 
     mutating func report(_ status: PageStatus, for selected: Selection) {
         guard isCurrent(selected) else { return }
         pageStatus = status
+    }
+
+    mutating func invalidate(status: CatalogStatus = .invalid) {
+        catalogStatus = status
+        catalog = nil
+        storageEpoch = UUID()
+        close()
+    }
+
+    private static func timestamp(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
     }
 
     mutating func close() {

@@ -88,6 +88,7 @@ public struct WindowList: Codable {
     public var catalogRefresh: Int?
     public var responseRequestID: UUID?
     public var sentry: SentryState?
+    public var testDestinations: TestDestinationCatalog.Projection?
 
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
@@ -109,7 +110,8 @@ public struct WindowList: Codable {
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
                 audioPrivacy: AudioPrivacyState? = nil, catalogRefresh: Int? = nil,
-                responseRequestID: UUID? = nil, sentry: SentryState? = nil) {
+                responseRequestID: UUID? = nil, sentry: SentryState? = nil,
+                testDestinations: TestDestinationCatalog.Projection? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
@@ -117,6 +119,7 @@ public struct WindowList: Codable {
         self.catalogRefresh = catalogRefresh
         self.responseRequestID = responseRequestID
         self.sentry = sentry
+        self.testDestinations = testDestinations
         self.inputGeneration = inputGeneration
         self.presentationInput = presentationInput
         self.videoEpoch = videoEpoch

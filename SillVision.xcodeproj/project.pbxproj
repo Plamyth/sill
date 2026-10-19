@@ -1316,6 +1316,7 @@
 				<string>AE23D0164904EA516E6E1CA4</string>
 				<string>21392BBCE4519F96EA6BB26A</string>
 				<string>CE44261B69C411E0154F7D9F</string>
+				<string>E2A2F112DBA96FF8A93A65FA</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
 			</array>
@@ -1398,6 +1399,7 @@
 				<string>507B4D6B9FA988CA1B34035D</string>
 				<string>DD9E1AC0D04122AFE22AB848</string>
 				<string>CE037CF6C9D9D6D9AE268A7E</string>
+				<string>1708784FAA7ED9B0F4E7C191</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1714,6 +1716,24 @@
 			<string>PBXBuildFile</string>
 			<key>fileRef</key>
 			<string>CE44261B69C411E0154F7D9F</string>
+		</dict>
+		<key>E2A2F112DBA96FF8A93A65FA</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/StreamClient+VisionTestDestinations.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>1708784FAA7ED9B0F4E7C191</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>E2A2F112DBA96FF8A93A65FA</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

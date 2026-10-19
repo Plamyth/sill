@@ -55,6 +55,8 @@ struct SillVisionWorkspace: View {
     @State private var displayChooserShown = false
     @State private var macAudioShown = false
     @State private var macAudioOfferShown = false
+    @State private var testDestinationsShown = false
+    @StateObject private var testDestinationStores = VisionTestDestinationStores()
 
     init(session: VisionAppSession, lease: VisionWindowLease) {
         self.session = session
@@ -90,6 +92,18 @@ struct SillVisionWorkspace: View {
                         Text(client.visionAudioPrivacyMessage)
                         Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
                     }
+                    Button("프로젝트 테스트 화면") {
+                        withWindowOwnership {
+                            guard phase == .active, !transitions.isPending else { return }
+                            client.reconcileVisionTestDestinationAuthentication()
+                            clearDraft()
+                            keysShown = false
+                            testDestinationsShown = true
+                            updateInputAdmission()
+                            releaseInput()
+                        }
+                    }
+                    .accessibilityHint("연결된 Mac에서 등록한 테스트 화면을 이 기기에서 엽니다.")
                     Button("연결 해제") { requestTransition(.disconnect) }
                 }
             }
@@ -199,6 +213,10 @@ struct SillVisionWorkspace: View {
             transitions.cancel()
             if connected { inputSuspended = false; client.rememberAuthenticatedMac() }
         }
+        .onChange(of: client.visionTestDestinations.storageEpoch, initial: true) { _, epoch in
+            testDestinationStores.synchronize(epoch)
+        }
+        .onChange(of: testDestinationsShown) { _, _ in updateInputAdmission() }
         .onChange(of: client.videoSize) { _, _ in releaseInput() }
         .onChange(of: client.active) { _, _ in releaseInput() }
         .onChange(of: client.visionTextScope) { _, _ in
@@ -226,6 +244,10 @@ struct SillVisionWorkspace: View {
                 }
             }, cancel: { withWindowOwnership { client.cancelVisionDisplaySelection() } },
                close: { displayChooserShown = false })
+        }
+        .sheet(isPresented: $testDestinationsShown) {
+            VisionTestDestinationsView(model: $client.visionTestDestinations, stores: testDestinationStores,
+                                       close: { testDestinationsShown = false })
         }
         .sheet(isPresented: $recoveryShown) { recoveryForm }
         .sheet(isPresented: $macAudioShown) {
@@ -373,7 +395,7 @@ struct SillVisionWorkspace: View {
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var macAudioModalShown: Bool { macAudioShown || macAudioOfferShown }
@@ -421,7 +443,7 @@ struct SillVisionWorkspace: View {
         guard session.owns(lease) else { return }
         input.allowed = inputAllowed
         client.visionAudioIntentModal = macAudioModalShown || displayChooserShown || transitions.isPending ||
-            inputSuspended || draftShown || recoveryShown
+            inputSuspended || draftShown || testDestinationsShown || recoveryShown
         session.refresh()
     }
 

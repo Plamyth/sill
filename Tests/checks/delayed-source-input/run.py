@@ -16,7 +16,8 @@ FILES = ["Sources/StreamProtocol/Input.swift", "Sources/StreamProtocol/Switcher.
          "Sources/SillHost/StreamCoordinator.swift", "Sources/SillHost/InputInjector.swift",
          "iOSClient/StreamClient.swift", "Sources/SillHost/PointerControl.swift",
          "Sources/SillHost/SourceInputFence.swift", "Sources/StreamProtocol/Compatibility.swift",
-         "Sources/SillHost/StreamServer.swift"]
+         "Sources/SillHost/StreamServer.swift", "Sources/StreamProtocol/TestDestinations.swift",
+         "Sources/StreamProtocol/AudioPrivacy.swift", "Sources/StreamProtocol/Sentry.swift"]
 
 
 def function(text, signature):
@@ -52,6 +53,11 @@ def program(sources):
     scoped = "public struct SourceInput" in sources[FILES[0]]
     listing = function(host, "private func listMessage()").replace("private func", "func", 1) if scoped else ""
     protocol = sources[FILES[0]] + sources[FILES[1]].split("/// Binary image payloads:", 1)[0]
+    for path in FILES[9:]:
+        protocol += "\n" + sources.get(path, "")
+    for marker in ["public struct MicrophoneCapability:"]:
+        if marker in sources[FILES[1]]:
+            protocol += "\n" + function(sources[FILES[1]], marker)
     protocol += "\n" + function(sources[FILES[7]], "public struct Hello:")
     if "public struct VideoEpoch:" in sources[FILES[1]]:
         protocol += "\n" + function(sources[FILES[1]], "public struct VideoEpoch:")

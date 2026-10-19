@@ -62,7 +62,7 @@ def main():
                        '-emit-module-path', str(output / (name + '.swiftmodule')), '-o', str(output / (name + '.o'))]
 
     protocol = ['Sources/StreamProtocol/' + n + '.swift' for n in
-                ['StreamMessage', 'Switcher', 'Input', 'Compatibility', 'Pointer', 'SafeText']]
+                ['StreamMessage', 'Switcher', 'Input', 'Compatibility', 'Pointer', 'SafeText', 'AudioRouting', 'AudioPrivacy', 'Sentry', 'TestDestinations']]
     sources = ['Client.swift', 'Host.swift', 'Geometry.swift', 'Display.swift', 'Framework.swift', 'Accounting.swift', 'MessageReader.swift', 'ProbeCap.swift',
                'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift', 'Sources/SillHost/SourceInputFence.swift',
                'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift',

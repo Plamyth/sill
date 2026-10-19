@@ -42,7 +42,8 @@ fetch() {
 }
 for f in iOSClient/TrackpadView.swift iOSClient/InputOverlay.swift iOSClient/PointerPresence.swift \
          iOSClient/TrackpadGestures.swift iOSClient/KeyChords.swift iOSClient/PortraitStreamScreen.swift \
-         Sources/StreamProtocol/Input.swift Sources/StreamProtocol/Switcher.swift Sources/StreamProtocol/StreamMessage.swift; do
+         Sources/StreamProtocol/Input.swift Sources/StreamProtocol/Switcher.swift Sources/StreamProtocol/StreamMessage.swift \
+         Sources/StreamProtocol/AudioRouting.swift Sources/StreamProtocol/AudioPrivacy.swift Sources/StreamProtocol/Sentry.swift Sources/StreamProtocol/TestDestinations.swift; do
     fetch "$f"
 done
 cd "$work/src"
@@ -60,7 +61,7 @@ cp "$here/Stubs.swift" "$here/main.swift" "$here/TouchSynth.h" "$here/TouchSynth
 target=arm64-apple-ios17.0-simulator
 xcrun -sdk iphonesimulator clang -target $target -fobjc-arc -Wall -c TouchSynth.m -o TouchSynth.o
 xcrun -sdk iphonesimulator swiftc -target $target -swift-version 5 -module-name TouchRig -Onone ${flags[@]+"${flags[@]}"} \
-    -import-objc-header Bridging.h Stubs.swift Keys.swift Input.swift Switcher.swift StreamMessage.swift $(ls PointerPresence.swift TrackpadGestures.swift KeyChords.swift 2>/dev/null) \
+    -import-objc-header Bridging.h Stubs.swift Keys.swift Input.swift Switcher.swift StreamMessage.swift $(ls AudioRouting.swift AudioPrivacy.swift Sentry.swift TestDestinations.swift 2>/dev/null) $(ls PointerPresence.swift TrackpadGestures.swift KeyChords.swift 2>/dev/null) \
     TrackpadView.swift InputOverlay.swift main.swift TouchSynth.o -o "$work/TouchRig.app/TouchRig"
 cat > "$work/TouchRig.app/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

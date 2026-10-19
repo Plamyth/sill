@@ -19,6 +19,7 @@ final class StreamClient {
     var visionDisplaySelection = DisplayAdmission()
     func bindVisionDisplays(to peer: NWConnection?) {}
     func bindVisionSentry(to peer: NWConnection?) {}
+    func bindVisionTestDestinations(to peer: NWConnection?) {}
     func confirmVisionDisplayPresentation() {}
     func reconcileVisionAudioIntent() {}
     enum MoveKind { case fromDirect, toCable, toWifi, fromRemote }

@@ -137,100 +137,172 @@ let unknownEnums = String(decoding: fixture, as: UTF8.self).replacingOccurrences
 check(rejects { _ = try decoder.decode(TestDestinationCatalog.self, from: Data(unknownEnums.utf8)) },
       "unknown enum rejected at decoding boundary")
 
+let legacyList = WindowList(macName: "fixture-Mac", windows: [], active: .desktop)
+let legacyListObject = try JSONSerialization.jsonObject(with: encoder.encode(legacyList)) as! [String: Any]
+check(legacyListObject["testDestinations"] == nil, "old WindowList initializer omits optional carrier")
+let decodedLegacyList = try decoder.decode(WindowList.self, from: encoder.encode(legacyList))
+check(decodedLegacyList.testDestinations == nil,
+      "old WindowList without catalog still decodes")
+for malformed in ["null", "42", "[]", "{}", "\"wrong\"", String(decoding: try encoder.encode(duplicate), as: UTF8.self)] {
+    let data = Data("{\"macName\":\"fixture-Mac\",\"windows\":[],\"active\":{\"desktop\":{}},\"testDestinations\":\(malformed)}".utf8)
+    let list = try decoder.decode(WindowList.self, from: data)
+    check(list.macName == "fixture-Mac" && list.active == .desktop && list.testDestinations?.catalog == nil,
+          "actual WindowList isolates malformed optional catalog and preserves stream fields")
+}
+var projectedList = legacyList
+projectedList.testDestinations = projected
+let listRoundTrip = try decoder.decode(WindowList.self, from: encoder.encode(projectedList))
+check(listRoundTrip.testDestinations?.catalog == catalog && listRoundTrip.active == .desktop,
+      "actual WindowList carries raw valid projection")
+
 typealias Model = VisionTestDestinations
 let peer = Model.PeerBinding(peerID: "fixture-peer", generation: UUID())
 let otherPeer = Model.PeerBinding(peerID: "other-peer", generation: UUID())
-var model = Model()
+let dateFormatter = ISO8601DateFormatter()
+let reference = dateFormatter.date(from: "2026-10-20T09:00:00Z")!
+var now = reference
+let freshCatalog = replacingEntry { $0.checkedAt = "2026-10-20T09:00:00Z" }
+let freshEntry = freshCatalog.entries[0]
+var model = Model(clock: { now })
 check(model.catalogStatus == .disconnected, "starts disconnected with no invented entries")
-check(!model.observe(catalog, from: peer), "catalog without current binding ignored")
+check(!model.observe(freshCatalog, from: peer), "catalog without current binding ignored")
 model.bind(peer)
-check(model.catalogStatus == .unavailable, "binding alone does not create destinations")
-var empty = catalog
+check(model.catalogStatus == .unavailable, "binding alone does not invent destinations")
+var empty = freshCatalog
 empty.entries = []
 model.observe(empty, from: peer)
-check(model.catalogStatus == .empty && model.entries.isEmpty, "zero live entries honestly empty")
+check(model.catalogStatus == .empty && model.entries.isEmpty, "producer live zero entries remains honestly empty")
 model.observe(unsupported, from: peer)
-check(model.catalogStatus == .unsupported && !model.open(entry, from: peer), "unsupported version never opens")
+check(model.catalogStatus == .unsupported && model.catalog == nil, "unsupported version discarded")
 model.observe(duplicate, from: peer)
-check(model.catalogStatus == .invalid && !model.open(entry, from: peer), "duplicate identity invalidates catalog")
-let lanCatalog = replacingEntry { $0.url = "http://Macbook.local:8080/screen" }
-model.observe(lanCatalog, from: peer)
-check(model.open(lanCatalog.entries[0], from: peer), "confirmed Bonjour LAN entry opens natively")
+check(model.catalogStatus == .invalid && model.entries.isEmpty, "invalid catalog discarded instead of displaying unsafe entries")
+model.observe(catalog, from: peer)
+check(!model.open(entry, from: peer), "unknown checkedAt cannot execute")
+model.observe(freshCatalog, from: peer)
+now = reference.addingTimeInterval(45)
+check(model.open(freshEntry, from: peer), "exact 45 second boundary accepted")
+let expiring = model.selection!
+now = reference.addingTimeInterval(45.001)
+check(!model.open(freshEntry, from: peer) && !model.isCurrent(expiring), "older than 45 seconds cannot open or remain current")
+check(!model.allowsNavigation(to: expiring.url, for: expiring), "navigation rechecks freshness after opening")
+model.report(.response(200), for: expiring)
+check(model.pageStatus == .loading, "late success cannot revive expired selection")
+now = reference.addingTimeInterval(-0.001)
+check(!model.open(freshEntry, from: peer), "future checkedAt cannot execute even within clock skew")
+now = reference
 model.close()
+let lanCatalog = replacingEntry { $0.url = "https://Macbook.local:8443/screen"; $0.checkedAt = freshEntry.checkedAt }
+model.observe(lanCatalog, from: peer)
+check(model.open(lanCatalog.entries[0], from: peer), "nonloopback Macbook.local HTTPS opens natively")
 for embed in [TestDestinationCatalog.Embed.allowed, .blocked, .unknown] {
-    let value = replacingEntry { $0.embed = embed }
+    var value = freshCatalog
+    value.entries[0].embed = embed
     model.observe(value, from: peer)
-    check(model.open(value.entries[0], from: peer), "iframe \(embed.rawValue) does not gate native top-level")
-    check(model.pageStatus == .loading, "host reachability is not a client success")
+    check(model.open(value.entries[0], from: peer), "iframe \(embed.rawValue) is informational for native view")
+    check(model.pageStatus == .loading, "host reachability never implies device success")
 }
 for reachability in [TestDestinationCatalog.Reachability.unreachable, .unknown] {
-    let value = replacingEntry { $0.reachability = reachability }
+    var value = freshCatalog
+    value.entries[0].reachability = reachability
     model.observe(value, from: peer)
-    check(model.selection == nil && !model.open(value.entries[0], from: peer), "\(reachability) cannot open")
+    check(model.selection == nil && !model.open(value.entries[0], from: peer), "\(reachability) cannot execute")
 }
-model.observe(catalog, from: peer)
-var invented = entry
-invented.url = "https://example.test/guessed"
-check(!model.open(invented, from: peer), "matching id with invented URL rejected")
-invented = entry
-invented.owner = "different-owner"
-check(!model.open(invented, from: peer), "matching URL with changed owner rejected")
-check(!model.open(entry, from: otherPeer), "other binding cannot open trusted entry")
-check(model.open(entry, from: peer), "exact current entry opens")
+model.observe(freshCatalog, from: peer)
+for change in ["projectId", "projectLabel", "origin", "owner", "path"] {
+    var forged = freshEntry
+    switch change {
+    case "projectId": forged.projectId = "other-project"
+    case "projectLabel": forged.projectLabel = "다른 프로젝트"
+    case "origin": forged.url = "https://other.example.test/screen"
+    case "owner": forged.owner = "other-owner"
+    default: forged.url = "https://example.test/guessed"
+    }
+    check(!model.open(forged, from: peer), "stale or invented \(change) never executes")
+}
+check(!model.open(freshEntry, from: otherPeer), "foreign binding cannot open trusted entry")
+check(model.open(freshEntry, from: peer), "exact fresh entry opens")
 let selected = model.selection!
 check(model.allowsNavigation(to: URL(string: "https://EXAMPLE.test:443/next?fixture=1#part")!, for: selected),
-      "same origin accepts paths queries fragments and default port")
-for url in ["http://example.test/screen", "https://example.test:444/screen",
+      "exact HTTPS origin permits path query and fragment changes")
+for url in ["http://example.test/screen", "https://example.test:444/screen", "https://login.example.test/start",
             "https://other.example.test/screen", "https://example.test.evil.test/screen",
             "https://person@example.test/screen", "mailto:fixture@example.test", "about:blank"] {
-    check(!model.allowsNavigation(to: URL(string: url)!, for: selected), "navigation rejects \(url)")
+    check(!model.allowsNavigation(to: URL(string: url)!, for: selected), "unregistered navigation rejected \(url)")
 }
-check(!model.observe(empty, from: otherPeer) && model.selection == selected, "late foreign catalog cannot erase current selection")
-model.report(.response(503), for: selected)
-check(model.pageStatus == .response(503), "actual client HTTP error preserved independently")
-model.report(.responseReceived(200), for: selected)
-check(model.pageStatus == .responseReceived(200), "received device response is not finished display")
-model.report(.displaying(200), for: selected)
-check(model.pageStatus == .displaying(200), "commit is distinct from completed load")
-model.report(.authenticationDenied, for: selected)
-check(model.pageStatus == .authenticationDenied, "authentication denial stays distinct from host observation")
-model.observe(catalog, from: peer)
-check(model.selection == selected, "unchanged catalog keeps view and isolated session")
-var newer = catalog
-newer.observedAt = "2026-10-20T09:01:00Z"
-model.observe(newer, from: peer)
-check(model.selection == selected, "observation refresh preserves exact unchanged entry")
-newer.entries[0].checkedAt = "2026-10-20T09:01:00Z"
-model.observe(newer, from: peer)
-check(model.selection == nil, "changed entry invalidates selection")
+check(!model.observe(empty, from: otherPeer) && model.selection == selected, "foreign catalog cannot erase current selection")
+for status in [Model.PageStatus.responseReceived(200), .displaying(200), .response(200), .response(503),
+               .authenticationDenied, .navigationDenied, .failed] {
+    model.report(status, for: selected)
+    check(model.pageStatus == status, "device response loading and denial states stay distinct \(status)")
+}
+let retainedEpoch = model.storageEpoch
+model.observe(freshCatalog, from: peer)
+check(model.selection == selected && model.storageEpoch == retainedEpoch, "unchanged catalog keeps isolated project login session")
+var refreshed = freshCatalog
+refreshed.observedAt = "2026-10-20T09:01:00Z"
+model.observe(refreshed, from: peer)
+check(model.selection == selected, "catalog observation time does not invent an entry freshness update")
+refreshed.entries[0].projectLabel = "수정된 프로젝트"
+model.observe(refreshed, from: peer)
+check(model.selection == nil, "current catalog label replacement invalidates open selection")
 model.report(.response(200), for: selected)
-check(model.pageStatus == .notOpened, "late page callback cannot revive invalidated view")
-
-let httpCatalog = replacingEntry { $0.url = "http://example.test:8080/screen" }
+check(model.pageStatus == .notOpened, "old page callback cannot revive replaced selection")
+var redirectCatalog = freshCatalog
+redirectCatalog.entries[0].redirectOrigins = redirects
+model.observe(redirectCatalog, from: peer)
+check(model.open(redirectCatalog.entries[0], from: peer), "registered redirect entry opens")
+let redirectSelection = model.selection!
+for url in ["https://login.example.test/authorize?fixture=1", "https://Macbook.local:8443/callback",
+            "https://example.test/return"] {
+    check(model.allowsNavigation(to: URL(string: url)!, for: redirectSelection), "registered exact redirect permits \(url)")
+}
+for url in ["https://sub.login.example.test/authorize", "https://login.example.test:444/start",
+            "http://login.example.test/start", "https://login.example.test.evil.test/start"] {
+    check(!model.allowsNavigation(to: URL(string: url)!, for: redirectSelection), "registered origin does not grant \(url)")
+}
+model.observe(freshCatalog, from: peer)
+check(!model.allowsNavigation(to: redirectSelection.url, for: redirectSelection), "redirect registration removal revokes existing selection")
+let httpCatalog = replacingEntry { $0.url = "http://example.test:8080/screen"; $0.checkedAt = freshEntry.checkedAt }
 model.observe(httpCatalog, from: peer)
-check(model.open(httpCatalog.entries[0], from: peer), "owner-confirmed HTTP has no invented private-only policy")
-let httpSelection = model.selection!
-check(model.allowsNavigation(to: URL(string: "http://example.test:8080/next")!, for: httpSelection), "HTTP same origin allowed")
-check(!model.allowsNavigation(to: URL(string: "http://example.test/next")!, for: httpSelection), "HTTP different port denied")
+check(!model.open(httpCatalog.entries[0], from: peer), "shared legacy HTTP entry never executes in HTTPS native viewer")
+model.observe(freshCatalog, from: peer)
+model.open(freshEntry, from: peer)
+let oldView = model.selection!
 model.close()
-check(model.open(httpCatalog.entries[0], from: peer) && model.selection?.id != httpSelection.id,
-      "new view gets a distinct session identity")
-let replacement = model.selection!
-model.report(.failed, for: httpSelection)
-check(model.pageStatus == .loading, "older view callback cannot change new view")
+check(model.storageEpoch == retainedEpoch && model.open(freshEntry, from: peer), "closing viewer preserves paired project login store")
+check(model.selection?.id != oldView.id, "reopening creates new callback identity while retaining project store")
+model.report(.failed, for: oldView)
+check(model.pageStatus == .loading, "previous view callback cannot alter reopened page")
+let beforeInvalid = model.storageEpoch
+model.observe(duplicate, from: peer)
+check(model.catalog == nil && model.selection == nil && model.storageEpoch != beforeInvalid,
+      "invalid catalog clears selection and project store authority")
+model.observe(freshCatalog, from: peer)
+model.open(freshEntry, from: peer)
+let beforeUnavailable = model.storageEpoch
+model.observe(nil, from: peer)
+check(model.catalogStatus == .unavailable && model.selection == nil && model.storageEpoch != beforeUnavailable,
+      "missing or malformed projection clears former project store authority")
+model.observe(freshCatalog, from: peer)
+model.open(freshEntry, from: peer)
+let oldGenerationSelection = model.selection!
 let nextGeneration = Model.PeerBinding(peerID: peer.peerID, generation: UUID())
+let beforeReconnect = model.storageEpoch
 model.bind(nextGeneration)
-check(model.catalog == nil && model.selection == nil && model.pageStatus == .notOpened,
-      "same peer reconnect clears catalog and selection by generation")
-check(!model.observe(catalog, from: peer), "old generation catalog cannot cross reconnect")
-check(!model.allowsNavigation(to: replacement.url, for: replacement), "old generation loses navigation authority")
-model.observe(catalog, from: nextGeneration)
-model.open(entry, from: nextGeneration)
+check(model.catalog == nil && model.selection == nil && model.storageEpoch != beforeReconnect,
+      "same peer reconnect clears catalog selection and project store authority")
+check(!model.observe(freshCatalog, from: peer), "old generation catalog cannot cross reconnect")
+check(!model.allowsNavigation(to: oldGenerationSelection.url, for: oldGenerationSelection), "old generation loses navigation authority")
+model.observe(freshCatalog, from: nextGeneration)
+model.open(freshEntry, from: nextGeneration)
+let beforeDisconnect = model.storageEpoch
 model.bind(nil)
-check(model.catalogStatus == .disconnected && model.catalog == nil && model.selection == nil,
-      "disconnect clears all remote viewer state")
+check(model.catalogStatus == .disconnected && model.catalog == nil && model.selection == nil && model.storageEpoch != beforeDisconnect,
+      "disconnect clears remote catalog viewer and login scope")
 model.bind(Model.PeerBinding(peerID: "  ", generation: UUID()))
 check(model.binding == nil, "empty peer identity cannot authorize catalog")
 
+runAdapterChecks(catalog: freshCatalog, now: reference)
+runWebViewChecks(catalog: freshCatalog, now: reference)
 print("\(checks) checks, \(failures) failures")
 if failures != 0 { exit(1) }

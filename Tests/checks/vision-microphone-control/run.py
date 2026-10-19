@@ -36,7 +36,7 @@ def main():
         require(base+['-parse-as-library','-whole-module-optimization','-emit-module','-emit-object','-module-name',name]+list(map(str,paths))+['-emit-module-path',str(output/(name+'.swiftmodule')),'-o',str(output/(name+'.o'))],name+'-compile')
     try:
         module('Network',[root/'Tests/checks/vision-microphone-control/Network.swift'])
-        module('StreamProtocol',[root/'Sources/StreamProtocol'/(n+'.swift') for n in ['StreamMessage','AudioPacket','Switcher','MicrophoneUplink','Input','Viewport','HostSettings','Compatibility','AudioRouting']])
+        module('StreamProtocol',[root/'Sources/StreamProtocol'/(n+'.swift') for n in ['StreamMessage','AudioPacket','Switcher','MicrophoneUplink','Input','Viewport','HostSettings','Compatibility','AudioRouting','AudioPrivacy','Sentry','TestDestinations']])
         objects=[str(output/'Network.o'),str(output/'StreamProtocol.o')]
         control=[root/'iOSClient'/(n+'.swift') for n in ['IPadMicrophonePCM','IPadMicrophonePolicy','IPadMicrophoneFrameGate']]
         control += [root/'visionOSClient/VisionCableBootstrap.swift',root/'visionOSClient/StreamClient+VisionMicrophone.swift',root/'Tests/checks/vision-microphone-control/main.swift']

@@ -41,7 +41,7 @@ def main():
         code, log = run(command, label)
         if code: raise RuntimeError(label+'\n'+log[-6000:])
         return log
-    protocol = [root/'Sources/StreamProtocol'/n for n in ['AudioPacket.swift','StreamMessage.swift','AudioRouting.swift','Switcher.swift','AudioPrivacy.swift']]
+    protocol = [root/'Sources/StreamProtocol'/n for n in ['AudioPacket.swift','StreamMessage.swift','AudioRouting.swift','Switcher.swift', 'Sentry.swift', 'TestDestinations.swift','AudioPrivacy.swift']]
     client_source = (root/'iOSClient/StreamClient.swift').read_text()
     begin = client_source.index('    func receiveVisionAudioCatalogBarrier(')
     end = client_source.index('    func receiveVisionAudioCatalogAcknowledgement(', begin)
