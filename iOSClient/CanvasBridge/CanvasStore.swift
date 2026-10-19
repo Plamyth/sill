@@ -181,6 +181,7 @@ final class CanvasStore: ObservableObject {
         let blockID: String?
     }
     private var noteContext: NoteContext?
+    private var pendingExcerptAnchor: (context: NoteContext, id: String)?
 
     var vaultDirty: Bool { !vaultDraft.utf8.elementsEqual((vaultNote?.text ?? "").utf8) }
     var vaultCanSave: Bool {
@@ -213,6 +214,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private func invalidateNoteRequests() {
+        pendingExcerptAnchor = nil
         noteRequest = nil
         acceptedNoteReads.removeAll()
         vaultLoading = false
@@ -250,6 +252,7 @@ final class CanvasStore: ObservableObject {
         noteEditorGeneration &+= 1
         noteRequest = nil
         noteContext = nil
+        pendingExcerptAnchor = nil
         vaultNote = nil
         vaultDraft = ""
         vaultSelection = NSRange(location:0,length:0)
@@ -268,6 +271,9 @@ final class CanvasStore: ObservableObject {
             vaultStatus = "노트 경로 또는 Mac 연결을 확인하세요."
             return
         }
+        let pending = pendingExcerptAnchor.flatMap { attempt in
+            attempt.context == noteContext && attempt.context.path == path && noteContextIsCurrent(attempt.context) ? attempt.id : nil
+        }
         let linkedNodeID = nodeID ?? (noteContext?.path == path ? noteContext?.nodeID : nil)
         var context = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
             connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
@@ -280,6 +286,7 @@ final class CanvasStore: ObservableObject {
         noteEditorGeneration &+= 1
         context.editorGeneration = noteEditorGeneration
         noteContext = context
+        pendingExcerptAnchor = pending.map { (context:context,id:$0) }
         vaultNote = nil
         vaultDraft = ""
         let request = UUID()
@@ -320,7 +327,8 @@ final class CanvasStore: ObservableObject {
 
     private func focusOpenedBlock(_ note: VaultNoteSnapshot) {
         vaultSelection = NSRange(location:0,length:0)
-        guard let id = noteContext?.blockID else { return }
+        let pending = pendingExcerptAnchor.flatMap { $0.context == noteContext ? $0.id : nil }
+        guard let id = pending ?? noteContext?.blockID else { return }
         do {
             let block = try VaultMarkdownBlocks(note.text).resolve(id)
             if let range = block.selection(in:note.text) { vaultSelection = range }
@@ -340,6 +348,7 @@ final class CanvasStore: ObservableObject {
             let block = try markdown.selected(vaultSelection)
             let anchor = try markdown.anchored(block)
             if block.blockID != nil { return attachVaultBlock(block,note:base) }
+            pendingExcerptAnchor = (context:context,id:anchor.blockID)
             let request = UUID(), editGeneration = noteEditGeneration
             noteRequest = request
             vaultSaving = true
@@ -397,6 +406,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private func attachVaultBlock(_ block: VaultExcerptBlock, note: VaultNoteSnapshot) -> UUID {
+        pendingExcerptAnchor = nil
         let preview = VaultNoteSnapshot.preview(block.quote)
         let id = scene.addNode(kind:.note,at:CanvasPoint(x:700-pan.width,y:430-pan.height),text:preview)
         scene.nodes[scene.nodes.count - 1].vaultNote = VaultNoteReference(path:note.path,sha256:note.sha256,

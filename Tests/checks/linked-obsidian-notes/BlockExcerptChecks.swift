@@ -174,7 +174,9 @@ func checkBlockExcerpts(_ check: (Bool, String) -> Void) async throws {
     NoteProtocol.conflict = false
     NoteProtocol.loseResponse = false
 
-    let unknown = await store("Unconfirmed paragraph")
+    let recoverySource = "First paragraph must stay untouched\n\nUnconfirmed second paragraph\n\nThird paragraph"
+    let unknown = await store(recoverySource)
+    select(unknown,"Unconfirmed second paragraph")
     var persisted: VaultNoteSnapshot?
     var puts = 0
     let failed = await unknown.excerptSelectedVaultBlock(save:{ _,_,text in
@@ -185,8 +187,24 @@ func checkBlockExcerpts(_ check: (Bool, String) -> Void) async throws {
     _ = await unknown.excerptSelectedVaultBlock(save:{ _,_,_ in puts += 1; return persisted! },load:{ _ in persisted! })
     check(puts == 1,"unresolved anchor attempt cannot be automatically written again")
     await unknown.openVaultNote("Notes/blocks.md") { _ in persisted! }
+    check(unknown.vaultSelectedBlock?.quote == "Unconfirmed second paragraph",
+        "reread focuses the attempted second paragraph instead of silently selecting paragraph one")
     let recoveredID = await unknown.excerptSelectedVaultBlock(save:{ _,_,_ in puts += 1; return persisted! },load:{ _ in persisted! })
-    check(recoveredID != nil && puts == 1,"explicit source reread recovers the saved anchor and reuses it without another write")
+    check(recoveredID != nil && puts == 1 && unknown.scene.nodes.last?.text == "Unconfirmed second paragraph" &&
+          persisted!.text.hasPrefix("First paragraph must stay untouched\n\n"),
+        "explicit source reread recovers the same second-paragraph anchor without another write or wrong card")
+    let rejected = await store(recoverySource)
+    select(rejected,"Unconfirmed second paragraph")
+    _ = await rejected.excerptSelectedVaultBlock(save:{ _,_,_ in throw URLError(.networkConnectionLost) },
+                                                load:{ _ in throw URLError(.timedOut) })
+    await rejected.openVaultNote("Notes/blocks.md") { _ in note(recoverySource) }
+    check(rejected.vaultSelection.location == NSNotFound && rejected.vaultSelectedBlock == nil,
+        "uncommitted missing anchor requires explicit reselection and never falls back to the first paragraph")
+    var recoveryWrites = 0
+    _ = await rejected.excerptSelectedVaultBlock(save:{ _,_,text in recoveryWrites += 1; return note(text) },
+                                                load:{ _ in note(recoverySource) })
+    check(recoveryWrites == 0 && rejected.scene.nodes.isEmpty,
+        "recovery cannot silently write another marker when the attempted identity is absent")
 
     let typing = await store("Freeze this paragraph"), gate = NoteGate()
     var submitted: VaultNoteSnapshot?
