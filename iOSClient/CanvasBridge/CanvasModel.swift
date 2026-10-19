@@ -245,6 +245,58 @@ struct VaultMarkdownBlocks {
         return (String(decoding:bytes[..<block.byteRange.upperBound] + insertion + bytes[block.byteRange.upperBound...],
                        as:UTF8.self),id)
     }
+
+    func replacing(_ id: String, with replacement: String) throws -> String {
+        let block = try resolve(id)
+        let candidate = try VaultMarkdownBlocks(replacement + " ^" + id).resolve(id)
+        guard candidate.quote.utf8.elementsEqual(replacement.utf8) else { throw VaultBlockError.unsupported }
+        let bytes = Array(text.utf8)
+        let start = block.byteRange.lowerBound
+        let end = start + block.quote.utf8.count
+        let result = bytes[..<start] + Array(replacement.utf8) + bytes[end...]
+        guard result.count <= 1024 * 1024 else { throw URLError(.dataLengthExceedsMaximum) }
+        return String(decoding:result,as:UTF8.self)
+    }
+}
+
+struct VaultBlockEdit: Codable, Equatable {
+    let schemaVersion: Int
+    let operationId: UUID
+    let baseSha256: String
+    let baseQuoteSha256: String
+    let replacementText: String
+
+    init(base: VaultNoteSnapshot, block: VaultExcerptBlock, text: String) {
+        schemaVersion = 1
+        operationId = UUID()
+        baseSha256 = base.sha256
+        baseQuoteSha256 = CanvasPacket.sha(Data(block.quote.utf8))
+        replacementText = text
+    }
+}
+
+struct VaultBlockEditResult: Decodable {
+    let schemaVersion: Int
+    let operationId: UUID
+    let blockID: String
+    let disposition: String
+    let quoteSha256: String
+    let note: VaultNoteSnapshot
+
+    func validated(edit: VaultBlockEdit, base: VaultNoteSnapshot, blockID expectedID: String) throws -> VaultNoteSnapshot {
+        let saved = try note.validated(at:base.path)
+        let original = try VaultMarkdownBlocks(base.text).resolve(expectedID)
+        let expected = try VaultMarkdownBlocks(base.text).replacing(expectedID,with:edit.replacementText)
+        let block = try VaultMarkdownBlocks(saved.text).resolve(expectedID)
+        guard edit.baseSha256 == base.sha256,
+              edit.baseQuoteSha256 == CanvasPacket.sha(Data(original.quote.utf8)),
+              schemaVersion == 1, operationId == edit.operationId, blockID == expectedID,
+              ["committed","reconciled"].contains(disposition),
+              quoteSha256 == CanvasPacket.sha(Data(edit.replacementText.utf8)),
+              block.quote.utf8.elementsEqual(edit.replacementText.utf8),
+              saved.text.utf8.elementsEqual(expected.utf8) else { throw URLError(.badServerResponse) }
+        return saved
+    }
 }
 
 struct VaultNoteSnapshot: Decodable, Equatable {

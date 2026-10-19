@@ -266,4 +266,179 @@ func checkBlockExcerpts(_ check: (Bool, String) -> Void) async throws {
           ordered.scene.nodes.first?.vaultNote?.sha256 == newerRead.sha256,
         "older anchor readback cannot regress a newer accepted refresh or attach stale quote")
     NoteProtocol.cas = false
+    try await checkLinkedBlockEditing(check)
+}
+
+
+@MainActor
+private func checkLinkedBlockEditing(_ check: (Bool,String) -> Void) async throws {
+    func note(_ text: String) -> VaultNoteSnapshot {
+        VaultNoteSnapshot(path:"Notes/semantic.md",text:text,
+            sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"now")
+    }
+    let original = note("# 원본\r\n\r\n문단 e\u{301} 👩🏽‍💻\r\n둘째 줄 ^edit-1\r\n\r\n끝\n")
+    let replacement = "수정한 글자 👩🏽‍💻\r\n다음 줄"
+    let expected = try VaultMarkdownBlocks(original.text).replacing("edit-1",with:replacement)
+    check(Array(expected.utf8) == Array(original.text.replacingOccurrences(of:"문단 e\u{301} 👩🏽‍💻\r\n둘째 줄",with:replacement).utf8),
+          "block replacement preserves every unrelated byte, CRLF, marker and Unicode")
+    for invalid in ["", "- 목록", "새 문단\n\n다른 문단", "글자 ^injected", "<tag>", "문단\r불완전"] {
+        do { _ = try VaultMarkdownBlocks(original.text).replacing("edit-1",with:invalid)
+            check(false,"unsupported block replacement rejected: \(invalid)")
+        } catch { check(true,"unsupported block replacement rejected: \(invalid)") }
+    }
+    func store() async -> CanvasStore {
+        let s = CanvasStore()
+        s.scene = CanvasScene()
+        s.setNoteConnection(address:"http://test",token:"test-token")
+        await s.openVaultNote(original.path) { _ in original }
+        s.vaultSelection = (original.text as NSString).range(of:"문단")
+        let id = await s.excerptSelectedVaultBlock(save:{ _,_,_ in throw URLError(.badURL) },load:{ _ in original })!
+        _ = s.closeVaultEditor()
+        await s.openVaultNote(original.path,nodeID:id) { _ in original }
+        return s
+    }
+    func result(_ edit: VaultBlockEdit, disposition: String = "committed") throws -> VaultBlockEditResult {
+        let saved = note(try VaultMarkdownBlocks(original.text).replacing("edit-1",with:edit.replacementText))
+        return VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:"edit-1",
+            disposition:disposition,quoteSha256:CanvasPacket.sha(Data(edit.replacementText.utf8)),note:saved)
+    }
+    let s = await store()
+    let before = s.scene
+    check(s.beginLinkedBlockEdit() && s.vaultBlockDraft == "문단 e\u{301} 👩🏽‍💻\n둘째 줄" && !s.vaultDirty,
+          "linked editor exposes paragraph without source marker and normalizes display newlines")
+    s.vaultBlockDraft = replacement.replacingOccurrences(of:"\r\n",with:"\n")
+    var submitted: VaultBlockEdit?
+    await s.saveLinkedBlock(replace: { path,id,edit in
+        check(path == original.path && id == "edit-1" && edit.baseSha256 == original.sha256,
+              "human editor sends shared semantic source identity and whole-note CAS")
+        check(edit.replacementText == replacement,"native editor restores CRLF before semantic request")
+        submitted = edit
+        return try result(edit)
+    },load:{ _ in note(expected) })
+    check(s.vaultNote?.text == expected && s.scene.nodes.first?.text == replacement && !s.vaultDirty,
+          "verified semantic result updates authoritative note and derived card")
+    check(s.scene.nodes.first?.id == before.nodes.first?.id && s.scene.nodes.first?.frame == before.nodes.first?.frame &&
+          s.scene.strokes == before.strokes && s.scene.drawingBase64 == before.drawingBase64 && s.scene.links == before.links,
+          "semantic editing preserves node identity, layout, ink and relations")
+    let edit = submitted!
+    let forged = VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:"edit-1",
+        disposition:"committed",quoteSha256:CanvasPacket.sha(Data(replacement.utf8)),note:note(expected + "forged"))
+    do { _ = try forged.validated(edit:edit,base:original,blockID:"edit-1")
+        check(false,"semantic response may not modify any unrelated source byte")
+    } catch { check(true,"semantic response may not modify any unrelated source byte") }
+
+    let uncertain = await store()
+    _ = uncertain.beginLinkedBlockEdit()
+    uncertain.vaultBlockDraft = "확정할 문장"
+    var firstEdit: VaultBlockEdit?
+    await uncertain.saveLinkedBlock(replace:{ _,_,edit in firstEdit = edit; throw URLError(.networkConnectionLost) },load:{ _ in original })
+    check(uncertain.vaultBlockHasPendingSave && uncertain.vaultDirty && uncertain.vaultBlockCanSave,
+          "lost response retains pending operation and draft for same-ID reconciliation")
+    uncertain.vaultBlockDraft = "응답 뒤에 새로 쓴 내용"
+    await uncertain.saveLinkedBlock(replace: { _,_,edit in
+        check(edit == firstEdit,"retry keeps exact operation ID and frozen payload despite later typing")
+        return try result(edit,disposition:"reconciled")
+    },load:{ _ in try result(firstEdit!).note })
+    check(uncertain.vaultNote?.text.contains("확정할 문장 ^edit-1") == true &&
+          uncertain.vaultBlockDraft == "응답 뒤에 새로 쓴 내용" && uncertain.vaultDirty && !uncertain.vaultBlockHasPendingSave,
+          "reconciliation confirms old operation without deleting newer unsaved typing")
+
+
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [SemanticBlockProtocol.self]
+    let relay = CanvasRelay(address:"http://test",token:"test-token",session:URLSession(configuration:config))
+    SemanticBlockProtocol.note = original
+    SemanticBlockProtocol.validContract = true
+    let transport = await store()
+    _ = transport.beginLinkedBlockEdit()
+    transport.vaultBlockDraft = "인간과 에이전트의 공통 수정"
+    await transport.saveLinkedBlock(replace:{ path,id,edit in
+        try await relay.replaceVaultBlock(at:path,blockID:id,edit:edit)
+    },load:relay.vaultNote)
+    check(SemanticBlockProtocol.validContract && transport.vaultNote?.text.contains("인간과 에이전트의 공통 수정 ^edit-1") == true,
+          "production URLSession semantic route sends auth, encoded path/block ID and versioned operation, then GET confirms")
+    check(!transport.vaultDirty && !transport.vaultBlockHasPendingSave,
+          "HTTP semantic receipt and explicit source readback finish the pending operation")
+
+    let dirty = await store()
+    dirty.vaultDraft += "whole-note draft"
+    check(!dirty.beginLinkedBlockEdit(),"block editor cannot replace an existing unsaved full-note draft")
+    for mutation in ["connection", "scene", "typing", "background refresh"] {
+        let delayed = await store(), gate = NoteGate()
+        _ = delayed.beginLinkedBlockEdit()
+        delayed.vaultBlockDraft = "일단 저장"
+        var frozen: VaultBlockEdit?
+        let task = Task { await delayed.saveLinkedBlock(replace: { _,_,edit in
+            frozen = edit
+            let saved = try await gate.load(original.path)
+            return VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:"edit-1",
+                disposition:"committed",quoteSha256:CanvasPacket.sha(Data(edit.replacementText.utf8)),note:saved)
+        },load:{ _ in try result(frozen!).note }) }
+        await gate.wait()
+        if mutation == "scene" { delayed.scene = CanvasScene() }
+        else if mutation == "connection" { delayed.setNoteConnection(address:"http://different",token:"other") }
+        else if mutation == "typing" { delayed.vaultBlockDraft = "저장 중 새 입력" }
+        else { await delayed.refreshVaultNotes { _ in note("Mac changed ^edit-1") } }
+        gate.finish(try result(frozen!).note)
+        await task.value
+        if mutation == "scene" || mutation == "connection" {
+            check(delayed.vaultNote?.sha256 == original.sha256 && delayed.vaultBlockDraft == "일단 저장",
+                  "late semantic response cannot cross \(mutation) context")
+        } else if mutation == "typing" {
+            check(delayed.vaultBlockDraft == "저장 중 새 입력" && delayed.vaultDirty,
+                  "typing during semantic save remains unsaved and intact")
+        } else {
+            check(delayed.vaultNote?.text.contains("일단 저장 ^edit-1") == true,
+                  "background refresh does not replace frozen semantic edit base")
+        }
+    }
+}
+
+
+private final class SemanticBlockProtocol: URLProtocol {
+    static var note: VaultNoteSnapshot!
+    static var validContract = true
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            let url = request.url!
+            let query = URLComponents(url:url,resolvingAgainstBaseURL:false)!.queryItems!
+            let relative = query.first(where:{$0.name == "path"})!.value!
+            Self.validContract = Self.validContract && relative == Self.note.path &&
+                request.value(forHTTPHeaderField:"X-Canvas-Token") == "test-token"
+            var payload: [String:Any]
+            if request.httpMethod == "PUT" {
+                var body = request.httpBody ?? Data()
+                if let stream = request.httpBodyStream {
+                    stream.open(); defer { stream.close() }
+                    var buffer = [UInt8](repeating:0,count:4096)
+                    while stream.hasBytesAvailable {
+                        let count = stream.read(&buffer,maxLength:buffer.count)
+                        if count <= 0 { break }
+                        body.append(contentsOf:buffer.prefix(count))
+                    }
+                }
+                let edit = try JSONDecoder().decode(VaultBlockEdit.self,from:body)
+                let id = query.first(where:{$0.name == "blockID"})!.value!
+                let originalQuote = try VaultMarkdownBlocks(Self.note.text).resolve(id).quote
+                Self.validContract = Self.validContract && url.path == "/vault/block" && edit.schemaVersion == 1 &&
+                    id == "edit-1" && edit.baseSha256 == Self.note.sha256 &&
+                    edit.baseQuoteSha256 == CanvasPacket.sha(Data(originalQuote.utf8))
+                let text = try VaultMarkdownBlocks(Self.note.text).replacing(id,with:edit.replacementText)
+                Self.note = VaultNoteSnapshot(path:relative,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"now")
+                payload = ["schemaVersion":1,"operationId":edit.operationId.uuidString,"blockID":id,
+                    "disposition":"committed","quoteSha256":CanvasPacket.sha(Data(edit.replacementText.utf8)),
+                    "note":snapshot()]
+            } else { Self.validContract = Self.validContract && url.path == "/vault/note"; payload = snapshot() }
+            let data = try JSONSerialization.data(withJSONObject:payload)
+            client!.urlProtocol(self,didReceive:HTTPURLResponse(url:url,statusCode:200,httpVersion:nil,headerFields:nil)!,cacheStoragePolicy:.notAllowed)
+            client!.urlProtocol(self,didLoad:data)
+            client!.urlProtocolDidFinishLoading(self)
+        } catch { client!.urlProtocol(self,didFailWithError:error) }
+    }
+    private func snapshot() -> [String:Any] {
+        ["path":Self.note.path,"text":Self.note.text,"sha256":Self.note.sha256,"modifiedAt":Self.note.modifiedAt]
+    }
+    override func stopLoading() {}
 }

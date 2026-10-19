@@ -268,13 +268,29 @@ struct CanvasWorkspace: View {
                 if let note = store.vaultNote {
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
-                    VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection)
-                        .frame(minHeight:150)
-                        .disabled(store.vaultLoading)
-                        .accessibilityIdentifier("obsidianMarkdownEditor")
+                    if store.vaultBlockEditing {
+                        VaultMarkdownEditor(text:$store.vaultBlockDraft,selection:$store.vaultBlockSelection,
+                            identifier:"obsidianLinkedBlockEditor",label:"Obsidian 연결 문단 편집기")
+                            .frame(minHeight:150).disabled(store.vaultLoading)
+                            .accessibilityIdentifier("obsidianLinkedBlockEditor")
+                        Text("연결 문단 편집 · 블록 표식과 다른 문단은 그대로 보존됩니다.")
+                            .font(.footnote).padding(.horizontal)
+                    } else {
+                        VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection)
+                            .frame(minHeight:150)
+                            .disabled(store.vaultLoading)
+                            .accessibilityIdentifier("obsidianMarkdownEditor")
+                    }
                     VStack(alignment:.leading,spacing:6) {
                         if let id = store.vaultLinkedBlockID {
                             Text("연결 블록 ^\(id)").font(.caption).textSelection(.enabled)
+                        }
+                        if !store.vaultBlockEditing {
+                        if store.vaultLinkedBlockID != nil {
+                            Button { _ = store.beginLinkedBlockEdit() } label: {
+                                Text("연결 문단만 수정").frame(maxWidth:.infinity,minHeight:44)
+                            }.disabled(!store.vaultCanAttach)
+                                .accessibilityIdentifier("obsidianEditLinkedBlock")
                         }
                         Text(store.vaultExcerptMessage).font(.footnote)
                         Button { Task { await excerptVaultBlock() } } label: {
@@ -288,6 +304,7 @@ struct CanvasWorkspace: View {
                         } label: {
                             Text("전체 노트 연결").frame(maxWidth:.infinity,minHeight:44)
                         }.disabled(!store.vaultCanAttach)
+                        }
                         if store.vaultBlocked && !store.vaultDirty {
                             Button { Task { await openVaultNote(note.path) } } label: {
                                 Text("원본 다시 읽기").frame(maxWidth:.infinity,minHeight:44)
@@ -330,8 +347,9 @@ struct CanvasWorkspace: View {
                 }
                 ToolbarItemGroup(placement:.topBarTrailing) {
                     if store.vaultNote != nil {
-                        Button("저장") { Task { await saveVaultNote() } }
-                            .frame(minWidth:44,minHeight:44).disabled(!store.vaultCanSave)
+                        Button(store.vaultBlockHasPendingSave ? "저장 결과 확인" : "저장") { Task { await saveVaultNote() } }
+                            .frame(minWidth:44,minHeight:44)
+                            .disabled(store.vaultBlockEditing ? !store.vaultBlockCanSave : !store.vaultCanSave)
                     } else {
                         Button("새로고침",systemImage:"arrow.clockwise") { Task { await loadVaultEntries() } }
                             .disabled(store.vaultLoading)
@@ -375,6 +393,12 @@ struct CanvasWorkspace: View {
     private func saveVaultNote() async {
         store.setNoteConnection(address:relayAddress,token:relayToken)
         let connection = relay
+        if store.vaultBlockEditing {
+            await store.saveLinkedBlock(replace: { path,id,edit in
+                try await connection.replaceVaultBlock(at:path,blockID:id,edit:edit)
+            },load:connection.vaultNote)
+            return
+        }
         await store.saveVaultNote { path, sha, text in
             try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
         }
@@ -887,6 +911,8 @@ struct CanvasWorkspace: View {
 private struct VaultMarkdownEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
+    var identifier = "obsidianMarkdownEditor"
+    var label = "Obsidian Markdown 원본 편집기"
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -899,8 +925,8 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
         view.smartQuotesType = .no
         view.smartDashesType = .no
         view.smartInsertDeleteType = .no
-        view.accessibilityLabel = "Obsidian Markdown 원본 편집기"
-        view.accessibilityIdentifier = "obsidianMarkdownEditor"
+        view.accessibilityLabel = label
+        view.accessibilityIdentifier = identifier
         return view
     }
 

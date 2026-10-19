@@ -172,6 +172,10 @@ final class CanvasStore: ObservableObject {
         didSet { noteEditGeneration &+= 1 }
     }
     @Published var vaultSelection = NSRange(location:0,length:0)
+    @Published private(set) var vaultBlockEditing = false
+    @Published var vaultBlockDraft = ""
+    @Published var vaultBlockSelection = NSRange(location:0,length:0)
+    private var pendingBlockEdit: VaultBlockEdit?
     @Published var vaultStatus = ""
     @Published private(set) var vaultSaving = false
     @Published private(set) var vaultLoading = false
@@ -197,13 +201,26 @@ final class CanvasStore: ObservableObject {
     private var noteContext: NoteContext?
     private var pendingExcerptAnchor: (context: NoteContext, id: String)?
 
-    var vaultDirty: Bool { !vaultDraft.utf8.elementsEqual((vaultNote?.text ?? "").utf8) }
+    private var vaultWholeNoteDirty: Bool { !vaultDraft.utf8.elementsEqual((vaultNote?.text ?? "").utf8) }
+    var vaultDirty: Bool {
+        vaultWholeNoteDirty || (vaultBlockEditing && (pendingBlockEdit != nil || vaultBlockTextChanged))
+    }
+    private var vaultBlockTextChanged: Bool {
+        guard let note = vaultNote, let id = vaultLinkedBlockID,
+              let block = try? VaultMarkdownBlocks(note.text).resolve(id) else { return vaultBlockEditing }
+        return !canonicalBlockText(vaultBlockDraft,original:block.quote).utf8.elementsEqual(block.quote.utf8)
+    }
+    var vaultBlockCanSave: Bool {
+        vaultBlockEditing && (pendingBlockEdit != nil || vaultBlockTextChanged) &&
+        !vaultSaving && !vaultLoading && noteContext.map(noteContextIsCurrent) == true
+    }
+    var vaultBlockHasPendingSave: Bool { pendingBlockEdit != nil }
     var vaultCanSave: Bool {
-        vaultNote != nil && vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        !vaultBlockEditing && vaultNote != nil && vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
     var vaultCanAttach: Bool {
-        vaultNote != nil && !vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        !vaultBlockEditing && vaultNote != nil && !vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
     var vaultLinkedBlockID: String? { noteContext?.blockID }
@@ -268,6 +285,9 @@ final class CanvasStore: ObservableObject {
         noteContext = nil
         pendingExcerptAnchor = nil
         vaultNote = nil
+        vaultBlockEditing = false
+        vaultBlockDraft = ""
+        pendingBlockEdit = nil
         vaultDraft = ""
         vaultSelection = NSRange(location:0,length:0)
         vaultLoading = false
@@ -350,6 +370,78 @@ final class CanvasStore: ObservableObject {
         } catch {
             vaultSelection = NSRange(location:NSNotFound,length:0)
             vaultStatus = "연결 블록 ^\(id) · \(error.localizedDescription)"
+        }
+    }
+
+    private func canonicalBlockText(_ text: String, original: String) -> String {
+        let lf = text.replacingOccurrences(of:"\r\n",with:"\n")
+        return original.contains("\r\n") ? lf.replacingOccurrences(of:"\n",with:"\r\n") : lf
+    }
+
+    @discardableResult
+    func beginLinkedBlockEdit() -> Bool {
+        guard vaultCanAttach, let note = vaultNote, let id = vaultLinkedBlockID else { return false }
+        do {
+            let block = try VaultMarkdownBlocks(note.text).resolve(id)
+            vaultBlockDraft = block.quote.replacingOccurrences(of:"\r\n",with:"\n")
+            vaultBlockSelection = NSRange(location:0,length:0)
+            pendingBlockEdit = nil
+            vaultBlockEditing = true
+            vaultStatus = "연결 문단만 수정합니다. 블록 표식과 다른 원문은 보존됩니다."
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
+    func saveLinkedBlock(replace: (String,String,VaultBlockEdit) async throws -> VaultBlockEditResult,
+                         load: (String) async throws -> VaultNoteSnapshot) async {
+        guard vaultBlockCanSave, let context = noteContext, let base = vaultNote,
+              let blockID = context.blockID else { return }
+        let request = UUID()
+        do {
+            let block = try VaultMarkdownBlocks(base.text).resolve(blockID)
+            let submitted = pendingBlockEdit ?? VaultBlockEdit(base:base,block:block,
+                text:canonicalBlockText(vaultBlockDraft,original:block.quote))
+            _ = try VaultMarkdownBlocks(base.text).replacing(blockID,with:submitted.replacementText)
+            pendingBlockEdit = submitted
+            let draftAtSubmission = vaultBlockDraft
+            noteRequest = request
+            vaultSaving = true
+            defer {
+                if noteRequest == request { noteRequest = nil; vaultSaving = false }
+            }
+            let result = try await replace(base.path,blockID,submitted)
+            let saved = try result.validated(edit:submitted,base:base,blockID:blockID)
+            guard !Task.isCancelled, noteRequest == request, noteContext == context,
+                  noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256 else { return }
+            noteReadSequence &+= 1
+            let readSequence = noteReadSequence
+            let readback = try await load(base.path).validated(at:base.path)
+            guard readback.sha256 == saved.sha256,
+                  readback.text.utf8.elementsEqual(saved.text.utf8) else { throw URLError(.badServerResponse) }
+            guard !Task.isCancelled, noteRequest == request, noteContext == context,
+                  noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256,
+                  readSequence >= acceptedNoteReads[base.path,default:0],
+                  pendingBlockEdit == submitted else { return }
+            acceptedNoteReads[base.path] = readSequence
+            vaultNote = saved
+            vaultDraft = saved.text
+            // A retry may resolve an earlier submission while newer typing remains unsaved.
+            if vaultBlockDraft.utf8.elementsEqual(draftAtSubmission.utf8),
+               canonicalBlockText(vaultBlockDraft,original:block.quote).utf8.elementsEqual(submitted.replacementText.utf8) {
+                vaultBlockDraft = submitted.replacementText.replacingOccurrences(of:"\r\n",with:"\n")
+            }
+            pendingBlockEdit = nil
+            vaultBlocked = false
+            refreshNoteCache(saved)
+            vaultStatus = vaultBlockTextChanged ? "제출한 문단은 저장됐습니다. 이후 입력은 아직 저장하지 않았습니다." :
+                "Obsidian 문단 저장과 카드 반영을 확인했습니다."
+        } catch {
+            guard noteContext == context, noteContextIsCurrent(context),
+                  noteRequest == nil || noteRequest == request else { return }
+            let failure = error as NSError
+            let reason = failure.domain == "CanvasRelay" && failure.code == 409 ?
+                "원문 변경 또는 작업 결과 불일치" : "통신 또는 원문 검증 실패"
+            vaultStatus = "\(reason). 입력과 작업 ID를 보존했습니다. ‘저장 결과 확인’은 같은 작업만 확인합니다. 원문을 새로 열려면 입력을 명시적으로 버려 주세요."
         }
     }
 
@@ -547,6 +639,7 @@ final class CanvasStore: ObservableObject {
                 guard readSequence >= acceptedNoteReads[path,default:0] else { continue }
                 acceptedNoteReads[path] = readSequence
                 refreshNoteCache(latest,expected:references)
+                if vaultBlockEditing { continue }
                 guard let context, noteContext == context, noteContextIsCurrent(context),
                       editorGeneration == noteEditorGeneration, context.path == path,
                       noteRequest == request, !vaultSaving,

@@ -166,6 +166,21 @@ struct CanvasRelay {
         return saved
     }
 
+    func replaceVaultBlock(at path: String, blockID: String, edit: VaultBlockEdit) async throws -> VaultBlockEditResult {
+        guard VaultNoteReference.validPath(path), !blockID.isEmpty,
+              blockID.utf8.count <= 1024,
+              blockID.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) ||
+                  (97...122).contains($0) || $0 == 45 }),
+              edit.schemaVersion == 1, edit.replacementText.utf8.count <= 1024 * 1024 else {
+            throw URLError(.badURL)
+        }
+        var components = URLComponents(string:try vaultURL("/vault/block",path:path))!
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name:"blockID",value:blockID)]
+        guard let endpoint = components.url?.absoluteString else { throw URLError(.badURL) }
+        return try await response(request(endpoint,method:"PUT",body:JSONEncoder().encode(edit)),
+                                  as:VaultBlockEditResult.self)
+    }
+
     func vaultCanvas(id: UUID) async throws -> VaultCanvas? {
         do {
             return try await response(request("/vault/canvas?id=\(id.uuidString.lowercased())"),
