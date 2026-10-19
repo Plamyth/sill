@@ -55,6 +55,11 @@ struct VisionPointer {
         let phase: Phase
     }
 
+    struct Flick {
+        let anchor: CGPoint
+        let velocity: CGPoint
+    }
+
     private struct Contact {
         let id: AnyHashable
         let began: TimeInterval
@@ -63,6 +68,21 @@ struct VisionPointer {
         let modifiers: KeyModifiers
         var last: CGPoint
         var lastRaw: CGPoint
+        var lastTime: TimeInterval
+        var motionTime: TimeInterval
+        var velocity = CGPoint.zero
+
+        mutating func track(_ sample: Sample) {
+            let dt = sample.timestamp - lastTime
+            if sample.location != lastRaw {
+                let next = CGPoint(x: (sample.location.x - lastRaw.x) / dt,
+                                   y: (sample.location.y - lastRaw.y) / dt)
+                let speed = hypot(next.x, next.y)
+                velocity = dt > 0 && dt <= 0.1 && speed.isFinite && speed <= 5000 ? next : .zero
+                motionTime = sample.timestamp
+            }
+            lastTime = sample.timestamp
+        }
 
         func scroll(to location: CGPoint, in rect: CGRect) -> InputEvent? {
             let dx = (location.x - lastRaw.x) / rect.width
@@ -81,6 +101,7 @@ struct VisionPointer {
     private var stroke = Stroke.idle
     private var live: [AnyHashable: TimeInterval] = [:]
     private var retired: Set<AnyHashable> = []
+    private(set) var flick: Flick?
     static let holdDuration: TimeInterval = 0.65
     static let movementThreshold: CGFloat = 8
 
@@ -121,7 +142,9 @@ struct VisionPointer {
                 guard sample.phase == .active, !known,
                       let p = viewport.point(sample.location, in: geometry) else { stroke = .suppressed; continue }
                 stroke = .pending(Contact(id: sample.id, began: sample.timestamp, origin: sample.location,
-                                          anchor: p, modifiers: modifiers, last: p, lastRaw: sample.location))
+                                          anchor: p, modifiers: modifiers, last: p, lastRaw: sample.location,
+                                          lastTime: sample.timestamp, motionTime: sample.timestamp))
+                flick = nil
                 events.append(.pointer(.move, x: p.x, y: p.y))
                 continue
             }
@@ -137,6 +160,7 @@ struct VisionPointer {
                         guard let scroll = contact.scroll(to: sample.location, in: rect) else { events += cancel(); continue }
                         events += KeyChord.modifiersDown(contact.modifiers)
                             + [.scrollGesture(.began, x: contact.anchor.x, y: contact.anchor.y), scroll]
+                        contact.track(sample)
                         contact.last = p
                         contact.lastRaw = sample.location
                         stroke = .scrolling(contact)
@@ -161,6 +185,7 @@ struct VisionPointer {
                     guard let scroll = contact.scroll(to: sample.location, in: rect) else { events += cancel(); continue }
                     events.append(scroll)
                 }
+                contact.track(sample)
                 contact.last = p
                 contact.lastRaw = sample.location
                 stroke = .scrolling(contact)
@@ -170,7 +195,13 @@ struct VisionPointer {
                 stroke = .dragging(contact)
             case .idle, .suppressed: break
             }
-            if sample.phase == .ended { events += finishStroke() }
+            if sample.phase == .ended {
+                if case .scrolling(let contact) = stroke, contact.modifiers.isEmpty,
+                   sample.timestamp - contact.motionTime <= 0.08 {
+                    flick = Flick(anchor: contact.anchor, velocity: contact.velocity)
+                }
+                events += finishStroke()
+            }
         }
         if live.isEmpty { stroke = .idle }
         return events
@@ -188,6 +219,7 @@ struct VisionPointer {
     }
 
     mutating func cancel() -> [InputEvent] {
+        flick = nil
         let releases = finishStroke()
         if !live.isEmpty { stroke = .suppressed }
         return releases

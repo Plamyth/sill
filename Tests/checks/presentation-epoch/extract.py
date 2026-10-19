@@ -21,7 +21,7 @@ def fixture(root):
     block = prior.block
     stream = (root / 'iOSClient/StreamClient.swift').read_text()
     files['Client.swift'] = files['Client.swift'].replace('// EXTRACTED', '')
-    native = (root / 'iOSClient/HEVCDisplayView.swift').read_text()
+    native = platform.select_platform((root / 'iOSClient/HEVCDisplayView.swift').read_text(), vision=True)
     declarations = [block(native, 'private enum NativeBinding:')]
     for marker in ['private var nativeLayer:', 'private var nativeBinding =', 'private var nativeLegacyPeer:',
                    'private var presentation =', 'private var retiring:', 'private var presentationObservers:',

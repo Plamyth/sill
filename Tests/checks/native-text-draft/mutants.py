@@ -40,7 +40,8 @@ MUTANTS = [
          '&& lhs.permit == rhs.permit && lhs.scope == rhs.scope && lhs.label == rhs.label'),
     ], 'human label does not grant or revoke authority'),
     ('foreground-cancel', 'Client.swift', [
-        ('if !foreground { revokeVisionTextDrafts() }', 'if false { revokeVisionTextDrafts() }'),
+        ('            revokeVisionTextDrafts()\n        }\n        displayView.setPresentationForeground(foreground)',
+         '        }\n        displayView.setPresentationForeground(foreground)'),
     ], 'foreground false cancels queued text even on legacy host'),
     ('scope-reuse', 'Client.swift', [
         ('&& lhs.permit == rhs.permit && lhs.scope == rhs.scope', '&& lhs.permit == rhs.permit'),

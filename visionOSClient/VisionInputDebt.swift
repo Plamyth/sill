@@ -125,8 +125,8 @@ final class VisionInputDebt {
         if let right, case .pointer(_, let x, let y) = right.event {
             out.append(right.replacing(.pointer(.rightUp, x: x, y: y)))
         }
-        if let scroll, case .scrollGesture(_, let x, let y) = scroll.event {
-            out.append(scroll.replacing(.scrollGesture(.ended, x: x, y: y)))
+        if let scroll, case .scrollGesture(let phase, let x, let y) = scroll.event {
+            out.append(scroll.replacing(.scrollGesture(phase == .momentumBegan ? .momentumEnded : .ended, x: x, y: y)))
         }
         while let key = keys.popLast() {
             let flags = keys.reduce(UInt64(0)) { $0 | (KeyModifiers.flag(forKey: $1.usage)?.rawValue ?? 0) }

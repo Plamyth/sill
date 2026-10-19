@@ -40,10 +40,14 @@ def fixture():
     pieces['resumeMethod'] = 'func resumeCatalog(_ list: WindowList) {\n' + pieces['resumeSource'] + '\n}'
     body = '\n'.join(select_platform(p, vision=True) for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState', 'resumeSource', 'movingState'])
     overlay = (ROOT / 'iOSClient/InputOverlay.swift').read_text()
+    files_momentum = 'import Foundation\nimport CoreFoundation\n' + block(overlay, 'final class ScrollMomentum: NSObject {') + '\n'
     pieces['takeVisionKeyReleases'] = block(overlay, 'func takeVisionKeyReleases()')
     stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', select_platform(pieces['moveInputReset'], vision=True)).replace('// BINDING_STATE', pieces['bindingState'].replace('@Published', '@SwiftUI.Published', 1)).replace('// MOVING_STATE', select_platform(pieces['movingState'], vision=True))
     body = body.replace('@Published', '@SwiftUI.Published')
     files = {'Client.swift': stub.replace('// EXTRACTED', body), 'main.swift': (Path(__file__).parent / 'main.swift').read_text(), 'Network.swift': (Path(__file__).parent / 'Network.swift').read_text(), 'SwiftUI.swift': (Path(__file__).parent / 'SwiftUI.swift').read_text()}
+    files['ScrollMomentum.swift'] = files_momentum
+    files['MomentumDriver.swift'] = (Path(__file__).parent / 'MomentumDriver.swift').read_text()
+    pieces['scrollMomentum'] = files_momentum
     for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()
     files['Tests/checks/vision-input-controls/SourceInputFence.swift'] = (ROOT / 'Sources/SillHost/SourceInputFence.swift').read_text()

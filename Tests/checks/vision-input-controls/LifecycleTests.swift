@@ -41,7 +41,7 @@ private final class LifecycleRig {
     }
 
     func balanced(_ label: String) {
-        var keys = Set<UInt16>(), buttons = Set<PointerAction>(), scrolling = false
+        var keys = Set<UInt16>(), buttons = Set<PointerAction>(), scrolling = false, coasting = false
         var valid = true
         for event in sent {
             switch event {
@@ -56,13 +56,15 @@ private final class LifecycleRig {
                 case .move: break
                 }
             case .scrollGesture(let phase, _, _):
-                if phase == .began { valid = !scrolling && valid; scrolling = true }
+                if phase == .began { valid = !scrolling && !coasting && valid; scrolling = true }
                 else if phase == .ended { valid = scrolling && valid; scrolling = false }
+                else if phase == .momentumBegan { valid = !scrolling && !coasting && valid; coasting = true }
+                else if phase == .momentumEnded { valid = coasting && valid; coasting = false }
                 else { valid = false }
             case .scroll, .text: break
             }
         }
-        check(valid && keys.isEmpty && buttons.isEmpty && !scrolling, label)
+        check(valid && keys.isEmpty && buttons.isEmpty && !scrolling && !coasting, label)
     }
 }
 
@@ -87,8 +89,8 @@ func runLifecycleTests() {
     noChange.view.ended(contact(0, 300, 400, .ended))
     noChange.view.recognizingChanged(false)
     noChange.view.disappeared()
-    check(noChange.sent.isEmpty && noChange.state.admissions == admissions,
-          "callback end reset disappear without change never admit phantom input")
+    check(noChange.sent.isEmpty && noChange.state.admissions == admissions + 1,
+          "callback empty disappearance admits cleanup without phantom input")
     noChange.view.changed(GestureValue())
     noChange.view.ended(GestureValue())
     check(noChange.sent.isEmpty && noChange.state.revision == nil, "callback empty optional values clean up without input")
@@ -231,5 +233,123 @@ func runLifecycleTests() {
     check(denied.sent.count == 3, "callback denied geometry leaves original admitted geometry usable")
     denied.balanced("callback denied sequence has no phantom input or release")
 
+    runMomentumTests()
     print("LIFECYCLE_ASSERTIONS \(checks - before)")
+}
+
+private func startFlick(_ rig: LifecycleRig) {
+    rig.view.changed(contact(0))
+    rig.view.changed(contact(0.05, 300, 500))
+    rig.view.ended(contact(0.06, 300, 510, .ended))
+}
+
+private func momentumStarted(_ rig: LifecycleRig) -> Bool {
+    rig.sent.contains { if case .scrollGesture(.momentumBegan, _, _) = $0 { return true }; return false }
+}
+
+private func lastScroll(_ rig: LifecycleRig) -> (x: Double, y: Double, dx: Double, dy: Double)? {
+    for event in rig.sent.reversed() {
+        if case let .scroll(x, y, dx, dy) = event { return (x, y, dx, dy) }
+    }
+    return nil
+}
+
+private func runMomentumTests() {
+    let before = checks
+    check(CADisplayLink.active.isEmpty, "legacy gestures leave no momentum driver running")
+    let flick = LifecycleRig()
+    startFlick(flick)
+    check(momentumStarted(flick) && CADisplayLink.active.count == 1,
+          "normal completed flick starts one existing momentum engine")
+    let first = lastScroll(flick)!
+    check(first.x == 0.3 && first.y == 0.4 && first.dx == 0 && abs(first.dy - 1.0 / 60) < 0.000001,
+          "flick immediately continues latest raw velocity at original remote target")
+    check(flick.state.revision == nil, "completed callback releases view ticket while coast continues")
+    MomentumClock.advance()
+    let second = lastScroll(flick)!
+    check(second.dy > 0 && second.dy < first.dy, "existing engine decays flick without reversing direction")
+    for _ in 0..<240 { MomentumClock.advance() }
+    check(CADisplayLink.active.isEmpty && flick.sent.last == .scrollGesture(.momentumEnded, x: 0.3, y: 0.4),
+          "flick converges to a balanced end within four simulated seconds")
+    let completed = flick.sent
+    MomentumClock.advance()
+    check(flick.sent == completed, "finished momentum sends no further remote input")
+    flick.balanced("natural coast has balanced scroll and momentum boundaries")
+
+    for scenario in ["slow", "pause", "cancel", "second-hand", "drag", "modifier", "stale-end", "recognizer-reset", "jump"] {
+        let rig = LifecycleRig()
+        if scenario == "modifier" { rig.input.toggle(.option) }
+        rig.view.changed(contact(0))
+        if scenario == "slow" {
+            rig.view.changed(contact(0.1, 300, 410))
+            rig.view.ended(contact(0.11, 300, 411, .ended))
+        } else if scenario == "drag" {
+            rig.view.changed(contact(0.8, 300, 500))
+            rig.view.ended(contact(0.81, 300, 510, .ended))
+        } else {
+            rig.view.changed(contact(0.05, 300, 500))
+            switch scenario {
+            case "pause": rig.view.ended(contact(0.3, 300, 500, .ended))
+            case "cancel": rig.view.ended(contact(0.06, 300, 510, .cancelled))
+            case "second-hand":
+                rig.view.changed(contact(0.055, 700, 500, id: 2))
+                rig.view.ended(GestureValue(first: [
+                    .init(id: 1, timestamp: 0.06, kind: .indirectPinch, location: CGPoint(x: 300, y: 510), phase: .ended),
+                    .init(id: 2, timestamp: 0.06, kind: .indirectPinch, location: CGPoint(x: 700, y: 500), phase: .ended)]))
+            case "stale-end": rig.view.ended(contact(0.04, 300, 510, .ended))
+            case "recognizer-reset":
+                rig.view.changed(contact(0.06, 300, 510, .ended))
+                rig.view.recognizingChanged(false)
+                rig.view.ended(contact(0.07, 300, 520, .ended))
+            case "jump": rig.view.ended(contact(0.06, 300, 900, .ended))
+            default: rig.view.ended(contact(0.06, 300, 510, .ended))
+            }
+        }
+        check(!momentumStarted(rig) && CADisplayLink.active.isEmpty,
+              "\(scenario) never turns into an unintended flick")
+        rig.balanced("\(scenario) leaves no held remote input")
+    }
+
+    for boundary in ["pinch", "magnify", "geometry", "source", "route", "admission", "disappear", "key", "overlay"] {
+        let rig = LifecycleRig()
+        startFlick(rig)
+        check(momentumStarted(rig), "\(boundary) starts with a real coast")
+        var replacement: NWConnection?
+        switch boundary {
+        case "pinch": rig.view.changed(contact(1, 500, 500, id: 2))
+        case "magnify": rig.view.changed(zoom(2, 1))
+        case "geometry": rig.view.geometryChanged(.init(bounds: CGRect(x: 0, y: 0, width: 1200, height: 1000), video: testGeometry.video))
+        case "source": _ = rig.client.catalog(catalog(.window(42), "coast-new-source"), from: rig.peer)
+        case "route":
+            let peer = NWConnection()
+            replacement = peer
+            rig.client.connection = peer
+            seedLegacy(rig.client, peer)
+        case "admission": rig.input.allowed = false
+        case "disappear": rig.view.disappeared()
+        case "key": rig.input.press(.escape)
+        default: rig.input.overlayInput(.text("관성 취소"))
+        }
+        check(CADisplayLink.active.isEmpty, "\(boundary) immediately invalidates coast driver")
+        let stopped = rig.sent
+        for _ in 0..<5 { MomentumClock.advance() }
+        check(rig.sent == stopped && replacement.map { events($0).isEmpty } != false,
+              "\(boundary) timer tail never reaches original or replacement target")
+        if boundary == "pinch" { rig.view.ended(contact(1.1, 500, 500, .ended, id: 2)) }
+        if boundary == "magnify" { rig.view.ended(zoom(2, 1.1)) }
+        rig.balanced("\(boundary) cancels exactly one momentum boundary")
+    }
+
+    let enlarged = LifecycleRig()
+    enlarged.input.magnify(2, at: CGPoint(x: 500, y: 500), time: 0,
+                          geometry: testGeometry, revision: enlarged.input.gestureRevision)
+    enlarged.input.finishGesture(revision: enlarged.input.gestureRevision)
+    startFlick(enlarged)
+    let scaled = lastScroll(enlarged)!
+    check(scaled.x == 0.4 && scaled.y == 0.45 && abs(scaled.dy - first.dy) < 0.000001,
+          "zoomed flick keeps inverse target and unscaled physical scroll speed")
+    enlarged.view.disappeared()
+    enlarged.balanced("zoomed coast ends when its input surface disappears")
+    check(CADisplayLink.active.isEmpty, "all inertial scroll drivers are released")
+    print("MOMENTUM_ASSERTIONS \(checks - before)")
 }

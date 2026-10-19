@@ -30,6 +30,13 @@ class ExtractionContract(unittest.TestCase):
                 self.assertEqual(manifest['callback.' + name], hashlib.sha256(closure.encode()).hexdigest())
         self.assertNotIn('CALLBACK_', files['SpatialCallbacks.swift'])
 
+    def test_verbatim_scroll_momentum(self):
+        source = (ROOT / 'iOSClient/InputOverlay.swift').read_text()
+        files, manifest = fixture()
+        expected = 'import Foundation\nimport CoreFoundation\n' + block(source, 'final class ScrollMomentum: NSObject {') + '\n'
+        self.assertEqual(files['ScrollMomentum.swift'], expected)
+        self.assertEqual(manifest['scrollMomentum'], hashlib.sha256(expected.encode()).hexdigest())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -211,7 +211,7 @@ def callback_mutants(source):
         return body.replace(zoom, 'ZOOM_BODY', 1).replace(contacts, zoom, 1).replace('ZOOM_BODY', contacts, 1)
 
     def finish_first(body):
-        finish = 'input.finishGesture(revision: ticket)'
+        finish = 'input.finishGesture(revision: ticket, allowMomentum: true)'
         assert body.count(finish) == 1
         return body.replace(finish, '', 1).replace('admit {', 'admit {\n' + finish, 1)
 
@@ -300,7 +300,7 @@ def main():
         for name, sources in groups:
             run(base + ['-parse-as-library', '-emit-module', '-emit-object', '-whole-module-optimization', '-module-name', name] +
                 list(map(str, sources)) + ['-emit-module-path', str(output / (name + '.swiftmodule')), '-o', str(output / (name + '.o'))], 'compile-' + name)
-        names = ['Client.swift', 'SpatialAdapter.swift', 'SpatialCallbacks.swift', 'LifecycleTests.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift',
+        names = ['Client.swift', 'SpatialAdapter.swift', 'SpatialCallbacks.swift', 'LifecycleTests.swift', 'ScrollMomentum.swift', 'MomentumDriver.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift',
                  'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift',
                  'visionOSClient/VisionTextDraft.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift',
                  'Tests/checks/vision-input-controls/SourceInputFence.swift', 'main.swift']

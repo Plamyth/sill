@@ -9,6 +9,7 @@ final class VisionInputSession: ObservableObject {
     let keyboard = InputOverlayProxy()
     private weak var client: StreamClient?
     private var pointer = VisionPointer()
+    private let momentum = ScrollMomentum()
     private var geometry: VisionPointer.Geometry?
     private struct Magnification {
         let base: VisionViewport
@@ -72,6 +73,7 @@ final class VisionInputSession: ObservableObject {
         guard revision == gestureRevision, self.geometry == geometry else { return }
         guard canSend else { releaseAll(); return }
         guard magnification == nil else { return }
+        momentum.stop()
         let first = pointer.isIdle
         let events = pointer.receive(samples, geometry: geometry, viewport: viewport, modifiers: latched)
         if first && !events.isEmpty { consumeLatch() }
@@ -84,6 +86,7 @@ final class VisionInputSession: ObservableObject {
         guard canSend else { releaseAll(); return }
         guard time.isFinite, factor.isFinite, factor > 0 else { finishGesture(revision: revision); return }
         if magnification == nil {
+            momentum.stop()
             let releases = pointer.cancel()
             releases.forEach { client?.sendInput($0) }
             magnification = Magnification(base: viewport, anchor: anchor, time: time)
@@ -94,10 +97,14 @@ final class VisionInputSession: ObservableObject {
         if let next = zoom.base.magnified(by: factor, at: zoom.anchor, in: geometry) { viewport = next }
     }
 
-    func finishGesture(revision: UUID) {
+    func finishGesture(revision: UUID, allowMomentum: Bool = false) {
         guard revision == gestureRevision else { return }
+        let flick = allowMomentum ? pointer.flick : nil
         let events = cancelPointer()
-        if canSend { events.forEach { client?.sendInput($0) } }
+        if canSend {
+            events.forEach { client?.sendInput($0) }
+            if let flick, let geometry { startMomentum(flick, geometry: geometry) }
+        }
         else if !events.isEmpty { client?.cancelVisionInputs() }
     }
 
@@ -106,17 +113,44 @@ final class VisionInputSession: ObservableObject {
         viewport = VisionViewport()
     }
 
+    func stopMomentum() { momentum.stop() }
+
     func takeReleases() -> [InputEvent] {
         consumeLatch()
         return cancelPointer() + (keyboard.view?.takeVisionKeyReleases() ?? [])
     }
 
     private func cancelPointer() -> [InputEvent] {
+        momentum.stop()
         gestureRevision = UUID()
         magnification = nil
         let releases = pointer.cancel()
         pointer = VisionPointer()
         return releases
+    }
+
+    private func startMomentum(_ flick: VisionPointer.Flick, geometry: VisionPointer.Geometry) {
+        guard let rect = geometry.fittedRect else { return }
+        let revision = gestureRevision
+        momentum.start(velocity: flick.velocity,
+            onBegin: { [weak self] in
+                self?.client?.sendInput(.scrollGesture(.momentumBegan, x: flick.anchor.x, y: flick.anchor.y))
+            },
+            onStep: { [weak self] step in
+                guard let self else { return }
+                guard self.canSend, self.gestureRevision == revision, self.geometry == geometry else {
+                    self.momentum.stop()
+                    return
+                }
+                self.client?.sendInput(.scroll(x: flick.anchor.x, y: flick.anchor.y,
+                                              dx: step.x / rect.width, dy: step.y / rect.height))
+            },
+            onEnd: { [weak self] in
+                guard let self else { return }
+                if self.canSend, self.gestureRevision == revision {
+                    self.client?.sendInput(.scrollGesture(.momentumEnded, x: flick.anchor.x, y: flick.anchor.y))
+                } else { self.client?.cancelVisionInputs() }
+            })
     }
 
     private func releaseForNextAction() { takeReleases().forEach { client?.sendInput($0) } }
