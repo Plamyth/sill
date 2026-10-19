@@ -67,7 +67,7 @@ final class CanvasStore: ObservableObject {
         let sceneID: UUID
         let sceneGeneration: UInt64
         let connectionGeneration: UInt64
-        let editorGeneration: UInt64
+        var editorGeneration: UInt64
         let path: String
         let nodeID: UUID?
     }
@@ -146,14 +146,15 @@ final class CanvasStore: ObservableObject {
             return
         }
         let linkedNodeID = nodeID ?? (noteContext?.path == path ? noteContext?.nodeID : nil)
-        noteEditorGeneration &+= 1
-        let context = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
+        var context = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
             connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
             path:path,nodeID:linkedNodeID)
         guard noteContextIsCurrent(context) else {
             vaultStatus = "연결한 노트의 경로 또는 서버가 바뀌었습니다. 자동 재연결하지 않았습니다."
             return
         }
+        noteEditorGeneration &+= 1
+        context.editorGeneration = noteEditorGeneration
         noteContext = context
         vaultNote = nil
         vaultDraft = ""
