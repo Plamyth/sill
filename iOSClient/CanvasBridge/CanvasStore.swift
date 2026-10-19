@@ -888,7 +888,10 @@ final class CanvasStore: ObservableObject {
               imported.nodes.count < 1000, imported.strokes.count < 10000 else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        let next = try PKDrawing(data: Data(base64Encoded: imported.drawingBase64) ?? Data())
+        guard let drawingData = Data(base64Encoded: imported.drawingBase64) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let next = try drawingData.isEmpty ? PKDrawing() : PKDrawing(data: drawingData)
         invalidateNoteScene()
         scene = imported
         drawing = next
