@@ -122,3 +122,65 @@ Pstack 경로는 TDD/Feature이며 Ponytail은 기존 모델·주입 시계·네
 - 최소 분해는 단일 작성자가 P1/P2와 관련 픽스처만 수정하는 것이다. 새 독립 검수와 실행은 부모가 맡는다.
 
 ARENA·Orca·중첩 에이전트는 사용하지 않았다. 이 반환은 범위가 정해진 소스 패치다.
+
+## 2026-10-20 SwiftUI Binding 재게시 P2 소스 수정 반환
+
+작업 키는 `vision-webview-update-fix-20261020`이다. 원 담당 대화는 위와 같다.
+전용 워크트리는 `work/sill-vision-update-fix`, 브랜치는
+`codex/vision-webview-update-fix-20261020`, 기준 커밋은
+`40a8e14bd4bf4493a24d35856b4910aaa8a13c5c`이다. 시작 시 브랜치·HEAD와
+깨끗한 상태를 Git으로 확인했다. 사용자가 전달한 IndependentPascal review18c의
+P2 원인을 실제 호출 소스와 대조했다. 해당 독립 검수를 이번 변경의 검수로 재사용하지 않는다.
+
+`VisionTestDestinations`는 구조체이므로 Binding을 통해 mutating `revalidate`를 호출하면
+건강한 선택을 검증했을 때도 setter가 호출된다. 실제 저장소는 StreamClient의
+`@Published visionTestDestinations`이므로 `updateUIView`에서 이를 반복하면
+SwiftUI reconciliation과 모델 게시가 반복될 수 있다. 생성·갱신·해체와 검증 전용
+콜백은 기존 nonmutating `isCurrent`를 사용하도록 바꿨다. 모델의 `observe`, `report`,
+`revalidate` 자체와 공통 권한·시간·출처 계약은 유지했다.
+
+무효 화면은 즉시 로드를 멈추고 설치된 자기 콘텐츠 규칙과 저장 식별자를 정리한다.
+진행 중 컴파일의 식별자는 완료 콜백이 정리한다. 선택 해제는 main queue에 예약하며,
+실행 시 같은 Selection인지와 최신 카탈로그에서 여전히 무효인지 다시 확인한다.
+예약 후 선택을 새로 열었거나 같은 선택의 최신 관측이 갱신됐으면 닫거나 게시하지 않는다.
+반복 예약도 첫 해제 뒤 동일 선택 검사에서 멈춘다. 생성 중 규칙 JSON 준비 실패의
+상태 보고도 예약하며, 보고 시 선택을 대조하고 모델의 기존 권한 재검증을 사용한다.
+
+`stop`은 먼저 리소스 상태를 `.closed`로 바꾼다. `stopLoading` 중 콜백이 와도
+상태 보고가 Binding을 쓰지 않는다. 컴파일 성공은 검증용 모델 쓰기를 하지 않는다.
+이전 선택의 상태 콜백은 현재 선택의 UUID가 다르면 보고하지 않는다.
+실제 페이지 상태 변경과 컴파일 실패 보고는 reconciliation 밖의 기존 이벤트 경로에 남는다.
+
+`WebViewFixture.swift`에는 기존 custom Binding setter에 카운터를 연결했다.
+실제 production `makeUIView`, `updateUIView`, `dismantleUIView`와 coordinator 본문을
+기존 runner가 그대로 추출한다. 추가 검사 소스는 다음 조건을 다룬다.
+
+- 건강한 생성과 반복 갱신 및 컴파일 완료에서 setter 호출이 없고 UUID·WebView·폼·저장소가 유지된다.
+- 건강한 해체·반복 stop·동기 중지 콜백·늦은 컴파일 완료에서 모델 쓰기가 없고 자기 규칙만 정리한다.
+- 만료 갱신은 즉시 로드를 중지하고 규칙을 제거하지만 예약 콜백 전에는 선택을 게시하지 않는다.
+- 예약 콜백은 같은 만료 선택만 한 번 해제하며, 그전에 새로 연 선택과 같은 선택의 관측 갱신을 보호한다.
+- update 이전에 선택이 교체돼도 이전 컴파일·실패·상태·stop 콜백이 새 선택을 쓰거나 변경하지 않는다.
+
+기존 리소스·출처·인증·관측 갱신 검사와 그 기대 결과는 유지했다. 예약 콜백은
+대역 스케줄러 대신 실제 main queue와 제한된 RunLoop 진행으로 확인하도록 작성했다.
+이 fixture는 WebKit 대역과 Binding setter 호출 수를 검사한다. 실제 SwiftUI의
+`@Published` 알림이나 기기 WebView 동작을 관측한 영수증은 아니다.
+
+공유 동결 대상의 실제 경로는 `Sources/StreamProtocol/TestDestinations.swift`이다.
+Git blob `b740be9a3608799f750405f409e4f9940b20b0a0`를 읽어 확인했으며 수정하지 않았다.
+부모 소유 Host reader와 다른 워크트리에 쓰지 않았다.
+
+Pstack TDD/Feature 경로로 회귀 검사 소스를 먼저 작성하고 구현했다.
+Model the Domain 원칙에 따라 기존 Selection과 ResourceState를 재사용했고,
+Laziness Protocol과 Ponytail full에 따라 기존 `isCurrent`와 main queue를 사용했다.
+새 계층·의존성·프로토콜은 추가하지 않았다. 선행 조건은 전용 소유권·기준 커밋·clean 확인이며,
+이 worker 내부의 병렬 분해는 해당 없음이다. 공유 쓰기는 없고 단일 P2 소스 단위로 반환한다.
+ARENA·Orca·중첩 에이전트는 사용자 금지에 따라 실행하지 않았다.
+
+이번 작성자의 검증 근거는 직접 소스 검토, `git diff --check`, 공유 blob 대조와 Git 상태뿐이다.
+사용자의 SOURCE-ONLY 제한으로 수정 전 실패와 수정 후 통과를 실행하지 않았다.
+테스트·빌드·Mini·네트워크·브라우저·기기·앱 런타임을 호출하지 않았다.
+새 독립 검수도 실행하지 않았다. 부모가 반환된 정확한 소스로 실제 fixture와
+matching SDK 검증 및 새 독립 검수를 수행한다. 기존 버전의 실행 영수증을
+이 패치의 통과로 합치지 않으며, 통합·배포·실기기 수용은 미검증이다.
+커밋 뒤 clean 상태로 소스 소유권을 부모에게 반환한다.

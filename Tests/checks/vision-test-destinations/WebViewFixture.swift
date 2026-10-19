@@ -66,10 +66,11 @@ final class WKWebView {
     var allowsBackForwardNavigationGestures = true
     var accessibilityLabel: String?
     var formValue = "기기 입력 초안"
+    var onStop: (() -> Void)?
     init(frame: CGRect = .zero, configuration: WKWebViewConfiguration = WKWebViewConfiguration()) {
         self.configuration = configuration
     }
-    func stopLoading() { stops += 1 }
+    func stopLoading() { stops += 1; onStop?() }
     func load(_ request: URLRequest) {
         listsAtLoad.append(configuration.userContentController.lists)
         loads.append(request)
@@ -293,21 +294,37 @@ private func runResourceRuleChecks(catalog: TestDestinationCatalog, now: Date) {
 
 private func runRuleLifecycleChecks(catalog: TestDestinationCatalog, now: Date) {
     let compiler = WKContentRuleListStore.shared
-    func scene(clock: @escaping () -> Date) -> (Binding<VisionTestDestinations>, VisionWebViewFixture, Coordinator, WKWebView) {
+    func drainMainQueue() {
+        var drained = false
+        DispatchQueue.main.async { drained = true }
+        let deadline = Date().addingTimeInterval(1)
+        while !drained && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.001))
+        }
+        check(drained, "예약된 main queue 모델 변경을 제한 시간 안에 확인한다")
+    }
+    func scene(clock: @escaping () -> Date, onWrite: @escaping () -> Void = {})
+        -> (Binding<VisionTestDestinations>, VisionWebViewFixture, Coordinator, WKWebView) {
         var model = VisionTestDestinations(clock: clock)
         let peer = VisionTestDestinations.PeerBinding(peerID: "격리 생명주기", generation: UUID())
         model.bind(peer)
         model.observe(catalog, from: peer)
         model.open(catalog.entries[0], from: peer)
-        let binding = Binding(get: { model }, set: { model = $0 })
+        let binding = Binding(get: { model }, set: { model = $0; onWrite() })
         let page = VisionWebViewFixture(model: binding, selection: model.selection!, store: .nonPersistent())
         let delegate = page.makeCoordinator()
         let view = page.makeUIView(context: FixtureContext(coordinator: delegate))
         return (binding, page, delegate, view)
     }
     var clock = now
-    let (binding, page, delegate, view) = scene(clock: { clock })
+    var writes = 0
+    let (binding, page, delegate, view) = scene(clock: { clock }, onWrite: { writes += 1 })
     let selection = binding.wrappedValue.selection!
+    check(writes == 0, "실제 makeUIView와 prepare는 건강한 모델의 Binding setter를 호출하지 않는다")
+    for _ in 0..<5 { page.updateUIView(view, context: FixtureContext(coordinator: delegate)) }
+    check(writes == 0 && binding.wrappedValue.selection?.id == selection.id && view.stops == 0 &&
+          view.formValue == "기기 입력 초안" && view.configuration.websiteDataStore === page.store,
+          "컴파일 중 반복 updateUIView는 모델을 게시하지 않고 같은 선택과 WebView 및 폼을 보존한다")
     let ownID = compiler.pending.last!.id
     let unrelated = WKContentRuleList("다른 담당 규칙")
     view.configuration.userContentController.add(unrelated)
@@ -316,6 +333,7 @@ private func runRuleLifecycleChecks(catalog: TestDestinationCatalog, now: Date) 
     delegate.webView(view, decidePolicyFor: WKNavigationAction(request: URLRequest(url: selection.url))) { policy = $0 }
     check(policy == .cancel, "규칙 설치 전 탐색 콜백도 허용하지 않는다")
     compiler.completeNext()
+    check(writes == 0, "건강한 컴파일 완료는 검증용 모델 쓰기를 만들지 않는다")
     check(view.loads.count == 1 && view.listsAtLoad[0].contains { $0.identifier == ownID },
           "규칙 설치 후에만 첫 페이지 요청이 발생한다")
     binding.wrappedValue.report(.displaying(200), for: selection)
@@ -325,7 +343,12 @@ private func runRuleLifecycleChecks(catalog: TestDestinationCatalog, now: Date) 
     renewed.entries[0].embed = .unknown
     binding.wrappedValue.observe(renewed, from: selection.binding)
     clock = now.addingTimeInterval(70)
-    page.updateUIView(view, context: FixtureContext(coordinator: delegate))
+    let writesBeforeUpdate = writes
+    for _ in 0..<5 { page.updateUIView(view, context: FixtureContext(coordinator: delegate)) }
+    delegate.webView(view, didFailProvisionalNavigation: nil,
+                     withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled))
+    drainMainQueue()
+    check(writes == writesBeforeUpdate, "갱신 후 반복 update와 무시하는 취소 콜백은 건강한 Binding을 쓰지 않는다")
     check(binding.wrappedValue.selection?.id == selection.id && binding.wrappedValue.pageStatus == .displaying(200) &&
           view.loads.count == 1 && view.stops == 0 && view.formValue == "기기 입력 초안" &&
           view.configuration.websiteDataStore === page.store && compiler.pending.isEmpty,
@@ -397,6 +420,84 @@ private func runRuleLifecycleChecks(catalog: TestDestinationCatalog, now: Date) 
           "컴파일 중 갱신된 최신 관측은 처음 선택 시각이 만료된 뒤에도 같은 선택을 허용한다")
     renewDelegate.stop(renewView)
 
+    for compiling in [true, false] {
+        var healthyWrites = 0
+        let (healthyBinding, _, healthyDelegate, healthyView) = scene(clock: { now }, onWrite: { healthyWrites += 1 })
+        let healthySelection = healthyBinding.wrappedValue.selection
+        if !compiling { compiler.completeNext() }
+        healthyView.onStop = { [weak healthyDelegate, weak healthyView] in
+            if let healthyView { healthyDelegate?.webViewWebContentProcessDidTerminate(healthyView) }
+        }
+        VisionWebViewFixture.dismantleUIView(healthyView, coordinator: healthyDelegate)
+        healthyDelegate.stop(healthyView)
+        if compiling { compiler.completeNext() }
+        drainMainQueue()
+        check(healthyWrites == 0 && healthyBinding.wrappedValue.selection == healthySelection &&
+              healthyView.navigationDelegate == nil && healthyView.uiDelegate == nil &&
+              healthyView.configuration.userContentController.lists.isEmpty,
+              "건강한 해체와 반복 stop 및 늦은 컴파일 완료는 Binding을 쓰지 않고 리소스를 정리한다")
+    }
+
+    for compiling in [true, false] {
+        var replacementWrites = 0
+        let (replacementBinding, _, oldDelegate, oldView) = scene(clock: { now }, onWrite: { replacementWrites += 1 })
+        let oldSelection = replacementBinding.wrappedValue.selection!
+        let identifier = compiler.pending.last!.id
+        if !compiling { compiler.completeNext() }
+        replacementBinding.wrappedValue.open(catalog.entries[0], from: oldSelection.binding)
+        let freshSelection = replacementBinding.wrappedValue.selection
+        let beforeCallbacks = replacementWrites
+        if compiling { compiler.completeNext() }
+        oldDelegate.webViewWebContentProcessDidTerminate(oldView)
+        oldDelegate.webView(oldView, didFailProvisionalNavigation: nil,
+                            withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost))
+        oldDelegate.stop(oldView)
+        drainMainQueue()
+        check(replacementWrites == beforeCallbacks && replacementBinding.wrappedValue.selection == freshSelection &&
+              replacementBinding.wrappedValue.pageStatus == .loading &&
+              oldView.loads.count == (compiling ? 0 : 1) && compiler.removed.filter { $0 == identifier }.count == 1,
+              "update 전 선택 교체에도 이전 컴파일과 보고 및 stop 콜백은 새 선택을 게시하거나 수정하지 않는다")
+    }
+
+    for compiling in [true, false] {
+        for recovery in ["없음", "새 선택", "현재 관측 갱신"] {
+            var time = now
+            var staleWrites = 0
+            let (staleBinding, stalePage, staleDelegate, staleView) = scene(clock: { time }, onWrite: { staleWrites += 1 })
+            let staleSelection = staleBinding.wrappedValue.selection!
+            let identifier = compiler.pending.last!.id
+            if !compiling { compiler.completeNext() }
+            time = now.addingTimeInterval(46)
+            for _ in 0..<3 { stalePage.updateUIView(staleView, context: FixtureContext(coordinator: staleDelegate)) }
+            check(staleWrites == 0 && staleBinding.wrappedValue.selection == staleSelection && staleView.stops > 0 &&
+                  staleView.configuration.userContentController.lists.isEmpty,
+                  "만료 update는 즉시 로드를 멈추고 규칙을 제거하지만 reconciliation 중 Binding을 쓰지 않는다")
+            if recovery != "없음" {
+                var current = catalog
+                current.entries[0].checkedAt = ISO8601DateFormatter().string(from: time)
+                staleBinding.wrappedValue.observe(current, from: staleSelection.binding)
+                if recovery == "새 선택" { staleBinding.wrappedValue.open(current.entries[0], from: staleSelection.binding) }
+            }
+            let expectedSelection = staleBinding.wrappedValue.selection
+            let beforeCallbacks = staleWrites
+            if compiling { compiler.completeNext() }
+            staleDelegate.webViewWebContentProcessDidTerminate(staleView)
+            check(staleWrites == beforeCallbacks, "멈춘 페이지의 컴파일과 상태 콜백은 기존 또는 새 선택을 쓰지 않는다")
+            drainMainQueue()
+            if recovery == "없음" {
+                check(staleBinding.wrappedValue.selection == nil && staleWrites == beforeCallbacks + 1,
+                      "지연된 무효화는 같은 만료 선택을 한 번만 닫는다")
+            } else {
+                check(staleBinding.wrappedValue.selection == expectedSelection && staleWrites == beforeCallbacks &&
+                      staleBinding.wrappedValue.isCurrent(expectedSelection!),
+                      "지연 무효화는 콜백 전 새 선택이나 같은 선택의 최신 권한 갱신을 닫지 않는다")
+            }
+            check(compiler.removed.filter { $0 == identifier }.count == 1 &&
+                  staleView.loads.count == (compiling ? 0 : 1),
+                  "만료 전후 컴파일은 재로드하지 않고 자기 규칙 식별자를 한 번만 정리한다")
+        }
+    }
+
     for revoke in ["만료", "연결 해제", "권한 변경", "재선택", "해체"] {
         var time = now
         let (nextBinding, nextPage, nextDelegate, nextView) = scene(clock: { time })
@@ -417,6 +518,7 @@ private func runRuleLifecycleChecks(catalog: TestDestinationCatalog, now: Date) 
         check(nextView.loads.isEmpty && nextView.configuration.userContentController.lists.isEmpty && compiler.removed.contains(identifier),
               "컴파일 중 \(revoke) 뒤 늦게 완료되어도 페이지를 열거나 규칙을 설치하지 않는다")
     }
+    drainMainQueue()
     check(Set(compiler.removed).count == compiler.removed.count, "각 페이지의 규칙 식별자는 고유하며 정리는 중복되지 않는다")
     check(compiler.pending.isEmpty, "격리 컴파일 콜백이 남지 않는다")
 }

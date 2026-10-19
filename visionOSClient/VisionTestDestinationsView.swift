@@ -189,10 +189,13 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
 
         func prepare(_ webView: WKWebView) {
             guard case .idle = resourceState else { return }
-            guard model.wrappedValue.revalidate(selection),
-                  let json = model.wrappedValue.resourceRuleListJSON(for: selection) else {
+            guard model.wrappedValue.isCurrent(selection) else { stop(webView); return }
+            guard let json = model.wrappedValue.resourceRuleListJSON(for: selection) else {
                 resourceState = .closed
-                model.wrappedValue.report(.resourceFilterFailed, for: selection)
+                DispatchQueue.main.async { [model, selection] in
+                    guard model.wrappedValue.selection == selection else { return }
+                    model.wrappedValue.report(.resourceFilterFailed, for: selection)
+                }
                 return
             }
             resourceState = .compiling
@@ -200,8 +203,9 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
             let identifier = ruleListIdentifier
             store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: json) { [weak self, weak webView] list, error in
                 guard let self, let webView, case .compiling = self.resourceState,
-                      self.model.wrappedValue.revalidate(self.selection) else {
+                      self.model.wrappedValue.isCurrent(self.selection) else {
                     self?.resourceState = .closed
+                    self?.invalidateSelectionIfNeeded()
                     webView?.stopLoading()
                     store.removeContentRuleList(forIdentifier: identifier) { _ in }
                     return
@@ -219,27 +223,38 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         }
 
         func revalidate(_ webView: WKWebView) {
-            if !model.wrappedValue.revalidate(selection) { stop(webView) }
+            if !model.wrappedValue.isCurrent(selection) { stop(webView) }
+        }
+
+        private func invalidateSelectionIfNeeded() {
+            guard model.wrappedValue.selection == selection, !model.wrappedValue.isCurrent(selection) else { return }
+            DispatchQueue.main.async { [model, selection] in
+                var current = model.wrappedValue
+                guard current.selection == selection, !current.isCurrent(selection) else { return }
+                current.close()
+                model.wrappedValue = current
+            }
         }
 
         func stop(_ webView: WKWebView) {
-            model.wrappedValue.revalidate(selection)
+            let previous = resourceState
+            resourceState = .closed
+            invalidateSelectionIfNeeded()
             webView.stopLoading()
-            if case .ready(let list) = resourceState {
+            if case .ready(let list) = previous {
                 webView.configuration.userContentController.remove(list)
                 ruleListStore.removeContentRuleList(forIdentifier: ruleListIdentifier) { _ in }
             }
             // 진행 중 컴파일의 저장 식별자는 완료 콜백에서 정리한다.
-            resourceState = .closed
         }
 
         private func allowed(_ url: URL?) -> Bool {
-            guard case .ready = resourceState, model.wrappedValue.revalidate(selection) else { return false }
+            guard case .ready = resourceState, model.wrappedValue.isCurrent(selection) else { return false }
             return url.map { model.wrappedValue.allowsNavigation(to: $0, for: selection) } == true
         }
 
         private func report(_ status: VisionTestDestinations.PageStatus) {
-            guard case .ready = resourceState else { return }
+            guard case .ready = resourceState, model.wrappedValue.selection == selection else { return }
             model.wrappedValue.report(status, for: selection)
         }
 
@@ -271,8 +286,8 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            guard case .ready = resourceState, model.wrappedValue.revalidate(selection) else {
-                webView.stopLoading()
+            guard case .ready = resourceState, model.wrappedValue.isCurrent(selection) else {
+                stop(webView)
                 return
             }
             responseCode = nil
@@ -302,7 +317,7 @@ private struct VisionTestDestinationWebView: UIViewRepresentable {
         }
 
         private func failed(_ error: Error) {
-            guard model.wrappedValue.revalidate(selection) else { return }
+            guard model.wrappedValue.isCurrent(selection) else { invalidateSelectionIfNeeded(); return }
             let code = (error as NSError).code
             if code == NSURLErrorCancelled { return }
             if code == NSURLErrorUserCancelledAuthentication, model.wrappedValue.pageStatus == .authenticationDenied { return }
