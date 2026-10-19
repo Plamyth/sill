@@ -175,6 +175,35 @@ class RunnerContract(unittest.TestCase):
             kill.assert_not_called()
             killpg.assert_not_called()
 
+    def test_cleanup_shares_one_deadline_across_slow_queries(self):
+        clock = [0.0]
+        requested = []
+        snapshots = iter([True, True, True, False, False])
+
+        def slow_query(command, **options):
+            timeout = options['timeout']
+            requested.append(timeout)
+            clock[0] += min(4.0, timeout)
+            if timeout < 4.0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            live = next(snapshots)
+            row = ('12345 1 12345 S Tue Oct 20 00:00:00 2026 /owned-command\n' if live else
+                   '22222 1 22222 S Tue Oct 20 00:00:00 2026 /unrelated-command\n')
+            return subprocess.CompletedProcess(command, 0, stdout=row)
+
+        item = Process(12345, 1, 12345, 'S', 'Tue Oct 20 00:00:00 2026', '/owned-command')
+        with patch('run.time.monotonic', side_effect=lambda: clock[0]), \
+                patch('run.subprocess.run', side_effect=slow_query), \
+                patch('run.os.kill'), patch('run.os.killpg'):
+            result = cleanup_group(99999, {item.identity: item}, None)
+        self.save_witness('cleanup-shared-deadline', {'virtualSeconds': clock[0],
+                          'queryTimeouts': requested, 'processGroup': result})
+        self.assertFalse(result['verified'])
+        self.assertIsNone(result['remaining'])
+        self.assertIsNone(result['detachedRemaining'])
+        self.assertLessEqual(clock[0], 15.0)
+        self.assertEqual(requested, [5, 5, 5, 3.0])
+
 
 if __name__ == '__main__':
     unittest.main()
