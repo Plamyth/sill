@@ -75,3 +75,23 @@ laterUnknown.revision += 1
 precondition(!laterUnknown.apply(unknownSource,basedOn:sent), "Proposals must cite sent stroke IDs")
 
 print("PASS agent revision repeat, conflicts, and append-only ink merge")
+
+var linkedScene = CanvasScene()
+let firstNode = CanvasNode(id:UUID(),kind:.note,
+    frame:CanvasRect(x:10,y:20,width:100,height:80),text:"근거",
+    confidence:.proposal,sourceStrokeIds:[])
+let secondNode = CanvasNode(id:UUID(),kind:.box,
+    frame:CanvasRect(x:200,y:20,width:100,height:80),text:"정리",
+    confidence:.proposal,sourceStrokeIds:[])
+let relation = CanvasLink(id:UUID(),from:firstNode.id,to:secondNode.id,label:"참고")
+let nodesRevision = AgentRevision(sceneId:linkedScene.id,baseRevision:linkedScene.revision,
+    annotations:[],proposedNodes:[firstNode,secondNode])
+var wire = try JSONSerialization.jsonObject(with:JSONEncoder().encode(nodesRevision)) as! [String:Any]
+wire["proposedLinks"] = try JSONSerialization.jsonObject(with:JSONEncoder().encode([relation]))
+let fromRelay = try JSONDecoder().decode(AgentRevision.self,from:JSONSerialization.data(withJSONObject:wire))
+precondition(linkedScene.apply(fromRelay), "Valid JSON graph revision should apply")
+guard linkedScene.nodes == [firstNode,secondNode], linkedScene.links == [relation] else {
+    fputs("FAIL revision JSON graph expected nodes=2 links=1; got nodes=\(linkedScene.nodes.count) links=\(linkedScene.links.count)\n",stderr)
+    exit(1)
+}
+print("PASS revision JSON graph nodes=2 links=1")
