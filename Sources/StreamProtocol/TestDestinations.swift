@@ -52,6 +52,7 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
             guard url == url.trimmingCharacters(in: .whitespacesAndNewlines),
                   !url.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0) }),
                   !url.contains("\\"),
+                  URL(string: url, encodingInvalidCharacters: false) != nil,
                   let components = URLComponents(string: url),
                   let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
                   components.user == nil, components.password == nil,
@@ -61,8 +62,7 @@ public struct TestDestinationCatalog: Codable, Equatable, Sendable {
             let host = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
             let name = host.hasSuffix(".") ? String(host.dropLast()) : host
             guard !["localhost", "local", "localhost.localdomain"].contains(name),
-                  !name.hasSuffix(".localhost"), !name.hasSuffix(".local"),
-                  !name.hasSuffix(".localdomain") else { throw ValidationError.unsafeURL }
+                  !name.hasSuffix(".localhost") else { throw ValidationError.unsafeURL }
             if host.contains(":") {
                 var address = in6_addr()
                 guard inet_pton(AF_INET6, host, &address) == 1 else { throw ValidationError.unsafeURL }
