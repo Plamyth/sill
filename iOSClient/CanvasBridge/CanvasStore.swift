@@ -1186,7 +1186,8 @@ final class CanvasStore: ObservableObject {
     var proposalIsCurrent: Bool {
         guard let context = proposalContext, context.sceneID == scene.id,
               context.generation == noteSceneGeneration, context.node.id == proposedNode else { return false }
-        return scene.nodes.first(where:{ $0.id == context.node.id }) == context.node
+        guard let current = scene.nodes.first(where:{ $0.id == context.node.id }) else { return false }
+        return current == context.node && current.text.utf8.elementsEqual(context.node.text.utf8)
     }
 
     func confirmProposal() {

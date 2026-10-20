@@ -115,6 +115,17 @@ import PencilKit
               "\(change) conflict preserves external canonical data and the correction draft")
         check(edit.status.contains("다른 곳"),"\(change) conflict explains why the draft was not committed")
     }
+    for (original, external) in [("\u{00E9}", "e\u{301}"), ("e\u{301}", "\u{00E9}")] {
+        let stale = store()
+        let id = stale.scene.addNode(kind:.note,at:CanvasPoint(x:100,y:100),text:original,confidence:.confirmed,sourceStrokeIds:[a.id])
+        stale.proposedNode = id
+        stale.proposalText = original
+        stale.scene.nodes[0].text = external
+        check(!stale.proposalIsCurrent,"Unicode normalization-only changes invalidate an open correction")
+        stale.confirmProposal()
+        check(stale.scene.nodes[0].text.utf8.elementsEqual(external.utf8) && stale.proposalText.utf8.elementsEqual(original.utf8) && stale.proposedNode == id,
+              "Unicode conflict preserves exact external UTF-8 and the exact correction draft")
+    }
     let edit = store()
     let id = edit.scene.addNode(kind:.note,at:CanvasPoint(x:100,y:100),text:"원문",confidence:.confirmed,sourceStrokeIds:[a.id])
     edit.proposedNode = id

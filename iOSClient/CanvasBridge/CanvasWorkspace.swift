@@ -157,7 +157,8 @@ struct CanvasWorkspace: View {
             guard let pending = pendingNodeEdit else { return }
             pendingNodeEdit = nil
             guard store.scene.id == pending.sceneID,
-                  store.scene.nodes.first(where:{ $0.id == pending.node.id }) == pending.node else {
+                  let current = store.scene.nodes.first(where:{ $0.id == pending.node.id }),
+                  current == pending.node, current.text.utf8.elementsEqual(pending.node.text.utf8) else {
                 store.status = "요소가 바뀌었습니다. 최신 요소를 다시 선택해 주세요."
                 return
             }
