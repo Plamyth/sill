@@ -955,7 +955,7 @@ final class StreamClient: ObservableObject {
         guard !visionDisplaySelection.inputBlocked, visionTextForeground, connected, moving == nil, visionMovePreparation == nil,
               active != .none, visionInputBinding.isConfirmed else { return nil }
         #if DEBUG && targetEnvironment(simulator)
-        if VisionReleaseTestContext.current != nil {
+        if VisionReleaseTestContext.isText {
             guard visionReleaseTransportIsIsolated, let permit = visionInputPermit else { return nil }
             return VisionTextTarget(peer: ObjectIdentifier(self), source: active, binding: visionInputBinding,
                                     permit: permit, scope: visionTextScope,
@@ -995,7 +995,7 @@ final class StreamClient: ObservableObject {
         }
         visionTextRequest = requestID
         #if DEBUG && targetEnvironment(simulator)
-        if VisionReleaseTestContext.current != nil {
+        if VisionReleaseTestContext.isText {
             let submitted = captureVisionTextTarget() == target &&
                 VisionReleaseFixture.current?.submit(text, request: requestID,
                     isolated: visionReleaseTransportIsIsolated) == true
@@ -1037,7 +1037,7 @@ final class StreamClient: ObservableObject {
 
     #if DEBUG && targetEnvironment(simulator)
     var visionReleaseTransportIsIsolated: Bool {
-        VisionReleaseTestContext.current != nil && mockDiscovery && !browsing && connection == nil && remoteDial == nil &&
+        VisionReleaseTestContext.isText && mockDiscovery && !browsing && connection == nil && remoteDial == nil &&
         !visionStartupStarted && savedMacs.isEmpty && microphoneCapture == nil
     }
 
@@ -1183,7 +1183,14 @@ final class StreamClient: ObservableObject {
                 VisionRemoteAudioStore.shared.permits(self, direction: .playback)) else { return }
             self.sendVisionAudio(control)
         }
-    }, player: VisionAudioPlayer(ownerID: visionAudioOwnerID))
+    }, player: makeVisionAudioPlayer())
+
+    private func makeVisionAudioPlayer() -> VisionAudioPlaying {
+        #if DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.isRemote { return VisionReleaseSilentPlayer() }
+        #endif
+        return VisionAudioPlayer(ownerID: visionAudioOwnerID)
+    }
 
     private func resetVisionAudio() {
         visionAudioIntentConnection = UUID()
@@ -1223,7 +1230,7 @@ final class StreamClient: ObservableObject {
 
     func afterVisionInputRelease(_ completion: @escaping (Bool) -> Void) {
         #if DEBUG && targetEnvironment(simulator)
-        if VisionReleaseTestContext.current != nil {
+        if VisionReleaseTestContext.isText {
             DispatchQueue.main.async { completion(self.visionReleaseTransportIsIsolated) }
             return
         }
@@ -1291,13 +1298,30 @@ final class StreamClient: ObservableObject {
     /// DEBUG: saved Macs seeded for this run by `-Sill.savedMacs '<JSON>'`; nothing is written back.
     private(set) var savedMacsSeeded = false
 
+    #if os(visionOS) && DEBUG && targetEnvironment(simulator)
+    func trustVisionReleasePeer(_ mac: SavedMac) -> Bool {
+        guard VisionReleaseTestContext.isRemote, connection == nil, !browsing, savedMacs.isEmpty,
+              let pin = mac.fingerprintData, MacID.make(fingerprint: pin) == mac.macID,
+              mac.allAddresses.count == 1, mac.addresses.first?.host == "127.0.0.1",
+              mac.addresses.first?.port == mac.remotePort else { return false }
+        savedMacsSeeded = true
+        savedMacs = [mac]
+        return true
+    }
+    #endif
+
     private var lifecycleObservers: [NSObjectProtocol] = []
 
     deinit { lifecycleObservers.forEach(NotificationCenter.default.removeObserver) }
 
     init() {
         #if os(visionOS)
-        if VisionReleaseTestContext.isTestBundle { return }
+        if VisionReleaseTestContext.isTestBundle {
+            guard VisionReleaseTestContext.isRemote else { return }
+            _ = Self.helloPayload
+            installVisionLifecycle()
+            return
+        }
         #endif
         // The hello is built here, on the main thread: it reads UIDevice (the device's name), which
         // the network queue, where connections become ready and send it, must not be first to touch.
@@ -1325,8 +1349,22 @@ final class StreamClient: ObservableObject {
         savedMacs = SavedMacs.decode(UserDefaults.standard.string(forKey: SavedMacs.defaultsKey))
         #endif
         #if os(visionOS)
+        installVisionLifecycle()
+        #else
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.resetLiveness()
+            self?.cameForward()
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.wentToBackground()
+        })
+        #endif
+    }
+
+    #if os(visionOS)
+    private func installVisionLifecycle() {
         _ = visionAudio
-        VisionRemoteAudioStore.shared.register(self)
+        if !VisionReleaseTestContext.isTestBundle { VisionRemoteAudioStore.shared.register(self) }
         lifecycleObservers.append(NotificationCenter.default.addObserver(forName: VisionRemoteAudioStore.changed,
             object: nil, queue: .main) { [weak self] _ in self?.objectWillChange.send() })
         lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -1339,16 +1377,8 @@ final class StreamClient: ObservableObject {
         lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.wentToBackground()
         })
-        #else
-        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.resetLiveness()
-            self?.cameForward()
-        })
-        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.wentToBackground()
-        })
-        #endif
     }
+    #endif
 
     /// Starts the network browser, once; from then on it is only made again (`rebuildBrowser`). The
     /// nearby one follows the policy (`updateDiscovery`).
@@ -1415,6 +1445,9 @@ final class StreamClient: ObservableObject {
 
     /// Called only after a formal pairing or an authenticated session with a saved Mac.
     func rememberPreferredMac(_ macID: String) {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         guard SavedMacs.automaticTarget(savedMacs, preferredID: macID) != nil else { return }
         UserDefaults.standard.set(macID, forKey: Self.preferredTrustedMacKey)
         stopSavedMacAutoConnect()
@@ -1700,6 +1733,9 @@ final class StreamClient: ObservableObject {
     /// A browser's results changed, or what the policy reads did (the saved Macs, the network's
     /// 3 s mark). Main thread.
     func discoveryChanged() {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         recomputeMacs()
         updateDiscovery()
         reconnectIfListed()
@@ -1858,6 +1894,9 @@ final class StreamClient: ObservableObject {
     /// Runs the policy on what is known now: starts or stops the nearby browser, shows the hint,
     /// keeps an idle status line in step, and looks again at the network's 3 s mark. Main thread.
     func updateDiscovery() {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         #if DEBUG
         if mockDiscovery { return }
         #endif
@@ -3690,7 +3729,7 @@ final class StreamClient: ObservableObject {
     /// The user chose to leave. No reconnect.
     func disconnect() {
         #if os(visionOS) && DEBUG && targetEnvironment(simulator)
-        if VisionReleaseTestContext.current != nil {
+        if VisionReleaseTestContext.isText {
             guard VisionReleaseFixture.current?.reset(isolated: visionReleaseTransportIsIsolated) == true else {
                 status = "테스트 입력 대상 초기화에 실패했습니다."
                 return

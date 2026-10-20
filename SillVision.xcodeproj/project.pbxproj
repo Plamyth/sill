@@ -622,6 +622,24 @@
 			<key>fileRef</key>
 			<string>6CF84F2CD28DFBFAED3D61C8</string>
 		</dict>
+		<key>1C6A8DBC629629D6FEDF1959</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionReleaseRemotePeer.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>0530B86A82796E4BA782A90E</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>1C6A8DBC629629D6FEDF1959</string>
+		</dict>
 		<key>3479E8EBBFDC8FBE714AE2E1</key>
 		<dict>
 			<key>isa</key>
@@ -1392,6 +1410,7 @@
 				<string>B327B8A7477D1231996FCA1C</string>
 				<string>7C90C59BF846BE05384578DB</string>
 				<string>6CF84F2CD28DFBFAED3D61C8</string>
+				<string>1C6A8DBC629629D6FEDF1959</string>
 				<string>3479E8EBBFDC8FBE714AE2E1</string>
 				<string>1EC353247B72DF67C513ED2B</string>
 				<string>48F453A3A0A3E814F7179DDC</string>
@@ -1479,6 +1498,7 @@
 				<string>B752A128F4045FB722367596</string>
 				<string>B771555041E5E11E0F265CA4</string>
 				<string>0F82E22ED995B125F7CAAE89</string>
+				<string>0530B86A82796E4BA782A90E</string>
 				<string>88EACB3A2740149DFB20447F</string>
 				<string>945B89332D433A1D178BA2E4</string>
 				<string>C5942AF7883F30CB41E8925D</string>
@@ -1926,6 +1946,7 @@
 				<string>B752A128F4045FB722367596</string>
 				<string>B771555041E5E11E0F265CA4</string>
 				<string>0F82E22ED995B125F7CAAE89</string>
+				<string>0530B86A82796E4BA782A90E</string>
 				<string>88EACB3A2740149DFB20447F</string>
 				<string>945B89332D433A1D178BA2E4</string>
 				<string>C5942AF7883F30CB41E8925D</string>

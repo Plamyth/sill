@@ -21,6 +21,16 @@ enum DeviceIdentity {
 
     private static let lock = NSLock()
     private static var cached: RemoteIdentity?
+    #if os(visionOS)
+    private static var fixtureIdentity: RemoteIdentity?
+
+    private static func testIdentity() -> RemoteIdentity? {
+        guard VisionReleaseTestContext.isRemote else { return nil }
+        if let fixtureIdentity { return fixtureIdentity }
+        fixtureIdentity = RemoteKey.generate().flatMap { RemoteIdentity(privateKey: $0) }
+        return fixtureIdentity
+    }
+    #endif
 
     private static var currentTag: Data {
         #if DEBUG
@@ -33,6 +43,9 @@ enum DeviceIdentity {
     /// from a backup (the key does not travel).
     static func existing() -> RemoteIdentity? {
         lock.lock(); defer { lock.unlock() }
+        #if os(visionOS)
+        if VisionReleaseTestContext.isTestBundle { return testIdentity() }
+        #endif
         if let cached { return cached }
         guard let key = readKey() else { return nil }
         cached = RemoteIdentity(privateKey: key)
@@ -41,6 +54,12 @@ enum DeviceIdentity {
 
     /// The identity, made now if this device has none yet (the first pairing).
     static func loadOrCreate() throws -> RemoteIdentity {
+        #if os(visionOS)
+        if VisionReleaseTestContext.isTestBundle {
+            guard let identity = existing() else { throw IdentityError("격리 테스트 신원을 만들 수 없습니다.") }
+            return identity
+        }
+        #endif
         if let id = existing() { return id }
         lock.lock(); defer { lock.unlock() }
         let key = try makeKey()
@@ -55,6 +74,9 @@ enum DeviceIdentity {
     /// own tag, which found none and made the real pairings look keyless) is not proof, and
     /// clearing the saved Macs on it would lose pairings the key still serves.
     static func knownMissing() -> Bool {
+        #if os(visionOS)
+        if VisionReleaseTestContext.isTestBundle { return false }
+        #endif
         var tags = [tag]
         #if DEBUG
         tags.append(secureEnclaveTag)
@@ -65,6 +87,9 @@ enum DeviceIdentity {
     /// Forgets the key (`-SillForgetMacs 1`).
     static func forget() {
         lock.lock(); defer { lock.unlock() }
+        #if os(visionOS)
+        if VisionReleaseTestContext.isTestBundle { fixtureIdentity = nil; return }
+        #endif
         cached = nil
         let query: [String: Any] = [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: currentTag]
         SecItemDelete(query as CFDictionary)
