@@ -30,7 +30,12 @@ enum LocalAudioRelayClosure {
               serverHashes.allSatisfy({ files[$0.key]?.sha256 == $0.value }),
               files["python/lib/python3.13/site-packages/sounddevice.py"]?.sha256 ==
                 "6336351c4771da61a3039f0aeb603da4d975d7b4525d56224016389433ccde34",
-              !files.keys.contains(where: { $0.hasSuffix(".pth") || $0.hasSuffix("/sitecustomize.py") || $0.hasSuffix("/usercustomize.py") }) else {
+              !files.keys.contains(where: { path in
+                  let path = path.lowercased()
+                  return [".pth", ".pyc", ".pyo", ".zip", ".egg", ".whl", ".pyz"].contains(where: path.hasSuffix) ||
+                      path.split(separator: "/").contains("__pycache__") ||
+                      path.hasSuffix("/sitecustomize.py") || path.hasSuffix("/usercustomize.py")
+              }) else {
             throw LocalAudioRelayLaunchFailure.runtimePackagingUnverified
         }
         let root = inventory.package.appendingPathComponent("runtime", isDirectory: true)

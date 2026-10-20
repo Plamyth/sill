@@ -1,10 +1,14 @@
 import hashlib
+import importlib.util
+import io
 import json
+import marshal
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import zipfile
 
 root = Path(__file__).resolve().parents[3]
 package, output = (Path(value).resolve() for value in sys.argv[1:3])
@@ -58,6 +62,33 @@ try:
         manifest.write_text(json.dumps(data))
         execute(scratch, False)
         target.write_bytes(contents)
+        manifest.write_bytes(saved)
+    cache = importlib.util.MAGIC_NUMBER + bytes(12) + marshal.dumps(compile("probe = True", "sitecustomize.py", "exec"))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as stream:
+        stream.writestr("probe.py", "value = 'test'\n")
+    for name, contents in [
+        ("python/lib/python3.13/sitecustomize.pyc", cache),
+        ("python/lib/python3.13/probe.PYO", cache),
+        ("python/lib/python3.13/probe.zip", archive.getvalue()),
+        ("python/lib/python3.13/probe.egg", archive.getvalue()),
+        ("python/lib/python3.13/__pycache__/probe", cache),
+    ]:
+        target = scratch / "runtime" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(contents)
+        target.chmod(0o644)
+        data = json.loads(saved)
+        parent = str(Path(name).parent)
+        if not any(item["path"] == parent for item in data["entries"]):
+            data["entries"].append({"path": parent, "kind": "directory", "mode": 0o755})
+        data["entries"].append({"path": name, "kind": "file", "mode": 0o644,
+                                "size": len(contents), "sha256": hashlib.sha256(contents).hexdigest()})
+        data["dependencies"].append({"source": name, "bundled": [], "system": []})
+        manifest.write_text(json.dumps(data))
+        execute(scratch, False)
+        target.unlink()
+        if parent.endswith("/__pycache__"): target.parent.rmdir()
         manifest.write_bytes(saved)
     record["sourceUnchanged"] = all(hashlib.sha256((root / name).read_bytes()).hexdigest() == value for name, value in original.items())
     assert record["sourceUnchanged"]
