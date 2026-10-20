@@ -115,7 +115,7 @@ class Runner:
         require(math.isfinite(seconds) and seconds > 0, "budget_invalid")
         self.deadline = time.monotonic() + seconds
 
-    def run(self, args, cwd=None):
+    def run(self, args, cwd=None, accepted_return_codes=(0,)):
         remaining = self.deadline - time.monotonic()
         require(remaining > 0, "budget_exhausted")
         environment = {k: v for k, v in os.environ.items() if not k.startswith("DEVICECTL_CHILD_")}
@@ -133,7 +133,7 @@ class Runner:
                 pass
             child.communicate()
             raise Held("command_timeout:" + Path(args[0]).name) from error
-        require(child.returncode == 0, "command_failed:" + Path(args[0]).name + ":" + str(child.returncode))
+        require(child.returncode in accepted_return_codes, "command_failed:" + Path(args[0]).name + ":" + str(child.returncode))
         return stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace")
 
 

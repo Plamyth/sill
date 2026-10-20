@@ -42,16 +42,28 @@ def validate_lease(lease_id, source, runner, clock=physical.now):
     require(physical.timestamp(row.get("startedAt")) <= clock() < physical.timestamp(row.get("expiresAt")),
             "canonical_lease_expired_or_future")
     services = read_json(REGISTRY).get("services", [])
+    require(isinstance(services, list) and all(isinstance(s, dict) for s in services),
+            "registered_services_invalid")
     configured = [s for s in services if s.get("id") == SERVICE]
     require(len(configured) == 1 and configured[0].get("lifecycle") == "leased" and
             configured[0].get("resource") == {"kind": "core-simulator", "udid": UDID}, "registered_service_mismatch")
-    status = json.loads(runner.run([LIFECYCLE, "status"])[0])
+    status = json.loads(runner.run([LIFECYCLE, "status"], accepted_return_codes=(0, 2))[0])
+    require(isinstance(status, dict) and status.get("schema") == 1 and all(isinstance(status.get(k), list) and
+            all(isinstance(v, dict) for v in status[k]) for k in ("leases", "violations")),
+            "lifecycle_status_invalid")
     live = [r for r in status.get("leases", []) if r.get("leaseId") == lease_id]
     require(len(live) == 1 and all(live[0].get(k) == v for k, v in row.items()) and
             live[0].get("state") == "live" and live[0].get("live") is True and live[0].get("expired") is False,
             "canonical_lease_not_live")
-    require(not any(v.get("serviceId") == SERVICE or v.get("leaseId") == lease_id
-                    for v in status.get("violations", [])), "lifecycle_violation")
+    group = configured[0].get("singletonGroup")
+    require(isinstance(group, str) and bool(group), "registered_singleton_group_missing")
+    related_services = {s.get("id") for s in services if s.get("singletonGroup") == group or
+                        s.get("resource") == {"kind": "core-simulator", "udid": UDID}}
+    related_leases = {r.get("leaseId") for r in status["leases"] if r.get("serviceId") in related_services}
+    require(not any(v.get("serviceId") in related_services or v.get("leaseId") in related_leases or
+                    v.get("singletonGroup") == group for v in status["violations"]), "lifecycle_violation")
+    require(not any(r.get("leaseId") != lease_id and r.get("serviceId") in related_services and
+                    r.get("live") is True for r in status["leases"]), "conflicting_simulator_lease")
     return row
 
 
@@ -139,6 +151,7 @@ def prepare(args, source, runner, output):
         runner.run(["/usr/bin/xcrun", "xcodebuild", "-project", str(Path(args.repo) / "SillVision.xcodeproj"),
                     "-scheme", SCHEME, "-configuration", "Debug", "-sdk", "xrsimulator",
                     "-destination", "generic/platform=visionOS Simulator", "-derivedDataPath", output / "DerivedData",
+                    "-resultBundlePath", output / "NativeBuild.xcresult",
                     "-disableAutomaticPackageResolution", "-skipPackageUpdates", "CODE_SIGN_IDENTITY=-",
                     "CODE_SIGNING_ALLOWED=YES", "DEVELOPMENT_TEAM=" + physical.TEAM,
                     "BT_RELEASE_SOURCE_COMMIT=" + source.commit, "BT_RELEASE_SOURCE_TREE=" + source.tree,
@@ -147,7 +160,8 @@ def prepare(args, source, runner, output):
         runs = list((output / "DerivedData/Build/Products").glob("*.xctestrun"))
         require(len(runs) == 1, "native_ui_test_driver_missing_or_ambiguous")
         raw = {"schema": "ccr.vision.simulator-prepared/v1", **source.fields(), "built": built,
-               "app": str(app), "xctestrun": evidence(runs[0])}
+               "app": str(app), "xctestrun": evidence(runs[0]),
+               "nativeBuildResultBundle": str(output / "NativeBuild.xcresult")}
         atomic_json(manifest, raw)
     raw = read_json(manifest)
     require(raw.get("schema") == "ccr.vision.simulator-prepared/v1" and source.matches(raw), "prepared_source_mismatch")
@@ -253,6 +267,8 @@ def accept(args, source, runner, output, native):
             deployed.get("bundleId") == BUNDLE, "simulator_deployment_required")
     physical.verify_evidence(deployed.get("preparedEvidence"))
     native.ready()
+    require(bundle_manifest(native.container("app"), source, runner) == prepared["built"],
+            "existing_test_bundle_replacement_held:parent_recovery_required")
     context = {**source.fields(), "runID": str(uuid.uuid4())}
     run = native.directory / "NativeUI.xctestrun"
     test_run_file(prepared, run, context)
@@ -330,7 +346,9 @@ def execute(args, runner):
             require(physical.source_identity(args, runner) == source, "source_changed_during_action")
         except (Held, OSError, ValueError, TypeError, KeyError) as error:
             atomic_json(directory / "result.json", {"status": "held", "reason": str(error),
-                                                   **source.fields(), "productionEnabled": False})
+                                                   **source.fields(), "productionEnabled": False,
+                                                   "nativeBuildResultBundle": str(output / "NativeBuild.xcresult"),
+                                                   "nativeBuildResultBundleExists": (output / "NativeBuild.xcresult").exists()})
             raise
         atomic_json(directory / "result.json", result)
         return result

@@ -5,7 +5,10 @@ Use `Scripts/vision-release-simulator.py` for the existing xrOS 27 simulator
 `dev.ambrion.SillVision.ReleaseTest` app from the actual Vision sources.
 It never installs, uninstalls, launches, or replaces `dev.ambrion.SillVision`.
 The protected original build 1 and its container remain outside the adapter's
-mutation targets. `Scripts/vision-release-adapter.py` is unchanged.
+mutation targets. Physical deployment behavior remains unchanged. Its shared
+runner accepts explicitly named return codes; existing callers still require
+exit 0. Only the lifecycle status reader permits its documented exit 2, then
+validates the JSON and rejects violations in this simulator's singleton group.
 
 The adapter supplies a native XCTest path for a bounded diagnostic. It does
 not supply the missing complete remote integration driver. Successful output
@@ -38,7 +41,8 @@ python3 -B Scripts/vision-release-simulator.py prepare \
 
 Prepare invokes `xcodebuild build-for-testing` on the shared
 `SillVisionReleaseTest` scheme with Debug, `xrsimulator`, explicit source stamps,
-and an ad hoc simulator signature. It checks the built bundle identifier,
+and an ad hoc simulator signature. `NativeBuild.xcresult` retains first-build
+diagnostics and its path and existence are recorded on failure. It checks the built bundle identifier,
 platform, executable, Info.plist, CodeResources, complete file manifest and
 signature. The `.xctestrun` must contain the actual UI test target. Missing or
 unsupported SDK output is held. An incomplete build directory is preserved for
@@ -80,7 +84,8 @@ not manufacture a runtime file from expected values. Deploy alone records
 
 Run `accept` with the same arguments and lease ID. The name is retained as the
 adapter action; the returned result is the narrow diagnostic described above.
-The adapter copies the verified `.xctestrun`, retains its environment and path
+The adapter rechecks installed test-bundle bytes before XCTest can replace them.
+A mismatch is held for recovery. It copies the verified `.xctestrun`, retains its environment and path
 bindings, injects the explicit context, and requires its target app path to be
 the prepared test app. It runs the one native UI test without rebuilding or
 parallel simulator clones, then reads the actual `.xcresult` summary and test
