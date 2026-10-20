@@ -35,6 +35,7 @@ enum Fixture {
     static var menuCost: TimeInterval = 0
     static var menuReads = 0
     static var failCancel = false, failPress = false
+    static var showMenuErrorAfterEffect = false
     static var longTitle = false, missingMenuTitle = false
     static var failTimeout = false, attributeReads = 0
     static var failedRead: Int?, failedCancel: Int?
@@ -48,6 +49,7 @@ enum Fixture {
         menuOpen = false; rootMissing = false; trusted = true; enabled = true
         menuCount = 1; levels = 1; actions = []; timeouts = [:]; menuCost = 0; menuReads = 0
         failCancel = false; failPress = false; longTitle = false; missingMenuTitle = false
+        showMenuErrorAfterEffect = false
         failTimeout = false; attributeReads = 0; failedRead = nil; failedCancel = nil; menuTitle = nil
         setupCost = 0; actionCost = 0; menuCalls = []
     }
@@ -68,7 +70,10 @@ func FixtureFixtureElementPerformAction(_ element: Int, _ action: CFString) -> A
     let timeout = TimeInterval(Fixture.timeouts[element] ?? 1)
     Fixture.now += min(Fixture.actionCost, timeout)
     if Fixture.actionCost > timeout { return .cannotComplete }
-    if name == kAXShowMenuAction as String { Fixture.menuOpen = true }
+    if name == kAXShowMenuAction as String {
+        Fixture.menuOpen = true
+        if Fixture.showMenuErrorAfterEffect { return .cannotComplete }
+    }
     if name == kAXCancelAction as String {
         if Fixture.failCancel || Fixture.failedCancel == element { return .cannotComplete }
         Fixture.menuOpen = false
@@ -183,6 +188,31 @@ func FixtureFixtureElementCopyAttributeValue(_ element: Int, _ name: CFString, _
             check(!Fixture.menuOpen, "deadline 실패 메뉴가 정리됩니다")
             check(Fixture.menuCalls.allSatisfy { $0 < start + 0.3 } && Fixture.now - start <= 0.3,
                   "읽기와 정리의 모든 AX 호출이 총예산 전에 시작합니다")
+        }
+        Fixture.reset(); Fixture.showMenuErrorAfterEffect = true
+        do {
+            let reader = seededReader(), catalog = reader.catalog(force: true)
+            let reply = reader.perform(request(catalog, .menu), owner: owner)
+            check(reply.note != nil && reply.menuID == nil && reply.menu == nil && !Fixture.menuOpen
+                  && Fixture.actions.map(\.1) == [kAXShowMenuAction as String, kAXCancelAction as String]
+                  && Fixture.actions.last?.0 == 10,
+                  "AXShowMenu가 메뉴를 연 뒤 timeout을 반환해도 tile로 정리합니다")
+        }
+        Fixture.reset(); Fixture.showMenuErrorAfterEffect = true; Fixture.failCancel = true
+        do {
+            let reader = seededReader(), catalog = reader.catalog(force: true)
+            let reply = reader.perform(request(catalog, .menu), owner: owner)
+            check(reply.note != nil && Fixture.menuOpen && Fixture.actions.last?.1 == kAXCancelAction as String,
+                  "부분 성공한 ShowMenu의 정리 실패도 책임을 보존합니다")
+            let before = Fixture.actions.count
+            reader.disconnected(other)
+            check(Fixture.actions.count == before, "부분 성공한 메뉴도 다른 owner가 정리하지 않습니다")
+            Fixture.failCancel = false
+            reader.disconnected(owner)
+            check(!Fixture.menuOpen && Fixture.actions.count == before + 1,
+                  "부분 성공한 메뉴의 owner disconnect가 정리를 재시도합니다")
+            reader.disconnected(owner)
+            check(Fixture.actions.count == before + 1, "부분 성공한 메뉴의 정리도 멱등적입니다")
         }
         Fixture.reset(); Fixture.rootMissing = true
         do {
