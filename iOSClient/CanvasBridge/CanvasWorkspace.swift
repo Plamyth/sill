@@ -90,8 +90,14 @@ struct CanvasWorkspace: View {
             .accessibilityIdentifier("canvasDiagramMode")
             GeometryReader { geometry in
                 ZStack(alignment:.topLeading) {
-                    HStack(spacing:1) {
-                        if diagramMode != .diagram { canvas }
+                    HStack(spacing:diagramMode == .split ? 1 : 0) {
+                        canvas
+                            .frame(width:diagramMode == .diagram ? 0 :
+                                diagramMode == .split ? max(0,(geometry.size.width - 1) / 2) : geometry.size.width)
+                            .clipped()
+                            .opacity(diagramMode == .diagram ? 0 : 1)
+                            .allowsHitTesting(diagramMode != .diagram)
+                            .accessibilityHidden(diagramMode == .diagram)
                         if diagramMode != .original { diagram }
                     }
                     if geometry.size.width >= 100 && geometry.size.height >= 100 {

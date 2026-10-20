@@ -94,4 +94,39 @@ final class CanvasBridgeUITests: XCTestCase {
         image.lifetime = .keepAlways
         add(image)
     }
+
+    func testModeSwitchHidesOriginalInputAndAccessibility() throws {
+        let app = try app()
+        let surface = app.descendants(matching:.any).matching(identifier:"canvasNavigationSurface").firstMatch
+        let node = app.descendants(matching:.any).matching(identifier:"canvasNode-\(nodeID)").firstMatch
+        XCTAssertTrue(surface.waitForExistence(timeout:5))
+        let originalFrame = node.frame
+        let viewport = surface.value as? String
+        for mode in ["다이어그램","나란히 보기","원본 그림","나란히 보기","다이어그램","원본 그림"] {
+            app.buttons[mode].firstMatch.tap()
+            if mode == "다이어그램" {
+                XCTAssertTrue(surface.waitForNonExistence(timeout:5))
+                XCTAssertTrue(node.waitForNonExistence(timeout:5))
+                XCTAssertTrue(app.webViews["canvasPeleDiagram"].waitForExistence(timeout:10))
+            } else {
+                XCTAssertTrue(surface.waitForExistence(timeout:5))
+                XCTAssertEqual(surface.value as? String,viewport)
+                XCTAssertTrue(node.exists)
+                if mode == "원본 그림" { XCTAssertEqual(node.frame,originalFrame) }
+            }
+        }
+    }
+
+    func testNativeModeLifetimeProbe() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CCR_MODE_LIFETIME_PROBE"] == "1",
+            "전용 네이티브 수명 검사 앱에서 선택 실행합니다.")
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier:try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_TEST_BUNDLE"]))
+        app.launchArguments = ["--ccr-test-runtime",try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_TEST_RUNTIME_ID"])]
+        app.launch()
+        let result = app.staticTexts["canvasModeLifetimeResult"]
+        XCTAssertTrue(result.waitForExistence(timeout:30))
+        XCTAssertTrue(result.label.hasPrefix("CANVAS_MODE_LIFETIME total="),result.label)
+        XCTAssertTrue(result.label.contains("failed=0"),result.label)
+    }
 }

@@ -44,6 +44,39 @@ import PencilKit
         precondition(store.scene.nodes[0].text == "Pencil·키보드 편집 계약" && store.canUndoGraph)
         let snapshot = try CanvasDiagramSnapshot(scene:store.scene)
         precondition(snapshot.source.contains("Pencil"))
+        let parent = store.scene.nodes[0].id
+        let child = store.scene.addNode(kind:.box,at:.init(x:400,y:200),text:"기존 자식")
+        let other = store.scene.addNode(kind:.box,at:.init(x:700,y:200),text:"다른 부모")
+        precondition(store.scene.connectAsChild(parent:parent,child:child))
+        let beforeMixed = store.scene
+        var proposed = store.scene.nodes[1]
+        proposed.id = UUID()
+        proposed.text = "새 제안 자식"
+        proposed.confidence = .proposal
+        var moved = store.scene.links[0]
+        moved.to = proposed.id
+        let mixed = AgentRevision(sceneId:store.scene.id,baseRevision:store.scene.revision,
+            annotations:[],proposedNodes:[proposed],
+            proposedLinks:[.init(id:UUID(),from:other,to:child,label:"새 부모",kind:.parentChild)],
+            nodeEdits:[.init(expected:store.scene.nodes[0],text:"혼합 수정")],
+            linkEdits:[.init(expected:store.scene.links[0],replacement:moved)])
+        precondition(store.applyAgentRevision(mixed) && store.canUndoGraph)
+        let afterMixed = store.scene
+        precondition(store.applyAgentRevision(mixed) && store.scene == afterMixed)
+        store.saveNow()
+        let mixedReopened = CanvasStore(blockRecoveryURL:out.appendingPathComponent("recovery.json"))
+        precondition(mixedReopened.scene == afterMixed)
+        let latestDrawing = PKDrawing(strokes:later.strokes + drawing.strokes)
+        store.updateDrawing(latestDrawing)
+        let latestRaw = store.scene.drawingBase64
+        store.undoGraphEdit()
+        precondition(store.scene.hasSameGraph(as:beforeMixed) && !store.canUndoGraph)
+        precondition(store.drawing.strokes.map(\.id) == latestDrawing.strokes.map(\.id) &&
+            store.scene.drawingBase64 == latestRaw)
+        store.saveNow()
+        let restored = CanvasStore(blockRecoveryURL:out.appendingPathComponent("recovery.json"))
+        precondition(restored.scene == store.scene)
+        print("PASS 혼합 노드·부모 링크·기존 수정의 단일 적용, 멱등 재수신, 저장 복원과 전체 그래프 되돌림 뒤 최신 잉크 보존")
         print("PASS 실제 Store의 AI 수정→저장→새 Store 복원, 재수신·오래된 거부, 공통 텍스트 편집, Undo 뒤 새 Pencil 획 보존")
     }
 }

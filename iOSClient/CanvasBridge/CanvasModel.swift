@@ -937,18 +937,19 @@ struct CanvasScene: Codable, Equatable {
         let availableIds = existingIds.union(proposalIds)
         guard change.annotations.allSatisfy({ $0.nodeId.map(availableIds.contains) ?? true }),
               proposedLinks.allSatisfy({ $0.from != $0.to && availableIds.contains($0.from) &&
-                  availableIds.contains($0.to) }),
-              Self.validHierarchy(links + proposedLinks, nodeIds: availableIds) else {
+                  availableIds.contains($0.to) }) else {
             return false
         }
         var next = self
-        if !nodeEdits.isEmpty || !linkEdits.isEmpty {
-            guard next.editGraph(nodeEdits:nodeEdits,linkEdits:linkEdits) else { return false }
-        }
         next.annotations.append(contentsOf: change.annotations)
         next.nodes.append(contentsOf: change.proposedNodes)
         next.links.append(contentsOf: proposedLinks)
-        guard Self.validHierarchy(next.links,nodeIds:availableIds) else { return false }
+        if !nodeEdits.isEmpty || !linkEdits.isEmpty {
+            guard next.editGraph(nodeEdits:nodeEdits,linkEdits:linkEdits) else { return false }
+        }
+        guard next.links.allSatisfy({ $0.from != $0.to && availableIds.contains($0.from) &&
+                  availableIds.contains($0.to) }),
+              Self.validHierarchy(next.links,nodeIds:availableIds) else { return false }
         next.revision = revision + 1
         self = next
         return true

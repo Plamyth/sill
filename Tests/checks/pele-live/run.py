@@ -13,7 +13,11 @@ archive = json.loads(subprocess.check_output([
     '/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive',
     '--project', 'BT_CCR-ipad'], text=True))
 output = Path(sys.argv[1]).resolve()
-if output != Path(archive['path']) / 'pele-rea-20261021/pele-worker':
+review_fix = sys.argv[2:] == ['--review-fix']
+if sys.argv[2:] and not review_fix:
+    raise SystemExit('지원하지 않는 검사 옵션입니다.')
+folder = 'pele-review-fix' if review_fix else 'pele-worker'
+if output != Path(archive['path']) / 'pele-rea-20261021' / folder:
     raise SystemExit('지정된 외장 검증 경로만 사용합니다.')
 output.mkdir(parents=True, exist_ok=True)
 home = output / 'home'
@@ -25,6 +29,11 @@ env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer
            CFFIXED_USER_HOME=str(home))
 inputs = list((root / 'iOSClient/CanvasBridge').glob('*.swift')) + list(resources.iterdir()) + list(here.iterdir())
 inputs += [root / 'iOSClient/Sill.xcodeproj/project.pbxproj',relay / 'relay/obsidian-vault.js']
+native = root / 'Tests/integration/ipad-runtime/CanvasBridge/CanvasModeLifetimeChecks.swift'
+ui_tests = root / 'Tests/integration/ipad-runtime/CanvasBridgeUITests/CanvasBridgeUITests.swift'
+ink_checks = root / 'Tests/checks/ink-undo'
+if review_fix:
+    inputs += [native,ui_tests,*ink_checks.glob('*.swift'),ink_checks / 'Info.plist']
 inputs = [p for p in inputs if p.is_file()]
 hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 manifest = json.loads((resources / 'provenance.json').read_text())
@@ -64,9 +73,16 @@ try:
         '-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',plist,
         '-o',output / 'store-check'])
     run('store-run',[output / 'store-check'],30)
-    run('webkit-compile',base + ['-parse-as-library',here / 'WebKitChecks.swift','-o',output / 'webkit-check'])
-    run('webkit-run',[output / 'webkit-check'],60)
-    run('vault-run',['node',here / 'vault-check.cjs'],30)
+    if review_fix:
+        run('ink-history-compile',base + ['-parse-as-library',model,store,
+            ink_checks / 'InkUndoChecks.swift',ink_checks / 'main.swift',
+            '-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',plist,
+            '-o',output / 'ink-history-check'])
+        run('ink-history-run',[output / 'ink-history-check'],30)
+    else:
+        run('webkit-compile',base + ['-parse-as-library',here / 'WebKitChecks.swift','-o',output / 'webkit-check'])
+        run('webkit-run',[output / 'webkit-check'],60)
+        run('vault-run',['node',here / 'vault-check.cjs'],30)
     ios = output / 'ios'
     ios.mkdir(exist_ok=True)
     iosbase = ['xcrun','swiftc','-sdk',iphone,'-target','arm64-apple-ios27.0','-swift-version','5',
@@ -78,6 +94,13 @@ try:
                 ['IPadAudioSession','IPadAudioLeaseState','IPadAudioLeaseCoordinator']]
     sources += [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
     run('ios-typecheck',iosbase + ['-parse-as-library','-I',ios,'-typecheck',*sources])
+    if review_fix:
+        run('native-mode-typecheck',iosbase + ['-D','DEBUG','-D','CANVAS_MODE_LIFETIME_CHECK','-parse-as-library','-I',ios,
+            '-typecheck',*sources,native])
+        frameworks = Path(env['DEVELOPER_DIR']) / 'Platforms/iPhoneOS.platform/Developer/Library/Frameworks'
+        swift_tests = frameworks.parent.parent / 'usr/lib'
+        run('ui-tests-typecheck',iosbase + ['-parse-as-library','-F',frameworks,'-I',swift_tests,
+            '-typecheck',ui_tests])
     run('project-format',['plutil','-lint',root / 'iOSClient/Sill.xcodeproj/project.pbxproj',
         root / 'Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj'])
 except Exception as error:
@@ -88,5 +111,6 @@ if hashes != after:
     status = 1
 (output / 'result.json').write_text(json.dumps(dict(results=results,inputHashes=hashes,
     inputsUnchanged=hashes == after,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
-    realVaultTouched=False,deviceExecuted=False,sharedHostChanged=False,exitCode=status),indent=2) + '\n')
+    realVaultTouched=False,deviceExecuted=False,nativeModeExecuted=False,sharedHostChanged=False,
+    reviewFix=review_fix,exitCode=status),indent=2) + '\n')
 sys.exit(status)
