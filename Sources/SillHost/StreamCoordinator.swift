@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import ApplicationServices
 import Network
 import ScreenCaptureKit
 import StreamProtocol
@@ -1259,12 +1260,26 @@ package final class StreamCoordinator {
         guard let app = NSWorkspace.shared.frontmostApplication, let bundleID = app.bundleIdentifier,
               !WindowCatalog.isPrivateApplication(bundleID) else { return nil }
         let deadline = ProcessInfo.processInfo.systemUptime + 0.25
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(application, 0.05)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        let element = focused as! AXUIElement
+        AXUIElementSetMessagingTimeout(element, 0.05)
+        guard WindowSizer.hasKeyboardFocus(element, pid: app.processIdentifier),
+              let frame = WindowSizer.frame(of: element) else { return nil }
+        var rawTitle: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &rawTitle)
+        let title = rawTitle as? String
         var matches: [UInt32] = []
         for info in catalog.infos where info.bundleID == bundleID {
             guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
             guard let window = catalog.window(id: info.id), window.owningApplication?.processID == app.processIdentifier,
-                  let element = sizer.element(for: window, input: true),
-                  WindowSizer.hasKeyboardFocus(element, pid: app.processIdentifier) else { continue }
+                  let bounds = Self.liveBounds(of: info.id),
+                  abs(frame.minX - bounds.minX) <= 4, abs(frame.minY - bounds.minY) <= 4,
+                  abs(frame.width - bounds.width) <= 4, abs(frame.height - bounds.height) <= 4,
+                  title == nil || title!.isEmpty || info.title == title else { continue }
             matches.append(info.id)
         }
         return matches.count == 1 ? .window(matches[0]) : nil

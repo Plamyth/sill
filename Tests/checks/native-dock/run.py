@@ -159,6 +159,8 @@ handle = host[handle_start:handle_end].replace("private func", "func") + """    
 """
 admission = r'''
 import Foundation
+import CoreFoundation
+import CoreGraphics
 import StreamProtocol
 final class NWConnection {
     enum State { case ready, cancelled }
@@ -192,7 +194,20 @@ struct NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication
 struct WindowCatalog { static func isPrivateApplication(_ id: String) -> Bool { false } }
 struct Window { let id: UInt32; var owningApplication: Owner? { Owner() }; struct Owner { let processID: Int32 = 42 } }
 struct Sizer { func element(for window: Window, input: Bool) -> UInt32? { window.id } }
-struct WindowSizer { static func hasKeyboardFocus(_ element: UInt32, pid: Int32) -> Bool { element == 17 } }
+typealias AXUIElement = NSNumber
+let kAXFocusedWindowAttribute = "focusedWindow", kAXTitleAttribute = "title"
+enum AXError { case success }
+func AXUIElementCreateApplication(_ pid: Int32) -> AXUIElement { NSNumber(value: pid) }
+func AXUIElementSetMessagingTimeout(_ element: AXUIElement, _ timeout: Float) {}
+func AXUIElementGetTypeID() -> CFTypeID { CFNumberGetTypeID() }
+func AXUIElementCopyAttributeValue(_ element: AXUIElement, _ name: CFString, _ result: inout CFTypeRef?) -> AXError {
+    result = (name as String) == kAXFocusedWindowAttribute ? NSNumber(value: 123) : "focused" as NSString
+    return .success
+}
+struct WindowSizer {
+    static func hasKeyboardFocus(_ element: AXUIElement, pid: Int32) -> Bool { element.intValue == 123 }
+    static func frame(of element: AXUIElement) -> CGRect? { CGRect(x: 0, y: 0, width: 100, height: 100) }
+}
 final class Mic { enum Phase { case off, cleanupFailed }; var phase = Phase.off }
 final class Catalog {
     func window(id: UInt32) -> Window? { Window(id: id) }
@@ -209,6 +224,7 @@ final class Catalog {
     var pendingDockSelection: (StreamMessage, NWConnection, UInt64)?
     var dockArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
     let microphoneReceiver = Mic(), sizer = Sizer()
+    static func liveBounds(of id: UInt32) -> CGRect? { CGRect(x: 0, y: 0, width: 100, height: 100) }
     var inputFence = Fence()
     var connections: [ObjectIdentifier: NWConnection] = [:]
     var routes: [ObjectIdentifier: Route] = [:]
