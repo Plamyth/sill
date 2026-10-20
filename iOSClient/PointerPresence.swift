@@ -35,7 +35,7 @@ struct PointerPresence: Equatable {
     /// Who moved the pointer last: this device, or the Mac or another device.
     enum Control: Equatable { case here, elsewhere }
     /// What drew this device's own pointer.
-    enum Origin: Equatable { case trackpad, pencil, none }
+    enum Origin: Equatable { case trackpad, pencil, spatial, none }
 
     /// A new session: the Mac has the pointer until this device's first input (Q6).
     var control: Control = .elsewhere
@@ -78,6 +78,8 @@ struct PointerPresence: Equatable {
                 return own
             case .pencil:
                 return pencilShowsPointer ? own : nil
+            case .spatial:
+                return own
             case .none:
                 return nil
             }

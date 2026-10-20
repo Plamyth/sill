@@ -15,8 +15,14 @@ final class VisionInputSession: ObservableObject {
         let base: VisionViewport
         let anchor: CGPoint
         var time: TimeInterval
+        var largestChange: CGFloat = 0
     }
     private var magnification: Magnification?
+    private struct Rotation {
+        var degrees: Double
+        var time: TimeInterval
+    }
+    private var rotation: Rotation?
     var allowed = false {
         didSet { if oldValue && !allowed { releaseAll() } }
     }
@@ -72,7 +78,7 @@ final class VisionInputSession: ObservableObject {
     func spatial(_ samples: [VisionPointer.Sample], geometry: VisionPointer.Geometry, revision: UUID) {
         guard revision == gestureRevision, self.geometry == geometry else { return }
         guard canSend else { releaseAll(); return }
-        guard magnification == nil else { return }
+        guard magnification == nil, rotation == nil else { return }
         momentum.stop()
         let first = pointer.isIdle
         let events = pointer.receive(samples, geometry: geometry, viewport: viewport, modifiers: latched)
@@ -94,16 +100,35 @@ final class VisionInputSession: ObservableObject {
         }
         guard let zoom = magnification, time >= zoom.time else { return }
         magnification?.time = time
+        magnification?.largestChange = max(zoom.largestChange, abs(factor - 1))
         if let next = zoom.base.magnified(by: factor, at: zoom.anchor, in: geometry) { viewport = next }
     }
 
-    func finishGesture(revision: UUID, allowMomentum: Bool = false) {
+    func rotate(_ degrees: Double, at anchor: CGPoint, time: TimeInterval, geometry: VisionPointer.Geometry, revision: UUID) {
+        guard revision == gestureRevision, self.geometry == geometry, canSend else { return }
+        guard viewport.point(anchor, in: geometry) != nil else { return }
+        guard degrees.isFinite, time.isFinite, time >= (rotation?.time ?? -.infinity) else { return }
+        if rotation == nil {
+            momentum.stop()
+            pointer.cancel().forEach { client?.sendInput($0) }
+            consumeLatch()
+        }
+        rotation = Rotation(degrees: degrees, time: time)
+    }
+
+    func finishGesture(revision: UUID, completed: Bool = false) {
         guard revision == gestureRevision else { return }
-        let flick = allowMomentum ? pointer.flick : nil
+        let flick = completed ? pointer.flick : nil
+        let turn = completed && (magnification?.largestChange ?? 0) <= 0.08 ? rotation?.degrees : nil
+        let baseViewport = magnification?.base
         let events = cancelPointer()
         if canSend {
             events.forEach { client?.sendInput($0) }
-            if let flick, let geometry { startMomentum(flick, geometry: geometry) }
+            if let turn, abs(turn) >= 25, client?.active == .desktop {
+                if let baseViewport { viewport = baseViewport }
+                KeyChord.press(turn > 0 ? VisionRemoteKey.right.rawValue : VisionRemoteKey.left.rawValue,
+                               with: .control).forEach { client?.sendInput($0) }
+            } else if let flick, let geometry { startMomentum(flick, geometry: geometry) }
         }
         else if !events.isEmpty { client?.cancelVisionInputs() }
     }
@@ -124,6 +149,7 @@ final class VisionInputSession: ObservableObject {
         momentum.stop()
         gestureRevision = UUID()
         magnification = nil
+        rotation = nil
         let releases = pointer.cancel()
         pointer = VisionPointer()
         return releases

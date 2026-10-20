@@ -3,9 +3,16 @@ from pathlib import Path
 import unittest
 
 from extract import ROOT, block, fixture
+from swift_platform import select_platform
 
 
 class ExtractionContract(unittest.TestCase):
+    def test_simulator_debug_boundary(self):
+        source = '#if DEBUG && targetEnvironment(simulator)\nsimulator\n#else\nproduction\n#endif\n'
+        for debug in [False, True]:
+            for simulator in [False, True]:
+                self.assertEqual(select_platform(source, vision=True, debug=debug, simulator=simulator),
+                                 'simulator\n' if debug and simulator else 'production\n')
     def test_worktree_anchor(self):
         self.assertEqual(ROOT, Path(__file__).resolve().parents[3])
         self.assertTrue((ROOT / 'visionOSClient/VisionSpatialInput.swift').is_file())

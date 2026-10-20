@@ -47,6 +47,9 @@ final class StreamClient {
     // MOVING_STATE
     var lastInputAt = 0.0
     var notes: [InputEvent] = []
+    enum PointerOrigin { case spatial }
+    var pointerPoints: [CGPoint?] = []
+    func setOwnPointer(_ point: CGPoint?, from origin: PointerOrigin) { pointerPoints.append(point) }
     var completions = 0
     var retained: [(peer: NWConnection, header: StreamHeader, payload: Data)] = []
     func pointerNoteSent(_ event: InputEvent) { notes.append(event) }

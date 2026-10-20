@@ -156,7 +156,7 @@ struct VisionPointer {
                 let elapsed = sample.timestamp - contact.began
                 let moved = hypot(sample.location.x - contact.origin.x, sample.location.y - contact.origin.y) >= Self.movementThreshold
                 if moved {
-                    if elapsed < Self.holdDuration {
+                    if elapsed < Self.holdDuration || contact.modifiers.isEmpty {
                         guard let scroll = contact.scroll(to: sample.location, in: rect) else { events += cancel(); continue }
                         events += KeyChord.modifiersDown(contact.modifiers)
                             + [.scrollGesture(.began, x: contact.anchor.x, y: contact.anchor.y), scroll]

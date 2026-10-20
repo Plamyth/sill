@@ -27,15 +27,19 @@ struct VisionSpatialInput: View {
     var body: some View {
         Color.clear.contentShape(Rectangle())
             .accessibilityLabel("Mac 원격 화면")
-            .accessibilityHint("바라보고 짧게 집으면 클릭합니다. 집은 채 바로 움직이면 스크롤하고, 빠르게 움직여 놓으면 자연스럽게 감속합니다. 길게 집었다 놓으면 오른쪽 클릭, 길게 집은 뒤 움직이면 드래그합니다. 두 손 집기로 이 화면을 확대하거나 축소합니다.")
+            .accessibilityHint("바라보고 한 번 집으면 클릭, 빠르게 두 번 집으면 더블클릭합니다. 집고 유지했다 놓으면 오른쪽 클릭, 집은 채 움직이면 가로와 세로로 스크롤합니다. 두 손을 벌리거나 모으면 확대하거나 축소합니다. 두 손을 오른쪽이나 왼쪽으로 돌렸다 놓으면 Mac 데스크탑을 한 칸 전환합니다.")
             .gesture(SpatialEventGesture(coordinateSpace: .local)
-                .simultaneously(with: MagnifyGesture())
+                .simultaneously(with: MagnifyGesture().simultaneously(with: RotateGesture()))
                 .updating($recognizing) { _, state, _ in state = true }
                 .onChanged { value in
                     let ticket = revision ?? input.gestureRevision
                     revision = ticket
                     admit {
-                        if let zoom = value.second {
+                        if let turn = value.second?.second {
+                            input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
+                                         geometry: geometry, revision: ticket)
+                        }
+                        if let zoom = value.second?.first {
                             input.magnify(zoom.magnification, at: zoom.startLocation, time: zoom.time.timeIntervalSinceReferenceDate,
                                           geometry: geometry, revision: ticket)
                         }
@@ -47,14 +51,18 @@ struct VisionSpatialInput: View {
                 .onEnded { value in
                     guard let ticket = revision else { return }
                     admit {
-                        if let zoom = value.second {
+                        if let turn = value.second?.second {
+                            input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
+                                         geometry: geometry, revision: ticket)
+                        }
+                        if let zoom = value.second?.first {
                             input.magnify(zoom.magnification, at: zoom.startLocation, time: zoom.time.timeIntervalSinceReferenceDate,
                                           geometry: geometry, revision: ticket)
                         }
                         if let contacts = value.first {
                             input.spatial(contacts.compactMap { VisionPointer.Sample($0) }, geometry: geometry, revision: ticket)
                         }
-                        input.finishGesture(revision: ticket, allowMomentum: true)
+                        input.finishGesture(revision: ticket, completed: true)
                     }
                     revision = nil
                 })

@@ -69,9 +69,9 @@ check(feed(&pointer, [sample(5, 4.9, 800, 800, .ended)]).isEmpty, "cancelled ter
 _ = feed(&pointer, [sample(6, 5)])
 check(feed(&pointer, [sample(6, 5.1, 500, 500, .cancelled)]).isEmpty, "native cancelled pending pinch never clicks")
 var released = VisionPointer()
-_ = feed(&released, [sample(60, 0)])
+_ = feed(&released, [sample(60, 0)], modifiers: .command)
 _ = feed(&released, [sample(60, 0.7, 600, 700)])
-check(feed(&released, [sample(60, 0.8, 700, 800, .ended)]) == [.pointer(.move, x: 0.7, y: 0.8), .pointer(.leftUp, x: 0.7, y: 0.8)], "native drag terminal moves then releases exactly once")
+check(feed(&released, [sample(60, 0.8, 700, 800, .ended)]) == [.pointer(.move, x: 0.7, y: 0.8), .pointer(.leftUp, x: 0.7, y: 0.8)] + KeyChord.modifiersUp(.command), "modified drag terminal moves then releases exactly once")
 check(feed(&released, [sample(60, 0.9, 700, 800, .ended)]).isEmpty, "duplicate native drag terminal cannot release again")
 _ = feed(&released, [sample(61, 1)], modifiers: .option)
 _ = feed(&released, [sample(61, 1.7, 600, 700)])
@@ -91,11 +91,11 @@ for reversed in [false, true] {
 var held = VisionPointer()
 _ = feed(&held, [sample(20, 20)])
 _ = feed(&held, [sample(20, 20.7, 600, 700)])
-check(feed(&held, [sample(21, 20.8, 700, 500)]) == [.pointer(.leftUp, x: 0.6, y: 0.7)], "second hand releases held Mac button")
+check(feed(&held, [sample(21, 20.8, 700, 500)]) == [.scrollGesture(.ended, x: 0.5, y: 0.5)], "second hand ends scroll even after a held start")
 _ = feed(&held, [sample(20, 21, 600, 700, .ended), sample(21, 21, 700, 500, .ended)])
 _ = feed(&held, [sample(22, 22)])
 _ = feed(&held, [sample(22, 22.7, 600, 700)])
-check(feed(&held, [sample(22, .nan, 600, 700)]) == [.pointer(.leftUp, x: 0.6, y: 0.7)], "invalid timestamp releases live button and inhibits its tail")
+check(feed(&held, [sample(22, .nan, 600, 700)]) == [.scrollGesture(.ended, x: 0.5, y: 0.5)], "invalid timestamp ends live scroll and inhibits its tail")
 check(feed(&held, [sample(22, 23, 600, 700, .ended)]).isEmpty, "invalid sample cannot turn into a click later")
 var outside = VisionPointer()
 check(outside.receive([sample(30, 30, 60, 25)], geometry: fitted, viewport: viewport).isEmpty, "letterbox beginning is rejected")
@@ -167,10 +167,10 @@ for phase in [VisionPointer.Sample.Phase.ended, .cancelled] {
         "same batch retired ID cannot produce a later duplicate click after \(phase)")
 }
 var boundedDrag = VisionPointer()
-_ = boundedDrag.receive([sample(45, 0, 750, 250)], geometry: geometry, viewport: enlarged)
+_ = boundedDrag.receive([sample(45, 0, 750, 250)], geometry: geometry, viewport: enlarged, modifiers: .command)
 continuityCheck(boundedDrag.receive([sample(45, 0.8, 3000, -3000)], geometry: geometry, viewport: enlarged) ==
-    [.pointer(.leftDown, x: 0.75, y: 0.25), .pointer(.move, x: 1, y: 0)] &&
-    boundedDrag.cancel() == [.pointer(.leftUp, x: 1, y: 0)],
+    KeyChord.modifiersDown(.command) + [.pointer(.leftDown, x: 0.75, y: 0.25), .pointer(.move, x: 1, y: 0)] &&
+    boundedDrag.cancel() == [.pointer(.leftUp, x: 1, y: 0)] + KeyChord.modifiersUp(.command),
     "zoomed drag remains bounded by inverse transform")
 var interruptedScroll = VisionPointer()
 _ = interruptedScroll.receive([sample(46, 0, 750, 250)], geometry: geometry, viewport: enlarged, modifiers: .shift)

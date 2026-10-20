@@ -42,7 +42,7 @@ emergency = block(workspace, 'Button("누른 입력 해제")')
 controls = block(workspace, 'private var controls: some View')
 check('emergency release remains outside disabled controls with window ownership', 'withWindowOwnership { input.releaseAll() }' in emergency and emergency not in controls and '.disabled(!input.canSend || draftShown)' in controls)
 check('no native input mode state picker or callers remain', all(token not in workspace + session + pointer for token in ['VisionPointer.Mode', 'var mode =', 'enum Mode', 'mode: mode', 'Picker("조작"', 'input.tap(', 'input.drag(', 'input.endGesture(']))
-check('native gesture adapter replaces exclusive tap drag', 'VisionSpatialInput(input: input' in workspace and 'SpatialTapGesture' not in workspace and 'DragGesture' not in workspace and '.simultaneously(with: MagnifyGesture())' in spatial)
+check('native gesture adapter replaces exclusive tap drag', 'VisionSpatialInput(input: input' in workspace and 'SpatialTapGesture' not in workspace and 'DragGesture' not in workspace and '.simultaneously(with: MagnifyGesture().simultaneously(with: RotateGesture()))' in spatial)
 adapter = block(spatial, 'extension VisionPointer.Sample {')
 check('native contact mapping retains id timestamp local location and cancellation', all(token in adapter for token in ['AnyHashable(event.id)', 'timestamp: event.timestamp', 'location: event.location', 'case .cancelled: phase = .cancelled', '@unknown default: phase = .cancelled']))
 check('native contact kinds refuse hover pointer', 'case .directPinch, .indirectPinch, .touch: break' in adapter and 'default: return nil' in adapter)
@@ -53,7 +53,11 @@ check('no gaze polling grid or new tracking permission', all(token not in spatia
 project = plistlib.loads((ROOT / 'SillVision.xcodeproj/project.pbxproj').read_bytes())['objects']
 refs = {key for key, value in project.items() if value.get('isa') == 'PBXFileReference' and value.get('path') == 'visionOSClient/VisionSpatialInput.swift'}
 builds = {key for key, value in project.items() if value.get('isa') == 'PBXBuildFile' and value.get('fileRef') in refs}
-check('generated project builds native adapter exactly once', len(refs) == len(builds) == 1 and sum(key in value.get('files', []) for value in project.values() if value.get('isa') == 'PBXSourcesBuildPhase' for key in builds) == 1 and "'VisionSpatialInput'" in (ROOT / 'Scripts/make-vision-project.py').read_text())
+app_targets = [value for value in project.values() if value.get('isa') == 'PBXNativeTarget' and value.get('productType') == 'com.apple.product-type.application']
+check('generated project builds native adapter exactly once per app target', len(refs) == len(builds) == 1 and
+      {target.get('name') for target in app_targets} == {'SillVision', 'SillVisionReleaseTest'} and
+      all(sum(key in project[phase].get('files', []) for phase in target.get('buildPhases', []) for key in builds) == 1
+          for target in app_targets) and "'VisionSpatialInput'" in (ROOT / 'Scripts/make-vision-project.py').read_text())
 check('move and teardown await fresh catalog', all('visionInputBinding = .awaitingCatalog' in block(stream, marker) for marker in ['private func finishMoveAfterInputDrain(', 'func tearDown(status:']))
 files, manifest = fixture()
 check('fixture substitutions resolved', all(marker not in files['Client.swift'] for marker in ['// EXTRACTED', '// OVERLAY_DRAIN', '// MOVE_INPUT_RESET', '// BINDING_STATE']))

@@ -25,6 +25,12 @@ func presence(_ control: P.Control, mac: CGPoint? = nil, inside: Bool = false, o
 }
 let macAt = pt(0.40, 0.30), ownAt = pt(0.62, 0.55)
 let layouts = [(false, "landscape"), (true, "portrait")]
+for (portrait, layout) in layouts {
+    check(presence(.here, own: ownAt, origin: .spatial, portrait: portrait).sprite(now: 0) == ownAt,
+          "Vision spatial input keeps its cursor visible in \(layout)")
+    check(presence(.here, own: ownAt, origin: .spatial, portrait: portrait, streaming: false).sprite(now: 0) == nil,
+          "Vision spatial cursor disappears when streaming ends")
+}
 
 // The Mac (or another device) moved it last: the Mac's pointer while it is over the stream, in every
 // layout, whatever drew this device's own pointer before.

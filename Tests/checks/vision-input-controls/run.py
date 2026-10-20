@@ -206,12 +206,12 @@ def callback_mutants(source):
         return source.replace(body, transform(body), 1)
 
     def contacts_first(body):
-        zoom = block(body, 'if let zoom = value.second {')
+        zoom = block(body, 'if let zoom = value.second?.first {')
         contacts = block(body, 'if let contacts = value.first {')
         return body.replace(zoom, 'ZOOM_BODY', 1).replace(contacts, zoom, 1).replace('ZOOM_BODY', contacts, 1)
 
     def finish_first(body):
-        finish = 'input.finishGesture(revision: ticket, allowMomentum: true)'
+        finish = 'input.finishGesture(revision: ticket, completed: true)'
         assert body.count(finish) == 1
         return body.replace(finish, '', 1).replace('admit {', 'admit {\n' + finish, 1)
 

@@ -3978,15 +3978,24 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         guard !visionDisplaySelection.inputBlocked, visionMovePreparation == nil, let expected = connection else { return }
         guard let input = visionInputBinding.capture(event), let permit = visionInputPermit else { return }
+        let binding = visionInputBinding
         lastInputAt = ProcessInfo.processInfo.systemUptime
         let bytes = Self.visionInputBytes(input)
         queue.async { [weak self] in
             guard let self else { return }
-            let accepted = self.link.send(bytes, onlyOn: expected, permit: permit) { [weak self] in
+            _ = self.link.send(bytes, onlyOn: expected, permit: permit) { [weak self] in
                 self?.visionInputDebt.record(input, on: expected)
+                self?.pointerNoteSent(event)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.connection === expected, self.visionInputPermit == permit,
+                          self.visionInputBinding == binding else { return }
+                    switch event {
+                    case .pointer(_, let x, let y), .scroll(let x, let y, _, _), .scrollGesture(_, let x, let y):
+                        self.setOwnPointer(CGPoint(x: x, y: y), from: .spatial)
+                    case .text, .key: break
+                    }
+                }
             }
-            guard accepted else { return }
-            self.pointerNoteSent(event)
         }
         return
         #else

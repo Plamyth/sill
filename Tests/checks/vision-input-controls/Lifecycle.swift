@@ -7,8 +7,18 @@ struct GestureValue {
         let startLocation: CGPoint
         let time: Date
     }
+    struct Rotation {
+        struct Angle { let degrees: Double }
+        let rotation: Angle
+        let time: Date
+        var startLocation: CGPoint = CGPoint(x: 500, y: 500)
+    }
+    struct Transform {
+        var first: Magnification?
+        var second: Rotation?
+    }
     var first: [SpatialEventCollection.Event]?
-    var second: Magnification?
+    var second: Transform?
 }
 
 final class CallbackState {

@@ -28,6 +28,35 @@ func waitMain(_ done: () -> Bool) {
     check(done(), "bounded main completion")
 }
 let p = CGPoint(x: 0.3, y: 0.4), q = CGPoint(x: 0.6, y: 0.7)
+do {
+    let feedback = StreamClient(), original = NWConnection()
+    feedback.connection = original
+    seedLegacy(feedback, original)
+    feedback.link.hold(original)
+    feedback.sendInput(.pointer(.move, x: p.x, y: p.y)); feedback.queue.sync {}
+    var drained = false
+    DispatchQueue.main.async { drained = true }
+    waitMain { drained }
+    check(feedback.pointerPoints.isEmpty, "queued spatial input cannot draw a cursor before transport submission")
+    _ = feedback.link.unhold(original)
+    waitMain { feedback.pointerPoints.count == 1 }
+    check(feedback.pointerPoints.last! == p, "submitted spatial input shows the exact target")
+    feedback.sendInput(.pointer(.move, x: q.x, y: q.y)); feedback.queue.sync {}
+    feedback.connection = NWConnection()
+    drained = false
+    DispatchQueue.main.async { drained = true }
+    waitMain { drained }
+    check(feedback.pointerPoints.count == 1, "late spatial feedback cannot cross a connection change")
+    let replacement = feedback.connection!
+    seedLegacy(feedback, replacement)
+    feedback.sendInput(.pointer(.move, x: q.x, y: q.y)); feedback.queue.sync {}
+    _ = feedback.catalog(WindowList(macName: "검사 Mac", windows: [], active: .desktop,
+                                   inputGeneration: "changed"), from: replacement)
+    drained = false
+    DispatchQueue.main.async { drained = true }
+    waitMain { drained }
+    check(feedback.pointerPoints.count == 1, "late spatial feedback cannot cross a source generation change")
+}
 let testGeometry = VisionPointer.Geometry(bounds: CGRect(x: 0, y: 0, width: 1000, height: 1000), video: CGSize(width: 1000, height: 1000))
 struct TestPinch { let id: UUID; let revision: UUID }
 var testPinches: [ObjectIdentifier: TestPinch] = [:]
@@ -147,7 +176,7 @@ owed.link.hold(owedPeer)
 owedInput.testEndGesture(); owed.queue.sync {}
 check(events(owedPeer).count == 3, "hold queues terminal up after transmitted down")
 owedInput.releaseAll(); owed.queue.sync {}
-check(events(owedPeer).last == .pointer(.leftUp, x: q.x, y: q.y), "emergency retains release debt after local gesture already ended")
+check(events(owedPeer).last == .scrollGesture(.ended, x: p.x, y: p.y), "emergency retains release debt after local gesture already ended")
 _ = owed.link.unhold(owedPeer)
 check(events(owedPeer).count == 4, "cancelled queued release cannot replay after unhold")
 let fresh = NWConnection(); owed.moving = .init(connection: fresh); owed.finish(fresh)
@@ -252,7 +281,7 @@ scoped.link.hold(scopedPeer)
 scopedInput.testEndGesture(); scoped.queue.sync {}
 let pendingUp = inputs(scopedPeer).count
 _ = scoped.catalog(catalog(sourceA, "A2"), from: scopedPeer); scoped.queue.sync {}
-check(inputs(scopedPeer).count == pendingUp + 1 && inputs(scopedPeer).last?.generation == "B1" && events(scopedPeer).last == .pointer(.leftUp, x: q.x, y: q.y), "catalog releases transmitted down whose terminal was queued")
+check(inputs(scopedPeer).count == pendingUp + 1 && inputs(scopedPeer).last?.generation == "B1" && events(scopedPeer).last == .scrollGesture(.ended, x: p.x, y: p.y), "catalog releases transmitted scroll whose terminal was queued")
 _ = scoped.link.unhold(scopedPeer)
 check(inputs(scopedPeer).count == pendingUp + 1, "old queued source release cannot replay")
 scopedInput.testEndGesture()
@@ -421,7 +450,7 @@ gestureClient.queue.sync {}
 let beforeLoss = events(gesturePeer).count
 gestureInput.allowed = false
 gestureClient.queue.sync {}
-check(events(gesturePeer).count == beforeLoss + 1 && events(gesturePeer).last == .pointer(.leftUp, x: 0.6, y: 0.7), "admission loss releases live native drag through actual send debt")
+check(events(gesturePeer).count == beforeLoss + 1 && events(gesturePeer).last == .scrollGesture(.ended, x: 0.5, y: 0.5), "admission loss ends live native scroll through actual send debt")
 gestureInput.allowed = true
 gestureInput.spatial([nativeSample(4, 4, 700, 800)], geometry: testGeometry, revision: cancelledTicket)
 gestureInput.spatial([nativeSample(4, 4.1, 700, 800, .ended)], geometry: testGeometry, revision: cancelledTicket)
@@ -493,9 +522,9 @@ continuityInput.spatial([nativeSample(51, 2.8, 950, 650), nativeSample(51, 2.7, 
 continuityInput.spatial([nativeSample(51, 2.9, 3000, 3000, .cancelled)], geometry: testGeometry, revision: dragTicket)
 continuityClient.queue.sync {}
 check(Array(events(continuityPeer).dropFirst(beforeOrderedDrag)) == [
-    .pointer(.move, x: 0.75, y: 0.25), .pointer(.leftDown, x: 0.75, y: 0.25),
-    .pointer(.move, x: 0.85, y: 0.45), .pointer(.leftUp, x: 0.85, y: 0.45)],
-    "actual session drag and cancellation retain newest bounded inverse target within a batch")
+    .pointer(.move, x: 0.75, y: 0.25), .scrollGesture(.began, x: 0.75, y: 0.25),
+    .scroll(x: 0.75, y: 0.25, dx: 0.2, dy: 0.4), .scrollGesture(.ended, x: 0.75, y: 0.25)],
+    "actual session held scroll and cancellation retain original inverse anchor within a batch")
 runLifecycleTests()
 print("RESULT_ASSERTIONS \(checks)")
 
