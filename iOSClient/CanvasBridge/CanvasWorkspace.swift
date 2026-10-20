@@ -20,6 +20,8 @@ struct CanvasWorkspace: View {
     @State private var importOpen = false
     @State private var inspectorOpen = false
     @State private var pendingNodeEdit: (sceneID: UUID, node: CanvasNode)?
+    @State private var proposalSelection = NSRange(location:0,length:0)
+    @State private var proposalInputBusy = false
     @State private var handwritingSearchOpen = false
     @State private var handwritingQuery = ""
     @State private var dictationOpen = false
@@ -812,7 +814,12 @@ struct CanvasWorkspace: View {
         NavigationStack {
             Form {
                 Text("글자 내용을 수정합니다. 원본 획과 출처는 유지됩니다.")
-                TextField("내용 확인",text:$store.proposalText,axis:.vertical)
+                VaultMarkdownEditor(text:$store.proposalText,selection:$proposalSelection,
+                                    identifier:"canvasNodeTextEditor",label:"요소 글자 편집기",
+                                    nodeEditing:true,inputBusy:$proposalInputBusy,
+                                    editSession:{ store.proposalInputSessionID })
+                    .id(store.proposalInputSessionID)
+                    .frame(minHeight:240)
                 if !store.proposalIsCurrent {
                     Text("다른 곳에서 요소나 장면이 바뀌었습니다. 입력은 유지하며 덮어쓰지 않습니다. 닫고 최신 요소를 다시 열어 주세요.")
                         .foregroundStyle(.orange)
@@ -821,13 +828,23 @@ struct CanvasWorkspace: View {
             .navigationTitle("구조 요소 확인")
             .toolbar {
                 ToolbarItem(placement:.confirmationAction) {
-                    Button("확정") { store.confirmProposal() }.disabled(!store.proposalIsCurrent)
+                    Button("확정") { store.confirmProposal() }
+                        .disabled(!store.proposalIsCurrent || proposalInputBusy)
                 }
                 ToolbarItem(placement:.cancellationAction) {
                     Button("나중에") { store.proposedNode = nil }
                 }
             }
         }
+        .onAppear {
+            proposalSelection = NSRange(location:0,length:0)
+            proposalInputBusy = false
+        }
+        .onChange(of:store.proposedNode) { _,_ in
+            proposalSelection = NSRange(location:0,length:0)
+            proposalInputBusy = false
+        }
+        .onDisappear { proposalInputBusy = false }
     }
 
     private var dictationSheet: some View {
@@ -965,11 +982,14 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
     @Binding var selection: NSRange
     var identifier = "obsidianMarkdownEditor"
     var label = "Obsidian Markdown 원본 편집기"
+    var nodeEditing = false
+    var inputBusy: Binding<Bool> = .constant(false)
+    var editSession: () -> UUID? = { nil }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView()
+        let view: UITextView = nodeEditing ? NodeTextView() : UITextView()
         view.delegate = context.coordinator
         view.font = UIFontMetrics.default.scaledFont(for:.monospacedSystemFont(ofSize:17,weight:.regular))
         view.adjustsFontForContentSizeCategory = true
@@ -979,39 +999,160 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
         view.smartInsertDeleteType = .no
         view.accessibilityLabel = label
         view.accessibilityIdentifier = identifier
+        if let nodeView = view as? NodeTextView {
+            context.coordinator.configure(nodeView)
+        }
         return view
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
         view.isEditable = context.environment.isEnabled
-        guard view.markedTextRange == nil else { return }
+        guard view.markedTextRange == nil, !context.coordinator.scribbling else { return }
         context.coordinator.updating = true
         defer { context.coordinator.updating = false }
-        if !view.text.utf8.elementsEqual(text.utf8) { view.text = text }
+        if !view.text.utf8.elementsEqual(text.utf8) {
+            view.text = text
+            if nodeEditing { view.undoManager?.removeAllActions() }
+        }
         let start = max(0,min(selection.location,text.utf16.count))
         let range = NSRange(location:start,length:max(0,min(selection.length,text.utf16.count - start)))
         if view.selectedRange != range {
             view.selectedRange = range
             view.scrollRangeToVisible(range)
         }
+        context.coordinator.refreshControls(view)
+    }
+
+    static func dismantleUIView(_ view: UITextView, coordinator: Coordinator) {
+        guard let view = view as? NodeTextView else { return }
+        coordinator.retire(view)
+        view.inputStateChanged = nil
+        view.delegate = nil
+        view.undoManager?.removeAllActions()
+    }
+
+    final class NodeTextView: UITextView {
+        private let textUndoManager = UndoManager()
+        override var undoManager: UndoManager? { textUndoManager }
+        var inputStateChanged: (() -> Void)?
+        override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+            super.setMarkedText(markedText,selectedRange:selectedRange)
+            inputStateChanged?()
+        }
+        override func unmarkText() {
+            super.unmarkText()
+            inputStateChanged?()
+        }
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: VaultMarkdownEditor
         var updating = false
-        init(_ parent: VaultMarkdownEditor) { self.parent = parent }
+        var scribbling = false
+        private let session: UUID?
+        private var active = true
+        private weak var editor: UITextView?
+        private var erase: UIBarButtonItem?
+        private var undo: UIBarButtonItem?
+        private var redo: UIBarButtonItem?
+        init(_ parent: VaultMarkdownEditor) {
+            self.parent = parent
+            session = parent.editSession()
+        }
+        private var isCurrent: Bool {
+            active && (!parent.nodeEditing || session != nil && session == parent.editSession())
+        }
+        func retire(_ view: UITextView) {
+            active = false
+            editor = nil
+            #if !os(visionOS)
+            for interaction in view.interactions where interaction is UIScribbleInteraction {
+                view.removeInteraction(interaction)
+            }
+            #endif
+        }
+        func configure(_ view: NodeTextView) {
+            editor = view
+            view.undoManager?.removeAllActions()
+            view.inputStateChanged = { [weak self, weak view] in
+                guard let self, let view else { return }
+                self.textViewDidChange(view)
+            }
+            #if !os(visionOS)
+            view.addInteraction(UIScribbleInteraction(delegate:self))
+            #endif
+            let toolbar = UIToolbar()
+            let erase = UIBarButtonItem(title:"선택 글자 지우기",style:.plain,target:self,action:#selector(eraseSelection))
+            let undo = UIBarButtonItem(title:"실행 취소",style:.plain,target:self,action:#selector(undoEdit))
+            let redo = UIBarButtonItem(title:"다시 실행",style:.plain,target:self,action:#selector(redoEdit))
+            self.erase = erase
+            self.undo = undo
+            self.redo = redo
+            toolbar.items = [undo,redo,UIBarButtonItem(systemItem:.flexibleSpace),erase]
+            toolbar.sizeToFit()
+            view.inputAccessoryView = toolbar
+            refreshControls(view)
+        }
+        func refreshControls(_ view: UITextView) {
+            let ready = isCurrent && view.isEditable && view.markedTextRange == nil && !scribbling
+            erase?.isEnabled = ready && canvasSelectedCharacterRange(in:view.text,selection:view.selectedRange) != nil
+            undo?.isEnabled = ready && view.undoManager?.canUndo == true
+            redo?.isEnabled = ready && view.undoManager?.canRedo == true
+        }
+        private func publishInputState(_ view: UITextView) {
+            guard isCurrent else { return }
+            parent.inputBusy.wrappedValue = view.markedTextRange != nil || scribbling
+            refreshControls(view)
+        }
+        @objc private func eraseSelection() {
+            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling,
+                  let range = canvasSelectedCharacterRange(in:editor.text,selection:editor.selectedRange),
+                  let start = editor.position(from:editor.beginningOfDocument,offset:range.location),
+                  let end = editor.position(from:start,offset:range.length),
+                  let selected = editor.textRange(from:start,to:end) else { return }
+            editor.selectedTextRange = selected
+            editor.deleteBackward()
+            textViewDidChange(editor)
+        }
+        @objc private func undoEdit() {
+            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling else { return }
+            editor.undoManager?.undo()
+            textViewDidChange(editor)
+        }
+        @objc private func redoEdit() {
+            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling else { return }
+            editor.undoManager?.redo()
+            textViewDidChange(editor)
+        }
         func textViewDidChange(_ view: UITextView) {
-            guard !updating else { return }
+            guard !updating, isCurrent else { return }
             parent.text = view.text
             parent.selection = view.selectedRange
+            if parent.nodeEditing { publishInputState(view) }
         }
         func textViewDidChangeSelection(_ view: UITextView) {
-            guard !updating else { return }
+            guard !updating, isCurrent else { return }
             parent.selection = view.selectedRange
+            if parent.nodeEditing { publishInputState(view) }
         }
     }
 }
+
+#if !os(visionOS)
+extension VaultMarkdownEditor.Coordinator: UIScribbleInteractionDelegate {
+    func scribbleInteractionWillBeginWriting(_ interaction: UIScribbleInteraction) {
+        guard isCurrent else { return }
+        scribbling = true
+        if let editor { publishInputState(editor) }
+    }
+    func scribbleInteractionDidFinishWriting(_ interaction: UIScribbleInteraction) {
+        guard isCurrent else { return }
+        scribbling = false
+        if let editor { textViewDidChange(editor) }
+    }
+}
+#endif
 
 private struct CanvasInkHistoryButtons: View {
     @ObservedObject var history: CanvasInkHistory

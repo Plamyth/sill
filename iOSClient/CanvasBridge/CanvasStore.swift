@@ -151,7 +151,7 @@ final class CanvasStore: ObservableObject {
             if oldValue != proposedNode {
                 proposalContext = proposedNode.flatMap { id in
                     scene.nodes.first(where:{ $0.id == id }).map {
-                        (sceneID:scene.id,generation:noteSceneGeneration,node:$0)
+                        (sessionID:UUID(),sceneID:scene.id,generation:noteSceneGeneration,node:$0)
                     }
                 }
             }
@@ -181,7 +181,8 @@ final class CanvasStore: ObservableObject {
     private var linkKind: CanvasLink.Kind = .general
     private var saveTask: Task<Void,Never>?
     private var handwritingRequest: UUID?
-    private var proposalContext: (sceneID: UUID, generation: UInt64, node: CanvasNode)?
+    private var proposalContext: (sessionID: UUID, sceneID: UUID, generation: UInt64, node: CanvasNode)?
+    var proposalInputSessionID: UUID? { proposalContext?.sessionID }
     @Published private(set) var vaultNote: VaultNoteSnapshot?
     @Published var vaultDraft = "" {
         didSet { noteEditGeneration &+= 1 }

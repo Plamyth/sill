@@ -3,6 +3,22 @@ import CryptoKit
 import Darwin
 import CoreGraphics
 
+func canvasSelectedCharacterRange(in text: String, selection: NSRange) -> NSRange? {
+    let count = text.utf16.count
+    guard selection.location >= 0, selection.location < count, selection.length > 0,
+          selection.length <= count - selection.location else { return nil }
+    let end = selection.location + selection.length
+    var offset = 0
+    var lower: Int?
+    for character in text {
+        let next = offset + String(character).utf16.count
+        if lower == nil, next > selection.location { lower = offset }
+        if next >= end, let lower { return NSRange(location:lower,length:next - lower) }
+        offset = next
+    }
+    return nil
+}
+
 struct CanvasPoint: Codable, Equatable {
     var x: Double
     var y: Double

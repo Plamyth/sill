@@ -12,7 +12,41 @@ import PencilKit
     func finish(_ text: String?) { continuation!.resume(returning:text); continuation = nil }
 }
 
+func checkCanvasSelectedCharacterRanges(_ check: (Bool, String) -> Void) {
+    for character in ["👩🏽‍💻", "👍🏽", "🇰🇷", "한", "e\u{301}", "\r\n", "A"] {
+        let text = "앞" + character + "뒤"
+        let expected = NSRange(location:1,length:character.utf16.count)
+        for offset in 0..<character.utf16.count {
+            let selection = NSRange(location:1 + offset,length:1)
+            let range = canvasSelectedCharacterRange(in:text,selection:selection)
+            check(range == expected,"each selected UTF-16 unit expands to the whole Swift Character in \(character)")
+            if let range {
+                check((text as NSString).replacingCharacters(in:range,with:"") == "앞뒤",
+                      "selected character deletion leaves both neighbors intact in \(character)")
+            }
+        }
+        check(canvasSelectedCharacterRange(in:text,selection:expected) == expected,
+              "already complete character selection keeps its exact boundaries")
+    }
+    let joined = "a👩🏽‍💻e\u{301}z"
+    check(canvasSelectedCharacterRange(in:joined,selection:NSRange(location:2,length:8)) == NSRange(location:1,length:9),
+          "selection spanning partial emoji and accent expands both endpoints")
+    check(canvasSelectedCharacterRange(in:joined,selection:NSRange(location:0,length:joined.utf16.count)) == NSRange(location:0,length:joined.utf16.count),
+          "whole text selection remains valid")
+    for range in [NSRange(location:0,length:0), NSRange(location:joined.utf16.count,length:0),
+                  NSRange(location:joined.utf16.count,length:1), NSRange(location:-1,length:1),
+                  NSRange(location:0,length:-1), NSRange(location:NSNotFound,length:1),
+                  NSRange(location:1,length:Int.max), NSRange(location:Int.max,length:Int.max),
+                  NSRange(location:0,length:joined.utf16.count + 1)] {
+        check(canvasSelectedCharacterRange(in:joined,selection:range) == nil,
+              "collapsed, negative, outside and overflowing selections are refused: \(range)")
+    }
+    check(canvasSelectedCharacterRange(in:"",selection:NSRange(location:0,length:1)) == nil,
+          "empty text has no selected character to erase")
+}
+
 @MainActor func checkSelectedInk(_ check: (Bool, String) -> Void) async throws {
+    checkCanvasSelectedCharacterRanges(check)
     func stroke(_ x: CGFloat) -> PKStroke {
         let points = [CGPoint(x:x,y:20),CGPoint(x:x+20,y:50)].enumerated().map { index,point in
             PKStrokePoint(location:point,timeOffset:Double(index)*0.1,size:CGSize(width:3,height:3),
@@ -144,4 +178,23 @@ import PencilKit
     edit.proposedNode = nil
     edit.confirmProposal()
     check(edit.scene == beforeCancel,"cancelling a correction never changes canonical data")
+    edit.proposedNode = id
+    let firstEditSession = edit.proposalInputSessionID
+    check(firstEditSession != nil,"opening a proposal creates its input session synchronously")
+    edit.proposedNode = nil
+    check(edit.proposalInputSessionID == nil,"cancel invalidates input session before view teardown")
+    edit.proposedNode = id
+    check(edit.proposalInputSessionID != firstEditSession && edit.proposalInputSessionID != nil,
+          "reopening the same node never admits callbacks from the old input session")
+    let draft = "  앞👩🏽‍💻뒤 e\u{301}\n"
+    edit.proposalText = draft
+    if let range = canvasSelectedCharacterRange(in:draft,selection:NSRange(location:4,length:1)) {
+        edit.proposalText = (draft as NSString).replacingCharacters(in:range,with:"")
+    }
+    edit.confirmProposal()
+    check(edit.proposalInputSessionID == nil,"confirmation retires the editor session synchronously")
+    check(edit.scene.nodes[0].text.utf8.elementsEqual("  앞뒤 e\u{301}\n".utf8),
+          "production deletion range commits the exact remaining draft through proposal confirmation")
+    check(edit.scene.nodes[0].sourceStrokeIds == [a.id] && edit.drawing == beforeInk && edit.scene.nodes[1] == untouched,
+          "selected character correction retains original ink, source IDs and unrelated nodes")
 }
