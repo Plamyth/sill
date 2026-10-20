@@ -105,8 +105,11 @@ final class CanvasBridgeUITests: XCTestCase {
         for mode in ["다이어그램","나란히 보기","원본 그림","나란히 보기","다이어그램","원본 그림"] {
             app.buttons[mode].firstMatch.tap()
             if mode == "다이어그램" {
-                XCTAssertTrue(surface.waitForNonExistence(timeout:5))
-                XCTAssertTrue(node.waitForNonExistence(timeout:5))
+                // XCTest still includes accessibilityHidden elements in queries on iPadOS 27.
+                for element in [surface,node] {
+                    let hidden = XCTNSPredicateExpectation(predicate:NSPredicate(format:"hittable == false"),object:element)
+                    XCTAssertEqual(XCTWaiter.wait(for:[hidden],timeout:5),.completed)
+                }
                 XCTAssertTrue(app.webViews["canvasPeleDiagram"].waitForExistence(timeout:10))
             } else {
                 XCTAssertTrue(surface.waitForExistence(timeout:5))
