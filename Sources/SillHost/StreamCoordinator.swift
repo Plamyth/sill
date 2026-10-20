@@ -1666,7 +1666,7 @@ package final class StreamCoordinator {
     // Mac must show the picked window). A window staged on the virtual display never touches Mac
     // focus on select (a pick that falls back to the real window is regular mode), and neither do
     // the host's own restarts. On interaction, both modes do what a real click does: a click,
-    // keystroke or typed text into the streamed window first activates its app, because keys go to
+    // scroll, keystroke or typed text into the streamed window first activates its app, because keys go to
     // the active app's key window and a first click into an inactive app is otherwise eaten as
     // "activate". On the regular path the window is also raised when another window covers the
     // click or scroll point, so the event reaches it and it repaints; on the virtual display a
@@ -1767,15 +1767,13 @@ package final class StreamCoordinator {
         // arriving through a tap on the switcher). The event itself is still delivered, so no
         // key-up or button-up goes missing.
         guard !switching, case .window(let id) = active else { return }
-        // Scroll routes to the window under the cursor whatever the active app is: it only needs
-        // uncovering (regular path). Clicks, keys and text need the app active and the window key.
-        let needsFocus: Bool
+        // Scroll admission requires the same app and key-window focus as clicks and keys.
         switch event {
-        case .pointer(let action, _, _): guard action == .leftDown || action == .rightDown else { return }; needsFocus = true
-        case .scroll: needsFocus = false
-        case .scrollGesture(let phase, _, _): guard phase == .began else { return }; needsFocus = false
-        case .key(_, let down, _): guard down else { return }; needsFocus = true
-        case .text: needsFocus = true
+        case .pointer(let action, _, _): guard action == .leftDown || action == .rightDown else { return }
+        case .scroll: break
+        case .scrollGesture(let phase, _, _): guard phase == .began else { return }
+        case .key(_, let down, _): guard down else { return }
+        case .text: break
         }
         let now = CFAbsoluteTimeGetCurrent()
         guard now - lastRaiseCheck > 0.5 else { return }     // a burst of keys or scroll ticks is one check
@@ -1793,8 +1791,8 @@ package final class StreamCoordinator {
         // On the virtual display a cover is a stranger (a window left there by an earlier run):
         // move it off, then the click lands.
         if staged, covered { stage.evictForeignWindows() }
-        let notActive = needsFocus && Self.activePID(trustAppKit: appKitLoop) != pid
-        guard notActive || covered else { return }
+        let notActive = Self.activePID(trustAppKit: appKitLoop) != pid
+        guard notActive || covered || !inputTargetReady(event) else { return }
         // A failed activation must not stall every later interaction: one attempt per 2 s.
         guard now - lastActivationAt > 2 else { return }
         lastActivationAt = now
@@ -1810,9 +1808,9 @@ package final class StreamCoordinator {
         // One window lookup serves both.
         if answered {
             if staged, let element = stage.placement?.element {
-                if needsFocus { WindowSizer.makeKey(element) }
+                WindowSizer.makeKey(element)
             } else if let w = catalog.window(id: id), let element = sizer.element(for: w) {
-                if needsFocus { WindowSizer.makeKey(element) }
+                WindowSizer.makeKey(element)
                 if covered, WindowSizer.raise(element) { Stats.shared.bump("win.raised") }
             }
         }
@@ -1821,9 +1819,7 @@ package final class StreamCoordinator {
             // Release the queue after activation or the deadline; every delivery rechecks focus.
             let deadline = CFAbsoluteTimeGetCurrent() + Self.activationTimeout
             while CFAbsoluteTimeGetCurrent() < deadline {
-                let active = Self.activePID(trustAppKit: self.appKitLoop) == pid
-                let onTop = point.map { Self.topmostWindow(at: $0)?.id == id } ?? true
-                if active && onTop { break }
+                if answered && self.inputTargetReady(event) { break }
                 try? await Task.sleep(for: .milliseconds(20))
             }
             self.releaseHeldInput()
