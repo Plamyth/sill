@@ -95,7 +95,7 @@ final class CanvasBridgeUITests: XCTestCase {
         add(image)
     }
 
-    func testModeSwitchHidesOriginalInputAndAccessibility() throws {
+    func testModeSwitchDisablesHiddenOriginalAndRestoresIt() throws {
         let app = try app()
         let surface = app.descendants(matching:.any).matching(identifier:"canvasNavigationSurface").firstMatch
         let node = app.descendants(matching:.any).matching(identifier:"canvasNode-\(nodeID)").firstMatch
