@@ -9,13 +9,13 @@ import sys
 root = Path(__file__).resolve().parents[3]
 package, output = (Path(value).resolve() for value in sys.argv[1:3])
 output.mkdir(parents=True, exist_ok=False)
-files = [root / "Sources/SillHost" / name for name in ["LocalAudioRelayLaunch.swift", "LocalAudioRelayClosure.swift", "LocalAudioRelayMachO.swift"]]
+files = [root / "Sources/SillHost" / name for name in ["LocalAudioRelayLaunch.swift", "LocalAudioRelayClosure.swift", "LocalAudioRelayMachO.swift", "LocalAudioRelay.swift", "LocalAudioParticipants.swift", "AudioForwardingContract.swift"]]
 files.append(Path(__file__).with_name("ClosureMain.swift"))
 original = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
-relay = (root / "Sources/SillHost/LocalAudioRelay.swift").read_text()
-start = relay.index("struct LocalAudioRelayRuntimeExpectation {")
+relay = (root / "Sources/SillHost/RemoteAccess.swift").read_text()
+start = relay.index("struct AudioForwardingPairedDevice:")
 end = relay.index("\n}", start) + 2
-support = output / "RuntimeExpectation.swift"
+support = output / "PairedDevice.swift"
 support.write_text("import Foundation\n" + relay[start:end] + "\n")
 record = {"sourceHashes": original, "typeExcerptSHA256": hashlib.sha256(support.read_bytes()).hexdigest(),
           "installed": False, "audioOpened": False, "serverStarted": False, "canonicalSelfSignatureTested": False,
@@ -34,6 +34,10 @@ try:
         if (result.returncode == 0) != expected:
             raise RuntimeError("unexpected closure verification result")
     execute(package, True)
+    result = subprocess.run([str(output / "check"), str(package), "factory-rejection"], capture_output=True, text=True, timeout=30)
+    record["factoryOutsideCanonicalRefused"] = result.returncode == 0 and "PASS canonical app factory refuses" in result.stdout
+    if not record["factoryOutsideCanonicalRefused"]:
+        raise RuntimeError("factory allowed non-canonical caller")
     scratch = output / "mutated"
     shutil.copytree(package, scratch)
     manifest = scratch / "manifest.json"
