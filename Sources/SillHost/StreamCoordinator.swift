@@ -185,6 +185,7 @@ package final class StreamCoordinator {
         didSet {
             if active != oldValue {
                 sourceRevision += 1
+                dockSelectionIngress.updateSelectionRevision(selectionRevision)
                 microphoneIngress.revoke()
                 microphoneReceiver.forgetCapabilities()
                 microphoneReceiver.revoke(reason: "source changed")
@@ -984,9 +985,14 @@ package final class StreamCoordinator {
     // MARK: Client messages
 
     private func handle(_ message: StreamMessage, from connection: NWConnection, selectionTicket: UInt64? = nil) async {
+        defer {
+            if let ticket = selectionTicket, pendingDockSelection?.2 != ticket {
+                dockSelectionIngress.complete(ticket)
+            }
+        }
         if let ticket = selectionTicket {
             guard dockSelectionIngress.isCurrent(ticket) else { return }
-            if dockTransition {
+            if dockTransition || (message.kind == .selectSource && switching) {
                 pendingDockSelection = (message, connection, ticket)
                 return
             }
@@ -1003,13 +1009,7 @@ package final class StreamCoordinator {
             guard !switching else { broadcastList(); return }
             await select(.desktop, displaySelection: selection)
         case .selectSource:
-            guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return }
-            // A window picked comes forward on the Mac, which closes a view a gesture opened; the
-            // Desktop picked (as a device does before a gesture made over a window) leaves it.
-            if case .window = source { gestureChords.forget() }
-            // A pick from the device's switcher: the device never selects a window by itself (its
-            // automatic requests are for the Desktop only).
-            await handlePick(source)
+            await handleRemoteSource(message, from: connection, selectionTicket: selectionTicket)
         case .windowCommand:
             // The bar's long-press menu: the window's own traffic lights, pressed through
             // Accessibility. The staged window's element is already matched; others are looked up.
@@ -1305,6 +1305,36 @@ package final class StreamCoordinator {
         return !shuttingDown
     }
 
+    private func remoteSourceAdmission(_ request: SourceRequest, from connection: NWConnection,
+                                       selectionTicket: UInt64?) -> SourceSelectionAdmission {
+        let isCurrent = {
+            let id = ObjectIdentifier(connection)
+            guard self.inputFence.contains(id), self.connections[id] === connection,
+                  connection.state == .ready, !self.shuttingDown else { return false }
+            // Automatic restore only fills an empty selection observed at the original revision.
+            return request.origin != .automatic ||
+                (request.selectionRevision == self.selectionRevision && self.active == .none)
+        }
+        return SourceSelectionAdmission(isCurrent: {
+            self.dockSelectionIngress.isCurrent(selectionTicket) && isCurrent()
+        }, commit: { commit in
+            self.dockSelectionIngress.performIfCurrent(selectionTicket, refused: false) {
+                guard isCurrent() else { return false }
+                commit()
+                return true
+            }
+        })
+    }
+
+    private func handleRemoteSource(_ message: StreamMessage, from connection: NWConnection,
+                                    selectionTicket: UInt64?) async {
+        guard let request = Wire.decode(SourceRequest.self, from: message.payload) else { return }
+        let admission = remoteSourceAdmission(request, from: connection, selectionTicket: selectionTicket)
+        guard admission.isCurrent() else { return }
+        if case .window = request.source { gestureChords.forget() }
+        await select(request.source, bringForward: true, admission: admission)
+    }
+
     private func focusedDockSource() -> StreamSource? {
         guard let app = NSWorkspace.shared.frontmostApplication, let bundleID = app.bundleIdentifier,
               !WindowCatalog.isPrivateApplication(bundleID) else { return nil }
@@ -1534,6 +1564,12 @@ package final class StreamCoordinator {
         restartOf = (source == active && source != .none) ? source : nil
         defer {
             switching = false
+            if !dockTransition, let pending = pendingDockSelection {
+                pendingDockSelection = nil
+                Task { @MainActor in
+                    await self.handle(pending.0, from: pending.1, selectionTicket: pending.2)
+                }
+            }
             for connection in connections.values { sendMicrophoneCatalog(to: connection) }
             restartOf = nil
             var pick = pickArrivedWhileSwitching
@@ -1673,7 +1709,9 @@ package final class StreamCoordinator {
         var kind = HostStatusSnapshot.Stream.Kind.window
         switch source {
         case .none:
-            active = .none
+            if let admission {
+                guard admission.commit({ self.active = .none }) else { return }
+            } else { active = .none }
             broadcastList()
             return
         case .window(let id):
@@ -2730,7 +2768,8 @@ package final class StreamCoordinator {
         let dock = synthetic ? nil : (preloadedDock ?? nativeDock.catalog())
         dockSelectionIngress.publish(dock: dock, windowIDs: catalog.infos.map(\.id),
             displayInventoryID: catalog.displayInventory.revision, displayIDs: catalog.displayInventory.infos.map(\.id),
-            appBundleIDs: (catalog.installedApps + dockApps()).filter { !WindowCatalog.isPrivateApplication($0.bundleID) }.map(\.bundleID))
+            appBundleIDs: (catalog.installedApps + dockApps()).filter { !WindowCatalog.isPrivateApplication($0.bundleID) }.map(\.bundleID),
+            selectionRevision: selectionRevision)
         return StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,

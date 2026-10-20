@@ -7,6 +7,45 @@ public enum StreamSource: Codable, Hashable, Sendable {
     case desktop          // one Mac display; its selection is carried separately
 }
 
+/// Kind 6 retains the StreamSource enum at the JSON root for older hosts.
+public struct SourceRequest: Codable, Equatable {
+    public enum Origin: String, Codable { case human, automatic }
+    public let source: StreamSource
+    public let origin: Origin?
+    public let selectionRevision: String?
+
+    public init(source: StreamSource, origin: Origin? = nil, selectionRevision: String? = nil) {
+        self.source = source; self.origin = origin; self.selectionRevision = selectionRevision
+    }
+
+    private enum CodingKeys: String, CodingKey { case selectionOrigin, selectionRevision }
+    public init(from decoder: Decoder) throws {
+        let metadata = try decoder.container(keyedBy: CodingKeys.self)
+        if metadata.contains(.selectionOrigin) || metadata.contains(.selectionRevision) {
+            origin = try metadata.decode(Origin.self, forKey: .selectionOrigin)
+            if metadata.contains(.selectionRevision) {
+                let revision = try metadata.decode(String.self, forKey: .selectionRevision)
+                guard !revision.isEmpty, revision.utf8.count <= 128 else {
+                    throw DecodingError.dataCorruptedError(forKey: .selectionRevision, in: metadata, debugDescription: "Invalid selection revision")
+                }
+                selectionRevision = revision
+            } else { selectionRevision = nil }
+            if origin == .automatic, selectionRevision == nil {
+                throw DecodingError.keyNotFound(CodingKeys.selectionRevision, .init(codingPath: decoder.codingPath, debugDescription: "Automatic request needs original revision"))
+            }
+        } else { origin = nil; selectionRevision = nil }
+        // Synthesized enum decoding requires exactly one source key.
+        source = try StreamSource(from: decoder)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try source.encode(to: encoder)
+        var metadata = encoder.container(keyedBy: CodingKeys.self)
+        try metadata.encodeIfPresent(origin, forKey: .selectionOrigin)
+        try metadata.encodeIfPresent(selectionRevision, forKey: .selectionRevision)
+    }
+}
+
 public struct DisplayInfo: Codable, Equatable, Identifiable {
     public var id: UInt32
     public var name: String

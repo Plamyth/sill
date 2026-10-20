@@ -5,6 +5,9 @@ final class DockSelectionIngress: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private var latest: UInt64 = 0
     private var latestPeer: ObjectIdentifier?
+    private var pendingSelection: UInt64?
+    private var selectionRevision: String?
+    private var publishedSelectionRevision: String?
     private var peers: [ObjectIdentifier: Bool] = [:]
     private var dockVersion: UUID?
     private var dockItems: Set<Int> = []
@@ -31,6 +34,7 @@ final class DockSelectionIngress: @unchecked Sendable {
         defer { lock.unlock() }
         peers[peer] = nil
         menus[peer] = nil
+        if latestPeer == peer { pendingSelection = nil }
     }
 
     func recordMenu(for peer: ObjectIdentifier, request: RemoteDockRequest, reply: RemoteDockReply) {
@@ -58,7 +62,7 @@ final class DockSelectionIngress: @unchecked Sendable {
     }
 
     func publish(dock: RemoteDockCatalog?, windowIDs: [UInt32], displayInventoryID: UUID?,
-                 displayIDs: [UInt32], appBundleIDs: [String]) {
+                 displayIDs: [UInt32], appBundleIDs: [String], selectionRevision: String? = nil) {
         lock.lock()
         defer { lock.unlock() }
         dockVersion = dock?.note == nil ? dock?.version : nil
@@ -67,6 +71,22 @@ final class DockSelectionIngress: @unchecked Sendable {
         displayInventory = displayInventoryID
         displays = Set(displayIDs)
         apps = Set(appBundleIDs)
+        if let selectionRevision {
+            self.selectionRevision = selectionRevision
+            publishedSelectionRevision = selectionRevision
+        }
+    }
+
+    func updateSelectionRevision(_ revision: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        selectionRevision = revision
+    }
+
+    func complete(_ ticket: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        if pendingSelection == ticket { pendingSelection = nil }
     }
 
     func reserve(for message: StreamMessage, from peer: ObjectIdentifier) -> UInt64? {
@@ -86,8 +106,12 @@ final class DockSelectionIngress: @unchecked Sendable {
                       request.title != nil else { return nil }
             }
         case .selectSource:
-            guard let source = Wire.decode(StreamSource.self, from: message.payload) else { return nil }
-            if case .window(let id) = source, !windows.contains(id) { return nil }
+            guard let request = Wire.decode(SourceRequest.self, from: message.payload) else { return nil }
+            if request.origin == .automatic {
+                guard pendingSelection == nil, let revision = request.selectionRevision,
+                      revision == selectionRevision, revision == publishedSelectionRevision else { return nil }
+            }
+            if case .window(let id) = request.source, !windows.contains(id) { return nil }
         case .selectDisplay:
             guard let selection = Wire.decode(DisplaySelection.self, from: message.payload),
                   selection.inventoryID == displayInventory, displays.contains(selection.displayID) else { return nil }
@@ -98,6 +122,7 @@ final class DockSelectionIngress: @unchecked Sendable {
         guard latest < .max else { return nil }
         latest += 1
         latestPeer = peer
+        pendingSelection = latest
         return latest
     }
 
