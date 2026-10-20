@@ -146,7 +146,16 @@ final class CanvasStore: ObservableObject {
         didSet { handwritingRequest = nil }
     }
     @Published var proposedNode: UUID? {
-        didSet { handwritingRequest = nil }
+        didSet {
+            handwritingRequest = nil
+            if oldValue != proposedNode {
+                proposalContext = proposedNode.flatMap { id in
+                    scene.nodes.first(where:{ $0.id == id }).map {
+                        (sceneID:scene.id,generation:noteSceneGeneration,node:$0)
+                    }
+                }
+            }
+        }
     }
     @Published var displayedVoice: VoiceSession?
     @Published private(set) var outbox = CanvasOutbox()
@@ -172,6 +181,7 @@ final class CanvasStore: ObservableObject {
     private var linkKind: CanvasLink.Kind = .general
     private var saveTask: Task<Void,Never>?
     private var handwritingRequest: UUID?
+    private var proposalContext: (sceneID: UUID, generation: UInt64, node: CanvasNode)?
     @Published private(set) var vaultNote: VaultNoteSnapshot?
     @Published var vaultDraft = "" {
         didSet { noteEditGeneration &+= 1 }
@@ -1173,9 +1183,21 @@ final class CanvasStore: ObservableObject {
         status = "손글씨 검색 결과 \(validMatches.count)곳을 선택했습니다."
     }
 
+    var proposalIsCurrent: Bool {
+        guard let context = proposalContext, context.sceneID == scene.id,
+              context.generation == noteSceneGeneration, context.node.id == proposedNode else { return false }
+        return scene.nodes.first(where:{ $0.id == context.node.id }) == context.node
+    }
+
     func confirmProposal() {
         guard let proposedNode else { return }
-        guard scene.confirmNode(proposedNode, text: proposalText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        guard proposalIsCurrent else {
+            status = "다른 곳에서 요소나 장면이 바뀌었습니다. 입력은 유지하며 덮어쓰지 않습니다. 닫고 최신 요소를 다시 열어 주세요."
+            return
+        }
+        let text = proposalContext?.node.confidence == .confirmed ? proposalText :
+            proposalText.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard scene.confirmNode(proposedNode, text: text) else {
             status = "연결된 노트는 원본 노트 편집에서 수정하세요."
             return
         }

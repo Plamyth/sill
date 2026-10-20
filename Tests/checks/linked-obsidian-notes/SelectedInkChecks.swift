@@ -95,4 +95,42 @@ import PencilKit
     await failure.proposeHandwriting(selectedOnly:true) { _ in nil }
     check(failure.scene.nodes.isEmpty && failure.drawing == ink && failure.inkSelection == [a.id],
           "unrecognized selection preserves original ink and selection for retry")
+    for change in ["text", "frame", "lineage", "scene", "scene-roundtrip"] {
+        let edit = store()
+        let id = edit.scene.addNode(kind:.note,at:CanvasPoint(x:100,y:100),text:"원문",confidence:.confirmed,sourceStrokeIds:[a.id])
+        edit.proposedNode = id
+        edit.proposalText = "수정 중 👩🏽‍💻 e\u{301}"
+        switch change {
+        case "text": edit.scene.nodes[0].text = "Mac에서 수정"
+        case "frame": edit.scene.nodes[0].frame.x += 1
+        case "lineage": edit.scene.nodes[0].sourceStrokeIds = [b.id]
+        default:
+            let original = edit.scene
+            edit.scene.id = UUID()
+            if change == "scene-roundtrip" { edit.scene = original }
+        }
+        let external = edit.scene
+        edit.confirmProposal()
+        check(edit.scene == external && edit.proposedNode == id && edit.proposalText == "수정 중 👩🏽‍💻 e\u{301}",
+              "\(change) conflict preserves external canonical data and the correction draft")
+        check(edit.status.contains("다른 곳"),"\(change) conflict explains why the draft was not committed")
+    }
+    let edit = store()
+    let id = edit.scene.addNode(kind:.note,at:CanvasPoint(x:100,y:100),text:"원문",confidence:.confirmed,sourceStrokeIds:[a.id])
+    edit.proposedNode = id
+    edit.proposalText = "  글자별 교정 👩🏽‍💻 e\u{301}\n"
+    _ = edit.scene.addNode(kind:.box,at:CanvasPoint(x:500,y:100),text:"별개 요소")
+    let untouched = edit.scene.nodes[1]
+    let beforeInk = edit.drawing
+    edit.confirmProposal()
+    check(Array(edit.scene.nodes[0].text.utf8) == Array("  글자별 교정 👩🏽‍💻 e\u{301}\n".utf8),
+          "confirmed text correction preserves exact whitespace and Unicode bytes")
+    check(edit.proposedNode == nil && edit.scene.nodes[0].sourceStrokeIds == [a.id] && edit.drawing == beforeInk && edit.scene.nodes[1] == untouched,
+          "unrelated scene edits do not block correction or change ink and source lineage")
+    edit.proposedNode = id
+    edit.proposalText = "취소할 입력"
+    let beforeCancel = edit.scene
+    edit.proposedNode = nil
+    edit.confirmProposal()
+    check(edit.scene == beforeCancel,"cancelling a correction never changes canonical data")
 }

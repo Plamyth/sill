@@ -19,6 +19,7 @@ struct CanvasWorkspace: View {
     @State private var exportOpen = false
     @State private var importOpen = false
     @State private var inspectorOpen = false
+    @State private var pendingNodeEdit: (sceneID: UUID, node: CanvasNode)?
     @State private var handwritingSearchOpen = false
     @State private var handwritingQuery = ""
     @State private var dictationOpen = false
@@ -152,7 +153,17 @@ struct CanvasWorkspace: View {
             Text("원본 획에서 일치하는 손글씨를 찾아 영역으로 선택합니다.")
         }
         .sheet(isPresented:$connectionOpen) { connectionSheet }
-        .sheet(isPresented:$inspectorOpen) {
+        .sheet(isPresented:$inspectorOpen,onDismiss: {
+            guard let pending = pendingNodeEdit else { return }
+            pendingNodeEdit = nil
+            guard store.scene.id == pending.sceneID,
+                  store.scene.nodes.first(where:{ $0.id == pending.node.id }) == pending.node else {
+                store.status = "요소가 바뀌었습니다. 최신 요소를 다시 선택해 주세요."
+                return
+            }
+            store.proposedNode = pending.node.id
+            store.proposalText = pending.node.text
+        }) {
             NavigationStack {
                 ScrollView { inspector }
                     .navigationTitle("구조 데이터")
@@ -760,8 +771,8 @@ struct CanvasWorkspace: View {
                     }.frame(minHeight:44)
                 } else {
                     Button("내용 수정") {
-                        store.proposedNode = id
-                        store.proposalText = node.text
+                        pendingNodeEdit = (sceneID:store.scene.id,node:node)
+                        inspectorOpen = false
                     }
                 }
             } else {
@@ -799,13 +810,17 @@ struct CanvasWorkspace: View {
     private var proposalSheet: some View {
         NavigationStack {
             Form {
-                Text("에이전트나 글자 인식의 제안입니다. 원본 획을 지우지 않고 내용만 수정합니다.")
+                Text("글자 내용을 수정합니다. 원본 획과 출처는 유지됩니다.")
                 TextField("내용 확인",text:$store.proposalText,axis:.vertical)
+                if !store.proposalIsCurrent {
+                    Text("다른 곳에서 요소나 장면이 바뀌었습니다. 입력은 유지하며 덮어쓰지 않습니다. 닫고 최신 요소를 다시 열어 주세요.")
+                        .foregroundStyle(.orange)
+                }
             }
             .navigationTitle("구조 요소 확인")
             .toolbar {
                 ToolbarItem(placement:.confirmationAction) {
-                    Button("확정") { store.confirmProposal() }
+                    Button("확정") { store.confirmProposal() }.disabled(!store.proposalIsCurrent)
                 }
                 ToolbarItem(placement:.cancellationAction) {
                     Button("나중에") { store.proposedNode = nil }
