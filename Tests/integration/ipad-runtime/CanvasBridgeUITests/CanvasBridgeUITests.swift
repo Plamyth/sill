@@ -34,21 +34,21 @@ final class CanvasBridgeUITests: XCTestCase {
         let value = editor.value as? String ?? ""
         editor.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.1)).tap()
         editor.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count))
-        editor.typeText("앞 👩🏽‍💻 뒤")
-        XCTAssertEqual(editor.value as? String, "앞 👩🏽‍💻 뒤")
+        editor.typeText("👩🏽‍💻 앞 뒤")
+        XCTAssertEqual(editor.value as? String, "👩🏽‍💻 앞 뒤")
         let erase = app.buttons["선택 글자 지우기"].firstMatch
         XCTAssertFalse(erase.isEnabled)
-        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 43, dy: 18)).doubleTap()
+        editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 12, dy: 18)).doubleTap()
         let select = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["Select", "선택"])).firstMatch
         if select.waitForExistence(timeout: 1) { select.tap() }
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: erase)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
         erase.tap()
-        XCTAssertEqual(editor.value as? String, "앞  뒤")
+        XCTAssertEqual(editor.value as? String, " 앞 뒤")
         app.toolbars.buttons["실행 취소"].firstMatch.tap()
-        XCTAssertEqual(editor.value as? String, "앞 👩🏽‍💻 뒤")
+        XCTAssertEqual(editor.value as? String, "👩🏽‍💻 앞 뒤")
         app.toolbars.buttons["다시 실행"].firstMatch.tap()
-        XCTAssertEqual(editor.value as? String, "앞  뒤")
+        XCTAssertEqual(editor.value as? String, " 앞 뒤")
         app.buttons["확정"].tap()
         XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Pencil 그림과 구조 데이터가 Obsidian에 저장됐습니다."].waitForExistence(timeout: 20))
