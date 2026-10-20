@@ -52,6 +52,8 @@ package final class StreamCoordinator {
     private var audioRoutePublished: [ObjectIdentifier: UUID] = [:]
     private var audioRouteArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
     private let microphoneReceiver: HostMicrophoneReceiver
+    var authenticationCatalog: (@MainActor (NWConnection, Data) async -> WindowList?)?
+    private var authenticationCatalogTickets: [ObjectIdentifier: UUID] = [:]
     let server: StreamServer
     let catalog = WindowCatalog()
     let capture = WindowCapture()
@@ -431,10 +433,27 @@ package final class StreamCoordinator {
             self?.publishAudioRoutes()
         }
 
-        server.onClientConnected = { [weak self] connection, route, link in
+        server.onControlClientConnected = { [weak self] connection, route in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
+                      self.remote?.isPaired(fingerprint) == true else { return }
+                let id = ObjectIdentifier(connection), ticket = UUID()
+                self.authenticationCatalogTickets[id] = ticket
+                let catalog = await self.authenticationCatalog?(connection, fingerprint)
+                    ?? WindowList(macName: self.macName, windows: [], active: .none)
+                guard self.authenticationCatalogTickets[id] == ticket, connection.state == .ready,
+                      self.remote?.isPaired(fingerprint) == true else { return }
+                self.server.sendAuthenticationCatalog(catalog, to: connection)
+            }
+        }
+        server.onControlClientDisconnected = { [weak self] connection in
+            Task { @MainActor in self?.authenticationCatalogTickets[ObjectIdentifier(connection)] = nil }
+        }
+        server.onClientConnected = { [weak self] connection, route, link in
+            DispatchQueue.main.async {
+                guard let self, connection.state == .ready else { return }
                 let id = ObjectIdentifier(connection)
+                self.authenticationCatalogTickets[id] = nil
                 guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
                     return
@@ -604,8 +623,9 @@ package final class StreamCoordinator {
         server.onClientHello = { [weak self] connection, hello in
             let id = ObjectIdentifier(connection)
             let name = SafeText.label(hello.device ?? "")
-            Task { @MainActor in
-                guard let self else { return }
+            DispatchQueue.main.async {
+                guard let self, connection.state == .ready, self.connections[id] === connection,
+                      self.inputFence.contains(id) else { return }
                 self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
                 self.requestExtendedDesktop(for: connection, hello: hello)
                 guard !name.isEmpty else { return }
