@@ -1,0 +1,16 @@
+{
+  "schema": "ccr.ipad-test-adapter/v1",
+  "projectId": "bt-ccr-ipad",
+  "owner": "01a13ace-e372-7ed1-9946-149df37ee1c3",
+  "integration": {"remote": "origin", "repository": "github.com/plamyth/sill", "ref": "integration/ccr-ipad"},
+  "bundleId": "com.ambrion.rea.ipad-runtime",
+  "protectedUserBundleId": "com.ambrion.sillcanvas.ipad",
+  "environment": "isolated-ipad-canvas",
+  "externalEffects": "zero",
+  "requiredChecks": ["runtime-source", "native-canvas-ui", "vault-roundtrip", "isolation", "error-contract", "fixture-reset", "user-data-preserved"],
+  "deployCommand": ["/usr/bin/python3", "{repo}/Scripts/ipad-test-runtime/adapter.py", "deploy", "--config", "{privateConfig}"],
+  "acceptanceCommand": ["/usr/bin/python3", "{repo}/Scripts/ipad-test-runtime/adapter.py", "accept", "--config", "{privateConfig}"],
+  "requiredPrivateConfig": ["repo", "outputRoot", "leaseFile", "deviceUDID", "developmentTeam", "relayRepo", "relayCommit", "nodeExecutable", "relayHost", "relayPort"],
+  "lease": {"schema": "ccr.device-lease/v1", "requiredActions": ["install", "launch", "copy", "test"], "requiresCurrentOwnerHandoff": true},
+  "productionEnabled": false
+}

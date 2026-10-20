@@ -1,0 +1,53 @@
+import datetime as dt
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+import uuid
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location('adapter', Path(__file__).with_name('adapter.py'))
+adapter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(adapter)
+
+class AdapterContract(unittest.TestCase):
+    def test_lease_denials_never_call_device(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lease_path = Path(directory) / 'lease.json'
+            config = {'leaseFile': str(lease_path), 'deviceUDID': 'own-ipad'}
+            grant = {'schema': 'ccr.device-lease/v1', 'owner': adapter.OWNER,
+                     'deviceUDID': 'own-ipad', 'expiresAt': (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat(),
+                     'actions': ['install','launch','copy','test'], 'handoffEvidence': 'existing-owner-handoff'}
+            for key, value in [('owner','foreign'),('deviceUDID','another'),('expiresAt','2020-01-01T00:00:00+00:00'),('actions',[]),('handoffEvidence','')]:
+                invalid = dict(grant, **{key:value}); lease_path.write_text(json.dumps(invalid))
+                with patch.object(adapter, 'command') as command:
+                    with self.assertRaises(adapter.Held):
+                        adapter.device(config, ['install','app','untrusted'], Path(directory)/'log')
+                    command.assert_not_called()
+            lease_path.write_text(json.dumps(grant)); adapter.lease(config)
+
+    def test_dirty_or_wrong_ref_cannot_deploy(self):
+        with patch.object(adapter, 'command', return_value=' M source.swift'):
+            with self.assertRaisesRegex(adapter.Held, 'source_dirty'):
+                adapter.identity({'repo':'.'})
+        with patch.object(adapter, 'command', side_effect=['','main']):
+            with self.assertRaisesRegex(adapter.Held, 'branch_mismatch'):
+                adapter.identity({'repo':'.'})
+
+    def test_fixture_is_independent_of_user_data(self):
+        id = str(uuid.uuid4()); value = adapter.fixture(id)
+        self.assertEqual(value['id'],id)
+        self.assertEqual(value['strokes'],[])
+        self.assertEqual(value['nodes'][0]['sourceStrokeIds'],[])
+        self.assertEqual(value['nodes'][0]['id'],adapter.NODE)
+        self.assertEqual(adapter.pixel()[:8],b'\x89PNG\r\n\x1a\n')
+
+    def test_failed_copy_is_not_silently_absent(self):
+        import subprocess
+        with patch.object(adapter,'lease'), patch.object(adapter.subprocess,'run',return_value=subprocess.CompletedProcess([],1,b'',b'connection timeout')):
+            with self.assertRaisesRegex(adapter.Held,'without_absence'):
+                adapter.copy_file({'deviceUDID':'own-ipad'},Path('.'),'original','copy',optional=True)
+
+if __name__ == '__main__':
+    unittest.main()

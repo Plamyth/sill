@@ -1,0 +1,13 @@
+# iPad 통합 테스트 연결
+
+`descriptor.json`은 전역 release convergence 등록 담당이 사용할 명령과 수용 항목이다. 경로 자리표시는 배포된 clean integration worktree와 비공개 설정 파일의 절대 경로로 바꾼다. 이 파일 자체는 managed 등록이나 운영 배포 허가가 아니다.
+
+`adapter.py deploy --config PRIVATE_JSON`은 clean `integration/ccr-ipad`의 원격 source guard를 확인하고 실사용 Sill과 다른 REA 전용 진단 bundle을 Debug로 빌드·설치한다. 기존 Sill 설치는 덮어쓰지 않는다. Info.plist에 정확한 commit/tree를 넣으며, 기기에서 실행 중인 앱이 만든 runtime.json의 실행파일 SHA와 대조한다. 시험 UUID의 저장 경로와 relay 연결을 사용한다. 원래 keychain 연결과 그림을 옮기지 않는다. 테스트 시작 전후 사용자 상태의 바이트를 비교한다.
+
+`adapter.py accept --config PRIVATE_JSON`은 별도의 쓰기 가능한 Obsidian 시험 보관함과 릴레이에서 실제 글자 선택 삭제·Undo·Redo·저장·Mac 수정·재열기를 실행한다. UI runner는 이 저장소의 XCTest 소스이며 기존 REA 진단 bundle을 재사용한다. 실제 보관함 JSON/PNG/Markdown과 기기 파일을 대조하고 인증 거부·오래된 버전 거부·시험 데이터 초기화를 확인한다. 외부 대화 전송 provider는 연결하지 않는다. 실패는 JSON held와 비정상 종료로 반환한다. 실제 Pencil 종류·압력·호버·MyScript 제스처 동등성은 이 검사의 수용 항목이 아니다.
+
+비공개 설정은 `repo`, `outputRoot`, `leaseFile`, `deviceUDID`, `developmentTeam`, `relayRepo`, `relayCommit`, `nodeExecutable`, `relayHost`, `relayPort`를 가진다. 출력은 storage-route가 확인한 BT_CCR-ipad development archive의 하위 경로다. 릴레이는 기존 서버와 다른 private IPv4·port를 쓰며, 기존 승인된 relay 소스의 commit을 고정한다. 인증 token은 출력의 0600 비공개 파일에만 생성된다. 설정·lease·token·사용자 그림은 Git에 넣지 않는다.
+
+lease는 `ccr.device-lease/v1` schema, 원래 owner, 정확한 deviceUDID, 시간대가 있는 expiresAt, install/launch/copy/test actions, 실제 사용권 근거인 handoffEvidence를 가진다. lease 파일을 만든다는 사실로 사용권이 생기지 않는다. 현재 담당의 실제 반납 또는 이미 확인된 독립 기기 사용권을 근거로 등록해야 한다. 다른 기기의 시험은 병렬 가능하며 공유 Mac 화면·입출력·호스트 변경은 별도 조율한다.
+
+기술 검사 명령은 `python3 -B Scripts/ipad-test-runtime/test_adapter.py`다. 스크립트 통과만으로 실제 기기나 전역 testAccepted를 기록하지 않는다. acceptance 영수증이 모든 검사를 증명하고 전역 원장이 같은 commit/tree/runtime를 확인해야 한다.
