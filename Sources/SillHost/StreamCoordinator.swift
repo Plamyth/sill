@@ -1311,7 +1311,6 @@ package final class StreamCoordinator {
             let id = ObjectIdentifier(connection)
             guard self.inputFence.contains(id), self.connections[id] === connection,
                   connection.state == .ready, !self.shuttingDown else { return false }
-            // Automatic restore only fills an empty selection observed at the original revision.
             return request.origin != .automatic ||
                 (request.selectionRevision == self.selectionRevision && self.active == .none)
         }
