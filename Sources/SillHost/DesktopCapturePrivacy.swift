@@ -50,9 +50,6 @@ final class DesktopCapturePrivacy {
         self.display = display
         self.drain = drain
         let gate = admission
-        for app in NSWorkspace.shared.runningApplications where WindowCatalog.isPrivateApplication(app.bundleIdentifier ?? "") {
-            gate.changed(pid: app.processIdentifier, running: true)
-        }
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: nil) { [weak self] note in
                 guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
@@ -60,6 +57,9 @@ final class DesktopCapturePrivacy {
                 gate.changed(pid: app.processIdentifier, running: note.name == NSWorkspace.didLaunchApplicationNotification)
                 Task { @MainActor [weak self] in self?.scheduleRefresh() }
             })
+        }
+        for app in NSWorkspace.shared.runningApplications where WindowCatalog.isPrivateApplication(app.bundleIdentifier ?? "") {
+            gate.changed(pid: app.processIdentifier, running: true)
         }
     }
 
