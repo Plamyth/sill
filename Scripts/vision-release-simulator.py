@@ -45,8 +45,10 @@ def validate_lease(lease_id, source, runner, clock=physical.now):
     require(isinstance(services, list) and all(isinstance(s, dict) for s in services),
             "registered_services_invalid")
     configured = [s for s in services if s.get("id") == SERVICE]
+    resource = {"kind": "core-simulator", "udid": UDID}
     require(len(configured) == 1 and configured[0].get("lifecycle") == "leased" and
-            configured[0].get("resource") == {"kind": "core-simulator", "udid": UDID}, "registered_service_mismatch")
+            isinstance(configured[0].get("resource"), dict) and
+            all(configured[0]["resource"].get(k) == v for k, v in resource.items()), "registered_service_mismatch")
     status = json.loads(runner.run([LIFECYCLE, "status"], accepted_return_codes=(0, 2))[0])
     require(isinstance(status, dict) and status.get("schema") == 1 and all(isinstance(status.get(k), list) and
             all(isinstance(v, dict) for v in status[k]) for k in ("leases", "violations")),
@@ -58,7 +60,8 @@ def validate_lease(lease_id, source, runner, clock=physical.now):
     group = configured[0].get("singletonGroup")
     require(isinstance(group, str) and bool(group), "registered_singleton_group_missing")
     related_services = {s.get("id") for s in services if s.get("singletonGroup") == group or
-                        s.get("resource") == {"kind": "core-simulator", "udid": UDID}}
+                        (isinstance(s.get("resource"), dict) and
+                         all(s["resource"].get(k) == v for k, v in resource.items()))}
     related_leases = {r.get("leaseId") for r in status["leases"] if r.get("serviceId") in related_services}
     require(all("services" not in v or (isinstance(v["services"], list) and
                 all(isinstance(s, str) for s in v["services"])) for v in status["violations"]),

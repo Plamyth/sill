@@ -87,6 +87,17 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(sim.validate_lease(LEASE_ID, SOURCE, runner), self.row)
         self.assertEqual(runner.calls, [[sim.LIFECYCLE, "status"]])
 
+    def test_registered_guest_route_preserves_exact_simulator_identity(self):
+        registry = sim.read_json(self.registry)
+        registry["services"][0]["resource"]["guestOutputRoute"] = {
+            "outputDeviceUid": "BuiltInSpeakerDevice", "files": ["var/run/com.apple.coresimulator.audio.plist"]}
+        sim.atomic_json(self.registry, registry)
+        self.assertEqual(sim.validate_lease(LEASE_ID, SOURCE, self.status_runner()), self.row)
+        registry["services"][0]["resource"]["udid"] = BOOT_ID
+        sim.atomic_json(self.registry, registry)
+        with self.assertRaises(sim.Held):
+            sim.validate_lease(LEASE_ID, SOURCE, self.status_runner())
+
     def test_status_exit_two_keeps_unrelated_violations_separate(self):
         status = json.loads(self.status_runner().output)
         other = {**status["leases"][0], "leaseId": BOOT_ID, "serviceId": "other-project",
