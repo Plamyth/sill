@@ -117,6 +117,16 @@ class BoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(sim.Held, "command_failed"):
             runner.run(command)
 
+    def test_canonical_singleton_conflict_shape_is_held(self):
+        status = json.loads(self.status_runner().output)
+        for violation in (
+            {"type": "singleton_conflict", "group": "vision-simulator", "services": [sim.SERVICE, "same-group"]},
+            {"type": "singleton_conflict", "group": "another-group", "services": [sim.SERVICE]},
+        ):
+            status["violations"] = [violation]
+            with self.subTest(violation=violation), self.assertRaisesRegex(sim.Held, "lifecycle_violation"):
+                sim.validate_lease(LEASE_ID, SOURCE, Runner(json.dumps(status), 2))
+
     def test_first_sdk_failure_retains_native_diagnostics_reference(self):
         args = SimpleNamespace(action="prepare", device=sim.UDID, repo=str(self.root),
                                remote="origin", ref="refs/heads/fixture", output=str(self.root / "output"))
