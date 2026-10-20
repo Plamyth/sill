@@ -122,7 +122,7 @@ package final class HostAudioPrivacy {
     var membershipChanged: ((LocalAudioParticipantRegistry.MembershipChange) -> Void)?
     var inspectForLocalReturn: (() -> LocalAudioParticipantFacts)?
     var localReturnDidComplete: ((_ commitAudio: () -> Bool) -> Bool)?
-    package var localReturnUnavailableReason: String? { participants.unavailableReason }
+    package var localReturnUnavailableReason: String? { participants.authenticatedLocalReturnUnavailableReason }
 
     init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
          localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
@@ -298,13 +298,16 @@ package final class HostAudioPrivacy {
         let request = UUID()
         let generation = privacyGeneration
         let membership = participants.snapshot
+        guard let ticket = participants.beginLocalReturn(operationId: request, privacyGeneration: generation,
+                                                        membership: membership) else { return false }
+        defer { participants.endLocalReturn(ticket) }
         localReturnID = request
         forwardingRevision = UUID()
         forwardingInvalidated?()
         let authenticated = await LocalAudioCompletion<Bool>.wait(until: deadline) {
             guard !Task.isCancelled, ContinuousClock.now < deadline, self.localReturnID == request,
                   self.privacyGeneration == generation, self.participants.matches(membership),
-                  self.localReturnUnavailableReason == nil, self.latched, self.persistenceHealthy else { return false }
+                  self.latched, self.persistenceHealthy else { return false }
             return await self.authenticateLocal(request)
         }
         guard authenticated == true, !Task.isCancelled, ContinuousClock.now < deadline, localReturnID == request,
