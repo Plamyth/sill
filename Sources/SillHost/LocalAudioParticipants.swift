@@ -103,10 +103,12 @@ struct LocalAudioParticipantReceipt: Codable, Equatable {
         registryRevision = request.registryRevision; participantId = request.participantId; bootId = request.bootId
         self.state = state; self.facts = facts; self.reason = reason
     }
-    func proves(_ request: LocalAudioParticipantRequest) -> Bool {
+    func matches(_ request: LocalAudioParticipantRequest) -> Bool {
         request.isValid && schemaVersion == 1 && operationId == request.operationId && privacyGeneration == request.privacyGeneration &&
-        registryRevision == request.registryRevision && participantId == request.participantId && bootId == request.bootId &&
-        state == .quiescent && facts.quiescent
+        registryRevision == request.registryRevision && participantId == request.participantId && bootId == request.bootId
+    }
+    func proves(_ request: LocalAudioParticipantRequest) -> Bool {
+        matches(request) && state == .quiescent && facts.quiescent
     }
 }
 

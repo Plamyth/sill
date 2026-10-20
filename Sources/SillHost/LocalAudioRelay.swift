@@ -257,7 +257,9 @@ final class LocalAudioRelay {
             guard let reply: Reply<LocalAudioParticipantReceipt> = await self.call("fenceAndQuiesce", payload: request, until: deadline) else {
                 return .init(request, state: .unknown, facts: .unknown)
             }
-            guard reply.result.proves(request) else {
+            let conflict = reply.result.matches(request) && reply.result.state == .blocked &&
+                reply.result.facts == .unknown && reply.result.reason == "audio_preparation_conflict"
+            guard reply.result.proves(request) || conflict else {
                 self.lost()
                 return .init(request, state: .unknown, facts: .unknown)
             }
