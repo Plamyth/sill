@@ -28,6 +28,10 @@ def run(name, command):
 
 
 protocol = sorted((root / "Sources/StreamProtocol").glob("*.swift"))
+inputs = [root / "Sources/SillHost/RemoteDockReader.swift", root / "Sources/SillHost/WindowCatalog.swift", *protocol,
+          Path(__file__).resolve(), Path(__file__).parent / "fixture.swift"]
+hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+(out / "inputs.json").write_text(json.dumps(hashes, indent=2))
 code = run("protocol", [
     "/usr/bin/xcrun", "swiftc", "-emit-library", "-emit-module", "-module-name", "StreamProtocol",
     *map(str, protocol), "-emit-module-path", str(out / "StreamProtocol.swiftmodule"),
@@ -54,9 +58,6 @@ reader = reader.replace("private var icons:", "var icons:")
 assert not re.search(r"(?<![A-Za-z])AX(?:UIElement\w+|IsProcessTrusted)\(", reader)
 source = out / "inert.swift"
 source.write_text(reader + "\n" + fixture)
-inputs = [root / "Sources/SillHost/RemoteDockReader.swift", root / "Sources/SillHost/WindowCatalog.swift", *protocol,
-          Path(__file__).resolve(), Path(__file__).parent / "fixture.swift"]
-(out / "inputs.json").write_text(json.dumps({str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}, indent=2))
 code = run("inert-compile", [
     "/usr/bin/xcrun", "swiftc", "-parse-as-library", "-I", str(out), "-L", str(out), "-lStreamProtocol",
     "-Xlinker", "-rpath", "-Xlinker", str(out), str(source), "-o", str(out / "checks"),
@@ -70,4 +71,5 @@ sdk = run("sdk-typecheck", [
     str(root / "Sources/SillHost/RemoteDockReader.swift"), str(out / "policy.swift"),
 ])
 print(f"격리 검사 종료 코드 {code}, 실제 SDK typecheck 종료 코드 {sdk}")
+assert hashes == {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}, "검사 중 소스가 바뀌었습니다."
 sys.exit(code or sdk)
