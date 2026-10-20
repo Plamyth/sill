@@ -137,8 +137,10 @@ def main():
         mutants = [
             ("unguarded-commit", "guard admission.commit(commit) else {", "guard ({ commit(); return true })() else {",
              "capture-start-peer-loss"),
-            ("missing-cleanup", "await capture.stop()\n                await syntheticCapture.stop()", "/* cleanup omitted */",
+            ("missing-cleanup", "await capture.stop()\n            await syntheticCapture.stop()", "/* cleanup omitted */",
              "capture-start-new-ticket"),
+            ("missing-start-error-cleanup", "} catch {\n            enc.onEncoded = nil", "} catch {\n            if error is StartFailure { throw error }\n            enc.onEncoded = nil",
+             "capture-start-error-cleanup-peer-loss"),
             ("missing-peer-guard", "guard self.dockPeerIsCurrent(connection) else { return false }", "if false { return false }",
              "capture-start-transport-closed"),
         ]

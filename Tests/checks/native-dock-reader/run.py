@@ -8,7 +8,8 @@ import re
 import subprocess
 import sys
 
-root, out = (Path(p).resolve() for p in sys.argv[1:])
+skip_sdk = "--skip-sdk-typecheck" in sys.argv[1:]
+root, out = (Path(p).resolve() for p in sys.argv[1:] if p != "--skip-sdk-typecheck")
 route = json.loads(subprocess.check_output([
     "/Users/ambrion/.local/bin/storage-route", "path", "development-archive", "--project", "CCR-Vision"
 ]))
@@ -66,10 +67,10 @@ if code:
     sys.exit(code)
 code = run("inert-run", [str(out / "checks")])
 (out / "policy.swift").write_text("import Foundation\nenum WindowCatalog { " + policy[0] + " }\n")
-sdk = run("sdk-typecheck", [
+sdk = 0 if skip_sdk else run("sdk-typecheck", [
     "/usr/bin/xcrun", "swiftc", "-typecheck", "-parse-as-library", "-I", str(out),
     str(root / "Sources/SillHost/RemoteDockReader.swift"), str(out / "policy.swift"),
 ])
-print(f"격리 검사 종료 코드 {code}, 실제 SDK typecheck 종료 코드 {sdk}")
+print(f"격리 검사 종료 코드 {code}, 실제 SDK typecheck {'부모 담당 후속 검사로 생략' if skip_sdk else f'종료 코드 {sdk}'}")
 assert hashes == {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}, "검사 중 소스가 바뀌었습니다."
 sys.exit(code or sdk)

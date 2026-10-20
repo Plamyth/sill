@@ -5,12 +5,13 @@ from pathlib import Path
 import subprocess
 import sys
 
-root, out = (Path(p).resolve() for p in sys.argv[1:])
+skip_sdk = "--skip-sdk-typecheck" in sys.argv[1:]
+root, out = (Path(p).resolve() for p in sys.argv[1:] if p != "--skip-sdk-typecheck")
 out.mkdir(parents=True, exist_ok=True)
 env = dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer")
 libdir = out / "reader"
 result = subprocess.run([sys.executable, "-B", str(root / "Tests/checks/native-dock-reader/run.py"),
-                         str(root), str(libdir)], env=env, timeout=300)
+                         str(root), str(libdir), *(["--skip-sdk-typecheck"] if skip_sdk else [])], env=env, timeout=300)
 if result.returncode:
     sys.exit(result.returncode)
 

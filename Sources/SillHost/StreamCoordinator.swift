@@ -1823,39 +1823,40 @@ package final class StreamCoordinator {
             }
             server.broadcast(StreamMessage(kind: .frame, timestamp: now, isKeyframe: isKey, payload: data), epoch: epoch.id)
         }
-        if let filter {
-            capture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
-            try await capture.start(filter: filter, width: width, height: height, fps: fps, showsCursor: false, sourceRect: sourceRect,
-                                    desktopDisplay: source == .desktop && !synthetic ? catalog.display : nil)
-        } else {
-            syntheticCapture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
-            syntheticCapture.start(width: width, height: height, fps: fps)
-        }
-        if let desktopSelection {
-            guard catalog.displayInventory.current == desktopSelection,
-                  catalog.display != nil, currentSourceRect(source: source, fresh: true) == bounds else {
-                await capture.stop()
-                throw PipelineEpochError.missingGeometry
+        do {
+            if let filter {
+                capture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
+                try await capture.start(filter: filter, width: width, height: height, fps: fps, showsCursor: false, sourceRect: sourceRect,
+                                        desktopDisplay: source == .desktop && !synthetic ? catalog.display : nil)
+            } else {
+                syntheticCapture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
+                syntheticCapture.start(width: width, height: height, fps: fps)
             }
-        }
-        let dock = synthetic ? nil : nativeDock.catalog()
-        let commit = {
-            self.encoder = enc
-            self.active = source
-            self.inputGeneration = generation
-            self.videoEpoch = epoch
-            server.commitVideo(epoch, catalog: self.listMessage(preloadedDock: dock)) { [weak enc] in enc?.requestKeyframe() }
-        }
-        if let admission {
-            guard admission.commit(commit) else {
-                enc.onEncoded = nil
-                await capture.stop()
-                await syntheticCapture.stop()
-                capture.onFrame = nil; syntheticCapture.onFrame = nil
-                server.resetForNewStream()
-                throw PipelineEpochError.admissionRevoked
+            if let desktopSelection {
+                guard catalog.displayInventory.current == desktopSelection,
+                      catalog.display != nil, currentSourceRect(source: source, fresh: true) == bounds else {
+                    throw PipelineEpochError.missingGeometry
+                }
             }
-        } else { commit() }
+            let dock = synthetic ? nil : nativeDock.catalog()
+            let commit = {
+                self.encoder = enc
+                self.active = source
+                self.inputGeneration = generation
+                self.videoEpoch = epoch
+                server.commitVideo(epoch, catalog: self.listMessage(preloadedDock: dock)) { [weak enc] in enc?.requestKeyframe() }
+            }
+            if let admission {
+                guard admission.commit(commit) else { throw PipelineEpochError.admissionRevoked }
+            } else { commit() }
+        } catch {
+            enc.onEncoded = nil
+            await capture.stop()
+            await syntheticCapture.stop()
+            capture.onFrame = nil; syntheticCapture.onFrame = nil
+            server.resetForNewStream()
+            throw error
+        }
         print("Streaming \(describe) at \(width)×\(height), \(fps) fps, \(streamBitrate / 1_000_000) Mbps")
         status.update {
             $0.stream = HostStatusSnapshot.Stream(kind: kind, title: title, width: width, height: height, fps: fps,

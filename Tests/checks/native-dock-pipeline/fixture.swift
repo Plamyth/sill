@@ -230,7 +230,7 @@ final class Stats { static let shared = Stats(); func bump(_ key: String) {} }
 
 enum Revocation: String, CaseIterable { case peerLoss = "peer-loss", newTicket = "new-ticket", transportClosed = "transport-closed" }
 enum Moment: String, CaseIterable { case captureStart = "capture-start", catalogRead = "catalog-read", commitCallback = "commit-callback" }
-enum StartFailure: Error { case refused }
+final class StartFailure: Error {}
 struct CheckFailure: Error, CustomStringConvertible { let description: String }
 @MainActor func expect(_ condition: @autoclosure () -> Bool, _ description: String) throws {
     if !condition() { throw CheckFailure(description: description) }
@@ -423,14 +423,18 @@ struct CheckFailure: Error, CustomStringConvertible { let description: String }
         for reason in [nil, Revocation.peerLoss, Revocation.newTicket, Revocation.transportClosed] {
             await check("capture-start-error-\(reason?.rawValue ?? "current")") {
                 let host = Host(), request = Request(host), before = Snapshot(host)
+                let failure = StartFailure()
                 let task = pending(host, request: request)
                 await host.capture.waitUntilStarted()
                 if let reason { request.revoke(reason) }
-                host.capture.finish(StartFailure.refused)
+                host.capture.finish(failure)
                 let error = await task.value
-                try expect(error is StartFailure, "capture.start 오류를 호출자에게 전달해야 합니다")
+                try expect((error as? StartFailure) === failure, "capture.start의 원래 오류 객체를 호출자에게 전달해야 합니다")
                 try before.check(host)
                 try expect(request.commitAttempts == 0, "시작 오류 뒤 commit을 호출하면 안 됩니다")
+                try cleaned(host, candidate: HEVCEncoder.created.last!)
+                try expect(host.capture.stops == 1 && host.syntheticCapture.stops == 1 && host.server.resets == 1,
+                           "시작 오류 후보를 정확히 한 번 정리해야 합니다")
             }
         }
         for reason in Revocation.allCases {
@@ -438,7 +442,7 @@ struct CheckFailure: Error, CustomStringConvertible { let description: String }
                 let host = Host(), request = Request(host)
                 let task = pending(host, request: request)
                 await host.capture.waitUntilStarted()
-                request.revoke(reason); host.capture.finish(StartFailure.refused)
+                request.revoke(reason); host.capture.finish(StartFailure())
                 _ = await task.value
                 try cleaned(host, candidate: HEVCEncoder.created.last!)
             }
@@ -447,11 +451,13 @@ struct CheckFailure: Error, CustomStringConvertible { let description: String }
             let host = Host(), request = Request(host)
             let task = pending(host, request: request, select: true)
             await host.capture.waitUntilStarted()
-            request.revoke(.peerLoss); host.capture.finish(StartFailure.refused)
+            request.revoke(.peerLoss); host.capture.finish(StartFailure())
             _ = await task.value
             try Snapshot(Host()).check(host)
             try expect(!host.switching, "시작 오류 뒤 select 전환 잠금을 해제해야 합니다")
             try cleaned(host, candidate: HEVCEncoder.created.last!)
+            try expect(host.capture.stops == 2 && host.syntheticCapture.stops == 2 && host.server.resets == 2,
+                       "select의 전환 전 정리와 오류 후보 정리를 각각 한 번 수행해야 합니다")
         }
         exit(failed == 0 ? 0 : 1)
     }
