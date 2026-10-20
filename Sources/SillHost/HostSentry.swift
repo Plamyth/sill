@@ -56,11 +56,16 @@ final class HostSentry {
     private var forwardingRevision = UUID()
 
     func forwardingProof() -> ForwardingProof? {
-        forwardingRevision = UUID()
-        guard operation == .idle, persistenceHealthy, let admissionProof = admission.protectionSnapshot() else { return nil }
+        guard operation == .idle, persistenceHealthy, let admissionProof = admission.protectionSnapshot() else {
+            forwardingRevision = UUID()
+            return nil
+        }
         let proof = ForwardingProof(membershipGeneration: membershipGeneration, revision: forwardingRevision,
                                     admission: admissionProof)
-        guard surfaces.verify(), forwardingProofCurrent(proof) else { return nil }
+        guard surfaces.verify(), forwardingProofCurrent(proof) else {
+            forwardingRevision = UUID()
+            return nil
+        }
         return proof
     }
 

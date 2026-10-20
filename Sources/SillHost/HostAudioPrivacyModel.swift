@@ -149,16 +149,28 @@ package final class HostAudioPrivacy {
         fileprivate let localReturnID: UUID
     }
     private var forwardingRevision = UUID()
+    private var forwardingSnapshot: PrivacyAudioSnapshot?
     var forwardingPrivacyGeneration: UUID { privacyGeneration }
     var forwardingInvalidated: (() -> Void)?
 
+    /// Reads protection health while participants remain fenced; never opens normal admission.
+    package func forwardingHealth() -> Bool { forwardingProof() != nil }
+
     func forwardingProof() -> ForwardingProof? {
-        forwardingRevision = UUID()
         let proof = ForwardingProof(privacyGeneration: privacyGeneration, membership: participants.snapshot,
                                     revision: forwardingRevision, localReturnID: localReturnID)
         guard forwardingProofCurrent(proof), let snapshot = try? hal.read(),
-              (try? snapshot.plan().isEmpty) == true, forwardingProofCurrent(proof) else { return nil }
-        return proof
+              (try? snapshot.plan().isEmpty) == true, forwardingProofCurrent(proof) else {
+            forwardingRevision = UUID()
+            forwardingSnapshot = nil
+            return nil
+        }
+        if forwardingSnapshot != snapshot {
+            forwardingRevision = UUID()
+            forwardingSnapshot = snapshot
+        }
+        return ForwardingProof(privacyGeneration: proof.privacyGeneration, membership: proof.membership,
+                               revision: forwardingRevision, localReturnID: proof.localReturnID)
     }
 
     func forwardingProofCurrent(_ proof: ForwardingProof) -> Bool {
