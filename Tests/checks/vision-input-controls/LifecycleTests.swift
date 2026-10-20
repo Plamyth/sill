@@ -217,13 +217,29 @@ func runLifecycleTests() {
     invalidTurn.view.ended(turn(.nan, 0.2))
     check(invalidTurn.sent.isEmpty && invalidTurn.client.steppedDisplays.isEmpty && VisionAudioGain.shared.value == 1,
           "invalid terminal rotation cancels a previously valid angle")
+    let noInventory = LifecycleRig()
+    noInventory.client.visionDisplaySelection.token = nil
+    noInventory.view.changed(turn(-90, 0.1))
+    noInventory.view.ended(turn(-90, 0.2))
+    check(VisionAudioGain.shared.value == 0.5, "rotation gain works without monitor inventory")
     let changedInventory = LifecycleRig()
-    changedInventory.view.changed(turn(-40, 0.1))
-    changedInventory.client.visionDisplaySelection.token = .init(peerEpoch: UUID(), window: UUID(),
-        admission: UUID(), inventory: UUID(), revision: 2)
-    changedInventory.view.ended(turn(40, 0.2))
-    check(changedInventory.client.steppedDisplays.isEmpty && VisionAudioGain.shared.value == 1,
-          "monitor inventory change during rotation cancels the original gesture")
+    changedInventory.view.changed(turn(-90, 0.1))
+    changedInventory.client.visionDisplaySelection.token = nil
+    changedInventory.view.ended(turn(-90, 0.2))
+    check(VisionAudioGain.shared.value == 0.5, "unrelated monitor inventory change does not gate remote gain")
+    for boundary in ["source", "connection"] {
+        let retired = LifecycleRig()
+        retired.view.changed(turn(-90, 0.1))
+        if boundary == "source" {
+            _ = retired.client.catalog(catalog(.window(42), "gain-new-source"), from: retired.peer)
+        } else {
+            let peer = NWConnection()
+            retired.client.connection = peer
+            seedLegacy(retired.client, peer)
+        }
+        retired.view.ended(turn(-90, 0.2))
+        check(VisionAudioGain.shared.value == 1, "retired connection or source cannot commit a volume gesture")
+    }
     for delivered in [false, true] {
         let cancelledCursor = LifecycleRig()
         cancelledCursor.view.changed(contact(0))

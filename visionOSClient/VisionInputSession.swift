@@ -21,7 +21,8 @@ final class VisionInputSession: ObservableObject {
     private var magnification: Magnification?
     private struct Rotation {
         var time: TimeInterval
-        let scope: VisionDisplaySelection.Token
+        let scope: VisionInputBinding
+        let source: StreamSource
         let gainTicket: VisionAudioGain.Ticket
     }
     private var rotation: Rotation?
@@ -116,8 +117,12 @@ final class VisionInputSession: ObservableObject {
         guard degrees.isFinite, time.isFinite else { finishGesture(revision: revision); return }
         guard magnification?.blocksRotation != true else { return }
         guard time >= (rotation?.time ?? -.infinity) else { return }
-        guard let scope = client?.visionDisplaySelection.token else { return }
-        guard rotation == nil || rotation?.scope == scope else { finishGesture(revision: revision); return }
+        guard let client else { return }
+        let scope = client.visionInputBinding
+        guard rotation == nil || (rotation?.scope == scope && rotation?.source == client.active) else {
+            finishGesture(revision: revision)
+            return
+        }
         if rotation == nil {
             momentum.stop()
             pointer.cancel().forEach { client?.sendInput($0) }
@@ -128,7 +133,7 @@ final class VisionInputSession: ObservableObject {
             finishGesture(revision: revision)
             return
         }
-        rotation = Rotation(time: time, scope: scope, gainTicket: ticket)
+        rotation = Rotation(time: time, scope: scope, source: client.active, gainTicket: ticket)
     }
 
     func finishGesture(revision: UUID, completed: Bool = false) {
@@ -137,7 +142,7 @@ final class VisionInputSession: ObservableObject {
         if let turn = rotation {
             VisionAudioGain.shared.end(ticket: turn.gainTicket,
                 commit: completed && canSend && magnification?.blocksRotation != true &&
-                        client?.visionDisplaySelection.token == turn.scope)
+                        client?.visionInputBinding == turn.scope && client?.active == turn.source)
         }
         let wasRotating = rotation != nil
         let events = cancelPointer()
