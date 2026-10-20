@@ -41,8 +41,10 @@ do {
     _ = feedback.link.unhold(original)
     waitMain { feedback.pointerPoints.count == 1 }
     check(feedback.pointerPoints.last! == p, "submitted spatial input shows the exact target")
+    check(feedback.cursorVisible == p, "submitted target is visible")
     feedback.sendInput(.pointer(.move, x: q.x, y: q.y)); feedback.queue.sync {}
     feedback.connection = NWConnection()
+    check(feedback.cursorVisible == nil, "connection change immediately hides the old spatial cursor")
     drained = false
     DispatchQueue.main.async { drained = true }
     waitMain { drained }
@@ -52,6 +54,7 @@ do {
     feedback.sendInput(.pointer(.move, x: q.x, y: q.y)); feedback.queue.sync {}
     _ = feedback.catalog(WindowList(macName: "검사 Mac", windows: [], active: .desktop,
                                    inputGeneration: "changed"), from: replacement)
+    check(feedback.cursorVisible == nil, "source generation change immediately hides the old spatial cursor")
     drained = false
     DispatchQueue.main.async { drained = true }
     waitMain { drained }

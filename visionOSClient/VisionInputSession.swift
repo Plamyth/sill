@@ -107,7 +107,8 @@ final class VisionInputSession: ObservableObject {
     func rotate(_ degrees: Double, at anchor: CGPoint, time: TimeInterval, geometry: VisionPointer.Geometry, revision: UUID) {
         guard revision == gestureRevision, self.geometry == geometry, canSend else { return }
         guard viewport.point(anchor, in: geometry) != nil else { return }
-        guard degrees.isFinite, time.isFinite, time >= (rotation?.time ?? -.infinity) else { return }
+        guard degrees.isFinite, time.isFinite else { finishGesture(revision: revision); return }
+        guard time >= (rotation?.time ?? -.infinity) else { return }
         if rotation == nil {
             momentum.stop()
             pointer.cancel().forEach { client?.sendInput($0) }

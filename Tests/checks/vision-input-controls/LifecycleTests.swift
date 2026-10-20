@@ -167,6 +167,10 @@ func runLifecycleTests() {
     zoomTurn.view.ended(turn(50, 0.3))
     check(zoomTurn.sent.isEmpty && zoomTurn.input.viewport.scale == 1.5,
           "meaningful zoom wins over incidental rotation")
+    let invalidTurn = LifecycleRig()
+    invalidTurn.view.changed(turn(40, 0.1))
+    invalidTurn.view.ended(turn(.nan, 0.2))
+    check(invalidTurn.sent.isEmpty, "invalid terminal rotation cancels a previously valid angle")
 
     let magnify = LifecycleRig()
     magnify.view.changed(contact(0))

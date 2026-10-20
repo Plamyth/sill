@@ -137,7 +137,7 @@ struct PointerPresence: Equatable {
     /// middle, and the Mac's pointer is moved there too, so the two agree (as before this plan). The
     /// Mac's arrow needs nothing: the host's next report is in the new geometry.
     func recentresOnNewFrame(now: Double) -> Bool {
-        control == .here && own != nil && sprite(now: now) != nil
+        origin != .spatial && control == .here && own != nil && sprite(now: now) != nil
     }
 
     /// §3.3: a report (kind 26) counts only if the Mac had read every input this device sent on the

@@ -1027,7 +1027,10 @@ final class StreamClient: ObservableObject {
 
     @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog {
         didSet {
-            if oldValue != visionInputBinding { revokeVisionTextDrafts() }
+            if oldValue != visionInputBinding {
+                setOwnPointer(nil, from: .spatial)
+                revokeVisionTextDrafts()
+            }
             if !visionInputBinding.isConfirmed {
                 visionInputPermit = nil
                 link.setInputPermit(nil)
@@ -1137,6 +1140,7 @@ final class StreamClient: ObservableObject {
     }
 
     func cancelVisionInputs(completion: (() -> Void)? = nil) {
+        setOwnPointer(nil, from: .spatial)
         revokeVisionTextDrafts()
         let expected = connection
         queue.async { [weak self] in

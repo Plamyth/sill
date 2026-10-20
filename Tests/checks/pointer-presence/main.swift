@@ -30,6 +30,8 @@ for (portrait, layout) in layouts {
           "Vision spatial input keeps its cursor visible in \(layout)")
     check(presence(.here, own: ownAt, origin: .spatial, portrait: portrait, streaming: false).sprite(now: 0) == nil,
           "Vision spatial cursor disappears when streaming ends")
+    check(!presence(.here, own: ownAt, origin: .spatial, portrait: portrait).recentresOnNewFrame(now: 0),
+          "Vision frame resize never generates an unsolicited center pointer move")
 }
 
 // The Mac (or another device) moved it last: the Mac's pointer while it is over the stream, in every
