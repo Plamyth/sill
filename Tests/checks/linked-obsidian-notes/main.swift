@@ -83,7 +83,8 @@ final class NoteProtocol: URLProtocol {
             VaultNoteSnapshot(path:path,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"now")
         }
         func store() -> CanvasStore {
-            let s = CanvasStore()
+            let s = CanvasStore(blockRecoveryURL:FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("recovery.json"))
             s.scene = CanvasScene()
             s.drawing = PKDrawing()
             s.scene.drawingBase64 = s.drawing.dataRepresentation().base64EncodedString()

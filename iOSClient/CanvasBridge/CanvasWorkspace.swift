@@ -25,6 +25,7 @@ struct CanvasWorkspace: View {
     @State private var vaultEntries: [CanvasRelay.VaultEntry] = []
     @State private var vaultStatus = ""
     @State private var vaultDiscardOpen = false
+    @State private var recoveryDiscardOpen = false
     @State private var syncedSceneSha: String?
     @State private var canvasNoteSha: String?
     @State private var pendingSceneSha: String?
@@ -265,6 +266,18 @@ struct CanvasWorkspace: View {
     private var vaultSheet: some View {
         NavigationStack {
             VStack(spacing:0) {
+                if !store.blockRecoveryNotice.isEmpty {
+                    VStack(alignment:.leading,spacing:6) {
+                        Text(store.blockRecoveryNotice).font(.footnote)
+                        if store.blockRecovery != nil && !store.vaultBlockEditing {
+                            Button("보존된 문단 입력 열기") { _ = store.restoreLinkedBlockDraft() }
+                                .frame(minHeight:44).accessibilityIdentifier("obsidianRestoreBlockDraft")
+                            Button("보존된 입력 버리기",role:.destructive) { recoveryDiscardOpen = true }
+                                .frame(minHeight:44).accessibilityIdentifier("obsidianDiscardBlockRecovery")
+                        }
+                    }.frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
+                        .disabled(store.vaultDirty || store.vaultSaving || store.vaultLoading)
+                }
                 if let note = store.vaultNote {
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
@@ -362,6 +375,12 @@ struct CanvasWorkspace: View {
                 }
             }
             .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving)
+            .alert("보존된 입력을 버릴까요?",isPresented:$recoveryDiscardOpen) {
+                Button("입력 버리기",role:.destructive) { _ = store.discardLinkedBlockRecovery() }
+                Button("취소",role:.cancel) {}
+            } message: {
+                Text("이 기기의 복구 입력과 미확인 작업 기록만 버립니다. 이미 서버에 저장된 결과는 취소되지 않습니다.")
+            }
             .alert("저장하지 않은 입력을 버릴까요?",isPresented:$vaultDiscardOpen) {
                 Button("입력 버리고 닫기",role:.destructive) {
                     if store.closeVaultEditor(discard:true) { vaultOpen = false }

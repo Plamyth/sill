@@ -173,9 +173,18 @@ final class CanvasStore: ObservableObject {
     }
     @Published var vaultSelection = NSRange(location:0,length:0)
     @Published private(set) var vaultBlockEditing = false
-    @Published var vaultBlockDraft = ""
+    @Published var vaultBlockDraft = "" {
+        didSet { if !changingBlockState { persistBlockDraft() } }
+    }
     @Published var vaultBlockSelection = NSRange(location:0,length:0)
     private var pendingBlockEdit: VaultBlockEdit?
+    @Published private(set) var blockRecovery: VaultBlockRecovery?
+    @Published private(set) var blockRecoveryNotice = ""
+    private let blockRecoveryURL: URL?
+    private var blockRecoveryBytes: Data?
+    private var blockRecoveryReadable = true
+    private var changingBlockState = false
+    private var blockRecoveryWasRestored = false
     @Published var vaultStatus = ""
     @Published private(set) var vaultSaving = false
     @Published private(set) var vaultLoading = false
@@ -280,6 +289,12 @@ final class CanvasStore: ObservableObject {
                 "저장하지 않은 입력이 있습니다. 저장하거나 입력 버리기를 선택하세요."
             return false
         }
+        if vaultBlockEditing {
+            do { try writeBlockRecovery(nil) }
+            catch { vaultStatus = error.localizedDescription; return false }
+        }
+        changingBlockState = true
+        defer { changingBlockState = false }
         noteEditorGeneration &+= 1
         noteRequest = nil
         noteContext = nil
@@ -304,6 +319,10 @@ final class CanvasStore: ObservableObject {
         guard VaultNoteReference.validPath(path), !noteToken.isEmpty else {
             vaultStatus = "노트 경로 또는 Mac 연결을 확인하세요."
             return
+        }
+        if vaultBlockEditing {
+            do { try writeBlockRecovery(nil) }
+            catch { vaultStatus = error.localizedDescription; return }
         }
         let pending = pendingExcerptAnchor.flatMap { attempt in
             attempt.context == noteContext && attempt.context.path == path && noteContextIsCurrent(attempt.context) ? attempt.id : nil
@@ -385,13 +404,109 @@ final class CanvasStore: ObservableObject {
     func beginLinkedBlockEdit() -> Bool {
         guard vaultCanAttach, let note = vaultNote, let id = vaultLinkedBlockID else { return false }
         do {
+            guard blockRecoveryReadable, blockRecovery == nil, let context = noteContext,
+                  let nodeID = context.nodeID else { throw VaultBlockRecoveryError.corrupt }
             let block = try VaultMarkdownBlocks(note.text).resolve(id)
             _ = try VaultMarkdownBlocks(note.text).replacing(id,with:block.quote)
+            guard let sceneURL = Self.sceneURL() else { throw VaultBlockRecoveryError.unavailable }
+            let sceneBytes = try JSONEncoder().encode(scene)
+            guard sceneBytes.count <= Self.sceneByteLimit else { throw VaultBlockRecoveryError.unavailable }
+            try CanvasLocalFile.write(sceneBytes,to:sceneURL)
+            try writeBlockRecovery(VaultBlockRecovery(schemaVersion:1,sceneID:context.sceneID,
+                nodeID:nodeID,relayAddress:noteAddress,blockID:id,base:note,
+                draft:block.quote.replacingOccurrences(of:"\r\n",with:"\n"),pending:nil))
+            changingBlockState = true
+            defer { changingBlockState = false }
             vaultBlockDraft = block.quote.replacingOccurrences(of:"\r\n",with:"\n")
             vaultBlockSelection = NSRange(location:0,length:0)
             pendingBlockEdit = nil
             vaultBlockEditing = true
+            blockRecoveryWasRestored = false
             vaultStatus = "연결 문단만 수정합니다. 블록 표식과 다른 원문은 보존됩니다."
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
+    private static func defaultBlockRecoveryURL() -> URL? {
+        FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first?
+            .appendingPathComponent("CanvasBlockEdit",isDirectory:true).appendingPathComponent("recovery.json")
+    }
+
+    private func writeBlockRecovery(_ record: VaultBlockRecovery?) throws {
+        guard blockRecoveryReadable, let url = blockRecoveryURL else { throw VaultBlockRecoveryError.corrupt }
+        let current: Data?
+        do {
+            current = FileManager.default.fileExists(atPath:url.path) ? try Self.readBlockRecovery(url) : nil
+        } catch { throw VaultBlockRecoveryError.unavailable }
+        guard current == blockRecoveryBytes else {
+            blockRecoveryReadable = false
+            blockRecoveryNotice = VaultBlockRecoveryError.corrupt.localizedDescription
+            throw VaultBlockRecoveryError.corrupt
+        }
+        let bytes = try JSONEncoder().encode(VaultBlockRecoveryFile(record))
+        guard bytes.count <= VaultBlockRecoveryFile.byteLimit else { throw VaultBlockRecoveryError.unavailable }
+        do {
+            try CanvasLocalFile.write(bytes,to:url)
+            guard try Data(contentsOf:url) == bytes else { throw VaultBlockRecoveryError.unavailable }
+        } catch { throw VaultBlockRecoveryError.unavailable }
+        blockRecoveryBytes = bytes
+        blockRecovery = record
+        blockRecoveryNotice = record == nil ? "" : "연결 문단 입력을 이 기기에 보존했습니다. 자동 전송하지 않습니다."
+    }
+
+    private static func readBlockRecovery(_ url: URL) throws -> Data {
+        let attributes = try FileManager.default.attributesOfItem(atPath:url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber,
+              size.intValue <= VaultBlockRecoveryFile.byteLimit else { throw VaultBlockRecoveryError.corrupt }
+        return try Data(contentsOf:url)
+    }
+
+    private func persistBlockDraft() {
+        guard vaultBlockEditing, var record = blockRecovery else { return }
+        record.draft = vaultBlockDraft
+        record.pending = pendingBlockEdit
+        do { try writeBlockRecovery(record) }
+        catch {
+            blockRecoveryNotice = error.localizedDescription
+            vaultStatus = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func discardLinkedBlockRecovery() -> Bool {
+        guard !vaultSaving, !vaultLoading, !vaultDirty, !vaultBlockEditing else { return false }
+        do { try writeBlockRecovery(nil); return true }
+        catch { vaultStatus = error.localizedDescription; return false }
+    }
+
+    @discardableResult
+    func restoreLinkedBlockDraft() -> Bool {
+        do {
+            guard blockRecoveryReadable, let record = blockRecovery else { throw VaultBlockRecoveryError.corrupt }
+            _ = try record.validated()
+            guard !vaultDirty, !vaultSaving, !vaultLoading, !noteToken.isEmpty,
+                  record.sceneID == scene.id, record.relayAddress == noteAddress,
+                  let ref = scene.nodes.first(where:{ $0.id == record.nodeID })?.vaultNote,
+                  ref.path == record.base.path, ref.blockID == record.blockID,
+                  ref.relayAddress == record.relayAddress else { throw VaultBlockRecoveryError.context }
+            changingBlockState = true
+            defer { changingBlockState = false }
+            noteEditorGeneration &+= 1
+            noteRequest = nil
+            noteContext = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
+                connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
+                path:record.base.path,nodeID:record.nodeID,blockID:record.blockID)
+            vaultNote = record.base
+            vaultDraft = record.base.text
+            pendingBlockEdit = record.pending
+            vaultBlockDraft = record.draft
+            vaultBlockSelection = NSRange(location:0,length:0)
+            vaultBlockEditing = true
+            vaultBlocked = false
+            blockRecoveryWasRestored = true
+            vaultStatus = record.pending == nil ? "보존된 문단 입력을 열었습니다. 저장 전 원문을 확인합니다." :
+                "미확인 작업과 이후 입력을 복원했습니다. 저장 결과 확인은 같은 작업 ID만 사용합니다."
             return true
         } catch { vaultStatus = error.localizedDescription; return false }
     }
@@ -403,16 +518,36 @@ final class CanvasStore: ObservableObject {
         let request = UUID()
         do {
             let block = try VaultMarkdownBlocks(base.text).resolve(blockID)
-            let submitted = pendingBlockEdit ?? VaultBlockEdit(base:base,block:block,
-                text:canonicalBlockText(vaultBlockDraft,original:base.text))
-            _ = try VaultMarkdownBlocks(base.text).replacing(blockID,with:submitted.replacementText)
-            pendingBlockEdit = submitted
-            let draftAtSubmission = vaultBlockDraft
             noteRequest = request
             vaultSaving = true
             defer {
                 if noteRequest == request { noteRequest = nil; vaultSaving = false }
             }
+            if blockRecoveryWasRestored {
+                let current = try await load(base.path).validated(at:base.path)
+                guard !Task.isCancelled, noteRequest == request, noteContext == context,
+                      noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256 else { return }
+                let expected = try pendingBlockEdit.map {
+                    try VaultMarkdownBlocks(base.text).replacing(blockID,with:$0.replacementText)
+                }
+                guard current.text.utf8.elementsEqual(base.text.utf8) ||
+                      expected.map({ current.text.utf8.elementsEqual($0.utf8) }) == true else {
+                    throw VaultBlockRecoveryError.changed
+                }
+            }
+            let submitted = pendingBlockEdit ?? VaultBlockEdit(base:base,block:block,
+                text:canonicalBlockText(vaultBlockDraft,original:base.text))
+            _ = try VaultMarkdownBlocks(base.text).replacing(blockID,with:submitted.replacementText)
+            guard var recovery = blockRecovery, recovery.sceneID == context.sceneID,
+                  recovery.nodeID == context.nodeID, recovery.relayAddress == noteAddress,
+                  recovery.base == base, recovery.blockID == blockID else {
+                throw VaultBlockRecoveryError.context
+            }
+            recovery.draft = vaultBlockDraft
+            recovery.pending = submitted
+            try writeBlockRecovery(recovery)
+            pendingBlockEdit = submitted
+            let draftAtSubmission = vaultBlockDraft
             let result = try await replace(base.path,blockID,submitted)
             let saved = try result.validated(edit:submitted,base:base,blockID:blockID)
             guard !Task.isCancelled, noteRequest == request, noteContext == context,
@@ -426,6 +561,12 @@ final class CanvasStore: ObservableObject {
                   noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256,
                   readSequence >= acceptedNoteReads[base.path,default:0],
                   pendingBlockEdit == submitted else { return }
+            recovery.base = saved
+            recovery.draft = vaultBlockDraft
+            recovery.pending = nil
+            try writeBlockRecovery(recovery)
+            changingBlockState = true
+            defer { changingBlockState = false }
             acceptedNoteReads[base.path] = readSequence
             vaultNote = saved
             vaultDraft = saved.text
@@ -435,6 +576,7 @@ final class CanvasStore: ObservableObject {
                 vaultBlockDraft = submitted.replacementText.replacingOccurrences(of:"\r\n",with:"\n")
             }
             pendingBlockEdit = nil
+            blockRecoveryWasRestored = false
             vaultBlocked = false
             refreshNoteCache(saved)
             vaultStatus = vaultBlockTextChanged ? "제출한 문단은 저장됐습니다. 이후 입력은 아직 저장하지 않았습니다." :
@@ -695,7 +837,8 @@ final class CanvasStore: ObservableObject {
         }
     }
 
-    init() {
+    init(blockRecoveryURL: URL? = nil) {
+        self.blockRecoveryURL = blockRecoveryURL ?? Self.defaultBlockRecoveryURL()
         if let restored = Self.restoreScene() {
             scene = restored.scene
             drawing = restored.drawing
@@ -712,6 +855,20 @@ final class CanvasStore: ObservableObject {
         } catch {
             outboxReadable = false
             status = CanvasSendError.outboxUnavailable.localizedDescription
+        }
+        do {
+            guard let url = self.blockRecoveryURL else { throw VaultBlockRecoveryError.unavailable }
+            if FileManager.default.fileExists(atPath:url.path) {
+                let bytes = try Self.readBlockRecovery(url)
+                blockRecovery = try JSONDecoder().decode(VaultBlockRecoveryFile.self,from:bytes).record()
+                blockRecoveryBytes = bytes
+                if blockRecovery != nil {
+                    blockRecoveryNotice = "보존된 연결 문단 입력이 있습니다. 열기 전에는 전송하지 않습니다."
+                }
+            }
+        } catch {
+            blockRecoveryReadable = false
+            blockRecoveryNotice = VaultBlockRecoveryError.corrupt.localizedDescription
         }
     }
 

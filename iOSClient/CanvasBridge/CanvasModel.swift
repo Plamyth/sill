@@ -308,7 +308,7 @@ struct VaultBlockEditResult: Decodable {
     }
 }
 
-struct VaultNoteSnapshot: Decodable, Equatable {
+struct VaultNoteSnapshot: Codable, Equatable {
     let path: String
     let text: String
     let sha256: String
@@ -334,6 +334,70 @@ struct VaultNoteSnapshot: Decodable, Equatable {
             throw URLError(.badServerResponse)
         }
         return self
+    }
+}
+
+enum VaultBlockRecoveryError: LocalizedError {
+    case unavailable, corrupt, context, changed
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable: return "문단 복구 파일을 저장하지 못했습니다. 입력은 유지하며 새 요청은 보내지 않습니다."
+        case .corrupt: return "문단 복구 파일을 확인하지 못했습니다. 기존 파일을 보존하며 문단 저장을 중단합니다."
+        case .context: return "보존된 입력의 장면·카드·원문·서버가 현재 연결과 다릅니다. 자동 연결하지 않습니다."
+        case .changed: return "원문이 기준 또는 예상 결과와 다릅니다. 입력과 작업 ID를 보존하며 다시 쓰지 않습니다."
+        }
+    }
+}
+
+struct VaultBlockRecovery: Codable, Equatable {
+    let schemaVersion: Int
+    let sceneID: UUID
+    let nodeID: UUID
+    let relayAddress: String
+    let blockID: String
+    var base: VaultNoteSnapshot
+    var draft: String
+    var pending: VaultBlockEdit?
+
+    func validated() throws -> Self {
+        guard schemaVersion == 1, relayAddress.utf8.count <= 2048,
+              let url = URLComponents(string:relayAddress), url.scheme.map({ ["http","https"].contains($0) }) == true,
+              url.host?.isEmpty == false, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil, draft.utf8.count <= 1024 * 1024 else {
+            throw VaultBlockRecoveryError.corrupt
+        }
+        _ = try base.validated(at:base.path)
+        let block = try VaultMarkdownBlocks(base.text).resolve(blockID)
+        _ = try VaultMarkdownBlocks(base.text).replacing(blockID,with:block.quote)
+        if let pending {
+            guard pending.schemaVersion == 1, pending.baseSha256 == base.sha256,
+                  pending.baseQuoteSha256 == CanvasPacket.sha(Data(block.quote.utf8)) else {
+                throw VaultBlockRecoveryError.corrupt
+            }
+            _ = try VaultMarkdownBlocks(base.text).replacing(blockID,with:pending.replacementText)
+        }
+        return self
+    }
+}
+
+struct VaultBlockRecoveryFile: Codable {
+    let schemaVersion: Int
+    let payload: Data?
+    let sha256: String
+    static let byteLimit = 24 * 1024 * 1024
+
+    init(_ record: VaultBlockRecovery?) throws {
+        schemaVersion = 1
+        payload = try record.map { try JSONEncoder().encode($0.validated()) }
+        sha256 = CanvasPacket.sha(payload ?? Data())
+    }
+
+    func record() throws -> VaultBlockRecovery? {
+        guard schemaVersion == 1, CanvasPacket.sha(payload ?? Data()) == sha256 else {
+            throw VaultBlockRecoveryError.corrupt
+        }
+        return try payload.map { try JSONDecoder().decode(VaultBlockRecovery.self,from:$0).validated() }
     }
 }
 

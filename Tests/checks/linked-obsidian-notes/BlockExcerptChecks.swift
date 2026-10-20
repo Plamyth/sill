@@ -267,6 +267,7 @@ func checkBlockExcerpts(_ check: (Bool, String) -> Void) async throws {
         "older anchor readback cannot regress a newer accepted refresh or attach stale quote")
     NoteProtocol.cas = false
     try await checkLinkedBlockEditing(check)
+    try await checkBlockDraftRecovery(check)
 }
 
 
@@ -287,7 +288,8 @@ private func checkLinkedBlockEditing(_ check: (Bool,String) -> Void) async throw
         } catch { check(true,"unsupported block replacement rejected: \(invalid)") }
     }
     func store(_ source: VaultNoteSnapshot = original) async -> CanvasStore {
-        let s = CanvasStore()
+        let s = CanvasStore(blockRecoveryURL:FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("recovery.json"))
         s.scene = CanvasScene()
         s.setNoteConnection(address:"http://test",token:"test-token")
         await s.openVaultNote(source.path) { _ in source }
@@ -479,4 +481,160 @@ private final class SemanticBlockProtocol: URLProtocol {
         ["path":Self.note.path,"text":Self.note.text,"sha256":Self.note.sha256,"modifiedAt":Self.note.modifiedAt]
     }
     override func stopLoading() {}
+}
+
+@MainActor
+private func checkBlockDraftRecovery(_ check: (Bool,String) -> Void) async throws {
+    func note(_ text: String) -> VaultNoteSnapshot {
+        VaultNoteSnapshot(path:"Notes/recovery.md",text:text,
+            sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"now")
+    }
+    let source = note("# 원본\r\n\r\n문단 e\u{301} 👩🏽‍💻 ^recover-1\r\n\r\n다른 문단\r\n")
+    func path() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("recovery.json")
+    }
+    func record(_ url: URL) throws -> VaultBlockRecovery? {
+        try JSONDecoder().decode(VaultBlockRecoveryFile.self,from:Data(contentsOf:url)).record()
+    }
+    func setup(_ url: URL) async -> CanvasStore {
+        let s = CanvasStore(blockRecoveryURL:url)
+        s.scene = CanvasScene()
+        s.setNoteConnection(address:"http://test",token:"test-token")
+        await s.openVaultNote(source.path) { _ in source }
+        s.vaultSelection = (source.text as NSString).range(of:"문단")
+        let id = await s.excerptSelectedVaultBlock(save:{ _,_,_ in throw URLError(.badURL) },load:{ _ in source })!
+        _ = s.closeVaultEditor()
+        await s.openVaultNote(source.path,nodeID:id) { _ in source }
+        check(s.beginLinkedBlockEdit(),"recovery fixture starts a source-linked editor")
+        return s
+    }
+    func restart(_ previous: CanvasStore, _ url: URL) -> CanvasStore {
+        let s = CanvasStore(blockRecoveryURL:url)
+        check(s.scene.id == previous.scene.id && s.scene.nodes.map(\.id) == previous.scene.nodes.map(\.id),
+              "restart reads persisted source scene and card identities without reconstructing them")
+        s.setNoteConnection(address:"http://test",token:"test-token")
+        return s
+    }
+    func result(_ edit: VaultBlockEdit, disposition: String = "committed") throws -> VaultBlockEditResult {
+        let saved = note(try VaultMarkdownBlocks(source.text).replacing("recover-1",with:edit.replacementText))
+        return VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:"recover-1",
+            disposition:disposition,quoteSha256:CanvasPacket.sha(Data(edit.replacementText.utf8)),note:saved)
+    }
+    let url = path(), initial = await setup(url)
+    let draft = "한 글자 수정 e\u{301} 👩🏽‍💻\n계속 입력"
+    initial.vaultBlockDraft = draft
+    let savedDraft = try record(url)
+    check(!String(decoding:try Data(contentsOf:url),as:UTF8.self).contains("test-token"),
+          "recovery stores no relay credential")
+    check(savedDraft?.draft.utf8.elementsEqual(draft.utf8) == true && savedDraft?.pending == nil,
+          "each draft change is durable before any network operation")
+    let recovered = restart(initial,url)
+    check(!recovered.vaultBlockEditing && recovered.blockRecovery != nil,
+          "restart offers recovery without opening or automatically transmitting the draft")
+    recovered.setNoteConnection(address:"http://other",token:"different")
+    check(!recovered.restoreLinkedBlockDraft(),"recovery refuses a different relay identity")
+    recovered.setNoteConnection(address:"http://test",token:"test-token")
+    let originalScene = recovered.scene
+    recovered.scene.nodes = []
+    check(!recovered.restoreLinkedBlockDraft(),"recovery refuses a missing source card")
+    recovered.scene = CanvasScene()
+    check(!recovered.restoreLinkedBlockDraft(),"recovery refuses a different scene")
+    recovered.scene = originalScene
+    check(recovered.restoreLinkedBlockDraft() && recovered.vaultBlockDraft.utf8.elementsEqual(draft.utf8) && recovered.vaultDirty,
+          "restart restores exact Unicode draft with its original scene, card and source")
+    var preflight = 0, writes = 0
+    await recovered.saveLinkedBlock(replace:{ _,_,edit in
+        writes += 1
+        check(try record(url)?.pending == edit,"operation ID and frozen payload reach disk before the request")
+        return try result(edit)
+    },load:{ _ in
+        preflight += 1
+        return preflight == 1 ? source : try result(record(url)!.pending!).note
+    })
+    check(preflight == 2 && writes == 1 && !recovered.vaultDirty && !recovered.vaultBlockHasPendingSave,
+          "recovered draft checks source, saves once, and independently confirms exact result")
+    check(try record(url)?.base == recovered.vaultNote,"confirmed base advances durably before pending state clears")
+    await recovered.openVaultNote(source.path) { _ in recovered.vaultNote ?? source }
+    check(try record(url) == nil,"clean editor reload clears obsolete recovery before accepting another source")
+
+    let pendingURL = path(), pendingStore = await setup(pendingURL)
+    pendingStore.vaultBlockDraft = "서버에 먼저 저장됨"
+    var operation: VaultBlockEdit?
+    await pendingStore.saveLinkedBlock(replace:{ _,_,edit in
+        operation = edit
+        check(try record(pendingURL)?.pending == edit,"lost-response operation was durable before dispatch")
+        throw URLError(.networkConnectionLost)
+    },load:{ _ in source })
+    pendingStore.vaultBlockDraft = "응답 뒤 새 입력"
+    let pendingRestart = restart(pendingStore,pendingURL)
+    check(pendingRestart.restoreLinkedBlockDraft() && pendingRestart.vaultBlockHasPendingSave &&
+          pendingRestart.vaultBlockDraft == "응답 뒤 새 입력","restart retains uncertain operation separately from later typing")
+    let committed = try result(operation!).note
+    await pendingRestart.saveLinkedBlock(replace:{ _,_,edit in
+        check(edit == operation,"restart retries the identical operation ID and immutable payload")
+        return try result(edit,disposition:"reconciled")
+    },load:{ _ in committed })
+    check(!pendingRestart.vaultBlockHasPendingSave && pendingRestart.vaultDirty &&
+          pendingRestart.vaultBlockDraft == "응답 뒤 새 입력" && pendingRestart.vaultNote == committed,
+          "reconciled server result never erases newer local typing")
+    let newerRestart = restart(pendingRestart,pendingURL)
+    check(newerRestart.restoreLinkedBlockDraft() && newerRestart.vaultBlockDraft == "응답 뒤 새 입력" &&
+          newerRestart.vaultNote == committed && !newerRestart.vaultBlockHasPendingSave,
+          "another restart retains the newer draft against the confirmed server base")
+    let closed = newerRestart.closeVaultEditor(discard:true)
+    let cleared = try record(pendingURL) == nil
+    check(closed && cleared,
+          "explicit editor discard clears local recovery without a remote write")
+
+    let staleURL = path(), stale = await setup(staleURL)
+    stale.vaultBlockDraft = "보존할 입력"
+    let staleRestart = restart(stale,staleURL)
+    _ = staleRestart.restoreLinkedBlockDraft()
+    let before = try Data(contentsOf:staleURL)
+    var staleWrites = 0
+    await staleRestart.saveLinkedBlock(replace:{ _,_,edit in staleWrites += 1; return try result(edit) },
+        load:{ _ in note(source.text + "Mac의 새 내용") })
+    let unchanged = try Data(contentsOf:staleURL) == before
+    check(staleWrites == 0 && staleRestart.vaultBlockDraft == "보존할 입력" && unchanged,"changed source refuses overwrite and preserves recovery byte-for-byte")
+
+    let failedURL = path(), failed = await setup(failedURL)
+    failed.vaultBlockDraft = "저장 장벽"
+    try FileManager.default.removeItem(at:failedURL)
+    try FileManager.default.createDirectory(at:failedURL,withIntermediateDirectories:false)
+    var failedWrites = 0
+    await failed.saveLinkedBlock(replace:{ _,_,edit in failedWrites += 1; return try result(edit) },load:{ _ in source })
+    check(failedWrites == 0 && !failed.vaultBlockHasPendingSave && failed.vaultBlockDraft == "저장 장벽",
+          "journal IO failure stops dispatch without losing in-memory typing")
+
+    let corruptURL = path(), corruptSource = await setup(corruptURL)
+    corruptSource.vaultBlockDraft = "보존된 원본 초안"
+    let intact = try Data(contentsOf:corruptURL)
+    var object = try JSONSerialization.jsonObject(with:intact) as! [String:Any]
+    object["sha256"] = String(repeating:"0",count:64)
+    let corrupt = try JSONSerialization.data(withJSONObject:object)
+    try corrupt.write(to:corruptURL)
+    let refused = restart(corruptSource,corruptURL)
+    let corruptUnchanged = try Data(contentsOf:corruptURL) == corrupt
+    check(!refused.restoreLinkedBlockDraft() && !refused.discardLinkedBlockRecovery() && corruptUnchanged,"corrupt journal is preserved and never silently reset or transmitted")
+    do {
+        let envelope = try JSONDecoder().decode(VaultBlockRecoveryFile.self,from:corrupt)
+        _ = try envelope.record()
+        check(false,"journal checksum mismatch is rejected")
+    } catch { check(true,"journal checksum mismatch is rejected") }
+    let externalURL = path(), external = await setup(externalURL)
+    external.vaultBlockDraft = "before replacement"
+    try Data("external owner".utf8).write(to:externalURL)
+    external.vaultBlockDraft = "after replacement"
+    await external.saveLinkedBlock(replace:{ _,_,edit in failedWrites += 1; return try result(edit) },load:{ _ in source })
+    let externalUnchanged = try Data(contentsOf:externalURL) == Data("external owner".utf8)
+    check(failedWrites == 0 && externalUnchanged,
+          "external journal replacement is not overwritten and cannot authorize a request")
+    let discardURL = path(), discardSource = await setup(discardURL)
+    discardSource.vaultBlockDraft = "의도적으로 버릴 초안"
+    let discardRestart = restart(discardSource,discardURL)
+    let discarded = discardRestart.discardLinkedBlockRecovery()
+    let discardedRecord = try record(discardURL)
+    check(discarded && discardedRecord == nil &&
+          discardRestart.vaultNote == nil,"unopened recovery can be explicitly discarded without opening or modifying Obsidian")
 }
