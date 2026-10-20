@@ -163,7 +163,6 @@ struct SillVisionWorkspace: View {
         }
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
-        .accessibilityIdentifier("vision.workspace")
         .ornament(attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
             if session.owns(lease), client.connected, client.active != .none, client.visionSentrySnapshot.available {
                 VisionSentryOrnament(snapshot: client.visionSentrySnapshot,

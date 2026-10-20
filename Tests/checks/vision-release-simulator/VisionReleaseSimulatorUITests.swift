@@ -10,6 +10,9 @@ final class VisionReleaseSimulatorUITests: XCTestCase {
         app.launchArguments = ["--ccr-release-context", String(decoding: try JSONSerialization.data(withJSONObject: context), as: UTF8.self)]
         app.launch()
         defer { app.terminate() }
+        let provider = app.staticTexts.matching(identifier: "release.provider-output")
+        XCTAssertTrue(provider.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(provider.count, 1)
         XCTAssertTrue(app.buttons["입력 초안"].waitForExistence(timeout: 15))
         app.buttons["입력 초안"].tap()
         let editor = app.textViews["Mac 입력 초안"]

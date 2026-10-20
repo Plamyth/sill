@@ -55,3 +55,7 @@ Parent steering added testDraftKeyboardDelivery. It launches explicit text profi
 The parent reported official integration ad272f34cf1afb3b369faf31c87a0ec4f594b8d8 after its independent Python driver fixes and tests. This worker remains based on 18063c5 with no Python changes and no cherry-pick, push or official integration mutation. The parent retains simulator and lifecycle ownership.
 
 The generated-project membership check passed. VisionReleaseRemotePeer.swift occurs once in the sources of each Vision app target. Final Swift frontend parse of the added keyboard diagnostic passed with the same sysroot warning. BLOCKED: independent review. Parent review and exact native execution are required before integration or acceptance.
+
+## Observed accessibility collision follow-up
+
+The parent reported native hierarchy evidence that the workspace VStack identifier propagated to every child and replaced the provider's identifier. Repository search found only the declaration of vision.workspace and no caller. Removed that single ancestor identifier. The provider and remote status labels retain their own identifiers. testDraftKeyboardDelivery now first requires exactly one release.provider-output static text before opening the draft, so the parent's next native run checks this observed collision independently of keyboard delivery. No labels, text content, input controller or review guards were changed. Native hierarchy validation remains parent-owned.
