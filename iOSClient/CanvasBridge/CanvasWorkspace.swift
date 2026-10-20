@@ -694,13 +694,17 @@ struct CanvasWorkspace: View {
         return GeometryReader { _ in
             ZStack(alignment:.topLeading) {
                 Color(uiColor:CanvasPalette.background)
-                PencilCanvas(store:store)
+                PencilCanvas(store:store,isVisible:diagramMode != .diagram)
                 if store.scene.drawingBase64.isEmpty {
                     ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
                 }
                 ForEach(store.scene.links.filter { visible.linkIDs.contains($0.id) }) { link in linkView(link) }
-                ForEach(store.scene.nodes.filter { visible.nodeIDs.contains($0.id) }) { node in nodeView(node) }
-                ForEach(store.scene.annotations.filter { visible.annotationIDs.contains($0.id) }) { note in annotationView(note) }
+                ForEach(store.scene.nodes.filter { visible.nodeIDs.contains($0.id) }) { node in
+                    nodeView(node).accessibilityHidden(diagramMode == .diagram)
+                }
+                ForEach(store.scene.annotations.filter { visible.annotationIDs.contains($0.id) }) { note in
+                    annotationView(note).accessibilityHidden(diagramMode == .diagram)
+                }
             }
             .frame(width:store.scene.width,height:store.scene.height)
             .scaleEffect(store.zoom,anchor:.topLeading)

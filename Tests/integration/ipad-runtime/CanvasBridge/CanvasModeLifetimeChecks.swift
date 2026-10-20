@@ -85,6 +85,11 @@ enum CanvasModeLifetimeChecks {
                 "보기 \(mode) 전환에서 실제 PKCanvasView·Coordinator·UndoManager 동일성 유지")
             try check(store.viewport == viewport && store.scene.nodes == nodes,
                 "보기 \(mode) 전환에서 뷰포트·줌·노드 좌표 유지")
+            try check(canvas.superview?.accessibilityElementsHidden == (mode == 1) &&
+                canvas.superview?.isAccessibilityElement == (mode != 1) &&
+                canvas.superview?.isHidden == (mode == 1) &&
+                canvas.superview?.isUserInteractionEnabled == (mode != 1),
+                "보기 \(mode)에서 원본 UIKit 입력·접근성 노출이 표시 상태와 일치")
             if mode == 1 {
                 let hit = window.hitTest(canvas.convert(CGPoint(x:100,y:100),to:window),with:nil)
                 try check(hit !== canvas && hit?.isDescendant(of:canvas) != true,

@@ -10,6 +10,7 @@ final class CanvasInkView: PKCanvasView {
 
 struct PencilCanvas: UIViewRepresentable {
     @ObservedObject var store: CanvasStore
+    var isVisible = true
 
     func makeCoordinator() -> Coordinator { Coordinator(store: store) }
 
@@ -87,7 +88,9 @@ struct PencilCanvas: UIViewRepresentable {
         pinch.cancelsTouchesInView = false
         pinch.delegate = context.coordinator
         host.addGestureRecognizer(pinch)
-        host.isAccessibilityElement = true
+        host.isAccessibilityElement = isVisible
+        host.accessibilityElementsHidden = !isVisible
+        host.isHidden = !isVisible
         host.accessibilityLabel = "캔버스 이동과 확대"
         host.accessibilityIdentifier = "canvasNavigationSurface"
         return host
@@ -95,6 +98,10 @@ struct PencilCanvas: UIViewRepresentable {
 
     func updateUIView(_ host: UIView, context: Context) {
         guard let canvas = context.coordinator.canvas else { return }
+        host.isAccessibilityElement = isVisible
+        host.accessibilityElementsHidden = !isVisible
+        host.isHidden = !isVisible
+        host.isUserInteractionEnabled = isVisible
         host.accessibilityValue = "확대 \(Int(store.zoom * 100))%"
         if context.coordinator.renderedGeneration != store.inkHistory.generation ||
            context.coordinator.renderedModelDrawing != store.drawing {
