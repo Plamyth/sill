@@ -83,16 +83,29 @@ class AdapterContract(unittest.TestCase):
                 if args[1]=='release':
                     raise adapter.Held('release failed')
                 return ''
-            def copy(config, root, source, destination, *rest, **kwargs):
-                Path(destination).mkdir()
-                return True
-            with patch.object(adapter,'command',side_effect=command), patch.object(adapter,'stop_owned') as stop, patch.object(adapter,'lease'), patch.object(adapter,'copy_file',side_effect=copy), patch.object(adapter,'snapshots',return_value={'original':'same'}):
+            def inventory(config, args, log):
+                adapter.write(args[-1], {'result':{'domainIdentifier':adapter.BUNDLE,'files':[]}})
+            with patch.object(adapter,'command',side_effect=command), patch.object(adapter,'stop_owned') as stop, patch.object(adapter,'lease'), patch.object(adapter,'device',side_effect=inventory), patch.object(adapter,'snapshots',return_value={'original':'same'}):
                 self.assertFalse(adapter.cleanup({'deviceUDID':'own-ipad'},work,{'leaseId':'owned'},vault,'fixture',{'original':'same'}))
                 stop.assert_called_once()
             result=adapter.read(work/'reset-readback.json')
             self.assertFalse(result['relayReleased'])
             self.assertTrue(result['deviceStateEmpty'])
             self.assertTrue(result['originalDataPreserved'])
+
+    def test_reset_requires_actual_inventory_even_when_copy_reports_failure(self):
+        for remaining in [False, True]:
+            with self.subTest(remaining=remaining), tempfile.TemporaryDirectory() as directory:
+                work=Path(directory);vault=work/'isolated-vault';vault.mkdir()
+                def command(args,*rest):
+                    if args[0]=='xcrun': raise adapter.Held('command_failed:xcrun')
+                    return json.dumps({'released':True})
+                def inventory(config,args,log):
+                    files=[{'relativePath':'Library/Application Support/CCRIntegrationTests/fixture/state/CanvasScene.json'}] if remaining else []
+                    adapter.write(args[-1],{'result':{'domainIdentifier':adapter.BUNDLE,'files':files}})
+                with patch.object(adapter,'command',side_effect=command),patch.object(adapter,'stop_owned'),patch.object(adapter,'lease'),patch.object(adapter,'device',side_effect=inventory),patch.object(adapter,'snapshots',return_value={}):
+                    self.assertEqual(adapter.cleanup({'deviceUDID':'own-ipad'},work,{'leaseId':'owned'},vault,'fixture',{}),not remaining)
+                self.assertEqual(adapter.read(work/'reset-readback.json')['deviceStateEmpty'],not remaining)
 
     def test_collected_dead_relay_lease_can_restart_without_touching_live_orphan(self):
         with tempfile.TemporaryDirectory() as directory:

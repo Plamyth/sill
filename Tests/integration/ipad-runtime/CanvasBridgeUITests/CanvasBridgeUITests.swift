@@ -39,6 +39,8 @@ final class CanvasBridgeUITests: XCTestCase {
         let erase = app.buttons["선택 글자 지우기"].firstMatch
         XCTAssertFalse(erase.isEnabled)
         editor.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 43, dy: 18)).doubleTap()
+        let select = app.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", ["Select", "선택"])).firstMatch
+        if select.waitForExistence(timeout: 1) { select.tap() }
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: erase)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
         erase.tap()

@@ -320,12 +320,21 @@ def cleanup(config, work, service, vault, test_id, before):
         require(results['testProcessStopped'], 'test_process_not_stopped')
         empty = work / 'empty-state'; empty.mkdir(exist_ok=True)
         lease(config)
-        command(['xcrun', 'devicectl', 'device', 'copy', 'to', '--device', config['deviceUDID'], '--domain-type', 'appDataContainer',
-                 '--domain-identifier', BUNDLE, '--source', empty, '--destination', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state',
-                 '--remove-existing-content', 'true'], work / 'reset.log', 60)
-        device_state = work / ('reset-device-state-' + str(time.time_ns()))
-        copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', device_state)
-        require(not list(device_state.rglob('*')), 'device_fixture_reset_failed')
+        try:
+            command(['xcrun', 'devicectl', 'device', 'copy', 'to', '--device', config['deviceUDID'], '--domain-type', 'appDataContainer',
+                     '--domain-identifier', BUNDLE, '--source', empty, '--destination', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state',
+                     '--remove-existing-content', 'true'], work / 'reset.log', 60)
+        except Held:
+            pass
+        inventory = work / ('reset-device-files-' + str(time.time_ns()) + '.json')
+        device(config, ['info', 'files', '--domain-type', 'appDataContainer', '--domain-identifier', BUNDLE,
+                        '--json-output', str(inventory)], work / 'reset-inventory.log')
+        observed = read(inventory)['result']
+        require(observed['domainIdentifier'] == BUNDLE, 'device_reset_domain_mismatch')
+        prefix = 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state'
+        require(not any(row['relativePath'].startswith(prefix + '/') or
+                        row['relativePath'] == prefix and not row['resources']['isDirectory']
+                        for row in observed['files']), 'device_fixture_reset_failed')
         results['deviceStateEmpty'] = True
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         results['deviceStateEmpty'] = False
