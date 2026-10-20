@@ -10,6 +10,7 @@ final class VisionInputSession: ObservableObject {
     private weak var client: StreamClient?
     private var pointer = VisionPointer()
     private let momentum = ScrollMomentum()
+    private let gainOwner = UUID()
     private var geometry: VisionPointer.Geometry?
     private struct Magnification {
         let base: VisionViewport
@@ -19,9 +20,9 @@ final class VisionInputSession: ObservableObject {
     }
     private var magnification: Magnification?
     private struct Rotation {
-        var degrees: Double
         var time: TimeInterval
         let scope: VisionDisplaySelection.Token
+        let gainTicket: VisionAudioGain.Ticket
     }
     private var rotation: Rotation?
     var allowed = false {
@@ -102,6 +103,10 @@ final class VisionInputSession: ObservableObject {
         guard let zoom = magnification, time >= zoom.time else { return }
         magnification?.time = time
         magnification?.blocksRotation = zoom.blocksRotation || factor <= 0.92 || factor >= 1.08
+        if magnification?.blocksRotation == true, let turn = rotation {
+            VisionAudioGain.shared.end(ticket: turn.gainTicket, commit: false)
+            rotation = nil
+        }
         if let next = zoom.base.magnified(by: factor, at: zoom.anchor, in: geometry) { viewport = next }
     }
 
@@ -109,6 +114,7 @@ final class VisionInputSession: ObservableObject {
         guard revision == gestureRevision, self.geometry == geometry, canSend else { return }
         guard viewport.point(anchor, in: geometry) != nil else { return }
         guard degrees.isFinite, time.isFinite else { finishGesture(revision: revision); return }
+        guard magnification?.blocksRotation != true else { return }
         guard time >= (rotation?.time ?? -.infinity) else { return }
         guard let scope = client?.visionDisplaySelection.token else { return }
         guard rotation == nil || rotation?.scope == scope else { finishGesture(revision: revision); return }
@@ -117,21 +123,27 @@ final class VisionInputSession: ObservableObject {
             pointer.cancel().forEach { client?.sendInput($0) }
             consumeLatch()
         }
-        rotation = Rotation(degrees: degrees, time: time, scope: scope)
+        let ticket = rotation?.gainTicket ?? VisionAudioGain.shared.begin(owner: gainOwner)
+        guard VisionAudioGain.shared.preview(ticket: ticket, degrees: degrees) != nil else {
+            finishGesture(revision: revision)
+            return
+        }
+        rotation = Rotation(time: time, scope: scope, gainTicket: ticket)
     }
 
     func finishGesture(revision: UUID, completed: Bool = false) {
         guard revision == gestureRevision else { return }
         let flick = completed ? pointer.flick : nil
-        let turn = completed && magnification?.blocksRotation != true ? rotation : nil
-        let baseViewport = magnification?.base
+        if let turn = rotation {
+            VisionAudioGain.shared.end(ticket: turn.gainTicket,
+                commit: completed && canSend && magnification?.blocksRotation != true &&
+                        client?.visionDisplaySelection.token == turn.scope)
+        }
+        let wasRotating = rotation != nil
         let events = cancelPointer()
         if canSend {
             events.forEach { client?.sendInput($0) }
-            if let turn, abs(turn.degrees) >= 25 {
-                if client?.selectAdjacentVisionDisplay(by: turn.degrees > 0 ? 1 : -1, expected: turn.scope) == true,
-                   let baseViewport { viewport = baseViewport }
-            } else if let flick, let geometry { startMomentum(flick, geometry: geometry) }
+            if !wasRotating, let flick, let geometry { startMomentum(flick, geometry: geometry) }
         }
         else if !events.isEmpty { client?.cancelVisionInputs() }
         if !completed { client?.cancelVisionCursor() }
@@ -153,6 +165,7 @@ final class VisionInputSession: ObservableObject {
         momentum.stop()
         gestureRevision = UUID()
         magnification = nil
+        if let turn = rotation { VisionAudioGain.shared.end(ticket: turn.gainTicket, commit: false) }
         rotation = nil
         let releases = pointer.cancel()
         pointer = VisionPointer()

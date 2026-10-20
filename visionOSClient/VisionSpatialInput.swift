@@ -32,7 +32,7 @@ struct VisionSpatialInput: View {
         Color.clear.contentShape(Rectangle())
             .hoverEffect(.highlight, isEnabled: input.canSend)
             .accessibilityLabel("Mac 원격 화면")
-            .accessibilityHint("바라보고 한 번 집으면 클릭, 빠르게 두 번 집으면 더블클릭합니다. 집고 유지했다 놓으면 오른쪽 클릭, 집은 채 움직이면 가로와 세로로 스크롤합니다. 두 손을 벌리거나 모으면 확대하거나 축소합니다. Mac 모니터를 표시할 때 두 손을 오른쪽이나 왼쪽으로 돌렸다 놓으면 다음이나 이전 모니터로 한 칸 전환합니다.")
+            .accessibilityHint("바라보고 한 번 집으면 클릭, 빠르게 두 번 집으면 더블클릭합니다. 집고 유지했다 놓으면 오른쪽 클릭, 집은 채 움직이면 가로와 세로로 스크롤합니다. 두 손을 벌리거나 모으면 확대하거나 축소합니다. 두 손을 오른쪽으로 돌리면 원격 소리가 커지고 왼쪽으로 돌리면 작아집니다.")
             .gesture(SpatialEventGesture(coordinateSpace: .local)
                 .simultaneously(with: MagnifyGesture().simultaneously(with: RotateGesture()))
                 .updating($recognizing) { _, state, _ in state = true }
@@ -45,13 +45,13 @@ struct VisionSpatialInput: View {
                             input.finishGesture(revision: ticket)
                             return
                         }
-                        if let turn = value.second?.second {
-                            input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
-                                         geometry: geometry, revision: ticket)
-                        }
                         if let zoom = value.second?.first {
                             input.magnify(zoom.magnification, at: zoom.startLocation, time: zoom.time.timeIntervalSinceReferenceDate,
                                           geometry: geometry, revision: ticket)
+                        }
+                        if let turn = value.second?.second {
+                            input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
+                                         geometry: geometry, revision: ticket)
                         }
                         if !contacts.isEmpty {
                             input.spatial(contacts, geometry: geometry, revision: ticket)
@@ -66,13 +66,13 @@ struct VisionSpatialInput: View {
                             input.finishGesture(revision: ticket)
                             return
                         }
-                        if let turn = value.second?.second {
-                            input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
-                                         geometry: geometry, revision: ticket)
-                        }
                         if let zoom = value.second?.first {
                             input.magnify(zoom.magnification, at: zoom.startLocation, time: zoom.time.timeIntervalSinceReferenceDate,
                                           geometry: geometry, revision: ticket)
+                        }
+                        if let turn = value.second?.second {
+                            input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
+                                         geometry: geometry, revision: ticket)
                         }
                         if !contacts.isEmpty {
                             input.spatial(contacts, geometry: geometry, revision: ticket)

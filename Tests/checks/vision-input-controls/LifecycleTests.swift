@@ -26,6 +26,9 @@ private final class LifecycleRig {
     let view: SpatialCallbacks
 
     init() {
+        let reset = VisionAudioGain.shared.begin(owner: UUID())
+        _ = VisionAudioGain.shared.preview(ticket: reset, degrees: 180)
+        VisionAudioGain.shared.end(ticket: reset, commit: true)
         view = SpatialCallbacks(input: input, geometry: testGeometry, state: state)
         input.bind(client)
         client.connection = peer
@@ -146,38 +149,46 @@ func runLifecycleTests() {
         let rotation = LifecycleRig()
         rotation.view.changed(turn(degrees / 2, 0.1))
         rotation.view.changed(turn(degrees, 0.2))
-        check(rotation.sent.isEmpty, "rotation waits until native completion")
+        let expected = min(1, max(0, 1 + degrees / 180))
+        check(rotation.sent.isEmpty && abs(VisionAudioGain.shared.value - expected) < 0.000001,
+              "rotation proportionally previews remote playback without host input")
         rotation.view.ended(turn(degrees, 0.3))
-        let direction = degrees > 0 ? 1 : -1
-        check(rotation.sent.isEmpty && rotation.client.steppedDisplays == [direction],
-              "rotation requests exactly one monitor in its signed direction without keyboard shortcuts")
+        check(rotation.sent.isEmpty && rotation.client.steppedDisplays.isEmpty &&
+              abs(VisionAudioGain.shared.value - expected) < 0.000001,
+              "rotation completion commits remote gain without switching monitors")
         rotation.view.ended(turn(degrees * 2, 0.4))
-        check(rotation.sent.isEmpty && rotation.client.steppedDisplays == [direction],
-              "duplicate rotation completion cannot switch twice")
-        rotation.balanced("monitor rotation leaves no held input")
+        check(abs(VisionAudioGain.shared.value - expected) < 0.000001,
+              "duplicate rotation completion cannot alter committed gain")
+        rotation.balanced("volume rotation leaves no held input")
     }
-    for cancel in [false, true] {
-        let rotation = LifecycleRig()
-        rotation.view.changed(turn(cancel ? 40 : 8, 0.1))
-        if cancel { rotation.view.recognizingChanged(false) }
-        else { rotation.view.ended(turn(8, 0.2)) }
-        check(rotation.sent.isEmpty && rotation.client.steppedDisplays.isEmpty,
-              "rotation jitter or cancellation never switches a monitor")
-    }
+    let cancelledGain = LifecycleRig()
+    cancelledGain.view.changed(turn(-90, 0.1))
+    check(VisionAudioGain.shared.value == 0.5, "left rotation previews half remote volume")
+    cancelledGain.view.recognizingChanged(false)
+    check(VisionAudioGain.shared.value == 1, "cancelled rotation restores its start gain")
+    let firstWindow = LifecycleRig()
+    let secondWindow = LifecycleRig()
+    firstWindow.view.changed(turn(-90, 0.1))
+    secondWindow.view.changed(turn(-45, 0.2))
+    check(VisionAudioGain.shared.value == 0.25, "new window adjusts the currently audible remote gain")
+    firstWindow.view.recognizingChanged(false)
+    check(VisionAudioGain.shared.value == 0.25, "old window cancellation cannot revert the new window gain")
+    secondWindow.view.ended(turn(-45, 0.3))
+    check(VisionAudioGain.shared.value == 0.25, "current window commits its own proportional gain")
     let zoomTurn = LifecycleRig()
-    zoomTurn.view.changed(turn(40, 0.1))
+    zoomTurn.view.changed(turn(-40, 0.1))
     zoomTurn.view.changed(zoom(1.5, 0.2))
-    zoomTurn.view.ended(turn(50, 0.3))
-    check(zoomTurn.sent.isEmpty && zoomTurn.client.steppedDisplays.isEmpty && zoomTurn.input.viewport.scale == 1.5,
+    zoomTurn.view.ended(turn(-50, 0.3))
+    check(zoomTurn.sent.isEmpty && zoomTurn.client.steppedDisplays.isEmpty && zoomTurn.input.viewport.scale == 1.5 && VisionAudioGain.shared.value == 1,
           "meaningful zoom wins over incidental rotation")
     for factor in [0.92, 1.08] {
         for returnsToStart in [false, true] {
             let boundaryZoom = LifecycleRig()
-            boundaryZoom.view.changed(turn(40, 0.1))
+            boundaryZoom.view.changed(turn(-40, 0.1))
             boundaryZoom.view.changed(zoom(factor, 0.2))
             if returnsToStart { boundaryZoom.view.changed(zoom(1, 0.3)) }
-            boundaryZoom.view.ended(turn(40, 0.4))
-            check(boundaryZoom.client.steppedDisplays.isEmpty,
+            boundaryZoom.view.ended(turn(-40, 0.4))
+            check(boundaryZoom.client.steppedDisplays.isEmpty && VisionAudioGain.shared.value == 1,
                   "eight percent zoom boundary and its history suppress rotation")
         }
     }
@@ -186,32 +197,32 @@ func runLifecycleTests() {
             let rejected = LifecycleRig()
             rejected.view.changed(contact(0))
             _ = rejected.sent
-            rejected.view.changed(turn(40, 0.1))
-            var transform = turn(50, 0.3)
+            rejected.view.changed(turn(-40, 0.1))
+            var transform = turn(-50, 0.3)
             transform.first = invalid.first
             transform.second?.first = zoom(2, 0.3).second?.first
             if terminal { rejected.view.ended(transform) }
-            else { rejected.view.changed(transform); rejected.view.ended(turn(50, 0.4)) }
+            else { rejected.view.changed(transform); rejected.view.ended(turn(-50, 0.4)) }
             var drained = false
             DispatchQueue.main.async { drained = true }
             waitMain { drained }
             check(rejected.client.steppedDisplays.isEmpty && rejected.input.viewport.scale == 1 &&
-                  rejected.client.cursorVisible == nil,
+                  rejected.client.cursorVisible == nil && VisionAudioGain.shared.value == 1,
                   "cancelled or invalid contact rejects transforms and retires queued cursor")
             rejected.balanced("invalid native contact leaves no held input")
         }
     }
     let invalidTurn = LifecycleRig()
-    invalidTurn.view.changed(turn(40, 0.1))
+    invalidTurn.view.changed(turn(-40, 0.1))
     invalidTurn.view.ended(turn(.nan, 0.2))
-    check(invalidTurn.sent.isEmpty && invalidTurn.client.steppedDisplays.isEmpty,
+    check(invalidTurn.sent.isEmpty && invalidTurn.client.steppedDisplays.isEmpty && VisionAudioGain.shared.value == 1,
           "invalid terminal rotation cancels a previously valid angle")
     let changedInventory = LifecycleRig()
-    changedInventory.view.changed(turn(40, 0.1))
+    changedInventory.view.changed(turn(-40, 0.1))
     changedInventory.client.visionDisplaySelection.token = .init(peerEpoch: UUID(), window: UUID(),
         admission: UUID(), inventory: UUID(), revision: 2)
     changedInventory.view.ended(turn(40, 0.2))
-    check(changedInventory.client.steppedDisplays.isEmpty,
+    check(changedInventory.client.steppedDisplays.isEmpty && VisionAudioGain.shared.value == 1,
           "monitor inventory change during rotation cancels the original gesture")
     for delivered in [false, true] {
         let cancelledCursor = LifecycleRig()

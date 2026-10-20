@@ -301,7 +301,7 @@ def main():
             run(base + ['-parse-as-library', '-emit-module', '-emit-object', '-whole-module-optimization', '-module-name', name] +
                 list(map(str, sources)) + ['-emit-module-path', str(output / (name + '.swiftmodule')), '-o', str(output / (name + '.o'))], 'compile-' + name)
         names = ['Client.swift', 'VisionWindowLease.swift', 'visionOSClient/VisionDisplaySelection.swift', 'SpatialAdapter.swift', 'SpatialCallbacks.swift', 'LifecycleTests.swift', 'ScrollMomentum.swift', 'MomentumDriver.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift',
-                 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift',
+                 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionAudioGain.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift',
                  'visionOSClient/VisionTextDraft.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift',
                  'Tests/checks/vision-input-controls/SourceInputFence.swift', 'main.swift']
         run(base + ['-I', str(output)] + [str(generated / name) for name in names] +

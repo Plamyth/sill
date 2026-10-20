@@ -48,7 +48,7 @@ def fixture():
     files['ScrollMomentum.swift'] = files_momentum
     files['MomentumDriver.swift'] = (Path(__file__).parent / 'MomentumDriver.swift').read_text()
     pieces['scrollMomentum'] = files_momentum
-    for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
+    for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionAudioGain.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()
     files['Tests/checks/vision-input-controls/SourceInputFence.swift'] = (ROOT / 'Sources/SillHost/SourceInputFence.swift').read_text()
     spatial = (ROOT / 'visionOSClient/VisionSpatialInput.swift').read_text()
