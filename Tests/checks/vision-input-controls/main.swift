@@ -59,6 +59,14 @@ do {
     DispatchQueue.main.async { drained = true }
     waitMain { drained }
     check(feedback.pointerPoints.count == 1, "late spatial feedback cannot cross a source generation change")
+    let oldCount = feedback.pointerPoints.count
+    feedback.sendInput(.pointer(.move, x: q.x, y: q.y)); feedback.queue.sync {}
+    feedback.cancelVisionInputs()
+    drained = false
+    DispatchQueue.main.async { drained = true }
+    waitMain { drained }
+    check(feedback.pointerPoints.count == oldCount && feedback.cursorVisible == nil,
+          "cancelled spatial callback cannot resurrect a cursor on the same peer permit and binding")
 }
 let testGeometry = VisionPointer.Geometry(bounds: CGRect(x: 0, y: 0, width: 1000, height: 1000), video: CGSize(width: 1000, height: 1000))
 struct TestPinch { let id: UUID; let revision: UUID }

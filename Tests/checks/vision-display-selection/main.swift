@@ -47,6 +47,33 @@ check(state.begin(.init(requestID: first.requestID, displayID: 11, token: first.
 check(state.released(first.requestID, confirmed: true), "release passes unchanged full scope")
 state.submitted(first.requestID)
 let displayed = epoch()
+var neighbors = model()
+var neighborList = list(22, source: .desktop, required: false, epoch: displayed)
+neighborList.displays = rows + [DisplayInfo(id: 33, name: "가상 모니터", width: 2560, height: 1440, isMain: false)]
+neighbors.observe(.init(neighborList))
+let neighborToken = neighbors.token!
+check(neighbors.adjacentCommand(by: 1, expected: neighborToken)?.displayID == 33 &&
+      neighbors.adjacentCommand(by: -1, expected: neighborToken)?.displayID == 11,
+      "rotation selects adjacent actual inventory entries in both directions")
+check(neighbors.adjacentCommand(by: 2, expected: neighborToken) == nil &&
+      neighbors.adjacentCommand(by: 0, expected: neighborToken) == nil,
+      "rotation cannot skip monitors or request no movement")
+neighborList.activeDisplayID = 11; neighbors.observe(.init(neighborList))
+check(neighbors.adjacentCommand(by: -1, expected: neighbors.token!)?.displayID == 33,
+      "previous monitor wraps once from the first entry")
+neighborList.activeDisplayID = 33; neighbors.observe(.init(neighborList))
+check(neighbors.adjacentCommand(by: 1, expected: neighbors.token!)?.displayID == 11,
+      "next monitor wraps once from the last entry")
+check(neighbors.adjacentCommand(by: 1, expected: neighborToken) == nil,
+      "rotation rejects an obsolete catalog token")
+let pendingNeighbor = neighbors.adjacentCommand(by: 1, expected: neighbors.token!)!
+_ = neighbors.begin(pendingNeighbor)
+check(neighbors.adjacentCommand(by: 1, expected: neighbors.token!) == nil,
+      "rotation cannot enqueue another monitor while selection is pending")
+var single = model(); var singleList = list(11, source: .desktop, required: false, epoch: displayed)
+singleList.displays = [rows[0]]; single.observe(.init(singleList))
+check(single.adjacentCommand(by: 1, expected: single.token!) == nil,
+      "one monitor never creates a redundant selection request")
 state.presented(displayed)
 check(state.pending != nil, "presentation alone is not convergence")
 state.observe(.init(list(22, source: .desktop, generation: "g1", required: false, epoch: displayed)))
@@ -104,6 +131,21 @@ func client() -> (StreamClient, NWConnection) {
     c.observeVisionDisplays(list(), from: peer)
     return (c, peer)
 }
+let (rotatedClient, rotatedPeer) = client()
+rotatedClient.observeVisionDisplays(list(11, source: .desktop, required: false, epoch: displayed), from: rotatedPeer)
+let rotatedToken = rotatedClient.visionDisplaySelection.token!
+check(rotatedClient.selectAdjacentVisionDisplay(by: 1, expected: rotatedToken),
+      "actual rotation adapter enters the existing monitor release transaction")
+check(rotatedPeer.sent.isEmpty && rotatedClient.releaseCallbacks.count == 1,
+      "rotation waits for actual input release before requesting a monitor")
+check(!rotatedClient.selectAdjacentVisionDisplay(by: 1, expected: rotatedToken) && rotatedClient.releaseCallbacks.count == 1,
+      "pending rotation cannot create another release transaction")
+rotatedClient.releaseCallbacks[0](true); drain()
+let rotatedSelection = rotatedPeer.sent.first.flatMap { Wire.decode(DisplaySelection.self,
+    from: Data($0.dropFirst(StreamMessage.headerLength))) }
+check(rotatedPeer.sent.count == 1 && rotatedPeer.sent[0].first == StreamMessageKind.selectDisplay.rawValue &&
+      rotatedSelection == DisplaySelection(displayID: 22, inventoryID: inventory),
+      "rotation sends one exact monitor ID and inventory over the existing scoped transport")
 let (native, peer) = client()
 let request = command(native.visionDisplaySelection)
 _ = native.selectVisionDisplay(request)

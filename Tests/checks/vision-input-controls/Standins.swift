@@ -15,8 +15,17 @@ final class StreamClient {
     var visionStartupStarted = false
     func stopSavedMacAutoConnect() {}
     func microphoneSetConnection(_ peer: NWConnection?) {}
-    struct DisplayAdmission { var inputBlocked = false }
+    struct DisplayAdmission {
+        var inputBlocked = false
+        var token: VisionDisplaySelection.Token? = .init(peerEpoch: UUID(), window: UUID(), admission: UUID(), inventory: UUID(), revision: 1)
+    }
     var visionDisplaySelection = DisplayAdmission()
+    var steppedDisplays: [Int] = []
+    func selectAdjacentVisionDisplay(by step: Int, expected: VisionDisplaySelection.Token) -> Bool {
+        guard !visionDisplaySelection.inputBlocked, visionDisplaySelection.token == expected else { return false }
+        steppedDisplays.append(step)
+        return true
+    }
     func bindVisionDisplays(to peer: NWConnection?) {}
     func bindVisionSentry(to peer: NWConnection?) {}
     func bindVisionTestDestinations(to peer: NWConnection?) {}
@@ -50,6 +59,7 @@ final class StreamClient {
     enum PointerOrigin { case spatial }
     var pointerPoints: [CGPoint] = []
     var cursorVisible: CGPoint?
+    var visionCursorGeneration = UUID()
     func setOwnPointer(_ point: CGPoint?, from origin: PointerOrigin) {
         cursorVisible = point
         if let point { pointerPoints.append(point) }

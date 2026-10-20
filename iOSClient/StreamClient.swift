@@ -1028,7 +1028,7 @@ final class StreamClient: ObservableObject {
     @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog {
         didSet {
             if oldValue != visionInputBinding {
-                setOwnPointer(nil, from: .spatial)
+                cancelVisionCursor()
                 revokeVisionTextDrafts()
             }
             if !visionInputBinding.isConfirmed {
@@ -1036,6 +1036,13 @@ final class StreamClient: ObservableObject {
                 link.setInputPermit(nil)
             }
         }
+    }
+
+    private var visionCursorGeneration = UUID()
+
+    func cancelVisionCursor() {
+        visionCursorGeneration = UUID()
+        setOwnPointer(nil, from: .spatial)
     }
 
     #if DEBUG && targetEnvironment(simulator)
@@ -1140,7 +1147,7 @@ final class StreamClient: ObservableObject {
     }
 
     func cancelVisionInputs(completion: (() -> Void)? = nil) {
-        setOwnPointer(nil, from: .spatial)
+        cancelVisionCursor()
         revokeVisionTextDrafts()
         let expected = connection
         queue.async { [weak self] in
@@ -3983,6 +3990,7 @@ final class StreamClient: ObservableObject {
         guard !visionDisplaySelection.inputBlocked, visionMovePreparation == nil, let expected = connection else { return }
         guard let input = visionInputBinding.capture(event), let permit = visionInputPermit else { return }
         let binding = visionInputBinding
+        let cursorGeneration = visionCursorGeneration
         lastInputAt = ProcessInfo.processInfo.systemUptime
         let bytes = Self.visionInputBytes(input)
         queue.async { [weak self] in
@@ -3992,7 +4000,7 @@ final class StreamClient: ObservableObject {
                 self?.pointerNoteSent(event)
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.connection === expected, self.visionInputPermit == permit,
-                          self.visionInputBinding == binding else { return }
+                          self.visionInputBinding == binding, self.visionCursorGeneration == cursorGeneration else { return }
                     switch event {
                     case .pointer(_, let x, let y), .scroll(let x, let y, _, _), .scrollGesture(_, let x, let y):
                         self.setOwnPointer(CGPoint(x: x, y: y), from: .spatial)

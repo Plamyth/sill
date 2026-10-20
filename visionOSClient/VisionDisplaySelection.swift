@@ -80,6 +80,15 @@ struct VisionDisplaySelection {
     var choices: [DisplayInfo] { catalog?.capability == 1 && catalog?.validInventory == true ? catalog?.displays ?? [] : [] }
     var observedDisplay: UInt32? { catalog?.source == .desktop ? catalog?.activeDisplay : nil }
 
+    func adjacentCommand(by step: Int, expected: Token) -> Command? {
+        guard step == -1 || step == 1, token == expected, !inputBlocked,
+              choices.count > 1, let current = observedDisplay,
+              let index = choices.firstIndex(where: { $0.id == current }) else { return nil }
+        let next = (index + step + choices.count) % choices.count
+        let command = Command(requestID: UUID(), displayID: choices[next].id, token: expected)
+        return preview(command).code == .ready ? command : nil
+    }
+
     mutating func bind(peerEpoch: UUID?) {
         guard self.peerEpoch != peerEpoch else { return }
         cancel(.peerChanged)

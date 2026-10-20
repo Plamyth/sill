@@ -20,7 +20,7 @@ def block(text, marker):
 
 def fixture():
     stream = (ROOT / 'iOSClient/StreamClient.swift').read_text()
-    markers = ['var connection: NWConnection?', 'private static func visionInputBytes(', 'private func applyVisionInputCatalog(', 'private func visionPresentationChanged(', 'private func observeVisionInputCatalog(', 'func cancelVisionInputs(', 'private func finishMove(']
+    markers = ['var connection: NWConnection?', 'private static func visionInputBytes(', 'private func applyVisionInputCatalog(', 'private func visionPresentationChanged(', 'private func observeVisionInputCatalog(', 'func cancelVisionInputs(', 'func cancelVisionCursor(', 'private func finishMove(']
     pieces = {m: block(stream, m) for m in markers}
     pieces['sendInput'] = block(stream, 'func sendInput(')
     hello = block(stream, 'private static let helloPayload: Data =') + '()'
@@ -70,6 +70,8 @@ def fixture():
     files['SpatialCallbacks.swift'] = callbacks
     files['LifecycleTests.swift'] = (Path(__file__).parent / 'LifecycleTests.swift').read_text()
     files['visionOSClient/VisionTextDraft.swift'] = (ROOT / 'visionOSClient/VisionTextDraft.swift').read_text()
+    files['visionOSClient/VisionDisplaySelection.swift'] = (ROOT / 'visionOSClient/VisionDisplaySelection.swift').read_text()
+    files['VisionWindowLease.swift'] = 'import Foundation\n' + block((ROOT / 'visionOSClient/VisionCableBootstrap.swift').read_text(), 'struct VisionWindowLease:') + '\n'
     pieces['sourceInputFence'] = files['Tests/checks/vision-input-controls/SourceInputFence.swift']
     for path in ['Tests/vision-pointer/main.swift','visionOSClient/VisionInputFence.swift','visionOSClient/VisionTransition.swift','Tests/checks/fence/main.swift']:
         files[path] = (ROOT/path).read_text()

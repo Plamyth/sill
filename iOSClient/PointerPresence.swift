@@ -132,10 +132,6 @@ struct PointerPresence: Equatable {
         return (mac, .trackpad)
     }
 
-    /// A new frame size (another source, an Aa resize) changes what a fraction means (§7.3): this
-    /// device's own pointer, only while it shows under this device's control, starts again in the
-    /// middle, and the Mac's pointer is moved there too, so the two agree (as before this plan). The
-    /// Mac's arrow needs nothing: the host's next report is in the new geometry.
     func recentresOnNewFrame(now: Double) -> Bool {
         origin != .spatial && control == .here && own != nil && sprite(now: now) != nil
     }

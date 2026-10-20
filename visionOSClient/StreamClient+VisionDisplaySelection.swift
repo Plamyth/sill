@@ -7,6 +7,13 @@ import UIKit
 #endif
 
 extension StreamClient {
+    @discardableResult
+    func selectAdjacentVisionDisplay(by step: Int, expected: VisionDisplaySelection.Token) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let command = visionDisplaySelection.adjacentCommand(by: step, expected: expected) else { return false }
+        return selectVisionDisplay(command).code == .releasing
+    }
+
     func visionDisplayApplicationIsActive() -> Bool {
         #if os(visionOS)
         return UIApplication.shared.applicationState == .active

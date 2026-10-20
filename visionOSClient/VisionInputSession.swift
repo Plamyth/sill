@@ -21,6 +21,7 @@ final class VisionInputSession: ObservableObject {
     private struct Rotation {
         var degrees: Double
         var time: TimeInterval
+        let scope: VisionDisplaySelection.Token
     }
     private var rotation: Rotation?
     var allowed = false {
@@ -109,29 +110,31 @@ final class VisionInputSession: ObservableObject {
         guard viewport.point(anchor, in: geometry) != nil else { return }
         guard degrees.isFinite, time.isFinite else { finishGesture(revision: revision); return }
         guard time >= (rotation?.time ?? -.infinity) else { return }
+        guard let scope = client?.visionDisplaySelection.token else { return }
+        guard rotation == nil || rotation?.scope == scope else { finishGesture(revision: revision); return }
         if rotation == nil {
             momentum.stop()
             pointer.cancel().forEach { client?.sendInput($0) }
             consumeLatch()
         }
-        rotation = Rotation(degrees: degrees, time: time)
+        rotation = Rotation(degrees: degrees, time: time, scope: scope)
     }
 
     func finishGesture(revision: UUID, completed: Bool = false) {
         guard revision == gestureRevision else { return }
         let flick = completed ? pointer.flick : nil
-        let turn = completed && (magnification?.largestChange ?? 0) <= 0.08 ? rotation?.degrees : nil
+        let turn = completed && (magnification?.largestChange ?? 0) <= 0.08 ? rotation : nil
         let baseViewport = magnification?.base
         let events = cancelPointer()
         if canSend {
             events.forEach { client?.sendInput($0) }
-            if let turn, abs(turn) >= 25, client?.active == .desktop {
-                if let baseViewport { viewport = baseViewport }
-                KeyChord.press(turn > 0 ? VisionRemoteKey.right.rawValue : VisionRemoteKey.left.rawValue,
-                               with: .control).forEach { client?.sendInput($0) }
+            if let turn, abs(turn.degrees) >= 25 {
+                if client?.selectAdjacentVisionDisplay(by: turn.degrees > 0 ? 1 : -1, expected: turn.scope) == true,
+                   let baseViewport { viewport = baseViewport }
             } else if let flick, let geometry { startMomentum(flick, geometry: geometry) }
         }
         else if !events.isEmpty { client?.cancelVisionInputs() }
+        if !completed { client?.cancelVisionCursor() }
     }
 
     func resetViewport() {

@@ -148,29 +148,52 @@ func runLifecycleTests() {
         rotation.view.changed(turn(degrees, 0.2))
         check(rotation.sent.isEmpty, "rotation waits until native completion")
         rotation.view.ended(turn(degrees, 0.3))
-        let chord = KeyChord.press(degrees > 0 ? VisionRemoteKey.right.rawValue : VisionRemoteKey.left.rawValue, with: .control)
-        check(rotation.sent == chord, "rotation switches exactly one Space in its signed direction")
+        let direction = degrees > 0 ? 1 : -1
+        check(rotation.sent.isEmpty && rotation.client.steppedDisplays == [direction],
+              "rotation requests exactly one monitor in its signed direction without keyboard shortcuts")
         rotation.view.ended(turn(degrees * 2, 0.4))
-        check(rotation.sent == chord, "duplicate rotation completion cannot switch twice")
-        rotation.balanced("rotation releases Control and arrow")
+        check(rotation.sent.isEmpty && rotation.client.steppedDisplays == [direction],
+              "duplicate rotation completion cannot switch twice")
+        rotation.balanced("monitor rotation leaves no held input")
     }
     for cancel in [false, true] {
         let rotation = LifecycleRig()
         rotation.view.changed(turn(cancel ? 40 : 8, 0.1))
         if cancel { rotation.view.recognizingChanged(false) }
         else { rotation.view.ended(turn(8, 0.2)) }
-        check(rotation.sent.isEmpty, "rotation jitter or cancellation never switches a Space")
+        check(rotation.sent.isEmpty && rotation.client.steppedDisplays.isEmpty,
+              "rotation jitter or cancellation never switches a monitor")
     }
     let zoomTurn = LifecycleRig()
     zoomTurn.view.changed(turn(40, 0.1))
     zoomTurn.view.changed(zoom(1.5, 0.2))
     zoomTurn.view.ended(turn(50, 0.3))
-    check(zoomTurn.sent.isEmpty && zoomTurn.input.viewport.scale == 1.5,
+    check(zoomTurn.sent.isEmpty && zoomTurn.client.steppedDisplays.isEmpty && zoomTurn.input.viewport.scale == 1.5,
           "meaningful zoom wins over incidental rotation")
     let invalidTurn = LifecycleRig()
     invalidTurn.view.changed(turn(40, 0.1))
     invalidTurn.view.ended(turn(.nan, 0.2))
-    check(invalidTurn.sent.isEmpty, "invalid terminal rotation cancels a previously valid angle")
+    check(invalidTurn.sent.isEmpty && invalidTurn.client.steppedDisplays.isEmpty,
+          "invalid terminal rotation cancels a previously valid angle")
+    let changedInventory = LifecycleRig()
+    changedInventory.view.changed(turn(40, 0.1))
+    changedInventory.client.visionDisplaySelection.token = .init(peerEpoch: UUID(), window: UUID(),
+        admission: UUID(), inventory: UUID(), revision: 2)
+    changedInventory.view.ended(turn(40, 0.2))
+    check(changedInventory.client.steppedDisplays.isEmpty,
+          "monitor inventory change during rotation cancels the original gesture")
+    for delivered in [false, true] {
+        let cancelledCursor = LifecycleRig()
+        cancelledCursor.view.changed(contact(0))
+        _ = cancelledCursor.sent
+        if delivered { waitMain { cancelledCursor.client.cursorVisible != nil } }
+        cancelledCursor.view.recognizingChanged(false)
+        var drained = false
+        DispatchQueue.main.async { drained = true }
+        waitMain { drained }
+        check(cancelledCursor.client.cursorVisible == nil,
+              "native cancellation hides spatial cursor before or after its display callback")
+    }
 
     let magnify = LifecycleRig()
     magnify.view.changed(contact(0))
