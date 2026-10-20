@@ -697,6 +697,16 @@ struct CanvasAnnotation: Codable, Identifiable, Equatable {
     var author: String
 }
 
+struct CanvasNodeTextEdit: Codable {
+    var expected: CanvasNode
+    var text: String
+}
+
+struct CanvasLinkEdit: Codable {
+    var expected: CanvasLink
+    var replacement: CanvasLink
+}
+
 struct CanvasScene: Codable, Equatable {
     var schemaVersion = 1
     var id = UUID()
@@ -815,10 +825,55 @@ struct CanvasScene: Codable, Equatable {
     }
 
     mutating func confirmNode(_ id: UUID, text: String) -> Bool {
-        guard let index = nodes.firstIndex(where: { $0.id == id }),
-              nodes[index].vaultNote == nil else { return false }
-        nodes[index].text = text
-        nodes[index].confidence = .confirmed
+        guard let node = nodes.first(where: { $0.id == id }) else { return false }
+        return editGraph(nodeEdits:[CanvasNodeTextEdit(expected:node,text:text)],linkEdits:[])
+    }
+
+    static func sameNode(_ lhs: CanvasNode, _ rhs: CanvasNode) -> Bool {
+        lhs == rhs && lhs.text.utf8.elementsEqual(rhs.text.utf8)
+    }
+
+    static func sameLink(_ lhs: CanvasLink, _ rhs: CanvasLink) -> Bool {
+        lhs == rhs && lhs.label.utf8.elementsEqual(rhs.label.utf8)
+    }
+
+    func hasSameGraph(as other: CanvasScene) -> Bool {
+        nodes.count == other.nodes.count && links.count == other.links.count &&
+            zip(nodes,other.nodes).allSatisfy { Self.sameNode($0,$1) } &&
+            zip(links,other.links).allSatisfy { Self.sameLink($0,$1) } && annotations == other.annotations &&
+            zip(annotations,other.annotations).allSatisfy {
+                $0.text.utf8.elementsEqual($1.text.utf8) && $0.author.utf8.elementsEqual($1.author.utf8)
+            }
+    }
+
+    @discardableResult
+    mutating func editGraph(nodeEdits: [CanvasNodeTextEdit], linkEdits: [CanvasLinkEdit]) -> Bool {
+        guard !nodeEdits.isEmpty || !linkEdits.isEmpty,
+              Set(nodes.map(\.id)).count == nodes.count,
+              Set(links.map(\.id)).count == links.count,
+              Set(nodeEdits.map { $0.expected.id }).count == nodeEdits.count,
+              Set(linkEdits.map { $0.expected.id }).count == linkEdits.count else { return false }
+        var nextNodes = nodes
+        var nextLinks = links
+        for edit in nodeEdits {
+            guard edit.text.utf8.count <= 16_384, edit.expected.vaultNote == nil,
+                  let index = nextNodes.firstIndex(where: { $0.id == edit.expected.id }),
+                  Self.sameNode(nextNodes[index],edit.expected) else { return false }
+            nextNodes[index].text = edit.text
+            nextNodes[index].confidence = .confirmed
+        }
+        let ids = Set(nodes.map(\.id))
+        for edit in linkEdits {
+            let value = edit.replacement
+            guard value.id == edit.expected.id, value.label.utf8.count <= 4096,
+                  value.from != value.to, ids.contains(value.from), ids.contains(value.to),
+                  let index = nextLinks.firstIndex(where: { $0.id == edit.expected.id }),
+                  Self.sameLink(nextLinks[index],edit.expected) else { return false }
+            nextLinks[index] = value
+        }
+        guard Self.validHierarchy(nextLinks,nodeIds:ids) else { return false }
+        nodes = nextNodes
+        links = nextLinks
         revision += 1
         return true
     }
@@ -829,22 +884,39 @@ struct CanvasScene: Codable, Equatable {
         let proposalIds = change.proposedNodes.map(\.id)
         let proposedLinks = change.proposedLinks ?? []
         let linkIds = proposedLinks.map(\.id)
+        let nodeEdits = change.nodeEdits ?? []
+        let linkEdits = change.linkEdits ?? []
         guard Set(annotationIds).count == annotationIds.count,
               Set(proposalIds).count == proposalIds.count,
-              Set(linkIds).count == linkIds.count else { return false }
+              Set(linkIds).count == linkIds.count,
+              Set(nodeEdits.map { $0.expected.id }).count == nodeEdits.count,
+              Set(linkEdits.map { $0.expected.id }).count == linkEdits.count,
+              Set(proposalIds).isDisjoint(with:nodeEdits.map { $0.expected.id }),
+              Set(linkIds).isDisjoint(with:linkEdits.map { $0.expected.id }) else { return false }
         if change.baseRevision < revision {
-            guard !annotationIds.isEmpty || !proposalIds.isEmpty || !linkIds.isEmpty else { return false }
+            guard !annotationIds.isEmpty || !proposalIds.isEmpty || !linkIds.isEmpty ||
+                    !nodeEdits.isEmpty || !linkEdits.isEmpty else { return false }
             if change.annotations.allSatisfy({ incoming in
-                annotations.first(where: { $0.id == incoming.id }) == incoming
+                annotations.contains { $0 == incoming && $0.text.utf8.elementsEqual(incoming.text.utf8) &&
+                    $0.author.utf8.elementsEqual(incoming.author.utf8) }
             }) && change.proposedNodes.allSatisfy({ incoming in
-                nodes.first(where: { $0.id == incoming.id }) == incoming
+                nodes.contains { Self.sameNode($0,incoming) }
             }) && proposedLinks.allSatisfy({ incoming in
-                links.first(where: { $0.id == incoming.id }) == incoming
+                links.contains { Self.sameLink($0,incoming) }
+            }) && nodeEdits.allSatisfy({ edit in
+                guard edit.expected.vaultNote == nil else { return false }
+                var desired = edit.expected
+                desired.text = edit.text
+                desired.confidence = .confirmed
+                return nodes.contains { Self.sameNode($0,desired) }
+            }) && linkEdits.allSatisfy({ edit in
+                edit.expected.id == edit.replacement.id && links.contains { Self.sameLink($0,edit.replacement) }
             }) { return true }
+            guard nodeEdits.isEmpty, linkEdits.isEmpty else { return false }
             guard let sent, sent.id == id, sent.revision == change.baseRevision,
                   sent.schemaVersion == schemaVersion,
                   sent.width == width, sent.height == height,
-                  sent.nodes == nodes, sent.links == links, sent.annotations == annotations,
+                  sent.hasSameGraph(as:self),
                   strokes.count > sent.strokes.count,
                   Array(strokes.prefix(sent.strokes.count)) == sent.strokes else {
                 return false
@@ -869,10 +941,16 @@ struct CanvasScene: Codable, Equatable {
               Self.validHierarchy(links + proposedLinks, nodeIds: availableIds) else {
             return false
         }
-        annotations.append(contentsOf: change.annotations)
-        nodes.append(contentsOf: change.proposedNodes)
-        links.append(contentsOf: proposedLinks)
-        revision += 1
+        var next = self
+        if !nodeEdits.isEmpty || !linkEdits.isEmpty {
+            guard next.editGraph(nodeEdits:nodeEdits,linkEdits:linkEdits) else { return false }
+        }
+        next.annotations.append(contentsOf: change.annotations)
+        next.nodes.append(contentsOf: change.proposedNodes)
+        next.links.append(contentsOf: proposedLinks)
+        guard Self.validHierarchy(next.links,nodeIds:availableIds) else { return false }
+        next.revision = revision + 1
+        self = next
         return true
     }
 }
@@ -883,6 +961,68 @@ struct AgentRevision: Codable {
     var annotations: [CanvasAnnotation]
     var proposedNodes: [CanvasNode]
     var proposedLinks: [CanvasLink]? = nil
+    var nodeEdits: [CanvasNodeTextEdit]? = nil
+    var linkEdits: [CanvasLinkEdit]? = nil
+}
+
+struct CanvasDiagramSnapshot: Codable, Equatable {
+    struct Node: Codable, Equatable {
+        let diagramID: String
+        let id: UUID
+        let text: String
+    }
+    let sceneID: UUID
+    let revision: Int
+    let source: String
+    let nodes: [Node]
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.sceneID == rhs.sceneID && lhs.revision == rhs.revision &&
+            lhs.source.utf8.elementsEqual(rhs.source.utf8) && lhs.nodes == rhs.nodes &&
+            zip(lhs.nodes,rhs.nodes).allSatisfy { $0.text.utf8.elementsEqual($1.text.utf8) }
+    }
+
+    enum Failure: LocalizedError {
+        case limit, invalidGraph
+        var errorDescription: String? {
+            switch self {
+            case .limit: return "다이어그램 표시 한도를 넘었습니다. 원본 그림과 구조 데이터는 보존됩니다."
+            case .invalidGraph: return "중복 요소나 끊어진 관계가 있어 다이어그램을 표시하지 않았습니다."
+            }
+        }
+    }
+
+    init(scene: CanvasScene) throws {
+        guard scene.nodes.count <= 512, scene.links.count <= 1024 else { throw Failure.limit }
+        let ids = Set(scene.nodes.map(\.id))
+        guard ids.count == scene.nodes.count, Set(scene.links.map(\.id)).count == scene.links.count,
+              scene.links.allSatisfy({ ids.contains($0.from) && ids.contains($0.to) }) else {
+            throw Failure.invalidGraph
+        }
+        func diagramID(_ id: UUID) -> String { "n" + id.uuidString.lowercased().replacingOccurrences(of:"-",with:"") }
+        func label(_ text: String) -> String {
+            text.unicodeScalars.map { value in
+                if value.value < 128 && !CharacterSet.alphanumerics.contains(value) && value != " " {
+                    return "#\(value.value);"
+                }
+                return String(value)
+            }.joined()
+        }
+        let visible = scene.visibility
+        nodes = scene.nodes.filter { visible.nodeIDs.contains($0.id) }.map {
+            Node(diagramID:diagramID($0.id),id:$0.id,text:$0.text)
+        }
+        var lines = ["flowchart TD"]
+        lines += nodes.map { "\($0.diagramID)[\"\(label($0.text.isEmpty ? "이름 없는 요소" : $0.text))\"]" }
+        lines += scene.links.filter { visible.linkIDs.contains($0.id) }.map {
+            let relation = $0.label.isEmpty ? ($0.kind == .parentChild ? "하위 요소" : "연결") : $0.label
+            return "\(diagramID($0.from)) -->|\"\(label(relation))\"| \(diagramID($0.to))"
+        }
+        source = lines.joined(separator:"\n")
+        guard source.utf8.count <= 50_000 else { throw Failure.limit }
+        sceneID = scene.id
+        revision = scene.revision
+    }
 }
 
 struct VoiceSession: Codable, Equatable {

@@ -44,6 +44,13 @@ struct CanvasWorkspace: View {
     @State private var expandedCard: ControlRoomCardReference?
     @State private var pipPlacement = VoicePIPPlacement()
     @State private var pipDragOrigin: CGPoint?
+    @State private var diagramMode: DiagramMode = .original
+
+    private enum DiagramMode: String, CaseIterable {
+        case original = "원본 그림"
+        case diagram = "다이어그램"
+        case split = "나란히 보기"
+    }
 
     init() {
         if let connection = CanvasRelay.loadConnection() {
@@ -74,9 +81,19 @@ struct CanvasWorkspace: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar.zIndex(1)
+            Picker("그림판 보기",selection:$diagramMode) {
+                Text("원본 그림").tag(DiagramMode.original)
+                Text("다이어그램").tag(DiagramMode.diagram)
+                Text("나란히 보기").tag(DiagramMode.split)
+            }
+            .pickerStyle(.segmented).padding(.horizontal,10).padding(.vertical,6)
+            .accessibilityIdentifier("canvasDiagramMode")
             GeometryReader { geometry in
                 ZStack(alignment:.topLeading) {
-                    canvas
+                    HStack(spacing:1) {
+                        if diagramMode != .diagram { canvas }
+                        if diagramMode != .original { diagram }
+                    }
                     if geometry.size.width >= 100 && geometry.size.height >= 100 {
                         voicePIP(in:geometry.size)
                     }
@@ -263,6 +280,8 @@ struct CanvasWorkspace: View {
             foldButton
             if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
+            Button("구조 수정 되돌리기",systemImage:"arrow.uturn.backward") { store.undoGraphEdit() }
+                .disabled(!store.canUndoGraph)
             Button("Obsidian 노트",systemImage:"doc.text") {
                 vaultOpen = true
                 Task { await loadVaultEntries() }
@@ -684,6 +703,18 @@ struct CanvasWorkspace: View {
         .clipped()
         .contentShape(Rectangle())
         .background(Color(uiColor:.secondarySystemBackground))
+    }
+
+    private var diagram: some View {
+        VStack(alignment:.leading,spacing:8) {
+            Text("같은 구조 데이터의 자동 배치 · 원본 획 위치는 유지됩니다.").font(.caption)
+            Text("자유그림의 자동 의미 해석은 미지원입니다. 요소를 누르면 기존 편집기로 연결됩니다.")
+                .font(.caption).foregroundStyle(.secondary)
+            CanvasPeleView(scene:store.scene,selectedNode:store.selectedNode,onSelect:{ id in
+                store.selectedNode = id
+                inspectorOpen = true
+            },onError:{ store.status = $0 })
+        }.padding(8)
     }
 
     private func strokeView(_ stroke: InkStroke) -> some View {

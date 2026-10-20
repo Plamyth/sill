@@ -65,4 +65,33 @@ final class CanvasBridgeUITests: XCTestCase {
         app.buttons["나중에"].tap()
         XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
     }
+
+    func testPeleNodeEditAndSave() throws {
+        let app = try app()
+        app.buttons["다이어그램"].firstMatch.tap()
+        let diagram = app.webViews["canvasPeleDiagram"].firstMatch
+        XCTAssertTrue(diagram.waitForExistence(timeout:10))
+        let node = diagram.buttons["시험 글자"].firstMatch
+        XCTAssertTrue(node.waitForExistence(timeout:10))
+        node.tap()
+        XCTAssertTrue(app.buttons["내용 수정"].waitForExistence(timeout:5))
+        app.buttons["내용 수정"].tap()
+        let editor = app.textViews["canvasNodeTextEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout:5))
+        XCTAssertEqual(editor.value as? String,"시험 글자")
+        editor.coordinate(withNormalizedOffset:CGVector(dx:0.99,dy:0.1)).tap()
+        editor.typeText(" · Pele 수정")
+        let changed = try XCTUnwrap(editor.value as? String)
+        app.buttons["확정"].tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout:5))
+        XCTAssertTrue(diagram.buttons[changed].waitForExistence(timeout:10))
+        XCTAssertTrue(app.staticTexts["Pencil 그림과 구조 데이터가 Obsidian에 저장됐습니다."].waitForExistence(timeout:20))
+        app.terminate()
+        app.launch()
+        app.buttons["다이어그램"].firstMatch.tap()
+        XCTAssertTrue(app.webViews["canvasPeleDiagram"].buttons[changed].waitForExistence(timeout:10))
+        let image = XCTAttachment(screenshot:app.screenshot())
+        image.lifetime = .keepAlways
+        add(image)
+    }
 }

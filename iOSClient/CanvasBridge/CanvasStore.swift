@@ -166,6 +166,27 @@ final class CanvasStore: ObservableObject {
     var zoom: Double { viewport.zoom }
     var pan: CGSize { viewport.pan }
     let inkHistory = CanvasInkHistory()
+    @Published private var graphUndo: (before: CanvasScene, after: CanvasScene)?
+
+    var canUndoGraph: Bool {
+        guard let undo = graphUndo, scene.id == undo.after.id else { return false }
+        return scene.hasSameGraph(as:undo.after)
+    }
+
+    func undoGraphEdit() {
+        guard canUndoGraph, let undo = graphUndo else {
+            status = "구조가 바뀌어 이전 수정으로 되돌릴 수 없습니다. 최신 내용을 유지합니다."
+            return
+        }
+        var next = scene
+        next.nodes = undo.before.nodes
+        next.links = undo.before.links
+        next.annotations = undo.before.annotations
+        next.revision += 1
+        scene = next
+        graphUndo = nil
+        status = "구조 수정을 되돌렸습니다. 현재 원본 획은 그대로 보존했습니다."
+    }
     private var storedDrawing = PKDrawing()
     var drawing: PKDrawing {
         get { storedDrawing }
@@ -1198,10 +1219,12 @@ final class CanvasStore: ObservableObject {
         }
         let text = proposalContext?.node.confidence == .confirmed ? proposalText :
             proposalText.trimmingCharacters(in:.whitespacesAndNewlines)
+        let before = scene
         guard scene.confirmNode(proposedNode, text: text) else {
-            status = "연결된 노트는 원본 노트 편집에서 수정하세요."
+            status = "내용 한도나 요소 상태를 확인하세요. 연결된 노트는 원본 노트 편집에서 수정하세요."
             return
         }
+        graphUndo = (before,scene)
         self.proposedNode = nil
         status = "수정한 글자를 확정했습니다. 원본 획 출처는 남겼습니다."
     }
@@ -1224,13 +1247,21 @@ final class CanvasStore: ObservableObject {
         status = "장면을 가져왔습니다. 그림과 구조 데이터를 함께 복원했습니다."
     }
 
-    func applyAgentRevision(_ revision: AgentRevision) {
+    @discardableResult
+    func applyAgentRevision(_ revision: AgentRevision) -> Bool {
         let sent = outbox.entries.first(where: { $0.id == packet?.packetId })
             .flatMap { try? $0.packet.frozenScene() }
-        guard scene.apply(revision, basedOn:sent) else {
+        var next = scene
+        guard next.apply(revision, basedOn:sent) else {
             status = "에이전트 제안이 현재 그림과 충돌해 자동 반영하지 않았습니다."
-            return
+            return false
         }
-        status = "에이전트 주석과 제안 요소가 캔버스에 반영됐습니다. 제안은 수정 후 확인할 수 있습니다."
+        if next.revision != scene.revision {
+            let before = scene
+            scene = next
+            graphUndo = (before,next)
+        }
+        status = "에이전트의 구조 수정과 제안을 반영했습니다. 원본 획과 요소 출처는 보존했습니다."
+        return true
     }
 }

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<style>
+:root { color-scheme:dark; font-family:-apple-system,sans-serif; background:#17191e; color:#f1f3f6 }
+body { margin:0; padding:16px }
+#diagram { overflow:auto; min-height:120px }
+svg { --pele-bg:#17191e; --pele-fg:#f1f3f6; --pele-line:#a6bbeb; --pele-border:#a6bbeb; --pele-surface:#292f3d }
+.pele-node { cursor:pointer }
+.pele-node:focus { outline:3px solid #7bb5ff }
+[aria-selected="true"] > rect { stroke:#70b4ff; stroke-width:3 }
+#error { color:#ffbbad; white-space:pre-wrap }
+</style>
+<script src="pele.global.js" defer></script>
+<script src="bridge.js" defer></script>
+</head>
+<body><div id="error" role="alert"></div><div id="diagram" aria-label="구조 다이어그램"></div></body>
+</html>
