@@ -172,13 +172,15 @@ def deploy(config, work, source):
     else:
         write(work / 'user-before.json', previous)
     derived = Path(config.get('buildCache', str(Path(config['outputRoot']) / 'AppDerivedData'))).resolve()
-    require(derived.is_relative_to(Path(config['outputRoot']).resolve()), 'build_cache_not_owned')
+    output_root = Path(config['outputRoot']).resolve()
+    require(derived.is_relative_to(output_root) and derived != output_root, 'build_cache_not_owned')
     app = derived / 'Build/Products/Debug-iphoneos/Sill.app'
     version = '1'
     metadata = plistlib.loads((Path(config['repo']) / 'iOSClient/Info-Debug.plist').read_bytes())
     metadata.update(CCRSourceCommit=source['commit'], CCRSourceTree=source['tree'],
                     CFBundleIdentifier=BUNDLE, CFBundleDisplayName='REA 통합 검증', CFBundleVersion=version)
     metadata_path = derived.parent / 'Diagnostic-Runtime-Info.plist'
+    require(not metadata_path.is_symlink() and metadata_path.resolve().is_relative_to(output_root), 'metadata_path_not_owned')
     metadata_path.write_bytes(plistlib.dumps(metadata))
     command(['xcodebuild', '-project', Path(config['repo']) / 'iOSClient/Sill.xcodeproj', '-scheme', 'Sill',
              '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-allowProvisioningUpdates',

@@ -126,5 +126,13 @@ class AdapterContract(unittest.TestCase):
             self.assertEqual(args[args.index('--device')+1],'own-ipad')
             self.assertEqual(args[-2:],['--ccr-test-runtime','fixture'])
 
+    def test_build_cache_cannot_equal_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            with patch.object(adapter,'lease'),patch.object(adapter,'snapshots',return_value={}),patch.object(adapter,'command') as command:
+                with self.assertRaisesRegex(adapter.Held,'build_cache_not_owned'):
+                    adapter.deploy({'outputRoot':str(root),'buildCache':str(root)},root/'work',{'commit':'a'*40,'tree':'b'*40})
+                command.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()
