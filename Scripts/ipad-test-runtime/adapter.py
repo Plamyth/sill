@@ -171,20 +171,29 @@ def deploy(config, work, source):
         require(read(work / 'user-before.json') == previous, 'user_data_changed_since_previous_deploy')
     else:
         write(work / 'user-before.json', previous)
-    derived = work / 'AppDerivedData'
+    derived = Path(config.get('buildCache', str(Path(config['outputRoot']) / 'AppDerivedData'))).resolve()
+    require(derived.is_relative_to(Path(config['outputRoot']).resolve()), 'build_cache_not_owned')
     app = derived / 'Build/Products/Debug-iphoneos/Sill.app'
     version = str(int(source['commit'][:7], 16))
+    metadata = plistlib.loads((Path(config['repo']) / 'iOSClient/Info-Debug.plist').read_bytes())
+    metadata.update(CCRSourceCommit=source['commit'], CCRSourceTree=source['tree'],
+                    CFBundleIdentifier=BUNDLE, CFBundleDisplayName='REA 통합 검증', CFBundleVersion=version)
+    metadata_path = work / 'Runtime-Info.plist'
+    metadata_path.write_bytes(plistlib.dumps(metadata))
     command(['xcodebuild', '-project', Path(config['repo']) / 'iOSClient/Sill.xcodeproj', '-scheme', 'Sill',
              '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-allowProvisioningUpdates',
              'DEVELOPMENT_TEAM=' + config['developmentTeam'], 'CURRENT_PROJECT_VERSION=' + version,
-             'PRODUCT_BUNDLE_IDENTIFIER=' + BUNDLE, 'INFOPLIST_KEY_CFBundleDisplayName=REA 통합 검증',
-             'INFOPLIST_KEY_CCRSourceCommit=' + source['commit'], 'INFOPLIST_KEY_CCRSourceTree=' + source['tree'], 'build'],
+             'PRODUCT_BUNDLE_IDENTIFIER=' + BUNDLE, 'INFOPLIST_FILE=' + str(metadata_path), 'build'],
             work / 'build.log', 1200)
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     require(info.get('CFBundleIdentifier') == BUNDLE, 'test_bundle_mismatch')
     require(info.get('CCRSourceCommit') == source['commit'] and info.get('CCRSourceTree') == source['tree'], 'built_metadata_mismatch')
     executable = sha((app / info['CFBundleExecutable']).read_bytes())
     command(['codesign', '--verify', '--strict', app], work / 'codesign.log')
+    artifact = work / 'Artifact/Sill.app'
+    artifact.parent.mkdir(exist_ok=True)
+    shutil.copytree(app, artifact, dirs_exist_ok=True)
+    app = artifact
     test_id = str(uuid.uuid5(uuid.NAMESPACE_URL, BUNDLE + source['commit'] + config['deviceUDID']))
     context_path = work / 'context.json'
     address = 'http://' + config['relayHost'] + ':' + str(config['relayPort'])
@@ -413,7 +422,8 @@ def main():
         source = identity(config); work = output / source['commit']
         require(not work.is_symlink() and work.resolve().parent == output, 'work_path_escapes_routed_root')
         work.mkdir(parents=True, exist_ok=True)
-        with (work / 'lock').open('a') as lock:
+        output.mkdir(parents=True, exist_ok=True)
+        with (output / 'device-and-build.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             lease(config)
             guard = command(['/Users/ambrion/.local/bin/codex-source-guard', 'capture', '--repo', config['repo'], '--ref', 'integration/ccr-ipad'])
