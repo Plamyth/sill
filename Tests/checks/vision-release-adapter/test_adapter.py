@@ -412,7 +412,6 @@ class AdapterTests(unittest.TestCase):
                     self.execute("deploy")
                 self.assertFalse((self.boundary.revision / "deployment.json").exists())
                 setattr(self.boundary, field, False)
-                # Reuse the actually installed fixture after the failed readback.
                 self.boundary.runtime = self.boundary.make_runtime()
                 self.boundary.installed = False
                 attempt = self.boundary.revision / "install-attempt.json"
