@@ -1,6 +1,6 @@
 # Dock 파이프라인 취소 검사
 
-`StreamCoordinator.swift`의 `select`, `startPipeline`, `PipelineEpochError`, `epochGeometry`, `SourceSelectionAdmission`, `dockPeerIsCurrent`와 Dock admission 생성 closure를 실행 때 추출한다. 본문이나 가드를 바꾸지 않고 검사 객체 안에서 컴파일한다. `DockSelectionIngress.swift` 전체와 `Sources/StreamProtocol` 전체도 실제 소스를 컴파일한다.
+첫 번째 인자로 지정한 소스 경로의 `StreamCoordinator.swift`에서 `handleDockRequest`, `dockActionIsCurrent`, `select`, `startPipeline`, `PipelineEpochError`, `epochGeometry`, `SourceSelectionAdmission`, `dockPeerIsCurrent`와 Dock admission 생성 closure를 추출한다. 본문이나 가드를 바꾸지 않고 검사 객체 안에서 컴파일한다. `DockSelectionIngress.swift` 전체와 `Sources/StreamProtocol` 전체도 지정한 경로의 실제 소스를 컴파일한다. 검사 파일은 실행한 `run.py`와 같은 디렉터리에서 읽으므로 생산 코드 경로와 검사 워크트리가 달라도 된다.
 
 `Capture`와 `SyntheticCapture`는 정수 프레임과 continuation만 다룬다. encoder, server, status, 창·화면 목록, 가상 화면과 AX 동작 경계는 메모리 객체다. `CoreGraphics`의 사각형·크기 값만 사용한다. 캡처·AX·앱·기기·서비스·오디오·HAL API를 호출하지 않는다.
 
@@ -11,7 +11,7 @@ python3 -B Tests/checks/native-dock-pipeline/run.py . \
   /Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-final
 ```
 
-실행기는 실제 함수의 SHA-256, 입력 파일 전체 해시, Git 기준 commit과 tree, 컴파일·실행 명령과 종료 코드, 사례별 결과를 `result.json`에 기록한다. 추출 파일, 실행파일, 모듈 캐시와 로그는 지정한 외장 출력 디렉터리에만 쓴다. 종료 코드 `0`은 모든 동작 검사와 변이 검출의 통과, `1`은 동작 실패 또는 변이 미검출, `2`는 검사 도구·컴파일·소스 불변성 오류다. 발견한 생산 결함도 실패로 유지한다.
+실행기는 실제 함수의 SHA-256, 생산 입력과 검사 파일의 개별 해시, 양쪽 Git 기준 commit과 tree 및 미커밋 상태, 컴파일·실행 명령과 종료 코드, 사례별 결과를 `result.json`에 기록한다. 추출 파일, 실행파일, 모듈 캐시와 로그는 지정한 외장 출력 디렉터리에만 쓴다. 이미 존재하는 출력 경로는 종료 코드 `2`로 거부한다. 이전 영수증을 덮지 않도록 실행마다 새 라벨을 사용한다. 종료 코드 `0`은 모든 동작 검사와 변이 검출의 통과, `1`은 동작 실패 또는 변이 미검출, `2`는 검사 도구·컴파일·소스 불변성 오류다. 발견한 생산 결함도 실패로 유지한다.
 
 검사는 캡처 시작 continuation을 보류하고 실제 ingress에서 peer를 제거하거나 유효한 새 ticket을 발급한다. ingress에는 peer가 남은 상태에서 연결 객체만 `cancelled`로 바꾸는 사례도 포함한다. 카탈로그 조회 시점과 admission commit callback 직전에도 같은 무효화를 넣는다. 취소 뒤에는 source·입력 세대·epoch·encoder·전송 catalog가 확정되지 않고 양쪽 캡처와 출력 콜백이 정리되는지 확인한다. 성공 사례는 준비한 epoch와 전송 catalog의 일치, 정확히 한 번의 확정, 기존 `admission=nil` 호출과 동일 소스의 세대 유지도 확인한다.
 
@@ -30,7 +30,7 @@ Pstack의 Feature 경로를 적용했다. `how`로 실제 호출 흐름을 읽�
 - [ ] 독립 검수는 부모 담당이 수행한다. 자체 점검을 독립 검수로 세지 않는다.
 - [ ] PR·병합·SDK 전체 검사·앱 실행은 부모 담당의 범위다.
 
-`handleDockRequest`와 `focusedDockSource`의 AX 조회는 실행하지 않는다. 해당 조회 뒤의 오래된 요청이 실제 `select` 진입 가드에 거부되는 경계부터 확인한다. `listMessage`, geometry 조회, 프레임 처리, 네트워크와 상태 공개는 어댑터이므로 실제 화면·전송·SDK 전체 수용의 증거가 아니다. 커밋한 `result.json`과 `RESULT.md`에 기준 실행 결과와 생산 결함을 기록한다.
+`handleDockRequest`의 Dock 조회와 액션은 메모리 어댑터로 실행하며 `focusedDockSource`의 실제 AX 조회는 실행하지 않는다. `listMessage`, geometry 조회, 프레임 처리, 네트워크와 상태 공개는 어댑터이므로 실제 화면·전송·SDK 전체 수용의 증거가 아니다. 커밋한 `result.json`과 `RESULT.md`의 기존 실패 기록은 보존한다.
 
 ## P2 시작 오류 정리 후속 검사
 
@@ -51,3 +51,23 @@ python3 -B Tests/checks/native-dock/run.py . \
 ```
 
 `native-dock`는 `native-dock-reader`의 비활성 검사를 먼저 실행한다. `--skip-sdk-typecheck`는 reader의 별도 SDK typecheck만 생략하며 기본 동작은 유지한다. SDK 검사와 독립 검수는 부모 담당의 후속 단계다. 자체 점검이나 이 동작 검사를 독립 검수로 세지 않는다. 실제 OS 캡처·AX·앱·기기·오디오·HAL·호스트 설치·재시작은 실행하지 않는다. ARENA는 사용하지 않는다.
+
+## Dock 액션 실패 후 이전 소스 복구 검사
+
+작업 키는 `host-dock-rollback-checks-20261021`, 담당 대화는 `01a15afa-e54c-76c1-815b-434c884226ff`다. 기준은 `63283efd9322ed66cd079186e5091bcf4083342e`, 단독 쓰기 브랜치는 `codex/native-dock-rollback-checks-20261021`이다. 이 변경은 이 검사 디렉터리만 수정한다. 생산 코드의 공통 admission 이동과 복구 `select(previous)` 수정은 부모 담당의 소유다.
+
+기존 36개 사례와 4개 변이를 유지하고 `dock-failure-restore-current`, `dock-failure-restore-peer-removed`, `dock-failure-restore-new-ticket`, `dock-failure-restore-transport-cancel`, `dock-failure-restore-pair-revoke`를 추가했다. 실제 `handleDockRequest`가 기존 소스를 종료한 뒤 Dock 액션 오류를 받고 복구 `select`와 `startPipeline`에 진입한다. 복구 캡처 continuation을 보류하고 등록만 제거하거나, 다른 창을 고르는 새 ticket만 발급하거나, 연결 상태만 취소하거나, 페어링만 해제한다. 서로 다른 취소 조건을 섞지 않는다.
+
+취소 4종은 commit 0회, active·encoder·epoch 미확정, 양쪽 캡처·콜백·준비 epoch 정리와 두 전환 잠금 해제를 확인한다. 취소하지 않은 대조 사례는 이전 창을 정확히 한 번 확정하고 캡처를 유지하며 원래 Dock 오류를 성공 응답으로 바꾸지 않는지 확인한다. 최종 독립 검수는 별도 검수자가 맡는다.
+
+부모 수정 경로를 별도 인자로 전달하는 명령은 다음과 같다. `run-rollback-parent-01`은 새 라벨이어야 한다.
+
+```sh
+python3 -B '/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock-rollback-checks/Tests/checks/native-dock-pipeline/run.py' \
+  '/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock' \
+  /Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-rollback-parent-01
+```
+
+검사 워크트리를 첫 번째 인자로 주면 수정 전 생산 코드를 검사하므로 복구 취소 4건이 실패해야 한다. 부모 수정 소스를 주면 41개 동작 검사와 기존 4개 변이가 모두 통과해야 한다. admission initializer는 괄호를 짝지어 추출하므로 성공 분기 안에서 공통 위치로 옮겨도 주변 분기를 잘못 추출하지 않는다.
+
+Pstack Feature 절차에서 `Model the Domain`에 따라 새 취소 4종을 별도 enum으로 표현했다. `Test Behavior, Not Implementation`에 따라 실제 commit과 캡처 정리 결과를 비교한다. Ponytail은 기존 continuation·어댑터·추출기를 재사용하는 데 적용했다. ARENA와 하위 에이전트는 실행하지 않는다. 이 담당은 사용자가 지정한 검사 구현 담당이며 자체 검증을 최종 독립 검수로 세지 않는다.
