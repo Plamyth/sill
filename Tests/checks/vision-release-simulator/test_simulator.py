@@ -314,6 +314,38 @@ class BoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(sim.Held, "native_ui_test_configuration_unsupported"):
             sim.test_run_file({"xctestrun": sim.evidence(original)}, self.root / "out", {})
 
+    def test_sdk_format_one_keeps_exact_native_target_and_context(self):
+        original = self.root / "sdk.xctestrun"
+        target = {"BlueprintName": "VisionReleaseSimulatorUITests", "IsUITestBundle": True,
+                  "TestHostPath": "__TESTROOT__/runner.app", "UITargetAppPath": "__TESTROOT__/Test.app"}
+        original.write_bytes(plistlib.dumps({"VisionReleaseSimulatorUITests": target,
+            "__xctestrun_metadata__": {"FormatVersion": 1}}))
+        before = original.read_bytes()
+        destination = self.root / "execution.xctestrun"
+        context = {**SOURCE.fields(), "runID": LEASE_ID}
+        sim.test_run_file({"xctestrun": sim.evidence(original), "app": str(self.root / "Test.app")},
+                          destination, context)
+        result = plistlib.loads(destination.read_bytes())
+        actual = result["VisionReleaseSimulatorUITests"]
+        self.assertEqual(json.loads(actual["EnvironmentVariables"]["CCR_VISION_RELEASE_CONTEXT"]), context)
+        self.assertEqual(actual["UITargetAppPath"], str(self.root / "Test.app"))
+        self.assertEqual(result["__xctestrun_metadata__"]["FormatVersion"], 1)
+        self.assertEqual(original.read_bytes(), before)
+
+    def test_format_one_rejects_unknown_versions_extra_targets_and_wrong_app(self):
+        original = self.root / "sdk.xctestrun"
+        target = {"BlueprintName": "VisionReleaseSimulatorUITests", "IsUITestBundle": True,
+                  "UITargetAppPath": "__TESTROOT__/Test.app"}
+        valid = {"VisionReleaseSimulatorUITests": target, "__xctestrun_metadata__": {"FormatVersion": 1}}
+        for raw in ({**valid, "__xctestrun_metadata__": {"FormatVersion": 99}},
+                    {**valid, "AnotherUITest": target},
+                    {**valid, "VisionReleaseSimulatorUITests": {**target, "UITargetAppPath": "__TESTROOT__/SillVision.app"}}):
+            with self.subTest(raw=raw):
+                original.write_bytes(plistlib.dumps(raw))
+                with self.assertRaises(sim.Held):
+                    sim.test_run_file({"xctestrun": sim.evidence(original), "app": str(self.root / "Test.app")},
+                                      self.root / "execution.xctestrun", {})
+
     def test_native_ui_driver_cannot_target_original_app(self):
         original = self.root / "wrong.xctestrun"
         original.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [{
