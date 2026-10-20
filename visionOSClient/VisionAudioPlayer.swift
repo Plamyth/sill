@@ -215,7 +215,7 @@ final class VisionAudioPlayer: @unchecked Sendable {
             }
         }
         do {
-            try output.start(ticket, format: format, version: version, authorization: authorization) { _, _, frames, list in
+            try output.start(ticket, format: format, version: version, authorization: authorization) { [gain = VisionAudioGain.shared] _, _, frames, list in
                 let buffers = UnsafeMutableAudioBufferListPointer(list)
                 for buffer in buffers {
                     if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
@@ -226,8 +226,9 @@ final class VisionAudioPlayer: @unchecked Sendable {
                           Int(buffers[channel].mDataByteSize) >= Int(frames) * MemoryLayout<Float>.size else { return noErr }
                 }
                 _ = renderState.withLockIfAvailable { value in
+                    let renderGain = gain.renderGain
                     value.playback.render(ticket: ticket, version: version, frames: Int(frames), now: Self.now) { frame, channel, sample in
-                        buffers[channel].mData!.assumingMemoryBound(to: Float.self)[frame] = sample
+                        buffers[channel].mData!.assumingMemoryBound(to: Float.self)[frame] = renderGain == 0 ? 0 : sample * renderGain
                     }
                 }
                 return noErr

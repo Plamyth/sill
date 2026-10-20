@@ -982,6 +982,24 @@
 			<key>fileRef</key>
 			<string>256B0F03B37CA87A91C72FFF</string>
 		</dict>
+		<key>4B947FAFDD7D6A9A8A873454</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionAudioGain.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>339D6E9A49A55833E247901A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>4B947FAFDD7D6A9A8A873454</string>
+		</dict>
 		<key>871C3AB6569A4C63C1E9C978</key>
 		<dict>
 			<key>isa</key>
@@ -1430,6 +1448,7 @@
 				<string>F1C4E8501A537755FC17C59B</string>
 				<string>AE15723CA61DB321A16717AE</string>
 				<string>256B0F03B37CA87A91C72FFF</string>
+				<string>4B947FAFDD7D6A9A8A873454</string>
 				<string>871C3AB6569A4C63C1E9C978</string>
 				<string>12D80BE0415B83D3DDD7607D</string>
 				<string>3E02C1765F12250E1E3D0CC7</string>
@@ -1518,6 +1537,7 @@
 				<string>A4C79F788B3CA044B6655ABE</string>
 				<string>BC739450E2D039089A4BACA9</string>
 				<string>5E4A1EC0F1B59D52EB290FC6</string>
+				<string>339D6E9A49A55833E247901A</string>
 				<string>02B570258369E1E27D771386</string>
 				<string>B02287A7A145B6DA8AB586F9</string>
 				<string>C46E483069CD13375DE973F8</string>
@@ -1966,6 +1986,7 @@
 				<string>A4C79F788B3CA044B6655ABE</string>
 				<string>BC739450E2D039089A4BACA9</string>
 				<string>5E4A1EC0F1B59D52EB290FC6</string>
+				<string>339D6E9A49A55833E247901A</string>
 				<string>02B570258369E1E27D771386</string>
 				<string>B02287A7A145B6DA8AB586F9</string>
 				<string>C46E483069CD13375DE973F8</string>
