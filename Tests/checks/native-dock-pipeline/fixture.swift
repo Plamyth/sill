@@ -108,6 +108,8 @@ final class Server {
     var commits: [Commit] = []
     var resets = 0, broadcasts = 0
     var admission = VideoEpochAdmission.stopped
+    var sent: [StreamMessage] = []
+    func send(_ message: StreamMessage, to connection: NWConnection) { sent.append(message) }
     func prepareVideo(_ epoch: VideoEpoch) { prepared.append(epoch); admission = .preparing(epoch) }
     func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, onReady: () -> Void) {
         commits.append(Commit(epoch: epoch, catalog: catalog)); admission = .committed(epoch); onReady()
@@ -130,11 +132,20 @@ final class Status {
     var updates = 0
     func update(_ action: (inout HostStatusSnapshot) -> Void) { updates += 1; action(&value) }
 }
+enum AXError { case success, cannotComplete }
 final class Dock {
     var value = RemoteDockCatalog(version: UUID(), items: [RemoteDockItem(id: 0, title: "검사 앱", subrole: "app", running: true)])
     var onRead: (() -> Void)?
     var reads = 0
-    func catalog() -> RemoteDockCatalog { reads += 1; onRead?(); return value }
+    var actionAttempts = 0
+    static let failure = "격리된 Dock 액션 실패"
+    func disconnected(_ owner: ObjectIdentifier) {}
+    func perform(_ request: RemoteDockRequest, owner: ObjectIdentifier,
+                 actionAdmission: ((() -> AXError) -> AXError)) -> RemoteDockReply {
+        _ = actionAdmission { self.actionAttempts += 1; return .cannotComplete }
+        return RemoteDockReply(requestID: request.requestID, catalog: value, note: Self.failure)
+    }
+    func catalog(force: Bool = false) -> RemoteDockCatalog { reads += 1; onRead?(); return value }
 }
 struct Config { var virtualDisplay = false }
 final class NWConnection {
@@ -142,7 +153,14 @@ final class NWConnection {
     var state = State.ready
 }
 struct Route { var encrypted = true; var fingerprint: String? = "검사 키" }
-final class Remote { func isPaired(_ fingerprint: String) -> Bool { fingerprint == "검사 키" } }
+final class Remote {
+    var paired = true
+    func isPaired(_ fingerprint: String) -> Bool { paired && fingerprint == "검사 키" }
+}
+final class Microphone {
+    enum Phase { case off, cleanupFailed }
+    var phase = Phase.off
+}
 struct Injector {
     func releaseInput(of device: ObjectIdentifier) {}
     func isUpOfSomethingDown(_ event: Int, from device: ObjectIdentifier) -> Bool { false }
@@ -160,6 +178,13 @@ final class Stats { static let shared = Stats(); func bump(_ key: String) {} }
     let capture = Capture(), syntheticCapture = SyntheticCapture()
     let server = Server(), status = Status(), nativeDock = Dock(), catalog = Catalog(), stage = Stage()
     let dockSelectionIngress = DockSelectionIngress()
+    let microphoneReceiver = Microphone()
+    var dockTransition = false
+    var dockGeneration: String?
+    var pendingDockSelection: (StreamMessage, NWConnection, UInt64)?
+    var pendingLaunch: String?
+    var dockArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
+    var selectionRevision: String { "검사 선택 세대" }
     var active = StreamSource.none
     var inputGeneration = "기존 입력 세대"
     var videoEpoch: VideoEpoch?
@@ -203,6 +228,13 @@ final class Stats { static let shared = Stats(); func bump(_ key: String) {} }
     func adopt(_ value: Config, away: Bool) { config = value }
     func encoderHung(_ encoder: HEVCEncoder) async {}
     func broadcastList() {}
+    func focusedDockSource() -> StreamSource? { fatalError("실패 복구 검사에서 OS 포커스 조회를 실행하면 안 됩니다") }
+    func handle(_ message: StreamMessage, from connection: NWConnection, selectionTicket: UInt64?) async {
+        fatalError("실패 복구 검사는 후속 메시지를 실행하지 않습니다")
+    }
+    func runDock(_ message: StreamMessage, from connection: NWConnection, selectionTicket: UInt64?) async {
+        await handleDockRequest(message, from: connection, selectionTicket: selectionTicket)
+    }
     func listMessage(preloadedDock: RemoteDockCatalog? = nil) -> StreamMessage {
         listCalls += 1
         dockSelectionIngress.publish(dock: preloadedDock, windowIDs: [7, 17], displayInventoryID: nil,
@@ -230,6 +262,28 @@ final class Stats { static let shared = Stats(); func bump(_ key: String) {} }
 
 enum Revocation: String, CaseIterable { case peerLoss = "peer-loss", newTicket = "new-ticket", transportClosed = "transport-closed" }
 enum Moment: String, CaseIterable { case captureStart = "capture-start", catalogRead = "catalog-read", commitCallback = "commit-callback" }
+enum RecoveryRevocation: String, CaseIterable {
+    case peerRemoved = "peer-removed", newTicket = "new-ticket"
+    case transportCancelled = "transport-cancel", pairingRevoked = "pair-revoke"
+
+    @MainActor func apply(to request: Request) {
+        let host = request.host
+        switch self {
+        case .peerRemoved:
+            host.dockSelectionIngress.removePeer(ObjectIdentifier(request.peer))
+        case .newTicket:
+            let peer = ObjectIdentifier(request.newerPeer)
+            host.dockSelectionIngress.setPeer(peer, dockAllowed: true)
+            let message = StreamMessage(kind: .selectSource, timestamp: 2, isKeyframe: false,
+                                       payload: Wire.encode(StreamSource.window(17)))
+            precondition(host.dockSelectionIngress.reserve(for: message, from: peer)! > request.ticket)
+        case .transportCancelled:
+            request.peer.state = .cancelled
+        case .pairingRevoked:
+            host.remote?.paired = false
+        }
+    }
+}
 final class StartFailure: Error {}
 struct CheckFailure: Error, CustomStringConvertible { let description: String }
 @MainActor func expect(_ condition: @autoclosure () -> Bool, _ description: String) throws {
@@ -458,6 +512,45 @@ struct CheckFailure: Error, CustomStringConvertible { let description: String }
             try cleaned(host, candidate: HEVCEncoder.created.last!)
             try expect(host.capture.stops == 2 && host.syntheticCapture.stops == 2 && host.server.resets == 2,
                        "select의 전환 전 정리와 오류 후보 정리를 각각 한 번 수행해야 합니다")
+        }
+        for reason in [nil] + RecoveryRevocation.allCases.map(Optional.some) {
+            await check("dock-failure-restore-\(reason?.rawValue ?? "current")") {
+                let host = Host(); host.active = .window(7)
+                let request = Request(host)
+                let message = StreamMessage(kind: .dockRequest, timestamp: 1, isKeyframe: false,
+                    payload: Wire.encode(RemoteDockRequest(version: host.nativeDock.value.version, itemID: 0, action: .press)))
+                let task = Task { @MainActor in
+                    await host.runDock(message, from: request.peer, selectionTicket: request.ticket)
+                }
+                await host.capture.waitUntilStarted()
+                let candidate = HEVCEncoder.created.last!
+                try expect(host.nativeDock.actionAttempts == 1 && host.active == .none && host.dockTransition,
+                           "Dock 액션이 실패한 뒤 소스가 종료된 상태에서 실제 복구 캡처를 기다려야 합니다")
+                try expect(host.server.commits.isEmpty && host.capture.starts == 1,
+                           "복구 캡처 시작 완료 전에 commit하면 안 됩니다")
+                reason?.apply(to: request)
+                host.capture.finish()
+                await task.value
+                try expect(!host.switching && !host.dockTransition && host.dockGeneration == nil,
+                           "실패 복구 종료 뒤 두 전환 잠금과 Dock 세대를 정리해야 합니다")
+                if reason != nil {
+                    let observed = "commit=\(host.server.commits.count), active=\(host.active), capture.running=\(host.capture.running)"
+                    try expect(host.server.commits.isEmpty && host.active == .none && host.encoder == nil && host.videoEpoch == nil,
+                               "취소된 실패 복구를 확정하면 안 됩니다. 관측값 \(observed)")
+                    try cleaned(host, candidate: candidate)
+                    try expect(host.capture.stops == 3 && host.syntheticCapture.stops == 3 && host.server.resets == 3,
+                               "기존 소스 종료와 복구 전 정리와 취소 후보 정리를 각각 한 번 수행해야 합니다")
+                } else {
+                    try committed(host, source: .window(7), dock: host.nativeDock.value)
+                    try expect(host.capture.running && host.capture.stops == 2 && host.syntheticCapture.stops == 2,
+                               "정상 실패 복구는 이전 소스를 한 번 확정하고 캡처를 유지해야 합니다")
+                }
+                for sent in host.server.sent {
+                    let reply = Wire.decode(RemoteDockReply.self, from: sent.payload)
+                    try expect(reply?.note == Dock.failure && reply?.selectedSource == nil && reply?.videoEpochID == nil,
+                               "복구 결과를 Dock 액션 성공으로 답하면 안 됩니다")
+                }
+            }
         }
         exit(failed == 0 ? 0 : 1)
     }
