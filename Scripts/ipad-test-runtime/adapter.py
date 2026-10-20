@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import runpy
 import secrets
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 import zlib
 import struct
@@ -132,8 +134,10 @@ def fixture(scene_id):
                  'frame': {'x': 625, 'y': 600, 'width': 260, 'height': 120}, 'sourceStrokeIds': []}]}
 
 def save_scene(server, scene, image, base):
+    encoded = subprocess.run([str(server['encoder'])], input=json.dumps(scene, ensure_ascii=False).encode(), env=ENV, capture_output=True, timeout=30)
+    require(encoded.returncode == 0, 'native_scene_encoding_failed')
     return request(server, 'PUT', '/vault/canvas?id=' + scene['id'].lower(), {
-        'revision': scene['revision'], 'sceneJSONBase64': base64.b64encode(json.dumps(scene, ensure_ascii=False).encode()).decode(),
+        'revision': scene['revision'], 'sceneJSONBase64': base64.b64encode(encoded.stdout).decode(),
         'imagePNGBase64': base64.b64encode(image).decode(), 'baseSha256': base})
 
 def runtime_readback(config, work, test_id):
@@ -153,7 +157,11 @@ def stop_owned(config, work):
     found = [r for r in rows if r['processIdentifier'] == pid]
     if not found:
         return
-    require(len(found) == 1 and found[0]['executable'].endswith('/Sill.app/Sill'), 'owned_process_mismatch')
+    installed = read(work / 'install.json')['result']['installedApplications']
+    candidates = [row for row in installed if row.get('bundleID') == BUNDLE]
+    require(len(candidates) == 1 and observed.get('bundleID') == BUNDLE, 'installed_test_identity_missing')
+    executable = urllib.parse.urljoin(candidates[0]['installationURL'], 'Sill')
+    require(len(found) == 1 and found[0]['executable'] == executable, 'owned_process_mismatch')
     device(config, ['process', 'terminate', '--pid', str(pid)], work / 'stop.log')
 
 def deploy(config, work, source):
@@ -240,7 +248,10 @@ def relay_runtime(config, work, source):
     require(not vault.is_symlink() and vault.resolve().parent == work.resolve(), 'vault_path_escapes_test_runtime')
     vault.mkdir(exist_ok=True)
     snapshot = work / 'snapshot.json'; hidden = work / 'hidden.json'; write(snapshot, {}); write(hidden, [])
-    ctx = read(work / 'context.json'); server = {'token': ctx['token'], 'address': ctx['relayAddress']}
+    encoder = work / 'NativeSceneEncoder'
+    command(['xcrun', 'swiftc', '-parse-as-library', Path(config['repo']) / 'iOSClient/CanvasBridge/CanvasModel.swift',
+             Path(config['repo']) / 'Scripts/ipad-test-runtime/NativeSceneEncoder.swift', '-o', encoder], work / 'scene-encoder-build.log')
+    ctx = read(work / 'context.json'); server = {'token': ctx['token'], 'address': ctx['relayAddress'], 'encoder': encoder}
     conf = {'relayRepo': str(relay_repo), 'vault': str(vault), 'store': str(work / 'relay-store'),
             'snapshot': str(snapshot), 'hidden': str(hidden), 'token': ctx['token'], 'host': config['relayHost'], 'port': config['relayPort']}
     write(work / 'relay-private.json', conf)
@@ -258,6 +269,47 @@ def relay_runtime(config, work, source):
         (work / 'relay-release.json').unlink(missing_ok=True)
     write(work / 'relay-lease.json', service)
     return server, vault, service
+
+def cleanup(config, work, service, vault, test_id, before):
+    lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
+    results = {}
+    try:
+        released = json.loads(command([lifecycle, 'release', '--owner', OWNER, service['leaseId']], work / 'relay-release.log'))
+        require(released.get('released') is True, 'relay_lease_release_unconfirmed')
+        write(work / 'relay-release.json', released)
+        results['relayReleased'] = True
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        results['relayReleased'] = False
+    try:
+        stop_owned(config, work)
+        results['testProcessStopped'] = True
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        results['testProcessStopped'] = False
+    try:
+        require(results['testProcessStopped'], 'test_process_not_stopped')
+        empty = work / 'empty-state'; empty.mkdir(exist_ok=True)
+        lease(config)
+        command(['xcrun', 'devicectl', 'device', 'copy', 'to', '--device', config['deviceUDID'], '--domain-type', 'appDataContainer',
+                 '--domain-identifier', BUNDLE, '--source', empty, '--destination', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state',
+                 '--remove-existing-content', 'true'], work / 'reset.log', 60)
+        device_state = work / ('reset-device-state-' + str(time.time_ns()))
+        copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', device_state)
+        require(not list(device_state.rglob('*')), 'device_fixture_reset_failed')
+        results['deviceStateEmpty'] = True
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        results['deviceStateEmpty'] = False
+    try:
+        require(results['relayReleased'] and not vault.is_symlink() and vault.resolve().parent == work.resolve(), 'vault_cleanup_not_owned')
+        shutil.rmtree(vault); vault.mkdir()
+        results['vaultEmpty'] = not list(vault.iterdir())
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        results['vaultEmpty'] = False
+    try:
+        results['originalDataPreserved'] = snapshots(config, work, 'user-after-reset') == before
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        results['originalDataPreserved'] = False
+    write(work / 'reset-readback.json', results)
+    return all(results.values())
 
 def accept(config, work, source):
     lease(config)
@@ -302,28 +354,8 @@ def accept(config, work, source):
         write(work / 'functional-readback.json', proof)
         accepted = True
     finally:
-        released = json.loads(command([lifecycle, 'release', '--owner', OWNER, service['leaseId']], work / 'relay-release.log'))
-        require(released.get('released') is True, 'relay_lease_release_unconfirmed')
-        write(work / 'relay-release.json', released)
-        try:
-            stop_owned(config, work)
-            write(work / 'test-process-cleanup.json', {'status': 'stopped-owned-test-process'})
-        except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-            write(work / 'test-process-cleanup.json', {'status': 'held', 'reason': 'owned_test_process_cleanup_unconfirmed'})
-    require(accepted, 'acceptance_incomplete')
-    empty = work / 'empty-state'; empty.mkdir(exist_ok=True)
-    stop_owned(config, work)
-    lease(config)
-    command(['xcrun', 'devicectl', 'device', 'copy', 'to', '--device', config['deviceUDID'], '--domain-type', 'appDataContainer',
-             '--domain-identifier', BUNDLE, '--source', empty, '--destination', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state',
-             '--remove-existing-content', 'true'], work / 'reset.log', 60)
-    device_state = work / ('reset-device-state-' + str(time.time_ns()))
-    copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', device_state)
-    require(not list(device_state.rglob('*')), 'device_fixture_reset_failed')
-    shutil.rmtree(vault); vault.mkdir()
-    require(not list(vault.iterdir()), 'fixture_reset_failed')
-    require(snapshots(config, work, 'user-after-reset') == before, 'original_data_changed_during_reset')
-    write(work / 'reset-readback.json', {'deviceStateEmpty': True, 'vaultEmpty': True, 'originalDataPreserved': True})
+        cleanup_passed = cleanup(config, work, service, vault, test_id, before)
+    require(accepted and cleanup_passed, 'acceptance_or_cleanup_incomplete')
     evidence_path = work / 'functional-readback.json'
     evidence = {'path': str(evidence_path), 'sha256': sha(evidence_path.read_bytes())}
     reset_path = work / 'reset-readback.json'
@@ -345,8 +377,7 @@ def acceptance_contract(config):
     descriptor = read(Path(config['repo']) / 'Scripts/ipad-test-runtime/descriptor.json')
     require(sorted(set(test.get('requiredChecks', []))) == sorted(descriptor['requiredChecks']) and
             test.get('environment') == 'isolated-ipad-canvas' and test.get('externalEffects') == 'zero', 'registry_test_contract_mismatch')
-    contract = {'requiredChecks': sorted(set(test['requiredChecks'])), 'environment': test['environment'], 'externalEffects': test['externalEffects']}
-    return sha(json.dumps(contract, sort_keys=True, separators=(',', ':')).encode())
+    return runpy.run_path('/Users/ambrion/.local/bin/bt-release-convergence')['acceptance_contract'](rows[0])
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('phase', choices=['deploy', 'accept']); parser.add_argument('--config', required=True)
