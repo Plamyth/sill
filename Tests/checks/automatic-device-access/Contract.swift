@@ -3,6 +3,19 @@ import Foundation
 private let user: UInt64 = 7_583_687_675_853_032
 private let source = "100.112.191.3"
 
+private final class LeaseClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ticks: UInt64 = 0
+    private var wall = Date(timeIntervalSince1970: 1_000_000)
+    func read() -> (UInt64, Date) { lock.lock(); defer { lock.unlock() }; return (ticks, wall) }
+    func advance(_ seconds: UInt64) {
+        lock.lock(); defer { lock.unlock() }
+        ticks += seconds * 1_000_000_000
+        wall = wall.addingTimeInterval(Double(seconds))
+    }
+    func changeWall(_ seconds: Double) { lock.lock(); defer { lock.unlock() }; wall = wall.addingTimeInterval(seconds) }
+}
+
 private func status(id: String = "nLocal", uid: UInt64 = user, backend: String = "Running") -> Data {
     Data("{\"BackendState\":\"\(backend)\",\"Self\":{\"ID\":\"\(id)\",\"UserID\":\(uid),\"TailscaleIPs\":[\"100.112.191.2\"]}}".utf8)
 }
@@ -51,6 +64,7 @@ private final class Fixture: @unchecked Sendable {
     }
 
     static func main() async {
+        leases()
         let fingerprint = Data32(Data(repeating: 0x42, count: 32))!
         expect(Data32(Data(repeating: 0, count: 31)) == nil, "TLS digest 길이 검증")
         expect(Data32(Data(repeating: 0, count: 33)) == nil, "긴 TLS digest 거부")
@@ -157,6 +171,48 @@ private final class Fixture: @unchecked Sendable {
         await lifecycle()
         if CommandLine.arguments.contains("--live-self") { await liveSelf() }
         print("자동 기기 접근 계약 \(checks)개 통과")
+    }
+
+    private static func leases() {
+        let principal = AutomaticDevicePrincipal.tailnet(userId: user, nodeStableId: "nPeerTest")
+        let key = Data32(Data(repeating: 1, count: 32))!
+        let clock = LeaseClock()
+        let lease = AutomaticSessionAuthorization(principal: principal, fingerprint: key, clock: clock.read)
+        expect(lease.isCurrent, "권한 수명 시작")
+        clock.advance(5)
+        expect(lease.renew(principal: principal, fingerprint: key), "동일 실제 주체의 갱신")
+        clock.advance(6)
+        expect(lease.isCurrent, "갱신된 기한")
+        clock.advance(4)
+        expect(!lease.isCurrent, "단조 시계에서 만료")
+        expect(!lease.renew(principal: principal, fingerprint: key), "만료된 권한을 되살리지 않음")
+        let stopped = AutomaticSessionAuthorization(principal: principal, fingerprint: key)
+        stopped.invalidate()
+        expect(!stopped.isCurrent && !stopped.renew(principal: principal, fingerprint: key), "철회된 권한 갱신 거절")
+        for changedKey in [false, true] {
+            let clock = LeaseClock()
+            let grant = AutomaticSessionAuthorization(principal: principal, fingerprint: key, clock: clock.read)
+            let otherPrincipal = changedKey ? principal : .tailnet(userId: user, nodeStableId: "nOther")
+            let otherKey = changedKey ? Data32(Data(repeating: 2, count: 32))! : key
+            expect(!grant.renew(principal: otherPrincipal, fingerprint: otherKey), "다른 주체 또는 인증서 갱신 거절")
+            expect(!grant.isCurrent, "변경된 주체는 기존 권한을 철회")
+        }
+        let shortClock = LeaseClock()
+        let short = AutomaticSessionAuthorization(principal: principal, fingerprint: key,
+            nodeExpiry: shortClock.read().1.addingTimeInterval(2), clock: shortClock.read)
+        shortClock.advance(2)
+        expect(!short.isCurrent, "노드 만료를 세션 기한보다 우선함")
+        let wallClock = LeaseClock()
+        let wall = AutomaticSessionAuthorization(principal: principal, fingerprint: key, clock: wallClock.read)
+        wallClock.changeWall(20)
+        expect(!wall.isCurrent, "벽시계 만료")
+        wallClock.changeWall(-20)
+        expect(!wall.isCurrent && !wall.renew(principal: principal, fingerprint: key), "벽시계 왕복으로 철회 권한이 살아나지 않음")
+        let rollback = LeaseClock()
+        let monotonic = AutomaticSessionAuthorization(principal: principal, fingerprint: key, clock: rollback.read)
+        rollback.changeWall(-100)
+        rollback.advance(10)
+        expect(!monotonic.isCurrent, "벽시계가 뒤로 가도 단조 기한은 유지")
     }
 
     private static func lifecycle() async {

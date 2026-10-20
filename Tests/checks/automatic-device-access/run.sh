@@ -10,6 +10,7 @@ TMPDIR="$out/tmp" xcrun swiftc -swift-version 6 -strict-concurrency=complete -wa
     -target arm64-apple-macosx14.0 -module-cache-path "$out/module-cache" \
     "$root/Sources/SillHost/OriginPolicy.swift" \
     "$root/Sources/SillHost/AutomaticDevicePrincipal.swift" \
+    "$root/Sources/SillHost/AutomaticSessionAuthorization.swift" \
     "$root/Sources/SillHost/TailnetDeviceAccess.swift"
 TMPDIR="$out/tmp" xcrun swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors -parse-as-library \
     -D AUTOMATIC_DEVICE_ACCESS_CONTRACT \
@@ -17,6 +18,7 @@ TMPDIR="$out/tmp" xcrun swiftc -swift-version 6 -strict-concurrency=complete -wa
     -module-cache-path "$out/module-cache" \
     "$root/Sources/SillHost/OriginPolicy.swift" \
     "$root/Sources/SillHost/AutomaticDevicePrincipal.swift" \
+    "$root/Sources/SillHost/AutomaticSessionAuthorization.swift" \
     "$root/Sources/SillHost/TailnetDeviceAccess.swift" \
     "$here/Contract.swift" -o "$out/check"
 python3 - "$out/check" "$@" <<'PY'

@@ -17,6 +17,10 @@ struct ClientRoute {
     var isRemote = false
     var fingerprint: Data? = Data(repeating: 1, count: 32)
     var cableDevice: String? = nil
+    var automatic = false
+    var authorizationCurrent = true
+    var requiresLiveAuthorization: Bool { automatic }
+    var isAuthenticated: Bool { encrypted && (pairedName != nil || automatic) && (!automatic || authorizationCurrent) }
 }
 struct Hello { var presentationInput: Int? = nil; var device: String? = nil }
 enum SafeText { static func label(_ text: String) -> String { text } }
@@ -29,6 +33,16 @@ final class FixtureQueue {
 final class PointerProbe {
     var departed: [ObjectIdentifier] = []
     func clientLeft(_ id: ObjectIdentifier) { departed.append(id) }
+}
+final class MicrophoneRenderBuffer {
+    var deliveries = 0
+    var isOpen = true, isAdmitted = true
+    func sendEnabled(_ data: Data, to connection: NWConnection) -> Bool { deliveries += 1; return true }
+}
+final class MicrophoneReplies {
+    func offer(_ message: StreamMessage, connection: NWConnection, render: MicrophoneRenderBuffer?, queue: FixtureQueue,
+               deliver: (StreamMessage, NWConnection, MicrophoneRenderBuffer?) -> Void) { deliver(message, connection, render) }
+    func takeDeliveryTrace() -> Bool { false }
 }
 final class Client {
     let connection: NWConnection
@@ -45,6 +59,7 @@ final class Client {
     var awaitingFirstKeyframe = false
     var catalogSent = false
     var device: String?
+    var pendingBytes = 0
     init(_ connection: NWConnection) { self.connection = connection }
 }
 final class RoleHost {
@@ -65,6 +80,7 @@ final class RoleHost {
     var viewerJoins = 0, viewerLeaves = 0, controlJoins = 0, controlLeaves = 0
     var counts: [Int] = [], sent: [StreamMessageKind] = []
     var ticking = false
+    let microphoneReplies = MicrophoneReplies()
     init() {
         onClientConnected = { [unowned self] _, _, _ in viewerJoins += 1 }
         onClientDisconnected = { [unowned self] _ in viewerLeaves += 1 }
@@ -88,6 +104,42 @@ struct Check {
     static func main() {
         var checks = 0
         func check(_ value: Bool) { precondition(value); checks += 1 }
+        for current in [true, false] {
+            let host = RoleHost(), connection = NWConnection(), render = MicrophoneRenderBuffer()
+            host.serve(connection, route: .init(encrypted: true, pairedName: nil, automatic: true), hello: Hello())
+            host.clients[ObjectIdentifier(connection)]!.route.authorizationCurrent = current
+            host.sendMicrophone(StreamMessage(kind: .microphoneState, timestamp: 0, isKeyframe: false, payload: Data()), to: connection, render: render)
+            check(render.deliveries == (current ? 1 : 0))
+            check(connection.state == (current ? .ready : .cancelled))
+        }
+        do {
+            let host = RoleHost()
+            let peers = (0..<12).map { _ in NWConnection() }
+            for peer in peers { host.serve(peer, route: .init(encrypted: true, pairedName: nil, isRemote: true, automatic: true), hello: nil) }
+            check(host.controlJoins == 12 && host.clients.count == 12 && host.viewerJoins == 0)
+            for peer in peers { peer.cancel() }
+            check(host.controlLeaves == 12 && host.clients.isEmpty)
+        }
+        do {
+            let host = RoleHost(), connection = NWConnection()
+            host.serve(connection, route: .init(encrypted: true, pairedName: nil, automatic: true), hello: nil)
+            check(host.controlJoins == 1 && host.viewerJoins == 0 && host.counts.isEmpty)
+            let client = host.clients[ObjectIdentifier(connection)]!
+            client.route.authorizationCurrent = false
+            host.sendAuthenticationCatalog(.init(macName: "fixture", windows: [], active: .none), to: connection)
+            check(host.sent.isEmpty)
+            host.took(Hello(), from: client)
+            check(host.viewerJoins == 0 && host.controlLeaves == 1 && connection.state == .cancelled)
+        }
+        do {
+            let host = RoleHost(), connection = NWConnection()
+            host.serve(connection, route: .init(encrypted: true, pairedName: nil, automatic: true), hello: Hello())
+            let client = host.clients[ObjectIdentifier(connection)]!
+            check(host.viewerJoins == 1)
+            client.route.authorizationCurrent = false
+            host.send(StreamMessage(kind: .frame, timestamp: 0, isKeyframe: true, payload: Data([1])).serialized(), to: client)
+            check(host.sent.isEmpty && connection.state == .cancelled && host.viewerLeaves == 1)
+        }
         let host = RoleHost(), peer = NWConnection()
         host.serve(peer, route: .init(encrypted: true), hello: nil)
         check(host.controlJoins == 1 && host.viewerJoins == 0 && host.counts.isEmpty && !host.ticking)

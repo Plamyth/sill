@@ -25,10 +25,11 @@ def block(text, marker):
 
 server = (root / "Sources/SillHost/StreamServer.swift").read_text()
 fixture = Path(__file__).with_name("Main.swift").read_text()
-methods = [block(server, marker) for marker in ["private func register(", "func serve(", "private func took(", "private func unregister(", "func sendAuthenticationCatalog("]]
+methods = [block(server, marker) for marker in ["private func register(", "func serve(", "private func took(", "private func unregister(", "func sendAuthenticationCatalog(", "func sendMicrophone("]]
 raw = block(server, "private func send(_ raw:")
 prefix = raw[raw.index("{") + 1:raw.index("        guard let data = PresentationMedia.adapt")]
 prefix = prefix.replace("else { return }", "else { return false }")
+prefix = prefix.replace("client.connection.cancel(); return }", "client.connection.cancel(); return false }")
 methods.append("func admitsRaw(_ raw: Data, to client: Client) -> Bool {" + prefix + "\nreturn true\n}")
 fixture = fixture.replace("    // METHODS", "\n".join(methods).replace("private func", "func"))
 fixture = fixture.replace("    // VIEWER_COUNT", block(server, "private var viewerCount:").replace("private var", "var"))

@@ -30,7 +30,7 @@ import StreamProtocol
 /// TEST ONLY, on a test host only (DoorPolicy.isTestHost): SILL_TEST_BACKOFF_SECONDS=<s> replaces
 /// the 300 s backoff; SILL_TEST_CABLE_INTERFACE=<if> counts a client scoped to that interface as
 /// one on the cable to an "iPad" (CableLink.testInterface).
-final class Door {
+final class Door: @unchecked Sendable {
     /// One pairing attempt, for RemoteAccess to judge on the main actor.
     struct PairAttempt: Sendable {
         let door: DoorPolicy.Door
@@ -109,6 +109,14 @@ final class Door {
         }
     }
     private var pending: [ObjectIdentifier: Pending] = [:]
+    private struct AutomaticSession {
+        let connection: NWConnection
+        let authorization: AutomaticSessionAuthorization
+        var evidence: AutomaticEvidence
+        var refreshing = false
+    }
+    private var automaticSessions: [ObjectIdentifier: AutomaticSession] = [:]
+    private var automaticMaintenance: DispatchSourceTimer?
     private var failures: [String: [CFAbsoluteTime]] = [:]
     private var backoffUntil: [String: CFAbsoluteTime] = [:]
     /// Home door: each source's plain tries within the last minute (DoorPolicy.olderSillTry).
@@ -146,6 +154,14 @@ final class Door {
         if testHost, let v = environment["SILL_TEST_BACKOFF_SECONDS"], let s = Double(v), s > 0 { b = s }
         backoff = b
         cableStandIn = kind == .home ? CableLink.testInterface(testHost: testHost, environment: environment) : nil
+    }
+
+    deinit {
+        automaticMaintenance?.cancel()
+        for session in automaticSessions.values {
+            session.authorization.invalidate()
+            if case .tailnet(_, let resolver, _) = session.evidence { resolver.stop() }
+        }
     }
 
     /// The server's TLS options for this door's listener: the identity, both application
@@ -375,9 +391,70 @@ final class Door {
             let cable: String?
             if case .cable(let id) = evidence.principal { cable = id } else { cable = nil }
             let peer = ClientRoute.Peer(fingerprint: evidence.fingerprint.data, name: nil, cableDevice: cable,
-                                       automaticPrincipal: evidence.principal)
+                                       automaticPrincipal: evidence.principal,
+                                       authorization: self.startAutomaticSession(c, evidence: evidence))
             server.serve(c, route: .automatic(origin: origin, peer: peer), hello: hello,
                          admitted: { print("자동 연결 기기를 허용했습니다.") })
+        }
+    }
+
+    private func startAutomaticSession(_ c: NWConnection, evidence: AutomaticEvidence) -> AutomaticSessionAuthorization {
+        let expiry: Date
+        if case .tailnet(let proof, _, _) = evidence { expiry = proof.nodeExpiry } else { expiry = .distantFuture }
+        let authorization = AutomaticSessionAuthorization(principal: evidence.principal, fingerprint: evidence.fingerprint, nodeExpiry: expiry)
+        automaticSessions[ObjectIdentifier(c)] = AutomaticSession(connection: c, authorization: authorization, evidence: evidence)
+        if automaticMaintenance == nil {
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + 5, repeating: 5, leeway: .milliseconds(100))
+            timer.setEventHandler { [weak self] in self?.maintainAutomaticSessions() }
+            automaticMaintenance = timer
+            timer.resume()
+        }
+        return authorization
+    }
+
+    private func retireAutomatic(_ id: ObjectIdentifier) {
+        guard let session = automaticSessions.removeValue(forKey: id) else { return }
+        session.authorization.invalidate()
+        if case .tailnet(_, let resolver, _) = session.evidence { resolver.stop() }
+        session.connection.cancel()
+    }
+
+    private func maintainAutomaticSessions() {
+        for (id, session) in automaticSessions {
+            guard session.connection.state == .ready, session.authorization.isCurrent else { retireAutomatic(id); continue }
+            guard !session.refreshing else { continue }
+            switch session.evidence {
+            case .local:
+                guard evidenceCurrent(session.evidence, on: session.connection),
+                      session.authorization.renew(principal: session.evidence.principal, fingerprint: session.evidence.fingerprint) else {
+                    retireAutomatic(id); continue
+                }
+            case .tailnet(_, let resolver, let key):
+                guard let source = Self.source(of: session.connection) else { retireAutomatic(id); continue }
+                automaticSessions[id]?.refreshing = true
+                let ip = IPBytes.text(IPBytes.unmapped(source.bytes))
+                Task { [weak self] in
+                    let result = await resolver.principal(for: ip)
+                    guard let self else { resolver.stop(); return }
+                    self.queue.async {
+                        guard var current = self.automaticSessions[id], current.authorization === session.authorization else { return }
+                        guard case .success(let proof) = result else { self.retireAutomatic(id); return }
+                        let evidence = AutomaticEvidence.tailnet(proof, resolver, key)
+                        guard self.evidenceCurrent(evidence, on: current.connection),
+                              current.authorization.renew(principal: evidence.principal, fingerprint: key, nodeExpiry: proof.nodeExpiry) else {
+                            self.retireAutomatic(id); return
+                        }
+                        current.evidence = evidence
+                        current.refreshing = false
+                        self.automaticSessions[id] = current
+                    }
+                }
+            }
+        }
+        if automaticSessions.isEmpty {
+            automaticMaintenance?.cancel()
+            automaticMaintenance = nil
         }
     }
 

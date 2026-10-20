@@ -535,7 +535,7 @@ package final class RemoteAccess {
 
     func isAuthorized(_ route: ClientRoute) -> Bool {
         guard route.encrypted, route.fingerprint?.count == 32 else { return false }
-        if connectionPolicy == .automaticNetwork { return route.automaticPrincipal != nil }
+        if connectionPolicy == .automaticNetwork { return route.automaticPrincipal != nil && route.isAuthenticated }
         return route.fingerprint.map(isPaired) == true
     }
 

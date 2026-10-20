@@ -1246,6 +1246,7 @@ final class StreamServer {
     /// the floor at "0" every device is served, and above it the gate has judged it already. On
     /// `queue`.
     private func took(_ hello: Hello, from client: Client) {
+        guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); return }
         guard clients[ObjectIdentifier(client.connection)] === client, client.connection.state == .ready else { return }
         if !client.role.isViewer {
             client.role = .viewer
@@ -1441,6 +1442,7 @@ final class StreamServer {
                                     isKeyframe: false, payload: Wire.encode(catalog))
         queue.async { [self] in
             guard let client = clients[ObjectIdentifier(connection)], !client.role.isViewer,
+                  !client.route.requiresLiveAuthorization || client.route.isAuthenticated,
                   client.route.encrypted, client.route.fingerprint != nil,
                   connection.state == .ready else { return }
             send(message.serialized(), to: client)
@@ -1497,6 +1499,7 @@ final class StreamServer {
                 return
             }
             guard client.role.accepts(header.kind) else { c.cancel(); return }
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { c.cancel(); return }
             client.lastHeardAt = Date().timeIntervalSince1970
             // A header can announce up to 4 GiB and the read below would wait for all of it. No
             // client message comes near a megabyte, so a bigger one is a broken or hostile peer.
@@ -1507,6 +1510,7 @@ final class StreamServer {
                 return
             }
             let deliver = { (payload: Data) in
+                guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { c.cancel(); return }
                 if header.kind == .microphoneControl || header.kind == .microphoneFrame {
                     if client.route.encrypted, client.route.fingerprint != nil {
                         self.onMicrophoneMessage?(StreamMessage(kind: header.kind, timestamp: header.timestamp,
@@ -1617,6 +1621,7 @@ final class StreamServer {
         microphoneReplies.offer(message, connection: connection, render: render, queue: queue) { [weak self] message, connection, render in
             guard let self, let client = self.clients[ObjectIdentifier(connection)],
                   client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready else { return }
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { connection.cancel(); return }
             if let render {
                 let state = Wire.decode(MicrophoneState.self, from: message.payload)
                 let trace = self.microphoneReplies.takeDeliveryTrace()
@@ -1803,6 +1808,7 @@ final class StreamServer {
     private static let graceAfterConnect: TimeInterval = 8.0
 
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
+        guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); return }
         var raw = raw
         if !client.role.isViewer {
             guard let header = StreamMessage.parseHeader(raw), client.role.sends(header.kind) else { return }
@@ -1883,6 +1889,7 @@ enum ClientRoute: Equatable {
         var name: String?
         var cableDevice: String?
         var automaticPrincipal: AutomaticDevicePrincipal? = nil
+        var authorization: AutomaticSessionAuthorization? = nil
     }
     /// `peer` nil: the plain door, which sees no key.
     case home(OriginPolicy.Origin, peer: Peer?)
@@ -1939,7 +1946,15 @@ enum ClientRoute: Equatable {
         if case .automatic(_, let peer) = self { return peer.automaticPrincipal }
         return nil
     }
-    var isAuthenticated: Bool { encrypted && (pairedName != nil || automaticPrincipal != nil) }
+    var requiresLiveAuthorization: Bool { if case .automatic = self { return true }; return false }
+    var isAuthenticated: Bool {
+        guard encrypted else { return false }
+        if case .automatic(_, let peer) = self {
+            guard let principal = peer.automaticPrincipal, let authorization = peer.authorization else { return false }
+            return authorization.principal == principal && authorization.fingerprint.data == peer.fingerprint && authorization.isCurrent
+        }
+        return pairedName != nil
+    }
     /// The session is TLS: every remote one, and every home one with a peer.
     var encrypted: Bool {
         switch self {

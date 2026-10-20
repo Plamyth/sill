@@ -1202,7 +1202,7 @@ package final class StreamCoordinator {
               let request = Wire.decode(RemoteDockRequest.self, from: message.payload),
               inputFence.contains(id), connections[id] === connection, connection.state == .ready,
               let route = routes[id], route.encrypted,
-              let fingerprint = route.fingerprint, remote?.isAuthorized(route) == true,
+              remote?.isAuthorized(route) == true,
               !synthetic, !shuttingDown, !switching else { return }
         let now = ProcessInfo.processInfo.systemUptime
         var recent = (dockArrivals[id] ?? []).filter { now - $0 < 1 }
@@ -1320,7 +1320,7 @@ package final class StreamCoordinator {
         let id = ObjectIdentifier(connection)
         guard inputFence.contains(id),
               connections[id] === connection, connection.state == .ready,
-              let route = routes[id], route.encrypted, let fingerprint = route.fingerprint,
+              let route = routes[id], route.encrypted,
               remote?.isAuthorized(route) == true else { return false }
         return !shuttingDown
     }

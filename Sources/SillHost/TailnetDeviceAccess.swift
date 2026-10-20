@@ -14,6 +14,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         let principal: AutomaticDevicePrincipal
         let sourceIP: String
         let localIPs: [String]
+        let nodeExpiry: Date
         let validUntil: Date
         fileprivate let issuer: UUID
         fileprivate let deadline: UInt64
@@ -42,7 +43,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     private var active: Attempt?
     static let outputLimit = 512 * 1024
 
-    init() { read = Self.readCLI }
+    init() { read = { command, check in try Self.readCLI(command, check) } }
 
     #if AUTOMATIC_DEVICE_ACCESS_CONTRACT
     /// 계약 검사만 가짜 센서 결과를 주입한다. 생산 초기화는 고정 CLI를 사용한다.
@@ -118,7 +119,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
                 let until = min(Date().addingTimeInterval(2), expiry)
                 let proof = Proof(principal: .tailnet(userId: who.Node.User, nodeStableId: who.Node.StableID),
                                   sourceIP: ip, localIPs: before.selfNode.TailscaleIPs.compactMap(Self.numericSource),
-                                  validUntil: until, issuer: issuer,
+                                  nodeExpiry: expiry, validUntil: until, issuer: issuer,
                                   deadline: min(attempt.deadline, DispatchTime.now().uptimeNanoseconds + 2_000_000_000))
                 lock.lock()
                 let wasStopped = stopped
