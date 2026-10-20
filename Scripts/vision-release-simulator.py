@@ -212,9 +212,16 @@ def deploy(args, source, runner, output, native):
 def test_run_file(prepared, destination, context):
     path = physical.verify_evidence(prepared["xctestrun"])["path"]
     run = plistlib.loads(Path(path).read_bytes())
-    configs = run.get("TestConfigurations", [])
-    require(len(configs) == 1, "native_ui_test_configuration_unsupported")
-    targets = configs[0].get("TestTargets", [])
+    format_one = "TestConfigurations" not in run
+    if format_one:
+        require(run.get("__xctestrun_metadata__", {}).get("FormatVersion") == 1 and
+                set(run) == {"VisionReleaseSimulatorUITests", "__xctestrun_metadata__"},
+                "native_ui_test_configuration_unsupported")
+        targets = [run["VisionReleaseSimulatorUITests"]]
+    else:
+        configs = run["TestConfigurations"]
+        require(len(configs) == 1, "native_ui_test_configuration_unsupported")
+        targets = configs[0].get("TestTargets", [])
     require(len(targets) == 1 and targets[0].get("BlueprintName") == "VisionReleaseSimulatorUITests",
             "native_ui_test_driver_unsupported")
     target = targets[0]
@@ -231,7 +238,8 @@ def test_run_file(prepared, destination, context):
             return {k: relocate(v) for k, v in value.items()}
         return value
     run = relocate(run)
-    actual = run["TestConfigurations"][0]["TestTargets"][0]
+    actual = (run["VisionReleaseSimulatorUITests"] if format_one else
+              run["TestConfigurations"][0]["TestTargets"][0])
     require(actual.get("UITargetAppPath") == prepared["app"], "ui_driver_target_app_mismatch")
     destination.write_bytes(plistlib.dumps(run))
 
