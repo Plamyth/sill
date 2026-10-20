@@ -167,7 +167,7 @@ def deploy(config, work, source):
     app = derived / 'Build/Products/Debug-iphoneos/Sill.app'
     version = str(int(source['commit'][:7], 16))
     command(['xcodebuild', '-project', Path(config['repo']) / 'iOSClient/Sill.xcodeproj', '-scheme', 'Sill',
-             '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived,
+             '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-allowProvisioningUpdates',
              'DEVELOPMENT_TEAM=' + config['developmentTeam'], 'CURRENT_PROJECT_VERSION=' + version,
              'PRODUCT_BUNDLE_IDENTIFIER=' + BUNDLE, 'INFOPLIST_KEY_CFBundleDisplayName=REA 통합 검증',
              'INFOPLIST_KEY_CCRSourceCommit=' + source['commit'], 'INFOPLIST_KEY_CCRSourceTree=' + source['tree'], 'build'],
@@ -194,6 +194,10 @@ def deploy(config, work, source):
     device(config, ['install', 'app', str(app), '--json-output', str(work / 'install.json')], work / 'install.log')
     copy_file(config, work, work / 'context.json', root + '/context.json', 'to')
     copy_file(config, work, state, root + '/state', 'to', replace=True)
+    server, _, _ = relay_runtime(config, work, source)
+    time.sleep(1)
+    ready_status, _ = request(server, 'GET', '/vault/entries')
+    require(ready_status == 200, 'isolated_relay_not_ready')
     device(config, ['process', 'launch', BUNDLE, '--json-output', str(work / 'launch.json'), '--', '--ccr-test-runtime', test_id], work / 'launch.log')
     time.sleep(2)
     observed, evidence = runtime_readback(config, work, test_id)
@@ -228,14 +232,7 @@ def harness(config, work, method):
             work / (method + '.log'), 180)
     return result
 
-def accept(config, work, source):
-    lease(config)
-    contract = acceptance_contract(config)
-    deployed = read(work / 'deployment.json')
-    require(all(deployed[k] == source[k] for k in source), 'deployment_source_mismatch')
-    test_id = deployed['testId']; before = read(work / 'user-before.json')
-    copy_file(config, work, work / 'seed-state',
-              'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', 'to', replace=True)
+def relay_runtime(config, work, source):
     relay_repo = Path(config['relayRepo']).resolve()
     require(command(['git', 'rev-parse', 'HEAD'], cwd=relay_repo).strip() == config['relayCommit'], 'relay_source_mismatch')
     require(not command(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=relay_repo).strip(), 'relay_source_dirty')
@@ -248,15 +245,41 @@ def accept(config, work, source):
             'snapshot': str(snapshot), 'hidden': str(hidden), 'token': ctx['token'], 'host': config['relayHost'], 'port': config['relayPort']}
     write(work / 'relay-private.json', conf)
     lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
-    service = json.loads(command([lifecycle, 'start', '--owner', OWNER, '--ttl', '900',
-        '--generation', source['commit'], '--stdout', work / 'isolated-relay.log',
-        '--stderr', work / 'isolated-relay.err.log', 'ccr-ipad-integration-relay-8793', '--',
-        config['nodeExecutable'], Path(config['repo']) / 'Scripts/ipad-test-runtime/relay.js', work / 'relay-private.json']))
+    previous = work / 'relay-lease.json'
+    if previous.exists() and not (work / 'relay-release.json').exists():
+        service = read(previous)
+        require(service['owner'] == OWNER and service['generation'] == source['commit'], 'relay_lease_identity_mismatch')
+        command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
+    else:
+        service = json.loads(command([lifecycle, 'start', '--owner', OWNER, '--ttl', '900',
+            '--generation', source['commit'], '--stdout', work / 'isolated-relay.log',
+            '--stderr', work / 'isolated-relay.err.log', 'ccr-ipad-integration-relay-8793', '--',
+            config['nodeExecutable'], Path(config['repo']) / 'Scripts/ipad-test-runtime/relay.js', work / 'relay-private.json']))
+        (work / 'relay-release.json').unlink(missing_ok=True)
     write(work / 'relay-lease.json', service)
+    return server, vault, service
+
+def accept(config, work, source):
+    lease(config)
+    contract = acceptance_contract(config)
+    deployed = read(work / 'deployment.json')
+    require(all(deployed[k] == source[k] for k in source), 'deployment_source_mismatch')
+    test_id = deployed['testId']; before = read(work / 'user-before.json')
+    server, vault, service = relay_runtime(config, work, source)
+    lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
     accepted = False
     try:
         time.sleep(1)
-        start = fixture(test_id); code, saved = save_scene(server, start, pixel(), None); require(code == 200, 'fixture_seed_failed')
+        start = fixture(test_id)
+        prior_status, prior = request(server, 'GET', '/vault/canvas?id=' + test_id)
+        require(prior_status in (200, 404), 'fixture_lookup_failed')
+        base = prior['noteSha256'] if prior_status == 200 else None
+        if prior_status == 200:
+            start['revision'] = prior['revision'] + 1
+        code, saved = save_scene(server, start, pixel(), base); require(code == 200, 'fixture_seed_failed')
+        write(work / 'seed-state/CanvasScene.json', start)
+        copy_file(config, work, work / 'seed-state',
+                  'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', 'to', replace=True)
         ui = harness(config, work, 'testEditAndSave')
         code, current = request(server, 'GET', '/vault/canvas?id=' + test_id); require(code == 200, 'vault_readback_failed')
         actual = json.loads(base64.b64decode(current['sceneJSONBase64'])); require(actual['nodes'][0]['text'] == '앞  뒤', 'native_save_text_mismatch')
