@@ -288,6 +288,7 @@ package final class StreamCoordinator {
     /// The streamed app's menus, for the devices that asked for them (kinds 24, 25 and 27,
     /// MenuMirror). Reads and presses nothing for a device that never asked.
     let menus: MenuMirror
+    private let nativeDock = RemoteDockReader()
     /// TEST ONLY. `SILL_TEST_MENU_PID=<pid>` on a --synthetic host: the test pattern's menus are that
     /// process's (the gates' fixture, Scripts/menufixture.swift), read and pressed through the same
     /// code, never activated (the Desktop's rule). Nil otherwise; `testMenuLine` is what `start`
@@ -487,6 +488,7 @@ package final class StreamCoordinator {
                 self.linkReports[id] = nil
                 if self.flipWait == id { self.flipWait = nil }
                 self.menus.clientLeft(connection)
+                self.nativeDock.disconnected(id)
                 self.releaseInput(of: id)
                 self.status.update { $0.devices.removeAll { $0.id == id } }
                 // The last device at home left devices away behind: the away quality, at once.
@@ -963,6 +965,8 @@ package final class StreamCoordinator {
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
         switch message.kind {
+        case .dockRequest:
+            await handleDockRequest(message, from: connection)
         case .changeAudioRoute, .fetchAudioRoutes:
             handleAudioRoute(message, from: connection)
         case .selectDisplay:
@@ -1143,6 +1147,32 @@ package final class StreamCoordinator {
     }
 
     // MARK: Where input lands
+
+    private func handleDockRequest(_ message: StreamMessage, from connection: NWConnection) async {
+        let id = ObjectIdentifier(connection)
+        guard message.payload.count <= StreamMessage.clientPayloadLimit(for: .dockRequest),
+              let request = Wire.decode(RemoteDockRequest.self, from: message.payload),
+              inputFence.contains(id), connections[id] === connection, connection.state == .ready,
+              let route = routes[id], route.encrypted,
+              let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
+              !synthetic, !shuttingDown, !switching else { return }
+        let generation = inputGeneration
+        let sourceBefore = active
+        let bundleID = nativeDock.applicationBundleID(for: request)
+        let reply = nativeDock.perform(request, owner: id)
+        server.send(StreamMessage(kind: .dockReply, timestamp: Date().timeIntervalSince1970,
+                                  isKeyframe: false, payload: Wire.encode(reply)), to: connection)
+        guard reply.note == nil, request.action == .press || request.action == .choose else { return }
+        _ = await catalog.refreshWindows()
+        guard inputFence.contains(id), connections[id] === connection, connection.state == .ready,
+              !shuttingDown, !switching, inputGeneration == generation, active == sourceBefore else { return }
+        if request.action == .press {
+            let source = bundleID.flatMap { bundle in catalog.infos.first(where: { $0.bundleID == bundle }) }
+                .map { StreamSource.window($0.id) } ?? .desktop
+            await select(source, bringForward: false)
+        }
+        broadcastList()
+    }
 
     /// The active source's rectangle on screen, in CG global points (top-left origin), which is
     /// what the injector maps the client's fractions onto. Nil when nothing is streaming, so
@@ -2530,7 +2560,8 @@ package final class StreamCoordinator {
                                                       displayInventoryID: synthetic ? nil : catalog.displayInventory.revision,
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
-                                                      dockApps: synthetic ? nil : dockApps())))
+                                                      dockApps: synthetic ? nil : dockApps(),
+                                                      dock: synthetic ? nil : nativeDock.catalog())))
     }
 
     /// Read only the current user's Dock app tiles; no Dock preference is changed.
