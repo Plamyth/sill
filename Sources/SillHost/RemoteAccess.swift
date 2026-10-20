@@ -3,6 +3,15 @@ import Network
 import Security
 import StreamProtocol
 
+struct AudioForwardingPairedDevice: Sendable {
+    let id: AudioForwardingDeviceID
+    let pairingGeneration: UUID
+    fileprivate init(id: AudioForwardingDeviceID, pairingGeneration: UUID) {
+        self.id = id
+        self.pairingGeneration = pairingGeneration
+    }
+}
+
 /// Pairing and remote access on one host (docs/remote-access-plan.md §4.10; pairing at home,
 /// docs/home-pairing-plan.md §4.6): the Mac's identity and trust list, Require pairing, the pairing
 /// window, the asks at the home door (the cable, the limits), the addresses (Reachability,
@@ -514,6 +523,31 @@ package final class RemoteAccess {
         paired.contains { $0.fingerprintData == fingerprint }
     }
 
+    func forwardingPeer(fingerprint: Data) -> AudioForwardingPairedDevice? {
+        guard identity != nil, let store, isPaired(fingerprint),
+              let id = AudioForwardingDeviceID(fingerprint: fingerprint) else { return nil }
+        do {
+            var stored = try store.loadPaired()
+            guard stored.count == paired.count, zip(stored, paired).allSatisfy({ pair in
+                let (stored, cached) = pair
+                var lhs = stored, rhs = cached
+                lhs.audioPairingGeneration = nil; rhs.audioPairingGeneration = nil
+                return lhs == rhs && (cached.audioPairingGeneration == nil || cached.audioPairingGeneration == stored.audioPairingGeneration)
+            }), let index = stored.firstIndex(where: { $0.fingerprintData == fingerprint }) else { return nil }
+            if stored[index].audioPairingGeneration == nil {
+                stored[index].audioPairingGeneration = UUID()
+                try store.savePaired(stored)
+                guard try store.loadPaired() == stored else { return nil }
+            }
+            paired = stored
+            guard let generation = stored[index].audioPairingGeneration else { return nil }
+            return AudioForwardingPairedDevice(id: id, pairingGeneration: generation)
+        } catch {
+            print("입출력 기기 자격의 페어링 세대를 저장하거나 확인하지 못했습니다.")
+            return nil
+        }
+    }
+
     /// The home door refused plain Sill messages from one source, again and again (an older Sill;
     /// DoorPolicy.olderSillTry): the menu's item, for 10 minutes.
     private func olderDeviceSeen() {
@@ -548,7 +582,7 @@ package final class RemoteAccess {
             let name = SafeText.label(attempt.request.name)
             let model = attempt.request.model.map { SafeText.label($0) }.flatMap { $0.isEmpty ? nil : $0 }
             var device = PairedDevice(fingerprint: Base64URL.encode(attempt.deviceFingerprint), name: name, model: model,
-                                      pairedAt: now, method: attempt.request.method)
+                                      pairedAt: now, method: attempt.request.method, audioPairingGeneration: UUID())
             // Re-pairing the same key replaces its record, keeping the iPhone or iPad it runs on.
             device.cableDevice = paired.first { $0.fingerprint == device.fingerprint }?.cableDevice
             // The snapshot is updated before kind 20 ok goes out, so the session dial that follows
@@ -676,7 +710,8 @@ package final class RemoteAccess {
         }
         let model = a.request.model.map { SafeText.label($0) }.flatMap { $0.isEmpty ? nil : $0 }
         let device = PairedDevice(fingerprint: fingerprint, name: SafeText.label(a.request.name), model: model,
-                                  pairedAt: Date().timeIntervalSince1970, method: PairResult.cable, cableDevice: deviceID)
+                                  pairedAt: Date().timeIntervalSince1970, method: PairResult.cable, cableDevice: deviceID,
+                                  audioPairingGeneration: UUID())
         var next = paired
         next.append(device)
         do { try store?.savePaired(next) } catch {
