@@ -125,7 +125,7 @@ final class VisionInputSession: ObservableObject {
         }
         if rotation == nil {
             momentum.stop()
-            pointer.cancel().forEach { client?.sendInput($0) }
+            pointer.cancel().forEach { client.sendInput($0) }
             consumeLatch()
         }
         let ticket = rotation?.gainTicket ?? VisionAudioGain.shared.begin(owner: gainOwner)
