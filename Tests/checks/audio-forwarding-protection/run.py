@@ -33,6 +33,7 @@ runtime_type = relay[start:relay.index('\n}\n', start) + 3]
 inputs = protocol + host + [relay_source, here / 'Main.swift', here / 'run.py', here / 'fixtures/manifest.json']
 before = [hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs]
 input_manifest = {str(p.relative_to(root)): digest for p, digest in zip(inputs, before)}
+protocol_hashes = {str(p.relative_to(root)): input_manifest[str(p.relative_to(root))] for p in protocol}
 print('INPUT_SHA256', hashlib.sha256(json.dumps(input_manifest, sort_keys=True).encode()).hexdigest(), flush=True)
 print('SWIFTC', subprocess.check_output(['xcrun', 'swiftc', '--version'], text=True).strip(), flush=True)
 print('MACOS_SDK', subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-version'], text=True).strip(), flush=True)
@@ -49,7 +50,7 @@ try:
     with owned_output() as temporary:
         out = Path(temporary)
         runtime = out / 'RuntimeExpectation.swift'
-        runtime.write_text('import Foundation\n' + runtime_type)
+        runtime.write_text('import Foundation\nimport StreamProtocol\n' + runtime_type)
         shared = ['xcrun', 'swiftc', '-package-name', 'Sill', '-module-cache-path', str(out / 'cache')]
         subprocess.run(shared + ['-emit-library', '-emit-module', '-module-name', 'StreamProtocol',
             *map(str, protocol), '-o', str(out / 'libStreamProtocol.dylib'),
@@ -59,5 +60,8 @@ try:
             '-o', str(out / 'checks')], check=True, timeout=180)
         subprocess.run([str(out / 'checks')], check=True, timeout=30)
 finally:
-    assert before == [hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs]
+    after = [hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs]
+    print(json.dumps({'sourceHashes': input_manifest, 'sharedModuleSourceHashes': protocol_hashes,
+        'sourceUnchanged': before == after, 'actualMediaOrDeviceActions': False}, sort_keys=True), flush=True)
+    assert before == after
     print('SOURCE_UNCHANGED', True, flush=True)

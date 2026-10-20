@@ -135,13 +135,15 @@ public struct WindowList: Codable {
     public var dockApps: [AppInfo]?
     public var dock: RemoteDockCatalog?
     public var selectionRevision: String?
+    public var audioForwarding: AudioForwardingCatalog?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
                 remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
-                dockApps: [AppInfo]? = nil, dock: RemoteDockCatalog? = nil, selectionRevision: String? = nil) {
+                dockApps: [AppInfo]? = nil, dock: RemoteDockCatalog? = nil, selectionRevision: String? = nil,
+                audioForwarding: AudioForwardingCatalog? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
@@ -157,6 +159,7 @@ public struct WindowList: Codable {
         self.dockApps = dockApps
         self.dock = dock
         self.selectionRevision = selectionRevision
+        self.audioForwarding = audioForwarding
     }
 }
 

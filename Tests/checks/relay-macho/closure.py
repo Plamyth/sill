@@ -15,19 +15,30 @@ package, output = (Path(value).resolve() for value in sys.argv[1:3])
 output.mkdir(parents=True, exist_ok=False)
 files = [root / "Sources/SillHost" / name for name in ["LocalAudioRelayLaunch.swift", "LocalAudioRelayClosure.swift", "LocalAudioRelayMachO.swift", "LocalAudioRelay.swift", "LocalAudioParticipants.swift", "AudioForwardingContract.swift", "AudioForwardingCoordinator.swift"]]
 files.append(Path(__file__).with_name("ClosureMain.swift"))
-original = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
+protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
+inputs = files + protocol + [root / 'Sources/SillHost/RemoteAccess.swift', Path(__file__).resolve()]
+original = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
 relay = (root / "Sources/SillHost/RemoteAccess.swift").read_text()
 start = relay.index("struct AudioForwardingPairedDevice:")
 end = relay.index("\n}", start) + 2
 support = output / "PairedDevice.swift"
-support.write_text("import Foundation\n" + relay[start:end] + "\n")
+support.write_text("import Foundation\nimport StreamProtocol\n" + relay[start:end] + "\n")
 record = {"sourceHashes": original, "typeExcerptSHA256": hashlib.sha256(support.read_bytes()).hexdigest(),
+          "sharedModuleSourceHashes": {str(p.relative_to(root)): original[str(p.relative_to(root))] for p in protocol},
           "installed": False, "audioOpened": False, "serverStarted": False, "canonicalSelfSignatureTested": False,
           "cases": [], "exitCode": 2}
 try:
-    env = dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer")
-    args = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-module-cache-path", str(output / "cache")]
-    result = subprocess.run(args + [str(path) for path in files] + [str(support), "-o", str(output / "check")],
+    env = dict(os.environ)
+    args = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-package-name", "Sill", "-module-cache-path", str(output / "cache")]
+    module = subprocess.run(args + ['-emit-library', '-emit-module', '-module-name', 'StreamProtocol',
+        *map(str, protocol), '-o', str(output / 'libStreamProtocol.dylib'),
+        '-emit-module-path', str(output / 'StreamProtocol.swiftmodule')],
+        capture_output=True, text=True, env=env, timeout=180)
+    (output / 'protocol-compile.log').write_text(module.stdout + module.stderr)
+    if module.returncode:
+        raise RuntimeError('shared protocol module did not compile')
+    result = subprocess.run(args + ['-I', str(output), '-L', str(output), '-lStreamProtocol',
+        '-Xlinker', '-rpath', '-Xlinker', str(output)] + [str(path) for path in files] + [str(support), "-o", str(output / "check")],
                             capture_output=True, text=True, env=env, timeout=180)
     (output / "compile.log").write_text(result.stdout + result.stderr)
     if result.returncode:

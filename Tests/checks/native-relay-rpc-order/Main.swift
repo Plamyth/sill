@@ -1,4 +1,5 @@
 import Foundation
+import StreamProtocol
 
 @MainActor final class Fixture {
     let child = Process()

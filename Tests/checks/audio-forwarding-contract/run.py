@@ -13,22 +13,35 @@ sources = [root / name for name in [
     "Sources/SillHost/AudioForwardingContract.swift",
     "Tests/checks/audio-forwarding-contract/Main.swift",
 ]]
+protocol = sorted((root / "Sources/StreamProtocol").glob("*.swift"))
+inputs = sources + protocol + [Path(__file__).resolve()]
 def hashes():
-    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
+    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
 before = hashes()
-env = dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer")
+protocol_hashes = {str(path.relative_to(root)): before[str(path.relative_to(root))] for path in protocol}
+env = dict(os.environ)
 binary = out / "audio-forwarding-contract-checks"
-with (out / "compile.log").open("w") as log:
-    compiled = subprocess.run(["xcrun", "swiftc", "-parse-as-library", *map(str, sources),
-        "-o", str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+shared = ["xcrun", "swiftc", "-package-name", "Sill", "-module-cache-path", str(out / "cache")]
+with (out / "protocol-compile.log").open("w") as log:
+    module = subprocess.run(shared + ["-emit-library", "-emit-module", "-module-name", "StreamProtocol",
+        *map(str, protocol), "-o", str(out / "libStreamProtocol.dylib"),
+        "-emit-module-path", str(out / "StreamProtocol.swiftmodule")],
+        env=env, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+compiled = None
+if module.returncode == 0:
+    with (out / "compile.log").open("w") as log:
+        compiled = subprocess.run(shared + ["-parse-as-library", "-I", str(out), "-L", str(out),
+            "-lStreamProtocol", "-Xlinker", "-rpath", "-Xlinker", str(out), *map(str, sources),
+            "-o", str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT, timeout=180)
 executed = None
-if compiled.returncode == 0:
+if compiled is not None and compiled.returncode == 0:
     with (out / "checks.log").open("w") as log:
         executed = subprocess.run([str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT, timeout=30)
 after = hashes()
-passed = compiled.returncode == 0 and executed is not None and executed.returncode == 0 and before == after
-receipt = {"compileExit": compiled.returncode, "checksExit": executed.returncode if executed else None,
-    "sourceHashes": before, "sourceUnchanged": before == after, "passed": passed,
+passed = compiled is not None and compiled.returncode == 0 and executed is not None and executed.returncode == 0 and before == after
+receipt = {"protocolCompileExit": module.returncode, "compileExit": compiled.returncode if compiled else None,
+    "checksExit": executed.returncode if executed else None,
+    "sourceHashes": before, "sharedModuleSourceHashes": protocol_hashes, "sourceUnchanged": before == after, "passed": passed,
     "actualMediaOrDeviceActions": False}
 (out / "result.json").write_text(json.dumps(receipt, indent=2) + "\n")
 print(json.dumps(receipt))

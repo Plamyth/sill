@@ -1,3 +1,4 @@
+import StreamProtocol
 import Foundation
 import Darwin
 

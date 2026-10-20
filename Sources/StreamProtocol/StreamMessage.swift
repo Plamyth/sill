@@ -82,6 +82,10 @@ public enum StreamMessageKind: UInt8 {
     case selectDisplay = 211     // client → host: DisplaySelection, only with displaySelection == 1
     case dockRequest = 215
     case dockReply = 216
+    case forwardingControl = 217
+    case forwardingState = 218
+    case forwardingUplinkReserved = 219
+    case forwardingDownlinkReserved = 220
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -117,6 +121,8 @@ public struct StreamMessage {
         case .dockRequest: return 4096
         case .dockReply: return -1
         case .audioRoutes: return -1
+        case .forwardingControl: return 4096
+        case .forwardingState, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         default: return maxClientPayload
         }
     }
@@ -128,6 +134,8 @@ public struct StreamMessage {
         case .audioRoutes: return AudioRoutingPolicy.maxStatePayload
         case .changeAudioRoute, .fetchAudioRoutes: return -1
         case .dockRequest: return -1
+        case .forwardingState: return 16384
+        case .forwardingControl, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         default: return kind == .frame || kind == .epochFrame ? maxFramePayload : maxOtherHostPayload
         }
     }
