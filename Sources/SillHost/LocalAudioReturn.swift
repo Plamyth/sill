@@ -19,17 +19,29 @@ package final class NativeAudioStartup {
     package init() {
         participants.register(.native, bootId: bootId, control: .init(fenceAndQuiesce: { [weak self] request in
             guard let self else { return .init(request, state: .unknown, facts: .unknown) }
-            if let prior = self.request {
-                guard prior == request else { return .init(request, state: .blocked, facts: .unknown) }
-                return self.receipt(request)
-            }
-            self.request = request
-            self.acknowledged = await self.quiesce(using: self.revoke)
-            return self.receipt(request)
+            return await self.prepare(request)
         }, inspect: { [weak self] id in
-            guard let self, let request = self.request, request.operationId == id else { return nil }
+            guard let self, let request = self.request, request.operationId == id,
+                  self.participants.requestIsCurrent(request) else { return nil }
             return self.receipt(request)
+        }, supportsForwarding: true, forwardingPrepare: { [weak self] preparation in
+            guard let self else { return nil }
+            return await self.prepare(preparation.request)
         }))
+    }
+
+    private func prepare(_ request: LocalAudioParticipantRequest) async -> LocalAudioParticipantReceipt {
+        guard participants.requestIsCurrent(request) else { return .init(request, state: .blocked, facts: .unknown) }
+        if let prior = self.request, sameRequest(prior, request) { return receipt(request) }
+        self.request = request
+        acknowledged = false
+        let stopped = await quiesce(using: revoke, while: {
+            self.request.map({ self.sameRequest($0, request) }) == true && self.participants.requestIsCurrent(request)
+        })
+        guard self.request.map({ sameRequest($0, request) }) == true,
+              participants.requestIsCurrent(request) else { return .init(request, state: .blocked, facts: .unknown) }
+        acknowledged = stopped
+        return receipt(request)
     }
 
     package func bundledRelayLaunchUnavailableReason() -> String? {
@@ -45,13 +57,21 @@ package final class NativeAudioStartup {
         }
     }
 
+    private func sameRequest(_ first: LocalAudioParticipantRequest, _ second: LocalAudioParticipantRequest) -> Bool {
+        first.schemaVersion == second.schemaVersion && first.operationId == second.operationId &&
+        first.privacyGeneration == second.privacyGeneration && first.registryRevision == second.registryRevision &&
+        first.participantId == second.participantId && first.bootId == second.bootId
+    }
+
     private func receipt(_ request: LocalAudioParticipantRequest) -> LocalAudioParticipantReceipt {
         let facts: LocalAudioParticipantFacts
         if state == .failedBeforeParticipants {
             facts = .init(admissionFenced: participants.isFenced, startsSettled: true, mediaDetached: true,
                           callbacksDrained: true, buffersEmpty: true, workersExited: true)
         } else { facts = readFacts?() ?? .unknown }
-        return .init(request, state: acknowledged && facts.quiescent ? .quiescent : .unknown, facts: facts)
+        let current = self.request.map { sameRequest($0, request) } == true && participants.requestIsCurrent(request)
+        return .init(request, state: current && acknowledged && facts.quiescent ? .quiescent : .unknown,
+                     facts: current ? facts : .unknown)
     }
 
     /// The constructor must throw only before any native audio participant can start.
@@ -77,15 +97,23 @@ package final class NativeAudioStartup {
         }
     }
 
-    func quiesce(using barrier: (() async -> Bool)?) async -> Bool {
-        await waitUntilInitialized()
-        switch state {
-        case .failedBeforeParticipants: return true
-        case .coordinatorCreated:
-            guard let barrier else { return false }
-            return await barrier()
-        case .initializing: return false
+    private var quiescenceTail: Task<Void, Never>?
+    func quiesce(using barrier: (() async -> Bool)?, while current: @escaping @MainActor () -> Bool = { true }) async -> Bool {
+        let previous = quiescenceTail
+        let task = Task { @MainActor in
+            if let previous { await previous.value }
+            await self.waitUntilInitialized()
+            guard current() else { return false }
+            switch self.state {
+            case .failedBeforeParticipants: return true
+            case .coordinatorCreated:
+                guard let barrier else { return false }
+                return await barrier()
+            case .initializing: return false
+            }
         }
+        quiescenceTail = Task { @MainActor in _ = await task.value }
+        return await task.value
     }
 
     private func finish(_ next: State) {
