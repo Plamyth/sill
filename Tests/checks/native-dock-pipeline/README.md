@@ -31,3 +31,23 @@ Pstack의 Feature 경로를 적용했다. `how`로 실제 호출 흐름을 읽�
 - [ ] PR·병합·SDK 전체 검사·앱 실행은 부모 담당의 범위다.
 
 `handleDockRequest`와 `focusedDockSource`의 AX 조회는 실행하지 않는다. 해당 조회 뒤의 오래된 요청이 실제 `select` 진입 가드에 거부되는 경계부터 확인한다. `listMessage`, geometry 조회, 프레임 처리, 네트워크와 상태 공개는 어댑터이므로 실제 화면·전송·SDK 전체 수용의 증거가 아니다. 커밋한 `result.json`과 `RESULT.md`에 기준 실행 결과와 생산 결함을 기록한다.
+
+## P2 시작 오류 정리 후속 검사
+
+앞의 실행 설명과 `RESULT.md`, `result.json`은 Volta가 남긴 32/36 통과, 4건 실패 기록이다. 이 실패 영수증은 그대로 보존한다. 후속 작업 키는 `host-dock-p2-cleanup-20261021`이며, 실행 결과는 `RESULT-P2-20261021.md`와 `result-p2-fix-20261021.json`에 별도로 기록한다.
+
+Pstack Bug fix 절차로 Volta 검사 커밋 `36e60de18de96654d65e12803e8371591edebd2d`를 먼저 병합하고 같은 4건의 실패를 재현한다. `Fix Root Causes`에 따라 `startPipeline`의 캡처 시작부터 확정 직전까지의 오류를 하나의 catch에서 정리한다. `Model the Domain`에 따라 기존 후보 encoder와 epoch를 그대로 사용한다. Ponytail은 새 자료형이나 정리 helper 없이 기존 정리 코드를 옮기는 선택에 적용한다.
+
+36개 사례는 유지한다. `Test Behavior, Not Implementation`에 따라 시작 오류 검사는 원래 오류 객체의 동일성과 양쪽 캡처·콜백·준비 epoch 정리를 확인한다. 직접 호출은 stop과 서버 reset이 각각 한 번, `select`는 기존 파이프라인 정리와 실패 후보 정리를 합쳐 각각 두 번이어야 한다. 기존 변이 3개의 검출을 유지하고 시작 오류에서만 정리를 건너뛰는 변이를 추가한다.
+
+후속 실행 명령은 다음과 같다.
+
+```sh
+python3 -B Tests/checks/native-dock-pipeline/run.py . \
+  /Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021
+python3 -B Tests/checks/native-dock/run.py . \
+  /Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-native-dock-20261021 \
+  --skip-sdk-typecheck
+```
+
+`native-dock`는 `native-dock-reader`의 비활성 검사를 먼저 실행한다. `--skip-sdk-typecheck`는 reader의 별도 SDK typecheck만 생략하며 기본 동작은 유지한다. SDK 검사와 독립 검수는 부모 담당의 후속 단계다. 자체 점검이나 이 동작 검사를 독립 검수로 세지 않는다. 실제 OS 캡처·AX·앱·기기·오디오·HAL·호스트 설치·재시작은 실행하지 않는다. ARENA는 사용하지 않는다.

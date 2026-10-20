@@ -1,0 +1,460 @@
+{
+  "sourceCommit": "36e60de18de96654d65e12803e8371591edebd2d",
+  "sourceTree": "ec8c4817e65cc5648940051efc672367b029b7f1",
+  "sourceSHA256": {
+    "Sources/SillHost/StreamCoordinator.swift": "8cdcbe8d3f141c3e464236eaec6b47e4bca3560ff46eb8bd30856c6630146494",
+    "Sources/SillHost/DockSelectionIngress.swift": "9857b79323311997565043f826cd85004fdb0b56468d6d56bb1f4c2985db6787",
+    "Sources/StreamProtocol/AddressParser.swift": "d33c0f33f358b7e25340849dc4233d975405374a99703e52d838fa64a0b4cf89",
+    "Sources/StreamProtocol/AudioPacket.swift": "84913ea1f3fd4d3098654b198e89551d705fb6cde623364031912e8bc2bb78ab",
+    "Sources/StreamProtocol/AudioRouting.swift": "4b80e78658cee594036170eff22aa8d2d5a00fa9d6934f124727e70f80c7c8a5",
+    "Sources/StreamProtocol/Compatibility.swift": "abc4d32a117408c97ce0583c7d1f5f425cb83d04dbfdf90ec9112f029ac7508c",
+    "Sources/StreamProtocol/Gesture.swift": "c6041867df7551393625fb6f1af4ae199a8b358cdeb7637638853a4db20d5157",
+    "Sources/StreamProtocol/HostSettings.swift": "33fbf9fcfb19b18bd7e6aea62ae1637df27a35a76300be6ec2c980bed82cb5a1",
+    "Sources/StreamProtocol/Input.swift": "211384266736ccb0133fb72eaa6a72090007e65c7a28244a043f46ed4e8b5790",
+    "Sources/StreamProtocol/MacMenu.swift": "d1ddeeadb6417641e02e95f5be4c66a5d30beb5e8410bff88d0f1ddb2c0960bd",
+    "Sources/StreamProtocol/MicrophoneUplink.swift": "c48c4547ee581a95416d262181031c89a83441c9d0835296b9473a03b70b51da",
+    "Sources/StreamProtocol/Pairing.swift": "f1d1f707d1d2d089d63ab3d58256c0cbe480eb0cb5ad24884f8dfde5a00ad12f",
+    "Sources/StreamProtocol/Pointer.swift": "1ffc28eeab0344e4cbed48f5c7fdc70a4aa7fd04cff606dde0e4885bd2dc2106",
+    "Sources/StreamProtocol/Remote.swift": "b821d5fcaf93f101cf6f1b4bf1a55c3df5091d775350ae1e2c779d82a26f987d",
+    "Sources/StreamProtocol/RemoteAudioSubscription.swift": "a1caeeefbc509eacadf67ee0fdf5b01d640637ed81e5a637b984782d231ff3f2",
+    "Sources/StreamProtocol/RemoteDock.swift": "04d2f28b7ef7488b9f8f569323cdc46a917f9b4d93137ae1d34d8291a58e34f2",
+    "Sources/StreamProtocol/RemoteIdentity.swift": "e62cc0fdded56219a4a8a82cc6365ce8c6deb9b9082d97acc8684c17fecb1be4",
+    "Sources/StreamProtocol/RemoteTLS.swift": "0fd68d47fed6002283a0ad1026cfb6e64042fc3c464aa99b86410f6ca484829e",
+    "Sources/StreamProtocol/SafeText.swift": "233377ba3798e58ecec4c88d8fff8c6d1dabd3031b694936fd855387ad92c472",
+    "Sources/StreamProtocol/StreamMessage.swift": "b63296522096d280493dd4319fca9c07b4ee09abab3438961cb59749a296b205",
+    "Sources/StreamProtocol/Switcher.swift": "52b9dc88c500e1436cb8c5e6d580252752a89ddecf3053c9e50f7f85901398aa",
+    "Sources/StreamProtocol/Viewport.swift": "4a3ae09d1bcacafff7bd0619abb13fd51f0e5527070add93ddf8ae1f31a379de",
+    "Tests/checks/native-dock-pipeline/fixture.swift": "245084362075bf84c6d5c9888e374cfda0f9c05d723d36d35bddc42ed1bcfe4b",
+    "Tests/checks/native-dock-pipeline/run.py": "d055993d1aefb2872d81193be863b9b7530b9343061bf5e4f8a4b66a1c5073fe"
+  },
+  "output": "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021",
+  "commands": [
+    {
+      "name": "swift-version",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "--version"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "protocol-compile",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/module-cache",
+        "-parse-as-library",
+        "-emit-module",
+        "-emit-object",
+        "-whole-module-optimization",
+        "-module-name",
+        "StreamProtocol",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/AddressParser.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/AudioPacket.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/AudioRouting.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Compatibility.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Gesture.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/HostSettings.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Input.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/MacMenu.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/MicrophoneUplink.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Pairing.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Pointer.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Remote.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/RemoteAudioSubscription.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/RemoteDock.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/RemoteIdentity.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/RemoteTLS.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/SafeText.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/StreamMessage.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Switcher.swift",
+        "/Users/ambrion/Documents/ChatGPT/BT_CCR(비전프로 앱)/work/sill-host-native-dock/Sources/StreamProtocol/Viewport.swift",
+        "-emit-module-path",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/StreamProtocol.swiftmodule",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/StreamProtocol.o"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "baseline-compile",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/module-cache",
+        "-parse-as-library",
+        "-I",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/Fixture.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/DockSelectionIngress.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/StreamProtocol.o",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/baseline"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "baseline-runtime",
+      "argv": [
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/baseline"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "unguarded-commit-compile",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/module-cache",
+        "-parse-as-library",
+        "-I",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/unguarded-commit.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/DockSelectionIngress.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/StreamProtocol.o",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/unguarded-commit"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "unguarded-commit-runtime",
+      "argv": [
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/unguarded-commit"
+      ],
+      "exitCode": 1
+    },
+    {
+      "name": "missing-cleanup-compile",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/module-cache",
+        "-parse-as-library",
+        "-I",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-cleanup.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/DockSelectionIngress.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/StreamProtocol.o",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-cleanup"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "missing-cleanup-runtime",
+      "argv": [
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-cleanup"
+      ],
+      "exitCode": 1
+    },
+    {
+      "name": "missing-start-error-cleanup-compile",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/module-cache",
+        "-parse-as-library",
+        "-I",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-start-error-cleanup.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/DockSelectionIngress.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/StreamProtocol.o",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-start-error-cleanup"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "missing-start-error-cleanup-runtime",
+      "argv": [
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-start-error-cleanup"
+      ],
+      "exitCode": 1
+    },
+    {
+      "name": "missing-peer-guard-compile",
+      "argv": [
+        "/usr/bin/xcrun",
+        "swiftc",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/module-cache",
+        "-parse-as-library",
+        "-I",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-peer-guard.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/DockSelectionIngress.swift",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/StreamProtocol.o",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-peer-guard"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "missing-peer-guard-runtime",
+      "argv": [
+        "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-fix-20261021/missing-peer-guard"
+      ],
+      "exitCode": 1
+    }
+  ],
+  "cases": [
+    {
+      "passed": true,
+      "name": "capture-start-peer-loss"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-new-ticket"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-transport-closed"
+    },
+    {
+      "name": "catalog-read-peer-loss",
+      "passed": true
+    },
+    {
+      "name": "catalog-read-new-ticket",
+      "passed": true
+    },
+    {
+      "passed": true,
+      "name": "catalog-read-transport-closed"
+    },
+    {
+      "name": "commit-callback-peer-loss",
+      "passed": true
+    },
+    {
+      "passed": true,
+      "name": "commit-callback-new-ticket"
+    },
+    {
+      "name": "commit-callback-transport-closed",
+      "passed": true
+    },
+    {
+      "name": "synthetic-start-peer-loss",
+      "passed": true
+    },
+    {
+      "name": "synthetic-commit-peer-loss",
+      "passed": true
+    },
+    {
+      "passed": true,
+      "name": "stale-select-peer-loss"
+    },
+    {
+      "passed": true,
+      "name": "select-await-peer-loss"
+    },
+    {
+      "passed": true,
+      "name": "synthetic-start-new-ticket"
+    },
+    {
+      "passed": true,
+      "name": "synthetic-commit-new-ticket"
+    },
+    {
+      "passed": true,
+      "name": "stale-select-new-ticket"
+    },
+    {
+      "passed": true,
+      "name": "select-await-new-ticket"
+    },
+    {
+      "passed": true,
+      "name": "synthetic-start-transport-closed"
+    },
+    {
+      "passed": true,
+      "name": "synthetic-commit-transport-closed"
+    },
+    {
+      "passed": true,
+      "name": "stale-select-transport-closed"
+    },
+    {
+      "passed": true,
+      "name": "select-await-transport-closed"
+    },
+    {
+      "passed": true,
+      "name": "valid-pipeline-admitted"
+    },
+    {
+      "passed": true,
+      "name": "valid-pipeline-nil"
+    },
+    {
+      "passed": true,
+      "name": "valid-select-admitted"
+    },
+    {
+      "passed": true,
+      "name": "valid-select-nil"
+    },
+    {
+      "passed": true,
+      "name": "valid-synthetic-admitted"
+    },
+    {
+      "passed": true,
+      "name": "valid-synthetic-nil"
+    },
+    {
+      "passed": true,
+      "name": "same-source-generation"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-error-current"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-error-peer-loss"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-error-new-ticket"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-error-transport-closed"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-error-cleanup-peer-loss"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-error-cleanup-new-ticket"
+    },
+    {
+      "passed": true,
+      "name": "capture-start-error-cleanup-transport-closed"
+    },
+    {
+      "passed": true,
+      "name": "select-start-error-cleanup"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "unguarded-commit",
+      "witness": "capture-start-peer-loss",
+      "caught": true,
+      "exitCode": 1
+    },
+    {
+      "name": "missing-cleanup",
+      "witness": "capture-start-new-ticket",
+      "caught": true,
+      "exitCode": 1
+    },
+    {
+      "name": "missing-start-error-cleanup",
+      "witness": "capture-start-error-cleanup-peer-loss",
+      "caught": true,
+      "exitCode": 1
+    },
+    {
+      "name": "missing-peer-guard",
+      "witness": "capture-start-transport-closed",
+      "caught": true,
+      "exitCode": 1
+    }
+  ],
+  "startedAt": "2026-10-20T20:17:13.609428+00:00",
+  "limits": [
+    "실제 OS 캡처, AX, 앱, 기기, 서비스, 오디오와 HAL을 사용하지 않습니다.",
+    "select와 startPipeline 전체 본문을 실행하며 handleDockRequest의 AX 조회는 실행하지 않습니다.",
+    "독립 검수와 전체 SDK 검사는 부모 담당의 별도 단계입니다."
+  ],
+  "extractedSHA256": {
+    "private enum PipelineEpochError:": "c90dd30cbe6a3077c0b2db9ffa6f93d08b2ad8251c2f6f11c7939e38bc4f3da3",
+    "private func startPipeline(": "d30863b4bce8583851c1f4bdaf2266232fed92d88ea1068c37a90ae8891a65c4",
+    "func select(_ source: StreamSource,": "f32d905fc0b83fa4bff7d5e1aadeabb24bf78f32c876c4169ead9eafd6552981",
+    "private static func epochGeometry(": "4315d2a852b05d74c62aa9b136b87d5ad3467e1ea14054507bd8621be08be4e0",
+    "private func dockPeerIsCurrent(": "6b60fd48bb4a0b9de1df72156815e81cb8bb32455351650fab2a226ae9c084b3",
+    "SourceSelectionAdmission": "21a3a6d6be0ac4d4917a4afc379ed324bd8d45f720df6778a26600abb613fb33",
+    "Dock admission factory": "a060d4cc0b3865b574a465555f07d35b63fb44a598e3dca35d1203c751e217d7"
+  },
+  "swiftVersion": "Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)\nTarget: arm64-apple-macosx27.0.0\nswift-driver version: 1.168.6",
+  "baselineExit": 0,
+  "passed": 36,
+  "failed": 0,
+  "exitCode": 0,
+  "finishedAt": "2026-10-20T20:18:40.504352+00:00",
+  "sourceUnchanged": true,
+  "postRunGitBinding": {
+    "commit": "7973ebfcc5a5c52df97f1a19c10a540288c8d056",
+    "tree": "94026620c729dae7e96a830c776acd58fcfbb9a7",
+    "verifiedAt": "2026-10-20T20:19:58.258523+00:00",
+    "note": "실행 당시 HEAD는 sourceCommit이며 수정 파일은 커밋 전이었다. 실행 입력 해시를 위 커밋의 Git 파일과 실행 후 작업 파일에 각각 대조했다.",
+    "inputsMatchCommittedFiles": true,
+    "verifiedSHA256": {
+      "Sources/SillHost/StreamCoordinator.swift": "8cdcbe8d3f141c3e464236eaec6b47e4bca3560ff46eb8bd30856c6630146494",
+      "Sources/SillHost/DockSelectionIngress.swift": "9857b79323311997565043f826cd85004fdb0b56468d6d56bb1f4c2985db6787",
+      "Sources/StreamProtocol/AddressParser.swift": "d33c0f33f358b7e25340849dc4233d975405374a99703e52d838fa64a0b4cf89",
+      "Sources/StreamProtocol/AudioPacket.swift": "84913ea1f3fd4d3098654b198e89551d705fb6cde623364031912e8bc2bb78ab",
+      "Sources/StreamProtocol/AudioRouting.swift": "4b80e78658cee594036170eff22aa8d2d5a00fa9d6934f124727e70f80c7c8a5",
+      "Sources/StreamProtocol/Compatibility.swift": "abc4d32a117408c97ce0583c7d1f5f425cb83d04dbfdf90ec9112f029ac7508c",
+      "Sources/StreamProtocol/Gesture.swift": "c6041867df7551393625fb6f1af4ae199a8b358cdeb7637638853a4db20d5157",
+      "Sources/StreamProtocol/HostSettings.swift": "33fbf9fcfb19b18bd7e6aea62ae1637df27a35a76300be6ec2c980bed82cb5a1",
+      "Sources/StreamProtocol/Input.swift": "211384266736ccb0133fb72eaa6a72090007e65c7a28244a043f46ed4e8b5790",
+      "Sources/StreamProtocol/MacMenu.swift": "d1ddeeadb6417641e02e95f5be4c66a5d30beb5e8410bff88d0f1ddb2c0960bd",
+      "Sources/StreamProtocol/MicrophoneUplink.swift": "c48c4547ee581a95416d262181031c89a83441c9d0835296b9473a03b70b51da",
+      "Sources/StreamProtocol/Pairing.swift": "f1d1f707d1d2d089d63ab3d58256c0cbe480eb0cb5ad24884f8dfde5a00ad12f",
+      "Sources/StreamProtocol/Pointer.swift": "1ffc28eeab0344e4cbed48f5c7fdc70a4aa7fd04cff606dde0e4885bd2dc2106",
+      "Sources/StreamProtocol/Remote.swift": "b821d5fcaf93f101cf6f1b4bf1a55c3df5091d775350ae1e2c779d82a26f987d",
+      "Sources/StreamProtocol/RemoteAudioSubscription.swift": "a1caeeefbc509eacadf67ee0fdf5b01d640637ed81e5a637b984782d231ff3f2",
+      "Sources/StreamProtocol/RemoteDock.swift": "04d2f28b7ef7488b9f8f569323cdc46a917f9b4d93137ae1d34d8291a58e34f2",
+      "Sources/StreamProtocol/RemoteIdentity.swift": "e62cc0fdded56219a4a8a82cc6365ce8c6deb9b9082d97acc8684c17fecb1be4",
+      "Sources/StreamProtocol/RemoteTLS.swift": "0fd68d47fed6002283a0ad1026cfb6e64042fc3c464aa99b86410f6ca484829e",
+      "Sources/StreamProtocol/SafeText.swift": "233377ba3798e58ecec4c88d8fff8c6d1dabd3031b694936fd855387ad92c472",
+      "Sources/StreamProtocol/StreamMessage.swift": "b63296522096d280493dd4319fca9c07b4ee09abab3438961cb59749a296b205",
+      "Sources/StreamProtocol/Switcher.swift": "52b9dc88c500e1436cb8c5e6d580252752a89ddecf3053c9e50f7f85901398aa",
+      "Sources/StreamProtocol/Viewport.swift": "4a3ae09d1bcacafff7bd0619abb13fd51f0e5527070add93ddf8ae1f31a379de",
+      "Tests/checks/native-dock-pipeline/fixture.swift": "245084362075bf84c6d5c9888e374cfda0f9c05d723d36d35bddc42ed1bcfe4b",
+      "Tests/checks/native-dock-pipeline/run.py": "d055993d1aefb2872d81193be863b9b7530b9343061bf5e4f8a4b66a1c5073fe",
+      "Sources/SillHost/RemoteDockReader.swift": "7ffc6a323368bc568d7438ec369a59f89326cf4f37ea62da6a131f92a70b9c29",
+      "Sources/SillHost/WindowCatalog.swift": "4ae919483d794d3e14540b8ccc211c0d7e4c2abb8a834da5af5bd4f7eeda02ff",
+      "Tests/checks/native-dock-reader/run.py": "ded5ed06af3af44e317120c0dcc96c8513652a795ff43529171eb6684659b9e7",
+      "Tests/checks/native-dock-reader/fixture.swift": "a0450397120b13f6384c940d55a82d1b4bb4802cec2b29d44495e5ec77aefa1a"
+    }
+  },
+  "nativeDockRegression": {
+    "command": [
+      "python3",
+      "-B",
+      "Tests/checks/native-dock/run.py",
+      ".",
+      "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-native-dock-20261021/pipeline-checks/run-p2-native-dock-20261021",
+      "--skip-sdk-typecheck"
+    ],
+    "observedExitCode": 0,
+    "readerPassCount": 60,
+    "readerFailed": 0,
+    "sdkTypecheck": "부모 담당 후속 검사로 생략",
+    "hostMessage": "Dock 호스트의 TLS·페어링·입력 사용권·지연 응답·세대 변경·ingress 순서·기존 마이크 정리 경계 검증 통과",
+    "logsSHA256": {
+      "admission-0.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "admission-1.log": "ab4f7d854d3091add3a1b6016295b37aa7e80dfa0086ed3b12a9f63066878dcb",
+      "reader/inert-compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reader/inert-run.log": "d2622b2ee0d116752e33ed927bba8685bcae5b28674df3ec11f61bba0bf50867",
+      "reader/protocol.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}
