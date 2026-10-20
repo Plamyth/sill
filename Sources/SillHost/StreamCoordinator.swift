@@ -11,6 +11,14 @@ struct SourceSelectionAdmission {
     let commit: (() -> Void) -> Bool
 }
 
+@MainActor
+struct AudioForwardingConnectionContext {
+    let peer: AudioForwardingPairedDevice
+    let principal: AudioForwardingCatalog.Principal
+    let role: AudioForwardingCatalog.Role
+    let isCurrent: () -> Bool
+}
+
 /// Owns the pipeline for the life of the process and points it at whatever source the client
 /// picks. Threading: this class is main-actor; frames flow capture queue → VT thread → network
 /// queue without touching it. Network callbacks hop here with Task { @MainActor }.
@@ -52,8 +60,13 @@ package final class StreamCoordinator {
     private var audioRoutePublished: [ObjectIdentifier: UUID] = [:]
     private var audioRouteArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
     private let microphoneReceiver: HostMicrophoneReceiver
-    var authenticationCatalog: (@MainActor (NWConnection, Data) async -> WindowList?)?
-    private var authenticationCatalogTickets: [ObjectIdentifier: UUID] = [:]
+    var forwardingControl: (@MainActor (AudioForwardingControl, AudioForwardingConnectionContext) async -> AudioForwardingState?)?
+    private struct ForwardingClient {
+        let connection: NWConnection
+        let route: ClientRoute
+        let generation = UUID()
+    }
+    private var forwardingClients: [ObjectIdentifier: ForwardingClient] = [:]
     let server: StreamServer
     let catalog = WindowCatalog()
     let capture = WindowCapture()
@@ -435,25 +448,28 @@ package final class StreamCoordinator {
 
         server.onControlClientConnected = { [weak self] connection, route in
             Task { @MainActor in
-                guard let self, !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
+                guard let self, !self.synthetic, connection.state == .ready,
                       self.remote?.isAuthorized(route) == true else { return }
-                let id = ObjectIdentifier(connection), ticket = UUID()
-                self.authenticationCatalogTickets[id] = ticket
-                let catalog = await self.authenticationCatalog?(connection, fingerprint)
-                    ?? WindowList(macName: self.macName, windows: [], active: .none)
-                guard self.authenticationCatalogTickets[id] == ticket, connection.state == .ready,
-                      self.remote?.isAuthorized(route) == true else { return }
-                self.server.sendAuthenticationCatalog(catalog, to: connection)
+                let id = ObjectIdentifier(connection)
+                if self.forwardingClients[id] == nil {
+                    self.forwardingClients[id] = ForwardingClient(connection: connection, route: route)
+                }
             }
         }
         server.onControlClientDisconnected = { [weak self] connection in
-            Task { @MainActor in self?.authenticationCatalogTickets[ObjectIdentifier(connection)] = nil }
+            Task { @MainActor in self?.forwardingClients[ObjectIdentifier(connection)] = nil }
+        }
+        server.onForwardingControl = { [weak self] exchange, connection, route, role in
+            Task { @MainActor in
+                guard let self else { connection.cancel(); return }
+                await self.handleForwarding(exchange, connection: connection, route: route, role: role)
+            }
         }
         server.onClientConnected = { [weak self] connection, route, link in
             DispatchQueue.main.async {
                 guard let self, connection.state == .ready else { return }
                 let id = ObjectIdentifier(connection)
-                self.authenticationCatalogTickets[id] = nil
+                self.forwardingClients[id] = ForwardingClient(connection: connection, route: route)
                 guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
                     return
@@ -515,6 +531,7 @@ package final class StreamCoordinator {
                 self.gestureArrivals[id] = nil
                 self.dockArrivals[id] = nil
                 self.routes[id] = nil
+                self.forwardingClients[id] = nil
                 self.audioRoutePublished[id] = nil
                 self.audioRouteArrivals[id] = nil
                 self.lastPairingWanted[id] = nil
@@ -1003,6 +1020,47 @@ package final class StreamCoordinator {
     }
 
     // MARK: Client messages
+
+    private func handleForwarding(_ exchange: StreamServer.ForwardingExchange, connection: NWConnection,
+                                  route: ClientRoute, role: AudioForwardingCatalog.Role) async {
+        let id = ObjectIdentifier(connection)
+        guard !synthetic, connection.state == .ready, remote?.isAuthorized(route) == true,
+              let automatic = route.automaticPrincipal, let peer = remote?.forwardingPeer(route: route) else {
+            server.sendForwardingState(nil, to: connection, ticket: exchange.ticket)
+            return
+        }
+        if forwardingClients[id] == nil { forwardingClients[id] = ForwardingClient(connection: connection, route: route) }
+        guard let registration = forwardingClients[id], registration.connection === connection,
+              registration.route == route else { connection.cancel(); return }
+        let kind: AudioForwardingCatalog.Principal.Kind
+        switch automatic { case .tailnet: kind = .tailnet; case .cable: kind = .cable; case .localNetwork: kind = .localNetwork }
+        let principal = AudioForwardingCatalog.Principal(kind: kind, id: peer.id, authorizationGeneration: peer.pairingGeneration)
+        let context = AudioForwardingConnectionContext(peer: peer, principal: principal, role: role, isCurrent: { [weak self, weak connection] in
+            guard let self, let connection, connection.state == .ready,
+                  self.forwardingClients[id]?.generation == registration.generation,
+                  self.forwardingClients[id]?.connection === connection,
+                  let current = self.remote?.forwardingPeer(route: route) else { return false }
+            return current.id == peer.id && current.pairingGeneration == peer.pairingGeneration
+        })
+        if let intent = exchange.control.intent,
+           intent.pairedDeviceId != peer.id || intent.transportKind != .native {
+            server.sendForwardingState(nil, to: connection, ticket: exchange.ticket)
+            return
+        }
+        guard context.isCurrent() else { return }
+        let state = await forwardingControl?(exchange.control, context)
+        guard context.isCurrent() else {
+            server.sendForwardingState(nil, to: connection, ticket: exchange.ticket)
+            return
+        }
+        if let catalog = state?.catalog,
+           catalog.principal.id != principal.id || catalog.principal.authorizationGeneration != principal.authorizationGeneration ||
+           catalog.principal.kind != principal.kind || catalog.role != role {
+            server.sendForwardingState(nil, to: connection, ticket: exchange.ticket)
+            return
+        }
+        server.sendForwardingState(state, to: connection, ticket: exchange.ticket)
+    }
 
     private func handle(_ message: StreamMessage, from connection: NWConnection, selectionTicket: UInt64? = nil) async {
         defer {
@@ -1985,10 +2043,12 @@ package final class StreamCoordinator {
             Stats.shared.bump("in.focusRejected")
             return
         }
-        guard let route = routes[device], route.whileAuthorized({
-            logClick(event, in: rect)
+        logClick(event, in: rect)
+        guard let route = routes[device], inputAuthorizationCurrent(device) else { injector.releaseInput(of: device); return }
+        injector.withAuthorization(route.whileAuthorized) {
             injector.apply(event, in: rect, from: device)
-        }) else { injector.releaseInput(of: device); return }
+        }
+        if !inputAuthorizationCurrent(device) { injector.releaseInput(of: device) }
     }
 
     private func inputTargetReady(_ event: InputEvent) -> Bool {
@@ -2011,7 +2071,9 @@ package final class StreamCoordinator {
     private func applyAdmittedChord(keyCode: UInt16, flags: UInt64, device: KeyStrokes.Device) {
         guard !switching else { return }
         guard inputTargetReady(.text("")) else { Stats.shared.bump("in.focusRejected"); return }
-        _ = routes[device]?.whileAuthorized { injector.chord(keyCode: keyCode, flags: flags) }
+        guard let route = routes[device], inputAuthorizationCurrent(device) else { return }
+        injector.withAuthorization(route.whileAuthorized) { injector.chord(keyCode: keyCode, flags: flags) }
+        if !inputAuthorizationCurrent(device) { injector.releaseInput(of: device) }
     }
 
     private func releaseHeldInput() {

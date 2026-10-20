@@ -110,6 +110,10 @@ struct Stage {
     }
 }
 final class Injector {
+    var authorization: (((() -> Void)) -> Bool)?
+    func withAuthorization(_ authorize: @escaping (_ operation: () -> Void) -> Bool, _ action: () -> Void) {
+        let previous = authorization; authorization = authorize; defer { authorization = previous }; action()
+    }
     var owed = false
     var events: [InputEvent] = []
     var nulls: [Bool] = []
@@ -124,11 +128,12 @@ final class Injector {
         }
     }
     func apply(_ event: InputEvent, in rect: CGRect, from device: Int) {
+        if let authorization, !authorization({}) { return }
         events.append(event); nulls.append(rect.isNull)
         if isUpOfSomethingDown(event, from: device) { owed = false }
         afterApply?()
     }
-    func chord(keyCode: UInt16, flags: UInt64) { chords += 1 }
+    func chord(keyCode: UInt16, flags: UInt64) { if authorization?({}) != false { chords += 1 } }
     func releaseInput(of device: Int) { releases += 1; owed = false }
 }
 struct AuthorizationRoute {
@@ -174,7 +179,8 @@ final class Host {
     }
     static func topmostWindow(at point: CGPoint?) -> (id: UInt32, pid: Int32)? { pointID.map { ($0, 22) } }
     static func activePID(trustAppKit: Bool) -> Int32? { frontPID }
-    func logClick(_ event: InputEvent, in rect: CGRect) {}
+    var onLog: (() -> Void)?
+    func logClick(_ event: InputEvent, in rect: CGRect) { onLog?() }
 ''' + methods + "\n" + chord + r'''
     func replay(_ events: [InputEvent]) {
         holdUntil = CFAbsoluteTimeGetCurrent() + 1
@@ -387,6 +393,10 @@ let afterFocus = fresh()
 WindowSizer.onFocusRead = { afterFocus.routes[1]?.current = false }
 afterFocus.immediate(click)
 check(afterFocus.injector.events.isEmpty, "expiry during focus readback prevents injection")
+let afterLog = fresh()
+afterLog.onLog = { afterLog.routes[1]?.current = false }
+afterLog.immediate(click)
+check(afterLog.injector.events.isEmpty, "expiry during click log prevents injection")
 let departed = fresh(); departed.routes[1] = nil
 departed.immediate(down); departed.chord()
 check(departed.injector.events.isEmpty && departed.injector.chords == 0, "departed route cannot inject")

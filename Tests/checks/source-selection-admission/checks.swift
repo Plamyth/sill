@@ -11,6 +11,7 @@ func human(_ source: StreamSource = .window(7)) -> StreamMessage {
 @MainActor func setup() -> (Host, NWConnection) {
     let host = Host(), peer = NWConnection(), id = ObjectIdentifier(peer)
     host.connections[id] = peer
+    host.routes[id] = Route()
     host.inputFence.members.insert(id)
     host.dockSelectionIngress.setPeer(id, dockAllowed: false)
     _ = host.listMessage()
@@ -218,6 +219,18 @@ func require(_ value: @autoclosure () -> Bool, _ text: String) throws {
             await host.capture.waitUntilStarted(); host.capture.finish()
             for _ in 0..<100 where host.server.commits.isEmpty { await Task.yield() }
             try require(host.active == .window(7) && host.server.commits.count == 1, "최신 사람 선택만 확정해야 합니다")
+        }
+        await check("capture-await-authorization-expiry") {
+            let (host, peer) = setup(), request = human(.window(17)), id = ObjectIdentifier(peer)
+            host.routes[id]?.requiresLiveAuthorization = true
+            let ticket = host.dockSelectionIngress.reserve(for: request, from: id)!
+            let task = Task { @MainActor in await host.handle(request, from: peer, selectionTicket: ticket) }
+            await host.capture.waitUntilStarted()
+            host.routes[id]?.isAuthenticated = false
+            host.capture.finish()
+            await task.value
+            try require(host.server.commits.isEmpty && host.active == .none,
+                        "캡처 준비 중 연결 권한이 만료되면 선택을 확정하면 안 됩니다")
         }
         await check("remove-peer-clears-only-owned-pending") {
             let (host, peer) = setup(), id = ObjectIdentifier(peer), other = NWConnection()

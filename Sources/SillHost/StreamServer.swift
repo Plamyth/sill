@@ -126,6 +126,8 @@ final class StreamServer {
         /// A hello (kind 23) came on this connection: only the first counts.
         var helloSeen = false
         var role = StreamPeerRole.viewer
+        var forwardingExchange: ForwardingExchange?
+        var forwardingObserved = false
         var presentationInput = false
         /// The input messages (kind 8) read from it. Every kind 26 sent to it carries the count, so the
         /// device can drop one the host built before it read that device's latest input
@@ -144,6 +146,10 @@ final class StreamServer {
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
     private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
+    struct ForwardingExchange: Sendable {
+        let control: AudioForwardingControl
+        let ticket = UUID()
+    }
     private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
     private var videoAdmission = VideoEpochAdmission.stopped
@@ -154,6 +160,7 @@ final class StreamServer {
     var onClientConnected: ((NWConnection, ClientRoute, ClientLink.Route?) -> Void)?
     var onControlClientConnected: ((NWConnection, ClientRoute) -> Void)?
     var onControlClientDisconnected: ((NWConnection) -> Void)?
+    var onForwardingControl: ((ForwardingExchange, NWConnection, ClientRoute, AudioForwardingCatalog.Role) -> Void)?
     /// A connected home client's link changed with its connection's path. Only reported, never
     /// acted on: the menu card shows it. Called on the network queue.
     var onClientRouteChanged: ((NWConnection, ClientLink.Route?) -> Void)?
@@ -1047,7 +1054,7 @@ final class StreamServer {
         } else {
             onControlClientConnected?(connection, route)
             queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
-                guard let self, let client, self.clients[id] === client, !client.role.isViewer else { return }
+                guard let self, let client, self.clients[id] === client, client.role == .awaitingHello else { return }
                 connection.cancel()
             }
         }
@@ -1255,6 +1262,8 @@ final class StreamServer {
         guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); return }
         guard clients[ObjectIdentifier(client.connection)] === client, client.connection.state == .ready else { return }
         if !client.role.isViewer {
+            client.forwardingExchange = nil
+            client.forwardingObserved = false
             client.role = .viewer
             onClientConnected?(client.connection, client.route, client.link)
             onClientCountChanged?(viewerCount)
@@ -1517,6 +1526,11 @@ final class StreamServer {
             }
             let deliver = { (payload: Data) in
                 guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { c.cancel(); return }
+                if header.kind == .forwardingControl {
+                    self.receiveForwarding(payload, from: client)
+                    self.receiveLoop(client)
+                    return
+                }
                 if header.kind == .microphoneControl || header.kind == .microphoneFrame {
                     if client.route.encrypted, client.route.fingerprint != nil {
                         self.onMicrophoneMessage?(StreamMessage(kind: header.kind, timestamp: header.timestamp,
@@ -1587,6 +1601,47 @@ final class StreamServer {
                 guard data.count == header.payloadLength else { c.cancel(); return }
                 deliver(data)
             }
+        }
+    }
+
+    private func receiveForwarding(_ payload: Data, from client: Client) {
+        let connection = client.connection
+        guard clients[ObjectIdentifier(connection)] === client, connection.state == .ready,
+              client.route.isAuthenticated, client.forwardingExchange == nil,
+              payload.count <= StreamMessage.clientPayloadLimit(for: .forwardingControl),
+              (try? LocalAudioRelayJSON.validate(payload)) != nil,
+              let control = Wire.decode(AudioForwardingControl.self, from: payload),
+              control.operation == .observe || client.forwardingObserved,
+              let onForwardingControl else { connection.cancel(); return }
+        let exchange = ForwardingExchange(control: control)
+        client.forwardingExchange = exchange
+        if client.role == .awaitingHello { client.role = .controlOnly }
+        let role: AudioForwardingCatalog.Role = client.role.isViewer ? .viewer : .controlOnly
+        onForwardingControl(exchange, connection, client.route, role)
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
+            guard let self, let client, self.clients[ObjectIdentifier(connection)] === client,
+                  client.forwardingExchange?.ticket == exchange.ticket else { return }
+            connection.cancel()
+        }
+    }
+
+    func sendForwardingState(_ state: AudioForwardingState?, to connection: NWConnection, ticket: UUID) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)],
+                  let exchange = client.forwardingExchange, exchange.ticket == ticket else { return }
+            guard connection.state == .ready, client.route.isAuthenticated, let state,
+                  state.requestID == exchange.control.requestID, state.operation == exchange.control.operation,
+                  state.catalog == nil || state.catalog?.role == (client.role.isViewer ? .viewer : .controlOnly) else {
+                connection.cancel(); return
+            }
+            let payload = Wire.encode(state)
+            guard !payload.isEmpty, payload.count <= StreamMessage.hostPayloadLimit(for: .forwardingState) else {
+                connection.cancel(); return
+            }
+            client.forwardingExchange = nil
+            if state.operation == .observe { client.forwardingObserved = true }
+            send(StreamMessage(kind: .forwardingState, timestamp: Date().timeIntervalSince1970,
+                               isKeyframe: false, payload: payload).serialized(), to: client)
         }
     }
 

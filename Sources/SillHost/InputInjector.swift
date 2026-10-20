@@ -117,15 +117,33 @@ final class InputInjector {
 
     /// The one place an event reaches the Mac: posted, or in a dry run only counted. True when it
     /// was posted.
+    typealias PostAuthorization = (_ operation: () -> Void) -> Bool
+    private var postAuthorization: PostAuthorization?
+
+    func withAuthorization(_ authorization: @escaping PostAuthorization, _ action: () -> Void) {
+        let previous = postAuthorization
+        postAuthorization = authorization
+        defer { postAuthorization = previous }
+        action()
+    }
+
     private func post(_ event: CGEvent) -> Bool {
-        if Self.isKeyboard(event.type) { lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
-        if dryRun {
-            if testLog { logTest(event) }
-            Stats.shared.bump("in.dry")
-            return false
+        var posted = false
+        let emit = {
+            if Self.isKeyboard(event.type) { self.lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
+            if self.dryRun {
+                if self.testLog { self.logTest(event) }
+                Stats.shared.bump("in.dry")
+            } else {
+                event.post(tap: .cghidEventTap)
+                posted = true
+            }
         }
-        event.post(tap: .cghidEventTap)
-        return true
+        let release = event.type == .keyUp || event.type == .leftMouseUp || event.type == .rightMouseUp ||
+            event.type == .otherMouseUp || (event.type == .flagsChanged && event.flags.rawValue & ~lastKeyFlags == 0)
+        if !release, let postAuthorization { _ = postAuthorization(emit) }
+        else { emit() }
+        return posted
     }
 
     private static func isKeyboard(_ type: CGEventType) -> Bool { type == .keyDown || type == .keyUp || type == .flagsChanged }

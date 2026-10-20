@@ -25,7 +25,9 @@ def block(text, marker):
 
 server = (root / "Sources/SillHost/StreamServer.swift").read_text()
 fixture = Path(__file__).with_name("Main.swift").read_text()
-methods = [block(server, marker) for marker in ["private func register(", "func serve(", "private func took(", "private func unregister(", "func sendAuthenticationCatalog(", "func sendMicrophone("]]
+methods = [block(server, marker) for marker in ["private func register(", "func serve(", "private func took(", "private func unregister(", "func sendAuthenticationCatalog(", "func sendMicrophone(", "private func receiveForwarding(", "func sendForwardingState("]]
+fixture = fixture.replace("    // EXCHANGE", block(server, "struct ForwardingExchange:"))
+fixture = fixture.replace("// JSON_VALIDATOR", block((root / 'Sources/SillHost/LocalAudioRelay.swift').read_text(), 'enum LocalAudioRelayJSON {'))
 raw = block(server, "private func send(_ raw:")
 prefix = raw[raw.index("{") + 1:raw.index("        guard let data = PresentationMedia.adapt")]
 prefix = prefix.replace("else { return }", "else { return false }")

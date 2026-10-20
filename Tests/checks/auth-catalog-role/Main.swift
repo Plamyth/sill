@@ -1,5 +1,6 @@
 import Foundation
 import StreamProtocol
+// JSON_VALIDATOR
 
 final class NWConnection {
     enum State { case ready, failed, cancelled }
@@ -65,9 +66,12 @@ final class Client {
     var catalogSent = false
     var device: String?
     var pendingBytes = 0
+    var forwardingExchange: RoleHost.ForwardingExchange?
+    var forwardingObserved = false
     init(_ connection: NWConnection) { self.connection = connection }
 }
 final class RoleHost {
+    // EXCHANGE
     struct VideoAdmission { var current: VideoEpoch? = nil }
     var videoAdmission = VideoAdmission()
     var clients: [ObjectIdentifier: Client] = [:]
@@ -86,6 +90,8 @@ final class RoleHost {
     var counts: [Int] = [], sent: [StreamMessageKind] = []
     var ticking = false
     let microphoneReplies = MicrophoneReplies()
+    var onForwardingControl: ((ForwardingExchange, NWConnection, ClientRoute, AudioForwardingCatalog.Role) -> Void)?
+    var rawSent: [Data] = []
     init() {
         onClientConnected = { [unowned self] _, _, _ in viewerJoins += 1 }
         onClientDisconnected = { [unowned self] _ in viewerLeaves += 1 }
@@ -99,14 +105,14 @@ final class RoleHost {
     func replayCatalog(to client: Client) {}
     func link(_ connection: NWConnection, path: Int) -> ClientLink.Route? { nil }
     func send(_ raw: Data, to client: Client) {
-        if admitsRaw(raw, to: client), let header = StreamMessage.parseHeader(raw) { sent.append(header.kind) }
+        if admitsRaw(raw, to: client), let header = StreamMessage.parseHeader(raw) { sent.append(header.kind); rawSent.append(raw) }
     }
     // METHODS
 }
 
 @main
 struct Check {
-    static func main() {
+    static func main() throws {
         var checks = 0
         func check(_ value: Bool) { precondition(value); checks += 1 }
         for current in [true, false] {
@@ -208,15 +214,63 @@ struct Check {
         let auth = Client(NWConnection()); auth.role = .awaitingHello
         for value in 0...255 {
             guard let kind = StreamMessageKind(rawValue: UInt8(value)) else { continue }
-            check(auth.role.accepts(kind) == (kind == .hello || kind == .ping))
+            check(auth.role.accepts(kind) == (kind == .hello || kind == .ping || kind == .forwardingControl))
             check(auth.role.sends(kind) == (kind == .windowList || kind == .pong || kind == .goodbye))
             check(StreamPeerRole.viewer.accepts(kind) && StreamPeerRole.viewer.sends(kind))
+            check(StreamPeerRole.controlOnly.accepts(kind) == (kind == .hello || kind == .ping || kind == .forwardingControl))
+            check(StreamPeerRole.controlOnly.sends(kind) == (kind == .windowList || kind == .pong || kind == .goodbye || kind == .forwardingState))
         }
         let active = StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false,
                                    payload: Wire.encode(WindowList(macName: "fixture", windows: [], active: .desktop)))
         check(!host.admitsRaw(active.serialized(), to: auth))
         let frame = StreamMessage(kind: .frame, timestamp: 0, isKeyframe: true, payload: Data([1]))
         check(!host.admitsRaw(frame.serialized(), to: auth))
+        let observe = try AudioForwardingControl(requestID: UUID(), operation: .observe, intent: nil)
+        let identity = AudioForwardingDeviceID(hex: String(repeating: "a", count: 64))!, generation = UUID()
+        let credential = try AudioForwardingCredential(pairedDeviceId: identity, pairingGeneration: generation,
+                                                       credential: String(repeating: "A", count: 43))
+        let snapshot = try AudioForwardingSnapshot(revision: .init(0), intent: nil, binding: nil)
+        let bootstrap = try AudioForwardingBootstrap(credential: credential,
+            ownCursor: .init(intentRevision: .init(0), bindingRevision: .init(0)), snapshot: snapshot)
+        let catalog = try AudioForwardingCatalog(principal: .init(kind: .cable, id: identity, authorizationGeneration: generation),
+                                                 role: .controlOnly, bootstrap: bootstrap)
+        let state = try AudioForwardingState(requestID: observe.requestID, operation: .observe, catalog: catalog, result: nil)
+        do {
+            let host = RoleHost(), connection = NWConnection()
+            var received: RoleHost.ForwardingExchange?
+            host.onForwardingControl = { exchange, peer, _, role in
+                received = exchange; check(peer === connection && role == .controlOnly)
+            }
+            host.serve(connection, route: .init(encrypted: true, pairedName: nil, automatic: true), hello: nil)
+            let client = host.clients[ObjectIdentifier(connection)]!
+            host.receiveForwarding(Wire.encode(observe), from: client)
+            check(received?.control.requestID == observe.requestID && client.role == .controlOnly)
+            check(host.viewerJoins == 0 && host.counts.isEmpty && !host.ticking)
+            host.queue.expirations.first?()
+            check(connection.state == .ready)
+            host.sendForwardingState(state, to: connection, ticket: UUID())
+            check(host.rawSent.isEmpty && client.forwardingExchange != nil)
+            host.sendForwardingState(state, to: connection, ticket: received!.ticket)
+            check(host.sent == [.forwardingState] && client.forwardingObserved && client.forwardingExchange == nil)
+            let decoded = Wire.decode(AudioForwardingState.self, from: Data(host.rawSent[0].dropFirst(StreamMessage.headerLength)))
+            check(decoded?.requestID == observe.requestID && decoded?.catalog?.principal.id == identity)
+            host.queue.expirations.last?()
+            check(connection.state == .ready)
+            host.receiveForwarding(Wire.encode(observe), from: client)
+            let old = received!
+            host.took(Hello(), from: client)
+            check(client.role.isViewer && client.forwardingExchange == nil && !client.forwardingObserved)
+            let sent = host.sent
+            host.sendForwardingState(state, to: connection, ticket: old.ticket)
+            check(host.sent == sent)
+        }
+        for invalid in [Data("{}".utf8), Data("{\"schemaVersion\":1,\"schemaVersion\":1}".utf8), Data(repeating: 65, count: 4097)] {
+            let host = RoleHost(), connection = NWConnection()
+            host.onForwardingControl = { _, _, _, _ in preconditionFailure("invalid request reached provider") }
+            host.serve(connection, route: .init(encrypted: true), hello: nil)
+            host.receiveForwarding(invalid, from: host.clients[ObjectIdentifier(connection)]!)
+            check(connection.state == .cancelled && host.viewerJoins == 0)
+        }
         print("PASS \(checks) authenticated catalogue and viewer lifetime checks")
     }
 }

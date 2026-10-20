@@ -11,12 +11,14 @@ import sys
 sys.dont_write_bytecode = True
 root, output = (Path(value).resolve() for value in sys.argv[1:])
 here = Path(__file__).resolve().parent
-route = json.loads(subprocess.check_output([
-    "/Users/ambrion/.local/bin/storage-route", "path", "development-archive", "--project", "CCR-Vision"
-]))
-assert output.is_relative_to(Path(route["path"]) / "host-native-dock-20261021/pipeline-checks")
-output.mkdir(parents=True, exist_ok=False)
-(output / "tmp").mkdir()
+emit = sys.argv[2] == '--emit'
+if not emit:
+    route = json.loads(subprocess.check_output([
+        "/Users/ambrion/.local/bin/storage-route", "path", "development-archive", "--project", "CCR-Vision"
+    ]))
+    assert output.is_relative_to(Path(route["path"]) / "host-native-dock-20261021/pipeline-checks")
+    output.mkdir(parents=True, exist_ok=False)
+    (output / "tmp").mkdir()
 env = dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer",
            TMPDIR=str(output / "tmp"), CLANG_MODULE_CACHE_PATH=str(output / "module-cache"))
 spec = importlib.util.spec_from_file_location("pipeline", root / "Tests/checks/native-dock-pipeline/run.py")
@@ -27,7 +29,7 @@ source = (root / "Sources/SillHost/StreamCoordinator.swift").read_text()
 markers = ["private enum PipelineEpochError:", "private func startPipeline(",
            "func select(_ source: StreamSource,", "private static func epochGeometry(",
            "private func dockPeerIsCurrent(", "private func handleDockRequest(",
-           "private func dockActionIsCurrent(", "private func handlePick("]
+           "private func dockActionIsCurrent(", "private func handlePick(", "private func inputAuthorizationCurrent("]
 for marker in ["private func remoteSourceAdmission(", "private func handleRemoteSource("]:
     if marker in source:
         markers.append(marker)
@@ -58,6 +60,9 @@ if "selectionRevision: String? = nil" in (root / "Sources/SillHost/DockSelection
                                 "displayIDs: [], appBundleIDs: [], selectionRevision: selectionRevision)")
 template += "\nfinal class Chords { func forget() {} }\n"
 generated = output / "Fixture.swift"
+if emit:
+    print(template + (here / "checks.swift").read_text())
+    sys.exit(0)
 generated.write_text(template + (here / "checks.swift").read_text())
 inputs = [root / "Sources/SillHost/StreamCoordinator.swift", root / "Sources/SillHost/DockSelectionIngress.swift",
           *sorted((root / "Sources/StreamProtocol").glob("*.swift")), here / "run.py", here / "checks.swift",

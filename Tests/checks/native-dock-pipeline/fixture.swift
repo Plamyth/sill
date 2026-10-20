@@ -148,14 +148,21 @@ final class Dock {
     func catalog(force: Bool = false) -> RemoteDockCatalog { reads += 1; onRead?(); return value }
 }
 struct Config { var virtualDisplay = false }
+enum KeyStrokes { typealias Device = ObjectIdentifier }
 final class NWConnection {
     enum State { case ready, cancelled }
     var state = State.ready
 }
-struct Route { var encrypted = true; var fingerprint: String? = "검사 키" }
+struct Route {
+    var encrypted = true
+    var fingerprint: String? = "검사 키"
+    var requiresLiveAuthorization = false
+    var isAuthenticated = true
+}
 final class Remote {
     var paired = true
     func isPaired(_ fingerprint: String) -> Bool { paired && fingerprint == "검사 키" }
+    func isAuthorized(_ route: Route) -> Bool { paired && route.encrypted && route.isAuthenticated }
 }
 final class Microphone {
     enum Phase { case off, cleanupFailed }

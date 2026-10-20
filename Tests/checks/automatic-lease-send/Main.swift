@@ -27,6 +27,29 @@ final class ResultBox: @unchecked Sendable {
     func set(_ value: Bool) { lock.lock(); self.value = value; lock.unlock() }
     func read() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
 }
+enum CGEventType { case keyDown, keyUp, flagsChanged, leftMouseDown, leftMouseUp, rightMouseUp, otherMouseUp, mouseMoved }
+final class CGEvent {
+    struct Flags { let rawValue: UInt64 }
+    enum Tap { case cghidEventTap }
+    let type: CGEventType
+    let flags = Flags(rawValue: 0)
+    var posted = 0
+    init(_ type: CGEventType) { self.type = type }
+    func post(tap: Tap) { posted += 1 }
+}
+enum KeyStrokes { static let capsLock: UInt64 = 1 << 16 }
+struct Stats { static let shared = Stats(); func bump(_ name: String) {} }
+final class PostFixture {
+    typealias PostAuthorization = (_ operation: () -> Void) -> Bool
+    var postAuthorization: PostAuthorization?
+    static let modifierBits: UInt64 = 0xff
+    var lastKeyFlags: UInt64 = 0
+    var dryRun = false, testLog = false
+    func logTest(_ event: CGEvent) {}
+    // func withAuthorization(
+    // private func post(_ event:
+    // private static func isKeyboard(
+}
 
 @main struct Check {
     static func main() {
@@ -67,6 +90,23 @@ final class ResultBox: @unchecked Sendable {
         releaseOwner.signal()
         check(ownerDone.wait(timeout: .now() + 3) == .success && sendDone.wait(timeout: .now() + 3) == .success)
         check(!result.read() && blocked.sent == 0 && !waitingRender.admitted)
-        print("PASS \(assertions) actual grant-lock and sendEnabled checks; no microphone, HAL or TLS device")
+        let injectionLease = AutomaticSessionAuthorization(principal: principal, fingerprint: key)
+        let injector = PostFixture(), firstKey = CGEvent(.keyDown), lateKey = CGEvent(.keyDown), keyUp = CGEvent(.keyUp)
+        injector.withAuthorization(injectionLease.whileCurrent) {
+            check(injector.post(firstKey))
+            injectionLease.invalidate()
+            check(!injector.post(lateKey))
+            check(injector.post(keyUp))
+            for kind in [CGEventType.leftMouseDown, .mouseMoved] {
+                let event = CGEvent(kind)
+                check(!injector.post(event) && event.posted == 0)
+            }
+            for kind in [CGEventType.leftMouseUp, .rightMouseUp, .otherMouseUp] {
+                check(injector.post(CGEvent(kind)))
+            }
+        }
+        check(firstKey.posted == 1 && lateKey.posted == 0 && keyUp.posted == 1)
+        check(injector.postAuthorization == nil && injector.post(CGEvent(.mouseMoved)))
+        print("PASS \(assertions) actual grant-lock, sendEnabled and injector post checks; no microphone, HAL or TLS device")
     }
 }
