@@ -104,6 +104,17 @@ final class WindowCatalog {
         (w.title ?? "").lowercased().contains("layerprobe")
     }
 
+    nonisolated static func isPrivateApplication(_ bundleID: String) -> Bool {
+        bundleID == "com.openai.sky.CUAService"
+    }
+
+    static func isShareableWindow(_ w: SCWindow) -> Bool {
+        guard let app = w.owningApplication, !app.applicationName.isEmpty else { return false }
+        return w.windowLayer == 0 && w.frame.width > 100 && w.frame.height > 100
+            && app.processID != ownPID && !isPrivateApplication(app.bundleIdentifier)
+            && !isSystemHelperWindow(w)
+    }
+
     /// Window list and thumbnails, while a client is connected.
     static let pollInterval: Duration = .seconds(2)
     /// A window whose `WindowInfo` (title, app, size) has not changed since its last thumbnail,
@@ -160,7 +171,7 @@ final class WindowCatalog {
         if clientCount > 0 { Task { @MainActor [weak self] in await self?.refreshWindows() } }
     }
 
-    func window(id: UInt32) -> SCWindow? { windows.first { $0.windowID == id } }
+    func window(id: UInt32) -> SCWindow? { windows.first { $0.windowID == id && Self.isShareableWindow($0) } }
 
     /// `window(id:)`, else one look at every window the system knows (on-screen or not). The
     /// coordinator uses it for the staged window, whose SCWindow must be fresh after the move: the
@@ -170,7 +181,7 @@ final class WindowCatalog {
     func resolveWindow(id: UInt32) async -> SCWindow? {
         if let w = window(id: id) { return w }
         guard let all = await Self.shareableContent(excludingDesktopWindows: false, onScreenWindowsOnly: false, timeout: 3) else { return nil }
-        return all.windows.first { $0.windowID == id && !Self.isOwn($0) }
+        return all.windows.first { $0.windowID == id && Self.isShareableWindow($0) }
     }
 
     /// `ownApplication`, else one look at every window (on screen or not) for this process. The
@@ -267,7 +278,7 @@ final class WindowCatalog {
         var pinned: SCWindow? = nil
         if let id = stagedWindowID, !content.windows.contains(where: { $0.windowID == id }),
            let all = await Self.shareableContent(excludingDesktopWindows: false, onScreenWindowsOnly: false, timeout: 3) {
-            pinned = all.windows.first { $0.windowID == id && !Self.isOwn($0) }
+            pinned = all.windows.first { $0.windowID == id && Self.isShareableWindow($0) }
             if pinned != nil { print("Catalog: the staged window \(id) is not in the on-screen list; pinned it from the full list.") }
         }
         guard seq > appliedSeq, topology.version == topologyVersion else { return false }
@@ -275,13 +286,7 @@ final class WindowCatalog {
         inventoryTopologyVersion = topologyVersion
         ownApplication = content.applications.first { $0.processID == Self.ownPID }
         updateDisplays(content.displays)
-        var visible = content.windows.filter { w in
-            guard let app = w.owningApplication, !app.applicationName.isEmpty else { return false }
-            return w.windowLayer == 0                                  // drops widgets, wallpaper, backstop
-                && w.frame.width > 100 && w.frame.height > 100
-                && app.processID != Self.ownPID
-                && !Self.isSystemHelperWindow(w)
-        }
+        var visible = content.windows.filter(Self.isShareableWindow)
         if let pinned, !visible.contains(where: { $0.windowID == pinned.windowID }) { visible.append(pinned) }
         // The system's order is not front-to-back and shuffles between polls. The brief wants a
         // fixed order in the bar, so keep first-seen order and append newcomers.
@@ -468,7 +473,8 @@ final class WindowCatalog {
             guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { continue }
             for name in names where name.hasSuffix(".app") {
                 let url = URL(fileURLWithPath: dir).appendingPathComponent(name)
-                guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier, !seen.contains(id) else { continue }
+                guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier,
+                      !isPrivateApplication(id), !seen.contains(id) else { continue }
                 seen.insert(id)
                 var display = FileManager.default.displayName(atPath: url.path)
                 if display.hasSuffix(".app") { display.removeLast(4) }

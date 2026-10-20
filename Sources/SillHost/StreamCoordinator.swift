@@ -996,6 +996,7 @@ package final class StreamCoordinator {
             await catalog.refreshWindows()      // show the result now, not at the next poll
         case .launchApp:
             guard let req = Wire.decode(LaunchApp.self, from: message.payload),
+                  !WindowCatalog.isPrivateApplication(req.bundleID),
                   let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: req.bundleID) else { return }
             gestureChords.forget()              // the app comes forward, which closes a view a gesture opened
             pendingLaunch = req.bundleID
@@ -2544,6 +2545,7 @@ package final class StreamCoordinator {
         for tile in tiles {
             guard let data = tile["tile-data"] as? [String: Any],
                   let bundleID = data["bundle-identifier"] as? String,
+                  !WindowCatalog.isPrivateApplication(bundleID),
                   !bundleID.isEmpty, seen.insert(bundleID).inserted else { continue }
             let name = data["file-label"] as? String ?? bundleID
             result.append(AppInfo(name: name, bundleID: bundleID))
