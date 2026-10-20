@@ -174,11 +174,11 @@ def deploy(config, work, source):
     derived = Path(config.get('buildCache', str(Path(config['outputRoot']) / 'AppDerivedData'))).resolve()
     require(derived.is_relative_to(Path(config['outputRoot']).resolve()), 'build_cache_not_owned')
     app = derived / 'Build/Products/Debug-iphoneos/Sill.app'
-    version = str(int(source['commit'][:7], 16))
+    version = '1'
     metadata = plistlib.loads((Path(config['repo']) / 'iOSClient/Info-Debug.plist').read_bytes())
     metadata.update(CCRSourceCommit=source['commit'], CCRSourceTree=source['tree'],
                     CFBundleIdentifier=BUNDLE, CFBundleDisplayName='REA 통합 검증', CFBundleVersion=version)
-    metadata_path = work / 'Runtime-Info.plist'
+    metadata_path = derived.parent / 'Diagnostic-Runtime-Info.plist'
     metadata_path.write_bytes(plistlib.dumps(metadata))
     command(['xcodebuild', '-project', Path(config['repo']) / 'iOSClient/Sill.xcodeproj', '-scheme', 'Sill',
              '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-allowProvisioningUpdates',
