@@ -3,6 +3,8 @@ import StreamProtocol
 
 @main
 struct SillVisionApp: App {
+    init() { VisionReleaseRuntimeWriter.write() }
+
     var body: some Scene {
         WindowGroup(id: "mac") {
             SillVisionWindow()
