@@ -139,6 +139,12 @@ struct Main {
             precondition(f.audio.participants.isFenced && !f.audio.verify())
             let proof = f.read()!
             precondition(f.adapter.current(proof))
+            let audioProof = f.audio.forwardingProof()!, sentryProof = f.sentry.forwardingProof()!
+            for _ in 0..<3 {
+                precondition(f.audio.forwardingProof() == audioProof && f.sentry.forwardingProof() == sentryProof,
+                             "동일한 보호 관측의 반복 조회는 proof 세대를 유지해야 합니다.")
+                precondition(f.adapter.current(proof), "건강검사가 coordinator의 기존 증명을 무효화하면 안 됩니다.")
+            }
             precondition(f.hal.writes == 0 && f.surfaceWrites == 0 && f.hal.restorations == 0); checks += 3
         }
         for invalid in 0..<10 {
