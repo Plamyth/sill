@@ -15,6 +15,7 @@ final class DockSelectionIngress: @unchecked Sendable {
     private struct Menu {
         let id: UUID
         let item: Int
+        let version: UUID
         let choices: [String: String]
     }
     private var menus: [ObjectIdentifier: Menu] = [:]
@@ -45,7 +46,7 @@ final class DockSelectionIngress: @unchecked Sendable {
             }
         }
         collect(items)
-        menus[peer] = Menu(id: id, item: request.itemID, choices: choices)
+        menus[peer] = Menu(id: id, item: request.itemID, version: reply.catalog.version, choices: choices)
     }
 
     func discardMenu(for peer: ObjectIdentifier) {
@@ -78,6 +79,7 @@ final class DockSelectionIngress: @unchecked Sendable {
                   request.version == dockVersion, dockItems.contains(request.itemID) else { return nil }
             if request.action == .choose {
                 guard let menu = menus[peer], menu.id == request.menuID, menu.item == request.itemID,
+                      menu.version == request.version,
                       let item = request.menuItemID, menu.choices[item] == request.title,
                       request.title != nil else { return nil }
             }
