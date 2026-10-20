@@ -16,7 +16,8 @@ struct LiveDevicesPane: View {
                     requirePairingProblem: model.requirePairingProblem,
                     actions: DevicesPane.Actions(pair: { model.pairDevice() },
                                                  remove: { model.removeDevice($0) },
-                                                 rename: { model.renameDevice($0, to: $1) }))
+                                                 rename: { model.renameDevice($0, to: $1) }),
+                    connectionPolicy: model.remote?.connectionPolicy ?? .automaticNetwork)
     }
 }
 
@@ -39,6 +40,7 @@ struct DevicesPane: View {
     let actions: Actions
     /// "Last connected 2 minutes ago" counts from here (fixed in the previews).
     var now: Date?
+    var connectionPolicy: HostConnectionPolicy = .registeredKeys
 
     @State private var removedName: String?
     /// A Remove the keychain did not keep: the device's name and why.
@@ -54,30 +56,42 @@ struct DevicesPane: View {
 
     var body: some View {
         Form {
-            Section {
-                Toggle("Require pairing", isOn: $requirePairing)
-                    .disabled(unavailable != nil)
-                if let problem = unavailable {
-                    Warning("Devices can’t connect: Sill couldn’t use its key in your keychain (\(withoutFullStop(problem))). Quit Sill and open it again, and choose Always Allow if the keychain asks.")
-                } else if let p = requirePairingProblem {
-                    let reason = withoutFullStop(p.reason)
-                    Warning(p.wanted
-                            ? "Pairing is required until Sill quits: Sill couldn’t update the keychain (\(reason)). Try again."
-                            : "Pairing is still required: Sill couldn’t update the keychain (\(reason)). Try again.")
+            if connectionPolicy == .automaticNetwork {
+                Section {
+                    Label("기기 자동 연결", systemImage: "network")
+                    Text("같은 네트워크와 USB 케이블에서는 기기를 등록하지 않고 연결합니다. 외부에서는 같은 계정의 Tailscale 기기로 연결합니다.")
+                    if let problem = unavailable {
+                        Warning("연결을 시작할 수 없습니다: \(withoutFullStop(problem))")
+                    }
+                } footer: {
+                    Footnote("연결은 암호화됩니다. 앱 키 등록이나 페어링 코드는 필요하지 않습니다.")
                 }
-            } footer: {
-                if requirePairing {
-                    Footnote("Each iPhone or iPad pairs once: over the USB cable by itself, or on Wi\u{2011}Fi with a code this Mac shows when the device asks. Everything devices send and receive is encrypted.")
-                } else {
-                    Label("Any device on your network (or nearby, with Direct Wireless Connection on) and any app on this Mac can see and control it without pairing. Connections are still encrypted.",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Section {
+                    Toggle("Require pairing", isOn: $requirePairing)
+                        .disabled(unavailable != nil)
+                    if let problem = unavailable {
+                        Warning("Devices can’t connect: Sill couldn’t use its key in your keychain (\(withoutFullStop(problem))). Quit Sill and open it again, and choose Always Allow if the keychain asks.")
+                    } else if let p = requirePairingProblem {
+                        let reason = withoutFullStop(p.reason)
+                        Warning(p.wanted
+                                ? "Pairing is required until Sill quits: Sill couldn’t update the keychain (\(reason)). Try again."
+                                : "Pairing is still required: Sill couldn’t update the keychain (\(reason)). Try again.")
+                    }
+                } footer: {
+                    if requirePairing {
+                        Footnote("Each iPhone or iPad pairs once: over the USB cable by itself, or on Wi\u{2011}Fi with a code this Mac shows when the device asks. Everything devices send and receive is encrypted.")
+                    } else {
+                        Label("Any device on your network (or nearby, with Direct Wireless Connection on) and any app on this Mac can see and control it without pairing. Connections are still encrypted.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                pairedDevices
             }
-            pairedDevices
         }
     }
 

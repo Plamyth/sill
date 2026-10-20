@@ -21,6 +21,9 @@ struct ClientRoute {
     var authorizationCurrent = true
     var requiresLiveAuthorization: Bool { automatic }
     var isAuthenticated: Bool { encrypted && (pairedName != nil || automatic) && (!automatic || authorizationCurrent) }
+    func whileAuthorized(_ send: () -> Void) -> Bool {
+        guard !automatic || authorizationCurrent else { return false }; send(); return true
+    }
 }
 struct Hello { var presentationInput: Int? = nil; var device: String? = nil }
 enum SafeText { static func label(_ text: String) -> String { text } }
@@ -37,7 +40,9 @@ final class PointerProbe {
 final class MicrophoneRenderBuffer {
     var deliveries = 0
     var isOpen = true, isAdmitted = true
-    func sendEnabled(_ data: Data, to connection: NWConnection) -> Bool { deliveries += 1; return true }
+    func sendEnabled(_ data: Data, to connection: NWConnection, authorize: (_ send: () -> Void) -> Bool) -> Bool {
+        authorize { deliveries += 1 }
+    }
 }
 final class MicrophoneReplies {
     func offer(_ message: StreamMessage, connection: NWConnection, render: MicrophoneRenderBuffer?, queue: FixtureQueue,

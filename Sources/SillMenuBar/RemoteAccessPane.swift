@@ -18,7 +18,8 @@ struct LiveRemoteAccessPane: View {
                          actions: RemoteAccessPane.Actions(
                              setPort: { settings.config.remotePort = $0 },
                              setAddressName: { settings.remoteAddressName = $0 },
-                             showDevices: { model.showSettings?(.devices) }))
+                             showDevices: { model.showSettings?(.devices) }),
+                         connectionPolicy: model.remote?.connectionPolicy ?? .automaticNetwork)
     }
 }
 
@@ -42,6 +43,7 @@ struct RemoteAccessPane: View {
     /// The address name setting, as saved.
     let addressName: String
     let actions: Actions
+    var connectionPolicy: HostConnectionPolicy = .registeredKeys
 
     @State private var editingPort = false
     @State private var portText = ""
@@ -50,24 +52,34 @@ struct RemoteAccessPane: View {
     @State private var nameProblem: String?
 
     private var available: Bool { status.identityProblem == nil }
-    private var on: Bool { remoteAccess && available }
+    private var on: Bool { (connectionPolicy == .automaticNetwork || remoteAccess) && available }
 
     var body: some View {
         Form {
-            Section {
-                Toggle("Remote access", isOn: $remoteAccess)
-                    .disabled(!available)
-                if let problem = status.identityProblem {
-                    // The system's messages end with a full stop of their own.
-                    let reason = problem.hasSuffix(".") ? String(problem.dropLast()) : problem
-                    Warning("Remote access isn’t available: Sill couldn’t use the keychain (\(reason)).")
+            if connectionPolicy == .automaticNetwork {
+                Section {
+                    Label("외부 기기 자동 연결", systemImage: "network.badge.shield.half.filled")
+                    Text("같은 계정의 Tailscale 기기인지 확인해 연결합니다. 앱 등록이나 페어링 코드는 필요하지 않습니다.")
+                    if let problem = status.identityProblem {
+                        Warning("원격 연결을 시작할 수 없습니다: \(problem)")
+                    }
                 }
-            } footer: {
-                Footnote("Lets the iPhone and iPad you pair connect to this Mac from other networks: through a VPN such as Tailscale, or through a port you forward on your router. Sill turns away every device you haven’t paired, and encrypts everything the paired ones send and receive.")
+            } else {
+                Section {
+                    Toggle("Remote access", isOn: $remoteAccess)
+                        .disabled(!available)
+                    if let problem = status.identityProblem {
+                        // The system's messages end with a full stop of their own.
+                        let reason = problem.hasSuffix(".") ? String(problem.dropLast()) : problem
+                        Warning("Remote access isn’t available: Sill couldn’t use the keychain (\(reason)).")
+                    }
+                } footer: {
+                    Footnote("Lets the iPhone and iPad you pair connect to this Mac from other networks: through a VPN such as Tailscale, or through a port you forward on your router. Sill turns away every device you haven’t paired, and encrypts everything the paired ones send and receive.")
+                }
+                pairedDevices
+                if on { internet }
             }
             if on { addresses }
-            pairedDevices
-            if on { internet }
             Section {
                 LabeledContent {
                     Button("Open Energy Settings…") { Self.openEnergySettings() }

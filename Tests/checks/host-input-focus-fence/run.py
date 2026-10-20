@@ -23,9 +23,10 @@ def function(source, signature):
 
 def program(host, protocol, sizer):
     names = ["deliver(_", "applyAdmittedInput(_", "releaseHeldInput()", "raiseIfInteracting(_"]
-    names += [n for n in ["inputTargetReady(_", "applyAdmittedChord("] if "private func " + n in host]
+    names += [n for n in ["inputTargetReady(_", "applyAdmittedChord(", "inputAuthorizationCurrent(_"] if "private func " + n in host]
     methods = "\n".join(function(host, "private func " + n) for n in names)
     chord = "" if "private func applyAdmittedChord(" in host else "func applyAdmittedChord(keyCode: UInt16, flags: UInt64) { injector.chord(keyCode: keyCode, flags: flags) }"
+    held = function(host, "private enum Held").replace("private enum", "enum", 1)
     match = function(sizer, "private static func axWindow(matching window:")
     return protocol.split("public struct SourceInput:", 1)[0] + r'''
 import CoreFoundation
@@ -78,7 +79,8 @@ final class WindowSizer {
     static var focused = false
     func element(for window: Window, input: Bool = false) -> AXUIElement? { Self.unique ? 99 : nil }
     static var unique = true
-    static func hasKeyboardFocus(_ element: AXUIElement, pid: Int32) -> Bool { focused }
+    static var onFocusRead: (() -> Void)?
+    static func hasKeyboardFocus(_ element: AXUIElement, pid: Int32) -> Bool { onFocusRead?(); return focused }
     static var keyRequests: [Int] = []
     static var focusOnRequest = true
     static func makeKey(_ element: Int) {
@@ -129,8 +131,15 @@ final class Injector {
     func chord(keyCode: UInt16, flags: UInt64) { chords += 1 }
     func releaseInput(of device: Int) { releases += 1; owed = false }
 }
+struct AuthorizationRoute {
+    var current = true
+    var requiresLiveAuthorization: Bool { true }
+    var isAuthenticated: Bool { current }
+    func whileAuthorized(_ operation: () -> Void) -> Bool { guard current else { return false }; operation(); return true }
+}
 final class Host {
-    enum Held { case input(InputEvent, CGRect, Int, VideoEpoch?), chord(keyCode: UInt16, flags: UInt64), disconnect(Int) }
+''' + held + r'''
+    var routes = [1: AuthorizationRoute()]
     var heldInput: [Held] = []
     var holdUntil: CFAbsoluteTime = 0
     var switching = false
@@ -176,6 +185,7 @@ final class Host {
         deliver(event, in: CGRect(x: 0, y: 0, width: 100, height: 100), from: 1, epoch: epoch)
     }
     func chord() { applyAdmittedChord(keyCode: 123, flags: 0) }
+    func flush() { releaseHeldInput() }
     func interact(_ event: InputEvent, epoch: VideoEpoch? = nil) {
         if !synthetic { raiseIfInteracting(event) }
         immediate(event, epoch: epoch)
@@ -196,7 +206,7 @@ let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
 func fresh(front: Int32? = 22, focused: Bool = true, point: UInt32? = 7) -> Host {
     Host.frontPID = front; WindowSizer.focused = focused; WindowSizer.unique = true; Host.pointID = point
     WindowSizer.keyRequests = []; WindowSizer.focusOnRequest = true
-    Clock.onSleep = nil
+    Clock.onSleep = nil; WindowSizer.onFocusRead = nil
     return Host()
 }
 let wrongFront = fresh(front: 77)
@@ -358,6 +368,30 @@ def main():
     original = {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in [HOST, "Sources/SillHost/WindowSizer.swift", "Sources/StreamProtocol/Input.swift"]}
     host = subprocess.check_output(["git", "--no-lazy-fetch", "show", BASE + ":" + HOST], cwd=ROOT, text=True) if args.baseline else (ROOT / HOST).read_text()
     source = program(host, (ROOT / "Sources/StreamProtocol/Input.swift").read_text(), (ROOT / "Sources/SillHost/WindowSizer.swift").read_text())
+    if "device: KeyStrokes.Device)" in function(host, "private func applyAdmittedChord("):
+        source = source.replace("applyAdmittedChord(keyCode: 123, flags: 0)", "applyAdmittedChord(keyCode: 123, flags: 0, device: 1)")
+        source = source.replace(".chord(keyCode: 123, flags: 0)", ".chord(keyCode: 123, flags: 0, device: 1)")
+        source = source.replace('if failures > 0 {', r'''
+let revoked = fresh()
+revoked.holdUntil = CFAbsoluteTimeGetCurrent() + 1
+revoked.immediate(down)
+revoked.heldInput.append(.chord(keyCode: 123, flags: 0, device: 1))
+revoked.routes[1]?.current = false
+revoked.flush()
+check(revoked.injector.events.isEmpty && revoked.injector.chords == 0, "expired queued input and chord are not injected")
+check(revoked.injector.releases == 1, "expired queued key releases device state")
+let expiredUp = fresh(); expiredUp.injector.owed = true; expiredUp.routes[1]?.current = false
+expiredUp.immediate(up)
+check(expiredUp.injector.events == [up] && expiredUp.injector.nulls == [true], "owed key up survives authorization expiry")
+let afterFocus = fresh()
+WindowSizer.onFocusRead = { afterFocus.routes[1]?.current = false }
+afterFocus.immediate(click)
+check(afterFocus.injector.events.isEmpty, "expiry during focus readback prevents injection")
+let departed = fresh(); departed.routes[1] = nil
+departed.immediate(down); departed.chord()
+check(departed.injector.events.isEmpty && departed.injector.chords == 0, "departed route cannot inject")
+if failures > 0 {
+''')
     if args.emit:
         print(source)
         return 0

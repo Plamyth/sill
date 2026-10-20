@@ -27,6 +27,13 @@ final class AutomaticSessionAuthorization: @unchecked Sendable, Equatable {
         valid = false
     }
 
+    func whileCurrent(_ operation: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard current(clock()) else { return false }
+        operation()
+        return true
+    }
+
     func renew(principal: AutomaticDevicePrincipal, fingerprint: Data32, nodeExpiry: Date = .distantFuture) -> Bool {
         lock.lock(); defer { lock.unlock() }
         let now = clock()

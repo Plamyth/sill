@@ -108,13 +108,18 @@ package final class MicrophoneRenderBuffer: @unchecked Sendable {
     var isOpen: Bool { state.withLock { $0.open } }
     var isAdmitted: Bool { state.withLock { $0.open && $0.admitted } }
     @discardableResult
-    func sendEnabled(_ data: Data, to connection: NWConnection) -> Bool {
+    func sendEnabled(_ data: Data, to connection: NWConnection,
+                     authorize: (_ send: () -> Void) -> Bool = { send in send(); return true }) -> Bool {
         state.withLock { value in
             guard value.open else { return false }
-            return grant.whileValid(at: monotonicNow()) {
-                value.admitted = true
-                connection.send(content: data, completion: .contentProcessed { _ in })
+            var sent = false
+            _ = grant.whileValid(at: monotonicNow()) {
+                sent = authorize {
+                    value.admitted = true
+                    connection.send(content: data, completion: .contentProcessed { _ in })
+                }
             }
+            return sent
         }
     }
 

@@ -379,23 +379,17 @@ final class Door: @unchecked Sendable {
             readPairRequest(id, c, evidence.fingerprint.data)
             return
         }
-        guard let server else { c.cancel(); return }
-        server.gate(c) { [weak self] hello in
-            guard let self, let server = self.server, self.pending[id]?.connection === c,
-                  self.evidenceCurrent(evidence, on: c), let pending = self.pending.removeValue(forKey: id) else { c.cancel(); return }
-            pending.deadline?.cancel()
-            if let hello, self.kind == .home,
-               server.droppedForDirectWireless(c, acceptedPeerToPeer: pending.peerToPeer, hello: hello) { return }
-            self.forgive(pending.source)
-            let origin = pending.origin ?? .internet
-            let cable: String?
-            if case .cable(let id) = evidence.principal { cable = id } else { cable = nil }
-            let peer = ClientRoute.Peer(fingerprint: evidence.fingerprint.data, name: nil, cableDevice: cable,
-                                       automaticPrincipal: evidence.principal,
-                                       authorization: self.startAutomaticSession(c, evidence: evidence))
-            server.serve(c, route: .automatic(origin: origin, peer: peer), hello: hello,
-                         admitted: { print("자동 연결 기기를 허용했습니다.") })
-        }
+        guard let server, let pending = self.pending.removeValue(forKey: id) else { c.cancel(); return }
+        pending.deadline?.cancel()
+        forgive(pending.source)
+        let origin = pending.origin ?? .internet
+        let cable: String?
+        if case .cable(let id) = evidence.principal { cable = id } else { cable = nil }
+        let peer = ClientRoute.Peer(fingerprint: evidence.fingerprint.data, name: nil, cableDevice: cable,
+                                   automaticPrincipal: evidence.principal,
+                                   authorization: startAutomaticSession(c, evidence: evidence))
+        server.serve(c, route: .automatic(origin: origin, peer: peer), hello: nil,
+                     admitted: { print("자동 연결 기기를 허용했습니다.") })
     }
 
     private func startAutomaticSession(_ c: NWConnection, evidence: AutomaticEvidence) -> AutomaticSessionAuthorization {

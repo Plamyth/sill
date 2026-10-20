@@ -256,6 +256,7 @@ final class StreamServer {
         let reported = pointerSampler == nil ? samplePointer(now: now) : []
         let data = StreamMessage(kind: .tick, timestamp: now, isKeyframe: false, payload: Data()).serialized()
         for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); continue }
             // A kind 26 just sent keeps its link awake this turn.
             if reported.contains(id) { continue }
             // Over TLS every record costs CPU (the remote plan's H20): skip a tick right after
@@ -264,7 +265,9 @@ final class StreamServer {
             if client.encrypted, now - client.lastSentAt < Self.tickInterval { continue }
             // The USB cable has no radio to keep awake.
             if client.encrypted, client.onCable { continue }
-            client.connection.send(content: data, completion: .contentProcessed { _ in })   // not counted as inflight
+            if !client.route.whileAuthorized({ client.connection.send(content: data, completion: .contentProcessed { _ in }) }) {
+                client.connection.cancel()
+            }
         }
         Stats.shared.bump("net.tick")
     }
@@ -294,6 +297,7 @@ final class StreamServer {
         var sent = Set<ObjectIdentifier>()
         var watched = false
         for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); continue }
             guard let report = reading.report(for: id, seen: client.inputsRead) else {
                 client.lastPointer = nil
                 continue
@@ -302,7 +306,9 @@ final class StreamServer {
             guard report != client.lastPointer else { continue }
             client.lastPointer = report
             let data = StreamMessage(kind: .macPointer, timestamp: now, isKeyframe: false, payload: Wire.encode(report)).serialized()
-            client.connection.send(content: data, completion: .contentProcessed { _ in })   // not counted as inflight
+            guard client.route.whileAuthorized({ client.connection.send(content: data, completion: .contentProcessed { _ in }) }) else {
+                client.connection.cancel(); continue
+            }
             client.lastSentAt = now
             Stats.shared.bump("ptr.sent")
             sent.insert(id)
@@ -1631,7 +1637,7 @@ final class StreamServer {
                     if trace { print("mic.trace activeDelivery request=\(request) grant=\(grant) pendingBytes=\(client.pendingBytes) action=drop renderOpen=\(render.isOpen) renderAdmitted=\(render.isAdmitted) sendEnabled=notCalled") }
                     return
                 }
-                let enabled = render.sendEnabled(message.serialized(), to: connection)
+                let enabled = render.sendEnabled(message.serialized(), to: connection, authorize: client.route.whileAuthorized)
                 if trace { print("mic.trace activeDelivery request=\(request) grant=\(grant) pendingBytes=\(client.pendingBytes) action=send renderOpen=\(render.isOpen) renderAdmitted=\(render.isAdmitted) sendEnabled=\(enabled)") }
             } else { self.send(message.serialized(), to: client) }
         }
@@ -1851,28 +1857,31 @@ final class StreamServer {
             client.inflightFrames += 1
             if client.oldestUnackedFrameAt == nil { client.oldestUnackedFrameAt = now }
         }
-        client.connection.send(content: data, completion: .contentProcessed { [weak client] _ in
-            guard let client else { return }
-            client.inflight -= 1
-            client.pendingBytes -= data.count
-            client.takenThisSecond += data.count
-            if remote {
-                if let seq = keyframeSeq, let i = client.keyframesInFlight.firstIndex(where: { $0.seq == seq }) {
-                    client.keyframeBytesInFlight -= client.keyframesInFlight.remove(at: i).bytes
-                    // The last of them taken: what they left behind them.
-                    if client.keyframesInFlight.isEmpty { client.backlogFloor = client.pendingBytes }
+        let sent = client.route.whileAuthorized {
+            client.connection.send(content: data, completion: .contentProcessed { [weak client] _ in
+                guard let client else { return }
+                client.inflight -= 1
+                client.pendingBytes -= data.count
+                client.takenThisSecond += data.count
+                if remote {
+                    if let seq = keyframeSeq, let i = client.keyframesInFlight.firstIndex(where: { $0.seq == seq }) {
+                        client.keyframeBytesInFlight -= client.keyframesInFlight.remove(at: i).bytes
+                        // The last of them taken: what they left behind them.
+                        if client.keyframesInFlight.isEmpty { client.backlogFloor = client.pendingBytes }
+                    }
                 }
-            }
-            if isFrame {
-                client.inflightFrames -= 1
-                if client.inflightFrames <= 0 {
-                    client.inflightFrames = 0; client.oldestUnackedFrameAt = nil
-                } else {
-                    // Progress: a slow but live peer on a saturated link never drains to zero.
-                    client.oldestUnackedFrameAt = Date().timeIntervalSince1970
+                if isFrame {
+                    client.inflightFrames -= 1
+                    if client.inflightFrames <= 0 {
+                        client.inflightFrames = 0; client.oldestUnackedFrameAt = nil
+                    } else {
+                        // Progress: a slow but live peer on a saturated link never drains to zero.
+                        client.oldestUnackedFrameAt = Date().timeIntervalSince1970
+                    }
                 }
-            }
-        })
+            })
+        }
+        if !sent { client.connection.cancel() }
     }
 }
 
@@ -1947,6 +1956,15 @@ enum ClientRoute: Equatable {
         return nil
     }
     var requiresLiveAuthorization: Bool { if case .automatic = self { return true }; return false }
+    func whileAuthorized(_ operation: () -> Void) -> Bool {
+        if case .automatic(_, let peer) = self {
+            guard let principal = peer.automaticPrincipal, let authorization = peer.authorization,
+                  authorization.principal == principal, authorization.fingerprint.data == peer.fingerprint else { return false }
+            return authorization.whileCurrent(operation)
+        }
+        operation()
+        return true
+    }
     var isAuthenticated: Bool {
         guard encrypted else { return false }
         if case .automatic(_, let peer) = self {

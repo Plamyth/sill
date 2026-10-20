@@ -232,7 +232,7 @@ package final class StreamCoordinator {
         "Gestures ignored: \(counts["gestures"] ?? 0) in a minute, from devices sending more than \(StreamCoordinator.gesturesPerSecond) a second."
     }
     /// Gestures waiting for a switch in flight to finish, in arrival order, and the task posting them.
-    private var pendingGestures: [(gesture: TrackpadGesture, device: String)] = []
+    private var pendingGestures: [(gesture: TrackpadGesture, device: String, id: KeyStrokes.Device)] = []
     private var gestureDrain: Task<Void, Never>?
     /// A host that does not advertise (the synthetic test hosts, which tests reach by port) posts no
     /// gesture's chord: it logs the one it would post, "(not posted: a test host)", and counts
@@ -1010,6 +1010,10 @@ package final class StreamCoordinator {
                 dockSelectionIngress.complete(ticket)
             }
         }
+        guard connection.state == .ready, inputAuthorizationCurrent(ObjectIdentifier(connection)) else {
+            injector.releaseInput(of: ObjectIdentifier(connection))
+            return
+        }
         if let ticket = selectionTicket {
             guard dockSelectionIngress.isCurrent(ticket) else { return }
             if dockTransition || (message.kind == .selectSource && switching) {
@@ -1027,7 +1031,9 @@ package final class StreamCoordinator {
             guard let selection = Wire.decode(DisplaySelection.self, from: message.payload) else { return }
             // A monitor pick cannot queue behind an in-flight host restart.
             guard !switching else { broadcastList(); return }
-            await select(.desktop, displaySelection: selection)
+            let admission = remoteSourceAdmission(SourceRequest(source: .desktop, origin: .human),
+                                                   from: connection, selectionTicket: selectionTicket)
+            await select(.desktop, displaySelection: selection, admission: admission)
         case .selectSource:
             await handleRemoteSource(message, from: connection, selectionTicket: selectionTicket)
         case .windowCommand:
@@ -1100,7 +1106,7 @@ package final class StreamCoordinator {
             }
             recent.append(now)
             gestureArrivals[id] = recent
-            queueGesture(gesture, from: deviceName(connection))
+            queueGesture(gesture, from: deviceName(connection), id: ObjectIdentifier(connection))
         case .remoteAudioControl:
             guard let request = Wire.decode(RemoteAudioSubscription.self, from: message.payload) else { return }
             await controlRemoteAudio(request, from: connection)
@@ -1330,7 +1336,7 @@ package final class StreamCoordinator {
         let isCurrent = {
             let id = ObjectIdentifier(connection)
             guard self.inputFence.contains(id), self.connections[id] === connection,
-                  connection.state == .ready, !self.shuttingDown else { return false }
+                  connection.state == .ready, !self.shuttingDown, self.inputAuthorizationCurrent(id) else { return false }
             return request.origin != .automatic ||
                 (request.selectionRevision == self.selectionRevision && self.active == .none)
         }
@@ -1947,7 +1953,7 @@ package final class StreamCoordinator {
     /// behind it, so a click just before the gesture lands first.
     private enum Held {
         case input(InputEvent, CGRect, KeyStrokes.Device, VideoEpoch?)
-        case chord(keyCode: UInt16, flags: UInt64)
+        case chord(keyCode: UInt16, flags: UInt64, device: KeyStrokes.Device)
         case disconnect(KeyStrokes.Device)
     }
     private var heldInput: [Held] = []
@@ -1979,8 +1985,10 @@ package final class StreamCoordinator {
             Stats.shared.bump("in.focusRejected")
             return
         }
-        logClick(event, in: rect)
-        injector.apply(event, in: rect, from: device)
+        guard let route = routes[device], route.whileAuthorized({
+            logClick(event, in: rect)
+            injector.apply(event, in: rect, from: device)
+        }) else { injector.releaseInput(of: device); return }
     }
 
     private func inputTargetReady(_ event: InputEvent) -> Bool {
@@ -1995,10 +2003,15 @@ package final class StreamCoordinator {
         return WindowSizer.hasKeyboardFocus(element, pid: pid)
     }
 
-    private func applyAdmittedChord(keyCode: UInt16, flags: UInt64) {
+    private func inputAuthorizationCurrent(_ device: KeyStrokes.Device) -> Bool {
+        guard let route = routes[device] else { return false }
+        return !route.requiresLiveAuthorization || route.isAuthenticated
+    }
+
+    private func applyAdmittedChord(keyCode: UInt16, flags: UInt64, device: KeyStrokes.Device) {
         guard !switching else { return }
         guard inputTargetReady(.text("")) else { Stats.shared.bump("in.focusRejected"); return }
-        injector.chord(keyCode: keyCode, flags: flags)
+        _ = routes[device]?.whileAuthorized { injector.chord(keyCode: keyCode, flags: flags) }
     }
 
     private func releaseHeldInput() {
@@ -2009,7 +2022,7 @@ package final class StreamCoordinator {
         for item in held {
             switch item {
             case .input(let event, let rect, let device, let epoch): applyAdmittedInput(event, rect: rect, device: device, epoch: epoch)
-            case .chord(let keyCode, let flags): applyAdmittedChord(keyCode: keyCode, flags: flags)
+            case .chord(let keyCode, let flags, let device): applyAdmittedChord(keyCode: keyCode, flags: flags, device: device)
             case .disconnect(let device): injector.releaseInput(of: device)
             }
         }
@@ -2703,8 +2716,8 @@ package final class StreamCoordinator {
     /// gesture made while a window streamed comes right after the device's Desktop pick, the
     /// window may be on its way home from the virtual display, and the view should open over the
     /// Desktop, which is the only source that shows it.
-    private func queueGesture(_ gesture: TrackpadGesture, from device: String) {
-        pendingGestures.append((gesture, device))
+    private func queueGesture(_ gesture: TrackpadGesture, from device: String, id: KeyStrokes.Device) {
+        pendingGestures.append((gesture, device, id))
         guard gestureDrain == nil else { return }
         gestureDrain = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -2714,7 +2727,7 @@ package final class StreamCoordinator {
             }
             while !self.pendingGestures.isEmpty {
                 let next = self.pendingGestures.removeFirst()
-                self.performGesture(next.gesture, from: next.device)
+                self.performGesture(next.gesture, from: next.device, id: next.id)
             }
             self.gestureDrain = nil
         }
@@ -2724,8 +2737,8 @@ package final class StreamCoordinator {
     /// one line saying what it did, and the chord posted, behind input held for an activation; on
     /// a host that does not advertise, only counted. Nothing is raised or activated first: these
     /// views act on the whole Mac (App Exposé on the app in front), as they do from its keyboard.
-    private func performGesture(_ gesture: TrackpadGesture, from device: String) {
-        guard !shuttingDown else { return }
+    private func performGesture(_ gesture: TrackpadGesture, from device: String, id: KeyStrokes.Device) {
+        guard !shuttingDown, inputAuthorizationCurrent(id) else { return }
         let outcome = gestureChords.resolve(gesture.gesture, table: hotKeyTable())
         print(GestureChords.line(device: device, gesture: gesture.gesture, fingers: gesture.fingers,
                                  outcome: outcome, dryRun: gesturesDry))
@@ -2735,10 +2748,10 @@ package final class StreamCoordinator {
             return
         }
         if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil {
-            heldInput.append(.chord(keyCode: keyCode, flags: flags))
+            heldInput.append(.chord(keyCode: keyCode, flags: flags, device: id))
             return
         }
-        applyAdmittedChord(keyCode: keyCode, flags: flags)
+        applyAdmittedChord(keyCode: keyCode, flags: flags, device: id)
     }
 
     /// A device's input as `GestureChords` weighs it: whether it can close a view a gesture opened.
@@ -2913,7 +2926,7 @@ package final class StreamCoordinator {
     private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID, action: UInt64,
                                       epoch: UInt64? = nil) -> Bool {
         !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
-        routes[id] != nil && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
+        inputAuthorizationCurrent(id) && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
         (epoch == nil || epoch == remoteAudioEpoch)
     }
 
