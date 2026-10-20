@@ -486,6 +486,7 @@ enum MockCatalog {
 
     /// How the connect screen starts in a case: the card unfolded, on the typed path, and the
     /// viewfinder's stand-in. The home card unfolds from the client's `homeAsk` (ConnectScreen).
+    #if !VISION_CLIENT
     static func connectScreenOptions(_ c: ConnectCase) -> (adding: Bool, typed: Bool, scanner: CodeScanner.Mode) {
         switch c {
         case .addmac, .pairing: return (true, false, .placeholder)
@@ -495,6 +496,7 @@ enum MockCatalog {
         default: return (false, false, .placeholder)
         }
     }
+    #endif
 
     /// A stand-in pairing link: a made-up key and secret, so nothing pairs with it.
     static var mockLink: PairLink {

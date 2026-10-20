@@ -233,7 +233,7 @@ final class InputOverlayView: UIView, UIKeyInput {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil { momentum.stop(); releaseForwardedKeys() }
-        #if DEBUG
+        #if DEBUG && !VISION_CLIENT
         if window != nil {
             InputScript.overlay = self
         } else if InputScript.overlay === self {

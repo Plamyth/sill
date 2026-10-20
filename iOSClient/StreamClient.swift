@@ -4419,7 +4419,7 @@ final class StreamClient: ObservableObject {
                     // Once per connection, now that the Mac has let this device in: the Mac's menus,
                     // their top level now and again whenever it changes (a Mac from before them skips it).
                     self.subscribeToMenus()
-                    #if DEBUG
+                    #if DEBUG && !VISION_CLIENT
                     InputScript.sessionListed(self)   // -SillInputScript: its clock starts here
                     SettingsScript.sessionListed(self)   // -SillSettingsScript: and this one's
                     if let test = UserDefaults.standard.string(forKey: "SillMoveHomeTest") { self.beginMoveHomeTest(test) }
@@ -5130,11 +5130,15 @@ extension StreamClient {
     /// app it streams, and each menu opened is validated by that app.
     var menuHarnessRefusal: String? {
         guard connection != nil else { return nil }
+        #if VISION_CLIENT
+        return "Vision Pro에서는 외부 입력 스크립트로 Mac 메뉴를 제어할 수 없습니다."
+        #else
         if let why = InputScript.refusal(endpoint: connection?.endpoint, hostVersion: hostVersion) {
             return why.replacingOccurrences(of: ", which posts input to this Mac", with: "")
         }
         guard menus.app == "menufixture" else { return "the menus are \(menus.app ?? "no app")'s, not the test app's (menufixture)" }
         return nil
+        #endif
     }
 
     /// `-SillMenuPress 'File/Save'`: once the first top level is in, the item at that path is chosen
