@@ -79,8 +79,12 @@ def prepare(root):
         checks['project membership ' + name] = project[ref]['path'] == path and project[build]['fileRef'] == ref and any(
             item['isa'] == 'PBXSourcesBuildPhase' and build in item['files'] for item in project.values())
     version = re.search(r"'CURRENT_PROJECT_VERSION': '([1-9][0-9]*)'", (root / 'Scripts/make-vision-project.py').read_text())
-    checks['build versions match generator'] = version is not None and [item['buildSettings']['CURRENT_PROJECT_VERSION'] for item in project.values()
-        if item['isa'] == 'XCBuildConfiguration' and 'CURRENT_PROJECT_VERSION' in item['buildSettings']] == [version[1], version[1]]
+    apps = [item for item in project.values() if item.get('isa') == 'PBXNativeTarget' and
+            item.get('productType') == 'com.apple.product-type.application']
+    checks['build versions match generator'] = version is not None and {app['name'] for app in apps} == {'SillVision', 'SillVisionReleaseTest'} and all(
+        len(configs := project[app['buildConfigurationList']]['buildConfigurations']) == 2 and
+        {project[key]['name'] for key in configs} == {'Debug', 'Release'} and
+        all(project[key]['buildSettings']['CURRENT_PROJECT_VERSION'] == version[1] for key in configs) for app in apps)
     failed = [name for name, passed in checks.items() if not passed]
     if failed:
         raise AssertionError(failed)
