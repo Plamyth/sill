@@ -441,6 +441,7 @@ final class NoteProtocol: URLProtocol {
         hierarchy.selectedNode = UUID(); hierarchy.beginChildLink()
         check(hierarchy.linkStart == nil,"missing selected source does not arm connection")
         try await checkBlockExcerpts(check)
+        try await checkSelectedInk(check)
         print("RESULT \(checks) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }

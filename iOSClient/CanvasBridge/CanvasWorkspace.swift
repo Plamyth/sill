@@ -221,6 +221,8 @@ struct CanvasWorkspace: View {
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
+            Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
+                .disabled(store.inkSelection.isEmpty)
             Button("음성 설명",systemImage:"mic") { dictationOpen = true }
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)

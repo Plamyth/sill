@@ -107,6 +107,7 @@ struct PencilCanvas: UIViewRepresentable {
         case .lasso: canvas.tool = PKLassoTool()
         case .select: break
         }
+        if canvas.selection != store.inkSelection { canvas.selection = store.inkSelection }
         context.coordinator.updateHover()
     }
 
@@ -166,6 +167,7 @@ struct PencilCanvas: UIViewRepresentable {
             let enabled = canvas.drawingGestureRecognizer.isEnabled
             canvas.drawingGestureRecognizer.isEnabled = false
             canvas.drawing = store.drawing
+            canvas.selection = store.inkSelection
             canvas.drawingGestureRecognizer.isEnabled = enabled
             manager.enableUndoRegistration()
             manager.removeAllActions()
@@ -263,6 +265,11 @@ struct PencilCanvas: UIViewRepresentable {
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
             true
+        }
+
+        func canvasViewSelectionDidChange(_ canvasView: PKCanvasView) {
+            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            store.setInkSelection(canvasView.selection)
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {

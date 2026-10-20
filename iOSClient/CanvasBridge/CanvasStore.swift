@@ -117,7 +117,7 @@ final class CanvasStore: ObservableObject {
             }
             if selectedNode.map({ !visible.contains($0) }) == true { selectedNode = nil }
             if proposedNode.map({ !visible.contains($0) }) == true { proposedNode = nil }
-            if oldValue.id != scene.id { invalidateNoteScene(); inkHistory.invalidate() }
+            if oldValue.id != scene.id { setInkSelection([]); invalidateNoteScene(); inkHistory.invalidate() }
             else if let context = noteContext, !noteContextIsCurrent(context) { invalidateNoteRequests() }
             handwritingRequest = nil
             scheduleSave()
@@ -125,10 +125,14 @@ final class CanvasStore: ObservableObject {
     }
     @Published var mode: CanvasMode = .pen {
         didSet {
-            if oldValue != mode { clearPendingLink() }
+            if oldValue != mode {
+                clearPendingLink()
+                if mode != .lasso { setInkSelection([]) }
+            }
             handwritingRequest = nil
         }
     }
+    @Published private(set) var inkSelection: Set<UUID> = []
     @Published var eraserStyle: CanvasEraserStyle = .partial
     @Published var selectedNode: UUID? {
         didSet {
@@ -159,6 +163,7 @@ final class CanvasStore: ObservableObject {
         set {
             objectWillChange.send()
             storedDrawing = newValue
+            setInkSelection([])
             handwritingRequest = nil
             inkHistory.invalidate()
         }
@@ -978,6 +983,7 @@ final class CanvasStore: ObservableObject {
     func updateDrawing(_ next: PKDrawing) {
         guard drawing != next else { return }
         storedDrawing = next
+        setInkSelection(inkSelection)
         handwritingRequest = nil
         var changed = scene
         changed.drawingBase64 = next.dataRepresentation().base64EncodedString()
@@ -1105,15 +1111,26 @@ final class CanvasStore: ObservableObject {
         scene.moveNode(selectedNode, to: CanvasPoint(x: Double(point.x), y: Double(point.y)))
     }
 
-    func proposeHandwriting(recognize: (PKDrawing) async -> String? = { drawing in
+    func setInkSelection(_ ids: Set<UUID>) {
+        let next = ids.intersection(drawing.strokes.map(\.id))
+        guard next != inkSelection else { return }
+        inkSelection = next
+        handwritingRequest = nil
+    }
+
+    func proposeHandwriting(selectedOnly: Bool = false, recognize: (PKDrawing) async -> String? = { drawing in
         let recognizer = PKStrokeRecognizer()
         await recognizer.updateDrawing(drawing)
         return await recognizer.recognizedText()
     }) async {
         let request = UUID()
         handwritingRequest = request
-        let sourceDrawing = drawing
-        guard !sourceDrawing.strokes.isEmpty else { status = "인식할 획이 없습니다."; return }
+        let sourceDrawing = selectedOnly ? PKDrawing(strokes:drawing.strokes.filter { inkSelection.contains($0.id) }) : drawing
+        guard !sourceDrawing.strokes.isEmpty else {
+            handwritingRequest = nil
+            status = selectedOnly ? "영역 선택 도구로 인식할 글자를 먼저 선택하세요." : "인식할 획이 없습니다."
+            return
+        }
         let recognized = await recognize(sourceDrawing)
         guard handwritingRequest == request else { return }
         handwritingRequest = nil
