@@ -19,7 +19,7 @@ enum AutomaticDevicePrincipal: Hashable, Sendable {
     /// 영구 앱 키 등록이나 Tailnet 원격 권한으로 승격하지 않는다.
     case localNetwork(transportFingerprint: Data32)
 
-    /// 종류별 namespace 해시다. 실제 TLS 인증서 fingerprint와 혼용하지 않는다.
+    /// 종류별 namespace를 입력에 포함한 64자리 소문자 hex다. 실제 TLS fingerprint와 혼용하지 않는다.
     var stableIdentifier: String {
         let namespace: String
         let fields: [Data]
@@ -41,6 +41,6 @@ enum AutomaticDevicePrincipal: Hashable, Sendable {
             withUnsafeBytes(of: &count) { input.append(contentsOf: $0) }
             input.append(field)
         }
-        return namespace + ":" + SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
     }
 }

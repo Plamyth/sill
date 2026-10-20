@@ -35,7 +35,7 @@ SDK 전체 빌드·실제 peer TLS·실기기 연결·앱 설치·기기 승인�
 
 ## 최종 검사 영수증
 
-2026-10-21 KST에 아래 명령을 실제 실행해 종료 코드 0과 계약 115개 통과를 확인했다.
+2026-10-21 KST에 Node device ID 형식 보완 전 아래 명령을 실제 실행해 종료 코드 0과 계약 115개 통과를 확인했다.
 
 ```sh
 env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash Tests/checks/automatic-device-access/run.sh --live-self
@@ -69,14 +69,22 @@ LAN에서는 부모가 실제 socket TLS 인증서 SHA-256을 `Data32(actualDige
 
 ## 정확한 소스 해시
 
-아래 순서로 `경로 + NUL + SHA256 hex + LF`를 UTF-8로 연결한 집합의 SHA-256은 `df32008d6ae59ce8d7c05955dc680319aa13c20ba59d0f0eb121687e15f2e4f5`다. OriginPolicy는 읽기 전용으로 재사용했으며 변경하지 않았다.
+아래 순서로 `경로 + NUL + SHA256 hex + LF`를 UTF-8로 연결한 최종 집합의 SHA-256은 `5d12328958aa4827446b58dd2391522264190b6c55f67fa9090af3cb5c553b1c`다. OriginPolicy는 읽기 전용으로 재사용했으며 변경하지 않았다.
 
 | 경로 | SHA-256 |
 | --- | --- |
-| Sources/SillHost/AutomaticDevicePrincipal.swift | b971777190b251adc0ef1eddecefae16a99585d777ee44a2053afc64e0745bc2 |
+| Sources/SillHost/AutomaticDevicePrincipal.swift | 8ddb899f3bf2ec74801bf464452d3c502d76e4500e414bca840531d516ab9f0b |
 | Sources/SillHost/TailnetDeviceAccess.swift | 5bcc5d28d36f302944f1ec9d1e5ab142f9835310c1bff0883dde98c01bdf2f47 |
 | Sources/SillHost/OriginPolicy.swift | c263125add93da1c21e1a2238a3368e85e4eca10ed6843710fa6df922ee7cda3 |
-| Tests/checks/automatic-device-access/Contract.swift | 59fd503d6d1e39c873f4036342cd88943b8dc4279b0724e85cc665e4b7891ec8 |
+| Tests/checks/automatic-device-access/Contract.swift | 518d4d46fc1750d2a4106d1d3593d54c7425b0749ba0dd77922a758cb866870e |
 | Tests/checks/automatic-device-access/run.sh | 0f6398b4834bb2e3df773c05ddab5680fa2e286a2989c91411701651c0cb6453 |
 
 소유 범위 자체 diff 검토에서는 기본값에 테스트 센서를 연결하지 않음, 다른 소스·기존 paired 기록을 쓰지 않음, App 키와 TLS fingerprint를 Tailnet identity로 위장하지 않음을 확인했다. 이 검토는 부모의 독립 검수와 통합 수용을 대신하지 않는다. 최종 커밋은 인계 답변으로 제공하고 이 작업의 쓰기 권한을 부모에게 반납한다.
+
+## Node device ID 계약 보완과 쓰기 반납
+
+사용자 추가 지시에 따라 `stableIdentifier`는 namespace 문자열 prefix를 반환하지 않는다. namespace와 길이 구분을 SHA-256 입력에 유지하고 결과 64자리 소문자 hex만 반환한다. 세 종류의 분리와 고정 해시 벡터를 검사했다. 이 값은 AutomaticDevicePrincipal과 부모의 AudioForwardingDeviceID 사이 변환에만 사용한다. TLS SPKI 원본 fingerprint로 사용하지 않는다.
+
+부모는 호스트 identity·principalID·정책 버전으로 결정적 authorization generation을 발급한다. 이 부품은 authorization generation을 만들지 않는다. proof의 무작위 issuer는 발급 객체 사이의 일시적인 혼용을 막는 용도이며 stableIdentifier·영구 device ID·authorization generation에 포함하지 않는다. 부모의 접속별 인스턴스 및 기존 pending 상한을 유지하며 큐나 캐시는 추가하지 않았다.
+
+보완 뒤 `env DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash Tests/checks/automatic-device-access/run.sh`가 생산 조건 typecheck와 실제 parser 계약 115개를 통과했다. 마지막 실행물은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR/automatic-device-access-20261020T230307-90111/check`다. 이 실행에서는 실제 CLI를 다시 조회하지 않았다. 실제 self 조회를 통과한 TailnetDeviceAccess.swift의 바이트와 해시는 그대로다. 런타임·설치·기기·키·신뢰·TCC는 변경하지 않았다. 독립 검수와 실제 peer TLS·기기 승인은 부모에게 남긴다.

@@ -59,12 +59,17 @@ private final class Fixture: @unchecked Sendable {
         let lan = AutomaticDevicePrincipal.localNetwork(transportFingerprint: fingerprint)
         expect(Set([tailnet.stableIdentifier, cable.stableIdentifier, lan.stableIdentifier]).count == 3,
                "세 namespace 분리")
-        expect(tailnet.stableIdentifier == tailnet.stableIdentifier, "식별자 결정성")
+        expect(tailnet.stableIdentifier == "ca4e636e58377ee7f2d632589538a541dfd0124be8cc5f82470138a7dd27a225",
+               "namespace와 길이 구분을 포함한 고정 식별자 계약")
         expect(tailnet.stableIdentifier != AutomaticDevicePrincipal.tailnet(userId: user + 1, nodeStableId: "nPeerTest").stableIdentifier,
                "다른 사용자 분리")
         expect(tailnet.stableIdentifier != AutomaticDevicePrincipal.tailnet(userId: user, nodeStableId: "nOther").stableIdentifier,
                "다른 노드 분리")
-        expect(lan.stableIdentifier.hasPrefix("sill-principal-local-network-v1:"), "LAN namespace 명시")
+        for principal in [tailnet, cable, lan] {
+            let id = principal.stableIdentifier
+            expect(id.utf8.count == 64 && id.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) },
+                   "Node device ID는 정확히 64자리 소문자 hex")
+        }
 
         let fixture = Fixture([status(), whois(), status()])
         let access = TailnetDeviceAccess(testingRead: fixture.read)
