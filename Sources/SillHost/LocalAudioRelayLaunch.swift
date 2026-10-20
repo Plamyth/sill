@@ -288,6 +288,26 @@ enum LocalAudioRelayLaunch {
         try LocalAudioRelayClosure.validate(inventory)
     }
 
+    @MainActor
+    static func makeForwardingRelay(participants: LocalAudioParticipantRegistry) throws -> LocalAudioRelay {
+        let inventory = try validateInstalledRuntime()
+        try requireLaunchSupport(inventory)
+        let invocation = LocalAudioRelayInvocation(inventory: inventory)
+        let process = Process()
+        process.executableURL = invocation.executableURL
+        process.arguments = invocation.arguments
+        process.environment = invocation.environment
+        process.currentDirectoryURL = invocation.currentDirectoryURL
+        return LocalAudioRelay(participants: participants, process: process,
+            packagedRuntime: invocation.runtime, forwarding: true, validateLaunch: {
+                do {
+                    try validateSignatureAndSelf()
+                    try inventory.recheck()
+                    return true
+                } catch { return false }
+            })
+    }
+
     private static func validateSignatureAndSelf() throws {
         func checked(_ status: OSStatus) throws {
             guard status == errSecSuccess else { throw LocalAudioRelayLaunchFailure.signature(status) }
