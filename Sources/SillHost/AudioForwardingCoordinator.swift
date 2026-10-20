@@ -50,13 +50,34 @@ final class AudioForwardingCoordinator {
         let configuration: AudioForwardingConfiguration
         let receipts: [LocalAudioParticipantReceipt]
         let localProtection: LocalProtection
+        @MainActor
+        private final class Submission {
+            let admission: @MainActor () -> Bool
+            var claimed = false
+            init(admission: @escaping @MainActor () -> Bool) { self.admission = admission }
+            func claim() -> Bool {
+                guard !claimed, admission() else { return false }
+                claimed = true
+                return true
+            }
+        }
+        private let submission: Submission
 
-        fileprivate init(scope: Scope, receipts: [LocalAudioParticipantReceipt]) {
+        private enum CodingKeys: String, CodingKey {
+            case intentGeneration, bindingEpoch, operationId, configuration, receipts, localProtection
+        }
+
+        @MainActor
+        fileprivate init(scope: Scope, receipts: [LocalAudioParticipantReceipt], admission: @escaping @MainActor () -> Bool) {
             intentGeneration = scope.binding.intentGeneration; bindingEpoch = scope.binding.bindingEpoch
             operationId = scope.binding.operationId; configuration = scope.binding.configuration
             self.receipts = receipts
             localProtection = .init(sentryVerified: true, localMutedVerified: true)
+            submission = Submission(admission: admission)
         }
+
+        @MainActor
+        func claimSubmission() -> Bool { submission.claim() }
     }
 
     enum Failure: Equatable, Sendable {
@@ -234,11 +255,14 @@ final class AudioForwardingCoordinator {
         guard await current(scope, token: token, deadline: deadline), dependencies.protectionCurrent(readback) else {
             return .blocked(.stale)
         }
-        guard let response = await call(until: deadline, operation: {
+        guard let response = await call(until: deadline, operation: { [self] in
             guard self.dependencies.protectionCurrent(readback), self.owns(scope, token: token, deadline: deadline) else {
                 return nil as AudioForwardingResult<AudioForwardingSnapshot>?
             }
-            return await self.dependencies.commit(Commit(scope: scope, receipts: receipts))
+            return await self.dependencies.commit(Commit(scope: scope, receipts: receipts, admission: { [weak self] in
+                guard let self else { return false }
+                return self.dependencies.protectionCurrent(readback) && self.owns(scope, token: token, deadline: deadline)
+            }))
         }), let response, case .accepted(let committed) = response,
               owns(scope, token: token, deadline: deadline), scope.matches(committed, committed: true),
               dependencies.protectionCurrent(readback) else { return .blocked(.commit) }

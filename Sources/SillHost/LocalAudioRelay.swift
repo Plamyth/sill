@@ -300,6 +300,48 @@ final class LocalAudioRelay {
         await forwardingCall("forwardingSnapshot", payload: Empty())
     }
 
+    func forwardingConfiguration(privacyGeneration: UUID) -> AudioForwardingConfiguration? {
+        guard forwarding, case .connected(let boot) = state, registeredBoot == boot, process.isRunning,
+              participants.snapshot.boots[.relay] == boot else { return nil }
+        return try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
+            privacyGeneration: privacyGeneration, membership: participants.snapshot)
+    }
+
+    func forwardingCommit(_ commit: AudioForwardingCoordinator.Commit) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+        let membership = participants.snapshot
+        guard forwardingConfiguration(privacyGeneration: commit.configuration.privacyGeneration) == commit.configuration,
+              commit.receipts.count == LocalAudioParticipantID.allCases.count,
+              Set(commit.receipts.map(\.participantId)) == Set(LocalAudioParticipantID.allCases),
+              commit.receipts.allSatisfy({ receipt in
+                  guard let boot = membership.boots[receipt.participantId] else { return false }
+                  return receipt.proves(LocalAudioParticipantRequest(schemaVersion: 1, operationId: commit.operationId,
+                      privacyGeneration: commit.configuration.privacyGeneration, registryRevision: String(membership.revision),
+                      participantId: receipt.participantId, bootId: boot, budgetMilliseconds: 5000))
+              }) else { return nil }
+        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingCommit", payload: commit,
+            admission: { [weak self] in
+                let admitted = commit.claimSubmission()
+                return admitted && self?.forwardingConfiguration(privacyGeneration: commit.configuration.privacyGeneration) == commit.configuration
+            })
+        guard participants.matches(membership),
+              forwardingConfiguration(privacyGeneration: commit.configuration.privacyGeneration) == commit.configuration else { return nil }
+        return result
+    }
+
+    func forwardingInspect(_ binding: AudioForwardingBinding, until deadline: ContinuousClock.Instant) async -> LocalAudioParticipantReceipt? {
+        let membership = participants.snapshot
+        guard forwardingConfiguration(privacyGeneration: binding.configuration.privacyGeneration) == binding.configuration,
+              let expected = binding.participantRequest(for: .relay, budgetMilliseconds: 5000) else { return nil }
+        let response: Reply<LocalAudioParticipantReceipt?>? = await call("inspect", payload: Inspection(operationId: binding.operationId),
+            until: min(deadline, ContinuousClock.now.advanced(by: .seconds(3))), admission: { [weak self] in
+                self?.forwardingConfiguration(privacyGeneration: binding.configuration.privacyGeneration) == binding.configuration
+            })
+        guard participants.matches(membership),
+              forwardingConfiguration(privacyGeneration: binding.configuration.privacyGeneration) == binding.configuration,
+              let receipt = response?.result, receipt.proves(expected) else { return nil }
+        return receipt
+    }
+
     func forwardingRequest(_ intent: AudioForwardingIntentRequest, peer: AudioForwardingPairedDevice,
                            credential: AudioForwardingCredential) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         struct Submission: Encodable {

@@ -18,6 +18,8 @@ final class Fixture {
     var proofAge: Duration = .zero
     var sentry = true, muted = true, proofCurrent = true, missingSnapshot = false, refusedCommit = false
     var gate: Gate?
+    var submissionGate: Gate?
+    var enforceSubmission = false
 
     init(off: Bool = false) throws {
         let device = String(repeating: "a", count: 64), generation = UUID().uuidString
@@ -65,6 +67,11 @@ final class Fixture {
             return .init(scope: scope, observedAt: ContinuousClock.now.advanced(by: self.proofAge),
                 sentryVerified: self.sentry, localMutedVerified: self.muted)
         }, protectionCurrent: { _ in self.mutate?("protectionCurrent"); return self.proofCurrent }, commit: { payload in
+            if let gate = self.submissionGate { await gate.wait() }
+            if self.enforceSubmission {
+                guard payload.claimSubmission() else { return nil }
+                precondition(!payload.claimSubmission())
+            }
             self.commits += 1
             let data = try! JSONEncoder().encode(payload)
             let object = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -94,6 +101,30 @@ struct Main {
     }
     @MainActor static func main() async throws {
         var checks = 0
+        for change in ["none", "invalidate", "cancel", "configuration", "protection"] {
+            let f = try Fixture(), gate = Gate(), coordinator = f.coordinator()
+            f.enforceSubmission = true
+            f.submissionGate = gate
+            let work = Task { await coordinator.reconcile(f.snapshot()) }
+            await settle(gate)
+            switch change {
+            case "invalidate": coordinator.invalidate()
+            case "cancel": work.cancel()
+            case "configuration": f.configuration = nil
+            case "protection": f.proofCurrent = false
+            default: break
+            }
+            gate.release()
+            let result = await work.value
+            if change == "none" {
+                guard case .committed = result else { preconditionFailure("정상 제출 표식 누락") }
+                precondition(f.commits == 1)
+            } else {
+                blocked(result)
+                precondition(f.commits == 0)
+            }
+            checks += 1
+        }
         for off in [false, true] {
             let f = try Fixture(off: off), coordinator = f.coordinator(), initial = f.snapshot()
             async let first = coordinator.reconcile(initial)
