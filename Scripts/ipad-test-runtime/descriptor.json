@@ -12,5 +12,6 @@
   "acceptanceCommand": ["/usr/bin/python3", "{repo}/Scripts/ipad-test-runtime/adapter.py", "accept", "--config", "{privateConfig}"],
   "requiredPrivateConfig": ["repo", "outputRoot", "leaseFile", "deviceUDID", "developmentTeam", "relayRepo", "relayCommit", "nodeExecutable", "relayHost", "relayPort"],
   "lease": {"schema": "ccr.device-lease/v1", "requiredActions": ["install", "launch", "copy", "test"], "requiresCurrentOwnerHandoff": true},
+  "relayLifecycle": {"serviceId": "ccr-ipad-integration-relay-8793", "port": 8793, "ttlSeconds": 900, "singletonGroup": "ccr-ipad-integration-test"},
   "productionEnabled": false
 }

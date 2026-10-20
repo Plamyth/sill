@@ -247,11 +247,15 @@ def accept(config, work, source):
     conf = {'relayRepo': str(relay_repo), 'vault': str(vault), 'store': str(work / 'relay-store'),
             'snapshot': str(snapshot), 'hidden': str(hidden), 'token': ctx['token'], 'host': config['relayHost'], 'port': config['relayPort']}
     write(work / 'relay-private.json', conf)
-    log = (work / 'isolated-relay.log').open('ab')
-    process = subprocess.Popen([config['nodeExecutable'], str(Path(config['repo']) / 'Scripts/ipad-test-runtime/relay.js'), str(work / 'relay-private.json')], stdout=log, stderr=log)
+    lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
+    service = json.loads(command([lifecycle, 'start', '--owner', OWNER, '--ttl', '900',
+        '--generation', source['commit'], '--stdout', work / 'isolated-relay.log',
+        '--stderr', work / 'isolated-relay.err.log', 'ccr-ipad-integration-relay-8793', '--',
+        config['nodeExecutable'], Path(config['repo']) / 'Scripts/ipad-test-runtime/relay.js', work / 'relay-private.json']))
+    write(work / 'relay-lease.json', service)
     accepted = False
     try:
-        time.sleep(1); require(process.poll() is None, 'isolated_relay_failed_to_start')
+        time.sleep(1)
         start = fixture(test_id); code, saved = save_scene(server, start, pixel(), None); require(code == 200, 'fixture_seed_failed')
         ui = harness(config, work, 'testEditAndSave')
         code, current = request(server, 'GET', '/vault/canvas?id=' + test_id); require(code == 200, 'vault_readback_failed')
@@ -266,6 +270,7 @@ def accept(config, work, source):
         code, _ = save_scene(server, start, pixel(), '0' * 64); require(code == 409, 'stale_contract_failed')
         actual['revision'] += 1; actual['nodes'][0]['text'] = 'Mac에서 수정한 시험 글자'
         code, _ = save_scene(server, actual, pixel(), current['noteSha256']); require(code == 200, 'reverse_update_failed')
+        command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
         reverse = harness(config, work, 'testReopenRemoteRevision')
         require(snapshots(config, work, 'user-after-accept') == before, 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
@@ -274,7 +279,9 @@ def accept(config, work, source):
         write(work / 'functional-readback.json', proof)
         accepted = True
     finally:
-        process.terminate(); process.wait(timeout=15); log.close()
+        released = json.loads(command([lifecycle, 'release', '--owner', OWNER, service['leaseId']], work / 'relay-release.log'))
+        require(released.get('released') is True, 'relay_lease_release_unconfirmed')
+        write(work / 'relay-release.json', released)
         try:
             stop_owned(config, work)
             write(work / 'test-process-cleanup.json', {'status': 'stopped-owned-test-process'})
@@ -328,7 +335,7 @@ def main():
         require(output.is_relative_to(approved) and output != approved, 'output_path_not_routed')
         require(ipaddress.ip_address(config['relayHost']).is_private and ipaddress.ip_address(config['relayHost']).version == 4,
                 'relay_host_not_private_ipv4')
-        require(1024 < int(config['relayPort']) < 65536 and int(config['relayPort']) != 8791, 'relay_port_invalid_or_live')
+        require(int(config['relayPort']) == 8793, 'relay_port_not_registered_integration_port')
         source = identity(config); work = output / source['commit']
         require(not work.is_symlink() and work.resolve().parent == output, 'work_path_escapes_routed_root')
         work.mkdir(parents=True, exist_ok=True)
