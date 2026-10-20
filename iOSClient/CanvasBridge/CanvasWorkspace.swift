@@ -1033,8 +1033,6 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
     }
 
     final class NodeTextView: UITextView {
-        private let textUndoManager = UndoManager()
-        override var undoManager: UndoManager? { textUndoManager }
         var inputStateChanged: (() -> Void)?
         override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
             super.setMarkedText(markedText,selectedRange:selectedRange)
