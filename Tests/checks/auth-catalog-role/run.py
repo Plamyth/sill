@@ -6,11 +6,19 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[3]
-output = Path(tempfile.mkdtemp(prefix="ccr-auth-role-"))
+output = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path(tempfile.mkdtemp(prefix="ccr-auth-role-"))
+if len(sys.argv) == 2: output.mkdir(parents=True, exist_ok=False)
 
 def block(text, marker):
     assert text.count(marker) == 1, marker
-    start = text.index(marker); opening = text.index("{", start); end = opening + 1; depth = 1
+    start = text.index(marker)
+    body = start
+    if "func " in marker:
+        body = text.index("(", start) + 1
+        parameters = 1
+        while parameters:
+            parameters += (text[body] == "(") - (text[body] == ")"); body += 1
+    opening = text.index("{", body); end = opening + 1; depth = 1
     while depth:
         depth += (text[end] == "{") - (text[end] == "}"); end += 1
     return text[start:end]
@@ -43,4 +51,6 @@ try:
 finally:
     import shutil
     shutil.rmtree(output)
-    print("RECEIPT " + json.dumps({"sourceHashes": original, "outputRemoved": not output.exists(), "hardwareOrDeviceActions": 0}))
+    receipt = {"sourceHashes": original, "outputRemoved": not output.exists(), "hardwareOrDeviceActions": 0}
+    if len(sys.argv) == 2: output.with_suffix(".json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print("RECEIPT " + json.dumps(receipt))

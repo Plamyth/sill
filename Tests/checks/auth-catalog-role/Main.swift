@@ -90,7 +90,7 @@ struct Check {
         let host = RoleHost(), peer = NWConnection()
         host.serve(peer, route: .init(encrypted: true), hello: nil)
         check(host.controlJoins == 1 && host.viewerJoins == 0 && host.counts.isEmpty && !host.ticking)
-        host.sendAuthenticationCatalog(.init(windows: [], active: .none), to: peer)
+        host.sendAuthenticationCatalog(.init(macName: "fixture", windows: [], active: .none), to: peer)
         check(host.sent == [.windowList] && host.clients[ObjectIdentifier(peer)]?.catalogSent == false)
         peer.cancel()
         check(host.controlLeaves == 1 && host.viewerLeaves == 0 && host.counts.isEmpty)
@@ -108,7 +108,7 @@ struct Check {
         host.took(Hello(presentationInput: 1), from: client)
         check(host.viewerJoins == 2 && host.counts == [1, 2] && client.presentationInput)
         let before = host.sent
-        host.sendAuthenticationCatalog(.init(windows: [], active: .none), to: pending)
+        host.sendAuthenticationCatalog(.init(macName: "fixture", windows: [], active: .none), to: pending)
         check(host.sent == before)
         host.took(Hello(), from: client)
         check(host.viewerJoins == 2 && host.counts == [1, 2])
@@ -132,7 +132,7 @@ struct Check {
             check(StreamPeerRole.viewer.accepts(kind) && StreamPeerRole.viewer.sends(kind))
         }
         let active = StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false,
-                                   payload: Wire.encode(WindowList(windows: [], active: .desktop)))
+                                   payload: Wire.encode(WindowList(macName: "fixture", windows: [], active: .desktop)))
         check(!host.admitsRaw(active.serialized(), to: auth))
         let frame = StreamMessage(kind: .frame, timestamp: 0, isKeyframe: true, payload: Data([1]))
         check(!host.admitsRaw(frame.serialized(), to: auth))

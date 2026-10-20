@@ -439,7 +439,7 @@ package final class StreamCoordinator {
                 let id = ObjectIdentifier(connection), ticket = UUID()
                 self.authenticationCatalogTickets[id] = ticket
                 let catalog = await self.authenticationCatalog?(connection, fingerprint)
-                    ?? WindowList(windows: [], active: .none)
+                    ?? WindowList(macName: self.macName, windows: [], active: .none)
                 guard self.authenticationCatalogTickets[id] == ticket, connection.state == .ready,
                       self.remote?.isPaired(fingerprint) == true else { return }
                 self.server.sendAuthenticationCatalog(catalog, to: connection)
