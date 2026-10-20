@@ -5,6 +5,12 @@ import Network
 import ScreenCaptureKit
 import StreamProtocol
 
+@MainActor
+struct SourceSelectionAdmission {
+    let isCurrent: () -> Bool
+    let commit: (() -> Void) -> Bool
+}
+
 /// Owns the pipeline for the life of the process and points it at whatever source the client
 /// picks. Threading: this class is main-actor; frames flow capture queue → VT thread → network
 /// queue without touching it. Network callbacks hop here with Task { @MainActor }.
@@ -1192,6 +1198,7 @@ package final class StreamCoordinator {
                   shown.items.contains(where: { $0.id == request.itemID }) else {
                 nativeDock.disconnected(id)
                 dockSelectionIngress.discardMenu(for: id)
+                _ = listMessage(preloadedDock: shown)
                 server.send(StreamMessage(kind: .dockReply, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                     payload: Wire.encode(RemoteDockReply(requestID: request.requestID, catalog: shown,
                                                         note: "Dock 내용이 바뀌었습니다. 최신 항목에서 다시 선택하세요."))), to: connection)
@@ -1236,24 +1243,34 @@ package final class StreamCoordinator {
             }
         }
         var reply = nativeDock.perform(request, owner: id, actionAdmission: { action in
-            guard !changesSource || self.dockActionIsCurrent(connection, ticket: selectionTicket) else { return .cannotComplete }
-            return changesSource
-                ? self.dockSelectionIngress.performIfCurrent(selectionTicket, refused: .cannotComplete, action)
-                : action()
+            guard self.dockPeerIsCurrent(connection),
+                  !changesSource || self.dockActionIsCurrent(connection, ticket: selectionTicket) else { return .cannotComplete }
+            return self.dockSelectionIngress.performForPeer(id, refused: .cannotComplete) {
+                changesSource
+                    ? self.dockSelectionIngress.performIfCurrent(selectionTicket, refused: .cannotComplete, action)
+                    : action()
+            }
         })
         dockSelectionIngress.recordMenu(for: id, request: request, reply: reply)
         if changesSource, reply.note == nil {
+            let admission = SourceSelectionAdmission(isCurrent: {
+                self.dockSelectionIngress.isCurrent(selectionTicket) && self.dockPeerIsCurrent(connection)
+            }, commit: { commit in
+                guard self.dockPeerIsCurrent(connection) else { return false }
+                return self.dockSelectionIngress.performIfCurrent(selectionTicket, refused: false) { commit(); return true }
+            })
             let deadline = ProcessInfo.processInfo.systemUptime + 2
             repeat {
                 guard dockActionIsCurrent(connection, ticket: selectionTicket) else { return }
                 _ = await catalog.refreshWindows()
                 guard dockActionIsCurrent(connection, ticket: selectionTicket) else { return }
                 if previous == .desktop {
-                    await select(.desktop, bringForward: false)
+                    await select(.desktop, bringForward: false, admission: admission)
                     break
                 }
                 if let source = focusedDockSource() {
-                    await select(source, bringForward: false)
+                    guard dockActionIsCurrent(connection, ticket: selectionTicket) else { return }
+                    await select(source, bringForward: false, admission: admission)
                     break
                 }
                 try? await Task.sleep(for: .milliseconds(100))
@@ -1275,12 +1292,17 @@ package final class StreamCoordinator {
     }
 
     private func dockActionIsCurrent(_ connection: NWConnection, ticket: UInt64?) -> Bool {
+        dockPeerIsCurrent(connection) && dockSelectionIngress.isCurrent(ticket) &&
+            !switching && active == .none && inputGeneration == dockGeneration
+    }
+
+    private func dockPeerIsCurrent(_ connection: NWConnection) -> Bool {
         let id = ObjectIdentifier(connection)
-        guard dockSelectionIngress.isCurrent(ticket), inputFence.contains(id),
+        guard inputFence.contains(id),
               connections[id] === connection, connection.state == .ready,
               let route = routes[id], route.encrypted, let fingerprint = route.fingerprint,
               remote?.isPaired(fingerprint) == true else { return false }
-        return !shuttingDown && !switching && active == .none && inputGeneration == dockGeneration
+        return !shuttingDown
     }
 
     private func focusedDockSource() -> StreamSource? {
@@ -1505,8 +1527,9 @@ package final class StreamCoordinator {
     /// restarts leave Mac focus where it is, and so does staging a window on the virtual display.
     /// One exception: a staged window that comes home because the virtual display was turned off
     /// comes forward too, whichever select commits that change (see `cameHome`).
-    func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil) async {
-        guard !switching, !shuttingDown else { return }
+    func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil,
+                admission: SourceSelectionAdmission? = nil) async {
+        guard !switching, !shuttingDown, admission?.isCurrent() ?? true else { return }
         switching = true
         restartOf = (source == active && source != .none) ? source : nil
         defer {
@@ -1555,7 +1578,7 @@ package final class StreamCoordinator {
         // A fresh, bounded inventory read must succeed before changing a desktop pipeline.
         if source == .desktop, !synthetic {
             let refreshed = await catalog.refreshWindows()
-            guard refreshed, !shuttingDown,
+            guard refreshed, !shuttingDown, admission?.isCurrent() ?? true,
                   let selection = displaySelection ?? catalog.displayInventory.current,
                   catalog.displayInventory.contains(selection),
                   inputFence.allowsSelection(source, desktopScope: DisplayInventory.scope(selection)),
@@ -1577,6 +1600,7 @@ package final class StreamCoordinator {
         await capture.stop()
         await syntheticCapture.stop()
         capture.onFrame = nil; syntheticCapture.onFrame = nil   // both queues drained: let the old encoder go
+        guard admission?.isCurrent() ?? true else { return }
         rectCache = nil
         // Source changes discard queued actions. Only owed releases and disconnect cleanup survive.
         let dropped = heldInput
@@ -1668,7 +1692,7 @@ package final class StreamCoordinator {
                 let want = wantedStage(for: w)
                 do {
                     let prepared = try await stage.prepare(window: w, wanted: want.size, envelope: want.envelope, captureScale: captureScale, refreshHz: fps)
-                    guard !shuttingDown else { stage.release(); active = .none; broadcastList(); return }
+                    guard !shuttingDown, admission?.isCurrent() ?? true else { stage.release(); active = .none; broadcastList(); return }
                     filter = prepared.filter
                     sourceRect = prepared.sourceRect
                     size = prepared.outputSize ?? prepared.sourceRect.size
@@ -1722,7 +1746,7 @@ package final class StreamCoordinator {
                 var own = catalog.ownApplication
                 if own == nil, remote != nil {
                     own = await catalog.resolveOwnApplication()
-                    guard !shuttingDown else { active = .none; broadcastList(); return }
+                    guard !shuttingDown, admission?.isCurrent() ?? true else { active = .none; broadcastList(); return }
                 }
                 if let own {
                     filter = SCContentFilter(display: d, excludingApplications: [own], exceptingWindows: [])
@@ -1737,8 +1761,9 @@ package final class StreamCoordinator {
 
         do {
             try await startPipeline(source: source, filter: filter, sourceRect: sourceRect, width: width, height: height, describe: describe,
-                                    title: title, kind: kind)
+                                    title: title, kind: kind, admission: admission)
         } catch {
+            if (error as? PipelineEpochError) == .admissionRevoked { stage.release(); active = .none; broadcastList(); return }
             // `picked`, not a catalog lookup: a staged window may have left the on-screen list.
             if virtualDisplay, stage.isStaged, let w = picked {
                 // The display filter failed to start: send the window home and stream it there.
@@ -1750,7 +1775,7 @@ package final class StreamCoordinator {
                 do {
                     try await startPipeline(source: source, filter: SCContentFilter(desktopIndependentWindow: w), sourceRect: nil,
                                             width: evenPixels(w.frame.width * captureScale), height: evenPixels(w.frame.height * captureScale),
-                                            describe: fallback, title: title, kind: kind)
+                                            describe: fallback, title: title, kind: kind, admission: admission)
                 } catch {
                     print("Could not start streaming \(fallback): \(error)")
                     active = .none
@@ -1765,10 +1790,11 @@ package final class StreamCoordinator {
         // Mid-switch requests (a viewport, the last client leaving) are applied by the defer.
     }
 
-    private enum PipelineEpochError: Error { case missingGeometry }
+    private enum PipelineEpochError: Error, Equatable { case missingGeometry, admissionRevoked }
 
     private func startPipeline(source: StreamSource, filter: SCContentFilter?, sourceRect: CGRect?, width: Int, height: Int, describe: String,
-                               title: String, kind: HostStatusSnapshot.Stream.Kind) async throws {
+                               title: String, kind: HostStatusSnapshot.Stream.Kind, admission: SourceSelectionAdmission? = nil) async throws {
+        guard admission?.isCurrent() ?? true else { throw PipelineEpochError.admissionRevoked }
         let desktopSelection = source == .desktop && !synthetic ? catalog.displayInventory.current : nil
         guard let bounds = currentSourceRect(source: source, fresh: true) else { throw PipelineEpochError.missingGeometry }
         let generation = source == active ? inputGeneration : UUID().uuidString
@@ -1812,11 +1838,24 @@ package final class StreamCoordinator {
                 throw PipelineEpochError.missingGeometry
             }
         }
-        encoder = enc
-        active = source
-        inputGeneration = generation
-        videoEpoch = epoch
-        server.commitVideo(epoch, catalog: listMessage()) { [weak enc] in enc?.requestKeyframe() }
+        let dock = synthetic ? nil : nativeDock.catalog()
+        let commit = {
+            self.encoder = enc
+            self.active = source
+            self.inputGeneration = generation
+            self.videoEpoch = epoch
+            server.commitVideo(epoch, catalog: self.listMessage(preloadedDock: dock)) { [weak enc] in enc?.requestKeyframe() }
+        }
+        if let admission {
+            guard admission.commit(commit) else {
+                enc.onEncoded = nil
+                await capture.stop()
+                await syntheticCapture.stop()
+                capture.onFrame = nil; syntheticCapture.onFrame = nil
+                server.resetForNewStream()
+                throw PipelineEpochError.admissionRevoked
+            }
+        } else { commit() }
         print("Streaming \(describe) at \(width)×\(height), \(fps) fps, \(streamBitrate / 1_000_000) Mbps")
         status.update {
             $0.stream = HostStatusSnapshot.Stream(kind: kind, title: title, width: width, height: height, fps: fps,
@@ -2686,11 +2725,11 @@ package final class StreamCoordinator {
 
     // MARK: Catalog to clients
 
-    private func listMessage() -> StreamMessage {
-        let dock = synthetic ? nil : nativeDock.catalog()
+    private func listMessage(preloadedDock: RemoteDockCatalog? = nil) -> StreamMessage {
+        let dock = synthetic ? nil : (preloadedDock ?? nativeDock.catalog())
         dockSelectionIngress.publish(dock: dock, windowIDs: catalog.infos.map(\.id),
             displayInventoryID: catalog.displayInventory.revision, displayIDs: catalog.displayInventory.infos.map(\.id),
-            appBundleIDs: catalog.installedApps.map(\.bundleID))
+            appBundleIDs: (catalog.installedApps + dockApps()).filter { !WindowCatalog.isPrivateApplication($0.bundleID) }.map(\.bundleID))
         return StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,

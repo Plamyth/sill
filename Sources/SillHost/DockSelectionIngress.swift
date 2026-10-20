@@ -2,7 +2,7 @@ import Foundation
 import StreamProtocol
 
 final class DockSelectionIngress: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private var latest: UInt64 = 0
     private var latestPeer: ObjectIdentifier?
     private var peers: [ObjectIdentifier: Bool] = [:]
@@ -36,6 +36,8 @@ final class DockSelectionIngress: @unchecked Sendable {
     func recordMenu(for peer: ObjectIdentifier, request: RemoteDockRequest, reply: RemoteDockReply) {
         lock.lock()
         defer { lock.unlock() }
+        if request.action == .cancel, let menu = menus[peer],
+           let requested = request.menuID, requested != menu.id { return }
         menus[peer] = nil
         guard request.action == .menu, reply.note == nil, let id = reply.menuID, let items = reply.menu else { return }
         var choices: [String: String] = [:]
@@ -109,6 +111,13 @@ final class DockSelectionIngress: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard ticket != nil, ticket == latest, latestPeer.flatMap({ peers[$0] }) != nil else { return refused }
+        return action()
+    }
+
+    func performForPeer<Result>(_ peer: ObjectIdentifier, refused: Result, _ action: () -> Result) -> Result {
+        lock.lock()
+        defer { lock.unlock() }
+        guard peers[peer] == true else { return refused }
         return action()
     }
 }

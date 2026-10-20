@@ -29,7 +29,7 @@ def extract(signature):
         depth += (host[end] == "{") - (host[end] == "}")
         end += 1
     return host[start:end].replace("private func", "func")
-method = "\n".join(extract(name) for name in ["handleDockRequest(", "dockActionIsCurrent(", "focusedDockSource("])
+method = "\n".join(extract(name) for name in ["handleDockRequest(", "dockActionIsCurrent(", "dockPeerIsCurrent(", "focusedDockSource("])
 clock = (root / "Sources/SillHost/DockSelectionIngress.swift").read_text()
 handle_start = host.index("    private func handle(_ message:")
 handle_end = host.index("        switch message.kind {", handle_start)
@@ -85,11 +85,12 @@ struct Sizer { func element(for window: Window, input: Bool) -> UInt32? { window
 typealias AXUIElement = NSNumber
 let kAXFocusedWindowAttribute = "focusedWindow", kAXTitleAttribute = "title"
 enum AXError { case success, cannotComplete }
-enum FocusFixture { static var title: String? = "focused" }
+enum FocusFixture { static var title: String? = "focused"; static var onTitle: (() -> Void)? }
 func AXUIElementCreateApplication(_ pid: Int32) -> AXUIElement { NSNumber(value: pid) }
 func AXUIElementSetMessagingTimeout(_ element: AXUIElement, _ timeout: Float) {}
 func AXUIElementGetTypeID() -> CFTypeID { CFNumberGetTypeID() }
 func AXUIElementCopyAttributeValue(_ element: AXUIElement, _ name: CFString, _ result: inout CFTypeRef?) -> AXError {
+    if (name as String) == kAXTitleAttribute { FocusFixture.onTitle?() }
     result = (name as String) == kAXFocusedWindowAttribute ? NSNumber(value: 123) : FocusFixture.title.map { $0 as NSString }
     return .success
 }
@@ -104,6 +105,10 @@ final class Catalog {
     var refreshes = 0
     var onRefresh: (() -> Void)?
     func refreshWindows() async -> Bool { refreshes += 1; onRefresh?(); return true }
+}
+@MainActor struct SourceSelectionAdmission {
+    let isCurrent: () -> Bool
+    let commit: (() -> Void) -> Bool
 }
 @MainActor final class Host {
     let launchID = "fixture-host"
@@ -129,13 +134,18 @@ final class Catalog {
     var selections: [StreamSource] = []
     var broadcasts = 0
     var onStop: (() -> Void)?
-    func select(_ source: StreamSource, bringForward: Bool) async {
+    func select(_ source: StreamSource, bringForward: Bool, admission: SourceSelectionAdmission? = nil) async {
+        guard admission?.isCurrent() ?? true else { return }
         selections.append(source); active = source; inputGeneration = UUID().uuidString; sourceRevision += 1
         videoEpoch = source == .none ? nil : VideoEpoch(generation: inputGeneration, source: source,
             geometry: VideoEpoch.Geometry(x: 0,y: 0,width: 100,height: 100), width: 100,height: 100)
         if source == .none { onStop?() }
     }
 
+    func listMessage(preloadedDock: RemoteDockCatalog? = nil) -> StreamMessage {
+        dockSelectionIngress.publish(dock: preloadedDock ?? nativeDock.catalog(), windowIDs: [7,17,19], displayInventoryID: nil, displayIDs: [], appBundleIDs: ["fixture.app", "com.apple.finder"])
+        return StreamMessage(kind: .windowList, timestamp: 1, isKeyframe: false, payload: Data())
+    }
     func broadcastList() { broadcasts += 1 }
 ''' + method + '\n' + handle + r'''
 }
@@ -267,6 +277,14 @@ final class Catalog {
             precondition(h.nativeDock.calls == 0 && h.nativeDock.cleanups == 1 && h.selections.isEmpty)
             let response = Wire.decode(RemoteDockReply.self, from: h.server.sent[0].payload)!
             precondition(response.selectedSource == nil && response.selectionRevision == nil && response.videoEpochID == nil)
+        }
+        do {
+            let (h, c) = fixture()
+            let newer = StreamMessage(kind: .selectSource, timestamp: 2, isKeyframe: false, payload: Wire.encode(StreamSource.window(19)))
+            FocusFixture.onTitle = { _ = h.dockSelectionIngress.reserve(for: newer, from: ObjectIdentifier(c)) }
+            await h.handle(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
+            FocusFixture.onTitle = nil
+            precondition(h.nativeDock.calls == 1 && h.selections == [.none])
         }
         print("Dock 호스트의 TLS·페어링·입력 사용권·지연 응답·세대 변경·ingress 순서·기존 마이크 정리 경계 검증 통과")
     }
