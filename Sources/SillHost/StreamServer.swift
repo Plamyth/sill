@@ -125,6 +125,7 @@ final class StreamServer {
         var acceptedPeerToPeer = false
         /// A hello (kind 23) came on this connection: only the first counts.
         var helloSeen = false
+        var role = StreamPeerRole.viewer
         var presentationInput = false
         /// The input messages (kind 8) read from it. Every kind 26 sent to it carries the count, so the
         /// device can drop one the host built before it read that device's latest input
@@ -142,6 +143,7 @@ final class StreamServer {
     /// The network queue: both doors, their connections, the verify blocks and the timers.
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
+    private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
     private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
     private var videoAdmission = VideoEpochAdmission.stopped
@@ -150,6 +152,8 @@ final class StreamServer {
     /// when its connection does not say, and always for a remote session). Called on the network
     /// queue.
     var onClientConnected: ((NWConnection, ClientRoute, ClientLink.Route?) -> Void)?
+    var onControlClientConnected: ((NWConnection, ClientRoute) -> Void)?
+    var onControlClientDisconnected: ((NWConnection) -> Void)?
     /// A connected home client's link changed with its connection's path. Only reported, never
     /// acted on: the menu card shows it. Called on the network queue.
     var onClientRouteChanged: ((NWConnection, ClientLink.Route?) -> Void)?
@@ -230,7 +234,7 @@ final class StreamServer {
 
     /// On the network queue.
     private func updateTicking() {
-        let wanted = !clients.isEmpty && (streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
+        let wanted = viewerCount > 0 && (streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
         if wanted, tickTimer == nil {
             let t = DispatchSource.makeTimerSource(queue: queue)
             t.schedule(deadline: .now(), repeating: Self.tickInterval, leeway: .milliseconds(5))
@@ -246,12 +250,12 @@ final class StreamServer {
     /// On the network queue. Re-evaluates the recency rule so the timer stops itself after a quiet spell.
     private func tick() {
         let live = streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency
-        guard live, !clients.isEmpty else { updateTicking(); return }
+        guard live, viewerCount > 0 else { updateTicking(); return }
         let now = Date().timeIntervalSince1970
         // The Mac's pointer, unless the frame-rate sampler has it while it moves.
         let reported = pointerSampler == nil ? samplePointer(now: now) : []
         let data = StreamMessage(kind: .tick, timestamp: now, isKeyframe: false, payload: Data()).serialized()
-        for (id, client) in clients where client.connection.state == .ready {
+        for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
             // A kind 26 just sent keeps its link awake this turn.
             if reported.contains(id) { continue }
             // Over TLS every record costs CPU (the remote plan's H20): skip a tick right after
@@ -282,14 +286,14 @@ final class StreamServer {
     /// (PointerWatch.samplerInterval). Returns the devices sent one.
     @discardableResult
     private func samplePointer(now: TimeInterval) -> Set<ObjectIdentifier> {
-        let ready = clients.compactMap { $0.value.connection.state == .ready ? $0.key : nil }
+        let ready = clients.compactMap { $0.value.role.isViewer && $0.value.connection.state == .ready ? $0.key : nil }
         guard let watch = pointerWatch, let reading = watch.sample(devices: ready) else {
             setPointerSampler(interval: nil)
             return []
         }
         var sent = Set<ObjectIdentifier>()
         var watched = false
-        for (id, client) in clients where client.connection.state == .ready {
+        for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
             guard let report = reading.report(for: id, seen: client.inputsRead) else {
                 client.lastPointer = nil
                 continue
@@ -984,7 +988,7 @@ final class StreamServer {
         client.connectedAt = Date().timeIntervalSince1970
         client.lastHeardAt = client.connectedAt
         clients[ObjectIdentifier(client.connection)] = client
-        onClientCountChanged?(clients.count)
+        if client.role.isViewer { onClientCountChanged?(viewerCount) }
         updateTicking()
         updateSweep()
     }
@@ -998,6 +1002,7 @@ final class StreamServer {
     func serve(_ connection: NWConnection, route: ClientRoute, hello: Hello?, admitted: () -> Void = {}) {
         let client = Client(connection)
         client.route = route
+        client.role = route.encrypted && hello == nil ? .awaitingHello : .viewer
         // As its route says: every session a Door admits is TLS (a remote one, or a home one with its
         // peer's key); a home route without a peer is a plain connection and keeps the plain door's
         // tick rule (the pacing harness's home client, Scripts/pacing).
@@ -1022,12 +1027,20 @@ final class StreamServer {
                 let link = self.link(connection, path: path)
                 guard link != client.link else { return }
                 client.link = link
-                self.onClientRouteChanged?(connection, link)
+                if client.role.isViewer { self.onClientRouteChanged?(connection, link) }
             }
         }
         register(client)
         receiveLoop(client)
-        onClientConnected?(connection, route, client.link)
+        if client.role.isViewer {
+            onClientConnected?(connection, route, client.link)
+        } else {
+            onControlClientConnected?(connection, route)
+            queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
+                guard let self, let client, self.clients[id] === client, !client.role.isViewer else { return }
+                connection.cancel()
+            }
+        }
         admitted()
         if let hello { took(hello, from: client) }
     }
@@ -1229,6 +1242,12 @@ final class StreamServer {
     /// the floor at "0" every device is served, and above it the gate has judged it already. On
     /// `queue`.
     private func took(_ hello: Hello, from client: Client) {
+        if !client.role.isViewer {
+            client.role = .viewer
+            onClientConnected?(client.connection, client.route, client.link)
+            onClientCountChanged?(viewerCount)
+            updateTicking()
+        }
         client.helloSeen = true
         client.presentationInput = hello.presentationInput == 1
         if client.presentationInput {
@@ -1289,7 +1308,7 @@ final class StreamServer {
             client.sentThisSecond = 0
             client.withheldThisSecond = 0
             client.takenThisSecond = 0
-            if let verdict = client.judge.close(second) { onClientLinkChanged?(client.connection, verdict) }
+            if client.role.isViewer, let verdict = client.judge.close(second) { onClientLinkChanged?(client.connection, verdict) }
             guard client.route.isRemote else { continue }
             let silent = now - client.lastHeardAt
             if now - client.connectedAt >= Self.remoteSilence, silent > Self.remoteSilence {
@@ -1317,10 +1336,14 @@ final class StreamServer {
     /// connection that was never registered (refused, or failed before it was ready) leaves no line.
     private func unregister(_ id: ObjectIdentifier) {
         guard let client = clients.removeValue(forKey: id) else { return }
-        pointerWatch?.clientLeft(id)
+        if client.role.isViewer { pointerWatch?.clientLeft(id) }
         print("Client left: \(client.connection.endpoint)")
-        onClientDisconnected?(client.connection)
-        onClientCountChanged?(clients.count)
+        if client.role.isViewer {
+            onClientDisconnected?(client.connection)
+            onClientCountChanged?(viewerCount)
+        } else {
+            onControlClientDisconnected?(client.connection)
+        }
         updateTicking()
         updateSweep()
     }
@@ -1354,7 +1377,7 @@ final class StreamServer {
         queue.async { [self] in
             guard videoAdmission == .preparing(epoch) else { return }
             videoAdmission = .committed(epoch)
-            for client in clients.values where client.catalogSent && client.connection.state == .ready {
+            for client in clients.values where client.role.isViewer && client.catalogSent && client.connection.state == .ready {
                 client.latestCatalog = catalog
                 client.microphoneCatalogGrant = nil
                 send(catalog.serialized(), to: client)
@@ -1399,7 +1422,7 @@ final class StreamServer {
                 print("send: no client for \(connection.endpoint) (\(clients.count) known)")
                 return
             }
-            if message.kind == .windowList {
+            if message.kind == .windowList, client.role.isViewer {
                 client.catalogSent = true
                 client.latestCatalog = message
                 client.microphoneCatalogGrant = nil
@@ -1408,11 +1431,22 @@ final class StreamServer {
         }
     }
 
+    func sendAuthenticationCatalog(_ catalog: WindowList, to connection: NWConnection) {
+        let message = StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970,
+                                    isKeyframe: false, payload: Wire.encode(catalog))
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)], !client.role.isViewer,
+                  client.route.encrypted, client.route.fingerprint != nil,
+                  connection.state == .ready else { return }
+            send(message.serialized(), to: client)
+        }
+    }
+
     /// Thread-safe; queued before the matching kind 201 answer on the same network queue.
     func setRemoteAudio(_ enabled: Bool, for connection: NWConnection,
                         afterSequence: UInt64 = .max) {
         queue.async { [self] in
-            guard let client = clients[ObjectIdentifier(connection)] else { return }
+            guard let client = clients[ObjectIdentifier(connection)], client.role.isViewer else { return }
             client.remoteAudioEnabled = enabled
             client.remoteAudioAfterSequence = enabled ? afterSequence : .max
         }
@@ -1438,7 +1472,7 @@ final class StreamServer {
                                  isKeyframe: false, payload: payload).serialized()
         queue.async { [self] in
             guard epoch == remoteAudioEpoch else { return }
-            for client in clients.values where client.remoteAudioEnabled &&
+            for client in clients.values where client.role.isViewer && client.remoteAudioEnabled &&
                 sequence > client.remoteAudioAfterSequence && client.connection.state == .ready {
                 guard client.pendingBytes < 512_000 else { continue }
                 send(data, to: client)
@@ -1457,6 +1491,7 @@ final class StreamServer {
                 if isComplete || error != nil { c.cancel() }
                 return
             }
+            guard client.role.accepts(header.kind) else { c.cancel(); return }
             client.lastHeardAt = Date().timeIntervalSince1970
             // A header can announce up to 4 GiB and the read below would wait for all of it. No
             // client message comes near a megabyte, so a bigger one is a broken or hostile peer.
@@ -1517,7 +1552,9 @@ final class StreamServer {
                     // without a line. Never a refusal here (see `took`).
                     if !client.helloSeen {
                         client.helloSeen = true
-                        if let hello = Wire.decode(Hello.self, from: payload) { self.took(hello, from: client) }
+                        if let hello = Wire.decode(Hello.self, from: payload), DeviceGate.admits(hello, floor: self.deviceFloor) {
+                            self.took(hello, from: client)
+                        } else { c.cancel() }
                     }
                 } else if header.kind == .pairingWanted && client.route.isRemote {
                     // "Show your pairing code" comes only from a device near the Mac: ignored here.
@@ -1558,7 +1595,7 @@ final class StreamServer {
     func sendMicrophoneCatalog(_ message: StreamMessage, to connection: NWConnection, grant: HostLocalOwnerGrant) {
         let data = message.serialized()
         queue.async { [self] in
-            guard let client = clients[ObjectIdentifier(connection)],
+            guard let client = clients[ObjectIdentifier(connection)], client.role.isViewer,
                   client.route.encrypted, client.route.fingerprint == grant.fingerprint,
                   videoAdmission.current?.id == grant.scope.videoEpoch,
                   client.connection.state == .ready else { return }
@@ -1611,7 +1648,7 @@ final class StreamServer {
             if message.kind == .frame, message.isKeyframe { lastKeyframeAt = Date().timeIntervalSince1970 }
             var wantKeyframe = false
             defer { if wantKeyframe { onKeyframeNeeded?() } }
-            for client in clients.values where client.catalogSent && client.connection.state == .ready {
+            for client in clients.values where client.role.isViewer && client.catalogSent && client.connection.state == .ready {
                 if message.kind == .frame, client.route.isRemote {
                     if paceRemote(client, message: message, data: data) { wantKeyframe = true }
                     continue
@@ -1746,7 +1783,7 @@ final class StreamServer {
     /// hitch (the trackpad stutter's cause 2); it only brings one forward when frames come slower
     /// than the stream's rate. The remote device waits longer after a drop in exchange. On `queue`.
     private func remoteKeyframeDue(_ now: TimeInterval) -> Bool {
-        guard clients.values.contains(where: { !$0.route.isRemote }) else {
+        guard clients.values.contains(where: { $0.role.isViewer && !$0.route.isRemote }) else {
             return now - lastRemoteKeyframeRequest >= Self.remoteKeyframeSpacing
         }
         return now - lastRemoteKeyframeRequest >= Self.remoteKeyframeSpacingBesideHome
@@ -1762,6 +1799,14 @@ final class StreamServer {
 
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
         var raw = raw
+        if !client.role.isViewer {
+            guard let header = StreamMessage.parseHeader(raw), client.role.sends(header.kind) else { return }
+            if header.kind == .windowList {
+                guard let list = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))),
+                      list.active == .none, list.windows.isEmpty, list.videoEpoch == nil,
+                      list.microphone == nil, list.inputGeneration == nil else { return }
+            }
+        }
         if let header = StreamMessage.parseHeader(raw), header.kind == .windowList,
            var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
             catalog.presentationInput = 1

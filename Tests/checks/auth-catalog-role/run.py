@@ -1,0 +1,46 @@
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+root = Path(__file__).resolve().parents[3]
+output = Path(tempfile.mkdtemp(prefix="ccr-auth-role-"))
+
+def block(text, marker):
+    assert text.count(marker) == 1, marker
+    start = text.index(marker); opening = text.index("{", start); end = opening + 1; depth = 1
+    while depth:
+        depth += (text[end] == "{") - (text[end] == "}"); end += 1
+    return text[start:end]
+
+server = (root / "Sources/SillHost/StreamServer.swift").read_text()
+fixture = Path(__file__).with_name("Main.swift").read_text()
+methods = [block(server, marker) for marker in ["private func register(", "func serve(", "private func took(", "private func unregister(", "func sendAuthenticationCatalog("]]
+raw = block(server, "private func send(_ raw:")
+prefix = raw[raw.index("{") + 1:raw.index("        guard let data = PresentationMedia.adapt")]
+prefix = prefix.replace("else { return }", "else { return false }")
+methods.append("func admitsRaw(_ raw: Data, to client: Client) -> Bool {" + prefix + "\nreturn true\n}")
+fixture = fixture.replace("    // METHODS", "\n".join(methods).replace("private func", "func"))
+fixture = fixture.replace("    // VIEWER_COUNT", block(server, "private var viewerCount:").replace("private var", "var"))
+reader = block(server, "private func receiveLoop(")
+assert reader.index("guard client.role.accepts(header.kind)") < reader.index("self.onMicrophoneMessage?") < reader.index("self.pointerWatch?.inputArrived")
+assert "viewerCount > 0" in block(server, "private func updateTicking(")
+assert "client.role.isViewer && client.catalogSent" in block(server, "func broadcast(_ message:")
+assert "client.role.isViewer" in block(server, "func sendMicrophoneCatalog(")
+assert "client.role.isViewer" in block(server, "func setRemoteAudio(")
+original = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in
+            [root / "Sources/SillHost/StreamServer.swift", root / "Sources/SillHost/StreamPeerRole.swift", Path(__file__), Path(__file__).with_name("Main.swift")]}
+try:
+    source = output / "Fixture.swift"; source.write_text(fixture)
+    base = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-module-cache-path", str(output / "cache")]
+    protocol = base + ["-parse-as-library", "-whole-module-optimization", "-emit-module", "-emit-object", "-module-name", "StreamProtocol"]
+    subprocess.run(protocol + [str(p) for p in sorted((root / "Sources/StreamProtocol").glob("*.swift"))] + ["-emit-module-path", str(output / "StreamProtocol.swiftmodule"), "-o", str(output / "StreamProtocol.o")], check=True, timeout=180)
+    subprocess.run(base + ["-I", str(output), str(root / "Sources/SillHost/StreamPeerRole.swift"), str(source), str(output / "StreamProtocol.o"), "-o", str(output / "check")], check=True, timeout=180)
+    subprocess.run([str(output / "check")], check=True, timeout=30)
+    assert all(hashlib.sha256((root / name).read_bytes()).hexdigest() == value for name, value in original.items())
+finally:
+    import shutil
+    shutil.rmtree(output)
+    print("RECEIPT " + json.dumps({"sourceHashes": original, "outputRemoved": not output.exists(), "hardwareOrDeviceActions": 0}))
