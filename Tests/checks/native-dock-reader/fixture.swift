@@ -42,6 +42,7 @@ enum Fixture {
     static var menuTitle: String?
     static var setupCost: TimeInterval = 0, actionCost: TimeInterval = 0
     static var menuCalls: [TimeInterval] = []
+    static var onRead: ((Int, String) -> Void)?
 
     static func reset() {
         now = 100; count = 1; privateApp = false; unresolved = false
@@ -52,6 +53,7 @@ enum Fixture {
         showMenuErrorAfterEffect = false
         failTimeout = false; attributeReads = 0; failedRead = nil; failedCancel = nil; menuTitle = nil
         setupCost = 0; actionCost = 0; menuCalls = []
+        onRead = nil
     }
     static func url(_ i: Int) -> URL { URL(fileURLWithPath: "/fixture/App\(i).app") }
 }
@@ -87,6 +89,7 @@ func FixtureFixtureElementPerformAction(_ element: Int, _ action: CFString) -> A
 func FixtureFixtureElementCopyAttributeValue(_ element: Int, _ name: CFString, _ result: inout CFTypeRef?) -> AXError {
     let key = name as String
     Fixture.attributeReads += 1
+    Fixture.onRead?(element, key)
     if Fixture.failedRead == element { return .cannotComplete }
     if Fixture.menuOpen {
         Fixture.menuCalls.append(Fixture.now)
@@ -139,6 +142,13 @@ func FixtureFixtureElementCopyAttributeValue(_ element: Int, _ name: CFString, _
             let reader = RemoteDockReader()
             for i in 0..<Fixture.count { reader.icons[Fixture.url(i).absoluteString] = Data(repeating: 255, count: 65536) }
             return reader
+        }
+        func actionRequest(_ reader: RemoteDockReader, _ catalog: RemoteDockCatalog,
+                           _ action: RemoteDockRequest.Action) -> RemoteDockRequest {
+            guard action == .choose else { return request(catalog, action) }
+            let reply = reader.perform(request(catalog, .menu), owner: owner)
+            return RemoteDockRequest(version: catalog.version, itemID: 0, action: .choose,
+                                     menuID: reply.menuID, menuItemID: "0", title: "열기 1001")
         }
 
         Fixture.reset(); Fixture.privateApp = true
@@ -305,6 +315,103 @@ func FixtureFixtureElementCopyAttributeValue(_ element: Int, _ name: CFString, _
             Fixture.setupCost = 0
             reader.disconnected(owner)
             check(!Fixture.menuOpen, "전체 예산 이후 남은 정리 책임은 disconnect에서 재개합니다")
+        }
+        for action in [RemoteDockRequest.Action.press, .menu, .choose] {
+            Fixture.reset()
+            let reader = seededReader(), catalog = reader.catalog(force: true)
+            let next = actionRequest(reader, catalog, action)
+            Fixture.actions = []
+            var latestTicket = 1, admissions = 0, executions = 0
+            Fixture.onRead = { element, key in
+                if element == 1 && key == kAXChildrenAttribute as String { latestTicket = 2 }
+            }
+            let reply = reader.perform(next, owner: owner, actionAdmission: { performAction in
+                admissions += 1
+                guard latestTicket == 1 else { return .cannotComplete }
+                executions += 1
+                return performAction()
+            })
+            print("\(action) 최신 ticket \(latestTicket), admission \(admissions)회, 실행 \(executions)회, 액션 \(Fixture.actions.map(\.1))")
+            check(latestTicket == 2 && admissions == 1 && executions == 0 && reply.note != nil
+                  && reply.menuID == nil && reply.menu == nil
+                  && !Fixture.actions.contains(where: { $0.1 != kAXCancelAction as String }),
+                  "\(action) catalog 읽기 중 최신 선택이 바뀌면 admission이 AX 효과 없이 거부합니다")
+            let expected = action == .choose ? [kAXCancelAction as String] : []
+            let before = Fixture.actions.count
+            reader.disconnected(owner)
+            check(!Fixture.menuOpen && Fixture.actions.map(\.1) == expected && Fixture.actions.count == before,
+                  "\(action) 거부는 기존 메뉴만 정리하고 새 메뉴 책임을 남기지 않습니다")
+        }
+        for action in [RemoteDockRequest.Action.press, .menu, .choose] {
+            for fail in [false, true] {
+                Fixture.reset()
+                let reader = seededReader(), catalog = reader.catalog(force: true)
+                let next = actionRequest(reader, catalog, action)
+                Fixture.actions = []
+                Fixture.failPress = fail
+                Fixture.showMenuErrorAfterEffect = fail
+                var admissions = 0, onlyAction = false
+                let reply = reader.perform(next, owner: owner, actionAdmission: { performAction in
+                    admissions += 1
+                    let reads = Fixture.attributeReads, before = Fixture.actions.count
+                    let result = performAction()
+                    let names = Fixture.actions.dropFirst(before).map(\.1)
+                    onlyAction = Fixture.attributeReads == reads
+                        && names == [action == .menu ? kAXShowMenuAction as String : kAXPressAction as String]
+                    return result
+                })
+                check(admissions == 1 && onlyAction && (reply.note != nil) == fail,
+                      "\(action) admission은 실제 AX 액션 한 번과 그 \(fail ? "오류" : "성공") 결과를 전달합니다")
+                let before = Fixture.actions.count
+                reader.disconnected(owner)
+                check(!Fixture.menuOpen && admissions == 1
+                      && Fixture.actions.count == before + (action == .menu && !fail ? 1 : 0),
+                      "\(action) \(fail ? "실패" : "성공") 후 메뉴 정리는 admission 밖에서 완료됩니다")
+            }
+        }
+        for action in [RemoteDockRequest.Action.press, .menu, .choose] {
+            Fixture.reset()
+            let reader = seededReader(), catalog = reader.catalog(force: true)
+            let next = actionRequest(reader, catalog, action)
+            Fixture.actions = []
+            let reply = reader.perform(next, owner: owner, actionAdmission: { performAction in
+                Fixture.now += 0.4
+                return performAction()
+            })
+            check(reply.note != nil && Fixture.actions.isEmpty,
+                  "\(action) admission 대기 중 deadline이 지나면 AX 액션을 시작하지 않습니다")
+            reader.disconnected(owner)
+            check(!Fixture.menuOpen && Fixture.actions.map(\.1) == (action == .choose ? [kAXCancelAction as String] : []),
+                  "\(action) admission deadline 후 기존 메뉴만 owner가 정리합니다")
+        }
+        Fixture.reset()
+        do {
+            let reader = seededReader(), catalog = reader.catalog(force: true)
+            let choose = actionRequest(reader, catalog, .choose)
+            Fixture.failCancel = true
+            let reply = reader.perform(choose, owner: owner, actionAdmission: { _ in .cannotComplete })
+            let before = Fixture.actions.count
+            reader.disconnected(other)
+            check(reply.note != nil && Fixture.menuOpen && Fixture.actions.count == before
+                  && !Fixture.actions.contains(where: { $0.1 == kAXPressAction as String }),
+                  "choose admission 거부 후 정리 실패의 책임과 owner가 보존됩니다")
+            Fixture.failCancel = false
+            reader.disconnected(owner)
+            check(!Fixture.menuOpen && Fixture.actions.count == before + 1,
+                  "choose admission 거부 후 owner disconnect가 정리를 재시도합니다")
+        }
+        Fixture.reset()
+        do {
+            let reader = seededReader(), catalog = reader.catalog(force: true)
+            _ = reader.perform(request(catalog, .menu), owner: owner)
+            var admissions = 0
+            let reply = reader.perform(request(catalog, .cancel), owner: owner, actionAdmission: { _ in
+                admissions += 1
+                return .cannotComplete
+            })
+            check(reply.note == nil && !Fixture.menuOpen && admissions == 0
+                  && Fixture.actions.last?.1 == kAXCancelAction as String,
+                  "명시적 cancel은 actionAdmission으로 감싸지 않습니다")
         }
         print("실제 AX·앱·기기·오디오·HAL·서비스 호출 없음, 실패 \(failures.count)개")
         if !failures.isEmpty { exit(1) }
