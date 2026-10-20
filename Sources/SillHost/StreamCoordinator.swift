@@ -289,6 +289,11 @@ package final class StreamCoordinator {
     /// MenuMirror). Reads and presses nothing for a device that never asked.
     let menus: MenuMirror
     private let nativeDock = RemoteDockReader()
+    private let dockSelectionIngress = DockSelectionIngress()
+    private var dockTransition = false
+    private var dockGeneration: String?
+    private var pendingDockSelection: (StreamMessage, NWConnection, UInt64)?
+    private var dockArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
     /// TEST ONLY. `SILL_TEST_MENU_PID=<pid>` on a --synthetic host: the test pattern's menus are that
     /// process's (the gates' fixture, Scripts/menufixture.swift), read and pressed through the same
     /// code, never activated (the Desktop's rule). Nil otherwise; `testMenuLine` is what `start`
@@ -475,6 +480,7 @@ package final class StreamCoordinator {
                 self.extendedDesktopViewports[id] = nil
                 self.inputFence.leave(id)
                 self.gestureArrivals[id] = nil
+                self.dockArrivals[id] = nil
                 self.routes[id] = nil
                 self.audioRoutePublished[id] = nil
                 self.audioRouteArrivals[id] = nil
@@ -530,8 +536,9 @@ package final class StreamCoordinator {
             self.server.broadcast(StreamMessage(kind: .appList, timestamp: Date().timeIntervalSince1970,
                                                 isKeyframe: false, payload: Wire.encode(apps)))
         }
-        server.onMessage = { [weak self] message, connection in
-            Task { @MainActor in await self?.handle(message, from: connection) }
+        server.onMessage = { [weak self, dockSelectionIngress] message, connection in
+            let ticket = dockSelectionIngress.reserve(for: message)
+            Task { @MainActor in await self?.handle(message, from: connection, selectionTicket: ticket) }
         }
         catalog.onWindowsChanged = { [weak self] infos in
             Task { @MainActor in await self?.windowsChanged(infos) }
@@ -963,10 +970,17 @@ package final class StreamCoordinator {
 
     // MARK: Client messages
 
-    private func handle(_ message: StreamMessage, from connection: NWConnection) async {
+    private func handle(_ message: StreamMessage, from connection: NWConnection, selectionTicket: UInt64? = nil) async {
+        if let ticket = selectionTicket {
+            guard dockSelectionIngress.isCurrent(ticket) else { return }
+            if dockTransition {
+                pendingDockSelection = (message, connection, ticket)
+                return
+            }
+        }
         switch message.kind {
         case .dockRequest:
-            await handleDockRequest(message, from: connection)
+            await handleDockRequest(message, from: connection, selectionTicket: selectionTicket)
         case .changeAudioRoute, .fetchAudioRoutes:
             handleAudioRoute(message, from: connection)
         case .selectDisplay:
@@ -1148,7 +1162,7 @@ package final class StreamCoordinator {
 
     // MARK: Where input lands
 
-    private func handleDockRequest(_ message: StreamMessage, from connection: NWConnection) async {
+    private func handleDockRequest(_ message: StreamMessage, from connection: NWConnection, selectionTicket: UInt64?) async {
         let id = ObjectIdentifier(connection)
         guard message.payload.count <= StreamMessage.clientPayloadLimit(for: .dockRequest),
               let request = Wire.decode(RemoteDockRequest.self, from: message.payload),
@@ -1156,22 +1170,104 @@ package final class StreamCoordinator {
               let route = routes[id], route.encrypted,
               let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
               !synthetic, !shuttingDown, !switching else { return }
-        let generation = inputGeneration
-        let sourceBefore = active
-        let bundleID = nativeDock.applicationBundleID(for: request)
-        let reply = nativeDock.perform(request, owner: id)
+        let now = ProcessInfo.processInfo.systemUptime
+        var recent = (dockArrivals[id] ?? []).filter { now - $0 < 1 }
+        guard recent.count < 8 else { return }
+        recent.append(now)
+        dockArrivals[id] = recent
+        let changesSource = request.action == .press || request.action == .choose
+        let previous = active
+        if request.action != .cancel {
+            let shown = nativeDock.catalog(force: true)
+            guard shown.note == nil, request.version == shown.version,
+                  shown.items.contains(where: { $0.id == request.itemID }) else {
+                server.send(StreamMessage(kind: .dockReply, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
+                    payload: Wire.encode(RemoteDockReply(requestID: request.requestID, catalog: shown,
+                                                        note: "Dock 내용이 바뀌었습니다. 최신 항목에서 다시 선택하세요."))), to: connection)
+                return
+            }
+        }
+        defer {
+            if changesSource {
+                dockTransition = false
+                dockGeneration = nil
+                if let pending = pendingDockSelection {
+                    pendingDockSelection = nil
+                    Task { @MainActor in
+                        await self.handle(pending.0, from: pending.1, selectionTicket: pending.2)
+                    }
+                }
+            }
+        }
+        if changesSource {
+            guard dockSelectionIngress.isCurrent(selectionTicket) else { return }
+            dockTransition = true
+            pendingLaunch = nil
+            await select(.none, bringForward: false)
+            dockGeneration = inputGeneration
+            let deadline = ProcessInfo.processInfo.systemUptime + 1
+            while microphoneReceiver.phase != .off, microphoneReceiver.phase != .cleanupFailed,
+                  dockActionIsCurrent(connection, ticket: selectionTicket),
+                  ProcessInfo.processInfo.systemUptime < deadline {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            guard dockActionIsCurrent(connection, ticket: selectionTicket) else { return }
+            guard microphoneReceiver.phase == .off else {
+                server.send(StreamMessage(kind: .dockReply, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
+                    payload: Wire.encode(RemoteDockReply(requestID: request.requestID, catalog: nativeDock.catalog(),
+                                                        note: "기존 마이크의 종료를 확인하지 못해 Dock 동작을 보류했습니다."))), to: connection)
+                return
+            }
+        }
+        var reply = nativeDock.perform(request, owner: id)
+        if changesSource, reply.note == nil {
+            let deadline = ProcessInfo.processInfo.systemUptime + 2
+            repeat {
+                guard dockActionIsCurrent(connection, ticket: selectionTicket) else { return }
+                _ = await catalog.refreshWindows()
+                guard dockActionIsCurrent(connection, ticket: selectionTicket) else { return }
+                if previous == .desktop {
+                    await select(.desktop, bringForward: false)
+                    break
+                }
+                if let source = focusedDockSource() {
+                    await select(source, bringForward: false)
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            } while ProcessInfo.processInfo.systemUptime < deadline
+            if active == .none { reply.note = "Dock 동작은 전달됐지만 활성 창을 확인하지 못했습니다. Mac 창을 선택해 주세요." }
+        } else if changesSource, dockActionIsCurrent(connection, ticket: selectionTicket) {
+            await select(previous, bringForward: false)
+        }
+        guard connections[id] === connection, connection.state == .ready else { return }
         server.send(StreamMessage(kind: .dockReply, timestamp: Date().timeIntervalSince1970,
                                   isKeyframe: false, payload: Wire.encode(reply)), to: connection)
-        guard reply.note == nil, request.action == .press || request.action == .choose else { return }
-        _ = await catalog.refreshWindows()
-        guard inputFence.contains(id), connections[id] === connection, connection.state == .ready,
-              !shuttingDown, !switching, inputGeneration == generation, active == sourceBefore else { return }
-        if request.action == .press {
-            let source = bundleID.flatMap { bundle in catalog.infos.first(where: { $0.bundleID == bundle }) }
-                .map { StreamSource.window($0.id) } ?? .desktop
-            await select(source, bringForward: false)
-        }
         broadcastList()
+    }
+
+    private func dockActionIsCurrent(_ connection: NWConnection, ticket: UInt64?) -> Bool {
+        let id = ObjectIdentifier(connection)
+        guard dockSelectionIngress.isCurrent(ticket), inputFence.contains(id),
+              connections[id] === connection, connection.state == .ready,
+              let route = routes[id], route.encrypted, let fingerprint = route.fingerprint,
+              remote?.isPaired(fingerprint) == true else { return false }
+        return !shuttingDown && !switching && active == .none && inputGeneration == dockGeneration
+    }
+
+    private func focusedDockSource() -> StreamSource? {
+        guard let app = NSWorkspace.shared.frontmostApplication, let bundleID = app.bundleIdentifier,
+              !WindowCatalog.isPrivateApplication(bundleID) else { return nil }
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.25
+        var matches: [UInt32] = []
+        for info in catalog.infos where info.bundleID == bundleID {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+            guard let window = catalog.window(id: info.id), window.owningApplication?.processID == app.processIdentifier,
+                  let element = sizer.element(for: window, input: true),
+                  WindowSizer.hasKeyboardFocus(element, pid: app.processIdentifier) else { continue }
+            matches.append(info.id)
+        }
+        return matches.count == 1 ? .window(matches[0]) : nil
     }
 
     /// The active source's rectangle on screen, in CG global points (top-left origin), which is
