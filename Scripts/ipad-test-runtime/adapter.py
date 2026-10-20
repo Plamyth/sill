@@ -79,7 +79,7 @@ def identity(config):
 
 def device(config, args, name):
     lease(config)
-    return command(['xcrun', 'devicectl', 'device', *args, '--device', config['deviceUDID']], name, 120)
+    return command(['xcrun', 'devicectl', 'device', *args[:2], '--device', config['deviceUDID'], *args[2:]], name, 120)
 
 def copy_file(config, work, source, destination, direction='from', optional=False, replace=False, bundle=BUNDLE):
     lease(config)

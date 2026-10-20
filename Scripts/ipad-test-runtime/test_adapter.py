@@ -118,5 +118,13 @@ class AdapterContract(unittest.TestCase):
                 with self.assertRaisesRegex(adapter.Held,'orphan_owned_relay_still_live'):
                     adapter.relay_runtime(config,work,{'commit':'a'*40,'tree':'b'*40})
 
+    def test_device_option_precedes_application_argument_separator(self):
+        with patch.object(adapter,'lease'),patch.object(adapter,'command',return_value='') as run:
+            adapter.device({'deviceUDID':'own-ipad'},['process','launch',adapter.BUNDLE,'--','--ccr-test-runtime','fixture'],Path('log'))
+            args=run.call_args.args[0]
+            self.assertLess(args.index('--device'),args.index('--'))
+            self.assertEqual(args[args.index('--device')+1],'own-ipad')
+            self.assertEqual(args[-2:],['--ccr-test-runtime','fixture'])
+
 if __name__ == '__main__':
     unittest.main()
