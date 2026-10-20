@@ -40,7 +40,7 @@ struct LocalAudioRelayManifest: Codable {
     let entries: [Entry]
     let dependencies: [Dependency]
 
-    static let nodeCommit = "2cd5b01cc624edc06c4b3e9cedc5d2b22fd98e2f"
+    static let nodeCommit = "edf2cee3915cf064465b2a84e88f6b4c47943096"
     static let requiredFiles = ["node/bin/node", "server/control-room-server.js", "server/audio-router.py",
                                 "python/bin/python3.13", "python/Python"]
     static let requiredDirectory = "python/lib/python3.13"
@@ -59,7 +59,7 @@ struct LocalAudioRelayManifest: Codable {
         }
         let manifest = try JSONDecoder().decode(Self.self, from: data)
         guard manifest.schemaVersion == 1,
-              ["native-audio-control-stdio-v1", "native-audio-packaged-stdio-v2"].contains(manifest.runtimeABI),
+              ["native-audio-forwarding-stdio-v3"].contains(manifest.runtimeABI),
               manifest.nodeSourceCommit == nodeCommit, manifest.port == 17648 else {
             throw LocalAudioRelayLaunchFailure.unsupportedRuntimeABI
         }
@@ -263,7 +263,7 @@ struct LocalAudioRelayInvocation {
     init(inventory: LocalAudioRelayInventory) {
         let root = inventory.package.appendingPathComponent("runtime")
         executableURL = root.appendingPathComponent("node/bin/node")
-        arguments = [root.appendingPathComponent("server/control-room-server.js").path, "--native-audio-packaged-stdio"]
+        arguments = [root.appendingPathComponent("server/control-room-server.js").path, "--native-audio-forwarding-stdio"]
         environment = ["CCR_MOBILE_PORT": "17648"]
         currentDirectoryURL = root
         runtime = .init(python: root.appendingPathComponent("python/bin/python3.13").path,
@@ -283,13 +283,9 @@ enum LocalAudioRelayLaunch {
         return inventory
     }
 
-    static func requireLaunchSupport(_ inventory: LocalAudioRelayInventory) throws -> Never {
+    static func requireLaunchSupport(_ inventory: LocalAudioRelayInventory) throws {
         try inventory.recheck()
-        if inventory.manifest.runtimeABI == "native-audio-control-stdio-v1" {
-            throw LocalAudioRelayLaunchFailure.unsupportedRuntimeABI
-        }
-        // Inventory declarations cannot prove dynamic Python loading or the server's external helper execution closure.
-        throw LocalAudioRelayLaunchFailure.runtimePackagingUnverified
+        try LocalAudioRelayClosure.validate(inventory)
     }
 
     private static func validateSignatureAndSelf() throws {
