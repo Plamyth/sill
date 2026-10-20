@@ -96,7 +96,10 @@ greater than the prepared build. Build equality never establishes source
 identity.
 
 The build sets bundle `dev.ambrion.SillVision`, team `ZPTXHJ866D`, and generated
-Info.plist keys `BTSourceCommit` / `BTSourceTree` before signing. Prepare checks
+Info.plist keys `BTSourceCommit` / `BTSourceTree` before signing. The checked-in
+template expands `BT_RELEASE_SOURCE_COMMIT` / `BT_RELEASE_SOURCE_TREE` build
+settings. Arbitrary `INFOPLIST_KEY_` settings were omitted by the actual SDK
+build, so that failed artifact remains held and preserved. Prepare checks
 the actual built plist, XROS platform, `codesign --verify --deep --strict`,
 identifier, team, CDHash, application identifier and team entitlements, and all
 bundle file hashes. Later actions verify the signed bundle again. Source/ref

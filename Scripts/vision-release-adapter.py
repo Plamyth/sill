@@ -346,7 +346,7 @@ def prepare(args, source, runner, output):
                 "PRODUCT_BUNDLE_IDENTIFIER=" + BUNDLE, "DEVELOPMENT_TEAM=" + TEAM,
                 "CURRENT_PROJECT_VERSION=" + build,
                 "CODE_SIGNING_ALLOWED=YES", "CODE_SIGNING_REQUIRED=YES", "CODE_SIGN_STYLE=Automatic",
-                "INFOPLIST_KEY_BTSourceCommit=" + source.commit, "INFOPLIST_KEY_BTSourceTree=" + source.tree,
+                "BT_RELEASE_SOURCE_COMMIT=" + source.commit, "BT_RELEASE_SOURCE_TREE=" + source.tree,
                 "build"], cwd=args.repo)
     built = signed_app(derived / "Build/Products/Release-xros/SillVision.app", source, runner)
     require(built["build"] == build, "built_developer_version_mismatch")

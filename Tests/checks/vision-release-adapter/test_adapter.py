@@ -218,7 +218,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(prepared["commit"], self.source.commit)
         self.assertEqual(prepared["tree"], self.source.tree)
         commands = self.boundary.calls
-        self.assertTrue(any("INFOPLIST_KEY_BTSourceCommit=" + self.source.commit in row for row in commands))
+        self.assertTrue(any("BT_RELEASE_SOURCE_COMMIT=" + self.source.commit in row for row in commands))
         self.assertTrue(any("-resultBundlePath" in row for row in commands))
         self.assertFalse(any("xcode-select" in word for row in commands for word in row))
 

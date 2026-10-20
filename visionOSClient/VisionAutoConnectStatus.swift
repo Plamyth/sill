@@ -5,7 +5,9 @@ enum VisionReleaseRuntimeWriter {
     private static let foundation: Runtime? = {
         let bundle = Bundle.main
         guard let commit = bundle.object(forInfoDictionaryKey: "BTSourceCommit") as? String,
+              !commit.isEmpty,
               let tree = bundle.object(forInfoDictionaryKey: "BTSourceTree") as? String,
+              !tree.isEmpty,
               let bundleId = bundle.bundleIdentifier,
               let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
               let executable = bundle.executableURL,
