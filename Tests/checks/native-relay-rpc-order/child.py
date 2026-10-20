@@ -71,6 +71,16 @@ for line in sys.stdin:
         prepared_receipt = result
     elif method == 'fenceAndQuiesce':
         result = receipt(payload)
+        if mode.startswith('conflict'):
+            result.update(state='blocked', facts={key: None for key in result['facts']}, reason='audio_preparation_conflict')
+            field = mode.removeprefix('conflict-')
+            if field in ['operationId', 'privacyGeneration', 'bootId']: result[field] = str(uuid.uuid4())
+            elif field == 'registryRevision': result[field] = '999'
+            elif field == 'schemaVersion': result[field] = 2
+            elif field == 'participantId': result[field] = 'native.sill'
+            elif field == 'state': result[field] = 'unknown'
+            elif field == 'reason': result[field] = 'unknown_conflict'
+            elif field == 'facts': result[field]['workersExited'] = True
     elif method == 'inspect':
         result = prepared_receipt if prepared_receipt and payload['operationId'].lower() == prepared_receipt['operationId'].lower() else None
     else:

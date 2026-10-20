@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 root = Path(sys.argv[1]).resolve()
-assert sys.argv[2:] in [[], ['http-admission']]
+assert sys.argv[2:] in [[], ['http-admission'], ['conflict']]
 check = root / 'Tests/checks/native-relay-rpc-order'
 names = ['Sources/SillHost/LocalAudioRelay.swift', 'Sources/SillHost/LocalAudioParticipants.swift',
          'Sources/SillHost/AudioForwardingContract.swift', 'Sources/SillHost/RemoteAccess.swift',

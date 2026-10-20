@@ -55,6 +55,11 @@ import Foundation
         precondition(condition(), "test barrier expired")
     }
     @MainActor static func main() async {
+        if CommandLine.arguments.last == "conflict" {
+            await preparationConflict()
+            print("PASS \(assertions) conflict receipt assertions. Actual private pipe, inert child only.")
+            return
+        }
         if CommandLine.arguments.last != "http-admission" {
             await fifo()
             await queuedCancellationAndDeadline()
@@ -69,7 +74,29 @@ import Foundation
         }
         await httpPreparation()
         await reentrantAdmission()
+        await preparationConflict()
         print("PASS \(assertions) assertions. Actual LocalAudioRelay private call, inert stdio only.")
+    }
+    @MainActor static func preparationConflict() async {
+        for field in ["valid", "operationId", "privacyGeneration", "bootId", "registryRevision", "schemaVersion", "participantId", "state", "reason", "facts"] {
+            let f = await Fixture.make("conflict-\(field)"), binding = await f.binding()
+            let original = binding.participantRequest(for: .relay, budgetMilliseconds: 5000)!
+            guard case .accepted(let prepared) = await f.relay.forwardingPrepare(binding) else { fatalError("conflict fixture prepare") }
+            let stale = LocalAudioParticipantRequest(schemaVersion: 1, operationId: UUID(),
+                privacyGeneration: original.privacyGeneration, registryRevision: original.registryRevision,
+                participantId: .relay, bootId: original.bootId, budgetMilliseconds: 5000)
+            let membership = f.registry.snapshot
+            let refusal = await f.registry.checkedFence(stale)
+            if field == "valid" {
+                expect(refusal?.state == .blocked && refusal?.reason == "audio_preparation_conflict", "known conflict returns typed refusal")
+                expect(f.relay.checkConnected && f.registry.matches(membership), "known conflict preserves connection and membership")
+                expect(await f.registry.checkedInspect(binding.operationId) == prepared, "known conflict preserves previously prepared binding")
+                expect(await f.relay.checkedCall("after-conflict", until: .now.advanced(by: .seconds(1))) == 1, "same child accepts the next RPC")
+            } else {
+                expect(f.relay.checkClosed, "invalid conflict receipt closes connection \(field)")
+            }
+            f.finish()
+        }
     }
     @MainActor static func httpPreparation() async {
         for mode in ["valid", "http", "http-receipt-bootId", "http-receipt-registryRevision", "http-receipt-privacyGeneration"] {
