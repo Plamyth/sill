@@ -351,7 +351,7 @@ package final class StreamCoordinator {
         var home = StreamServer.HomeDoorMode.plain
         if homePairing, let remote {
             if let identity = remote.identity {
-                home = .tls(StreamServer.HomeTLS(identity: identity, trust: remote.trust))
+                home = .tls(StreamServer.HomeTLS(identity: identity, trust: remote.trust, connectionPolicy: remote.connectionPolicy))
             } else {
                 home = .closed("Sill couldn’t use its key \(remote.keyPlace) (\(remote.identityProblem ?? "no identity"))")
             }
@@ -436,13 +436,13 @@ package final class StreamCoordinator {
         server.onControlClientConnected = { [weak self] connection, route in
             Task { @MainActor in
                 guard let self, !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
-                      self.remote?.isPaired(fingerprint) == true else { return }
+                      self.remote?.isAuthorized(route) == true else { return }
                 let id = ObjectIdentifier(connection), ticket = UUID()
                 self.authenticationCatalogTickets[id] = ticket
                 let catalog = await self.authenticationCatalog?(connection, fingerprint)
                     ?? WindowList(macName: self.macName, windows: [], active: .none)
                 guard self.authenticationCatalogTickets[id] == ticket, connection.state == .ready,
-                      self.remote?.isPaired(fingerprint) == true else { return }
+                      self.remote?.isAuthorized(route) == true else { return }
                 self.server.sendAuthenticationCatalog(catalog, to: connection)
             }
         }
@@ -460,9 +460,9 @@ package final class StreamCoordinator {
                 }
                 self.routes[id] = route
                 self.dockSelectionIngress.setPeer(id, dockAllowed: route.encrypted &&
-                    route.fingerprint.map { self.remote?.isPaired($0) == true } == true)
+                    self.remote?.isAuthorized(route) == true)
                 if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
-                   self.remote?.isPaired(fingerprint) == true {
+                   self.remote?.isAuthorized(route) == true {
                     self.microphoneIngress.authorize(connection, fingerprint: fingerprint)
                 }
                 // A paired device shows its paired name until its own stats arrive, and a remote one
@@ -1202,7 +1202,7 @@ package final class StreamCoordinator {
               let request = Wire.decode(RemoteDockRequest.self, from: message.payload),
               inputFence.contains(id), connections[id] === connection, connection.state == .ready,
               let route = routes[id], route.encrypted,
-              let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
+              let fingerprint = route.fingerprint, remote?.isAuthorized(route) == true,
               !synthetic, !shuttingDown, !switching else { return }
         let now = ProcessInfo.processInfo.systemUptime
         var recent = (dockArrivals[id] ?? []).filter { now - $0 < 1 }
@@ -1321,7 +1321,7 @@ package final class StreamCoordinator {
         guard inputFence.contains(id),
               connections[id] === connection, connection.state == .ready,
               let route = routes[id], route.encrypted, let fingerprint = route.fingerprint,
-              remote?.isPaired(fingerprint) == true else { return false }
+              remote?.isAuthorized(route) == true else { return false }
         return !shuttingDown
     }
 
@@ -2335,7 +2335,7 @@ package final class StreamCoordinator {
     private func requestExtendedDesktop(for connection: NWConnection, hello: Hello) {
         let id = ObjectIdentifier(connection)
         let route = routes[id]
-        let paired = route?.fingerprint.map { remote?.isPaired($0) == true } ?? false
+        let paired = route.map { remote?.isAuthorized($0) == true } ?? false
         guard !shuttingDown, ExtendedDesktop.eligible(appKitLoop: appKitLoop, synthetic: synthetic,
             connected: connections[id] === connection && connection.state == .ready,
             encrypted: route?.encrypted == true, paired: paired, device: hello.device) else { return }
@@ -2848,7 +2848,7 @@ package final class StreamCoordinator {
               UUID(uuidString: inputGeneration) == scope.inputGeneration, epoch.generation == inputGeneration,
               let connection = microphoneConnection(peer: scope.peer),
               let route = routes[ObjectIdentifier(connection)], route.encrypted,
-              route.fingerprint == fingerprint, remote?.isPaired(fingerprint) == true else { return false }
+              route.fingerprint == fingerprint, remote?.isAuthorized(route) == true else { return false }
         return true
     }
 
@@ -2992,7 +2992,7 @@ package final class StreamCoordinator {
     private func audioRouteAuthorized(_ connection: NWConnection) -> Bool {
         let id = ObjectIdentifier(connection)
         let route = routes[id]
-        let paired = route?.fingerprint.map { remote?.isPaired($0) == true } ?? false
+        let paired = route.map { remote?.isAuthorized($0) == true } ?? false
         return AudioRoutingPolicy.authorized(encrypted: route?.encrypted == true, paired: paired,
             connected: connections[id] === connection && connection.state == .ready,
             synthetic: synthetic, shuttingDown: shuttingDown)

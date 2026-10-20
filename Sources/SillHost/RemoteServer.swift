@@ -41,11 +41,12 @@ final class RemoteServer {
     private var retryItem: DispatchWorkItem?
     private var reportedFailure = false
 
-    init(server: StreamServer, identity: HostIdentity, trust: TrustBox) {
+    init(server: StreamServer, identity: HostIdentity, trust: TrustBox, connectionPolicy: HostConnectionPolicy = .registeredKeys) {
         self.server = server
         queue = server.queue
         self.trust = trust
-        door = Door(.remote, queue: server.queue, identity: identity, trust: trust, testHost: server.isTestHost)
+        door = Door(.remote, queue: server.queue, identity: identity, trust: trust, testHost: server.isTestHost,
+                    connectionPolicy: connectionPolicy)
         door.server = server
     }
 

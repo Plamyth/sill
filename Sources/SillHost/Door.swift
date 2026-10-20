@@ -50,6 +50,7 @@ final class Door {
         /// Home door only: the iPhone or iPad this connection came over by the USB cable, by the
         /// Mac's own rule (CableLink.device over the arrival interface, read afresh); nil otherwise.
         let cable: CableLink.Ancestry?
+        var automaticPrincipal: AutomaticDevicePrincipal? = nil
     }
 
     static let maxPending = 8
@@ -59,6 +60,7 @@ final class Door {
     static let failuresForBackoff = 5
 
     let kind: DoorPolicy.Door
+    let connectionPolicy: HostConnectionPolicy
     private let queue: DispatchQueue
     private let identity: HostIdentity
     private let trust: TrustBox
@@ -88,6 +90,23 @@ final class Door {
         /// failure for its source.
         var refused = false
         var deadline: DispatchWorkItem?
+        var automaticEvidence: AutomaticEvidence?
+        var resolvingAutomatic = false
+    }
+    private enum AutomaticEvidence {
+        case local(AutomaticLocalAccess, Data32)
+        case tailnet(TailnetDeviceAccess.Proof, TailnetDeviceAccess, Data32)
+
+        var fingerprint: Data32 {
+            switch self { case .local(_, let key), .tailnet(_, _, let key): return key }
+        }
+        var principal: AutomaticDevicePrincipal {
+            switch self {
+            case .local(.cable(let id), _): return .cable(deviceId: id)
+            case .local(_, let key): return .localNetwork(transportFingerprint: key)
+            case .tailnet(let proof, _, _): return proof.principal
+            }
+        }
     }
     private var pending: [ObjectIdentifier: Pending] = [:]
     private var failures: [String: [CFAbsoluteTime]] = [:]
@@ -114,8 +133,10 @@ final class Door {
         }
     }()
 
-    init(_ kind: DoorPolicy.Door, queue: DispatchQueue, identity: HostIdentity, trust: TrustBox, testHost: Bool) {
+    init(_ kind: DoorPolicy.Door, queue: DispatchQueue, identity: HostIdentity, trust: TrustBox, testHost: Bool,
+         connectionPolicy: HostConnectionPolicy = .registeredKeys) {
         self.kind = kind
+        self.connectionPolicy = connectionPolicy
         self.queue = queue
         self.identity = identity
         self.trust = trust
@@ -147,7 +168,15 @@ final class Door {
 
     /// On `queue`, in the TLS handshake: trust is the pin and the protocol, nothing else.
     private func verify(_ fp: Data?, _ alpn: String?) -> Bool {
-        DoorPolicy.trusts(kind, alpn: alpn, trustFor(fp, trust.snapshot))
+        if connectionPolicy == .automaticNetwork {
+            return fp?.count == 32 && (alpn == RemoteTLS.sessionALPN || alpn == RemoteTLS.pairingALPN)
+        }
+        return DoorPolicy.trusts(kind, alpn: alpn, trustFor(fp, trust.snapshot))
+    }
+
+    private func refusalBeforeStart(_ origin: OriginPolicy.Origin) -> String? {
+        if connectionPolicy == .automaticNetwork { return origin == .internet ? "internet" : nil }
+        return DoorPolicy.refusalBeforeStart(kind, origin: origin, internetAccess: trust.snapshot.internetAccess)
     }
 
     private func sourceText(_ c: NWConnection) -> String {
@@ -171,7 +200,7 @@ final class Door {
         // already waiting with the whole server flight, the Mac's certificate included, before any
         // state callback could refuse it. A source this door does not admit gets no byte.
         if let a = server.arrivalBeforeStart(of: c, remoteDoor: kind == .remote),
-           let word = DoorPolicy.refusalBeforeStart(kind, origin: a.origin, internetAccess: trust.snapshot.internetAccess) {
+           let word = refusalBeforeStart(a.origin) {
             c.cancel()
             refusals.count(word)
             countFailure(source, now)
@@ -231,7 +260,7 @@ final class Door {
             pending[id] = p
         }
         let origin = p.origin ?? .internet
-        if let word = DoorPolicy.refusalBeforeStart(kind, origin: origin, internetAccess: trust.snapshot.internetAccess) {
+        if let word = refusalBeforeStart(origin) {
             refuse(id, word)
             c.cancel()
             return false
@@ -242,6 +271,16 @@ final class Door {
     private func readyArrived(_ id: ObjectIdentifier, _ c: NWConnection) {
         guard pending[id] != nil, checkOrigin(id, c), let server else { return }
         let fp = RemoteTLS.peerFingerprint(c)
+        if connectionPolicy == .automaticNetwork {
+            guard pending[id]?.resolvingAutomatic == false else { return }
+            guard let fp, let key = Data32(fp), let alpn = RemoteTLS.negotiatedALPN(c),
+                  alpn == RemoteTLS.sessionALPN || alpn == RemoteTLS.pairingALPN else {
+                refuse(id, "unpaired"); c.cancel(); return
+            }
+            pending[id]?.resolvingAutomatic = true
+            resolveAutomatic(id, c, key: key, alpn: alpn)
+            return
+        }
         let t = trust.snapshot
         switch DoorPolicy.atReady(kind, alpn: RemoteTLS.negotiatedALPN(c), trustFor(fp, t), remoteSessions: server.remoteSessionCount) {
         case .session:
@@ -262,6 +301,83 @@ final class Door {
         case .refuse(let word):
             refuse(id, word)
             c.cancel()
+        }
+    }
+
+    private func localAccess(_ c: NWConnection, directWireless: Bool? = nil) -> AutomaticLocalAccess? {
+        guard let source = Self.source(of: c) else { return nil }
+        let interfaces = InterfaceSnapshot.policyInterfaces(InterfaceSnapshot.read().filter(\.up))
+        let local: String?
+        if case .hostPort(let host, _)? = c.currentPath?.localEndpoint { local = StreamServer.addressText(host).text }
+        else { local = nil }
+        var cables: [String: CableLink.Ancestry] = [:]
+        if let scope = source.scope, let ancestry = InterfaceSnapshot.readCable(scope).ancestry { cables[scope] = ancestry }
+        return AutomaticLocalAccess.resolve(remote: IPBytes.text(IPBytes.unmapped(source.bytes)), localAddress: local,
+            scope: source.scope, interfaces: interfaces, cables: cables,
+            directWireless: directWireless ?? pending[ObjectIdentifier(c)]?.peerToPeer ?? false)
+    }
+
+    private func evidenceCurrent(_ evidence: AutomaticEvidence, on c: NWConnection) -> Bool {
+        guard c.state == .ready, RemoteTLS.peerFingerprint(c) == evidence.fingerprint.data else { return false }
+        switch evidence {
+        case .local(let expected, _):
+            let direct: Bool
+            if case .directWireless = expected { direct = true } else { direct = false }
+            return localAccess(c, directWireless: direct) == expected
+        case .tailnet(let proof, let resolver, _):
+            guard let source = Self.source(of: c),
+                  case .hostPort(let localHost, _)? = c.currentPath?.localEndpoint else { return false }
+            let local = StreamServer.addressText(localHost).text
+            let interfaces = InterfaceSnapshot.policyInterfaces(InterfaceSnapshot.read().filter(\.up))
+            guard proof.localIPs.contains(local),
+                  let arrival = OriginPolicy.arrivalInterface(localAddress: local, scope: source.scope, interfaces: interfaces),
+                  case .tunnel? = interfaces.kind[arrival] else { return false }
+            return resolver.isCurrent(proof, sourceIP: IPBytes.text(IPBytes.unmapped(source.bytes)))
+        }
+    }
+
+    private func resolveAutomatic(_ id: ObjectIdentifier, _ c: NWConnection, key: Data32, alpn: String) {
+        if let local = localAccess(c) {
+            automaticResolved(id, c, evidence: .local(local, key), alpn: alpn)
+            return
+        }
+        guard pending[id]?.origin == .vpn, let source = Self.source(of: c) else {
+            refuse(id, "internet"); c.cancel(); return
+        }
+        let resolver = TailnetDeviceAccess()
+        let ip = IPBytes.text(IPBytes.unmapped(source.bytes))
+        Task { [weak self] in
+            let result = await resolver.principal(for: ip)
+            guard let self else { resolver.stop(); c.cancel(); return }
+            self.queue.async {
+                guard case .success(let proof) = result else { self.refuse(id, "unpaired"); c.cancel(); return }
+                self.automaticResolved(id, c, evidence: .tailnet(proof, resolver, key), alpn: alpn)
+            }
+        }
+    }
+
+    private func automaticResolved(_ id: ObjectIdentifier, _ c: NWConnection, evidence: AutomaticEvidence, alpn: String) {
+        guard pending[id]?.connection === c, evidenceCurrent(evidence, on: c) else { c.cancel(); return }
+        pending[id]?.automaticEvidence = evidence
+        if alpn == RemoteTLS.pairingALPN {
+            readPairRequest(id, c, evidence.fingerprint.data)
+            return
+        }
+        guard let server else { c.cancel(); return }
+        server.gate(c) { [weak self] hello in
+            guard let self, let server = self.server, self.pending[id]?.connection === c,
+                  self.evidenceCurrent(evidence, on: c), let pending = self.pending.removeValue(forKey: id) else { c.cancel(); return }
+            pending.deadline?.cancel()
+            if let hello, self.kind == .home,
+               server.droppedForDirectWireless(c, acceptedPeerToPeer: pending.peerToPeer, hello: hello) { return }
+            self.forgive(pending.source)
+            let origin = pending.origin ?? .internet
+            let cable: String?
+            if case .cable(let id) = evidence.principal { cable = id } else { cable = nil }
+            let peer = ClientRoute.Peer(fingerprint: evidence.fingerprint.data, name: nil, cableDevice: cable,
+                                       automaticPrincipal: evidence.principal)
+            server.serve(c, route: .automatic(origin: origin, peer: peer), hello: hello,
+                         admitted: { print("자동 연결 기기를 허용했습니다.") })
         }
     }
 
@@ -358,6 +474,9 @@ final class Door {
                 // `.ready`). Gone from `pending`: the deadline passed while the payload came in.
                 guard self.checkOrigin(id, c), let p = self.pending.removeValue(forKey: id) else { c.cancel(); return }
                 p.deadline?.cancel()
+                if self.connectionPolicy == .automaticNetwork {
+                    guard let evidence = p.automaticEvidence, self.evidenceCurrent(evidence, on: c) else { c.cancel(); return }
+                }
                 let queue = self.queue
                 let reply: @Sendable (PairResult) -> Void = { result in
                     queue.async {
@@ -367,12 +486,15 @@ final class Door {
                         queue.asyncAfter(deadline: .now() + 0.25) { c.cancel() }
                     }
                 }
-                if DoorPolicy.pairing(self.kind, method: request.method, version: request.v) == .closed {
+                if self.connectionPolicy != .automaticNetwork,
+                   DoorPolicy.pairing(self.kind, method: request.method, version: request.v) == .closed {
                     reply(PairResult(ok: false, reason: PairResult.closed))
                     return
                 }
                 guard let judge = self.onPairAttempt else { c.cancel(); return }
-                judge(self.attempt(request, fp, c, p), reply)
+                var attempt = self.attempt(request, fp, c, p)
+                attempt.automaticPrincipal = p.automaticEvidence?.principal
+                judge(attempt, reply)
             }
         }
     }

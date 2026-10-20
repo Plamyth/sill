@@ -370,6 +370,7 @@ final class StreamServer {
     struct HomeTLS {
         let identity: HostIdentity
         let trust: TrustBox
+        var connectionPolicy: HostConnectionPolicy = .registeredKeys
     }
     let homeMode: HomeDoorMode
     /// The TLS home door's admission; nil for a plain or closed one. RemoteAccess wires its outputs.
@@ -442,7 +443,10 @@ final class StreamServer {
         (deviceFloor, testGoodbye) = Self.gateSettings(testHost: test)
         homeMode = home
         var door: Door?
-        if case .tls(let t) = home { door = Door(.home, queue: queue, identity: t.identity, trust: t.trust, testHost: test) }
+        if case .tls(let t) = home {
+            door = Door(.home, queue: queue, identity: t.identity, trust: t.trust, testHost: test,
+                        connectionPolicy: t.connectionPolicy)
+        }
         homeDoor = door
         // TEST ONLY: SILL_TEST_LOOPBACK, on a test host alone (anywhere else TestHooks says it is ignored).
         if test, Self.testLoopback { print("Test listener: loopback only (SILL_TEST_LOOPBACK); reach this host at 127.0.0.1.") }
@@ -1002,7 +1006,7 @@ final class StreamServer {
     func serve(_ connection: NWConnection, route: ClientRoute, hello: Hello?, admitted: () -> Void = {}) {
         let client = Client(connection)
         client.route = route
-        client.role = route.encrypted && route.pairedName != nil && hello == nil ? .awaitingHello : .viewer
+        client.role = route.isAuthenticated && hello == nil ? .awaitingHello : .viewer
         // As its route says: every session a Door admits is TLS (a remote one, or a home one with its
         // peer's key); a home route without a peer is a plain connection and keeps the plain door's
         // tick rule (the pacing harness's home client, Scripts/pacing).
@@ -1878,25 +1882,41 @@ enum ClientRoute: Equatable {
         var fingerprint: Data
         var name: String?
         var cableDevice: String?
+        var automaticPrincipal: AutomaticDevicePrincipal? = nil
     }
     /// `peer` nil: the plain door, which sees no key.
     case home(OriginPolicy.Origin, peer: Peer?)
     case remote(origin: OriginPolicy.Origin, label: String, fingerprint: Data, name: String)
+    case automatic(origin: OriginPolicy.Origin, peer: Peer)
 
-    var isRemote: Bool { if case .remote = self { return true }; return false }
+    var isRemote: Bool {
+        switch self {
+        case .remote: return true
+        case .automatic(let origin, _): return origin == .vpn
+        case .home: return false
+        }
+    }
     var origin: OriginPolicy.Origin {
         switch self {
         case .home(let o, _): return o
         case .remote(let o, _, _, _): return o
+        case .automatic(let origin, _): return origin
         }
     }
     /// The label a remote route shows on the Mac's card; nil at home.
-    var label: String? { if case .remote(_, let l, _, _) = self { return l }; return nil }
+    var label: String? {
+        switch self {
+        case .remote(_, let label, _, _): return label
+        case .automatic(let origin, _): return origin == .vpn ? "Tailscale 자동 연결" : "로컬 자동 연결"
+        case .home: return nil
+        }
+    }
     /// The peer's key, at either door; nil on the plain home door.
     var fingerprint: Data? {
         switch self {
         case .home(_, let peer): return peer?.fingerprint
         case .remote(_, _, let f, _): return f
+        case .automatic(_, let peer): return peer.fingerprint
         }
     }
     /// The paired name, at either door; nil on the plain home door and for an unpaired key.
@@ -1904,15 +1924,28 @@ enum ClientRoute: Equatable {
         switch self {
         case .home(_, let peer): return peer?.name
         case .remote(_, _, _, let n): return n
+        case .automatic: return nil
         }
     }
     /// A home session over the USB cable: the device's CableLink.deviceID.
-    var cableDevice: String? { if case .home(_, let peer) = self { return peer?.cableDevice }; return nil }
+    var cableDevice: String? {
+        switch self {
+        case .home(_, let peer): return peer?.cableDevice
+        case .automatic(_, let peer): return peer.cableDevice
+        case .remote: return nil
+        }
+    }
+    var automaticPrincipal: AutomaticDevicePrincipal? {
+        if case .automatic(_, let peer) = self { return peer.automaticPrincipal }
+        return nil
+    }
+    var isAuthenticated: Bool { encrypted && (pairedName != nil || automaticPrincipal != nil) }
     /// The session is TLS: every remote one, and every home one with a peer.
     var encrypted: Bool {
         switch self {
         case .home(_, let peer): return peer != nil
         case .remote: return true
+        case .automatic: return true
         }
     }
 }

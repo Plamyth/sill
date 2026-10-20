@@ -3,6 +3,11 @@ import Foundation
 struct AudioForwardingDeviceID: Codable, Hashable, Sendable {
     let hex: String
 
+    init?(hex: String) {
+        guard hex.utf8.count == 64, hex.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+        self.hex = hex
+    }
+
     init?(fingerprint: Data) {
         guard fingerprint.count == 32 else { return nil }
         hex = fingerprint.map { String(format: "%02x", $0) }.joined()

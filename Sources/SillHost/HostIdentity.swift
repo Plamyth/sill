@@ -92,10 +92,11 @@ package final class HostIdentity: @unchecked Sendable {
 
     /// A fresh TXT record for one Bonjour registration: `r` = a new tag, and `p` (HomeDoorTXT) when
     /// the home door speaks TLS: "1" pairing required, "0" open. A plain door carries no `p`.
-    package func txtRecord(homeDoor p: String? = nil) -> NWTXTRecord? {
+    package func txtRecord(homeDoor p: String? = nil, automaticAccess: Bool = false) -> NWTXTRecord? {
         guard let tag = RecognitionTag.make(recognitionKey: recognitionKey) else { return nil }
         var entries = [RecognitionTag.txtKey: tag]
         if let p { entries[HomeDoorTXT.key] = p }
+        if automaticAccess { entries[HomeDoorTXT.automaticAccessKey] = HomeDoorTXT.automaticAccessValue }
         return NWTXTRecord(entries)
     }
 }

@@ -13,6 +13,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     struct Proof: Sendable {
         let principal: AutomaticDevicePrincipal
         let sourceIP: String
+        let localIPs: [String]
         let validUntil: Date
         fileprivate let issuer: UUID
         fileprivate let deadline: UInt64
@@ -116,7 +117,8 @@ final class TailnetDeviceAccess: @unchecked Sendable {
                 try check()
                 let until = min(Date().addingTimeInterval(2), expiry)
                 let proof = Proof(principal: .tailnet(userId: who.Node.User, nodeStableId: who.Node.StableID),
-                                  sourceIP: ip, validUntil: until, issuer: issuer,
+                                  sourceIP: ip, localIPs: before.selfNode.TailscaleIPs.compactMap(Self.numericSource),
+                                  validUntil: until, issuer: issuer,
                                   deadline: min(attempt.deadline, DispatchTime.now().uptimeNanoseconds + 2_000_000_000))
                 lock.lock()
                 let wasStopped = stopped
@@ -154,6 +156,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         struct LocalNode: Decodable, Equatable {
             let ID: String
             let UserID: UInt64
+            let TailscaleIPs: [String]
             let Expired: Bool?
         }
         let BackendState: String
@@ -164,6 +167,9 @@ final class TailnetDeviceAccess: @unchecked Sendable {
             guard BackendState == "Running" else { throw Failure.backendNotRunning }
             guard TailnetDeviceAccess.validID(selfNode.ID), selfNode.UserID > 0 else { throw Failure.malformedEvidence }
             guard selfNode.Expired != true else { throw Failure.expiredNode }
+            let ips = selfNode.TailscaleIPs.compactMap(TailnetDeviceAccess.numericSource)
+            guard !ips.isEmpty, ips.count <= 8, ips.count == selfNode.TailscaleIPs.count,
+                  Set(ips).count == ips.count else { throw Failure.malformedEvidence }
         }
     }
 

@@ -4,7 +4,7 @@ private let user: UInt64 = 7_583_687_675_853_032
 private let source = "100.112.191.3"
 
 private func status(id: String = "nLocal", uid: UInt64 = user, backend: String = "Running") -> Data {
-    Data("{\"BackendState\":\"\(backend)\",\"Self\":{\"ID\":\"\(id)\",\"UserID\":\(uid)}}".utf8)
+    Data("{\"BackendState\":\"\(backend)\",\"Self\":{\"ID\":\"\(id)\",\"UserID\":\(uid),\"TailscaleIPs\":[\"100.112.191.2\"]}}".utf8)
 }
 
 private func whois(_ changes: [String: Any] = [:], remove: String? = nil, profile: UInt64 = user) -> Data {
@@ -76,6 +76,7 @@ private final class Fixture: @unchecked Sendable {
         let issued = await access.principal(for: source)
         guard case .success(let proof) = issued else { fatalError("정상 증거에서 미발급 \(issued)") }
         expect(proof.principal == tailnet, "실제 parser의 동일 사용자 발급")
+        expect(proof.localIPs == ["100.112.191.2"], "수신 소켓의 로컬 Tailscale 주소 결합 자료")
         expect(fixture.commands == [.status, .whois(source), .status], "status 전후 검사 순서")
         expect(access.isCurrent(proof, sourceIP: source), "원래 source 유효")
         expect(access.isCurrent(proof, sourceIP: "::ffff:100.112.191.3"), "소켓 mapped IPv4 정규화")

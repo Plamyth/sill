@@ -183,6 +183,8 @@ public enum RecognitionTag {
 /// Not an identifier, and not authentication: anyone can advertise any `p`, which is why a saved
 /// Mac's rows are always dialed pinned, whatever its record says.
 public enum HomeDoorTXT {
+    public static let automaticAccessKey = "ac"
+    public static let automaticAccessValue = "ccr-network-v1"
     /// The TXT key.
     public static let key = "p"
 

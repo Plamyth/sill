@@ -160,7 +160,7 @@ final class AppModel {
     /// own).
     private func makeRemoteAccess() -> RemoteAccess {
         let store = makeIdentityStore()
-        let remote = RemoteAccess(store: store)
+        let remote = RemoteAccess(store: store, connectionPolicy: synthetic ? .registeredKeys : .automaticNetwork)
         if let problem = remote.identityProblem { print("Remote access unavailable: \(problem)") }
         remote.restoreSeen(settings.remoteDevicesSeen())
         remote.onSeen = { [weak self, weak remote] prefix, at, route in
@@ -225,6 +225,7 @@ final class AppModel {
     /// `-requirePairing YES|NO` and saves it in its own store (memory, or the test directory);
     /// Sill.app ignores the argument with a line.
     private func launchRequirePairing(_ remote: RemoteAccess) -> Bool {
+        if remote.connectionPolicy == .automaticNetwork { return false }
         let stored = remote.storedRequirePairing()
         let defaults = UserDefaults.standard
         guard defaults.object(forKey: "requirePairing") != nil else { return stored }
@@ -244,6 +245,11 @@ final class AppModel {
     /// effect only once saved: a save that fails leaves it on, with the keychain line in the pane.
     /// Turning it on always takes effect, for this run at least.
     func setRequirePairing(_ on: Bool) {
+        if remote?.connectionPolicy == .automaticNetwork {
+            settings.config.requirePairing = false
+            requirePairingProblem = nil
+            return
+        }
         guard on != settings.config.requirePairing else { requirePairingProblem = nil; return }
         guard let remote else { return }
         if let problem = remote.saveRequirePairing(on) {

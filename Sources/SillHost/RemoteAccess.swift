@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Security
+import CryptoKit
 import StreamProtocol
 
 struct AudioForwardingPairedDevice: Sendable {
@@ -163,7 +164,10 @@ package final class RemoteAccess {
     /// `identityProblem` says why. That includes a trust list that cannot be read: kept with an
     /// empty list, the store would save the next pairing over it and every earlier pairing would be
     /// gone.
-    package init(store: IdentityStore) {
+    package let connectionPolicy: HostConnectionPolicy
+
+    package init(store: IdentityStore, connectionPolicy: HostConnectionPolicy = .registeredKeys) {
+        self.connectionPolicy = connectionPolicy
         var identity: HostIdentity?
         var problem: String?
         var paired: [PairedDevice] = []
@@ -173,7 +177,10 @@ package final class RemoteAccess {
             guard let id = HostIdentity(privateKey: key, recognitionKey: recognition) else {
                 throw IdentityStoreError("the key could not make a TLS identity")
             }
-            paired = try store.loadPaired()
+            do { paired = try store.loadPaired() }
+            catch {
+                guard connectionPolicy == .automaticNetwork else { throw error }
+            }
             identity = id
         } catch {
             problem = "\(error)"
@@ -194,14 +201,15 @@ package final class RemoteAccess {
         testHost = server.isTestHost
         homeTLS = server.homeTLS
         if case .closed(let why) = server.homeMode { homeUnavailable = why }
-        self.requirePairing = requirePairing
+        self.requirePairing = connectionPolicy != .automaticNetwork && requirePairing
         askLimits = AskLimits(seconds: AskLimits.testSeconds(testHost: testHost, environment: ProcessInfo.processInfo.environment))
         guard let identity else { publish(); return }
-        let tls = homeTLS, box = trust
+        let tls = homeTLS, box = trust, automatic = connectionPolicy == .automaticNetwork
         server.txtRecord = {
-            identity.txtRecord(homeDoor: tls ? HomeDoorTXT.value(requirePairing: box.snapshot.requirePairing) : nil)
+            identity.txtRecord(homeDoor: tls ? HomeDoorTXT.value(requirePairing: box.snapshot.requirePairing) : nil,
+                               automaticAccess: automatic)
         }
-        let door = RemoteServer(server: server, identity: identity, trust: trust)
+        let door = RemoteServer(server: server, identity: identity, trust: trust, connectionPolicy: connectionPolicy)
         door.onListener = { [weak self] state in Task { @MainActor in self?.listenerChanged(state) } }
         let judgeHere: (Door.PairAttempt, @escaping @Sendable (PairResult) -> Void) -> Void = { [weak self] attempt, reply in
             Task { @MainActor in
@@ -235,10 +243,10 @@ package final class RemoteAccess {
     package func apply(_ config: HostConfig) {
         guard identity != nil else { announceHomeDoor(); publish(); return }
         let wasOn = remoteAccess, wasInternet = internetAccess, wasRequired = requirePairing
-        remoteAccess = config.remoteAccess
+        remoteAccess = connectionPolicy == .automaticNetwork || config.remoteAccess
         remotePort = config.remotePort
-        internetAccess = config.remoteAccess && config.internetAccess
-        requirePairing = config.requirePairing
+        internetAccess = connectionPolicy != .automaticNetwork && config.remoteAccess && config.internetAccess
+        requirePairing = connectionPolicy != .automaticNetwork && config.requirePairing
         if wasOn, !remoteAccess {
             if let w = window.current, w.forRemote { window.close(.cancelled); windowClosed(.cancelled, reopen: false) }
             print("Remote access off.")
@@ -333,6 +341,7 @@ package final class RemoteAccess {
     /// becomes the remote door's too. The remote door runs while a window it takes proofs for is
     /// open, even with Remote Access off.
     package func openPairing(requestedBy: String?) {
+        guard connectionPolicy != .automaticNetwork else { return }
         openPairing(requestedBy: requestedBy, byDevice: nil)
         followRequest(named: requestedBy)
     }
@@ -431,6 +440,7 @@ package final class RemoteAccess {
     /// (Require pairing off) and goes through the ask rule's steps 1 and 3–6 and the ask limits,
     /// never step 2: a session is no pairing connection.
     func pairingWanted(by device: String, session: (fingerprint: Data, source: String, display: String, from: String, fromThisMac: Bool)?) {
+        guard connectionPolicy != .automaticNetwork else { return }
         guard identity != nil else { return }
         guard homeTLS, let s = session else {
             if window.isOpen {
@@ -523,6 +533,28 @@ package final class RemoteAccess {
         paired.contains { $0.fingerprintData == fingerprint }
     }
 
+    func isAuthorized(_ route: ClientRoute) -> Bool {
+        guard route.encrypted, route.fingerprint?.count == 32 else { return false }
+        if connectionPolicy == .automaticNetwork { return route.automaticPrincipal != nil }
+        return route.fingerprint.map(isPaired) == true
+    }
+
+    func forwardingPeer(route: ClientRoute) -> AudioForwardingPairedDevice? {
+        guard isAuthorized(route), let identity else { return nil }
+        guard let principal = route.automaticPrincipal else {
+            return route.fingerprint.flatMap { forwardingPeer(fingerprint: $0) }
+        }
+        guard let id = AudioForwardingDeviceID(hex: principal.stableIdentifier) else { return nil }
+        var input = Data("ccr-audio-authorization-v1\0".utf8)
+        input.append(identity.fingerprint)
+        input.append(Data(id.hex.utf8))
+        var bytes = Array(SHA256.hash(data: input).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x50
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        let uuid = bytes.withUnsafeBytes { UUID(uuid: $0.load(as: uuid_t.self)) }
+        return AudioForwardingPairedDevice(id: id, pairingGeneration: uuid)
+    }
+
     func forwardingPeer(fingerprint: Data) -> AudioForwardingPairedDevice? {
         guard identity != nil, let store, isPaired(fingerprint),
               let id = AudioForwardingDeviceID(fingerprint: fingerprint) else { return nil }
@@ -561,6 +593,12 @@ package final class RemoteAccess {
     /// remote door counts only for a window that door runs for.
     private func judge(_ attempt: Door.PairAttempt) -> PairResult {
         guard let identity else { return PairResult(ok: false, reason: PairResult.closed) }
+        if connectionPolicy == .automaticNetwork {
+            guard attempt.request.v == 1, attempt.automaticPrincipal != nil,
+                  attempt.request.method != PairRequest.cancel else { return PairResult(ok: false, reason: PairResult.closed) }
+            return PairResult(ok: true, macID: identity.macID, name: macName,
+                              recognitionKey: Base64URL.encode(identity.recognitionKey), method: "automatic")
+        }
         if attempt.request.method == PairRequest.ask {
             guard attempt.door == .home else { return PairResult(ok: false, reason: PairResult.closed) }
             return ask(attempt, identity)
