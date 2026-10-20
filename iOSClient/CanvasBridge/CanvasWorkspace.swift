@@ -49,8 +49,15 @@ struct CanvasWorkspace: View {
         if let connection = CanvasRelay.loadConnection() {
             _relayAddress = State(initialValue:connection.address)
             _relayToken = State(initialValue:connection.token)
-            let data = try? Data(contentsOf:Self.canvasVaultCheckpointURL())
-            if let data = data ?? UserDefaults.standard.data(forKey:"canvasVaultCheckpoint"),
+            var data = try? CanvasLocalFile.read(Self.canvasVaultCheckpointURL())
+            #if DEBUG
+            if case .normal = CanvasRuntime.launch {
+                data = data ?? UserDefaults.standard.data(forKey:"canvasVaultCheckpoint")
+            }
+            #else
+            data = data ?? UserDefaults.standard.data(forKey:"canvasVaultCheckpoint")
+            #endif
+            if let data,
                let checkpoint = try? JSONDecoder().decode(CanvasVaultCheckpoint.self,from:data),
                checkpoint.address == connection.address {
                 _vaultSceneID = State(initialValue:checkpoint.sceneID)
@@ -468,11 +475,7 @@ struct CanvasWorkspace: View {
     }
 
     private static func canvasVaultCheckpointURL() throws -> URL {
-        guard let directory = FileManager.default.urls(for:.applicationSupportDirectory,
-                                                       in:.userDomainMask).first else {
-            throw CanvasSendError.outboxUnavailable
-        }
-        return directory.appendingPathComponent("CanvasVaultCheckpoint.json")
+        try CanvasRuntime.stateURL(.checkpoint)
     }
 
     private func saveCanvasVaultCheckpoint() throws {

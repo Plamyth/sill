@@ -196,7 +196,10 @@ final class CanvasStore: ObservableObject {
     private var pendingBlockEdit: VaultBlockEdit?
     @Published private(set) var blockRecovery: VaultBlockRecovery?
     @Published private(set) var blockRecoveryNotice = ""
-    private let blockRecoveryURL: URL?
+    private let blockRecoveryOverride: URL?
+    private var blockRecoveryURL: URL? {
+        try? CanvasRuntime.stateURL(.blockRecovery,blockRecoveryOverride:blockRecoveryOverride)
+    }
     private var blockRecoveryBytes: Data?
     private var blockRecoveryReadable = true
     private var changingBlockState = false
@@ -443,11 +446,6 @@ final class CanvasStore: ObservableObject {
         } catch { vaultStatus = error.localizedDescription; return false }
     }
 
-    private static func defaultBlockRecoveryURL() -> URL? {
-        FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first?
-            .appendingPathComponent("CanvasBlockEdit",isDirectory:true).appendingPathComponent("recovery.json")
-    }
-
     private func writeBlockRecovery(_ record: VaultBlockRecovery?) throws {
         guard blockRecoveryReadable, let url = blockRecoveryURL else { throw VaultBlockRecoveryError.corrupt }
         let current: Data?
@@ -463,7 +461,7 @@ final class CanvasStore: ObservableObject {
         guard bytes.count <= VaultBlockRecoveryFile.byteLimit else { throw VaultBlockRecoveryError.unavailable }
         do {
             try CanvasLocalFile.write(bytes,to:url)
-            guard try Data(contentsOf:url) == bytes else { throw VaultBlockRecoveryError.unavailable }
+            guard try CanvasLocalFile.read(url) == bytes else { throw VaultBlockRecoveryError.unavailable }
         } catch { throw VaultBlockRecoveryError.unavailable }
         blockRecoveryBytes = bytes
         blockRecovery = record
@@ -475,7 +473,7 @@ final class CanvasStore: ObservableObject {
         guard attributes[.type] as? FileAttributeType == .typeRegular,
               let size = attributes[.size] as? NSNumber,
               size.intValue <= VaultBlockRecoveryFile.byteLimit else { throw VaultBlockRecoveryError.corrupt }
-        return try Data(contentsOf:url)
+        return try CanvasLocalFile.read(url)
     }
 
     private func persistBlockDraft() {
@@ -854,7 +852,15 @@ final class CanvasStore: ObservableObject {
     }
 
     init(blockRecoveryURL: URL? = nil) {
-        self.blockRecoveryURL = blockRecoveryURL ?? Self.defaultBlockRecoveryURL()
+        self.blockRecoveryOverride = blockRecoveryURL
+        #if DEBUG
+        if case .invalid = CanvasRuntime.launch {
+            outboxReadable = false
+            blockRecoveryReadable = false
+            status = CanvasRuntime.TestError.invalid.localizedDescription
+            return
+        }
+        #endif
         if let restored = Self.restoreScene() {
             scene = restored.scene
             drawing = restored.drawing
@@ -863,7 +869,7 @@ final class CanvasStore: ObservableObject {
         do {
             let url = try Self.outboxURL()
             if FileManager.default.fileExists(atPath:url.path) {
-                outbox = try JSONDecoder().decode(CanvasOutbox.self,from:Data(contentsOf:url))
+                outbox = try JSONDecoder().decode(CanvasOutbox.self,from:CanvasLocalFile.read(url))
                 try outbox.validate()
                 packet = outbox.entries.last?.receipt
                 if outbox.unresolved != nil { status = "미확인 전송 복원 · 같은 패킷의 영수증만 조회합니다." }
@@ -889,11 +895,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private static func outboxURL() throws -> URL {
-        guard let directory = FileManager.default.urls(for:.applicationSupportDirectory,
-                                                       in:.userDomainMask).first else {
-            throw CanvasSendError.outboxUnavailable
-        }
-        return directory.appendingPathComponent("CanvasOutbox",isDirectory:true).appendingPathComponent("ledger.json")
+        try CanvasRuntime.stateURL(.outbox)
     }
 
     private func updateOutbox(_ change: (inout CanvasOutbox) throws -> Void) throws {
@@ -950,14 +952,11 @@ final class CanvasStore: ObservableObject {
     }
 
     private static func sceneURL() -> URL? {
-        guard let directory = FileManager.default.urls(for:.applicationSupportDirectory,
-                                                       in:.userDomainMask).first else { return nil }
-        try? FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-        return directory.appendingPathComponent("CanvasScene.json")
+        try? CanvasRuntime.stateURL(.scene)
     }
 
     private static func restoreScene() -> (scene: CanvasScene, drawing: PKDrawing)? {
-        guard let url = sceneURL(),let data = try? Data(contentsOf:url),
+        guard let url = sceneURL(),let data = try? CanvasLocalFile.read(url),
               data.count <= sceneByteLimit,
               let scene = try? JSONDecoder().decode(CanvasScene.self,from:data),
               scene.schemaVersion == 1,

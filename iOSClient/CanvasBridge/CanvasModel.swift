@@ -3,6 +3,255 @@ import CryptoKit
 import Darwin
 import CoreGraphics
 
+enum CanvasRuntime {
+    enum StateFile: String, CaseIterable {
+        case scene = "CanvasScene.json"
+        case outbox = "CanvasOutbox/ledger.json"
+        case blockRecovery = "CanvasBlockEdit/recovery.json"
+        case checkpoint = "CanvasVaultCheckpoint.json"
+    }
+
+    #if DEBUG
+    enum LaunchState {
+        case normal
+        case isolated(TestContext)
+        case invalid
+    }
+
+    struct TestContext {
+        let id: UUID
+        let commit: String
+        let tree: String
+        let relayAddress: String
+        let token: String
+        fileprivate let support: URL
+        fileprivate let root: URL
+    }
+
+    enum TestError: LocalizedError {
+        case invalid
+        var errorDescription: String? { "격리 테스트 설정을 확인할 수 없습니다. 앱을 종료한 뒤 테스트 설정을 다시 준비하세요." }
+    }
+
+    static let contextByteLimit = 16 * 1024
+    static let launch = resolve(arguments:ProcessInfo.processInfo.arguments,
+        applicationSupport:FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first,
+        sourceCommit:Bundle.main.object(forInfoDictionaryKey:"CCRSourceCommit") as? String,
+        sourceTree:Bundle.main.object(forInfoDictionaryKey:"CCRSourceTree") as? String)
+
+    static func resolve(arguments: [String], applicationSupport: URL?,
+                        sourceCommit: String?, sourceTree: String?) -> LaunchState {
+        let flags = arguments.indices.filter { arguments[$0] == "--ccr-test-runtime" }
+        guard !flags.isEmpty else { return .normal }
+        guard flags.count == 1, let index = flags.first, index + 1 < arguments.count,
+              let id = UUID(uuidString:arguments[index + 1]),
+              arguments[index + 1].lowercased() == id.uuidString.lowercased(),
+              let support = applicationSupport else { return .invalid }
+        do {
+            try requireDirectory(support)
+            let support = support.resolvingSymlinksInPath().standardizedFileURL
+            let root = support.appendingPathComponent("CCRIntegrationTests",isDirectory:true)
+                .appendingPathComponent(id.uuidString.lowercased(),isDirectory:true)
+            let file = root.appendingPathComponent("context.json")
+            try checkPath(file, beneath:support, allowMissing:false)
+            let data = try readFile(file,beneath:support,limit:contextByteLimit)
+            struct Payload: Decodable {
+                let schema: String
+                let id: String
+                let commit: String
+                let tree: String
+                let relayAddress: String
+                let token: String
+            }
+            let value = try JSONDecoder().decode(Payload.self,from:data)
+            guard value.schema == "ccr.ipad-test-context/v1", UUID(uuidString:value.id) == id,
+                  isHash(value.commit), isHash(value.tree),
+                  value.commit == sourceCommit, value.tree == sourceTree,
+                  privateEndpoint(value.relayAddress), value.token.count >= 24 else { throw TestError.invalid }
+            try checkPath(root.appendingPathComponent("state",isDirectory:true),beneath:support)
+            let context = TestContext(id:id,commit:value.commit,tree:value.tree,
+                relayAddress:value.relayAddress,token:value.token,support:support,root:root)
+            for file in StateFile.allCases { _ = try isolatedURL(file,in:context) }
+            return .isolated(context)
+        } catch { return .invalid }
+    }
+
+    private static func isHash(_ value: String) -> Bool {
+        value.utf8.count == 40 && value.utf8.allSatisfy {
+            (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
+        }
+    }
+
+    static func privateEndpoint(_ value: String) -> Bool {
+        guard value.hasPrefix("http://"),
+              let parts = URLComponents(string:value), parts.scheme == "http",
+              parts.user == nil, parts.password == nil, parts.path.isEmpty,
+              parts.query == nil, parts.fragment == nil,
+              let host = parts.host, let port = parts.port, (1...65535).contains(port) else { return false }
+        let octets = host.split(separator:".",omittingEmptySubsequences:false)
+        guard octets.count == 4 else { return false }
+        let numbers = octets.compactMap { octet -> Int? in
+            guard let number = Int(octet), (0...255).contains(number), String(number) == octet else { return nil }
+            return number
+        }
+        guard numbers.count == 4, value == "http://\(host):\(port)" else { return false }
+        return numbers[0] == 10 || (numbers[0] == 172 && (16...31).contains(numbers[1])) ||
+            (numbers[0] == 192 && numbers[1] == 168)
+    }
+
+    private static func requireDirectory(_ url: URL) throws {
+        guard try FileManager.default.attributesOfItem(atPath:url.path)[.type] as? FileAttributeType == .typeDirectory
+        else { throw TestError.invalid }
+    }
+
+    private static func checkPath(_ url: URL, beneath root: URL, allowMissing: Bool = true) throws {
+        let root = root.standardizedFileURL
+        let url = url.standardizedFileURL
+        guard url.path.hasPrefix(root.path + "/") else { throw TestError.invalid }
+        try requireDirectory(root)
+        let components = url.pathComponents.dropFirst(root.pathComponents.count)
+        var current = root
+        for (index, component) in components.enumerated() {
+            current.appendPathComponent(component)
+            let attributes: [FileAttributeKey:Any]
+            do { attributes = try FileManager.default.attributesOfItem(atPath:current.path) }
+            catch CocoaError.fileReadNoSuchFile where allowMissing { continue }
+            let kind = attributes[.type] as? FileAttributeType
+            guard kind == (index == components.count - 1 && !url.hasDirectoryPath ? .typeRegular : .typeDirectory)
+            else { throw TestError.invalid }
+            if kind == .typeRegular, (attributes[.referenceCount] as? NSNumber)?.intValue != 1 {
+                throw TestError.invalid
+            }
+        }
+    }
+
+    static func isolatedURL(_ file: StateFile, in context: TestContext) throws -> URL {
+        let url = context.root.appendingPathComponent("state",isDirectory:true).appendingPathComponent(file.rawValue)
+        try checkPath(url,beneath:context.support)
+        return url
+    }
+
+    static func writeRuntimeReceipt(bundle: Bundle = .main) throws {
+        do {
+            guard case .isolated(let context) = launch,
+                  bundle.object(forInfoDictionaryKey:"CCRSourceCommit") as? String == context.commit,
+                  bundle.object(forInfoDictionaryKey:"CCRSourceTree") as? String == context.tree,
+                  let bundleID = bundle.bundleIdentifier, !bundleID.isEmpty,
+                  let build = bundle.object(forInfoDictionaryKey:"CFBundleVersion") as? String, !build.isEmpty,
+                  let executable = bundle.executableURL else { throw TestError.invalid }
+            let executableBytes = try Data(contentsOf:executable)
+            struct Receipt: Encodable {
+                let schema = "ccr.ipad-test-runtime/v1"
+                let id: String
+                let commit: String
+                let tree: String
+                let bundleID: String
+                let build: String
+                let storageRoot: String
+                let relayAddress: String
+                let executableSHA256: String
+                let processID: Int32
+            }
+            let state = context.root.appendingPathComponent("state",isDirectory:true)
+            let receipt = Receipt(id:context.id.uuidString.lowercased(),commit:context.commit,tree:context.tree,
+                bundleID:bundleID,build:build,storageRoot:state.path,relayAddress:context.relayAddress,
+                executableSHA256:SHA256.hash(data:executableBytes).map { String(format:"%02x",$0) }.joined(),
+                processID:getpid())
+            let url = state.appendingPathComponent("runtime.json")
+            try checkPath(url,beneath:context.support)
+            try CanvasLocalFile.write(JSONEncoder().encode(receipt),to:url)
+        } catch { throw TestError.invalid }
+    }
+
+    static func validateStateURL(_ url: URL) throws {
+        switch launch {
+        case .normal: return
+        case .invalid: throw TestError.invalid
+        case .isolated(let context):
+            let receipt = context.root.appendingPathComponent("state",isDirectory:true).appendingPathComponent("runtime.json")
+            if url == receipt {
+                try checkPath(url,beneath:context.support)
+                return
+            }
+            guard let file = StateFile.allCases.first(where: {
+                context.root.appendingPathComponent("state").appendingPathComponent($0.rawValue).path == url.path
+            }), try isolatedURL(file,in:context) == url else { throw TestError.invalid }
+        }
+    }
+
+    private static func withParent<T>(of url: URL, beneath root: URL, create: Bool = false,
+                                      _ operation: (Int32,String) throws -> T) throws -> T {
+        guard url.standardizedFileURL.path == url.path, url.path.hasPrefix(root.path + "/")
+        else { throw TestError.invalid }
+        var directory = open(root.path,O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard directory >= 0 else { throw TestError.invalid }
+        defer { close(directory) }
+        for component in url.deletingLastPathComponent().pathComponents.dropFirst(root.pathComponents.count) {
+            var next = openat(directory,component,O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            if next < 0 && errno == ENOENT && create {
+                guard mkdirat(directory,component,0o700) == 0 || errno == EEXIST,
+                      fsync(directory) == 0 else { throw TestError.invalid }
+                next = openat(directory,component,O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            }
+            guard next >= 0 else { throw TestError.invalid }
+            close(directory)
+            directory = next
+        }
+        return try operation(directory,url.lastPathComponent)
+    }
+
+    fileprivate static func readFile(_ url: URL, beneath root: URL, limit: Int? = nil) throws -> Data {
+        try withParent(of:url,beneath:root) { directory, name in
+            let fd = openat(directory,name,O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+            guard fd >= 0 else { throw TestError.invalid }
+            let handle = FileHandle(fileDescriptor:fd,closeOnDealloc:true)
+            defer { try? handle.close() }
+            var info = stat()
+            guard fstat(fd,&info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1
+            else { throw TestError.invalid }
+            if let limit {
+                guard info.st_size <= limit, let data = try handle.read(upToCount:limit + 1), data.count <= limit
+                else { throw TestError.invalid }
+                return data
+            }
+            return try handle.readToEnd() ?? Data()
+        }
+    }
+
+    fileprivate static func writeFile(_ data: Data, to url: URL, beneath root: URL) throws {
+        try withParent(of:url,beneath:root,create:true) { directory, name in
+            var info = stat()
+            if fstatat(directory,name,&info,AT_SYMLINK_NOFOLLOW) == 0 {
+                guard info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1 else { throw TestError.invalid }
+            } else if errno != ENOENT { throw TestError.invalid }
+            let temporary = ".\(UUID().uuidString).tmp"
+            let fd = openat(directory,temporary,O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,0o600)
+            guard fd >= 0 else { throw TestError.invalid }
+            let handle = FileHandle(fileDescriptor:fd,closeOnDealloc:true)
+            defer { try? handle.close(); unlinkat(directory,temporary,0) }
+            try handle.write(contentsOf:data)
+            try handle.synchronize()
+            guard renameat(directory,temporary,directory,name) == 0, fsync(directory) == 0 else { throw TestError.invalid }
+        }
+    }
+    #endif
+
+    static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil) throws -> URL {
+        #if DEBUG
+        switch launch {
+        case .normal: break
+        case .isolated(let context): return try isolatedURL(file,in:context)
+        case .invalid: throw TestError.invalid
+        }
+        #endif
+        if file == .blockRecovery, let override = blockRecoveryOverride { return override }
+        guard let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first
+        else { throw CanvasSendError.outboxUnavailable }
+        if file == .scene { try? FileManager.default.createDirectory(at:support,withIntermediateDirectories:true) }
+        return support.appendingPathComponent(file.rawValue)
+    }
+}
+
 func canvasSelectedCharacterRange(in text: String, selection: NSRange) -> NSRange? {
     let count = text.utf16.count
     guard selection.location >= 0, selection.location < count, selection.length > 0,
@@ -822,6 +1071,16 @@ struct CanvasOutbox: Codable {
 }
 
 enum CanvasLocalFile {
+    static func read(_ url: URL) throws -> Data {
+        #if DEBUG
+        try CanvasRuntime.validateStateURL(url)
+        if case .isolated(let context) = CanvasRuntime.launch {
+            return try CanvasRuntime.readFile(url,beneath:context.support)
+        }
+        #endif
+        return try Data(contentsOf:url)
+    }
+
     private static func syncDirectory(_ url: URL) throws {
         let fd = open(url.path,O_RDONLY)
         guard fd >= 0 else { throw CanvasSendError.outboxUnavailable }
@@ -830,6 +1089,13 @@ enum CanvasLocalFile {
     }
 
     static func write(_ data: Data, to url: URL) throws {
+        #if DEBUG
+        try CanvasRuntime.validateStateURL(url)
+        if case .isolated(let context) = CanvasRuntime.launch {
+            try CanvasRuntime.writeFile(data,to:url,beneath:context.support)
+            return
+        }
+        #endif
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true,
                                                 attributes:[.posixPermissions:0o700])

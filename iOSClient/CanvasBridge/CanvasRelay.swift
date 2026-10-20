@@ -56,6 +56,13 @@ struct CanvasRelay {
     private static let keychainService = "com.ambrion.canvasbridge.relay"
 
     static func loadConnection() -> (address: String, token: String)? {
+        #if DEBUG
+        switch CanvasRuntime.launch {
+        case .isolated(let context): return (context.relayAddress,context.token)
+        case .invalid: return nil
+        case .normal: break
+        }
+        #endif
         guard let documents = FileManager.default.urls(for:.documentDirectory,
                                                        in:.userDomainMask).first else { return storedConnection() }
         let file = documents.appendingPathComponent("canvas-relay.json")
@@ -96,9 +103,23 @@ struct CanvasRelay {
     }
 
     private func request(_ path: String, method: String = "GET", body: Data? = nil) throws -> URLRequest {
+        #if DEBUG
+        switch CanvasRuntime.launch {
+        case .isolated(let context):
+            guard address == context.relayAddress, token == context.token else { throw CanvasRuntime.TestError.invalid }
+        case .invalid: throw CanvasRuntime.TestError.invalid
+        case .normal: break
+        }
+        #endif
         guard let root = URL(string: address), root.scheme == "http",
               let url = URL(string: path, relativeTo: root)?.absoluteURL,
               !token.isEmpty else { throw URLError(.badURL) }
+        #if DEBUG
+        if case .isolated = CanvasRuntime.launch {
+            guard url.scheme == root.scheme, url.host == root.host, url.port == root.port,
+                  url.user == nil, url.password == nil else { throw CanvasRuntime.TestError.invalid }
+        }
+        #endif
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue(token, forHTTPHeaderField: "X-Canvas-Token")
