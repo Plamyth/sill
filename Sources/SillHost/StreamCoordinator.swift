@@ -1252,13 +1252,13 @@ package final class StreamCoordinator {
             }
         })
         dockSelectionIngress.recordMenu(for: id, request: request, reply: reply)
-        if changesSource, reply.note == nil {
-            let admission = SourceSelectionAdmission(isCurrent: {
+        let admission = SourceSelectionAdmission(isCurrent: {
                 self.dockSelectionIngress.isCurrent(selectionTicket) && self.dockPeerIsCurrent(connection)
             }, commit: { commit in
                 guard self.dockPeerIsCurrent(connection) else { return false }
                 return self.dockSelectionIngress.performIfCurrent(selectionTicket, refused: false) { commit(); return true }
             })
+        if changesSource, reply.note == nil {
             let deadline = ProcessInfo.processInfo.systemUptime + 2
             repeat {
                 guard dockActionIsCurrent(connection, ticket: selectionTicket) else { return }
@@ -1277,7 +1277,7 @@ package final class StreamCoordinator {
             } while ProcessInfo.processInfo.systemUptime < deadline
             if active == .none { reply.note = "Dock 동작은 전달됐지만 활성 창을 확인하지 못했습니다. Mac 창을 선택해 주세요." }
         } else if changesSource, dockActionIsCurrent(connection, ticket: selectionTicket) {
-            await select(previous, bringForward: false)
+            await select(previous, bringForward: false, admission: admission)
         }
         guard connections[id] === connection, connection.state == .ready else { return }
         if changesSource, reply.note == nil, dockSelectionIngress.isCurrent(selectionTicket),
