@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 
-NODE_COMMIT = "633beec7207f6c3b5ee2a2eef399eabed36039be"
+NODE_COMMIT = "aa98e05842fccc034c1efd28461b489fe3d1a5b4"
 SYSTEM = ("/usr/lib/", "/System/Library/")
 MACHO = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 
@@ -58,11 +58,10 @@ def main():
         server.mkdir()
         names = git("ls-tree", "--name-only", NODE_COMMIT, "server/").decode().splitlines()
         names = [name for name in names if name.endswith((".js", ".py"))]
-        assert set(review["serverModules"]).issubset(names)
+        assert set(review["serverModules"]) == set(names)
         for name in names:
             data = git("show", NODE_COMMIT + ":" + name)
-            if name in review["serverModules"]:
-                assert hashlib.sha256(data).hexdigest() == review["serverModules"][name]
+            assert hashlib.sha256(data).hexdigest() == review["serverModules"][name]
             (runtime / name).write_bytes(data)
         python_evidence = args.python_evidence.resolve(strict=True)
         previous = json.loads((python_evidence / "result.json").read_text())

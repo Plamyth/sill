@@ -58,6 +58,11 @@ try:
     manifest = scratch / "manifest.json"
     saved = manifest.read_bytes()
     data = json.loads(saved)
+    data["nodeSourceCommit"] = "633beec7207f6c3b5ee2a2eef399eabed36039be"
+    manifest.write_text(json.dumps(data))
+    execute(scratch, False)
+    manifest.write_bytes(saved)
+    data = json.loads(saved)
     next(item for item in data["dependencies"] if item["source"] == "node/bin/node")["bundled"] = []
     manifest.write_text(json.dumps(data))
     execute(scratch, False)

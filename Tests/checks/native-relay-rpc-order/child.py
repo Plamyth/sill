@@ -11,6 +11,13 @@ controller = None
 sequence = 0
 binding = None
 prepared_receipt = None
+bootstrap_count = 0
+previous_bootstrap_reply = None
+bootstrap_intent_id = str(uuid.uuid4())
+bootstrap_intent_generation = str(uuid.uuid4())
+bootstrap_binding_epoch = str(uuid.uuid4())
+bootstrap_transport_id = str(uuid.uuid4())
+bootstrap_operation_id = str(uuid.uuid4())
 
 def snapshot():
     return dict(schemaVersion=1, revision='1', intent=None, binding=None)
@@ -20,6 +27,62 @@ def receipt(request):
                 registryRevision=request['registryRevision'], participantId='s23.audio.relay', bootId=boot,
                 state='quiescent', facts={key: True for key in ['admissionFenced', 'startsSettled', 'mediaDetached',
                    'callbacksDrained', 'buffersEmpty', 'workersExited']}, reason=None)
+
+def forwarding_bootstrap(payload):
+    assert set(payload) == {'pairedDeviceId', 'pairingGeneration'}
+    own = dict(intentRevision='7', bindingRevision='11')
+    state = dict(schemaVersion=1, revision='9', intent=None, binding=None)
+    credential = dict(pairedDeviceId=payload['pairedDeviceId'], pairingGeneration=payload['pairingGeneration'], credential='a' * 43)
+    result = dict(credential=credential, ownCursor=own, snapshot=state)
+    scenario = mode.removeprefix('bootstrap-')
+    if scenario == 'empty':
+        own.update(intentRevision='0', bindingRevision='0')
+    if scenario == 'max-cursor':
+        own.update(intentRevision='18446744073709551615', bindingRevision='18446744073709551615')
+    if scenario in ['own-off', 'own-off-binding', 'other-off', 'other-active', 'refused', 'cursor-mismatch'] or scenario.startswith('bad-snapshot-'):
+        other = scenario in ['other-off', 'other-active', 'refused']
+        active = scenario == 'other-active'
+        owner = 'cd' * 32 if other else payload['pairedDeviceId']
+        state['intent'] = dict(pairedDeviceId=owner, intentId=bootstrap_intent_id, intentRevision='99' if other else '7',
+            intentGeneration=bootstrap_intent_generation, inputDesired=active, outputDesired=active,
+            sentryDesired=True, localMutedDesired=True)
+        if scenario in ['own-off-binding', 'other-active', 'refused'] or scenario.startswith('bad-snapshot-'):
+            assert configuration is not None
+            state['binding'] = dict(pairedDeviceId=owner, intentGeneration=bootstrap_intent_generation,
+                bindingEpoch=bootstrap_binding_epoch, transportId=bootstrap_transport_id, transportKind='native',
+                operationId=bootstrap_operation_id, phase='active' if active else 'off', configuration=configuration)
+    if scenario == 'refused':
+        return dict(state='refused', code='remembered_device_superseded', snapshot=state)
+    if scenario == 'credential-id': credential['pairedDeviceId'] = 'cd' * 32
+    elif scenario == 'credential-generation': credential['pairingGeneration'] = str(uuid.uuid4())
+    elif scenario == 'cursor-mismatch': own['intentRevision'] = '6'
+    elif scenario.startswith('missing-'): result.pop(scenario.removeprefix('missing-'))
+    elif scenario == 'extra': result['appKey'] = 'caller-claim-must-be-rejected'
+    elif scenario.startswith('credential-missing-'): credential.pop(scenario.removeprefix('credential-missing-'))
+    elif scenario == 'credential-extra': credential['role'] = 'audioOwner'
+    elif scenario == 'credential-invalid': credential['credential'] = 'invalid'
+    elif scenario.startswith('cursor-missing-'): own.pop(scenario.removeprefix('cursor-missing-'))
+    elif scenario == 'cursor-extra': own['otherDevice'] = dict(intentRevision='99', bindingRevision='101')
+    elif scenario.startswith('cursor-invalid-'):
+        field, invalid = scenario.removeprefix('cursor-invalid-').split('-', 1)
+        own[field] = dict(number=1, boolean=True, fraction=1.5, null=None, object={}, array=[], empty='',
+            negative='-1', plus='+1', leading='01', overflow='18446744073709551616',
+            whitespace=' 1', exponent='1e2', decimal='1.0')[invalid]
+    elif scenario.startswith('bad-snapshot-'):
+        invalid = scenario.removeprefix('bad-snapshot-')
+        if invalid.startswith('missing-'): state.pop(invalid.removeprefix('missing-'))
+        elif invalid == 'extra': state['unexpected'] = True
+        elif invalid == 'schema': state['schemaVersion'] = 2
+        elif invalid == 'revision': state['revision'] = '01'
+        elif invalid == 'intent-revision': state['intent']['intentRevision'] = '0'
+        elif invalid == 'intent-protection': state['intent']['localMutedDesired'] = False
+        elif invalid == 'binding-owner': state['binding']['pairedDeviceId'] = 'cd' * 32
+        elif invalid == 'binding-generation': state['binding']['intentGeneration'] = str(uuid.uuid4())
+        elif invalid == 'binding-active-off': state['binding']['phase'] = 'active'
+        elif invalid == 'binding-without-intent': state['intent'] = None
+        elif invalid == 'binding-configuration': state['binding']['configuration'] = {}
+        else: raise AssertionError(invalid)
+    return result
 
 for line in sys.stdin:
     req = json.loads(line)
@@ -32,6 +95,9 @@ for line in sys.stdin:
     with open(log_path, 'a') as log:
         log.write(json.dumps(req) + '\n')
     method, payload = req['method'], req['payload']
+    if mode.startswith('bootstrap-'):
+        assert method in {'bootstrap', 'inspectRuntime', 'forwardingConfigure', 'forwardingBootstrap',
+                          'hold', 'hold-bootstrap-deadline', 'after-bootstrap'}, '관측 중 허용되지 않은 RPC'
     if method == 'bootstrap':
         result = dict(participantId='s23.audio.relay', capabilities=['quiesce-v1', 'inspect-v1', 'runtime-v1', 'forwarding-v1'])
     elif method == 'inspectRuntime':
@@ -43,6 +109,10 @@ for line in sys.stdin:
     elif method == 'forwardingRegister':
         time.sleep(2.2 if mode == 'queued-over-prepare' else 0.12)
         result = dict(pairedDeviceId=payload['pairedDeviceId'], pairingGeneration=payload['pairingGeneration'], credential='a' * 43)
+    elif method == 'forwardingBootstrap':
+        bootstrap_count += 1
+        if mode == 'bootstrap-delayed': time.sleep(0.2)
+        result = forwarding_bootstrap(payload)
     elif method == 'forwardingSnapshot':
         intent_generation, epoch = str(uuid.uuid4()), str(uuid.uuid4())
         binding = binding or dict(pairedDeviceId='ab' * 32, intentGeneration=intent_generation, bindingEpoch=epoch,
@@ -84,10 +154,14 @@ for line in sys.stdin:
     elif method == 'inspect':
         result = prepared_receipt if prepared_receipt and payload['operationId'].lower() == prepared_receipt['operationId'].lower() else None
     else:
-        if method.startswith('hold'): time.sleep(0.2)
+        if method.startswith('hold'): time.sleep(3.4 if method == 'hold-bootstrap-deadline' else 0.2)
         result = 1
     reply = dict(schemaVersion=1, controllerBootId=controller, sequence=req['sequence'],
                  requestId=req['requestId'], relayBootId=boot, processId=os.getpid(), result=result)
+    if method == 'forwardingBootstrap' and mode.startswith('bootstrap-stale-') and bootstrap_count == 2:
+        field = mode.removeprefix('bootstrap-stale-')
+        reply[field] = previous_bootstrap_reply[field] if field in ['sequence', 'requestId'] else str(uuid.uuid4())
+    if method == 'forwardingBootstrap': previous_bootstrap_reply = reply.copy()
     if method == 'bad':
         if mode == 'schemaVersion': reply[mode] = 2
         elif mode == 'sequence': reply[mode] = '999'

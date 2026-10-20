@@ -298,6 +298,27 @@ final class LocalAudioRelay {
         return result
     }
 
+    func forwardingBootstrap(peer: AudioForwardingPairedDevice,
+                             admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<AudioForwardingBootstrap>? {
+        struct Registration: Encodable { let pairedDeviceId: AudioForwardingDeviceID; let pairingGeneration: UUID }
+        let membership = participants.snapshot
+        guard case .connected(let boot) = state, registeredBoot == boot, membership.boots[.relay] == boot else { return nil }
+        let result: AudioForwardingResult<AudioForwardingBootstrap>? = await forwardingCall("forwardingBootstrap",
+            payload: Registration(pairedDeviceId: peer.id, pairingGeneration: peer.pairingGeneration),
+            admission: { [weak self] in
+                guard let self, admission?() != false, case .connected(let currentBoot) = self.state,
+                      currentBoot == boot, self.registeredBoot == boot, self.participants.snapshot == membership else { return false }
+                return true
+            })
+        guard admission?() != false, !Task.isCancelled, case .connected(let currentBoot) = state,
+              currentBoot == boot, registeredBoot == boot, participants.snapshot == membership else { return nil }
+        if case .accepted(let bootstrap) = result,
+           bootstrap.credential.pairedDeviceId != peer.id || bootstrap.credential.pairingGeneration != peer.pairingGeneration {
+            lost(); return nil
+        }
+        return result
+    }
+
     func forwardingConfigure(privacyGeneration: UUID) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         let membership = participants.snapshot
         guard let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,

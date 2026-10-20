@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 root = Path(sys.argv[1]).resolve()
-assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered']]
+assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['bootstrap']]
 check = root / 'Tests/checks/native-relay-rpc-order'
 names = ['Sources/SillHost/LocalAudioRelay.swift', 'Sources/SillHost/LocalAudioParticipants.swift',
          'Sources/SillHost/AudioForwardingContract.swift', 'Sources/SillHost/RemoteAccess.swift',
@@ -22,6 +22,13 @@ protocol_hashes = {str(p.relative_to(root)): before[str(p.relative_to(root))] fo
 with tempfile.TemporaryDirectory(prefix='relay-rpc-check-') as scratch:
     out = Path(scratch)
     source = (root / names[0]).read_text() + '\n' + (check / 'Probe.swift').read_text()
+    source += '''
+extension LocalAudioRelay {
+    var checkBootstrapBoot: UUID? { if case .connected(let boot) = state { boot } else { nil } }
+    var checkBootstrapRegisteredBoot: UUID? { registeredBoot }
+    func checkBootstrapReplaceBoot(_ boot: UUID) { state = .connected(boot); registeredBoot = boot }
+}
+'''
     (out / 'Relay.swift').write_text(source)
     access = (root / names[3]).read_text()
     paired = access[access.index('struct AudioForwardingPairedDevice:'):access.index('\n/// Pairing')]

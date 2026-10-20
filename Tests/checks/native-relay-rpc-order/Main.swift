@@ -6,6 +6,7 @@ import StreamProtocol
     let registry = LocalAudioParticipantRegistry()
     let log: URL
     let relay: LocalAudioRelay
+    var bootstrapNativeCalls = 0
     static var number = 0
 
     init(_ mode: String) {
@@ -16,10 +17,18 @@ import StreamProtocol
         relay = LocalAudioRelay(participants: registry, process: child,
             packagedRuntime: .init(python: "inert-python", router: "inert-router", port: 0), forwarding: true,
             validateLaunch: { true })
-        registry.register(.native, bootId: UUID(), control: .init(fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) },
-            inspect: { _ in nil }, supportsForwarding: true, forwardingPrepare: { .init($0.request, state: .quiescent,
+        registry.register(.native, bootId: UUID(), control: .init(fenceAndQuiesce: { [weak self] request in
+            self?.bootstrapNativeCalls += 1
+            return .init(request, state: .unknown, facts: .unknown)
+        }, inspect: { [weak self] _ in
+            self?.bootstrapNativeCalls += 1
+            return nil
+        }, supportsForwarding: true, forwardingPrepare: { [weak self] preparation in
+            self?.bootstrapNativeCalls += 1
+            return .init(preparation.request, state: .quiescent,
                 facts: .init(admissionFenced: true, startsSettled: true, mediaDetached: true,
-                             callbacksDrained: true, buffersEmpty: true, workersExited: true)) }))
+                             callbacksDrained: true, buffersEmpty: true, workersExited: true))
+        }))
     }
     static func make(_ mode: String = "valid") async -> Fixture {
         let f = Fixture(mode)
@@ -59,6 +68,11 @@ import StreamProtocol
         precondition(condition(), "test barrier expired")
     }
     @MainActor static func main() async {
+        if CommandLine.arguments.last == "bootstrap" {
+            await bootstrap()
+            print("bootstrap 검사 \(assertions)개 통과. 실제 등록 relay의 비공개 파이프와 inert 자식만 사용.")
+            return
+        }
         if CommandLine.arguments.last == "registered" {
             await registeredPreparation()
             print("PASS \(assertions) registered forwarding assertions. Actual private pipe, inert child only.")
@@ -85,7 +99,224 @@ import StreamProtocol
         await reentrantAdmission()
         await preparationConflict()
         await registeredPreparation()
+        if CommandLine.arguments.count == 3 { await bootstrap() }
         print("PASS \(assertions) assertions. Actual LocalAudioRelay private call, inert stdio only.")
+    }
+    @MainActor static func bootstrapFixture(_ scenario: String) async -> Fixture {
+        let f = await Fixture.make("bootstrap-\(scenario)")
+        guard case .accepted = await f.relay.forwardingConfigure(privacyGeneration: UUID()) else {
+            fatalError("bootstrap 구성 실패")
+        }
+        return f
+    }
+    @MainActor static func bootstrapPeer() -> AudioForwardingPairedDevice {
+        AudioForwardingPairedDevice(id: AudioForwardingDeviceID(hex: String(repeating: "ab", count: 32))!, pairingGeneration: UUID())
+    }
+    @MainActor static func bootstrapFrames(_ f: Fixture, peer: AudioForwardingPairedDevice, count: Int) {
+        let requests = f.requests()
+        let calls = requests.filter { $0["method"] as? String == "forwardingBootstrap" }
+        expect(calls.count == count, "실제 bootstrap 전송 횟수")
+        for call in calls {
+            let payload = call["payload"] as! [String: Any]
+            expect(Set(payload.keys) == ["pairedDeviceId", "pairingGeneration"], "bootstrap payload에는 기기 ID와 세대만 포함")
+            expect(payload["pairedDeviceId"] as? String == peer.id.hex &&
+                   (payload["pairingGeneration"] as? String).flatMap({ UUID(uuidString: $0) }) == peer.pairingGeneration,
+                   "호스트가 확인한 peer의 ID와 세대를 그대로 전송")
+        }
+        expect(requests.map { $0["sequence"] as! String } == (1...requests.count).map(String.init), "bootstrap FIFO 순번은 연속")
+        expect(Set(requests.map { $0["requestId"] as! String }).count == requests.count, "관측마다 고유한 requestId 사용")
+        expect(f.bootstrapNativeCalls == 0, "관측은 native 참여자의 준비·차단·검사를 실행하지 않음")
+        let allowed = Set(["bootstrap", "inspectRuntime", "forwardingConfigure", "forwardingBootstrap", "after-bootstrap",
+                           "hold", "hold-bootstrap-deadline"])
+        expect(requests.allSatisfy { allowed.contains($0["method"] as! String) }, "관측은 등록·요청·준비·commit 등 미디어 진입 RPC를 보내지 않음")
+    }
+    @MainActor static func bootstrap() async {
+        await bootstrapAccepted()
+        await bootstrapRegistryScope()
+        await bootstrapInvalid()
+        await bootstrapStale()
+        await bootstrapRefused()
+        await bootstrapQueuedCancellationAndDeadline()
+        await bootstrapAdmission()
+    }
+    @MainActor static func bootstrapRegistryScope() async {
+        let stale = await bootstrapFixture("empty"), peer = bootstrapPeer(), replacement = UUID()
+        stale.registry.register(.relay, bootId: replacement,
+            control: .init(fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
+        let current = stale.registry.snapshot
+        expect(await stale.relay.forwardingBootstrap(peer: peer) == nil, "교체된 이전 relay는 bootstrap을 전송하지 않음")
+        expect(stale.relay.checkConnected && stale.registry.snapshot == current && current.boots[.relay] == replacement,
+               "이전 객체의 관측 거절은 새 relay 등록을 보존")
+        bootstrapFrames(stale, peer: peer, count: 0)
+        stale.finish()
+        expect(stale.registry.snapshot == current, "이전 객체 종료가 새 relay 등록을 해제하지 않음")
+
+        let observing = await bootstrapFixture("empty")
+        observing.registry.unregister(.native)
+        let incomplete = observing.registry.snapshot
+        guard case .accepted = await observing.relay.forwardingBootstrap(peer: peer) else {
+            fatalError("현재 relay의 관측은 native 미디어 준비를 요구하지 않음")
+        }
+        expect(observing.relay.checkConnected && observing.registry.snapshot == incomplete,
+               "native가 준비되지 않아도 관측은 현 상태만 반환")
+        bootstrapFrames(observing, peer: peer, count: 1)
+        observing.finish()
+    }
+    @MainActor static func bootstrapAccepted() async {
+        for scenario in ["empty", "max-cursor", "own-off", "own-off-binding", "other-off", "other-active"] {
+            let f = scenario == "empty" || scenario == "max-cursor"
+                ? await Fixture.make("bootstrap-\(scenario)") : await bootstrapFixture(scenario)
+            let peer = bootstrapPeer()
+            let membership = f.registry.snapshot
+            var checks = 0
+            var original: Data?
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .sortedKeys
+            for observation in 1...4 {
+                let result = scenario == "empty"
+                    ? await f.relay.forwardingBootstrap(peer: peer)
+                    : await f.relay.forwardingBootstrap(peer: peer, admission: { checks += 1; return true })
+                guard case .accepted(let bootstrap) = result else { fatalError("정상 bootstrap 응답 거절 \(scenario)") }
+                expect(bootstrap.credential.pairedDeviceId == peer.id && bootstrap.credential.pairingGeneration == peer.pairingGeneration &&
+                       bootstrap.credential.credential == String(repeating: "a", count: 43), "accepted credential의 기기·세대·값 보존")
+                let expectedIntent: UInt64 = scenario == "empty" ? 0 : scenario == "max-cursor" ? UInt64.max : 7
+                let expectedBinding: UInt64 = scenario == "empty" ? 0 : scenario == "max-cursor" ? UInt64.max : 11
+                expect(bootstrap.ownCursor.intentRevision.value == expectedIntent && bootstrap.ownCursor.bindingRevision.value == expectedBinding,
+                       "자기 cursor의 0·일반값·UInt64 최댓값 보존")
+                expect(bootstrap.snapshot.revision.value == 9, "공유 snapshot revision 보존")
+                if scenario == "empty" || scenario == "max-cursor" {
+                    expect(bootstrap.snapshot.intent == nil && bootstrap.snapshot.binding == nil, "기억 없는 관측은 미디어 binding을 만들지 않음")
+                } else {
+                    let other = scenario.hasPrefix("other-"), active = scenario == "other-active"
+                    let owner = other ? AudioForwardingDeviceID(hex: String(repeating: "cd", count: 32))! : peer.id
+                    let intent = bootstrap.snapshot.intent, binding = bootstrap.snapshot.binding
+                    expect(intent?.pairedDeviceId == owner, "자기 기기와 다른 기기의 기억 상태를 구별")
+                    expect(intent?.intentRevision.value == (other ? 99 : 7), "다른 기기의 공유 intent revision을 자기 cursor로 대체하지 않음")
+                    expect(intent?.inputDesired == active && intent?.outputDesired == active,
+                           "기억된 OFF 또는 다른 기기의 active 상태를 그대로 관측")
+                    if scenario == "own-off-binding" || active {
+                        expect(binding?.pairedDeviceId == owner && binding?.phase == (active ? .active : .off), "기억된 binding의 소유자와 상태 보존")
+                    } else { expect(binding == nil, "연결이 없는 기억 상태의 관측은 binding을 생성하지 않음") }
+                    expect(intent?.sentryDesired == true && intent?.localMutedDesired == true, "기억 상태의 보호 조건 보존")
+                }
+                let data = try! encoder.encode(bootstrap)
+                if let original { expect(data == original, "반복 관측은 credential·cursor·snapshot을 변경하지 않음") }
+                else { original = data }
+                expect(f.relay.checkConnected && f.relay.checkDrained && f.registry.matches(membership), "반복 관측은 연결·등록 boot·membership 보존")
+                bootstrapFrames(f, peer: peer, count: observation)
+            }
+            if scenario != "empty" { expect(checks >= 8, "순수 admission 검사를 전송 전과 응답 전달 전에 재평가") }
+            f.finish()
+        }
+    }
+    @MainActor static func bootstrapInvalid() async {
+        var scenarios = ["credential-id", "credential-generation", "cursor-mismatch", "extra", "credential-extra", "credential-invalid", "cursor-extra"]
+        scenarios += ["credential", "ownCursor", "snapshot"].map { "missing-\($0)" }
+        scenarios += ["pairedDeviceId", "pairingGeneration", "credential"].map { "credential-missing-\($0)" }
+        scenarios += ["intentRevision", "bindingRevision"].map { "cursor-missing-\($0)" }
+        for field in ["intentRevision", "bindingRevision"] {
+            scenarios += ["number", "boolean", "fraction", "null", "object", "array", "empty", "negative", "plus", "leading", "overflow",
+                          "whitespace", "exponent", "decimal"].map { "cursor-invalid-\(field)-\($0)" }
+        }
+        scenarios += ["missing-schemaVersion", "missing-revision", "missing-intent", "missing-binding", "extra", "schema", "revision",
+                      "intent-revision", "intent-protection", "binding-owner", "binding-generation", "binding-active-off",
+                      "binding-without-intent", "binding-configuration"].map { "bad-snapshot-\($0)" }
+        for scenario in scenarios {
+            let f = await bootstrapFixture(scenario), peer = bootstrapPeer()
+            let nativeBoot = f.registry.snapshot.boots[.native]
+            expect(await f.relay.forwardingBootstrap(peer: peer) == nil, "불일치 또는 잘못된 bootstrap 거절 \(scenario)")
+            expect(f.relay.checkClosed && f.relay.checkDrained, "잘못된 bootstrap은 연결을 닫고 FIFO를 정리 \(scenario)")
+            expect(f.registry.snapshot.boots[.relay] == nil && f.registry.snapshot.boots[.native] == nativeBoot,
+                   "실패한 relay 등록만 해제 \(scenario)")
+            bootstrapFrames(f, peer: peer, count: 1)
+            f.finish()
+        }
+    }
+    @MainActor static func bootstrapStale() async {
+        for field in ["requestId", "sequence", "relayBootId", "controllerBootId"] {
+            let f = await bootstrapFixture("stale-\(field)"), peer = bootstrapPeer()
+            guard case .accepted = await f.relay.forwardingBootstrap(peer: peer) else { fatalError("stale 전 정상 관측 실패") }
+            expect(await f.relay.forwardingBootstrap(peer: peer) == nil, "stale bootstrap envelope 거절 \(field)")
+            expect(f.relay.checkClosed && f.relay.checkDrained && f.registry.snapshot.boots[.relay] == nil,
+                   "stale envelope는 기존 fail-closed 적용 \(field)")
+            bootstrapFrames(f, peer: peer, count: 2)
+            f.finish()
+        }
+    }
+    @MainActor static func bootstrapRefused() async {
+        let f = await bootstrapFixture("refused"), peer = bootstrapPeer(), membership = f.registry.snapshot
+        guard case .refused(let code, let snapshot) = await f.relay.forwardingBootstrap(peer: peer) else {
+            fatalError("typed refused가 유지되어야 함")
+        }
+        expect(code == "remembered_device_superseded" && snapshot.intent?.pairedDeviceId.hex == String(repeating: "cd", count: 32) &&
+               snapshot.intent?.intentRevision.value == 99 && snapshot.binding?.phase == .off, "typed refused의 코드와 snapshot을 그대로 반환")
+        expect(f.relay.checkConnected && f.relay.checkDrained && f.registry.matches(membership), "typed refused는 현재 연결과 membership 보존")
+        expect(await f.relay.checkedCall("after-bootstrap", until: .now.advanced(by: .seconds(1))) == 1, "typed refused 이후 같은 자식에 다음 RPC 가능")
+        bootstrapFrames(f, peer: peer, count: 1)
+        f.finish()
+    }
+    @MainActor static func bootstrapQueuedCancellationAndDeadline() async {
+        for cancel in [true, false] {
+            let f = await bootstrapFixture("empty"), peer = bootstrapPeer(), membership = f.registry.snapshot
+            if cancel {
+                let preCancelled = Task { await f.relay.forwardingBootstrap(peer: peer) }
+                preCancelled.cancel()
+                expect(await preCancelled.value == nil && f.relay.checkConnected, "미리 취소된 bootstrap은 전송하지 않음")
+                bootstrapFrames(f, peer: peer, count: 0)
+            }
+            let sequence = f.relay.checkSequence
+            let hold = Task { await f.relay.checkedCall(cancel ? "hold" : "hold-bootstrap-deadline", until: .now.advanced(by: .seconds(5))) }
+            await wait { f.relay.checkPending }
+            let queued = Task { await f.relay.forwardingBootstrap(peer: peer) }
+            await wait { f.relay.checkWaiting == 1 }
+            if cancel { queued.cancel() }
+            expect(await queued.value == nil, "큐의 bootstrap은 취소 또는 자체 3초 deadline에 nil 반환")
+            expect(f.relay.checkConnected && f.relay.checkPending && f.relay.checkWaiting == 0 && f.relay.checkSequence == sequence + 1,
+                   "미전송 bootstrap의 취소·만료는 활성 호출·연결·순번 보존")
+            bootstrapFrames(f, peer: peer, count: 0)
+            let survivor = Task { await f.relay.forwardingBootstrap(peer: peer) }
+            await wait { f.relay.checkWaiting == 1 }
+            expect(await hold.value == 1, "기존 활성 RPC는 bootstrap 취소·만료 이후 완료")
+            guard case .accepted = await survivor.value else { fatalError("다음 bootstrap은 FIFO 슬롯을 받아야 함") }
+            expect(f.relay.checkConnected && f.relay.checkDrained && f.registry.matches(membership), "살아남은 bootstrap은 같은 연결로 완료")
+            bootstrapFrames(f, peer: peer, count: 1)
+            f.finish()
+        }
+    }
+    @MainActor static func bootstrapAdmission() async {
+        for queued in [true, false] {
+            for mutation in ["gate", "boot", "membership"] {
+                let f = await bootstrapFixture("delayed"), peer = bootstrapPeer()
+                var admitted = true, checks = 0
+                let hold: Task<Int?, Never>? = queued
+                    ? Task { await f.relay.checkedCall("hold", until: .now.advanced(by: .seconds(2))) } : nil
+                if queued { await wait { f.relay.checkPending } }
+                let observation = Task { await f.relay.forwardingBootstrap(peer: peer, admission: { checks += 1; return admitted }) }
+                if queued {
+                    await wait { f.relay.checkWaiting == 1 }
+                    expect(checks == 0, "bootstrap admission은 실제 FIFO 슬롯 획득 이후 검사")
+                } else {
+                    await wait { f.requests().last?["method"] as? String == "forwardingBootstrap" }
+                    expect(checks >= 1 && f.relay.checkPending, "전송 전 admission을 통과한 응답 대기 상태")
+                }
+                if mutation == "gate" { admitted = false }
+                else if mutation == "boot" { f.relay.checkBootstrapReplaceBoot(UUID()) }
+                else { f.registry.unregister(.native) }
+                let membership = f.registry.snapshot, boot = f.relay.checkBootstrapBoot, registeredBoot = f.relay.checkBootstrapRegisteredBoot
+                expect(await observation.value == nil, "기다리는 동안 \(mutation) 변경 시 stale 결과 전달 금지")
+                if queued { expect(await hold?.value == 1, "권한·boot·membership 변경이 선행 RPC를 닫지 않음") }
+                expect(f.relay.checkConnected && f.relay.checkDrained && f.registry.snapshot == membership &&
+                       f.relay.checkBootstrapBoot == boot && f.relay.checkBootstrapRegisteredBoot == registeredBoot,
+                       "stale bootstrap은 변경된 현재 연결·등록 boot·membership을 보존")
+                if !queued && mutation == "gate" { expect(checks >= 2, "응답 대기 중 권한 철회를 전달 전에 재검사") }
+                bootstrapFrames(f, peer: peer, count: queued ? 0 : 1)
+                if mutation != "boot" {
+                    expect(await f.relay.checkedCall("after-bootstrap", until: .now.advanced(by: .seconds(1))) == 1,
+                           "stale 결과 폐기 후에도 같은 자식의 RPC 연결 사용 가능")
+                }
+                f.finish()
+            }
+        }
     }
     @MainActor static func registeredPreparation() async {
         for cancel in [false, true] {
