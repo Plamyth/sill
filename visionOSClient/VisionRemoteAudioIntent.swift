@@ -128,6 +128,7 @@ extension StreamClient {
 
     var visionAudioIntentContext: VisionRemoteAudioIntent.Context {
         var context = VisionRemoteAudioIntent.Context()
+        if VisionReleaseTestContext.isTestBundle { return context }
         context.hostKey = visionAudioTrustedHostKey
         context.connected = connected && !visionWindowRetired
         context.authenticated = context.hostKey != nil

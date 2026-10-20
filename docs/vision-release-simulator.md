@@ -114,7 +114,7 @@ It does not label the provider receipt as an actual remote Mac response.
 
 Test activation requires the fixed test bundle, DEBUG, simulator, matching
 embedded source stamps, and an explicit UUID context. Invalid context displays
-the refusal view before any session is created. The test bundle's client skips
+the refusal view before any session is created. The text profile's client skips
 identity/defaults startup and lifecycle callbacks. Its session never starts
 Remote, autoconnect, Bonjour, stats, or audio reconciliation. `startBrowsing`,
 `startRemote`, and typed pairing refuse the test bundle. No real connection,
@@ -148,3 +148,47 @@ The Pstack Feature worker traced startup and the native evidence boundaries in
 one scoped worktree. Model the Domain kept exact source and lifecycle identity
 explicit. Ponytail full reuses stdlib helpers, MockCatalog and the existing native
 draft editor. ARENA, Orca, competing exploration and nested workers are excluded.
+
+## Bounded remote peer profile
+
+`Context.profile` accepts `text` or `remote`. An omitted profile preserves the
+text diagnostic above. Unknown or null profiles refuse before creating a
+session. The fixed test app also refuses identity creation for invalid contexts
+and never reads, creates, deletes or checks keys in the real keychain.
+
+The `remote` profile creates a scene-owned listener bound to `127.0.0.1` on an
+OS-assigned port. Both TLS peers use ephemeral `RemoteKey` and `RemoteIdentity`
+keys with `RemoteTLS` mutual pins and the session ALPN. The production
+`dialSaved`, `RemoteConnector`, `SessionLink`, `MessageReader`, signed Mac info,
+modern input binding and `HEVCDisplayView` paths handle the connection. The
+in-memory saved Mac row cannot persist. Discovery, pairing and reconnect are
+closed for this test bundle. Scene leases and foreground/background observers
+remain active. Audio uses a silent provider, unavailable microphone capability
+and an empty audio intent context, with no OS permission request.
+
+The simulated peer sends alternating 64 by 64 HEVC IDRs and a modern desktop
+catalog with one display. It validates received `SourceInput` generation and
+video epoch. A text event writes and reads its private provider file before the
+UI reports that the peer received it. Reset removes that file and verifies
+absence. Receipts remain in
+`Documents/CCRRemoteFixture/<runID>/<window-admission>/receipt.json` and bind
+source commit/tree, run, process boot, window admission and video epoch. The
+listener stops and resets the provider on EOF, scene release, error, or its
+120 second lifetime. Receipt metadata keeps `wholeProductTestAccepted=false`.
+
+The parent runs the new native test on its exact prepared test app and existing
+simulator lease. Select
+`VisionReleaseSimulatorUITests/VisionReleaseSimulatorUITests/testRemotePeerFixture`
+with the same `CCR_VISION_RELEASE_CONTEXT` source/run environment. The test adds
+the explicit remote profile, verifies TLS and signed identity, waits for native
+presentation, submits through the existing draft panel, checks the peer's real
+input readback, resets the provider and disconnects. It retains a screenshot.
+The Python adapter remains unchanged and continues to select the text test.
+The parent must separately inspect the remote receipt and exact SDK/XCTest
+result. Neither that adapter nor this source change claims full remote acceptance.
+
+This unit does not exercise multi-display switching, other input classes,
+physical gaze, audio capture/playback, HAL, Sentry, real Mac pairing or production
+acceptance. The fixture status labels those limits in Korean. Source checks and
+portable HEVC decoding do not prove Network.framework or the native simulator
+renderer. The parent owns those exact SDK and runtime checks.

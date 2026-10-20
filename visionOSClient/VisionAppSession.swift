@@ -14,23 +14,28 @@ final class VisionAppSession: ObservableObject {
     private var started = false
     private var foreground = false
     private var expectedPin: Data?
+    #if DEBUG && targetEnvironment(simulator)
+    @Published private(set) var remotePeer: VisionReleaseRemotePeer?
+    #endif
     private let launch: VisionCableBootstrap<FoundMac>.Launch
 
     init() {
         launch = .parse(CommandLine.arguments)
         #if DEBUG && targetEnvironment(simulator)
-        if VisionReleaseTestContext.current != nil {
+        if VisionReleaseTestContext.isText {
             client = MockCatalog.client(settings: .legacy, menus: nil)
             client.seedVisionReleaseTest()
         } else { client = StreamClient() }
         #else
         client = StreamClient()
         #endif
-        if VisionReleaseTestContext.isTestBundle {
+        if !VisionReleaseTestContext.usesSceneLifecycle {
             message = "시뮬레이터 격리 테스트입니다. Mac 연결은 사용하지 않습니다."
             return
         }
-        client.visionCableBootstrap = VisionCableBootstrap(launch: launch)
+        if !VisionReleaseTestContext.isTestBundle {
+            client.visionCableBootstrap = VisionCableBootstrap(launch: launch)
+        }
         client.visionCableBootstrap.onChange = { [weak self] in self?.refresh() }
         let events: [AnyPublisher<Void, Never>] = [
             client.$connected.map { _ in () }.eraseToAnyPublisher(),
@@ -55,7 +60,10 @@ final class VisionAppSession: ObservableObject {
     }
 
     deinit {
-        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #if DEBUG && targetEnvironment(simulator)
+        remotePeer?.stop()
+        #endif
+        guard VisionReleaseTestContext.usesSceneLifecycle else { return }
         let client = client
         let input = input
         DispatchQueue.main.async {
@@ -67,7 +75,7 @@ final class VisionAppSession: ObservableObject {
 
     func claim(_ window: UUID) {
         if windowLease == nil { windowLease = VisionWindowLease(window: window) }
-        guard !VisionReleaseTestContext.isTestBundle else { return }
+        guard VisionReleaseTestContext.usesSceneLifecycle else { return }
         client.admitVisionDisplays(lease: windowLease, foreground: foreground)
     }
 
@@ -78,10 +86,16 @@ final class VisionAppSession: ObservableObject {
         windowLease = nil
         suspendPresentation()
         input.allowed = false
+        #if DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.isRemote {
+            client.disconnect()
+            remotePeer?.stop()
+        }
+        #endif
     }
 
     func setScenePhase(_ phase: ScenePhase) {
-        if VisionReleaseTestContext.isTestBundle {
+        if !VisionReleaseTestContext.usesSceneLifecycle {
             input.bind(client)
             client.setVisionPresentationForeground(phase == .active)
             VisionReleaseRuntimeWriter.write()
@@ -99,20 +113,38 @@ final class VisionAppSession: ObservableObject {
     }
 
     func suspendPresentation() {
-        guard !VisionReleaseTestContext.isTestBundle else { return }
+        guard VisionReleaseTestContext.usesSceneLifecycle else { return }
         client.microphoneSceneChanged(lease: nil, scene: .background)
         setForeground(false)
     }
 
     func start(foreground: Bool) {
-        guard !VisionReleaseTestContext.isTestBundle else { return }
+        guard VisionReleaseTestContext.usesSceneLifecycle else { return }
         guard foreground else { setForeground(false); return }
         guard !started else { setForeground(foreground); return }
+        #if DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.isRemote {
+            guard let context = VisionReleaseTestContext.current, let lease = windowLease else { return }
+            do {
+                remotePeer = try VisionReleaseRemotePeer(context: context, lease: lease)
+            } catch {
+                message = "격리 원격 피어를 준비하지 못했습니다. \(error)"
+                return
+            }
+        }
+        #endif
         started = true
         self.foreground = foreground
         client.visionStartupForeground = foreground
         input.bind(client)
         stats.attach(to: client)
+        #if DEBUG && targetEnvironment(simulator)
+        if let remotePeer {
+            remotePeer.start(client: client)
+            setForeground(foreground)
+            return
+        }
+        #endif
         client.startRemote()
         expectedPin = client.visionExpectedMacPin
         client.armSavedMacAutoConnect()
@@ -122,7 +154,7 @@ final class VisionAppSession: ObservableObject {
     }
 
     func setForeground(_ active: Bool) {
-        guard !VisionReleaseTestContext.isTestBundle else { return }
+        guard VisionReleaseTestContext.usesSceneLifecycle else { return }
         foreground = active
         client.admitVisionDisplays(lease: windowLease, foreground: active)
         client.visionStartupForeground = active
@@ -133,7 +165,14 @@ final class VisionAppSession: ObservableObject {
     }
 
     func refresh() {
-        guard !VisionReleaseTestContext.isTestBundle else { VisionReleaseRuntimeWriter.write(); return }
+        guard VisionReleaseTestContext.usesSceneLifecycle else { VisionReleaseRuntimeWriter.write(); return }
+        #if DEBUG && targetEnvironment(simulator)
+        if let remotePeer {
+            remotePeer.observe(client: client, lease: windowLease, foreground: foreground)
+            message = "시뮬레이션 TLS 피어 · 시선·오디오·HAL·Sentry 미검증"
+            return
+        }
+        #endif
         client.updateVisionMacAudioRoutes(lease: windowLease, foreground: foreground)
         client.reconcileVisionAudioIntent()
         let bootstrap = client.visionCableBootstrap

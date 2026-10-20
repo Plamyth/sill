@@ -179,6 +179,9 @@ extension StreamClient {
 
     /// Writes the list only (`recomputeMacs` itself writes what it learns of a Mac's door).
     func storeSavedMacs() {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         if !savedMacsSeeded { UserDefaults.standard.set(SavedMacs.encode(savedMacs), forKey: SavedMacs.defaultsKey) }
     }
 
@@ -260,6 +263,9 @@ extension StreamClient {
     /// Watches the device's path, to tell "the Mac blinked" from "this device left home" after a
     /// loss (DiscoveryPolicy.remoteDialDue).
     func startPathMonitor() {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         #if os(visionOS)
         guard !visionWindowRetired else { return }
         #endif
@@ -617,6 +623,9 @@ extension StreamClient {
     /// above.
     @discardableResult
     func reconnectIfListed() -> Bool {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return false }
+        #endif
         reconnectCheck?.cancel()
         reconnectCheck = nil
         guard appInForeground, !connected, !moveUnderWay, var r = reconnect else { return false }
@@ -793,6 +802,9 @@ extension StreamClient {
     /// the overlay then says (StreamClient+Home's `askOverStream`); over a plain one, kind 21, for
     /// which a plain door always opens a window. `mac`: what the overlay calls the Mac.
     func requestPairingCode(mac: String? = nil) {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         if let t = sessionPairingTarget {
             askOverStream(t, mac: mac ?? (macName.isEmpty ? hostName : macName))
             return
@@ -894,6 +906,9 @@ extension StreamClient {
 
     /// The QR path: the link's addresses one at a time, pinned to its key.
     func pair(link: PairLink, overlay: Bool, scanned: Bool = false) {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         let addresses = link.addresses.map(RemoteDialPolicy.address(for:))
         let candidates = RemoteDialPolicy.order(addresses, remotePort: link.port, lastWorked: nil, localIPv4: Self.localIPv4Networks())
         startPairing(candidates: candidates, pin: link.fingerprint, key: { _ in PairingProof.qrKey(secret: link.secret) },
@@ -903,6 +918,9 @@ extension StreamClient {
 
     /// The typed path: one address, any P-256 key, bound into the proof with K from the code.
     func pair(code: String, address: ParsedAddress, overlay: Bool) {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         let a = RemoteDialPolicy.address(for: address)
         let port = address.port ?? HostConfigDefaults.remotePort
         let candidates = [RemoteDialPolicy.Candidate(host: a.host, port: port, kind: a.kind, via: a.via)]

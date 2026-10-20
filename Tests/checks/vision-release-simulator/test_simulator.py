@@ -294,6 +294,48 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaises(sim.Held):
                 sim.validate_results(summary, nodes)
 
+    def remote_fixture(self):
+        return {"schema": "ccr.vision.simulated-remote-peer/v1", "profile": "remote", **SOURCE.fields(),
+                "runID": LEASE_ID, "bootUUID": BOOT_ID, "owner": sim.OWNER, "bundleId": sim.BUNDLE,
+                "window": LEASE_ID, "admission": BOOT_ID,
+                "storageIdentity": str(Path(self.observation()["container"]) / "Documents/CCRRemoteFixture" / LEASE_ID / BOOT_ID),
+                "providerMode": "simulated-loopback-tls-peer", "externalEffects": "zero",
+                "wholeProductTestAccepted": False, "tlsMutualPinVerified": True,
+                "clientSignedIdentityVerified": True, "nativePresentationObserved": True,
+                "framesSent": 4, "epoch": BOOT_ID, "generation": "fixture-generation",
+                "inputs": [{"generation": "fixture-generation", "videoEpoch": BOOT_ID,
+                            "event": {"text": {"_0": "remote fixture 41"}}}],
+                "providerAbsent": True, "providerResetVerified": True, "stopped": True, "problem": ""}
+
+    def test_remote_fixture_requires_real_native_and_peer_witnesses(self):
+        raw = self.remote_fixture()
+        sim.validate_remote_fixture(raw, SOURCE, {"runID": LEASE_ID}, self.observation())
+        for key, value in {"profile": "text", "commit": "c" * 40, "runID": BOOT_ID,
+                           "bootUUID": LEASE_ID, "owner": "other", "bundleId": sim.physical.BUNDLE,
+                           "storageIdentity": "/original/container", "externalEffects": "unknown",
+                           "wholeProductTestAccepted": True, "tlsMutualPinVerified": False,
+                           "clientSignedIdentityVerified": False, "nativePresentationObserved": False,
+                           "framesSent": 1, "providerAbsent": False, "providerResetVerified": False,
+                           "stopped": False, "problem": "input failed", "inputs": []}.items():
+            with self.subTest(key=key), self.assertRaises(sim.Held):
+                sim.validate_remote_fixture({**raw, key: value}, SOURCE, {"runID": LEASE_ID}, self.observation())
+
+    def test_remote_fixture_rejects_stale_epoch_and_wrong_text(self):
+        raw = self.remote_fixture()
+        for item in ({**raw["inputs"][0], "generation": "stale"},
+                     {**raw["inputs"][0], "videoEpoch": LEASE_ID},
+                     {**raw["inputs"][0], "event": {"text": {"_0": "wrong text"}}}):
+            with self.subTest(item=item), self.assertRaises(sim.Held):
+                sim.validate_remote_fixture({**raw, "inputs": [item]}, SOURCE,
+                                            {"runID": LEASE_ID}, self.observation())
+
+    def test_native_results_must_match_requested_remote_scenario(self):
+        summary = {"result": "Passed", "passedTests": 1, "failedTests": 0, "skippedTests": 0}
+        remote = {"testNodes": [{"name": "testRemotePeerFixture()", "nodeType": "Test Case", "result": "Passed"}]}
+        sim.validate_results(summary, remote, "testRemotePeerFixture()")
+        with self.assertRaises(sim.Held):
+            sim.validate_results(summary, remote)
+
     def test_xctestrun_keeps_native_driver_and_exact_context(self):
         original = self.root / "original.xctestrun"
         original.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [{

@@ -244,7 +244,7 @@ def test_run_file(prepared, destination, context):
     destination.write_bytes(plistlib.dumps(run))
 
 
-def validate_results(summary, tests):
+def validate_results(summary, tests, test_name="testWorkspaceFixture()"):
     require(summary.get("result") == "Passed" and summary.get("passedTests") == 1 and
             summary.get("failedTests") == 0 and summary.get("skippedTests") == 0, "native_ui_tests_not_passed")
     def leaves(node):
@@ -256,7 +256,7 @@ def validate_results(summary, tests):
             for value in node:
                 yield from leaves(value)
     matches = [n for n in leaves(tests) if n.get("nodeType") == "Test Case" and
-               n.get("name") == "testWorkspaceFixture()" and n.get("result") == "Passed"]
+               n.get("name") == test_name and n.get("result") == "Passed"]
     require(len(matches) == 1, "representative_actual_swiftui_test_missing")
 
 
@@ -273,6 +273,33 @@ def validate_fixture(raw, source, context, observation):
     require(raw.get("sessionIsolated") is True, "session_not_isolated")
 
 
+def validate_remote_fixture(raw, source, context, observation):
+    require(raw.get("schema") == "ccr.vision.simulated-remote-peer/v1" and source.matches(raw) and
+            raw.get("profile") == "remote", "remote_fixture_source_mismatch")
+    require(raw.get("runID") == context["runID"] and raw.get("bootUUID") == observation["runtime"]["bootUUID"] and
+            raw.get("bundleId") == BUNDLE and raw.get("owner") == OWNER, "remote_fixture_runtime_mismatch")
+    for key in ("window", "admission", "epoch"):
+        value = raw.get(key, "")
+        require(isinstance(value, str) and str(uuid.UUID(value)) == value.lower(), "remote_fixture_uuid_invalid")
+    directory = Path(observation["container"]) / "Documents/CCRRemoteFixture" / context["runID"] / raw["admission"]
+    require(raw.get("storageIdentity") == str(directory), "remote_fixture_not_private")
+    require(raw.get("providerMode") == "simulated-loopback-tls-peer" and raw.get("externalEffects") == "zero" and
+            raw.get("wholeProductTestAccepted") is False, "remote_fixture_scope_invalid")
+    require(all(raw.get(k) is True for k in ("tlsMutualPinVerified", "clientSignedIdentityVerified",
+            "nativePresentationObserved", "providerAbsent", "providerResetVerified", "stopped")) and
+            raw.get("problem") == "" and type(raw.get("framesSent")) is int and raw["framesSent"] >= 2,
+            "remote_fixture_observation_missing")
+    inputs = raw.get("inputs")
+    require(isinstance(inputs, list) and 0 < len(inputs) <= 128 and isinstance(raw.get("generation"), str) and
+            bool(raw["generation"]), "remote_fixture_inputs_missing")
+    require(all(isinstance(item, dict) and item.get("generation") == raw["generation"] and
+                str(item.get("videoEpoch", "")).lower() == raw["epoch"].lower() for item in inputs),
+            "remote_fixture_input_epoch_mismatch")
+    text = [item.get("event", {}).get("text") for item in inputs if isinstance(item.get("event"), dict) and
+            "text" in item["event"]]
+    require(text == [{"_0": "remote fixture 41"}], "remote_fixture_text_readback_missing")
+
+
 def accept(args, source, runner, output, native):
     prepared = prepare(args, source, runner, output)
     deployed = read_json(output / "deployment.json")
@@ -282,7 +309,9 @@ def accept(args, source, runner, output, native):
     native.ready()
     require(bundle_manifest(native.container("app"), source, runner) == prepared["built"],
             "existing_test_bundle_replacement_held:parent_recovery_required")
-    context = {**source.fields(), "runID": str(uuid.uuid4())}
+    remote = getattr(args, "scenario", "text") == "remote"
+    test_name = "testRemotePeerFixture()" if remote else "testWorkspaceFixture()"
+    context = {**source.fields(), "runID": str(uuid.uuid4()), "profile": "remote" if remote else "text"}
     run = native.directory / "NativeUI.xctestrun"
     test_run_file(prepared, run, context)
     result = native.directory / "NativeUI.xcresult"
@@ -290,7 +319,7 @@ def accept(args, source, runner, output, native):
                 "-destination", "platform=visionOS Simulator,id=" + UDID,
                 "-resultBundlePath", result, "-parallel-testing-enabled", "NO",
                 "-maximum-concurrent-test-simulator-destinations", "1", "-disable-concurrent-destination-testing",
-                "-only-testing:VisionReleaseSimulatorUITests/VisionReleaseSimulatorUITests/testWorkspaceFixture"])
+                "-only-testing:VisionReleaseSimulatorUITests/VisionReleaseSimulatorUITests/" + test_name[:-2]])
     reports = {}
     for kind in ("summary", "tests"):
         raw = json.loads(runner.run(["/usr/bin/xcrun", "xcresulttool", "get", "test-results", kind,
@@ -298,23 +327,33 @@ def accept(args, source, runner, output, native):
         path = native.directory / (kind + ".json")
         atomic_json(path, raw)
         reports[kind] = raw
-    validate_results(reports["summary"], reports["tests"])
+    validate_results(reports["summary"], reports["tests"], test_name)
     observation = native.observe(prepared["built"])
     validate_lease(args.lease_id, source, runner)
-    fixture_path = Path(observation["container"]) / "Documents/CCRReleaseFixture/receipt.json"
+    if remote:
+        fixture_root = Path(observation["container"]) / "Documents/CCRRemoteFixture" / context["runID"]
+        matches = list(fixture_root.glob("*/receipt.json"))
+        require(len(matches) == 1, "remote_fixture_receipt_missing_or_ambiguous")
+        fixture_path = matches[0]
+    else:
+        fixture_path = Path(observation["container"]) / "Documents/CCRReleaseFixture/receipt.json"
     fixture = read_json(fixture_path)
-    validate_fixture(fixture, source, context, observation)
-    require(not (fixture_path.parent / "draft.json").exists(), "fixture_reset_readback_failed")
+    (validate_remote_fixture if remote else validate_fixture)(fixture, source, context, observation)
+    require(not (fixture_path.parent / ("provider.json" if remote else "draft.json")).exists(), "fixture_reset_readback_failed")
     atomic_json(native.directory / "actual-fixture.json", fixture)
     rows = [observation["runtimeEvidence"], evidence(native.directory / "actual-fixture.json"),
             evidence(native.directory / "summary.json"), evidence(native.directory / "tests.json")]
     return {"schema": "ccr.vision.simulator-diagnostic/v1", "status": "diagnostic-verified", **source.fields(),
-            "releaseStatus": "held:full-remote-driver-missing",
-            "profile": "isolated-native-text-draft-simulator", "deviceId": UDID, "bundleId": BUNDLE,
+            "releaseStatus": "held:full-remote-checks-missing",
+            "profile": "isolated-native-remote-peer-simulator" if remote else "isolated-native-text-draft-simulator",
+            "deviceId": UDID, "bundleId": BUNDLE,
             "ownerThread": OWNER, "leaseId": args.lease_id, "runtimeId": observation["runtimeId"],
             "runtimeAccepted": True, "uiAccepted": True, "wholeProductTestAccepted": False,
-            "productionEnabled": False, "externalEffects": "zero", "providerMode": "deterministic-stub",
-            "checks": {name: {"status": "pass", "evidence": rows} for name in SIM_CHECKS},
+            "productionEnabled": False, "externalEffects": "zero", "providerMode": fixture["providerMode"],
+            "checks": {name: {"status": "pass", "evidence": rows} for name in
+                       (("runtime-source-readback", "readiness", "native-remote-text-ui", "tls-peer",
+                         "native-video-presentation", "isolated-peer-input", "fixture-reset", "external-effects-zero")
+                        if remote else SIM_CHECKS)},
             "physicalRequiredChecks": list(physical.CHECKS),
             "unverified": ["modern-display-picker", "multiwindow-admission", "video-stream",
                            "physical-gaze", "physical-audio", "HAL", "sentry", "full-remote-acceptance"],
@@ -376,6 +415,7 @@ def parser():
     cli.add_argument("--tree")
     cli.add_argument("--device", default=UDID)
     cli.add_argument("--lease-id")
+    cli.add_argument("--scenario", choices=("text", "remote"), default="text")
     cli.add_argument("--budget-seconds", type=float, default=600)
     cli.add_argument("--native-budget-seconds", type=float, default=120)
     return cli

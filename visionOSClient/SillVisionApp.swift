@@ -3,7 +3,10 @@ import StreamProtocol
 
 @main
 struct SillVisionApp: App {
-    init() { VisionReleaseRuntimeWriter.write() }
+    init() {
+        guard !VisionReleaseTestContext.isTestBundle || VisionReleaseTestContext.current != nil else { return }
+        VisionReleaseRuntimeWriter.write()
+    }
 
     var body: some Scene {
         WindowGroup(id: "mac") {
@@ -154,10 +157,12 @@ struct SillVisionWorkspace: View {
             } else {
                 hosts
             }
+            #if DEBUG && targetEnvironment(simulator)
+            if let peer = session.remotePeer { VisionReleaseRemoteStatus(peer: peer) }
+            #endif
         }
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
-        .accessibilityIdentifier("vision.workspace")
         .ornament(attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
             if session.owns(lease), client.connected, client.active != .none, client.visionSentrySnapshot.available {
                 VisionSentryOrnament(snapshot: client.visionSentrySnapshot,

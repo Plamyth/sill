@@ -5,15 +5,32 @@ enum VisionReleaseTestContext {
     static var isTestBundle: Bool { Bundle.main.bundleIdentifier == bundleID }
 
     struct Context: Codable {
+        enum Profile: String, Codable { case text, remote }
         let commit: String
         let tree: String
         let runID: String
+        let profile: Profile
+
+        private enum CodingKeys: String, CodingKey { case commit, tree, runID, profile }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            commit = try values.decode(String.self, forKey: .commit)
+            tree = try values.decode(String.self, forKey: .tree)
+            runID = try values.decode(String.self, forKey: .runID)
+            profile = values.contains(.profile) ? try values.decode(Profile.self, forKey: .profile) : .text
+        }
     }
+
+    static var isText: Bool { current?.profile == .text }
+    static var isRemote: Bool { current?.profile == .remote }
+    static var usesSceneLifecycle: Bool { !isTestBundle || isRemote }
 
     static let current: Context? = {
         #if DEBUG && targetEnvironment(simulator)
         let args = CommandLine.arguments
-        guard isTestBundle, let index = args.firstIndex(of: "--ccr-release-context"),
+        guard isTestBundle, args.filter({ $0 == "--ccr-release-context" }).count == 1,
+              let index = args.firstIndex(of: "--ccr-release-context"),
               index + 1 < args.count, let data = args[index + 1].data(using: .utf8),
               let value = try? JSONDecoder().decode(Context.self, from: data),
               value.commit.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil,
@@ -30,7 +47,9 @@ enum VisionReleaseTestContext {
 
 #if DEBUG && targetEnvironment(simulator)
 final class VisionReleaseFixture: ObservableObject {
-    static let current = VisionReleaseTestContext.current.map(VisionReleaseFixture.init)
+    static let current = VisionReleaseTestContext.current.flatMap {
+        $0.profile == .text ? VisionReleaseFixture(context: $0) : nil
+    }
     @Published private(set) var displayedText = "시뮬레이터의 결정적 Mac 입력 대상입니다."
     private let context: VisionReleaseTestContext.Context
     private let directory: URL

@@ -28,13 +28,14 @@ struct VisionMicrophoneAuthorization {
 extension StreamClient {
     #if os(visionOS)
     static func requestVisionRecordPermission(_ completion: @escaping (Bool) -> Void) {
+        guard !VisionReleaseTestContext.isTestBundle else { completion(false); return }
         Task { @MainActor in completion(await AVAudioApplication.requestRecordPermission()) }
     }
     #endif
 
     var visionMicrophoneCanStart: Bool {
         #if os(visionOS)
-        if visionDisplaySelection.inputBlocked { return false }
+        if VisionReleaseTestContext.isTestBundle || visionDisplaySelection.inputBlocked { return false }
         #endif
         return microphoneAdmission.active && microphoneAuthorization == nil && microphonePolicy.canStart &&
             microphoneCapture == nil && microphoneCleanupProblem == nil &&
