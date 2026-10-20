@@ -73,7 +73,12 @@ class Boundary:
                       ("rev-list", "--count", "HEAD"): str(self.revision_count)}
             return values[tuple(words)] + "\n", ""
         if args[0] == adapter.ROUTER:
-            return json.dumps({"path": self.args.output}), ""
+            base = Path(self.args.output)
+            if "--filename" in args:
+                if base.exists():
+                    raise adapter.Held("command_failed:storage-route:2")
+                return json.dumps({"path": str(base)}), ""
+            return json.dumps({"path": str(base.parent)}), ""
         if args[:2] == ["/usr/bin/xcrun", "xcodebuild"]:
             self.build = next(arg.split("=", 1)[1] for arg in args if arg.startswith("CURRENT_PROJECT_VERSION="))
             derived = Path(args[args.index("-derivedDataPath") + 1])
@@ -227,6 +232,18 @@ class AdapterTests(unittest.TestCase):
         info = plistlib.loads((Path(result["built"]["path"]) / "Info.plist").read_bytes())
         self.assertEqual(info["BTSourceCommit"], self.source.commit)
         self.assertEqual(info["BTSourceTree"], self.source.tree)
+
+    def test_prepared_output_reuses_routed_parent_without_reallocation(self):
+        first = self.prepare()
+        original = Path(first["evidence"]).read_bytes()
+        self.boundary.calls.clear()
+        second = self.prepare()
+        self.assertEqual(first["evidence"], second["evidence"])
+        self.assertEqual(Path(first["evidence"]).read_bytes(), original)
+        routes = [row for row in self.boundary.calls if row[0] == adapter.ROUTER]
+        self.assertEqual(len(routes), 1)
+        self.assertNotIn("--filename", routes[0])
+        self.assertFalse(any("xcodebuild" in row for row in self.boundary.calls))
 
     def test_explicit_build_minimum_and_pin(self):
         self.args.build_number = 22

@@ -51,7 +51,11 @@ example static argument array is:
 
 The routed base is the exact `path` returned by
 `storage-route path development-archive --project CCR-Vision --filename NAME`.
-The adapter invokes that router and checks equality before writing. A new name
+The adapter invokes that router and checks equality before writing. For an
+existing base it requests the project directory without `--filename`, verifies
+that routed parent (including the router's external volume UUID checks), then
+requires the existing base's exact ownership marker. It never requests a new
+allocation for an existing output or silently replaces it. A new name
 such as `release-convergence-runtime-20261020` separates actual adapter output
 from existing onboarding observations. A nonempty directory without the
 adapter's ownership marker is refused. The base marker binds repository,

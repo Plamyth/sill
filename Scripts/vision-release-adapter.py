@@ -527,9 +527,12 @@ def execute(args, runner):
         validate_lease(args.lease, args.device)
     source = source_identity(args, runner)
     base = safe_path(args.output)
-    routed = json.loads(runner.run([ROUTER, "path", "development-archive", "--project", "CCR-Vision",
-                                    "--filename", base.name])[0])
-    require(routed.get("path") == str(base), "output_not_storage_routed")
+    route = [ROUTER, "path", "development-archive", "--project", "CCR-Vision"]
+    existing = base.exists()
+    if not existing:
+        route.extend(["--filename", base.name])
+    routed = json.loads(runner.run(route)[0])
+    require(routed.get("path") == str(base.parent if existing else base), "output_not_storage_routed")
     marker = {"schema": "ccr.vision.output/v1", "repo": args.repo, "ownerThread": OWNER,
               "remote": args.remote, "ref": args.ref, "projectId": args.project_id, "environment": args.environment}
     if not base.exists():
