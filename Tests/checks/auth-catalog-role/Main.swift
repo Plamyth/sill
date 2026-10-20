@@ -13,6 +13,7 @@ final class NWConnection {
 enum ClientLink { struct Route: Equatable {} }
 struct ClientRoute {
     var encrypted: Bool
+    var pairedName: String? = "paired"
     var isRemote = false
     var fingerprint: Data? = Data(repeating: 1, count: 32)
     var cableDevice: String? = nil
@@ -92,9 +93,29 @@ struct Check {
         check(host.controlJoins == 1 && host.viewerJoins == 0 && host.counts.isEmpty && !host.ticking)
         host.sendAuthenticationCatalog(.init(macName: "fixture", windows: [], active: .none), to: peer)
         check(host.sent == [.windowList] && host.clients[ObjectIdentifier(peer)]?.catalogSent == false)
+        let retained = host.clients[ObjectIdentifier(peer)]!
         peer.cancel()
         check(host.controlLeaves == 1 && host.viewerLeaves == 0 && host.counts.isEmpty)
         check(host.pointerWatch?.departed.isEmpty == true)
+        let joinedBeforeLateHello = host.viewerJoins
+        host.took(Hello(), from: retained)
+        check(host.viewerJoins == joinedBeforeLateHello && host.counts.isEmpty)
+
+        let notReady = NWConnection()
+        host.serve(notReady, route: .init(encrypted: true), hello: nil)
+        let notReadyClient = host.clients[ObjectIdentifier(notReady)]!
+        notReady.state = .failed
+        host.took(Hello(), from: notReadyClient)
+        check(host.viewerJoins == 0 && host.counts.isEmpty)
+        notReady.cancel()
+        let replaced = NWConnection()
+        host.serve(replaced, route: .init(encrypted: true), hello: nil)
+        let original = host.clients[ObjectIdentifier(replaced)]!
+        let replacement = Client(replaced); replacement.role = .awaitingHello
+        host.clients[ObjectIdentifier(replaced)] = replacement
+        host.took(Hello(), from: original)
+        check(host.viewerJoins == 0 && host.counts.isEmpty)
+        replaced.cancel()
 
         let screen = NWConnection(), audioAuth = NWConnection()
         host.serve(screen, route: .init(encrypted: true), hello: Hello())
@@ -124,6 +145,9 @@ struct Check {
         let plain = NWConnection()
         host.serve(plain, route: .init(encrypted: false), hello: nil)
         check(host.viewerJoins == 3 && host.counts == [1, 2, 1, 2])
+        let unpaired = NWConnection()
+        host.serve(unpaired, route: .init(encrypted: true, pairedName: nil), hello: nil)
+        check(unpaired.state == .ready && host.viewerJoins == 4 && host.counts == [1, 2, 1, 2, 3])
         let auth = Client(NWConnection()); auth.role = .awaitingHello
         for value in 0...255 {
             guard let kind = StreamMessageKind(rawValue: UInt8(value)) else { continue }

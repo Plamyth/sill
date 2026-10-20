@@ -40,6 +40,7 @@ assert "client.role.isViewer" in block(server, "func sendMicrophoneCatalog(")
 assert "client.role.isViewer" in block(server, "func setRemoteAudio(")
 original = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in
             [root / "Sources/SillHost/StreamServer.swift", root / "Sources/SillHost/StreamPeerRole.swift", Path(__file__), Path(__file__).with_name("Main.swift")]}
+passed = False
 try:
     source = output / "Fixture.swift"; source.write_text(fixture)
     base = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-module-cache-path", str(output / "cache")]
@@ -48,9 +49,10 @@ try:
     subprocess.run(base + ["-I", str(output), str(root / "Sources/SillHost/StreamPeerRole.swift"), str(source), str(output / "StreamProtocol.o"), "-o", str(output / "check")], check=True, timeout=180)
     subprocess.run([str(output / "check")], check=True, timeout=30)
     assert all(hashlib.sha256((root / name).read_bytes()).hexdigest() == value for name, value in original.items())
+    passed = True
 finally:
     import shutil
     shutil.rmtree(output)
-    receipt = {"sourceHashes": original, "outputRemoved": not output.exists(), "hardwareOrDeviceActions": 0}
+    receipt = {"passed": passed, "sourceHashes": original, "outputRemoved": not output.exists(), "hardwareOrDeviceActions": 0}
     if len(sys.argv) == 2: output.with_suffix(".json").write_text(json.dumps(receipt, indent=2) + "\n")
     print("RECEIPT " + json.dumps(receipt))

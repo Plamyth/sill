@@ -1002,7 +1002,7 @@ final class StreamServer {
     func serve(_ connection: NWConnection, route: ClientRoute, hello: Hello?, admitted: () -> Void = {}) {
         let client = Client(connection)
         client.route = route
-        client.role = route.encrypted && hello == nil ? .awaitingHello : .viewer
+        client.role = route.encrypted && route.pairedName != nil && hello == nil ? .awaitingHello : .viewer
         // As its route says: every session a Door admits is TLS (a remote one, or a home one with its
         // peer's key); a home route without a peer is a plain connection and keeps the plain door's
         // tick rule (the pacing harness's home client, Scripts/pacing).
@@ -1242,6 +1242,7 @@ final class StreamServer {
     /// the floor at "0" every device is served, and above it the gate has judged it already. On
     /// `queue`.
     private func took(_ hello: Hello, from client: Client) {
+        guard clients[ObjectIdentifier(client.connection)] === client, client.connection.state == .ready else { return }
         if !client.role.isViewer {
             client.role = .viewer
             onClientConnected?(client.connection, client.route, client.link)

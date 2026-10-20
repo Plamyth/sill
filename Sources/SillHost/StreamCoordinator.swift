@@ -435,7 +435,7 @@ package final class StreamCoordinator {
         server.onControlClientConnected = { [weak self] connection, route in
             Task { @MainActor in
                 guard let self, !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
-                      self.remote?.isPaired(fingerprint) == true else { connection.cancel(); return }
+                      self.remote?.isPaired(fingerprint) == true else { return }
                 let id = ObjectIdentifier(connection), ticket = UUID()
                 self.authenticationCatalogTickets[id] = ticket
                 let catalog = await self.authenticationCatalog?(connection, fingerprint)
@@ -449,8 +449,8 @@ package final class StreamCoordinator {
             Task { @MainActor in self?.authenticationCatalogTickets[ObjectIdentifier(connection)] = nil }
         }
         server.onClientConnected = { [weak self] connection, route, link in
-            Task { @MainActor in
-                guard let self else { return }
+            DispatchQueue.main.async {
+                guard let self, connection.state == .ready else { return }
                 let id = ObjectIdentifier(connection)
                 self.authenticationCatalogTickets[id] = nil
                 guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
@@ -622,8 +622,9 @@ package final class StreamCoordinator {
         server.onClientHello = { [weak self] connection, hello in
             let id = ObjectIdentifier(connection)
             let name = SafeText.label(hello.device ?? "")
-            Task { @MainActor in
-                guard let self else { return }
+            DispatchQueue.main.async {
+                guard let self, connection.state == .ready, self.connections[id] === connection,
+                      self.inputFence.contains(id) else { return }
                 self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
                 self.requestExtendedDesktop(for: connection, hello: hello)
                 guard !name.isEmpty else { return }
