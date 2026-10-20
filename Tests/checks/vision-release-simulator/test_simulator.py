@@ -23,11 +23,12 @@ BOOT_ID = "00000000-0000-4000-8000-000000000002"
 
 
 class Runner:
-    def __init__(self, output=""):
-        self.output, self.calls = output, []
+    def __init__(self, output="", exit_code=0):
+        self.output, self.calls, self.exit_code = output, [], exit_code
 
-    def run(self, command, cwd=None):
+    def run(self, command, cwd=None, accepted_return_codes=(0,)):
         self.calls.append([str(x) for x in command])
+        sim.require(self.exit_code in accepted_return_codes, "command_failed:fixture:" + str(self.exit_code))
         return self.output, ""
 
 
@@ -40,6 +41,7 @@ class BoundaryTests(unittest.TestCase):
         self.leases.mkdir()
         self.registry = self.root / "services.json"
         sim.atomic_json(self.registry, {"services": [{"id": sim.SERVICE, "lifecycle": "leased",
+            "singletonGroup": "vision-simulator",
             "resource": {"kind": "core-simulator", "udid": sim.UDID}}]})
         self.row = {"schema": 1, "leaseId": LEASE_ID, "serviceId": sim.SERVICE, "owner": sim.OWNER,
                     "generation": SOURCE.commit, "managedBy": "bt-service-lifecycle", "resourceKind": "core-simulator",
@@ -54,7 +56,7 @@ class BoundaryTests(unittest.TestCase):
         self.args = SimpleNamespace(lease_id=LEASE_ID, native_budget_seconds=1)
 
     def status_runner(self, **updates):
-        return Runner(json.dumps({"leases": [{**self.row, "state": "live", "live": True,
+        return Runner(json.dumps({"schema": 1, "leases": [{**self.row, "state": "live", "live": True,
                                                 "expired": False, **updates}], "violations": []}))
 
     def bundle(self):
@@ -84,6 +86,69 @@ class BoundaryTests(unittest.TestCase):
         runner = self.status_runner()
         self.assertEqual(sim.validate_lease(LEASE_ID, SOURCE, runner), self.row)
         self.assertEqual(runner.calls, [[sim.LIFECYCLE, "status"]])
+
+    def test_status_exit_two_keeps_unrelated_violations_separate(self):
+        status = json.loads(self.status_runner().output)
+        other = {**status["leases"][0], "leaseId": BOOT_ID, "serviceId": "other-project",
+                 "live": False, "expired": True}
+        status["leases"].append(other)
+        status["violations"] = [{"type": "expired_lease", "leaseId": BOOT_ID}]
+        self.assertEqual(sim.validate_lease(LEASE_ID, SOURCE, Runner(json.dumps(status), 2)), self.row)
+        with self.assertRaisesRegex(sim.Held, "command_failed"):
+            sim.validate_lease(LEASE_ID, SOURCE, Runner(json.dumps(status), 3))
+
+    def test_same_singleton_violations_and_concurrent_owner_are_held(self):
+        registry = sim.read_json(self.registry)
+        registry["services"].append({"id": "same-group", "singletonGroup": "vision-simulator"})
+        sim.atomic_json(self.registry, registry)
+        status = json.loads(self.status_runner().output)
+        status["leases"].append({**status["leases"][0], "leaseId": BOOT_ID, "serviceId": "same-group"})
+        with self.assertRaisesRegex(sim.Held, "conflicting_simulator_lease"):
+            sim.validate_lease(LEASE_ID, SOURCE, Runner(json.dumps(status)))
+        status["leases"][-1].update(live=False, expired=True)
+        status["violations"] = [{"type": "expired_lease", "leaseId": BOOT_ID}]
+        with self.assertRaisesRegex(sim.Held, "lifecycle_violation"):
+            sim.validate_lease(LEASE_ID, SOURCE, Runner(json.dumps(status), 2))
+
+    def test_explicit_return_codes_do_not_change_runner_default(self):
+        command = [sys.executable, "-B", "-c", "print('status-json'); raise SystemExit(2)"]
+        runner = sim.physical.Runner(10)
+        self.assertEqual(runner.run(command, accepted_return_codes=(0, 2))[0].strip(), "status-json")
+        with self.assertRaisesRegex(sim.Held, "command_failed"):
+            runner.run(command)
+
+    def test_first_sdk_failure_retains_native_diagnostics_reference(self):
+        args = SimpleNamespace(action="prepare", device=sim.UDID, repo=str(self.root),
+                               remote="origin", ref="refs/heads/fixture", output=str(self.root / "output"))
+        class FailedBuild:
+            def run(inner, command, cwd=None):
+                if str(command[0]) == sim.physical.ROUTER:
+                    return json.dumps({"path": args.output}), ""
+                self.assertIn("-resultBundlePath", command)
+                result = Path(command[command.index("-resultBundlePath") + 1])
+                result.mkdir()
+                raise sim.Held("command_failed:xcrun:65")
+        with patch.object(sim.physical, "source_identity", return_value=SOURCE):
+            with self.assertRaisesRegex(sim.Held, "command_failed:xcrun:65"):
+                sim.execute(args, FailedBuild())
+        results = list(Path(args.output).glob("*/prepare-*/result.json"))
+        self.assertEqual(len(results), 1)
+        held = sim.read_json(results[0])
+        self.assertTrue(held["nativeBuildResultBundleExists"])
+        self.assertTrue(Path(held["nativeBuildResultBundle"]).is_dir())
+
+    def test_changed_installed_bundle_is_held_before_mutating_ui_test(self):
+        app = self.bundle()
+        built = sim.bundle_manifest(app, SOURCE, Runner())
+        marker = self.root / "prepare.json"
+        sim.atomic_json(marker, {"prepared": True})
+        sim.atomic_json(self.root / "deployment.json", {"schema": "ccr.vision.simulator-deployed/v1",
+                        **SOURCE.fields(), "bundleId": sim.BUNDLE, "preparedEvidence": sim.evidence(marker)})
+        (app / "Test").write_bytes(b"changed outside this deployment")
+        native = SimpleNamespace(ready=lambda: None, container=lambda _: app)
+        with patch.object(sim, "prepare", return_value={"built": built}):
+            with self.assertRaisesRegex(sim.Held, "existing_test_bundle_replacement_held"):
+                sim.accept(self.args, SOURCE, Runner(), self.root, native)
 
     def test_copied_json_does_not_authorize(self):
         sim.atomic_json(self.root / "copied.json", self.row)
