@@ -113,6 +113,10 @@ final class CanvasBridgeUITests: XCTestCase {
                 XCTAssertTrue(app.webViews["canvasPeleDiagram"].waitForExistence(timeout:10))
             } else {
                 XCTAssertTrue(surface.waitForExistence(timeout:5))
+                for element in [surface,node] {
+                    let restored = XCTNSPredicateExpectation(predicate:NSPredicate(format:"hittable == true"),object:element)
+                    XCTAssertEqual(XCTWaiter.wait(for:[restored],timeout:5),.completed)
+                }
                 XCTAssertEqual(surface.value as? String,viewport)
                 XCTAssertTrue(node.exists)
                 if mode == "원본 그림" { XCTAssertEqual(node.frame,originalFrame) }
