@@ -4101,13 +4101,7 @@ final class StreamClient: ObservableObject {
     }
 
     // MARK: - The pointer (docs/pointer-visibility-plan.md §7.3)
-    //
-    // Who moved the Mac's pointer last decides what the one sprite shows: the Mac (its own mouse, an
-    // app warping it) or another device, and the sprite is the Mac's pointer where kind 26 says it is,
-    // over the stream; this device, and the sprite is its own only for the portrait trackpad (the
-    // Pencil's with Q2's flip), else nothing. This device's input makes it the one (on `queue`, in
-    // sendInput's block); a fresh report from the Mac (kind 26, on `queue` too) makes it the Mac's.
-    // `renderPointer` puts the result on screen.
+
 
     /// Hands the sprite what it shows now: the feed as it stands, this device's own pointer, the
     /// layout, `active` and the pad's fingers (PointerPresence.sprite). Runs when any of them changes,
@@ -4168,10 +4162,6 @@ final class StreamClient: ObservableObject {
         sendInput(event)
     }
 
-    /// The frame's size changed (another source, an Aa resize): this device's own pointer, while it
-    /// shows under this device's control, starts again in the middle and the Mac's goes there too, as
-    /// before; the Mac's arrow waits for the host's next report, which is in the new geometry already
-    /// (PointerPresence.recentresOnNewFrame). The display view calls it. Main thread.
     func pointerFrameChanged() {
         presence.follow(pointerFeed.current)
         guard presence.recentresOnNewFrame(now: ProcessInfo.processInfo.systemUptime) else { return }

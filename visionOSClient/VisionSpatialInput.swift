@@ -1,6 +1,10 @@
 import SwiftUI
 
 extension VisionPointer.Sample {
+    var invalidatesGesture: Bool {
+        phase == .cancelled || !timestamp.isFinite || !location.x.isFinite || !location.y.isFinite
+    }
+
     init?(_ event: SpatialEventCollection.Event) {
         switch event.kind {
         case .directPinch, .indirectPinch, .touch: break
@@ -35,7 +39,12 @@ struct VisionSpatialInput: View {
                 .onChanged { value in
                     let ticket = revision ?? input.gestureRevision
                     revision = ticket
+                    let contacts = value.first?.compactMap { VisionPointer.Sample($0) } ?? []
                     admit {
+                        guard !contacts.contains(where: \.invalidatesGesture) else {
+                            input.finishGesture(revision: ticket)
+                            return
+                        }
                         if let turn = value.second?.second {
                             input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
                                          geometry: geometry, revision: ticket)
@@ -44,14 +53,19 @@ struct VisionSpatialInput: View {
                             input.magnify(zoom.magnification, at: zoom.startLocation, time: zoom.time.timeIntervalSinceReferenceDate,
                                           geometry: geometry, revision: ticket)
                         }
-                        if let contacts = value.first {
-                            input.spatial(contacts.compactMap { VisionPointer.Sample($0) }, geometry: geometry, revision: ticket)
+                        if !contacts.isEmpty {
+                            input.spatial(contacts, geometry: geometry, revision: ticket)
                         }
                     }
                 }
                 .onEnded { value in
                     guard let ticket = revision else { return }
+                    let contacts = value.first?.compactMap { VisionPointer.Sample($0) } ?? []
                     admit {
+                        guard !contacts.contains(where: \.invalidatesGesture) else {
+                            input.finishGesture(revision: ticket)
+                            return
+                        }
                         if let turn = value.second?.second {
                             input.rotate(turn.rotation.degrees, at: turn.startLocation, time: turn.time.timeIntervalSinceReferenceDate,
                                          geometry: geometry, revision: ticket)
@@ -60,8 +74,8 @@ struct VisionSpatialInput: View {
                             input.magnify(zoom.magnification, at: zoom.startLocation, time: zoom.time.timeIntervalSinceReferenceDate,
                                           geometry: geometry, revision: ticket)
                         }
-                        if let contacts = value.first {
-                            input.spatial(contacts.compactMap { VisionPointer.Sample($0) }, geometry: geometry, revision: ticket)
+                        if !contacts.isEmpty {
+                            input.spatial(contacts, geometry: geometry, revision: ticket)
                         }
                         input.finishGesture(revision: ticket, completed: true)
                     }

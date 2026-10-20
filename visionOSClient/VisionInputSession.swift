@@ -15,7 +15,7 @@ final class VisionInputSession: ObservableObject {
         let base: VisionViewport
         let anchor: CGPoint
         var time: TimeInterval
-        var largestChange: CGFloat = 0
+        var blocksRotation = false
     }
     private var magnification: Magnification?
     private struct Rotation {
@@ -101,7 +101,7 @@ final class VisionInputSession: ObservableObject {
         }
         guard let zoom = magnification, time >= zoom.time else { return }
         magnification?.time = time
-        magnification?.largestChange = max(zoom.largestChange, abs(factor - 1))
+        magnification?.blocksRotation = zoom.blocksRotation || factor <= 0.92 || factor >= 1.08
         if let next = zoom.base.magnified(by: factor, at: zoom.anchor, in: geometry) { viewport = next }
     }
 
@@ -123,7 +123,7 @@ final class VisionInputSession: ObservableObject {
     func finishGesture(revision: UUID, completed: Bool = false) {
         guard revision == gestureRevision else { return }
         let flick = completed ? pointer.flick : nil
-        let turn = completed && (magnification?.largestChange ?? 0) <= 0.08 ? rotation : nil
+        let turn = completed && magnification?.blocksRotation != true ? rotation : nil
         let baseViewport = magnification?.base
         let events = cancelPointer()
         if canSend {

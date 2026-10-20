@@ -170,6 +170,37 @@ func runLifecycleTests() {
     zoomTurn.view.ended(turn(50, 0.3))
     check(zoomTurn.sent.isEmpty && zoomTurn.client.steppedDisplays.isEmpty && zoomTurn.input.viewport.scale == 1.5,
           "meaningful zoom wins over incidental rotation")
+    for factor in [0.92, 1.08] {
+        for returnsToStart in [false, true] {
+            let boundaryZoom = LifecycleRig()
+            boundaryZoom.view.changed(turn(40, 0.1))
+            boundaryZoom.view.changed(zoom(factor, 0.2))
+            if returnsToStart { boundaryZoom.view.changed(zoom(1, 0.3)) }
+            boundaryZoom.view.ended(turn(40, 0.4))
+            check(boundaryZoom.client.steppedDisplays.isEmpty,
+                  "eight percent zoom boundary and its history suppress rotation")
+        }
+    }
+    for terminal in [false, true] {
+        for invalid in [contact(0.3, 300, 400, .cancelled), contact(0.3, .nan, 400), contact(.infinity)] {
+            let rejected = LifecycleRig()
+            rejected.view.changed(contact(0))
+            _ = rejected.sent
+            rejected.view.changed(turn(40, 0.1))
+            var transform = turn(50, 0.3)
+            transform.first = invalid.first
+            transform.second?.first = zoom(2, 0.3).second?.first
+            if terminal { rejected.view.ended(transform) }
+            else { rejected.view.changed(transform); rejected.view.ended(turn(50, 0.4)) }
+            var drained = false
+            DispatchQueue.main.async { drained = true }
+            waitMain { drained }
+            check(rejected.client.steppedDisplays.isEmpty && rejected.input.viewport.scale == 1 &&
+                  rejected.client.cursorVisible == nil,
+                  "cancelled or invalid contact rejects transforms and retires queued cursor")
+            rejected.balanced("invalid native contact leaves no held input")
+        }
+    }
     let invalidTurn = LifecycleRig()
     invalidTurn.view.changed(turn(40, 0.1))
     invalidTurn.view.ended(turn(.nan, 0.2))

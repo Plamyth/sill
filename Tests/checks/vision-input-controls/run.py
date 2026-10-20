@@ -207,7 +207,7 @@ def callback_mutants(source):
 
     def contacts_first(body):
         zoom = block(body, 'if let zoom = value.second?.first {')
-        contacts = block(body, 'if let contacts = value.first {')
+        contacts = block(body, 'if !contacts.isEmpty {')
         return body.replace(zoom, 'ZOOM_BODY', 1).replace(contacts, zoom, 1).replace('ZOOM_BODY', contacts, 1)
 
     def finish_first(body):
