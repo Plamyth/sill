@@ -271,6 +271,14 @@ final class LocalAudioRelay {
                 return nil
             }
             return reply.result
+        }, supportsForwarding: forwarding, forwardingPrepare: { [weak self] preparation in
+            guard let self else { return nil }
+            let deadline = ContinuousClock.now.advanced(by: .milliseconds(preparation.request.budgetMilliseconds))
+            let result = await self.forwardingPrepare(preparation, until: deadline, admission: { [weak self] in
+                self?.participants.requestIsCurrent(preparation.request) == true
+            })
+            guard case .accepted(let receipt) = result else { return nil }
+            return receipt
         }))
         if case .connected = state, participants.snapshot.boots[.relay] == reply.relayBootId { return true }
         if participants.snapshot.boots[.relay] == reply.relayBootId { participants.unregister(.relay) }
@@ -362,21 +370,28 @@ final class LocalAudioRelay {
     }
 
     func forwardingPrepare(_ binding: AudioForwardingBinding, until deadline: ContinuousClock.Instant) async -> AudioForwardingResult<LocalAudioParticipantReceipt>? {
+        guard forwardingConfiguration(privacyGeneration: binding.configuration.privacyGeneration) == binding.configuration,
+              let request = binding.participantRequest(for: .relay, budgetMilliseconds: 5000) else { return nil }
+        return await forwardingPrepare(.init(intentGeneration: binding.intentGeneration,
+            bindingEpoch: binding.bindingEpoch, request: request), until: deadline)
+    }
+
+    private func forwardingPrepare(_ preparation: LocalAudioParticipantRegistry.ForwardingPreparation,
+                                   until deadline: ContinuousClock.Instant,
+                                   admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<LocalAudioParticipantReceipt>? {
         struct Preparation: Encodable { let intentGeneration: UUID; let bindingEpoch: UUID }
         let now = ContinuousClock.now
         let deadline = min(deadline, now.advanced(by: .seconds(5)))
         guard !Task.isCancelled, now < deadline else { return nil }
-        let remaining = now.duration(to: deadline).components
-        let budget = Int(remaining.seconds * 1000 + remaining.attoseconds / 1_000_000_000_000_000)
         let membership = participants.snapshot
+        let expected = preparation.request
         guard forwarding, case .connected(let boot) = state,
-              let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
-            privacyGeneration: binding.configuration.privacyGeneration, membership: membership),
-              binding.configuration == configuration,
-              let expected = binding.participantRequest(for: .relay, budgetMilliseconds: max(1, min(5000, budget))),
+              expected.isValid, expected.participantId == .relay,
+              expected.registryRevision == String(membership.revision), membership.boots[.relay] == boot,
               expected.bootId == boot else { return nil }
         let result: AudioForwardingResult<LocalAudioParticipantReceipt>? = await forwardingCall("forwardingPrepare",
-            payload: Preparation(intentGeneration: binding.intentGeneration, bindingEpoch: binding.bindingEpoch), until: deadline)
+            payload: Preparation(intentGeneration: preparation.intentGeneration, bindingEpoch: preparation.bindingEpoch),
+            until: deadline, admission: admission)
         guard case .connected(let currentBoot) = state, currentBoot == boot else { return nil }
         guard participants.matches(membership) else { lost(); return nil }
         if case .accepted(let receipt) = result, !receipt.proves(expected) { lost(); return nil }

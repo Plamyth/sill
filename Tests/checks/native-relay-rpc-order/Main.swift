@@ -15,7 +15,10 @@ import Foundation
         relay = LocalAudioRelay(participants: registry, process: child,
             packagedRuntime: .init(python: "inert-python", router: "inert-router", port: 0), forwarding: true,
             validateLaunch: { true })
-        registry.register(.native, bootId: UUID(), control: .init(fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
+        registry.register(.native, bootId: UUID(), control: .init(fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) },
+            inspect: { _ in nil }, supportsForwarding: true, forwardingPrepare: { .init($0.request, state: .quiescent,
+                facts: .init(admissionFenced: true, startsSettled: true, mediaDetached: true,
+                             callbacksDrained: true, buffersEmpty: true, workersExited: true)) }))
     }
     static func make(_ mode: String = "valid") async -> Fixture {
         let f = Fixture(mode)
@@ -55,6 +58,11 @@ import Foundation
         precondition(condition(), "test barrier expired")
     }
     @MainActor static func main() async {
+        if CommandLine.arguments.last == "registered" {
+            await registeredPreparation()
+            print("PASS \(assertions) registered forwarding assertions. Actual private pipe, inert child only.")
+            return
+        }
         if CommandLine.arguments.last == "conflict" {
             await preparationConflict()
             print("PASS \(assertions) conflict receipt assertions. Actual private pipe, inert child only.")
@@ -75,7 +83,42 @@ import Foundation
         await httpPreparation()
         await reentrantAdmission()
         await preparationConflict()
+        await registeredPreparation()
         print("PASS \(assertions) assertions. Actual LocalAudioRelay private call, inert stdio only.")
+    }
+    @MainActor static func registeredPreparation() async {
+        for cancel in [false, true] {
+            let f = await Fixture.make(), binding = await f.binding()
+            let membership = f.registry.snapshot
+            guard let ticket = f.registry.beginForwarding(epoch: binding.bindingEpoch, intentGeneration: binding.intentGeneration,
+                operationId: binding.operationId, privacyGeneration: binding.configuration.privacyGeneration,
+                membership: membership, identity: [binding.transportId.uuidString]) else { fatalError("registered forwarding capability missing") }
+            let request = binding.participantRequest(for: .relay, budgetMilliseconds: 2000)!
+            let hold: Task<Int?, Never>? = cancel ? Task { await f.relay.checkedCall("hold-registered", until: .now.advanced(by: .seconds(2))) } : nil
+            if cancel { await wait { f.relay.checkPending } }
+            let count = f.requests().filter { $0["method"] as? String == "forwardingPrepare" }.count
+            let prepare = Task { await f.registry.prepareForwarding(ticket, request: request, until: .now.advanced(by: .seconds(2))) }
+            if cancel {
+                await wait { f.relay.checkWaiting == 1 }
+                f.registry.cancelForwarding(ticket)
+                expect(await hold?.value == 1, "existing private call survives cancelled binding")
+            }
+            let receipt = await prepare.value
+            if cancel {
+                expect(receipt == nil && f.relay.checkConnected && f.registry.matches(membership), "cancelled registered preparation preserves connection")
+                expect(f.requests().filter { $0["method"] as? String == "forwardingPrepare" }.count == count,
+                       "cancelled binding is not submitted after waiting for the slot")
+            } else {
+                expect(receipt?.proves(request) == true, "actual registered typed callback prepares the relay")
+                let nativeRequest = binding.participantRequest(for: .native, budgetMilliseconds: 2000)!
+                let nativeReceipt = await f.registry.prepareForwarding(ticket, request: nativeRequest, until: .now.advanced(by: .seconds(1)))
+                expect(nativeReceipt?.proves(nativeRequest) == true, "both members are prepared before inspect")
+                let inspected = await f.registry.inspectForwarding(ticket, request: request, until: .now.advanced(by: .seconds(1)))
+                expect(inspected?.proves(request) == true, "registered inspect confirms the same prepared relay")
+                expect(f.relay.checkConnected && f.registry.matches(membership), "registered preparation preserves boot and membership")
+            }
+            f.finish()
+        }
     }
     @MainActor static func preparationConflict() async {
         for field in ["valid", "operationId", "privacyGeneration", "bootId", "registryRevision", "schemaVersion", "participantId", "state", "reason", "facts"] {

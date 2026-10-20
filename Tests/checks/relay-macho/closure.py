@@ -13,7 +13,7 @@ import zipfile
 root = Path(__file__).resolve().parents[3]
 package, output = (Path(value).resolve() for value in sys.argv[1:3])
 output.mkdir(parents=True, exist_ok=False)
-files = [root / "Sources/SillHost" / name for name in ["LocalAudioRelayLaunch.swift", "LocalAudioRelayClosure.swift", "LocalAudioRelayMachO.swift", "LocalAudioRelay.swift", "LocalAudioParticipants.swift", "AudioForwardingContract.swift"]]
+files = [root / "Sources/SillHost" / name for name in ["LocalAudioRelayLaunch.swift", "LocalAudioRelayClosure.swift", "LocalAudioRelayMachO.swift", "LocalAudioRelay.swift", "LocalAudioParticipants.swift", "AudioForwardingContract.swift", "AudioForwardingCoordinator.swift"]]
 files.append(Path(__file__).with_name("ClosureMain.swift"))
 original = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 relay = (root / "Sources/SillHost/RemoteAccess.swift").read_text()
