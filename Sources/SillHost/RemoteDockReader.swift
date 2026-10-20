@@ -85,7 +85,8 @@ final class RemoteDockReader {
         return current
     }
 
-    func perform(_ request: RemoteDockRequest, owner: ObjectIdentifier) -> RemoteDockReply {
+    func perform(_ request: RemoteDockRequest, owner: ObjectIdentifier,
+                 actionAdmission: ((() -> AXError) -> AXError) = { $0() }) -> RemoteDockReply {
         deadline = ProcessInfo.processInfo.systemUptime + 0.3
         readDeadline = deadline - 0.04
         readFailed = false
@@ -121,18 +122,21 @@ final class RemoteDockReader {
         switch request.action {
         case .press:
             guard dismissMenu(), allowed(tile.element),
-                  action(tile.element, kAXPressAction) == .success else {
+                  action(tile.element, kAXPressAction, actionAdmission: actionAdmission) == .success else {
                 return reply("Mac Dock에서 항목을 열지 못했습니다.")
             }
             return reply()
         case .menu:
-            guard dismissMenu(), allowed(tile.element), action(tile.element, kAXShowMenuAction) == .success else {
+            guard dismissMenu(), allowed(tile.element) else {
                 return reply("이 Dock 항목의 메뉴를 읽지 못했습니다.")
             }
             let id = UUID()
-            let created = ProcessInfo.processInfo.systemUptime
-            menuSession = MenuSession(id: id, owner: owner, version: current.version, tileID: request.itemID,
-                                      tile: tile.element, root: nil, elements: [:], created: created)
+            let session = MenuSession(id: id, owner: owner, version: current.version, tileID: request.itemID,
+                                      tile: tile.element, root: nil, elements: [:],
+                                      created: ProcessInfo.processInfo.systemUptime)
+            guard action(tile.element, kAXShowMenuAction, actionAdmission: actionAdmission, openingMenu: session) == .success else {
+                return reply("이 Dock 항목의 메뉴를 읽지 못했습니다.")
+            }
             guard let root = children(tile.element).first(where: { string($0, kAXRoleAttribute) == kAXMenuRole as String }) else {
                 return reply("이 Dock 항목의 메뉴를 읽지 못했습니다.")
             }
@@ -154,7 +158,7 @@ final class RemoteDockReader {
                   (value(element, kAXEnabledAttribute) as? NSNumber)?.boolValue == true else {
                 return reply("Dock 메뉴가 바뀌었습니다. 다시 열어 주세요.")
             }
-            guard allowed(tile.element), action(element, kAXPressAction) == .success else {
+            guard allowed(tile.element), action(element, kAXPressAction, actionAdmission: actionAdmission) == .success else {
                 return reply("Mac Dock 메뉴를 실행하지 못했습니다.")
             }
             menuSession = nil
@@ -242,12 +246,17 @@ final class RemoteDockReader {
         return allowed(url: url, subrole: subrole)
     }
 
-    private func action(_ element: AXUIElement, _ name: String) -> AXError {
+    private func action(_ element: AXUIElement, _ name: String,
+                        actionAdmission: ((() -> AXError) -> AXError), openingMenu: MenuSession? = nil) -> AXError {
         let remaining = readDeadline - ProcessInfo.processInfo.systemUptime
         guard !readFailed, remaining > 0,
               AXUIElementSetMessagingTimeout(element, Float(min(0.01, remaining))) == .success,
               ProcessInfo.processInfo.systemUptime < readDeadline else { return .cannotComplete }
-        return AXUIElementPerformAction(element, name as CFString)
+        return actionAdmission {
+            guard ProcessInfo.processInfo.systemUptime < readDeadline else { return .cannotComplete }
+            if let openingMenu { menuSession = openingMenu }
+            return AXUIElementPerformAction(element, name as CFString)
+        }
     }
 
     private func dismissMenu() -> Bool {
