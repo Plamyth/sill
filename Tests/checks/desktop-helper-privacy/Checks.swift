@@ -11,7 +11,18 @@ final class NSWorkspace {
     static let didTerminateApplicationNotification = Notification.Name("terminate")
     static let applicationUserInfoKey = "application"
     let notificationCenter = NotificationCenter()
-    var runningApplications: [NSRunningApplication] = []
+    var snapshotHook: (() -> Void)?
+    private var applications: [NSRunningApplication] = []
+    var runningApplications: [NSRunningApplication] {
+        get {
+            let snapshot = applications
+            let hook = snapshotHook
+            snapshotHook = nil
+            hook?()
+            return snapshot
+        }
+        set { applications = newValue }
+    }
 }
 struct SCDisplay {}
 struct SCRunningApplication { let bundleIdentifier: String; let processID: Int32 }
@@ -156,6 +167,23 @@ final class SCStream {
     for _ in 0..<20 { await Task.yield() }
     check(!admitted(timed.admission), "late native success after timeout cannot reopen delivery or resume continuation twice")
     timed.stop()
+
+    NSWorkspace.shared.runningApplications = []
+    NSWorkspace.shared.snapshotHook = {
+        NSWorkspace.shared.runningApplications = [NSRunningApplication(privateID, 800)]
+        notify(NSRunningApplication(privateID, 800))
+    }
+    WindowCatalog.content = SCShareableContent(applications: [ordinary])
+    let startup = DesktopCapturePrivacy(display: SCDisplay(), drain: {})
+    check(startup.admission.requiredPIDs == [800], "CUA launch during initial workspace snapshot is observed")
+    do { _ = try await startup.initialFilter(); check(false, "new startup CUA missing from SCK must throw") }
+    catch { check(!admitted(startup.admission), "stale startup inventory cannot admit unfiltered desktop") }
+    WindowCatalog.content = SCShareableContent(applications: [ordinary, SCRunningApplication(bundleIdentifier: privateID, processID: 800)])
+    let startupFilter = try await startup.initialFilter()
+    let startupStream = SCStream()
+    startup.attach(startupStream, revision: startupFilter.1)
+    check(startupFilter.0.pids == [800] && admitted(startup.admission), "startup CUA is excluded before first desktop delivery")
+    startup.stop()
     print("PASS \(checks) desktop privacy checks; inert OS adapters, no screen capture or device input")
 }
 Task { @MainActor in
