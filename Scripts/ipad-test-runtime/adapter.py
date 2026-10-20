@@ -211,8 +211,8 @@ def deploy(config, work, source):
     write(state / 'CanvasScene.json', fixture(test_id))
     root = 'Library/Application Support/CCRIntegrationTests/' + test_id
     device(config, ['install', 'app', str(app), '--json-output', str(work / 'install.json')], work / 'install.log')
-    copy_file(config, work, work / 'context.json', root + '/context.json', 'to')
     copy_file(config, work, state, root + '/state', 'to', replace=True)
+    copy_file(config, work, work / 'context.json', root + '/context.json', 'to')
     server, _, _ = relay_runtime(config, work, source)
     time.sleep(1)
     ready_status, _ = request(server, 'GET', '/vault/entries')
@@ -363,6 +363,8 @@ def accept(config, work, source):
         write(work / 'seed-state/CanvasScene.json', start)
         copy_file(config, work, work / 'seed-state',
                   'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', 'to', replace=True)
+        copy_file(config, work, work / 'context.json',
+                  'Library/Application Support/CCRIntegrationTests/' + test_id + '/context.json', 'to')
         ui = harness(config, work, 'testEditAndSave')
         code, current = request(server, 'GET', '/vault/canvas?id=' + test_id); require(code == 200, 'vault_readback_failed')
         actual = json.loads(base64.b64decode(current['sceneJSONBase64'])); require(actual['nodes'][0]['text'] == '앞  뒤', 'native_save_text_mismatch')
