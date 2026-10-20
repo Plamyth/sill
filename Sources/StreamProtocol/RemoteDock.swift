@@ -62,6 +62,9 @@ public struct RemoteDockReply: Codable, Sendable {
     public var menuID: UUID?
     public var menu: [RemoteDockMenuItem]?
     public var note: String?
+    public var selectedSource: StreamSource?
+    public var selectionRevision: String?
+    public var videoEpochID: UUID?
 
     public init(requestID: UUID, catalog: RemoteDockCatalog, menuID: UUID? = nil,
                 menu: [RemoteDockMenuItem]? = nil, note: String? = nil) {

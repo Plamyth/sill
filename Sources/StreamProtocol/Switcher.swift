@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the host streams. The client decides; the host only ever streams one source.
-public enum StreamSource: Codable, Hashable {
+public enum StreamSource: Codable, Hashable, Sendable {
     case none
     case window(UInt32)   // CGWindowID, stable for the life of the window
     case desktop          // one Mac display; its selection is carried separately
@@ -95,13 +95,14 @@ public struct WindowList: Codable {
     /// Apps pinned to the Mac Dock, in Dock order. Absent on older hosts.
     public var dockApps: [AppInfo]?
     public var dock: RemoteDockCatalog?
+    public var selectionRevision: String?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
                 remoteAudio: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
-                dockApps: [AppInfo]? = nil, dock: RemoteDockCatalog? = nil) {
+                dockApps: [AppInfo]? = nil, dock: RemoteDockCatalog? = nil, selectionRevision: String? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
@@ -116,6 +117,7 @@ public struct WindowList: Codable {
         self.desktopSelectionRequired = desktopSelectionRequired
         self.dockApps = dockApps
         self.dock = dock
+        self.selectionRevision = selectionRevision
     }
 }
 

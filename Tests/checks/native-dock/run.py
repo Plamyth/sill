@@ -58,14 +58,18 @@ struct Route { var encrypted = true; var fingerprint: String? = "paired" }
 final class Remote { var paired = true; func isPaired(_ key: String) -> Bool { paired && key == "paired" } }
 let fixtureVersion = UUID()
 final class Reader {
-    func catalog(force: Bool = false) -> RemoteDockCatalog { RemoteDockCatalog(version: fixtureVersion, items: [RemoteDockItem(id: 0, title: "fixture", subrole: "app", running: true)]) }
+    var version = fixtureVersion
+    func catalog(force: Bool = false) -> RemoteDockCatalog { RemoteDockCatalog(version: version, items: [RemoteDockItem(id: 0, title: "fixture", subrole: "app", running: true)]) }
     var calls = 0
     var onPerform: (() -> Void)?
     var note: String?
     var bundle: String? = "fixture.app"
     func applicationBundleID(for request: RemoteDockRequest) -> String? { bundle }
-    func perform(_ request: RemoteDockRequest, owner: ObjectIdentifier) -> RemoteDockReply {
-        calls += 1; onPerform?()
+    func disconnected(_ owner: ObjectIdentifier) { cleanups += 1 }
+    var cleanups = 0
+    func perform(_ request: RemoteDockRequest, owner: ObjectIdentifier, actionAdmission: (() -> AXError) -> AXError = { $0() }) -> RemoteDockReply {
+        let admitted = actionAdmission { self.calls += 1; self.onPerform?(); return .success }
+        if admitted != .success { return RemoteDockReply(requestID: request.requestID, catalog: catalog(), note: "거부") }
         return RemoteDockReply(requestID: request.requestID, catalog: RemoteDockCatalog(version: request.version, items: []), note: note)
     }
 }
@@ -80,12 +84,13 @@ struct Window { let id: UInt32; var owningApplication: Owner? { Owner() }; struc
 struct Sizer { func element(for window: Window, input: Bool) -> UInt32? { window.id } }
 typealias AXUIElement = NSNumber
 let kAXFocusedWindowAttribute = "focusedWindow", kAXTitleAttribute = "title"
-enum AXError { case success }
+enum AXError { case success, cannotComplete }
+enum FocusFixture { static var title: String? = "focused" }
 func AXUIElementCreateApplication(_ pid: Int32) -> AXUIElement { NSNumber(value: pid) }
 func AXUIElementSetMessagingTimeout(_ element: AXUIElement, _ timeout: Float) {}
 func AXUIElementGetTypeID() -> CFTypeID { CFNumberGetTypeID() }
 func AXUIElementCopyAttributeValue(_ element: AXUIElement, _ name: CFString, _ result: inout CFTypeRef?) -> AXError {
-    result = (name as String) == kAXFocusedWindowAttribute ? NSNumber(value: 123) : "focused" as NSString
+    result = (name as String) == kAXFocusedWindowAttribute ? NSNumber(value: 123) : FocusFixture.title.map { $0 as NSString }
     return .success
 }
 struct WindowSizer {
@@ -101,6 +106,10 @@ final class Catalog {
     func refreshWindows() async -> Bool { refreshes += 1; onRefresh?(); return true }
 }
 @MainActor final class Host {
+    let launchID = "fixture-host"
+    var sourceRevision: UInt64 = 0
+    var selectionRevision: String { "\(launchID):\(sourceRevision)" }
+    var videoEpoch: VideoEpoch?
     var pendingLaunch: String?
     let dockSelectionIngress = DockSelectionIngress()
     var dockTransition = false
@@ -121,7 +130,9 @@ final class Catalog {
     var broadcasts = 0
     var onStop: (() -> Void)?
     func select(_ source: StreamSource, bringForward: Bool) async {
-        selections.append(source); active = source; inputGeneration = UUID().uuidString
+        selections.append(source); active = source; inputGeneration = UUID().uuidString; sourceRevision += 1
+        videoEpoch = source == .none ? nil : VideoEpoch(generation: inputGeneration, source: source,
+            geometry: VideoEpoch.Geometry(x: 0,y: 0,width: 100,height: 100), width: 100,height: 100)
         if source == .none { onStop?() }
     }
 
@@ -131,6 +142,8 @@ final class Catalog {
 @MainActor func fixture() -> (Host, NWConnection) {
     let h = Host(), c = NWConnection(), id = ObjectIdentifier(c)
     h.inputFence.members.insert(id); h.connections[id] = c; h.routes[id] = Route()
+    h.dockSelectionIngress.setPeer(id, dockAllowed: true)
+    h.dockSelectionIngress.publish(dock: h.nativeDock.catalog(), windowIDs: [7,17,19], displayInventoryID: nil, displayIDs: [], appBundleIDs: ["fixture.app"])
     return (h, c)
 }
 @main struct AdmissionChecks {
@@ -155,7 +168,7 @@ final class Catalog {
         ]
         for change in refusals {
             let (h, c) = fixture(); change(h, c)
-            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message))
+            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
             precondition(h.nativeDock.calls == 0 && h.server.sent.isEmpty && h.selections.isEmpty)
         }
         for payload in [Data(repeating: 1, count: 4097), Data("invalid".utf8)] {
@@ -165,10 +178,11 @@ final class Catalog {
         }
         do {
             let (h, c) = fixture()
-            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message))
+            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
             precondition(h.nativeDock.calls == 1 && h.selections == [.none, .window(17)] && h.broadcasts == 1)
             let reply = Wire.decode(RemoteDockReply.self, from: h.server.sent[0].payload)!
             precondition(reply.requestID == request.requestID)
+            precondition(reply.selectedSource == .window(17) && reply.selectionRevision == h.selectionRevision && reply.videoEpochID == h.videoEpoch?.id)
         }
         for change in [
             { (h: Host) in h.inputFence.members.removeAll() },
@@ -179,12 +193,12 @@ final class Catalog {
         ] {
             let (h, c) = fixture()
             h.catalog.onRefresh = { change(h) }
-            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message))
+            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
             precondition(h.nativeDock.calls == 1 && h.selections == [.none])
         }
         do {
             let (h, c) = fixture(); h.nativeDock.note = "거부"
-            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message))
+            await h.handleDockRequest(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
             precondition(h.catalog.refreshes == 0 && h.selections == [.none, .window(7)])
         }
         do {
@@ -193,20 +207,20 @@ final class Catalog {
             h.nativeDock.onPerform = {
                 precondition(h.active == .none && h.microphoneReceiver.phase == .off && h.pendingLaunch == nil)
             }
-            await h.handle(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message))
+            await h.handle(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
             precondition(h.nativeDock.calls == 1)
         }
         do {
             let (h, c) = fixture()
             h.microphoneReceiver.phase = .cleanupFailed
-            await h.handle(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message))
+            await h.handle(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
             precondition(h.nativeDock.calls == 0 && h.selections == [.none] && h.server.sent.count == 1)
         }
         do {
             let (h, c) = fixture()
-            let oldTicket = h.dockSelectionIngress.reserve(for: message)
+            let oldTicket = h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c))
             let newer = StreamMessage(kind: .selectSource, timestamp: 2, isKeyframe: false, payload: Wire.encode(StreamSource.window(19)))
-            let newerTicket = h.dockSelectionIngress.reserve(for: newer)
+            let newerTicket = h.dockSelectionIngress.reserve(for: newer, from: ObjectIdentifier(c))
             await h.handle(newer, from: c, selectionTicket: newerTicket)
             await h.handle(message, from: c, selectionTicket: oldTicket)
             precondition(h.nativeDock.calls == 0 && h.selections == [.window(19)])
@@ -215,11 +229,44 @@ final class Catalog {
             let (h, c) = fixture()
             h.onStop = {
                 let newer = StreamMessage(kind: .selectSource, timestamp: 2, isKeyframe: false, payload: Wire.encode(StreamSource.window(19)))
-                h.pendingDockSelection = (newer, c, h.dockSelectionIngress.reserve(for: newer)!)
+                h.pendingDockSelection = (newer, c, h.dockSelectionIngress.reserve(for: newer, from: ObjectIdentifier(c))!)
             }
-            await h.handle(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message))
+            await h.handle(message, from: c, selectionTicket: h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c)))
             for _ in 0..<20 where h.selections.count < 2 { await Task.yield() }
             precondition(h.nativeDock.calls == 0 && h.selections == [.none, .window(19)])
+        }
+        do {
+            let (h, c) = fixture()
+            let current = h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c))
+            let stranger = NWConnection()
+            precondition(h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(stranger)) == nil)
+            precondition(h.dockSelectionIngress.isCurrent(current))
+            let stale = StreamMessage(kind: .dockRequest, timestamp: 2, isKeyframe: false,
+                payload: Wire.encode(RemoteDockRequest(version: UUID(), itemID: 0, action: .press)))
+            precondition(h.dockSelectionIngress.reserve(for: stale, from: ObjectIdentifier(c)) == nil)
+            precondition(h.dockSelectionIngress.isCurrent(current))
+            var effects = 0
+            let newer = StreamMessage(kind: .selectSource, timestamp: 2, isKeyframe: false, payload: Wire.encode(StreamSource.window(19)))
+            let next = h.dockSelectionIngress.reserve(for: newer, from: ObjectIdentifier(c))
+            let refused: AXError = h.dockSelectionIngress.performIfCurrent(current, refused: .cannotComplete) { effects += 1; return .success }
+            precondition(refused == .cannotComplete && effects == 0)
+            let accepted: AXError = h.dockSelectionIngress.performIfCurrent(next, refused: .cannotComplete) { effects += 1; return .success }
+            precondition(accepted == .success && effects == 1)
+        }
+        do {
+            let (h, c) = fixture()
+            FocusFixture.title = nil
+            precondition(h.focusedDockSource() == nil)
+            FocusFixture.title = ""
+            precondition(h.focusedDockSource() == nil)
+            FocusFixture.title = "focused"
+            precondition(h.focusedDockSource() == .window(17))
+            let ticket = h.dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(c))
+            h.nativeDock.version = UUID()
+            await h.handle(message, from: c, selectionTicket: ticket)
+            precondition(h.nativeDock.calls == 0 && h.nativeDock.cleanups == 1 && h.selections.isEmpty)
+            let response = Wire.decode(RemoteDockReply.self, from: h.server.sent[0].payload)!
+            precondition(response.selectedSource == nil && response.selectionRevision == nil && response.videoEpochID == nil)
         }
         print("Dock 호스트의 TLS·페어링·입력 사용권·지연 응답·세대 변경·ingress 순서·기존 마이크 정리 경계 검증 통과")
     }

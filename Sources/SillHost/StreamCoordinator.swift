@@ -178,6 +178,7 @@ package final class StreamCoordinator {
     package private(set) var active: StreamSource = .none {
         didSet {
             if active != oldValue {
+                sourceRevision += 1
                 microphoneIngress.revoke()
                 microphoneReceiver.forgetCapabilities()
                 microphoneReceiver.revoke(reason: "source changed")
@@ -295,6 +296,8 @@ package final class StreamCoordinator {
     private var dockGeneration: String?
     private var pendingDockSelection: (StreamMessage, NWConnection, UInt64)?
     private var dockArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
+    private var sourceRevision: UInt64 = 0
+    private var selectionRevision: String { "\(launchID):\(sourceRevision)" }
     /// TEST ONLY. `SILL_TEST_MENU_PID=<pid>` on a --synthetic host: the test pattern's menus are that
     /// process's (the gates' fixture, Scripts/menufixture.swift), read and pressed through the same
     /// code, never activated (the Desktop's rule). Nil otherwise; `testMenuLine` is what `start`
@@ -430,6 +433,8 @@ package final class StreamCoordinator {
                     return
                 }
                 self.routes[id] = route
+                self.dockSelectionIngress.setPeer(id, dockAllowed: route.encrypted &&
+                    route.fingerprint.map { self.remote?.isPaired($0) == true } == true)
                 if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
                    self.remote?.isPaired(fingerprint) == true {
                     self.microphoneIngress.authorize(connection, fingerprint: fingerprint)
@@ -464,7 +469,8 @@ package final class StreamCoordinator {
             // re-encoded once the window has been still for 50 ms (HEVCEncoder.requestKeyframe).
             self?.encoderBox.current?.requestKeyframe()
         }
-        server.onClientDisconnected = { [weak self, microphoneIngress] connection in
+        server.onClientDisconnected = { [weak self, microphoneIngress, dockSelectionIngress] connection in
+            dockSelectionIngress.removePeer(ObjectIdentifier(connection))
             let microphonePeer = microphoneIngress.peer(connection)?.id
             microphoneIngress.close(connection)
             Task { @MainActor in
@@ -538,7 +544,7 @@ package final class StreamCoordinator {
                                                 isKeyframe: false, payload: Wire.encode(apps)))
         }
         server.onMessage = { [weak self, dockSelectionIngress] message, connection in
-            let ticket = dockSelectionIngress.reserve(for: message)
+            let ticket = dockSelectionIngress.reserve(for: message, from: ObjectIdentifier(connection))
             Task { @MainActor in await self?.handle(message, from: connection, selectionTicket: ticket) }
         }
         catalog.onWindowsChanged = { [weak self] infos in
@@ -979,6 +985,7 @@ package final class StreamCoordinator {
                 return
             }
         }
+        if [.selectSource, .selectDisplay, .launchApp].contains(message.kind), selectionTicket == nil { return }
         switch message.kind {
         case .dockRequest:
             await handleDockRequest(message, from: connection, selectionTicket: selectionTicket)
@@ -1178,10 +1185,13 @@ package final class StreamCoordinator {
         dockArrivals[id] = recent
         let changesSource = request.action == .press || request.action == .choose
         let previous = active
+        var ownsTransition = false
         if request.action != .cancel {
             let shown = nativeDock.catalog(force: true)
             guard shown.note == nil, request.version == shown.version,
                   shown.items.contains(where: { $0.id == request.itemID }) else {
+                nativeDock.disconnected(id)
+                dockSelectionIngress.discardMenu(for: id)
                 server.send(StreamMessage(kind: .dockReply, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                     payload: Wire.encode(RemoteDockReply(requestID: request.requestID, catalog: shown,
                                                         note: "Dock 내용이 바뀌었습니다. 최신 항목에서 다시 선택하세요."))), to: connection)
@@ -1189,7 +1199,7 @@ package final class StreamCoordinator {
             }
         }
         defer {
-            if changesSource {
+            if ownsTransition {
                 dockTransition = false
                 dockGeneration = nil
                 if let pending = pendingDockSelection {
@@ -1201,8 +1211,13 @@ package final class StreamCoordinator {
             }
         }
         if changesSource {
-            guard dockSelectionIngress.isCurrent(selectionTicket) else { return }
+            guard dockSelectionIngress.isCurrent(selectionTicket) else {
+                nativeDock.disconnected(id)
+                dockSelectionIngress.discardMenu(for: id)
+                return
+            }
             dockTransition = true
+            ownsTransition = true
             pendingLaunch = nil
             await select(.none, bringForward: false)
             dockGeneration = inputGeneration
@@ -1220,7 +1235,13 @@ package final class StreamCoordinator {
                 return
             }
         }
-        var reply = nativeDock.perform(request, owner: id)
+        var reply = nativeDock.perform(request, owner: id, actionAdmission: { action in
+            guard !changesSource || self.dockActionIsCurrent(connection, ticket: selectionTicket) else { return .cannotComplete }
+            return changesSource
+                ? self.dockSelectionIngress.performIfCurrent(selectionTicket, refused: .cannotComplete, action)
+                : action()
+        })
+        dockSelectionIngress.recordMenu(for: id, request: request, reply: reply)
         if changesSource, reply.note == nil {
             let deadline = ProcessInfo.processInfo.systemUptime + 2
             repeat {
@@ -1242,6 +1263,12 @@ package final class StreamCoordinator {
             await select(previous, bringForward: false)
         }
         guard connections[id] === connection, connection.state == .ready else { return }
+        if changesSource, reply.note == nil, dockSelectionIngress.isCurrent(selectionTicket),
+           let epoch = videoEpoch, epoch.source == active, active != .none {
+            reply.selectedSource = active
+            reply.selectionRevision = selectionRevision
+            reply.videoEpochID = epoch.id
+        }
         server.send(StreamMessage(kind: .dockReply, timestamp: Date().timeIntervalSince1970,
                                   isKeyframe: false, payload: Wire.encode(reply)), to: connection)
         broadcastList()
@@ -1270,8 +1297,8 @@ package final class StreamCoordinator {
         guard WindowSizer.hasKeyboardFocus(element, pid: app.processIdentifier),
               let frame = WindowSizer.frame(of: element) else { return nil }
         var rawTitle: CFTypeRef?
-        _ = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &rawTitle)
-        let title = rawTitle as? String
+        guard AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &rawTitle) == .success,
+              let title = rawTitle as? String, !title.isEmpty else { return nil }
         var matches: [UInt32] = []
         for info in catalog.infos where info.bundleID == bundleID {
             guard ProcessInfo.processInfo.systemUptime < deadline else { return nil }
@@ -1279,7 +1306,7 @@ package final class StreamCoordinator {
                   let bounds = Self.liveBounds(of: info.id),
                   abs(frame.minX - bounds.minX) <= 4, abs(frame.minY - bounds.minY) <= 4,
                   abs(frame.width - bounds.width) <= 4, abs(frame.height - bounds.height) <= 4,
-                  title == nil || title!.isEmpty || info.title == title else { continue }
+                  info.title == title else { continue }
             matches.append(info.id)
         }
         return matches.count == 1 ? .window(matches[0]) : nil
@@ -2660,7 +2687,11 @@ package final class StreamCoordinator {
     // MARK: Catalog to clients
 
     private func listMessage() -> StreamMessage {
-        StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
+        let dock = synthetic ? nil : nativeDock.catalog()
+        dockSelectionIngress.publish(dock: dock, windowIDs: catalog.infos.map(\.id),
+            displayInventoryID: catalog.displayInventory.revision, displayIDs: catalog.displayInventory.infos.map(\.id),
+            appBundleIDs: catalog.installedApps.map(\.bundleID))
+        return StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                       payload: Wire.encode(WindowList(macName: macName, windows: catalog.infos, active: active, launchID: launchID,
                                                       hostVersion: hostVersion, protocol: SillProtocol.current,
                                                       gestures: TrackpadGesture.generation,
@@ -2672,7 +2703,7 @@ package final class StreamCoordinator {
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
                                                       dockApps: synthetic ? nil : dockApps(),
-                                                      dock: synthetic ? nil : nativeDock.catalog())))
+                                                      dock: dock, selectionRevision: selectionRevision)))
     }
 
     /// Read only the current user's Dock app tiles; no Dock preference is changed.
