@@ -46,6 +46,24 @@
 			<key>fileRef</key>
 			<string>52D22460CE17438A468DDD1A</string>
 		</dict>
+		<key>549BCED76BEB55B3C56D633B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/AwayCopy.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>5D5EFBED5CC5A44E49681F9A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>549BCED76BEB55B3C56D633B</string>
+		</dict>
 		<key>701FF96548D4F45FC8677744</key>
 		<dict>
 			<key>isa</key>
@@ -1342,6 +1360,7 @@
 			<array>
 				<string>55F4C88ECE7C60F68A020113</string>
 				<string>52D22460CE17438A468DDD1A</string>
+				<string>549BCED76BEB55B3C56D633B</string>
 				<string>701FF96548D4F45FC8677744</string>
 				<string>DC859A8193370992AD6BE453</string>
 				<string>9157AA4C9D05833F017AB1BF</string>
@@ -1428,6 +1447,7 @@
 			<array>
 				<string>FF0EB77E25688DA5A0DB4603</string>
 				<string>1DC7096D80005BAD4058C02A</string>
+				<string>5D5EFBED5CC5A44E49681F9A</string>
 				<string>A3DEEC43D5A749CBB5DC4802</string>
 				<string>9F9AAE0C8E2ECA297B79AB8D</string>
 				<string>127A7A39804628DFDE2DB428</string>
@@ -1874,6 +1894,7 @@
 			<array>
 				<string>FF0EB77E25688DA5A0DB4603</string>
 				<string>1DC7096D80005BAD4058C02A</string>
+				<string>5D5EFBED5CC5A44E49681F9A</string>
 				<string>A3DEEC43D5A749CBB5DC4802</string>
 				<string>9F9AAE0C8E2ECA297B79AB8D</string>
 				<string>127A7A39804628DFDE2DB428</string>
