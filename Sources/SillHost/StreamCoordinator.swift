@@ -1767,7 +1767,6 @@ package final class StreamCoordinator {
         // arriving through a tap on the switcher). The event itself is still delivered, so no
         // key-up or button-up goes missing.
         guard !switching, case .window(let id) = active else { return }
-        // Scroll admission requires the same app and key-window focus as clicks and keys.
         switch event {
         case .pointer(let action, _, _): guard action == .leftDown || action == .rightDown else { return }
         case .scroll: break
