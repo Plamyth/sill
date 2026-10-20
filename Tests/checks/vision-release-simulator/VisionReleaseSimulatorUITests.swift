@@ -34,7 +34,6 @@ final class VisionReleaseSimulatorUITests: XCTestCase {
         let raw = try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_VISION_RELEASE_CONTEXT"])
         var context = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         let app = XCUIApplication(bundleIdentifier: "dev.ambrion.SillVision.ReleaseTest")
-        defer { app.terminate() }
         context["profile"] = "unknown"
         app.launchArguments = ["--ccr-release-context", String(decoding: try JSONSerialization.data(withJSONObject: context), as: UTF8.self)]
         app.launch()
