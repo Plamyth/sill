@@ -80,8 +80,13 @@ class Boundary:
             app = derived / "Build/Products/Release-xros/SillVision.app"
             (app / "_CodeSignature").mkdir(parents=True)
             info = {"CFBundleIdentifier": adapter.BUNDLE, "CFBundleExecutable": "SillVision",
-                    "CFBundleVersion": self.build, "BTSourceCommit": self.source.commit,
-                    "BTSourceTree": self.source.tree, "DTPlatformName": "xros"}
+                    "CFBundleVersion": self.build, "DTPlatformName": "xros"}
+            template = plistlib.loads((SCRIPT.parent.parent / "visionOSClient/Info.plist").read_bytes())
+            settings = dict(arg.split("=", 1) for arg in args if "=" in arg)
+            for key in ("BTSourceCommit", "BTSourceTree"):
+                value = template.get(key)
+                if isinstance(value, str) and value.startswith("$(") and value.endswith(")"):
+                    info[key] = settings.get(value[2:-1], "")
             (app / "Info.plist").write_bytes(plistlib.dumps(info))
             (app / "SillVision").write_bytes(b"fixture signed executable " + self.source.commit.encode())
             (app / "_CodeSignature/CodeResources").write_bytes(b"fixture signed resources")
@@ -216,6 +221,12 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(any("INFOPLIST_KEY_BTSourceCommit=" + self.source.commit in row for row in commands))
         self.assertTrue(any("-resultBundlePath" in row for row in commands))
         self.assertFalse(any("xcode-select" in word for row in commands for word in row))
+
+    def test_source_stamp_uses_actual_info_template(self):
+        result = self.prepare()
+        info = plistlib.loads((Path(result["built"]["path"]) / "Info.plist").read_bytes())
+        self.assertEqual(info["BTSourceCommit"], self.source.commit)
+        self.assertEqual(info["BTSourceTree"], self.source.tree)
 
     def test_explicit_build_minimum_and_pin(self):
         self.args.build_number = 22
