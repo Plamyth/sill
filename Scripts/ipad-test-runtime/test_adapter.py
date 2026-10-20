@@ -94,5 +94,29 @@ class AdapterContract(unittest.TestCase):
             self.assertTrue(result['deviceStateEmpty'])
             self.assertTrue(result['originalDataPreserved'])
 
+    def test_collected_dead_relay_lease_can_restart_without_touching_live_orphan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work=Path(directory);repo=work/'repo';repo.mkdir()
+            adapter.write(work/'context.json',{'token':'private-test-token','relayAddress':'http://192.168.1.1:8793'})
+            prior={'leaseId':'old','owner':adapter.OWNER,'generation':'a'*40,'pid':42,'birth':'old-birth'}
+            adapter.write(work/'relay-lease.json',prior)
+            def command(args,*rest,**kwargs):
+                if args[0]=='git':
+                    return 'relay-commit' if args[1]=='rev-parse' else ''
+                if 'start' in args:
+                    return json.dumps(dict(prior,leaseId='new'))
+                return ''
+            policy={'LEASES':work/'authoritative','is_live':lambda row:False}
+            config={'repo':str(repo),'relayRepo':str(repo),'relayCommit':'relay-commit','relayHost':'192.168.1.1','relayPort':8793,'nodeExecutable':'/node'}
+            with patch.object(adapter,'command',side_effect=command),patch.object(adapter.runpy,'run_path',return_value=policy):
+                _,_,service=adapter.relay_runtime(config,work,{'commit':'a'*40,'tree':'b'*40})
+                self.assertEqual(service['leaseId'],'new')
+                self.assertTrue(adapter.read(work/'relay-stale-reconciliation.json')['ownedProcessAbsent'])
+            adapter.write(work/'relay-lease.json',prior)
+            policy['is_live']=lambda row:True
+            with patch.object(adapter,'command',side_effect=command),patch.object(adapter.runpy,'run_path',return_value=policy):
+                with self.assertRaisesRegex(adapter.Held,'orphan_owned_relay_still_live'):
+                    adapter.relay_runtime(config,work,{'commit':'a'*40,'tree':'b'*40})
+
 if __name__ == '__main__':
     unittest.main()

@@ -257,11 +257,31 @@ def relay_runtime(config, work, source):
     write(work / 'relay-private.json', conf)
     lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
     previous = work / 'relay-lease.json'
+    service = None
+    policy = runpy.run_path(lifecycle)
     if previous.exists() and not (work / 'relay-release.json').exists():
-        service = read(previous)
-        require(service['owner'] == OWNER and service['generation'] == source['commit'], 'relay_lease_identity_mismatch')
-        command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
-    else:
+        prior = read(previous)
+        require(prior['owner'] == OWNER and prior['generation'] == source['commit'], 'relay_lease_identity_mismatch')
+        authoritative = policy['LEASES'] / (prior['leaseId'] + '.json')
+        if authoritative.exists():
+            current = read(authoritative)
+            require(all(current.get(k) == prior.get(k) for k in ['leaseId','owner','serviceId','generation','pid','birth']),
+                    'relay_authoritative_identity_mismatch')
+            expiry = policy['expiry'](current)
+            require(expiry is not None, 'relay_expiry_invalid')
+            if policy['is_live'](current) and expiry > policy['now']():
+                try:
+                    service = json.loads(command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', prior['leaseId']], work / 'relay-renew.log'))
+                except Held:
+                    require(not policy['is_live'](current) or expiry <= policy['now'](), 'relay_renew_failed_while_live')
+            if service is None:
+                released = json.loads(command([lifecycle, 'release', '--owner', OWNER, prior['leaseId']], work / 'relay-stale-release.log'))
+                require(released.get('released') is True, 'stale_relay_release_unconfirmed')
+                write(work / 'relay-stale-reconciliation.json', {'priorLeaseId': prior['leaseId'], 'released': True})
+        else:
+            require(not policy['is_live'](prior), 'orphan_owned_relay_still_live')
+            write(work / 'relay-stale-reconciliation.json', {'priorLeaseId': prior['leaseId'], 'ownedProcessAbsent': True})
+    if service is None:
         service = json.loads(command([lifecycle, 'start', '--owner', OWNER, '--ttl', '900',
             '--generation', source['commit'], '--stdout', work / 'isolated-relay.log',
             '--stderr', work / 'isolated-relay.err.log', 'ccr-ipad-integration-relay-8793', '--',
