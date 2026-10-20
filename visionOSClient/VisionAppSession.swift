@@ -3,7 +3,7 @@ import Combine
 import StreamProtocol
 
 final class VisionAppSession: ObservableObject {
-    let client = StreamClient()
+    let client: StreamClient
     let input = VisionInputSession()
     let stats = ClientStatsReporter()
     @Published private(set) var windowLease: VisionWindowLease?
@@ -18,6 +18,18 @@ final class VisionAppSession: ObservableObject {
 
     init() {
         launch = .parse(CommandLine.arguments)
+        #if DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.current != nil {
+            client = MockCatalog.client(settings: .legacy, menus: nil)
+            client.seedVisionReleaseTest()
+        } else { client = StreamClient() }
+        #else
+        client = StreamClient()
+        #endif
+        if VisionReleaseTestContext.isTestBundle {
+            message = "시뮬레이터 격리 테스트입니다. Mac 연결은 사용하지 않습니다."
+            return
+        }
         client.visionCableBootstrap = VisionCableBootstrap(launch: launch)
         client.visionCableBootstrap.onChange = { [weak self] in self?.refresh() }
         let events: [AnyPublisher<Void, Never>] = [
@@ -43,6 +55,7 @@ final class VisionAppSession: ObservableObject {
     }
 
     deinit {
+        guard !VisionReleaseTestContext.isTestBundle else { return }
         let client = client
         let input = input
         DispatchQueue.main.async {
@@ -54,6 +67,7 @@ final class VisionAppSession: ObservableObject {
 
     func claim(_ window: UUID) {
         if windowLease == nil { windowLease = VisionWindowLease(window: window) }
+        guard !VisionReleaseTestContext.isTestBundle else { return }
         client.admitVisionDisplays(lease: windowLease, foreground: foreground)
     }
 
@@ -67,6 +81,12 @@ final class VisionAppSession: ObservableObject {
     }
 
     func setScenePhase(_ phase: ScenePhase) {
+        if VisionReleaseTestContext.isTestBundle {
+            input.bind(client)
+            client.setVisionPresentationForeground(phase == .active)
+            VisionReleaseRuntimeWriter.write()
+            return
+        }
         let scene: VisionMicrophoneAdmission.Scene
         switch phase {
         case .active: scene = .active
@@ -79,11 +99,13 @@ final class VisionAppSession: ObservableObject {
     }
 
     func suspendPresentation() {
+        guard !VisionReleaseTestContext.isTestBundle else { return }
         client.microphoneSceneChanged(lease: nil, scene: .background)
         setForeground(false)
     }
 
     func start(foreground: Bool) {
+        guard !VisionReleaseTestContext.isTestBundle else { return }
         guard foreground else { setForeground(false); return }
         guard !started else { setForeground(foreground); return }
         started = true
@@ -100,6 +122,7 @@ final class VisionAppSession: ObservableObject {
     }
 
     func setForeground(_ active: Bool) {
+        guard !VisionReleaseTestContext.isTestBundle else { return }
         foreground = active
         client.admitVisionDisplays(lease: windowLease, foreground: active)
         client.visionStartupForeground = active
@@ -110,6 +133,7 @@ final class VisionAppSession: ObservableObject {
     }
 
     func refresh() {
+        guard !VisionReleaseTestContext.isTestBundle else { VisionReleaseRuntimeWriter.write(); return }
         client.updateVisionMacAudioRoutes(lease: windowLease, foreground: foreground)
         client.reconcileVisionAudioIntent()
         let bootstrap = client.visionCableBootstrap

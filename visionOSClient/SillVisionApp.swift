@@ -7,7 +7,11 @@ struct SillVisionApp: App {
 
     var body: some Scene {
         WindowGroup(id: "mac") {
-            SillVisionWindow()
+            if VisionReleaseTestContext.isTestBundle && VisionReleaseTestContext.current == nil {
+                Text("격리 테스트 실행 정보가 없거나 일치하지 않습니다.")
+            } else {
+                SillVisionWindow()
+            }
         }
         .defaultSize(width: 1280, height: 800)
     }
@@ -153,6 +157,7 @@ struct SillVisionWorkspace: View {
         }
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
+        .accessibilityIdentifier("vision.workspace")
         .ornament(attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
             if session.owns(lease), client.connected, client.active != .none, client.visionSentrySnapshot.available {
                 VisionSentryOrnament(snapshot: client.visionSentrySnapshot,
@@ -342,6 +347,11 @@ struct SillVisionWorkspace: View {
                 StreamView(client: client)
                     .scaleEffect(input.viewport.scale, anchor: .center)
                     .offset(input.viewport.offset)
+                #if DEBUG && targetEnvironment(simulator)
+                if let provider = VisionReleaseFixture.current {
+                    VisionReleaseProviderDisplay(provider: provider)
+                }
+                #endif
                 InputOverlay(videoSize: client.videoSize, send: { event in withWindowOwnership { input.overlayInput(event) } },
                              setOwnPointer: { point, origin in withWindowOwnership { client.setOwnPointer(point, from: origin) } }, proxy: input.keyboard,
                              isKeyboardShown: $keyboardShown, latchedModifiers: input.latched,

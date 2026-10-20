@@ -953,8 +953,16 @@ final class StreamClient: ObservableObject {
 
     func captureVisionTextTarget() -> VisionTextTarget? {
         guard !visionDisplaySelection.inputBlocked, visionTextForeground, connected, moving == nil, visionMovePreparation == nil,
-              active != .none, visionInputBinding.isConfirmed,
-              let peer = connection, let permit = visionInputPermit else { return nil }
+              active != .none, visionInputBinding.isConfirmed else { return nil }
+        #if DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.current != nil {
+            guard visionReleaseTransportIsIsolated, let permit = visionInputPermit else { return nil }
+            return VisionTextTarget(peer: ObjectIdentifier(self), source: active, binding: visionInputBinding,
+                                    permit: permit, scope: visionTextScope,
+                                    label: "시뮬레이터 테스트 Mac · 결정적 입력 대상")
+        }
+        #endif
+        guard let peer = connection, let permit = visionInputPermit else { return nil }
         let sourceLabel: String
         switch active {
         case .window(let id):
@@ -986,6 +994,15 @@ final class StreamClient: ObservableObject {
             return
         }
         visionTextRequest = requestID
+        #if DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.current != nil {
+            let submitted = captureVisionTextTarget() == target &&
+                VisionReleaseFixture.current?.submit(text, request: requestID,
+                    isolated: visionReleaseTransportIsIsolated) == true
+            DispatchQueue.main.async { terminal(submitted ? .submitted : .cancelled) }
+            return
+        }
+        #endif
         let scope = visionTextScope
         let submission = SessionLink.Submission { [weak self] outcome in
             if self?.visionTextScope == scope { self?.visionTextSubmissions.removeValue(forKey: requestID) }
@@ -1017,6 +1034,20 @@ final class StreamClient: ObservableObject {
             }
         }
     }
+
+    #if DEBUG && targetEnvironment(simulator)
+    var visionReleaseTransportIsIsolated: Bool {
+        VisionReleaseTestContext.current != nil && mockDiscovery && !browsing && connection == nil && remoteDial == nil &&
+        !visionStartupStarted && savedMacs.isEmpty && microphoneCapture == nil
+    }
+
+    func seedVisionReleaseTest() {
+        guard visionReleaseTransportIsIsolated else { return }
+        visionInputBinding = .confirmedLegacy
+        visionInputPermit = UUID()
+        visionDisplaySelection.observe(.init(WindowList(macName: macName, windows: windows, active: active)))
+    }
+    #endif
 
     func setVisionPresentationForeground(_ foreground: Bool) {
         visionTextForeground = foreground
@@ -1191,6 +1222,12 @@ final class StreamClient: ObservableObject {
     }
 
     func afterVisionInputRelease(_ completion: @escaping (Bool) -> Void) {
+        #if DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.current != nil {
+            DispatchQueue.main.async { completion(self.visionReleaseTransportIsIsolated) }
+            return
+        }
+        #endif
         let expected = connection
         queue.async { [weak self] in
             guard let self, let expected, self.connection === expected else {
@@ -1259,6 +1296,9 @@ final class StreamClient: ObservableObject {
     deinit { lifecycleObservers.forEach(NotificationCenter.default.removeObserver) }
 
     init() {
+        #if os(visionOS)
+        if VisionReleaseTestContext.isTestBundle { return }
+        #endif
         // The hello is built here, on the main thread: it reads UIDevice (the device's name), which
         // the network queue, where connections become ready and send it, must not be first to touch.
         _ = Self.helloPayload
@@ -1313,6 +1353,9 @@ final class StreamClient: ObservableObject {
     /// Starts the network browser, once; from then on it is only made again (`rebuildBrowser`). The
     /// nearby one follows the policy (`updateDiscovery`).
     func startBrowsing() {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         guard !browsing else { return }
         browsing = true
         searchingSince = ProcessInfo.processInfo.systemUptime
@@ -3646,6 +3689,17 @@ final class StreamClient: ObservableObject {
 
     /// The user chose to leave. No reconnect.
     func disconnect() {
+        #if os(visionOS) && DEBUG && targetEnvironment(simulator)
+        if VisionReleaseTestContext.current != nil {
+            guard VisionReleaseFixture.current?.reset(isolated: visionReleaseTransportIsIsolated) == true else {
+                status = "테스트 입력 대상 초기화에 실패했습니다."
+                return
+            }
+            connected = false
+            active = .none
+            return
+        }
+        #endif
         #if os(visionOS)
         stopVisionCableBootstrap(.cancelled)
         #endif

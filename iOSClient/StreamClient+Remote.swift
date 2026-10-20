@@ -220,6 +220,9 @@ extension StreamClient {
     /// (`confirmPendingLink`); `-SillDialSaved remotely` dials the first saved Mac as Connect
     /// Remotely does (a session that never moves home).
     func startRemote() {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else { return }
+        #endif
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "SillForgetMacs") {
             savedMacs = []
@@ -839,6 +842,12 @@ extension StreamClient {
     /// The typed path: the address and the code as typed, checked here first (a typo never uses up
     /// one of the Mac's five tries, and nothing is sent).
     func pairTyped(code codeText: String, address addressText: String, overlay: Bool) {
+        #if os(visionOS)
+        guard !VisionReleaseTestContext.isTestBundle else {
+            status = "시뮬레이터 테스트에서는 실제 Mac과 페어링하지 않습니다."
+            return
+        }
+        #endif
         let address: ParsedAddress
         switch AddressParser.parse(addressText) {
         case .success(let a): address = a

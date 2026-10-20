@@ -28,6 +28,24 @@
 			<key>fileRef</key>
 			<string>55F4C88ECE7C60F68A020113</string>
 		</dict>
+		<key>52D22460CE17438A468DDD1A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/MockCatalog.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>1DC7096D80005BAD4058C02A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>52D22460CE17438A468DDD1A</string>
+		</dict>
 		<key>701FF96548D4F45FC8677744</key>
 		<dict>
 			<key>isa</key>
@@ -567,6 +585,24 @@
 			<string>PBXBuildFile</string>
 			<key>fileRef</key>
 			<string>7C90C59BF846BE05384578DB</string>
+		</dict>
+		<key>6CF84F2CD28DFBFAED3D61C8</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionReleaseTestContext.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>0F82E22ED995B125F7CAAE89</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>6CF84F2CD28DFBFAED3D61C8</string>
 		</dict>
 		<key>3479E8EBBFDC8FBE714AE2E1</key>
 		<dict>
@@ -1198,6 +1234,60 @@
 			<key>fileRef</key>
 			<string>AE23D0164904EA516E6E1CA4</string>
 		</dict>
+		<key>21392BBCE4519F96EA6BB26A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionTestDestinations.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>DD9E1AC0D04122AFE22AB848</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>21392BBCE4519F96EA6BB26A</string>
+		</dict>
+		<key>CE44261B69C411E0154F7D9F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionTestDestinationsView.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>CE037CF6C9D9D6D9AE268A7E</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>CE44261B69C411E0154F7D9F</string>
+		</dict>
+		<key>E2A2F112DBA96FF8A93A65FA</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/StreamClient+VisionTestDestinations.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>1708784FAA7ED9B0F4E7C191</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>E2A2F112DBA96FF8A93A65FA</string>
+		</dict>
 		<key>96ED5C5789B174A01557791C</key>
 		<dict>
 			<key>isa</key>
@@ -1236,6 +1326,8 @@
 			<key>children</key>
 			<array>
 				<string>38A007151ABE87CC01A5B6E9</string>
+				<string>81D2F2F5CC3EA9330E8171C3</string>
+				<string>1C328E92044FCF1AA1A0201F</string>
 			</array>
 			<key>name</key>
 			<string>Products</string>
@@ -1249,6 +1341,7 @@
 			<key>children</key>
 			<array>
 				<string>55F4C88ECE7C60F68A020113</string>
+				<string>52D22460CE17438A468DDD1A</string>
 				<string>701FF96548D4F45FC8677744</string>
 				<string>DC859A8193370992AD6BE453</string>
 				<string>9157AA4C9D05833F017AB1BF</string>
@@ -1279,6 +1372,7 @@
 				<string>182110FA0F96BC35CDB69840</string>
 				<string>B327B8A7477D1231996FCA1C</string>
 				<string>7C90C59BF846BE05384578DB</string>
+				<string>6CF84F2CD28DFBFAED3D61C8</string>
 				<string>3479E8EBBFDC8FBE714AE2E1</string>
 				<string>1EC353247B72DF67C513ED2B</string>
 				<string>48F453A3A0A3E814F7179DDC</string>
@@ -1319,6 +1413,7 @@
 				<string>E2A2F112DBA96FF8A93A65FA</string>
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
+				<string>7D8846BC17D54AA289927346</string>
 			</array>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
@@ -1332,6 +1427,7 @@
 			<key>files</key>
 			<array>
 				<string>FF0EB77E25688DA5A0DB4603</string>
+				<string>1DC7096D80005BAD4058C02A</string>
 				<string>A3DEEC43D5A749CBB5DC4802</string>
 				<string>9F9AAE0C8E2ECA297B79AB8D</string>
 				<string>127A7A39804628DFDE2DB428</string>
@@ -1362,6 +1458,7 @@
 				<string>093FAD9F1AFE6154567069A4</string>
 				<string>B752A128F4045FB722367596</string>
 				<string>B771555041E5E11E0F265CA4</string>
+				<string>0F82E22ED995B125F7CAAE89</string>
 				<string>88EACB3A2740149DFB20447F</string>
 				<string>945B89332D433A1D178BA2E4</string>
 				<string>C5942AF7883F30CB41E8925D</string>
@@ -1642,6 +1739,434 @@
 				<string>6E9B4AF64B7AEED1DECFA7A9</string>
 			</array>
 		</dict>
+		<key>81D2F2F5CC3EA9330E8171C3</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>explicitFileType</key>
+			<string>wrapper.application</string>
+			<key>path</key>
+			<string>SillVisionReleaseTest.app</string>
+			<key>sourceTree</key>
+			<string>BUILT_PRODUCTS_DIR</string>
+			<key>includeInIndex</key>
+			<integer>0</integer>
+		</dict>
+		<key>3D7BFC16604AAC7156B05644</key>
+		<dict>
+			<key>isa</key>
+			<string>XCBuildConfiguration</string>
+			<key>name</key>
+			<string>Debug</string>
+			<key>buildSettings</key>
+			<dict>
+				<key>PRODUCT_NAME</key>
+				<string>$(TARGET_NAME)</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
+				<string>dev.ambrion.SillVision.ReleaseTest</string>
+				<key>GENERATE_INFOPLIST_FILE</key>
+				<string>YES</string>
+				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
+				<string>CCR Sill 격리 테스트</string>
+				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
+				<string>YES</string>
+				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
+				<string>YES</string>
+				<key>INFOPLIST_KEY_NSLocalNetworkUsageDescription</key>
+				<string>Mac에 연결하여 암호화된 연결로 화면을 표시하고 제어합니다.</string>
+				<key>INFOPLIST_FILE</key>
+				<string>visionOSClient/Info.plist</string>
+				<key>TARGETED_DEVICE_FAMILY</key>
+				<string>7</string>
+				<key>SUPPORTED_PLATFORMS</key>
+				<string>xros xrsimulator</string>
+				<key>XROS_DEPLOYMENT_TARGET</key>
+				<string>2.5</string>
+				<key>CURRENT_PROJECT_VERSION</key>
+				<string>14</string>
+				<key>MARKETING_VERSION</key>
+				<string>0.5.1</string>
+				<key>CODE_SIGN_STYLE</key>
+				<string>Automatic</string>
+				<key>SWIFT_ACTIVE_COMPILATION_CONDITIONS</key>
+				<string>VISION_CLIENT DEBUG</string>
+				<key>SWIFT_OPTIMIZATION_LEVEL</key>
+				<string>-Onone</string>
+				<key>LD_RUNPATH_SEARCH_PATHS</key>
+				<array>
+					<string>$(inherited)</string>
+					<string>@executable_path/Frameworks</string>
+				</array>
+				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
+				<string>YES</string>
+			</dict>
+		</dict>
+		<key>790F698B7CB5B91F44D6403F</key>
+		<dict>
+			<key>isa</key>
+			<string>XCBuildConfiguration</string>
+			<key>name</key>
+			<string>Release</string>
+			<key>buildSettings</key>
+			<dict>
+				<key>PRODUCT_NAME</key>
+				<string>$(TARGET_NAME)</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
+				<string>dev.ambrion.SillVision.ReleaseTest</string>
+				<key>GENERATE_INFOPLIST_FILE</key>
+				<string>YES</string>
+				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
+				<string>CCR Sill 격리 테스트</string>
+				<key>INFOPLIST_KEY_UIApplicationSceneManifest_Generation</key>
+				<string>YES</string>
+				<key>INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents</key>
+				<string>YES</string>
+				<key>INFOPLIST_KEY_NSLocalNetworkUsageDescription</key>
+				<string>Mac에 연결하여 암호화된 연결로 화면을 표시하고 제어합니다.</string>
+				<key>INFOPLIST_FILE</key>
+				<string>visionOSClient/Info.plist</string>
+				<key>TARGETED_DEVICE_FAMILY</key>
+				<string>7</string>
+				<key>SUPPORTED_PLATFORMS</key>
+				<string>xros xrsimulator</string>
+				<key>XROS_DEPLOYMENT_TARGET</key>
+				<string>2.5</string>
+				<key>CURRENT_PROJECT_VERSION</key>
+				<string>14</string>
+				<key>MARKETING_VERSION</key>
+				<string>0.5.1</string>
+				<key>CODE_SIGN_STYLE</key>
+				<string>Automatic</string>
+				<key>SWIFT_ACTIVE_COMPILATION_CONDITIONS</key>
+				<string>VISION_CLIENT</string>
+				<key>SWIFT_OPTIMIZATION_LEVEL</key>
+				<string>-O</string>
+				<key>LD_RUNPATH_SEARCH_PATHS</key>
+				<array>
+					<string>$(inherited)</string>
+					<string>@executable_path/Frameworks</string>
+				</array>
+				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
+				<string>YES</string>
+			</dict>
+		</dict>
+		<key>1CDE4D4AFFA0608A48956514</key>
+		<dict>
+			<key>isa</key>
+			<string>XCConfigurationList</string>
+			<key>buildConfigurations</key>
+			<array>
+				<string>3D7BFC16604AAC7156B05644</string>
+				<string>790F698B7CB5B91F44D6403F</string>
+			</array>
+			<key>defaultConfigurationIsVisible</key>
+			<integer>0</integer>
+			<key>defaultConfigurationName</key>
+			<string>Debug</string>
+		</dict>
+		<key>C92192961669233B9A929A80</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXSourcesBuildPhase</string>
+			<key>buildActionMask</key>
+			<integer>2147483647</integer>
+			<key>files</key>
+			<array>
+				<string>FF0EB77E25688DA5A0DB4603</string>
+				<string>1DC7096D80005BAD4058C02A</string>
+				<string>A3DEEC43D5A749CBB5DC4802</string>
+				<string>9F9AAE0C8E2ECA297B79AB8D</string>
+				<string>127A7A39804628DFDE2DB428</string>
+				<string>F389FE810353A79BBA3544CB</string>
+				<string>4ACDFFE948A78DF23ED0035D</string>
+				<string>3615CE16D06F0F12DA13936D</string>
+				<string>9D8CC73936E51D94491355C6</string>
+				<string>981C271352EB325FFF98A019</string>
+				<string>7E1214047D982C4BA8F028A1</string>
+				<string>56D88DC230AA249F058661CC</string>
+				<string>88B0A7C63215770BE59AA8A8</string>
+				<string>6979989EBBAB895F83AAA549</string>
+				<string>AA4127943CF5908365D3E659</string>
+				<string>10DE2A97416E48BEA0FDE07E</string>
+				<string>77994A6242D9D90309416445</string>
+				<string>01F230ECB07841CBB1C23E97</string>
+				<string>95080C32F55E6F86351E74ED</string>
+				<string>CDBA62A637AD2C7EEAC874F0</string>
+				<string>89464491193614164286A1E2</string>
+				<string>FCF38A4CA041BC7044E03241</string>
+				<string>DCBD7657CA65779AFA3AD151</string>
+				<string>871C870F57840B34ED357510</string>
+				<string>DC873941899B6BD7021EC8C8</string>
+				<string>EBC3B5C98416CCB54AD486D3</string>
+				<string>153EB174B1F3D7B5D8520064</string>
+				<string>DCBF67BF6A5ADB8A52EBACEF</string>
+				<string>2EE7E986523D977002850DB1</string>
+				<string>093FAD9F1AFE6154567069A4</string>
+				<string>B752A128F4045FB722367596</string>
+				<string>B771555041E5E11E0F265CA4</string>
+				<string>0F82E22ED995B125F7CAAE89</string>
+				<string>88EACB3A2740149DFB20447F</string>
+				<string>945B89332D433A1D178BA2E4</string>
+				<string>C5942AF7883F30CB41E8925D</string>
+				<string>CD3BDEEBE03DDE64B75B7B65</string>
+				<string>7E9DA331C16C94FDB48C03C3</string>
+				<string>5E0C7BD5E5E54E80D694B9B9</string>
+				<string>674544828B4029D98977E5D7</string>
+				<string>C6F3E5ABA8600FBF8CF25DC6</string>
+				<string>61A3114FAEA584F17FB75287</string>
+				<string>3230AC4CD5E3763EDD25A737</string>
+				<string>0AFB5283362651425EABE5A8</string>
+				<string>6CC43938824CF9AE932BEF5B</string>
+				<string>EE2BDC3589587CDA3DA71281</string>
+				<string>374865A0798851D67E9FA6D6</string>
+				<string>BB502B8112B3BB055EBEB8F8</string>
+				<string>DB5D04E8041B0FC9FF58D895</string>
+				<string>A4C79F788B3CA044B6655ABE</string>
+				<string>BC739450E2D039089A4BACA9</string>
+				<string>5E4A1EC0F1B59D52EB290FC6</string>
+				<string>02B570258369E1E27D771386</string>
+				<string>B02287A7A145B6DA8AB586F9</string>
+				<string>C46E483069CD13375DE973F8</string>
+				<string>149A7D906454AAC0F060EBC6</string>
+				<string>331E11F67379528B562D146B</string>
+				<string>AC8D6597572DB8007CEC8C9F</string>
+				<string>AAF2C2DAF25BA42888B2B819</string>
+				<string>6974DD38FD7D3B64BCE34E32</string>
+				<string>61CBD8FEE241841E22C2EEE4</string>
+				<string>7748DBD153CAC047DEB83D40</string>
+				<string>5B607DCE6240AE7BCB5CB3AD</string>
+				<string>2D8EDDCB8DC3AE39E9AC602F</string>
+				<string>64ED039BE88BFAC833997639</string>
+				<string>8BA2911306AF7E40ADECE888</string>
+				<string>81ADD1BEF5B2C3D271813467</string>
+				<string>507B4D6B9FA988CA1B34035D</string>
+				<string>DD9E1AC0D04122AFE22AB848</string>
+				<string>CE037CF6C9D9D6D9AE268A7E</string>
+				<string>1708784FAA7ED9B0F4E7C191</string>
+			</array>
+			<key>runOnlyForDeploymentPostprocessing</key>
+			<integer>0</integer>
+		</dict>
+		<key>9A0DF30D179550139E1C8536</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXResourcesBuildPhase</string>
+			<key>buildActionMask</key>
+			<integer>2147483647</integer>
+			<key>files</key>
+			<array>
+				<string>A2CFCCD7177AB15B702AFEEB</string>
+			</array>
+			<key>runOnlyForDeploymentPostprocessing</key>
+			<integer>0</integer>
+		</dict>
+		<key>83FBF10F24D75AF1B0E22B67</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFrameworksBuildPhase</string>
+			<key>buildActionMask</key>
+			<integer>2147483647</integer>
+			<key>files</key>
+			<array>
+				<string>2454C594A07BB9296FBAF853</string>
+			</array>
+			<key>runOnlyForDeploymentPostprocessing</key>
+			<integer>0</integer>
+		</dict>
+		<key>2C8E2681DF20FE3747E8B6D0</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXNativeTarget</string>
+			<key>buildConfigurationList</key>
+			<string>1CDE4D4AFFA0608A48956514</string>
+			<key>buildPhases</key>
+			<array>
+				<string>C92192961669233B9A929A80</string>
+				<string>9A0DF30D179550139E1C8536</string>
+				<string>83FBF10F24D75AF1B0E22B67</string>
+			</array>
+			<key>buildRules</key>
+			<array/>
+			<key>dependencies</key>
+			<array/>
+			<key>name</key>
+			<string>SillVisionReleaseTest</string>
+			<key>productName</key>
+			<string>SillVisionReleaseTest</string>
+			<key>productReference</key>
+			<string>81D2F2F5CC3EA9330E8171C3</string>
+			<key>productType</key>
+			<string>com.apple.product-type.application</string>
+			<key>packageProductDependencies</key>
+			<array>
+				<string>6E9B4AF64B7AEED1DECFA7A9</string>
+			</array>
+		</dict>
+		<key>7D8846BC17D54AA289927346</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>Tests/checks/vision-release-simulator/VisionReleaseSimulatorUITests.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>1C328E92044FCF1AA1A0201F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>explicitFileType</key>
+			<string>wrapper.cfbundle</string>
+			<key>path</key>
+			<string>VisionReleaseSimulatorUITests.xctest</string>
+			<key>sourceTree</key>
+			<string>BUILT_PRODUCTS_DIR</string>
+			<key>includeInIndex</key>
+			<integer>0</integer>
+		</dict>
+		<key>2DE3077C86A218A535C01BBE</key>
+		<dict>
+			<key>isa</key>
+			<string>XCBuildConfiguration</string>
+			<key>name</key>
+			<string>Debug</string>
+			<key>buildSettings</key>
+			<dict>
+				<key>PRODUCT_NAME</key>
+				<string>$(TARGET_NAME)</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
+				<string>dev.ambrion.SillVision.ReleaseTest.UITests</string>
+				<key>GENERATE_INFOPLIST_FILE</key>
+				<string>YES</string>
+				<key>TARGETED_DEVICE_FAMILY</key>
+				<string>7</string>
+				<key>SUPPORTED_PLATFORMS</key>
+				<string>xrsimulator</string>
+				<key>XROS_DEPLOYMENT_TARGET</key>
+				<string>2.5</string>
+				<key>TEST_TARGET_NAME</key>
+				<string>SillVisionReleaseTest</string>
+				<key>LD_RUNPATH_SEARCH_PATHS</key>
+				<array>
+					<string>$(inherited)</string>
+					<string>@executable_path/Frameworks</string>
+					<string>@loader_path/Frameworks</string>
+				</array>
+			</dict>
+		</dict>
+		<key>093FB7F47ECAE4CB8926371B</key>
+		<dict>
+			<key>isa</key>
+			<string>XCBuildConfiguration</string>
+			<key>name</key>
+			<string>Release</string>
+			<key>buildSettings</key>
+			<dict>
+				<key>PRODUCT_NAME</key>
+				<string>$(TARGET_NAME)</string>
+				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
+				<string>dev.ambrion.SillVision.ReleaseTest.UITests</string>
+				<key>GENERATE_INFOPLIST_FILE</key>
+				<string>YES</string>
+				<key>TARGETED_DEVICE_FAMILY</key>
+				<string>7</string>
+				<key>SUPPORTED_PLATFORMS</key>
+				<string>xrsimulator</string>
+				<key>XROS_DEPLOYMENT_TARGET</key>
+				<string>2.5</string>
+				<key>TEST_TARGET_NAME</key>
+				<string>SillVisionReleaseTest</string>
+				<key>LD_RUNPATH_SEARCH_PATHS</key>
+				<array>
+					<string>$(inherited)</string>
+					<string>@executable_path/Frameworks</string>
+					<string>@loader_path/Frameworks</string>
+				</array>
+			</dict>
+		</dict>
+		<key>2E20AAAC1D508604627F66DF</key>
+		<dict>
+			<key>isa</key>
+			<string>XCConfigurationList</string>
+			<key>buildConfigurations</key>
+			<array>
+				<string>2DE3077C86A218A535C01BBE</string>
+				<string>093FB7F47ECAE4CB8926371B</string>
+			</array>
+			<key>defaultConfigurationIsVisible</key>
+			<integer>0</integer>
+			<key>defaultConfigurationName</key>
+			<string>Debug</string>
+		</dict>
+		<key>A1F042CCB40E668DCF651B23</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXContainerItemProxy</string>
+			<key>containerPortal</key>
+			<string>98F54143AB4E86B28C3AFEE0</string>
+			<key>proxyType</key>
+			<integer>1</integer>
+			<key>remoteGlobalIDString</key>
+			<string>2C8E2681DF20FE3747E8B6D0</string>
+			<key>remoteInfo</key>
+			<string>SillVisionReleaseTest</string>
+		</dict>
+		<key>453D068F7DAC6A22716F6331</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXTargetDependency</string>
+			<key>target</key>
+			<string>2C8E2681DF20FE3747E8B6D0</string>
+			<key>targetProxy</key>
+			<string>A1F042CCB40E668DCF651B23</string>
+		</dict>
+		<key>F8EEE2D1FB94B51599922A9D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>7D8846BC17D54AA289927346</string>
+		</dict>
+		<key>A66526A64E87ABC3D13D868C</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXSourcesBuildPhase</string>
+			<key>buildActionMask</key>
+			<integer>2147483647</integer>
+			<key>files</key>
+			<array>
+				<string>F8EEE2D1FB94B51599922A9D</string>
+			</array>
+			<key>runOnlyForDeploymentPostprocessing</key>
+			<integer>0</integer>
+		</dict>
+		<key>C1B1D8220E6ADEFBDD305CAA</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXNativeTarget</string>
+			<key>buildConfigurationList</key>
+			<string>2E20AAAC1D508604627F66DF</string>
+			<key>buildPhases</key>
+			<array>
+				<string>A66526A64E87ABC3D13D868C</string>
+			</array>
+			<key>buildRules</key>
+			<array/>
+			<key>dependencies</key>
+			<array>
+				<string>453D068F7DAC6A22716F6331</string>
+			</array>
+			<key>name</key>
+			<string>VisionReleaseSimulatorUITests</string>
+			<key>productName</key>
+			<string>VisionReleaseSimulatorUITests</string>
+			<key>productReference</key>
+			<string>1C328E92044FCF1AA1A0201F</string>
+			<key>productType</key>
+			<string>com.apple.product-type.bundle.ui-testing</string>
+		</dict>
 		<key>98F54143AB4E86B28C3AFEE0</key>
 		<dict>
 			<key>isa</key>
@@ -1650,6 +2175,14 @@
 			<dict>
 				<key>LastUpgradeCheck</key>
 				<string>2700</string>
+				<key>TargetAttributes</key>
+				<dict>
+					<key>C1B1D8220E6ADEFBDD305CAA</key>
+					<dict>
+						<key>TestTargetID</key>
+						<string>2C8E2681DF20FE3747E8B6D0</string>
+					</dict>
+				</dict>
 			</dict>
 			<key>buildConfigurationList</key>
 			<string>BD59A88C5EC2D65E34727A49</string>
@@ -1675,65 +2208,13 @@
 			<key>targets</key>
 			<array>
 				<string>0E8A3AD980EC179856012B7E</string>
+				<string>2C8E2681DF20FE3747E8B6D0</string>
+				<string>C1B1D8220E6ADEFBDD305CAA</string>
 			</array>
 			<key>packageReferences</key>
 			<array>
 				<string>582681C2EAE02B3F3D399C0C</string>
 			</array>
-		</dict>
-		<key>21392BBCE4519F96EA6BB26A</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXFileReference</string>
-			<key>lastKnownFileType</key>
-			<string>sourcecode.swift</string>
-			<key>path</key>
-			<string>visionOSClient/VisionTestDestinations.swift</string>
-			<key>sourceTree</key>
-			<string>SOURCE_ROOT</string>
-		</dict>
-		<key>DD9E1AC0D04122AFE22AB848</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXBuildFile</string>
-			<key>fileRef</key>
-			<string>21392BBCE4519F96EA6BB26A</string>
-		</dict>
-		<key>CE44261B69C411E0154F7D9F</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXFileReference</string>
-			<key>lastKnownFileType</key>
-			<string>sourcecode.swift</string>
-			<key>path</key>
-			<string>visionOSClient/VisionTestDestinationsView.swift</string>
-			<key>sourceTree</key>
-			<string>SOURCE_ROOT</string>
-		</dict>
-		<key>CE037CF6C9D9D6D9AE268A7E</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXBuildFile</string>
-			<key>fileRef</key>
-			<string>CE44261B69C411E0154F7D9F</string>
-		</dict>
-		<key>E2A2F112DBA96FF8A93A65FA</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXFileReference</string>
-			<key>lastKnownFileType</key>
-			<string>sourcecode.swift</string>
-			<key>path</key>
-			<string>visionOSClient/StreamClient+VisionTestDestinations.swift</string>
-			<key>sourceTree</key>
-			<string>SOURCE_ROOT</string>
-		</dict>
-		<key>1708784FAA7ED9B0F4E7C191</key>
-		<dict>
-			<key>isa</key>
-			<string>PBXBuildFile</string>
-			<key>fileRef</key>
-			<string>E2A2F112DBA96FF8A93A65FA</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>
