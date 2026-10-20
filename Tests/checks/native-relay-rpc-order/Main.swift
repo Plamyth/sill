@@ -55,17 +55,81 @@ import Foundation
         precondition(condition(), "test barrier expired")
     }
     @MainActor static func main() async {
-        await fifo()
-        await queuedCancellationAndDeadline()
-        await acquiredCancellation()
-        await registryCallers()
-        await finalAdmission()
-        await activeFailure()
-        await lostDrain()
-        await invalidReplies()
-        await sequenceLimit()
-        await prepare()
+        if CommandLine.arguments.last != "http-admission" {
+            await fifo()
+            await queuedCancellationAndDeadline()
+            await acquiredCancellation()
+            await registryCallers()
+            await finalAdmission()
+            await activeFailure()
+            await lostDrain()
+            await invalidReplies()
+            await sequenceLimit()
+            await prepare()
+        }
+        await httpPreparation()
+        await reentrantAdmission()
         print("PASS \(assertions) assertions. Actual LocalAudioRelay private call, inert stdio only.")
+    }
+    @MainActor static func httpPreparation() async {
+        for mode in ["valid", "http", "http-receipt-bootId", "http-receipt-registryRevision", "http-receipt-privacyGeneration"] {
+            let f = await Fixture.make(mode), binding = await f.binding()
+            expect(binding.transportKind == (mode == "valid" ? .native : .http), "fixture transport")
+            let expected = binding.participantRequest(for: .relay, budgetMilliseconds: 5000)!
+            let membership = f.registry.snapshot
+            let result = await f.relay.forwardingPrepare(binding)
+            if mode == "valid" || mode == "http" {
+                guard case .accepted(let receipt) = result else { fatalError("HTTP and native prepare must accept matching relay receipt") }
+                expect(receipt.proves(expected) && f.registry.matches(membership), "prepare proves boot, configuration and membership")
+                let inspected = await f.registry.checkedInspect(binding.operationId)
+                expect(inspected == receipt && inspected?.proves(expected) == true, "inspect returns the same prepared receipt")
+                expect(f.relay.checkConnected, "HTTP preparation preserves connection")
+                if mode == "http" {
+                    let count = f.requests().count, sequence = f.relay.checkSequence
+                    let peer = AudioForwardingPairedDevice(id: binding.pairedDeviceId, pairingGeneration: UUID())
+                    let credential = try! JSONDecoder().decode(AudioForwardingCredential.self, from: JSONSerialization.data(withJSONObject: [
+                        "pairedDeviceId": binding.pairedDeviceId.hex, "pairingGeneration": peer.pairingGeneration.uuidString,
+                        "credential": String(repeating: "a", count: 43)]))
+                    let intent = try! JSONDecoder().decode(AudioForwardingIntentRequest.self, from: JSONSerialization.data(withJSONObject: [
+                        "schemaVersion": 1, "pairedDeviceId": binding.pairedDeviceId.hex, "intentId": UUID().uuidString,
+                        "intentRevision": "1", "action": "request", "inputDesired": true, "outputDesired": true,
+                        "expectedRevision": "0", "transportId": binding.transportId.uuidString, "transportKind": "http", "bindingRevision": "1"]))
+                    expect(await f.relay.forwardingRequest(intent, peer: peer, credential: credential) == nil, "HTTP intent submission remains prohibited")
+                    expect(f.requests().count == count && f.relay.checkSequence == sequence, "HTTP intent request is not sent")
+                }
+            } else {
+                expect(result == nil && f.relay.checkClosed, "HTTP preparation rejects mismatched receipt identity")
+            }
+            f.finish()
+        }
+    }
+    @MainActor static func reentrantAdmission() async {
+        for mutation in ["lost", "boot", "phase", "slot", "process"] {
+            let f = await Fixture.make(), relay = f.relay
+            let sequence = relay.checkSequence, count = f.requests().count
+            var completed = false
+            let request = Task {
+                let result = await relay.checkedCall("reentrant-\(mutation)", until: .now.advanced(by: .seconds(1)), admission: {
+                    switch mutation {
+                    case "lost": relay.lost()
+                    case "boot": relay.checkReplaceConnectedBoot()
+                    case "phase": relay.checkReplacePhase()
+                    case "slot": relay.checkReplaceSlot()
+                    default:
+                        f.child.terminate()
+                        f.child.waitUntilExit()
+                    }
+                    return true
+                })
+                completed = true
+                return result
+            }
+            await wait { completed }
+            expect(await request.value == nil, "reentrant admission rejects before send \(mutation)")
+            expect(relay.checkSequence == sequence && !relay.checkPending, "reentry consumes no sequence or pending continuation \(mutation)")
+            expect(f.requests().count == count, "child receives no reentrant frame \(mutation)")
+            f.finish()
+        }
     }
     @MainActor static func fifo() async {
         let f = await Fixture.make(), relay = f.relay

@@ -87,7 +87,7 @@ enum LocalAudioRelayJSON {
 
 @MainActor
 final class LocalAudioRelay {
-    private enum State { case idle, bootstrapping, checkingRuntime(UUID), connected(UUID), closed }
+    private enum State: Equatable { case idle, bootstrapping, checkingRuntime(UUID), connected(UUID), closed }
     private struct Empty: Codable {}
     private struct Inspection: Encodable { let operationId: UUID }
     private struct Runtime: Decodable {
@@ -329,7 +329,6 @@ final class LocalAudioRelay {
               let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
             privacyGeneration: binding.configuration.privacyGeneration, membership: membership),
               binding.configuration == configuration,
-              binding.transportKind == .native,
               let expected = binding.participantRequest(for: .relay, budgetMilliseconds: max(1, min(5000, budget))),
               expected.bootId == boot else { return nil }
         let result: AudioForwardingResult<LocalAudioParticipantReceipt>? = await forwardingCall("forwardingPrepare",
@@ -410,6 +409,8 @@ final class LocalAudioRelay {
         guard sequence < UInt64.max, process.isRunning else {
             lost(); return nil
         }
+        let expectedState = state
+        let expectedProcessId = process.processIdentifier
         let expectedBoot: UUID?
         switch state {
         case .bootstrapping: guard method == "bootstrap" else { lost(); return nil }; expectedBoot = nil
@@ -428,7 +429,9 @@ final class LocalAudioRelay {
         var sent = false
         let response: Data? = await withTaskCancellationHandler {
             await withCheckedContinuation { completion in
-                guard admission?() != false, !Task.isCancelled, ContinuousClock.now < deadline else {
+                guard admission?() != false, activeCall == requestId, state == expectedState,
+                      process.isRunning, process.processIdentifier == expectedProcessId,
+                      !Task.isCancelled, ContinuousClock.now < deadline else {
                     completion.resume(returning: nil)
                     return
                 }

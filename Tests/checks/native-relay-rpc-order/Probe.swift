@@ -9,5 +9,8 @@ extension LocalAudioRelay {
     var checkConnected: Bool { if case .connected = state { true } else { false } }
     var checkClosed: Bool { if case .closed = state { true } else { false } }
     var checkDrained: Bool { pending == nil && waiting.isEmpty && activeCall == nil && buffer.isEmpty }
+    func checkReplaceConnectedBoot() { state = .connected(UUID()) }
+    func checkReplacePhase() { if case .connected(let boot) = state { state = .checkingRuntime(boot) } }
+    func checkReplaceSlot() { activeCall = UUID() }
     func checkSetSequence(_ value: UInt64) { sequence = value }
 }

@@ -10,6 +10,7 @@ configuration = None
 controller = None
 sequence = 0
 binding = None
+prepared_receipt = None
 
 def snapshot():
     return dict(schemaVersion=1, revision='1', intent=None, binding=None)
@@ -45,7 +46,7 @@ for line in sys.stdin:
     elif method == 'forwardingSnapshot':
         intent_generation, epoch = str(uuid.uuid4()), str(uuid.uuid4())
         binding = binding or dict(pairedDeviceId='ab' * 32, intentGeneration=intent_generation, bindingEpoch=epoch,
-                       transportId=str(uuid.uuid4()), transportKind='native', operationId=str(uuid.uuid4()),
+                       transportId=str(uuid.uuid4()), transportKind='http' if mode.startswith('http') else 'native', operationId=str(uuid.uuid4()),
                        phase='quiescing', configuration=configuration)
         result = dict(schemaVersion=1, revision='1', binding=binding, intent=dict(pairedDeviceId='ab' * 32,
             intentId=str(uuid.uuid4()), intentRevision='1', intentGeneration=binding['intentGeneration'],
@@ -58,18 +59,20 @@ for line in sys.stdin:
         request = dict(operationId=binding['operationId'], privacyGeneration=configuration['privacyGeneration'],
                        registryRevision=configuration['registryRevision'])
         result = receipt(request)
-        if mode.startswith('receipt-'):
-            field = mode[len('receipt-'):]
+        receipt_mode = mode[5:] if mode.startswith('http-') else mode
+        if receipt_mode.startswith('receipt-'):
+            field = receipt_mode[len('receipt-'):]
             if field == 'state': result[field] = 'blocked'
             elif field == 'facts': result[field]['workersExited'] = False
             elif field == 'schemaVersion': result[field] = 2
             elif field == 'registryRevision': result[field] = '999'
             elif field == 'participantId': result[field] = 'native.sill'
             else: result[field] = str(uuid.uuid4())
+        prepared_receipt = result
     elif method == 'fenceAndQuiesce':
         result = receipt(payload)
     elif method == 'inspect':
-        result = None
+        result = prepared_receipt if prepared_receipt and payload['operationId'].lower() == prepared_receipt['operationId'].lower() else None
     else:
         if method.startswith('hold'): time.sleep(0.2)
         result = 1

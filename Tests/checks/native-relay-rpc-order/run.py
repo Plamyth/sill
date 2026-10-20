@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 root = Path(sys.argv[1]).resolve()
+assert sys.argv[2:] in [[], ['http-admission']]
 check = root / 'Tests/checks/native-relay-rpc-order'
 names = ['Sources/SillHost/LocalAudioRelay.swift', 'Sources/SillHost/LocalAudioParticipants.swift',
          'Sources/SillHost/AudioForwardingContract.swift', 'Sources/SillHost/RemoteAccess.swift']
@@ -30,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='relay-rpc-check-') as scratch:
     print(compile_result.stdout + compile_result.stderr, end='')
     executed = None
     if compile_result.returncode == 0:
-        worker = subprocess.Popen([str(binary), str(check / 'child.py'), str(out)],
+        worker = subprocess.Popen([str(binary), str(check / 'child.py'), str(out), *sys.argv[2:]],
             start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             output, _ = worker.communicate(timeout=90)
