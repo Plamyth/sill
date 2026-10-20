@@ -1409,19 +1409,15 @@ package final class StreamCoordinator {
         await syntheticCapture.stop()
         capture.onFrame = nil; syntheticCapture.onFrame = nil   // both queues drained: let the old encoder go
         rectCache = nil
-        // Input held for the old source must not replay into the new one, but what acts on the whole
-        // Mac still goes, in order: a gesture's chord held behind it, and the up of a key or a button
-        // the Mac has down (DroppedInput: a modifier left down makes the next click a ⌘-click, a
-        // button every move a drag), a button's where the pointer is (`.null`), not where the old
-        // source would have put it. The keys and buttons of devices that left go up after them.
+        // Source changes discard queued actions. Only owed releases and disconnect cleanup survive.
         let dropped = heldInput
         heldInput = []; holdUntil = 0
         for item in dropped {
             switch item {
             case .input(let event, _, let device, _):
                 if injector.isUpOfSomethingDown(event, from: device) { injector.apply(event, in: .null, from: device) }
-            case .chord(let keyCode, let flags):
-                injector.chord(keyCode: keyCode, flags: flags)
+            case .chord:
+                break
             case .disconnect(let device):
                 injector.releaseInput(of: device)
             }
@@ -1672,14 +1668,9 @@ package final class StreamCoordinator {
     // the active app's key window and a first click into an inactive app is otherwise eaten as
     // "activate". On the regular path the window is also raised when another window covers the
     // click or scroll point, so the event reaches it and it repaints; on the virtual display a
-    // cover can only be a stranger, which is moved off instead. Activation is Accessibility only
-    // (the direct NSRunningApplication call is refused from a background process since macOS 14,
-    // and a Launch Services "open" trips app-based Focus automations); the app comes up a moment
-    // later, so the events that triggered it are held and replayed in order once it is up. A pick always goes
-    // through Accessibility. Interaction stays cheap: one frontmost lookup per half second at
-    // most, and Accessibility only when the app is not active or a cover is found. An app that
-    // lets the activation run into its timeout (a beach ball) gets no further AX calls from
-    // either: each would hold the main actor for another second.
+    // cover can only be a stranger, which is moved off instead. Activation requests use AX and a
+    // best-effort AppKit fallback, without a Launch Services open. Queued input is admitted only
+    // after fresh OS app/window focus readback, including when activation times out.
     /// Consecutive catalog polls the staged full-screen window has been missing from every list.
     private var missingPolls = 0
     private var lastRaiseCheck: CFAbsoluteTime = 0
@@ -1694,7 +1685,7 @@ package final class StreamCoordinator {
     }
     private var heldInput: [Held] = []
     private var holdUntil: CFAbsoluteTime = 0
-    /// How long held input waits for the app to become frontmost before it is replayed anyway.
+    /// Maximum activation wait. Delivery still requires a fresh target check after this expires.
     private static let activationTimeout: TimeInterval = 0.6
 
     private func deliver(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device, epoch: VideoEpoch? = nil) {
@@ -1704,6 +1695,10 @@ package final class StreamCoordinator {
     }
 
     private func applyAdmittedInput(_ event: InputEvent, rect: CGRect, device: KeyStrokes.Device, epoch: VideoEpoch?) {
+        if injector.isUpOfSomethingDown(event, from: device) {
+            injector.apply(event, in: .null, from: device)
+            return
+        }
         var rect = rect
         if let epoch {
             guard let current = presentationInputRect(SourceInput(event: event, generation: epoch.generation, videoEpoch: epoch.id)) else {
@@ -1712,8 +1707,31 @@ package final class StreamCoordinator {
             }
             rect = current
         }
+        guard inputTargetReady(event) else {
+            injector.releaseInput(of: device)
+            Stats.shared.bump("in.focusRejected")
+            return
+        }
         logClick(event, in: rect)
         injector.apply(event, in: rect, from: device)
+    }
+
+    private func inputTargetReady(_ event: InputEvent) -> Bool {
+        if synthetic { return true }
+        guard case .window(let id) = active else { return active == .desktop }
+        if let point = injectorProbePoint(event) {
+            guard Self.topmostWindow(at: point)?.id == id else { return false }
+        }
+        guard let window = catalog.window(id: id), let pid = window.owningApplication?.processID,
+              Self.activePID(trustAppKit: appKitLoop) == pid else { return false }
+        guard let element = sizer.element(for: window, input: true) else { return false }
+        return WindowSizer.hasKeyboardFocus(element, pid: pid)
+    }
+
+    private func applyAdmittedChord(keyCode: UInt16, flags: UInt64) {
+        guard !switching else { return }
+        guard inputTargetReady(.text("")) else { Stats.shared.bump("in.focusRejected"); return }
+        injector.chord(keyCode: keyCode, flags: flags)
     }
 
     private func releaseHeldInput() {
@@ -1724,7 +1742,7 @@ package final class StreamCoordinator {
         for item in held {
             switch item {
             case .input(let event, let rect, let device, let epoch): applyAdmittedInput(event, rect: rect, device: device, epoch: epoch)
-            case .chord(let keyCode, let flags): injector.chord(keyCode: keyCode, flags: flags)
+            case .chord(let keyCode, let flags): applyAdmittedChord(keyCode: keyCode, flags: flags)
             case .disconnect(let device): injector.releaseInput(of: device)
             }
         }
@@ -1781,6 +1799,10 @@ package final class StreamCoordinator {
         // An app that let the activation run into its timeout gets no more AX calls, each of which
         // would wait out another second; the hold below still applies.
         let answered = notActive ? activate(pid: pid) : true
+        if notActive, appKitLoop, Self.activePID(trustAppKit: true) != pid {
+            // A request is not focus proof. The delivery gate checks the resulting OS focus.
+            _ = NSRunningApplication(processIdentifier: pid)?.activate(options: [])
+        }
         // The streamed window must also be the app's key window, or its first click only makes it
         // key (acceptsFirstMouse is false for most controls). Raising lifts it above the cover.
         // One window lookup serves both.
@@ -1794,12 +1816,11 @@ package final class StreamCoordinator {
         }
         holdUntil = now + Self.activationTimeout
         Task { @MainActor in
-            // Replay as soon as our window is the one under the click (usually 50–200 ms), or at
-            // the timeout. On the virtual display nothing can cover it: wait for activation only.
+            // Release the queue after activation or the deadline; every delivery rechecks focus.
             let deadline = CFAbsoluteTimeGetCurrent() + Self.activationTimeout
             while CFAbsoluteTimeGetCurrent() < deadline {
                 let active = Self.activePID(trustAppKit: self.appKitLoop) == pid
-                let onTop = staged || point.flatMap { Self.topmostWindow(at: $0) }?.pid == pid
+                let onTop = point.map { Self.topmostWindow(at: $0)?.id == id } ?? true
                 if active && onTop { break }
                 try? await Task.sleep(for: .milliseconds(20))
             }
@@ -1998,7 +2019,7 @@ package final class StreamCoordinator {
     }
 
     /// Before a menu of a window source is read or one of its items pressed: its app active and the
-    /// window key, as a click from the device makes them (`raiseIfInteracting`: Accessibility only,
+    /// window key, as a click from the device makes them (`raiseIfInteracting`,
     /// one activation attempt per 2 s, never Launch Services). An inactive app's states differ (its
     /// Copy, Close and Minimize read disabled: the probe), and a press must act on the streamed
     /// window, not another of the app's. No raise: a menu needs the app active, not the window
@@ -2455,7 +2476,7 @@ package final class StreamCoordinator {
             heldInput.append(.chord(keyCode: keyCode, flags: flags))
             return
         }
-        injector.chord(keyCode: keyCode, flags: flags)
+        applyAdmittedChord(keyCode: keyCode, flags: flags)
     }
 
     /// A device's input as `GestureChords` weighs it: whether it can close a view a gesture opened.

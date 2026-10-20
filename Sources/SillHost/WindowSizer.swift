@@ -149,6 +149,22 @@ final class WindowSizer {
         AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     }
 
+    static func hasKeyboardFocus(_ element: AXUIElement, pid: pid_t) -> Bool {
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.05)
+        var application: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute as CFString, &application) == .success,
+              let application, CFGetTypeID(application) == AXUIElementGetTypeID() else { return false }
+        let app = application as! AXUIElement
+        AXUIElementSetMessagingTimeout(app, 0.05)
+        var actualPID: pid_t = 0
+        guard AXUIElementGetPid(app, &actualPID) == .success, actualPID == pid else { return false }
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
+        return CFEqual(focused, element)
+    }
+
     /// Brings a window to the front of its app's windows (Accessibility raise; activating the app
     /// is the coordinator's job). Regular path only: when a pick brings the window forward, and
     /// when another window covers the spot the device clicked or scrolled (otherwise the event
@@ -160,11 +176,11 @@ final class WindowSizer {
     /// The AX element of a window known only by its ScreenCaptureKit description, for `raise` and
     /// `makeKey`. Matched once for both: each match (see `axWindow`) is synchronous IPC into the
     /// app, a second when it hangs. Nil if Accessibility is off or no window matches.
-    func element(for window: SCWindow) -> AXUIElement? {
+    func element(for window: SCWindow, input: Bool = false) -> AXUIElement? {
         guard AXIsProcessTrusted(), let pid = window.owningApplication?.processID else { return nil }
         let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 1.0)
-        return Self.axWindow(matching: window, in: app)
+        AXUIElementSetMessagingTimeout(app, input ? 0.05 : 1.0)
+        return Self.axWindow(matching: window, in: app, input: input)
     }
 
     /// Resolves `window` to its AX element and records its current frame, without moving it.
@@ -266,16 +282,25 @@ final class WindowSizer {
     ///    pick the one whose origin and size are within a few points of the window's live bounds,
     ///    among the title matches if there were any, else among all of the app's windows.
     /// 3. Otherwise nil: resizing the wrong window is worse than not resizing.
-    private static func axWindow(matching window: SCWindow, in app: AXUIElement) -> AXUIElement? {
+    private static func axWindow(matching window: SCWindow, in app: AXUIElement, input: Bool = false) -> AXUIElement? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
               let candidates = value as? [AXUIElement], !candidates.isEmpty else { return nil }
         // The timeout on `app` does not carry over to its windows: a busy app would otherwise hold
         // the main thread for the ~1.5 s default per candidate.
-        for c in candidates { AXUIElementSetMessagingTimeout(c, 0.5) }
+        for c in candidates { AXUIElementSetMessagingTimeout(c, input ? 0.05 : 0.5) }
 
         let title = window.title ?? ""
         let titled = title.isEmpty ? [] : candidates.filter { string(of: $0, kAXTitleAttribute) == title }
+        if input {
+            guard let bounds = liveBounds(of: window.windowID) else { return nil }
+            let matches = (title.isEmpty ? candidates : titled).filter { candidate in
+                guard let f = frame(of: candidate) else { return false }
+                return abs(f.minX - bounds.minX) <= frameTolerance && abs(f.minY - bounds.minY) <= frameTolerance
+                    && abs(f.width - bounds.width) <= frameTolerance && abs(f.height - bounds.height) <= frameTolerance
+            }
+            return matches.count == 1 ? matches[0] : nil
+        }
         if titled.count == 1 { return titled[0] }
 
         let bounds = liveBounds(of: window.windowID) ?? window.frame
