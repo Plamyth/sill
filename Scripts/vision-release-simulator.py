@@ -60,8 +60,13 @@ def validate_lease(lease_id, source, runner, clock=physical.now):
     related_services = {s.get("id") for s in services if s.get("singletonGroup") == group or
                         s.get("resource") == {"kind": "core-simulator", "udid": UDID}}
     related_leases = {r.get("leaseId") for r in status["leases"] if r.get("serviceId") in related_services}
+    require(all("services" not in v or (isinstance(v["services"], list) and
+                all(isinstance(s, str) for s in v["services"])) for v in status["violations"]),
+            "lifecycle_status_invalid")
     require(not any(v.get("serviceId") in related_services or v.get("leaseId") in related_leases or
-                    v.get("singletonGroup") == group for v in status["violations"]), "lifecycle_violation")
+                    v.get("singletonGroup") == group or v.get("group") == group or
+                    related_services.intersection(v.get("services", []))
+                    for v in status["violations"]), "lifecycle_violation")
     require(not any(r.get("leaseId") != lease_id and r.get("serviceId") in related_services and
                     r.get("live") is True for r in status["leases"]), "conflicting_simulator_lease")
     return row
