@@ -376,7 +376,7 @@ def accept(config, work, source):
                   'Library/Application Support/CCRIntegrationTests/' + test_id + '/context.json', 'to')
         ui = harness(config, work, 'testEditAndSave')
         code, current = request(server, 'GET', '/vault/canvas?id=' + test_id); require(code == 200, 'vault_readback_failed')
-        actual = json.loads(base64.b64decode(current['sceneJSONBase64'])); require(actual['nodes'][0]['text'] == ' 앞 뒤', 'native_save_text_mismatch')
+        actual = json.loads(base64.b64decode(current['sceneJSONBase64'])); require(actual['nodes'][0]['text'] == '👩🏽‍💻 앞 ', 'native_save_text_mismatch')
         require(actual['nodes'][0]['id'] == NODE and not actual['strokes'], 'fixture_lineage_mismatch')
         copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/CanvasScene.json', work / 'device-scene.json')
         require(read(work / 'device-scene.json') == actual, 'device_vault_scene_mismatch')
