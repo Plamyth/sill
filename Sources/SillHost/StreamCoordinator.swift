@@ -1631,7 +1631,8 @@ package final class StreamCoordinator {
         }
         if let filter {
             capture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
-            try await capture.start(filter: filter, width: width, height: height, fps: fps, showsCursor: false, sourceRect: sourceRect)
+            try await capture.start(filter: filter, width: width, height: height, fps: fps, showsCursor: false, sourceRect: sourceRect,
+                                    desktopDisplay: source == .desktop && !synthetic ? catalog.display : nil)
         } else {
             syntheticCapture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
             syntheticCapture.start(width: width, height: height, fps: fps)
