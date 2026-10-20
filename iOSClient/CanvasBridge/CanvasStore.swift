@@ -1147,6 +1147,32 @@ final class CanvasStore: ObservableObject {
         status = "글자 후보입니다. 수정한 뒤 확인하면 구조 데이터에 확정됩니다."
     }
 
+    func searchHandwriting(_ query: String, search: (PKDrawing, String) async -> [Set<UUID>] = { drawing, query in
+        let recognizer = PKStrokeRecognizer()
+        await recognizer.updateDrawing(drawing)
+        return await recognizer.search(query).map(\.strokes)
+    }) async {
+        handwritingRequest = nil
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { status = "찾을 글자를 입력하세요."; return }
+        let source = drawing
+        guard !source.strokes.isEmpty else { status = "검색할 획이 없습니다."; return }
+        let request = UUID()
+        handwritingRequest = request
+        let matches = await search(source, query)
+        guard handwritingRequest == request else { return }
+        handwritingRequest = nil
+        let validIDs = Set(source.strokes.map(\.id))
+        let validMatches = matches.map { $0.intersection(validIDs) }.filter { !$0.isEmpty }
+        guard !validMatches.isEmpty else {
+            status = "일치하는 손글씨를 찾지 못했습니다. 원본과 선택은 유지했습니다."
+            return
+        }
+        mode = .lasso
+        setInkSelection(validMatches.reduce(into:Set<UUID>()) { $0.formUnion($1) })
+        status = "손글씨 검색 결과 \(validMatches.count)곳을 선택했습니다."
+    }
+
     func confirmProposal() {
         guard let proposedNode else { return }
         guard scene.confirmNode(proposedNode, text: proposalText.trimmingCharacters(in: .whitespacesAndNewlines)) else {

@@ -19,6 +19,8 @@ struct CanvasWorkspace: View {
     @State private var exportOpen = false
     @State private var importOpen = false
     @State private var inspectorOpen = false
+    @State private var handwritingSearchOpen = false
+    @State private var handwritingQuery = ""
     @State private var dictationOpen = false
     @State private var vaultOpen = false
     @State private var vaultDirectory = ""
@@ -139,6 +141,16 @@ struct CanvasWorkspace: View {
                 catch { return }
             }
         }
+        .alert("손글씨 찾기", isPresented:$handwritingSearchOpen) {
+            TextField("찾을 글자", text:$handwritingQuery)
+            Button("찾기") {
+                let query = handwritingQuery
+                Task { await store.searchHandwriting(query) }
+            }.disabled(handwritingQuery.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+            Button("취소", role:.cancel) { }
+        } message: {
+            Text("원본 획에서 일치하는 손글씨를 찾아 영역으로 선택합니다.")
+        }
         .sheet(isPresented:$connectionOpen) { connectionSheet }
         .sheet(isPresented:$inspectorOpen) {
             NavigationStack {
@@ -220,6 +232,7 @@ struct CanvasWorkspace: View {
             }
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
+            Button("손글씨 찾기",systemImage:"magnifyingglass") { handwritingSearchOpen = true }
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
                 .disabled(store.inkSelection.isEmpty)
