@@ -176,6 +176,12 @@ final class LocalAudioRelay {
         let completion: CheckedContinuation<Data?, Never>
         let timer: Task<Void, Never>
     }
+    private struct Waiting {
+        let id: UUID
+        let deadline: ContinuousClock.Instant
+        let completion: CheckedContinuation<Bool, Never>
+        let timer: Task<Void, Never>
+    }
 
     private let participants: LocalAudioParticipantRegistry
     private let process: Process
@@ -190,7 +196,8 @@ final class LocalAudioRelay {
     private var buffer = Data()
     private var pending: Pending?
     private var sequence: UInt64 = 0
-    private var busy = false
+    private var activeCall: UUID?
+    private var waiting: [Waiting] = []
     private var registeredBoot: UUID?
 
     init(participants: LocalAudioParticipantRegistry, process: Process,
@@ -247,8 +254,10 @@ final class LocalAudioRelay {
         participants.register(.relay, bootId: reply.relayBootId, control: .init(fenceAndQuiesce: { [weak self] request in
             guard let self else { return .init(request, state: .unknown, facts: .unknown) }
             let deadline = ContinuousClock.now.advanced(by: .milliseconds(request.budgetMilliseconds))
-            guard let reply: Reply<LocalAudioParticipantReceipt> = await self.call("fenceAndQuiesce", payload: request, until: deadline),
-                  reply.result.proves(request) else {
+            guard let reply: Reply<LocalAudioParticipantReceipt> = await self.call("fenceAndQuiesce", payload: request, until: deadline) else {
+                return .init(request, state: .unknown, facts: .unknown)
+            }
+            guard reply.result.proves(request) else {
                 self.lost()
                 return .init(request, state: .unknown, facts: .unknown)
             }
@@ -305,14 +314,27 @@ final class LocalAudioRelay {
     }
 
     func forwardingPrepare(_ binding: AudioForwardingBinding) async -> AudioForwardingResult<LocalAudioParticipantReceipt>? {
+        await forwardingPrepare(binding, until: ContinuousClock.now.advanced(by: .seconds(5)))
+    }
+
+    func forwardingPrepare(_ binding: AudioForwardingBinding, until deadline: ContinuousClock.Instant) async -> AudioForwardingResult<LocalAudioParticipantReceipt>? {
         struct Preparation: Encodable { let intentGeneration: UUID; let bindingEpoch: UUID }
+        let now = ContinuousClock.now
+        let deadline = min(deadline, now.advanced(by: .seconds(5)))
+        guard !Task.isCancelled, now < deadline else { return nil }
+        let remaining = now.duration(to: deadline).components
+        let budget = Int(remaining.seconds * 1000 + remaining.attoseconds / 1_000_000_000_000_000)
         let membership = participants.snapshot
-        guard let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
+        guard forwarding, case .connected(let boot) = state,
+              let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
             privacyGeneration: binding.configuration.privacyGeneration, membership: membership),
               binding.configuration == configuration,
-              let expected = binding.participantRequest(for: .relay, budgetMilliseconds: 2000) else { return nil }
+              binding.transportKind == .native,
+              let expected = binding.participantRequest(for: .relay, budgetMilliseconds: max(1, min(5000, budget))),
+              expected.bootId == boot else { return nil }
         let result: AudioForwardingResult<LocalAudioParticipantReceipt>? = await forwardingCall("forwardingPrepare",
-            payload: Preparation(intentGeneration: binding.intentGeneration, bindingEpoch: binding.bindingEpoch))
+            payload: Preparation(intentGeneration: binding.intentGeneration, bindingEpoch: binding.bindingEpoch), until: deadline)
+        guard case .connected(let currentBoot) = state, currentBoot == boot else { return nil }
         guard participants.matches(membership) else { lost(); return nil }
         if case .accepted(let receipt) = result, !receipt.proves(expected) { lost(); return nil }
         return result
@@ -329,16 +351,63 @@ final class LocalAudioRelay {
     }
 
     private func forwardingCall<Payload: Encodable, Result: Decodable>(_ method: String,
-        payload: Payload) async -> AudioForwardingResult<Result>? {
+        payload: Payload, until deadline: ContinuousClock.Instant? = nil,
+        admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<Result>? {
         guard forwarding, case .connected = state else { return nil }
         let reply: Reply<AudioForwardingResult<Result>>? = await call(method, payload: payload,
-            until: ContinuousClock.now.advanced(by: .seconds(3)))
+            until: deadline ?? ContinuousClock.now.advanced(by: .seconds(3)), admission: admission)
         return reply?.result
     }
 
+    private func acquireCall(_ id: UUID, until deadline: ContinuousClock.Instant) async -> Bool {
+        guard !Task.isCancelled, ContinuousClock.now < deadline else { return false }
+        if case .closed = state { return false }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { completion in
+                if activeCall == nil {
+                    activeCall = id
+                    completion.resume(returning: true)
+                } else {
+                    let timer = Task { [weak self] in
+                        try? await ContinuousClock().sleep(until: deadline)
+                        if !Task.isCancelled { self?.removeWaiting(id) }
+                    }
+                    waiting.append(Waiting(id: id, deadline: deadline, completion: completion, timer: timer))
+                }
+            }
+        } onCancel: { [weak self] in Task { @MainActor in self?.removeWaiting(id) } }
+    }
+
+    private func removeWaiting(_ id: UUID) {
+        guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
+        let removed = waiting.remove(at: index)
+        removed.timer.cancel()
+        removed.completion.resume(returning: false)
+    }
+
+    private func releaseCall(_ id: UUID) {
+        guard activeCall == id else { return }
+        activeCall = nil
+        while !waiting.isEmpty {
+            let next = waiting.removeFirst()
+            next.timer.cancel()
+            if ContinuousClock.now >= next.deadline {
+                next.completion.resume(returning: false)
+            } else {
+                activeCall = next.id
+                next.completion.resume(returning: true)
+                return
+            }
+        }
+    }
+
     private func call<Payload: Encodable, Result: Decodable>(_ method: String, payload: Payload,
-                                                           until deadline: ContinuousClock.Instant) async -> Reply<Result>? {
-        guard !Task.isCancelled, !busy, sequence < UInt64.max, process.isRunning, ContinuousClock.now < deadline else {
+        until deadline: ContinuousClock.Instant, admission: (@MainActor () -> Bool)? = nil) async -> Reply<Result>? {
+        let requestId = UUID()
+        guard await acquireCall(requestId, until: deadline) else { return nil }
+        defer { releaseCall(requestId) }
+        guard !Task.isCancelled, ContinuousClock.now < deadline else { return nil }
+        guard sequence < UInt64.max, process.isRunning else {
             lost(); return nil
         }
         let expectedBoot: UUID?
@@ -348,18 +417,23 @@ final class LocalAudioRelay {
         case .connected(let boot): expectedBoot = boot
         case .idle, .closed: return nil
         }
-        busy = true
-        defer { busy = false }
-        sequence += 1
-        let requestId = UUID(), expectedSequence = String(sequence)
+        let nextSequence = sequence + 1
+        let expectedSequence = String(nextSequence)
         let request = Request(controllerBootId: controllerBootId, sequence: expectedSequence,
                               requestId: requestId, method: method, payload: payload)
         guard var bytes = try? JSONEncoder().encode(request), bytes.count < LocalAudioRelayJSON.limit else {
             lost(); return nil
         }
         bytes.append(10)
+        var sent = false
         let response: Data? = await withTaskCancellationHandler {
             await withCheckedContinuation { completion in
+                guard admission?() != false, !Task.isCancelled, ContinuousClock.now < deadline else {
+                    completion.resume(returning: nil)
+                    return
+                }
+                sequence = nextSequence
+                sent = true
                 let timer = Task { [weak self] in
                     try? await ContinuousClock().sleep(until: deadline)
                     if !Task.isCancelled, self?.pending?.id == requestId { self?.lost() }
@@ -371,7 +445,10 @@ final class LocalAudioRelay {
                     catch { Task { @MainActor in self?.lost() } }
                 }
             }
-        } onCancel: { [weak self] in Task { @MainActor in self?.lost() } }
+        } onCancel: { [weak self] in Task { @MainActor in
+            if self?.pending?.id == requestId { self?.lost() }
+        } }
+        guard sent else { return nil }
         guard let response, !Task.isCancelled, ContinuousClock.now < deadline else { lost(); return nil }
         do {
             try LocalAudioRelayJSON.validate(response)
@@ -402,6 +479,13 @@ final class LocalAudioRelay {
     func lost() {
         if case .closed = state { return }
         state = .closed
+        activeCall = nil
+        let queued = waiting
+        waiting.removeAll()
+        for item in queued {
+            item.timer.cancel()
+            item.completion.resume(returning: false)
+        }
         if let boot = registeredBoot, participants.snapshot.boots[.relay] == boot { participants.unregister(.relay) }
         registeredBoot = nil
         let completing = pending

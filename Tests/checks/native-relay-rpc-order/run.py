@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -20,16 +21,29 @@ with tempfile.TemporaryDirectory(prefix='relay-rpc-check-') as scratch:
     (out / 'Relay.swift').write_text(source)
     access = (root / names[3]).read_text()
     paired = access[access.index('struct AudioForwardingPairedDevice:'):access.index('\n/// Pairing')]
-    (out / 'Paired.swift').write_text('import Foundation\n' + paired)
+    (out / 'Paired.swift').write_text('import Foundation\n' + paired.replace('fileprivate init(', 'init('))
+    (out / 'Registry.swift').write_text((root / names[1]).read_text() + '\n' + (check / 'RegistryProbe.swift').read_text())
     binary = out / 'checks'
     compile_result = subprocess.run(['swiftc', '-parse-as-library', str(out / 'Relay.swift'),
-        str(root / names[1]), str(root / names[2]), str(out / 'Paired.swift'), str(check / 'Main.swift'),
+        str(out / 'Registry.swift'), str(root / names[2]), str(out / 'Paired.swift'), str(check / 'Main.swift'),
         '-o', str(binary)], timeout=120, capture_output=True, text=True)
     print(compile_result.stdout + compile_result.stderr, end='')
     executed = None
     if compile_result.returncode == 0:
-        executed = subprocess.run([str(binary), str(check / 'child.py')], timeout=45, capture_output=True, text=True)
-        print(executed.stdout + executed.stderr, end='')
+        worker = subprocess.Popen([str(binary), str(check / 'child.py'), str(out)],
+            start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            output, _ = worker.communicate(timeout=90)
+        except subprocess.TimeoutExpired:
+            os.killpg(worker.pid, signal.SIGKILL)
+            output, _ = worker.communicate()
+        finally:
+            try:
+                os.killpg(worker.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        executed = worker
+        print(output, end='')
     after = hashes()
     receipt = dict(compileExit=compile_result.returncode, checksExit=executed.returncode if executed else None,
         sourceHashes=before, sourceUnchanged=before == after, extractedRelaySHA256=hashlib.sha256(source.encode()).hexdigest(),
