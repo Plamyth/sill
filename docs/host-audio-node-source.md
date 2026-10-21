@@ -1,6 +1,8 @@
 # Host 오디오 중계 Node 소스 고정
 
-대상 Node commit은 `24190a6af7306e06b9e681042034f8556c8942fb`, tree는 `7d52e175a9065d3493acf330c917c67fa30ff364`이다. 기존 필수 계약인 `nodeSourceCommit`과 `localnodeCommit`을 유지하며 새 필드를 도입하지 않는다.
+대상 Node commit은 `24190a6af7306e06b9e681042034f8556c8942fb`, tree는 `7d52e175a9065d3493acf330c917c67fa30ff364`이다. 기존 필수 계약인 `manifest.nodeSourceCommit`과 `LocalAudioRelayManifest.nodeCommit`을 유지하며 새 필드를 도입하지 않는다.
+
+서버 봉인 해시표도 함께 갱신한다. `server/audio-forwarding-proxy.js`의 기대 SHA-256은 `b7cdb3504785a315a2c1ed304e0d62583c60506f70c8fad0f56231c1337ff48c`이며 실제 proxy 바이트와 일치해야 한다. proxy 바이트와 매니페스트 해시를 함께 변조해도 거절하는 검사로 확인한다.
 
 이전 `1f846e8b776dec9b504cebf78735e57dc1ad5cda` 대비 서버 모듈 16개 중 proxy 1개가 바뀌고 15개는 같다. 이 Git 객체 비교의 검증 책임은 부모 담당에게 있다. 패키징에는 대상 commit의 실제 proxy 바이트와 그 SHA-256을 반영해야 한다. 매니페스트의 commit만 바꾼 패키지는 수용 대상이 아니다.
 

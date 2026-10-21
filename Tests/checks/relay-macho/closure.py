@@ -85,7 +85,7 @@ try:
     manifest.write_text(json.dumps(data))
     execute(scratch, False)
     manifest.write_bytes(saved)
-    for name in ["server/control-room-server.js", "python/lib/python3.13/site-packages/sounddevice.py", "node/bin/node"]:
+    for name in ["server/control-room-server.js", "server/audio-forwarding-proxy.js", "python/lib/python3.13/site-packages/sounddevice.py", "node/bin/node"]:
         target = scratch / "runtime" / name
         contents = target.read_bytes()
         changed = contents[:12] if name == "node/bin/node" else contents + b"\n# modified\n"
