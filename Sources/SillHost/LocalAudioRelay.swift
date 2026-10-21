@@ -346,11 +346,13 @@ final class LocalAudioRelay {
         return result
     }
 
-    func forwardingConfigure(privacyGeneration: UUID) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+    func forwardingConfigure(privacyGeneration: UUID,
+                             admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         let membership = participants.snapshot
         guard let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
             privacyGeneration: privacyGeneration, membership: membership) else { return nil }
-        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingConfigure", payload: configuration)
+        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingConfigure", payload: configuration, admission: admission)
+        guard admission?() != false else { return nil }
         guard participants.matches(membership) else { lost(); return nil }
         return result
     }
@@ -458,9 +460,12 @@ final class LocalAudioRelay {
         return result
     }
 
-    func forwardingDisconnect(_ binding: AudioForwardingBinding) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+    func forwardingDisconnect(_ binding: AudioForwardingBinding,
+                              admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         struct Disconnection: Encodable { let bindingEpoch: UUID }
-        return await forwardingCall("forwardingDisconnect", payload: Disconnection(bindingEpoch: binding.bindingEpoch))
+        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingDisconnect",
+            payload: Disconnection(bindingEpoch: binding.bindingEpoch), admission: admission)
+        return admission?() == false ? nil : result
     }
 
     func forwardingRevoke(_ peer: AudioForwardingPairedDevice) async -> AudioForwardingResult<AudioForwardingSnapshot>? {

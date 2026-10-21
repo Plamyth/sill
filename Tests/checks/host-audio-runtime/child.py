@@ -82,6 +82,8 @@ for line in sys.stdin:
             connections[key] = (payload['pairedDeviceId'], time.monotonic())
         elif payload['operation'] == 'detach':
             connections.pop(key, None)
+        if binding and not any(value[0] == binding['pairedDeviceId'] for value in connections.values()):
+            binding = None
         result = snapshot()
         if payload['operation'] == 'attach' and (directory / 'refuse-attach').exists():
             result = dict(state='refused', code='fixture_attach_refused', snapshot=snapshot())
@@ -105,6 +107,7 @@ for line in sys.stdin:
         revision += 1
         result = snapshot()
     elif method == 'forwardingSnapshot':
+        wait_flag('snapshot')
         now = time.monotonic()
         connections = {key: value for key, value in connections.items() if now - value[1] < 10}
         if (directory / 'http-pending').exists() and not http_started and binding is None and connections:

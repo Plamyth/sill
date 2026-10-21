@@ -12,6 +12,6 @@ runtime은 같은 epoch를 중복 reconcile하지 않고, 긴 reconcile을 기�
 
 생성자는 `init(privacy:sentry:prepareProtection:)`다. `prepareProtection: @MainActor () -> Bool`은 새 quiescing binding을 소비할 때 실제 privacy 또는 sentry readback이 없을 경우만 호출한다. 부모가 실제 admission, arm 또는 reconcile, sentry 활성화를 수행한다. runtime은 콜백 뒤에도 실제 모델의 proof를 다시 확인하며 arm으로 보호 세대나 설정이 바뀌면 이전 binding은 commit하지 않는다. 정상 active의 관측은 콜백을 재실행하지 않는다. catalog 조회는 보호 준비의 성공을 요구하지 않는다.
 
-기존 `forwardingConfigure(privacyGeneration:)`와 `forwardingDisconnect(_:)`에는 caller admission 인자가 없다. runtime은 configure 동안 commit admission을 닫고 반환 후 controllerBoot/privacyGeneration/membership을 비교한다. disconnect는 정확한 bindingEpoch만 대상으로 한다. 이 두 API의 FIFO 대기 후 caller 세대를 송신 직전에 검사하려면 `admission: (@MainActor () -> Bool)?`가 필요하며, 이 작업의 허용 소스 범위에서는 추가하지 않았다. 이 경계는 전체 송신 계약의 미충족 항목으로 남는다.
+`forwardingConfigure`와 `forwardingDisconnect`는 기본 nil인 caller admission을 기존 FIFO 송신 직전에 전달한다. runtime은 설정 세대·relay·설정 또는 정확한 epoch와 연결 소유를 검사한다. 대기 중 무효화된 configure는 송신하지 않고 공유 pipe를 보존하는 직접 회귀를 포함한다.
 
 이 작업자는 Swift 빌드·회귀를 실행하지 않는다. 부모의 Mini 실행과 통합 SDK 검사, 독립 검수 전에는 실행 통과나 실제 설치 수용으로 표시하지 않는다.
