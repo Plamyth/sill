@@ -232,9 +232,16 @@ struct RemoteAudioSubscription { let enabled: Bool; let requestID: UUID }
         check(!starting.retirementConfirmed, "new generation cannot erase start-stop overlap")
 
         let stale = CallbackCoordinator(), a = Plan(), b = Plan()
+        let stopped = stale.remoteAudioCapture.onStopped
+        var delayedStop: (() -> Void)?
+        stale.remoteAudioCapture.onStopped = { generation, error in
+            delayedStop = { stopped?(generation, error) }
+        }
         await start(stale.remoteAudioCapture, a)
         stale.remoteAudioCapture.stream(a.stream!, didStopWithError: TestFailure.injected)
         await start(stale.remoteAudioCapture, b)
+        check(delayedStop != nil && stale.remoteAudioCapture.hasStream, "old stop notification waits until replacement start is complete")
+        delayedStop?()
         for _ in 0..<10 { await Task.yield() }
         check(stale.revocations == 0 && stale.remoteAudioCapture.hasStream,
               "queued old capture failure cannot revoke the replacement subscription")
