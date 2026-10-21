@@ -201,10 +201,11 @@ struct Main {
                          "긴 participant 준비 중에도 HTTP snapshot 관측과 연결별 renew가 진행됩니다.")
             precondition(f.count("forwardingCommit") == 0 && f.nativeStops == 1,
                          "늦은 native 준비 완료는 만료된 epoch를 commit할 수 없습니다.")
+            await f.until(seconds: 7) { f.count("forwardingDisconnect") == 1 }
             gate.release()
             try await Task.sleep(for: .milliseconds(100))
             precondition(f.count("forwardingCommit") == 0)
-            checks += 4
+            checks += 5
         }
 
         for invalidation in ["protection", "configuration", "boot", "close"] {
