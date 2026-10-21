@@ -3,6 +3,12 @@ import CryptoKit
 import Security
 import Darwin
 
+enum VisionReleaseTestContext {
+    static let isTestBundle = false
+    static let usesSceneLifecycle = true
+}
+enum VisionReleaseRuntimeWriter { static func write() {} }
+
 struct NWInterface: Hashable { let name: String }
 enum NWEndpoint: Hashable {
     case service(name: String, type: String, domain: String, interface: NWInterface?)
@@ -150,6 +156,18 @@ final class StreamClient {
     func admitVisionDisplays(lease: VisionWindowLease?, foreground: Bool) {}
     var visionStartupStarted = true
     var visionStartupForeground = true
+    var visionTextForeground = false
+    let displayView = FixtureDisplay()
+    let visionAudio = FixtureAudio()
+    var visionDisplaySelection = FixtureSelection()
+    func revokeVisionTextDrafts() {}
+    func microphoneApplicationActive(_ active: Bool) {}
+    func microphoneBackgrounded() {}
+    func revokeVisionMacAudioRoutes(foreground: Bool) {}
+    func rebuildIfDue(_ kind: FixtureBrowserKind, cameForward: Bool) {}
+    enum FixtureBrowserKind { case network, nearby }
+    func fixtureBackground() { wentToBackground() }
+    func fixtureActive() { cameForward() }
     var localNetworkDenied = false
     var queue = DispatchQueue()
     var session: Session?
@@ -236,6 +254,8 @@ final class FixtureLaunchClient {
     }
     func stopVisionCableBootstrap(_ reason: VisionCableBootstrapReason) { bootstrap.stop(reason) }
 }
+struct FixtureSelection { var lease: VisionWindowLease? }
+final class FixtureDisplay { func setPresentationForeground(_ active: Bool) {} }
 final class FixtureAudio { func setForeground(_ active: Bool) {} }
 enum VisionMicrophoneAdmission { enum Scene { case active, inactive, background } }
 enum ScenePhase { case active, inactive, background }
@@ -261,5 +281,8 @@ final class FixtureAppOwner {
 // The startup fixture does not instantiate the audio graph or shared authority.
 enum VisionRemoteAudioStore {
     static let shared = InertAudioRetirement()
-    final class InertAudioRetirement { func retire(_ client: StreamClient) {} }
+    final class InertAudioRetirement {
+        func retire(_ client: StreamClient) {}
+        func refresh() {}
+    }
 }

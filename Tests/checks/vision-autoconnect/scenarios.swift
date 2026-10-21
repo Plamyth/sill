@@ -258,6 +258,37 @@ for appBackground in [false, true] {
     timer.performEvenIfCancelled(); client.discoveryChanged()
     check("app or scene background permanently closes pending startup", client.remoteAttempts.isEmpty && timer.cancelled)
 }
+for sceneFirst in [false, true] {
+    let client = savedStartup()
+    let oldTimer = armRemote(client)
+    if sceneFirst {
+        client.visionStartupForeground = false
+        client.setVisionPresentationForeground(false)
+        client.fixtureBackground()
+    } else {
+        client.fixtureBackground()
+        client.visionStartupForeground = false
+        client.setVisionPresentationForeground(false)
+    }
+    oldTimer.performEvenIfCancelled(); client.discoveryChanged()
+    check("inactive saved startup makes no dial", client.remoteAttempts.isEmpty && client.sessionPins.isEmpty)
+    let beforeResume = DispatchQueue.main.timers.count
+    if sceneFirst {
+        client.visionStartupForeground = true
+        client.setVisionPresentationForeground(true)
+        client.fixtureActive()
+    } else {
+        client.fixtureActive()
+        client.visionStartupForeground = true
+        client.setVisionPresentationForeground(true)
+    }
+    oldTimer.performEvenIfCancelled()
+    check("cancelled deadline cannot consume resumed saved startup", client.remoteAttempts.isEmpty)
+    check("saved startup resumes with one fresh deadline", DispatchQueue.main.timers.count == beforeResume + 1)
+    DispatchQueue.main.timers.last!.1.performEvenIfCancelled()
+    client.discoveryChanged(); client.fixtureActive(); client.setVisionPresentationForeground(true)
+    check("saved startup reconnects once after app and scene reactivate", client.remoteAttempts.count == 1 && client.reconnect != nil)
+}
 for mode in [launch, Boot.Launch.invalid] {
     let client = savedStartup(mode)
     let before = DispatchQueue.main.timers.count

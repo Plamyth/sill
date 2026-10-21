@@ -34,7 +34,9 @@ def block(source, marker):
 
 
 def vision(source):
-    return select_platform(source.replace('os(iOS) || os(visionOS)', 'os(visionOS)'), vision=True)
+    source = source.replace('os(iOS) || os(visionOS)', 'os(visionOS)')
+    source = source.replace('os(visionOS) && DEBUG && targetEnvironment(simulator)', 'DEBUG && targetEnvironment(simulator)')
+    return select_platform(source, vision=True)
 
 
 def emit(root, output):
@@ -67,7 +69,8 @@ def emit(root, output):
                    'func rememberAuthenticatedMac(', 'private func trySavedMacAutoConnect(',
                    'private func tryVisionSavedMacAutoConnect(', 'func homeDecision(', 'func wiredDial(']:
         pieces[marker] = vision(block(stream, marker))
-    for marker in ['func retireVisionWindow()', 'func disconnect()']:
+    for marker in ['func retireVisionWindow()', 'func disconnect()', 'func setVisionPresentationForeground(',
+                   'private func cameForward()', 'private func wentToBackground(']:
         pieces[marker] = vision(block(stream, marker))
     for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()', 'func cancelRemoteDial()']:
         pieces[marker] = vision(block(remote, marker))
