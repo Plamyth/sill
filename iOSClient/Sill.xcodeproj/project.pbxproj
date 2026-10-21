@@ -72,6 +72,7 @@
 		A1000001000000000000A402 /* TourOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000F402 /* TourOverlay.swift */; };
 		A1000001000000000000AB01 /* DuoPosture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB01 /* DuoPosture.swift */; };
 		A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
+		B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000F001 /* PencilTextCorrection.swift */; };
 		B2000001000000000000A001 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
 		B2000001000000000000A002 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
 		B2000001000000000000A003 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
@@ -157,6 +158,7 @@
 		A1000001000000000000F402 /* TourOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourOverlay.swift; sourceTree = "<group>"; };
 		A1000001000000000000FB01 /* DuoPosture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPosture.swift; sourceTree = "<group>"; };
 		A1000001000000000000FB02 /* DuoPostureReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPostureReader.swift; sourceTree = "<group>"; };
+		B2000021000000000000F001 /* PencilTextCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilTextCorrection.swift; sourceTree = "<group>"; };
 		B2000001000000000000F001 /* CanvasModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasModel.swift; sourceTree = "<group>"; };
 		B2000001000000000000F002 /* CanvasRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasRelay.swift; sourceTree = "<group>"; };
 		B2000001000000000000F003 /* CanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasStore.swift; sourceTree = "<group>"; };
@@ -268,6 +270,7 @@
 			isa = PBXGroup;
 			children = (
 				B2000001000000000000F001 /* CanvasModel.swift */,
+				B2000021000000000000F001 /* PencilTextCorrection.swift */,
 				B2000001000000000000F013 /* CanvasPeleView.swift */,
 				B2000001000000000000F014 /* Pele */,
 				B2000001000000000000F002 /* CanvasRelay.swift */,
@@ -393,6 +396,7 @@
 				A1000001000000000000AB01 /* DuoPosture.swift in Sources */,
 				A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */,
 				B2000001000000000000A001 /* CanvasModel.swift in Sources */,
+				B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */,
 				B2000001000000000000A013 /* CanvasPeleView.swift in Sources */,
 				B2000001000000000000A002 /* CanvasRelay.swift in Sources */,
 				B2000001000000000000A003 /* CanvasStore.swift in Sources */,
