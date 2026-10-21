@@ -105,12 +105,19 @@ enum PencilTextCorrectionChecks {
         let beforeStale = view.text
         controller.applyCorrection(scratch,expectedText:"옛 입력")
         try check(view.text == beforeStale,"그리는 동안 바뀐 입력은 적용하지 않음")
+        UIApplication.shared.sendAction(action,to:mode.target,from:mode,for:nil)
+        try check(mode.accessibilityValue == "손글씨 입력","펜 교정 종료 후 손글씨 입력 복원")
+        guard let scribble = view.interactions.compactMap({ $0 as? UIScribbleInteraction }).first else {
+            throw CocoaError(.validationMissingMandatoryProperty)
+        }
+        try check(controller.scribbleInteraction(scribble,shouldBeginAt:.zero),"기존 Scribble 교정 경로 다시 허용")
         guard let start = view.position(from:view.beginningOfDocument,offset:1),
               let end = view.position(from:start,offset:1),
               let range = view.textRange(from:start,to:end) else { throw CocoaError(.validationMissingMandatoryProperty) }
         view.replace(range,withText:"구")
         controller.textViewDidChange(view)
         try check(view.text == "가구" && store.proposalText == "가구","기존 네이티브 입력의 글자 교정 결과 연결")
+        UIApplication.shared.sendAction(action,to:mode.target,from:mode,for:nil)
         try check(store.proposalInputSessionID == session && store.proposalIsCurrent,"수정 중 원래 요소·입력 세션 유지")
         store.confirmProposal()
         store.saveNow()
