@@ -233,7 +233,7 @@ package final class StreamCoordinator {
         "Gestures ignored: \(counts["gestures"] ?? 0) in a minute, from devices sending more than \(StreamCoordinator.gesturesPerSecond) a second."
     }
     struct GestureDesktopContext {
-        let desktopScope: String
+        let desktopScope: String?
         let inputGeneration: String
         let videoEpoch: VideoEpoch
         let scopeToken: UUID
@@ -2554,9 +2554,9 @@ package final class StreamCoordinator {
 
     private func currentGestureDesktop() -> GestureDesktopContext? {
         guard active == .desktop, UUID(uuidString: inputGeneration) != nil,
-              let scope = desktopScope, let epoch = videoEpoch, epoch.isValid,
+              synthetic || desktopScope != nil, let epoch = videoEpoch, epoch.isValid,
               epoch.source == .desktop, epoch.generation == inputGeneration else { return nil }
-        return GestureDesktopContext(desktopScope: scope, inputGeneration: inputGeneration,
+        return GestureDesktopContext(desktopScope: synthetic ? nil : desktopScope, inputGeneration: inputGeneration,
                                      videoEpoch: epoch, scopeToken: gestureScopeToken)
     }
 
@@ -2575,7 +2575,7 @@ package final class StreamCoordinator {
     }
 
     private func gestureDesktopIsCurrent(_ context: GestureDesktopContext) -> Bool {
-        return active == .desktop && desktopScope == context.desktopScope &&
+        return active == .desktop && (synthetic ? nil : desktopScope) == context.desktopScope &&
             inputGeneration == context.inputGeneration && videoEpoch == context.videoEpoch &&
             gestureScopeToken == context.scopeToken
     }

@@ -24,6 +24,10 @@ python3 -B Tests/checks/gesture-drain-scope/run.py --emit-only
 
 작성 범위는 Python AST 파싱, 위 두 생성 결과와 변경 생산 파일의 `swiftc -frontend -parse`, `git diff --check`까지다. 부모는 생성 명령의 종료 코드와 Swift 파싱 코드를 각각 확인해야 하며 단순 파이프의 마지막 종료 코드만으로 생성 성공을 추정하지 않는다. Mini 행동 실행·타입검사·전체 앱 컴파일·서명 후보·독립 검수 결과는 이번 작성 범위에서 미확인이다. 기기·UI·실제 입력·오디오·HAL·설치·재시작은 수행하지 않는다.
 
+작성 결과: 기준 `3ddfd943fb1b44b07d9bc18a9e17807378feab09`와 수정 생산 소스 모두 생성 종료 0, 생성 Swift 파싱 종료 0이다. Python AST 파싱과 변경 생산 파일 단독 파싱, `git diff --check`도 통과했다. 기존 `selectionChecks`와 `checks` 본문은 새 호출·결과 출력 외에 기준과 바이트 대조로 동일함을 확인했다. 생성 결과 SHA-256은 기준 `ad3d00b71cd3c952b9d02df1a73f487c939af62317f5fb0e97f67e787503b99c`, 수정본 `a5726b4fb9d03dd5aafff1f367d8080b6d047fe2f92d1eb7b9dc099b53c0ce84`이다. 두 생성의 `Checks.swift`·`Fixture.swift`·`run.py` 해시가 같음을 확인했다. 행동 실행은 하지 않아 red/green은 미확인이다.
+
+생산 수정은 `GestureDesktopContext.desktopScope`를 optional로 바꾸고, 합성 모드만 물리 scope 없이 허용·저장·비교하도록 한 네 줄이다. `DesktopGestureSelection`의 실제 디스플레이 scope와 티켓 조건, 실제 모드의 scope 필수 조건, epoch·generation·연결·TTL 검증은 유지한다.
+
 ## 창에서 Desktop으로 전환하는 순정 클라이언트의 P2 수정
 
 이번 기준은 `22c04fd33b8c10f61432a18ec21b595afc9d0f7e`, tree `69ad10bc8a90e74034cd147ded11d137339f7029`이다. `iOSClient/StreamClient.swift`의 순정 `sendGesture`는 창 화면에서 Desktop 선택을 보낸 직후 kind 28을 보낸다. 기존 후보가 전환 중 수신을 모두 거부해 이 정상 순서를 잃었다. iOS 클라이언트와 wire 계약은 변경하지 않는다.
