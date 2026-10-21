@@ -598,6 +598,8 @@ final class LocalAudioRelay {
         pending.completion.resume(returning: response)
     }
 
+    func stop() { lost() }
+
     func lost() {
         if case .closed = state { return }
         state = .closed
