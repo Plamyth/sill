@@ -1,406 +1,221 @@
 #!/usr/bin/env python3
-"""CoreAudio 속성의 읽기 전용 표본. 오디오 데이터나 보호 성공을 측정하지 않는다."""
-
+"""공개 CoreAudio 속성만 읽는다. 오디오 샘플과 설정 쓰기 API는 사용하지 않는다."""
 import argparse
 import ctypes as C
+import datetime
 import json
 import math
-import sys
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-
-
-MAX_BYTES = 64 * 1024
-MAX_DEVICES = 4096
-MAX_BUFFERS = 1024
-MAX_CHANNELS = 4096
-MAX_STRING_UNITS = 16384
-SYSTEM = 1
-SCOPES = {"global": "glob", "input": "inpt", "output": "outp"}
-DEFAULTS = {"input": "dIn ", "output": "dOut", "systemOutput": "sOut"}
-CONTROLS = {"mute": ("mute", "bool"), "volumeScalar": ("volm", "scalar"),
-            "volumeDecibels": ("vold", "float")}
-GLOBALS = {"uid": ("uid ", "string"), "name": ("lnam", "string"),
-           "alive": ("livn", "bool"), "transport": ("tran", "uint"),
-           "hog": ("oink", "pid"), "isRunningSomewhere": ("gone", "bool"),
-           "isRunning": ("goin", "bool")}
-ANCHOR_FIELDS = ("uid", "hog", "isRunningSomewhere", "isRunning")
-
-
-@dataclass(frozen=True)
-class Address:
-    selector: str
-    scope: str = "global"
-    element: int = 0
-
-
-@dataclass
-class PropertyObservation:
-    has: bool | None = None
-    sizeStatus: int | None = None
-    getStatus: int | None = None
-    settableStatus: int | None = None
-    settable: bool | None = None
-    value: object = None
-    error: list = field(default_factory=list)
-    sizeBytes: int | None = None
-    returnedSize: int | None = None
-
-
-@dataclass
-class ReadResult:
-    status: int
-    returned_size: int
-    data: bytes | str
-    error: str | None = None
-
-
-class NativeAddress(C.Structure):
-    _fields_ = [("selector", C.c_uint32), ("scope", C.c_uint32), ("element", C.c_uint32)]
-
-
-class AudioBuffer(C.Structure):
-    _fields_ = [("channels", C.c_uint32), ("byte_size", C.c_uint32), ("data", C.c_void_p)]
-
-
-class AudioBufferList(C.Structure):
-    _fields_ = [("count", C.c_uint32), ("buffers", AudioBuffer * 1)]
+import struct
+import sys
 
 
 def fourcc(value):
     return int.from_bytes(value.encode("ascii"), "big")
 
 
-class NativeBackend:
-    def __init__(self):
-        if sys.platform != "darwin":
-            raise RuntimeError("네이티브 조회는 macOS에서만 지원합니다.")
-        hal = C.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
-        self.cf = C.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
-        address = C.POINTER(NativeAddress)
-        u32ptr = C.POINTER(C.c_uint32)
-        self._has = hal.AudioObjectHasProperty
-        self._has.argtypes = [C.c_uint32, address]
-        self._has.restype = C.c_ubyte
-        self._size = hal.AudioObjectGetPropertyDataSize
-        self._size.argtypes = [C.c_uint32, address, C.c_uint32, C.c_void_p, u32ptr]
-        self._size.restype = C.c_int32
-        self._get = hal.AudioObjectGetPropertyData
-        self._get.argtypes = [C.c_uint32, address, C.c_uint32, C.c_void_p, u32ptr, C.c_void_p]
-        self._get.restype = C.c_int32
-        self._settable = hal.AudioObjectIsPropertySettable
-        self._settable.argtypes = [C.c_uint32, address, C.POINTER(C.c_ubyte)]
-        self._settable.restype = C.c_int32
-        for name, args, result in (
-            ("CFGetTypeID", [C.c_void_p], C.c_ulong),
-            ("CFStringGetTypeID", [], C.c_ulong),
-            ("CFStringGetLength", [C.c_void_p], C.c_long),
-            ("CFStringGetMaximumSizeForEncoding", [C.c_long, C.c_uint32], C.c_long),
-            ("CFStringGetCString", [C.c_void_p, C.c_void_p, C.c_long, C.c_uint32], C.c_ubyte),
-            ("CFRelease", [C.c_void_p], None),
-        ):
-            function = getattr(self.cf, name)
-            function.argtypes = args
-            function.restype = result
-
-    @staticmethod
-    def _address(address):
-        return NativeAddress(fourcc(address.selector), fourcc(SCOPES[address.scope]), address.element)
-
-    def has(self, device, address):
-        native = self._address(address)
-        return bool(self._has(device, C.byref(native)))
-
-    def get_size(self, device, address):
-        native, size = self._address(address), C.c_uint32()
-        status = self._size(device, C.byref(native), 0, None, C.byref(size))
-        return status, size.value
-
-    def is_settable(self, device, address):
-        native, value = self._address(address), C.c_ubyte()
-        status = self._settable(device, C.byref(native), C.byref(value))
-        return status, bool(value.value)
-
-    def get(self, device, address, size, kind):
-        validate_size(size, kind)
-        native, used = self._address(address), C.c_uint32(size)
-        storage = C.create_string_buffer(max(1, size))
-        status = self._get(device, C.byref(native), 0, None, C.byref(used), storage)
-        result = ReadResult(status, used.value, b"")
-        if status != 0:
-            return result
-        if kind != "string":
-            result.data = storage.raw[:min(size, used.value)]
-            return result
-        pointer = C.c_void_p.from_buffer(storage).value
-        if pointer is None:
-            result.error = "CFString 포인터가 비어 있습니다."
-            return result
-        try:
-            if used.value != size:
-                raise ValueError("CFString 반환 크기가 요청 크기와 다릅니다.")
-            if self.cf.CFGetTypeID(pointer) != self.cf.CFStringGetTypeID():
-                raise ValueError("반환 객체가 CFString이 아닙니다.")
-            length = self.cf.CFStringGetLength(pointer)
-            if not 0 <= length <= MAX_STRING_UNITS:
-                raise ValueError("CFString 길이가 상한을 벗어났습니다.")
-            encoding = 0x08000100  # kCFStringEncodingUTF8
-            capacity = self.cf.CFStringGetMaximumSizeForEncoding(length, encoding) + 1
-            if not 1 <= capacity <= MAX_BYTES:
-                raise ValueError("UTF-8 변환 버퍼가 상한을 벗어났습니다.")
-            text = C.create_string_buffer(capacity)
-            if not self.cf.CFStringGetCString(pointer, text, capacity, encoding):
-                raise ValueError("CFString UTF-8 변환이 실패했습니다.")
-            result.data = text.value.decode("utf-8")
-            if len(result.data.encode("utf-16-le")) // 2 != length:
-                raise ValueError("CFString 변환 중 문자열이 잘렸습니다.")
-        except (ValueError, UnicodeError) as error:
-            result.error = str(error)
-        finally:
-            # Name과 DeviceUID는 SDK 계약상 성공한 get의 호출자 소유다.
-            self.cf.CFRelease(pointer)
-        return result
+class Address(C.Structure):
+    _fields_ = [("selector", C.c_uint32), ("scope", C.c_uint32), ("element", C.c_uint32)]
 
 
-def validate_size(size, kind):
-    if not isinstance(size, int) or not 0 <= size <= MAX_BYTES:
-        raise ValueError("속성 버퍼 크기가 상한을 벗어났습니다.")
-    expected = C.sizeof(C.c_void_p) if kind == "string" else 4
-    if kind == "ids":
-        if size % 4 or size // 4 > MAX_DEVICES:
-            raise ValueError("장치 목록 크기가 잘못됐습니다.")
-    elif kind == "channels":
-        if size != 0 and size < 4:
-            raise ValueError("AudioBufferList 헤더가 잘렸습니다.")
-    elif size != expected:
-        raise ValueError("속성 자료형과 버퍼 크기가 다릅니다.")
+class AudioBuffer(C.Structure):
+    _fields_ = [("channels", C.c_uint32), ("bytes", C.c_uint32), ("data", C.c_void_p)]
+
+
+class BufferList(C.Structure):
+    _fields_ = [("count", C.c_uint32), ("buffer", AudioBuffer)]
 
 
 def decode(data, kind):
-    if kind == "string":
-        if not isinstance(data, str) or not data or "\x00" in data:
-            raise ValueError("장치 문자열이 비어 있거나 잘못됐습니다.")
-        return data
     if kind == "ids":
-        ids = [C.c_uint32.from_buffer_copy(data[i:i + 4]).value for i in range(0, len(data), 4)]
+        if len(data) % 4 or len(data) > 4096:
+            raise ValueError("invalid_device_list_size")
+        ids = list(struct.unpack("=" + "I" * (len(data) // 4), data))
         if 0 in ids or len(ids) != len(set(ids)):
-            raise ValueError("장치 ID가 0이거나 중복됐습니다.")
-        return sorted(ids)
+            raise ValueError("invalid_device_ids")
+        return ids
     if kind == "channels":
         if not data:
             return 0
-        count = C.c_uint32.from_buffer_copy(data[:4]).value
-        offset, stride = AudioBufferList.buffers.offset, C.sizeof(AudioBuffer)
-        if count > MAX_BUFFERS or (count and offset + count * stride > len(data)):
-            raise ValueError("AudioBufferList 개수 또는 버퍼 경계가 잘못됐습니다.")
-        total = 0
-        for index in range(count):
-            start = offset + index * stride
-            buffer = AudioBuffer.from_buffer_copy(data[start:start + stride])
-            if buffer.data:
-                raise ValueError("StreamConfiguration의 데이터 포인터가 NULL이 아닙니다.")
-            total += buffer.channels
-            if total > MAX_CHANNELS:
-                raise ValueError("실제 채널 합계가 조회 상한을 넘었습니다. 채널을 자르지 않습니다.")
-        return total
-    ctype = {"pid": C.c_int32, "float": C.c_float, "scalar": C.c_float}.get(kind, C.c_uint32)
-    value = ctype.from_buffer_copy(data).value
-    if kind in ("float", "scalar") and not math.isfinite(value):
-        raise ValueError("음량 값이 NaN 또는 무한대입니다.")
-    if kind == "scalar" and not 0 <= value <= 1:
-        raise ValueError("VolumeScalar가 0..1 범위를 벗어났습니다.")
-    if kind == "bool" and value not in (0, 1):
-        raise ValueError("상태 값이 0 또는 1이 아닙니다.")
+        if len(data) < 4:
+            raise ValueError("invalid_channel_header")
+        count = struct.unpack_from("=I", data)[0]
+        offset, stride = BufferList.buffer.offset, C.sizeof(AudioBuffer)
+        if count > 128 or (count and offset + count * stride > len(data)):
+            raise ValueError("invalid_channel_buffers")
+        channels = sum(struct.unpack_from("=I", data, offset + i * stride)[0] for i in range(count))
+        if channels > 256:
+            raise ValueError("channel_limit_exceeded")
+        return channels
+    if len(data) != 4:
+        raise ValueError("invalid_scalar_size")
+    value = struct.unpack({"u32": "=I", "pid": "=i", "float": "=f"}[kind], data)[0]
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("nonfinite_scalar")
     return value
 
 
-def observe(backend, device, address, kind):
-    observation = PropertyObservation()
+class NativeHAL:
+    def __init__(self):
+        if sys.platform != "darwin":
+            raise RuntimeError("macOS_required")
+        self.hal = C.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+        self.cf = C.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        address = C.POINTER(Address)
+        self.has = self.hal.AudioObjectHasProperty
+        self.has.argtypes = [C.c_uint32, address]; self.has.restype = C.c_ubyte
+        self.settable = self.hal.AudioObjectIsPropertySettable
+        self.settable.argtypes = [C.c_uint32, address, C.POINTER(C.c_ubyte)]; self.settable.restype = C.c_int32
+        self.size = self.hal.AudioObjectGetPropertyDataSize
+        self.size.argtypes = [C.c_uint32, address, C.c_uint32, C.c_void_p, C.POINTER(C.c_uint32)]
+        self.size.restype = C.c_int32
+        self.get = self.hal.AudioObjectGetPropertyData
+        self.get.argtypes = [C.c_uint32, address, C.c_uint32, C.c_void_p, C.POINTER(C.c_uint32), C.c_void_p]
+        self.get.restype = C.c_int32
+        self.cf.CFStringGetCString.argtypes = [C.c_void_p, C.c_void_p, C.c_long, C.c_uint32]
+        self.cf.CFStringGetCString.restype = C.c_ubyte
+        self.cf.CFRelease.argtypes = [C.c_void_p]
+        self.cf.CFRelease.restype = None
 
-    def error(stage, message):
-        observation.error.append({"stage": stage, "message": str(message)})
-
-    try:
-        observation.has = backend.has(device, address)
-    except (OSError, ValueError) as failure:
-        error("has", failure)
-        return observation
-    if not observation.has:
-        return observation
-    try:
-        status, settable = backend.is_settable(device, address)
-        observation.settableStatus = status
-        if status == 0:
-            observation.settable = settable
-        else:
-            error("settable", f"OSStatus {status}")
-    except (OSError, ValueError) as failure:
-        error("settable", failure)
-    try:
-        status, size = backend.get_size(device, address)
-        observation.sizeStatus, observation.sizeBytes = status, size
-        if status != 0:
-            error("size", f"OSStatus {status}")
-            return observation
-        validate_size(size, kind)
-    except (OSError, ValueError) as failure:
-        error("size", failure)
-        return observation
-    try:
-        result = backend.get(device, address, size, kind)
-        observation.getStatus, observation.returnedSize = result.status, result.returned_size
-        if result.status != 0:
-            error("get", f"OSStatus {result.status}")
-            return observation
-        if result.returned_size != size:
-            raise ValueError("조회 중 반환 크기가 변했습니다.")
-        if result.error:
-            raise ValueError(result.error)
-        if kind != "string" and len(result.data) != result.returned_size:
-            raise ValueError("반환 데이터와 반환 크기가 다릅니다.")
-        observation.value = decode(result.data, kind)
-    except (OSError, ValueError, TypeError) as failure:
-        error("get", failure)
-    return observation
-
-
-def readable(observation):
-    return (observation.has is True and observation.sizeStatus == 0 and observation.getStatus == 0
-            and not any(error["stage"] != "settable" for error in observation.error))
-
-
-def known(observation):
-    return readable(observation) and not observation.error
-
-
-def global_property(backend, device, name):
-    selector, kind = GLOBALS[name]
-    return observe(backend, device, Address(selector), kind)
-
-
-def anchor(backend):
-    ids = observe(backend, SYSTEM, Address("dev#"), "ids")
-    defaults = {name: observe(backend, SYSTEM, Address(selector), "uint")
-                for name, selector in DEFAULTS.items()}
-    devices = {}
-    issues = []
-    if readable(ids):
-        for device in ids.value:
-            devices[str(device)] = {name: global_property(backend, device, name)
-                                    for name in ("name",) + ANCHOR_FIELDS}
-        uids = [device["uid"].value for device in devices.values() if readable(device["uid"])]
-        if len(uids) != len(set(uids)):
-            issues.append("장치 UID가 중복됐습니다.")
-        for name, observation in defaults.items():
-            if readable(observation) and observation.value != 0 and observation.value not in ids.value:
-                issues.append(f"기본 장치 {name}의 ID가 장치 목록에 없습니다.")
-    return {"deviceIDs": ids, "defaults": defaults, "devices": devices, "issues": issues}
+    def observe(self, device, selector, scope="glob", element=0, kind="u32"):
+        a = Address(fourcc(selector), fourcc(scope), element)
+        row = {"has": bool(self.has(device, C.byref(a))), "sizeStatus": None,
+               "getStatus": None, "settableStatus": None, "settable": None,
+               "dataSize": None, "returnedSize": None, "value": None, "error": None}
+        if not row["has"]:
+            return row
+        writable = C.c_ubyte()
+        row["settableStatus"] = self.settable(device, C.byref(a), C.byref(writable))
+        if row["settableStatus"] == 0:
+            row["settable"] = bool(writable.value)
+        size = C.c_uint32()
+        row["sizeStatus"] = self.size(device, C.byref(a), 0, None, C.byref(size))
+        row["dataSize"] = size.value
+        if row["sizeStatus"] != 0 or size.value > 65536:
+            row["error"] = "property_size_unavailable"
+            return row
+        expected = size.value
+        if kind == "string" and expected != C.sizeof(C.c_void_p):
+            row["error"] = "invalid_string_size"
+            return row
+        data = C.create_string_buffer(max(1, expected))
+        row["getStatus"] = self.get(device, C.byref(a), 0, None, C.byref(size), data)
+        row["returnedSize"] = size.value
+        owned_string = C.c_void_p.from_buffer_copy(data.raw[:expected]).value if kind == "string" and row["getStatus"] == 0 else None
+        try:
+            if row["getStatus"] != 0 or size.value != expected:
+                row["error"] = "property_read_unavailable_or_size_changed"
+                return row
+            if kind == "string":
+                if not owned_string:
+                    raise ValueError("null_string")
+                text = C.create_string_buffer(8192)
+                if not self.cf.CFStringGetCString(owned_string, text, len(text), 0x08000100):
+                    raise ValueError("string_decode_failed")
+                row["value"] = text.value.decode("utf-8", errors="strict")
+            else:
+                row["value"] = decode(data.raw[:expected], kind)
+        except (ValueError, UnicodeError) as error:
+            row["error"] = str(error)
+        finally:
+            if owned_string:
+                self.cf.CFRelease(owned_string)
+        return row
 
 
-def compare_anchors(before, after):
-    def observations(snapshot):
-        result = {"deviceIDs": snapshot["deviceIDs"]}
-        result.update({f"defaults.{name}": value for name, value in snapshot["defaults"].items()})
-        for device, fields in snapshot["devices"].items():
-            result.update({f"devices.{device}.{name}": fields[name] for name in ANCHOR_FIELDS})
-        return result
-
-    left, right = observations(before), observations(after)
-    changes, unknown = [], []
-    for path in sorted(left.keys() | right.keys()):
-        first, last = left.get(path), right.get(path)
-        if first != last:
-            changes.append({"path": path, "before": asdict(first) if first else None,
-                            "after": asdict(last) if last else None})
-        if first is None or last is None or not known(first) or not known(last):
-            unknown.append(path)
-    issues = before["issues"] + after["issues"]
-    return {"state": "unknown" if changes or unknown or issues else "stable",
-            "changes": changes, "unknown": unknown, "issues": issues,
-            "atomic": False}
+def usable(row):
+    return row["has"] and row["sizeStatus"] == 0 and row["getStatus"] == 0 and not row["error"]
 
 
-def read_device(backend, device):
-    result = {"id": device, **{name: global_property(backend, device, name) for name in GLOBALS}}
-    result["scopes"] = {}
-    for scope in ("input", "output"):
-        channels = observe(backend, device, Address("slay", scope), "channels")
-        controls = {}
-        for name, (selector, kind) in CONTROLS.items():
-            elements = range(channels.value + 1) if readable(channels) else (0,)
-            controls[name] = [{"element": element,
-                               "observation": observe(backend, device, Address(selector, scope, element), kind)}
-                              for element in elements]
-        result["scopes"][scope] = {"channels": channels, "controls": controls,
-                                   "complete": known(channels)}
+def anchors(hal):
+    devices = hal.observe(1, "dev#", kind="ids")
+    result = {"devices": devices, "defaults": {key: hal.observe(1, selector)
+              for key, selector in [("input", "dIn "), ("output", "dOut"), ("systemOutput", "sOut")]}, "identities": {}}
+    if usable(devices):
+        for device in devices["value"]:
+            result["identities"][str(device)] = {
+                "uid": hal.observe(device, "uid ", kind="string"),
+                "alive": hal.observe(device, "livn"),
+                "hog": hal.observe(device, "oink", kind="pid"),
+                "runningSomewhere": hal.observe(device, "gone"),
+                "runningHere": hal.observe(device, "goin")}
     return result
 
 
-def json_value(value):
-    if isinstance(value, PropertyObservation):
-        return asdict(value)
-    raise TypeError(f"지원하지 않는 JSON 자료형 {type(value).__name__}")
+def anchors_complete(value):
+    if not usable(value["devices"]) or not all(usable(r) for r in value["defaults"].values()):
+        return False
+    for rows in value["identities"].values():
+        if not usable(rows["uid"]) or not usable(rows["alive"]):
+            return False
+        for key in ["hog", "runningSomewhere", "runningHere"]:
+            row = rows[key]
+            if row["has"] and (not usable(row) or row["settableStatus"] != 0):
+                return False
+    return True
 
 
-def collect(backend, device_names=()):
-    started = datetime.now(timezone.utc).isoformat()
-    before = anchor(backend)
-    wanted = set(device_names)
-    matches = {name: [] for name in wanted}
-    selected = []
-    for device, fields in before["devices"].items():
-        name = fields["name"]
-        if readable(name) and name.value in matches:
-            matches[name.value].append(int(device))
-        if not wanted or (readable(name) and name.value in wanted):
-            selected.append(int(device))
-    devices = [read_device(backend, device) for device in selected]
-    after = anchor(backend)
-    selection_errors = [f"장치 이름 {name!r}의 일치 개수가 {len(ids)}입니다."
-                        for name, ids in sorted(matches.items()) if len(ids) != 1]
-    report = {"schemaVersion": 1, "startedAt": started,
-              "completedAt": datetime.now(timezone.utc).isoformat(),
-              "deviceNameFilters": sorted(wanted), "selectionErrors": selection_errors,
-              "devices": devices, "anchors": {"before": before, "after": after},
-              "stability": compare_anchors(before, after),
-              "propertyWrites": 0, "ioStarted": False, "hogAcquired": False,
-              "physicalAccepted": False, "audioSamplesRead": False, "keysRead": False,
-              "limitations": ["전후 표본의 일치만 비교하며 원자적 스냅샷이나 중간 변동 부재를 보장하지 않습니다.",
-                              "settable과 running 표본은 전체 물리 차단이나 항구적 무음의 증거가 아닙니다.",
-                              "조회한 공개 HAL 속성으로 모든 공개·비공개 수단의 존재 여부를 추정하지 않습니다."]}
-    encoded = json.loads(json.dumps(report, default=json_value, allow_nan=False))
-
-    def has_error(value):
-        if isinstance(value, dict):
-            return bool(value.get("error")) or any(has_error(item) for item in value.values())
-        return isinstance(value, list) and any(has_error(item) for item in value)
-
-    complete = (not selection_errors and encoded["stability"]["state"] == "stable"
-                and not has_error(encoded) and all(scope["complete"] for device in devices
-                    for scope in device["scopes"].values()))
-    encoded["diagnosticComplete"] = complete
-    return encoded
+def anchor_changes(before, after):
+    changes = []
+    def compare(left, right, path):
+        if "has" in left:
+            if left["has"] != right["has"] or usable(left) and usable(right) and left["value"] != right["value"]:
+                changes.append(path)
+        else:
+            for key in left.keys() & right.keys():
+                compare(left[key], right[key], path + "/" + key)
+    compare(before, after, "anchors")
+    return sorted(changes)
 
 
-def main(argv=None):
+def capture(hal, names=()):
+    before = anchors(hal)
+    endpoints, found = [], set()
+    ids = before["devices"]["value"] if usable(before["devices"]) else []
+    for device in ids:
+        name = hal.observe(device, "lnam", kind="string")
+        if names and (not usable(name) or name["value"] not in names):
+            continue
+        if usable(name):
+            found.add(name["value"])
+        row = {"id": device, "name": name, "identity": before["identities"][str(device)],
+               "transport": hal.observe(device, "tran"), "scopes": {}}
+        for scope in ["inpt", "outp"]:
+            channels = hal.observe(device, "slay", scope, kind="channels")
+            controls = []
+            for element in range((channels["value"] if usable(channels) else 0) + 1):
+                controls.append({"element": element, **{key: hal.observe(device, selector, scope, element, kind)
+                    for key, selector, kind in [("mute", "mute", "u32"), ("volumeScalar", "volm", "float"), ("volumeDecibels", "vold", "float")]}})
+            row["scopes"][scope] = {"channels": channels, "controls": controls}
+        endpoints.append(row)
+    after = anchors(hal)
+    complete = anchors_complete(before) and anchors_complete(after)
+    changes = anchor_changes(before, after)
+    return {"schema": "ccr-audio-endpoint-readonly/v1", "observedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "readOnly": True, "propertyWrites": 0, "ioStarted": False, "hogAcquired": False,
+            "physicalAccepted": False, "hostExitIsolationProven": False,
+            "before": before, "endpoints": endpoints, "after": after,
+            "anchorReadsComplete": complete, "observedAnchorChanges": changes,
+            "anchorsUnchanged": False if changes else (before == after if complete else None),
+            "requestedNamesMissing": sorted(set(names) - found),
+            "limitations": ["전후 값의 일치는 원자적 스냅샷이나 중간 변경 부재를 증명하지 않습니다.",
+                "설정 가능 속성·현재 독점 소유 PID·실행 값은 차단 성공이나 종료 후 지속 보호의 증거가 아닙니다.",
+                "실행 값은 장치 단위 관측이며 프로세스 목록·오디오 샘플·모든 물리 경로를 확인하지 않습니다.",
+                "나열한 공개 속성의 부재를 모든 공개·공급업체 차단 수단의 부재로 확대하지 않습니다."]}
+
+
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device-name", action="append", default=[], help="정확한 장치 이름. 반복 지정 가능")
-    parser.add_argument("--output", required=True, type=Path, help="부모가 storage-route로 정한 새 JSON 절대경로")
-    args = parser.parse_args(argv)
-    if not args.output.is_absolute():
-        parser.error("--output에는 storage-route가 반환한 절대경로가 필요합니다.")
-    try:
-        # 기존 영수증을 덮지 않도록 HAL 로드 전에 새 출력 파일을 확보한다.
-        with args.output.open("x", encoding="utf-8") as output:
-            report = collect(NativeBackend(), args.device_name)
-            json.dump(report, output, ensure_ascii=False, indent=2, allow_nan=False)
-            output.write("\n")
-    except (OSError, RuntimeError) as error:
-        print(f"진단을 완료하지 못했습니다. {error}", file=sys.stderr)
-        return 2
-    return 0 if report["diagnosticComplete"] else 2
+    parser.add_argument("--device-name", action="append", default=[])
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    result = capture(NativeHAL(), args.device_name)
+    with args.output.open("x", encoding="utf-8") as output:
+        json.dump(result, output, ensure_ascii=False, indent=2, allow_nan=False)
+        output.write("\n")
+    print(json.dumps({"output": str(args.output), "endpoints": len(result["endpoints"]),
+                      "anchorsUnchanged": result["anchorsUnchanged"], "propertyWrites": 0}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
