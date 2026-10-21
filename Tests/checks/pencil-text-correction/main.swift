@@ -116,5 +116,11 @@ let noisy = (0..<101).map { CGPoint(x: CGFloat($0 % 2) * 0.1, y: CGFloat($0) * 0
 check(CanvasPencilTextCorrection.gesture(for: noisy) == .split, "미세 가로 잡음 허용")
 let falseScratch = stroke([(0, 0), (40, 0), (39, 0), (40, 0), (39, 0), (40, 0), (39, 0), (0, 0)])
 check(CanvasPencilTextCorrection.gesture(for: falseScratch) == nil, "미세 반전을 scratch로 세지 않음")
+let narrowScratch = stroke([(0,0),(8,1),(0,0),(8,1),(0,0),(8,1)])
+check(CanvasPencilTextCorrection.gesture(for:narrowScratch,minimumEraseWidth:8) == .erase,"폭8pt 글자 기준의 scratch")
+check(CanvasPencilTextCorrection.gesture(for:narrowScratch) == nil,"명시한 글자 폭 없이 작은 획을 확대 해석하지 않음")
+for invalid in [CGFloat.nan, -CGFloat.infinity, CGFloat(0), CGFloat(25)] {
+    check(CanvasPencilTextCorrection.gesture(for:scratch,minimumEraseWidth:invalid) == nil,"잘못된 글자 폭 거부")
+}
 print("검사 \(checks)개, 실패 \(failures)개")
 if failures > 0 { exit(1) }

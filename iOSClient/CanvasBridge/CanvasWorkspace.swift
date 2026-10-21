@@ -1201,7 +1201,7 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             guard isCurrent, correctionEnabled, let editor, editor.isEditable,
                   editor.markedTextRange == nil, !scribbling,
                   editor.text.utf8.elementsEqual(expectedText.utf8),
-                  let gesture = CanvasPencilTextCorrection.gesture(for:points),
+                  let gesture = correctionGesture(points,in:editor),
                   let range = correctionRange(points,gesture:gesture,in:editor),
                   let edit = CanvasPencilTextCorrection.edit(in:editor.text,gesture:gesture,range:range),
                   let start = editor.position(from:editor.beginningOfDocument,offset:edit.range.location),
@@ -1209,6 +1209,21 @@ struct VaultMarkdownEditor: UIViewRepresentable {
                   let textRange = editor.textRange(from:start,to:end) else { return }
             editor.replace(textRange,withText:edit.replacement)
             textViewDidChange(editor)
+        }
+        private func correctionGesture(_ points: [CGPoint], in view: UITextView) -> CanvasPencilTextGesture? {
+            guard let first = points.first, let last = points.last,
+                  let position = view.closestPosition(to:CGPoint(x:(first.x+last.x)/2,y:(first.y+last.y)/2)) else { return nil }
+            let offset = view.offset(from:view.beginningOfDocument,to:position)
+            var widths: [CGFloat] = []
+            for location in [offset-1,offset] {
+                guard let range = canvasSelectedCharacterRange(in:view.text,selection:NSRange(location:location,length:1)),
+                      let start = view.position(from:view.beginningOfDocument,offset:range.location),
+                      let end = view.position(from:start,offset:range.length),
+                      let textRange = view.textRange(from:start,to:end) else { continue }
+                widths += view.selectionRects(for:textRange).map(\.rect.width).filter { $0 > 0 && $0.isFinite }
+            }
+            guard let width = widths.min() else { return nil }
+            return CanvasPencilTextCorrection.gesture(for:points,minimumEraseWidth:max(1,min(24,width*0.8)))
         }
         func correctionRange(_ points: [CGPoint], gesture: CanvasPencilTextGesture,
                                      in view: UITextView) -> NSRange? {

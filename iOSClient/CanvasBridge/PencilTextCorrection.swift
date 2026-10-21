@@ -12,8 +12,9 @@ struct CanvasPencilTextChange {
 
 enum CanvasPencilTextCorrection {
     // ponytail: 화면 좌표의 단일 획 휴리스틱이다. 실기기 표본으로 아래 임계치를 교정한다.
-    static func gesture(for points: [CGPoint]) -> CanvasPencilTextGesture? {
-        guard (4...4096).contains(points.count),
+    static func gesture(for points: [CGPoint], minimumEraseWidth: CGFloat = 24) -> CanvasPencilTextGesture? {
+        guard minimumEraseWidth.isFinite, minimumEraseWidth >= 1, minimumEraseWidth <= 24,
+              (4...4096).contains(points.count),
               points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }),
               let first = points.first, let last = points.last else { return nil }
         var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
@@ -35,9 +36,9 @@ enum CanvasPencilTextCorrection {
             return dy < 0 ? .join : .split
         }
 
-        guard width >= 24, height <= width * 0.55,
+        guard width >= minimumEraseWidth, height <= width * 0.55,
               travelX >= width * 3, travelY <= travelX * 0.5 else { return nil }
-        let excursion = max(8, width * 0.45)
+        let excursion = max(min(8, minimumEraseWidth / 3), width * 0.45)
         var extreme = first.x
         var direction = 0, reversals = 0
         for point in points.dropFirst() {

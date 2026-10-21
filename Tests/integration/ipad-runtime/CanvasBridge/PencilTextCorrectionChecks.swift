@@ -68,8 +68,18 @@ enum PencilTextCorrectionChecks {
         }
         controller.applyCorrection(crossing,expectedText:view.text)
         try check(view.text == twoLines,"두 줄의 일부만 닿은 삭제 획은 적용하지 않음")
+        view.text = "abcde"
+        controller.textViewDidChange(view)
+        let narrow = try glyph(2)
+        let narrowScratch = (0...5).map { index in
+            CGPoint(x:narrow.midX + (index % 2 == 0 ? -1 : 1) * narrow.width * 0.45,
+                    y:narrow.midY + (index % 2 == 0 ? -1 : 1))
+        }
+        controller.applyCorrection(narrowScratch,expectedText:view.text)
+        try check(view.text == "abde","실제 좁은 영문 글자 c만 지우기")
         view.text = "가나다"
         controller.textViewDidChange(view)
+        view.undoManager?.removeAllActions()
         let middle = try glyph(1), cy = middle.midY, cx = middle.midX
         let scratch = (0...5).map { index in CGPoint(x:cx + (index % 2 == 0 ? -12 : 12),y:cy + (index % 2 == 0 ? -4 : 4)) }
         let hit = controller.correctionRange(scratch,gesture:.erase,in:view)

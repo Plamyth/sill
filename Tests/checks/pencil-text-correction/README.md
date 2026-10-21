@@ -24,3 +24,5 @@ Pstack Feature의 적용 기록은 다음과 같다.
 - BLOCKED: independent review. 이 세션에는 하위 에이전트 도구가 없다. 자체 검사로 독립 검수를 대체하지 않으며 부모의 검수 결과를 기다린다.
 
 Ponytail은 기존 선택 함수를 재사용하고 Foundation/CoreGraphics와 Python 표준 라이브러리만 쓰는 데 적용했다. 근거는 `myscript-pencil-gesture-stage-20261021/myscript-pencil-delete-join-split-spec.md`의 실제 scratch 삭제, 아래→위 합치기, 위→아래 나누기 관측이며 분류 임계치는 해당 앱에서 추출한 값이 아니다.
+
+실제 UITextView는 대상 주변의 grapheme 사각형 폭으로 삭제 최소 폭을 1~24pt 안에서 조절한다. 작은 영문·숫자도 인접 글자 중심을 건드리지 않는 폭으로 단독 삭제할 수 있어야 한다. 기본24pt는 글자 크기 정보가 없는 모델 호출에만 적용한다.
