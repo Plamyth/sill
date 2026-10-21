@@ -223,7 +223,7 @@ def callback_mutants(source):
         'recognizing-cleanup': (edit('func recognizingChanged(', lambda b: b.replace('input.finishGesture(revision: ticket)', '_ = ticket', 1)),
                                 'cancelled rotation retires its input revision'),
         'disappear-cleanup': (edit('func disappeared(', lambda b: b.replace('input.finishGesture(revision: ticket)', '_ = ticket', 1)),
-                              'callback disappear releases held button before modifier'),
+                              'disappear cancels monitor rotation without changing gain'),
         'ticket-refresh': (edit('func changed(', lambda b: b.replace('revision ?? input.gestureRevision', 'input.gestureRevision', 1)),
                            'callback queued old values cannot cross geometry boundary'),
     }
