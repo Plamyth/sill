@@ -87,6 +87,9 @@ try:
         assert 'R' * 43 not in result.stdout + result.stderr, 'credential 원문 로그 유출'
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
+        if result.returncode:
+            for events in sorted((output / 'cases').glob('*/events.jsonl'), key=lambda p: p.stat().st_mtime)[-3:]:
+                print('FAILED_CASE_EVENTS', events.parent.name, events.read_text()[-12000:], flush=True)
         result.check_returncode()
 finally:
     after = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in inputs}
