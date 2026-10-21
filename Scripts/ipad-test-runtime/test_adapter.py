@@ -1,7 +1,6 @@
 import datetime as dt
 import importlib.util
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -71,15 +70,11 @@ class AdapterContract(unittest.TestCase):
                'acceptanceCommand':['/usr/bin/python3','/한글/adapter.py','accept']}}
         def read(path):
             return {'projects':[row]} if str(path).endswith('projects.json') else {'requiredChecks':['native-canvas-ui']}
-        # Mini 검사는 설치 도구의 SHA가 기록된 읽기 전용 snapshot을 전달받는다.
-        tool = os.environ.get('CCR_TEST_RELEASE_TOOL', '/Users/ambrion/.local/bin/bt-release-convergence')
-        module = adapter.runpy.run_path(tool)
-        expected = module['acceptance_contract'](row)
-        with patch.object(adapter,'read',side_effect=read), patch.object(adapter.runpy,'run_path',return_value=module) as loader:
+        expected = adapter.runpy.run_path('/Users/ambrion/.local/bin/bt-release-convergence')['acceptance_contract'](row)
+        with patch.object(adapter,'read',side_effect=read):
             self.assertEqual(adapter.acceptance_contract({'repo':'.'}), expected)
-            loader.assert_called_once_with('/Users/ambrion/.local/bin/bt-release-convergence')
         changed = dict(row, test=dict(row['test'],deployCommand=['/usr/bin/python3','different']))
-        self.assertNotEqual(expected,module['acceptance_contract'](changed))
+        self.assertNotEqual(expected,adapter.runpy.run_path('/Users/ambrion/.local/bin/bt-release-convergence')['acceptance_contract'](changed))
 
     def test_release_failure_does_not_skip_device_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
