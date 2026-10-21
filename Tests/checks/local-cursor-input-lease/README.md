@@ -8,7 +8,9 @@ Pstack poteto-mode의 Feature 경로와 Model the Domain 원칙을 적용했다.
 
 ## API 계약
 
-`openConnection()`은 IPC peer를 검증한 부모만 호출한다. 외부 UUID를 입력받지 않는다. 연결과 grant는 Codable이 아니며 생성자는 파일 밖에서 접근할 수 없다. 부모는 연결 객체를 실제 IPC 연결 수명에 결합하고 종료 시 `closeConnection(_:)`을 호출한다.
+`openConnection()`은 IPC peer를 검증한 부모만 호출한다. 외부 UUID를 입력받지 않는다. 연결과 grant는 Codable이 아니며 생성자는 파일 밖에서 접근할 수 없다. 부모는 연결 객체를 실제 IPC 연결 수명에 결합하고 실제 FD 종료 시에만 `closeConnection(_:)`을 호출한다.
+
+`release(_ grant: Grant) -> Bool`은 정확한 현재 Grant 객체만 `.explicitRelease` 사유로 해제하며 검증된 IPC 연결은 유지한다. 사용자가 제어를 끄거나 bind의 focus 검증이 실패한 경우 사용한다. 현재 소유를 먼저 무효화하고 해당 소유자의 Down 해제 callback이 끝나면 true를 반환한다. 같은 연결로 다시 claim할 수 있고 새 claim은 새 wire scope를 발급한다. 갱신 전 객체, 이미 해제한 객체, 다른 owner나 모델의 grant는 false이며 현재 소유와 Down을 변경하지 않는다. stale 요청이 다른 소유자의 만료 처리를 대신 실행하지도 않는다. 정확한 현재 객체는 기한이 지났어도 명시 정리가 가능하며, 이미 만료 처리된 객체는 false다. 이 정리는 입력 게시 권한을 부여하지 않는다.
 
 `claim(_:target:ttlMilliseconds:)`과 `renew(_:ttlMilliseconds:)`은 오류를 던지며 Host가 발급한 grant를 반환한다. TTL 기본값은 500ms이고 허용 범위는 100...2000ms다. 같은 연결과 target의 renew는 기한과 Grant 객체 identity만 갱신하며 wire에 내보내는 `id`, `generation`, `target`, `connection`을 유지한다. 부모는 binding token과 InputInjector device 소유도 유지한다. 따라서 기존 Down의 Up은 갱신된 Grant로 처리할 수 있다. 이전 객체를 캡처한 authorization callback은 `current === grant` 검사에서 거절된다. 동일 연결의 다른 target claim은 이전 소유자의 Down을 해제한 뒤 새 `id`와 `generation`을 발급한다. 같은 target의 중복 claim은 거부하고 renew를 사용한다. 다른 연결은 유효한 소유자를 선점할 수 없다.
 
@@ -20,7 +22,7 @@ Pstack poteto-mode의 Feature 경로와 Model the Domain 원칙을 적용했다.
 
 `conversationScoped`는 특정 대화의 전송·승인 명령이다. 이 경로만 원자적인 동기 `conversationAuthority` guard를 요구한다. 선택적 callback의 타입은 `((Target, () -> Void) -> Void)?`이고 기본값은 nil이다. 원본 선택의 compare-and-execute 보호 안에서 내부 closure를 동기적으로 호출해야 하며 그 안에서 창 검사와 최종 lease 검사를 수행한다. callback이 없거나 내부 closure를 호출하지 않으면 게시하지 않는다. Target의 대화·영상 필드 일치는 실제 대화 선택 권한의 증명이 아니다. 원본 선택 검증은 부모의 책임이다. 이 메서드를 기존 `InputInjector.withAuthorization`의 동기 `PostAuthorization` 안에서 호출할 수 있다. 기존 Sill 원격 입력 경로는 변경하거나 직렬화하지 않는다.
 
-`releaseDown(Connection, Target, ReleaseReason)`은 만료, target 변경, 연결 종료, remote viewer 선점, Sentry 보호에 대해 해당 연결의 Down만 해제한다. 부모는 `connection.id`로 매핑한 주입 소유자만 해제해야 한다. 갱신 전후 동일 연결의 Down은 유지한다. release callback 중 claim과 renew는 거부한다. 다른 연결의 종료나 거절된 다른 요청은 유효한 소유자를 변경하지 않는다.
+`releaseDown(Connection, Target, ReleaseReason)`은 명시 해제, 만료, target 변경, 연결 종료, remote viewer 선점, Sentry 보호에 대해 해당 연결의 Down만 해제한다. 부모는 `connection.id`로 매핑한 주입 소유자만 해제해야 한다. 갱신 전후 동일 연결의 Down은 유지한다. release callback 중 claim과 renew는 거부한다. 다른 연결의 종료나 거절된 다른 요청은 유효한 소유자를 변경하지 않는다.
 
 `expireIfNeeded()`는 주입된 단조 나노초 시계로 기한을 확인한다. `remoteStateChanged(remoteViewerOwnsInput:sentryProtected:)`는 현재 보호 상태를 반영하며 기존 소유자의 Down을 즉시 해제한다. 타이머는 부모가 운영하며 게시·claim·renew에서도 만료를 검사한다. 원격 보호 해제만으로 이전 grant가 되살아나지 않는다.
 

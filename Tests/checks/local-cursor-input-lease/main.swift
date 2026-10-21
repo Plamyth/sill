@@ -172,6 +172,92 @@ private struct Checks {
             try require(h.post(next), "검증된 새 연결은 별도 권한을 발급받아야 합니다")
         }
 
+        for interaction in [Lease.Interaction.windowScoped, .conversationScoped(conversationID: "conversation-A")] {
+            check("명시 해제와 같은 IPC 연결의 재bind \(interaction)") {
+                let h = Harness(), connection = h.model.openConnection(), other = h.model.openConnection()
+                let grant = try h.model.claim(connection, target: h.target(interaction: interaction))
+                h.downs[connection.id] = [1]
+                h.downs[other.id] = [9]
+                try require(h.model.release(grant), "현재 grant의 명시 해제는 성공해야 합니다")
+                try require(!h.post(grant) && !h.model.release(grant), "해제한 grant의 게시와 중복 해제를 거절해야 합니다")
+                try require(h.releases.count == 1 && h.releases[0].reason == .explicitRelease &&
+                            h.releases[0].owner === connection && h.releases[0].target == grant.target,
+                            "명시 해제는 정확한 소유자와 target을 한 번만 해제해야 합니다")
+                try require(h.downs[connection.id] == nil && h.downs[other.id] == [9],
+                            "명시 해제는 다른 소유자의 Down을 유지해야 합니다")
+                let rebound = try h.model.claim(connection, target: grant.target)
+                try require(rebound.connection === connection && rebound.id != grant.id &&
+                            rebound.generation != grant.generation && h.post(rebound),
+                            "검증된 같은 연결로 재bind하고 새 scope를 발급받을 수 있어야 합니다")
+                h.downs[connection.id] = [2]
+                try require(!h.model.release(grant) && h.downs[connection.id] == [2] && h.post(rebound),
+                            "이전 해제 요청이 재bind한 소유를 해제하면 안 됩니다")
+                h.model.closeConnection(connection)
+                try require(h.releases.count == 2 && h.releases[1].reason == .connectionClosed && !h.post(rebound),
+                            "실제 연결 종료는 재bind한 현재 grant를 별도로 해제해야 합니다")
+                try refuses(.connectionNotOpen) { _ = try h.model.claim(connection, target: grant.target) }
+            }
+        }
+        check("갱신 전 객체와 다른 owner의 해제 거절") {
+            let h = Harness(), foreign = Harness()
+            let a = h.model.openConnection(), b = h.model.openConnection()
+            let foreignConnection = foreign.model.openConnection()
+            let foreignGrant = try foreign.model.claim(foreignConnection, target: foreign.target())
+            let old = try h.model.claim(a, target: h.target())
+            let renewed = try h.model.renew(old)
+            h.downs[a.id] = [1]
+            try require(old.id == renewed.id && old.generation == renewed.generation && old !== renewed,
+                        "이 검사는 wire scope가 같은 이전 객체를 사용해야 합니다")
+            try require(!h.model.release(old) && !h.model.release(foreignGrant) && h.post(renewed),
+                        "이전 객체나 다른 모델의 grant가 현재 소유를 해제하면 안 됩니다")
+            try require(h.releases.isEmpty && h.downs[a.id] == [1] && foreign.post(foreignGrant),
+                        "거절된 명시 해제는 양쪽 소유와 Down을 유지해야 합니다")
+            try require(h.model.release(renewed), "갱신된 현재 객체는 해제할 수 있어야 합니다")
+            let next = try h.model.claim(b, target: h.target())
+            h.downs[b.id] = [2]
+            try require(!h.model.release(old) && !h.model.release(renewed) && h.post(next),
+                        "이전 owner의 grant가 다른 owner의 현재 소유를 해제하면 안 됩니다")
+            try require(h.releases.count == 1 && h.downs[b.id] == [2], "다른 owner의 Down은 유지해야 합니다")
+            h.time = next.deadlineNanoseconds
+            try require(!h.model.release(old) && h.releases.count == 1 && h.downs[b.id] == [2],
+                        "stale 해제 요청은 다른 owner의 만료 처리까지 실행하면 안 됩니다")
+            try require(h.model.expireIfNeeded() && h.releases.count == 2 && h.releases[1].reason == .expired,
+                        "만료 처리는 해당 진입점에서 별도로 수행해야 합니다")
+        }
+        check("현재 객체의 기한 후 명시 정리") {
+            let h = Harness(), connection = h.model.openConnection()
+            let grant = try h.model.claim(connection, target: h.target())
+            h.downs[connection.id] = [1]
+            h.time = grant.deadlineNanoseconds
+            try require(h.model.release(grant) && h.releases.count == 1 &&
+                        h.releases[0].reason == .explicitRelease && h.downs[connection.id] == nil,
+                        "기한이 지났어도 정확한 현재 객체의 정리는 허용해야 합니다")
+            try require(!h.model.expireIfNeeded() && !h.model.release(grant), "명시 정리 뒤 중복 해제하면 안 됩니다")
+            let next = try h.model.claim(connection, target: h.target())
+            try require(h.post(next), "기한 후 명시 정리도 IPC 연결을 유지해야 합니다")
+        }
+        check("명시 해제 callback이 끝나기 전 재bind 거절") {
+            let h = Harness(), connection = h.model.openConnection()
+            let grant = try h.model.claim(connection, target: h.target())
+            h.downs[connection.id] = [1]
+            var called = false
+            var callbackError: Error?
+            h.onRelease = {
+                called = true
+                do {
+                    try require(!h.model.release(grant) && !h.post(grant), "명시 해제 callback 전에 현재 권한을 무효화해야 합니다")
+                    try refuses(.releaseInProgress) { _ = try h.model.claim(connection, target: grant.target) }
+                    try refuses(.releaseInProgress) { _ = try h.model.renew(grant) }
+                } catch { callbackError = error }
+            }
+            try require(h.model.release(grant), "명시 해제는 callback을 완료해야 합니다")
+            if let callbackError { throw callbackError }
+            h.onRelease = nil
+            let next = try h.model.claim(connection, target: grant.target)
+            try require(called && h.releases.count == 1 && h.downs[connection.id] == nil && h.post(next),
+                        "Down 해제 완료 뒤 같은 연결로 재bind할 수 있어야 합니다")
+        }
+
         for variant in 0..<7 {
             check("target 필드 변경 \(variant)") {
                 let h = Harness(), connection = h.model.openConnection(), other = h.model.openConnection()
@@ -332,7 +418,7 @@ private struct Checks {
 
         for interaction in [Lease.Interaction.windowScoped, .conversationScoped(conversationID: "conversation-A")] {
             for windowResult in [false, true] {
-                for mutation in ["갱신", "target 변경", "종료", "만료", "원격", "Sentry"] {
+                for mutation in ["갱신", "target 변경", "명시 해제", "종료", "만료", "원격", "Sentry"] {
                     check("창 검증 재진입 \(interaction) \(mutation) \(windowResult)") {
                         let h = Harness(), connection = h.model.openConnection()
                         let grant = try h.model.claim(connection, target: h.target(interaction: interaction))
@@ -343,6 +429,7 @@ private struct Checks {
                                 switch mutation {
                                 case "갱신": replacement = try h.model.renew(grant)
                                 case "target 변경": replacement = try h.model.claim(connection, target: h.target(windowID: 74, interaction: interaction))
+                                case "명시 해제": _ = h.model.release(grant)
                                 case "종료": h.model.closeConnection(connection)
                                 case "만료": h.time = grant.deadlineNanoseconds
                                 case "원격": h.model.remoteStateChanged(remoteViewerOwnsInput: true, sentryProtected: false)
@@ -364,7 +451,7 @@ private struct Checks {
                 }
             }
         }
-        for mutation in ["갱신", "target 변경", "종료", "만료", "원격", "Sentry"] {
+        for mutation in ["갱신", "target 변경", "명시 해제", "종료", "만료", "원격", "Sentry"] {
             check("대화 권한 callback 재진입 \(mutation)") {
                 let h = Harness(), connection = h.model.openConnection()
                 let grant = try h.model.claim(connection, target: h.target(interaction: .conversationScoped(conversationID: "conversation-A")))
@@ -376,6 +463,7 @@ private struct Checks {
                         case "갱신": _ = try h.model.renew(grant)
                         case "target 변경": _ = try h.model.claim(connection, target: h.target(windowID: 74,
                             interaction: .conversationScoped(conversationID: "conversation-A")))
+                        case "명시 해제": _ = h.model.release(grant)
                         case "종료": h.model.closeConnection(connection)
                         case "만료": h.time = grant.deadlineNanoseconds
                         case "원격": h.model.remoteStateChanged(remoteViewerOwnsInput: true, sentryProtected: false)
@@ -400,6 +488,7 @@ private struct Checks {
                 do {
                     try require(h.downs[connection.id] == [1], "이 검사는 실제 해제 완료 전의 재진입을 검사해야 합니다")
                     try require(!h.post(grant), "release callback 전에 권한부터 무효화해야 합니다")
+                    try require(!h.model.release(grant), "해제 callback의 중복 해제는 거절해야 합니다")
                     try refuses(.releaseInProgress) { _ = try h.model.claim(other, target: h.target()) }
                     try refuses(.releaseInProgress) { _ = try h.model.renew(grant) }
                 } catch { callbackError = error }

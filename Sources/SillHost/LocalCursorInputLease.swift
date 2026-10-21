@@ -60,6 +60,7 @@ final class LocalCursorInputLease {
     }
 
     enum ReleaseReason: Equatable {
+        case explicitRelease
         case expired
         case targetChanged
         case connectionClosed
@@ -97,6 +98,14 @@ final class LocalCursorInputLease {
         if let current, current.connection === connection {
             revoke(current, reason: .connectionClosed)
         }
+    }
+
+    @discardableResult
+    func release(_ grant: Grant) -> Bool {
+        // Cleanup uses exact object identity, without expiring an unrelated current owner.
+        guard current === grant else { return false }
+        revoke(grant, reason: .explicitRelease)
+        return true
     }
 
     func claim(_ connection: Connection, target: Target,
