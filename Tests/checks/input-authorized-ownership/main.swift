@@ -63,6 +63,32 @@ final class Device {}
         check(partial.count == 1 && partial[0].contains("key 59 flags changed (none)"))
         let stillB = capture { injector.releaseInput(of: bID) }
         check(stillB.count == 1 && stillB[0].contains("key 0 up"))
+        for text in ["\n", "\t", "\u{8}", "가"] {
+            check(capture {
+                injector.withAuthorization({ _ in false }) { injector.apply(.text(text), in: rect, from: aID) }
+            }.isEmpty)
+        }
+        check(capture {
+            injector.withAuthorization({ _ in false }) { injector.chord(keyCode: 36, flags: 0) }
+        }.isEmpty)
+        var attempts = 0
+        let partialText = capture {
+            injector.withAuthorization({ operation in
+                attempts += 1
+                guard attempts == 1 else { return false }
+                operation(); return true
+            }) { injector.apply(.text("\n가"), in: rect, from: aID) }
+        }
+        check(partialText.count == 2 && partialText[0].contains("key 36 down") && partialText[1].contains("key 36 up"))
+        attempts = 0
+        let modifierPair = capture {
+            injector.withAuthorization({ operation in
+                attempts += 1
+                guard attempts == 1 else { return false }
+                operation(); return true
+            }) { injector.chord(keyCode: 59, flags: 1 << 18) }
+        }
+        check(modifierPair.count == 2 && attempts == 1)
         print("PASS \(assertions) actual InputInjector ownership checks; dryRun=true and no CGEvent posted")
     }
 }

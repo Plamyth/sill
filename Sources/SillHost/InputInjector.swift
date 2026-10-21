@@ -146,6 +146,13 @@ final class InputInjector {
         return posted
     }
 
+    private func postPair(_ down: CGEvent, _ up: CGEvent) -> Bool {
+        var accepted = false
+        let posted = post(down, admitted: { accepted = true })
+        if accepted { _ = post(up, release: true) }
+        return posted
+    }
+
     private static func isKeyboard(_ type: CGEventType) -> Bool { type == .keyDown || type == .keyUp || type == .flagsChanged }
 
     /// TEST ONLY: one line for an event a dry run would have posted (`testLog`).
@@ -458,19 +465,18 @@ final class InputInjector {
                 // which Spotlight's field ignores (typing into Spotlight did nothing, 2026-09-23).
                 down.flags = []
                 up.flags = []
-                _ = post(down)
-                _ = post(up)
+                _ = postPair(down, up)
             }
             if !dryRun { Stats.shared.bump("in.text") }
         }
     }
 
     private func tap(virtualKey: CGKeyCode) {
-        for down in [true, false] {
-            guard let event = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: down) else { continue }
-            event.flags = []       // plain Return, Tab, Delete: never a leftover modifier
-            _ = post(event)
-        }
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else { return }
+        down.flags = []
+        up.flags = []
+        _ = postPair(down, up)
     }
 
     // MARK: Keys
@@ -595,8 +601,7 @@ final class InputInjector {
         let events = strokes.compactMap { CGEvent(keyboardEventSource: source, virtualKey: $0.virtualKey, keyDown: $0.down) }
         guard events.count == strokes.count else { return }
         for (event, stroke) in zip(events, strokes) { event.flags = CGEventFlags(rawValue: stroke.flags) }
-        let posted = post(events[0])
-        _ = post(events[1])
+        let posted = postPair(events[0], events[1])
         guard posted else { return }
         Stats.shared.bump("in.gesture")
         checkModifiersLeft(chord: flags, before: before)
