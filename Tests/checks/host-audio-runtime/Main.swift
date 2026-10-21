@@ -140,7 +140,7 @@ struct Main {
             guard case .accepted(let retained) = await LocalAudioRelayLaunch.lastRelay?.forwardingSnapshot() else {
                 preconditionFailure("마지막 연결 종료 후 공유 pipe가 사라졌습니다.")
             }
-            precondition(retained.binding?.phase == .off && retained.intent?.outputDesired == false)
+            precondition(retained.binding == nil && retained.intent?.inputDesired == false && retained.intent?.outputDesired == false)
             precondition(f.count("forwardingDisconnect") == 0 && f.count("forwardingRevoke") == 0)
             checks += 7
         }
@@ -234,6 +234,34 @@ struct Main {
             await f.until { f.count("forwardingCommit") == 1 }
             precondition(f.protectionPreparations == 1, "새 구성에서 실제 보호를 유지하며 binding이 수렴합니다.")
             checks += 8
+        }
+
+        do {
+            let f = try Fixture(root: root), connection = Connection()
+            defer { f.finish() }
+            try await f.start()
+            guard let relay = LocalAudioRelayLaunch.lastRelay else { preconditionFailure() }
+            _ = await f.observe(connection)
+            let configured = f.count("forwardingConfigure")
+            f.flag("hold-snapshot")
+            let snapshots = f.count("forwardingSnapshot")
+            let blocker = Task { @MainActor in await relay.forwardingSnapshot() }
+            await f.until { f.count("forwardingSnapshot") > snapshots }
+            var admitted = true
+            let queued = Task { @MainActor in
+                await relay.forwardingConfigure(privacyGeneration: f.privacy.forwardingPrivacyGeneration,
+                    admission: { admitted })
+            }
+            try await Task.sleep(for: .milliseconds(30))
+            admitted = false
+            f.flag("release-snapshot")
+            _ = await blocker.value
+            let refused = await queued.value
+            precondition(refused == nil && f.count("forwardingConfigure") == configured,
+                "대기 중 무효화된 configure는 공유 pipe에 송신하지 않습니다.")
+            let after = await f.observe(connection)
+            precondition(after != nil, "거절된 configure가 다른 연결의 공유 pipe를 닫으면 안 됩니다.")
+            checks += 2
         }
 
         let allDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)

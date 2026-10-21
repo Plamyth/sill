@@ -271,7 +271,13 @@ final class HostAudioForwardingRuntime {
         configuring = token; attemptedConfiguration = expected
         configuration = nil
         fenceWork()
-        let result = await relay.forwardingConfigure(privacyGeneration: expected.privacyGeneration)
+        let result = await relay.forwardingConfigure(privacyGeneration: expected.privacyGeneration,
+            admission: { [weak self] in
+                guard let self else { return false }
+                return !self.stopped && self.relay === relay && self.generation == generation &&
+                    self.configuring == token &&
+                    relay.forwardingConfiguration(privacyGeneration: self.privacy.forwardingPrivacyGeneration) == expected
+            })
         guard configuring == token else { return }
         configuring = nil
         guard !stopped, self.relay === relay, self.generation == generation,
@@ -461,12 +467,30 @@ final class HostAudioForwardingRuntime {
         preparedScope = nil; committedScope = nil
     }
 
+    private func connectionOwners(_ binding: AudioForwardingBinding) -> [UUID: UUID] {
+        var result: [UUID: UUID] = [:]
+        for lease in connections.values {
+            guard lease.attached, lease.connectionIsCurrent(), let observation = lease.observation,
+                  lease.peer.id == binding.pairedDeviceId,
+                  observation.configuration == binding.configuration,
+                  binding.transportKind == .http || lease.nativeTransport == binding.transportId else { continue }
+            result[lease.id] = lease.evidenceGeneration
+        }
+        return result
+    }
+
     private func disconnect(_ binding: AudioForwardingBinding) {
         guard binding.phase != .off, let relay else { return }
+        let generation = self.generation, configuration = currentConfiguration
+        let owners = connectionOwners(binding)
         Task { @MainActor [weak self] in
-            guard let self, !self.stopped, self.relay === relay else { return }
-            // Relay 계약은 이 epoch와 일치하는 binding만 제거하며 desired는 보존한다.
-            _ = await relay.forwardingDisconnect(binding)
+            guard let self else { return }
+            _ = await relay.forwardingDisconnect(binding, admission: { [weak self] in
+                guard let self else { return false }
+                return !self.stopped && self.relay === relay && self.generation == generation &&
+                    self.currentConfiguration == configuration && self.connectionOwners(binding) == owners &&
+                    (self.offered == nil || self.offered?.bindingEpoch == binding.bindingEpoch)
+            })
         }
     }
 }
