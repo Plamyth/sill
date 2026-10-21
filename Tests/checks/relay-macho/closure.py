@@ -10,7 +10,7 @@ import subprocess
 import sys
 import zipfile
 
-NODE_COMMIT = "97f640bc6202a451b2211321aa96f20ee1a0f5ef"
+NODE_COMMIT = "1f846e8b776dec9b504cebf78735e57dc1ad5cda"
 
 root = Path(__file__).resolve().parents[3]
 package, output = (Path(value).resolve() for value in sys.argv[1:3])
@@ -67,6 +67,11 @@ try:
     manifest.write_bytes(saved)
     data = json.loads(saved)
     data["nodeSourceCommit"] = "aa98e05842fccc034c1efd28461b489fe3d1a5b4"
+    manifest.write_text(json.dumps(data))
+    execute(scratch, False)
+    manifest.write_bytes(saved)
+    data = json.loads(saved)
+    data["nodeSourceCommit"] = "97f640bc6202a451b2211321aa96f20ee1a0f5ef"
     manifest.write_text(json.dumps(data))
     execute(scratch, False)
     manifest.write_bytes(saved)
