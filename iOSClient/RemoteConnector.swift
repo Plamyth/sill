@@ -86,10 +86,13 @@ final class RemoteConnector {
         queue.async { [self] in
             guard !finished else { return }
             if candidates.isEmpty { finish(); return }
-            if !sequential {
+            switch mode {
+            case .session, .ownerBootstrap:
                 let item = DispatchWorkItem { [weak self] in self?.outOfTime() }
                 wholeItem = item
                 queue.asyncAfter(deadline: .now() + RemoteDialPolicy.wholeDial, execute: item)
+            case .pairing:
+                break
             }
             startNext()
         }

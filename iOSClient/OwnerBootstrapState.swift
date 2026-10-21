@@ -9,6 +9,7 @@ struct OwnerBootstrapState {
     private(set) var phase: Phase = .unarmed
     private var generation: UInt64 = 0
     private var initiallyEmpty = false
+    var wasInitiallyEmpty: Bool { initiallyEmpty }
 
     mutating func arm(savedKeyPresent: Bool, preferredKeyPresent: Bool, hasRecords: Bool, explicitLaunch: Bool) {
         guard phase == .unarmed else { return }
@@ -58,5 +59,23 @@ struct OwnerBootstrapState {
               let key = Base64URL.decode(recognition), key.count == 32,
               Base64URL.encode(key) == recognition else { return false }
         return true
+    }
+}
+
+final class OwnerBootstrapSendPermit {
+    private let lock = NSRecursiveLock()
+    private var available = true
+
+    func sendIfAllowed(_ send: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard available else { return false }
+        available = false
+        send()
+        return true
+    }
+
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        available = false
     }
 }

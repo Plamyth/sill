@@ -133,7 +133,9 @@ final class OwnerBootstrapExchange {
     private let name: String
     private let model: String
     private let queue: DispatchQueue
+    private let sendPermit = OwnerBootstrapSendPermit()
     private var finished = false
+    private var started = false
     private var deadline: DispatchWorkItem?
     private var completion: ((PairResult?) -> Void)?
 
@@ -141,11 +143,15 @@ final class OwnerBootstrapExchange {
         self.connection = connection; self.profile = profile; self.name = name; self.model = model; self.queue = queue
     }
 
-    func cancel() { queue.async { [self] in finish(nil, report: false) } }
+    func cancel() {
+        sendPermit.cancel()
+        queue.async { [self] in finish(nil, report: false) }
+    }
 
     func start(done: @escaping (PairResult?) -> Void) {
         queue.async { [self] in
-            guard !finished else { return }
+            guard !finished, !started else { return }
+            started = true
             completion = done
             guard RemoteTLS.negotiatedALPN(connection) == OwnerMacBootstrap.alpn,
                   RemoteTLS.peerFingerprint(connection) == profile.fingerprintData else { finish(nil); return }
@@ -159,10 +165,12 @@ final class OwnerBootstrapExchange {
                                       proof: "", name: name, model: model)
             let message = StreamMessage(kind: .pairRequest, timestamp: Date().timeIntervalSince1970,
                                         isKeyframe: false, payload: Wire.encode(request))
-            connection.send(content: message.serialized(), completion: .contentProcessed { [weak self] error in
-                if error != nil { self?.finish(nil) }
-            })
-            readHeader()
+            guard sendPermit.sendIfAllowed({
+                connection.send(content: message.serialized(), completion: .contentProcessed { [weak self] error in
+                    if error != nil { self?.finish(nil) }
+                })
+            }) else { finish(nil, report: false); return }
+            if !finished { readHeader() }
         }
     }
 
@@ -187,6 +195,7 @@ final class OwnerBootstrapExchange {
     private func finish(_ result: PairResult?, report: Bool = true) {
         guard !finished else { return }
         finished = true
+        sendPermit.cancel()
         deadline?.cancel(); deadline = nil
         connection.stateUpdateHandler = nil
         connection.cancel()

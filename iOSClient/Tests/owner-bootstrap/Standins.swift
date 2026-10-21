@@ -90,8 +90,9 @@ final class NWConnection {
     var alpn: String? = OwnerMacBootstrap.alpn
     var reads: [Read] = []
     var sent: [Data] = []
+    var sendError: Int?
     func cancel() { cancelled = true }
-    func send(content: Data?, completion: Completion) { sent.append(content!); if case .contentProcessed(let done) = completion { done(nil) } }
+    func send(content: Data?, completion: Completion) { sent.append(content!); if case .contentProcessed(let done) = completion { done(sendError) } }
     func receive(minimumIncompleteLength: Int, maximumLength: Int, completion: @escaping Read) { reads.append(completion) }
     func deliver(_ data: Data?, ended: Bool = false, error: Int? = nil) { if !reads.isEmpty { reads.removeFirst()(data, nil, ended, error) } }
 }

@@ -29,7 +29,7 @@ func answer(_ socket: NWConnection, _ r: PairResult = result()) {
 reset()
 do {
     let c = client()
-    check("실제 startup에서 최초 빈 저장소만 등록 시작", RemoteConnector.all.count == 1)
+    check("실제 startup에서 최초 빈 저장소만 등록 시작", RemoteConnector.all.count == 1 && c.ownerBootstrap.wasInitiallyEmpty)
     let connector = c.ownerBootstrapDial!
     check("profile 주소와 port만 순서대로 사용", connector.candidates.map(\.host) == fixtureProfile.addresses && connector.candidates.allSatisfy { $0.port == 7455 })
     for _ in 0..<5 { c.discoveryChanged(); c.armSavedMacAutoConnect(); c.startRemote() }
@@ -48,7 +48,7 @@ do {
 for value: Any in ["[]", "corrupt", Data(), 1] {
     reset(); UserDefaults.standard.values[SavedMacs.defaultsKey] = value
     let c = client(); c.discoveryChanged()
-    check("빈 배열·손상·비문자열 원시 저장키가 최초 자격을 막음", RemoteConnector.all.isEmpty && Bundle.reads == 0)
+    check("빈 배열·손상·비문자열 원시 저장키가 최초 자격을 막음", RemoteConnector.all.isEmpty && Bundle.reads == 0 && !c.ownerBootstrap.wasInitiallyEmpty)
 }
 for value: Any in ["", "missing", 1] {
     reset(); UserDefaults.standard.values[StreamClient.ownerPreferredKey] = value
@@ -205,5 +205,14 @@ do {
     check("정상 교환은 중복 시작에도 kind19를 한 번만 보냄", socket.sent.count == 1 && !socket.cancelled)
     answer(socket)
     check("정상 교환 결과도 한 번만 전달", completions == 1)
+}
+reset()
+do {
+    let socket = NWConnection(); socket.sendError = 1
+    let exchange = OwnerBootstrapExchange(connection: socket, profile: fixtureProfile, name: "검사 iPad", model: "iPadFixture", queue: DispatchQueue())
+    var completions = 0
+    exchange.start { value in precondition(value == nil); completions += 1 }
+    exchange.cancel()
+    check("동기 전송 오류도 잠금 교착 없이 한 번 종료하고 읽기를 시작하지 않음", completions == 1 && socket.cancelled && socket.sent.count == 1 && socket.reads.isEmpty)
 }
 print("PASS \(count) owner bootstrap startup/exchange checks; deterministic stand-ins, no device/network/Keychain effects")
