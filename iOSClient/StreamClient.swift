@@ -184,11 +184,12 @@ final class StreamClient: ObservableObject {
     #if os(iOS) || os(visionOS)
     #if os(visionOS)
     private struct VisionStartupTarget {
-        let token = UUID()
+        var token = UUID()
         let macID: String
         let pin: Data
         let recognitionKey: Data
         let preferredID: String?
+        let devicePin: Data
     }
     private var startupRemoteCheck: DispatchWorkItem?
     #endif
@@ -196,6 +197,7 @@ final class StreamClient: ObservableObject {
         case unarmed
         #if os(visionOS)
         case waiting(VisionStartupTarget)
+        case suspended(VisionStartupTarget)
         #else
         case waiting(String)
         #endif
@@ -917,7 +919,9 @@ final class StreamClient: ObservableObject {
     var visionDisplayLink: SessionLink { link }
     var visionWindowRetired = false
     var visionStartupStarted = false
-    var visionStartupForeground = false
+    var visionStartupForeground = false {
+        didSet { tryVisionSavedMacAutoConnect() }
+    }
     @Published var visionCableBootstrap = VisionCableBootstrap<FoundMac>(launch: .ordinary)
     var visionExpectedMacPin: Data? {
         if let request = visionCableBootstrap.request { return request.pin }
@@ -1062,7 +1066,6 @@ final class StreamClient: ObservableObject {
     func setVisionPresentationForeground(_ foreground: Bool) {
         visionTextForeground = foreground
         if !foreground {
-            if visionStartupStarted { stopSavedMacAutoConnect() }
             revokeVisionTextDrafts()
         }
         displayView.setPresentationForeground(foreground)
@@ -1428,22 +1431,14 @@ final class StreamClient: ObservableObject {
             return
         }
         #if os(visionOS)
-        guard let pin = target.fingerprintData, let recognitionKey = target.recognitionKeyData else { return }
+        guard let pin = target.fingerprintData, let recognitionKey = target.recognitionKeyData,
+              let devicePin = DeviceIdentity.existing()?.fingerprint else { return }
         startupAutoConnection = .waiting(VisionStartupTarget(macID: target.macID, pin: pin,
-            recognitionKey: recognitionKey, preferredID: preferred))
+            recognitionKey: recognitionKey, preferredID: preferred, devicePin: devicePin))
         #else
         startupAutoConnection = .waiting(target.macID)
         #endif
         trySavedMacAutoConnect()
-        #if os(visionOS)
-        if case .waiting(let target) = startupAutoConnection {
-            let work = DispatchWorkItem { [weak self] in
-                self?.tryVisionSavedMacAutoConnect(expired: target.token)
-            }
-            startupRemoteCheck = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + DiscoveryPolicy.remoteWait, execute: work)
-        }
-        #endif
     }
 
     func stopSavedMacAutoConnect() {
@@ -1496,19 +1491,44 @@ final class StreamClient: ObservableObject {
     }
     #if os(visionOS)
     private func tryVisionSavedMacAutoConnect(expired token: UUID? = nil) {
-        guard case .waiting(let target) = startupAutoConnection else { return }
-        guard appInForeground, visionStartupForeground, !connected, connection == nil, reconnect == nil,
+        var target: VisionStartupTarget
+        switch startupAutoConnection {
+        case .waiting(let pending), .suspended(let pending): target = pending
+        default: return
+        }
+        guard token == nil || token == target.token else { return }
+        guard !visionWindowRetired, !connected, connection == nil, reconnect == nil,
               remoteDial == nil, pairingDial == nil, homeDialer == nil, pairing == .idle, homeAsk == nil,
               case .ordinary = visionCableBootstrap.launch,
               UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey) == target.preferredID,
               let saved = SavedMacs.automaticTarget(savedMacs, preferredID: target.preferredID),
+              savedMacs.filter({ $0.macID == target.macID }).count == 1,
               saved.macID == target.macID, saved.fingerprintData == target.pin,
               saved.recognitionKeyData == target.recognitionKey,
-              DeviceIdentity.existing() != nil else { stopSavedMacAutoConnect(); return }
+              DeviceIdentity.existing()?.fingerprint == target.devicePin else { stopSavedMacAutoConnect(); return }
+        guard appInForeground, visionStartupForeground else {
+            if case .waiting = startupAutoConnection {
+                target.token = UUID()
+                startupAutoConnection = .suspended(target)
+            }
+            startupRemoteCheck?.cancel()
+            startupRemoteCheck = nil
+            return
+        }
+        startupAutoConnection = .waiting(target)
         let rows = macs.filter { $0.route == .network && $0.macID == target.macID && $0.carriesTag &&
             $0.endpoint != nil && homeDecision($0, macID: target.macID, tap: false) == .pinned }
         let row = rows.first(where: { wiredDial(for: $0) != nil }) ?? rows.first
-        guard row != nil || token == target.token else { return }
+        guard row != nil || token == target.token else {
+            if startupRemoteCheck == nil {
+                let work = DispatchWorkItem { [weak self] in
+                    self?.tryVisionSavedMacAutoConnect(expired: target.token)
+                }
+                startupRemoteCheck = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + DiscoveryPolicy.remoteWait, execute: work)
+            }
+            return
+        }
         stopSavedMacAutoConnect()
         startupAutoConnection = .attempted
         guard beginVisionSavedMacReconnect(saved) else { return }
@@ -1619,7 +1639,7 @@ final class StreamClient: ObservableObject {
         #endif
         appInForeground = false
         #if os(visionOS)
-        if visionStartupStarted { stopSavedMacAutoConnect() }
+        tryVisionSavedMacAutoConnect()
         stopVisionCableBootstrap(.foregroundRequired)
         #endif
         reconnectCheck?.cancel()

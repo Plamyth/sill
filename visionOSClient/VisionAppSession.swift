@@ -84,6 +84,7 @@ final class VisionAppSession: ObservableObject {
     func release(_ window: UUID) {
         guard windowOwner == window else { return }
         windowLease = nil
+        client.stopSavedMacAutoConnect()
         suspendPresentation()
         input.allowed = false
         #if DEBUG && targetEnvironment(simulator)
