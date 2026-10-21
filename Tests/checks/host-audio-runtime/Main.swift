@@ -36,6 +36,15 @@ struct Main {
             let active = await f.observe(connection)
             precondition(active?.catalog?.bootstrap.snapshot.binding?.phase == .active)
             precondition(f.protectionPreparations == 0, "정상 보호와 active 관측은 보호 준비를 반복하지 않습니다.")
+            f.flag("refuse-request")
+            let refusedRequest = await f.submit(connection)
+            guard case .refused(_, let retainedActive) = refusedRequest?.result else { preconditionFailure("거절된 요청 상태 누락") }
+            precondition(retainedActive.binding?.phase == .active,
+                         "거절된 새 native 요청이 기존 transport 소유를 바꾸면 안 됩니다.")
+            let afterRefusal = await f.observe(connection)
+            precondition(afterRefusal?.catalog?.bootstrap.snapshot.binding?.phase == .active)
+            try FileManager.default.removeItem(at: f.directory.appendingPathComponent("refuse-request"))
+
             precondition(f.nativeStops == 1 && f.count("forwardingPrepare") == 1 && f.count("inspect") >= 1)
             precondition(f.hal.reads > 1 && f.surfaceReads > 1, "실제 privacy/sentry proof readback 실행")
             precondition(f.events().filter { $0["method"] as? String == "forwardingRequest" }

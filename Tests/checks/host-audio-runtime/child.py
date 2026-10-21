@@ -94,18 +94,21 @@ for line in sys.stdin:
                           sentryDesired=True, localMutedDesired=True)
             result = snapshot()
     elif method == 'forwardingRequest':
-        incoming = payload['intent']
-        assert payload['credential'] == credentials.get(payload['pairedDeviceId'])
-        assert incoming['transportKind'] == 'native'
-        generation = str(uuid.uuid4())
-        intent = dict(pairedDeviceId=payload['pairedDeviceId'], intentId=incoming['intentId'], intentRevision=incoming['intentRevision'],
-                      intentGeneration=generation, inputDesired=incoming['inputDesired'], outputDesired=incoming['outputDesired'],
-                      sentryDesired=True, localMutedDesired=True)
-        binding = dict(pairedDeviceId=payload['pairedDeviceId'], intentGeneration=generation, bindingEpoch=str(uuid.uuid4()),
-                       transportId=incoming['transportId'], transportKind='native', operationId=str(uuid.uuid4()),
-                       phase='quiescing', configuration=configuration)
-        revision += 1
-        result = snapshot()
+        if (directory / 'refuse-request').exists():
+            result = dict(state='refused', code='forwarding_cas_conflict', snapshot=snapshot())
+        else:
+            incoming = payload['intent']
+            assert payload['credential'] == credentials.get(payload['pairedDeviceId'])
+            assert incoming['transportKind'] == 'native'
+            generation = str(uuid.uuid4())
+            intent = dict(pairedDeviceId=payload['pairedDeviceId'], intentId=incoming['intentId'], intentRevision=incoming['intentRevision'],
+                          intentGeneration=generation, inputDesired=incoming['inputDesired'], outputDesired=incoming['outputDesired'],
+                          sentryDesired=True, localMutedDesired=True)
+            binding = dict(pairedDeviceId=payload['pairedDeviceId'], intentGeneration=generation, bindingEpoch=str(uuid.uuid4()),
+                           transportId=incoming['transportId'], transportKind='native', operationId=str(uuid.uuid4()),
+                           phase='quiescing', configuration=configuration)
+            revision += 1
+            result = snapshot()
     elif method == 'forwardingSnapshot':
         wait_flag('snapshot')
         now = time.monotonic()
@@ -122,19 +125,22 @@ for line in sys.stdin:
             revision += 1
         result = snapshot()
     elif method == 'forwardingPrepare':
-        assert payload['bindingEpoch'] == binding['bindingEpoch']
-        prepared = receipt()
-        result = prepared
+        if binding is None or payload['bindingEpoch'] != binding['bindingEpoch']:
+            result = dict(state='refused', code='binding_superseded', snapshot=snapshot())
+        else:
+            prepared = receipt()
+            result = prepared
     elif method == 'inspect':
         result = prepared if prepared and payload['operationId'] == prepared['operationId'] else None
     elif method == 'forwardingCommit':
         wait_flag('commit')
-        assert payload['bindingEpoch'] == binding['bindingEpoch']
-        assert payload['configuration'] == configuration and len(payload['receipts']) == 2
-        assert all(payload['localProtection'].values())
-        binding = dict(binding, phase='active' if intent['inputDesired'] or intent['outputDesired'] else 'off')
-        revision += 1
-        result = snapshot()
+        if binding is None or payload['bindingEpoch'] != binding['bindingEpoch'] or payload['configuration'] != configuration:
+            result = dict(state='refused', code='binding_superseded', snapshot=snapshot())
+        else:
+            assert len(payload['receipts']) == 2 and all(payload['localProtection'].values())
+            binding = dict(binding, phase='active' if intent['inputDesired'] or intent['outputDesired'] else 'off')
+            revision += 1
+            result = snapshot()
     elif method == 'forwardingDisconnect':
         if binding and binding['bindingEpoch'] == payload['bindingEpoch']:
             binding = None
