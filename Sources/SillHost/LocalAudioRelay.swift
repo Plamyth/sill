@@ -375,7 +375,8 @@ final class LocalAudioRelay {
     }
 
     func forwardingRequest(_ intent: AudioForwardingIntentRequest, peer: AudioForwardingPairedDevice,
-                           credential: AudioForwardingCredential) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+                           credential: AudioForwardingCredential,
+                           admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         struct Submission: Encodable {
             let pairedDeviceId: AudioForwardingDeviceID
             let credential: String
@@ -383,8 +384,18 @@ final class LocalAudioRelay {
         }
         guard intent.transportKind == .native, intent.pairedDeviceId == peer.id,
               credential.pairedDeviceId == peer.id, credential.pairingGeneration == peer.pairingGeneration else { return nil }
-        return await forwardingCall("forwardingRequest",
-            payload: Submission(pairedDeviceId: peer.id, credential: credential.credential, intent: intent))
+        let membership = participants.snapshot
+        guard case .connected(let boot) = state, registeredBoot == boot, membership.boots[.relay] == boot else { return nil }
+        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingRequest",
+            payload: Submission(pairedDeviceId: peer.id, credential: credential.credential, intent: intent),
+            admission: { [weak self] in
+                guard let self, admission?() != false, case .connected(let currentBoot) = self.state,
+                      currentBoot == boot, self.registeredBoot == boot, self.participants.snapshot == membership else { return false }
+                return true
+            })
+        guard admission?() != false, !Task.isCancelled, case .connected(let currentBoot) = state,
+              currentBoot == boot, registeredBoot == boot, participants.snapshot == membership else { return nil }
+        return result
     }
 
     func forwardingPrepare(_ binding: AudioForwardingBinding) async -> AudioForwardingResult<LocalAudioParticipantReceipt>? {
