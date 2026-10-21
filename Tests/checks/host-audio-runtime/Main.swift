@@ -3,6 +3,38 @@ import StreamProtocol
 
 @main
 struct Main {
+    @MainActor private static func startWithPrepareGate(_ fixture: Fixture) async throws {
+        let original = LocalAudioRelayLaunch.child!
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        let script = String(data: try encoder.encode(original.path), encoding: .utf8)!
+        let wrapper = fixture.directory.appendingPathComponent("prepare-queue-gate.py")
+        let source = """
+        import json, pathlib, runpy, sys, time
+        directory = pathlib.Path(sys.argv[1])
+        original_loads = json.loads
+        count = 0
+        def gated_loads(value, *args, **kwargs):
+            global count
+            request = original_loads(value, *args, **kwargs)
+            if isinstance(request, dict) and request.get('method') == 'forwardingPrepare':
+                count += 1
+                (directory / ('prepare-entered-' + str(count))).touch()
+                release = directory / ('prepare-release-' + str(count))
+                deadline = time.monotonic() + 4.6
+                while not release.exists() and time.monotonic() < deadline:
+                    time.sleep(.005)
+            return request
+        json.loads = gated_loads
+        sys.argv[0] = \(script)
+        runpy.run_path(\(script), run_name='__main__')
+        """
+        try source.write(to: wrapper, atomically: true, encoding: .utf8)
+        LocalAudioRelayLaunch.child = wrapper
+        defer { LocalAudioRelayLaunch.child = original }
+        try await fixture.start()
+    }
+
     @MainActor static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         LocalAudioRelayLaunch.child = URL(fileURLWithPath: CommandLine.arguments[2])
@@ -271,6 +303,49 @@ struct Main {
             let after = await f.observe(connection)
             precondition(after != nil, "거절된 configure가 다른 연결의 공유 pipe를 닫으면 안 됩니다.")
             checks += 2
+        }
+
+        for exhaustRetries in [false, true] {
+            let f = try Fixture(root: root), connection = Connection()
+            defer { f.finish() }
+            try await startWithPrepareGate(f)
+            guard let relay = LocalAudioRelayLaunch.lastRelay else { preconditionFailure() }
+            let observed = await f.observe(connection)
+            precondition(observed != nil)
+            let gate = NativeGate()
+            f.gate = gate
+            let pending = await f.submit(connection)
+            guard case .accepted(let value) = pending?.result, let binding = value.binding else { preconditionFailure() }
+            await f.until { gate.entered }
+            let configured = f.count("forwardingConfigure")
+            let blockers = exhaustRetries ? 4 : 1
+            for index in 1...blockers {
+                let blocker = Task { @MainActor in
+                    await relay.forwardingPrepare(binding, until: ContinuousClock.now.advanced(by: .seconds(5)))
+                }
+                await f.until { FileManager.default.fileExists(atPath:
+                    f.directory.appendingPathComponent("prepare-entered-\(index)").path) }
+                if index == 1 { f.runtime.invalidateProtection() }
+                try await Task.sleep(for: .milliseconds(3900))
+                precondition(f.count("forwardingConfigure") == configured,
+                             "FIFO 대기 중 만료된 configure가 송신되면 안 됩니다.")
+                precondition(relay.forwardingConfiguration(privacyGeneration: f.privacy.forwardingPrivacyGeneration) != nil,
+                             "송신 전 만료는 살아 있는 공유 pipe를 닫으면 안 됩니다.")
+                f.flag("prepare-release-\(index)")
+                guard case .accepted = await blocker.value else { preconditionFailure("FIFO 점유 RPC 종료 실패") }
+            }
+            if exhaustRetries {
+                try await Task.sleep(for: .seconds(3))
+                let blocked = await f.observe(connection)
+                precondition(blocked == nil && f.count("forwardingConfigure") == configured,
+                             "재시도 상한 이후에는 FIFO가 풀려도 다시 송신하지 않습니다.")
+            } else {
+                await f.until(seconds: 5) { f.count("forwardingConfigure") == configured + 1 }
+                let recovered = await f.observe(connection)
+                precondition(recovered?.catalog?.schemaVersion == 2,
+                             "같은 살아 있는 relay는 FIFO가 풀린 뒤 다시 구성됩니다.")
+            }
+            checks += 4
         }
 
         let allDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)

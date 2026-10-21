@@ -54,6 +54,8 @@ final class HostAudioForwardingRuntime {
     private var startWork: Task<Void, Never>?
     private var configuration: AudioForwardingConfiguration?
     private var attemptedConfiguration: AudioForwardingConfiguration?
+    private var configurationAttempts = 0
+    private var configurationRetryAt: ContinuousClock.Instant?
     private var configuring: UUID?
     private var monitor: UUID?
     private var polling = false
@@ -266,9 +268,17 @@ final class HostAudioForwardingRuntime {
     private func configure() async {
         guard running, !stopped, configuring == nil, let relay,
               let expected = relay.forwardingConfiguration(privacyGeneration: privacy.forwardingPrivacyGeneration),
-              configuration != expected, attemptedConfiguration != expected else { return }
+              configuration != expected else { return }
+        if attemptedConfiguration == expected {
+            guard configurationAttempts < 3, let retryAt = configurationRetryAt,
+                  ContinuousClock.now >= retryAt else { return }
+        } else {
+            configurationAttempts = 0
+        }
         let token = UUID(), generation = self.generation
         configuring = token; attemptedConfiguration = expected
+        configurationAttempts += 1
+        configurationRetryAt = nil
         configuration = nil
         fenceWork()
         let result = await relay.forwardingConfigure(privacyGeneration: expected.privacyGeneration,
@@ -280,9 +290,14 @@ final class HostAudioForwardingRuntime {
             })
         guard configuring == token else { return }
         configuring = nil
-        guard !stopped, self.relay === relay, self.generation == generation,
-              relay.forwardingConfiguration(privacyGeneration: privacy.forwardingPrivacyGeneration) == expected,
-              case .accepted(let snapshot) = result,
+        guard !Task.isCancelled, !stopped, self.relay === relay, self.generation == generation,
+              relay.forwardingConfiguration(privacyGeneration: privacy.forwardingPrivacyGeneration) == expected else { return }
+        // 송신한 RPC의 실패는 relay를 닫는다. 같은 살아 있는 relay의 nil은 송신 전 대기 만료다.
+        if result == nil {
+            if configurationAttempts < 3 { configurationRetryAt = ContinuousClock.now.advanced(by: .seconds(1)) }
+            return
+        }
+        guard case .accepted(let snapshot) = result,
               snapshot.binding == nil || snapshot.binding?.configuration == expected else { return }
         configuration = expected
         offer(snapshot)
