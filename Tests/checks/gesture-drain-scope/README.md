@@ -1,5 +1,29 @@
 # 제스처 지연 큐의 컨텍스트 검사
 
+## 합성 Desktop의 빈 물리 inventory 회귀 P2
+
+기준 생산 소스는 `3ddfd943fb1b44b07d9bc18a9e17807378feab09`이다. 사용자 인계에서 확인된 기존 **394개·0실패**는 이 기준의 이전 실행 증거로 보존한다. 이번 작성자는 이를 재실행하지 않았다. 기존 검사 본문과 단언은 유지하고 그 누적 결과를 새 합성 검사 직전에 별도로 출력한다.
+
+Pstack Bug fix의 테스트 우선 커밋 → 최소 수정 커밋 순서를 따른다. Ponytail 재사용 원칙으로 기존 생산 함수 추출기·fixture·검사 함수만 확장한다. 사용자 지정 단일 설계를 따르며 추가 에이전트·ARENA·Goal과 설계 탐색은 수행하지 않는다. 실행·전체 앱 컴파일·서명 후보·독립 검수는 부모의 Mini 단계다.
+
+Fixture는 `synthetic`와 빈 inventory를 주입받고 합성일 때 `gesturesDry`도 켠다. `Stats.bump`는 이름별 횟수를 기록한다. 실제 생산 수신·큐·컨텍스트·최종 chord 수행·held 재생과 `GestureChords`를 추출하여 다음을 검사한다.
+
+- 빈 물리 inventory인 합성 Desktop에서 6종 행동 각각의 즉시 실행과 held 재생, 주입 0, `in.gestureDry`, `open/repeated`.
+- 물리 inventory만 생겨도 합성 컨텍스트의 scope는 nil이고 대기 행동은 그대로 실행됨. 실제 `displaysChanged`의 토큰 무효화와 구분한다.
+- 열린 상태·반복 상태를 먼저 만든 뒤 연결 종료 또는 TTL 경계 만료 시 drain·held 모두 카운터와 상태 변화 0.
+- 실제 모드에서 빈 inventory이면 6종 모두 수신 거부, 주입·상태·카운터 변화 0.
+
+기존 394개에 새 단언 100개를 추가해 총 494개가 예상된다. 이 수는 코드상 예상이며 Mini 실행 결과가 아니다. 기준은 새 합성 정상 경로에서 행동 실패, 수정본은 전체 통과가 기대된다. 파싱 성공이나 컴파일 오류를 red/green 행동 증거로 취급하지 않는다.
+
+아래 명령은 **같은 최신 작업트리의 검사·fixture·생성기**로 생산 소스만 바꾼다. `--ref`는 생산 소스에만 적용되므로 기준 commit에 새 테스트가 없어도 비교할 수 있다. stdout은 저장 없이 파이프로 전달할 수 있고 stderr의 SHA-256으로 동일 검사 입력을 대조한다.
+
+```sh
+python3 -B Tests/checks/gesture-drain-scope/run.py --emit-only --ref 3ddfd943fb1b44b07d9bc18a9e17807378feab09
+python3 -B Tests/checks/gesture-drain-scope/run.py --emit-only
+```
+
+작성 범위는 Python AST 파싱, 위 두 생성 결과와 변경 생산 파일의 `swiftc -frontend -parse`, `git diff --check`까지다. 부모는 생성 명령의 종료 코드와 Swift 파싱 코드를 각각 확인해야 하며 단순 파이프의 마지막 종료 코드만으로 생성 성공을 추정하지 않는다. Mini 행동 실행·타입검사·전체 앱 컴파일·서명 후보·독립 검수 결과는 이번 작성 범위에서 미확인이다. 기기·UI·실제 입력·오디오·HAL·설치·재시작은 수행하지 않는다.
+
 ## 창에서 Desktop으로 전환하는 순정 클라이언트의 P2 수정
 
 이번 기준은 `22c04fd33b8c10f61432a18ec21b595afc9d0f7e`, tree `69ad10bc8a90e74034cd147ded11d137339f7029`이다. `iOSClient/StreamClient.swift`의 순정 `sendGesture`는 창 화면에서 Desktop 선택을 보낸 직후 kind 28을 보낸다. 기존 후보가 전환 중 수신을 모두 거부해 이 정상 순서를 잃었다. iOS 클라이언트와 wire 계약은 변경하지 않는다.

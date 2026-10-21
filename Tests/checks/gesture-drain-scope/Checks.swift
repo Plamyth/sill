@@ -6,10 +6,11 @@
     Results.assertions += 1
     if !value() { Results.failures += 1; print("FAIL \(label)") }
 }
-@MainActor func fresh() -> (Harness, NWConnection) {
+@MainActor func fresh(synthetic: Bool = false, emptyInventory: Bool = false) -> (Harness, NWConnection) {
     Clock.now = 10000
     Clock.sleeping = nil
-    let host = Harness(), peer = NWConnection()
+    Stats.counters = [:]
+    let host = Harness(synthetic: synthetic, emptyInventory: emptyInventory), peer = NWConnection()
     host.join(peer)
     return (host, peer)
 }
@@ -216,6 +217,84 @@
               "선택 거부 뒤 기존 open/repeated 보존 " + name)
     }
     Clock.sleeping = nil
+}
+@MainActor func syntheticChecks() async {
+    let actions: [(String, GestureAction)] = [
+        ("swipeUp", .missionControl), ("swipeDown", .appExpose),
+        ("swipeLeft", .nextSpace), ("swipeRight", .previousSpace),
+        ("pinch", .apps), ("spread", .showDesktop)
+    ]
+    for held in [false, true] {
+        for (name, action) in actions {
+            let (h, p) = fresh(synthetic: true, emptyInventory: true)
+            check(h.catalog.displayInventory.infos.isEmpty && h.desktopScope == nil,
+                  "합성 빈 물리 inventory " + name)
+            if held { h.holdUntil = Clock.now + 1 }
+            await h.send(name, from: p)
+            await InertTask.drain()
+            if held {
+                check(h.heldInput.count == 1 && Stats.counters.isEmpty && h.gestureChords.open == nil,
+                      "합성 held 실행 전 카운터·상태 보존 " + name)
+                h.releaseHeldInput()
+            }
+            check(h.injector.trace.isEmpty && h.injector.targets.isEmpty,
+                  "합성 6종 실제 주입 없음 held=\(held) " + name)
+            check(Stats.counters["in.gestureDry"] == 1,
+                  "합성 6종 dry 카운터 held=\(held) " + name)
+            check(h.gestureChords.open == (action.isView ? action : nil) && !h.gestureChords.repeated,
+                  "합성 6종 상태 held=\(held) " + name)
+        }
+    }
+    for held in [false, true] {
+        let (h, p) = fresh(synthetic: true, emptyInventory: true)
+        await h.send(from: p)
+        if held { h.holdUntil = Clock.now + 1 }
+        // 물리 목록만 바꾸며 생산 displaysChanged의 토큰 무효화는 호출하지 않는다.
+        h.catalog.displayInventory.update([
+            DisplayInfo(id: 1, name: "inert-1", width: 100, height: 100, isMain: true)
+        ], signatures: ["synthetic-unrelated-inventory"])
+        await InertTask.drain()
+        if held { h.releaseHeldInput() }
+        check(h.desktopScope != nil && h.currentGestureDesktop()?.desktopScope == nil,
+              "합성 컨텍스트가 물리 scope를 저장하지 않음")
+        check(Stats.counters["in.gestureDry"] == 1 && h.gestureChords.open == .missionControl &&
+              !h.gestureChords.repeated && h.injector.trace.isEmpty,
+              "합성 물리 inventory 변경과 독립 held=\(held)")
+    }
+    for held in [false, true] {
+        for expired in [false, true] {
+            let (h, p) = fresh(synthetic: true, emptyInventory: true)
+            await h.send(from: p)
+            await InertTask.drain()
+            await h.send(from: p)
+            await InertTask.drain()
+            check(Stats.counters["in.gestureDry"] == 1 && h.gestureChords.open == .missionControl &&
+                  h.gestureChords.repeated, "합성 무효화 전 open/repeated 준비")
+            let counters = Stats.counters
+            if held { h.holdUntil = Clock.now + 1 }
+            await h.send("swipeDown", from: p)
+            if held {
+                await InertTask.drain()
+                check(h.heldInput.count == 1, "합성 무효화 전 held 보존")
+            }
+            if expired { Clock.now += 2 } else { h.leave(p) }
+            if held { h.releaseHeldInput() } else { await InertTask.drain() }
+            check(Stats.counters == counters, "합성 종료/만료 뒤 카운터 변화 없음 held=\(held) expired=\(expired)")
+            check(h.gestureChords.open == .missionControl && h.gestureChords.repeated,
+                  "합성 종료/만료 뒤 상태 변화 없음 held=\(held) expired=\(expired)")
+            check(h.injector.trace.isEmpty && h.injector.targets.isEmpty,
+                  "합성 종료/만료 뒤 주입 없음")
+        }
+    }
+    for (name, _) in actions {
+        let (h, p) = fresh(emptyInventory: true)
+        await h.send(name, from: p)
+        check(h.currentGestureDesktop() == nil && h.pendingGestures.isEmpty && h.gestureDrain == nil,
+              "실제 모드 빈 inventory 수신 거부 " + name)
+        await InertTask.drain()
+        pristine(h, "실제 모드 빈 inventory " + name)
+        check(Stats.counters.isEmpty, "실제 모드 빈 inventory 카운터 변화 없음 " + name)
+    }
 }
 @MainActor func checks() async {
     var legacy = SourceInputFence<String>()
@@ -433,6 +512,8 @@
     }
     await selectionChecks()
     check(InertTask.pending.isEmpty, "소유한 inert 작업 종료")
+    print("기존 검사: \(Results.assertions) assertions, \(Results.failures) failures")
+    await syntheticChecks()
     print("\(Results.failures == 0 ? "PASS" : "FAIL") \(Results.assertions) assertions, \(Results.failures) failures; inert dependencies only")
 }
 @main struct GestureDrainChecks {

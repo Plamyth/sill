@@ -40,7 +40,8 @@ struct StreamMessage {
 enum KeyStrokes { typealias Device = ObjectIdentifier }
 @MainActor struct Stats {
     static let shared = Stats()
-    func bump(_ name: String) {}
+    static var counters: [String: Int] = [:]
+    func bump(_ name: String) { Self.counters[name, default: 0] += 1 }
 }
 final class RefusalSummary {
     init(queue: DispatchQueue, categories: [String], line: @escaping ([String: Int]) -> String) {}
@@ -113,7 +114,7 @@ final class PointerStub { func setGeometry(_ geometry: Int, fps: Int) {} }
     var connections: [ObjectIdentifier: NWConnection] = [:]
     var shuttingDown = false
     var gesturesDry = false
-    let synthetic = false
+    let synthetic: Bool
     var beforePipelineCommit: (() async -> Void)?
     var afterPipelineCommit: (() async -> Void)?
     var failPipeline = false
@@ -131,11 +132,15 @@ final class PointerStub { func setGeometry(_ geometry: Int, fps: Int) {} }
     func presentationInputRect(_ input: SourceInput) -> CGRect? { videoEpoch?.id == input.videoEpoch ? .zero : nil }
     func logClick(_ event: InputEvent, in rect: CGRect) {}
     // PRODUCTION_MEMBERS
-    init() {
-        catalog.displayInventory.update([
-            DisplayInfo(id: 1, name: "inert-1", width: 100, height: 100, isMain: true),
-            DisplayInfo(id: 2, name: "inert-2", width: 100, height: 100, isMain: false)
-        ], signatures: ["fixture"])
+    init(synthetic: Bool = false, emptyInventory: Bool = false) {
+        self.synthetic = synthetic
+        gesturesDry = synthetic
+        if !emptyInventory {
+            catalog.displayInventory.update([
+                DisplayInfo(id: 1, name: "inert-1", width: 100, height: 100, isMain: true),
+                DisplayInfo(id: 2, name: "inert-2", width: 100, height: 100, isMain: false)
+            ], signatures: ["fixture"])
+        }
         active = .desktop
         readyEpoch()
         injector.target = { [weak self] in self?.active ?? .none }
