@@ -1,0 +1,42 @@
+# 제스처 지연 큐의 컨텍스트 검사
+
+원 담당은 `01a13005-ff61-7780-b0e8-6dc171de1c9d`이다. 전용 브랜치는 `codex/gesture-drain-scope-20261021`, 기준은 `068be8f4a50444716aefe86347e7ae5dfa947f5d`이다. 변경 범위는 제스처 수신, 두 지연 큐와 입력 참여 식별이다.
+
+Pstack Bug fix 절차를 적용한다. 실행 증거는 부모가 Mini에서 생성한다. 이 구현 담당은 생성과 파싱까지만 수행한다. Ponytail full에 따라 기존 fence, 세대와 영상 epoch를 사용하고 별도 프레임워크나 wire 계약을 추가하지 않는다. 데이터 모양은 원 연결, 참여 토큰, source, desktopScope, 입력 세대, 영상 epoch, 무효화 토큰과 만료 시각을 묶은 대기 제스처다.
+
+- [ ] 1. Reproduce it yourself on the matching surface via the driver skill (Non-negotiables).
+  skip: 실제 UI 금지. 아래 원본 생산 함수 추출 경로의 합성 red 실행은 부모 담당에게 전달한다.
+- [ ] 2. Binary-search the cause.
+  소스에서 연결·세대가 사라지는 첫 큐와 동작 상태를 먼저 바꾸는 held 큐를 확인했다. 실행 증거는 미수집이다.
+- [ ] 3. Plan the fix.
+  단독 구현 범위와 ARENA 금지를 우선한다. 기존 함수와 fence에 필요한 상태만 추가한다.
+- [ ] 4. Verify on the same surface.
+  수정 후 같은 합성 검사의 green 실행은 부모 담당이 수행한다.
+- [ ] 5. Stage the commits so the failing repro lands before the fix in git history.
+  테스트 커밋 후 수정 커밋으로 분리한다. red를 실행하기 전에는 실패 확인으로 보고하지 않는다.
+- [ ] 6. Run **Opening a PR**.
+  skip: 이 작업은 clean 커밋 반납까지만 담당한다. PR·통합과 독립 검수는 부모 담당의 범위다.
+
+## 생성과 파싱
+
+전용 작업트리 루트에서 실행한다. stdout은 생성된 Swift이고 stderr는 입력 파일 및 추출부 SHA-256이다. 맥북에서는 아래 생성·파싱 명령만 사용한다.
+
+```sh
+python3 -B Tests/checks/gesture-drain-scope/run.py --emit-only --baseline | swiftc -frontend -parse -
+python3 -B Tests/checks/gesture-drain-scope/run.py --emit-only | swiftc -frontend -parse -
+swiftc -frontend -parse Sources/SillHost/StreamCoordinator.swift Sources/SillHost/SourceInputFence.swift
+```
+
+## 부모의 Mini 실행
+
+원본 red는 맥북의 `--emit-only --baseline` 출력을 부모의 승인된 한시 실행 입력으로 전달해 Mini에서 `swift -package-name Sill -`로 실행한다. 원본 Git 객체를 Mini에 복사할 필요가 없다. 실패 단언과 종료 코드 1이 기대값이며, 컴파일 오류는 red 증거가 아니다. green은 같은 방식으로 `--baseline` 없이 생성한다. 부모가 한시 소스 사본을 사용하면 그 안에서 `python3 -B Tests/checks/gesture-drain-scope/run.py --run`도 가능하다. 이 생성기는 원격 연결이나 실행을 자동 시작하지 않는다.
+
+네이티브 타입검사는 부모의 한시 소스 실행 경로에서 `swift build --target SillHostCore`로 수행한다. 이 명령은 호스트를 실행하거나 설치하지 않는다. 기존 SDK·컴파일 경로의 제약은 별도로 기록한다.
+
+## 증거와 한계
+
+`run.py`는 생산 `TrackpadGesture`, `VideoEpoch`, `SourceInputFence`, `DisplayInventory`, `GestureChords`와 `StreamCoordinator`의 제스처 수신 case, queue/drain 콜백, 수행 함수, held 재생 함수, 관련 속성 observer를 추출한다. 생산 분기를 재구현하지 않는다. 접근 수준과 Task 실행기만 합성용으로 교체한다. 입력·연결·키 테이블·시간·스케줄러는 부작용 없는 의존성이다. 입력 참여 join/leave는 실제 fence를 호출하는 fixture이다. 전체 네트워크 연결 콜백이나 실제 NWConnection의 스케줄링을 실행하는 검사는 아니다.
+
+검사는 원 연결 종료·취소·재가입·교체, 다른 연결 유지, 세대·영상·선택·전환과 ABA, 두 큐 만료, 잘못된 이름·손가락 및 optional nil, 마지막 held 지연, 상태 오염, 기존 키 해제 순서, window 전환 후 주입 금지를 포함한다. 단축키 조회 의존성에서도 컨텍스트를 바꿔 마지막 주입 전 검증을 확인한다.
+
+kind 28 JSON에는 송신 시점의 세대가 없다. 수신 전에 지연된 패킷이 이미 바뀐 유효 desktop에 도착하는 경합은 이 수정으로 식별할 수 없다. `gestures=1`이나 호스트 내부 토큰으로 그 경합을 해결했다고 주장하지 않는다. 이 검사는 실제 UI·입력·캡처·오디오·HAL·기기·설치·재시작·사람 수용 증거를 만들지 않는다.
