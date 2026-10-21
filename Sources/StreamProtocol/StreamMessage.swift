@@ -80,6 +80,8 @@ public enum StreamMessageKind: UInt8 {
     case changeAudioRoute = 209  // paired TLS client → host: AudioRouteSelection, explicit CAS only
     case fetchAudioRoutes = 210  // paired TLS client → host, empty: refresh without changing defaults
     case selectDisplay = 211     // client → host: DisplaySelection, only with displaySelection == 1
+    case activateSentry = 213
+    case sentryState = 214
     case dockRequest = 215
     case dockReply = 216
     case forwardingControl = 217
@@ -118,6 +120,8 @@ public struct StreamMessage {
         case .microphoneState, .microphoneReceipt: return -1
         case .changeAudioRoute: return AudioRoutingPolicy.maxSelectionPayload
         case .fetchAudioRoutes: return 0
+        case .activateSentry: return 512
+        case .sentryState: return -1
         case .dockRequest: return 4096
         case .dockReply: return -1
         case .audioRoutes: return -1
@@ -129,6 +133,8 @@ public struct StreamMessage {
 
     public static func hostPayloadLimit(for kind: StreamMessageKind) -> Int {
         switch kind {
+        case .activateSentry: return -1
+        case .sentryState: return 4096
         case .microphoneState, .microphoneReceipt: return 4096
         case .microphoneControl, .microphoneFrame: return 0
         case .audioRoutes: return AudioRoutingPolicy.maxStatePayload

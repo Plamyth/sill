@@ -40,14 +40,16 @@ final class DesktopCapturePrivacy {
     enum Failure: Error { case inventoryUnavailable, privateApplicationMissing, updateTimedOut }
     nonisolated let admission = DesktopFrameAdmission()
     private let display: SCDisplay
+    private let requireOwnApplicationExclusion: Bool
     private let drain: () async -> Void
     private var observers: [NSObjectProtocol] = []
     private var stream: SCStream?
     private var refresh: Task<Void, Never>?
     private var stopped = false
 
-    init(display: SCDisplay, drain: @escaping () async -> Void) {
+    init(display: SCDisplay, requireOwnApplicationExclusion: Bool = false, drain: @escaping () async -> Void) {
         self.display = display
+        self.requireOwnApplicationExclusion = requireOwnApplicationExclusion
         self.drain = drain
         let gate = admission
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
@@ -78,7 +80,8 @@ final class DesktopCapturePrivacy {
                 excluded[app.processID] = app
             }
         }
-        guard admission.requiredPIDs.isSubset(of: Set(excluded.keys)) else {
+        guard admission.requiredPIDs.isSubset(of: Set(excluded.keys)),
+              !requireOwnApplicationExclusion || excluded[WindowCatalog.ownPID] != nil else {
             throw Failure.privateApplicationMissing
         }
         return SCContentFilter(display: display, excludingApplications: Array(excluded.values), exceptingWindows: [])

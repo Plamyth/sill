@@ -86,6 +86,9 @@ extension SystemAudioCapture {
 final class NWConnection {}
 struct RemoteAudioSubscription { let enabled: Bool; let requestID: UUID }
 @MainActor final class FakeServer {
+    final class Sentry { var admitted = true; func allowsActions(_ peer: ObjectIdentifier) -> Bool { admitted } }
+    let sentryAdmission = Sentry()
+
     var resets = 0
     var epoch: UInt64 = 0
     var holdReset = false
@@ -130,6 +133,7 @@ struct RemoteAudioSubscription { let enabled: Bool; let requestID: UUID }
     init() {
         // PRODUCTION_STOP_CALLBACK
     }
+    func audioPrivacyReady() -> Bool { true }
     func inputAuthorizationCurrent(_ id: ObjectIdentifier) -> Bool { routes[id] == true }
     func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil, to connection: NWConnection) {}
     // COORDINATOR_METHODS
@@ -278,6 +282,26 @@ struct RemoteAudioSubscription { let enabled: Bool; let requestID: UUID }
         reset.remoteAudioCapture.onPacket?(Data(), 1)
         check(reset.server.acceptedPackets == [reset.server.epoch], "replacement PCM callback uses the current server epoch")
         await reset.remoteAudioCapture.stop()
+
+        let blocked = CallbackCoordinator(), blockedPeer = NWConnection(), blockedID = ObjectIdentifier(blockedPeer)
+        blocked.routes[blockedID] = true; blocked.connections[blockedID] = blockedPeer
+        blocked.server.holdReset = true
+        let blockReset = Task { await blocked.revokeRemoteAudio(reason: "held before protection failure") }
+        for _ in 0..<1000 where blocked.server.pendingReset == nil { await Task.yield() }
+        let blockedEnable = Task { await blocked.controlRemoteAudio(.init(enabled: true, requestID: UUID()), from: blockedPeer) }
+        for _ in 0..<1000 where blocked.remoteAudioRequests[blockedID] == nil { await Task.yield() }
+        blocked.server.sentryAdmission.admitted = false
+        blocked.enqueueRemoteAudioRevocation(reason: "protection lost before subscribers exist")
+        check(blocked.remoteAudioRequests.isEmpty && blocked.remoteAudioActions.isEmpty,
+              "protection loss synchronously invalidates pending requests before recovery")
+        blocked.server.sentryAdmission.admitted = true
+        blocked.server.finishReset()
+        for _ in 0..<1000 where blocked.server.pendingReset == nil { await Task.yield() }
+        check(blocked.server.pendingReset != nil, "protection revocation queues its own capture barrier")
+        blocked.server.finishReset()
+        await blockReset.value; await blockedEnable.value
+        check(blocked.remoteAudioSubscribers.isEmpty && blocked.server.enabled.isEmpty,
+              "protection recovery cannot resurrect the invalidated pending request")
 
         let chain = CallbackCoordinator(), peer = NWConnection(), peerID = ObjectIdentifier(peer)
         chain.routes[peerID] = true; chain.connections[peerID] = peer

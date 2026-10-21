@@ -19,6 +19,10 @@ prepared = None
 http_started = False
 
 
+def same_uuid(a, b):
+    return isinstance(a, str) and isinstance(b, str) and a.lower() == b.lower()
+
+
 def snapshot():
     return dict(schemaVersion=1, revision=str(revision), intent=intent, binding=binding)
 
@@ -125,16 +129,16 @@ for line in sys.stdin:
             revision += 1
         result = snapshot()
     elif method == 'forwardingPrepare':
-        if binding is None or payload['bindingEpoch'] != binding['bindingEpoch']:
+        if binding is None or not same_uuid(payload['bindingEpoch'], binding['bindingEpoch']):
             result = dict(state='refused', code='binding_superseded', snapshot=snapshot())
         else:
             prepared = receipt()
             result = prepared
     elif method == 'inspect':
-        result = prepared if prepared and payload['operationId'] == prepared['operationId'] else None
+        result = prepared if prepared and same_uuid(payload['operationId'], prepared['operationId']) else None
     elif method == 'forwardingCommit':
         wait_flag('commit')
-        if binding is None or payload['bindingEpoch'] != binding['bindingEpoch'] or payload['configuration'] != configuration:
+        if binding is None or not same_uuid(payload['bindingEpoch'], binding['bindingEpoch']) or payload['configuration'] != configuration:
             result = dict(state='refused', code='binding_superseded', snapshot=snapshot())
         else:
             assert len(payload['receipts']) == 2 and all(payload['localProtection'].values())
@@ -142,7 +146,7 @@ for line in sys.stdin:
             revision += 1
             result = snapshot()
     elif method == 'forwardingDisconnect':
-        if binding and binding['bindingEpoch'] == payload['bindingEpoch']:
+        if binding and same_uuid(binding['bindingEpoch'], payload['bindingEpoch']):
             binding = None
             revision += 1
         result = snapshot()

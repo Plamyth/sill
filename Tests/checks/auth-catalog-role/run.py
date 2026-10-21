@@ -34,6 +34,7 @@ raw = block(server, "private func send(_ raw:")
 prefix = raw[raw.index("{") + 1:raw.index("        guard let data = PresentationMedia.adapt")]
 prefix = prefix.replace("else { return }", "else { return false }")
 prefix = prefix.replace("client.cancel(); return }", "client.cancel(); return false }")
+prefix = prefix.replace("client.needsKeyframe = true\n            return", "client.needsKeyframe = true\n            return false")
 methods.append("func admitsRaw(_ raw: Data, to client: Client) -> Bool {" + prefix + "\nreturn true\n}")
 fixture = fixture.replace("    // METHODS", "\n".join(methods).replace("private func", "func"))
 fixture = fixture.replace("    // VIEWER_COUNT", block(server, "private var viewerCount:").replace("private var", "var"))
@@ -51,7 +52,7 @@ try:
     base = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-module-cache-path", str(output / "cache")]
     protocol = base + ["-parse-as-library", "-whole-module-optimization", "-emit-module", "-emit-object", "-module-name", "StreamProtocol"]
     subprocess.run(protocol + [str(p) for p in sorted((root / "Sources/StreamProtocol").glob("*.swift"))] + ["-emit-module-path", str(output / "StreamProtocol.swiftmodule"), "-o", str(output / "StreamProtocol.o")], check=True, timeout=180)
-    subprocess.run(base + ["-I", str(output), str(root / "Sources/SillHost/StreamPeerRole.swift"), str(source), str(output / "StreamProtocol.o"), "-o", str(output / "check")], check=True, timeout=180)
+    subprocess.run(base + ["-I", str(output), str(root / "Sources/SillHost/StreamPeerRole.swift"), str(root / "Sources/SillHost/SentryAdmission.swift"), str(source), str(output / "StreamProtocol.o"), "-o", str(output / "check")], check=True, timeout=180)
     subprocess.run([str(output / "check")], check=True, timeout=30)
     assert all(hashlib.sha256((root / name).read_bytes()).hexdigest() == value for name, value in original.items())
     passed = True

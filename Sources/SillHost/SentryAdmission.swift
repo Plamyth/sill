@@ -123,6 +123,8 @@ final class SentryAdmission: @unchecked Sendable {
             return allows(peer, epoch: payload.epoch)
         case .frame, .parameterSets:
             return allows(peer, epoch: nil)
+        case .audio:
+            return allowsActions(peer)
         case .thumbnail:
             lock.lock(); defer { lock.unlock() }
             return !enabled || (!requested && !returningLocal && sessions[peer]?.admitted == true)

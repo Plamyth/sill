@@ -18,7 +18,7 @@ struct MenuEntry: Equatable {
         case setDirectWireless(Bool)
         case setMaxFPS(Int), setBitrate(Int), setCaptureScale(CGFloat)
         case toggleLaunchAtLogin
-        case showLog, showSettings, quit
+        case showLog, showSettings, quit, returnLocalAudio
         /// Settings on one tab (Remote Access…); the plain `showSettings` stays for ⌘,. (Swift
         /// allows no second case named `showSettings`.)
         case showSettingsTab(SettingsTab)
@@ -154,8 +154,14 @@ enum MenuBuilder {
         let permissions = PermissionState(screenRecording: model.permissions.screenRecording,
                                           accessibility: model.permissions.accessibility)
         let update = model.updates.offer.flatMap { offer in model.updates.runningVersion.map { (offer: offer, running: $0) } }
-        return entries(presentation: model.presentation, config: model.settings.config, login: login, permissions: permissions,
-                       update: update)
+        var menu = entries(presentation: model.presentation, config: model.settings.config, login: login, permissions: permissions,
+                           update: update)
+        let index = max(0, menu.count - 2)
+        menu.insert(MenuEntry(kind: .item, title: "인증 후 로컬 입출력으로 복귀…",
+            subtitle: model.localAudioReturnUnavailableReason ?? model.localAudioReturnNotice,
+            enabled: !model.localAudioReturnPending && model.localAudioReturnUnavailableReason == nil,
+            action: .returnLocalAudio), at: index)
+        return menu
     }
 
     /// The menu as text, for the previews: "✓" checked, "⚠" attention, "(off)" disabled.
@@ -294,6 +300,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .setBitrate(let bitrate): model.settings.config.bitrate = bitrate
         case .setCaptureScale(let scale): model.settings.config.captureScale = scale
         case .toggleLaunchAtLogin: model.loginItem.set(!model.loginItem.isOn)
+        case .returnLocalAudio: model.requestLocalAudioReturn()
         case .showLog: model.showLog?()
         case .showSettings: model.showSettings?(nil)
         case .showSettingsTab(let tab): model.showSettings?(tab)

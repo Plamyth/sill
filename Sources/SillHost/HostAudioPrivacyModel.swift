@@ -113,6 +113,7 @@ package final class HostAudioPrivacy {
     private let cancelAuthentication: () -> Void
     private var localReturnID = UUID()
     private var returningLocal = false
+    var isReturningLocal: Bool { returningLocal }
     private var authenticatingLocal = false
     private var privacyGeneration = UUID()
     private var persistenceHealthy = true

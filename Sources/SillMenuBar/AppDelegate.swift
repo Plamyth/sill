@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pairingWindow: PairDeviceWindowController?
     private var cableNotice: CableNoticeWindowController?
     private var terminating = false
+    private var localAudioReturnObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DebugHooks.renderPreviewsIfAsked(model: model)      // exits when asked
@@ -56,6 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // kill must then still put the streamed window back.
         HostShutdown.install { [model] in model.coordinator }
         model.start()
+        localAudioReturnObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.ambrion.ccrsill.requestAuthenticatedLocalAudioReturn.v1"),
+            object: nil, queue: .main) { [weak self] notification in
+                guard notification.userInfo == nil, let text = notification.object as? String,
+                      let requestID = UUID(uuidString: text), requestID.uuidString == text else { return }
+                Task { @MainActor [weak self] in self?.model.requestLocalAudioReturn(requestID: requestID) }
+            }
         DebugHooks.schedule(model: model)
     }
 

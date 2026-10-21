@@ -32,11 +32,15 @@ final class CGEvent {
     struct Flags { let rawValue: UInt64 }
     enum Tap { case cghidEventTap }
     let type: CGEventType
-    let flags = Flags(rawValue: 0)
+    var flags = Flags(rawValue: 0)
+    enum Field { case eventSourceUserData }
+    var userData: Int64 = 0
+    func setIntegerValueField(_ field: Field, value: Int64) { userData = value }
     var posted = 0
     init(_ type: CGEventType) { self.type = type }
     func post(tap: Tap) { posted += 1 }
 }
+typealias CGEventFlags = CGEvent.Flags
 enum KeyStrokes { static let capsLock: UInt64 = 1 << 16 }
 struct Stats { static let shared = Stats(); func bump(_ name: String) {} }
 final class PostFixture {
@@ -44,6 +48,8 @@ final class PostFixture {
     var postAuthorization: PostAuthorization?
     static let modifierBits: UInt64 = 0xff
     var lastKeyFlags: UInt64 = 0
+    var isolatesPhysicalInput = false
+    var remoteEventTag: Int64?
     var dryRun = false, testLog = false
     func logTest(_ event: CGEvent) {}
     // func withAuthorization(
@@ -107,6 +113,14 @@ final class PostFixture {
         }
         check(firstKey.posted == 1 && lateKey.posted == 0 && keyUp.posted == 1)
         check(injector.postAuthorization == nil && injector.post(CGEvent(.mouseMoved)))
+        injector.isolatesPhysicalInput = true
+        injector.remoteEventTag = 90210
+        injector.lastKeyFlags = 7
+        let pointer = CGEvent(.mouseMoved)
+        check(injector.post(pointer) && pointer.flags.rawValue == 7 && pointer.userData == 90210)
+        let denied = CGEvent(.leftMouseDown)
+        injector.withAuthorization(injectionLease.whileCurrent) { check(!injector.post(denied)) }
+        check(denied.posted == 0 && denied.userData == 0)
         print("PASS \(assertions) actual grant-lock, sendEnabled and injector post checks; no microphone, HAL or TLS device")
     }
 }

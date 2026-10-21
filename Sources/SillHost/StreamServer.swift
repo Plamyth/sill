@@ -53,6 +53,8 @@ import StreamProtocol
 /// a slow uplink is normal there. A session at a TLS home door is a home client in all of this: the
 /// home rule of `broadcast` and the home eviction, as on the plain door.
 final class StreamServer {
+    let sentryAdmission = SentryAdmission()
+    private let remoteAudioDrain = DispatchGroup()
     private final class Client {
         let connection: NWConnection
         /// Set only by the coordinator's first direct catalog, after source-fence admission.
@@ -1018,7 +1020,9 @@ final class StreamServer {
     private func register(_ client: Client) {
         client.connectedAt = Date().timeIntervalSince1970
         client.lastHeardAt = client.connectedAt
-        clients[ObjectIdentifier(client.connection)] = client
+        let peer = ObjectIdentifier(client.connection)
+        sentryAdmission.register(peer, externalRoute: client.route.isAuthenticated && client.route.isRemote)
+        clients[peer] = client
         if client.role.isViewer { onClientCountChanged?(viewerCount) }
         updateTicking()
         updateSweep()
@@ -1374,6 +1378,7 @@ final class StreamServer {
     private func unregister(_ id: ObjectIdentifier) {
         guard let client = clients.removeValue(forKey: id) else { return }
         client.invalidateAuthorization()
+        sentryAdmission.remove(id)
         if client.role.isViewer { pointerWatch?.clientLeft(id) }
         print("Client left: \(client.connection.endpoint)")
         if client.role.isViewer {
@@ -1501,6 +1506,19 @@ final class StreamServer {
                 client.remoteAudioAfterSequence = .max
             }
             completion(remoteAudioEpoch)
+        }
+    }
+
+    func drainRemoteAudio(completion: @escaping (Bool) -> Void) {
+        resetRemoteAudio { [self] _ in
+            var finished = false
+            let finish: (Bool) -> Void = { success in
+                guard !finished else { return }
+                finished = true
+                completion(success)
+            }
+            remoteAudioDrain.notify(queue: queue) { finish(true) }
+            queue.asyncAfter(deadline: .now() + 5) { finish(false) }
         }
     }
 
@@ -1889,6 +1907,10 @@ final class StreamServer {
 
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
         guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); return }
+        guard sentryAdmission.allowsWire(raw, for: ObjectIdentifier(client.connection), currentEpoch: videoAdmission.current?.id) else {
+            client.needsKeyframe = true
+            return
+        }
         var raw = raw
         if !client.role.isViewer {
             guard let header = StreamMessage.parseHeader(raw), client.role.sends(header.kind) else { return }
@@ -1900,6 +1922,7 @@ final class StreamServer {
         }
         if let header = StreamMessage.parseHeader(raw), header.kind == .windowList,
            var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
+            catalog.sentry = sentryAdmission.status(for: ObjectIdentifier(client.connection))
             catalog.presentationInput = 1
             catalog.videoEpoch = catalog.videoEpoch == videoAdmission.current ? videoAdmission.current : nil
             raw = StreamMessage(kind: .windowList, timestamp: header.timestamp, isKeyframe: header.isKeyframe,
@@ -1931,8 +1954,11 @@ final class StreamServer {
             client.inflightFrames += 1
             if client.oldestUnackedFrameAt == nil { client.oldestUnackedFrameAt = now }
         }
-        let sent = client.route.whileAuthorized {
-            client.connection.send(content: data, completion: .contentProcessed { [weak client] _ in
+        let audio = StreamMessage.parseHeader(data)?.kind == .audio
+        let sent = client.route.whileAuthorized { [remoteAudioDrain] in
+            if audio { remoteAudioDrain.enter() }
+            client.connection.send(content: data, completion: .contentProcessed { [remoteAudioDrain, weak client] _ in
+                if audio { remoteAudioDrain.leave() }
                 guard let client else { return }
                 client.inflight -= 1
                 client.pendingBytes -= data.count

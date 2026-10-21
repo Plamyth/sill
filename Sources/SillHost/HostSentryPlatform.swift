@@ -9,6 +9,8 @@ final class HostSentryPlatform {
 
     var changed: (() -> Void)?
     var requestLocalReturn: (() -> Void)?
+    var recoveryRequested: (() -> Void)?
+    private var recoveryTask: Task<Void, Never>?
 
     var reason: String? {
         switch state {
@@ -203,6 +205,7 @@ final class HostSentryPlatform {
             return recoverFailedRelease("가림 화면 해제를 운영체제에서 확인하지 못했습니다.")
         }
         tapID = nil
+        recoveryTask?.cancel(); recoveryTask = nil
         timer?.invalidate()
         timer = nil
         for (center, token) in observers { center.removeObserver(token) }
@@ -234,15 +237,29 @@ final class HostSentryPlatform {
         return false
     }
 
-    private func invalidate(_ message: String) {
+    private func invalidate(_ message: String, force: Bool = false) {
         localReturnDown = nil
-        if case .invalid(let previous) = state, previous == message { return }
+        if !force, case .invalid(let previous) = state, previous == message { return }
         state = .invalid(message)
         updateCurtainText()
         let wasChanging = changingLifecycle
         changingLifecycle = true
         defer { changingLifecycle = wasChanging }
         changed?()
+    }
+
+    private func environmentChanged(_ message: String) {
+        invalidate(message, force: true)
+        requestRecovery()
+    }
+
+    private func requestRecovery() {
+        guard recoveryTask == nil else { return }
+        recoveryTask = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            defer { self.recoveryTask = nil }
+            self.recoveryRequested?()
+        }
     }
 
     private func environmentIsUsable() -> Bool {
@@ -314,7 +331,7 @@ final class HostSentryPlatform {
 
     private func filter(_ type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            invalidate("입력 필터가 운영체제에 의해 중단되었습니다. 보호 상태를 다시 확인해야 합니다.")
+            environmentChanged("입력 필터가 운영체제에 의해 중단되었습니다. 보호 상태를 다시 확인해야 합니다.")
             return nil
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
@@ -378,6 +395,7 @@ final class HostSentryPlatform {
         panel.isOpaque = true
         panel.backgroundColor = .black
         panel.alphaValue = 1
+        panel.ignoresMouseEvents = true
         panel.hasShadow = false
         panel.animationBehavior = .none
         panel.sharingType = .none
@@ -520,7 +538,7 @@ final class HostSentryPlatform {
                     case NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification: self.sleeping = false
                     default: break
                     }
-                    self.invalidate("화면 또는 사용자 세션이 바뀌어 보호 상태를 다시 확인해야 합니다.")
+                    self.environmentChanged("화면 또는 사용자 세션이 바뀌어 보호 상태를 다시 확인해야 합니다.")
                     guard !self.changingLifecycle else { return }
                     self.changingLifecycle = true
                     defer { self.changingLifecycle = false }
@@ -537,12 +555,15 @@ final class HostSentryPlatform {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.notifiedLocked = locked
-                    self.invalidate("화면 잠금 상태가 바뀌어 보호 상태를 다시 확인해야 합니다.")
+                    self.environmentChanged("화면 잠금 상태가 바뀌어 보호 상태를 다시 확인해야 합니다.")
                 }
             })
         }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.changed?() }
+            MainActor.assumeIsolated {
+                guard let self, self.isProtected else { return }
+                if !self.verify() { self.requestRecovery() }
+            }
         }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
@@ -551,6 +572,7 @@ final class HostSentryPlatform {
     deinit {
         if let tap { CFMachPortInvalidate(tap) }
         if let tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), tapSource, .commonModes) }
+        recoveryTask?.cancel(); recoveryTask = nil
         timer?.invalidate()
         for (center, token) in observers { center.removeObserver(token) }
         for token in lockObservers { DistributedNotificationCenter.default().removeObserver(token) }

@@ -76,6 +76,7 @@ final class RoleHost {
     // EXCHANGE
     struct VideoAdmission { var current: VideoEpoch? = nil }
     var videoAdmission = VideoAdmission()
+    let sentryAdmission = SentryAdmission()
     var clients: [ObjectIdentifier: Client] = [:]
     // VIEWER_COUNT
     let queue = FixtureQueue()
@@ -289,6 +290,23 @@ struct Check {
             host.receiveForwarding(invalid, from: host.clients[ObjectIdentifier(connection)]!)
             check(connection.state == .cancelled && host.viewerJoins == 0)
         }
+        check(StreamMessage.clientPayloadLimit(for: .activateSentry) == 512 && StreamMessage.hostPayloadLimit(for: .activateSentry) == -1)
+        check(StreamMessage.clientPayloadLimit(for: .sentryState) == -1 && StreamMessage.hostPayloadLimit(for: .sentryState) == 4096)
+        check(StreamMessageKind.activateSentry.rawValue == 213 && StreamMessageKind.sentryState.rawValue == 214)
+        let guarded = RoleHost(), guardedPeer = NWConnection()
+        guarded.sentryAdmission.configure(latched: true, persistenceHealthy: true)
+        guarded.serve(guardedPeer, route: .init(encrypted: true, automatic: true), hello: Hello())
+        let guardedID = ObjectIdentifier(guardedPeer), guardedClient = guarded.clients[ObjectIdentifier(guardedPeer)]!
+        guarded.sentryAdmission.admit(guardedID)
+        let pcm = StreamMessage(kind: .audio, timestamp: 0, isKeyframe: false, payload: Data([1])).serialized()
+        check(!guarded.admitsRaw(pcm, to: guardedClient))
+        guarded.sentryAdmission.update(verified: true, persistenceHealthy: true, reason: nil)
+        check(guarded.admitsRaw(pcm, to: guardedClient))
+        guarded.sentryAdmission.update(verified: false, persistenceHealthy: true, reason: "입력 필터 실패")
+        check(!guarded.admitsRaw(pcm, to: guardedClient))
+        guarded.sentryAdmission.update(verified: true, persistenceHealthy: true, reason: nil)
+        guarded.sentryAdmission.fenceForLocalReturn()
+        check(!guarded.admitsRaw(pcm, to: guardedClient))
         print("PASS \(checks) authenticated catalogue and viewer lifetime checks")
     }
 }

@@ -19,7 +19,13 @@ final class AppModel {
     /// as with the CLI's flag. No onboarding in this mode.
     let synthetic = CommandLine.arguments.contains("--synthetic")
     private(set) var coordinator: StreamCoordinator?
-    private let microphoneOwner = SillVirtualMicrophoneOwner()
+    private let microphoneOwner: SillVirtualMicrophoneOwner
+    private let audioPrivacy: HostAudioPrivacy?
+    private let nativeAudioStartup: NativeAudioStartup
+    private let localAudioReturnBootID = UUID()
+    private(set) var localAudioReturnNotice = "Touch ID 또는 Mac 로그인 암호로 인증합니다."
+    private(set) var localAudioReturnPending = false
+    var localAudioReturnUnavailableReason: String? { audioPrivacy?.localReturnUnavailableReason }
     /// The coordinator could not be created (the listener refused its parameters). Shown in the
     /// menu; the app keeps running so the user can read it and quit.
     private(set) var startupError: String?
@@ -65,6 +71,14 @@ final class AppModel {
     @ObservationIgnored private var presentationExpiryAt: Date?
 
     init() {
+        let startup = NativeAudioStartup()
+        nativeAudioStartup = startup
+        let production = Self.bundled && Bundle.main.bundleIdentifier == "com.ambrion.sillcanvas.mac"
+            && Bundle.main.bundleURL.path == "/Applications/CCR Sill.app"
+            && !CommandLine.arguments.contains("--synthetic")
+        let privacy = production ? HostAudioPrivacy(defaults: .standard, nativeStartup: startup) : nil
+        audioPrivacy = privacy
+        microphoneOwner = SillVirtualMicrophoneOwner(privacy: privacy)
         let settings = HostSettings()
         self.settings = settings
         permissions = PermissionsModel(settings: settings)
@@ -78,10 +92,64 @@ final class AppModel {
         presentation = StatusText.present(snapshot: HostStatusSnapshot(),
                                           permissions: PermissionState(screenRecording: true, accessibility: true),
                                           startupError: nil, hasCoordinator: false)
+        if production {
+            let support: [String: Any] = ["version": 1, "hostBootID": localAudioReturnBootID.uuidString,
+                "hostPID": Int(getpid()), "requestNotification": "com.ambrion.ccrsill.requestAuthenticatedLocalAudioReturn.v1",
+                "resultsKey": "CCRLocalAudioReturnResults.v1"]
+            UserDefaults.standard.set(support, forKey: "CCRLocalAudioReturnSupport.v1")
+            _ = UserDefaults.standard.synchronize()
+        }
     }
 
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unbundled" }
+
+    func requestLocalAudioReturn(requestID: UUID = UUID()) {
+        guard let audioPrivacy else { return }
+        if let prior = UserDefaults.standard.dictionary(forKey: "CCRLocalAudioReturnResults.v1")?[requestID.uuidString] as? [String: Any],
+           prior["hostBootID"] as? String == localAudioReturnBootID.uuidString { return }
+        guard !localAudioReturnPending else {
+            recordLocalAudioReturn(requestID, phase: "blocked", restored: false, reason: "다른 로컬 복귀를 처리하고 있습니다.")
+            return
+        }
+        if let reason = localAudioReturnUnavailableReason {
+            localAudioReturnNotice = reason
+            recordLocalAudioReturn(requestID, phase: "blocked", restored: false, reason: reason)
+            return
+        }
+        recordLocalAudioReturn(requestID, phase: "authenticating", restored: false, reason: nil)
+        localAudioReturnPending = true
+        localAudioReturnNotice = "로컬 입출력 복귀를 인증하고 있습니다."
+        Task { @MainActor in
+            let restored = await audioPrivacy.requestLocalReturn()
+            localAudioReturnPending = false
+            localAudioReturnNotice = restored ? "로컬 입출력으로 복귀했습니다." : "인증 또는 기존 장치 복원을 확인하지 못했습니다."
+            recordLocalAudioReturn(requestID, phase: restored ? "restored" : "blocked", restored: restored,
+                                   reason: restored ? nil : localAudioReturnNotice)
+        }
+    }
+
+    private func recordLocalAudioReturn(_ requestID: UUID, phase: String, restored: Bool, reason: String?) {
+        let defaults = UserDefaults.standard
+        let key = "CCRLocalAudioReturnResults.v1"
+        var records = defaults.dictionary(forKey: key) ?? [:]
+        let now = Date().timeIntervalSince1970
+        var result: [String: Any] = ["version": 1, "hostBootID": localAudioReturnBootID.uuidString,
+            "hostPID": Int(getpid()), "requestID": requestID.uuidString, "phase": phase,
+            "restored": restored, "observedAt": now]
+        if phase != "authenticating" { result["completedAt"] = now }
+        if let reason { result["reason"] = reason }
+        records[requestID.uuidString] = result
+        let oldest = records.keys.sorted {
+            ((records[$0] as? [String: Any])?["observedAt"] as? Double ?? 0) <
+            ((records[$1] as? [String: Any])?["observedAt"] as? Double ?? 0)
+        }
+        for old in oldest.prefix(max(0, records.count - 32)) { records.removeValue(forKey: old) }
+        defaults.set(records, forKey: key)
+        if !defaults.synchronize() || (defaults.dictionary(forKey: key)?[requestID.uuidString] as? NSDictionary) != (result as NSDictionary) {
+            localAudioReturnNotice = "로컬 복귀 결과를 저장하지 못했습니다. 실제 상태를 다시 확인해야 합니다."
+        }
+    }
 
     /// Starts the host: the same coordinator as the CLI, under the AppKit loop that is already
     /// running, asking for no permission at launch. Never exits on an error.
@@ -100,10 +168,13 @@ final class AppModel {
                 settings.config.requirePairing = launchRequirePairing(remote)
                 // The window lists carry this Sill's version, when it has one (the bare binary's
                 // "dev" does not parse): later devices can tell which Mac to update.
-                let c = try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
+                if audioPrivacy?.latched == true { _ = audioPrivacy?.reconcile() }
+                let c = try nativeAudioStartup.construct {
+                    try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
                                               homePairing: true, testHooks: !Self.bundled,
                                               hostVersion: SillVersion(Self.version) != nil ? Self.version : nil,
-                                              microphoneOwner: microphoneOwner)
+                                              microphoneOwner: microphoneOwner, audioPrivacy: audioPrivacy)
+                }
                 c.keepRunningOnListenerFailure()
                 coordinator = c
                 // One path from the controls to the host, synchronous: the host's target equals

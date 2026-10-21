@@ -39,7 +39,7 @@ assert emitted.count("// PRODUCTION_STOP_CALLBACK") == 1
 emitted = emitted.replace("// PRODUCTION_STOP_CALLBACK", callback)
 methods = [block(coordinator, marker).replace('private func', 'func', 1) for marker in [
     'private func stopRemoteAudioIfIdle()', 'private func revokeRemoteAudio(',
-    'private func canEnableRemoteAudio(', 'private func controlRemoteAudio(']]
+    'private func canEnableRemoteAudio(', 'private func controlRemoteAudio(', 'private func enqueueRemoteAudioRevocation(']]
 emitted = emitted.replace('// COORDINATOR_METHODS', '\n'.join(methods))
 lifecycle_path = root / 'Sources/SillHost/RemoteAudioCaptureLifecycle.swift'
 lifecycle = lifecycle_path.read_text()

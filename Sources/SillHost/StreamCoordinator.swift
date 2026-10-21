@@ -58,6 +58,11 @@ package final class StreamCoordinator {
 
     private let microphoneIngress = MicrophoneIngress()
     private let microphoneOwner: (any HostMicrophoneOriginalOwner)?
+    private let audioPrivacy: HostAudioPrivacy?
+    private var sentry: HostSentry?
+    private var forwardingRuntime: HostAudioForwardingRuntime?
+    private var physicalAudioRoutesRetired = false
+    private var localAudioReturnDrained = false
     private lazy var audioHardwareRoutes = AudioHardwareRoutes()
     private var audioRoutePublished: [ObjectIdentifier: UUID] = [:]
     private var audioRouteArrivals: [ObjectIdentifier: [TimeInterval]] = [:]
@@ -346,7 +351,8 @@ package final class StreamCoordinator {
     /// version for the window lists, when it has one that parses.
     package init(config: HostConfig, synthetic: Bool = false, appKitLoop: Bool, remote: RemoteAccess? = nil,
                  homePairing: Bool = false, testHooks: Bool = true, hostVersion: String? = nil,
-                 microphoneOwner: (any HostMicrophoneOriginalOwner)? = nil) throws {
+                 microphoneOwner: (any HostMicrophoneOriginalOwner)? = nil,
+                 audioPrivacy: HostAudioPrivacy? = nil) throws {
         var config = config.validated()
         if !appKitLoop { config.virtualDisplay = false }
         self.config = config
@@ -354,6 +360,7 @@ package final class StreamCoordinator {
         self.appKitLoop = appKitLoop
         self.hostVersion = hostVersion
         self.microphoneOwner = microphoneOwner
+        self.audioPrivacy = synthetic ? nil : audioPrivacy
         microphoneReceiver = HostMicrophoneReceiver(provider: synthetic ? nil : microphoneOwner)
         let env = ProcessInfo.processInfo.environment
         let path = PointerTestHooks.pointerPath(synthetic: synthetic, environment: env)
@@ -389,6 +396,73 @@ package final class StreamCoordinator {
         // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
         server.setPeerToPeer(config.directWireless)
         stage = VirtualStage(sizer: sizer, catalog: catalog)
+        if let privacy = self.audioPrivacy {
+            let platform = HostSentryPlatform()
+            let defaults = UserDefaults.standard
+            let key = "CCRHostSentryLatch.v1"
+            let raw = defaults.object(forKey: key)
+            let sentry = HostSentry(admission: server.sentryAdmission,
+                initiallyLatched: SentryJournalState.requiresProtection(raw), persistenceHealthy: SentryJournalState.isValid(raw),
+                persist: { value in
+                    defaults.set(value.rawValue, forKey: key)
+                    return defaults.synchronize() && defaults.string(forKey: key) == value.rawValue
+                }, surfaces: .init(engage: { platform.engage() }, verify: { platform.verify() },
+                    release: { platform.release() }, reason: { platform.reason }, restoreCurtains: { platform.restoreCurtains() }),
+                audioReady: { [weak privacy] in privacy?.forwardingHealth() == true },
+                localReturnUnavailableReason: { [weak privacy] in
+                    guard let privacy else { return "오디오 복귀 경로를 확인할 수 없습니다." }
+                    return privacy.localReturnUnavailableReason
+                })
+            self.sentry = sentry
+            let admission = server.sentryAdmission
+            let runtime = HostAudioForwardingRuntime(privacy: privacy, sentry: sentry, prepareProtection: {
+                if privacy.forwardingHealth(), sentry.forwardingProof() != nil { return true }
+                admission.requireProtection()
+                let protected = privacy.latched ? privacy.forwardingHealth() || privacy.reconcile() : privacy.armAndVerify()
+                guard protected else { return false }
+                return sentry.activate()
+            })
+            forwardingRuntime = runtime
+            forwardingControl = { [weak runtime] control, context in await runtime?.handle(control, context: context) }
+            injector.remoteEventTag = HostSentryPlatform.remoteEventTag
+            privacy.membershipChanged = { [weak sentry, weak runtime] phase in
+                runtime?.invalidateProtection()
+                switch phase {
+                case .willChange: sentry?.membershipWillChange()
+                case .didChange: _ = sentry?.reconcile()
+                }
+            }
+            privacy.forwardingInvalidated = { [weak runtime] in runtime?.invalidateProtection() }
+            platform.changed = { [weak sentry, weak runtime] in
+                runtime?.invalidateProtection()
+                sentry?.surfacesChanged()
+            }
+            platform.recoveryRequested = { [weak sentry] in _ = sentry?.reconcile() }
+            platform.requestLocalReturn = { [weak privacy] in Task { @MainActor in _ = await privacy?.requestLocalReturn() } }
+            sentry.changed = { [weak self] in
+                guard let self else { return }
+                self.injector.isolatesPhysicalInput = self.server.sentryAdmission.isRequested
+                for peer in self.connections.keys where !self.server.sentryAdmission.allowsActions(peer) {
+                    self.injector.releaseInput(of: peer)
+                    if let connection = self.connections[peer] { self.server.setRemoteAudio(false, for: connection) }
+                }
+                if self.remoteAudioSubscribers.contains(where: { !self.server.sentryAdmission.allowsActions($0) }) ||
+                    self.remoteAudioRequests.keys.contains(where: { !self.server.sentryAdmission.allowsActions($0) }) {
+                    self.enqueueRemoteAudioRevocation(reason: "현장 화면과 입력 보호를 확인할 수 없습니다.")
+                }
+                self.broadcastList()
+                self.encoder?.requestKeyframe()
+            }
+            privacy.localReturnDidComplete = { [weak self] commitAudio in
+                guard let self else { return false }
+                guard self.sentry?.completeAuthenticatedLocalReturn(commitAudio: commitAudio) == true else { return false }
+                self.server.closeSessions("인증된 로컬 복귀로 원격 세션이 종료되었습니다.", matching: { _ in true })
+                return true
+            }
+            privacy.changed = { [weak self] state in self?.audioPrivacyChanged(state) }
+            privacy.revokeForLocalReturn = { [weak self] in await self?.prepareLocalAudioReturn() ?? false }
+            privacy.inspectForLocalReturn = { [weak self] in self?.localAudioReturnFacts() ?? .unknown }
+        }
         microphoneReceiver.availabilityChanged = { [weak self] in
             guard let self else { return }
             self.status.update { $0.microphoneCleanupGrantID = self.microphoneReceiver.cleanupGrantID }
@@ -455,11 +529,12 @@ package final class StreamCoordinator {
                 let id = ObjectIdentifier(connection)
                 if self.forwardingClients[id] == nil {
                     self.forwardingClients[id] = ForwardingClient(connection: connection, route: route)
+                    self.sentry?.joined(id)
                 }
             }
         }
         server.onControlClientDisconnected = { [weak self] connection in
-            Task { @MainActor in self?.forwardingClients[ObjectIdentifier(connection)] = nil }
+            Task { @MainActor in self?.forwardingClientLeft(connection) }
         }
         server.onForwardingControl = { [weak self] exchange, connection, route, role in
             Task { @MainActor in
@@ -479,6 +554,10 @@ package final class StreamCoordinator {
                     return
                 }
                 self.routes[id] = route
+                if route.isAuthenticated {
+                    if let privacy = self.audioPrivacy, !privacy.latched { _ = privacy.armAndVerify() }
+                    self.sentry?.joined(id)
+                }
                 self.dockSelectionIngress.setPeer(id, dockAllowed: route.encrypted &&
                     self.remote?.isAuthorized(route) == true)
                 if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
@@ -535,7 +614,7 @@ package final class StreamCoordinator {
                 self.gestureArrivals[id] = nil
                 self.dockArrivals[id] = nil
                 self.routes[id] = nil
-                self.forwardingClients[id] = nil
+                self.forwardingClientLeft(connection)
                 self.audioRoutePublished[id] = nil
                 self.audioRouteArrivals[id] = nil
                 self.lastPairingWanted[id] = nil
@@ -746,6 +825,11 @@ package final class StreamCoordinator {
             let hardwareResponds = await Task.detached(priority: .userInitiated) { EncoderProbe.hardwareResponds() }.value
             if !hardwareResponds { enterSoftwareFallback(afterHang: false) }
         }
+        sentry?.start { [weak self] in
+            guard let privacy = self?.audioPrivacy, privacy.latched else { return }
+            _ = privacy.reconcile()
+        }
+        await forwardingRuntime?.start()
         if virtualDisplay { enableVirtualDisplay() }
         catalog.start()
         // The only startup line Direct Wireless adds, and only when it is on: the default path
@@ -1036,7 +1120,10 @@ package final class StreamCoordinator {
             server.sendForwardingState(nil, to: connection, ticket: exchange.ticket)
             return
         }
-        if forwardingClients[id] == nil { forwardingClients[id] = ForwardingClient(connection: connection, route: route) }
+        if forwardingClients[id] == nil {
+            forwardingClients[id] = ForwardingClient(connection: connection, route: route)
+            sentry?.joined(id)
+        }
         guard let registration = forwardingClients[id], registration.connection === connection,
               registration.route == route else { connection.cancel(); return }
         let kind: AudioForwardingCatalog.Principal.Kind
@@ -1080,6 +1167,22 @@ package final class StreamCoordinator {
         }
         guard connection.state == .ready, inputAuthorizationCurrent(ObjectIdentifier(connection)) else {
             injector.releaseInput(of: ObjectIdentifier(connection))
+            return
+        }
+        if message.kind == .activateSentry {
+            handleSentry(message, from: connection)
+            return
+        }
+        let peer = ObjectIdentifier(connection)
+        if message.kind == .remoteAudioControl,
+           let request = Wire.decode(RemoteAudioSubscription.self, from: message.payload), !request.enabled {
+            await controlRemoteAudio(request, from: connection)
+            return
+        }
+        if !server.sentryAdmission.allowsActions(peer) {
+            if message.kind == .input,
+               let input = Wire.decode(SourceInput.self, from: message.payload)?.event ?? Wire.decode(InputEvent.self, from: message.payload),
+               injector.isUpOfSomethingDown(input, from: peer) { injector.apply(input, in: .null, from: peer) }
             return
         }
         if let ticket = selectionTicket {
@@ -1404,7 +1507,8 @@ package final class StreamCoordinator {
         let isCurrent = {
             let id = ObjectIdentifier(connection)
             guard self.inputFence.contains(id), self.connections[id] === connection,
-                  connection.state == .ready, !self.shuttingDown, self.inputAuthorizationCurrent(id) else { return false }
+                  connection.state == .ready, !self.shuttingDown, self.inputAuthorizationCurrent(id),
+                  self.server.sentryAdmission.allowsActions(id) else { return false }
             return request.origin != .automatic ||
                 (request.selectionRevision == self.selectionRevision && self.active == .none)
         }
@@ -1505,6 +1609,7 @@ package final class StreamCoordinator {
         } else { windowMatches = true }
         guard let rect, Self.epochGeometry(rect) == epoch.geometry, windowMatches else {
             videoEpoch = nil
+            server.sentryAdmission.capture(nil)
             server.resetForNewStream()
             broadcastList()
             guard case .idle = geometryRecovery else { return nil }
@@ -1653,6 +1758,8 @@ package final class StreamCoordinator {
     func select(_ source: StreamSource, bringForward: Bool = false, displaySelection: DisplaySelection? = nil,
                 admission: SourceSelectionAdmission? = nil) async {
         guard !switching, !shuttingDown, admission?.isCurrent() ?? true else { return }
+        if sentry != nil, case .window(let id) = source,
+           catalog.window(id: id)?.owningApplication?.processID == getpid() { return }
         switching = true
         restartOf = (source == active && source != .none) ? source : nil
         defer {
@@ -1723,6 +1830,7 @@ package final class StreamCoordinator {
             for device in connections.keys { injector.releaseInput(of: device) }
         }
         videoEpoch = nil
+        server.sentryAdmission.capture(nil)
         server.resetForNewStream()
         await revokeRemoteAudio(reason: "source changed")
 
@@ -1958,7 +2066,8 @@ package final class StreamCoordinator {
             if let filter {
                 capture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
                 try await capture.start(filter: filter, width: width, height: height, fps: fps, showsCursor: false, sourceRect: sourceRect,
-                                        desktopDisplay: source == .desktop && !synthetic ? catalog.display : nil)
+                                        desktopDisplay: source == .desktop && !synthetic ? catalog.display : nil,
+                                        requireOwnApplicationExclusion: sentry != nil)
             } else {
                 syntheticCapture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
                 syntheticCapture.start(width: width, height: height, fps: fps)
@@ -1975,6 +2084,11 @@ package final class StreamCoordinator {
                 self.active = source
                 self.inputGeneration = generation
                 self.videoEpoch = epoch
+                let excluded: Bool
+                if case .window(let id) = source {
+                    excluded = self.catalog.window(id: id)?.owningApplication.map { $0.processID != getpid() } ?? false
+                } else { excluded = source == .desktop && self.sentry != nil }
+                server.sentryAdmission.capture(excluded ? epoch.id : nil)
                 server.commitVideo(epoch, catalog: self.listMessage(preloadedDock: dock)) { [weak enc] in enc?.requestKeyframe() }
             }
             if let admission {
@@ -2048,7 +2162,7 @@ package final class StreamCoordinator {
             }
             rect = current
         }
-        guard inputTargetReady(event) else {
+        guard server.sentryAdmission.allowsActions(device), inputTargetReady(event) else {
             injector.releaseInput(of: device)
             Stats.shared.bump("in.focusRejected")
             return
@@ -2079,7 +2193,7 @@ package final class StreamCoordinator {
     }
 
     private func applyAdmittedChord(keyCode: UInt16, flags: UInt64, device: KeyStrokes.Device) {
-        guard !switching else { return }
+        guard !switching, server.sentryAdmission.allowsActions(device) else { return }
         guard inputTargetReady(.text("")) else { Stats.shared.bump("in.focusRejected"); return }
         guard let route = routes[device], inputAuthorizationCurrent(device) else { return }
         injector.withAuthorization(route.whileAuthorized) { injector.chord(keyCode: keyCode, flags: flags) }
@@ -2459,6 +2573,7 @@ package final class StreamCoordinator {
     /// dies of the signal with no goodbye, as before (`releaseKeysForExit`): its devices notice by
     /// liveness.
     package func shutdownForExit() {
+        forwardingRuntime?.stop()
         microphoneOwner?.restoreMicrophoneForExit()
         injector.releaseAll()
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
@@ -2765,6 +2880,7 @@ package final class StreamCoordinator {
         extendedDesktop.checkDisplay()
         if active == .desktop {
             videoEpoch = nil
+            server.sentryAdmission.capture(nil)
             inputGeneration = UUID().uuidString
             server.resetForNewStream()
             pointer.setGeometry(nil, fps: fps)
@@ -2810,7 +2926,7 @@ package final class StreamCoordinator {
     /// a host that does not advertise, only counted. Nothing is raised or activated first: these
     /// views act on the whole Mac (App Exposé on the app in front), as they do from its keyboard.
     private func performGesture(_ gesture: TrackpadGesture, from device: String, id: KeyStrokes.Device) {
-        guard !shuttingDown, inputAuthorizationCurrent(id) else { return }
+        guard !shuttingDown, inputAuthorizationCurrent(id), server.sentryAdmission.allowsActions(id) else { return }
         let outcome = gestureChords.resolve(gesture.gesture, table: hotKeyTable())
         print(GestureChords.line(device: device, gesture: gesture.gesture, fingers: gesture.fingers,
                                  outcome: outcome, dryRun: gesturesDry))
@@ -2928,7 +3044,7 @@ package final class StreamCoordinator {
     }
 
     private func microphoneScopeIsCurrent(_ scope: MicrophoneScope, fingerprint: Data) -> Bool {
-        guard !synthetic, !switching, !shuttingDown, let epoch = videoEpoch,
+        guard audioPrivacyReady(), !synthetic, !switching, !shuttingDown, let epoch = videoEpoch,
               epoch.id == scope.videoEpoch, epoch.source == active, scope.source == active,
               UUID(uuidString: inputGeneration) == scope.inputGeneration, epoch.generation == inputGeneration,
               let connection = microphoneConnection(peer: scope.peer),
@@ -2939,6 +3055,13 @@ package final class StreamCoordinator {
 
     private func microphoneCatalog(to connection: NWConnection) -> StreamMessage {
         var message = listMessage()
+        if var list = Wire.decode(WindowList.self, from: message.payload) {
+            list.audioPrivacy = audioPrivacy?.state
+            list.sentry = server.sentryAdmission.status(for: ObjectIdentifier(connection))
+            if audioPrivacy?.state.protected != true { list.microphone = nil }
+            message.payload = Wire.encode(list)
+        }
+        guard audioPrivacyReady() else { return message }
         guard let peer = microphoneIngress.peer(connection), let epoch = videoEpoch,
               let generation = UUID(uuidString: inputGeneration),
               var list = Wire.decode(WindowList.self, from: message.payload) else { return message }
@@ -2972,6 +3095,70 @@ package final class StreamCoordinator {
                                                                         reason: reason))), to: connection)
     }
 
+    private func forwardingClientLeft(_ connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        guard let registration = forwardingClients.removeValue(forKey: id) else { return }
+        forwardingRuntime?.connectionClosed(registration.generation)
+    }
+
+    private func audioPrivacyReady() -> Bool {
+        guard let audioPrivacy else { return false }
+        return !physicalAudioRoutesRetired && audioPrivacy.verify()
+    }
+
+    private func audioPrivacyChanged(_ state: AudioPrivacyState) {
+        if !state.protected {
+            forwardingRuntime?.invalidateProtection()
+            microphoneIngress.revoke()
+            microphoneReceiver.forgetCapabilities()
+            microphoneReceiver.revoke(reason: state.reason ?? "로컬 오디오 보호를 확인할 수 없습니다.")
+            for connection in connections.values { server.setRemoteAudio(false, for: connection) }
+            enqueueRemoteAudioRevocation(reason: state.reason ?? "로컬 오디오 보호를 확인할 수 없습니다.")
+        }
+        broadcastList()
+    }
+
+    private func prepareLocalAudioReturn() async -> Bool {
+        if audioPrivacy?.isReturningLocal == true { server.sentryAdmission.fenceForLocalReturn() }
+        physicalAudioRoutesRetired = true
+        localAudioReturnDrained = false
+        microphoneIngress.revoke()
+        microphoneReceiver.forgetCapabilities()
+        microphoneReceiver.revoke(reason: "네이티브 오디오 경로를 종료하고 있습니다.")
+        await revokeRemoteAudio(reason: "네이티브 오디오 경로를 종료하고 있습니다.")
+        guard await microphoneReceiver.waitForRetirement(), !Task.isCancelled else { return false }
+        let drained = await withCheckedContinuation { continuation in
+            server.drainRemoteAudio { continuation.resume(returning: $0) }
+        }
+        guard drained, !Task.isCancelled else { return false }
+        localAudioReturnDrained = true
+        return localAudioReturnFacts().quiescent
+    }
+
+    private func localAudioReturnFacts() -> LocalAudioParticipantFacts {
+        let retired = microphoneReceiver.retirementComplete
+        let captureStopped = remoteAudioLifecycle.isIdle && remoteAudioCapture.retirementConfirmed &&
+            !remoteAudioCapture.hasStream && !remoteAudioRunning
+        return .init(admissionFenced: physicalAudioRoutesRetired && audioPrivacy?.participants.isFenced == true,
+            startsSettled: retired && remoteAudioLifecycle.isIdle,
+            mediaDetached: retired && captureStopped && microphoneIngress.localReturnDetached && remoteAudioSubscribers.isEmpty,
+            callbacksDrained: retired && captureStopped && localAudioReturnDrained,
+            buffersEmpty: retired && microphoneIngress.localReturnDetached && localAudioReturnDrained &&
+                remoteAudioRequests.isEmpty && remoteAudioActions.isEmpty,
+            workersExited: retired && captureStopped)
+    }
+
+    private func handleSentry(_ message: StreamMessage, from connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        guard let route = routes[id], remote?.isAuthorized(route) == true,
+              let activation = Wire.decode(SentryActivation.self, from: message.payload),
+              server.sentryAdmission.accept(activation, from: id) else { return }
+        let accepted = sentry?.activate() == true
+        guard let state = server.sentryAdmission.status(for: id) else { return }
+        server.send(StreamMessage(kind: .sentryState, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
+            payload: Wire.encode(SentryResponse(requestID: activation.requestID, accepted: accepted, state: state))), to: connection)
+    }
+
     private func stopRemoteAudioIfIdle() {
         guard remoteAudioSubscribers.isEmpty, !remoteAudioLifecycle.isStopping else { return }
         remoteAudioRunning = false
@@ -2982,6 +3169,11 @@ package final class StreamCoordinator {
     }
 
     private func revokeRemoteAudio(reason: String) async {
+        enqueueRemoteAudioRevocation(reason: reason)
+        await remoteAudioLifecycle.waitUntilIdle()
+    }
+
+    private func enqueueRemoteAudioRevocation(reason: String) {
         let old = remoteAudioSubscribers.compactMap { connections[$0] }
         remoteAudioSubscribers.removeAll()
         remoteAudioRequests.removeAll()
@@ -2995,13 +3187,12 @@ package final class StreamCoordinator {
             for connection in old { remoteAudioState(false, requestID: nil, reason: reason, to: connection) }
             await remoteAudioCapture.stop()
         }
-        await remoteAudioLifecycle.waitUntilIdle()
     }
 
     private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID, action: UInt64,
                                       epoch: UInt64? = nil) -> Bool {
-        !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
-        inputAuthorizationCurrent(id) && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
+        audioPrivacyReady() && !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
+        inputAuthorizationCurrent(id) && server.sentryAdmission.allowsActions(id) && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
         (epoch == nil || epoch == remoteAudioEpoch)
     }
 
@@ -3118,6 +3309,7 @@ package final class StreamCoordinator {
             guard message.payload.isEmpty else { return }
             reply = audioHardwareRoutes.observe()
         case .changeAudioRoute:
+            guard audioPrivacy?.latched != true, !physicalAudioRoutesRetired else { return }
             guard message.payload.count <= AudioRoutingPolicy.maxSelectionPayload else { return }
             if let request = Wire.decode(AudioRouteSelection.self, from: message.payload) {
                 reply = audioHardwareRoutes.select(request)

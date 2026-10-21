@@ -28,7 +28,12 @@ final class StreamServer {
         sent.append((ticket, state))
     }
 }
+@MainActor final class SentryProbe {
+    var joins = 0
+    func joined(_ peer: ObjectIdentifier) { joins += 1 }
+}
 @MainActor final class Host {
+    var sentry: SentryProbe? = SentryProbe()
     var synthetic = false
     var remote: Remote?
     let server = StreamServer()

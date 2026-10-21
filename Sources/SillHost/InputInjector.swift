@@ -52,6 +52,8 @@ final class InputInjector {
     /// zero and no Accessibility reminder prints. With the TEST ONLY scripted pointer a pointer
     /// event moves that pointer to its position instead (PointerWatch.sillMoved(to:)).
     var dryRun = false
+    var isolatesPhysicalInput = false
+    var remoteEventTag: Int64?
     /// TEST ONLY (SILL_TEST_INPUT_LOG=1, a synthetic host, which posts nothing: `testInputLog`): each
     /// event a dry run would post is printed, a keyboard event with the flags it was made with ("Test
     /// input: key 49 up (none)"), a pointer or scroll event with those the last keyboard event would
@@ -132,6 +134,8 @@ final class InputInjector {
         let emit = {
             admitted()
             if Self.isKeyboard(event.type) { self.lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
+            else if self.isolatesPhysicalInput { event.flags = CGEventFlags(rawValue: self.lastKeyFlags) }
+            if let tag = self.remoteEventTag { event.setIntegerValueField(.eventSourceUserData, value: tag) }
             if self.dryRun {
                 if self.testLog { self.logTest(event) }
                 Stats.shared.bump("in.dry")
@@ -509,7 +513,7 @@ final class InputInjector {
     private func post(_ stroke: KeyStroke, letGo: Bool = false, admitted: @escaping () -> Void = {}) -> Bool {
         guard let event = CGEvent(keyboardEventSource: source, virtualKey: stroke.virtualKey, keyDown: stroke.down) else { return false }
         event.flags = CGEventFlags(rawValue: stroke.flags)
-        let table = stroke.down && !dryRun ? CGEventSource.flagsState(.hidSystemState).rawValue : lastKeyFlags
+        let table = stroke.down && !dryRun && !isolatesPhysicalInput ? CGEventSource.flagsState(.hidSystemState).rawValue : lastKeyFlags
         var check: (id: Int, cleared: UInt64)?
         var accepted = false
         if post(event, release: !stroke.down, admitted: {
@@ -595,7 +599,7 @@ final class InputInjector {
     /// down. `checkModifiersLeft` says so in the log if the table still holds the chord's modifiers.
     func chord(keyCode: UInt16, flags: UInt64) {
         if !dryRun { remindAboutAccessibilityIfNeeded() }
-        let before = CGEventSource.flagsState(.hidSystemState).rawValue
+        let before = isolatesPhysicalInput ? lastKeyFlags : CGEventSource.flagsState(.hidSystemState).rawValue
         let strokes = KeyStrokes.chord(virtualKey: keyCode, flags: flags, before: before)
         // Both made before either is posted, so a key never goes down without its up.
         let events = strokes.compactMap { CGEvent(keyboardEventSource: source, virtualKey: $0.virtualKey, keyDown: $0.down) }

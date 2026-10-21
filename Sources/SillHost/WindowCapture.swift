@@ -26,7 +26,7 @@ final class WindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// and the whole default path) leaves the configuration exactly as it was.
     @MainActor
     func start(filter: SCContentFilter, width: Int, height: Int, fps: Int, showsCursor: Bool, sourceRect: CGRect? = nil,
-               desktopDisplay: SCDisplay? = nil) async throws {
+               desktopDisplay: SCDisplay? = nil, requireOwnApplicationExclusion: Bool = false) async throws {
         let config = SCStreamConfiguration()
         config.width = width
         config.height = height
@@ -43,7 +43,7 @@ final class WindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let queue = self.queue
         let privacy = desktopDisplay.map { display in
-            DesktopCapturePrivacy(display: display, drain: {
+            DesktopCapturePrivacy(display: display, requireOwnApplicationExclusion: requireOwnApplicationExclusion, drain: {
                 await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
             })
         }
