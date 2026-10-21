@@ -41,16 +41,16 @@ private final class Harness {
     })
 
     func target(pid: Int32 = 41, windowID: UInt32 = 73, instanceID: String = "opaque-instance",
-                workspace: String = "opaque-workspace", conversation: String = "opaque-conversation",
+                workspace: String = "opaque-workspace", interaction: Lease.Interaction = .windowScoped,
                 captureGeneration: String = "capture-A",
                 videoEpoch: UUID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!) -> Lease.Target {
         Lease.Target(pid: pid, windowID: windowID, instanceID: instanceID, workspace: workspace,
-                     conversation: conversation, captureGeneration: captureGeneration, videoEpoch: videoEpoch)
+                     interaction: interaction, captureGeneration: captureGeneration, videoEpoch: videoEpoch)
     }
 
     @discardableResult
     func post(_ grant: Lease.Grant, window: (Lease.Target) -> Bool = { _ in true },
-              authority: (Lease.Target, () -> Void) -> Void = { _, operation in operation() }) -> Bool {
+              authority: ((Lease.Target, () -> Void) -> Void)? = { _, operation in operation() }) -> Bool {
         model.withAuthorization(grant, windowCurrent: window, conversationAuthority: authority) {
             self.posts += 1
         }
@@ -120,22 +120,30 @@ private struct Checks {
             try require(h.post(grant) && h.releases.isEmpty, "발급 불가능한 기한이 기존 소유를 해제하면 안 됩니다")
         }
 
-        check("갱신과 이전 grant 재생 거부") {
-            let h = Harness(), connection = h.model.openConnection()
-            let old = try h.model.claim(connection, target: h.target(), ttlMilliseconds: 100)
-            h.downs[connection.id] = [7]
-            h.time += 90_000_000
-            let renewed = try h.model.renew(old, ttlMilliseconds: 2000)
-            try require(old !== renewed && old.id != renewed.id && old.generation != renewed.generation,
-                        "갱신은 새 grant와 세대를 발급해야 합니다")
-            try require(renewed.connection === connection && renewed.target == old.target,
-                        "갱신으로 소유 연결과 target을 바꾸면 안 됩니다")
-            try require(renewed.deadlineNanoseconds == h.time + 2_000_000_000, "갱신 TTL 상한을 적용해야 합니다")
-            try require(!h.post(old) && h.post(renewed), "갱신 전 grant는 즉시 무효여야 합니다")
-            try refuses(.staleGrant) { _ = try h.model.renew(old) }
-            h.time = old.deadlineNanoseconds
-            try require(h.post(renewed) && h.downs[connection.id] == [7] && h.releases.isEmpty,
-                        "이전 기한과 stale 요청이 갱신된 Down을 해제하면 안 됩니다")
+        for interaction in [Lease.Interaction.windowScoped, .conversationScoped(conversationID: "conversation-A")] {
+            check("갱신과 이전 grant 재생 거부 \(interaction)") {
+                let h = Harness(), connection = h.model.openConnection()
+                let old = try h.model.claim(connection, target: h.target(interaction: interaction), ttlMilliseconds: 100)
+                h.downs[connection.id] = [7]
+                h.time += 90_000_000
+                let renewed = try h.model.renew(old, ttlMilliseconds: 2000)
+                try require(old !== renewed && old.id == renewed.id && old.generation == renewed.generation,
+                            "갱신은 객체만 교체하고 wire 식별자와 세대를 유지해야 합니다")
+                try require(renewed.connection === connection && renewed.target == old.target,
+                            "갱신으로 소유 연결과 target을 바꾸면 안 됩니다")
+                try require(renewed.deadlineNanoseconds == h.time + 2_000_000_000, "갱신 TTL 상한을 적용해야 합니다")
+                try require(!h.post(old) && h.post(renewed), "갱신 전 grant는 즉시 무효여야 합니다")
+                try refuses(.staleGrant) { _ = try h.model.renew(old) }
+                h.time = old.deadlineNanoseconds
+                try require(h.post(renewed) && h.downs[connection.id] == [7] && h.releases.isEmpty,
+                            "이전 기한과 stale 요청이 갱신된 Down을 해제하면 안 됩니다")
+                let postedUp = h.model.withAuthorization(renewed, windowCurrent: { $0 == old.target },
+                    conversationAuthority: { _, execute in execute() }) {
+                    h.downs[renewed.connection.id]?.remove(7)
+                }
+                try require(postedUp && h.downs[connection.id] == [] && h.releases.isEmpty,
+                            "같은 wire scope의 갱신된 grant로 기존 소유자의 Up을 처리할 수 있어야 합니다")
+            }
         }
 
         check("다른 모델의 연결과 grant 거절") {
@@ -169,7 +177,7 @@ private struct Checks {
                 let h = Harness(), connection = h.model.openConnection(), other = h.model.openConnection()
                 let target = h.target()
                 let variants = [h.target(pid: 42), h.target(windowID: 74), h.target(instanceID: "instance-B"),
-                                h.target(workspace: "workspace-B"), h.target(conversation: "conversation-B"),
+                                h.target(workspace: "workspace-B"), h.target(interaction: .conversationScoped(conversationID: "conversation-B")),
                                 h.target(captureGeneration: "capture-B"),
                                 h.target(videoEpoch: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)]
                 let changed = variants[variant]
@@ -178,6 +186,8 @@ private struct Checks {
                 h.downs[connection.id] = [1]
                 h.downs[other.id] = [9]
                 let next = try h.model.claim(connection, target: changed)
+                try require(next.id != old.id && next.generation != old.generation,
+                            "target 변경 claim은 새 wire 식별자와 세대를 발급해야 합니다")
                 try require(h.downs[connection.id] == nil && h.downs[other.id] == [9], "이전 소유자의 Down만 먼저 해제해야 합니다")
                 try require(h.releases.count == 1 && h.releases[0].owner === connection &&
                             h.releases[0].target == target && h.releases[0].reason == .targetChanged,
@@ -216,26 +226,28 @@ private struct Checks {
             }
         }
 
-        for remote in [false, true] {
-            check(remote ? "원격 입력 선점" : "Sentry 현장 보호") {
-                let h = Harness(), connection = h.model.openConnection(), other = h.model.openConnection()
-                let grant = try h.model.claim(connection, target: h.target())
-                h.downs[connection.id] = [1]; h.downs[other.id] = [2]
-                h.model.remoteStateChanged(remoteViewerOwnsInput: remote, sentryProtected: !remote)
-                let reason: Lease.ReleaseReason = remote ? .remoteViewerOwnsInput : .sentryProtected
-                let refusal: Lease.Refusal = remote ? .remoteViewerOwnsInput : .sentryProtected
-                try require(h.releases.count == 1 && h.releases[0].reason == reason, "보호 활성 시 즉시 해제해야 합니다")
-                try require(h.downs[connection.id] == nil && h.downs[other.id] == [2], "원격 또는 다른 소유자의 Down을 해제하면 안 됩니다")
-                try require(!h.post(grant), "보호 중 게시를 거부해야 합니다")
-                try refuses(refusal) { _ = try h.model.claim(other, target: h.target()) }
-                try refuses(refusal) { _ = try h.model.renew(grant) }
-                h.model.remoteStateChanged(remoteViewerOwnsInput: remote, sentryProtected: !remote)
-                try require(h.releases.count == 1, "보호 상태 반복 통지로 중복 해제하면 안 됩니다")
-                h.model.remoteStateChanged(remoteViewerOwnsInput: false, sentryProtected: false)
-                try require(!h.post(grant), "보호 해제 후 이전 grant를 되살리면 안 됩니다")
-                let next = try h.model.claim(other, target: h.target())
-                h.model.remoteStateChanged(remoteViewerOwnsInput: false, sentryProtected: false)
-                try require(h.post(next) && h.releases.count == 1, "보호가 없는 통지로 현재 소유를 바꾸면 안 됩니다")
+        for interaction in [Lease.Interaction.windowScoped, .conversationScoped(conversationID: "conversation-A")] {
+            for remote in [false, true] {
+                check("보호 상태 거절 \(interaction) \(remote)") {
+                    let h = Harness(), connection = h.model.openConnection(), other = h.model.openConnection()
+                    let grant = try h.model.claim(connection, target: h.target(interaction: interaction))
+                    h.downs[connection.id] = [1]; h.downs[other.id] = [2]
+                    h.model.remoteStateChanged(remoteViewerOwnsInput: remote, sentryProtected: !remote)
+                    let reason: Lease.ReleaseReason = remote ? .remoteViewerOwnsInput : .sentryProtected
+                    let refusal: Lease.Refusal = remote ? .remoteViewerOwnsInput : .sentryProtected
+                    try require(h.releases.count == 1 && h.releases[0].reason == reason, "보호 활성 시 즉시 해제해야 합니다")
+                    try require(h.downs[connection.id] == nil && h.downs[other.id] == [2], "원격 또는 다른 소유자의 Down을 해제하면 안 됩니다")
+                    try require(!h.post(grant), "보호 중 게시를 거부해야 합니다")
+                    try refuses(refusal) { _ = try h.model.claim(other, target: h.target()) }
+                    try refuses(refusal) { _ = try h.model.renew(grant) }
+                    h.model.remoteStateChanged(remoteViewerOwnsInput: remote, sentryProtected: !remote)
+                    try require(h.releases.count == 1, "보호 상태 반복 통지로 중복 해제하면 안 됩니다")
+                    h.model.remoteStateChanged(remoteViewerOwnsInput: false, sentryProtected: false)
+                    try require(!h.post(grant), "보호 해제 후 이전 grant를 되살리면 안 됩니다")
+                    let next = try h.model.claim(other, target: h.target())
+                    h.model.remoteStateChanged(remoteViewerOwnsInput: false, sentryProtected: false)
+                    try require(h.post(next) && h.releases.count == 1, "보호가 없는 통지로 현재 소유를 바꾸면 안 됩니다")
+                }
             }
         }
         check("소유 전 보호와 두 보호의 결합") {
@@ -247,14 +259,16 @@ private struct Checks {
             try require(h.releases.isEmpty, "소유하지 않은 연결에 release를 호출하면 안 됩니다")
         }
 
-        check("창 검증 거부와 해제") {
-            let h = Harness(), connection = h.model.openConnection()
-            let grant = try h.model.claim(connection, target: h.target())
-            var observed: Lease.Target?
-            try require(!h.post(grant, window: { observed = $0; return false }), "오래된 창에 게시하면 안 됩니다")
-            try require(observed == grant.target && h.releases.count == 1 && h.releases[0].reason == .targetChanged,
-                        "창 검증에 원래 target을 전달하고 해당 소유를 해제해야 합니다")
-            try require(!h.post(grant) && h.posts == 0, "창 거절 후 grant가 무효여야 합니다")
+        for interaction in [Lease.Interaction.windowScoped, .conversationScoped(conversationID: "conversation-A")] {
+            check("창 검증 거부와 해제 \(interaction)") {
+                let h = Harness(), connection = h.model.openConnection()
+                let grant = try h.model.claim(connection, target: h.target(interaction: interaction))
+                var observed: Lease.Target?
+                try require(!h.post(grant, window: { observed = $0; return false }), "오래된 창에 게시하면 안 됩니다")
+                try require(observed == grant.target && h.releases.count == 1 && h.releases[0].reason == .targetChanged,
+                            "창 검증에 원래 target을 전달하고 해당 소유를 해제해야 합니다")
+                try require(!h.post(grant) && h.posts == 0, "창 거절 후 grant가 무효여야 합니다")
+            }
         }
         check("같은 target 재획득의 이전 grant 거절") {
             let h = Harness(), connection = h.model.openConnection()
@@ -266,19 +280,48 @@ private struct Checks {
                         "같은 target으로 돌아와도 이전 grant는 유효해지면 안 됩니다")
             try require(!called && h.post(next) && h.releases.count == 2, "이전 grant가 새 소유의 창 검사나 해제를 일으키면 안 됩니다")
         }
+        check("특정 대화 변경은 새 scope를 발급") {
+            let h = Harness(), connection = h.model.openConnection()
+            let a = h.target(interaction: .conversationScoped(conversationID: "conversation-A"))
+            let b = h.target(interaction: .conversationScoped(conversationID: "conversation-B"))
+            let old = try h.model.claim(connection, target: a)
+            h.downs[connection.id] = [1]
+            let next = try h.model.claim(connection, target: b)
+            try require(a != b && next.id != old.id && next.generation != old.generation,
+                        "같은 창의 특정 대화가 달라지면 target과 wire scope가 달라야 합니다")
+            try require(h.releases.count == 1 && h.downs[connection.id] == nil && !h.post(old) && h.post(next),
+                        "특정 대화 변경은 이전 Down을 해제하고 이전 callback을 거절해야 합니다")
+        }
         check("원본 대화 권한 미지원") {
             let h = Harness(), connection = h.model.openConnection()
-            let grant = try h.model.claim(connection, target: h.target())
+            let grant = try h.model.claim(connection, target: h.target(interaction: .conversationScoped(conversationID: "conversation-A")))
             var windowChecks = 0
+            try require(!h.post(grant, authority: nil), "대화 입력은 authority를 생략하면 거부해야 합니다")
             try require(!h.post(grant, window: { _ in windowChecks += 1; return true }, authority: { _, _ in }),
                         "대화 권한이 없으면 target 일치만으로 게시하면 안 됩니다")
             try require(windowChecks == 0 && h.posts == 0 && h.releases.isEmpty,
                         "권한 미지원은 실제 입력과 유효한 소유 변경을 일으키면 안 됩니다")
             try require(h.post(grant), "격리된 권한 callback으로 같은 소유 상태를 검증할 수 있어야 합니다")
         }
-        check("동기 게시 closure 호환과 중복 실행 방지") {
+        check("창 입력은 탭 변경과 대화 권한의 영향을 받지 않음") {
             let h = Harness(), connection = h.model.openConnection()
             let grant = try h.model.claim(connection, target: h.target())
+            var selectedTab = "tab-A"
+            var authorityCalled = false
+            var windowChecks = 0
+            try require(h.post(grant, window: { target in
+                windowChecks += 1
+                selectedTab = "tab-B"
+                return target == grant.target
+            }, authority: { _, _ in authorityCalled = true }),
+                        "명시한 원본 창의 일반 입력에 대화 authority를 요구하면 안 됩니다")
+            try require(selectedTab == "tab-B" && windowChecks == 1 && !authorityCalled && h.posts == 1,
+                        "탭이 바뀌어도 같은 창의 입력은 창 검사 뒤 inputPosted만 반환해야 합니다")
+            try require(h.post(grant, authority: nil), "창 입력은 authority 없이 허용해야 합니다")
+        }
+        check("동기 게시 closure 호환과 중복 실행 방지") {
+            let h = Harness(), connection = h.model.openConnection()
+            let grant = try h.model.claim(connection, target: h.target(interaction: .conversationScoped(conversationID: "conversation-A")))
             typealias PostAuthorization = (_ operation: () -> Void) -> Bool
             let authorization: PostAuthorization = { operation in
                 h.model.withAuthorization(grant, windowCurrent: { $0 == grant.target },
@@ -287,34 +330,36 @@ private struct Checks {
             try require(authorization { h.posts += 1 } && h.posts == 1, "동기 게시 계약은 한 번만 실행해야 합니다")
         }
 
-        for windowResult in [false, true] {
-            for mutation in ["갱신", "target 변경", "종료", "만료", "원격", "Sentry"] {
-                check("창 검증 재진입 \(mutation) \(windowResult)") {
-                    let h = Harness(), connection = h.model.openConnection()
-                    let grant = try h.model.claim(connection, target: h.target())
-                    var replacement: Lease.Grant?
-                    var callbackError: Error?
-                    let posted = h.post(grant, window: { _ in
-                        do {
-                            switch mutation {
-                            case "갱신": replacement = try h.model.renew(grant)
-                            case "target 변경": replacement = try h.model.claim(connection, target: h.target(conversation: "conversation-B"))
-                            case "종료": h.model.closeConnection(connection)
-                            case "만료": h.time = grant.deadlineNanoseconds
-                            case "원격": h.model.remoteStateChanged(remoteViewerOwnsInput: true, sentryProtected: false)
-                            default: h.model.remoteStateChanged(remoteViewerOwnsInput: false, sentryProtected: true)
-                            }
-                        } catch { callbackError = error }
-                        return windowResult
-                    })
-                    if let callbackError { throw callbackError }
-                    try require(!posted && h.posts == 0, "창 callback 뒤 이전 세대로 게시하면 안 됩니다")
-                    if let replacement {
-                        let expectedReleases = mutation == "갱신" ? 0 : 1
-                        try require(h.releases.count == expectedReleases && h.post(replacement),
-                                    "이전 창 검사 결과가 새 소유를 취소하면 안 됩니다")
-                    } else {
-                        try require(h.releases.count == 1, "무효화 사유에 맞게 Down을 한 번 해제해야 합니다")
+        for interaction in [Lease.Interaction.windowScoped, .conversationScoped(conversationID: "conversation-A")] {
+            for windowResult in [false, true] {
+                for mutation in ["갱신", "target 변경", "종료", "만료", "원격", "Sentry"] {
+                    check("창 검증 재진입 \(interaction) \(mutation) \(windowResult)") {
+                        let h = Harness(), connection = h.model.openConnection()
+                        let grant = try h.model.claim(connection, target: h.target(interaction: interaction))
+                        var replacement: Lease.Grant?
+                        var callbackError: Error?
+                        let posted = h.post(grant, window: { _ in
+                            do {
+                                switch mutation {
+                                case "갱신": replacement = try h.model.renew(grant)
+                                case "target 변경": replacement = try h.model.claim(connection, target: h.target(windowID: 74, interaction: interaction))
+                                case "종료": h.model.closeConnection(connection)
+                                case "만료": h.time = grant.deadlineNanoseconds
+                                case "원격": h.model.remoteStateChanged(remoteViewerOwnsInput: true, sentryProtected: false)
+                                default: h.model.remoteStateChanged(remoteViewerOwnsInput: false, sentryProtected: true)
+                                }
+                            } catch { callbackError = error }
+                            return windowResult
+                        })
+                        if let callbackError { throw callbackError }
+                        try require(!posted && h.posts == 0, "창 callback 뒤 이전 세대로 게시하면 안 됩니다")
+                        if let replacement {
+                            let expectedReleases = mutation == "갱신" ? 0 : 1
+                            try require(h.releases.count == expectedReleases && h.post(replacement),
+                                        "이전 창 검사 결과가 새 소유를 취소하면 안 됩니다")
+                        } else {
+                            try require(h.releases.count == 1, "무효화 사유에 맞게 Down을 한 번 해제해야 합니다")
+                        }
                     }
                 }
             }
@@ -322,14 +367,15 @@ private struct Checks {
         for mutation in ["갱신", "target 변경", "종료", "만료", "원격", "Sentry"] {
             check("대화 권한 callback 재진입 \(mutation)") {
                 let h = Harness(), connection = h.model.openConnection()
-                let grant = try h.model.claim(connection, target: h.target())
+                let grant = try h.model.claim(connection, target: h.target(interaction: .conversationScoped(conversationID: "conversation-A")))
                 var callbackError: Error?
                 var windowChecks = 0
                 let posted = h.post(grant, window: { _ in windowChecks += 1; return true }, authority: { _, execute in
                     do {
                         switch mutation {
                         case "갱신": _ = try h.model.renew(grant)
-                        case "target 변경": _ = try h.model.claim(connection, target: h.target(windowID: 74))
+                        case "target 변경": _ = try h.model.claim(connection, target: h.target(windowID: 74,
+                            interaction: .conversationScoped(conversationID: "conversation-A")))
                         case "종료": h.model.closeConnection(connection)
                         case "만료": h.time = grant.deadlineNanoseconds
                         case "원격": h.model.remoteStateChanged(remoteViewerOwnsInput: true, sentryProtected: false)

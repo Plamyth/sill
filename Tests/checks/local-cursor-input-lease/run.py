@@ -17,7 +17,7 @@ prologue = '''import Foundation
         let model = LocalCursorInputLease(releaseDown: { _, _, _ in })
         let connection = model.openConnection()
         let target = LocalCursorInputLease.Target(pid: 1, windowID: 1, instanceID: "opaque",
-            workspace: "opaque", conversation: "opaque", captureGeneration: "capture", videoEpoch: UUID())
+            workspace: "opaque", interaction: .windowScoped, captureGeneration: "capture", videoEpoch: UUID())
         let grant = try model.claim(connection, target: target)
 '''
 negative_cases = {
@@ -54,4 +54,5 @@ if after != before:
 print(json.dumps({'passed': True, 'sourceHashes': before, 'sourceUnchanged': True,
                   'scratchRemoved': not scratch.exists(), 'compileRejectedBoundaries': checked_boundaries,
                   'actualInput': 0, 'networkActions': 0, 'deviceOrHALActions': 0,
-                  'productionRefusal': 'conversation_authority_unavailable'}, ensure_ascii=False))
+                  'conversationScopedProductionRefusal': 'conversation_authority_unavailable',
+                  'windowScopedResultContract': 'inputPosted'}, ensure_ascii=False))

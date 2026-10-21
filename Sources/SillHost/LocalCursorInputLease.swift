@@ -7,13 +7,18 @@ final class LocalCursorInputLease {
         case ccrLocal = "ccr-local"
     }
 
+    enum Interaction: Equatable {
+        case windowScoped
+        case conversationScoped(conversationID: String)
+    }
+
     // Equality binds a request to observations. It does not prove conversation authority.
     struct Target: Equatable {
         let pid: Int32
         let windowID: UInt32 // CGWindowID's raw representation, without a platform dependency.
         let instanceID: String
         let workspace: String
-        let conversation: String
+        let interaction: Interaction
         let captureGeneration: String
         let videoEpoch: UUID
     }
@@ -34,10 +39,10 @@ final class LocalCursorInputLease {
         let deadlineNanoseconds: UInt64
         let origin = Origin.ccrLocal
 
-        fileprivate init(connection: Connection, target: Target, deadline: UInt64) {
-            id = UUID()
+        fileprivate init(connection: Connection, target: Target, deadline: UInt64, renewing: Grant? = nil) {
+            id = renewing?.id ?? UUID()
             self.connection = connection
-            generation = UUID()
+            generation = renewing?.generation ?? UUID()
             self.target = target
             deadlineNanoseconds = deadline
         }
@@ -120,33 +125,33 @@ final class LocalCursorInputLease {
         expireIfNeeded()
         try requireAvailable()
         guard isCurrent(grant) else { throw Refusal.staleGrant }
-        let renewed = try makeGrant(grant.connection, target: grant.target, ttlMilliseconds: ttlMilliseconds)
+        let renewed = try makeGrant(grant.connection, target: grant.target, ttlMilliseconds: ttlMilliseconds, renewing: grant)
         current = renewed
         return renewed
     }
 
-    // conversationAuthority must call its nonescaping operation synchronously under the
-    // authoritative selection's compare-and-execute guard. Companion 0.2 cannot supply it.
-    // A missing authority denies by never calling the operation. Target equality is insufficient.
+    // Conversation commands require an authoritative compare-and-execute guard, which
+    // Companion 0.2 cannot supply. Ordinary window input does not use conversation IDs.
     @discardableResult
     func withAuthorization(_ grant: Grant, windowCurrent: (Target) -> Bool,
-                           conversationAuthority: (Target, () -> Void) -> Void,
+                           conversationAuthority: ((Target, () -> Void) -> Void)? = nil,
                            operation: () -> Void) -> Bool {
         guard isCurrent(grant) else { return false }
-        var performed = false
-        conversationAuthority(grant.target) {
-            guard !performed, self.isCurrent(grant) else { return }
-            let windowMatches = windowCurrent(grant.target)
-            // The callback may renew, close, expire, or replace this exact grant.
-            guard self.isCurrent(grant) else { return }
-            guard windowMatches else {
-                self.revoke(grant, reason: .targetChanged)
-                return
+        switch grant.target.interaction {
+        case .windowScoped:
+            return postIfCurrent(grant, windowCurrent: windowCurrent, operation: operation)
+        case .conversationScoped:
+            guard let conversationAuthority else { return false }
+            var performed = false
+            conversationAuthority(grant.target) {
+                guard !performed else { return }
+                _ = self.postIfCurrent(grant, windowCurrent: windowCurrent) {
+                    performed = true
+                    operation()
+                }
             }
-            performed = true
-            operation()
+            return performed
         }
-        return performed
     }
 
     @discardableResult
@@ -175,10 +180,24 @@ final class LocalCursorInputLease {
         guard !sentryProtected else { throw Refusal.sentryProtected }
     }
 
-    private func makeGrant(_ connection: Connection, target: Target, ttlMilliseconds: Int) throws -> Grant {
+    private func makeGrant(_ connection: Connection, target: Target, ttlMilliseconds: Int,
+                           renewing: Grant? = nil) throws -> Grant {
         let (deadline, overflow) = now().addingReportingOverflow(UInt64(ttlMilliseconds) * 1_000_000)
         guard !overflow else { throw Refusal.deadlineOverflow }
-        return Grant(connection: connection, target: target, deadline: deadline)
+        return Grant(connection: connection, target: target, deadline: deadline, renewing: renewing)
+    }
+
+    private func postIfCurrent(_ grant: Grant, windowCurrent: (Target) -> Bool, operation: () -> Void) -> Bool {
+        guard isCurrent(grant) else { return false }
+        let windowMatches = windowCurrent(grant.target)
+        // The callback may renew, close, expire, or replace this exact grant.
+        guard isCurrent(grant) else { return false }
+        guard windowMatches else {
+            revoke(grant, reason: .targetChanged)
+            return false
+        }
+        operation()
+        return true
     }
 
     private func isCurrent(_ grant: Grant) -> Bool {
