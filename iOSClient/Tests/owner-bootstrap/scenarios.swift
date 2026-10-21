@@ -6,7 +6,7 @@ try JSONEncoder().encode(fixtureProfile).write(to: fixtureURL)
 var count = 0
 func check(_ name: String, _ value: Bool) { precondition(value, name); count += 1 }
 func reset() {
-    Clock.now = 100; Clock.events = []; Clock.main = []
+    Clock.now = 100; Clock.events = []; Clock.main = []; Clock.network = []; Clock.networkPaused = false
     UserDefaults.standard.values = [:]
     Bundle.resource = fixtureURL; Bundle.reads = 0
     DeviceIdentity.present = true; DeviceIdentity.missing = false; DeviceIdentity.throwsOnCreate = false
@@ -172,5 +172,38 @@ do {
     check("명시취소는 같은 실행에서 중지 유지", RemoteConnector.all.count == 1)
     let relaunched = client()
     check("새 앱 실행은 같은 기존 기기키로 제한 시도", RemoteConnector.all.count == 2 && relaunched.ownerBootstrapDial != nil && DeviceIdentity.creates == 0)
+}
+for pause in [false, true] {
+    reset()
+    let c = client()
+    let socket = c.ownerBootstrapDial!.win()
+    Clock.networkPaused = true
+    Clock.flush()
+    if pause { c.wentToBackground() } else { c.cancelPairing() }
+    Clock.resumeNetwork(); Clock.flush()
+    check("전송 큐 대기 중 사용자 취소·OS 중단은 kind19를 보내지 않음 \(pause)", socket.sent.isEmpty && socket.cancelled && c.persists == 0)
+}
+reset()
+do {
+    let socket = NWConnection()
+    let exchange = OwnerBootstrapExchange(connection: socket, profile: fixtureProfile, name: "검사 iPad", model: "iPadFixture", queue: DispatchQueue())
+    Clock.networkPaused = true
+    exchange.cancel()
+    exchange.start { _ in preconditionFailure("시작 전 취소 후 결과가 전달됨") }
+    Clock.resumeNetwork()
+    check("시작 전 취소는 kind19 송신과 결과 전달을 막음", socket.sent.isEmpty && socket.cancelled)
+}
+reset()
+do {
+    let socket = NWConnection()
+    let exchange = OwnerBootstrapExchange(connection: socket, profile: fixtureProfile, name: "검사 iPad", model: "iPadFixture", queue: DispatchQueue())
+    var completions = 0
+    Clock.networkPaused = true
+    exchange.start { _ in completions += 1 }
+    exchange.start { _ in preconditionFailure("중복 시작 결과가 전달됨") }
+    Clock.resumeNetwork()
+    check("정상 교환은 중복 시작에도 kind19를 한 번만 보냄", socket.sent.count == 1 && !socket.cancelled)
+    answer(socket)
+    check("정상 교환 결과도 한 번만 전달", completions == 1)
 }
 print("PASS \(count) owner bootstrap startup/exchange checks; deterministic stand-ins, no device/network/Keychain effects")

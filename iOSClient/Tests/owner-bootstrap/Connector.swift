@@ -3,16 +3,19 @@ import StreamProtocol
 
 final class DispatchWorkItem {
     let block: () -> Void
+    var cancelled = false
     init(block: @escaping () -> Void) { self.block = block }
-    func cancel() {}
+    func cancel() { cancelled = true }
+    func run() { if !cancelled { block() } }
 }
 struct DispatchTime {
     static func now() -> Self { .init() }
     static func + (lhs: Self, rhs: Double) -> Self { lhs }
 }
 struct DispatchQueue {
+    static var scheduled: [DispatchWorkItem] = []
     func async(execute: () -> Void) { execute() }
-    func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) {}
+    func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) { Self.scheduled.append(execute) }
 }
 struct RemoteIdentity {}
 enum RemoteDialPolicy {
@@ -74,7 +77,7 @@ let pin = Data(repeating: 0x37, count: 32)
 let candidates = [RemoteDialPolicy.Candidate(host: "100.64.1.2", port: 7455),
                   RemoteDialPolicy.Candidate(host: "100.64.1.3", port: 7455)]
 func connector(_ mode: RemoteConnector.Mode = .ownerBootstrap(pin: pin)) -> RemoteConnector {
-    NWConnection.all = []
+    NWConnection.all = []; DispatchQueue.scheduled = []
     let c = RemoteConnector(candidates: candidates, mode: mode, identity: RemoteIdentity(), queue: DispatchQueue(),
                             successors: [candidates[0].key: [Data(repeating: 8, count: 32)]])
     c.start(); return c
@@ -114,5 +117,16 @@ do {
     let c = connector(.pairing(pin: pin))
     check("기존 QR 경로의 pairing ALPN과 pin 유지", NWConnection.all[0].parameters.alpn == RemoteTLS.pairingALPN && NWConnection.all[0].parameters.pin == pin)
     c.cancel()
+}
+do {
+    let c = connector(); let first = NWConnection.all[0]
+    var failures = 0, winners = 0
+    c.onFailed = { _ in failures += 1 }; c.onWinner = { _ in winners += 1 }
+    first.stateUpdateHandler?(.preparing)
+    check("owner TLS 협상 중에도 전체 제한시간이 예약됨", !DispatchQueue.scheduled.isEmpty)
+    DispatchQueue.scheduled.forEach { $0.run() }
+    check("TLS 협상 정지는 제한시간에 소켓을 닫고 한 번 실패", first.cancelled && failures == 1)
+    first.ready()
+    check("협상 제한시간 뒤 늦은 ready는 성공으로 바뀌지 않음", winners == 0 && failures == 1)
 }
 print("PASS \(count) actual RemoteConnector owner mode checks; deterministic sockets, no transport effects")

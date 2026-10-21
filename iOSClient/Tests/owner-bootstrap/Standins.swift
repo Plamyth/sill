@@ -17,7 +17,9 @@ struct DispatchQueue {
     var isMain = false
     static let main = DispatchQueue(isMain: true)
     func async(execute: @escaping () -> Void) {
-        if isMain { Clock.main.append(execute) } else { execute() }
+        if isMain { Clock.main.append(execute) }
+        else if Clock.networkPaused { Clock.network.append(execute) }
+        else { execute() }
     }
     func asyncAfter(deadline: DispatchTime, execute: @escaping () -> Void) { Clock.events.append((deadline.value, execute)) }
     func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) { asyncAfter(deadline: deadline) { execute.run() } }
@@ -25,7 +27,13 @@ struct DispatchQueue {
 enum Clock {
     static var now = 100.0
     static var main: [() -> Void] = []
+    static var networkPaused = false
+    static var network: [() -> Void] = []
     static var events: [(Double, () -> Void)] = []
+    static func resumeNetwork() {
+        networkPaused = false
+        while !network.isEmpty { network.removeFirst()() }
+    }
     static func flush() { while !main.isEmpty { main.removeFirst()() } }
     static func advance(_ seconds: Double) {
         now += seconds

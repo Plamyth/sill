@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='build-', dir=HERE) as folder:
                     '-lStreamProtocol', '-Xlinker', '-rpath', '-Xlinker', str(out),
                     str(CLIENT / 'SavedMacs.swift'), str(CLIENT / 'OwnerBootstrapState.swift'),
                     str(out / 'main.swift'), '-o', str(out / 'checks')], check=True, env=env, timeout=180)
-    subprocess.run([str(out / 'checks'), str(out / 'synthetic.json')], check=True, timeout=30)
+    startup_checks = subprocess.run([str(out / 'checks'), str(out / 'synthetic.json')], timeout=30)
 
     connector = (CLIENT / 'RemoteConnector.swift').read_text().replace('import Network\n', '')
     connector = (HERE / 'Connector.swift').read_text().replace('// ACTUAL_CONNECTOR', connector)
@@ -67,4 +67,6 @@ with tempfile.TemporaryDirectory(prefix='build-', dir=HERE) as folder:
     subprocess.run(['swiftc', '-module-cache-path', str(cache), '-I', str(out), '-L', str(out),
                     '-lStreamProtocol', '-Xlinker', '-rpath', '-Xlinker', str(out),
                     str(out / 'main.swift'), '-o', str(out / 'connector-checks')], check=True, env=env, timeout=180)
-    subprocess.run([str(out / 'connector-checks')], check=True, timeout=30)
+    connector_checks = subprocess.run([str(out / 'connector-checks')], timeout=30)
+    if startup_checks.returncode != 0 or connector_checks.returncode != 0:
+        raise SystemExit(1)
