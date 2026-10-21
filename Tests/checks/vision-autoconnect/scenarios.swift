@@ -19,8 +19,10 @@ func row(_ name: String = service, wired: Bool = true, route: FoundMac.Route = .
 }
 func fresh(_ mode: Boot.Launch = launch) -> StreamClient {
     DeviceIdentity.available = true
+    DeviceIdentity.fingerprint = Data(repeating: 0x55, count: 32)
     UserDefaults.standard.strings = [:]
     let client = StreamClient(mode)
+    client.visionStartupForeground = true
     client.macs = [row()]
     return client
 }
@@ -256,8 +258,162 @@ for appBackground in [false, true] {
     timer.performEvenIfCancelled()
     client.appInForeground = true; client.visionStartupForeground = true
     timer.performEvenIfCancelled(); client.discoveryChanged()
-    check("app or scene background permanently closes pending startup", client.remoteAttempts.isEmpty && timer.cancelled)
+    check("old deadline cannot consume startup after app or scene suspension", client.remoteAttempts.isEmpty && timer.cancelled)
 }
+for sceneFirst in [false, true] {
+    let client = savedStartup()
+    let oldTimer = armRemote(client)
+    if sceneFirst {
+        client.visionStartupForeground = false
+        client.setVisionPresentationForeground(false)
+        client.fixtureBackground()
+    } else {
+        client.fixtureBackground()
+        client.visionStartupForeground = false
+        client.setVisionPresentationForeground(false)
+    }
+    oldTimer.performEvenIfCancelled(); client.discoveryChanged()
+    check("inactive saved startup makes no dial", client.remoteAttempts.isEmpty && client.sessionPins.isEmpty)
+    let beforeResume = DispatchQueue.main.timers.count
+    if sceneFirst {
+        client.visionStartupForeground = true
+        client.setVisionPresentationForeground(true)
+        client.fixtureActive()
+    } else {
+        client.fixtureActive()
+        client.visionStartupForeground = true
+        client.setVisionPresentationForeground(true)
+    }
+    oldTimer.performEvenIfCancelled()
+    check("cancelled deadline cannot consume resumed saved startup", client.remoteAttempts.isEmpty)
+    check("saved startup resumes with one fresh deadline", DispatchQueue.main.timers.count == beforeResume + 1)
+    DispatchQueue.main.timers.last!.1.performEvenIfCancelled()
+    client.discoveryChanged(); client.fixtureActive(); client.setVisionPresentationForeground(true)
+    check("saved startup reconnects once after app and scene reactivate", client.remoteAttempts.count == 1 && client.reconnect != nil)
+}
+for mutation in 0..<11 {
+    let client = savedStartup()
+    let timer = armRemote(client)
+    client.visionStartupForeground = false
+    client.fixtureBackground()
+    let original = client.savedMacs
+    switch mutation {
+    case 0: client.savedMacs[0].revoked = true
+    case 1: client.savedMacs[0].newKey = true
+    case 2: client.savedMacs[0].homeTLS = false
+    case 3: client.savedMacs[0].recognitionKey = Base64URL.encode(otherPin)
+    case 4: client.savedMacs[0].fingerprint = Base64URL.encode(otherPin)
+    case 5: client.savedMacs[0].macID = MacID.make(fingerprint: otherPin)
+    case 6: UserDefaults.standard.set("different-preference", forKey: StreamClient.preferredTrustedMacKey)
+    case 7: client.savedMacs.removeAll()
+    case 8: DeviceIdentity.available = false
+    case 9: DeviceIdentity.fingerprint = otherPin
+    default: client.savedMacs.append(client.savedMacs[0])
+    }
+    client.fixtureActive(); client.visionStartupForeground = true
+    client.savedMacs = original
+    UserDefaults.standard.set(original[0].macID, forKey: StreamClient.preferredTrustedMacKey)
+    DeviceIdentity.available = true
+    DeviceIdentity.fingerprint = Data(repeating: 0x55, count: 32)
+    let timers = DispatchQueue.main.timers.count
+    client.visionStartupForeground = false; client.visionStartupForeground = true
+    client.discoveryChanged(); client.armSavedMacAutoConnect(); timer.performEvenIfCancelled()
+    check("resume rejects changed trust or key and cannot revive after restoration \(mutation)", client.remoteAttempts.isEmpty && client.sessionPins.isEmpty && DispatchQueue.main.timers.count == timers && client.identityCalls == 0 && client.sentMethods.isEmpty && client.writes == 0)
+}
+for occupied in 0..<8 {
+    let client = savedStartup()
+    let timer = armRemote(client)
+    client.visionStartupForeground = false
+    switch occupied {
+    case 0: client.connected = true
+    case 1: client.connection = NWConnection()
+    case 2: client.reconnect = .init(macID: result.macID, bonjourName: nil, name: "fixture", lostAt: 0,
+                                   pathAtLoss: "fixture", remoteAllowed: true, rememberedDirect: false)
+    case 3: client.remoteDial = RemoteConnector()
+    case 4: client.pairingDial = RemoteConnector()
+    case 5: client.pairing = .working
+    case 6: client.homeDialer = HomeDialer(targets: [], pin: nil, identity: RemoteIdentity(), queue: client.queue)
+    default: client.homeAsk = HomeAsk(target: .init(endpoint: row().endpoint!, label: "fixture"), name: "fixture", cableRow: false, savedID: nil, tagNamed: false)
+    }
+    client.visionStartupForeground = true
+    client.connected = false; client.connection = nil; client.reconnect = nil; client.remoteDial = nil
+    client.pairingDial = nil; client.pairing = .idle; client.homeDialer = nil; client.homeAsk = nil
+    client.visionStartupForeground = false; client.visionStartupForeground = true
+    client.discoveryChanged(); timer.performEvenIfCancelled()
+    check("occupied resume permanently yields startup \(occupied)", client.remoteAttempts.isEmpty && client.sessionPins.isEmpty)
+}
+for cancellation in 0..<4 {
+    let client = savedStartup()
+    let timer = armRemote(client)
+    client.visionStartupForeground = false
+    switch cancellation {
+    case 0: client.disconnect()
+    case 1: client.retireVisionWindow()
+    case 2: client.stopSavedMacAutoConnect()
+    default: client.ask(row(), savedID: nil, tagNamed: false); client.cancelHomeAsk()
+    }
+    client.fixtureActive(); client.visionStartupForeground = true
+    client.discoveryChanged(); client.armSavedMacAutoConnect(); timer.performEvenIfCancelled()
+    check("cancelled suspended startup never revives \(cancellation)", client.remoteAttempts.isEmpty && client.sessionPins.isEmpty)
+}
+let cycling = savedStartup()
+var previousTimer = armRemote(cycling)
+for cycle in 0..<3 {
+    cycling.visionStartupForeground = false
+    cycling.setVisionPresentationForeground(false)
+    cycling.fixtureBackground(); cycling.fixtureBackground()
+    previousTimer.performEvenIfCancelled(); cycling.discoveryChanged()
+    let timers = DispatchQueue.main.timers.count
+    cycling.fixtureActive(); cycling.fixtureActive()
+    previousTimer.performEvenIfCancelled()
+    check("app active alone cannot resume an inactive scene \(cycle)", DispatchQueue.main.timers.count == timers && cycling.remoteAttempts.isEmpty)
+    cycling.visionStartupForeground = true
+    cycling.setVisionPresentationForeground(true)
+    cycling.visionStartupForeground = true
+    cycling.discoveryChanged()
+    previousTimer.performEvenIfCancelled()
+    check("one generation per resume survives stale timers \(cycle)", DispatchQueue.main.timers.count == timers + 1 && cycling.remoteAttempts.isEmpty)
+    previousTimer = DispatchQueue.main.timers.last!.1
+}
+previousTimer.performEvenIfCancelled(); previousTimer.performEvenIfCancelled()
+check("repeated suspensions still transfer one persistent reconnect intent", cycling.remoteAttempts.count == 1 && cycling.reconnect?.macID == result.macID && cycling.identityCalls == 0 && cycling.writes == 0 && cycling.sentMethods.isEmpty)
+let resumedCable = savedStartup()
+let resumedCableTimer = armRemote(resumedCable)
+resumedCable.visionStartupForeground = false
+resumedCable.macs = [row(macID: result.macID, tagged: true)]
+resumedCable.discoveryChanged()
+check("listed trusted cable cannot dial while scene inactive", resumedCable.sessionPins.isEmpty)
+resumedCable.visionStartupForeground = true
+resumedCableTimer.performEvenIfCancelled(); resumedCable.discoveryChanged()
+check("reactivation uses the existing pinned cable path once", resumedCable.sessionPins == [pin] && resumedCable.remoteAttempts.isEmpty)
+for releaseBeforeStart in [false, true] {
+    let seed = savedStartup()
+    let app = FixtureAppOwner()
+    app.client.transport.savedMacs = seed.savedMacs
+    let window = UUID()
+    app.claim(window)
+    app.setScenePhase(.inactive)
+    if !releaseBeforeStart { app.setScenePhase(.active); app.setScenePhase(.inactive) }
+    app.release(window)
+    let timers = DispatchQueue.main.timers.count
+    app.claim(window); app.setScenePhase(.active)
+    app.client.transport.discoveryChanged()
+    check("released window cannot rearm saved startup after claim \(releaseBeforeStart)", DispatchQueue.main.timers.count == timers && app.client.transport.remoteAttempts.isEmpty)
+}
+let ordinaryOwner = FixtureAppOwner()
+let ordinarySeed = savedStartup()
+ordinaryOwner.client.transport.savedMacs = ordinarySeed.savedMacs
+ordinaryOwner.claim(UUID())
+let inactiveTimers = DispatchQueue.main.timers.count
+ordinaryOwner.setScenePhase(.inactive)
+check("ordinary inactive app defers saved startup without cancelling it", DispatchQueue.main.timers.count == inactiveTimers && ordinaryOwner.client.calls.isEmpty)
+ordinaryOwner.setScenePhase(.active)
+check("ordinary inactive to active arms one saved startup", DispatchQueue.main.timers.count == inactiveTimers + 1)
+ordinaryOwner.setScenePhase(.inactive)
+ordinaryOwner.setScenePhase(.active)
+let ordinaryTimer = DispatchQueue.main.timers.last!.1
+ordinaryTimer.performEvenIfCancelled()
+check("actual app owner resumes saved startup without repeating initialization", ordinaryOwner.client.transport.remoteAttempts.count == 1 && ordinaryOwner.client.calls == ["startRemote", "armSavedMacAutoConnect", "startBrowsing"])
 for mode in [launch, Boot.Launch.invalid] {
     let client = savedStartup(mode)
     let before = DispatchQueue.main.timers.count

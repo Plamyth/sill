@@ -34,7 +34,9 @@ def block(source, marker):
 
 
 def vision(source):
-    return select_platform(source.replace('os(iOS) || os(visionOS)', 'os(visionOS)'), vision=True)
+    source = source.replace('os(iOS) || os(visionOS)', 'os(visionOS)')
+    source = source.replace('os(visionOS) && DEBUG && targetEnvironment(simulator)', 'DEBUG && targetEnvironment(simulator)')
+    return select_platform(source, vision=True)
 
 
 def emit(root, output):
@@ -49,8 +51,7 @@ def emit(root, output):
     stream = (root / 'iOSClient/StreamClient.swift').read_text()
     home = (root / 'iOSClient/StreamClient+Home.swift').read_text()
     remote = (root / 'iOSClient/StreamClient+Remote.swift').read_text()
-    for source, markers in [(stream, ['func setVisionPresentationForeground(', 'private func wentToBackground(',
-                                      'func connect(to mac:', 'func disconnect()', 'var connection: NWConnection?']),
+    for source, markers in [(stream, ['func connect(to mac:', 'func disconnect()', 'var connection: NWConnection?']),
                             (remote, ['func cancelPairing(', 'func dialSaved(', 'private func startPairing(']),
                             (home, ['func ask('])]:
         for marker in markers:
@@ -63,11 +64,13 @@ def emit(root, output):
                    'private func askedTarget(', 'static func bonjourName(', 'func homeRows(']:
         pieces[marker] = vision(block(home, marker))
     for marker in ['private struct VisionStartupTarget', 'private enum StartupAutoConnection',
+                   'var visionStartupForeground = false',
                    'func armSavedMacAutoConnect(', 'func stopSavedMacAutoConnect(', 'func rememberPreferredMac(',
                    'func rememberAuthenticatedMac(', 'private func trySavedMacAutoConnect(',
                    'private func tryVisionSavedMacAutoConnect(', 'func homeDecision(', 'func wiredDial(']:
         pieces[marker] = vision(block(stream, marker))
-    for marker in ['func retireVisionWindow()', 'func disconnect()']:
+    for marker in ['func retireVisionWindow()', 'func disconnect()', 'func setVisionPresentationForeground(',
+                   'private func cameForward()', 'private func wentToBackground(']:
         pieces[marker] = vision(block(stream, marker))
     for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()', 'func cancelRemoteDial()']:
         pieces[marker] = vision(block(remote, marker))
