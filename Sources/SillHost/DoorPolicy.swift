@@ -71,6 +71,8 @@ enum DoorPolicy {
         switch alpn {
         case RemoteTLS.sessionALPN?:
             return door == .home ? t.paired || !t.requirePairing : t.paired
+        case OwnerMacBootstrap.alpn?:
+            return door == .remote && t.remoteAccess
         case RemoteTLS.pairingALPN?:
             return door == .home ? true : t.remotePairingOpen
         default:
@@ -109,6 +111,8 @@ enum DoorPolicy {
             guard t.remoteAccess else { return .goodbye(Goodbye.remoteOff) }
             guard remoteSessions < maxRemoteSessions else { return .goodbye(Goodbye.busy) }
             return .session
+        case (.remote, OwnerMacBootstrap.alpn?):
+            return t.remoteAccess ? .pairing : .refuse("unpaired")
         case (.remote, RemoteTLS.pairingALPN?):
             return t.remotePairingOpen ? .pairing : .refuse("unpaired")
         default:

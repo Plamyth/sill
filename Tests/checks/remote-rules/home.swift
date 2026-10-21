@@ -72,7 +72,7 @@ func homeRemote() {
     check("1 unpaired on Wi-Fi: Not paired; a tap asks with any key; the reconnect waits for a tap", r.word == .notPaired && r.tap == .ask(pinned: false)
           && r.reconnect == .waitForTap && P.sessionTrust(r.tap, savedPin: nil) == nil)
     r = row(door: .pairingRequired, method: .wired, cable: true, tag: tagM)
-    check("1 unpaired on the cable: Wired; a tap asks", r.word == .pairsOverCable && r.word.word == "Wired" && r.tap == .ask(pinned: false))
+    check("1 unpaired on the cable: Wired; a tap asks", r.word == .pairsOverCable && r.word.word == "유선" && r.tap == .ask(pinned: false))
     // 2. The ask over the cable, claimed, answered with the cable's ok: saved (method cable, homeTLS), then a pinned session.
     check("2 the Mac's cable ok to the claimed ask: paired", answer(cableOK, askedCable: true, key: fpM) == .pairedOverCable)
     saved = SavedMacs.adding(SavedMac(macID: macM, fingerprint: Base64URL.encode(fpM), name: "Mac mini", recognitionKey: Base64URL.encode(rkM),
@@ -110,7 +110,7 @@ func homeRemote() {
     // 6. An open door (Require pairing off), another Mac, not saved: any key, then that key for the session.
     r = row(door: .open, method: .wifi, tag: strangerTag)
     check("6 an open door's unsaved Mac: Not paired (never a paired Mac's word); a tap connects with any key", r.id == nil && r.word == .openDoor
-          && r.word.word == "Not paired" && r.tap == .anyKey && P.sessionTrust(r.tap, savedPin: nil) == .open(seen: nil))
+          && r.word.word == "페어링되지 않음" && r.tap == .anyKey && P.sessionTrust(r.tap, savedPin: nil) == .open(seen: nil))
     let seenTrust = P.trust(.open(seen: nil), readyWith: fpX)
     check("6 its moves pin the key the first connection saw", P.pin(seenTrust) == .key(fpX))
     check("6 Require pairing turned on: goodbye pairingRequired, or the key refused after a stale record: pairingRequired",

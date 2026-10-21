@@ -60,6 +60,7 @@ import Security
 package final class KeychainIdentityStore: IdentityStore {
     static let recognitionAccount = "recognition-key"
     static let pairedAccount = "paired-devices"
+    static let ownerRegistryAccount = "owner-bootstrap-registry-v1"
     static let requirePairingAccount = "require-pairing"
 
     /// The data-protection access group, or nil for the legacy login keychain. Immutable.
@@ -177,6 +178,12 @@ package final class KeychainIdentityStore: IdentityStore {
 
     package func saveRequirePairing(_ record: Data) throws {
         try write(record, account: Self.requirePairingAccount, label: "\(namespace.label) (require pairing)")
+    }
+
+    package func loadOwnerRegistry() throws -> Data? { try read(Self.ownerRegistryAccount) }
+
+    package func saveOwnerRegistry(_ record: Data) throws {
+        try write(record, account: Self.ownerRegistryAccount, label: "\(namespace.label) (owner bootstrap registry)")
     }
 
     // MARK: Generic passwords

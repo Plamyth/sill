@@ -22,10 +22,12 @@ package struct PairedDevice: Codable, Hashable, Sendable {
     /// same device then pairs only with the code; Remove frees the device. Nil for a key never seen
     /// on the cable. Optional, so a list from before it decodes, and left out of the JSON when nil.
     package var cableDevice: String?
+    package var ownerPrincipal: String?
 
-    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil) {
+    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil, ownerPrincipal: String? = nil) {
         self.fingerprint = fingerprint; self.name = name; self.model = model; self.pairedAt = pairedAt; self.method = method
         self.cableDevice = cableDevice
+        self.ownerPrincipal = ownerPrincipal
     }
 
     /// How it was paired, as the Devices pane words it: "with the QR code", "with a code", "over
@@ -35,6 +37,7 @@ package struct PairedDevice: Codable, Hashable, Sendable {
     /// The words for a stored method (`displayMethod`; the pane's summaries use it too).
     package static func displayMethod(_ method: String) -> String? {
         switch method {
+        case OwnerMacBootstrap.method: return "같은 사용자 소유 기기로 자동 등록"
         case PairRequest.qr: return "with the QR code"
         case PairRequest.code: return "with a code"
         case PairResult.cable: return "over the USB cable"
@@ -115,6 +118,8 @@ package protocol IdentityStore: AnyObject {
     /// next save would replace it.
     func loadPaired() throws -> [PairedDevice]
     func savePaired(_ devices: [PairedDevice]) throws
+    func loadOwnerRegistry() throws -> Data?
+    func saveOwnerRegistry(_ record: Data) throws
     /// Require pairing (docs/home-pairing-plan.md §4.8), kept beside the trust list and never in
     /// UserDefaults, as the record RemoteAccess writes and judges (RequirePairingValue: off only
     /// with the Mac's own signature): nil when none was ever saved, which reads as on, so a missing
@@ -126,6 +131,11 @@ package protocol IdentityStore: AnyObject {
     /// TEST ONLY: a directory where a test hook may leave the current pairing link and code (the
     /// file store's own, 0700); nil for every other store.
     var testDirectory: URL? { get }
+}
+
+extension IdentityStore {
+    package func loadOwnerRegistry() throws -> Data? { throw IdentityStoreError("자동 등록 기록 저장을 지원하지 않습니다.") }
+    package func saveOwnerRegistry(_ record: Data) throws { throw IdentityStoreError("자동 등록 기록 저장을 지원하지 않습니다.") }
 }
 
 package struct IdentityStoreError: Error, CustomStringConvertible {
@@ -160,6 +170,10 @@ package final class MemoryIdentityStore: IdentityStore {
 
     package func loadPaired() throws -> [PairedDevice] { paired }
     package func savePaired(_ devices: [PairedDevice]) throws { paired = devices }
+
+    private var ownerRegistry: Data?
+    package func loadOwnerRegistry() throws -> Data? { ownerRegistry }
+    package func saveOwnerRegistry(_ record: Data) throws { ownerRegistry = record }
 
     private var requirePairing: Data?
     package func loadRequirePairing() throws -> Data? { requirePairing }
@@ -252,6 +266,14 @@ package final class FileIdentityStore: IdentityStore {
         try Self.writePrivate(try encoder.encode(devices), to: directory.appendingPathComponent("paired.json"))
     }
 
+    package func loadOwnerRegistry() throws -> Data? {
+        try Self.read(directory.appendingPathComponent("owner-registry"))
+    }
+
+    package func saveOwnerRegistry(_ record: Data) throws {
+        try Self.writePrivate(record, to: directory.appendingPathComponent("owner-registry"))
+    }
+
     package func loadRequirePairing() throws -> Data? {
         try Self.read(directory.appendingPathComponent("require-pairing"))
     }
@@ -315,6 +337,7 @@ struct TrustSnapshot: Sendable {
     /// One the remote door takes proofs for (opened by the Mac's user, or the CLI's --remote),
     /// never one a device opened by asking (docs/home-pairing-plan.md §4.6).
     var remotePairingOpen = false
+    var ownerBootstrapEpoch = UUID()
     var remoteAccess = false
     var internetAccess = false
     /// The home door admits only paired keys (on a TLS home door; the plain one has no pairing).
