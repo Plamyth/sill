@@ -54,6 +54,7 @@ final class InputInjector {
     var dryRun = false
     var isolatesPhysicalInput = false
     var remoteEventTag: Int64?
+    private var postObserver: (() -> Void)?
     /// TEST ONLY (SILL_TEST_INPUT_LOG=1, a synthetic host, which posts nothing: `testInputLog`): each
     /// event a dry run would post is printed, a keyboard event with the flags it was made with ("Test
     /// input: key 49 up (none)"), a pointer or scroll event with those the last keyboard event would
@@ -129,8 +130,25 @@ final class InputInjector {
         action()
     }
 
+    func trackingPosts(_ operation: () -> Void) -> Int {
+        let previous = postObserver
+        var count = 0
+        postObserver = { count += 1 }
+        defer { postObserver = previous }
+        operation()
+        return count
+    }
+
+    private func withoutPostTracking<T>(_ operation: () -> T) -> T {
+        let previous = postObserver
+        postObserver = nil
+        defer { postObserver = previous }
+        return operation()
+    }
+
     private func post(_ event: CGEvent, release: Bool = false, admitted: @escaping () -> Void = {}) -> Bool {
         var posted = false
+        let observer = postObserver
         let emit = {
             admitted()
             if Self.isKeyboard(event.type) { self.lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
@@ -141,12 +159,17 @@ final class InputInjector {
                 Stats.shared.bump("in.dry")
             } else {
                 event.post(tap: .cghidEventTap)
+                observer?()
                 posted = true
             }
         }
         let releasing = release || event.type == .keyUp || event.type == .leftMouseUp || event.type == .rightMouseUp || event.type == .otherMouseUp
-        if !releasing, let postAuthorization { _ = postAuthorization(emit) }
-        else { emit() }
+        if !releasing, let postAuthorization {
+            let previous = postObserver
+            postObserver = nil
+            defer { postObserver = previous }
+            _ = postAuthorization(emit)
+        } else { emit() }
         return posted
     }
 
@@ -450,7 +473,7 @@ final class InputInjector {
     private func type(_ string: String, from device: KeyStrokes.Device) {
         // A device types text with none of its modifier keys down: any it still holds goes up first
         // (KeyStrokes.text), as the characters carry no flags either.
-        post(keys.text(from: device))
+        withoutPostTracking { post(keys.text(from: device)) }
         for character in string {
             switch character {
             case "\n": tap(virtualKey: 36)          // Return
@@ -496,8 +519,10 @@ final class InputInjector {
             Stats.shared.bump("in.unknownKey")
             return
         }
-        for step in plan {
-            guard post(step.stroke, admitted: { self.keys = step.state }) else { break }
+        for (index, step) in plan.enumerated() {
+            let emit = { self.post(step.stroke, admitted: { self.keys = step.state }) }
+            let posted = index == plan.count - 1 ? emit() : withoutPostTracking(emit)
+            guard posted else { break }
         }
     }
 

@@ -275,6 +275,10 @@ enum LocalAudioRelayLaunch {
     static let canonicalApp = URL(fileURLWithPath: "/Applications/CCR Sill.app", isDirectory: true)
     static let designatedRequirement = "identifier \"com.ambrion.sillcanvas.mac\" and anchor apple generic and certificate leaf[subject.CN] = \"Apple Development: TAEWAN KANG (X6V8DN2VJ3)\" and certificate 1[field.1.2.840.113635.100.6.2.1]"
 
+    static func validateCanonicalHostForInput() -> Bool {
+        do { try validateSignatureAndSelf(); return true } catch { return false }
+    }
+
     static func validateInstalledRuntime() throws -> LocalAudioRelayInventory {
         try validateSignatureAndSelf()
         let inventory = try LocalAudioRelayInventory.capture(package: canonicalApp.appendingPathComponent("Contents/Resources/LocalAudioRelay"))

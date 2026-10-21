@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import StreamProtocol
 
 final class Device {}
@@ -6,6 +7,10 @@ final class Device {}
 @main @MainActor struct Checks {
     static var lastCaptured: [String] = []
     static func main() {
+        #if POST_BOUNDARY
+        postBoundaryChecks()
+        return
+        #endif
         var assertions = 0
         func check(_ condition: Bool) {
             if !condition {
@@ -92,3 +97,38 @@ final class Device {}
         print("PASS \(assertions) actual InputInjector ownership checks; dryRun=true and no CGEvent posted")
     }
 }
+
+#if POST_BOUNDARY
+@MainActor enum InputPostBoundary {
+    static var events: [CGEventType] = []
+    static func post(_ event: CGEvent) { events.append(event.type) }
+}
+extension Checks {
+    static func postBoundaryChecks() {
+        var assertions = 0
+        func check(_ condition: Bool) { precondition(condition); assertions += 1 }
+        let device = Device(), id = ObjectIdentifier(device)
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
+        for requested in [InputEvent.text("가"), .key(hidUsage: 4, down: true, modifiers: 0)] {
+            let injector = InputInjector(); injector.isolatesPhysicalInput = true
+            injector.apply(.key(hidUsage: 224, down: true, modifiers: 1), in: rect, from: id)
+            InputPostBoundary.events = []
+            let count = injector.trackingPosts {
+                injector.withAuthorization({ _ in false }) { injector.apply(requested, in: rect, from: id) }
+            }
+            check(count == 0)
+            check(InputPostBoundary.events == [.flagsChanged])
+            check(!injector.isUpOfSomethingDown(.key(hidUsage: 224, down: false, modifiers: 0), from: id))
+        }
+        let injector = InputInjector(); injector.isolatesPhysicalInput = true
+        injector.apply(.key(hidUsage: 224, down: true, modifiers: 1), in: rect, from: id)
+        InputPostBoundary.events = []
+        let accepted = injector.trackingPosts { injector.apply(.key(hidUsage: 4, down: true, modifiers: 0), in: rect, from: id) }
+        check(accepted == 1 && InputPostBoundary.events == [.flagsChanged, .keyDown])
+        InputPostBoundary.events = []
+        let explicitUp = injector.trackingPosts { injector.apply(.key(hidUsage: 4, down: false, modifiers: 0), in: rect, from: id) }
+        check(explicitUp == 1 && InputPostBoundary.events == [.keyUp])
+        print("PASS \(assertions) actual InputInjector text/key accounting checks; CGEvent.post intercepted, no OS input")
+    }
+}
+#endif

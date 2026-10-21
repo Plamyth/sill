@@ -1,0 +1,5 @@
+시점	결정	근거
+2026-10-21	외장 Git 작업트리에서 후보 작성	내장 실제 여유50GB 미달, storage-route 경로 검증
+2026-10-21	ccr-local 창 범위만 지원	CCR 본체 계약 합의, 대화 권한과 Sill delegation 미구현
+2026-10-21	기존 원격 viewer 우선	공유 InputInjector 소유권과 Sentry 경계 유지
+2026-10-21	실제 설치 전 코드 후보 검증	공식 호스트068be8f/설치142 보존, 정식 peer/AX 실증 미수행

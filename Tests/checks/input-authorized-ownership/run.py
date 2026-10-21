@@ -20,6 +20,14 @@ with tempfile.TemporaryDirectory(prefix='input-authorization-') as temporary:
     subprocess.run(base + ['-parse-as-library', '-I', str(scratch), '-L', str(scratch), '-lStreamProtocol',
         '-Xlinker', '-rpath', '-Xlinker', str(scratch), *map(str, host), str(here / 'main.swift'), '-o', str(binary)], check=True, timeout=180)
     subprocess.run([str(binary)], check=True, timeout=30)
+    original = host[0].read_text()
+    boundary = 'event.post(tap: .cghidEventTap)'
+    assert original.count(boundary) == 1
+    intercepted = scratch / 'InputInjector.swift'
+    intercepted.write_text(original.replace(boundary, 'InputPostBoundary.post(event)'))
+    subprocess.run(base + ['-D', 'POST_BOUNDARY', '-parse-as-library', '-I', str(scratch), '-L', str(scratch), '-lStreamProtocol',
+        '-Xlinker', '-rpath', '-Xlinker', str(scratch), str(intercepted), *map(str, host[1:]), str(here / 'main.swift'), '-o', str(binary)], check=True, timeout=180)
+    subprocess.run([str(binary)], check=True, timeout=30)
 assert all(hashlib.sha256((root / path).read_bytes()).hexdigest() == digest for path, digest in before.items())
 print(json.dumps({'passed': True, 'sourceHashes': before, 'sourceUnchanged': True, 'scratchRemoved': not scratch.exists(),
                   'actualInputPosting': False, 'deviceOrHALActions': 0}))

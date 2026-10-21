@@ -61,6 +61,7 @@ package final class StreamCoordinator {
     private let audioPrivacy: HostAudioPrivacy?
     private var sentry: HostSentry?
     private var forwardingRuntime: HostAudioForwardingRuntime?
+    private var cursorInput: LocalCursorInputBroker?
     private var physicalAudioRoutesRetired = false
     private var localAudioReturnDrained = false
     private lazy var audioHardwareRoutes = AudioHardwareRoutes()
@@ -441,6 +442,7 @@ package final class StreamCoordinator {
             platform.requestLocalReturn = { [weak privacy] in Task { @MainActor in _ = await privacy?.requestLocalReturn() } }
             sentry.changed = { [weak self] in
                 guard let self else { return }
+                self.cursorInput?.ownershipChanged()
                 self.injector.isolatesPhysicalInput = self.server.sentryAdmission.isRequested
                 for peer in self.connections.keys where !self.server.sentryAdmission.allowsActions(peer) {
                     self.injector.releaseInput(of: peer)
@@ -462,6 +464,17 @@ package final class StreamCoordinator {
             privacy.changed = { [weak self] state in self?.audioPrivacyChanged(state) }
             privacy.revokeForLocalReturn = { [weak self] in await self?.prepareLocalAudioReturn() ?? false }
             privacy.inspectForLocalReturn = { [weak self] in self?.localAudioReturnFacts() ?? .unknown }
+        }
+        if self.audioPrivacy != nil {
+            cursorInput = LocalCursorInputBroker(injector: injector, window: { [weak self] target in
+                guard let self, CGPreflightScreenCaptureAccess(),
+                      let content = await WindowCatalog.shareableContent(excludingDesktopWindows: false, onScreenWindowsOnly: true, timeout: 3),
+                      let window = content.windows.first(where: { $0.windowID == target.windowID }) else { return nil }
+                return LocalCursorWindow.capture(window: window, pid: target.pid, sizer: self.sizer)
+            }, remoteOwnsInput: { [weak self] in
+                guard let self else { return true }
+                return self.shuttingDown || self.switching || !self.connections.isEmpty || !self.heldInput.isEmpty
+            }, sentryProtected: { [weak self] in self?.server.sentryAdmission.isRequested ?? true })
         }
         microphoneReceiver.availabilityChanged = { [weak self] in
             guard let self else { return }
@@ -629,6 +642,7 @@ package final class StreamCoordinator {
                 self.menus.clientLeft(connection)
                 self.nativeDock.disconnected(id)
                 self.releaseInput(of: id)
+                self.cursorInput?.ownershipChanged()
                 self.status.update { $0.devices.removeAll { $0.id == id } }
                 // The last device at home left devices away behind: the away quality, at once.
                 let flipped = self.routesChanged(joined: nil, endpoint: nil)
@@ -832,6 +846,7 @@ package final class StreamCoordinator {
         await forwardingRuntime?.start()
         if virtualDisplay { enableVirtualDisplay() }
         catalog.start()
+        _ = cursorInput?.start()
         // The only startup line Direct Wireless adds, and only when it is on: the default path
         // prints what it always printed.
         if config.directWireless {
@@ -1761,6 +1776,7 @@ package final class StreamCoordinator {
         if sentry != nil, case .window(let id) = source,
            catalog.window(id: id)?.owningApplication?.processID == getpid() { return }
         switching = true
+        cursorInput?.ownershipChanged()
         restartOf = (source == active && source != .none) ? source : nil
         defer {
             switching = false
@@ -2357,6 +2373,10 @@ package final class StreamCoordinator {
 
     /// The on-screen layer-0 window under `point` (any point when nil, i.e. the frontmost normal
     /// window on screen) and its owner, or nil when unknown.
+    static func topmostInputWindow(at point: CGPoint?) -> (id: CGWindowID, pid: pid_t)? {
+        topmostWindow(at: point)
+    }
+
     private static func topmostWindow(at point: CGPoint?) -> (id: CGWindowID, pid: pid_t)? {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
         for info in list {   // front to back
@@ -2573,6 +2593,7 @@ package final class StreamCoordinator {
     /// dies of the signal with no goodbye, as before (`releaseKeysForExit`): its devices notice by
     /// liveness.
     package func shutdownForExit() {
+        cursorInput?.stop()
         forwardingRuntime?.stop()
         microphoneOwner?.restoreMicrophoneForExit()
         injector.releaseAll()
@@ -3341,6 +3362,7 @@ package final class StreamCoordinator {
         server.send(settingsMessage(state), to: connection)
         lastPublished[id] = state
         connections[id] = connection
+        cursorInput?.ownershipChanged()
         // Who this Mac is and how to reach it from afar (kind 18, signed), on both doors, only from
         // a host with an identity. An older device skips it too.
         if let info = remote?.macInfoMessage() { server.send(info, to: connection) }

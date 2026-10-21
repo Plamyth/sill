@@ -50,9 +50,11 @@ final class PostFixture {
     var lastKeyFlags: UInt64 = 0
     var isolatesPhysicalInput = false
     var remoteEventTag: Int64?
+    var postObserver: (() -> Void)?
     var dryRun = false, testLog = false
     func logTest(_ event: CGEvent) {}
     // func withAuthorization(
+    // func trackingPosts(
     // private func post(_ event:
     // private static func isKeyboard(
 }
@@ -121,6 +123,26 @@ final class PostFixture {
         let denied = CGEvent(.leftMouseDown)
         injector.withAuthorization(injectionLease.whileCurrent) { check(!injector.post(denied)) }
         check(denied.posted == 0 && denied.userData == 0)
+        let clean = PostFixture()
+        let cleanup = CGEvent(.keyUp), intended = CGEvent(.leftMouseDown)
+        let acceptedCount = clean.trackingPosts {
+            clean.withAuthorization({ emit in
+                _ = clean.post(cleanup, release: true)
+                emit()
+                return true
+            }) { _ = clean.post(intended) }
+        }
+        check(acceptedCount == 1 && cleanup.posted == 1 && intended.posted == 1)
+        let deniedCleanup = CGEvent(.keyUp), deniedInput = CGEvent(.leftMouseDown)
+        let deniedCount = clean.trackingPosts {
+            clean.withAuthorization({ _ in
+                _ = clean.post(deniedCleanup, release: true)
+                return false
+            }) { _ = clean.post(deniedInput) }
+        }
+        check(deniedCount == 0 && deniedCleanup.posted == 1 && deniedInput.posted == 0)
+        clean.dryRun = true
+        check(clean.trackingPosts { _ = clean.post(CGEvent(.mouseMoved)) } == 0)
         print("PASS \(assertions) actual grant-lock, sendEnabled and injector post checks; no microphone, HAL or TLS device")
     }
 }

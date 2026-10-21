@@ -29,7 +29,7 @@ production = paths[0].read_text()
 fixture = paths[3].read_text()
 for marker in ['package struct HostMicrophoneDestination:', 'package final class HostLocalOwnerGrant:', 'private struct Storage', 'func sendEnabled(']:
     fixture = fixture.replace('// ' + marker, block(production, marker))
-for marker in ['func withAuthorization(', 'private func post(_ event:', 'private static func isKeyboard(']:
+for marker in ['func withAuthorization(', 'func trackingPosts(', 'private func post(_ event:', 'private static func isKeyboard(']:
     fixture = fixture.replace('// ' + marker, block(paths[-1].read_text(), marker).replace('private func', 'func', 1))
 with tempfile.TemporaryDirectory(prefix='automatic-lease-send-') as temporary:
     scratch = Path(temporary)
