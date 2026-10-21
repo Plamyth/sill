@@ -58,6 +58,7 @@ final class HostMicrophoneReceiver {
     private let prepare: @MainActor (HostLocalOwnerGrant, MicrophoneRenderBuffer) async -> HostMicrophonePreparation
     private let provider: (any HostMicrophoneOriginalOwner)?
     private var watchdog: Task<Void, Never>?
+    private var retirementWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     var availabilityChanged: (() -> Void)?
     var current: ((MicrophoneScope, Data) -> Bool)?
     var sendState: ((MicrophoneState, MicrophoneRenderBuffer?) -> Void)?
@@ -100,6 +101,27 @@ final class HostMicrophoneReceiver {
               valid(grant, scope: grant.scope, fingerprint: fingerprint) else { return nil }
         advertised[peer] = grant
         return MicrophoneCapability(peer: peer, destination: grant.scope.destination, generation: grant.scope.capability)
+    }
+
+    var retirementComplete: Bool { phase == .off && lease == nil && watchdog == nil }
+
+    func waitForRetirement() async -> Bool {
+        if retirementComplete { return true }
+        if phase == .cleanupFailed || Task.isCancelled { return false }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                retirementWaiters[id] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.retirementWaiters.removeValue(forKey: id)?.resume(returning: false) }
+        }
+    }
+
+    private func notifyRetirement() {
+        let pending = Array(retirementWaiters.values)
+        retirementWaiters.removeAll()
+        pending.forEach { $0.resume(returning: retirementComplete) }
     }
 
     var cleanupGrantID: UUID? { phase == .cleanupFailed ? lease?.id : nil }
@@ -283,11 +305,13 @@ final class HostMicrophoneReceiver {
             owned.closing = false
             phase = .cleanupFailed
             updateOutcomes(owned, reason: error)
+            notifyRetirement()
             availabilityChanged?()
         } else {
             phase = .off
             updateOutcomes(owned, reason: owned.retirementReason)
             lease = nil
+            notifyRetirement()
             availabilityChanged?()
         }
     }
