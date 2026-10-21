@@ -320,14 +320,25 @@ struct Main {
             await f.until { gate.entered }
             let configured = f.count("forwardingConfigure")
             let blockers = exhaustRetries ? 4 : 1
+            var invalidatedAt: ContinuousClock.Instant?
             for index in 1...blockers {
                 let blocker = Task { @MainActor in
                     await relay.forwardingPrepare(binding, until: ContinuousClock.now.advanced(by: .seconds(5)))
                 }
                 await f.until { FileManager.default.fileExists(atPath:
                     f.directory.appendingPathComponent("prepare-entered-\(index)").path) }
-                if index == 1 { f.runtime.invalidateProtection() }
-                try await Task.sleep(for: .milliseconds(3900))
+                if index == 1 {
+                    invalidatedAt = ContinuousClock.now
+                    f.runtime.invalidateProtection()
+                }
+                if exhaustRetries, index == blockers, let invalidatedAt {
+                    // 세 번째 대기 만료 뒤, 잘못 허용된 네 번째 대기가 만료되기 전에 FIFO를 푼다.
+                    try await ContinuousClock().sleep(until: invalidatedAt.advanced(by: .seconds(14)))
+                    precondition(ContinuousClock.now < invalidatedAt.advanced(by: .milliseconds(14800)),
+                                 "재시도 상한을 구분할 시간 창을 벗어난 실행은 통과로 세지 않습니다.")
+                } else {
+                    try await Task.sleep(for: .milliseconds(3900))
+                }
                 precondition(f.count("forwardingConfigure") == configured,
                              "FIFO 대기 중 만료된 configure가 송신되면 안 됩니다.")
                 precondition(relay.forwardingConfiguration(privacyGeneration: f.privacy.forwardingPrivacyGeneration) != nil,
