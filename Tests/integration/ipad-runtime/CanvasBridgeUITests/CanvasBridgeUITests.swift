@@ -136,4 +136,30 @@ final class CanvasBridgeUITests: XCTestCase {
         XCTAssertTrue(result.label.hasPrefix("CANVAS_MODE_LIFETIME total="),result.label)
         XCTAssertTrue(result.label.contains("failed=0"),result.label)
     }
+    func testPencilCorrectionNativeProbe() throws {
+        let app = XCUIApplication(bundleIdentifier:try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_TEST_BUNDLE"]))
+        app.launchArguments = ["--ccr-test-runtime",try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_TEST_RUNTIME_ID"]),"--ccr-pencil-native-check"]
+        app.launch()
+        let result = app.staticTexts["pencilCorrectionNativeResult"]
+        XCTAssertTrue(result.waitForExistence(timeout:30))
+        XCTAssertTrue(result.label.hasPrefix("PENCIL_CORRECTION total="),result.label)
+        XCTAssertTrue(app.staticTexts["Pencil 그림과 구조 데이터가 Obsidian에 저장됐습니다."].waitForExistence(timeout:25))
+        let shot = XCTAttachment(screenshot:app.screenshot())
+        shot.name = "pencil-correction-production-geometry-and-vault"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    func testLivePencilRemoteRevision() throws {
+        let app = try app()
+        XCTAssertTrue(app.staticTexts["Mac에서 수정한 시험 글자"].waitForExistence(timeout:20))
+        print("CCR_PENCIL_LIVE_READY")
+        fflush(stdout)
+        XCTAssertTrue(app.staticTexts["Mac 실시간 교정 👩🏽‍💻"].waitForExistence(timeout:30))
+        let shot = XCTAttachment(screenshot:app.screenshot())
+        shot.name = "pencil-correction-remote-live"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
 }

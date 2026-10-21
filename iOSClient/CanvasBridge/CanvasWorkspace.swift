@@ -857,7 +857,7 @@ struct CanvasWorkspace: View {
     private var proposalSheet: some View {
         NavigationStack {
             Form {
-                Text("글자 내용을 수정합니다. 원본 획과 출처는 유지됩니다.")
+                Text("손글씨 입력으로 글자를 교정하거나, ‘펜 교정’을 켜 글자 위를 지그재그로 지우세요. 위로 긋기는 합치기, 아래로 긋기는 나누기입니다. 원본 획과 출처는 유지됩니다.")
                 VaultMarkdownEditor(text:$store.proposalText,selection:$proposalSelection,
                                     identifier:"canvasNodeTextEditor",label:"요소 글자 편집기",
                                     nodeEditing:true,inputBusy:$proposalInputBusy,
@@ -1021,7 +1021,7 @@ struct CanvasWorkspace: View {
     }
 }
 
-private struct VaultMarkdownEditor: UIViewRepresentable {
+struct VaultMarkdownEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
     var identifier = "obsidianMarkdownEditor"
@@ -1078,6 +1078,7 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
 
     final class NodeTextView: UITextView {
         var inputStateChanged: (() -> Void)?
+        let correctionTrace = CAShapeLayer()
         override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
             super.setMarkedText(markedText,selectedRange:selectedRange)
             inputStateChanged?()
@@ -1094,19 +1095,29 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
         var scribbling = false
         private let session: UUID?
         private var active = true
-        private weak var editor: UITextView?
+        fileprivate weak var editor: UITextView?
         private var erase: UIBarButtonItem?
         private var undo: UIBarButtonItem?
         private var redo: UIBarButtonItem?
+        private var correction: UIBarButtonItem?
+        private var correctionGesture: PencilTextGestureRecognizer?
+        private var correcting = false
+        fileprivate var correctionEnabled = false
+        private var gestureText: String?
         init(_ parent: VaultMarkdownEditor) {
             self.parent = parent
             session = parent.editSession()
         }
-        private var isCurrent: Bool {
+        fileprivate var isCurrent: Bool {
             active && (!parent.nodeEditing || session != nil && session == parent.editSession())
         }
         func retire(_ view: UITextView) {
             active = false
+            correctionGesture?.isEnabled = false
+            correctionGesture?.onTracking = nil
+            correctionGesture?.onStroke = nil
+            correctionGesture?.onPoints = nil
+            (view as? NodeTextView)?.correctionTrace.removeFromSuperlayer()
             editor = nil
             #if !os(visionOS)
             for interaction in view.interactions where interaction is UIScribbleInteraction {
@@ -1117,6 +1128,33 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
         func configure(_ view: NodeTextView) {
             editor = view
             view.undoManager?.removeAllActions()
+            let gesture = PencilTextGestureRecognizer(target: nil, action: nil)
+            gesture.isEnabled = false
+            gesture.onTracking = { [weak self, weak view] active in
+                guard let self, let view else { return }
+                self.correcting = active
+                self.gestureText = active ? view.text : self.gestureText
+                self.publishInputState(view)
+            }
+            gesture.onPoints = { [weak view] points in
+                guard let view else { return }
+                let path = UIBezierPath()
+                if let first = points.first {
+                    path.move(to:first)
+                    for point in points.dropFirst() { path.addLine(to:point) }
+                }
+                view.correctionTrace.path = path.cgPath
+            }
+            gesture.onStroke = { [weak self] points in
+                guard let self, let expected = self.gestureText else { return }
+                self.applyCorrection(points,expectedText:expected)
+            }
+            view.addGestureRecognizer(gesture)
+            correctionGesture = gesture
+            view.correctionTrace.strokeColor = UIColor.systemBlue.cgColor
+            view.correctionTrace.fillColor = UIColor.clear.cgColor
+            view.correctionTrace.lineWidth = 2
+            view.layer.addSublayer(view.correctionTrace)
             view.inputStateChanged = { [weak self, weak view] in
                 guard let self, let view else { return }
                 self.textViewDidChange(view)
@@ -1128,24 +1166,84 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
             let erase = UIBarButtonItem(title:"선택 글자 지우기",style:.plain,target:self,action:#selector(eraseSelection))
             let undo = UIBarButtonItem(title:"실행 취소",style:.plain,target:self,action:#selector(undoEdit))
             let redo = UIBarButtonItem(title:"다시 실행",style:.plain,target:self,action:#selector(redoEdit))
+            let correction = UIBarButtonItem(title:"펜 교정 켜기",style:.plain,target:self,action:#selector(toggleCorrection))
+            correction.accessibilityIdentifier = "canvasPencilCorrectionMode"
+            self.correction = correction
             self.erase = erase
             self.undo = undo
             self.redo = redo
-            toolbar.items = [undo,redo,UIBarButtonItem(systemItem:.flexibleSpace),erase]
+            toolbar.items = [undo,redo,UIBarButtonItem(systemItem:.flexibleSpace),correction,erase]
             toolbar.sizeToFit()
             view.inputAccessoryView = toolbar
             refreshControls(view)
         }
         func refreshControls(_ view: UITextView) {
-            let ready = isCurrent && view.isEditable && view.markedTextRange == nil && !scribbling
+            let ready = isCurrent && view.isEditable && view.markedTextRange == nil && !scribbling && !correcting
+            correction?.isEnabled = ready
             erase?.isEnabled = ready && canvasSelectedCharacterRange(in:view.text,selection:view.selectedRange) != nil
             undo?.isEnabled = ready && view.undoManager?.canUndo == true
             redo?.isEnabled = ready && view.undoManager?.canRedo == true
         }
         private func publishInputState(_ view: UITextView) {
             guard isCurrent else { return }
-            parent.inputBusy.wrappedValue = view.markedTextRange != nil || scribbling
+            parent.inputBusy.wrappedValue = view.markedTextRange != nil || scribbling || correcting
             refreshControls(view)
+        }
+        @objc private func toggleCorrection() {
+            guard isCurrent, let editor, editor.markedTextRange == nil, !scribbling, !correcting else { return }
+            correctionEnabled.toggle()
+            correctionGesture?.isEnabled = correctionEnabled
+            correction?.title = correctionEnabled ? "손글씨 입력으로" : "펜 교정 켜기"
+            correction?.accessibilityValue = correctionEnabled ? "펜 교정" : "손글씨 입력"
+            (editor as? NodeTextView)?.correctionTrace.path = nil
+        }
+        func applyCorrection(_ points: [CGPoint], expectedText: String) {
+            guard isCurrent, correctionEnabled, let editor, editor.isEditable,
+                  editor.markedTextRange == nil, !scribbling,
+                  editor.text.utf8.elementsEqual(expectedText.utf8),
+                  let gesture = CanvasPencilTextCorrection.gesture(for:points),
+                  let range = correctionRange(points,gesture:gesture,in:editor),
+                  let edit = CanvasPencilTextCorrection.edit(in:editor.text,gesture:gesture,range:range),
+                  let start = editor.position(from:editor.beginningOfDocument,offset:edit.range.location),
+                  let end = editor.position(from:start,offset:edit.range.length),
+                  let textRange = editor.textRange(from:start,to:end) else { return }
+            editor.replace(textRange,withText:edit.replacement)
+            textViewDidChange(editor)
+        }
+        func correctionRange(_ points: [CGPoint], gesture: CanvasPencilTextGesture,
+                                     in view: UITextView) -> NSRange? {
+            guard let first = points.first, let last = points.last else { return nil }
+            let center = CGPoint(x:(first.x + last.x)/2,y:(first.y + last.y)/2)
+            if gesture != .erase {
+                guard let position = view.closestPosition(to:center),
+                      view.caretRect(for:position).insetBy(dx:-20,dy:-12).contains(center) else { return nil }
+                return NSRange(location:view.offset(from:view.beginningOfDocument,to:position),length:0)
+            }
+            let minX = points.map(\.x).min()!, maxX = points.map(\.x).max()!
+            let minY = points.map(\.y).min()!, maxY = points.map(\.y).max()!
+            let bounds = CGRect(x:minX,y:minY,width:maxX-minX,height:maxY-minY)
+            guard bounds.height <= 80, bounds.width <= 500 else { return nil }
+            var hits: [NSRange] = [], offset = 0
+            var firstHitY: CGFloat?
+            for character in view.text {
+                let length = String(character).utf16.count
+                defer { offset += length }
+                guard let start = view.position(from:view.beginningOfDocument,offset:offset),
+                      let end = view.position(from:start,offset:length),
+                      let range = view.textRange(from:start,to:end) else { return nil }
+                let hitRects = view.selectionRects(for:range).map(\.rect).filter {
+                    $0.width > 0 && bounds.contains(CGPoint(x:$0.midX,y:$0.midY))
+                }
+                if let hit = hitRects.first {
+                    if let firstHitY, abs(hit.midY-firstHitY) > max(3,hit.height/2) { return nil }
+                    firstHitY = firstHitY ?? hit.midY
+                    if let previous = hits.last, NSMaxRange(previous) != offset { return nil }
+                    hits.append(NSRange(location:offset,length:length))
+                }
+            }
+            guard let lower = hits.first, let upper = hits.last else { return nil }
+            let range = NSRange(location:lower.location,length:NSMaxRange(upper)-lower.location)
+            return range.length <= 256 ? range : nil
         }
         @objc private func eraseSelection() {
             guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling,
@@ -1183,6 +1281,9 @@ private struct VaultMarkdownEditor: UIViewRepresentable {
 
 #if !os(visionOS)
 extension VaultMarkdownEditor.Coordinator: UIScribbleInteractionDelegate {
+    func scribbleInteraction(_ interaction: UIScribbleInteraction, shouldBeginAt location: CGPoint) -> Bool {
+        isCurrent && !correctionEnabled && editor?.isEditable == true
+    }
     func scribbleInteractionWillBeginWriting(_ interaction: UIScribbleInteraction) {
         guard isCurrent else { return }
         scribbling = true
@@ -1195,6 +1296,50 @@ extension VaultMarkdownEditor.Coordinator: UIScribbleInteractionDelegate {
     }
 }
 #endif
+
+
+private final class PencilTextGestureRecognizer: UIGestureRecognizer {
+    var onTracking: ((Bool) -> Void)?
+    var onPoints: (([CGPoint]) -> Void)?
+    var onStroke: (([CGPoint]) -> Void)?
+    private var points: [CGPoint] = []
+    private var started: TimeInterval = 0
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard touches.count == 1, let touch = touches.first, touch.type == .pencil else {
+            state = .failed; return
+        }
+        started = touch.timestamp
+        points = [touch.location(in:view)]
+        state = .began
+        onTracking?(true)
+        onPoints?(points)
+    }
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard state == .began || state == .changed, let touch = touches.first,
+              touch.type == .pencil else { return }
+        guard touch.timestamp - started <= 2, points.count < 500 else { state = .cancelled; return }
+        points.append(contentsOf:(event.coalescedTouches(for:touch) ?? [touch]).map { $0.location(in:view) })
+        state = .changed
+        onPoints?(points)
+    }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard state == .began || state == .changed, let touch = touches.first,
+              touch.type == .pencil else { return }
+        points.append(touch.location(in:view))
+        state = .ended
+        onTracking?(false)
+        if touch.timestamp - started <= 2, points.count <= 500 { onStroke?(points) }
+        onPoints?([])
+    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .cancelled }
+    override func reset() {
+        super.reset()
+        points = []
+        onTracking?(false)
+        onPoints?([])
+    }
+}
 
 private struct CanvasInkHistoryButtons: View {
     @ObservedObject var history: CanvasInkHistory
