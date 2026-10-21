@@ -406,11 +406,11 @@ let displayGate = StreamClient(), displayGateInput = VisionInputSession(), displ
 displayGateInput.bind(displayGate); displayGateInput.setGeometry(testGeometry); displayGateInput.allowed = true
 displayGate.connection = displayGatePeer; seedLegacy(displayGate, displayGatePeer)
 check(displayGateInput.canSend, "display transition gate starts from usable input")
-displayGate.visionDisplaySelection.inputBlocked = true
+displayGate.visionDisplaySelection.setModal(true)
 displayGateInput.press(.enter)
 displayGate.sendInput(.text("blocked display input")); displayGate.queue.sync {}
 check(!displayGateInput.canSend && inputs(displayGatePeer).isEmpty, "display transition blocks controls and direct native input")
-displayGate.visionDisplaySelection.inputBlocked = false
+displayGate.visionDisplaySelection.setModal(false)
 displayGateInput.press(.enter); displayGate.queue.sync {}
 check(events(displayGatePeer).count == 2, "confirmed display gate can restore ordinary native controls")
 let gestureClient = StreamClient(), gestureInput = VisionInputSession(), gesturePeer = NWConnection()

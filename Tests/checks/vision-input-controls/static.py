@@ -31,7 +31,7 @@ pointer = (ROOT / 'visionOSClient/VisionPointer.swift').read_text()
 spatial = (ROOT / 'visionOSClient/VisionSpatialInput.swift').read_text()
 admission = block(session, 'var canSend: Bool')
 check('native controls retain all admission fences', all(guard in admission for guard in ['!client.visionDisplaySelection.inputBlocked', 'allowed', '!moving', 'client.connected', 'client.active != .none', 'client.visionInputBinding.isConfirmed']))
-for marker in ['func spatial(', 'func magnify(']:
+for marker in ['func spatial(', 'func magnify(', 'func rotate(']:
     callback = block(session, marker)
     check(marker + ' requires current revision geometry and admission', all(guard in callback for guard in ['revision == gestureRevision', 'self.geometry == geometry', 'guard canSend']))
 check('context cancellation retires gesture revision and reducer', all(guard in block(session, 'private func cancelPointer()') for guard in ['gestureRevision = UUID()', 'magnification = nil', 'pointer.cancel()', 'pointer = VisionPointer()']))
@@ -47,6 +47,33 @@ adapter = block(spatial, 'extension VisionPointer.Sample {')
 check('native contact mapping retains id timestamp local location and cancellation', all(token in adapter for token in ['AnyHashable(event.id)', 'timestamp: event.timestamp', 'location: event.location', 'case .cancelled: phase = .cancelled', '@unknown default: phase = .cancelled']))
 check('native contact kinds refuse hover pointer', 'case .directPinch, .indirectPinch, .touch: break' in adapter and 'default: return nil' in adapter)
 check('native magnification wins arbitration before contact tails', all(block(spatial, marker).index('input.magnify(') < block(spatial, marker).index('input.spatial(') for marker in ['.onChanged {', '.onEnded {']))
+check('native zoom precedes rotation and contact dispatch', all(
+    block(spatial, marker).index('input.magnify(') < block(spatial, marker).index('input.rotate(') < block(spatial, marker).index('input.spatial(')
+    for marker in ['.onChanged {', '.onEnded {']))
+rotation = block(session, 'private struct Rotation {')
+rotate = block(session, 'func rotate(')
+finish = block(session, 'func finishGesture(')
+check('rotation captures angle time client peer binding source and display token', all(
+    token in rotation for token in ['var degrees: Double', 'var time: TimeInterval', 'let client: StreamClient',
+                                  'let peer: ObjectIdentifier', 'let scope: VisionInputBinding',
+                                  'let source: StreamSource', 'let token: VisionDisplaySelection.Token?']))
+check('rotation rejects invalid numbers anchors and late values', all(
+    token in rotate for token in ['degrees.isFinite', 'time.isFinite', 'viewport.point(anchor, in: geometry) != nil',
+                                 'time >= (rotation?.time ?? -.infinity)', 'finishGesture(revision: revision)']))
+check('rotation cancels pointer and scroll before capturing scope', rotate.index('momentum.stop()') < rotate.index('pointer.cancel()') < rotate.index('rotation = Rotation('))
+check('only completion selects once through captured client after input cleanup',
+      'selectAdjacentVisionDisplay' not in rotate and 'completed && magnification?.blocksRotation != true ? rotation : nil' in finish and
+      finish.count('selectAdjacentVisionDisplay') == 1 and finish.index('let events = cancelPointer()') < finish.index('selectAdjacentVisionDisplay') and
+      all(token in finish for token in ['client === turn.client', 'turn.client.connection.map(ObjectIdentifier.init) == turn.peer',
+                                       'turn.client.visionInputBinding == turn.scope', 'turn.client.active == turn.source',
+                                       'turn.client.visionDisplaySelection.token == token', 'abs(turn.degrees) >= 25',
+                                       'turn.client.selectAdjacentVisionDisplay(by: turn.degrees > 0 ? 1 : -1, expected: token)']))
+check('client replacement retires old input before rebinding', block(session, 'func bind(').index('releaseAll()') < block(session, 'func bind(').index('self.client = client'))
+check('rotation has no remote gain owner ticket preview or commit', all(token not in session for token in ['gainOwner', 'gainTicket', 'VisionAudioGain']))
+check('eight percent zoom history suppresses rotation', all(token in block(session, 'func magnify(') for token in [
+    'zoom.blocksRotation || factor <= 0.92 || factor >= 1.08', 'if magnification?.blocksRotation == true { rotation = nil }']))
+check('Korean guidance describes monitor rotation and optional modifier drag', 'Mac 모니터' in spatial and '25도' in spatial and
+      '보조 키를 선택하고 길게 집은 뒤' in spatial and 'Mac 모니터 한 칸 전환' in workspace and '보조 키를 선택하고 길게 집은 뒤' in workspace)
 check('native anchor and captured revision survive recognizer cancellation', all(token in spatial for token in ['zoom.startLocation', '@State private var revision: UUID?', 'let ticket = revision ?? input.gestureRevision', '.onChange(of: recognizing)', 'input.finishGesture(revision: ticket)', '.onChange(of: geometry, initial: true)']))
 check('stream transform and viewport inverse agree on centered scale and offset', all(token in workspace for token in ['.scaleEffect(input.viewport.scale, anchor: .center)', '.offset(input.viewport.offset)']) and all(token in pointer for token in ['point.x - geometry.bounds.midX - offset.width', 'point.y - geometry.bounds.midY - offset.height', '/ scale', 'clamp || geometry.bounds.contains(point)', 'clamp || rect.contains', 'min(4, max(1, scale * factor))']))
 check('no gaze polling grid or new tracking permission', all(token not in spatial + pointer for token in ['onContinuousHover', 'ARKitSession', 'queryDeviceAnchor', 'eyeTracking', 'hoverGrid']))
@@ -63,6 +90,10 @@ files, manifest = fixture()
 check('fixture substitutions resolved', all(marker not in files['Client.swift'] for marker in ['// EXTRACTED', '// OVERLAY_DRAIN', '// MOVE_INPUT_RESET', '// BINDING_STATE']))
 check('fixture uses production SourceInputFence', files['Tests/checks/vision-input-controls/SourceInputFence.swift'] == (ROOT / 'Sources/SillHost/SourceInputFence.swift').read_text())
 check('fixture includes native presentation state', files['visionOSClient/VisionPresentation.swift'] == (ROOT / 'visionOSClient/VisionPresentation.swift').read_text())
+check('fixture adjacency uses production display selection instead of a token only stub',
+      files['visionOSClient/VisionDisplaySelection.swift'] == (ROOT / 'visionOSClient/VisionDisplaySelection.swift').read_text() and
+      'var visionDisplaySelection = VisionDisplaySelection()' in files['Client.swift'] and
+      'visionDisplaySelection.adjacentCommand(by: step, expected: expected)' in files['Client.swift'])
 check('fixture executes actual reducer session and framework contact adapter', files['visionOSClient/VisionPointer.swift'] == pointer and files['visionOSClient/VisionInputSession.swift'] == session and files['SpatialAdapter.swift'] == 'import SwiftUI\n' + adapter + '\n')
 runner = (Path(__file__).parent / 'run.py').read_text()
 check('actual runner executes contact adapter session and viewport reducer tests', "'SpatialAdapter.swift'" in runner and "'Tests/vision-pointer/main.swift'" in runner and "'runtime-pointer'" in runner)

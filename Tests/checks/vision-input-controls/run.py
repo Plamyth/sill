@@ -221,7 +221,7 @@ def callback_mutants(source):
         'ended-order': (edit('func ended(', finish_first),
                         'callback ended dispatches terminal contact before cleanup'),
         'recognizing-cleanup': (edit('func recognizingChanged(', lambda b: b.replace('input.finishGesture(revision: ticket)', '_ = ticket', 1)),
-                                'cancelled rotation restores its start gain'),
+                                'cancelled rotation retires its input revision'),
         'disappear-cleanup': (edit('func disappeared(', lambda b: b.replace('input.finishGesture(revision: ticket)', '_ = ticket', 1)),
                               'callback disappear releases held button before modifier'),
         'ticket-refresh': (edit('func changed(', lambda b: b.replace('revision ?? input.gestureRevision', 'input.gestureRevision', 1)),

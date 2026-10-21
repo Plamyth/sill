@@ -10,7 +10,6 @@ final class VisionInputSession: ObservableObject {
     private weak var client: StreamClient?
     private var pointer = VisionPointer()
     private let momentum = ScrollMomentum()
-    private let gainOwner = UUID()
     private var geometry: VisionPointer.Geometry?
     private struct Magnification {
         let base: VisionViewport
@@ -20,10 +19,13 @@ final class VisionInputSession: ObservableObject {
     }
     private var magnification: Magnification?
     private struct Rotation {
+        var degrees: Double
         var time: TimeInterval
+        let client: StreamClient
+        let peer: ObjectIdentifier
         let scope: VisionInputBinding
         let source: StreamSource
-        let gainTicket: VisionAudioGain.Ticket
+        let token: VisionDisplaySelection.Token?
     }
     private var rotation: Rotation?
     var allowed = false {
@@ -35,6 +37,10 @@ final class VisionInputSession: ObservableObject {
     }
 
     func bind(_ client: StreamClient) {
+        if self.client !== client {
+            releaseAll()
+            if self.client?.visionInputSession === self { self.client?.visionInputSession = nil }
+        }
         self.client = client
         client.visionInputSession = self
     }
@@ -104,22 +110,21 @@ final class VisionInputSession: ObservableObject {
         guard let zoom = magnification, time >= zoom.time else { return }
         magnification?.time = time
         magnification?.blocksRotation = zoom.blocksRotation || factor <= 0.92 || factor >= 1.08
-        if magnification?.blocksRotation == true, let turn = rotation {
-            VisionAudioGain.shared.end(ticket: turn.gainTicket, commit: false)
-            rotation = nil
-        }
+        if magnification?.blocksRotation == true { rotation = nil }
         if let next = zoom.base.magnified(by: factor, at: zoom.anchor, in: geometry) { viewport = next }
     }
 
     func rotate(_ degrees: Double, at anchor: CGPoint, time: TimeInterval, geometry: VisionPointer.Geometry, revision: UUID) {
-        guard revision == gestureRevision, self.geometry == geometry, canSend else { return }
-        guard viewport.point(anchor, in: geometry) != nil else { return }
-        guard degrees.isFinite, time.isFinite else { finishGesture(revision: revision); return }
+        guard revision == gestureRevision, self.geometry == geometry else { return }
+        guard canSend else { releaseAll(); return }
+        guard degrees.isFinite, time.isFinite, viewport.point(anchor, in: geometry) != nil,
+              time >= (rotation?.time ?? -.infinity) else { finishGesture(revision: revision); return }
         guard magnification?.blocksRotation != true else { return }
-        guard time >= (rotation?.time ?? -.infinity) else { return }
-        guard let client else { return }
+        guard let client, let peer = client.connection else { return }
         let scope = client.visionInputBinding
-        guard rotation == nil || (rotation?.scope == scope && rotation?.source == client.active) else {
+        if let turn = rotation,
+           turn.client !== client || turn.peer != ObjectIdentifier(peer) || turn.scope != scope ||
+           turn.source != client.active || turn.token != client.visionDisplaySelection.token {
             finishGesture(revision: revision)
             return
         }
@@ -127,23 +132,18 @@ final class VisionInputSession: ObservableObject {
             momentum.stop()
             pointer.cancel().forEach { client.sendInput($0) }
             consumeLatch()
+            rotation = Rotation(degrees: degrees, time: time, client: client, peer: ObjectIdentifier(peer),
+                                scope: scope, source: client.active, token: client.visionDisplaySelection.token)
+        } else {
+            rotation?.degrees = degrees
+            rotation?.time = time
         }
-        let ticket = rotation?.gainTicket ?? VisionAudioGain.shared.begin(owner: gainOwner)
-        guard VisionAudioGain.shared.preview(ticket: ticket, degrees: degrees) != nil else {
-            finishGesture(revision: revision)
-            return
-        }
-        rotation = Rotation(time: time, scope: scope, source: client.active, gainTicket: ticket)
     }
 
     func finishGesture(revision: UUID, completed: Bool = false) {
         guard revision == gestureRevision else { return }
         let flick = completed ? pointer.flick : nil
-        if let turn = rotation {
-            VisionAudioGain.shared.end(ticket: turn.gainTicket,
-                commit: completed && canSend && magnification?.blocksRotation != true &&
-                        client?.visionInputBinding == turn.scope && client?.active == turn.source)
-        }
+        let completedRotation = completed && magnification?.blocksRotation != true ? rotation : nil
         let wasRotating = rotation != nil
         let events = cancelPointer()
         if canSend {
@@ -152,6 +152,12 @@ final class VisionInputSession: ObservableObject {
         }
         else if !events.isEmpty { client?.cancelVisionInputs() }
         if !completed { client?.cancelVisionCursor() }
+        if let turn = completedRotation, let token = turn.token, canSend,
+           client === turn.client, turn.client.connection.map(ObjectIdentifier.init) == turn.peer,
+           turn.client.visionInputBinding == turn.scope, turn.client.active == turn.source,
+           turn.client.visionDisplaySelection.token == token, abs(turn.degrees) >= 25 {
+            _ = turn.client.selectAdjacentVisionDisplay(by: turn.degrees > 0 ? 1 : -1, expected: token)
+        }
     }
 
     func resetViewport() {
@@ -170,7 +176,6 @@ final class VisionInputSession: ObservableObject {
         momentum.stop()
         gestureRevision = UUID()
         magnification = nil
-        if let turn = rotation { VisionAudioGain.shared.end(ticket: turn.gainTicket, commit: false) }
         rotation = nil
         let releases = pointer.cancel()
         pointer = VisionPointer()

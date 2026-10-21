@@ -15,18 +15,18 @@ final class StreamClient {
     var visionStartupStarted = false
     func stopSavedMacAutoConnect() {}
     func microphoneSetConnection(_ peer: NWConnection?) {}
-    struct DisplayAdmission {
-        var inputBlocked = false
-        var token: VisionDisplaySelection.Token? = .init(peerEpoch: UUID(), window: UUID(), admission: UUID(), inventory: UUID(), revision: 1)
-    }
-    var visionDisplaySelection = DisplayAdmission()
+    var visionDisplaySelection = VisionDisplaySelection()
     var steppedDisplays: [Int] = []
+    var selectedDisplays: [UInt32] = []
     func selectAdjacentVisionDisplay(by step: Int, expected: VisionDisplaySelection.Token) -> Bool {
-        guard !visionDisplaySelection.inputBlocked, visionDisplaySelection.token == expected else { return false }
+        guard let command = visionDisplaySelection.adjacentCommand(by: step, expected: expected) else { return false }
         steppedDisplays.append(step)
+        selectedDisplays.append(command.displayID)
         return true
     }
-    func bindVisionDisplays(to peer: NWConnection?) {}
+    func bindVisionDisplays(to peer: NWConnection?) {
+        visionDisplaySelection.bind(peerEpoch: peer == nil ? nil : UUID())
+    }
     func bindVisionSentry(to peer: NWConnection?) {}
     func bindVisionTestDestinations(to peer: NWConnection?) {}
     func confirmVisionDisplayPresentation() {}
