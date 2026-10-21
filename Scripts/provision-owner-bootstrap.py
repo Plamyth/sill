@@ -49,6 +49,8 @@ def validate(data):
     if any(not isinstance(address, str) for address in addresses) or len(set(addresses)) != len(addresses):
         raise ValueError("공개 Tailnet 주소가 중복되거나 잘못되었습니다.")
     for address in addresses:
+        if "%" in address:
+            raise ValueError("범위 식별자가 없는 Tailnet 주소만 사용할 수 있습니다.")
         ip = ipaddress.ip_address(address)
         network = ipaddress.ip_network("100.64.0.0/10" if ip.version == 4 else "fd7a:115c:a1e0::/48")
         if ip.compressed != address or ip not in network:

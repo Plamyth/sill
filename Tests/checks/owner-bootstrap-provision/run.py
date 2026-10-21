@@ -58,6 +58,7 @@ with tempfile.TemporaryDirectory(prefix="ccr-owner-provision-") as scratch:
     for field, bad in [("token", "secret"), ("remotePort", True), ("macID", "1" * 16),
                        ("fingerprint", fingerprint + "="), ("addresses", ["192.168.1.2"]),
                        ("addresses", ["100.64.01.2"]), ("addresses", ["[fd7a:115c:a1e0::2]"]),
+                       ("addresses", ["fd7a:115c:a1e0::2%en0"]),
                        ("addresses", ["100.64.1.2", "100.64.1.2"]), ("addresses", [None])]:
         invalid = dict(value)
         invalid[field] = bad
