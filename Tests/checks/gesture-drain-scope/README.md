@@ -29,13 +29,15 @@ swiftc -frontend -parse Sources/SillHost/StreamCoordinator.swift Sources/SillHos
 
 ## 부모의 Mini 실행
 
-원본 red는 맥북의 `--emit-only --baseline` 출력을 부모의 승인된 한시 실행 입력으로 전달해 Mini에서 `swift -package-name Sill -`로 실행한다. 원본 Git 객체를 Mini에 복사할 필요가 없다. 실패 단언과 종료 코드 1이 기대값이며, 컴파일 오류는 red 증거가 아니다. green은 같은 방식으로 `--baseline` 없이 생성한다. 부모가 한시 소스 사본을 사용하면 그 안에서 `python3 -B Tests/checks/gesture-drain-scope/run.py --run`도 가능하다. 이 생성기는 원격 연결이나 실행을 자동 시작하지 않는다.
+원본 red는 맥북의 `--emit-only --baseline` 출력을 부모의 승인된 한시 실행 입력으로 전달한다. Mini에서 `swiftc -parse-as-library -package-name Sill - -o "$작업별_임시실행파일"`의 stdin으로 받아 컴파일하고 해당 파일을 실행한다. 원본 Git 객체를 Mini에 복사할 필요가 없다. 실패 단언과 종료 코드 1이 기대값이며, 컴파일 오류는 red 증거가 아니다. green은 같은 방식으로 `--baseline` 없이 생성한다. 부모가 한시 소스 사본을 사용하면 그 안에서 `python3 -B Tests/checks/gesture-drain-scope/run.py --run`도 가능하다. 이 생성기는 원격 연결이나 실행을 자동 시작하지 않는다. `--run`은 임시 실행 파일을 컴파일하고 실행한 뒤 자신이 만든 파일만 정리한다.
 
 네이티브 타입검사는 부모의 한시 소스 실행 경로에서 `swift build --target SillHostCore`로 수행한다. 이 명령은 호스트를 실행하거나 설치하지 않는다. 기존 SDK·컴파일 경로의 제약은 별도로 기록한다.
 
 ## 증거와 한계
 
-`run.py`는 생산 `TrackpadGesture`, `VideoEpoch`, `SourceInputFence`, `DisplayInventory`, `GestureChords`와 `StreamCoordinator`의 제스처 수신 case, queue/drain 콜백, 수행 함수, held 재생 함수, 관련 속성 observer를 추출한다. 생산 분기를 재구현하지 않는다. 접근 수준과 Task 실행기만 합성용으로 교체한다. 입력·연결·키 테이블·시간·스케줄러는 부작용 없는 의존성이다. 입력 참여 join/leave는 실제 fence를 호출하는 fixture이다. 전체 네트워크 연결 콜백이나 실제 NWConnection의 스케줄링을 실행하는 검사는 아니다.
+`run.py`는 생산 `TrackpadGesture`, `VideoEpoch`, `SourceInputFence`, `DisplayInventory`, `GestureChords`와 `StreamCoordinator`의 제스처 수신 case, queue/drain 콜백, 수행 함수, held 재생 함수, 관련 속성 observer를 추출한다. 생산 분기를 재구현하지 않는다. 접근 수준, enclosing type의 정적 참조와 Task 실행기만 합성용으로 교체한다. 입력·연결·키 테이블·시간·스케줄러는 부작용 없는 의존성이다. 입력 참여 join/leave는 실제 fence를 호출하는 fixture이다. 전체 네트워크 연결 콜백이나 실제 NWConnection의 스케줄링을 실행하는 검사는 아니다.
+
+초기 테스트 준비 커밋 `a340d0b013bcdbb77e137b1d6e60012c8eb76e6f`는 부모의 Mini에서 컴파일 준비 오류가 확인됐다. red 동작 증거가 아니다. 그 실행의 정리 확인 영수증은 `/Users/ambrion/Library/Application Support/Mini Ephemeral Source/receipts/20261021T135815.140037Z-gesture-drain-scope-red-20261021.json`이다. 타입 이름, actor 전역 상태, CoreGraphics와 실행 방법을 후속 테스트 커밋에서 보완한다. 수정된 생성기의 실행 결과는 별도 영수증이 필요하다.
 
 검사는 원 연결 종료·취소·재가입·교체, 다른 연결 유지, 세대·영상·선택·전환과 ABA, 두 큐 만료, 잘못된 이름·손가락 및 optional nil, 마지막 held 지연, 상태 오염, 기존 키 해제 순서, window 전환 후 주입 금지를 포함한다. 단축키 조회 의존성에서도 컨텍스트를 바꿔 마지막 주입 전 검증을 확인한다.
 

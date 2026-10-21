@@ -1,8 +1,10 @@
-@MainActor var assertions = 0
-@MainActor var failures = 0
+@MainActor enum Results {
+    static var assertions = 0
+    static var failures = 0
+}
 @MainActor func check(_ value: @autoclosure () -> Bool, _ label: String) {
-    assertions += 1
-    if !value() { failures += 1; print("FAIL \(label)") }
+    Results.assertions += 1
+    if !value() { Results.failures += 1; print("FAIL \(label)") }
 }
 @MainActor func fresh() -> (Harness, NWConnection) {
     Clock.now = 10000
@@ -162,7 +164,11 @@
         pristine(h, "최종 단축키 조회 후 컨텍스트 취소")
     }
     check(InertTask.pending.isEmpty, "소유한 inert 작업 종료")
-    print("\(failures == 0 ? "PASS" : "FAIL") \(assertions) assertions, \(failures) failures; inert dependencies only")
+    print("\(Results.failures == 0 ? "PASS" : "FAIL") \(Results.assertions) assertions, \(Results.failures) failures; inert dependencies only")
 }
-await checks()
-if failures != 0 { exit(1) }
+@main struct GestureDrainChecks {
+    @MainActor static func main() async {
+        await checks()
+        if Results.failures != 0 { exit(1) }
+    }
+}

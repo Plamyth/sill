@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
@@ -46,7 +47,7 @@ def generate(baseline):
         "public enum StreamSource:", "public struct DisplayInfo:",
         "public struct DisplaySelection:", "public struct VideoEpoch:"])
     # InputEvent와 SourceInput도 생산 선언 그대로 사용한다.
-    shared = "\n".join(["import Foundation\nimport CoreFoundation", types, protocol,
+    shared = "\n".join(["import Foundation\nimport CoreFoundation\nimport CoreGraphics", types, protocol,
                          gesture, wire, fence, chords, inventory])
     members = host[host.index("    private var gestureChords ="):host.index("    /// A host that does not advertise")]
     members = members.replace("private ", "")
@@ -71,6 +72,7 @@ def generate(baseline):
     # 접근 수준과 실행기만 교체한다. 분기·검증·상태 전이는 수정하지 않는다.
     body = body.replace("private ", "").replace("Task<Void, Never>", "InertTask")
     body = body.replace("Task {", "InertTask {").replace("Task.sleep", "InertTask.sleep").replace("Task.isCancelled", "InertTask.isCancelled")
+    body = body.replace("StreamCoordinator.", "Harness.")
     fixture = (HERE / "Fixture.swift").read_text().replace("// PRODUCTION_MEMBERS", body)
     checks = (HERE / "Checks.swift").read_text()
     manifest["extractedHost"] = hashlib.sha256(body.encode()).hexdigest()
@@ -89,8 +91,12 @@ def main():
     if args.emit_only:
         sys.stdout.write(source)
         return 0
-    result = subprocess.run(["swift", "-package-name", "Sill", "-"], input=source, text=True)
-    return result.returncode
+    with tempfile.TemporaryDirectory(prefix="gesture-drain-scope-") as scratch:
+        executable = str(Path(scratch) / "checks")
+        result = subprocess.run(["swiftc", "-parse-as-library", "-package-name", "Sill", "-", "-o", executable], input=source, text=True)
+        if result.returncode:
+            return result.returncode
+        return subprocess.run([executable]).returncode
 
 
 if __name__ == "__main__":
