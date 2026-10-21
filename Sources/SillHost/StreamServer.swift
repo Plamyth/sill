@@ -140,15 +140,29 @@ final class StreamServer {
         var remoteAudioEnabled = false
         var remoteAudioAfterSequence: UInt64 = .max
         init(_ c: NWConnection) { connection = c }
+        func invalidateAuthorization() {
+            route.invalidateAuthorization()
+            forwardingExchange?.invalidate()
+        }
+        func cancel() { invalidateAuthorization(); connection.cancel() }
     }
 
     /// The network queue: both doors, their connections, the verify blocks and the timers.
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
     private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
-    struct ForwardingExchange: Sendable {
+    final class ForwardingExchange: @unchecked Sendable {
         let control: AudioForwardingControl
         let ticket = UUID()
+        private let lock = NSLock()
+        private var valid = true
+        private let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+        init(control: AudioForwardingControl) { self.control = control }
+        var isCurrent: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return valid && DispatchTime.now().uptimeNanoseconds < deadline
+        }
+        func invalidate() { lock.lock(); defer { lock.unlock() }; valid = false }
     }
     private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
@@ -263,7 +277,7 @@ final class StreamServer {
         let reported = pointerSampler == nil ? samplePointer(now: now) : []
         let data = StreamMessage(kind: .tick, timestamp: now, isKeyframe: false, payload: Data()).serialized()
         for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
-            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); continue }
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); continue }
             // A kind 26 just sent keeps its link awake this turn.
             if reported.contains(id) { continue }
             // Over TLS every record costs CPU (the remote plan's H20): skip a tick right after
@@ -273,7 +287,7 @@ final class StreamServer {
             // The USB cable has no radio to keep awake.
             if client.encrypted, client.onCable { continue }
             if !client.route.whileAuthorized({ client.connection.send(content: data, completion: .contentProcessed { _ in }) }) {
-                client.connection.cancel()
+                client.cancel()
             }
         }
         Stats.shared.bump("net.tick")
@@ -304,7 +318,7 @@ final class StreamServer {
         var sent = Set<ObjectIdentifier>()
         var watched = false
         for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
-            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); continue }
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); continue }
             guard let report = reading.report(for: id, seen: client.inputsRead) else {
                 client.lastPointer = nil
                 continue
@@ -314,7 +328,7 @@ final class StreamServer {
             client.lastPointer = report
             let data = StreamMessage(kind: .macPointer, timestamp: now, isKeyframe: false, payload: Wire.encode(report)).serialized()
             guard client.route.whileAuthorized({ client.connection.send(content: data, completion: .contentProcessed { _ in }) }) else {
-                client.connection.cancel(); continue
+                client.cancel(); continue
             }
             client.lastSentAt = now
             Stats.shared.bump("ptr.sent")
@@ -1030,7 +1044,7 @@ final class StreamServer {
             guard let self else { return }
             switch state {
             case .failed:
-                connection.cancel()
+                client.cancel()
                 self.unregister(id)
             case .cancelled:
                 self.unregister(id)
@@ -1055,7 +1069,7 @@ final class StreamServer {
             onControlClientConnected?(connection, route)
             queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
                 guard let self, let client, self.clients[id] === client, client.role == .awaitingHello else { return }
-                connection.cancel()
+                client.cancel()
             }
         }
         admitted()
@@ -1087,6 +1101,7 @@ final class StreamServer {
     /// whose connection the stream and the catalog share. A connection that was never registered
     /// closes with `closeWithGoodbye`. On `queue`.
     func goodbye(_ goodbye: Goodbye, to connection: NWConnection, within: TimeInterval = 0.25) {
+        clients[ObjectIdentifier(connection)]?.invalidateAuthorization()
         Self.sayGoodbye(payload: Wire.encode(goodbye), on: connection, queue: queue, within: within)
     }
 
@@ -1259,9 +1274,10 @@ final class StreamServer {
     /// the floor at "0" every device is served, and above it the gate has judged it already. On
     /// `queue`.
     private func took(_ hello: Hello, from client: Client) {
-        guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); return }
+        guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); return }
         guard clients[ObjectIdentifier(client.connection)] === client, client.connection.state == .ready else { return }
         if !client.role.isViewer {
+            client.forwardingExchange?.invalidate()
             client.forwardingExchange = nil
             client.forwardingObserved = false
             client.role = .viewer
@@ -1334,7 +1350,7 @@ final class StreamServer {
             let silent = now - client.lastHeardAt
             if now - client.connectedAt >= Self.remoteSilence, silent > Self.remoteSilence {
                 print("Client silent for \(Int(silent)) s, dropping: \(client.connection.endpoint)")
-                client.connection.cancel()   // its state handler forgets it
+                client.cancel()   // its state handler forgets it
             } else if client.needsKeyframe, client.keyframeWanted, !client.awaitingFirstKeyframe,
                       client.pendingBytes <= Self.remoteIdleBytes, client.connection.state == .ready {
                 waiting.append(client)
@@ -1357,6 +1373,7 @@ final class StreamServer {
     /// connection that was never registered (refused, or failed before it was ready) leaves no line.
     private func unregister(_ id: ObjectIdentifier) {
         guard let client = clients.removeValue(forKey: id) else { return }
+        client.invalidateAuthorization()
         if client.role.isViewer { pointerWatch?.clientLeft(id) }
         print("Client left: \(client.connection.endpoint)")
         if client.role.isViewer {
@@ -1510,22 +1527,22 @@ final class StreamServer {
             guard let data, let header = StreamMessage.parseHeader(data) else {
                 // EOF or a read error: the client closed (or was killed). Nothing else would notice
                 // while no frames are being sent, so cancel here; the state handler prints and forgets it.
-                if isComplete || error != nil { c.cancel() }
+                if isComplete || error != nil { client.cancel() }
                 return
             }
-            guard client.role.accepts(header.kind) else { c.cancel(); return }
-            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { c.cancel(); return }
+            guard client.role.accepts(header.kind) else { client.cancel(); return }
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); return }
             client.lastHeardAt = Date().timeIntervalSince1970
             // A header can announce up to 4 GiB and the read below would wait for all of it. No
             // client message comes near a megabyte, so a bigger one is a broken or hostile peer.
             let payloadLimit = StreamMessage.clientPayloadLimit(for: header.kind)
             if header.payloadLength > payloadLimit {
                 print("Closing \(c.endpoint): it announced a \(header.payloadLength)-byte message (limit \(payloadLimit)).")
-                c.cancel()
+                client.cancel()
                 return
             }
             let deliver = { (payload: Data) in
-                guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { c.cancel(); return }
+                guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); return }
                 if header.kind == .forwardingControl {
                     self.receiveForwarding(payload, from: client)
                     self.receiveLoop(client)
@@ -1583,7 +1600,7 @@ final class StreamServer {
                         client.helloSeen = true
                         if let hello = Wire.decode(Hello.self, from: payload), DeviceGate.admits(hello, floor: self.deviceFloor) {
                             self.took(hello, from: client)
-                        } else { c.cancel() }
+                        } else { client.cancel() }
                     }
                 } else if header.kind == .pairingWanted && client.route.isRemote {
                     // "Show your pairing code" comes only from a device near the Mac: ignored here.
@@ -1595,10 +1612,10 @@ final class StreamServer {
             if header.payloadLength == 0 { deliver(Data()); return }
             c.receive(minimumIncompleteLength: header.payloadLength, maximumLength: header.payloadLength) { data, _, isComplete, error in
                 guard let data else {
-                    if isComplete || error != nil { c.cancel() }
+                    if isComplete || error != nil { client.cancel() }
                     return
                 }
-                guard data.count == header.payloadLength else { c.cancel(); return }
+                guard data.count == header.payloadLength else { client.cancel(); return }
                 deliver(data)
             }
         }
@@ -1612,7 +1629,7 @@ final class StreamServer {
               (try? LocalAudioRelayJSON.validate(payload)) != nil,
               let control = Wire.decode(AudioForwardingControl.self, from: payload),
               control.operation == .observe || client.forwardingObserved,
-              let onForwardingControl else { connection.cancel(); return }
+              let onForwardingControl else { client.cancel(); return }
         let exchange = ForwardingExchange(control: control)
         client.forwardingExchange = exchange
         if client.role == .awaitingHello { client.role = .controlOnly }
@@ -1621,7 +1638,8 @@ final class StreamServer {
         queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
             guard let self, let client, self.clients[ObjectIdentifier(connection)] === client,
                   client.forwardingExchange?.ticket == exchange.ticket else { return }
-            connection.cancel()
+            exchange.invalidate()
+            client.cancel()
         }
     }
 
@@ -1629,16 +1647,17 @@ final class StreamServer {
         queue.async { [self] in
             guard let client = clients[ObjectIdentifier(connection)],
                   let exchange = client.forwardingExchange, exchange.ticket == ticket else { return }
-            guard connection.state == .ready, client.route.isAuthenticated, let state,
+            guard connection.state == .ready, client.route.isAuthenticated, exchange.isCurrent, let state,
                   state.requestID == exchange.control.requestID, state.operation == exchange.control.operation,
                   state.catalog == nil || state.catalog?.role == (client.role.isViewer ? .viewer : .controlOnly) else {
-                connection.cancel(); return
+                client.cancel(); return
             }
             let payload = Wire.encode(state)
             guard !payload.isEmpty, payload.count <= StreamMessage.hostPayloadLimit(for: .forwardingState) else {
-                connection.cancel(); return
+                client.cancel(); return
             }
             client.forwardingExchange = nil
+            exchange.invalidate()
             if state.operation == .observe { client.forwardingObserved = true }
             send(StreamMessage(kind: .forwardingState, timestamp: Date().timeIntervalSince1970,
                                isKeyframe: false, payload: payload).serialized(), to: client)
@@ -1682,7 +1701,7 @@ final class StreamServer {
         microphoneReplies.offer(message, connection: connection, render: render, queue: queue) { [weak self] message, connection, render in
             guard let self, let client = self.clients[ObjectIdentifier(connection)],
                   client.route.encrypted, client.route.fingerprint != nil, connection.state == .ready else { return }
-            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { connection.cancel(); return }
+            guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); return }
             if let render {
                 let state = Wire.decode(MicrophoneState.self, from: message.payload)
                 let trace = self.microphoneReplies.takeDeliveryTrace()
@@ -1869,7 +1888,7 @@ final class StreamServer {
     private static let graceAfterConnect: TimeInterval = 8.0
 
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
-        guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.connection.cancel(); return }
+        guard !client.route.requiresLiveAuthorization || client.route.isAuthenticated else { client.cancel(); return }
         var raw = raw
         if !client.role.isViewer {
             guard let header = StreamMessage.parseHeader(raw), client.role.sends(header.kind) else { return }
@@ -1893,7 +1912,7 @@ final class StreamServer {
            now - oldest > (remote ? Self.remoteDeadAfter : Self.deadAfter),
            now - client.connectedAt > (remote ? Self.remoteGrace : Self.graceAfterConnect) {
             print("Client not draining for \(Int(now - oldest)) s, dropping: \(client.connection.endpoint)")
-            client.connection.cancel()   // its state handler removes it from `clients`
+            client.cancel()   // its state handler removes it from `clients`
             return
         }
         client.inflight += 1
@@ -1936,7 +1955,7 @@ final class StreamServer {
                 }
             })
         }
-        if !sent { client.connection.cancel() }
+        if !sent { client.cancel() }
     }
 }
 
@@ -2011,6 +2030,9 @@ enum ClientRoute: Equatable {
         return nil
     }
     var requiresLiveAuthorization: Bool { if case .automatic = self { return true }; return false }
+    func invalidateAuthorization() {
+        if case .automatic(_, let peer) = self { peer.authorization?.invalidate() }
+    }
     func whileAuthorized(_ operation: () -> Void) -> Bool {
         if case .automatic(_, let peer) = self {
             guard let principal = peer.automaticPrincipal, let authorization = peer.authorization,

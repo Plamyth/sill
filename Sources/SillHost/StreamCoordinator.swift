@@ -16,6 +16,8 @@ struct AudioForwardingConnectionContext {
     let peer: AudioForwardingPairedDevice
     let principal: AudioForwardingCatalog.Principal
     let role: AudioForwardingCatalog.Role
+    let connectionID: UUID
+    let connectionIsCurrent: () -> Bool
     let isCurrent: () -> Bool
 }
 
@@ -469,7 +471,9 @@ package final class StreamCoordinator {
             DispatchQueue.main.async {
                 guard let self, connection.state == .ready else { return }
                 let id = ObjectIdentifier(connection)
-                self.forwardingClients[id] = ForwardingClient(connection: connection, route: route)
+                if self.forwardingClients[id] == nil {
+                    self.forwardingClients[id] = ForwardingClient(connection: connection, route: route)
+                }
                 guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
                     return
@@ -1024,7 +1028,7 @@ package final class StreamCoordinator {
     private func handleForwarding(_ exchange: StreamServer.ForwardingExchange, connection: NWConnection,
                                   route: ClientRoute, role: AudioForwardingCatalog.Role) async {
         let id = ObjectIdentifier(connection)
-        guard !synthetic, connection.state == .ready, remote?.isAuthorized(route) == true,
+        guard exchange.isCurrent, !synthetic, connection.state == .ready, remote?.isAuthorized(route) == true,
               let automatic = route.automaticPrincipal, let peer = remote?.forwardingPeer(route: route) else {
             server.sendForwardingState(nil, to: connection, ticket: exchange.ticket)
             return
@@ -1035,13 +1039,16 @@ package final class StreamCoordinator {
         let kind: AudioForwardingCatalog.Principal.Kind
         switch automatic { case .tailnet: kind = .tailnet; case .cable: kind = .cable; case .localNetwork: kind = .localNetwork }
         let principal = AudioForwardingCatalog.Principal(kind: kind, id: peer.id, authorizationGeneration: peer.pairingGeneration)
-        let context = AudioForwardingConnectionContext(peer: peer, principal: principal, role: role, isCurrent: { [weak self, weak connection] in
+        let connectionIsCurrent = { [weak self, weak connection] in
             guard let self, let connection, connection.state == .ready,
                   self.forwardingClients[id]?.generation == registration.generation,
                   self.forwardingClients[id]?.connection === connection,
                   let current = self.remote?.forwardingPeer(route: route) else { return false }
             return current.id == peer.id && current.pairingGeneration == peer.pairingGeneration
-        })
+        }
+        let context = AudioForwardingConnectionContext(peer: peer, principal: principal, role: role,
+            connectionID: registration.generation, connectionIsCurrent: connectionIsCurrent,
+            isCurrent: { exchange.isCurrent && connectionIsCurrent() })
         if let intent = exchange.control.intent,
            intent.pairedDeviceId != peer.id || intent.transportKind != .native {
             server.sendForwardingState(nil, to: connection, ticket: exchange.ticket)

@@ -22,7 +22,7 @@ final class Remote {
     }
 }
 final class StreamServer {
-    // struct ForwardingExchange:
+    // final class ForwardingExchange:
     var sent: [(UUID, AudioForwardingState?)] = []
     func sendForwardingState(_ state: AudioForwardingState?, to connection: NWConnection, ticket: UUID) {
         sent.append((ticket, state))
@@ -46,11 +46,12 @@ final class StreamServer {
         let id = AudioForwardingDeviceID(hex: principal.stableIdentifier)!, generation = UUID()
         let peer = AudioForwardingPairedDevice(id: id, pairingGeneration: generation)
         let request = try AudioForwardingControl(requestID: UUID(), operation: .observe, intent: nil)
-        for scenario in ["accepted", "expired", "replaced", "closed", "wrong-principal", "wrong-role"] {
+        for scenario in ["accepted", "expired", "replaced", "closed", "wrong-principal", "wrong-role", "promoted"] {
             let host = Host(), connection = NWConnection()
             let authorization = AutomaticSessionAuthorization(principal: principal, fingerprint: Data32(Data(repeating: 1, count: 32))!)
             let route = ClientRoute(automaticPrincipal: principal, authorization: authorization)
             host.remote = Remote(peer)
+            let exchange = StreamServer.ForwardingExchange(control: request)
             var entered = false
             host.forwardingControl = { control, context in
                 entered = true
@@ -61,6 +62,10 @@ final class StreamServer {
                 if scenario == "expired" { authorization.invalidate() }
                 if scenario == "replaced" { host.forwardingClients[ObjectIdentifier(connection)] = .init(connection: connection, route: route) }
                 if scenario == "closed" { connection.cancel() }
+                if scenario == "promoted" {
+                    exchange.invalidate()
+                    check(!context.isCurrent() && context.connectionIsCurrent())
+                }
                 let replyID = scenario == "wrong-principal" ? AudioForwardingDeviceID(hex: String(repeating: "b", count: 64))! : id
                 let credential = try! AudioForwardingCredential(pairedDeviceId: replyID, pairingGeneration: generation,
                     credential: String(repeating: "A", count: 43))
@@ -71,7 +76,6 @@ final class StreamServer {
                     role: scenario == "wrong-role" ? .viewer : context.role, bootstrap: bootstrap)
                 return try! AudioForwardingState(requestID: control.requestID, operation: .observe, catalog: catalog, result: nil)
             }
-            let exchange = StreamServer.ForwardingExchange(control: request)
             await host.handleForwarding(exchange, connection: connection, route: route, role: .controlOnly)
             check(entered && host.server.sent.count == 1 && host.server.sent[0].0 == exchange.ticket)
             check((host.server.sent[0].1?.catalog != nil) == (scenario == "accepted"))

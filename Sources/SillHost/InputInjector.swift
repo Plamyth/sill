@@ -127,9 +127,10 @@ final class InputInjector {
         action()
     }
 
-    private func post(_ event: CGEvent) -> Bool {
+    private func post(_ event: CGEvent, release: Bool = false, admitted: @escaping () -> Void = {}) -> Bool {
         var posted = false
         let emit = {
+            admitted()
             if Self.isKeyboard(event.type) { self.lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
             if self.dryRun {
                 if self.testLog { self.logTest(event) }
@@ -139,9 +140,8 @@ final class InputInjector {
                 posted = true
             }
         }
-        let release = event.type == .keyUp || event.type == .leftMouseUp || event.type == .rightMouseUp ||
-            event.type == .otherMouseUp || (event.type == .flagsChanged && event.flags.rawValue & ~lastKeyFlags == 0)
-        if !release, let postAuthorization { _ = postAuthorization(emit) }
+        let releasing = release || event.type == .keyUp || event.type == .leftMouseUp || event.type == .rightMouseUp || event.type == .otherMouseUp
+        if !releasing, let postAuthorization { _ = postAuthorization(emit) }
         else { emit() }
         return posted
     }
@@ -186,6 +186,7 @@ final class InputInjector {
     // MARK: Pointer
 
     private func pointer(_ action: PointerAction, at location: CGPoint, from device: KeyStrokes.Device) {
+        var left = self.left, right = self.right
         let type: CGEventType
         let button: CGMouseButton
         var clicks: Int64 = 1
@@ -220,16 +221,18 @@ final class InputInjector {
         if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: clicks) }
         // One synthetic "finger": a constant event number keeps a down/drag/up sequence coherent.
         event.setIntegerValueField(.mouseEventNumber, value: 0)
-        watch?.sillMoved(to: location)   // before the post (see `watch`); a dry run moves the scripted pointer
-        lastPointerLocation = location
-        if post(event) { Stats.shared.bump("in.pointer") }
+        if post(event, admitted: {
+            self.left = left; self.right = right
+            self.watch?.sillMoved(to: location)
+            self.lastPointerLocation = location
+        }) { Stats.shared.bump("in.pointer") }
     }
 
     /// Whether this input is the up of a key or a button the Mac has down, which still goes when the
     /// input has nowhere to land (DroppedInput, StreamCoordinator): its down was posted, its up has
     /// not been.
     func isUpOfSomethingDown(_ event: InputEvent, from device: KeyStrokes.Device) -> Bool {
-        DroppedInput.stillGoes(event, keyDown: keys.isDown, leftDown: left.owner == device, rightDown: right.owner == device)
+        DroppedInput.stillGoes(event, keyDown: { keys.down[$0] == device }, leftDown: left.owner == device, rightDown: right.owner == device)
     }
 
     private func beginClick(_ state: inout ButtonState, at location: CGPoint, from device: KeyStrokes.Device) {
@@ -478,11 +481,14 @@ final class InputInjector {
     private var keys = KeyStrokes()
 
     private func key(hidUsage: UInt16, down: Bool, modifiers: UInt64, from device: KeyStrokes.Device) {
-        guard let strokes = keys.key(usage: hidUsage, down: down, modifiers: modifiers, from: device) else {
+        guard down || keys.down[hidUsage] == device else { return }
+        guard let plan = keys.preparedKey(usage: hidUsage, down: down, modifiers: modifiers, from: device) else {
             Stats.shared.bump("in.unknownKey")
             return
         }
-        post(strokes)
+        for step in plan {
+            guard post(step.stroke, admitted: { self.keys = step.state }) else { break }
+        }
     }
 
     /// Posts KeyStrokes' events in order, each made from `source` with exactly its flags (a modifier's
@@ -490,18 +496,29 @@ final class InputInjector {
     /// (KeyUpCheck: the table read just before each down, a read that needs no permission).
     private func post(_ strokes: [KeyStroke], letGo: Bool = false) {
         for stroke in strokes {
-            guard let event = CGEvent(keyboardEventSource: source, virtualKey: stroke.virtualKey, keyDown: stroke.down) else { continue }
-            event.flags = CGEventFlags(rawValue: stroke.flags)
-            // A dry run reads no table: what it would hold is the last event's flags, none of them the Mac's own.
-            let table = stroke.down && !dryRun ? CGEventSource.flagsState(.hidSystemState).rawValue : lastKeyFlags
-            let check = upCheck.posting(stroke, table: table, posted: lastKeyFlags)
-            if post(event) { Stats.shared.bump(letGo ? "in.keyLetGo" : "in.key") }
-            guard let check else { continue }
-            if !dryRun { checkKeyModifiersLeft(check.id, key: stroke.virtualKey); continue }
-            // A dry run's table is its own: the check reads it at once, and it holds nothing it should not.
-            _ = upCheck.read(check.id, table: lastKeyFlags, posted: lastKeyFlags, held: keys.heldFlags)
-            if testLog { print("Test input: key \(stroke.virtualKey) up: the table read again in 0.25 s for \(KeyStrokes.names(check.cleared))") }
+            _ = post(stroke, letGo: letGo)
         }
+    }
+
+    private func post(_ stroke: KeyStroke, letGo: Bool = false, admitted: @escaping () -> Void = {}) -> Bool {
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: stroke.virtualKey, keyDown: stroke.down) else { return false }
+        event.flags = CGEventFlags(rawValue: stroke.flags)
+        let table = stroke.down && !dryRun ? CGEventSource.flagsState(.hidSystemState).rawValue : lastKeyFlags
+        var check: (id: Int, cleared: UInt64)?
+        var accepted = false
+        if post(event, release: !stroke.down, admitted: {
+            admitted()
+            accepted = true
+            check = self.upCheck.posting(stroke, table: table, posted: self.lastKeyFlags)
+        }) { Stats.shared.bump(letGo ? "in.keyLetGo" : "in.key") }
+        if let check {
+            if !dryRun { checkKeyModifiersLeft(check.id, key: stroke.virtualKey) }
+            else {
+                _ = upCheck.read(check.id, table: lastKeyFlags, posted: lastKeyFlags, held: keys.heldFlags)
+                if testLog { print("Test input: key \(stroke.virtualKey) up: the table read again in 0.25 s for \(KeyStrokes.names(check.cleared))") }
+            }
+        }
+        return accepted
     }
 
     /// A device left: its keys and buttons go up, a button where the pointer is now.

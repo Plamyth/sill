@@ -89,6 +89,21 @@ package struct KeyStrokes: Sendable {
         return strokes
     }
 
+    package func preparedKey(usage: UInt16, down: Bool, modifiers: UInt64, from device: Device) -> [(stroke: KeyStroke, state: Self)]? {
+        var final = self
+        guard let strokes = final.key(usage: usage, down: down, modifiers: modifiers, from: device) else { return nil }
+        var state = self
+        return strokes.enumerated().map { index, stroke in
+            if index == strokes.count - 1 { state = final }
+            else {
+                for (usage, owner) in state.down where owner == device && Self.virtualKeys[usage] == stroke.virtualKey {
+                    state.down[usage] = nil
+                }
+            }
+            return (stroke, state)
+        }
+    }
+
     /// Text from a device, which InputInjector types with no flags: the events to post first. A
     /// device types text only while it holds no ⌘, ⌃ or ⌥ (those make its keys shortcuts) and never
     /// holds a modifier's own key for it, so its modifier keys still down go up.

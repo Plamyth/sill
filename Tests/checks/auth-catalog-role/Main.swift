@@ -21,6 +21,7 @@ struct ClientRoute {
     var automatic = false
     var authorizationCurrent = true
     var requiresLiveAuthorization: Bool { automatic }
+    mutating func invalidateAuthorization() { authorizationCurrent = false }
     var isAuthenticated: Bool { encrypted && (pairedName != nil || automatic) && (!automatic || authorizationCurrent) }
     func whileAuthorized(_ send: () -> Void) -> Bool {
         guard !automatic || authorizationCurrent else { return false }; send(); return true
@@ -68,6 +69,7 @@ final class Client {
     var pendingBytes = 0
     var forwardingExchange: RoleHost.ForwardingExchange?
     var forwardingObserved = false
+    // CLIENT_METHODS
     init(_ connection: NWConnection) { self.connection = connection }
 }
 final class RoleHost {
@@ -252,6 +254,7 @@ struct Check {
             check(host.rawSent.isEmpty && client.forwardingExchange != nil)
             host.sendForwardingState(state, to: connection, ticket: received!.ticket)
             check(host.sent == [.forwardingState] && client.forwardingObserved && client.forwardingExchange == nil)
+            check(received?.isCurrent == false)
             let decoded = Wire.decode(AudioForwardingState.self, from: Data(host.rawSent[0].dropFirst(StreamMessage.headerLength)))
             check(decoded?.requestID == observe.requestID && decoded?.catalog?.principal.id == identity)
             host.queue.expirations.last?()
@@ -260,9 +263,24 @@ struct Check {
             let old = received!
             host.took(Hello(), from: client)
             check(client.role.isViewer && client.forwardingExchange == nil && !client.forwardingObserved)
+            check(!old.isCurrent)
             let sent = host.sent
             host.sendForwardingState(state, to: connection, ticket: old.ticket)
             check(host.sent == sent)
+        }
+        for expired in [true, false] {
+            let host = RoleHost(), connection = NWConnection()
+            var request: RoleHost.ForwardingExchange?
+            host.onForwardingControl = { exchange, _, _, _ in request = exchange }
+            host.serve(connection, route: .init(encrypted: true, pairedName: nil, automatic: true), hello: nil)
+            let client = host.clients[ObjectIdentifier(connection)]!
+            let observe = try AudioForwardingControl(requestID: UUID(), operation: .observe, intent: nil)
+            host.receiveForwarding(Wire.encode(observe), from: client)
+            check(request?.isCurrent == true && client.route.isAuthenticated)
+            if expired { host.queue.expirations.last?() }
+            else { client.cancel() }
+            check(request?.isCurrent == false && !client.route.isAuthenticated)
+            check(connection.state == .cancelled && host.clients.isEmpty)
         }
         for invalid in [Data("{}".utf8), Data("{\"schemaVersion\":1,\"schemaVersion\":1}".utf8), Data(repeating: 65, count: 4097)] {
             let host = RoleHost(), connection = NWConnection()

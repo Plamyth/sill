@@ -13,7 +13,7 @@ def block(text, marker):
 
 fixture = Path(__file__).with_name('Main.swift').read_text()
 for name, marker in [('RemoteAccess.swift', 'struct AudioForwardingPairedDevice:'),
-                     ('StreamServer.swift', 'struct ForwardingExchange:'),
+                     ('StreamServer.swift', 'final class ForwardingExchange:'),
                      ('StreamCoordinator.swift', '@MainActor\nstruct AudioForwardingConnectionContext'),
                      ('StreamCoordinator.swift', 'private struct ForwardingClient {'),
                      ('StreamCoordinator.swift', 'private func handleForwarding(')]:
