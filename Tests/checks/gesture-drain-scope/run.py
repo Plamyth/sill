@@ -24,13 +24,17 @@ def block(source, marker):
     return source[start:end]
 
 
-def generate(baseline):
+def generate(ref):
+    if ref:
+        ref = subprocess.check_output(
+            ["git", "--no-lazy-fetch", "rev-parse", "--verify", ref + "^{commit}"], cwd=ROOT, text=True
+        ).strip()
     manifest = {}
 
     def read(path):
         text = subprocess.check_output(
-            ["git", "--no-lazy-fetch", "show", BASE + ":" + path], cwd=ROOT, text=True
-        ) if baseline else (ROOT / path).read_text()
+            ["git", "--no-lazy-fetch", "show", ref + ":" + path], cwd=ROOT, text=True
+        ) if ref else (ROOT / path).read_text()
         manifest[path] = hashlib.sha256(text.encode()).hexdigest()
         return text
 
@@ -46,48 +50,81 @@ def generate(baseline):
     types = "\n".join(block(switcher, x) for x in [
         "public enum StreamSource:", "public struct DisplayInfo:",
         "public struct DisplaySelection:", "public struct VideoEpoch:"])
-    # InputEvent와 SourceInput도 생산 선언 그대로 사용한다.
     shared = "\n".join(["import Foundation\nimport CoreFoundation\nimport CoreGraphics", types, protocol,
                          gesture, wire, fence, chords, inventory])
     members = host[host.index("    private var gestureChords ="):host.index("    /// A host that does not advertise")]
     members = members.replace("private ", "")
     properties = []
     for marker in ["private var inputGeneration =", "private var videoEpoch:",
-                   "package private(set) var active:", "private var switching ="]:
+                   "package private(set) var active:", "private var switching =",
+                   "private var restartOf:", "private var pickArrivedWhileSwitching:"]:
         line = host[host.index(marker):].splitlines()[0]
         declaration = block(host, marker) if "{" in line else line
         properties.append(declaration.replace("package private(set) ", "").replace("private ", ""))
     token = "private var gestureScopeToken ="
     if token in host:
-        properties.append(host[host.index(token):].splitlines()[0].replace("private ", ""))
+        line = host[host.index(token):].splitlines()[0]
+        declaration = block(host, token) if "{" in line else line
+        properties.append(declaration.replace("private ", ""))
     methods = ["queueGesture(", "performGesture(", "releaseHeldInput()", "releaseInput(of",
                "deliver(_", "applyAdmittedInput(_", "applyAdmittedChord("]
-    methods += [x for x in ["gestureContext(", "gestureIsCurrent(", "applyAdmittedGesture("]
+    methods += [x for x in ["gestureContext(", "gestureIsCurrent(", "applyAdmittedGesture(",
+                "handleSourceSelection(", "handlePick(", "gestureSelectionIsLive(", "bindGestureSelection(",
+                "changingGestureScope(", "currentGestureDesktop(", "commitGestureSelection(",
+                "finishGestureSelection(", "gestureDesktopIsCurrent(", "gestureIsWaiting("]
                 if "private func " + x in host]
     extracted = "\n".join(block(host, "private func " + x) for x in methods)
+    ticketed = "private func selectStream(" in host
+    selection = block(host, "private func selectStream(" if ticketed else "func select(_ source:")
+    entry = selection[:selection.index("        defer {")]
+    finish = selection[selection.index("            switching = false"):selection.index("            for connection in connections.values")]
+    queued = selection[selection.index("            var pick ="):selection.index("            // Requests that arrived mid-switch")]
+    queued += "\n" + next(line for line in selection.splitlines() if "if catalog.clientCount == 0 { pick = nil }" in line)
+    queued += "\n" + block(selection, "            if let pick, pick != active {")
+    preflight = selection[selection.index("        if source == .desktop, !synthetic"):selection.index("        server.resetForNewStream()")]
+    call = "await selectionPipeline(source: source" + (", gestureOperation: gestureOperation" if ticketed else "") + ")"
+    selector = entry + "        defer {\n" + finish + "            restartOf = nil\n" + queued + "\n        }\n" + preflight + call + "\n}"
+    if ticketed:
+        selector = block(host, "func select(_ source:") + "\n" + selector
+    pipeline = block(host, "private func startPipeline(")
+    commit_start = pipeline.index("        changingGestureScope(for: gestureOperation) {") if ticketed else pipeline.index("        active = source")
+    commit = pipeline[commit_start:pipeline.index("        server.commitVideo(")]
+    selector += "\n" + """func selectionPipeline(source: StreamSource, gestureOperation: UUID? = nil) async {
+        await beforePipelineCommit?()
+        guard !failPipeline else { return }
+        let generation = source == active ? inputGeneration : UUID().uuidString
+        let epoch = VideoEpoch(generation: generation, source: source,
+            geometry: .init(x: 0, y: 0, width: 100, height: 100), width: 100, height: 100)
+""" + commit + "\n        await afterPipelineCommit?()\n}"
+    display_change = block(host, "private func displaysChanged()")
+    display_change = display_change[:display_change.index("        guard !synthetic")] + "\n}"
     held = block(host, "private enum Held")
     receive = host[host.index("        case .gesture:\n"):host.index("        case .remoteAudioControl:\n", host.index("        case .gesture:\n"))]
+    receive += host[host.index("        case .selectDisplay:\n"):host.index("        case .windowCommand:\n")]
     receive = "func receive(_ message: StreamMessage, from connection: NWConnection) async {\nswitch message.kind {\n" + receive + "default: break\n}\n}"
-    body = "\n".join(properties + [members, held, extracted, receive])
-    # 접근 수준과 실행기만 교체한다. 분기·검증·상태 전이는 수정하지 않는다.
+    body = "\n".join(properties + [members, held, extracted, selector, display_change, receive])
     body = body.replace("private ", "").replace("Task<Void, Never>", "InertTask")
     body = body.replace("Task {", "InertTask {").replace("Task.sleep", "InertTask.sleep").replace("Task.isCancelled", "InertTask.isCancelled")
     body = body.replace("StreamCoordinator.", "Harness.")
     fixture = (HERE / "Fixture.swift").read_text().replace("// PRODUCTION_MEMBERS", body)
     checks = (HERE / "Checks.swift").read_text()
+    for name in ["run.py", "Fixture.swift", "Checks.swift"]:
+        manifest[str((HERE / name).relative_to(ROOT))] = hashlib.sha256((HERE / name).read_bytes()).hexdigest()
     manifest["extractedHost"] = hashlib.sha256(body.encode()).hexdigest()
-    print(json.dumps({"baseline": baseline, "sourceHashes": manifest}, sort_keys=True), file=sys.stderr)
+    print(json.dumps({"ref": ref or "working-tree", "sourceHashes": manifest}, sort_keys=True), file=sys.stderr)
     return shared + "\n" + fixture + "\n" + checks
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", action="store_true", help="원본 068의 생산 소스를 추출한다")
+    revision = parser.add_mutually_exclusive_group()
+    revision.add_argument("--baseline", action="store_true", help="원본 068의 생산 소스를 추출한다")
+    revision.add_argument("--ref", help="이 Git ref의 생산 소스를 현재 검사와 비교한다")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--emit-only", action="store_true", help="생성만 한다. Swift를 실행하지 않는다")
     mode.add_argument("--run", action="store_true", help="부모의 Mini 한시 실행 사본 안에서만 사용한다")
     args = parser.parse_args()
-    source = generate(args.baseline)
+    source = generate(BASE if args.baseline else args.ref)
     if args.emit_only:
         sys.stdout.write(source)
         return 0

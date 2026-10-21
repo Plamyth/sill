@@ -17,6 +17,206 @@
     check(host.injector.targets.isEmpty, label + " 주입 없음")
     check(host.gestureChords.open == nil && !host.gestureChords.repeated, label + " 상태 오염 없음")
 }
+@MainActor func settle(_ host: Harness, _ gate: SelectionGate, _ selection: Task<Void, Never>, success: Bool = true) async {
+    gate.release(success)
+    await selection.value
+    host.catalog.refresh = nil
+}
+@MainActor func selectionChecks() async {
+    for fingers: Int? in [nil, 3, 4] {
+        for held in [false, true] {
+            let (h, p) = fresh()
+            let (gate, selection) = await h.beginWindowSelection(from: p)
+            await h.send(fingers: fingers, from: p)
+            pristine(h, "Desktop 완료 전 \(String(describing: fingers))")
+            Clock.sleeping = {
+                Clock.sleeping = nil
+                await settle(h, gate, selection)
+                if held { h.holdUntil = Clock.now + 1 }
+            }
+            await InertTask.drain()
+            await settle(h, gate, selection)
+            if held {
+                pristine(h, "선택 완료 후 held 대기")
+                check(h.heldInput.count == 1, "정상 순정 창→Desktop held 보존")
+                h.releaseHeldInput()
+            }
+            check(h.injector.targets == [.desktop] && h.gestureChords.open == .missionControl,
+                  "정상 순정 창→Desktop \(String(describing: fingers)) held=\(held)")
+        }
+    }
+    do {
+        let (h, p) = fresh()
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        Clock.now += 1.9
+        await h.send(from: p)
+        Clock.sleeping = { Clock.sleeping = nil; await settle(h, gate, selection) }
+        await InertTask.drain()
+        await settle(h, gate, selection)
+        check(h.injector.targets == [.desktop], "선택 요청 TTL 안의 늦은 제스처")
+    }
+    for boundary in [false, true] {
+        let (h, p) = fresh()
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        if boundary { Clock.now += 2 }
+        await h.send(from: p)
+        if !boundary { Clock.now += 2 }
+        await settle(h, gate, selection)
+        await InertTask.drain()
+        pristine(h, boundary ? "수신 전 선택 TTL 만료" : "대기 중 선택 TTL 만료")
+    }
+    for success in [false, true] {
+        let (h, p) = fresh()
+        h.failPipeline = success
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        await h.send(from: p)
+        await settle(h, gate, selection, success: success)
+        await InertTask.drain()
+        pristine(h, success ? "pipeline 실패" : "catalog 선택 실패")
+    }
+    do {
+        let (h, p) = fresh()
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        await h.send(from: p)
+        selection.cancel()
+        await settle(h, gate, selection)
+        await InertTask.drain()
+        pristine(h, "선택 작업 취소")
+    }
+    for stage in ["before", "after", "held"] {
+        let invalidations: [(String, (Harness, NWConnection) -> Void)] = [
+            ("연결 종료", { h, p in h.leave(p) }),
+            ("재가입", { h, p in
+                let switching = h.switching
+                h.leave(p); h.switching = false; h.join(p); h.switching = switching
+            }),
+            ("연결 교체", { h, p in h.connections[ObjectIdentifier(p)] = NWConnection() }),
+            ("연결 상태", { _, p in p.state = .cancelled }),
+            ("세대 ABA", { h, _ in let old = h.inputGeneration; h.inputGeneration = UUID().uuidString; h.inputGeneration = old }),
+            ("epoch ABA", { h, _ in let old = h.videoEpoch; h.readyEpoch(); h.videoEpoch = old }),
+            ("source ABA", { h, _ in let old = h.active; h.active = .none; h.active = old }),
+            ("switch ABA", { h, _ in h.switching = false; h.switching = true; h.switching = false }),
+            ("다른 디스플레이", { h, _ in
+                let old = h.catalog.displayInventory.current!
+                h.catalog.displayInventory.select(.init(displayID: 2, inventoryID: old.inventoryID))
+            }),
+            ("디스플레이 ABA 알림", { h, _ in
+                let old = h.catalog.displayInventory.current!
+                h.catalog.displayInventory.select(.init(displayID: 2, inventoryID: old.inventoryID))
+                h.displaysChanged()
+                h.catalog.displayInventory.select(old)
+            }),
+            ("shutdown", { h, _ in h.shuttingDown = true }),
+            ("만료", { _, _ in Clock.now += 2 })
+        ]
+        for (label, invalidate) in invalidations {
+            let (h, p) = fresh()
+            let (gate, selection) = await h.beginWindowSelection(from: p)
+            await h.send(from: p)
+            if stage == "before" { h.beforePipelineCommit = { invalidate(h, p) } }
+            if stage == "after" { h.afterPipelineCommit = { invalidate(h, p) } }
+            await settle(h, gate, selection)
+            if stage == "held" { h.holdUntil = Clock.now + 1 }
+            await InertTask.drain()
+            if stage == "held" {
+                check(h.heldInput.count == 1, "선택에서 유래한 held " + label)
+                invalidate(h, p)
+                h.switching = false
+                h.releaseHeldInput()
+            }
+            pristine(h, "선택 \(stage) " + label)
+        }
+    }
+    for request in ["same", "other-peer", "window", "same-display", "other-display", "restart"] {
+        let (h, p) = fresh()
+        let q = NWConnection(); h.join(q)
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        await h.send(from: p)
+        switch request {
+        case "same": await h.pick(.desktop, from: p)
+        case "other-peer": await h.pick(.desktop, from: q)
+        case "window": await h.pick(.window(8), from: p)
+        case "same-display": await h.pickDisplay(1, from: p)
+        case "other-display": await h.pickDisplay(2, from: p)
+        default: await h.select(.window(7))
+        }
+        await settle(h, gate, selection)
+        await InertTask.drain()
+        pristine(h, "중첩 요청 " + request)
+    }
+    do {
+        let (h, p) = fresh()
+        let q = NWConnection(); h.join(q)
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        await h.send(from: q)
+        await settle(h, gate, selection)
+        await InertTask.drain()
+        pristine(h, "다른 참여자의 선택을 빌리지 않음")
+    }
+    do {
+        let (h, p) = fresh()
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        await h.send(from: p)
+        await settle(h, gate, selection)
+        h.holdUntil = Clock.now + 1
+        await InertTask.drain()
+        await h.pick(.desktop, from: p)
+        h.releaseHeldInput()
+        pristine(h, "완료 후 새 선택의 결과로 held 승격 금지")
+    }
+    for restarting in [false, true] {
+        let (h, p) = fresh()
+        h.active = .window(7); h.readyEpoch()
+        let gate = SelectionGate()
+        h.beforePipelineCommit = { _ = await gate.wait() }
+        let task = Task { await h.select(restarting ? .window(7) : .window(8)) }
+        while !gate.entered { await Task.yield() }
+        await h.pick(.desktop, from: p)
+        await h.send(from: p)
+        gate.release()
+        await task.value
+        h.beforePipelineCommit = nil
+        await InertTask.drain()
+        pristine(h, restarting ? "이미 restart 중인 요청" : "이미 다른 소스 전환 중인 요청")
+        check(h.active == (restarting ? .desktop : .window(8)), "기존 restart 뒤 선택 처리 보존")
+    }
+    do {
+        let (h, p) = fresh()
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        await h.send(from: p)
+        h.gestureDrain?.cancel()
+        await settle(h, gate, selection)
+        await InertTask.drain()
+        pristine(h, "선택 대기 drain 취소")
+    }
+    do {
+        let h = Harness(), p = NWConnection()
+        let id = ObjectIdentifier(p)
+        check(h.inputFence.join(id, source: h.active, switching: false, desktopScope: h.desktopScope),
+              "이미 Desktop인 세대 1 클라이언트 가입")
+        h.connections[id] = p
+        await h.send(fingers: nil, from: p)
+        await InertTask.drain()
+        check(h.injector.targets == [.desktop] && h.gestureChords.open == .missionControl,
+              "Android 이미 Desktop 세대 1 무필드 제스처 보존")
+    }
+    for name in ["swipeUp", "swipeDown"] {
+        let (h, p) = fresh()
+        await h.send(from: p)
+        await InertTask.drain()
+        await h.send(from: p)
+        await InertTask.drain()
+        let targets = h.injector.targets
+        let (gate, selection) = await h.beginWindowSelection(from: p)
+        await h.send(name, from: p)
+        h.afterPipelineCommit = { h.readyEpoch() }
+        await settle(h, gate, selection)
+        await InertTask.drain()
+        check(h.injector.targets == targets && h.gestureChords.open == .missionControl && h.gestureChords.repeated,
+              "선택 거부 뒤 기존 open/repeated 보존 " + name)
+    }
+    Clock.sleeping = nil
+}
 @MainActor func checks() async {
     var legacy = SourceInputFence<String>()
     check(!legacy.contains("old"), "가입 전 입력 참여 없음")
@@ -231,6 +431,7 @@
         await InertTask.drain()
         pristine(h, "최종 단축키 조회 중 drain 취소")
     }
+    await selectionChecks()
     check(InertTask.pending.isEmpty, "소유한 inert 작업 종료")
     print("\(Results.failures == 0 ? "PASS" : "FAIL") \(Results.assertions) assertions, \(Results.failures) failures; inert dependencies only")
 }

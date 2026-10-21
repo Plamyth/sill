@@ -1,13 +1,12 @@
-// 생성된 검사에서만 쓰는 부작용 없는 의존성이다.
 @MainActor enum Clock {
     static var now: CFAbsoluteTime = 10000
-    static var sleeping: (() -> Void)?
+    static var sleeping: (() async -> Void)?
 }
 @MainActor func CFAbsoluteTimeGetCurrent() -> CFAbsoluteTime { Clock.now }
 @MainActor final class InertTask {
     static var pending: [InertTask] = []
     static var current: InertTask?
-    static var isCancelled: Bool { current?.cancelled ?? false }
+    static var isCancelled: Bool { Task.isCancelled || current?.cancelled == true }
     var cancelled = false
     let operation: @MainActor () async -> Void
     init(operation: @escaping @MainActor () async -> Void) {
@@ -17,7 +16,7 @@
     func cancel() { cancelled = true }
     static func sleep(for duration: Duration) async throws {
         Clock.now += 0.02
-        Clock.sleeping?()
+        await Clock.sleeping?()
     }
     static func drain() async {
         while !pending.isEmpty {
@@ -34,7 +33,7 @@ final class NWConnection {
     let endpoint = "inert"
 }
 struct StreamMessage {
-    enum Kind { case gesture, other }
+    enum Kind { case gesture, selectSource, selectDisplay, other }
     let kind: Kind
     let payload: Data
 }
@@ -57,7 +56,26 @@ final class StatusStub { func update(_ body: (inout StatusSnapshot) -> Void) { v
 final class ServerStub { func setStreaming(_ value: Bool) {} }
 final class CursorStub { var running = false }
 final class PointerStub { func setGeometry(_ geometry: Int, fps: Int) {} }
-struct CatalogStub { var displayInventory = DisplayInventory(); var activeWindowID: UInt32? }
+@MainActor final class CatalogStub {
+    var displayInventory = DisplayInventory()
+    var activeWindowID: UInt32?
+    var clientCount = 1
+    var refresh: (() async -> Bool)?
+    func refreshWindows() async -> Bool { await refresh?() ?? true }
+    func selectDisplay(_ selection: DisplaySelection) -> Bool { displayInventory.select(selection) }
+}
+@MainActor final class SelectionGate {
+    private var suspended: CheckedContinuation<Bool, Never>?
+    private(set) var entered = false
+    func wait() async -> Bool {
+        await withCheckedContinuation { suspended = $0; entered = true }
+    }
+    func release(_ success: Bool = true) {
+        let continuation = suspended
+        suspended = nil
+        continuation?.resume(returning: success)
+    }
+}
 @MainActor final class Injector {
     var trace: [String] = []
     var targets: [StreamSource] = []
@@ -95,12 +113,18 @@ struct CatalogStub { var displayInventory = DisplayInventory(); var activeWindow
     var connections: [ObjectIdentifier: NWConnection] = [:]
     var shuttingDown = false
     var gesturesDry = false
+    let synthetic = false
+    var beforePipelineCommit: (() async -> Void)?
+    var afterPipelineCommit: (() async -> Void)?
+    var failPipeline = false
+    var viewportArrivedWhileSwitching = false
     var heldInput: [Held] = []
     var holdUntil: CFAbsoluteTime = 0
     let injector = Injector()
     var onHotKeys: (() -> Void)?
     func pointerGeometry() -> Int { 0 }
     func menuTargetChanged() {}
+    func broadcastList() {}
     func deviceName(_ connection: NWConnection) -> String { "inert-peer" }
     func hotKeyTable() -> [Int: HotKey] { onHotKeys?(); return GestureChords.defaults }
     func inputTargetReady(_ event: InputEvent) -> Bool { active != .none }
@@ -133,6 +157,22 @@ struct CatalogStub { var displayInventory = DisplayInventory(); var activeWindow
     }
     func send(_ name: String = "swipeUp", fingers: Int? = 3, from connection: NWConnection) async {
         await receive(StreamMessage(kind: .gesture, payload: Wire.encode(TrackpadGesture(gesture: name, fingers: fingers))), from: connection)
+    }
+    func pick(_ source: StreamSource, from connection: NWConnection) async {
+        await receive(StreamMessage(kind: .selectSource, payload: Wire.encode(source)), from: connection)
+    }
+    func pickDisplay(_ id: UInt32, from connection: NWConnection) async {
+        let selection = DisplaySelection(displayID: id, inventoryID: catalog.displayInventory.current!.inventoryID)
+        await receive(StreamMessage(kind: .selectDisplay, payload: Wire.encode(selection)), from: connection)
+    }
+    func beginWindowSelection(from connection: NWConnection) async -> (SelectionGate, Task<Void, Never>) {
+        active = .window(7)
+        readyEpoch()
+        let gate = SelectionGate()
+        catalog.refresh = { await gate.wait() }
+        let task = Task { await self.pick(.desktop, from: connection) }
+        while !gate.entered { await Task.yield() }
+        return (gate, task)
     }
     func changeSelection() {
         switching = true
