@@ -83,6 +83,15 @@ extension SystemAudioCapture {
     }
 }
 
+@MainActor final class CallbackCoordinator {
+    let remoteAudioCapture = SystemAudioCapture()
+    private(set) var revocations = 0
+    init() {
+        // PRODUCTION_STOP_CALLBACK
+    }
+    func revokeRemoteAudio(reason: String) async { revocations += 1 }
+}
+
 @main struct Checks {
     @MainActor static func main() async {
         var failures = 0
@@ -146,7 +155,7 @@ extension SystemAudioCapture {
         let unsolicited = SystemAudioCapture()
         let oldPlan = Plan()
         var stoppedCallbacks = 0
-        unsolicited.onStopped = { _ in stoppedCallbacks += 1 }
+        unsolicited.onStopped = { _, _ in stoppedCallbacks += 1 }
         await start(unsolicited, oldPlan)
         unsolicited.stream(oldPlan.stream!, didStopWithError: TestFailure.injected)
         check(!unsolicited.retirementConfirmed && !unsolicited.hasStream, "unsolicited stop is unresolved")
@@ -178,6 +187,22 @@ extension SystemAudioCapture {
         await pendingStart.value
         await cycle(starting)
         check(!starting.retirementConfirmed, "new generation cannot erase start-stop overlap")
+
+        let stale = CallbackCoordinator(), a = Plan(), b = Plan()
+        await start(stale.remoteAudioCapture, a)
+        stale.remoteAudioCapture.stream(a.stream!, didStopWithError: TestFailure.injected)
+        await start(stale.remoteAudioCapture, b)
+        for _ in 0..<10 { await Task.yield() }
+        check(stale.revocations == 0 && stale.remoteAudioCapture.hasStream,
+              "queued old capture failure cannot revoke the replacement subscription")
+        await stale.remoteAudioCapture.stop()
+
+        let current = CallbackCoordinator(), live = Plan()
+        await start(current.remoteAudioCapture, live)
+        current.remoteAudioCapture.stream(live.stream!, didStopWithError: TestFailure.injected)
+        for _ in 0..<10 { await Task.yield() }
+        check(current.revocations == 1 && !current.remoteAudioCapture.hasStream,
+              "current capture failure still revokes its own subscription")
 
         print("RETIREMENT_RESULT assertions=\(count) failures=\(failures)")
         exit(failures == 0 ? 0 : 1)

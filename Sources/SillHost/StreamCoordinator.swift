@@ -609,8 +609,11 @@ package final class StreamCoordinator {
             print("Capture stopped: \(error.localizedDescription)")
             Task { @MainActor in await self?.select(.none) }
         }
-        remoteAudioCapture.onStopped = { [weak self] _ in
-            Task { @MainActor in await self?.revokeRemoteAudio(reason: "capture stopped") }
+        remoteAudioCapture.onStopped = { [weak self] generation, _ in
+            Task { @MainActor in
+                guard let self, self.remoteAudioCapture.isStoppedGeneration(generation) else { return }
+                await self.revokeRemoteAudio(reason: "capture stopped")
+            }
         }
         // Status for the menu bar app. The server's callbacks hop here from its network queue; the
         // stats tick runs on the main queue, which under the CLI's dispatchMain is drained by a

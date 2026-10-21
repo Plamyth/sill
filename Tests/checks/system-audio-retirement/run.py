@@ -32,6 +32,11 @@ fixture_path = root / "Tests/checks/system-audio-retirement/Fixture.swift"
 fixture = fixture_path.read_text()
 assert fixture.count("// PRODUCTION_CAPTURE") == 1
 emitted = fixture.replace("// PRODUCTION_CAPTURE", capture)
+coordinator_path = root / "Sources/SillHost/StreamCoordinator.swift"
+coordinator = coordinator_path.read_text()
+callback = block(coordinator, "remoteAudioCapture.onStopped =")
+assert emitted.count("// PRODUCTION_STOP_CALLBACK") == 1
+emitted = emitted.replace("// PRODUCTION_STOP_CALLBACK", callback)
 (output / "Checks.swift").write_text(emitted)
 for name in ["tmp", "module-cache", "clang-cache"]:
     (output / name).mkdir()
@@ -39,6 +44,8 @@ env = dict(os.environ, TMPDIR=str(output / "tmp"),
            SWIFTPM_MODULECACHE_OVERRIDE=str(output / "module-cache"),
            CLANG_MODULE_CACHE_PATH=str(output / "clang-cache"))
 record = {"productionSHA256": hashlib.sha256(source.encode()).hexdigest(),
+          "coordinatorSHA256": hashlib.sha256(coordinator.encode()).hexdigest(),
+          "stopCallbackSHA256": hashlib.sha256(callback.encode()).hexdigest(),
           "fixtureSHA256": hashlib.sha256(fixture.encode()).hexdigest(),
           "extractedSHA256": hashlib.sha256(capture.encode()).hexdigest(),
           "scope": "Actual start/stop/delegate/barrier methods and fields; fake SCStream; no ScreenCaptureKit, HAL, app, network or device IO",
@@ -55,7 +62,7 @@ try:
         record["exitCode"] = result.returncode
         if result.returncode:
             break
-    record["sourceUnchanged"] = source_path.read_text() == source and fixture_path.read_text() == fixture
+    record["sourceUnchanged"] = source_path.read_text() == source and fixture_path.read_text() == fixture and coordinator_path.read_text() == coordinator
     if not record["sourceUnchanged"]:
         record["exitCode"] = 2
 except Exception as error:

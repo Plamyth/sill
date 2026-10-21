@@ -18,10 +18,13 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     private var packer: RemoteAudioPCM?
     private var sampleSequence: UInt64 = 0
     var onPacket: ((Data, UInt64) -> Void)?
-    var onStopped: ((Error) -> Void)?
+    var onStopped: ((UUID, Error) -> Void)?
 
     var hasStream: Bool { streamLock.withLock { stream != nil } }
     var retirementConfirmed: Bool { streamLock.withLock { stream == nil && unretiredGenerations.isEmpty } }
+    func isStoppedGeneration(_ generation: UUID) -> Bool {
+        streamLock.withLock { captureGeneration == generation && stream == nil }
+    }
 
     /// A capture-queue barrier for a new subscriber. Everything captured before this
     /// point has a sequence no greater than the returned value. Discard the partial
@@ -130,13 +133,16 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        guard streamLock.withLock({ () -> Bool in
-            guard stream === self.stream else { return false }
+        guard let generation = streamLock.withLock({ () -> UUID? in
+            guard stream === self.stream else { return nil }
             self.stream = nil
-            return true
+            return captureGeneration
         }) else { return }
-        queue.async { [self] in packer = nil }
-        onStopped?(error)
+        queue.async { [self] in
+            guard isStoppedGeneration(generation) else { return }
+            packer = nil
+        }
+        onStopped?(generation, error)
     }
 }
 
