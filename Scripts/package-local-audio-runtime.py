@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 
-NODE_COMMIT = "97f640bc6202a451b2211321aa96f20ee1a0f5ef"
+NODE_COMMIT = "1f846e8b776dec9b504cebf78735e57dc1ad5cda"
 SYSTEM = ("/usr/lib/", "/System/Library/")
 MACHO = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 
