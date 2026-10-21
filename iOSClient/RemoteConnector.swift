@@ -22,6 +22,7 @@ final class RemoteConnector {
     enum Mode {
         case session(pin: Data)
         case pairing(pin: Data?)
+        case ownerBootstrap(pin: Data)
     }
 
     struct Winner {
@@ -79,7 +80,7 @@ final class RemoteConnector {
         self.queue = queue
     }
 
-    private var sequential: Bool { if case .pairing = mode { return true }; return false }
+    private var sequential: Bool { if case .session = mode { return false }; return true }
 
     func start() {
         queue.async { [self] in
@@ -120,8 +121,14 @@ final class RemoteConnector {
             startNext()
             return
         }
-        let alpn = sequential ? RemoteTLS.pairingALPN : RemoteTLS.sessionALPN
-        let pin: Data? = { switch mode { case .session(let p): return p; case .pairing(let p): return p } }()
+        let alpn: String = {
+            switch mode {
+            case .session: return RemoteTLS.sessionALPN
+            case .pairing: return RemoteTLS.pairingALPN
+            case .ownerBootstrap: return OwnerMacBootstrap.alpn
+            }
+        }()
+        let pin: Data? = { switch mode { case .session(let p): return p; case .pairing(let p): return p; case .ownerBootstrap(let p): return p } }()
         // The whole of trust: the pin, or on the typed pairing path any P-256 key (nil is no P-256).
         // The one TLS builder every connection to a Mac goes through (DeviceTLS).
         let others: [Data] = { if case .session = mode { return successors[candidate.key] ?? [] }; return [] }()
@@ -147,6 +154,13 @@ final class RemoteConnector {
         switch state {
         case .ready:
             guard !finished else { attempt.ended = true; attempt.connection.cancel(); return }
+            if case .ownerBootstrap(let pin) = mode {
+                guard RemoteTLS.negotiatedALPN(attempt.connection) == OwnerMacBootstrap.alpn,
+                      RemoteTLS.peerFingerprint(attempt.connection) == pin else {
+                    end(attempt, .notSill)
+                    return
+                }
+            }
             finished = true
             attempt.ended = true
             staggerItem?.cancel(); wholeItem?.cancel()

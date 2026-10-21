@@ -182,16 +182,21 @@ def deploy(config, work, source):
     metadata_path = derived.parent / 'Diagnostic-Runtime-Info.plist'
     require(not metadata_path.is_symlink() and metadata_path.resolve().is_relative_to(output_root), 'metadata_path_not_owned')
     metadata_path.write_bytes(plistlib.dumps(metadata))
+    fixture_writer = runpy.run_path(str(Path(config['repo']) / 'Scripts/owner-bootstrap-fixture.py'))['write_fixture']
+    owner_profile = fixture_writer(derived.parent / 'OwnerBootstrapFixture')
     command(['xcodebuild', '-project', Path(config['repo']) / 'iOSClient/Sill.xcodeproj', '-scheme', 'Sill',
              '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-allowProvisioningUpdates',
              'DEVELOPMENT_TEAM=' + config['developmentTeam'], 'CURRENT_PROJECT_VERSION=' + version,
-             'PRODUCT_BUNDLE_IDENTIFIER=' + BUNDLE, 'INFOPLIST_FILE=' + str(metadata_path), 'build'],
+             'PRODUCT_BUNDLE_IDENTIFIER=' + BUNDLE, 'INFOPLIST_FILE=' + str(metadata_path),
+             'CCR_OWNER_MAC_BOOTSTRAP_PROFILE=' + owner_profile['path'],
+             'CCR_OWNER_MAC_BOOTSTRAP_SHA256=' + owner_profile['sha256'], 'build'],
             work / 'build.log', 1200)
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     require(info.get('CFBundleIdentifier') == BUNDLE, 'test_bundle_mismatch')
     require(info.get('CCRSourceCommit') == source['commit'] and info.get('CCRSourceTree') == source['tree'], 'built_metadata_mismatch')
     executable = sha((app / info['CFBundleExecutable']).read_bytes())
     command(['codesign', '--verify', '--strict', app], work / 'codesign.log')
+    require(sha((app / 'CCR-OwnerMacBootstrap.json').read_bytes()) == owner_profile['sha256'], 'owner_profile_resource_mismatch')
     artifact = work / 'Artifact/Sill.app'
     artifact.parent.mkdir(exist_ok=True)
     shutil.copytree(app, artifact, dirs_exist_ok=True)

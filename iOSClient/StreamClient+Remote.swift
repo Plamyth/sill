@@ -185,6 +185,9 @@ extension StreamClient {
     /// Forget: the record only. The Mac lists this device until it is removed there, and the
     /// status line says so.
     func forget(_ macID: String) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         let name = savedMac(macID) != nil ? displayName(macID) : (macs.first { $0.macID == macID }?.name ?? "Mac")
         if reconnect?.macID == macID { reconnect = nil }
         savedMacs.removeAll { $0.macID == macID }
@@ -197,6 +200,9 @@ extension StreamClient {
     /// The card's Cancel while a pairing dial runs: it stops, nothing is saved. The home card's too:
     /// the ask, or the proof at the home door, stops, and the card folds (`homeAsk`).
     func cancelPairing() {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         pairingAttempt += 1          // a "busy" retry still waiting stays cancelled
         pairingDial?.cancel()
         pairingDial = nil
@@ -217,6 +223,9 @@ extension StreamClient {
     /// (`confirmPendingLink`); `-SillDialSaved remotely` dials the first saved Mac as Connect
     /// Remotely does (a session that never moves home).
     func startRemote() {
+        #if os(iOS)
+        armOwnerBootstrap()
+        #endif
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "SillForgetMacs") {
             savedMacs = []
@@ -297,6 +306,9 @@ extension StreamClient {
     /// Dials a saved Mac at its saved addresses (§7.5). A tap on its Remote row, Connect Remotely
     /// on its network row, the session after a pairing, the automatic reconnect, `-SillDialSaved`.
     func dialSaved(_ macID: String, why: DialReason) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         guard let mac = savedMac(macID), let pin = mac.fingerprintData else { return }
         let name = displayName(macID)
         guard let identity = DeviceIdentity.existing() else {
@@ -764,6 +776,9 @@ extension StreamClient {
     /// the overlay then says (StreamClient+Home's `askOverStream`); over a plain one, kind 21, for
     /// which a plain door always opens a window. `mac`: what the overlay calls the Mac.
     func requestPairingCode(mac: String? = nil) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         if let t = sessionPairingTarget {
             askOverStream(t, mac: mac ?? (macName.isEmpty ? hostName : macName))
             return
@@ -788,6 +803,9 @@ extension StreamClient {
     /// A sill://pair link from outside the app: shown for confirmation, never acted on by itself (a
     /// poster or a message could otherwise add a look-alike "Mac" that collects keystrokes).
     func handleOpenURL(_ url: URL) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         guard url.scheme?.lowercased() == "sill" else { return }
         switch PairLink.parse(url.absoluteString) {
         case .success(let link):
@@ -813,6 +831,9 @@ extension StreamClient {
     /// The typed path: the address and the code as typed, checked here first (a typo never uses up
     /// one of the Mac's five tries, and nothing is sent).
     func pairTyped(code codeText: String, address addressText: String, overlay: Bool) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         let address: ParsedAddress
         switch AddressParser.parse(addressText) {
         case .success(let a): address = a
@@ -881,6 +902,9 @@ extension StreamClient {
     private func startPairing(candidates: [RemoteDialPolicy.Candidate], pin: Data?, key: @escaping (Data) -> SymmetricKey?,
                               method: String, macName: String?, port: Int, addresses: [MacAddress], typed: MacAddress?,
                               overlay: Bool, scannedSecret: Data?, busyRetried: Bool) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         lastScannedSecret = scannedSecret
         pairingAttempt += 1
         let attempt = pairingAttempt

@@ -90,6 +90,7 @@ final class StreamClient {
     struct Goodbye { var reason: String }
     var goodbye: Goodbye?
     enum DialReason { case tap }
+    func startOwnerBootstrap() {}
     func homeDecision(_ row: FoundMac, macID: String?, tap: Bool) -> DiscoveryPolicy.HomeDial { row.decision }
     func wiredDial(for row: FoundMac) -> (endpoint: NWEndpoint, via: String)? { row.cable ? (.cable, "cable") : nil }
     func dialRow(_ row: FoundMac, macID: String?, trust: DiscoveryPolicy.HomeTrust, tagNamed: Bool, tap: Bool) -> Bool {

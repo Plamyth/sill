@@ -123,6 +123,14 @@ jobs:
           chmod 600 "$key"
           echo "SILL_TESTFLIGHT_KEY_FILE=$key" >> "$GITHUB_ENV"
 
+      # unsigned 검사는 개인 Mac 설정 대신 검증 가능한 합성 공개 리소스를 사용한다.
+      # export/upload에는 승인된 실제 공개 리소스 공급이 별도로 필요하며 합성값으로 대체하지 않는다.
+      - name: Prepare synthetic owner resource for the unsigned check
+        if: steps.mode.outputs.mode == 'unsigned'
+        run: |
+          fixture="$(python3 Scripts/owner-bootstrap-fixture.py --directory "$RUNNER_TEMP/OwnerBootstrapFixture")"
+          python3 -c 'import json,sys; v=json.loads(sys.argv[1]); print("CCR_OWNER_MAC_BOOTSTRAP_PROFILE="+v["path"]); print("CCR_OWNER_MAC_BOOTSTRAP_SHA256="+v["sha256"])' "$fixture" >> "$GITHUB_ENV"
+
       - name: Archive without signing and check it (Scripts/release-ios.sh --unsigned)
         if: steps.mode.outputs.mode == 'unsigned'
         run: Scripts/release-ios.sh --unsigned -v

@@ -17,3 +17,5 @@ python3 iOSClient/Tests/remote-default/compare.py
 Temporary sources, executables, and compiler caches stay below this directory. Temporary build directories are removed after each run. Existing test files outside iOSClient are read only. No Mac host source is compiled. The comparison reads committed protocol/client sources with `git show`.
 
 These tests prove client decisions and persistence boundaries through stand-ins. They do not prove a real TLS handshake, USB routing, remote service availability, physical iPad behavior, or installation. Full native iOS compilation requires an iPhoneOS SDK.
+
+Mini 임시 소스에서 Git 없이 비교할 때에는 정확한 기준 ref의 입력 파일을 상대 경로 그대로 export하고 `CCR_REMOTE_BASELINE_DIR`에 그 루트를, `CCR_REMOTE_BASELINE_REV`에 정확한 commit을 지정한다. 비교기는 기존 실패 목록도 JSON으로 출력한다. 이 snapshot은 테스트 입력이며 source-guard의 Git checkout 동일성 수용을 대신하지 않는다.

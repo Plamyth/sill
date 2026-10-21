@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -7,6 +8,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 CLIENT = HERE.parents[1]
 AUDIT = CLIENT / ".audit"
+AUDIT.mkdir(parents=True, exist_ok=True)
 failures = {}
 for label, flags in [("baseline", ["--baseline"]), ("candidate", [])]:
     log = AUDIT / f"remote-default-{label}-policies.log"
@@ -20,7 +22,8 @@ for label, flags in [("baseline", ["--baseline"]), ("candidate", [])]:
 same = failures["baseline"] == failures["candidate"]
 paths = [CLIENT / name for name in ["StreamClient.swift", "StreamClient+Remote.swift", "RemoteDialPolicy.swift"]]
 record = {
-    "baseHEAD": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=CLIENT.parent, text=True).strip(),
+    "baseHEAD": os.environ.get("CCR_REMOTE_BASELINE_REV") or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=CLIENT.parent, text=True).strip(),
+    "existingFailureAssertions": failures,
     "sameExistingFailures": same,
     "baselineFailedAssertions": len(failures["baseline"]),
     "candidateFailedAssertions": len(failures["candidate"]),

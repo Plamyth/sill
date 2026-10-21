@@ -231,10 +231,14 @@ final class StreamClient: ObservableObject {
         case waiting(String)
         case wired(String)
         case waitingRemote(String)
+        case ownerBootstrap
         case attempted
         case stopped
     }
     private var startupAutoConnection: StartupAutoConnection = .unarmed
+    var ownerBootstrap = OwnerBootstrapState()
+    var ownerBootstrapDial: RemoteConnector?
+    var ownerBootstrapExchange: OwnerBootstrapExchange?
     private static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
     #endif
     /// This connection's latest kind 18: who the Mac is and how to reach it from afar. Verified
@@ -1387,8 +1391,8 @@ final class StreamClient: ObservableObject {
     }
 
     #if os(iOS)
-    /// Runs after startRemote has discarded records whose device key is missing. It never creates
-    /// an identity, opens a pairing ask, or chooses a different Mac after a stored preference fails.
+    /// 저장된 신뢰를 먼저 재사용한다. 최초 원시 저장소가 비어 있을 때만 별도 owner 등록으로 넘긴다.
+    /// 손상·폐기·선호 불일치·기기 키 누락으로 저장 신뢰를 우회하지 않는다.
     func armSavedMacAutoConnect() {
         guard case .unarmed = startupAutoConnection else { return }
         #if DEBUG
@@ -1397,7 +1401,8 @@ final class StreamClient: ObservableObject {
         #endif
         let preferred = UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey)
         guard let target = SavedMacs.automaticTarget(savedMacs, preferredID: preferred) else {
-            startupAutoConnection = .stopped
+            startupAutoConnection = .ownerBootstrap
+            startOwnerBootstrap()
             return
         }
         guard DeviceIdentity.existing() != nil else {
@@ -1450,6 +1455,7 @@ final class StreamClient: ObservableObject {
         let macID: String
         let preferCable: Bool
         switch startupAutoConnection {
+        case .ownerBootstrap: startOwnerBootstrap(); return
         case .waiting(let id): macID = id; preferCable = true
         case .waitingRemote(let id): macID = id; preferCable = false
         default: return
@@ -1562,6 +1568,9 @@ final class StreamClient: ObservableObject {
         let wasInBackground = !appInForeground
         appInForeground = true
         guard wasInBackground else { return }
+        #if os(iOS)
+        resumeOwnerBootstrapAfterForeground()
+        #endif
         if browsing {
             rebuildIfDue(.network, cameForward: true)
             if nearbyBrowser != nil { rebuildIfDue(.nearby, cameForward: true) }
@@ -1580,6 +1589,7 @@ final class StreamClient: ObservableObject {
         #endif
         #if os(iOS)
         audioRouteAuthorization = nil
+        if ownerBootstrap.phase != .ready { cancelOwnerBootstrap(resumable: true) }
         #endif
         appInForeground = false
         reconnectCheck?.cancel()
@@ -1928,6 +1938,7 @@ final class StreamClient: ObservableObject {
     /// (`dial`): a pinned session, the ask, a session on an open door, a plain one, or nothing.
     func connect(to mac: FoundMac) {
         #if os(iOS)
+        cancelOwnerBootstrap()
         startupAutoConnection = .stopped
         #endif
         #if DEBUG
@@ -2052,6 +2063,9 @@ final class StreamClient: ObservableObject {
     @discardableResult
     func connect(to endpoint: NWEndpoint, name: String, peerToPeer: Bool = false, macID: String? = nil, fallback: NWEndpoint? = nil,
                  trust: DiscoveryPolicy.HomeTrust = .plain, row: HomeRow? = nil) -> Bool {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         // A TLS dial's parameters need this device's key, made now at its first one. A pin refused
         // (-9808) ends the dial as its `.waiting` would have: a Bonjour row's connection never says
         // so itself, it prepares again and again (DeviceTLS.options), and the tap's "Connecting to…"
@@ -3658,6 +3672,7 @@ final class StreamClient: ObservableObject {
     /// The user chose to leave. No reconnect.
     func disconnect() {
         #if os(iOS)
+        cancelOwnerBootstrap()
         startupAutoConnection = .stopped
         #endif
         reconnect = nil

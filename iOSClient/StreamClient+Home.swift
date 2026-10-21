@@ -474,6 +474,9 @@ extension StreamClient {
     }
 
     func startAsk(_ start: HomeAsk, busyRetried: Bool = false) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         guard let identity = deviceIdentity() else { return }
         homeDialer?.cancel()
         pairingDial?.cancel()
@@ -684,6 +687,9 @@ extension StreamClient {
     /// tries), then `sill-pair/1` to the connection the ask reached, pinned to the key it saw, kind
     /// 19 `code` with proof_D from the PBKDF2 key.
     func pairHome(code text: String) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         guard let ask = homeAsk, ask.phase == .shown, let key = ask.askedKey, let answered = ask.answered else { return }
         switch PairingCode.check(text) {
         case .failure(.length): pairing = .failed(.codeLength)
@@ -727,6 +733,9 @@ extension StreamClient {
     /// through the same ask rule, but its answer never came back, and the overlay said a code was
     /// showing when none was (the security review, 2026-09-27). A "busy" is retried once, silently.
     func askOverStream(_ t: (target: HomeDialer.Target, key: Data), mac: String, busyRetried: Bool = false) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         guard let identity = deviceIdentity() else { return }
         overlayAskDialer?.cancel()
         overlayAskShown = nil
@@ -806,6 +815,9 @@ extension StreamClient {
     /// Pair This iPad…'s typed code: over a TLS session at home, on the session's row; over any
     /// other, through the connection's kind 18 address as before.
     func pairOverlayTyped(code text: String, mac: String) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         guard let t = sessionPairingTarget else {
             guard let address = overlayAddress() else {
                 pairing = .failed(.notPairing(mac))
@@ -831,6 +843,9 @@ extension StreamClient {
     /// none answering, the link's own addresses, as before (a window a device opened lists none:
     /// "Nothing answered…").
     func pairLinkAtHome(_ link: PairLink, overlay: Bool, scanned: Bool) {
+        #if os(iOS)
+        cancelOwnerBootstrap()
+        #endif
         let secret = scanned ? link.secret : nil
         let qr: (Data) -> SymmetricKey? = { _ in PairingProof.qrKey(secret: link.secret) }
         if let ask = homeAsk, ask.phase == .shown, let key = ask.askedKey, key == link.fingerprint, let answered = ask.answered {

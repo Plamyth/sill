@@ -106,9 +106,13 @@ jobs:
       # twice the work on this arm64 runner, and no source depends on the architecture.
       - name: Build the iOS app for the simulator (Debug, arm64, not signed)
         run: |
+          fixture="$(python3 Scripts/owner-bootstrap-fixture.py --directory "$RUNNER_TEMP/OwnerBootstrapFixture")"
+          profile="$(printf '%s' "$fixture" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
+          digest="$(printf '%s' "$fixture" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha256"])')"
           xcodebuild -project iOSClient/Sill.xcodeproj -scheme Sill \
             -destination 'generic/platform=iOS Simulator' -configuration Debug \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" CODE_SIGNING_ALLOWED=NO ARCHS=arm64 build
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" CODE_SIGNING_ALLOWED=NO ARCHS=arm64 \
+            CCR_OWNER_MAC_BOOTSTRAP_PROFILE="$profile" CCR_OWNER_MAC_BOOTSTRAP_SHA256="$digest" build
 
       # Only the CLI's paths that end before the host starts: a refused flag, and
       # --print-reachability, which reads this machine's network configuration once (read-only)

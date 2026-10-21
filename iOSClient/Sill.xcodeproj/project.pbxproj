@@ -88,6 +88,8 @@
 		D4200001000000000000A003 /* TestDestinationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4200001000000000000F003 /* TestDestinationsView.swift */; };
 		B2000001000000000000A013 /* CanvasPeleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F013 /* CanvasPeleView.swift */; };
 		B2000001000000000000A014 /* Pele in Resources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F014 /* Pele */; };
+		E7200001000000000000A001 /* OwnerBootstrapState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7200001000000000000F001 /* OwnerBootstrapState.swift */; };
+		E7200001000000000000A002 /* StreamClient+OwnerBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -174,6 +176,8 @@
 		D4200001000000000000F003 /* TestDestinationsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestDestinations/TestDestinationsView.swift; sourceTree = "<group>"; };
 		B2000001000000000000F013 /* CanvasPeleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasPeleView.swift; sourceTree = "<group>"; };
 		B2000001000000000000F014 /* Pele */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Pele; sourceTree = "<group>"; };
+		E7200001000000000000F001 /* OwnerBootstrapState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OwnerBootstrapState.swift"; sourceTree = "<group>"; };
+		E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+OwnerBootstrap.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -209,6 +213,8 @@
 				A1000001000000000000F401 /* TourPolicy.swift */,
 				A1000001000000000000FB01 /* DuoPosture.swift */,
 				A1000001000000000000FB02 /* DuoPostureReader.swift */,
+				E7200001000000000000F001 /* OwnerBootstrapState.swift */,
+				E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */,
 				A1000001000000000000F003 /* StreamClient.swift */,
 				C3000001000000000000F001 /* RemoteAudioPlayer.swift */,
 				C3000001000000000000F004 /* IPadAudioSession.swift */,
@@ -311,6 +317,7 @@
 				A1000001000000000000B001 /* Sources */,
 				A1000001000000000000B002 /* Frameworks */,
 				A1000001000000000000B003 /* Resources */,
+				E7200001000000000000B001 /* Embed owner bootstrap */,
 			);
 			buildRules = (
 			);
@@ -373,6 +380,30 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+        E7200001000000000000B001 /* Embed owner bootstrap */ = {
+            isa = PBXShellScriptBuildPhase;
+            alwaysOutOfDate = 1;
+            buildActionMask = 2147483647;
+            files = ();
+            inputPaths = (
+                "$(CCR_OWNER_MAC_BOOTSTRAP_PROFILE)",
+                "$(SRCROOT)/../Scripts/embed-owner-bootstrap.sh",
+                "$(SRCROOT)/../Scripts/provision-owner-bootstrap.py",
+                "$(SRCROOT)/../Sources/StreamProtocol/OwnerMacBootstrap.swift",
+                "$(SRCROOT)/../Sources/StreamProtocol/RemoteIdentity.swift",
+                "$(SRCROOT)/../Sources/StreamProtocol/AddressParser.swift",
+            );
+            name = "Embed owner bootstrap";
+            outputPaths = (
+                "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CCR-OwnerMacBootstrap.json",
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+            shellPath = /bin/sh;
+            shellScript = "\"$SRCROOT/../Scripts/embed-owner-bootstrap.sh\"";
+        };
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		A1000001000000000000B001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -407,6 +438,8 @@
 				B2000001000000000000A007 /* PencilCanvas.swift in Sources */,
 				B2000001000000000000A008 /* SceneFile.swift in Sources */,
 				B2000001000000000000A009 /* SceneRenderer.swift in Sources */,
+				E7200001000000000000A001 /* OwnerBootstrapState.swift in Sources */,
+				E7200001000000000000A002 /* StreamClient+OwnerBootstrap.swift in Sources */,
 				A1000001000000000000A003 /* StreamClient.swift in Sources */,
 				C3000001000000000000A001 /* RemoteAudioPlayer.swift in Sources */,
 				C3000001000000000000A004 /* IPadAudioSession.swift in Sources */,

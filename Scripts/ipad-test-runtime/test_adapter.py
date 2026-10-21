@@ -1,6 +1,7 @@
 import datetime as dt
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -70,11 +71,15 @@ class AdapterContract(unittest.TestCase):
                'acceptanceCommand':['/usr/bin/python3','/한글/adapter.py','accept']}}
         def read(path):
             return {'projects':[row]} if str(path).endswith('projects.json') else {'requiredChecks':['native-canvas-ui']}
-        expected = adapter.runpy.run_path('/Users/ambrion/.local/bin/bt-release-convergence')['acceptance_contract'](row)
-        with patch.object(adapter,'read',side_effect=read):
+        # Mini 검사는 설치 도구의 SHA가 기록된 읽기 전용 snapshot을 전달받는다.
+        tool = os.environ.get('CCR_TEST_RELEASE_TOOL', '/Users/ambrion/.local/bin/bt-release-convergence')
+        module = adapter.runpy.run_path(tool)
+        expected = module['acceptance_contract'](row)
+        with patch.object(adapter,'read',side_effect=read), patch.object(adapter.runpy,'run_path',return_value=module) as loader:
             self.assertEqual(adapter.acceptance_contract({'repo':'.'}), expected)
+            loader.assert_called_once_with('/Users/ambrion/.local/bin/bt-release-convergence')
         changed = dict(row, test=dict(row['test'],deployCommand=['/usr/bin/python3','different']))
-        self.assertNotEqual(expected,adapter.runpy.run_path('/Users/ambrion/.local/bin/bt-release-convergence')['acceptance_contract'](changed))
+        self.assertNotEqual(expected,module['acceptance_contract'](changed))
 
     def test_release_failure_does_not_skip_device_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -138,6 +143,28 @@ class AdapterContract(unittest.TestCase):
             self.assertLess(args.index('--device'),args.index('--'))
             self.assertEqual(args[args.index('--device')+1],'own-ipad')
             self.assertEqual(args[-2:],['--ccr-test-runtime','fixture'])
+
+    def test_build_supplies_synthetic_owner_profile_before_codesign(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory).resolve()
+            work = output / 'work'; work.mkdir()
+            repo = Path(__file__).resolve().parents[2]
+            config = {'repo':str(repo), 'outputRoot':str(output), 'developmentTeam':'ZPTXHJ866D'}
+            def stop_after_build(args, *rest):
+                self.assertEqual(args[0], 'xcodebuild')
+                values = dict(str(arg).split('=',1) for arg in args if str(arg).startswith('CCR_OWNER_MAC_BOOTSTRAP_'))
+                profile = Path(values['CCR_OWNER_MAC_BOOTSTRAP_PROFILE'])
+                self.assertTrue(profile.is_relative_to(output))
+                self.assertEqual(adapter.sha(profile.read_bytes()), values['CCR_OWNER_MAC_BOOTSTRAP_SHA256'])
+                provision = adapter.runpy.run_path(str(repo / 'Scripts/provision-owner-bootstrap.py'))
+                value = provision['validate'](profile.read_bytes())
+                self.assertEqual(value['macID'], '0' * 16)
+                self.assertEqual(value['remotePort'], 1)
+                raise adapter.Held('stop_after_build_input_check')
+            with patch.object(adapter,'lease'), patch.object(adapter,'snapshots',return_value={}), patch.object(adapter,'command',side_effect=stop_after_build), patch.object(adapter,'device') as device:
+                with self.assertRaisesRegex(adapter.Held,'stop_after_build_input_check'):
+                    adapter.deploy(config,work,{'commit':'a'*40,'tree':'b'*40})
+                device.assert_not_called()
 
     def test_build_cache_cannot_equal_root(self):
         with tempfile.TemporaryDirectory() as directory:

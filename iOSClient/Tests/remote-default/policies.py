@@ -40,7 +40,9 @@ exit(fails == 0 ? 0 : 1)
             else:
                 tests.append(CHECKS / name / "home.swift")
         for path in inputs + tests:
-            text = (subprocess.check_output(["git", "show", "HEAD:" + str(path.relative_to(ROOT))], cwd=ROOT, text=True)
+            snapshot = os.environ.get("CCR_REMOTE_BASELINE_DIR")
+            text = ((Path(snapshot) / path.relative_to(ROOT)).read_text() if baseline and path in inputs and snapshot else
+                    subprocess.check_output(["git", "show", "HEAD:" + str(path.relative_to(ROOT))], cwd=ROOT, text=True)
                     if baseline and path in inputs else path.read_text())
             if path.name == "retirement-glue.swift":
                 stream = (CLIENT / "StreamClient.swift").read_text()

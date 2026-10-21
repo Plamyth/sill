@@ -28,11 +28,12 @@ struct SavedMac: Codable, Hashable, Identifiable {
     /// "host|port" of the address that last won a remote dial: dialed first next time.
     var lastWorked: String?
     var pairedAt: Date
-    /// "qr" or "code".
+    /// "qr", "code", "cable" 또는 "owner-tailnet-v1".
     var method: String
     var lastConnectedAt: Date?
     /// "Tailscale", "your VPN", "the internet" or "by address".
     var lastRoute: String?
+    /// Owner 등록은 home 관측 전에도 plaintext downgrade를 금지하기 위해 true로 저장한다.
     /// This device has seen the Mac's home door speak TLS: a TXT record with `p`, or a TLS session
     /// at home (docs/home-pairing-plan.md §7.3). Its rows are then dialed only over TLS, in DEBUG
     /// too, and a row of it without `p` reads "Update Sill" (no downgrade: its own Sill never goes
