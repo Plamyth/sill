@@ -205,7 +205,8 @@ final class HostAudioForwardingRuntime {
                 credential: observation.credential, admission: admitted), admitted() else { return nil }
             switch result {
             case .accepted(let snapshot):
-                    offer(snapshot)
+                lease.nativeTransport = intent.transportId
+                offer(snapshot)
                 guard let visible = visibleSnapshot(snapshot), admitted() else { return nil }
                 return try? .init(requestID: control.requestID, operation: .submit, catalog: nil, result: .accepted(visible))
             case .refused(let code, let snapshot):
