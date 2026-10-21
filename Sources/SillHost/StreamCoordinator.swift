@@ -160,9 +160,13 @@ package final class StreamCoordinator {
             set { lock.lock(); value = newValue; lock.unlock() }
         }
     }
-    private var inputGeneration = UUID().uuidString
+    private var gestureScopeToken = UUID()
+    private var inputGeneration = UUID().uuidString {
+        didSet { if oldValue != inputGeneration { gestureScopeToken = UUID() } }
+    }
     private var videoEpoch: VideoEpoch? {
         didSet {
+            if oldValue != videoEpoch { gestureScopeToken = UUID() }
             if oldValue?.id != videoEpoch?.id {
                 microphoneIngress.revoke()
                 microphoneReceiver.forgetCapabilities()
@@ -193,7 +197,9 @@ package final class StreamCoordinator {
     }
     private var rectCache: (id: CGWindowID, rect: CGRect, at: CFAbsoluteTime)?
     private var pendingLaunch: String?
-    private var switching = false
+    private var switching = false {
+        didSet { if switching && !oldValue { gestureScopeToken = UUID() } }
+    }
     /// A restart of the active source is in flight (a settings change, a resize, a rate change,
     /// the encoder fallback, a lost display): the source being restarted. Nil during a switch to
     /// another source.
@@ -220,8 +226,19 @@ package final class StreamCoordinator {
     private lazy var gestureDrops = RefusalSummary(queue: .main, categories: ["gestures"]) { counts in
         "Gestures ignored: \(counts["gestures"] ?? 0) in a minute, from devices sending more than \(StreamCoordinator.gesturesPerSecond) a second."
     }
-    /// Gestures waiting for a switch in flight to finish, in arrival order, and the task posting them.
-    private var pendingGestures: [(gesture: TrackpadGesture, device: String)] = []
+    private struct PendingGesture {
+        let gesture: TrackpadGesture
+        let connection: NWConnection
+        let device: String
+        let participation: UUID
+        let source: StreamSource
+        let desktopScope: String
+        let inputGeneration: String
+        let videoEpoch: VideoEpoch
+        let scopeToken: UUID
+        let expiresAt: CFAbsoluteTime
+    }
+    private var pendingGestures: [PendingGesture] = []
     private var gestureDrain: Task<Void, Never>?
     /// A host that does not advertise (the synthetic test hosts, which tests reach by port) posts no
     /// gesture's chord: it logs the one it would post, "(not posted: a test host)", and counts
@@ -1048,7 +1065,7 @@ package final class StreamCoordinator {
             }
             recent.append(now)
             gestureArrivals[id] = recent
-            queueGesture(gesture, from: deviceName(connection))
+            queueGesture(gesture, from: connection)
         case .remoteAudioControl:
             guard let request = Wire.decode(RemoteAudioSubscription.self, from: message.payload) else { return }
             await controlRemoteAudio(request, from: connection)
@@ -1682,7 +1699,7 @@ package final class StreamCoordinator {
     /// behind it, so a click just before the gesture lands first.
     private enum Held {
         case input(InputEvent, CGRect, KeyStrokes.Device, VideoEpoch?)
-        case chord(keyCode: UInt16, flags: UInt64)
+        case chord(PendingGesture)
         case disconnect(KeyStrokes.Device)
     }
     private var heldInput: [Held] = []
@@ -1730,10 +1747,19 @@ package final class StreamCoordinator {
         return WindowSizer.hasKeyboardFocus(element, pid: pid)
     }
 
-    private func applyAdmittedChord(keyCode: UInt16, flags: UInt64) {
-        guard !switching else { return }
-        guard inputTargetReady(.text("")) else { Stats.shared.bump("in.focusRejected"); return }
-        injector.chord(keyCode: keyCode, flags: flags)
+    private func applyAdmittedChord(_ pending: PendingGesture) {
+        guard gestureIsCurrent(pending) else { return }
+        var next = gestureChords
+        let gesture = pending.gesture
+        let outcome = next.resolve(gesture.gesture, table: hotKeyTable())
+        guard gestureIsCurrent(pending) else { return }
+        if case .chord(_, _, let keyCode, let flags) = outcome, !gesturesDry {
+            injector.chord(keyCode: keyCode, flags: flags)
+        }
+        gestureChords = next
+        print(GestureChords.line(device: pending.device, gesture: gesture.gesture, fingers: gesture.fingers,
+                                 outcome: outcome, dryRun: gesturesDry))
+        if case .chord = outcome, gesturesDry { Stats.shared.bump("in.gestureDry") }
     }
 
     private func releaseHeldInput() {
@@ -1744,7 +1770,7 @@ package final class StreamCoordinator {
         for item in held {
             switch item {
             case .input(let event, let rect, let device, let epoch): applyAdmittedInput(event, rect: rect, device: device, epoch: epoch)
-            case .chord(let keyCode, let flags): applyAdmittedChord(keyCode: keyCode, flags: flags)
+            case .chord(let pending): applyAdmittedChord(pending)
             case .disconnect(let device): injector.releaseInput(of: device)
             }
         }
@@ -2434,46 +2460,54 @@ package final class StreamCoordinator {
 
     // MARK: Trackpad gestures
 
-    /// Posts gestures in arrival order, once a switch in flight is done (at most 2 s later): a
-    /// gesture made while a window streamed comes right after the device's Desktop pick, the
-    /// window may be on its way home from the virtual display, and the view should open over the
-    /// Desktop, which is the only source that shows it.
-    private func queueGesture(_ gesture: TrackpadGesture, from device: String) {
-        pendingGestures.append((gesture, device))
+    private func gestureContext(_ gesture: TrackpadGesture, from connection: NWConnection) -> PendingGesture? {
+        guard TrackpadGesture.names.contains(gesture.gesture),
+              gesture.fingers == nil || gesture.fingers == 3 || gesture.fingers == 4,
+              !switching, !shuttingDown, active == .desktop,
+              UUID(uuidString: inputGeneration) != nil,
+              let scope = desktopScope, let epoch = videoEpoch, epoch.isValid,
+              epoch.source == active, epoch.generation == inputGeneration,
+              let participation = inputFence.participationToken(for: ObjectIdentifier(connection)),
+              connections[ObjectIdentifier(connection)] === connection,
+              case .ready = connection.state else { return nil }
+        return PendingGesture(gesture: gesture, connection: connection, device: deviceName(connection),
+                              participation: participation, source: active, desktopScope: scope,
+                              inputGeneration: inputGeneration, videoEpoch: epoch, scopeToken: gestureScopeToken,
+                              expiresAt: CFAbsoluteTimeGetCurrent() + 2)
+    }
+
+    private func gestureIsCurrent(_ pending: PendingGesture) -> Bool {
+        let id = ObjectIdentifier(pending.connection)
+        guard !Task.isCancelled, case .ready = pending.connection.state else { return false }
+        return !switching && !shuttingDown && active == .desktop && active == pending.source &&
+            desktopScope == pending.desktopScope && inputGeneration == pending.inputGeneration &&
+            videoEpoch == pending.videoEpoch && gestureScopeToken == pending.scopeToken &&
+            inputFence.participationToken(for: id) == pending.participation &&
+            connections[id] === pending.connection && CFAbsoluteTimeGetCurrent() < pending.expiresAt
+    }
+
+    private func queueGesture(_ gesture: TrackpadGesture, from connection: NWConnection) {
+        guard let pending = gestureContext(gesture, from: connection) else { return }
+        pendingGestures.append(pending)
         guard gestureDrain == nil else { return }
         gestureDrain = Task { @MainActor [weak self] in
             guard let self else { return }
-            let deadline = CFAbsoluteTimeGetCurrent() + 2
-            while self.switching, CFAbsoluteTimeGetCurrent() < deadline {
-                try? await Task.sleep(for: .milliseconds(20))
-            }
+            defer { self.gestureDrain = nil }
             while !self.pendingGestures.isEmpty {
+                guard !Task.isCancelled else { self.pendingGestures.removeAll(); return }
                 let next = self.pendingGestures.removeFirst()
-                self.performGesture(next.gesture, from: next.device)
+                self.performGesture(next)
             }
-            self.gestureDrain = nil
         }
     }
 
-    /// One gesture: the Mac's shortcut for it as its Keyboard Shortcuts are now (GestureChords),
-    /// one line saying what it did, and the chord posted, behind input held for an activation; on
-    /// a host that does not advertise, only counted. Nothing is raised or activated first: these
-    /// views act on the whole Mac (App Exposé on the app in front), as they do from its keyboard.
-    private func performGesture(_ gesture: TrackpadGesture, from device: String) {
-        guard !shuttingDown else { return }
-        let outcome = gestureChords.resolve(gesture.gesture, table: hotKeyTable())
-        print(GestureChords.line(device: device, gesture: gesture.gesture, fingers: gesture.fingers,
-                                 outcome: outcome, dryRun: gesturesDry))
-        guard case .chord(_, _, let keyCode, let flags) = outcome else { return }
-        if gesturesDry {
-            Stats.shared.bump("in.gestureDry")
-            return
-        }
+    private func performGesture(_ pending: PendingGesture) {
+        guard gestureIsCurrent(pending) else { return }
         if !heldInput.isEmpty || CFAbsoluteTimeGetCurrent() < holdUntil {
-            heldInput.append(.chord(keyCode: keyCode, flags: flags))
+            heldInput.append(.chord(pending))
             return
         }
-        applyAdmittedChord(keyCode: keyCode, flags: flags)
+        applyAdmittedChord(pending)
     }
 
     /// A device's input as `GestureChords` weighs it: whether it can close a view a gesture opened.

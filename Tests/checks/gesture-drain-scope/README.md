@@ -8,11 +8,11 @@ Pstack Bug fix 절차를 적용한다. 실행 증거는 부모가 Mini에서 생
   skip: 실제 UI 금지. 아래 원본 생산 함수 추출 경로의 합성 red 실행은 부모 담당에게 전달한다.
 - [ ] 2. Binary-search the cause.
   소스에서 연결·세대가 사라지는 첫 큐와 동작 상태를 먼저 바꾸는 held 큐를 확인했다. 실행 증거는 미수집이다.
-- [ ] 3. Plan the fix.
+- [x] 3. Plan the fix.
   단독 구현 범위와 ARENA 금지를 우선한다. 기존 함수와 fence에 필요한 상태만 추가한다.
 - [ ] 4. Verify on the same surface.
   수정 후 같은 합성 검사의 green 실행은 부모 담당이 수행한다.
-- [ ] 5. Stage the commits so the failing repro lands before the fix in git history.
+- [x] 5. Stage the commits so the failing repro lands before the fix in git history.
   테스트 커밋 후 수정 커밋으로 분리한다. red를 실행하기 전에는 실패 확인으로 보고하지 않는다.
 - [ ] 6. Run **Opening a PR**.
   skip: 이 작업은 clean 커밋 반납까지만 담당한다. PR·통합과 독립 검수는 부모 담당의 범위다.
@@ -32,6 +32,8 @@ swiftc -frontend -parse Sources/SillHost/StreamCoordinator.swift Sources/SillHos
 원본 red는 맥북의 `--emit-only --baseline` 출력을 부모의 승인된 한시 실행 입력으로 전달한다. Mini에서 `swiftc -parse-as-library -package-name Sill - -o "$작업별_임시실행파일"`의 stdin으로 받아 컴파일하고 해당 파일을 실행한다. 원본 Git 객체를 Mini에 복사할 필요가 없다. 실패 단언과 종료 코드 1이 기대값이며, 컴파일 오류는 red 증거가 아니다. green은 같은 방식으로 `--baseline` 없이 생성한다. 부모가 한시 소스 사본을 사용하면 그 안에서 `python3 -B Tests/checks/gesture-drain-scope/run.py --run`도 가능하다. 이 생성기는 원격 연결이나 실행을 자동 시작하지 않는다. `--run`은 임시 실행 파일을 컴파일하고 실행한 뒤 자신이 만든 파일만 정리한다.
 
 네이티브 타입검사는 부모의 한시 소스 실행 경로에서 `swift build --target SillHostCore`로 수행한다. 이 명령은 호스트를 실행하거나 설치하지 않는다. 기존 SDK·컴파일 경로의 제약은 별도로 기록한다.
+
+생성된 원본·수정본과 생산 변경 파일은 이 구현 담당의 맥북에서 `swiftc -frontend -parse`가 통과했다. 타입검사·red/green 실행·독립 검수는 부모 담당의 단계이며, 파싱 결과를 그 증거로 사용하지 않는다. 별도 하위 에이전트 도구가 없어 독립 검수를 직접 완료했다고 주장하지 않는다.
 
 ## 증거와 한계
 

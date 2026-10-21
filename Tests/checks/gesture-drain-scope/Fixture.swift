@@ -6,7 +6,8 @@
 @MainActor func CFAbsoluteTimeGetCurrent() -> CFAbsoluteTime { Clock.now }
 @MainActor final class InertTask {
     static var pending: [InertTask] = []
-    static var isCancelled = false
+    static var current: InertTask?
+    static var isCancelled: Bool { current?.cancelled ?? false }
     var cancelled = false
     let operation: @MainActor () async -> Void
     init(operation: @escaping @MainActor () async -> Void) {
@@ -21,9 +22,9 @@
     static func drain() async {
         while !pending.isEmpty {
             let task = pending.removeFirst()
-            isCancelled = task.cancelled
+            current = task
             await task.operation()
-            isCancelled = false
+            current = nil
         }
     }
 }

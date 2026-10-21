@@ -43,14 +43,22 @@
         ("영상 변경", { h, _ in h.readyEpoch() }),
         ("영상 제거", { h, _ in h.videoEpoch = nil }),
         ("선택 변경", { h, _ in h.changeSelection() }),
+        ("scope만 변경", { h, _ in let selection = h.catalog.displayInventory.current!; h.catalog.displayInventory.select(.init(displayID: 2, inventoryID: selection.inventoryID)) }),
         ("전환 중", { h, _ in h.switching = true }),
         ("window 도달 금지", { h, _ in h.active = .window(7) }),
         ("소스 없음", { h, _ in h.active = .none }),
         ("shutdown", { h, _ in h.shuttingDown = true }),
         ("큐 만료", { _, _ in Clock.now += 2.01 }),
+        ("만료 경계", { _, _ in Clock.now += 2 }),
         ("세대 ABA", { h, _ in let old = h.inputGeneration; h.inputGeneration = UUID().uuidString; h.inputGeneration = old }),
         ("영상 ABA", { h, _ in let old = h.videoEpoch; h.readyEpoch(); h.videoEpoch = old }),
         ("전환 ABA", { h, _ in h.switching = true; h.switching = false }),
+        ("선택 ABA", { h, _ in
+            let gen = h.inputGeneration, epoch = h.videoEpoch, selection = h.catalog.displayInventory.current!
+            h.changeSelection()
+            h.catalog.displayInventory.select(selection)
+            h.inputGeneration = gen; h.videoEpoch = epoch
+        }),
         ("소스 ABA", { h, _ in let gen = h.inputGeneration; let epoch = h.videoEpoch; h.active = .window(7); h.active = .desktop; h.inputGeneration = gen; h.videoEpoch = epoch })
     ]
     for (label, mutate) in mutations {
@@ -95,6 +103,32 @@
         h.switching = false
         await InertTask.drain()
         pristine(h, "수신 " + label)
+    }
+    do {
+        for name in ["swipeUp", "swipeDown"] {
+            let (h, p) = fresh()
+            await h.send(from: p)
+            await InertTask.drain()
+            let trace = h.injector.trace
+            h.holdUntil = Clock.now + 1
+            await h.send(name, from: p)
+            await InertTask.drain()
+            check(h.gestureChords.open == .missionControl && !h.gestureChords.repeated, "대기 제스처가 기존 열린 상태 보존 " + name)
+            Clock.now += 2
+            h.releaseHeldInput()
+            check(h.injector.trace == trace && h.gestureChords.open == .missionControl && !h.gestureChords.repeated, "만료 제스처가 기존 열린 상태 보존 " + name)
+        }
+    }
+    do {
+        let (h, p) = fresh()
+        await h.send(from: p)
+        await InertTask.drain()
+        await h.send(from: p)
+        await InertTask.drain()
+        let trace = h.injector.trace
+        await h.send("invalid", from: p)
+        await InertTask.drain()
+        check(h.injector.trace == trace && h.gestureChords.open == .missionControl && h.gestureChords.repeated, "잘못된 이름이 기존 repeated 상태 보존")
     }
     do {
         let (h, p) = fresh()
@@ -162,6 +196,13 @@
         h.onHotKeys = { h.active = .window(7) }
         await InertTask.drain()
         pristine(h, "최종 단축키 조회 후 컨텍스트 취소")
+    }
+    do {
+        let (h, p) = fresh()
+        await h.send(from: p)
+        h.onHotKeys = { h.gestureDrain?.cancel() }
+        await InertTask.drain()
+        pristine(h, "최종 단축키 조회 중 drain 취소")
     }
     check(InertTask.pending.isEmpty, "소유한 inert 작업 종료")
     print("\(Results.failures == 0 ? "PASS" : "FAIL") \(Results.assertions) assertions, \(Results.failures) failures; inert dependencies only")
