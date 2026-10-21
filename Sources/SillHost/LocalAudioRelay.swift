@@ -8,6 +8,10 @@ struct LocalAudioRelayRuntimeExpectation {
     var port: Int = 17648
 }
 
+enum AudioForwardingEvidenceOperation: String, Encodable {
+    case attach, renew, detach
+}
+
 enum LocalAudioRelayJSON {
     static let limit = 16_384
 
@@ -316,6 +320,29 @@ final class LocalAudioRelay {
            bootstrap.credential.pairedDeviceId != peer.id || bootstrap.credential.pairingGeneration != peer.pairingGeneration {
             lost(); return nil
         }
+        return result
+    }
+
+    func forwardingEvidence(peer: AudioForwardingPairedDevice, connectionID: UUID,
+                            operation: AudioForwardingEvidenceOperation,
+                            admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+        struct Evidence: Encodable {
+            let pairedDeviceId: AudioForwardingDeviceID
+            let pairingGeneration: UUID
+            let connectionId: UUID
+            let operation: AudioForwardingEvidenceOperation
+        }
+        let membership = participants.snapshot
+        guard case .connected(let boot) = state, registeredBoot == boot, membership.boots[.relay] == boot else { return nil }
+        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingEvidence",
+            payload: Evidence(pairedDeviceId: peer.id, pairingGeneration: peer.pairingGeneration,
+                connectionId: connectionID, operation: operation), admission: { [weak self] in
+                guard let self, admission?() != false, case .connected(let currentBoot) = self.state,
+                      currentBoot == boot, self.registeredBoot == boot, self.participants.snapshot == membership else { return false }
+                return true
+            })
+        guard admission?() != false, !Task.isCancelled, case .connected(let currentBoot) = state,
+              currentBoot == boot, registeredBoot == boot, participants.snapshot == membership else { return nil }
         return result
     }
 

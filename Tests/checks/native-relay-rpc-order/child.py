@@ -105,6 +105,18 @@ def forwarding_request(payload):
         return dict(state='refused', code='stale_revision', snapshot=state)
     return state
 
+def forwarding_evidence(payload):
+    assert set(payload) == {'pairedDeviceId', 'pairingGeneration', 'connectionId', 'operation'}
+    assert payload['pairedDeviceId'] == 'ab' * 32
+    uuid.UUID(payload['pairingGeneration'])
+    uuid.UUID(payload['connectionId'])
+    assert payload['operation'] in ['attach', 'renew', 'detach']
+    state = dict(schemaVersion=1, revision=str({'attach': 21, 'renew': 22, 'detach': 23}[payload['operation']]),
+                 intent=None, binding=None)
+    if mode == 'evidence-refused':
+        return dict(state='refused', code='stale_device_evidence', snapshot=state)
+    return state
+
 for line in sys.stdin:
     req = json.loads(line)
     assert set(req) == {'schemaVersion', 'controllerBootId', 'sequence', 'requestId', 'method', 'payload'}
@@ -121,6 +133,8 @@ for line in sys.stdin:
                           'hold', 'hold-bootstrap-deadline', 'after-bootstrap'}, '관측 중 허용되지 않은 RPC'
     if mode.startswith('request-'):
         assert method in {'bootstrap', 'inspectRuntime', 'forwardingRequest', 'hold', 'after-request'}, '요청 검사 중 허용되지 않은 RPC'
+    if mode.startswith('evidence-'):
+        assert method in {'bootstrap', 'inspectRuntime', 'forwardingEvidence', 'hold', 'after-evidence'}, '연결 근거 검사 중 허용되지 않은 RPC'
     if method == 'bootstrap':
         result = dict(participantId='s23.audio.relay', capabilities=['quiesce-v1', 'inspect-v1', 'runtime-v1', 'forwarding-v1'])
     elif method == 'inspectRuntime':
@@ -139,6 +153,9 @@ for line in sys.stdin:
     elif method == 'forwardingRequest':
         if mode == 'request-delayed': time.sleep(0.2)
         result = forwarding_request(payload)
+    elif method == 'forwardingEvidence':
+        if mode == 'evidence-delayed': time.sleep(0.2)
+        result = forwarding_evidence(payload)
     elif method == 'forwardingSnapshot':
         intent_generation, epoch = str(uuid.uuid4()), str(uuid.uuid4())
         binding = binding or dict(pairedDeviceId='ab' * 32, intentGeneration=intent_generation, bindingEpoch=epoch,

@@ -40,7 +40,7 @@ struct LocalAudioRelayManifest: Codable {
     let entries: [Entry]
     let dependencies: [Dependency]
 
-    static let nodeCommit = "aa98e05842fccc034c1efd28461b489fe3d1a5b4"
+    static let nodeCommit = "97f640bc6202a451b2211321aa96f20ee1a0f5ef"
     static let requiredFiles = ["node/bin/node", "server/control-room-server.js", "server/audio-router.py",
                                 "python/bin/python3.13", "python/Python"]
     static let requiredDirectory = "python/lib/python3.13"

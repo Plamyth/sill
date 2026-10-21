@@ -10,6 +10,8 @@ import subprocess
 import sys
 import zipfile
 
+NODE_COMMIT = "97f640bc6202a451b2211321aa96f20ee1a0f5ef"
+
 root = Path(__file__).resolve().parents[3]
 package, output = (Path(value).resolve() for value in sys.argv[1:3])
 output.mkdir(parents=True, exist_ok=False)
@@ -28,6 +30,7 @@ record = {"sourceHashes": original, "typeExcerptSHA256": hashlib.sha256(support.
           "installed": False, "audioOpened": False, "serverStarted": False, "canonicalSelfSignatureTested": False,
           "cases": [], "exitCode": 2}
 try:
+    assert json.loads((package / "manifest.json").read_text())["nodeSourceCommit"] == NODE_COMMIT
     env = dict(os.environ)
     args = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-package-name", "Sill", "-module-cache-path", str(output / "cache")]
     module = subprocess.run(args + ['-emit-library', '-emit-module', '-module-name', 'StreamProtocol',
@@ -59,6 +62,11 @@ try:
     saved = manifest.read_bytes()
     data = json.loads(saved)
     data["nodeSourceCommit"] = "633beec7207f6c3b5ee2a2eef399eabed36039be"
+    manifest.write_text(json.dumps(data))
+    execute(scratch, False)
+    manifest.write_bytes(saved)
+    data = json.loads(saved)
+    data["nodeSourceCommit"] = "aa98e05842fccc034c1efd28461b489fe3d1a5b4"
     manifest.write_text(json.dumps(data))
     execute(scratch, False)
     manifest.write_bytes(saved)

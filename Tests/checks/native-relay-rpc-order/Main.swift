@@ -68,6 +68,11 @@ import StreamProtocol
         precondition(condition(), "test barrier expired")
     }
     @MainActor static func main() async {
+        if CommandLine.arguments.last == "evidence" {
+            await evidenceScope()
+            print("연결 근거 검사 \(assertions)개 통과. 실제 비공개 파이프와 inert 자식만 사용.")
+            return
+        }
         if CommandLine.arguments.last == "bootstrap" {
             await bootstrap()
             print("bootstrap 검사 \(assertions)개 통과. 실제 등록 relay의 비공개 파이프와 inert 자식만 사용.")
@@ -102,8 +107,153 @@ import StreamProtocol
         if CommandLine.arguments.count == 3 {
             await bootstrap()
             await requestScope()
+            await evidenceScope()
         }
         print("PASS \(assertions) assertions. Actual LocalAudioRelay private call, inert stdio only.")
+    }
+    @MainActor static let evidenceOperations: [AudioForwardingEvidenceOperation] = [.attach, .renew, .detach]
+    @MainActor static func evidenceScope() async {
+        await evidenceAcceptedAndRefused()
+        await evidenceEntryScope()
+        await evidenceAdmission()
+    }
+    @MainActor static func evidenceFrames(_ f: Fixture, peer: AudioForwardingPairedDevice,
+                                          connectionID: UUID, operations: [AudioForwardingEvidenceOperation]) {
+        let requests = f.requests(), calls = requests.filter { $0["method"] as? String == "forwardingEvidence" }
+        expect(calls.count == operations.count, "실제 연결 근거 RPC 전송 횟수")
+        for (call, operation) in zip(calls, operations) {
+            let payload = call["payload"] as! [String: Any]
+            expect(Set(payload.keys) == ["pairedDeviceId", "pairingGeneration", "connectionId", "operation"],
+                   "연결 근거 payload는 정확히 네 필드만 전송")
+            expect(payload["pairedDeviceId"] as? String == peer.id.hex &&
+                   (payload["pairingGeneration"] as? String).flatMap(UUID.init(uuidString:)) == peer.pairingGeneration,
+                   "연결 근거는 확인된 peer와 pairing 세대를 전송")
+            expect((payload["connectionId"] as? String).flatMap(UUID.init(uuidString:)) == connectionID,
+                   "Host가 소유한 connectionID를 그대로 전송")
+            let encoded = try! JSONDecoder().decode(String.self, from: JSONEncoder().encode(operation))
+            expect(payload["operation"] as? String == operation.rawValue && encoded == operation.rawValue,
+                   "연결 근거 작업은 enum의 정확한 문자열로 인코딩")
+        }
+        expect(requests.map { $0["sequence"] as! String } == (1...requests.count).map(String.init), "연결 근거 FIFO 순번은 연속")
+        expect(Set(requests.map { $0["requestId"] as! String }).count == requests.count, "연결 근거마다 고유한 requestId 사용")
+        expect(f.bootstrapNativeCalls == 0, "연결 근거 검사는 native 준비·차단·검사 콜백을 실행하지 않음")
+        let allowed = Set(["bootstrap", "inspectRuntime", "forwardingEvidence", "hold", "after-evidence"])
+        expect(requests.allSatisfy { allowed.contains($0["method"] as! String) }, "연결 근거 검사는 미디어 준비·commit RPC를 보내지 않음")
+    }
+    @MainActor static func evidenceSnapshot(_ snapshot: AudioForwardingSnapshot, operation: AudioForwardingEvidenceOperation) {
+        let revision: UInt64 = operation == .attach ? 21 : operation == .renew ? 22 : 23
+        expect(snapshot.schemaVersion == 1 && snapshot.revision.value == revision && snapshot.intent == nil && snapshot.binding == nil,
+               "연결 근거 응답의 snapshot과 미연결 상태 보존")
+        let object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as! [String: Any]
+        expect(Set(object.keys) == ["schemaVersion", "revision", "intent", "binding"], "응답은 기존 네 필드 snapshot 계약 유지")
+    }
+    @MainActor static func evidenceAcceptedAndRefused() async {
+        expect(evidenceOperations.map(\.rawValue) == ["attach", "renew", "detach"], "연결 근거 작업 세 가지의 정확한 문자열 유지")
+        for scenario in ["accepted", "refused"] {
+            let f = await Fixture.make("evidence-\(scenario)"), peer = bootstrapPeer(), connectionID = UUID()
+            let membership = f.registry.snapshot
+            var sent: [AudioForwardingEvidenceOperation] = [], checks = 0
+            for operation in evidenceOperations {
+                for explicitAdmission in [false, true] {
+                    let result = explicitAdmission
+                        ? await f.relay.forwardingEvidence(peer: peer, connectionID: connectionID, operation: operation,
+                            admission: { checks += 1; return true })
+                        : await f.relay.forwardingEvidence(peer: peer, connectionID: connectionID, operation: operation)
+                    if scenario == "accepted" {
+                        guard case .accepted(let snapshot) = result else { fatalError("정상 연결 근거 응답 거절") }
+                        evidenceSnapshot(snapshot, operation: operation)
+                    } else {
+                        guard case .refused(let code, let snapshot) = result else { fatalError("연결 근거의 typed refused 유지") }
+                        expect(code == "stale_device_evidence", "연결 근거 거절 코드 보존")
+                        evidenceSnapshot(snapshot, operation: operation)
+                    }
+                    sent.append(operation)
+                    expect(f.relay.checkConnected && f.relay.checkDrained && f.registry.snapshot == membership,
+                           "정상 응답과 typed refused는 연결·FIFO·membership 보존")
+                    evidenceFrames(f, peer: peer, connectionID: connectionID, operations: sent)
+                }
+            }
+            expect(checks >= 6, "각 연결 근거 작업의 admission은 송신과 응답 전달 직전에 재평가")
+            expect(await f.relay.checkedCall("after-evidence", until: .now.advanced(by: .seconds(1))) == 1,
+                   "연결 근거 정상 응답과 거절 이후 같은 자식에 다음 RPC 가능")
+            f.finish()
+        }
+    }
+    @MainActor static func evidenceEntryScope() async {
+        for operation in evidenceOperations {
+            for scenario in ["registered-boot", "boot", "registry", "gate", "closed"] {
+                let f = await Fixture.make("evidence-accepted"), peer = bootstrapPeer(), connectionID = UUID()
+                if scenario == "registered-boot" { f.relay.checkEvidenceReplaceRegisteredBoot(UUID()) }
+                if scenario == "boot" { f.relay.checkReplaceConnectedBoot() }
+                if scenario == "closed" { f.relay.lost() }
+                if scenario == "boot" || scenario == "registry" || scenario == "closed" {
+                    f.registry.register(.relay, bootId: scenario == "boot" ? f.relay.checkBootstrapBoot! : UUID(),
+                        control: .init(fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
+                }
+                let membership = f.registry.snapshot, boot = f.relay.checkBootstrapBoot
+                let registeredBoot = f.relay.checkBootstrapRegisteredBoot, sequence = f.relay.checkSequence
+                var checks = 0
+                expect(await f.relay.forwardingEvidence(peer: peer, connectionID: connectionID, operation: operation,
+                    admission: { checks += 1; return scenario != "gate" }) == nil, "진입 시 \(scenario) 불일치 연결 근거 거절")
+                expect(f.relay.checkDrained && f.registry.snapshot == membership && f.relay.checkSequence == sequence &&
+                       f.relay.checkBootstrapBoot == boot && f.relay.checkBootstrapRegisteredBoot == registeredBoot &&
+                       (scenario == "closed" ? f.relay.checkClosed : f.relay.checkConnected),
+                       "진입 거절은 현재 연결·등록 boot·registry·순번 보존")
+                expect(scenario == "gate" ? checks >= 1 : checks == 0, "낡은 객체 진입은 admission 호출 전 거절")
+                evidenceFrames(f, peer: peer, connectionID: connectionID, operations: [])
+                f.finish()
+                if scenario == "boot" || scenario == "registry" || scenario == "closed" {
+                    expect(f.registry.snapshot == membership, "낡은 객체 정리는 새 relay 등록을 해제하지 않음")
+                }
+            }
+        }
+    }
+    @MainActor static func evidenceAdmission() async {
+        for operation in evidenceOperations {
+            for queued in [true, false] {
+                for mutation in ["gate", "boot", "registered-boot", "membership", "registry", "registry-revision"] {
+                    let f = await Fixture.make("evidence-delayed"), peer = bootstrapPeer(), connectionID = UUID()
+                    let sequence = f.relay.checkSequence
+                    var admitted = true, checks = 0
+                    let hold: Task<Int?, Never>? = queued
+                        ? Task { await f.relay.checkedCall("hold", until: .now.advanced(by: .seconds(2))) } : nil
+                    if queued { await wait { f.relay.checkPending } }
+                    let observation = Task { await f.relay.forwardingEvidence(peer: peer, connectionID: connectionID,
+                        operation: operation, admission: { checks += 1; return admitted }) }
+                    if queued {
+                        await wait { f.relay.checkWaiting == 1 }
+                        expect(checks == 0, "연결 근거 admission은 실제 FIFO 슬롯 획득 이후 실행")
+                    } else {
+                        await wait { f.requests().last?["method"] as? String == "forwardingEvidence" }
+                        expect(checks >= 1 && f.relay.checkPending, "송신 전 admission을 통과한 연결 근거 응답 대기 상태")
+                    }
+                    if mutation == "gate" { admitted = false }
+                    else if mutation == "boot" { f.relay.checkBootstrapReplaceBoot(UUID()) }
+                    else if mutation == "registered-boot" { f.relay.checkEvidenceReplaceRegisteredBoot(UUID()) }
+                    else if mutation == "membership" { f.registry.unregister(.native) }
+                    else {
+                        f.registry.register(.relay, bootId: mutation == "registry-revision" ? f.relay.checkBootstrapBoot! : UUID(),
+                            control: .init(fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
+                    }
+                    let membership = f.registry.snapshot, boot = f.relay.checkBootstrapBoot
+                    let registeredBoot = f.relay.checkBootstrapRegisteredBoot
+                    expect(await observation.value == nil, "대기 중 \(mutation) 변경 시 이전 연결 근거 결과 전달 금지")
+                    if queued { expect(await hold?.value == 1, "연결 근거 scope 변경이 선행 RPC를 닫지 않음") }
+                    expect(f.relay.checkConnected && f.relay.checkDrained && f.registry.snapshot == membership &&
+                           f.relay.checkBootstrapBoot == boot && f.relay.checkBootstrapRegisteredBoot == registeredBoot,
+                           "이전 연결 근거 폐기는 현재 연결·등록 boot·새 registry 보존")
+                    expect(f.relay.checkSequence == sequence + 1, "미전송 연결 근거는 순번을 소비하지 않음")
+                    if !queued && mutation == "gate" { expect(checks >= 2, "응답 대기 중 권한 철회를 반환 전에 재검사") }
+                    evidenceFrames(f, peer: peer, connectionID: connectionID, operations: queued ? [] : [operation])
+                    if mutation != "boot" {
+                        expect(await f.relay.checkedCall("after-evidence", until: .now.advanced(by: .seconds(1))) == 1,
+                               "낡은 연결 근거 폐기는 같은 자식의 후속 FIFO 슬롯을 해제")
+                    }
+                    f.finish()
+                    if mutation == "registry" { expect(f.registry.snapshot == membership, "이전 객체 종료는 교체된 relay 등록 보존") }
+                }
+            }
+        }
     }
     @MainActor static func requestIntent(_ peer: AudioForwardingPairedDevice,
                                          transport: AudioForwardingTransport = .native) -> AudioForwardingIntentRequest {

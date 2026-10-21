@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 root = Path(sys.argv[1]).resolve()
-assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['bootstrap']]
+assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['bootstrap'], ['evidence']]
 check = root / 'Tests/checks/native-relay-rpc-order'
 names = ['Sources/SillHost/LocalAudioRelay.swift', 'Sources/SillHost/LocalAudioParticipants.swift',
          'Sources/SillHost/AudioForwardingContract.swift', 'Sources/SillHost/RemoteAccess.swift',
@@ -27,6 +27,7 @@ extension LocalAudioRelay {
     var checkBootstrapBoot: UUID? { if case .connected(let boot) = state { boot } else { nil } }
     var checkBootstrapRegisteredBoot: UUID? { registeredBoot }
     func checkBootstrapReplaceBoot(_ boot: UUID) { state = .connected(boot); registeredBoot = boot }
+    func checkEvidenceReplaceRegisteredBoot(_ boot: UUID) { registeredBoot = boot }
 }
 '''
     (out / 'Relay.swift').write_text(source)
