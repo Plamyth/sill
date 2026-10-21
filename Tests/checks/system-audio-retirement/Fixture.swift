@@ -83,13 +83,56 @@ extension SystemAudioCapture {
     }
 }
 
+final class NWConnection {}
+struct RemoteAudioSubscription { let enabled: Bool; let requestID: UUID }
+@MainActor final class FakeServer {
+    var resets = 0
+    var epoch: UInt64 = 0
+    var holdReset = false
+    var pendingReset: ((UInt64) -> Void)?
+    var enabled = Set<ObjectIdentifier>()
+    var acceptedPackets: [UInt64] = []
+    func resetRemoteAudio(completion: @escaping (UInt64) -> Void) {
+        resets += 1
+        if holdReset { pendingReset = completion }
+        else { epoch += 1; enabled.removeAll(); completion(epoch) }
+    }
+    func finishReset() {
+        epoch += 1; enabled.removeAll()
+        let completion = pendingReset; pendingReset = nil; completion?(epoch)
+    }
+    func setRemoteAudio(_ enabled: Bool, for connection: NWConnection, afterSequence: UInt64 = .max) {
+        if enabled { self.enabled.insert(ObjectIdentifier(connection)) }
+        else { self.enabled.remove(ObjectIdentifier(connection)) }
+    }
+    func broadcastRemoteAudio(_ payload: Data, epoch: UInt64, sequence: UInt64) {
+        if epoch == self.epoch && !enabled.isEmpty { acceptedPackets.append(epoch) }
+    }
+}
 @MainActor final class CallbackCoordinator {
+    enum Source { case none, desktop }
+    struct Catalog { var display: SCDisplay? = SCDisplay(plan: Plan()) }
+    var catalog = Catalog()
+    var switching = false, shuttingDown = false, synthetic = false
+    var active = Source.desktop
+    var routes: [ObjectIdentifier: Bool] = [:]
+    var connections: [ObjectIdentifier: NWConnection] = [:]
+    var remoteAudioSubscribers = Set<ObjectIdentifier>()
+    var remoteAudioRequests: [ObjectIdentifier: UUID] = [:]
+    var remoteAudioActions: [ObjectIdentifier: UInt64] = [:]
+    var nextRemoteAudioAction: UInt64 = 0
+    var remoteAudioEpoch: UInt64 = 0
+    var remoteAudioRunning = false
+    let remoteAudioLifecycle = RemoteAudioCaptureLifecycle()
+    let server = FakeServer()
     let remoteAudioCapture = SystemAudioCapture()
-    private(set) var revocations = 0
+    var revocations: Int { server.resets }
     init() {
         // PRODUCTION_STOP_CALLBACK
     }
-    func revokeRemoteAudio(reason: String) async { revocations += 1 }
+    func inputAuthorizationCurrent(_ id: ObjectIdentifier) -> Bool { routes[id] == true }
+    func remoteAudioState(_ enabled: Bool, requestID: UUID?, reason: String? = nil, to connection: NWConnection) {}
+    // COORDINATOR_METHODS
 }
 
 @main struct Checks {
@@ -203,6 +246,52 @@ extension SystemAudioCapture {
         for _ in 0..<10 { await Task.yield() }
         check(current.revocations == 1 && !current.remoteAudioCapture.hasStream,
               "current capture failure still revokes its own subscription")
+
+        let reset = CallbackCoordinator(), first = NWConnection(), second = NWConnection()
+        let firstID = ObjectIdentifier(first), secondID = ObjectIdentifier(second)
+        for connection in [first, second] {
+            reset.routes[ObjectIdentifier(connection)] = true
+            reset.connections[ObjectIdentifier(connection)] = connection
+        }
+        await reset.controlRemoteAudio(.init(enabled: true, requestID: UUID()), from: first)
+        check(reset.remoteAudioSubscribers == [firstID], "first subscription is active before reset")
+        reset.server.holdReset = true
+        let revoke = Task { await reset.revokeRemoteAudio(reason: "inert test reset") }
+        for _ in 0..<1000 where reset.server.pendingReset == nil { await Task.yield() }
+        check(reset.server.pendingReset != nil, "reset completion is held")
+        let enable = Task { await reset.controlRemoteAudio(.init(enabled: true, requestID: UUID()), from: second) }
+        for _ in 0..<1000 where reset.remoteAudioRequests[secondID] == nil { await Task.yield() }
+        for _ in 0..<10 { await Task.yield() }
+        check(!reset.remoteAudioSubscribers.contains(secondID), "new subscription waits for reset and capture stop")
+        reset.server.finishReset()
+        await revoke.value
+        await enable.value
+        check(reset.remoteAudioSubscribers == [secondID] && reset.remoteAudioEpoch == reset.server.epoch,
+              "new subscription resumes in the completed reset epoch")
+        reset.remoteAudioCapture.onPacket?(Data(), 1)
+        check(reset.server.acceptedPackets == [reset.server.epoch], "replacement PCM callback uses the current server epoch")
+        await reset.remoteAudioCapture.stop()
+
+        let chain = CallbackCoordinator(), peer = NWConnection(), peerID = ObjectIdentifier(peer)
+        chain.routes[peerID] = true; chain.connections[peerID] = peer
+        chain.server.holdReset = true
+        let one = Task { await chain.revokeRemoteAudio(reason: "first reset") }
+        for _ in 0..<1000 where chain.server.pendingReset == nil { await Task.yield() }
+        let two = Task { await chain.revokeRemoteAudio(reason: "second reset") }
+        for _ in 0..<10 { await Task.yield() }
+        check(chain.server.resets == 1, "overlapping revocations serialize their server reset")
+        chain.server.finishReset()
+        for _ in 0..<1000 where chain.server.pendingReset == nil { await Task.yield() }
+        check(chain.server.resets == 2 && chain.server.pendingReset != nil, "second reset remains pending after first completion")
+        let afterBoth = Task { await chain.controlRemoteAudio(.init(enabled: true, requestID: UUID()), from: peer) }
+        for _ in 0..<1000 where chain.remoteAudioRequests[peerID] == nil { await Task.yield() }
+        check(chain.remoteAudioSubscribers.isEmpty, "new subscriber waits through the full reset chain")
+        chain.server.finishReset()
+        await one.value; await two.value; await afterBoth.value
+        chain.remoteAudioCapture.onPacket?(Data(), 1)
+        check(chain.remoteAudioSubscribers == [peerID] && chain.server.acceptedPackets == [2],
+              "new capture uses the last completed reset epoch")
+        await chain.remoteAudioCapture.stop()
 
         print("RETIREMENT_RESULT assertions=\(count) failures=\(failures)")
         exit(failures == 0 ? 0 : 1)

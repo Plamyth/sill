@@ -39,8 +39,14 @@ final class RemoteAudioCaptureLifecycle {
 
     func scheduleStop(_ operation: @escaping @MainActor () async -> Void) {
         guard current == nil else { return }
+        enqueueStop(operation)
+    }
+
+    func enqueueStop(_ operation: @escaping @MainActor () async -> Void) {
+        let previousStop = current
         let pendingStart = currentStart
         let stop = Stop(id: UUID(), task: Task {
+            await previousStop?.task.value
             if let pendingStart {
                 _ = await pendingStart.task.value
                 if self.currentStart?.id == pendingStart.id { self.currentStart = nil }

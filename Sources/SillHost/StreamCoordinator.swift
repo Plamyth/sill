@@ -2986,12 +2986,15 @@ package final class StreamCoordinator {
         remoteAudioSubscribers.removeAll()
         remoteAudioRequests.removeAll()
         remoteAudioActions.removeAll()
-        let epoch = await withCheckedContinuation { continuation in
-            server.resetRemoteAudio { continuation.resume(returning: $0) }
+        remoteAudioRunning = false
+        remoteAudioLifecycle.enqueueStop { [self] in
+            let epoch = await withCheckedContinuation { continuation in
+                server.resetRemoteAudio { continuation.resume(returning: $0) }
+            }
+            remoteAudioEpoch = max(remoteAudioEpoch, epoch)
+            for connection in old { remoteAudioState(false, requestID: nil, reason: reason, to: connection) }
+            await remoteAudioCapture.stop()
         }
-        remoteAudioEpoch = max(remoteAudioEpoch, epoch)
-        for connection in old { remoteAudioState(false, requestID: nil, reason: reason, to: connection) }
-        stopRemoteAudioIfIdle()
         await remoteAudioLifecycle.waitUntilIdle()
     }
 

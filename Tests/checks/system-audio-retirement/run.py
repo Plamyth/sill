@@ -37,6 +37,12 @@ coordinator = coordinator_path.read_text()
 callback = block(coordinator, "remoteAudioCapture.onStopped =")
 assert emitted.count("// PRODUCTION_STOP_CALLBACK") == 1
 emitted = emitted.replace("// PRODUCTION_STOP_CALLBACK", callback)
+methods = [block(coordinator, marker).replace('private func', 'func', 1) for marker in [
+    'private func stopRemoteAudioIfIdle()', 'private func revokeRemoteAudio(',
+    'private func canEnableRemoteAudio(', 'private func controlRemoteAudio(']]
+emitted = emitted.replace('// COORDINATOR_METHODS', '\n'.join(methods))
+lifecycle_path = root / 'Sources/SillHost/RemoteAudioCaptureLifecycle.swift'
+lifecycle = lifecycle_path.read_text()
 (output / "Checks.swift").write_text(emitted)
 for name in ["tmp", "module-cache", "clang-cache"]:
     (output / name).mkdir()
@@ -46,6 +52,7 @@ env = dict(os.environ, TMPDIR=str(output / "tmp"),
 record = {"productionSHA256": hashlib.sha256(source.encode()).hexdigest(),
           "coordinatorSHA256": hashlib.sha256(coordinator.encode()).hexdigest(),
           "stopCallbackSHA256": hashlib.sha256(callback.encode()).hexdigest(),
+          "lifecycleSHA256": hashlib.sha256(lifecycle.encode()).hexdigest(),
           "fixtureSHA256": hashlib.sha256(fixture.encode()).hexdigest(),
           "extractedSHA256": hashlib.sha256(capture.encode()).hexdigest(),
           "scope": "Actual start/stop/delegate/barrier methods and fields; fake SCStream; no ScreenCaptureKit, HAL, app, network or device IO",
@@ -53,7 +60,7 @@ record = {"productionSHA256": hashlib.sha256(source.encode()).hexdigest(),
 try:
     compiler = os.environ.get("SWIFTC", "/usr/bin/swiftc")
     commands = [[compiler, "-swift-version", "5", "-parse-as-library", "-module-cache-path", str(output / "module-cache"),
-                 "-o", str(output / "checks"), str(output / "Checks.swift")], [str(output / "checks")]]
+                 "-o", str(output / "checks"), str(output / "Checks.swift"), str(lifecycle_path)], [str(output / "checks")]]
     for index, command in enumerate(commands):
         result = subprocess.run(command, cwd=output, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
         (output / ("compile.log" if index == 0 else "checks.log")).write_bytes(result.stdout)
@@ -62,7 +69,7 @@ try:
         record["exitCode"] = result.returncode
         if result.returncode:
             break
-    record["sourceUnchanged"] = source_path.read_text() == source and fixture_path.read_text() == fixture and coordinator_path.read_text() == coordinator
+    record["sourceUnchanged"] = source_path.read_text() == source and fixture_path.read_text() == fixture and coordinator_path.read_text() == coordinator and lifecycle_path.read_text() == lifecycle
     if not record["sourceUnchanged"]:
         record["exitCode"] = 2
 except Exception as error:
