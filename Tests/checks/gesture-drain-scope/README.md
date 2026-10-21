@@ -1,5 +1,38 @@
 # 제스처 지연 큐의 컨텍스트 검사
 
+## 창에서 Desktop으로 전환하는 순정 클라이언트의 P2 수정
+
+이번 기준은 `22c04fd33b8c10f61432a18ec21b595afc9d0f7e`, tree `69ad10bc8a90e74034cd147ded11d137339f7029`이다. `iOSClient/StreamClient.swift`의 순정 `sendGesture`는 창 화면에서 Desktop 선택을 보낸 직후 kind 28을 보낸다. 기존 후보가 전환 중 수신을 모두 거부해 이 정상 순서를 잃었다. iOS 클라이언트와 wire 계약은 변경하지 않는다.
+
+Pstack Bug fix의 원인 추적과 재현 검사 보강을 수행했다. `Model the Domain`에 따라 원 연결·참여·요청 당시 화면·검증 토큰·만료 시각과 실제 선택 작업 UUID를 묶는 `DesktopGestureSelection`을 사용한다. Ponytail full에 따라 기존 fence와 세대·epoch·지연 큐를 재사용하고 의존성을 추가하지 않는다. 작업의 다음 실행 병목은 부모의 Mini 타입검사와 실제 합성 실행이다. 새 하위 에이전트·ARENA·실제 UI 재현은 사용자 금지 범위다.
+
+선택 요청은 `handleSourceSelection` → `handlePick` → `select`의 동일 티켓으로 연결한다. 파이프라인의 실제 `active`·세대·epoch 대입 직후 완료 후보를 캡처하고, 원래 선택의 defer에서 검증한 경우에만 완료한다. 대기 제스처와 마지막 `Held.chord`는 이 티켓의 완료 결과만 참조한다. 원래 선택 작업의 정상 상태 대입만 검증 토큰 변경을 허용하며, 다른 상태 변경은 ABA 복원 후에도 티켓을 취소한다. 기존 캡처·오디오·마이크 대입과 호출 순서는 유지한다.
+
+티켓은 유휴 상태의 창 화면에서 같은 참여자가 명시적으로 요청한 Desktop 선택 하나에만 발급한다. 다른 요청·실패·취소·겹친 선택·디스플레이 변경·기존 전환·restart·원 연결 종료·재가입은 대기 제스처를 승격하지 않는다. 대기 만료는 수신 후 2초와 선택 요청 후 2초 중 빠른 시각이다. 이미 Desktop인 클라이언트는 기존 수신 시점의 컨텍스트를 그대로 보존한다.
+
+`run.py --ref`는 지정한 Git commit의 생산 소스와 현재 작업트리의 동일 검사를 결합한다. ref는 시작 시 commit으로 고정한다. stderr에는 생산 파일·검사·fixture·생성기와 추출부의 SHA-256을 출력한다. 부모가 아래 두 stdout을 각각 Mini의 승인된 입력 스트림으로 전달해 같은 컴파일·실행 명령으로 비교한다.
+
+```sh
+python3 -B Tests/checks/gesture-drain-scope/run.py --emit-only --ref 22c04fd33b8c10f61432a18ec21b595afc9d0f7e
+python3 -B Tests/checks/gesture-drain-scope/run.py --emit-only
+```
+
+추출 범위에는 실제 selectSource/selectDisplay 수신 case, 요청 처리기, 선택 wrapper, 선택 본문의 진입과 defer 완료 코드, desktop preflight, restart 중 보류한 pick 처리, 실제 파이프라인의 최종 상태 대입과 완료 캡처가 포함된다. 전체 `select`의 미디어 부작용 본문은 실행하지 않는다. `catalog.refreshWindows` 의존성을 continuation으로 멈춰 실제 선택에 진입한 뒤 kind 28을 수신한다. 검사에서 티켓·operation·완료 상태를 직접 설정하지 않는다. `Test Behavior, Not Implementation`에 따라 실제 chord 대상과 기존 open/repeated 상태를 확인한다.
+
+새 검사는 순정 창→Desktop의 정상 수신, 완료 전 drain 대기, 완료 후 held, 선택 실패·취소·TTL, 원 참여 해제·재가입, 중첩 요청, 다른 연결·디스플레이, 세대·epoch·source·switch의 ABA, 디스플레이 ABA 알림, 이미 진행 중인 전환과 restart 뒤 보류 선택을 포함한다. 이미 Desktop인 Android 세대 1의 optional nil도 유지 검사한다. `run.py`의 설명 주석 두 개와 `Fixture.swift` 첫 설명 주석을 제거했다.
+
+- [x] 소스에서 순정 송신 순서와 거부 지점 추적.
+- [x] 실제 선택 경계와 정상·부정 경로 검사 추가.
+- [x] 수정본·기존 후보·원본 068 생성 및 Swift 구문 확인.
+- [x] Python AST 구문 확인과 `git diff --check`.
+- [ ] 부모 Mini에서 동일 최신 검사의 기준/수정 비교 실행.
+- [ ] 부모 Mini에서 전체 `SillHostCore` SDK 컴파일.
+- [ ] 수정된 head의 독립 검수. Pstack의 `BLOCKED: independent review`를 유지하며 clean commit 반납을 배포·통합 승인으로 표시하지 않는다.
+
+이 작성자는 맥북에서 생성·파싱만 수행했다. 사용자 인계에 적힌 기존 244개·후보 0실패·전체 SDK 컴파일 통과는 이전 후보의 증거이며 이번 수정의 통과 결과가 아니다. 실제 UI·입력·캡처·오디오·HAL·기기·설치·재시작·배포는 실행하지 않았다. 아래는 이전 작업의 보존 기록이다.
+
+## 이전 지연 큐 수정 기록
+
 원 담당은 `01a13005-ff61-7780-b0e8-6dc171de1c9d`이다. 전용 브랜치는 `codex/gesture-drain-scope-20261021`, 기준은 `068be8f4a50444716aefe86347e7ae5dfa947f5d`이다. 변경 범위는 제스처 수신, 두 지연 큐와 입력 참여 식별이다.
 
 Pstack Bug fix 절차를 적용한다. 실행 증거는 부모가 Mini에서 생성한다. 이 구현 담당은 생성과 파싱까지만 수행한다. Ponytail full에 따라 기존 fence, 세대와 영상 epoch를 사용하고 별도 프레임워크나 wire 계약을 추가하지 않는다. 데이터 모양은 원 연결, 참여 토큰, source, desktopScope, 입력 세대, 영상 epoch, 무효화 토큰과 만료 시각을 묶은 대기 제스처다.
