@@ -20,6 +20,10 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         let validUntil: Date
         fileprivate let issuer: UUID
         fileprivate let deadline: UInt64
+
+        var isUnexpired: Bool {
+            DispatchTime.now().uptimeNanoseconds < deadline && Date() < validUntil
+        }
     }
 
     enum Command: Equatable, Sendable {
@@ -89,8 +93,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     func withCurrent(_ proof: Proof, _ action: () -> Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard !stopped, proof.issuer == issuer,
-              DispatchTime.now().uptimeNanoseconds < proof.deadline, Date() < proof.validUntil else { return false }
+        guard !stopped, proof.issuer == issuer, proof.isUnexpired else { return false }
         return action()
     }
 

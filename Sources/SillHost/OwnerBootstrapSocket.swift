@@ -86,7 +86,7 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
         if let epoch {
             guard let snapshot, snapshot.remoteAccess, snapshot.ownerBootstrapEpoch == epoch else { return false }
         }
-        return !cancelled && DispatchTime.now().uptimeNanoseconds < deadline && current()
+        return !cancelled && current() && DispatchTime.now().uptimeNanoseconds < deadline
     }
 
     func cancel() {
@@ -101,7 +101,10 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
             guard trust == nil || trust === box, liveLocked(snapshot: snapshot),
                   evidence.proof.binding == binding, evidence.proof.sourceIP == binding.sourceIP,
                   evidence.proof.localIPs.contains(binding.localIP), !evidence.proof.localIPs.contains(binding.sourceIP) else { return false }
-            return evidence.sensor.withCurrent(evidence.proof) { action(snapshot) }
+            return evidence.sensor.withCurrent(evidence.proof) {
+                guard DispatchTime.now().uptimeNanoseconds < deadline else { return false }
+                return action(snapshot)
+            }
         }
     }
 
@@ -110,7 +113,8 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
         guard purpose == .session, let evidence, let candidate else { return false }
         return decide(in: box, evidence: evidence) { snapshot in
             guard !consumed, snapshot.remoteAccess, snapshot.ownerCandidates[binding.fingerprint] == candidate,
-                  evidence.proof.principal == candidate.principal, allowed(snapshot) else { return false }
+                  evidence.proof.principal == candidate.principal, allowed(snapshot),
+                  DispatchTime.now().uptimeNanoseconds < deadline, evidence.proof.isUnexpired else { return false }
             consumed = true
             box.authorizeOwner(binding.fingerprint)
             serve(box.snapshot)
