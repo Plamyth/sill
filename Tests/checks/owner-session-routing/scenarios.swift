@@ -31,7 +31,7 @@ for method in ["qr","code","cable","icloud"] {
 do {
     let c=StreamClient();c.records=[owner]
     check("owner Bonjour는 LAN 도어 상태로 막지 않고 저장 VPN 경로로 전달", c.homeDecision(row,macID:owner.macID,tap:false) == .pinned)
-    _=c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true)
+    check("재연결 상태 없는 owner row는 최초 연결 허용", c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true))
     check("owner row는 home socket 대신 저장 VPN dial", c.rowConnections == 0 && c.remoteRequests.count == 1 && c.remoteRequests.first?.0 == owner.macID)
     check("재연결 상태 없는 owner row 시작은 실패 표시 가능한 최초 연결", c.remoteRequests.first?.1 == .tap)
     c.status = "연결 중"
@@ -48,16 +48,34 @@ do {
     check("owner 재연결의 일시 실패는 기존 지연 재시도 유지", c.reconnect?.remoteFailures == 1 && (c.reconnect?.nextRemoteAt ?? 0) > ProcessInfo.processInfo.systemUptime && c.retryChecks == 1)
     c.remoteDialFailed(macID:owner.macID,why:.automatic,failure:.remoteOff,candidate:nil)
     check("owner 원격 끔 거절은 재시도를 끄고 이유 표시", c.reconnect?.remoteAllowed == false && c.status.contains("원격 접근을 껐습니다"))
+    let requestsBeforeTap = c.remoteRequests.count
     var missing = row; missing.endpoint = nil; missing.wired = true
     check("owner는 Bonjour endpoint 없이도 저장 경로 선택", c.dialRow(missing,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true,tap:true))
-    check("owner 수동 탭도 케이블 대신 저장 경로", c.rowConnections == 0 && c.remoteRequests.last?.1 == .tap)
+    check("owner 원격 끔 뒤 명시 탭은 케이블 대신 저장 경로", c.rowConnections == 0 && c.remoteRequests.count == requestsBeforeTap + 1 && c.remoteRequests.last?.1 == .tap)
     c.session=Session(macID:owner.macID);c.moveHomeIfListed()
     check("owner 자동 home 이동은 준비 단계에서 중지", c.homeEligible == 0)
     for kind in MoveKind.allCases { c.startMove(to:7,kind:kind,fallback:9) }
     check("owner home 이동 socket 생성 직전도 차단", c.moveCreated == 0)
 }
+for failure: RemoteDialPolicy.Failure in [.revoked,.wrongMac,.remoteOff] {
+    let c = StreamClient(); c.records = [owner]; c.reconnect = StreamClient.Retry(macID:owner.macID)
+    check("owner \(failure) 실패 전 자동 원격 요청 시작", c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true) && c.remoteRequests.count == 1 && c.remoteRequests.last?.1 == .automatic)
+    c.remoteDialFailed(macID:owner.macID,why:.automatic,failure:failure,candidate:ownerCandidates.first)
+    check("owner \(failure) 실제 실패 콜백이 자동 원격 재시도 중지", c.reconnect?.remoteAllowed == false)
+    let requestsBeforeRow = c.remoteRequests.count
+    let dialed = c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true)
+    check("owner \(failure) 실패 뒤 자동 Bonjour row 차단", !dialed)
+    check("owner \(failure) 실패 뒤 원격 요청 미증가 \(requestsBeforeRow)→\(c.remoteRequests.count)", c.remoteRequests.count == requestsBeforeRow && c.rowConnections == 0)
+}
+do {
+    let c = StreamClient(); c.records = [owner]
+    c.reconnect = StreamClient.Retry(macID:"other-mac",remoteAllowed:false)
+    check("다른 Mac의 중지 기록은 owner row 연결을 막지 않음", c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true))
+    check("다른 Mac의 중지 기록이 있으면 owner 최초 연결 이유 유지", c.remoteRequests.count == 1 && c.remoteRequests.last?.1 == .tap && c.rowConnections == 0)
+}
 for method in ["qr","code","cable","icloud"] {
     let legacy=record(method);let c=StreamClient();c.records=[legacy]
+    c.reconnect = StreamClient.Retry(macID:legacy.macID,remoteAllowed:false)
     check("기존 \(method) plain 도어의 업그레이드 요구 보존", c.homeDecision(row,macID:legacy.macID,tap:false) == .updateSill)
     _=c.dialRow(row,macID:legacy.macID,trust:.saved(pin:pin),tagNamed:true)
     check("기존 \(method) row 경로 보존", c.rowConnections == 1 && c.remoteRequests.isEmpty)
