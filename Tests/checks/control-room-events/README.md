@@ -13,3 +13,34 @@ python3 Tests/checks/control-room-events/run.py /Volumes/BT-Workspace/Developmen
 검사는 snapshot·patch·heartbeat, 세대·순서·중복·누락, 필드 제거, legacy 디코딩, 초기 unavailable, 원본 관측 시각과 30초 신선도, 4,002개 카드와 마지막 Cursor 두 카드, UTF-8·LF·CRLF·CR 프레임과 본문·전체 크기 제한을 확인합니다. URLProtocol 합성 전송으로 재연결 cursor, 오류, 미지원 응답, 취소, 최신 한 개 버퍼, 정책 삭제 뒤 단절 시 카드 비노출을 확인합니다. 연결 세대의 소유권도 검사합니다. 실제 HTTP 서버·UDS·앱·기기·오디오·키·모델·메시지를 사용하지 않습니다.
 
 앱 빌드와 독립 검수는 별도 영수증입니다. UI 표시·OS 인증서 검증의 실제 연결·설치 앱과 실제 기기의 수용은 이 Foundation 검사로 주장하지 않습니다.
+
+## 소스·세션 조회 선택
+
+작업 키는 `ipad-source-sessions-20261023`, 전용 브랜치는 `codex/ipad-source-sessions-20261023`, 기준 커밋은 `cedd0c526a21b67764de4471211e75de8bc8200f`입니다. 앱 변경은 `ControlRoomProjection.swift`와 `ControlRoomViews.swift`에만 있습니다. 공통 iPad·phone 뷰의 기존 3×3 안에 접을 수 있는 `소스·세션` 패널을 추가합니다.
+
+패널은 relay projection root의 optional `unifiedControl: {schema:1,rows,truncated,error}`와 `sourceConnections`만 디코딩합니다. 비공개 payload, `items`, `sessions`, private binding을 해석하거나 합성하지 않습니다. 소스 요약, 개별 Codex 연결과 행 capability는 별도 정보입니다. 원본 `status`, `executionStatus`, `agentStatus`, 연결 상태와 관측 시각도 별도로 표시합니다. 모든 선택은 조회용이며 명령·전송 API가 없습니다.
+
+선택 식별자는 `(source,key,externalId,sessionId,runId,hostId,instanceId,startedAt,workspaceIdentity,ownerThreadId)`입니다. 제목으로 병합하지 않습니다. 소스 전환은 남아 있는 해당 소스의 선택만 보존합니다. 사라지거나 식별자가 바뀐 선택과 중복된 복합 식별자는 제거하며, 이전 식별자가 다시 나타나도 자동 선택하지 않습니다. 원본 owner는 보존하고 `ownerVerified`와 함께 표시합니다.
+
+`android-mobile-control-events-v1.json`은 Android 저장소 commit `e5f931657dba5b2d3d4c04b547a7a17da3ac660b`의 `tests/fixtures/mobile-control-events-v1.json`과 정확히 같은 28,543바이트입니다. SHA-256은 `9fb6288d6ac3d68f4d743d8703b091f263664d239248b53e6ba82d8cb554b319`이며 출처는 `android-fixture-provenance.json`에 기록합니다. 기준 DTO 함수는 같은 커밋 `server/mobile-control.js`의 `projectControl`과 `codexSourceState`입니다. Vision `bf7f7ef`의 전용 모델과 projection은 참고만 했으며 가져오지 않았습니다.
+
+Android fixture의 모바일 snapshot은 iPad relay의 SSE root가 아닙니다. `SourceSessions.swift`는 해당 fixture의 허용 DTO 필드만 합성 relay root에 넣어 검사합니다. 기존 `fixture.json`의 공통 reducer 계약 검사와 구분합니다. `threads`와 `catalog`의 빈 배열을 요구하는 relay strict 계약은 유지합니다.
+
+```sh
+python3 Tests/checks/control-room-events/run.py /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/ios-source-sessions-20261023/validation
+```
+
+Pstack Feature 적용에서는 기존 reducer에서 projection 디코딩을 거쳐 공통 `ControlRoomGrid`로 표시되는 흐름을 확인하고, typed DTO·복합 식별자·소스별 선택 모델을 먼저 정했습니다. Ponytail은 기존 parser, reducer, Foundation 실행 도구와 SwiftUI menu·scroll을 재사용했습니다.
+
+- 선행 조건은 전용 워크트리의 기준 커밋·clean 상태, exact DTO, 외장 저장 경로 확인입니다.
+- 독립 작업은 Mini의 Foundation 검사와 맥북 Apple SDK 컴파일이며, 각 출력 경로를 분리합니다.
+- 공유 쓰기는 이 워크트리의 단일 작성자에게만 허용합니다. 설치·실물 UI·실서비스·호스트·음성·키 변경과 push는 수행하지 않습니다.
+- 가장 작은 분해는 두 앱 파일과 기존 검사 확장을 한 작성자가 처리하는 것입니다. ARENA와 하위 에이전트는 사용자 지시에 따라 사용하지 않습니다.
+
+검증은 4,000개 Codex 뒤 Cursor 두 행, 같은 제목과 ID의 교차 provider, 모든 복합 식별자 변경, 개별 연결 결박·오래된 관측, summary 권한으로 행 권한을 올리지 않는 조건, 필드 제거와 unavailable, 소스 전환 선택 보존을 포함합니다. 순수 Foundation은 기존 ephemeral 도구의 원담당 `01a13ace-e372-7ed1-9946-149df37ee1c3`, 고정 작업 키 `ipad-source-sessions-foundation`을 사용하고 `cleanup_verified`를 확인합니다.
+
+Apple SDK 검증은 전용 `validation/DerivedData`에서 `Sill`과 `SillPhone`을 `generic/platform=iOS`, `CODE_SIGNING_ALLOWED=NO`, `CODE_SIGNING_REQUIRED=NO`로 빌드합니다. 공개 bootstrap profile의 SHA-256 `7bcf8ce74bf4292d1a20b07d45bfa0c040957e1ade3d80dd4be37c5eb96cf8c7`을 대조합니다. 설치·실물 화면·현재 relay runtime 수용과 독립 검수는 이 검사에 포함하지 않습니다. relay allowlist 반영과 독립 검수는 부모 담당입니다.
+
+부모 relay의 숨김 보정은 exact Android fixture를 바꾸지 않습니다. 별도 합성 검사에서 숨긴 session·owner·run을 참조하는 provider 요약의 `unavailable`, null 식별자·관측값, 읽기 전용과 거부 capability, 일반 한국어 안내를 그대로 수용합니다. 행 제거는 선택을 해제하며 provider 요약을 남은 행의 연결·권한과 섞지 않습니다.
+
+이번 후보의 Mini Foundation 검사는 종료 코드 0이며 임시 사본 삭제 확인도 통과했습니다. `Sill`과 `SillPhone`의 generic iOS 무서명 빌드도 각각 종료 코드 0입니다. 증거는 전용 `validation` 폴더의 `foundation.log`, `foundation-result.json`, `Sill-generic-ios-result.json`, `SillPhone-generic-ios-result.json`에 있습니다. 실기기 UI와 실제 relay 연결은 미검증이며 설치는 0회입니다. 독립 검수는 부모 담당이 수행합니다.

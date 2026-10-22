@@ -14,6 +14,8 @@ struct ControlRoomProjection: Decodable {
     let chatgptProjectState: String?
     let sections: [ControlRoomSection]?
     let brainTrinity: BrainTrinityFeed?
+    let unifiedControl: ControlRoomUnifiedControl?
+    let sourceConnections: [ControlRoomSourceConnection]?
 
     struct Connection: Decodable {
         enum State: String, Decodable { case connected, stale, unavailable }
@@ -27,7 +29,7 @@ struct ControlRoomProjection: Decodable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, generatedAt, workspace, activeVoiceId, activeVoiceSession, voiceCard
         case currentGrid, workspaces, projects, chatgptProjects, chatgptProjectState, sections, brainTrinity
-        case sourceObservedAt, connection
+        case sourceObservedAt, connection, unifiedControl, sourceConnections
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +49,8 @@ struct ControlRoomProjection: Decodable {
         brainTrinity = try c.decodeIfPresent(BrainTrinityFeed.self,forKey:.brainTrinity)
         sourceObservedAt = try c.decodeIfPresent(String.self,forKey:.sourceObservedAt)
         connection = try c.decodeIfPresent(Connection.self,forKey:.connection)
+        unifiedControl = try c.decodeIfPresent(ControlRoomUnifiedControl.self,forKey:.unifiedControl)
+        sourceConnections = try c.decodeIfPresent([ControlRoomSourceConnection].self,forKey:.sourceConnections)
     }
 
     var hasDisplayContent: Bool { !generatedAt.isEmpty && connection?.state != .unavailable }
@@ -132,6 +136,196 @@ struct ControlRoomProjection: Decodable {
         formatter.formatOptions = [.withInternetDateTime]
         guard let date = fractional ?? formatter.date(from:value) else { return false }
         return now.timeIntervalSince(date) <= 30 && date.timeIntervalSince(now) <= 5
+    }
+}
+
+// Only the relay's public projection is decoded; source summaries never grant row permissions.
+enum ControlRoomSource: String, CaseIterable, Identifiable {
+    case codex, cursorDesktop = "cursor-desktop", cursorCloud = "cursor-cloud"
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .codex: return "Codex"
+        case .cursorDesktop: return "Cursor 로컬"
+        case .cursorCloud: return "Cursor Cloud"
+        }
+    }
+}
+
+struct ControlRoomSourceConnection: Decodable {
+    let provider: String
+    let connected: Bool?
+    let state: String?
+    let connectedAt: String?
+    let observedAt: String?
+    let owner: String?
+    let sessionId: String?
+    let runId: String?
+    let sourceRevision: ProjectionValue?
+    let readOnly: Bool?
+    let capabilities: ControlRoomSourceCapabilities?
+    let reason: String?
+
+    var label: String {
+        switch state {
+        case "unsupported": return "미지원"
+        case "connected": return connected == true ? "연결됨" : "연결 미확인"
+        case "stale": return "오래된 연결 관측"
+        case "unavailable": return "연결 정보 없음"
+        default: return state ?? "연결 미확인"
+        }
+    }
+}
+
+struct ControlRoomSourceCapabilities: Decodable {
+    let read: Bool?
+    let send: Bool?
+}
+
+struct ControlRoomSessionID: Hashable {
+    let source: String
+    let key: String
+    let externalId: String?
+    let sessionId: String?
+    let runId: String?
+    let hostId: String?
+    let instanceId: String?
+    let startedAt: String?
+    let workspaceIdentity: String?
+    let ownerThreadId: String?
+}
+
+struct ControlRoomSourceSession: Decodable, Identifiable {
+    let source: String
+    let provider: String
+    let key: String
+    let externalId: String?
+    let sessionId: String?
+    let runId: String?
+    let hostId: String?
+    let instanceId: String?
+    let startedAt: String?
+    let workspaceIdentity: String?
+    let ownerThreadId: String?
+    let ownerVerified: Bool?
+    let projectId: String?
+    let title: String?
+    let status: String?
+    let displayStatus: String?
+    let executionStatus: String?
+    let statusSource: String?
+    let agentStatus: String?
+    let observedAt: String?
+    let connectedAt: String?
+    let sourceRevision: ProjectionValue?
+    let connectionState: String?
+    let fresh: Bool?
+    let stale: Bool?
+    let readOnly: Bool?
+    let capabilities: ControlRoomSourceCapabilities?
+    let threadId: String?
+    let activeTurnId: String?
+    let sourceConnection: ControlRoomSourceConnection?
+
+    var id: ControlRoomSessionID {
+        ControlRoomSessionID(source:source,key:key,externalId:externalId,sessionId:sessionId,
+            runId:runId,hostId:hostId,instanceId:instanceId,startedAt:startedAt,
+            workspaceIdentity:workspaceIdentity,ownerThreadId:ownerThreadId)
+    }
+    var isSupported: Bool {
+        ControlRoomSource(rawValue:source) != nil && provider == source && !key.isEmpty && externalId?.isEmpty == false
+    }
+    var titleLabel: String { title?.isEmpty == false ? title! : externalId ?? "제목 미제공" }
+    var ownerLabel: String { ownerVerified == true ? ownerThreadId ?? "미확인" : "미확인" }
+
+    func isFresh(now: Date) -> Bool {
+        fresh == true && stale != true && Self.recent(observedAt,now:now)
+    }
+    static func recent(_ value: String?, now: Date) -> Bool {
+        guard let value, let date = BrainTrinityFeed.date(value) else { return false }
+        return now.timeIntervalSince(date) <= 30 && date.timeIntervalSince(now) <= 5
+    }
+
+    enum SessionConnection: Equatable {
+        case unavailable, mismatched, stale, current
+        var label: String {
+            switch self {
+            case .unavailable: return "개별 연결 미제공"
+            case .mismatched: return "개별 연결 식별자 불일치"
+            case .stale: return "개별 연결 최신성 미확인"
+            case .current: return "개별 원본 연결 확인"
+            }
+        }
+    }
+    func sessionConnection(now: Date) -> SessionConnection {
+        guard let connection = sourceConnection else { return .unavailable }
+        guard connection.provider == source, connection.sessionId?.isEmpty == false,
+              connection.sessionId == sessionId, connection.sessionId == externalId,
+              connection.runId == runId else { return .mismatched }
+        if source == "codex" {
+            guard connection.sessionId == threadId, connection.runId == activeTurnId else { return .mismatched }
+        }
+        guard connection.connected == true, connection.state == "connected",
+              connection.owner?.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty == false,
+              case .number(let revision) = connection.sourceRevision,
+              revision >= 0, revision <= 9_007_199_254_740_991, revision.rounded() == revision,
+              isFresh(now:now), Self.recent(connection.observedAt,now:now) else { return .stale }
+        return .current
+    }
+
+    // Describes the row contract only. This panel never sends commands.
+    func reportedSendAllowed(now: Date) -> Bool {
+        guard isSupported, ownerVerified == true, ownerThreadId?.isEmpty == false,
+              readOnly == false, capabilities?.send == true, isFresh(now:now) else { return false }
+        return source != "codex" || sessionConnection(now:now) == .current
+    }
+}
+
+struct ControlRoomUnifiedControl: Decodable {
+    let schema: Int
+    let rows: [ControlRoomSourceSession]
+    let truncated: Bool
+    let error: String?
+}
+
+extension ControlRoomProjection {
+    var sourceSessions: [ControlRoomSourceSession] {
+        guard hasDisplayContent, unifiedControl?.schema == 1 else { return [] }
+        return unifiedControl?.rows ?? []
+    }
+    var sourceSessionIDs: [ControlRoomSessionID] {
+        ControlRoomSource.allCases.flatMap { sessions(for:$0).map(\.id) }
+    }
+    func sessions(for source: ControlRoomSource) -> [ControlRoomSourceSession] {
+        let supported = sourceSessions.filter { $0.isSupported && $0.source == source.rawValue }
+        let counts = Dictionary(supported.map { ($0.id,1) },uniquingKeysWith:+)
+        return supported.filter { counts[$0.id] == 1 }
+    }
+    func sourceSummary(for source: ControlRoomSource) -> ControlRoomSourceConnection? {
+        guard hasDisplayContent else { return nil }
+        let matches = sourceConnections?.filter { $0.provider == source.rawValue } ?? []
+        return matches.count == 1 ? matches[0] : nil
+    }
+}
+
+struct ControlRoomSourceSelection {
+    private(set) var source: ControlRoomSource = .codex
+    private var selected: [ControlRoomSource:ControlRoomSessionID] = [:]
+    var sessionID: ControlRoomSessionID? { selected[source] }
+
+    mutating func select(source: ControlRoomSource) { self.source = source }
+    mutating func select(session: ControlRoomSourceSession) {
+        guard session.isSupported, session.source == source.rawValue else { return }
+        selected[source] = session.id
+    }
+    mutating func clear() { selected[source] = nil }
+    mutating func reconcile(_ projection: ControlRoomProjection?) {
+        selected = selected.filter { source,id in
+            projection?.sessions(for:source).contains(where:{ $0.id == id }) == true
+        }
+    }
+    func session(in projection: ControlRoomProjection) -> ControlRoomSourceSession? {
+        projection.sessions(for:source).first { $0.id == sessionID }
     }
 }
 

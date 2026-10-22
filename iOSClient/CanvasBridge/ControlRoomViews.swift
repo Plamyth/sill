@@ -79,6 +79,7 @@ struct ControlRoomGrid: View {
                     Text("대화 · 3×3 · 읽기 전용 · \(projection.generatedAt)")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     brainTrinityStatus(projection,now:context.date)
+                    ControlRoomSourcePanel(projection:projection,now:context.date)
                     if target == .unavailable {
                         ContentUnavailableView("선택한 작업 공간 없음",systemImage:"square.grid.3x3",
                                                description:Text("섹션 또는 프로젝트를 다시 선택하세요."))
@@ -244,6 +245,167 @@ struct ControlRoomGrid: View {
         .accessibilityIdentifier("controlRoomSlot-\(slot.index)")
         .accessibilityHint(card == nil ? "읽기 전용. 현재 연결된 대화가 없습니다." :
             matches ? "대화 상세 보기" : "필터 불일치. 원래 슬롯 위치를 유지합니다.")
+    }
+}
+
+private struct ControlRoomSourcePanel: View {
+    let projection: ControlRoomProjection
+    let now: Date
+    @State private var expanded = false
+    @State private var selection = ControlRoomSourceSelection()
+
+    var body: some View {
+        DisclosureGroup("소스·세션",isExpanded:$expanded) {
+            VStack(alignment:.leading,spacing:6) {
+                HStack {
+                    Picker("소스",selection:Binding(get:{ selection.source },set:{ source in
+                        selection.reconcile(projection)
+                        selection.select(source:source)
+                    })) {
+                        ForEach(ControlRoomSource.allCases) { source in Text(source.label).tag(source) }
+                    }
+                    .pickerStyle(.menu).accessibilityIdentifier("controlRoomSource")
+                    Spacer(minLength:4)
+                    Text("조회·선택 전용").font(.caption).foregroundStyle(.secondary)
+                }
+                ScrollView(.vertical) {
+                    VStack(alignment:.leading,spacing:5) {
+                        summary
+                        if let session = selection.session(in:projection) {
+                            details(session)
+                        } else {
+                            Text("세션을 선택하세요. 사라지거나 식별자가 바뀐 세션은 자동 승계하지 않습니다.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth:.infinity,alignment:.leading)
+                    .textSelection(.enabled)
+                }
+                .frame(maxHeight:130)
+                sessionList
+            }
+            .font(.caption)
+            .padding(.top,4)
+        }
+        .accessibilityIdentifier("controlRoomSourceSessions")
+        .onChange(of:projection.sourceSessionIDs,initial:true) { _,_ in selection.reconcile(projection) }
+    }
+
+    private var summary: some View {
+        VStack(alignment:.leading,spacing:4) {
+            if let summary = projection.sourceSummary(for:selection.source) {
+                Text("소스 전체 요약 · \(summary.label)")
+                Text("요약 관측 · \(summary.observedAt ?? "미제공")")
+                if let reason = summary.reason { Text("소스 안내 · \(reason)") }
+            } else {
+                Text("소스 전체 요약 미제공")
+            }
+            Text("요약 연결은 개별 세션의 연결·권한을 뜻하지 않습니다.")
+                .foregroundStyle(.secondary)
+            if !projection.isFresh(now:now) {
+                Text("마지막 관측 · 읽기 전용").foregroundStyle(.orange)
+            }
+            if let unified = projection.unifiedControl {
+                if unified.schema != 1 { Text("미지원 소스·세션 형식").foregroundStyle(.orange) }
+                if let error = unified.error { Text("소스 조회 안내 · \(error)").foregroundStyle(.orange) }
+                if unified.truncated { Text("일부 세션만 제공됨").foregroundStyle(.orange) }
+                let unsupported = projection.sourceSessions.filter { !$0.isSupported }.count
+                if unsupported > 0 { Text("미지원 소스 행 \(unsupported)개").foregroundStyle(.orange) }
+            } else {
+                Text("소스·세션 정보 미제공 · 기존 관제만 지원")
+            }
+        }
+    }
+
+    private var sessionList: some View {
+        let sessions = projection.sessions(for:selection.source)
+        return VStack(alignment:.leading,spacing:3) {
+            HStack {
+                Text("\(selection.source.label) 세션 \(sessions.count)개")
+                Spacer()
+                if selection.sessionID != nil {
+                    Button("선택 해제") { selection.clear() }.buttonStyle(.borderless)
+                }
+            }
+            ScrollView(.vertical) {
+                LazyVStack(alignment:.leading,spacing:3) {
+                    if sessions.isEmpty { Text("표시할 세션 없음").foregroundStyle(.secondary) }
+                    ForEach(sessions) { session in
+                        Button {
+                            selection.select(session:session)
+                        } label: {
+                            VStack(alignment:.leading,spacing:2) {
+                                Label(session.titleLabel,systemImage:selection.sessionID == session.id ? "checkmark.circle.fill" : "circle")
+                                Text([session.sessionId ?? "세션 미제공",session.runId ?? "실행 미제공",session.hostId]
+                                    .compactMap { $0 }.joined(separator:" · "))
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth:.infinity,minHeight:44,alignment:.leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("controlRoomSourceSession")
+                        .accessibilityAddTraits(selection.sessionID == session.id ? .isSelected : [])
+                    }
+                }
+            }
+            .frame(maxHeight:100)
+            .accessibilityIdentifier("controlRoomSourceSessionList")
+        }
+    }
+
+    private func details(_ row: ControlRoomSourceSession) -> some View {
+        VStack(alignment:.leading,spacing:4) {
+            Text(row.titleLabel).font(.callout.weight(.semibold))
+            Text("조회·선택 전용 · 이 화면은 읽기 전용입니다.")
+            field("원본 상태",row.status)
+            field("실행 상태",row.executionStatus)
+            field("표시 상태",row.displayStatus)
+            field("상태 출처",row.statusSource)
+            field("에이전트 상태",row.agentStatus)
+            field("행 연결 상태",row.connectionState)
+            Text("행 관측 · \(row.isFresh(now:now) ? "최신" : "최신성 미확인")")
+            field("행 관측 시각",row.observedAt)
+            field("행 연결 시각",row.connectedAt)
+            field("소스 버전",row.sourceRevision?.formatted)
+            field("외부 식별자",row.externalId)
+            field("세션",row.sessionId)
+            field("실행",row.runId)
+            field("호스트",row.hostId)
+            field("인스턴스",row.instanceId)
+            field("시작 시각",row.startedAt)
+            field("작업 공간",row.workspaceIdentity)
+            field("프로젝트",row.projectId)
+            field("행 키",row.key)
+            field("원본 owner",row.ownerThreadId)
+            Text("확인된 원담당 · \(row.ownerLabel)")
+            field("Codex 대화",row.threadId)
+            field("Codex 활성 실행",row.activeTurnId)
+            Text("행 보고 권한 · 조회 \(flag(row.capabilities?.read)) · 전송 \(flag(row.capabilities?.send)) · 읽기 전용 \(flag(row.readOnly))")
+            Text("현재 행 기준 전송 조건 · \(row.reportedSendAllowed(now:now) && projection.isFresh(now:now) ? "보고됨" : "미확인 또는 불가") · 이 화면에서는 실행 미지원")
+            Text(row.sessionConnection(now:now).label)
+            if let connection = row.sourceConnection {
+                field("개별 연결 제공자",connection.provider)
+                field("개별 연결 상태",connection.state)
+                field("개별 연결 관측",connection.observedAt)
+                field("개별 연결 시작",connection.connectedAt)
+                field("개별 연결 owner",connection.owner)
+                field("개별 연결 세션",connection.sessionId)
+                field("개별 연결 실행",connection.runId)
+                field("개별 연결 버전",connection.sourceRevision?.formatted)
+                Text("개별 연결 보고 권한 · 조회 \(flag(connection.capabilities?.read)) · 전송 \(flag(connection.capabilities?.send)) · 읽기 전용 \(flag(connection.readOnly))")
+                if let reason = connection.reason { field("개별 연결 안내",reason) }
+            }
+        }
+        .accessibilityIdentifier("controlRoomSourceSessionDetail")
+    }
+
+    private func field(_ label: String, _ value: String?) -> some View {
+        Text("\(label) · \(value ?? "미제공")").font(.caption)
+            .frame(maxWidth:.infinity,alignment:.leading)
+    }
+    private func flag(_ value: Bool?) -> String {
+        value.map { $0 ? "예" : "아니요" } ?? "미확인"
     }
 }
 

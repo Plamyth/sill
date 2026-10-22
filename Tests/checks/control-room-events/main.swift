@@ -90,6 +90,7 @@ func stream() -> AsyncStream<ControlRoomEventUpdate> {
 
 @main struct Checks {
     static func main() async throws {
+        try sourceSessionChecks()
         let fixture = try JSONSerialization.jsonObject(with:Data(contentsOf:URL(fileURLWithPath:"fixture.json"))) as! [String:Any]
         let common = fixture["events"] as! [[String:Any]]
         var reducer = ControlRoomEventsReducer()

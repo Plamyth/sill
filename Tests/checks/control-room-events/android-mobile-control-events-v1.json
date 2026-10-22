@@ -1,0 +1,845 @@
+{
+  "fixtureOnly": true,
+  "credentialsIncluded": false,
+  "events": [
+    {
+      "schema": "ccr.control-events/v1",
+      "type": "snapshot",
+      "generation": "11111111-1111-4111-8111-111111111111",
+      "revision": 0,
+      "emittedAt": "2026-10-23T00:00:00.000Z",
+      "snapshot": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00.000Z",
+        "workspace": "all",
+        "workspaceProjectIds": [
+          "fixture-project"
+        ],
+        "workspaces": [],
+        "sections": [],
+        "projects": [
+          {
+            "id": "fixture-project",
+            "label": "합성 프로젝트",
+            "projectKind": "local"
+          }
+        ],
+        "slots": [],
+        "chatgptProjectState": "unavailable",
+        "chatgptProjects": [],
+        "pcStatus": {
+          "generatedAt": "2026-10-23T00:00:00.000Z",
+          "reviewHub": {
+            "eg2": {
+              "schema": "control-room-eg2-review-hub/v1",
+              "available": false,
+              "writable": false,
+              "items": []
+            }
+          },
+          "cam": {
+            "schema": "control-room-cam-feed/v1",
+            "available": false,
+            "writable": false,
+            "cards": []
+          }
+        },
+        "activeVoiceId": "",
+        "threads": [
+          {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "slotIndex": 0,
+            "hostId": "local",
+            "source": "codex",
+            "title": "Codex 합성 작업",
+            "titleVerified": true,
+            "project": "",
+            "projectId": "fixture-project",
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "진행 중",
+            "goalActive": null,
+            "activeTurnId": "44444444-4444-4444-8444-444444444444",
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": [],
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "owner": "fixture-runtime-owner",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "sourceRevision": 7,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false
+          }
+        ],
+        "catalog": [],
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:33333333-3333-4333-8333-333333333333",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "33333333-3333-4333-8333-333333333333",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+              "ownerVerified": true,
+              "projectId": "fixture-project",
+              "title": "Codex 합성 작업",
+              "status": "진행 중",
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "sourceRevision": 7,
+              "connectionState": "connected",
+              "fresh": true,
+              "readOnly": false,
+              "capabilities": {
+                "read": true,
+                "send": true
+              },
+              "threadId": "33333333-3333-4333-8333-333333333333",
+              "activeTurnId": "44444444-4444-4444-8444-444444444444",
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": "2026-10-23T00:00:00.000Z",
+                "observedAt": "2026-10-23T00:00:00.000Z",
+                "owner": "fixture-runtime-owner",
+                "sessionId": "33333333-3333-4333-8333-333333333333",
+                "runId": "44444444-4444-4444-8444-444444444444",
+                "sourceRevision": 7,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false
+            },
+            {
+              "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
+              "source": "cursor-desktop",
+              "provider": "cursor-desktop",
+              "hostId": null,
+              "externalId": "composer-1",
+              "sessionId": "composer-1",
+              "runId": null,
+              "instanceId": "instance-1",
+              "startedAt": "2026-10-23T00:00:00.000Z",
+              "workspaceIdentity": "workspace-1",
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": "fixture-project",
+              "title": "Cursor 로컬 합성 작업",
+              "status": "미확인",
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "sourceRevision": "fixture-1",
+              "connectionState": null,
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            },
+            {
+              "key": "[\"cursor-cloud\",\"agent-1\",\"run-1\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "agent-1",
+              "sessionId": "agent-1",
+              "runId": "run-1",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+              "ownerVerified": true,
+              "projectId": "fixture-project",
+              "title": "Cursor Cloud 합성 작업",
+              "status": "FINISHED",
+              "displayStatus": null,
+              "executionStatus": "FINISHED",
+              "statusSource": "cursor-cloud-sse",
+              "agentStatus": "IDLE",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "sourceRevision": "fixture-1",
+              "connectionState": "closed",
+              "fresh": true,
+              "readOnly": false,
+              "capabilities": {
+                "read": true,
+                "send": true
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": true,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-desktop",
+            "connected": true,
+            "state": "connected",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": true,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": true,
+              "send": false
+            },
+            "reason": null
+          }
+        ]
+      }
+    },
+    {
+      "schema": "ccr.control-events/v1",
+      "type": "patch",
+      "generation": "11111111-1111-4111-8111-111111111111",
+      "revision": 1,
+      "baseRevision": 0,
+      "emittedAt": "2026-10-23T00:00:00.000Z",
+      "set": {
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:33333333-3333-4333-8333-333333333333",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "33333333-3333-4333-8333-333333333333",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+              "ownerVerified": true,
+              "projectId": "fixture-project",
+              "title": "Codex 합성 작업",
+              "status": "진행 중",
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "sourceRevision": 7,
+              "connectionState": "connected",
+              "fresh": true,
+              "readOnly": false,
+              "capabilities": {
+                "read": true,
+                "send": true
+              },
+              "threadId": "33333333-3333-4333-8333-333333333333",
+              "activeTurnId": "44444444-4444-4444-8444-444444444444",
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": "2026-10-23T00:00:00.000Z",
+                "observedAt": "2026-10-23T00:00:00.000Z",
+                "owner": "fixture-runtime-owner",
+                "sessionId": "33333333-3333-4333-8333-333333333333",
+                "runId": "44444444-4444-4444-8444-444444444444",
+                "sourceRevision": 7,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false
+            },
+            {
+              "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
+              "source": "cursor-desktop",
+              "provider": "cursor-desktop",
+              "hostId": null,
+              "externalId": "composer-1",
+              "sessionId": "composer-1",
+              "runId": null,
+              "instanceId": "instance-1",
+              "startedAt": "2026-10-23T00:00:00.000Z",
+              "workspaceIdentity": "workspace-1",
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": "fixture-project",
+              "title": "Cursor 로컬 합성 작업",
+              "status": "미확인",
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "sourceRevision": "fixture-1",
+              "connectionState": null,
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            },
+            {
+              "key": "[\"cursor-cloud\",\"agent-1\",\"run-1\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "agent-1",
+              "sessionId": "agent-1",
+              "runId": "run-1",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+              "ownerVerified": true,
+              "projectId": "fixture-project",
+              "title": "Cursor Cloud 합성 작업",
+              "status": "RUNNING",
+              "displayStatus": null,
+              "executionStatus": "RUNNING",
+              "statusSource": "cursor-cloud-sse",
+              "agentStatus": "IDLE",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "sourceRevision": "fixture-1",
+              "connectionState": "closed",
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        }
+      },
+      "unset": [],
+      "threads": {
+        "upsert": [],
+        "remove": []
+      },
+      "catalog": {
+        "upsert": [],
+        "remove": []
+      }
+    },
+    {
+      "schema": "ccr.control-events/v1",
+      "type": "heartbeat",
+      "generation": "11111111-1111-4111-8111-111111111111",
+      "revision": 1,
+      "emittedAt": "2026-10-23T00:00:00.000Z"
+    }
+  ],
+  "gap": {
+    "schema": "ccr.control-events/v1",
+    "type": "patch",
+    "generation": "11111111-1111-4111-8111-111111111111",
+    "revision": 3,
+    "baseRevision": 2,
+    "emittedAt": "2026-10-23T00:00:00.000Z",
+    "set": {
+      "unifiedControl": {
+        "schema": 1,
+        "rows": [
+          {
+            "key": "codex:33333333-3333-4333-8333-333333333333",
+            "source": "codex",
+            "provider": "codex",
+            "hostId": "local",
+            "externalId": "33333333-3333-4333-8333-333333333333",
+            "sessionId": "33333333-3333-4333-8333-333333333333",
+            "runId": "44444444-4444-4444-8444-444444444444",
+            "instanceId": null,
+            "startedAt": null,
+            "workspaceIdentity": null,
+            "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+            "ownerVerified": true,
+            "projectId": "fixture-project",
+            "title": "Codex 합성 작업",
+            "status": "진행 중",
+            "displayStatus": null,
+            "executionStatus": null,
+            "statusSource": null,
+            "agentStatus": null,
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "sourceRevision": 7,
+            "connectionState": "connected",
+            "fresh": true,
+            "readOnly": false,
+            "capabilities": {
+              "read": true,
+              "send": true
+            },
+            "threadId": "33333333-3333-4333-8333-333333333333",
+            "activeTurnId": "44444444-4444-4444-8444-444444444444",
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "owner": "fixture-runtime-owner",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "sourceRevision": 7,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false
+          },
+          {
+            "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
+            "source": "cursor-desktop",
+            "provider": "cursor-desktop",
+            "hostId": null,
+            "externalId": "composer-1",
+            "sessionId": "composer-1",
+            "runId": null,
+            "instanceId": "instance-1",
+            "startedAt": "2026-10-23T00:00:00.000Z",
+            "workspaceIdentity": "workspace-1",
+            "ownerThreadId": null,
+            "ownerVerified": false,
+            "projectId": "fixture-project",
+            "title": "Cursor 로컬 합성 작업",
+            "status": "미확인",
+            "displayStatus": null,
+            "executionStatus": null,
+            "statusSource": null,
+            "agentStatus": null,
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "sourceRevision": "fixture-1",
+            "connectionState": null,
+            "fresh": true,
+            "readOnly": true,
+            "capabilities": {
+              "read": true,
+              "send": false
+            },
+            "threadId": null,
+            "activeTurnId": null
+          },
+          {
+            "key": "[\"cursor-cloud\",\"agent-1\",\"run-1\"]",
+            "source": "cursor-cloud",
+            "provider": "cursor-cloud",
+            "hostId": null,
+            "externalId": "agent-1",
+            "sessionId": "agent-1",
+            "runId": "run-1",
+            "instanceId": null,
+            "startedAt": null,
+            "workspaceIdentity": null,
+            "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+            "ownerVerified": true,
+            "projectId": "fixture-project",
+            "title": "Cursor Cloud 합성 작업",
+            "status": "RUNNING",
+            "displayStatus": null,
+            "executionStatus": "RUNNING",
+            "statusSource": "cursor-cloud-sse",
+            "agentStatus": "IDLE",
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "sourceRevision": "fixture-1",
+            "connectionState": "closed",
+            "fresh": true,
+            "readOnly": true,
+            "capabilities": {
+              "read": true,
+              "send": false
+            },
+            "threadId": null,
+            "activeTurnId": null
+          }
+        ],
+        "truncated": false,
+        "error": null
+      }
+    },
+    "unset": [],
+    "threads": {
+      "upsert": [],
+      "remove": []
+    },
+    "catalog": {
+      "upsert": [],
+      "remove": []
+    }
+  },
+  "replacement": {
+    "schema": "ccr.control-events/v1",
+    "type": "snapshot",
+    "generation": "22222222-2222-4222-8222-222222222222",
+    "revision": 0,
+    "emittedAt": "2026-10-23T00:00:00.000Z",
+    "snapshot": {
+      "schemaVersion": 1,
+      "generatedAt": "2026-10-23T00:00:00.000Z",
+      "workspace": "all",
+      "workspaceProjectIds": [
+        "fixture-project"
+      ],
+      "workspaces": [],
+      "sections": [],
+      "projects": [
+        {
+          "id": "fixture-project",
+          "label": "합성 프로젝트",
+          "projectKind": "local"
+        }
+      ],
+      "slots": [],
+      "chatgptProjectState": "unavailable",
+      "chatgptProjects": [],
+      "pcStatus": {
+        "generatedAt": "2026-10-23T00:00:00.000Z",
+        "reviewHub": {
+          "eg2": {
+            "schema": "control-room-eg2-review-hub/v1",
+            "available": false,
+            "writable": false,
+            "items": []
+          }
+        },
+        "cam": {
+          "schema": "control-room-cam-feed/v1",
+          "available": false,
+          "writable": false,
+          "cards": []
+        }
+      },
+      "activeVoiceId": "",
+      "threads": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "slotIndex": 0,
+          "hostId": "local",
+          "source": "codex",
+          "title": "Codex 합성 작업",
+          "titleVerified": true,
+          "project": "",
+          "projectId": "fixture-project",
+          "projectVerified": true,
+          "sectionIds": [],
+          "parentThreadId": null,
+          "turnStatus": null,
+          "owner": null,
+          "childrenCount": 0,
+          "status": "진행 중",
+          "goalActive": null,
+          "activeTurnId": "44444444-4444-4444-8444-444444444444",
+          "canCompose": true,
+          "voiceCard": false,
+          "voiceState": null,
+          "emptySlot": false,
+          "sourceMissing": false,
+          "inputRequest": null,
+          "events": [],
+          "sourceConnection": {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "owner": "fixture-runtime-owner",
+            "sessionId": "33333333-3333-4333-8333-333333333333",
+            "runId": "44444444-4444-4444-8444-444444444444",
+            "sourceRevision": 7,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          "stale": false
+        }
+      ],
+      "catalog": [],
+      "unifiedControl": {
+        "schema": 1,
+        "rows": [
+          {
+            "key": "codex:33333333-3333-4333-8333-333333333333",
+            "source": "codex",
+            "provider": "codex",
+            "hostId": "local",
+            "externalId": "33333333-3333-4333-8333-333333333333",
+            "sessionId": "33333333-3333-4333-8333-333333333333",
+            "runId": "44444444-4444-4444-8444-444444444444",
+            "instanceId": null,
+            "startedAt": null,
+            "workspaceIdentity": null,
+            "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+            "ownerVerified": true,
+            "projectId": "fixture-project",
+            "title": "Codex 합성 작업",
+            "status": "진행 중",
+            "displayStatus": null,
+            "executionStatus": null,
+            "statusSource": null,
+            "agentStatus": null,
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "sourceRevision": 7,
+            "connectionState": "connected",
+            "fresh": true,
+            "readOnly": false,
+            "capabilities": {
+              "read": true,
+              "send": true
+            },
+            "threadId": "33333333-3333-4333-8333-333333333333",
+            "activeTurnId": "44444444-4444-4444-8444-444444444444",
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "owner": "fixture-runtime-owner",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "sourceRevision": 7,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false
+          },
+          {
+            "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
+            "source": "cursor-desktop",
+            "provider": "cursor-desktop",
+            "hostId": null,
+            "externalId": "composer-1",
+            "sessionId": "composer-1",
+            "runId": null,
+            "instanceId": "instance-1",
+            "startedAt": "2026-10-23T00:00:00.000Z",
+            "workspaceIdentity": "workspace-1",
+            "ownerThreadId": null,
+            "ownerVerified": false,
+            "projectId": "fixture-project",
+            "title": "Cursor 로컬 합성 작업",
+            "status": "미확인",
+            "displayStatus": null,
+            "executionStatus": null,
+            "statusSource": null,
+            "agentStatus": null,
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "sourceRevision": "fixture-1",
+            "connectionState": null,
+            "fresh": true,
+            "readOnly": true,
+            "capabilities": {
+              "read": true,
+              "send": false
+            },
+            "threadId": null,
+            "activeTurnId": null
+          },
+          {
+            "key": "[\"cursor-cloud\",\"agent-1\",\"run-1\"]",
+            "source": "cursor-cloud",
+            "provider": "cursor-cloud",
+            "hostId": null,
+            "externalId": "agent-1",
+            "sessionId": "agent-1",
+            "runId": "run-1",
+            "instanceId": null,
+            "startedAt": null,
+            "workspaceIdentity": null,
+            "ownerThreadId": "33333333-3333-4333-8333-333333333333",
+            "ownerVerified": true,
+            "projectId": "fixture-project",
+            "title": "Cursor Cloud 합성 작업",
+            "status": "FINISHED",
+            "displayStatus": null,
+            "executionStatus": "FINISHED",
+            "statusSource": "cursor-cloud-sse",
+            "agentStatus": "IDLE",
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "sourceRevision": "fixture-1",
+            "connectionState": "closed",
+            "fresh": true,
+            "readOnly": false,
+            "capabilities": {
+              "read": true,
+              "send": true
+            },
+            "threadId": null,
+            "activeTurnId": null
+          }
+        ],
+        "truncated": false,
+        "error": null
+      },
+      "sourceConnections": [
+        {
+          "provider": "codex",
+          "connected": true,
+          "state": "connected",
+          "connectedAt": "2026-10-23T00:00:00.000Z",
+          "observedAt": "2026-10-23T00:00:00.000Z",
+          "owner": null,
+          "sessionId": null,
+          "runId": null,
+          "sourceRevision": null,
+          "readOnly": true,
+          "capabilities": {
+            "read": true,
+            "send": false
+          },
+          "reason": null
+        },
+        {
+          "provider": "cursor-desktop",
+          "connected": true,
+          "state": "connected",
+          "connectedAt": "2026-10-23T00:00:00.000Z",
+          "observedAt": "2026-10-23T00:00:00.000Z",
+          "owner": null,
+          "sessionId": null,
+          "runId": null,
+          "sourceRevision": null,
+          "readOnly": true,
+          "capabilities": {
+            "read": true,
+            "send": false
+          },
+          "reason": null
+        },
+        {
+          "provider": "cursor-cloud",
+          "connected": true,
+          "state": "connected",
+          "connectedAt": "2026-10-23T00:00:00.000Z",
+          "observedAt": "2026-10-23T00:00:00.000Z",
+          "owner": null,
+          "sessionId": null,
+          "runId": null,
+          "sourceRevision": null,
+          "readOnly": true,
+          "capabilities": {
+            "read": true,
+            "send": false
+          },
+          "reason": null
+        }
+      ]
+    }
+  },
+  "expectedStatuses": [
+    "applied",
+    "applied",
+    "heartbeat",
+    "ignored",
+    "resync",
+    "applied"
+  ]
+}

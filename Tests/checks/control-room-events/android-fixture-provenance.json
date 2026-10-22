@@ -1,0 +1,10 @@
+{
+  "sourceRepository": "/Users/ambrion/.codex/worktrees/s23-live-agents-20261023/BT_CCR(안드로이드 앱)",
+  "sourceCommit": "e5f931657dba5b2d3d4c04b547a7a17da3ac660b",
+  "sourcePath": "tests/fixtures/mobile-control-events-v1.json",
+  "sha256": "9fb6288d6ac3d68f4d743d8703b091f263664d239248b53e6ba82d8cb554b319",
+  "bytes": 28543,
+  "usage": "projectControl DTO 계약 검사 전용. fixture.json의 relay projection SSE root와 별개이며 currentGrid로 간주하지 않음.",
+  "visionReferenceCommit": "bf7f7ef",
+  "owner": "01a13ace-e372-7ed1-9946-149df37ee1c3"
+}
