@@ -2091,7 +2091,7 @@ final class StreamClient: ObservableObject {
                  tap: Bool = false) -> Bool {
         if let id = macID, let saved = savedMac(id), RemoteDialPolicy.ownerTailnetScope(saved) {
             guard saved.revoked != true, saved.newKey != true, saved.fingerprintData != nil else { return false }
-            dialSaved(id, why: tap ? .tap : .automatic)
+            dialSaved(id, why: !tap && reconnect?.macID == id ? .automatic : .tap)
             return true
         }
         guard let endpoint = mac.endpoint else { return false }

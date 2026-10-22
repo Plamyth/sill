@@ -64,5 +64,9 @@ for failure in [RemoteDialPolicy.Failure.revoked, .wrongMac, .remoteOff] {
     c.remoteDialFailed(macID: owner.macID, why: c.remoteRequests.last!.1, failure: failure, candidate: ownerCandidates.first)
     check("\(failure) 응답 뒤 자동 원격 재시도 금지", c.reconnect?.remoteAllowed == false && c.reconnect?.remoteFailures == 0)
 }
+for failure in RemoteDialPolicy.Failure.allCases {
+    let text = RemoteCopy.dialFailure(failure, mac: owner.name, candidate: ownerCandidates.first, vpnName: "Tailscale", device: "Vision Pro")
+    check("\(failure) 오류 안내는 한국어", text.unicodeScalars.contains { (0xAC00...0xD7A3).contains($0.value) })
+}
 print("Owner session routing \(checks)개, 실패 \(failures)개. 실제 후보/진입/실패 메서드와 I/O 대역 검사.")
 if failures != 0 { exit(1) }
