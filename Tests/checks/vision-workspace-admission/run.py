@@ -75,6 +75,7 @@ struct Workspace {
     var displayChooserShown = false
     var recoveryShown = false
     var changingSource = false
+    var controlEventsShown = false
     __MEMBERS__
     var admitsInput: Bool { inputAllowed }
     var admitsAudio: Bool { audioControlsAllowed }
@@ -100,6 +101,14 @@ var normal = Workspace()
 verify(&normal, "normal without input mode", (true, true, false))
 normal.client.active = .window
 verify(&normal, "window without input mode", (true, true, false))
+
+var status = Workspace()
+status.update()
+status.controlEventsShown = true
+verify(&status, "work status preserves audio intent", (false, false, false))
+check(status.input.releases == 1, true, "work status releases remote input")
+status.controlEventsShown = false
+verify(&status, "work status dismissed", (true, true, false))
 
 for modal in [\Workspace.recoveryShown, \Workspace.changingSource] {
     let name = modal == \Workspace.recoveryShown ? "recovery" : "source confirmation"
@@ -180,9 +189,9 @@ exit(failures == 0 ? 0 : 1)
 '''.replace('__ALLOWED__', allowed).replace('__MEMBERS__', members)
     generated = output / 'main.swift'
     generated.write_text(swift)
-    developer = Path('/Applications/Xcode.app/Contents/Developer')
-    command = [str(developer / 'Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc'),
-               '-sdk', str(developer / 'Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'),
+    compiler = subprocess.check_output(['/usr/bin/xcrun', '--find', 'swiftc'], text=True).strip()
+    sdk = subprocess.check_output(['/usr/bin/xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
+    command = [compiler, '-sdk', sdk,
                '-target', 'arm64-apple-macosx14.0', '-swift-version', '5',
                '-module-cache-path', str(output / 'cache'), str(generated), '-o', str(output / 'checks')]
     record = {'scope': 'Actual workspace admission members and modal callback bodies with typed inert standins; no SwiftUI scheduling or hardware proof',

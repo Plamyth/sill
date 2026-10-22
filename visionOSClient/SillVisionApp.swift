@@ -64,6 +64,7 @@ struct SillVisionWorkspace: View {
     @State private var displayChooserShown = false
     @State private var macAudioShown = false
     @State private var macAudioOfferShown = false
+    @State private var controlEventsShown = false
     @State private var testDestinationsShown = false
     @StateObject private var testDestinationStores = VisionTestDestinationStores()
 
@@ -79,6 +80,18 @@ struct SillVisionWorkspace: View {
             HStack {
                 Text(client.macName.isEmpty ? "CCR Sill" : client.macName).font(.headline)
                 Spacer()
+                Button("작업 상태") {
+                    withWindowOwnership {
+                        guard phase == .active, !draftShown, !transitions.isPending else { return }
+                        keysShown = false
+                        controlEventsShown = true
+                        updateInputAdmission()
+                        releaseInput()
+                    }
+                }
+                .disabled(phase != .active || draftShown || recoveryShown || changingSource || testDestinationsShown ||
+                          displayChooserShown || macAudioModalShown || audioOfferShown || transitions.isPending)
+                .accessibilityHint("Codex와 Cursor의 원본 세션·실행 상태를 읽기 전용 패널에서 확인합니다.")
                 Button("Mac 창 추가") { openWindow(id: "mac") }
                     .accessibilityHint("현재 창을 유지하고 Mac 화면을 사용할 새 창을 엽니다.")
                 Text(session.message).font(.caption).lineLimit(2)
@@ -233,6 +246,7 @@ struct SillVisionWorkspace: View {
         .onChange(of: client.visionTestDestinations.storageEpoch, initial: true) { _, epoch in
             testDestinationStores.synchronize(epoch)
         }
+        .onChange(of: controlEventsShown) { _, _ in updateInputAdmission() }
         .onChange(of: testDestinationsShown) { _, _ in updateInputAdmission() }
         .onChange(of: client.videoSize) { _, _ in releaseInput() }
         .onChange(of: client.active) { _, _ in releaseInput() }
@@ -261,6 +275,9 @@ struct SillVisionWorkspace: View {
                 }
             }, cancel: { withWindowOwnership { client.cancelVisionDisplaySelection() } },
                close: { displayChooserShown = false })
+        }
+        .sheet(isPresented: $controlEventsShown) {
+            ControlEventsPanel(controller: session.controlEvents, enrollment: session.controlEnrollment, close: { controlEventsShown = false })
         }
         .sheet(isPresented: $testDestinationsShown) {
             VisionTestDestinationsView(model: $client.visionTestDestinations, stores: testDestinationStores,
@@ -413,11 +430,11 @@ struct SillVisionWorkspace: View {
 
     private var audioControlsAllowed: Bool {
         session.owns(lease) && phase == .active && client.connected &&
-        !transitions.isPending && !inputSuspended && !draftShown && !recoveryShown && !changingSource && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
+        !transitions.isPending && !inputSuspended && !controlEventsShown && !draftShown && !recoveryShown && !changingSource && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !draftShown && !recoveryShown && !changingSource && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
+        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !controlEventsShown && !draftShown && !recoveryShown && !changingSource && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var macAudioModalShown: Bool { macAudioShown || macAudioOfferShown }

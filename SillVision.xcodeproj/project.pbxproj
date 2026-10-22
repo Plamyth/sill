@@ -640,6 +640,168 @@
 			<key>fileRef</key>
 			<string>7C90C59BF846BE05384578DB</string>
 		</dict>
+		<key>274DF6AD36091D34CAFA6FBC</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsModel.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>9E3F96EA05E609C8C3C6969A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>274DF6AD36091D34CAFA6FBC</string>
+		</dict>
+		<key>0671A8C1BF5EDFE491BF91B6</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsReducer.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>4A6E4A9ED7892A6FAC3B18E7</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>0671A8C1BF5EDFE491BF91B6</string>
+		</dict>
+		<key>C908EA76435C39F07929791B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsSSEParser.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>0458D090030DE92BB13C1D03</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>C908EA76435C39F07929791B</string>
+		</dict>
+		<key>636CBC10C1E6FF3750B62F1A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsCodec.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>C0F994ED73D1BC51EA7668F2</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>636CBC10C1E6FF3750B62F1A</string>
+		</dict>
+		<key>BFDD448C8DF5CCFE8D8FCC95</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsProjection.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>7555D3A7AE4C8ABD83D0CD73</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>BFDD448C8DF5CCFE8D8FCC95</string>
+		</dict>
+		<key>3EED26872786379A5B91681D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsTransport.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>F841EC0B8307A4AD32B7DFEA</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>3EED26872786379A5B91681D</string>
+		</dict>
+		<key>212FBCF37E62E44BFBB56385</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsController.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>A18180F428007F656522C520</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>212FBCF37E62E44BFBB56385</string>
+		</dict>
+		<key>F01236E16E245CECB9CC615B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/ControlEventsPanel.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>6E339E0C6DC4A6452DA1ED49</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>F01236E16E245CECB9CC615B</string>
+		</dict>
+		<key>8361A1B20A15401462E1EDF8</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/VisionControlEnrollment.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>1DB4EEC97CB88EF3B6A4B583</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>8361A1B20A15401462E1EDF8</string>
+		</dict>
 		<key>6CF84F2CD28DFBFAED3D61C8</key>
 		<dict>
 			<key>isa</key>
@@ -1483,6 +1645,15 @@
 				<string>182110FA0F96BC35CDB69840</string>
 				<string>B327B8A7477D1231996FCA1C</string>
 				<string>7C90C59BF846BE05384578DB</string>
+				<string>274DF6AD36091D34CAFA6FBC</string>
+				<string>0671A8C1BF5EDFE491BF91B6</string>
+				<string>C908EA76435C39F07929791B</string>
+				<string>636CBC10C1E6FF3750B62F1A</string>
+				<string>BFDD448C8DF5CCFE8D8FCC95</string>
+				<string>3EED26872786379A5B91681D</string>
+				<string>212FBCF37E62E44BFBB56385</string>
+				<string>F01236E16E245CECB9CC615B</string>
+				<string>8361A1B20A15401462E1EDF8</string>
 				<string>6CF84F2CD28DFBFAED3D61C8</string>
 				<string>1C6A8DBC629629D6FEDF1959</string>
 				<string>3479E8EBBFDC8FBE714AE2E1</string>
@@ -1575,6 +1746,15 @@
 				<string>093FAD9F1AFE6154567069A4</string>
 				<string>B752A128F4045FB722367596</string>
 				<string>B771555041E5E11E0F265CA4</string>
+				<string>9E3F96EA05E609C8C3C6969A</string>
+				<string>4A6E4A9ED7892A6FAC3B18E7</string>
+				<string>0458D090030DE92BB13C1D03</string>
+				<string>C0F994ED73D1BC51EA7668F2</string>
+				<string>7555D3A7AE4C8ABD83D0CD73</string>
+				<string>F841EC0B8307A4AD32B7DFEA</string>
+				<string>A18180F428007F656522C520</string>
+				<string>6E339E0C6DC4A6452DA1ED49</string>
+				<string>1DB4EEC97CB88EF3B6A4B583</string>
 				<string>0F82E22ED995B125F7CAAE89</string>
 				<string>0530B86A82796E4BA782A90E</string>
 				<string>88EACB3A2740149DFB20447F</string>
@@ -1777,6 +1957,8 @@ fi
 				<string>YES</string>
 				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
 				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
+				<key>CCR_CONTROL_EVENTS_ORIGIN</key>
+				<string></string>
 			</dict>
 		</dict>
 		<key>A4EE9F50BD9F15C067246E7C</key>
@@ -1846,6 +2028,8 @@ fi
 				<string>YES</string>
 				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
 				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
+				<key>CCR_CONTROL_EVENTS_ORIGIN</key>
+				<string></string>
 			</dict>
 		</dict>
 		<key>BD59A88C5EC2D65E34727A49</key>
@@ -1968,6 +2152,8 @@ fi
 				<string>YES</string>
 				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
 				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
+				<key>CCR_CONTROL_EVENTS_ORIGIN</key>
+				<string></string>
 			</dict>
 		</dict>
 		<key>790F698B7CB5B91F44D6403F</key>
@@ -2019,6 +2205,8 @@ fi
 				<string>YES</string>
 				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
 				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
+				<key>CCR_CONTROL_EVENTS_ORIGIN</key>
+				<string></string>
 			</dict>
 		</dict>
 		<key>1CDE4D4AFFA0608A48956514</key>
@@ -2078,6 +2266,15 @@ fi
 				<string>093FAD9F1AFE6154567069A4</string>
 				<string>B752A128F4045FB722367596</string>
 				<string>B771555041E5E11E0F265CA4</string>
+				<string>9E3F96EA05E609C8C3C6969A</string>
+				<string>4A6E4A9ED7892A6FAC3B18E7</string>
+				<string>0458D090030DE92BB13C1D03</string>
+				<string>C0F994ED73D1BC51EA7668F2</string>
+				<string>7555D3A7AE4C8ABD83D0CD73</string>
+				<string>F841EC0B8307A4AD32B7DFEA</string>
+				<string>A18180F428007F656522C520</string>
+				<string>6E339E0C6DC4A6452DA1ED49</string>
+				<string>1DB4EEC97CB88EF3B6A4B583</string>
 				<string>0F82E22ED995B125F7CAAE89</string>
 				<string>0530B86A82796E4BA782A90E</string>
 				<string>88EACB3A2740149DFB20447F</string>

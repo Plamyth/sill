@@ -1,0 +1,171 @@
+{
+  "schema": "ccr.control-events/v1",
+  "type": "snapshot",
+  "generation": "11111111-1111-4111-8111-111111111111",
+  "revision": 0,
+  "emittedAt": "2026-10-23T00:00:00.000Z",
+  "snapshot": {
+    "schemaVersion": 1,
+    "threads": [],
+    "catalog": [],
+    "unifiedControl": {
+      "schema": 1,
+      "rows": [
+        {
+          "key": "codex:same-id",
+          "source": "codex",
+          "provider": "codex",
+          "hostId": null,
+          "externalId": "same-id",
+          "sessionId": "session-0",
+          "runId": "run-0",
+          "instanceId": null,
+          "startedAt": null,
+          "workspaceIdentity": null,
+          "ownerThreadId": "11111111-1111-4111-8111-111111111111",
+          "ownerVerified": true,
+          "projectId": null,
+          "title": "합성 작업 0",
+          "status": "진행 중",
+          "displayStatus": null,
+          "executionStatus": null,
+          "statusSource": null,
+          "agentStatus": null,
+          "observedAt": "2026-10-23T00:00:00.000Z",
+          "connectedAt": "2026-10-23T00:00:00.000Z",
+          "sourceRevision": 3,
+          "connectionState": "connected",
+          "fresh": true,
+          "readOnly": true,
+          "capabilities": {
+            "read": true,
+            "send": false
+          },
+          "threadId": "same-id",
+          "activeTurnId": null
+        },
+        {
+          "key": "cursor-desktop:same-id",
+          "source": "cursor-desktop",
+          "provider": "cursor-desktop",
+          "hostId": null,
+          "externalId": "same-id",
+          "sessionId": "session-1",
+          "runId": null,
+          "instanceId": "instance-1",
+          "startedAt": "2026-10-23T00:00:00.000Z",
+          "workspaceIdentity": "workspace-1",
+          "ownerThreadId": null,
+          "ownerVerified": false,
+          "projectId": null,
+          "title": "합성 작업 1",
+          "status": "진행 중",
+          "displayStatus": null,
+          "executionStatus": null,
+          "statusSource": null,
+          "agentStatus": null,
+          "observedAt": "2026-10-23T00:00:00.000Z",
+          "connectedAt": "2026-10-23T00:00:00.000Z",
+          "sourceRevision": 3,
+          "connectionState": "connected",
+          "fresh": true,
+          "readOnly": true,
+          "capabilities": {
+            "read": true,
+            "send": false
+          },
+          "threadId": null,
+          "activeTurnId": null
+        },
+        {
+          "key": "cursor-cloud:same-id",
+          "source": "cursor-cloud",
+          "provider": "cursor-cloud",
+          "hostId": null,
+          "externalId": "same-id",
+          "sessionId": "session-2",
+          "runId": "run-2",
+          "instanceId": null,
+          "startedAt": null,
+          "workspaceIdentity": null,
+          "ownerThreadId": "11111111-1111-4111-8111-111111111111",
+          "ownerVerified": true,
+          "projectId": null,
+          "title": "합성 작업 2",
+          "status": "진행 중",
+          "displayStatus": null,
+          "executionStatus": "RUNNING",
+          "statusSource": "cursor-cloud-sse",
+          "agentStatus": "ACTIVE",
+          "observedAt": "2026-10-23T00:00:00.000Z",
+          "connectedAt": "2026-10-23T00:00:00.000Z",
+          "sourceRevision": 3,
+          "connectionState": "connected",
+          "fresh": true,
+          "readOnly": false,
+          "capabilities": {
+            "read": true,
+            "send": true
+          },
+          "threadId": null,
+          "activeTurnId": null
+        }
+      ],
+      "truncated": false,
+      "error": null
+    },
+    "sourceConnections": [
+      {
+        "provider": "codex",
+        "connected": true,
+        "state": "connected",
+        "connectedAt": "2026-10-23T00:00:00.000Z",
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "owner": "11111111-1111-4111-8111-111111111111",
+        "sessionId": "session-0",
+        "runId": "run-0",
+        "sourceRevision": "3",
+        "readOnly": true,
+        "capabilities": {
+          "read": true,
+          "send": false
+        },
+        "reason": null
+      },
+      {
+        "provider": "cursor-desktop",
+        "connected": true,
+        "state": "connected",
+        "connectedAt": "2026-10-23T00:00:00.000Z",
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "owner": null,
+        "sessionId": "session-1",
+        "runId": null,
+        "sourceRevision": "3",
+        "readOnly": true,
+        "capabilities": {
+          "read": true,
+          "send": false
+        },
+        "reason": null
+      },
+      {
+        "provider": "cursor-cloud",
+        "connected": true,
+        "state": "connected",
+        "connectedAt": "2026-10-23T00:00:00.000Z",
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "owner": "11111111-1111-4111-8111-111111111111",
+        "sessionId": "session-2",
+        "runId": "run-2",
+        "sourceRevision": "3",
+        "readOnly": true,
+        "capabilities": {
+          "read": true,
+          "send": false
+        },
+        "reason": null
+      }
+    ]
+  }
+}
