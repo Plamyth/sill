@@ -39,6 +39,9 @@ import StreamProtocol
         check(Wire.decode(WindowList.self, from: try JSONSerialization.data(withJSONObject: invalid)) == nil, "boolean capability rejected")
         invalid = try object(gesture); invalid["videoEpoch"] = "not-a-uuid"
         check(Wire.decode(TrackpadGesture.self, from: try JSONSerialization.data(withJSONObject: invalid)) == nil, "malformed scope rejected")
+        let menuReply = MacMenu(version: 8, answering: 1, pressed: true, generation: generation, videoEpoch: epoch)
+        check(Wire.decode(MacMenu.self, from: Wire.encode(menuReply)) == menuReply, "menu response keeps producing scope")
+        check(try object(MacMenu())["videoEpoch"] == nil, "legacy menu response omits scope")
         print("PASS \(checks) independent peer wire compatibility checks")
     }
 }

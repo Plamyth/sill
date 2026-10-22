@@ -11,7 +11,7 @@ import Foundation
 // • A device asks once per connection, with a kind 27 without an id, after its first window list.
 //   Only such a connection (a subscriber) is ever sent a top level, and the host reads nothing for
 //   a connection that never asked: an older device, which sends no kind 27, costs the Mac nothing.
-// • The version is the host's, one for all devices (there is one stream, so one app). It moves
+// • The version belongs to the selected source context: per connection on independent-stream hosts. It moves
 //   whenever the app whose menus these are changes (to none included), or a re-read finds the top
 //   level's titles, count or enabled flags changed. An id is good only within its version: a kind
 //   25 or 27 with another version is answered at once and never read or pressed.
@@ -33,6 +33,8 @@ import Foundation
 public struct MacMenu: Codable, Hashable, Sendable {
     /// The tree this belongs to. The host adds 1 whenever the app whose menus these are changes, or
     /// its top level does; ids are good only within one version. In every kind 24.
+    public var generation: String?
+    public var videoEpoch: UUID?
     public var version: Int?
     /// "Code", "com.microsoft.VSCode": the app, in a top level only.
     public var app: String?
@@ -58,10 +60,11 @@ public struct MacMenu: Codable, Hashable, Sendable {
 
     public init(version: Int? = nil, app: String? = nil, bundleID: String? = nil, menus: [MacMenuItem]? = nil,
                 answering: Int? = nil, menu: String? = nil, items: [MacMenuItem]? = nil, more: Int? = nil,
-                pressed: Bool? = nil, stale: Bool? = nil, note: String? = nil) {
+                pressed: Bool? = nil, stale: Bool? = nil, note: String? = nil, generation: String? = nil, videoEpoch: UUID? = nil) {
         self.version = version; self.app = app; self.bundleID = bundleID; self.menus = menus
         self.answering = answering; self.menu = menu; self.items = items; self.more = more
         self.pressed = pressed; self.stale = stale; self.note = note
+        self.generation = generation; self.videoEpoch = videoEpoch
     }
 }
 
