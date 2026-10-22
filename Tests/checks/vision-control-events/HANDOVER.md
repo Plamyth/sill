@@ -43,3 +43,20 @@ python3 Tests/checks/vision-control-events/run.py --full-receipt --skip-node
 로컬 재검사 명령은 `python3 Tests/checks/vision-control-events/run.py`다. 영수증은 `.build/receipt.json`이며 full 모드는 commonGolden/mobileGolden 전체와 생산 파일·fixture SHA를 stdout에 출력한다. Vision SDK 빌드와 실제 SwiftUI 표시·접근성·줄바꿈·실제 TLS/등록/재접속 수용은 미검증이다. generator는 새 생산 파일 9개를 정규 SillVision·SillVisionReleaseTest에 모두 등록했고 총 86개 source를 생성했다.
 
 부모 후속 변경은 8MiB 큰 목록과 후속 변경, 등록 갱신·잠금 복원, 대문자 코드 정규화, 한국어 문구를 검증한다. 최종 수용 결과는 소스 외부의 원담당 영수증으로 확정한다.
+
+
+## 2026-10-23 개별 sourceConnection 계약 후속 핸드백
+
+전용 작업 키는 `vision-session-connection-20261023`이다. 작업공간은 `/Volumes/BT-Workspace/Development-Archives/CCR-Vision/source-events-20261023/session-connection`, 브랜치는 `codex/vision-session-connection-20261023`, 기준 HEAD는 `bf644337c9dd731ea919b6a78b6444983a488b7d`다. 부모 모델을 그대로 사용하고 추가 에이전트를 만들지 않았다. 이 절의 검증 범위가 위 과거 작성 기록과 구분되는 이번 변경의 실제 상태다.
+
+- [x] Pstack poteto-mode와 Model the Domain을 읽고 기존 DTO를 재사용하는 상태 enum으로 결박 판정을 모았다. Ponytail full의 기존 구조·표준 라이브러리 우선 선택으로 새 type 파일이나 의존성을 만들지 않았다.
+- [x] Android 정본 `server/mobile-control.js`의 `codexSourceState` 및 fixture를 직접 읽었다. 읽은 작업공간 HEAD는 `f15ccefbc6203b5180596c3e4147b8c9c732e583`, 해당 JS 파일 SHA256은 `a288f396c7f99cd66e56e731cbcdc8d9faeda507ddb7dff47ef845c9ae785620`다. 전달받은 `be5b9ba...`와 현재 읽기 HEAD를 동일 커밋이라고 주장하지 않는다.
+- [x] fixture를 exact 바이트로 복사하고 runner expected SHA를 `9fb6288d6ac3d68f4d743d8703b091f263664d239248b53e6ba82d8cb554b319`로 갱신했다. 복사 후 SHA readback과 `git diff --check`를 수행했다.
+- [x] `ControlEventsWork.sourceConnection`을 `unavailable / mismatched(observation) / current(observation) / stale(observation)`로 구성했다. DTO는 `ControlEventsSourceObservation`을 재사용하며 root 제공자 요약과 UI 표시를 구분한다.
+- [x] provider, 원본 세션 및 모든 제공된 Codex UUID 별칭, 실행 별칭을 검증한다. `connected=true`, `state=connected`, 공백이 아닌 runtime owner, 0 이상 JS safe integer revision, 행 stale 아님을 모두 만족할 때만 current다. 시각 TTL과 `fresh`는 quiet 세션의 연결을 낮추지 않는다.
+- [x] 원담당 `ownerThreadId`와 runtime `sourceConnection.owner`, 행 capability와 observer capability, 실행 관측과 연결 관측을 독립 보존·표시한다. 결박 거부 시 수신 document JSON을 수정하지 않는다. root 요약과 flat 연결값으로 개별 연결을 복원하지 않는다.
+- [x] 합성 반례를 기존 Main.swift에 추가했다. runtime owner 분리, root 연결 중 개별 단절, stale 실행 상태·시각 보존, 오래된 quiet 관측 유지, wrong session/run/provider, UUID 별칭 충돌·형식, invalid revision, 누락·legacy 개별 객체, 빈 owner, observer send=false와 기존 행 send=true의 독립성, threads/catalog fallback을 포함한다. 4002행 및 후속 patch 검사에 개별 연결 없는 Codex 행 전체의 미확인 보존 단언을 추가했다.
+- [ ] Swift 합성 검사, Node golden 동등성, 기존 206 검사 수 및 새 합계, 128 workspace 검사, 최종 독립 검수와 Vision SDK 빌드는 이번 자식 작업에서 실행하지 않았다. 기존 검사를 삭제하거나 축소하지 않았으며 부모가 exact 변경본에서 실행한다.
+- [ ] 커밋·push·PR·Mini 최종 실행은 부모 소유다. 위 과거 `60facc67...`, PR 14, `bf6443...` 및 서명 1760은 새 개별 필드 수용 근거가 아니다.
+
+변경 파일은 `visionOSClient/ControlEventsModel.swift`, `ControlEventsProjection.swift`, `ControlEventsPanel.swift`, `Tests/checks/vision-control-events/Main.swift`, `mobile-control-events-v1.json`, `run.py`, 이 HANDOVER뿐이다. Streaming/controller/enrollment/audio/SillVisionApp/generator는 수정하지 않았다. 실기기·음성·호스트·등록·Keychain·실제 SSE·네트워크 서비스·SDK·Mini 실행은 하지 않았으며 외부 효과는 0이다. 독립 검수 및 실제 UI 수용은 부모에게 남겨 두며 이 핸드백 뒤 쓰기를 중지한다.

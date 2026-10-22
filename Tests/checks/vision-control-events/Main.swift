@@ -104,6 +104,7 @@ private final class Streams {
         let commonGolden = try golden(common)
         let mobileGolden = try golden(mobile)
         try largeCatalogChecks(mobile)
+        try sessionConnectionChecks(mobile)
         let events = mobile["events"] as! [[String: Any]]
         let first = try ControlEventsCodec.decode(frame(events[0]))
         let patch = try ControlEventsCodec.decode(frame(events[1]))
@@ -214,6 +215,157 @@ private final class Streams {
         print(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
     }
 
+    static func sessionConnectionChecks(_ fixture: [String: Any]) throws {
+        let event = (fixture["events"] as! [[String: Any]])[0]
+        guard case .snapshot(_, let document) = try ControlEventsCodec.decode(frame(event)),
+              case .object(let unified) = document.root["unifiedControl"],
+              let rows = unified.rows("rows"), let row = rows.first(where: { $0.text("source") == "codex" }),
+              case .object(let connection) = row["sourceConnection"] else { fatalError("새 개별 연결 fixture 누락") }
+        func project(_ row: [String: ControlEventsValue]) throws -> ControlEventsProjection {
+            var root = document.root
+            var fields = unified
+            fields["rows"] = .array([.object(row)])
+            root["unifiedControl"] = .object(fields)
+            return try ControlEventsCodec.project(ControlEventsDocument(root: root))
+        }
+        func work(_ row: [String: ControlEventsValue]) throws -> ControlEventsWork { try project(row).work[0] }
+        func changing(_ key: String, _ value: ControlEventsValue?) -> [String: ControlEventsValue] {
+            var updated = row
+            var source = connection
+            source[key] = value
+            updated["sourceConnection"] = .object(source)
+            return updated
+        }
+        let current = try work(row)
+        expect(current.sourceConnection.isCurrent, "새 fixture 개별 Codex 연결 수용")
+        let source = current.sourceConnection.observation!
+        expect(source.owner == "fixture-runtime-owner" && current.ownerID == row.text("ownerThreadId") && source.owner != current.ownerID,
+               "실행 환경 담당과 원담당 대화 독립 보존")
+        expect(source.readOnly == true && source.capabilities == .object(["read": .bool(false), "send": .bool(false)]),
+               "관측기 권한 false 보존")
+        expect(current.readOnly == false && current.capabilities == .object(["read": .bool(true), "send": .bool(true)]),
+               "기존 명령 도우미 행 send true와 관측기 send false 독립")
+        expect(source.sourceRevision == .number(7), "개별 변경 번호는 행과 별도로 보존")
+
+        var disconnected = changing("connected", .bool(false))
+        if case .object(var raw) = disconnected["sourceConnection"] {
+            raw["state"] = .string("stale")
+            raw["observedAt"] = .string("2020-01-01T00:00:00.000Z")
+            disconnected["sourceConnection"] = .object(raw)
+        }
+        let split = try project(disconnected)
+        expect(split.sources.first { $0.provider == .codex }?.connected == true, "제공자 요약은 계속 연결")
+        let last = split.work[0]
+        if case .stale = last.sourceConnection { expect(true, "개별 원본 단절은 마지막 관측") }
+        else { expect(false, "개별 원본 단절은 마지막 관측") }
+        expect(last.connection.state == "connected" && !last.sourceConnection.isCurrent, "flat 연결값으로 개별 단절을 복원하지 않음")
+        expect(last.execution == current.execution && last.recordObservedAt == current.recordObservedAt,
+               "개별 단절에도 기존 실행 상태와 관측 시각 보존")
+        expect(last.sourceConnection.observation?.connection.observedAt != last.execution.observedAt,
+               "실행 관측과 연결 관측은 서로 덮지 않음")
+        expect(last.sourceConnection.label.contains("마지막 관측"), "개별 UI에 마지막 관측 문구 제공")
+        var stale = row
+        stale["stale"] = .bool(true)
+        let staleWork = try work(stale)
+        expect(!staleWork.sourceConnection.isCurrent && staleWork.execution == current.execution, "행 stale는 실행 관측을 보존하며 현재 연결 거부")
+        var quiet = changing("observedAt", .string("2020-01-01T00:00:00.000Z"))
+        quiet["agentStatus"] = .string("quiet")
+        quiet["fresh"] = .bool(false)
+        let quietWork = try work(quiet)
+        expect(quietWork.sourceConnection.isCurrent && quietWork.agentStatus == "quiet", "조용한 세션의 오래된 시각에 TTL 단절을 적용하지 않음")
+        expect(quietWork.execution == current.execution, "연결 관측 시각으로 실행 관측을 덮지 않음")
+
+        for (key, value) in [("sessionId", "55555555-5555-4555-8555-555555555555"),
+                             ("runId", "66666666-6666-4666-8666-666666666666"), ("provider", "cursor-cloud")] {
+            let wrong = try work(changing(key, .string(value)))
+            if case .mismatched(let observation) = wrong.sourceConnection {
+                expect(observation.owner == source.owner, "잘못된 결박에도 관측 원문 보존 \(key)")
+            } else { expect(false, "잘못된 결박 거부 \(key)") }
+            expect(!wrong.sourceConnection.isCurrent && wrong.execution == current.execution, "결박 거부는 실행 기록을 바꾸지 않음 \(key)")
+            expect(wrong.sourceConnection.label.contains("결박 거부"), "잘못된 결박의 UI 문구 \(key)")
+        }
+        for key in ["externalId", "sessionId", "threadId", "runId", "activeTurnId"] {
+            var alias = row
+            alias[key] = .string("77777777-7777-4777-8777-777777777777")
+            let rejected = try work(alias)
+            expect(!rejected.sourceConnection.isCurrent, "서로 다른 Codex UUID 별칭 거부 \(key)")
+            expect(rejected.sourceConnection.observation == source, "거부한 별칭에 맞춰 연결 JSON을 조작하지 않음 \(key)")
+        }
+        for key in ["threadId", "activeTurnId"] {
+            var alias = row
+            alias[key] = .string("not-a-uuid")
+            let invalid = try work(alias)
+            expect(!invalid.sourceConnection.isCurrent, "Codex UUID 형식 검사 \(key)")
+        }
+        let invalidRevisions: [ControlEventsValue?] = [nil, .null, .string("7"), .number(-1), .number(0.5),
+            .number(9_007_199_254_740_992), .bool(true)]
+        for revision in invalidRevisions {
+            let invalid = try work(changing("sourceRevision", revision))
+            expect(!invalid.sourceConnection.isCurrent, "잘못된 개별 JS safe integer는 현재 연결 불가")
+        }
+        let maximum = try work(changing("sourceRevision", .number(9_007_199_254_740_991)))
+        expect(maximum.sourceConnection.isCurrent, "개별 JS safe integer 최댓값 수용")
+        for owner in [ControlEventsValue.null, .string(""), .string("  ")] {
+            let invalid = try work(changing("owner", owner))
+            expect(!invalid.sourceConnection.isCurrent, "실행 환경 담당 없이는 현재 연결 불가")
+        }
+        let contradictory = try work(changing("state", .string("stale")))
+        expect(!contradictory.sourceConnection.isCurrent, "connected true만으로 state stale를 복원하지 않음")
+        for missing in [ControlEventsValue.null, .string("legacy")] {
+            var legacy = row
+            legacy["sourceConnection"] = missing
+            let unknown = try work(legacy)
+            expect(unknown.sourceConnection == .unavailable, "없는 개별 객체는 요약과 flat값이 있어도 미확인")
+        }
+        var legacy = row
+        legacy["sourceConnection"] = nil
+        let absent = try work(legacy)
+        expect(absent.sourceConnection == .unavailable && absent.execution == current.execution, "legacy 개별 필드 미제공 보존")
+        var unverified = row
+        unverified["ownerVerified"] = .bool(false)
+        let unverifiedOwner = try work(unverified)
+        expect(unverifiedOwner.ownerID == nil && unverifiedOwner.reportedOwnerID == current.ownerID && unverifiedOwner.ownerVerified == false,
+               "미확인 원담당은 확정하지 않고 보고값으로만 보존")
+
+        var structured = document.root
+        var ownedThread = document.root.rows("threads")![0]
+        ownedThread["owner"] = .object(["verified": .bool(true), "name": .string("합성 담당"), "threadId": row["ownerThreadId"]!])
+        structured["threads"] = .array([.object(ownedThread)])
+        let modern = try ControlEventsCodec.project(ControlEventsDocument(root: structured))
+        expect(modern.work.count == 3, "정규화 관제는 구조화된 기존 담당 필드와 독립 소비")
+        structured["unifiedControl"] = nil
+        structured["catalog"] = .array([])
+        let structuredFallback = try ControlEventsCodec.project(ControlEventsDocument(root: structured)).work[0]
+        expect(structuredFallback.ownerID == row.text("ownerThreadId") && structuredFallback.ownerVerified == true,
+               "기존 구조화 담당은 검증된 대화 식별자로 소비")
+
+        let thread = document.root.rows("threads")![0]
+        for name in ["threads", "catalog"] {
+            var root = document.root
+            root["unifiedControl"] = nil
+            root["threads"] = .array([])
+            root["catalog"] = .array([])
+            var record = thread
+            record["ownerThreadId"] = row["ownerThreadId"]
+            root[name] = .array([.object(record)])
+            let fallback = try ControlEventsCodec.project(ControlEventsDocument(root: root)).work[0]
+            expect(fallback.sourceConnection.isCurrent && fallback.sourceConnection.observation?.owner != fallback.ownerID,
+                   "\(name) 개별 연결과 담당 분리")
+            record["sourceConnection"] = nil
+            root[name] = .array([.object(record)])
+            let missing = try ControlEventsCodec.project(ControlEventsDocument(root: root)).work[0]
+            expect(missing.sourceConnection == .unavailable, "\(name) legacy 개별 연결 미확인")
+        }
+        var idle = row
+        idle["runId"] = .null
+        idle["activeTurnId"] = .null
+        var idleSource = connection
+        idleSource["runId"] = .null
+        idle["sourceConnection"] = .object(idleSource)
+        let idleWork = try work(idle)
+        expect(idleWork.sourceConnection.isCurrent, "활성 실행 없는 조용한 세션의 null 실행 결박 수용")
+    }
+
     static func largeCatalogChecks(_ fixture: [String: Any]) throws {
         var event = (fixture["events"] as! [[String: Any]])[0]
         var snapshot = event["snapshot"] as! [String: Any]
@@ -243,6 +395,8 @@ private final class Streams {
         expect(reducer.consume(initial, subscription: id) == .applied, "큰 snapshot 적용")
         var projected = try ControlEventsCodec.project(reducer.document!)
         expect(projected.work.count == 4000 + tail.count, "4천 Codex 뒤 원본 행 전체 보존")
+        expect(projected.work.filter { $0.id.provider == .codex }.allSatisfy { $0.sourceConnection == .unavailable },
+               "개별 연결 없는 대형 Codex 행은 자르지 않고 미확인 보존")
         expect(projected.work.contains { $0.id.provider == .cursorDesktop } && projected.work.contains { $0.id.provider == .cursorCloud },
                "뒤쪽 Cursor 로컬과 Cloud 보존")
         let oldCloud = projected.work.first { $0.id.provider == .cursorCloud }!

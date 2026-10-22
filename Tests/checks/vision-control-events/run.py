@@ -47,7 +47,7 @@ elif args.skip_node:
     receipt['nodeComparison']['reason'] = '부모가 정본 Node와 대조하도록 명시적으로 분리했습니다.'
 receipt['sourceSHA256'] = {str(file.relative_to(ROOT)): hashlib.sha256(file.read_bytes()).hexdigest() for file in files}
 receipt['fixturesSHA256'] = {file.name: hashlib.sha256(file.read_bytes()).hexdigest() for file in HERE.glob('*.json')}
-assert receipt['fixturesSHA256']['mobile-control-events-v1.json'] == '60facc67e1435383dfd6ef78cfcf7ea6393529ca1b399742d8f03a8273c350be'
+assert receipt['fixturesSHA256']['mobile-control-events-v1.json'] == '9fb6288d6ac3d68f4d743d8703b091f263664d239248b53e6ba82d8cb554b319'
 (BUILD / 'receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n')
 if args.full_receipt:
     print(json.dumps(receipt, ensure_ascii=False))

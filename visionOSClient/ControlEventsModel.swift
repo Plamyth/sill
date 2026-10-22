@@ -116,12 +116,42 @@ struct ControlEventsSourceObservation: Equatable, Sendable {
     let capabilities: ControlEventsValue?
 }
 
+enum ControlEventsSessionConnection: Equatable, Sendable {
+    case unavailable
+    case mismatched(ControlEventsSourceObservation)
+    case current(ControlEventsSourceObservation)
+    case stale(ControlEventsSourceObservation)
+
+    var observation: ControlEventsSourceObservation? {
+        switch self {
+        case .unavailable: return nil
+        case .mismatched(let observation), .current(let observation), .stale(let observation): return observation
+        }
+    }
+
+    var isCurrent: Bool {
+        if case .current = self { return true }
+        return false
+    }
+
+    var label: String {
+        switch self {
+        case .unavailable: return "개별 연결 미확인 · 개별 정보 미제공 또는 해석 불가"
+        case .mismatched: return "개별 연결 미확인 · 세션·실행 결박 거부"
+        case .current: return "개별 원본 연결 확인"
+        case .stale: return "마지막 관측 · 개별 원본 연결 미확인"
+        }
+    }
+}
+
 struct ControlEventsWork: Equatable, Identifiable, Sendable {
     let id: ControlEventsWorkID
     let title: String
     let ownerID: String?
     let execution: ControlEventsExecutionObservation
     let connection: ControlEventsConnectionObservation
+    var sourceConnection: ControlEventsSessionConnection = .unavailable
+    var reportedOwnerID: String? = nil
     var ownerVerified: Bool? = nil
     var sourceRevision: ControlEventsValue? = nil
     var agentStatus: String? = nil
