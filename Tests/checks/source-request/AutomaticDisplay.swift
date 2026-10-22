@@ -50,6 +50,44 @@ import Foundation
     initial.deliverIdleCatalog(idle)
     expect(picks(initial).count == 1 && picks(initial).first?.displayID == main.id,
            "same client reconnects with its confirmed display and a new peer ticket")
+    for acknowledgment in ["없음", "revision만"] {
+        let interrupted = fresh()
+        interrupted.deliverIdleCatalog(idle)
+        if acknowledgment == "revision만" {
+            var withoutEpoch = confirmed
+            withoutEpoch.videoEpoch = nil
+            interrupted.deliverIdleCatalog(withoutEpoch)
+        }
+        expect(interrupted.defaults.values.isEmpty, "미확인 자동 요청을 저장하지 않음")
+        interrupted.connection = NWConnection()
+        interrupted.beginAutomaticConnectionOpportunity(peer: interrupted.connection)
+        interrupted.deliverIdleCatalog(idle)
+        expect(picks(interrupted).count == 1, "ACK 이전 자동 display 요청도 새 연결에서 재개 acknowledgment=\(acknowledgment) actual=\(picks(interrupted).count)")
+    }
+    for choice in ["source", "none", "display", "launch"] {
+        let interrupted = fresh()
+        interrupted.deliverIdleCatalog(idle)
+        switch choice {
+        case "source": interrupted.select(.window(42))
+        case "none": interrupted.select(.none)
+        case "display": interrupted.selectDisplay(main)
+        default: interrupted.launch(bundleID: "fixture.manual")
+        }
+        interrupted.connection = NWConnection()
+        interrupted.beginAutomaticConnectionOpportunity(peer: interrupted.connection)
+        interrupted.deliverIdleCatalog(idle)
+        expect(interrupted.allSent.isEmpty, "새 수동 선택은 자동 display 복구로 덮지 않음 choice=\(choice)")
+    }
+    let sourceInterrupted = fresh()
+    let sourceTicket = sourceInterrupted.automaticTicket(peer: sourceInterrupted.connection!, list: idle)!
+    sourceInterrupted.requestAutomatic(.window(1001), ticket: sourceTicket)
+    sourceInterrupted.connection = NWConnection()
+    sourceInterrupted.beginAutomaticConnectionOpportunity(peer: sourceInterrupted.connection)
+    sourceInterrupted.resumeSource = .window(1001)
+    var sourceIdle = idle
+    sourceIdle.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
+    sourceInterrupted.deliverIdleCatalog(sourceIdle)
+    expect(sourceInterrupted.allSent.contains { $0.0 == .selectSource }, "ACK 이전 자동 source 요청도 새 연결에서 재개 actual=\(sourceInterrupted.allSent.count)")
     let restore = fresh()
     seed(restore)
     restore.deliverIdleCatalog(idle)

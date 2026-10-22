@@ -167,5 +167,49 @@ do {
     c.evaluate(); Clock.advance(3)
     check(c.remoteDials.count == 1, "owner 시작의 지연 콜백도 중복 연결하지 않음")
 }
+for cable in [false, true] {
+    Clock.reset()
+    let c = StreamClient()
+    if cable { c.macs = [FoundMac(cable: true)] }
+    c.armSavedMacAutoConnect()
+    if cable { c.cableUnavailable(c.connection!); c.macs = [] } else { Clock.advance(3) }
+    c.failRemote(.noAnswer)
+    check(c.reconnect?.remoteFailures == 1, "최초 원격 실패도 기존 재시도 상태에 기록 cable=\(cable)")
+    Clock.advance(10)
+    check(c.remoteDials.count == 2, "일시적 noAnswer 뒤 버튼 없이 재연결 cable=\(cable) actual=\(c.remoteDials.count)")
+    c.failRemote(.vpnUnavailable)
+    Clock.advance(10)
+    check(c.remoteDials.count == 3, "VPN 일시 불가 뒤 동일 저장 Mac 재시도 cable=\(cable) actual=\(c.remoteDials.count)")
+    c.failRemote(.noAnswer)
+    Clock.advance(120)
+    let count = c.remoteDials.count
+    c.evaluate(); _ = c.reconnectIfListed(); Clock.advance(1000)
+    check(c.remoteDials.count == count && c.reconnectCheck == nil, "기존 재시도 예산 만료 뒤 새 반복 없음")
+}
+for failure in [RemoteDialPolicy.Failure.revoked, .wrongMac, .remoteOff] {
+    Clock.reset()
+    let c = StreamClient(); c.savedMacs[0].method = "owner-tailnet-v1"
+    c.armSavedMacAutoConnect(); Clock.advance(3); c.failRemote(failure); Clock.advance(20)
+    check(c.remoteDials.count == 1, "명시적 원격 거절 뒤 자동 재시도 없음")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.armSavedMacAutoConnect(); Clock.advance(3); c.failRemote(.noAnswer)
+    c.stop(); Clock.advance(30)
+    check(c.remoteDials.count == 1 && c.reconnect == nil, "명시적 중지는 예약된 재시도도 취소")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.armSavedMacAutoConnect(); Clock.advance(3); c.failRemote(.noAnswer)
+    DeviceIdentity.available = false
+    Clock.advance(10)
+    check(c.remoteDials.count == 1, "재시도 전에 기기 키가 사라지면 소켓을 시작하지 않음")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.armSavedMacAutoConnect(); Clock.advance(3); c.failRemote(.noAnswer)
+    c.connect(to: FoundMac(macID: "other", cable: true)); Clock.advance(30)
+    check(c.remoteDials.count == 1 && c.reconnect == nil, "다른 Mac으로 이동하면 이전 자동 재시도는 끝남")
+}
 print("\(checks - failures)/\(checks) checks passed; \(failures) failed")
 exit(failures == 0 ? 0 : 1)
