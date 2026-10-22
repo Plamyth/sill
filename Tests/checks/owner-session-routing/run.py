@@ -12,12 +12,14 @@ start=dial.index('let candidates = RemoteDialPolicy.')
 end=dial.index('\n        #if DEBUG',start)
 candidates=dial[start:end]
 methods='\n'.join(m.vision(m.block(stream,marker)) for marker in ['func homeDecision(', 'func dialRow('])
+methods+='\n'+m.vision(m.block(remote,'func remoteDialFailed('))
 move=m.block(stream,'func moveHomeIfListed()')
 move=move[:move.index('        // Every network row')]+ '\n        homeEligible += 1\n    }'
 start_move=m.block(stream,'private func startMove(')
 start_move=start_move[:start_move.index('        let refused = WeakConnection()')].replace('private func','func')+'\n        moveCreated += 1\n    }'
 fixture=(HERE/'Standins.swift').read_text().replace('/* ACTUAL_METHODS */',methods+'\n'+move+'\n'+start_move)
 fixture=fixture.replace('/* ACTUAL_CANDIDATES */',candidates+'\n        return candidates')
+fixture+='\n'+m.vision(m.block(remote,'enum RemoteCopy {'))
 fixture+='\n'+(HERE/'scenarios.swift').read_text()
 with tempfile.TemporaryDirectory(prefix='owner-session-routing-') as folder:
  out=Path(folder);cache=out/'cache';env=dict(os.environ,CLANG_MODULE_CACHE_PATH=str(cache))

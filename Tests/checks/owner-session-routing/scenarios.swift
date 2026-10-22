@@ -42,5 +42,27 @@ for flag in ["revoked","newKey"] {
     _=c.dialRow(row,macID:invalid.macID,trust:.saved(pin:pin),tagNamed:true)
     check("owner \(flag) 직접 row 호출도 새 연결을 만들지 않음", c.rowConnections == 0 && c.remoteRequests.isEmpty)
 }
-print("Owner session routing \(checks)개, 실패 \(failures)개. 실제 후보/진입 메서드와 I/O 대역 검사.")
+for context in ["없음", "다른 Mac", "같은 Mac", "직접 선택"] {
+    let c = StreamClient(); c.records = [owner]; c.status = "연결 시도 중"
+    if context != "없음" { c.reconnect = .init(macID: context == "다른 Mac" ? "다른 ID" : owner.macID) }
+    _ = c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true, tap: context == "직접 선택")
+    let reason = c.remoteRequests.last!.1
+    let automatic = context == "같은 Mac"
+    check("\(context) row의 재시도 의도에 맞는 연결 이유", reason == (automatic ? .automatic : .tap))
+    c.remoteDial = nil
+    c.remoteDialFailed(macID: owner.macID, why: reason, failure: .noAnswer, candidate: ownerCandidates.first)
+    if automatic {
+        check("같은 Mac의 실패는 재시도 기한을 유지", c.reconnect?.remoteFailures == 1 && (c.reconnect?.nextRemoteAt ?? 0) > ProcessInfo.processInfo.systemUptime && c.retries == 1)
+    } else {
+        check("\(context) 실패가 연결 중 상태에 멈추지 않음", c.status != "연결 시도 중" && c.discoveryChanges == 1 && c.retries == 0)
+        check("다른 Mac의 재시도 상태를 변경하지 않음", c.reconnect?.remoteFailures ?? 0 == 0)
+    }
+}
+for failure in [RemoteDialPolicy.Failure.revoked, .wrongMac, .remoteOff] {
+    let c = StreamClient(); c.records = [owner]; c.reconnect = .init(macID: owner.macID)
+    _ = c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true)
+    c.remoteDialFailed(macID: owner.macID, why: c.remoteRequests.last!.1, failure: failure, candidate: ownerCandidates.first)
+    check("\(failure) 응답 뒤 자동 원격 재시도 금지", c.reconnect?.remoteAllowed == false && c.reconnect?.remoteFailures == 0)
+}
+print("Owner session routing \(checks)개, 실패 \(failures)개. 실제 후보/진입/실패 메서드와 I/O 대역 검사.")
 if failures != 0 { exit(1) }

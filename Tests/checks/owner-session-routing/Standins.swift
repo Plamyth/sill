@@ -17,7 +17,15 @@ final class Work { var cancelled = false; func cancel() { cancelled = true } }
 struct MoveRows { func keeping(listed: Set<String>) -> Self { self } }
 struct Session { struct Route { var isRemote = true }; var route = Route(); var why = StreamClient.DialReason.automatic; var macID: String? }
 final class StreamClient {
-    enum DialReason { case tap, automatic, connectRemotely }
+    enum DialReason { case tap, automatic, connectRemotely, afterPairing, launchArgument }
+    enum Pairing { case idle }
+    struct Reconnect {
+        var macID: String?
+        var remoteAllowed = true
+        var remoteFailures = 0
+        var nextRemoteAt: Double = 0
+    }
+    static let deviceWord = "Vision Pro"
     static let debugBuild = false
     var records: [SavedMac] = []
     var session: Session?
@@ -34,7 +42,14 @@ final class StreamClient {
     var homeEligible = 0, moveCreated = 0, rowConnections = 0
     var remoteRequests: [(String,DialReason)] = []
     var remoteDial: Int?
+    var reconnect: Reconnect?
+    var afterPairingWatch: Work?
+    var pairing = Pairing.idle
+    var retries = 0, discoveryChanges = 0
     var status = ""
+    func displayName(_ id: String) -> String { savedMac(id)?.name ?? "Mac" }
+    func reconnectIfListed() { retries += 1 }
+    func discoveryChanged() { discoveryChanges += 1 }
     func savedMac(_ id: String) -> SavedMac? { records.first { $0.macID == id } }
     static func localIPv4Networks() -> [(address:[UInt8],prefix:Int)] { [([192,168,1,2],24)] }
     static func candidates(_ mac: SavedMac) -> [RemoteDialPolicy.Candidate] {
