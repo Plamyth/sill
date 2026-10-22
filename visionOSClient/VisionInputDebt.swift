@@ -58,6 +58,87 @@ enum VisionInputBinding: Equatable {
     }
 }
 
+struct VisionPeerStreams: Equatable {
+    let connection = UUID()
+    private(set) var requiresScope = false
+    private(set) var compatible = false
+    private(set) var source = StreamSource.none
+    private(set) var epoch: VideoEpoch?
+    private(set) var failure: String?
+
+    enum Selection: Equatable {
+        case source(StreamSource)
+        case display(UInt32)
+        case launch(String)
+
+        func matches(_ catalog: WindowList) -> Bool {
+            switch self {
+            case .source(let source): return catalog.active == source
+            case .display(let id): return catalog.active == .desktop && catalog.activeDisplayID == id
+            case .launch(let bundle):
+                guard case .window(let id) = catalog.active else { return false }
+                return catalog.windows.contains { $0.id == id && $0.bundleID == bundle }
+            }
+        }
+    }
+    private var revision: String?
+    private var catalogEpoch: UUID?
+    private var activeDisplay: UInt32?
+    private var activeBundle: String?
+    private struct PendingSelection: Equatable {
+        let selection: Selection
+        let revision: String?
+        let epoch: UUID?
+    }
+    private var pendingSelection: PendingSelection?
+
+    @discardableResult
+    mutating func selectionRequested(_ selection: Selection, presented: VideoEpoch? = nil) -> Bool {
+        let sameTarget: Bool
+        switch selection {
+        case .source(let requested): sameTarget = source == requested
+        case .display(let id): sameTarget = source == .desktop && activeDisplay == id
+        case .launch(let bundle): sameTarget = activeBundle == bundle
+        }
+        if pendingSelection == nil, let presented, presented == epoch, sameTarget { return false }
+        pendingSelection = PendingSelection(selection: selection, revision: revision, epoch: catalogEpoch)
+        epoch = nil
+        return true
+    }
+
+    mutating func observe(_ catalog: WindowList) {
+        requiresScope = requiresScope || catalog.independentStreams != nil || catalog.sourceSelectionEffects != nil
+        compatible = catalog.independentStreams == 1 && catalog.sourceSelectionEffects == 0 && catalog.presentationInput == 1
+        source = catalog.active
+        activeDisplay = catalog.activeDisplayID
+        if case .window(let id) = source { activeBundle = catalog.windows.first { $0.id == id }?.bundleID }
+        else { activeBundle = nil }
+        failure = catalog.sourceSelectionFailure.map { SafeText.label($0, limit: 300) }.flatMap { $0.isEmpty ? nil : $0 }
+        if requiresScope && !compatible { failure = "Mac의 독립 화면 정보를 확인할 수 없습니다. 다시 연결해 주세요." }
+        if let pending = pendingSelection, pending.selection.matches(catalog),
+           catalog.selectionRevision != pending.revision || catalog.videoEpoch?.id != pending.epoch {
+            pendingSelection = nil
+        }
+        revision = catalog.selectionRevision
+        catalogEpoch = catalog.videoEpoch?.id
+        epoch = pendingSelection == nil && compatible && failure == nil && catalog.videoEpoch?.matches(source: catalog.active, generation: catalog.inputGeneration) == true
+            ? catalog.videoEpoch : nil
+    }
+
+    func presentedEpoch(_ binding: VisionInputBinding) -> VideoEpoch? {
+        guard requiresScope, compatible, case .presented(let shown) = binding, shown == epoch else { return nil }
+        return shown
+    }
+
+    func inputCatalog(_ catalog: WindowList) -> WindowList {
+        guard requiresScope else { return catalog }
+        var result = catalog
+        result.presentationInput = 1
+        result.videoEpoch = epoch
+        return result
+    }
+}
+
 struct CapturedVisionInput {
     let event: InputEvent
     let generation: String?

@@ -63,7 +63,9 @@ enum MacMenuElements {
             let done: (MacMenuState.Content) -> Void = { [weak client] content in
                 completion(client.map { elements(content, client: $0) } ?? [noteAction(MacMenuState.notConnected)])
             }
-            if let version = topLevelVersion, let id = row.id {
+            if row.scope != nil {
+                client.fetchMenu(row, completion: done)
+            } else if let version = topLevelVersion, let id = row.id {
                 client.fetchTopMenu(id: id, title: row.title, builtVersion: version, completion: done)
             } else {
                 client.fetchMenu(row, completion: done)

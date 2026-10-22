@@ -15,10 +15,14 @@ public struct TrackpadGesture: Codable, Equatable, Sendable {
     public var gesture: String
     /// 3 or 4, as the device counted the fingers. Logged only.
     public var fingers: Int?
+    public var generation: String?
+    public var videoEpoch: UUID?
 
-    public init(gesture: String, fingers: Int? = nil) {
+    public init(gesture: String, fingers: Int? = nil, generation: String? = nil, videoEpoch: UUID? = nil) {
         self.gesture = gesture
         self.fingers = fingers
+        self.generation = generation
+        self.videoEpoch = videoEpoch
     }
 
     /// The fingers move up: Mission Control.

@@ -120,6 +120,9 @@ struct SillVisionWorkspace: View {
                 Text("Mac의 입력 해제 수신을 확인하지 못해 원격 입력을 중지했습니다.").foregroundStyle(.orange)
             }
             if client.connected {
+                if let failure = client.visionSourceSelectionFailure {
+                    Text(failure).foregroundStyle(.orange).accessibilityLabel(failure)
+                }
                 screen
                 controls
                 Text("한 번 집기: 클릭 · 빠르게 두 번 집기: 더블클릭 · 집고 이동: 가로·세로 스크롤 · 유지했다 놓기: 오른쪽 클릭\n두 손 벌리기·모으기: 화면 확대·축소 · 두 손 좌우 회전 후 놓기: Mac 모니터 한 칸 전환\n보조 키를 선택하고 길게 집은 뒤 이동하면 드래그합니다.")

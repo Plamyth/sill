@@ -41,6 +41,8 @@ final class StreamClient {
     var active = StreamSource.none
     var visionAudioIntentAwaitingSource: StreamSource?
     func revokeVisionTextDrafts() { draftRevocations += 1 }
+    func prepareVisionPeerSourceChange(_ selection: LegacySelection) -> Bool { true }
+    enum LegacySelection { case source(StreamSource) }
     func microphoneSourceWillChange() { microphoneStops += 1 }
     func afterVisionInputRelease(_ completion: @escaping (Bool) -> Void) { releaseCallbacks.append(completion) }
     func send(_ kind: StreamMessageKind, _ payload: Data) {

@@ -52,6 +52,35 @@ import StreamProtocol
 /// of one part (1–4 digits, no leading zero) that no earlier menu has: the iPad's bar gives each an
 /// identifier made from its id, and two equal identifiers in one build throw.
 struct MacMenuState: Equatable {
+    struct Scope: Equatable {
+        let generation: String
+        let videoEpoch: UUID
+        let connection: UUID
+
+        init?(generation: String?, videoEpoch: UUID?, connection: UUID) {
+            guard let generation, !generation.isEmpty, let videoEpoch else { return nil }
+            self.generation = generation
+            self.videoEpoch = videoEpoch
+            self.connection = connection
+        }
+    }
+
+    enum Context: Equatable {
+        case legacy
+        case independent(Scope?)
+        case readOnly
+    }
+    private(set) var context = Context.legacy
+    private var subscription: Int?
+
+    mutating func subscribe(token: Int) -> FetchMenu {
+        subscription = token
+        if case .independent(let scope) = context {
+            return FetchMenu(token: token, generation: scope?.generation, videoEpoch: scope?.videoEpoch)
+        }
+        return FetchMenu(token: token)
+    }
+
     /// One row of a menu as the device draws it.
     struct Row: Equatable {
         enum Kind: Equatable { case item, submenu, note }
@@ -67,11 +96,13 @@ struct MacMenuState: Equatable {
         /// The tree version the row was sent in: its fetch or its choice carries it, so the Mac
         /// refuses one from an older tree instead of acting on whatever sits at that place now.
         var version: Int?
+        var scope: Scope?
 
         init(kind: Kind, id: String? = nil, title: String, key: String? = nil, enabled: Bool = true,
-             mark: Mark = .off, version: Int? = nil) {
+             mark: Mark = .off, version: Int? = nil, scope: Scope? = nil) {
             self.kind = kind; self.id = id; self.title = title; self.key = key
             self.enabled = enabled; self.mark = mark; self.version = version
+            self.scope = scope
         }
 
         /// A disabled row of words: a note, "No items", "‹n› more on the Mac".
@@ -130,6 +161,7 @@ struct MacMenuState: Equatable {
     }
 
     static let changedNote = "The menus changed. Open the menu again."
+    static let scopeChangedNote = "Mac 화면이 바뀌었습니다. 메뉴를 다시 열어 주세요."
     static let notConnected = "Not connected."
     static let noItems = "No items"
     static func noAnswer(mac: String) -> String { "\(mac.isEmpty ? "The Mac" : mac) didn’t answer. Open the menu again." }
@@ -157,6 +189,7 @@ struct MacMenuState: Equatable {
         let token: Int
         var keys: [Int]
         let sentAt: Double
+        let scope: Scope?
     }
     /// The fetches sent and not answered yet, oldest first.
     private var waiting: [Waiting] = []
@@ -165,6 +198,8 @@ struct MacMenuState: Equatable {
         let token: Int
         let id: String
         let title: String
+        let scope: Scope?
+        let version: Int
     }
     /// The choices sent and not answered yet, oldest first.
     private var choices: [Choice] = []
@@ -180,16 +215,33 @@ struct MacMenuState: Equatable {
     /// choices (by `answering`). Returns the completions it settles, whether the top level changed,
     /// and a refused choice.
     mutating func receive(_ m: MacMenu, now: Double) -> (done: [Done], topChanged: Bool, refusal: Refusal?) {
+        let responseScope: Scope?
+        if case .independent(let expected) = context, let expected {
+            responseScope = Scope(generation: m.generation, videoEpoch: m.videoEpoch, connection: expected.connection)
+        } else { responseScope = nil }
+        switch context {
+        case .legacy: break
+        case .independent(let expected):
+            guard let expected, responseScope == expected else { return ([], false, nil) }
+        case .readOnly:
+            guard m.generation == nil, m.videoEpoch == nil, m.menus != nil,
+                  m.items == nil, m.menu == nil, m.pressed == nil else { return ([], false, nil) }
+        }
         if let items = m.menus {
+            if case .independent = context, let token = m.answering {
+                guard subscription == token else { return ([], false, nil) }
+                subscription = nil
+            }
             // Every kind 24 has its version; a top level without one says nothing this device can use.
             guard let v = m.version else { return ([], false, nil) }
+            if context != .legacy, let version, v < version { return ([], false, nil) }
             let before = top
             version = v
             app = Self.clean(m.app, limit: SafeText.labelLimit)
             stale = m.stale == true
             note = Self.clean(m.note, limit: Self.noteLimit)
             if stale, note == nil { note = "\(app ?? "The app") isn’t responding." }
-            menus = Self.topRows(items, version: v)
+            menus = Self.topRows(items, version: v, scope: responseScope, readOnly: context == .readOnly)
             // Rule 2: what was asked of another tree is answered here.
             var done: [Done] = []
             waiting.removeAll { w in
@@ -201,6 +253,7 @@ struct MacMenuState: Equatable {
         }
         guard let token = m.answering else { return ([], false, nil) }
         if let i = waiting.firstIndex(where: { $0.token == token }) {
+            guard context == .legacy || waiting[i].scope == responseScope else { return ([], false, nil) }
             let w = waiting.remove(at: i)
             let content: Content
             if m.version != w.version {
@@ -208,11 +261,13 @@ struct MacMenuState: Equatable {
             } else {
                 let more = max(0, m.more ?? 0)
                 content = .sections(Self.sections(m.items ?? [], stale: m.stale == true, note: m.note, more: more,
-                                                  version: w.version), more: more)
+                                                  version: w.version, scope: responseScope), more: more)
             }
             return (w.keys.map { Done(key: $0, content: content) }, false, nil)
         }
         if let i = choices.firstIndex(where: { $0.token == token }) {
+            guard context == .legacy || choices[i].scope == responseScope else { return ([], false, nil) }
+            guard context == .legacy || choices[i].version == m.version else { return ([], false, nil) }
             let c = choices.remove(at: i)
             guard m.pressed == false else { return ([], false, nil) }
             let note = Self.clean(m.note, limit: Self.noteLimit) ?? Self.changedNote
@@ -225,7 +280,8 @@ struct MacMenuState: Equatable {
 
     /// A menu opened: the row's id and title, in the version the row came from. The kind 27 to
     /// send, a completion that joins one waiting, or what it gets at once (rules 1, 3, 5 and 7).
-    mutating func fetch(_ id: String, title: String, version asked: Int?, key: Int, token: Int, now: Double) -> Fetch {
+    mutating func fetch(_ id: String, title: String, version asked: Int?, key: Int, token: Int, now: Double, scope: Scope? = nil) -> Fetch {
+        guard acceptsRow(scope: scope) else { return .settled(.message(Self.scopeChangedNote)) }
         guard let current = version else { return .settled(.message(Self.notConnected)) }
         guard asked == current else { return .settled(.message(Self.changedNote)) }
         if stale {
@@ -235,8 +291,9 @@ struct MacMenuState: Equatable {
             waiting[i].keys.append(key)
             return .joined
         }
-        waiting.append(Waiting(id: id, title: title, version: current, token: token, keys: [key], sentAt: now))
-        return .send(FetchMenu(version: current, id: id, title: title, token: token))
+        waiting.append(Waiting(id: id, title: title, version: current, token: token, keys: [key], sentAt: now, scope: scope))
+        return .send(FetchMenu(version: current, id: id, title: title, token: token,
+                              generation: scope?.generation, videoEpoch: scope?.videoEpoch))
     }
 
     /// Rule 11: the id a menu of the top level built as `builtID` under `title` asks for now: its
@@ -252,11 +309,35 @@ struct MacMenuState: Equatable {
     /// made here (stale). Nil for a row that cannot be chosen (disabled, not an item, before a top
     /// level): nothing happens.
     mutating func press(_ row: Row, token: Int) -> Press? {
+        guard acceptsRow(scope: row.scope) else { return nil }
+        if context != .legacy, row.version != version { return nil }
         guard version != nil, row.kind == .item, row.enabled, let id = row.id, let v = row.version else { return nil }
         if stale { return .refused(Refusal(title: row.title, id: id, note: note ?? Self.changedNote, byMac: false)) }
-        choices.append(Choice(token: token, id: id, title: row.title))
+        choices.append(Choice(token: token, id: id, title: row.title, scope: row.scope, version: v))
         if choices.count > Self.maxChoices { choices.removeFirst(choices.count - Self.maxChoices) }
-        return .send(PressMenuItem(version: v, id: id, title: row.title, token: token))
+        return .send(PressMenuItem(version: v, id: id, title: row.title, token: token,
+                                  generation: row.scope?.generation, videoEpoch: row.scope?.videoEpoch))
+    }
+
+    private func acceptsRow(scope: Scope?) -> Bool {
+        switch context {
+        case .legacy: return scope == nil
+        case .independent(let expected): return expected != nil && expected == scope
+        case .readOnly: return false
+        }
+    }
+
+    mutating func setContext(_ next: Context) -> [Done] {
+        guard context != next else { return [] }
+        let done = waitingKeys.map { Done(key: $0, content: .message(Self.scopeChangedNote)) }
+        self = MacMenuState()
+        context = next
+        return done
+    }
+
+    mutating func declineFetch(token: Int) -> [Done] {
+        guard let index = waiting.firstIndex(where: { $0.token == token }) else { return [] }
+        return waiting.remove(at: index).keys.map { Done(key: $0, content: .message(Self.scopeChangedNote)) }
     }
 
     /// Rule 6: every fetch that has waited `timeout` seconds or more.
@@ -293,7 +374,7 @@ struct MacMenuState: Equatable {
 
     /// A menu's items as rows in sections (rule 10), every row disabled when `stale`, each carrying
     /// `version`.
-    static func sections(_ items: [MacMenuItem], stale: Bool, note: String?, more: Int, version: Int?) -> [Section] {
+    static func sections(_ items: [MacMenuItem], stale: Bool, note: String?, more: Int, version: Int?, scope: Scope? = nil) -> [Section] {
         var out: [Section] = []
         if let note = clean(note, limit: noteLimit) { out.append([.note(note)]) }
         var section: Section = []
@@ -308,7 +389,7 @@ struct MacMenuState: Equatable {
             section.append(Row(kind: kind, id: item.id, title: title,
                                key: kind == .item ? clean(item.key, limit: keyLimit) : nil,
                                enabled: item.enabled != false && !stale && item.id != nil,
-                               mark: mark(item.mark), version: version))
+                               mark: mark(item.mark), version: version, scope: scope))
         }
         if !section.isEmpty { out.append(section) }
         if more > 0 { out.append([.note(moreOnTheMac(more))]) }
@@ -324,14 +405,14 @@ struct MacMenuState: Equatable {
 
     /// The top level's rows: those with a title and an id of one part that no earlier menu has,
     /// at most 32.
-    static func topRows(_ items: [MacMenuItem], version: Int?) -> [Row] {
+    static func topRows(_ items: [MacMenuItem], version: Int?, scope: Scope? = nil, readOnly: Bool = false) -> [Row] {
         var rows: [Row] = []
         var ids = Set<String>()
         for item in items where rows.count < maxMenus {
             guard let id = item.id, isTopID(id), !ids.contains(id),
                   let title = clean(item.title, limit: titleLimit) else { continue }
             ids.insert(id)
-            rows.append(Row(kind: .submenu, id: id, title: title, enabled: item.enabled != false, version: version))
+            rows.append(Row(kind: .submenu, id: id, title: title, enabled: item.enabled != false && !readOnly, version: version, scope: scope))
         }
         return rows
     }
