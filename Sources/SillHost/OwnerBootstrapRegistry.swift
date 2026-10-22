@@ -28,7 +28,7 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
     var bindings: [Binding]
 
     init(macID: String) {
-        schema = 2
+        schema = 3
         self.macID = macID
         bindings = []
     }
@@ -36,10 +36,10 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let version = try values.decode(Int.self, forKey: .schema)
-        guard version == 1 || version == 2 else {
+        guard version == 1 || version == 2 || version == 3 else {
             throw IdentityStoreError("지원하지 않는 자동 등록 기록입니다.")
         }
-        schema = 2
+        schema = 3
         macID = try values.decode(String.self, forKey: .macID)
         if version == 1 {
             bindings = try values.decode([LegacyBinding].self, forKey: .bindings).map {
@@ -111,6 +111,7 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
     }
 
     func trusts(_ device: PairedDevice) -> Bool {
+        guard device.ownerActivationPending != true else { return false }
         guard let principal = device.ownerPrincipal else { return true }
         return bindings.contains { $0.principal == principal && $0.fingerprint == device.fingerprint && $0.state == .active }
     }

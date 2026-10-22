@@ -640,6 +640,28 @@ package final class RemoteAccess {
             remoteAccess && trust.snapshot.ownerBootstrapEpoch == epoch && socket.isLive
                 && ownerSensor.isCurrent(proof) && !Task.isCancelled
         }
+        var pendingRegistry: OwnerBootstrapRegistry?
+        var pendingDevices: [PairedDevice]?
+        var completing = false
+        func denyIncompleteActivation() {
+            if completing, let pendingRegistry, let pendingDevices {
+                do { try pendingRegistry.save(store: store, identity: identity) }
+                catch {
+                    do {
+                        try store.savePaired(pendingDevices)
+                        guard try store.loadPaired() == pendingDevices else {
+                            throw IdentityStoreError("미완료 등록 복원 저장을 확인하지 못했습니다.")
+                        }
+                    } catch {
+                        print("자동 등록 완료를 거부했지만 두 저장소의 보상 기록을 확인하지 못했습니다.")
+                    }
+                }
+            }
+            ownerRegistry = try? OwnerBootstrapRegistry.load(store: store, identity: identity)
+            if let saved = try? store.loadPaired() { paired = saved }
+            if completing, let pendingRegistry { ownerRegistry = pendingRegistry }
+            publishTrust()
+        }
         do {
             guard current() else { return closed }
             var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
@@ -656,28 +678,38 @@ package final class RemoteAccess {
                 try registry.save(store: store, identity: identity)
             }
             ownerRegistry = registry
-            if registry.bindings[index].state == .pending {
-                if !next.contains(where: { $0.fingerprint == fingerprint }) {
+            let needsActivation = registry.bindings[index].state == .pending
+                || next.contains { $0.fingerprint == fingerprint && $0.ownerActivationPending == true }
+            if needsActivation {
+                if let row = next.firstIndex(where: { $0.fingerprint == fingerprint }) {
+                    if next[row].ownerPrincipal != nil { next[row].ownerActivationPending = true }
+                } else {
                     next.append(PairedDevice(fingerprint: fingerprint, name: SafeText.label(attempt.request.name),
                         model: attempt.request.model.map { SafeText.label($0) }, pairedAt: Date().timeIntervalSince1970,
-                        method: OwnerMacBootstrap.method, ownerPrincipal: proof.principal))
+                        method: OwnerMacBootstrap.method, ownerPrincipal: proof.principal, ownerActivationPending: true))
                 }
                 guard current() else { return closed }
                 if next != saved { try store.savePaired(next) }
                 guard try store.loadPaired() == next else { throw IdentityStoreError("자동 등록 저장을 확인하지 못했습니다.") }
                 paired = next
-                guard current() else { publishTrust(); return closed }
+                pendingDevices = next
+                var reservation = registry
+                reservation.bindings[index].state = .pending
+                pendingRegistry = reservation
+                guard current() else { denyIncompleteActivation(); return closed }
                 registry.bindings[index].state = .active
                 try registry.save(store: store, identity: identity)
-                guard current() else {
-                    registry.bindings[index].state = .pending
-                    try registry.save(store: store, identity: identity)
-                    ownerRegistry = registry
-                    publishTrust()
-                    return closed
+                guard current() else { denyIncompleteActivation(); return closed }
+                if let row = next.firstIndex(where: { $0.fingerprint == fingerprint && $0.ownerPrincipal != nil }) {
+                    next[row].ownerActivationPending = nil
+                    completing = true
+                    try store.savePaired(next)
+                    guard try store.loadPaired() == next else { throw IdentityStoreError("자동 등록 완료 저장을 확인하지 못했습니다.") }
+                    guard current() else { denyIncompleteActivation(); return closed }
                 }
+            } else {
+                guard current() else { return closed }
             }
-            guard current() else { return closed }
             paired = next
             ownerRegistry = registry
             publishTrust()
@@ -685,9 +717,7 @@ package final class RemoteAccess {
             return PairResult(ok: true, macID: identity.macID, name: macName,
                 recognitionKey: Base64URL.encode(identity.recognitionKey), method: OwnerMacBootstrap.method)
         } catch {
-            ownerRegistry = try? OwnerBootstrapRegistry.load(store: store, identity: identity)
-            if let saved = try? store.loadPaired() { paired = saved }
-            publishTrust()
+            denyIncompleteActivation()
             return closed
         }
     }

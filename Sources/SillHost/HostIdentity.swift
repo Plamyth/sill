@@ -23,11 +23,13 @@ package struct PairedDevice: Codable, Hashable, Sendable {
     /// on the cable. Optional, so a list from before it decodes, and left out of the JSON when nil.
     package var cableDevice: String?
     package var ownerPrincipal: String?
+    package var ownerActivationPending: Bool?
 
-    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil, ownerPrincipal: String? = nil) {
+    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil, ownerPrincipal: String? = nil, ownerActivationPending: Bool? = nil) {
         self.fingerprint = fingerprint; self.name = name; self.model = model; self.pairedAt = pairedAt; self.method = method
         self.cableDevice = cableDevice
         self.ownerPrincipal = ownerPrincipal
+        self.ownerActivationPending = ownerActivationPending
     }
 
     /// How it was paired, as the Devices pane words it: "with the QR code", "with a code", "over

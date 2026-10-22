@@ -502,13 +502,14 @@ final class OwnerBootstrapChecks {
         let store = FaultStore(), host = remote(store)
         store.afterPairedSave = { throw IdentityStoreError("저장 직후 중단") }
         assertClosed(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
-        let partial = try store.loadPaired()
+        var partial = try store.loadPaired()
         expectEqual(partial.count, 1)
         expectTrue(host.trust.snapshot.paired.isEmpty)
         store.afterPairedSave = nil
         let restarted = remote(store)
         expectTrue(restarted.trust.snapshot.paired.isEmpty)
         assertOK(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        partial[0].ownerActivationPending = nil
         expectEqual(try store.loadPaired(), partial)
         let writes = store.writes, registryWrites = store.registryWrites
         assertOK(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
@@ -646,9 +647,10 @@ final class OwnerBootstrapChecks {
             assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
             expectTrue(host.trust.snapshot.paired.isEmpty)
             expectTrue(remote(store).trust.snapshot.paired.isEmpty)
-            let before = try store.loadPaired()
+            var before = try store.loadPaired()
             store.afterRegistrySave = nil
             assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            before[0].ownerActivationPending = nil
             expectEqual(try store.loadPaired(), before)
         }
     }
@@ -679,28 +681,31 @@ final class OwnerBootstrapChecks {
         let record = try require(JSONSerialization.jsonObject(with: store.loadOwnerRegistry()!) as? [String: Any])
         let payload = try require(Data(base64Encoded: record["payload"] as! String))
         let fields = try require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
-        expectEqual(fields["schema"] as? Int, 2)
+        expectEqual(fields["schema"] as? Int, 3)
         expectEqual(remote(store).trust.snapshot.paired.count, 2)
         assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
     }
 
     @MainActor func testActiveWriteFailureAndFailedCompensationNeverGrantsTrust() async throws {
         for loseCurrent in [false, true] {
-            let store = FaultStore(), live = LiveFlag(), host = remote(store)
-            store.afterRegistryWrite = {
-                if store.registryWrites == 2 {
-                    store.registryFailure = true
-                    if loseCurrent { live.set(false) }
-                    else { throw IdentityStoreError("active 저장 직후 실패") }
+            for bothStoresFail in [false, true] {
+                let store = FaultStore(), live = LiveFlag(), host = remote(store)
+                store.afterRegistryWrite = {
+                    if store.registryWrites == 2 {
+                        store.registryFailure = true
+                        store.pairedFailure = bothStoresFail
+                        if loseCurrent { live.set(false) }
+                        else { throw IdentityStoreError("active 저장 직후 실패") }
+                    }
                 }
+                let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
+                assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
+                expectTrue(host.trust.snapshot.paired.isEmpty)
+                expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+                store.afterRegistryWrite = nil; store.registryFailure = false; store.pairedFailure = false
+                assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+                expectEqual(remote(store).trust.snapshot.paired.count, 1)
             }
-            let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
-            assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
-            expectTrue(host.trust.snapshot.paired.isEmpty)
-            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
-            store.afterRegistryWrite = nil; store.registryFailure = false
-            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
-            expectEqual(remote(store).trust.snapshot.paired.count, 1)
         }
     }
 
@@ -723,6 +728,77 @@ final class OwnerBootstrapChecks {
             expectTrue(remote(store).trust.snapshot.paired.isEmpty)
             assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
         }
+    }
+
+    @MainActor func testFinalCompletionFailuresDoNotPublishTrust() async throws {
+        for mode in 0...4 {
+            let store = FaultStore(), live = LiveFlag(), host = remote(store)
+            store.beforePairedSave = {
+                if store.writes == 1 {
+                    if mode == 1 { Thread.sleep(forTimeInterval: 2.10) }
+                    else if mode == 3 { store.pairedDrops = true }
+                    else if mode != 2 { live.set(false) }
+                    if mode == 4 { store.registryFailure = true }
+                }
+            }
+            store.afterPairedSave = {
+                if mode == 2 && store.writes == 2 {
+                    store.pairedFailure = true
+                    throw IdentityStoreError("완료 표시 저장 직후 실패")
+                }
+            }
+            let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
+            assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
+            expectTrue(host.trust.snapshot.paired.isEmpty)
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            store.beforePairedSave = nil; store.afterPairedSave = nil
+            store.pairedDrops = false; store.pairedFailure = false; store.registryFailure = false
+            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectEqual(remote(store).trust.snapshot.paired.count, 1)
+        }
+    }
+
+    @MainActor func testCommittedTrustSurvivesSocketDisconnection() async throws {
+        let store = FaultStore(), host = remote(store), socket = OwnerBootstrapSocket.fixture(binding: binding())
+        assertOK(await host.judgeOwnerBootstrap(attempt(socket)))
+        let committed = try store.loadPaired()
+        expectNil(committed.first?.ownerActivationPending)
+        socket.cancel()
+        expectEqual(host.trust.snapshot.paired.count, 1)
+        expectEqual(remote(store).trust.snapshot.paired.count, 1)
+        assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
+        expectEqual(try store.loadPaired(), committed)
+        expectEqual(host.trust.snapshot.paired.count, 1)
+    }
+
+    @MainActor func testV2PairingCompatibility() async throws {
+        for state in ["pending", "active"] {
+            let store = FaultStore(), principal = OwnerBootstrapRegistry.principal(user: 7, node: "peer-node")
+            let original = PairedDevice(fingerprint: Base64URL.encode(binding().fingerprint), name: "v2 등록", model: "기존 모델",
+                pairedAt: 2, method: OwnerMacBootstrap.method, cableDevice: "v2 케이블", ownerPrincipal: principal)
+            try store.savePaired([original])
+            try signedRegistry(store, schema: 2, bindings: [["principal": principal, "fingerprint": original.fingerprint, "state": state]])
+            expectEqual(remote(store).trust.snapshot.paired.count, state == "active" ? 1 : 0)
+            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectEqual(try store.loadPaired(), [original])
+            expectEqual(remote(store).trust.snapshot.paired.count, 1)
+        }
+    }
+
+    @MainActor func observeTotalStorageOutageAfterCompletionWrite() async throws {
+        let store = FaultStore(), live = LiveFlag(), host = remote(store)
+        store.afterPairedSave = {
+            if store.writes == 2 {
+                store.registryFailure = true; store.pairedFailure = true; live.set(false)
+            }
+        }
+        let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
+        let result = await host.judgeOwnerBootstrap(attempt(socket))
+        let observation: [String: Any] = ["observation": "두 저장소가 완료 표시 쓰기 직후 모두 실패하는 한계",
+            "bootstrapOK": result.ok, "currentTrustCount": host.trust.snapshot.paired.count,
+            "restartTrustCount": remote(store).trust.snapshot.paired.count, "pairedWrites": store.writes,
+            "isAcceptanceEvidence": false]
+        print(String(decoding: try JSONSerialization.data(withJSONObject: observation, options: .sortedKeys), as: UTF8.self))
     }
 
     func testProofExpirationAndStop() async throws {
@@ -833,6 +909,10 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testV1MigrationPreservesExistingBinding() } catch { fail("v1 원장 이행 검사 예외") }
         do { try await checks.testActiveWriteFailureAndFailedCompensationNeverGrantsTrust() } catch { fail("active 저장 후 실패와 보상 실패 검사 예외") }
         do { try await checks.testRecoveredLegacyPairingRemovalPreservesRevocation() } catch { fail("legacy 복구 후 Remove 검사 예외") }
+        do { try await checks.testFinalCompletionFailuresDoNotPublishTrust() } catch { fail("최종 완료 저장 실패 검사 예외") }
+        do { try await checks.testCommittedTrustSurvivesSocketDisconnection() } catch { fail("정상 commit 후 연결 해제 검사 예외") }
+        do { try await checks.testV2PairingCompatibility() } catch { fail("v2 paired 호환 검사 예외") }
+        do { try await checks.observeTotalStorageOutageAfterCompletionWrite() } catch { fail("전체 저장 불능 한계 재현 예외") }
         checks.testCanonicalSignedSensorRejectsUnexpectedExecutable()
         let (passed, failed) = CheckCounts.shared.result
         print("생산 함수 기반 호스트 검사 \(passed)개 통과, \(failed)개 실패. 네트워크·실제 키체인·설치·오디오 호출 0.")
