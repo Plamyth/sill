@@ -40,7 +40,7 @@ def generate(ref):
         'commitPeerVideo(', 'sendPeerVideo(', 'setPeerStreaming(', 'sendPeerCatalog(',
         'currentVideoAdmission(', 'catalogMatches(', 'requestKeyframe(for ',
         'remoteKeyframeDue(_ now: TimeInterval, for client:', 'noteKeyframeRequest(', 'setPeerPointerRect(',
-        'deliverVideo(', 'isVideo(', 'hasStreamingClients'] if 'func ' + x in host]
+        'deliverVideo(', 'isVideo(', 'hasStreamingClients', 'sendScopedMetadata('] if 'func ' + x in host]
     members = '\n'.join(('static ' if m == 'isVideo(' else '') + block(host, 'func ' + m) for m in methods)
     fixture = (HERE/'Fixture.swift').read_text()
     checks = (HERE/'Checks.swift').read_text()

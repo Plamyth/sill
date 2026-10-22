@@ -1657,6 +1657,19 @@ final class StreamServer {
         }
     }
 
+    func sendScopedMetadata(_ message: StreamMessage, to connection: NWConnection,
+                            admission: SourcePublicationAdmission) {
+        guard message.kind != .windowList, !Self.isVideo(message.kind), message.kind != .macPointer else { return }
+        queue.async { [self] in
+            admission.publish {
+                guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                      connection.state == .ready, client.videoLane == .peer,
+                      client.peerVideo.publication === admission else { return }
+                send(message.serialized(), to: client)
+            }
+        }
+    }
+
     /// Thread-safe; queued before the matching kind 201 answer on the same network queue.
     func setRemoteAudio(_ enabled: Bool, for connection: NWConnection,
                         afterSequence: UInt64 = .max) {

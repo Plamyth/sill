@@ -148,7 +148,12 @@ func runPeers() async {
     check(legacy.sent.compactMap(StreamMessage.parseHeader).last?.kind == .frame, "legacy untagged adaptation preserved")
     server.queue.sync { _ = server.samplePointer(now: 4) }
     check(watch.globalCalls == 1, "legacy pointer keeps original global sampling")
+    let beforeMetadata = b.sent.count
+    server.queue.suspend()
+    server.sendScopedMetadata(msg(.macMenu, Data([42])), to: b, admission: ab)
     ab.invalidate()
+    server.queue.resume(); server.flush()
+    check(b.sent.count == beforeMetadata, "queued old menu response cannot cross source invalidation")
     let revokedCount = b.sent.count
     server.sendPeerVideo(msg(.frame), epoch: eb.id, to: b)
     server.queue.sync { server.replayCatalog(to: server.clients[ObjectIdentifier(b)]!) }

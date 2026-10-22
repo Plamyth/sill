@@ -19,5 +19,7 @@ with tempfile.TemporaryDirectory(prefix='peer-session-') as tmp:
     run([str(out/'checks')])
     run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out),str(root/'Tests/checks/peer-stream-session/wire.swift'),'-o',str(out/'wire-checks')])
     run([str(out/'wire-checks')])
+    run(['xcrun','swiftc','-swift-version','5','-parse-as-library',str(root/'Sources/SillHost/PeerInputQueue.swift'),str(root/'Tests/checks/peer-stream-session/input-queue.swift'),'-o',str(out/'queue-checks')])
+    run([str(out/'queue-checks')])
     assert before=={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in sources}
     print(json.dumps({'sourceUnchanged':True,'scope':'production control session; native capture protocol replaced by inert driver; no physical acceptance'}))

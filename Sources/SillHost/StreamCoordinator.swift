@@ -344,7 +344,17 @@ package final class StreamCoordinator {
     private var peerStreams: [ObjectIdentifier: PeerStreamSession] = [:]
     private var peerMenus: [ObjectIdentifier: MenuMirror] = [:]
     private let peerMenuReader = MenuReader()
-    private var peerInputSerial: UInt64 = 0
+    private let peerInputQueue = PeerInputQueue()
+    private var peerDriverFactory: (@MainActor () -> any PeerCaptureDriver)?
+    private var independentStreamsEnabled: Bool { !synthetic || peerDriverFactory != nil }
+    #if PEER_STREAM_CONTRACT
+    private(set) var contractPeerInputs: [StreamSource] = []
+    func startPeerContract(_ factory: @escaping @MainActor () -> any PeerCaptureDriver) {
+        precondition(synthetic && server.isTestHost && server.loopbackOnly)
+        peerDriverFactory = factory
+        server.start()
+    }
+    #endif
     private var peerHelloCaps: [ObjectIdentifier: Bool] = [:]
     private var peerGestureChords: [ObjectIdentifier: GestureChords] = [:]
 
@@ -493,7 +503,7 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 let id = ObjectIdentifier(connection)
-                guard !self.synthetic || self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
+                guard self.independentStreamsEnabled || self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
                     return
                 }
@@ -518,7 +528,7 @@ package final class StreamCoordinator {
                 self.routesChanged(joined: id, endpoint: "\(connection.endpoint)")
                 // Catalog first: the client's UI needs it even if the keyframe is slow to come.
                 self.catalog.thumbnailsWanted = true
-                if !self.synthetic {
+                if self.independentStreamsEnabled {
                     guard await self.installPeerStream(connection) else { connection.cancel(); return }
                 }
                 self.sendCatalog(to: connection)
@@ -597,7 +607,8 @@ package final class StreamCoordinator {
                 if count == 0 { self.viewport = nil; self.clientFPS = [:] }   // the next device starts from scratch
                 if count == 0 { self.gestureChords.forget() }                 // and did not open a view it could close
                 // On the software encoder, the hardware is checked only while someone watches.
-                if count == 0 { self.stopRecheck() } else { self.devicesPresent(firstArrived: wasEmpty) }
+                if count == 0 { self.stopRecheck() }
+                else if self.peerDriverFactory == nil { self.devicesPresent(firstArrived: wasEmpty) }
                 if count > 0 {
                     self.deselectWhenSettled = false
                 } else if self.switching {
@@ -674,7 +685,7 @@ package final class StreamCoordinator {
                 self.peerHelloCaps[id] = hello.sourceInput == 1
                 self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
                 if let lane = self.peerStreams[id] { lane.supportsScopedInput = hello.sourceInput == 1 }
-                if self.synthetic { self.requestExtendedDesktop(for: connection, hello: hello) }
+                if !self.independentStreamsEnabled { self.requestExtendedDesktop(for: connection, hello: hello) }
                 guard !name.isEmpty else { return }
                 self.status.update {
                     guard let i = $0.devices.firstIndex(where: { $0.id == id }), $0.devices[i].name == nil else { return }
@@ -1053,7 +1064,7 @@ package final class StreamCoordinator {
     // MARK: Client messages
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
-        if !synthetic {
+        if independentStreamsEnabled {
             guard let lane = peerStreams[ObjectIdentifier(connection)],
                   connections[ObjectIdentifier(connection)] === connection,
                   connection.state == .ready else { return }
@@ -3334,7 +3345,7 @@ extension StreamCoordinator {
         guard !shuttingDown, routes[id] != nil, peerStreams[id] == nil,
               await server.enablePeerVideo(for: connection),
               !shuttingDown, routes[id] != nil, connection.state == .ready else { return false }
-        let lane = PeerStreamSession(driver: NativePeerCaptureDriver(), configuration: { [weak self] in
+        let lane = PeerStreamSession(driver: peerDriverFactory?() ?? NativePeerCaptureDriver(), configuration: { [weak self] in
             guard let self else { return .standard }
             var value = self.target
             let quality = value.effective(away: self.routes[id]?.isAway == true)
@@ -3347,11 +3358,12 @@ extension StreamCoordinator {
         peerStreams[id] = lane
         let mirror = MenuMirror(server: server, reader: peerMenuReader)
         peerMenus[id] = mirror
+        mirror.sourceScope = { [weak lane] in lane?.epoch.map { ($0.generation, $0.id) } }
         mirror.currentTarget = { [weak self, weak lane] in
             guard let self, let lane else { return nil }
             return self.peerMenuTarget(lane)
         }
-        mirror.prepare = { [weak self, weak lane] in
+        mirror.readScopeReady = { [weak self, weak lane] in
             guard let self, let lane else { return false }
             guard let pid = lane.description?.windowPID else { return lane.source == .desktop }
             guard Self.activePID(trustAppKit: self.appKitLoop) == pid,
@@ -3360,12 +3372,21 @@ extension StreamCoordinator {
                   let element = self.sizer.element(for: window, input: true) else { return false }
             return WindowSizer.hasKeyboardFocus(element, pid: pid)
         }
+        mirror.prepare = { [weak mirror] in mirror?.readScopeReady() ?? false }
+        mirror.executePress = { [weak self, weak mirror] work in
+            guard let self else { return }
+            if !self.peerInputQueue.enqueue(peer: id, { turn in
+                guard !turn.cancelled else { return }
+                await work()
+            }) { mirror?.sourceScopeChanged() }
+        }
         mirror.preparePress = { [weak self, weak lane] in
             guard let self, let lane, let epoch = lane.epoch else { return false }
             return await self.preparePeerInteraction(lane, epoch: epoch, event: nil)
         }
         lane.onScopeInvalidated = { [weak self, weak connection] in
             guard let self, let connection else { return }
+            self.peerInputQueue.cancel(peer: id)
             self.injector.releaseInput(of: id)
             self.peerMenus[id]?.sourceScopeChanged()
             self.server.setPeerPointerRect(nil, for: connection)
@@ -3427,6 +3448,7 @@ extension StreamCoordinator {
     private func pollPeerStreams() {
         for (id, lane) in peerStreams {
             lane.catalogChanged()
+            lane.windowsChanged(catalog.infos)
             peerMenus[id]?.setTarget(peerMenuTarget(lane))
             peerMenus[id]?.catalogPolled()
         }
@@ -3434,7 +3456,7 @@ extension StreamCoordinator {
 
     private func updatePeerStreamStatus() {
         let live = peerStreams.values.filter { $0.epoch != nil }
-        cursorShapes.running = !live.isEmpty
+        if peerDriverFactory == nil { cursorShapes.running = !live.isEmpty }
         guard let lane = live.first, let epoch = lane.epoch else {
             if !synthetic { status.update { $0.stream = nil } }
             return
@@ -3460,31 +3482,46 @@ extension StreamCoordinator {
             if let value = Wire.decode(Viewport.self, from: message.payload) { lane.updateViewport(value) }
         case .input:
             guard let scoped = Wire.decode(SourceInput.self, from: message.payload) else { return true }
-            if injector.isUpOfSomethingDown(scoped.event, from: id) {
-                injector.apply(scoped.event, in: .null, from: id)
+            guard peerInputQueue.enqueue(peer: id, { [weak self, weak lane, weak connection] turn in
+                guard let self, let lane, let connection, !turn.cancelled else { return }
+                if self.injector.isUpOfSomethingDown(scoped.event, from: id) {
+                    self.injector.apply(scoped.event, in: .null, from: id)
+                    return
+                }
+                guard self.peerStreams[id] === lane, self.connections[id] === connection,
+                      connection.state == .ready, let epoch = lane.epoch,
+                      lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) != nil else { return }
+                guard await self.preparePeerInteraction(lane, epoch: epoch, event: scoped.event),
+                      !turn.cancelled, self.peerStreams[id] === lane,
+                      let rect = lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) else { return }
+                #if PEER_STREAM_CONTRACT
+                self.contractPeerInputs.append(lane.source)
+                #endif
+                self.logClick(scoped.event, in: rect)
+                self.injector.apply(scoped.event, in: rect, from: id)
+            }) else {
+                peerInputQueue.cancel(peer: id)
+                injector.releaseInput(of: id)
+                Stats.shared.bump("in.peerQueueFull")
                 return true
             }
-            guard let epoch = lane.epoch,
-                  lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) != nil else { return true }
-            guard await preparePeerInteraction(lane, epoch: epoch, event: scoped.event),
-                  peerStreams[id] === lane,
-                  let rect = lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) else { return true }
-            logClick(scoped.event, in: rect)
-            injector.apply(scoped.event, in: rect, from: id)
         case .gesture:
             guard let gesture = Wire.decode(TrackpadGesture.self, from: message.payload),
-                  let epoch = lane.epoch,
                   lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return true }
             let now = CFAbsoluteTimeGetCurrent()
             var recent = (gestureArrivals[id] ?? []).filter { now - $0 < 1 }
             guard recent.count < Self.gesturesPerSecond else { return true }
             recent.append(now); gestureArrivals[id] = recent
-            guard await preparePeerInteraction(lane, epoch: epoch, event: nil),
-                  lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return true }
-            var chords = peerGestureChords[id] ?? GestureChords()
-            let outcome = chords.resolve(gesture.gesture, table: hotKeyTable())
-            if case .chord(_, _, let key, let flags) = outcome { injector.chord(keyCode: key, flags: flags) }
-            peerGestureChords[id] = chords
+            _ = peerInputQueue.enqueue(peer: id) { [weak self, weak lane] turn in
+                guard let self, let lane, !turn.cancelled, let epoch = lane.epoch,
+                      lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return }
+                guard await self.preparePeerInteraction(lane, epoch: epoch, event: nil), !turn.cancelled,
+                      lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return }
+                var chords = self.peerGestureChords[id] ?? GestureChords()
+                let outcome = chords.resolve(gesture.gesture, table: self.hotKeyTable())
+                if case .chord(_, _, let key, let flags) = outcome { self.injector.chord(keyCode: key, flags: flags) }
+                self.peerGestureChords[id] = chords
+            }
         case .fetchMenu:
             guard let request = Wire.decode(FetchMenu.self, from: message.payload) else { return true }
             // Initial top-level subscription is observational and allowed before a video exists.
@@ -3510,7 +3547,7 @@ extension StreamCoordinator {
                 Task { @MainActor in
                     guard let self, let lane, self.peerStreams[id] === lane else { return }
                     if error == nil { _ = await self.catalog.refreshWindows() }
-                    lane.finishLaunch(token, windowID: error == nil ? self.catalog.infos.first(where: { $0.bundleID == request.bundleID })?.id : nil)
+                    lane.finishLaunch(token, windowID: error == nil ? self.catalog.infos.first(where: { $0.bundleID == request.bundleID })?.id : nil, failed: error != nil)
                 }
             }
         case .windowCommand:
@@ -3518,8 +3555,12 @@ extension StreamCoordinator {
                   case .window(let windowID) = lane.source, command.id == windowID,
                   lane.inputRect(generation: command.generation, epoch: command.videoEpoch) != nil,
                   let window = catalog.window(id: windowID) else { return true }
-            _ = sizer.perform(command.action, on: window)
-            _ = await catalog.refreshWindows()
+            _ = peerInputQueue.enqueue(peer: id) { [weak self, weak lane] turn in
+                guard let self, let lane, !turn.cancelled,
+                      lane.inputRect(generation: command.generation, epoch: command.videoEpoch) != nil else { return }
+                _ = self.sizer.perform(command.action, on: window)
+                _ = await self.catalog.refreshWindows()
+            }
         default:
             return false
         }
@@ -3529,6 +3570,7 @@ extension StreamCoordinator {
     private func preparePeerInteraction(_ lane: PeerStreamSession, epoch: VideoEpoch,
                                         event: InputEvent?) async -> Bool {
         guard lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil else { return false }
+        if synthetic { return true }
         guard case .window(let id) = lane.source else { return lane.source == .desktop }
         guard let window = catalog.window(id: id), let app = window.owningApplication else { return false }
         let activates: Bool
@@ -3537,15 +3579,12 @@ extension StreamCoordinator {
         default: activates = true
         }
         if !activates { return true }
-        peerInputSerial &+= 1
-        let serial = peerInputSerial
         if Self.activePID(trustAppKit: appKitLoop) != app.processID ||
            sizer.element(for: window, input: true).map({ !WindowSizer.hasKeyboardFocus($0, pid: app.processID) }) ?? true {
             activateAndRaise(window: window)
             try? await Task.sleep(for: .milliseconds(60))
         }
-        guard serial == peerInputSerial,
-              let rect = lane.inputRect(generation: epoch.generation, epoch: epoch.id),
+        guard let rect = lane.inputRect(generation: epoch.generation, epoch: epoch.id),
               Self.activePID(trustAppKit: appKitLoop) == app.processID,
               let element = sizer.element(for: window, input: true),
               WindowSizer.hasKeyboardFocus(element, pid: app.processID) else { return false }

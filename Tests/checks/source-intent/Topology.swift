@@ -154,6 +154,15 @@ import Foundation
             inventory(host, events.last!); await spin(host)
             expect(host.active == .desktop && host.catalog.displayInventory.selectedID == 1 && host.pickSequence == accepted, "original accepted automatic restores when its physical display returns")
         }
+        do {
+            let host = AdmissionHost(), peer = NWConnection()
+            host.peerStreams[ObjectIdentifier(peer)] = 1
+            host.active = .window(99)
+            host.displaysChanged()
+            await spin(host)
+            expect(host.peerPolls == 1 && host.audioChanges == 0, "peer topology does not revoke shared remote audio")
+            expect(host.active == .window(99), "peer topology does not run legacy global source recovery")
+        }
         print("topology production checks=\(checks) failures=\(failures)")
         if failures != 0 { exit(1) }
     }
