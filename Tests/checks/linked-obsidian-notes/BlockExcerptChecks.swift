@@ -7,7 +7,8 @@ func checkBlockExcerpts(_ check: (Bool, String) -> Void) async throws {
         VaultNoteSnapshot(path:"Notes/blocks.md",text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"now")
     }
     func store(_ text: String) async -> CanvasStore {
-        let value = CanvasStore()
+        let value = CanvasStore(noteRecoveryURL:FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("note.json"))
         value.scene = CanvasScene()
         value.drawing = PKDrawing()
         value.scene.drawingBase64 = value.drawing.dataRepresentation().base64EncodedString()

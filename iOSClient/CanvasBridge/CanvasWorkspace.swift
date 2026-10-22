@@ -31,6 +31,7 @@ struct CanvasWorkspace: View {
     @State private var vaultStatus = ""
     @State private var vaultDiscardOpen = false
     @State private var recoveryDiscardOpen = false
+    @State private var noteRecoveryDiscardOpen = false
     @State private var syncedSceneSha: String?
     @State private var canvasNoteSha: String?
     @State private var pendingSceneSha: String?
@@ -337,6 +338,23 @@ struct CanvasWorkspace: View {
     private var vaultSheet: some View {
         NavigationStack {
             VStack(spacing:0) {
+                if !store.noteRecoveryNotice.isEmpty {
+                    VStack(alignment:.leading,spacing:6) {
+                        Text(store.noteRecoveryNotice).font(.footnote)
+                        if let recovery = store.noteRecovery, store.vaultNote == nil {
+                            Text(recovery.base.path).font(.caption).textSelection(.enabled)
+                            Button("보존된 노트 입력 열기") {
+                                store.setNoteConnection(address:relayAddress,token:relayToken)
+                                let connection = relay
+                                Task { await store.restoreNoteDraft(load:connection.vaultNote) }
+                            }.frame(minHeight:44).disabled(store.vaultLoading)
+                                .accessibilityIdentifier("obsidianRestoreNoteDraft")
+                            Button("보존된 노트 입력 버리기",role:.destructive) { noteRecoveryDiscardOpen = true }
+                                .frame(minHeight:44).disabled(store.vaultLoading)
+                                .accessibilityIdentifier("obsidianDiscardNoteRecovery")
+                        }
+                    }.padding(.horizontal)
+                }
                 if !store.blockRecoveryNotice.isEmpty {
                     VStack(alignment:.leading,spacing:6) {
                         Text(store.blockRecoveryNotice).font(.footnote)
@@ -392,6 +410,12 @@ struct CanvasWorkspace: View {
                         } label: {
                             Text("전체 노트 연결").frame(maxWidth:.infinity,minHeight:44)
                         }.disabled(!store.vaultCanAttach)
+                        }
+                        if store.noteRecoveryWriteFailed {
+                            Button { store.retryNoteDraftPreservation() } label: {
+                                Text("입력 보존 다시 시도").frame(maxWidth:.infinity,minHeight:44)
+                            }.disabled(store.vaultBlocked || store.vaultSaving || store.vaultLoading || store.vaultInputBusy)
+                                .accessibilityIdentifier("obsidianRetryNotePreservation")
                         }
                         if store.vaultBlocked && !store.vaultDirty {
                             Button { Task { await openVaultNote(note.path) } } label: {
@@ -450,6 +474,12 @@ struct CanvasWorkspace: View {
                 }
             }
             .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
+            .alert("보존된 노트 입력을 버릴까요?",isPresented:$noteRecoveryDiscardOpen) {
+                Button("입력 버리기",role:.destructive) { _ = store.discardNoteRecovery() }
+                Button("취소",role:.cancel) {}
+            } message: {
+                Text("이 기기에 보존한 미저장 노트 입력만 버립니다. Obsidian 원본과 이미 저장된 결과는 변경하지 않습니다.")
+            }
             .alert("보존된 입력을 버릴까요?",isPresented:$recoveryDiscardOpen) {
                 Button("입력 버리기",role:.destructive) { _ = store.discardLinkedBlockRecovery() }
                 Button("취소",role:.cancel) {}

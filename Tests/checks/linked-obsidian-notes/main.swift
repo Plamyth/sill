@@ -70,6 +70,7 @@ final class NoteProtocol: URLProtocol {
 
 @main struct LinkedNotesCheck {
     @MainActor static func main() async throws {
+        setbuf(stdout,nil)
         let expectedHome = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!
         let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!
         precondition(support.path.hasPrefix(expectedHome + "/"),"Refusing real application support")
@@ -444,6 +445,7 @@ final class NoteProtocol: URLProtocol {
         try await checkVaultInputSessions(check)
         try await checkSelectedInk(check)
         try await checkHandwritingSearch(check)
+        try await checkWholeNoteRecovery(check)
         print("RESULT \(checks) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }

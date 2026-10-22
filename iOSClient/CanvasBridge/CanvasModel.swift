@@ -8,6 +8,7 @@ enum CanvasRuntime {
         case scene = "CanvasScene.json"
         case outbox = "CanvasOutbox/ledger.json"
         case blockRecovery = "CanvasBlockEdit/recovery.json"
+        case noteRecovery = "CanvasNoteEdit/recovery.json"
         case checkpoint = "CanvasVaultCheckpoint.json"
     }
 
@@ -236,7 +237,8 @@ enum CanvasRuntime {
     }
     #endif
 
-    static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil) throws -> URL {
+    static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil,
+                         noteRecoveryOverride: URL? = nil) throws -> URL {
         #if DEBUG
         switch launch {
         case .normal: break
@@ -245,6 +247,7 @@ enum CanvasRuntime {
         }
         #endif
         if file == .blockRecovery, let override = blockRecoveryOverride { return override }
+        if file == .noteRecovery, let override = noteRecoveryOverride { return override }
         guard let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first
         else { throw CanvasSendError.outboxUnavailable }
         if file == .scene { try? FileManager.default.createDirectory(at:support,withIntermediateDirectories:true) }
@@ -663,6 +666,62 @@ struct VaultBlockRecoveryFile: Codable {
             throw VaultBlockRecoveryError.corrupt
         }
         return try payload.map { try JSONDecoder().decode(VaultBlockRecovery.self,from:$0).validated() }
+    }
+}
+
+struct VaultNoteRecovery: Codable, Equatable {
+    let schemaVersion: Int
+    let sceneID: UUID
+    let nodeID: UUID?
+    let blockID: String?
+    let relayAddress: String
+    var base: VaultNoteSnapshot
+    var draft: String
+    var submittedText: String?
+
+    func validated() throws -> Self {
+        guard schemaVersion == 1, relayAddress.utf8.count <= 2048,
+              let url = URLComponents(string:relayAddress),
+              url.scheme.map({ ["http","https"].contains($0) }) == true,
+              url.host?.isEmpty == false, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil, draft.utf8.count <= 1024 * 1024,
+              submittedText.map({ $0.utf8.count <= 1024 * 1024 }) ?? true,
+              nodeID != nil || blockID == nil else { throw VaultBlockRecoveryError.corrupt }
+        _ = try base.validated(at:base.path)
+        return self
+    }
+
+    func reconciled(with latest: VaultNoteSnapshot) throws -> Self? {
+        _ = try validated()
+        _ = try latest.validated(at:base.path)
+        var next = self
+        if latest.sha256 != base.sha256 {
+            guard let submittedText, latest.text.utf8.elementsEqual(submittedText.utf8) else {
+                throw VaultBlockRecoveryError.changed
+            }
+        }
+        next.base = latest
+        next.submittedText = nil
+        return next.draft.utf8.elementsEqual(latest.text.utf8) ? nil : next
+    }
+}
+
+struct VaultNoteRecoveryFile: Codable {
+    let schemaVersion: Int
+    let payload: Data?
+    let sha256: String
+
+    init(_ record: VaultNoteRecovery?) throws {
+        schemaVersion = 1
+        payload = try record.map { try JSONEncoder().encode($0.validated()) }
+        sha256 = CanvasPacket.sha(payload ?? Data())
+    }
+
+    func record() throws -> VaultNoteRecovery? {
+        guard schemaVersion == 1, CanvasPacket.sha(payload ?? Data()) == sha256 else {
+            throw VaultBlockRecoveryError.corrupt
+        }
+        return try payload.map { try JSONDecoder().decode(VaultNoteRecovery.self,from:$0).validated() }
     }
 }
 
