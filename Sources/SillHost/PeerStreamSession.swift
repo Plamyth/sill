@@ -70,16 +70,19 @@ final class PeerStreamSession {
 
     private func select(source: StreamSource, display: DisplaySelection?, origin: SourceRequest.Origin?, revision: String?) {
         guard !state.closed else { return }
+        let snapshot = inventory()
         // A repeat of the already presented source is observational; it does not replace an encoder.
         if origin != .automatic, state.pending == nil, state.epoch != nil, state.source == source,
-           (source != .desktop || (state.display?.displayID == display?.displayID &&
-                display.flatMap { inventory().identity(of: $0.displayID) } == displayIdentity)),
+           (source != .desktop || (display.map(snapshot.contains) == true &&
+                state.display?.displayID == display?.displayID &&
+                display.flatMap { snapshot.identity(of: $0.displayID) } == displayIdentity)),
            driver.currentBounds() == description?.bounds {
             cancelLaunch()
+            state.acknowledgeCurrentSelection()
             onChanged?()
+            driver.requestKeyframe()
             return
         }
-        let snapshot = inventory()
         guard let ticket = state.request(source, display: display, origin: origin, revision: revision, inventory: snapshot) else {
             onChanged?()
             return
