@@ -36,13 +36,24 @@ for key in [SavedMacs.defaultsKey, StreamClient.ownerPreferredKey] {
         check("기존 원시 키는 최초 등록으로 우회하지 않음", RemoteConnector.all.isEmpty && Bundle.reads == 0)
     }
 }
-reset()
-do {
+for knownMissing in [true, false] {
+    reset()
     let c = StreamClient()
-    c.savedMacs = [SavedMac(macID: profile.macID, fingerprint: profile.fingerprint, name: "기존 Mac", recognitionKey: result().recognitionKey!, remotePort: 7455, addresses: [], infoIssuedAt: 0, pairedAt: Date(), method: "code", homeTLS: true)]
-    DeviceIdentity.present = false; DeviceIdentity.missing = true
+    c.savedMacs = [SavedMac(macID: profile.macID, fingerprint: profile.fingerprint, name: "기존 Mac", recognitionKey: result().recognitionKey!, remotePort: 7455, addresses: [], infoIssuedAt: 37, pairedAt: Date(timeIntervalSince1970: 41), method: "code", homeTLS: true)]
+    c.savedMacs[0].lastWorked = "100.64.1.2|7455"
+    c.savedMacs[0].lastConnectedAt = Date(timeIntervalSince1970: 53)
+    c.savedMacs[0].revoked = false
+    c.savedMacs[0].newKey = false
+    let before = c.savedMacs
+    let raw = "  " + SavedMacs.encode(before) + "\n"
+    UserDefaults.standard.set(raw, forKey: SavedMacs.defaultsKey)
+    UserDefaults.standard.set(profile.macID, forKey: StreamClient.ownerPreferredKey)
+    DeviceIdentity.present = false; DeviceIdentity.missing = knownMissing
     c.startRemote(); c.startOwnerBootstrap(); c.resumeOwnerBootstrapAfterForeground()
-    check("실제 startRemote의 기존 기록 정리 전 최초 자격 고정", c.savedMacs.isEmpty && RemoteConnector.all.isEmpty && DeviceIdentity.creates == 0 && !c.ownerBootstrap.wasInitiallyEmpty)
+    Clock.advance(60)
+    check("키 누락·일시 잠금에서 신뢰와 메타데이터 보존 \(knownMissing)", c.savedMacs == before && c.persists == 0)
+    check("원시 저장 문자열과 선호 Mac 보존 \(knownMissing)", UserDefaults.standard.string(forKey: SavedMacs.defaultsKey) == raw && UserDefaults.standard.string(forKey: StreamClient.ownerPreferredKey) == profile.macID)
+    check("새 키·등록·연결 없이 최초 자격 유지 \(knownMissing)", RemoteConnector.all.isEmpty && DeviceIdentity.creates == 0 && DeviceIdentity.forgets == 0 && c.dials.isEmpty && !c.ownerBootstrap.wasInitiallyEmpty && Bundle.reads == 0)
 }
 for invalid in ["background", "scene", "retired", "lease", "test", "cable"] {
     reset(); let c = StreamClient()
