@@ -771,7 +771,11 @@ final class StreamClient: ObservableObject {
     private var scheduledAutomaticTicket: AutomaticSourceTicket?
     private var automaticSubmission: SessionLink.Submission?
     private var automaticDisplayCatalogObserved = false
-    private var initialDisplayOpportunity: AutomaticConnectionOpportunity?
+    private struct InitialDisplayOpportunity {
+        let ticket: AutomaticSourceTicket
+        var submittedInventories: Set<UUID> = []
+    }
+    private var initialDisplayOpportunity: InitialDisplayOpportunity?
     private struct RememberedDisplay: Codable, Equatable {
         let macID: String
         let launchID: String
@@ -829,19 +833,38 @@ final class StreamClient: ObservableObject {
         guard !automaticDisplayCatalogObserved else { return }
         if initialDisplayOpportunity == nil {
             guard let ticket = automaticTicket(peer: peer, list: list) else { return }
-            initialDisplayOpportunity = AutomaticConnectionOpportunity(intent: ticket.intent, peer: ticket.peer,
-                host: ticket.host, observation: .catalog(ticket.revision))
+            initialDisplayOpportunity = InitialDisplayOpportunity(ticket: ticket)
         }
-        guard let opportunity = initialDisplayOpportunity,
-              opportunity.intent == explicitSourceIntent, opportunity.peer == ObjectIdentifier(peer),
-              opportunity.host == list.launchID, opportunity.accepts(list.selectionRevision), list.active == .none else {
+        guard var opportunity = initialDisplayOpportunity else { return }
+        let original = opportunity.ticket
+        guard original.intent == explicitSourceIntent, original.peer == ObjectIdentifier(peer),
+              original.host == list.launchID, original.revision == list.selectionRevision,
+              original.macID == session?.macID, list.active == .none else {
             automaticDisplayCatalogObserved = true
             initialDisplayOpportunity = nil
             return
         }
-        guard let ticket = automaticTicket(peer: peer, list: list), requestAutomaticDisplay(ticket: ticket) else { return }
-        automaticDisplayCatalogObserved = true
-        initialDisplayOpportunity = nil
+        guard list.automaticDisplaySelection == 1 else {
+            if !opportunity.submittedInventories.isEmpty {
+                automaticDisplayCatalogObserved = true
+                initialDisplayOpportunity = nil
+            }
+            return
+        }
+        guard let inventory = list.displayInventoryID,
+              !opportunity.submittedInventories.contains(inventory) else { return }
+        let previousIntent = automaticSourceIntent
+        if !opportunity.submittedInventories.isEmpty {
+            guard let expected = expectedSourceIntent, expected.origin == .automatic,
+                  case .display = expected.choice else { return }
+            automaticSourceIntent = original.intent
+        }
+        guard let ticket = automaticTicket(peer: peer, list: list), requestAutomaticDisplay(ticket: ticket) else {
+            automaticSourceIntent = previousIntent
+            return
+        }
+        opportunity.submittedInventories.insert(inventory)
+        initialDisplayOpportunity = opportunity
     }
 
     private func requestAutomaticDisplay(ticket: AutomaticSourceTicket) -> Bool {

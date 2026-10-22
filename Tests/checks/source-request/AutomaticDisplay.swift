@@ -125,7 +125,19 @@ import Foundation
         geometry: .init(x: 0, y: 0, width: 1920, height: 1080), width: 1920, height: 1080)
     topology.deliverIdleCatalog(accepted)
     expect(topology.defaults.values.count == 1, "최종 inventory와 새 epoch가 일치할 때만 화면을 저장")
-    for interruption in ["none", "window", "display", "launch", "revision", "peer", "host", "capability"] {
+    topology.deliverIdleCatalog(idle)
+    expect(picks(topology).count == 3, "r1 관측 뒤 옛 r0 catalog로 돌아가도 최초 기회를 열지 않음")
+    let untrustedContinuation = fresh()
+    untrustedContinuation.deliverIdleCatalog(idle)
+    untrustedContinuation.savedMacs = []
+    var untrustedInventory = idle
+    untrustedInventory.displayInventoryID = nextInventory
+    let audioBeforeUntrusted = untrustedContinuation.remoteAudioControl.changes
+    untrustedContinuation.deliverIdleCatalog(untrustedInventory)
+    expect(picks(untrustedContinuation).count == 1 && untrustedContinuation.automaticSourceIntent == nil &&
+           untrustedContinuation.remoteAudioControl.changes == audioBeforeUntrusted,
+           "continuation 중 신뢰가 없으면 자동 의도와 오디오를 복구하지 않음")
+    for interruption in ["none", "window", "display", "launch", "revision", "peer", "host", "mac", "capability"] {
         let client = fresh()
         client.deliverIdleCatalog(idle)
         var changed = idle
@@ -137,6 +149,7 @@ import Foundation
         case "revision": changed.selectionRevision = "revision-1"
         case "peer": client.connection = NWConnection()
         case "host": changed.launchID = "other-host"
+        case "mac": client.session?.macID = "other-mac"
         default: changed.automaticDisplaySelection = nil
         }
         changed.displayInventoryID = nil

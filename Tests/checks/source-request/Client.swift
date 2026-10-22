@@ -44,7 +44,7 @@ enum SavedMacs {
     var session: Session? = Session()
     var savedMacs = [SavedMac(macID: "trusted-mac", fingerprintData: Data([1]))]
     var automaticDisplayCatalogObserved = false
-    var initialDisplayOpportunity: AutomaticConnectionOpportunity?
+    var initialDisplayOpportunity: InitialDisplayOpportunity?
     var automaticDisplaySelection: Int?
     var pendingDisplaySelection: PendingDisplaySelection?
     var lastStartupCatalogDiagnostic: [String: String]?
