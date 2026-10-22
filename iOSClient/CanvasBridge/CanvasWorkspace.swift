@@ -1263,14 +1263,12 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             }
             // A physical scratch can cross neighbouring glyphs at this font size.
             // Its centre selects one complete Character; wider deletion stays explicit selection.
-            let ordered = hits.sorted { abs($0.rect.midX-bounds.midX) < abs($1.rect.midX-bounds.midX) }
-            guard let target = ordered.first,
-                  target.rect.insetBy(dx:0,dy:-4).contains(CGPoint(x:bounds.midX,y:bounds.midY)) else { return nil }
-            if ordered.count > 1,
-               abs(abs(ordered[0].rect.midX-bounds.midX)-abs(ordered[1].rect.midX-bounds.midX)) < 0.5 {
-                return nil
+            let targets = hits.filter { hit in
+                let edge = max(1,min(3,hit.rect.width * 0.15))
+                return hit.rect.insetBy(dx:edge,dy:-4).contains(CGPoint(x:bounds.midX,y:bounds.midY))
             }
-            return target.range
+            guard targets.count == 1 else { return nil }
+            return targets[0].range
         }
         @objc private func eraseSelection() {
             guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling,

@@ -95,6 +95,17 @@ enum PencilTextCorrectionChecks {
             controller.applyCorrection(wideScratch,expectedText:view.text)
             try check(view.text == result,"넓은 지그재그가 인접 글자를 지우지 않고 전체 Character를 보존")
         }
+        view.text = "a👩🏽‍💻b"
+        controller.textViewDidChange(view)
+        let emoji = try glyph(1,length:"👩🏽‍💻".utf16.count)
+        let ambiguous = (0...7).map { index in
+            CGPoint(x:emoji.maxX + (index % 2 == 0 ? -25 : 25),
+                    y:emoji.midY + (index % 2 == 0 ? -4 : 4))
+        }
+        try check(controller.correctionRange(ambiguous,gesture:.erase,in:view) == nil,
+                  "폭이 다른 emoji와 영문의 경계 중심은 모호한 삭제로 거부")
+        controller.applyCorrection(ambiguous,expectedText:view.text)
+        try check(view.text == "a👩🏽‍💻b","문자 경계의 넓은 획은 어느 글자도 지우지 않음")
         view.text = "가나다"
         controller.textViewDidChange(view)
         view.undoManager?.removeAllActions()
