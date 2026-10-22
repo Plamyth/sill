@@ -1087,6 +1087,44 @@ final class OwnerBootstrapChecks {
         }
     }
 
+    @MainActor func testAdmissionExpiryAfterBlockingValidation() async throws {
+        for mode in 0...3 {
+            let (_, host) = try await sessionHost()
+            let b = binding(), sensor = SensorFixture().sensor()
+            guard case .success(let proof) = await sensor.principal(for: b) else {
+                fail("최종 기한 검사의 증거 발급 실패"); continue
+            }
+            let evidence = OwnerBootstrapSocket.Evidence(sensor: sensor, proof: proof)
+            let entered = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+            if mode == 2 {
+                DispatchQueue.global().async {
+                    _ = sensor.withCurrent(proof) {
+                        entered.signal()
+                        Thread.sleep(forTimeInterval: 0.08)
+                        return true
+                    }
+                    finished.signal()
+                }
+                expectEqual(entered.wait(timeout: .now() + 1), .success)
+            }
+            let deadline = DispatchTime.now().uptimeNanoseconds + (mode == 3 ? 10_000_000_000 : 20_000_000)
+            let socket = OwnerBootstrapSocket.fixture(binding: b, trust: host.trust, purpose: .session,
+                deadline: deadline, current: {
+                    if mode == 0 { Thread.sleep(forTimeInterval: 0.08) }
+                    return true
+                })
+            var served = 0
+            expectFalse(socket.admit(in: host.trust, evidence: evidence, allowed: { _ in
+                if mode == 1 { Thread.sleep(forTimeInterval: 0.08) }
+                if mode == 3 { Thread.sleep(forTimeInterval: 2.05) }
+                return true
+            }) { _ in served += 1 })
+            if mode == 2 { expectEqual(finished.wait(timeout: .now() + 1), .success) }
+            expectEqual(served, 0)
+            expectTrue(host.trust.snapshot.ownerAuthorized.isEmpty)
+        }
+    }
+
     @MainActor func testLegacyNormalAdmissionWithoutOwnerProof() async throws {
         for method in [PairRequest.qr, PairRequest.code, PairResult.cable, "icloud"] {
             let store = FaultStore(), key = binding().fingerprint
@@ -1227,6 +1265,7 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testTwoPendingOwnerConnectionsHaveIndependentSensors() } catch { fail("동시 owner 연결 검사 예외") }
         do { try await checks.testAdmissionDecisionSerializesCancellationAndSettings() } catch { fail("결정 경계 직렬화 검사 예외") }
         do { try await checks.testSessionRefreshRejectsDamagedRevokedOrForeignRecord() } catch { fail("저장 기록의 재조회 거부 검사 예외") }
+        do { try await checks.testAdmissionExpiryAfterBlockingValidation() } catch { fail("최종 검사 중 만료 거부 검사 예외") }
         do { try await checks.testLegacyNormalAdmissionWithoutOwnerProof() } catch { fail("명시적 신뢰의 정상 연결 검사 예외") }
         checks.testCanonicalSignedSensorRejectsUnexpectedExecutable()
         let (passed, failed) = CheckCounts.shared.result
