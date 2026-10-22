@@ -110,6 +110,7 @@ private final class Streams {
         let mobile = try object(directory.appendingPathComponent("mobile-control-events-v1.json"))
         let commonGolden = try golden(common)
         let mobileGolden = try golden(mobile)
+        try await cloudResultChecks(directory)
         try largeCatalogChecks(mobile)
         try sessionConnectionChecks(mobile)
         let events = mobile["events"] as! [[String: Any]]
@@ -214,6 +215,193 @@ private final class Streams {
         let result: ControlEventsValue = .object(["checks": .number(Double(checks)), "externalEffects": .number(0),
             "commonGolden": .array(commonGolden), "mobileGolden": .array(mobileGolden)])
         print(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
+    }
+
+    @MainActor static func cloudResultChecks(_ directory: URL) async throws {
+        let fixture = try object(directory.appendingPathComponent("cloud-current-result-v1.json"))
+        expect(fixture["producerCommit"] as? String == "bcab7058ced4a6d21331228c2e354a2f45038cc2" &&
+               fixture["producerTree"] as? String == "1a18490dba65ffa3c312c0feed0feab9cb344da4", "공개 producer 후보 출처 고정")
+        let cases = fixture["cases"] as! [[String: Any]]
+        expect(cases.map { $0["name"] as! String } == ["current", "read-denied", "null-result", "stale", "other-run", "hidden"],
+               "공개 producer 실제 여섯 사례")
+        var documents = [String: ControlEventsDocument]()
+        for item in cases {
+            var raw = item["projection"] as! [String: Any]
+            raw["schemaVersion"] = 1
+            let value = try JSONDecoder().decode(ControlEventsValue.self, from: JSONSerialization.data(withJSONObject: raw))
+            guard case .object(let root) = value else { fatalError("공개 fixture 문서 누락") }
+            let document = ControlEventsDocument(root: root)
+            expect(ControlEventsReducer.valid(document), "공개 사례의 기존 schemaVersion 문서 유효")
+            documents[item["name"] as! String] = document
+        }
+        func project(_ document: ControlEventsDocument) -> ControlEventsProjection {
+            try! ControlEventsCodec.project(document)
+        }
+        let current = documents["current"]!
+        let original = project(current).work[0]
+        let text = "합성 응답입니다.\n원문 전체를 교체합니다."
+        expect(original.currentResult == text, "공개 현재 응답 원문 보존")
+        for name in ["read-denied", "null-result"] {
+            expect(project(documents[name]!).work[0].currentResult == nil, "공개 읽기 거부와 null은 본문 없음")
+        }
+        expect(project(documents["stale"]!).work[0].currentResult == text, "공개 stale 사례도 읽기 허용 본문 유지")
+        expect(project(documents["other-run"]!).work[0].currentResult == "두 번째 실행 응답", "다른 실행 응답 독립 보존")
+        expect(project(documents["hidden"]!).work.isEmpty, "공개 숨김은 행 없음")
+        guard case .object(let unified) = current.root["unifiedControl"], let row = unified.rows("rows")?.first else { fatalError() }
+        func changed(_ edit: (inout [String: ControlEventsValue]) -> Void) -> ControlEventsDocument {
+            var row = row
+            edit(&row)
+            var root = current.root
+            var unified = unified
+            unified["rows"] = .array([.object(row)])
+            root["unifiedControl"] = .object(unified)
+            return ControlEventsDocument(root: root)
+        }
+        let boundary = String(repeating: "한", count: 4000)
+        expect(boundary.utf8.count == 12000, "한글 경계는 글자 수가 아닌 UTF8 바이트")
+        for value: ControlEventsValue? in [nil, .null, .bool(true), .number(1), .array([]), .object([:]), .string(boundary + "a")] {
+            let invalid = changed { $0["result"] = value }
+            let projected = project(invalid)
+            expect(projected.work.count == 1 && projected.work[0].currentResult == nil, "누락·타입 오류·12001바이트는 해당 응답만 거부")
+        }
+        for read: ControlEventsValue? in [nil, .null, .bool(false), .string("true"), .number(1)] {
+            let denied = changed { $0["capabilities"] = .object(read.map { ["read": $0] } ?? [:]); $0["result"] = .string("읽기 거부에도 남은 비정상 본문") }
+            expect(project(denied).work[0].currentResult == nil, "명시적 read true 이외에는 문자열도 표시 거부")
+        }
+        for capabilities: ControlEventsValue? in [nil, .null, .bool(true), .string("read")] {
+            expect(project(changed { $0["capabilities"] = capabilities }).work[0].currentResult == nil,
+                   "권한 객체가 없거나 잘못된 타입이면 본문 거부")
+        }
+        expect(project(changed { $0["result"] = .string(boundary) }).work[0].currentResult == boundary, "한글 12000바이트 수용")
+        expect(project(changed { $0["result"] = .string("") }).work[0].currentResult == "", "빈 문자열을 nil과 구분")
+        for run: ControlEventsValue? in [nil, .null, .string("")] {
+            expect(project(changed { $0["runId"] = run }).work[0].currentResult == nil, "실행 없는 Cloud 본문 거부")
+        }
+        for provider in ["codex", "cursor-desktop"] {
+            expect(project(changed { $0["source"] = .string(provider); $0["provider"] = .string(provider) }).work[0].currentResult == nil,
+                   "Cloud 외 소스의 result 무시")
+        }
+        let legacy = ControlEventsDocument(root: ["schemaVersion": .number(1), "threads": .array([.object([
+            "id": .string("legacy"), "source": .string("codex"), "result": .string(text), "capabilities": .object(["read": .bool(true)])])])])
+        expect(project(legacy).work[0].currentResult == nil, "기존 계약의 result 무시")
+        var mixed = current.root
+        var mixedUnified = unified
+        var malformed = row; malformed["result"] = .bool(false); malformed["externalId"] = .string("잘못된 응답 행")
+        mixedUnified["rows"] = .array([.object(row), .object(malformed)])
+        mixed["unifiedControl"] = .object(mixedUnified)
+        let mixedRows = project(ControlEventsDocument(root: mixed)).work
+        expect(mixedRows.count == 2 && mixedRows[0].currentResult == text && mixedRows[1].currentResult == nil, "잘못된 응답이 다른 목록을 깨지 않음")
+
+        let streams = Streams()
+        let sleepGate = Box<CheckedContinuation<Void, Error>?>(nil)
+        let controller = ControlEventsController(stream: streams.open, sleep: { _ in
+            try await withCheckedThrowingContinuation { sleepGate.value = $0 }
+        })
+        controller.configure(try gateway()); controller.setForeground(true); controller.setVisible(true)
+        await eventually("응답 검사 합성 구독 시작") { streams.opened == 1 }
+        let generation = UUID()
+        var revision: Int64 = 0
+        func version(_ generation: UUID, _ revision: Int64) -> ControlEventsVersion {
+            ControlEventsVersion(generation: generation, revision: revision, emittedAt: date)
+        }
+        streams.continuations[0].yield(.opened(Date()))
+        streams.continuations[0].yield(.envelope(.snapshot(version(generation, revision), current)))
+        await eventually("공개 응답 snapshot 적용") { controller.reducer.isCurrent }
+        expect(controller.selectedResult == nil, "자동 실행 선택 없음")
+        controller.selection.select(.cursorCloud); controller.selection.workID = original.id
+        expect(controller.selectedResult?.text == text && controller.selectedResult?.isStale == false, "정확한 선택의 현재 응답")
+        func apply(_ document: ControlEventsDocument) async {
+            revision += 1
+            streams.continuations[0].yield(.envelope(.patch(version(generation, revision), baseRevision: revision - 1,
+                ControlEventsPatch(set: ["unifiedControl": document.root["unifiedControl"]!]))))
+            await eventually("합성 응답 행 전체 교체 \(revision)") { controller.reducer.version?.revision == revision }
+        }
+        await apply(documents["stale"]!)
+        expect(controller.selectedResult?.text == text && controller.selectedResult?.isStale == true, "공개 fresh false·연결 stale는 마지막 관측 표시")
+        await apply(changed { $0["fresh"] = nil })
+        expect(controller.selectedResult?.isStale == true, "fresh 미제공도 현재로 추정하지 않음")
+        await apply(changed { $0["connectionState"] = .string("stale") })
+        expect(controller.selectedResult?.isStale == true, "연결 stale도 마지막 관측")
+        for document in [documents["read-denied"]!, documents["null-result"]!, changed({ $0["result"] = nil }),
+                         changed({ $0["result"] = .number(42) }), changed({ $0["capabilities"] = .object(["read": .bool(false)]); $0["result"] = .string("거부된 본문") })] {
+            await apply(document)
+            expect(controller.selectedResult == nil && controller.projection?.work[0].currentResult == nil, "권한 회수·null·누락·오류는 옛 문자열 없이 nil")
+            await apply(current)
+            expect(controller.selectedResult?.text == text, "같은 실행의 새 읽기 허용 관측만 복원")
+        }
+        for replacement in ["짧음", "", "**해석하지 않을 원문**\n<script>합성</script>"] {
+            await apply(changed { $0["result"] = .string(replacement) })
+            expect(controller.selectedResult?.text == replacement, "전체 응답 교체와 빈 응답에 이전 본문 잔여 없음")
+        }
+        await apply(current)
+        controller.selection.select(.codex)
+        expect(controller.selectedResult == nil && controller.selection.workID == nil, "제공자 선택 변경은 이전 본문 제거")
+        controller.selection.workID = original.id
+        expect(controller.selectedResult == nil, "제공자와 WorkID 불일치도 본문 없음")
+        controller.selection.select(.cursorCloud); controller.selection.workID = original.id
+        var wrongID = original.id; wrongID.hostID = "다른 호스트"
+        controller.selection.workID = wrongID
+        expect(controller.selectedResult == nil, "일부 식별자만 같은 WorkID는 거부")
+        controller.selection.workID = original.id
+        await apply(documents["other-run"]!)
+        expect(controller.selection.workID == nil && controller.selectedResult == nil, "같은 agent의 다른 실행을 자동 재선택하지 않음")
+        await apply(current)
+        expect(controller.selectedResult == nil, "이전 실행 재등장도 자동 선택 없음")
+        controller.selection.workID = original.id
+        await apply(documents["hidden"]!)
+        expect(controller.projection?.work.isEmpty == true && controller.selection.workID == nil && controller.selectedResult == nil, "hidden patch는 본문과 선택 제거")
+        await apply(current); controller.selection.workID = original.id
+        for error in [ControlEventsTransportFailure.streamEnded as Error, URLError(.networkConnectionLost)] {
+            let index = streams.opened - 1
+            streams.continuations[index].finish(throwing: error)
+            await eventually("단순 단절 backoff") { sleepGate.value != nil }
+            expect(controller.selectedResult?.text == text && controller.selectedResult?.isStale == true, "EOF와 네트워크 단절은 마지막 관측 유지")
+            let gate = sleepGate.value; sleepGate.value = nil; gate?.resume()
+            await eventually("단순 단절 재구독") { streams.opened == index + 2 }
+            streams.continuations[index + 1].yield(.opened(Date()))
+            streams.continuations[index + 1].yield(.envelope(.snapshot(version(generation, revision), current)))
+            await eventually("단순 단절 후 snapshot 복구") { controller.reducer.isCurrent }
+            expect(controller.selectedResult?.text == text && controller.selectedResult?.isStale == false, "같은 실행의 전체 snapshot만 현재 상태 복구")
+        }
+        var index = streams.opened - 1
+        for nextGeneration in [generation, UUID()] {
+            let before = controller.reducer.document
+            let beforeVersion = controller.reducer.version
+            streams.continuations[index].yield(.envelope(.heartbeat(version(nextGeneration, revision + 2))))
+            await eventually("gap 또는 세대 변경은 새 구독으로 복구") { streams.opened == index + 2 }
+            expect(controller.projection == nil && controller.selection.workID == nil && controller.selectedResult == nil,
+                   "재접속 begin이 recovery를 바꿔도 옛 본문 없음")
+            expect(controller.reducer.document == before && controller.reducer.version == beforeVersion, "resync는 원문 reducer 문서와 버전 보존")
+            controller.selection.workID = original.id
+            expect(controller.selectedResult == nil, "snapshot 대기 중 옛 WorkID 강제 선택도 본문 없음")
+            streams.continuations[index].yield(.envelope(.snapshot(version(generation, revision), current)))
+            streams.continuations[index].finish(throwing: ControlEventsTransportFailure.authentication)
+            index += 1
+            streams.continuations[index].yield(.opened(Date()))
+            await eventually("복구 통로 열림") { controller.reducer.transport == .open }
+            expect(controller.projection == nil && controller.selectedResult == nil, "늦은 이전 snapshot과 인증 실패 콜백은 복구 상태 불변")
+            controller.selection.workID = nil
+            streams.continuations[index].yield(.envelope(.snapshot(version(nextGeneration, revision), current)))
+            await eventually("복구 전체 snapshot 수신") { controller.reducer.isCurrent }
+            expect(controller.selectedResult == nil && controller.selection.workID == nil, "새 snapshot도 옛 실행 자동 선택 없음")
+            controller.selection.workID = original.id
+            expect(controller.selectedResult?.text == text, "새 snapshot 후 명시 선택만 본문 표시")
+            revision += 1
+            streams.continuations[index].yield(.envelope(.patch(version(nextGeneration, revision), baseRevision: revision - 1,
+                ControlEventsPatch(set: ["unifiedControl": current.root["unifiedControl"]!]))))
+            await eventually("복구 이후 실제 patch 진행") { controller.reducer.version?.revision == revision }
+        }
+        let beforeAuth = controller.reducer.document
+        streams.continuations[index].finish(throwing: responseFailure(403))
+        await eventually("인증 회수는 자동 재시도 없이 종료") { controller.reducer.transport == .failed }
+        expect(controller.projection == nil && controller.selection.workID == nil && controller.selectedResult == nil, "인증 실패는 응답 표시 차단")
+        expect(controller.reducer.document == beforeAuth, "인증 실패에서도 reducer 원문 정확성 유지")
+        controller.selection.workID = original.id
+        expect(controller.selectedResult == nil, "인증 실패 후 옛 ID를 선택해도 본문 없음")
+        controller.reconnect()
+        await eventually("인증 실패 후 수동 재접속") { streams.opened == index + 2 }
+        expect(controller.projection == nil && controller.selectedResult == nil, "인증 실패 뒤 reconnect도 옛 본문 부활 없음")
+        controller.release()
     }
 
     static func retryChecks() {

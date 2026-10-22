@@ -131,6 +131,21 @@ struct ControlEventsPanel: View {
             field("원본 읽기 전용", work.readOnly.map { $0 ? "예" : "아니요 · 이 앱의 명령 권한과 별도" })
             field("원본 권한 보고", formatted(work.capabilities))
             Text("권한 보고를 보존하지만 이 Vision 앱에는 실행·전송 명령 경로를 제공하지 않습니다.").font(.caption)
+            if work.id.provider == .cursorCloud {
+                Text("현재 응답").font(.headline)
+                if let result = controller.selectedResult {
+                    Text(result.isStale ? "마지막 관측 · 현재 응답 여부는 미확인" : "선택한 실행에서 관측한 응답")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if result.text.isEmpty {
+                        Text("현재 응답이 빈 문자열입니다.")
+                    } else {
+                        Text(verbatim: result.text).textSelection(.enabled)
+                    }
+                } else {
+                    Text("현재 응답이 제공되지 않았거나 읽기가 허용되지 않았습니다.")
+                }
+                Text("선택한 실행의 응답 전체를 표시합니다. 전체 대화 이력은 제공되지 않으며, 이 앱에서는 초안 전송을 지원하지 않습니다.").font(.caption)
+            }
             if work.id.provider == .codex {
                 Text(!controller.reducer.isCurrent && work.sourceConnection.isCurrent ? "마지막 관측 · 개별 원본 연결의 현재 상태 미확인" : work.sourceConnection.label)
                     .accessibilityIdentifier("control-events.session-connection")

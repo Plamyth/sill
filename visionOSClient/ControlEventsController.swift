@@ -22,6 +22,11 @@ final class ControlEventsController: ObservableObject {
         self.sleep = sleep
     }
     var configured: Bool { gateway != nil }
+    var selectedResult: (text: String, isStale: Bool)? {
+        guard selection.provider == .cursorCloud, let id = selection.workID, id.provider == selection.provider,
+              let work = projection?.work.first(where: { $0.id == id }), let text = work.currentResult else { return nil }
+        return (text, !reducer.isCurrent || work.fresh != true || work.connection.state == "stale")
+    }
     deinit { task?.cancel() }
 
     func configure(_ gateway: ControlEventsGateway?) {
@@ -88,7 +93,11 @@ final class ControlEventsController: ObservableObject {
                             message = "연결 서버 상태를 동기화했습니다. 원본 이벤트 지원과 각 관측은 별도로 확인하세요."
                         case .heartbeat, .ignored: break
                         case .invalid: throw ControlEventsTransportFailure.payload
-                        case .resyncRequired: reducer = candidate; resync = true
+                        case .resyncRequired:
+                            reducer = candidate
+                            projection = nil
+                            selection.workID = nil
+                            resync = true
                         }
                     }
                     if resync { break }
@@ -101,6 +110,10 @@ final class ControlEventsController: ObservableObject {
             } catch {
                 guard self.operation == operation, !Task.isCancelled else { return }
                 reducer.stop(id, failed: true)
+                if (error as? ControlEventsTransportFailure) == .authentication {
+                    projection = nil
+                    selection.workID = nil
+                }
                 guard let delay = retry.delay(for: error) else {
                     message = (error as? ControlEventsTransportFailure)?.message ?? "이벤트 연결 또는 보안 검증에 실패했습니다. 마지막 관측만 표시합니다."
                     self.operation = nil

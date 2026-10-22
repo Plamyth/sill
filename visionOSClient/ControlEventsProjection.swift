@@ -74,6 +74,11 @@ extension ControlEventsCodec {
                 item.fresh = try optionalFlag(row, "fresh")
                 item.readOnly = try optionalFlag(row, "readOnly")
                 item.capabilities = row["capabilities"]
+                if provider == .cursorCloud, item.id.runID?.isEmpty == false,
+                   case .object(let capabilities) = item.capabilities, capabilities.flag("read") == true,
+                   case .string(let result) = row["result"], result.utf8.count <= 12_000 {
+                    item.currentResult = result
+                }
                 item.threadID = try optionalText(row, "threadId")
                 item.recordObservedAt = try optionalText(row, "observedAt")
                 item.reportedStatus = try optionalText(row, "status")
