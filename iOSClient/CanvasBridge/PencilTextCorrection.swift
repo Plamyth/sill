@@ -36,12 +36,38 @@ enum CanvasPencilTextCorrection {
             return dy < 0 ? .join : .split
         }
 
-        guard width >= minimumEraseWidth, height <= width * 0.55,
-              travelX >= width * 3, travelY <= travelX * 0.5 else { return nil }
-        let excursion = max(min(8, minimumEraseWidth / 3), width * 0.45)
-        var extreme = first.x
+        // 원래 화면 좌표의 join/split 판정 뒤, 삭제 획만 주축에 맞춘다.
+        // 공분산은 정규화 좌표로 구해 유한한 큰 좌표의 제곱 overflow를 피한다.
+        let scale = max(width, height)
+        guard scale > 0 else { return nil }
+        let normalized = points.map { CGPoint(x:($0.x-minX)/scale,y:($0.y-minY)/scale) }
+        let meanX = normalized.reduce(CGFloat.zero) { $0+$1.x } / CGFloat(points.count)
+        let meanY = normalized.reduce(CGFloat.zero) { $0+$1.y } / CGFloat(points.count)
+        var xx: CGFloat = 0, xy: CGFloat = 0, yy: CGFloat = 0
+        for point in normalized {
+            let x = point.x-meanX, y = point.y-meanY
+            xx += x*x; xy += x*y; yy += y*y
+        }
+        let angle = atan2(2*xy,xx-yy)/2, cosine = cos(angle), sine = sin(angle)
+        let erasePoints = normalized.map { point in
+            let x = point.x-meanX, y = point.y-meanY
+            return CGPoint(x:(x*cosine+y*sine)*scale,y:(-x*sine+y*cosine)*scale)
+        }
+        guard erasePoints.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return nil }
+        let eraseWidth = erasePoints.map(\.x).max()! - erasePoints.map(\.x).min()!
+        let eraseHeight = erasePoints.map(\.y).max()! - erasePoints.map(\.y).min()!
+        var eraseTravelX: CGFloat = 0, eraseTravelY: CGFloat = 0
+        for (a, b) in zip(erasePoints,erasePoints.dropFirst()) {
+            eraseTravelX += abs(b.x-a.x); eraseTravelY += abs(b.y-a.y)
+        }
+        // iPad44 실제 4개 획의 투영 height/width 최댓값은 약 0.655다.
+        guard eraseWidth.isFinite, eraseHeight.isFinite, eraseTravelX.isFinite, eraseTravelY.isFinite,
+              eraseWidth >= minimumEraseWidth, eraseHeight <= eraseWidth * 0.7,
+              eraseTravelX >= eraseWidth * 3, eraseTravelY <= eraseTravelX * 0.5 else { return nil }
+        let excursion = max(min(8, minimumEraseWidth / 3), eraseWidth * 0.45)
+        var extreme = erasePoints[0].x
         var direction = 0, reversals = 0
-        for point in points.dropFirst() {
+        for point in erasePoints.dropFirst() {
             if direction == 0 {
                 if abs(point.x - extreme) >= excursion {
                     direction = point.x > extreme ? 1 : -1

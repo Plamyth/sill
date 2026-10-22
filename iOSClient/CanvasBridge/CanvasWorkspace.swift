@@ -1202,24 +1202,16 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             (editor as? NodeTextView)?.correctionTrace.path = nil
         }
         func applyCorrection(_ points: [CGPoint], expectedText: String) {
-            func observed(_ reason: String) {
-                #if DEBUG
-                if let editor { PencilCorrectionDiagnostics.record(points,in:editor,outcome:reason) }
-                #endif
-            }
-            guard isCurrent else { observed("stale-session"); return }
-            guard correctionEnabled else { observed("mode-disabled"); return }
-            guard let editor, editor.isEditable else { observed("editor-disabled"); return }
-            guard editor.markedTextRange == nil, !scribbling else { observed("composition-active"); return }
-            guard editor.text.utf8.elementsEqual(expectedText.utf8),
-                  parent.text.utf8.elementsEqual(expectedText.utf8) else { observed("text-changed"); return }
-            guard let gesture = correctionGesture(points,in:editor) else { observed("gesture-not-recognized"); return }
-            guard let range = correctionRange(points,gesture:gesture,in:editor) else { observed("target-not-found"); return }
-            guard let edit = CanvasPencilTextCorrection.edit(in:editor.text,gesture:gesture,range:range),
+            guard isCurrent, correctionEnabled, let editor, editor.isEditable,
+                  editor.markedTextRange == nil, !scribbling,
+                  editor.text.utf8.elementsEqual(expectedText.utf8),
+                  parent.text.utf8.elementsEqual(expectedText.utf8),
+                  let gesture = correctionGesture(points,in:editor),
+                  let range = correctionRange(points,gesture:gesture,in:editor),
+                  let edit = CanvasPencilTextCorrection.edit(in:editor.text,gesture:gesture,range:range),
                   let start = editor.position(from:editor.beginningOfDocument,offset:edit.range.location),
                   let end = editor.position(from:start,offset:edit.range.length),
-                  let textRange = editor.textRange(from:start,to:end) else { observed("edit-not-valid"); return }
-            observed("applied-\(gesture)")
+                  let textRange = editor.textRange(from:start,to:end) else { return }
             editor.replace(textRange,withText:edit.replacement)
             textViewDidChange(editor)
         }
@@ -1344,9 +1336,6 @@ private final class PencilTextGestureRecognizer: UIGestureRecognizer {
         }
         started = touch.timestamp
         points = [touch.location(in:view)]
-        #if DEBUG
-        if let editor = view as? UITextView { PencilCorrectionDiagnostics.record(points,in:editor,outcome:"pencil-began") }
-        #endif
         state = .began
         onTracking?(true)
         onPoints?(points)
@@ -1354,12 +1343,7 @@ private final class PencilTextGestureRecognizer: UIGestureRecognizer {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
         guard state == .began || state == .changed, let touch = touches.first,
               touch.type == .pencil else { return }
-        guard touch.timestamp - started <= 2, points.count < 500 else {
-            #if DEBUG
-            if let editor = view as? UITextView { PencilCorrectionDiagnostics.record(points,in:editor,outcome:"move-budget-rejected") }
-            #endif
-            state = .cancelled; return
-        }
+        guard touch.timestamp - started <= 2, points.count < 500 else { state = .cancelled; return }
         points.append(contentsOf:(event.coalescedTouches(for:touch) ?? [touch]).map { $0.location(in:view) })
         state = .changed
         onPoints?(points)
@@ -1371,19 +1355,9 @@ private final class PencilTextGestureRecognizer: UIGestureRecognizer {
         state = .ended
         onTracking?(false)
         if touch.timestamp - started <= 2, points.count <= 500 { onStroke?(points) }
-        else {
-            #if DEBUG
-            if let editor = view as? UITextView { PencilCorrectionDiagnostics.record(points,in:editor,outcome:"stroke-budget-rejected") }
-            #endif
-        }
         onPoints?([])
     }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        #if DEBUG
-        if let editor = view as? UITextView { PencilCorrectionDiagnostics.record(points,in:editor,outcome:"pencil-cancelled") }
-        #endif
-        state = .cancelled
-    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .cancelled }
     override func reset() {
         super.reset()
         points = []
@@ -1391,43 +1365,6 @@ private final class PencilTextGestureRecognizer: UIGestureRecognizer {
         onPoints?([])
     }
 }
-
-#if DEBUG
-private enum PencilCorrectionDiagnostics {
-    private static var events: [[String:Any]] = []
-    static func record(_ points: [CGPoint], in editor: UITextView, outcome: String) {
-        let finite = Array(points.filter { $0.x.isFinite && $0.y.isFinite }.prefix(500))
-        var event: [String:Any] = ["outcome":outcome,"time":Date().timeIntervalSince1970,
-            "editor":editor.accessibilityIdentifier ?? "unknown","pointCount":points.count,
-            "points":finite.map { [Double($0.x),Double($0.y)] },
-            "textUTF16Count":editor.text.utf16.count,"fontSize":Double(editor.font?.pointSize ?? 0),
-            "contentOffset":[Double(editor.contentOffset.x),Double(editor.contentOffset.y)],
-            "editable":editor.isEditable,"hasMarkedText":editor.markedTextRange != nil]
-        if let minX = finite.map(\.x).min(), let maxX = finite.map(\.x).max(),
-           let minY = finite.map(\.y).min(), let maxY = finite.map(\.y).max(),
-           let position = editor.closestPosition(to:CGPoint(x:(minX+maxX)/2,y:(minY+maxY)/2)) {
-            event["bounds"] = [Double(minX),Double(minY),Double(maxX-minX),Double(maxY-minY)]
-            let offset = editor.offset(from:editor.beginningOfDocument,to:position)
-            event["nearestOffset"] = offset
-            event["glyphs"] = [offset-1,offset,offset+1].compactMap { location -> [String:Any]? in
-                guard let range = canvasSelectedCharacterRange(in:editor.text,selection:NSRange(location:location,length:1)),
-                      let start = editor.position(from:editor.beginningOfDocument,offset:range.location),
-                      let end = editor.position(from:start,offset:range.length),
-                      let textRange = editor.textRange(from:start,to:end) else { return nil }
-                return ["location":range.location,"length":range.length,
-                        "rects":editor.selectionRects(for:textRange).map { r in
-                            [Double(r.rect.minX),Double(r.rect.minY),Double(r.rect.width),Double(r.rect.height)] }]
-            }
-        }
-        events.append(event)
-        events = Array(events.suffix(8))
-        guard let root = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first else { return }
-        let url = root.appendingPathComponent("CCR Sill/pencil-correction-diagnostics.json")
-        // Only geometric samples, no note content. The bounded record is diagnostic, never an edit source.
-        try? CanvasLocalFile.write(JSONSerialization.data(withJSONObject:["schemaVersion":1,"events":events]),to:url)
-    }
-}
-#endif
 
 private struct CanvasInkHistoryButtons: View {
     @ObservedObject var history: CanvasInkHistory
