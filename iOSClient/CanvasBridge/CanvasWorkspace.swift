@@ -1367,7 +1367,8 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             let apply = UIAlertAction(title:"적용",style:.default) { [weak self, weak field] _ in
                 guard let self else { return }
                 guard let field, field.markedTextRange == nil else { self.cancelSelectionCorrection(snapshot); return }
-                self.confirmSelectionCorrection(snapshot,replacement:field.text ?? "")
+                let input = CanvasPencilTextCorrectionInput(text:snapshot.text,selection:snapshot.selection,raw:field.text ?? "")
+                self.confirmSelectionCorrection(snapshot,replacement:input.preferred)
             }
             apply.isEnabled = false
             field?.addAction(UIAction { [weak field] _ in

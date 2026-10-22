@@ -83,6 +83,38 @@ check(!snapshot.matches(text:snapshotText,session:nil,selection:snapshotSelectio
 check(!snapshot.matches(text:snapshotText,session:snapshotSession,selection:NSRange(location:0,length:1)),"달라진 선택은 stale")
 let normalizationEdit = CanvasPencilTextCorrection.replacement(in:snapshotText,selection:snapshotSelection,with:"é")
 check(normalizationEdit?.replacement.utf8.elementsEqual("é".utf8) == true,"사용자가 명시한 Unicode 정규화 교정만 허용")
+let correctionSource = "가다\n\n보존할 문단\n"
+let correctionSelection = NSRange(location:0,length:2)
+let observedCorrection = " 가구 ."
+let correctionInput = CanvasPencilTextCorrectionInput(text:correctionSource,selection:correctionSelection,raw:observedCorrection)
+check(correctionInput.preferred.utf8.elementsEqual("가구".utf8),
+      "실제47 교정 기본 결과 expected=\("가구".debugDescription) actual=\(correctionInput.preferred.debugDescription)")
+check(correctionInput.raw.utf8.elementsEqual(observedCorrection.utf8),"실제 관측 입력을 원문 적용용으로 보존")
+if let edit = CanvasPencilTextCorrection.replacement(in:correctionSource,selection:correctionSelection,with:correctionInput.preferred) {
+    check((correctionSource as NSString).replacingCharacters(in:edit.range,with:edit.replacement) == "가구\n\n보존할 문단\n",
+          "단어 교정은 선택 범위만 바꾸고 나머지 문단 보존")
+} else { check(false,"실제47 단어 교정 결과 생성") }
+for raw in ["가구."," 가구.","가구 . .","가구!","가구,"," 가구 다리 ","3.14"," 3.14 .","42","`가구`","**가구**","foo.bar()"," a_b .","가구\n","가구\r\n","가구  \n","\t가구\t","\u{a0}가구\u{a0}","👩🏽‍💻","क्‍ष"] {
+    let input = CanvasPencilTextCorrectionInput(text:correctionSource,selection:correctionSelection,raw:raw)
+    check(input.preferred.utf8.elementsEqual(raw.utf8),"구조·문장부호·여러 단어·숫자·Unicode 입력 보존 \(raw.debugDescription)")
+    check(input.raw.utf8.elementsEqual(raw.utf8),"원문 경로의 정확한 UTF8 보존 \(raw.debugDescription)")
+}
+for raw in [" 가구 ","가구 ."," 가구 . "," e\u{301} ."," 가구 ."] {
+    let input = CanvasPencilTextCorrectionInput(text:correctionSource,selection:correctionSelection,raw:raw)
+    let expected = raw.trimmingCharacters(in:CharacterSet(charactersIn:" ."))
+    check(input.preferred.utf8.elementsEqual(expected.utf8),"단일 단어 후보와 Unicode 바이트 보존 \(raw.debugDescription)")
+    check(input.raw.utf8.elementsEqual(raw.utf8),"정리 전 입력을 별도 보존")
+}
+for (text, selection) in [("가 다",NSRange(location:0,length:3)),("3.14",NSRange(location:0,length:4)),
+                           ("`가다`",NSRange(location:0,length:4)),("가\n다",NSRange(location:0,length:3)),
+                           ("가나다",NSRange(location:0,length:2)),("가나다",NSRange(location:1,length:2)),
+                           ("가다_값",NSRange(location:0,length:2)),("가다2",NSRange(location:0,length:2)),
+                           ("e\u{301}",NSRange(location:0,length:1)),("가다",NSRange(location:NSNotFound,length:2))] {
+    let input = CanvasPencilTextCorrectionInput(text:text,selection:selection,raw:observedCorrection)
+    check(input.preferred.utf8.elementsEqual(observedCorrection.utf8),"단일 전체 단어가 아닌 선택은 원문 경로 \(text.debugDescription)/\(selection)")
+}
+check(CanvasPencilTextCorrection.replacement(in:correctionSource,selection:correctionSelection,with:observedCorrection)?.replacement == observedCorrection,
+      "일반 텍스트 치환 API는 전역 정규화하지 않음")
 check(changed("가다", .split, NSRange(location: 1, length: 0)) == "가 다", "한글 나누기")
 check(changed("a b c", .join, NSRange(location: 2, length: 0)) == "ab c", "인접 공백만 합치기")
 for decoratedSpace in [" \u{301}", "\u{a0}\u{301}", " \u{fe0f}"] {

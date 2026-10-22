@@ -10,6 +10,17 @@ struct CanvasPencilTextChange {
     let replacement: String
 }
 
+struct CanvasPencilTextCorrectionInput {
+    let raw: String
+    let word: String?
+    var preferred: String { word ?? raw }
+
+    init(text: String, selection: NSRange, raw: String) {
+        self.raw = raw
+        word = nil
+    }
+}
+
 struct CanvasPencilTextSnapshot {
     let id = UUID()
     let text: String
