@@ -31,6 +31,9 @@ final class StreamClient {
     func bindVisionTestDestinations(to peer: NWConnection?) {}
     func confirmVisionDisplayPresentation() {}
     func reconcileVisionAudioIntent() {}
+    var visionPeerStreams = VisionPeerStreams()
+    func reconcileVisionPeerMenus() {}
+    func resetVisionPeerStreams() {}
     enum MoveKind { case fromDirect, toCable, toWifi, fromRemote }
     struct Move { let connection: NWConnection }
     static var noAutoDesktop = true

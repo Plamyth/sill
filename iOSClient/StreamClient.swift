@@ -879,6 +879,7 @@ final class StreamClient: ObservableObject {
             #if os(visionOS)
             if newValue != nil { stopSavedMacAutoConnect() }
             if link.connection !== newValue {
+                resetVisionPeerStreams()
                 bindVisionSentry(to: newValue)
                 bindVisionDisplays(to: newValue)
                 bindVisionTestDestinations(to: newValue)
@@ -948,6 +949,9 @@ final class StreamClient: ObservableObject {
     private var visionWireSource: StreamSource?
     private var visionMediaPS: (epoch: UUID, ps: ParameterSets)?
     private var visionInputPermit: UUID?
+    private var visionPeerStreams = VisionPeerStreams()
+    private var visionMenuPresentation: UUID?
+    @Published private(set) var visionSourceSelectionFailure: String?
     private var visionTextForeground = false
     @Published private(set) var visionTextScope = UUID()
     private var visionTextSubmissions: [UUID: SessionLink.Submission] = [:]
@@ -1100,12 +1104,13 @@ final class StreamClient: ObservableObject {
     }
 
     private func visionPresentationChanged(_ ticket: VisionPresentation.Ticket?) {
-        defer { confirmVisionDisplayPresentation(); reconcileVisionAudioIntent() }
+        defer { confirmVisionDisplayPresentation(); reconcileVisionPeerMenus(); reconcileVisionAudioIntent() }
         if let ticket, let peer = connection, ObjectIdentifier(peer) == ticket.peer,
            case .awaitingPresentation(let epoch) = visionInputBinding, epoch == ticket.epoch {
-            guard link.setInputPermit(ticket.id, epoch: ticket.epoch.id) else { return }
+            let permit = UUID()
+            guard link.setInputPermit(permit, epoch: ticket.epoch.id) else { return }
             visionInputBinding = .presented(ticket.epoch)
-            visionInputPermit = ticket.id
+            visionInputPermit = permit
         } else if ticket == nil {
             if case .presented(let epoch) = visionInputBinding {
                 visionInputBinding = .awaitingPresentation(epoch)
@@ -1162,6 +1167,14 @@ final class StreamClient: ObservableObject {
     }
 
     func cancelVisionInputs(completion: (() -> Void)? = nil) {
+        if visionPeerStreams.requiresScope {
+            visionInputPermit = nil
+            link.setInputPermit(nil)
+            if case .presented(let epoch) = visionInputBinding {
+                visionInputBinding = .awaitingPresentation(epoch)
+            }
+            reconcileVisionPeerMenus()
+        }
         cancelVisionCursor()
         revokeVisionTextDrafts()
         let expected = connection
@@ -2992,6 +3005,7 @@ final class StreamClient: ObservableObject {
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
         // only until the fence's pong (`deliver`), or stops at once without a fence.
         #if os(visionOS)
+        resetVisionPeerStreams()
         bindVisionSentry(to: c)
         bindVisionDisplays(to: c)
         bindVisionTestDestinations(to: c)
@@ -3963,9 +3977,11 @@ final class StreamClient: ObservableObject {
         if source == .desktop && visionDisplaySelection.blocksDesktopRequest { return }
         prepareVisionManualSource()
         guard !visionDisplaySelection.inputBlocked else { return }
-        visionAudioIntentAwaitingSource = source
-        microphoneSourceWillChange()
-        visionAudio.stop()
+        if prepareVisionPeerSourceChange(.source(source)) {
+            visionAudioIntentAwaitingSource = source
+            microphoneSourceWillChange()
+            visionAudio.stop()
+        }
         #else
         remoteAudioControl.sourceWillChange()
         #endif
@@ -3984,6 +4000,15 @@ final class StreamClient: ObservableObject {
     /// The bar's long-press menu: close, minimize or full-screen a window on the Mac.
     func command(_ action: WindowCommand.Action, window id: UInt32) {
         noteAction()
+        #if os(visionOS)
+        if visionPeerStreams.requiresScope {
+            guard let epoch = visionPeerStreams.presentedEpoch(visionInputBinding), epoch.source == .window(id),
+                  let scope = MacMenuState.Scope(generation: epoch.generation, videoEpoch: epoch.id, connection: visionPeerStreams.connection) else { return }
+            _ = sendVisionPeerCommand(.windowCommand, WindowCommand(id: id, action: action,
+                generation: scope.generation, videoEpoch: scope.videoEpoch), scope: scope)
+            return
+        }
+        #endif
         send(.windowCommand, Wire.encode(WindowCommand(id: id, action: action)))
     }
 
@@ -4026,6 +4051,9 @@ final class StreamClient: ObservableObject {
 
     /// Ask the host to launch an installed app; the host selects its first window itself.
     func launch(bundleID: String) {
+        #if os(visionOS)
+        prepareVisionPeerSourceChange(.launch(bundleID))
+        #endif
         noteAction()
         choicesSent += 1   // the host picks the launched app's window: a choice, like a pick
         send(.launchApp, Wire.encode(LaunchApp(bundleID: bundleID)))
@@ -4137,6 +4165,14 @@ final class StreamClient: ObservableObject {
         let plan = TrackpadGestures.sending(switchOn: Self.gesturesOn, connected: connected, hostGestures: hostGestures,
                                             generation: TrackpadGesture.generation, windowStreams: windowStreams)
         guard plan.send else { return false }
+        #if os(visionOS)
+        if visionPeerStreams.requiresScope {
+            guard let epoch = visionPeerStreams.presentedEpoch(visionInputBinding),
+                  let scope = MacMenuState.Scope(generation: epoch.generation, videoEpoch: epoch.id, connection: visionPeerStreams.connection) else { return false }
+            return sendVisionPeerCommand(.gesture, TrackpadGesture(gesture: gesture.rawValue, fingers: fingers,
+                generation: scope.generation, videoEpoch: scope.videoEpoch), scope: scope)
+        }
+        #endif
         if plan.desktopFirst { select(.desktop) }
         let payload = Wire.encode(TrackpadGesture(gesture: gesture.rawValue, fingers: fingers))
         queue.async { [weak self] in
@@ -4540,7 +4576,10 @@ final class StreamClient: ObservableObject {
                 let previous = self.active
                 #if os(visionOS)
                 self.observeVisionTestDestinations(list, from: peer)
-                guard self.applyVisionInputCatalog(list, from: from) else { return }
+                self.visionPeerStreams.observe(list)
+                self.visionSourceSelectionFailure = self.visionPeerStreams.failure
+                guard self.applyVisionInputCatalog(self.visionPeerStreams.inputCatalog(list), from: from) else { return }
+                self.reconcileVisionPeerMenus()
                 self.observeVisionDisplays(list, from: peer)
                 self.receiveVisionAudioCatalogAcknowledgement(list, from: peer)
                 self.reconcileVisionAudioIntent()
@@ -5004,10 +5043,86 @@ extension StreamClient {
 // MARK: - The Mac's menus
 
 extension StreamClient {
+    #if os(visionOS)
+    var visionPresentedPeerEpoch: VideoEpoch? {
+        visionInputPermit == nil ? nil : visionPeerStreams.presentedEpoch(visionInputBinding)
+    }
+
+    @discardableResult
+    func prepareVisionPeerSourceChange(_ selection: VisionPeerStreams.Selection) -> Bool {
+        guard visionPeerStreams.requiresScope else { return true }
+        let presented = visionInputPermit == nil ? nil : visionPeerStreams.presentedEpoch(visionInputBinding)
+        guard visionPeerStreams.selectionRequested(selection, presented: presented) else { return false }
+        cancelVisionInputs()
+        visionInputBinding = .awaitingPresentation(nil)
+        reconcileVisionPeerMenus()
+        return true
+    }
+
+    private func resetVisionPeerStreams() {
+        visionInputPermit = nil
+        link.setInputPermit(nil)
+        visionPeerStreams = VisionPeerStreams()
+        visionSourceSelectionFailure = nil
+        visionMenuPresentation = nil
+        finishMenus(menus.setContext(.independent(nil)))
+    }
+
+    private func reconcileVisionPeerMenus() {
+        let context: MacMenuState.Context
+        if !visionPeerStreams.requiresScope { context = .legacy }
+        else if visionPeerStreams.compatible && visionPeerStreams.source == .none { context = .readOnly }
+        else {
+            let epoch = visionPeerStreams.presentedEpoch(visionInputBinding)
+            context = .independent(MacMenuState.Scope(generation: epoch?.generation, videoEpoch: epoch?.id, connection: visionPeerStreams.connection))
+        }
+        let previous = menus.top
+        finishMenus(menus.setContext(context))
+        if previous != menus.top { MacMenuHub.shared.menusChanged(self) }
+        scheduleMenusExpiry()
+        if case .independent(.some) = context, let permit = visionInputPermit {
+            if visionMenuPresentation != permit {
+                subscribeToMenus()
+            }
+        } else { visionMenuPresentation = nil }
+    }
+
+    @discardableResult
+    private func sendVisionPeerCommand<T: Encodable>(_ kind: StreamMessageKind, _ request: T,
+                                                     scope: MacMenuState.Scope) -> Bool {
+        guard let epoch = visionPeerStreams.presentedEpoch(visionInputBinding),
+              scope.connection == visionPeerStreams.connection,
+              scope.generation == epoch.generation, scope.videoEpoch == epoch.id,
+              visionTextForeground, !visionDisplaySelection.inputBlocked, moving == nil, visionMovePreparation == nil,
+              let expected = connection, let permit = visionInputPermit else { return false }
+        let bytes = StreamMessage(kind: kind, timestamp: Date().timeIntervalSince1970,
+                                  isKeyframe: false, payload: Wire.encode(request)).serialized()
+        queue.sync { flushPendingMove() }
+        return link.send(bytes, onlyOn: expected, permit: permit, submission: SessionLink.Submission { _ in })
+    }
+    #endif
+
     /// The subscription: a kind 27 without an id, once per connection at its first window list (and
     /// on a move's new connection). The Mac then sends its top level and every later one; a Mac from
     /// before the menus skips it and sends nothing, so no Menus button shows. Main thread.
     func subscribeToMenus() {
+        #if os(visionOS)
+        if visionPeerStreams.requiresScope {
+            if let epoch = visionPeerStreams.presentedEpoch(visionInputBinding),
+               let scope = MacMenuState.Scope(generation: epoch.generation, videoEpoch: epoch.id, connection: visionPeerStreams.connection) {
+                guard visionTextForeground, !visionDisplaySelection.inputBlocked,
+                      moving == nil, visionMovePreparation == nil else { return }
+                if sendVisionPeerCommand(.fetchMenu, menus.subscribe(token: nextMenuToken()), scope: scope) {
+                    visionMenuPresentation = visionInputPermit
+                }
+            } else if let expected = connection {
+                let bytes = StreamMessage(kind: .fetchMenu, timestamp: Date().timeIntervalSince1970,
+                    isKeyframe: false, payload: Wire.encode(FetchMenu(token: nextMenuToken()))).serialized()
+                _ = link.send(bytes, onlyOn: expected)
+            }
+            return
+        }
+        #endif
         send(.fetchMenu, payload: Wire.encode(FetchMenu(token: nextMenuToken())))
     }
 
@@ -5017,6 +5132,9 @@ extension StreamClient {
     /// since UIKit rebuilds the bar lazily. With no menu of that title now, the menus changed, and
     /// the bar is asked for a rebuild again. `completion` runs once, on the main queue. Main thread.
     func fetchTopMenu(id: String, title: String, builtVersion: Int, completion: @escaping (MacMenuState.Content) -> Void) {
+        #if os(visionOS)
+        if visionPeerStreams.requiresScope { completion(.message(MacMenuState.scopeChangedNote)); return }
+        #endif
         guard let current = menus.version else { completion(.message(MacMenuState.notConnected)); return }
         guard let asked = menus.barMenuID(builtID: id, title: title) else {
             #if DEBUG
@@ -5035,22 +5153,30 @@ extension StreamClient {
     /// A submenu of a fetched menu opened: asked in the version its row came in. Main thread.
     func fetchMenu(_ row: MacMenuState.Row, completion: @escaping (MacMenuState.Content) -> Void) {
         guard let id = row.id else { completion(.message(MacMenuState.changedNote)); return }
-        fetchMenu(id: id, version: row.version, title: row.title, completion: completion)
+        fetchMenu(id: id, version: row.version, title: row.title, scope: row.scope, completion: completion)
     }
 
-    private func fetchMenu(id: String, version: Int?, title: String, completion: @escaping (MacMenuState.Content) -> Void) {
+    private func fetchMenu(id: String, version: Int?, title: String, scope: MacMenuState.Scope? = nil,
+                           completion: @escaping (MacMenuState.Content) -> Void) {
         menuKey += 1
         let key = menuKey
         let token = menuToken
         let now = ProcessInfo.processInfo.systemUptime
-        switch menus.fetch(id, title: title, version: version, key: key, token: token, now: now) {
+        switch menus.fetch(id, title: title, version: version, key: key, token: token, now: now, scope: scope) {
         case .send(let request):
             menuToken += 1
             menuCompletions[key] = completion
             #if DEBUG
             menuAsked[key] = (title, id, now)
             #endif
+            #if os(visionOS)
+            if visionPeerStreams.requiresScope {
+                let sent = scope.map { sendVisionPeerCommand(.fetchMenu, request, scope: $0) } ?? false
+                if !sent { finishMenus(menus.declineFetch(token: token)) }
+            } else { send(.fetchMenu, payload: Wire.encode(request)) }
+            #else
             send(.fetchMenu, payload: Wire.encode(request))
+            #endif
             scheduleMenusExpiry()
             #if DEBUG
             if connection == nil { mockAnswer(request) }
@@ -5071,7 +5197,13 @@ extension StreamClient {
         switch menus.press(row, token: menuToken) {
         case .send(let request)?:
             menuToken += 1
+            #if os(visionOS)
+            if visionPeerStreams.requiresScope {
+                if let scope = row.scope { _ = sendVisionPeerCommand(.pressMenuItem, request, scope: scope) }
+            } else { send(.pressMenuItem, payload: Wire.encode(request)) }
+            #else
             send(.pressMenuItem, payload: Wire.encode(request))
+            #endif
             #if DEBUG
             print("menus: chose \(row.title) (\(request.id ?? ""))")
             if connection == nil { mockAnswer(request) }

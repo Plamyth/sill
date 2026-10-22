@@ -63,7 +63,7 @@ def main():
 
     protocol = ['Sources/StreamProtocol/' + n + '.swift' for n in
                 ['StreamMessage', 'Switcher', 'Input', 'Compatibility', 'Pointer', 'SafeText', 'AudioRouting', 'AudioPrivacy', 'Sentry', 'TestDestinations']]
-    sources = ['Client.swift', 'Host.swift', 'Geometry.swift', 'Display.swift', 'Framework.swift', 'Accounting.swift', 'MessageReader.swift', 'ProbeCap.swift',
+    sources = ['Client.swift', 'VisionWindowLease.swift', 'visionOSClient/VisionDisplaySelection.swift', 'Host.swift', 'Geometry.swift', 'Display.swift', 'Framework.swift', 'Accounting.swift', 'MessageReader.swift', 'ProbeCap.swift',
                'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'Sources/SillHost/KeyStrokes.swift', 'Sources/SillHost/SourceInputFence.swift',
                'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'ScrollMomentum.swift', 'MomentumDriver.swift',
                'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionTextDraft.swift',

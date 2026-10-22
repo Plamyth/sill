@@ -35,7 +35,7 @@ struct VisionDisplaySelection {
     }
     private enum AutomaticPhase { case open, hostOwned, closed }
     enum Code: String, Codable {
-        case ready, releasing, queued, observing, observed
+        case ready, releasing, queued, observing, observed, unchanged
         case disconnected, foregroundRequired, windowRequired, catalogRequired
         case legacyOnly, unsupportedCapability, invalidInventory, unknownDisplay
         case staleScope, conflictingID, busy, releaseFailed, cancelled, timedOut
@@ -297,11 +297,19 @@ struct VisionDisplaySelection {
         return Result(requestID: command.requestID, code: code)
     }
     func known(_ id: UUID) -> Bool { pending?.command.requestID == id || history.contains { $0.0.requestID == id } }
-    mutating func begin(_ command: Command) -> Result {
+    mutating func begin(_ command: Command, presented: VideoEpoch? = nil) -> Result {
         if command.automaticRevision == nil { stopAutomatic() }
         let result = preview(command)
         guard !known(command.requestID) else { return result }
         guard result.code == .ready, let catalog else { remember(command, result); return result }
+        if let presented, catalog.epoch == presented, catalog.source == .desktop,
+           catalog.activeDisplay == command.displayID,
+           presented.matches(source: .desktop, generation: catalog.generation) {
+            unresolved = false
+            let unchanged = Result(requestID: command.requestID, code: .unchanged)
+            remember(command, unchanged)
+            return unchanged
+        }
         unresolved = true
         pending = Pending(command: command, original: catalog)
         let started = Result(requestID: command.requestID, code: .releasing)

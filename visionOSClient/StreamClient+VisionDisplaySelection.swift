@@ -117,11 +117,19 @@ extension StreamClient {
             reconcileVisionDisplaySubmission()
         }
         let known = visionDisplaySelection.known(command.requestID)
+        #if os(visionOS)
+        let presented = connection === visionDisplayPeer ? visionPresentedPeerEpoch : nil
+        let result = visionDisplaySelection.begin(command, presented: presented)
+        #else
         let result = visionDisplaySelection.begin(command)
+        #endif
         guard !known, result.code == .releasing else { return result }
         guard let expected = connection, expected === visionDisplayPeer else {
             cancelVisionDisplaySelection(.peerChanged); return visionDisplaySelection.lastResult ?? result
         }
+        #if os(visionOS)
+        prepareVisionPeerSourceChange(.display(command.displayID))
+        #endif
         visionInputSession?.allowed = false
         revokeVisionTextDrafts()
         visionInputSession?.releaseAll()

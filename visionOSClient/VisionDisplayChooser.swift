@@ -59,6 +59,7 @@ struct VisionDisplayChooser: View {
         case .releasing: return "Mac이 누른 입력의 해제를 읽었는지 확인하고 있습니다."
         case .queued: return "연결의 전송 순서를 기다리고 있습니다."
         case .observing: return "요청을 전송했습니다. Mac 목록과 화면 표시가 일치하는지 기다립니다."
+        case .unchanged: return "이미 이 Mac 모니터를 표시하고 있습니다."
         case .observed: return "선택한 모니터가 Mac 목록과 표시된 화면에서 확인되었습니다."
         case .timedOut: return "확인 시간이 지났습니다. 모니터를 다시 선택하거나 연결을 해제하세요."
         case .releaseFailed: return "Mac의 입력 해제 확인에 실패했습니다. 다시 선택하거나 연결을 해제하세요."
