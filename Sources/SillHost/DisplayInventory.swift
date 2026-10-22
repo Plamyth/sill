@@ -42,6 +42,14 @@ struct DisplayInventory {
         return true
     }
 
+    func identity(of displayID: UInt32) -> String? {
+        guard revision != nil, let index = infos.firstIndex(where: { $0.id == displayID }),
+              signatures.indices.contains(index),
+              let physical = signatures[index].split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false).first,
+              !physical.isEmpty else { return nil }
+        return "\(displayID)/\(physical)"
+    }
+
     static func scope(_ selection: DisplaySelection?) -> String? {
         selection.map { "\($0.inventoryID.uuidString)/\($0.displayID)" }
     }

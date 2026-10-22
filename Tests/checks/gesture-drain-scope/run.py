@@ -48,13 +48,20 @@ def generate(ref):
     wire = "enum Wire {\n" + "\n".join(block(switcher, x) for x in [
         "public static func encode<T:", "public static func decode<T:"]) + "\n}"
     types = "\n".join(block(switcher, x) for x in [
-        "public enum StreamSource:", "public struct DisplayInfo:",
+        "public enum StreamSource:", *(["public struct SourceRequest:"] if "public struct SourceRequest:" in switcher else []), "public struct DisplayInfo:",
         "public struct DisplaySelection:", "public struct VideoEpoch:"])
     shared = "\n".join(["import Foundation\nimport CoreFoundation\nimport CoreGraphics", types, protocol,
                          gesture, wire, fence, chords, inventory])
     members = host[host.index("    private var gestureChords ="):host.index("    /// A host that does not advertise")]
     members = members.replace("private ", "")
     properties = []
+    if "struct SourcePick {" in host:
+        properties += [block(host, marker).replace("private ", "") for marker in ["struct SourcePick {", "private struct PendingLaunch", "private struct AutomaticDisplayRecovery"] if marker in host]
+        properties += ["var launchID = \"gesture-host\"", "var selectionRevision: String { \"\\(launchID):\\(pickSequence)\" }"]
+        for marker in ["private var pickSequence:", "private var settledPickSequence:", "private var sourcePublicationAdmission =", "private var sourceAdmissionPick:", "private var pendingLaunch:", "private var displayTopologyGeneration:", "private var automaticDisplayRecovery:"]:
+            if marker in host: properties.append(host[host.index(marker):].splitlines()[0].replace("private ", ""))
+        shared += "\n" + block(read("Sources/SillHost/StreamServer.swift"), "final class SourcePublicationAdmission")
+
     for marker in ["private var inputGeneration =", "private var videoEpoch:",
                    "package private(set) var active:", "private var switching =",
                    "private var restartOf:", "private var pickArrivedWhileSwitching:"]:
@@ -73,6 +80,7 @@ def generate(ref):
                 "changingGestureScope(", "currentGestureDesktop(", "commitGestureSelection(",
                 "finishGestureSelection(", "gestureDesktopIsCurrent(", "gestureIsWaiting("]
                 if "private func " + x in host]
+    methods += [x for x in ["sourcePeerIsLive(", "automaticSelectionIsAllowed(", "replaceSourcePublication(", "retainAutomaticDisplay(", "reserveSourceIntent(", "admissionIsCurrent(", "rejectSourceIntent("] if "private func " + x in host]
     extracted = "\n".join(block(host, "private func " + x) for x in methods)
     ticketed = "private func selectStream(" in host
     selection = block(host, "private func selectStream(" if ticketed else "func select(_ source:")
@@ -80,7 +88,7 @@ def generate(ref):
     finish = selection[selection.index("            switching = false"):selection.index("            for connection in connections.values")]
     queued = selection[selection.index("            var pick ="):selection.index("            // Requests that arrived mid-switch")]
     queued += "\n" + next(line for line in selection.splitlines() if "if catalog.clientCount == 0 { pick = nil }" in line)
-    queued += "\n" + block(selection, "            if let pick, pick != active {")
+    queued += "\n" + block(selection, "            if let pick, admissionIsCurrent(pick) {" if "intent: SourcePick" in selection else "            if let pick, pick != active {")
     preflight = selection[selection.index("        if source == .desktop, !synthetic"):selection.index("        server.resetForNewStream()")]
     call = "await selectionPipeline(source: source" + (", gestureOperation: gestureOperation" if ticketed else "") + ")"
     selector = entry + "        defer {\n" + finish + "            restartOf = nil\n" + queued + "\n        }\n" + preflight + call + "\n}"
