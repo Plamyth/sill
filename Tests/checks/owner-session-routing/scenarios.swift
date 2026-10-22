@@ -42,5 +42,43 @@ for flag in ["revoked","newKey"] {
     _=c.dialRow(row,macID:invalid.macID,trust:.saved(pin:pin),tagNamed:true)
     check("owner \(flag) 직접 row 호출도 새 연결을 만들지 않음", c.rowConnections == 0 && c.remoteRequests.isEmpty)
 }
-print("Owner session routing \(checks)개, 실패 \(failures)개. 실제 후보/진입 메서드와 I/O 대역 검사.")
+for context in ["없음", "다른 Mac", "같은 Mac", "직접 선택"] {
+    let c = StreamClient(); c.records = [owner]; c.status = "연결 시도 중"; c.connected = false
+    if context != "없음" { c.reconnect = .init(macID: context == "다른 Mac" ? "다른 ID" : owner.macID) }
+    _ = c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true, tap: context == "직접 선택")
+    let reason = c.remoteRequests.last!.1
+    let automatic = context == "같은 Mac"
+    check("\(context) row의 재시도 의도에 맞는 연결 이유", reason == (automatic ? .automatic : .tap))
+    c.remoteDial = nil
+    c.remoteDialFailed(macID: owner.macID, why: reason, failure: .noAnswer, candidate: ownerCandidates.first)
+    if automatic {
+        check("같은 Mac의 실패는 재시도 기한을 유지", c.reconnect?.remoteFailures == 1 && (c.reconnect?.nextRemoteAt ?? 0) > ProcessInfo.processInfo.systemUptime && c.retries == 1)
+    } else {
+        check("\(context) 실패가 연결 중 상태에 멈추지 않음", c.status != "연결 시도 중" && c.discoveryChanges == 1 && c.retries == 0)
+        check("다른 Mac의 재시도 상태를 변경하지 않음", c.reconnect?.remoteFailures ?? 0 == 0)
+    }
+}
+for failure in [RemoteDialPolicy.Failure.revoked, .wrongMac, .remoteOff] {
+    let c = StreamClient(); c.records = [owner]; c.reconnect = .init(macID: owner.macID); c.connected = false
+    _ = c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true)
+    c.remoteDialFailed(macID: owner.macID, why: c.remoteRequests.last!.1, failure: failure, candidate: ownerCandidates.first)
+    check("\(failure) 응답 뒤 자동 원격 재시도 금지", c.reconnect?.remoteAllowed == false && c.reconnect?.remoteFailures == 0)
+    check("\(failure) 뒤 실제 재접속 진입에서 오류 상태와 타이머를 보존", c.retries == 0 && c.status == RemoteCopy.dialFailure(failure, mac: owner.name, candidate: ownerCandidates.first, vpnName: nil, device: "Vision Pro"))
+    let count = c.remoteRequests.count
+    let attempted = c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true)
+    check("\(failure) 뒤 남은 Bonjour 행도 자동 재접속을 시작하지 않음", !attempted && c.remoteRequests.count == count)
+    if failure == .remoteOff {
+        check("원격 꺼짐 뒤 명시적 선택은 새 요청으로 처리", c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true, tap: true) && c.remoteRequests.last?.1 == .tap)
+    }
+}
+for method in ["qr", "code", "cable", "icloud"] {
+    let legacy = record(method), c = StreamClient(); c.records = [legacy]; c.connected = false
+    c.reconnect = .init(macID: legacy.macID, remoteAllowed: false)
+    check("기존 \(method) 기록의 home 재접속 진입은 보존", c.reconnectIfListed() && c.retries == 1)
+}
+for failure in RemoteDialPolicy.Failure.allCases {
+    let text = RemoteCopy.dialFailure(failure, mac: owner.name, candidate: ownerCandidates.first, vpnName: "Tailscale", device: "Vision Pro")
+    check("\(failure) 오류 안내는 한국어", text.unicodeScalars.contains { (0xAC00...0xD7A3).contains($0.value) })
+}
+print("Owner session routing \(checks)개, 실패 \(failures)개. 실제 후보/진입/실패 메서드와 I/O 대역 검사.")
 if failures != 0 { exit(1) }

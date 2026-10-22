@@ -101,6 +101,20 @@ enum PairingProblem: Equatable {
 enum RemoteCopy {
     static func dialFailure(_ failure: RemoteDialPolicy.Failure, mac: String, candidate: RemoteDialPolicy.Candidate?,
                             vpnName: String?, device: String) -> String {
+        #if os(visionOS)
+        switch failure {
+        case .wrongMac: return "저장된 \(mac)의 인증 정보와 응답한 Mac이 일치하지 않습니다."
+        case .revoked: return "\(mac)이 이 기기의 접속을 허용하지 않습니다."
+        case .remoteOff: return "\(mac)의 원격 접속이 꺼져 있습니다."
+        case .busy: return "\(mac)에 연결된 기기가 최대 수에 도달했습니다."
+        case .refused: return "\(mac)의 CCR Sill 실행 상태와 원격 접속 허용을 확인해 주세요."
+        case .vpnOff: return "Vision Pro의 \(candidate.flatMap { vpnLabel($0) } ?? "VPN") 연결을 확인해 주세요."
+        case .nameNotFound: return "\(candidate?.host ?? mac)의 네트워크 주소를 찾을 수 없습니다."
+        case .localNetwork: return "Vision Pro 설정에서 CCR Sill의 로컬 네트워크 접근을 허용해 주세요."
+        case .notSill: return "응답한 서비스가 CCR Sill이 아닙니다. Mac의 연결 주소를 확인해 주세요."
+        case .noAnswer: return "\(mac)이 응답하지 않습니다. Mac의 전원과 VPN 연결을 확인해 주세요."
+        }
+        #else
         let at = candidate?.display ?? "its address"
         switch failure {
         case .wrongMac:
@@ -131,6 +145,7 @@ enum RemoteCopy {
             }
             return vpnName.map { "\(mac) didn’t answer. It may be asleep, or \($0) may be off on the Mac." } ?? "\(mac) didn’t answer. It may be asleep."
         }
+        #endif
     }
 
     /// A VPN address's service name when it carries one ("Tailscale", "Home WireGuard").
@@ -481,7 +496,11 @@ extension StreamClient {
             default:
                 r.remoteFailures += 1
                 r.nextRemoteAt = ProcessInfo.processInfo.systemUptime + DiscoveryPolicy.remoteRetryDelay(afterFailures: r.remoteFailures)
+                #if os(visionOS)
+                status = "\(name)에 원격으로 다시 연결하고 있습니다."
+                #else
                 status = "Reconnecting to \(name) remotely…"
+                #endif
             }
             reconnect = r
             reconnectIfListed()
@@ -489,7 +508,11 @@ extension StreamClient {
             afterPairingWatch?.cancel()
             afterPairingWatch = nil
             pairing = .idle
+            #if os(visionOS)
+            status = words
+            #else
             status = failure == .remoteOff ? words : "\(name) is saved. Tap it to connect."
+            #endif
         case .tap, .connectRemotely, .launchArgument:
             status = words
         }
@@ -636,6 +659,7 @@ extension StreamClient {
         reconnectCheck?.cancel()
         reconnectCheck = nil
         guard appInForeground, !connected, !moveUnderWay, var r = reconnect else { return false }
+        if let id = r.macID, !r.remoteAllowed, RemoteDialPolicy.ownerTailnetScope(savedMac(id)) { return false }
         let lifetime: DiscoveryPolicy.ReconnectLifetime
         #if os(visionOS)
         if let id = r.macID, let saved = savedMac(id), saved.fingerprintData != nil,

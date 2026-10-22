@@ -192,6 +192,11 @@ let wifiFirst = savedStartup()
 wifiFirst.macs = [row(wired: false, macID: result.macID, tagged: true)]
 wifiFirst.armSavedMacAutoConnect()
 check("pinned network row starts immediately without remote attempt", wifiFirst.sessionRows.count == 1 && wifiFirst.remoteAttempts.isEmpty)
+let ownerRowStartup = savedStartup()
+ownerRowStartup.savedMacs[0].method = OwnerMacBootstrap.method
+ownerRowStartup.macs = [row(macID: result.macID, tagged: true)]
+ownerRowStartup.armSavedMacAutoConnect()
+check("owner cable row의 실제 Vision 시작은 row 연결 전에 재시도 의도를 만듦", ownerRowStartup.reconnect?.macID == result.macID && ownerRowStartup.sessionRows.count == 1)
 let manual = savedStartup()
 let manualTimer = armRemote(manual)
 manual.stopSavedMacAutoConnect()
