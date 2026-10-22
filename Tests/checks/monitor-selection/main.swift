@@ -75,7 +75,7 @@ check(SillProtocol.current == 1, "additive feature keeps transport protocol vers
 let peer = NSObject()
 var stops = 0
 var sends: [RemoteAudioSubscription] = []
-let audio = IPadRemoteAudioController(send: { _, request in sends.append(request) }, stop: { stops += 1 }, play: { _ in }, changed: { _ in })
+let audio = IPadRemoteAudioController(send: { _, request in sends.append(request) }, stop: { stops += 1 }, play: { _, _ in }, changed: { _ in })
 audio.setConnection(ObjectIdentifier(peer))
 audio.receive(list, from: ObjectIdentifier(peer))
 audio.toggle()
