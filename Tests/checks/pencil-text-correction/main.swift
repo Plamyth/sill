@@ -99,6 +99,10 @@ for raw in ["가구."," 가구.","가구 . .","가구!","가구,"," 가구 다�
     check(input.preferred.utf8.elementsEqual(raw.utf8),"구조·문장부호·여러 단어·숫자·Unicode 입력 보존 \(raw.debugDescription)")
     check(input.raw.utf8.elementsEqual(raw.utf8),"원문 경로의 정확한 UTF8 보존 \(raw.debugDescription)")
 }
+for raw in [" \u{0301}가구 ", " \u{fe0f}가구 ", "가구 \u{0301}", "가구 \u{fe0f}", " \u{0301}가구 ."] {
+    let input = CanvasPencilTextCorrectionInput(text:correctionSource,selection:correctionSelection,raw:raw)
+    check(input.preferred.utf8.elementsEqual(raw.utf8),"결합 문자가 붙은 공백은 전체 Character와 원문 보존 \(raw.debugDescription)")
+}
 for raw in [" 가구 ","가구 ."," 가구 . "," e\u{301} ."," 가구 ."] {
     let input = CanvasPencilTextCorrectionInput(text:correctionSource,selection:correctionSelection,raw:raw)
     let expected = raw.trimmingCharacters(in:CharacterSet(charactersIn:" ."))

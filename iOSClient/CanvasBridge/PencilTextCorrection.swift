@@ -34,10 +34,11 @@ struct CanvasPencilTextCorrectionInput {
            text[text.index(before:range.lowerBound)].unicodeScalars.contains(where:continuation.contains) { return nil }
         if range.upperBound < text.endIndex,
            text[range.upperBound].unicodeScalars.contains(where:continuation.contains) { return nil }
-        let spaces = CharacterSet(charactersIn:" ")
-        var candidate = raw.trimmingCharacters(in:spaces)
-        // 실제47에서 관측한 단어 뒤의 분리된 마침표만 후보에서 제외한다.
-        if candidate.hasSuffix(" .") { candidate = String(candidate.dropLast(2)).trimmingCharacters(in:spaces) }
+        func trimSpaces(_ value: String) -> String {
+            String(value.drop(while:{ $0 == " " }).reversed().drop(while:{ $0 == " " }).reversed())
+        }
+        var candidate = trimSpaces(raw)
+        if candidate.suffix(2).elementsEqual(" .") { candidate = trimSpaces(String(candidate.dropLast(2))) }
         guard isWord(candidate), !candidate.utf8.elementsEqual(raw.utf8) else { return nil }
         return candidate
     }
