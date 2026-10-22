@@ -223,11 +223,11 @@ struct HostStatusSnapshot {
     func encoderHung(_ encoder: HEVCEncoder) async {}
     func revokeRemoteAudio(reason: String) async { if let audioBarrier { await audioBarrier.suspend() }; audioChanges += 1 }
     func cancelSourcePicksForTest() { cancelSourcePicks() }
-    
+
     func departed(_ peer: NWConnection) {
         let id = ObjectIdentifier(peer); inputFence.leave(id); sourcePeerDeparted(peer); connections[id] = nil
     }
-    
+
     final class Extended { func checkDisplay() {} }
     final class Pointer { func setGeometry(_ value: Int?, fps: Int) {} }
     let extendedDesktop = Extended()
