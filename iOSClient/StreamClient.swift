@@ -342,6 +342,7 @@ final class StreamClient: ObservableObject {
     @Published private(set) var activeDisplayID: UInt32?
     @Published private(set) var supportsDisplaySelection = false
     private var displayInventoryID: UUID?
+    private var automaticDisplaySelection: Int?
     private var desktopSelectionRequired = false
     private var displayCatalogPeer: ObjectIdentifier?
     var displaySelectionReady: Bool {
@@ -537,7 +538,12 @@ final class StreamClient: ObservableObject {
     /// view that would sit black until the next keyframe, up to 4 s later. Main thread.
     private(set) lazy var displayView: HEVCDisplayView = {
         let view = HEVCDisplayView(frame: .zero)
-        view.onVideoSize = { [weak self] size in self?.videoSize = size }
+        view.onVideoSize = { [weak self] size in
+            self?.videoSize = size
+            #if DEBUG
+            self?.recordStartupVideo()
+            #endif
+        }
         #if os(visionOS)
         view.onPresentation = { [weak self] ticket in self?.visionPresentationChanged(ticket) }
         #else
@@ -738,6 +744,8 @@ final class StreamClient: ObservableObject {
         let peer: ObjectIdentifier
         let host: String?
         let revision: String?
+        let inventory: UUID?
+        let macID: String?
     }
     private struct AutomaticConnectionOpportunity {
         let intent: UInt64
@@ -762,6 +770,146 @@ final class StreamClient: ObservableObject {
     private var resumeOpportunity: AutomaticConnectionOpportunity?
     private var scheduledAutomaticTicket: AutomaticSourceTicket?
     private var automaticSubmission: SessionLink.Submission?
+    private var automaticDisplayCatalogObserved = false
+    private var initialDisplayOpportunity: AutomaticConnectionOpportunity?
+    private struct RememberedDisplay: Codable, Equatable {
+        let macID: String
+        let launchID: String
+        let inventoryID: UUID
+        let displayID: UInt32
+    }
+    private struct PendingDisplaySelection {
+        let display: RememberedDisplay
+        let peer: ObjectIdentifier
+        let intent: UInt64
+        let revision: String?
+        let epoch: UUID?
+    }
+    private var pendingDisplaySelection: PendingDisplaySelection?
+
+    private func authenticatedDisplayMacID() -> String? {
+        guard connected, let session, let macID = session.macID,
+              let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
+              let pin = saved.fingerprintData else { return nil }
+        if session.route.isRemote { return macID }
+        if case .saved(let sessionPin) = session.home, sessionPin == pin { return macID }
+        return nil
+    }
+
+    private func observeDisplaySelection(_ list: WindowList, peer: NWConnection) {
+        if let automaticSubmission,
+           selectionRevision != list.selectionRevision || displayInventoryID != list.displayInventoryID ||
+            (pendingDisplaySelection != nil && list.automaticDisplaySelection != 1) {
+            link.cancel(automaticSubmission)
+            self.automaticSubmission = nil
+        }
+        guard let pending = pendingDisplaySelection else { return }
+        guard pending.peer == ObjectIdentifier(peer), pending.intent == explicitSourceIntent,
+              authenticatedDisplayMacID() == pending.display.macID,
+              list.launchID == pending.display.launchID,
+              list.displayInventoryID == pending.display.inventoryID else {
+            pendingDisplaySelection = nil
+            return
+        }
+        guard let revision = list.selectionRevision, !revision.isEmpty, revision.utf8.count <= 128,
+              pending.revision != nil,
+              revision != pending.revision,
+              list.active == .desktop, list.activeDisplayID == pending.display.displayID,
+              list.displays?.contains(where: { $0.id == pending.display.displayID }) == true,
+              let epoch = list.videoEpoch, epoch.isValid, epoch.source == .desktop,
+              epoch.generation == list.inputGeneration,
+              epoch.id != pending.epoch else { return }
+        if let data = try? JSONEncoder().encode(pending.display) {
+            UserDefaults.standard.set(data, forKey: "SillVerifiedDisplay." + pending.display.macID)
+        }
+        pendingDisplaySelection = nil
+    }
+
+    private func requestInitialDisplay(_ list: WindowList, peer: NWConnection) {
+        guard !automaticDisplayCatalogObserved else { return }
+        if initialDisplayOpportunity == nil {
+            guard let ticket = automaticTicket(peer: peer, list: list) else { return }
+            initialDisplayOpportunity = AutomaticConnectionOpportunity(intent: ticket.intent, peer: ticket.peer,
+                host: ticket.host, observation: .catalog(ticket.revision))
+        }
+        guard let opportunity = initialDisplayOpportunity,
+              opportunity.intent == explicitSourceIntent, opportunity.peer == ObjectIdentifier(peer),
+              opportunity.host == list.launchID, opportunity.accepts(list.selectionRevision), list.active == .none else {
+            automaticDisplayCatalogObserved = true
+            initialDisplayOpportunity = nil
+            return
+        }
+        guard let ticket = automaticTicket(peer: peer, list: list), requestAutomaticDisplay(ticket: ticket) else { return }
+        automaticDisplayCatalogObserved = true
+        initialDisplayOpportunity = nil
+    }
+
+    private func requestAutomaticDisplay(ticket: AutomaticSourceTicket) -> Bool {
+        guard !Self.noAutoDesktop, automaticDisplaySelection == 1,
+              let macID = authenticatedDisplayMacID(), let launchID = sessionHost, !launchID.isEmpty,
+              let inventory = displayInventoryID else { return false }
+        let remembered = UserDefaults.standard.data(forKey: "SillVerifiedDisplay." + macID)
+            .flatMap { try? JSONDecoder().decode(RememberedDisplay.self, from: $0) }
+        let chosen: DisplayInfo?
+        if let remembered, remembered.macID == macID, remembered.launchID == launchID,
+           remembered.inventoryID == inventory,
+           displays.filter({ $0.id == remembered.displayID }).count == 1 {
+            chosen = displays.first { $0.id == remembered.displayID }
+        } else {
+            let main = displays.filter(\.isMain)
+            chosen = main.count == 1 ? main.first : nil
+        }
+        guard let chosen else { return false }
+        return requestDisplay(chosen, origin: .automatic, ticket: ticket)
+    }
+
+    #if DEBUG
+    private var lastStartupCatalogDiagnostic: [String: String]?
+    private var startupVideoRecorded = false
+    private func recordStartupVideo() {
+        guard !startupVideoRecorded, connected, videoSize.width > 0, videoSize.height > 0,
+              let stats = linkStats, stats.fps > 0 else { return }
+        startupVideoRecorded = true
+        recordStartupDiagnostic(["event": "video_received", "videoSize": "\(videoSize.width)x\(videoSize.height)",
+            "fps": String(stats.fps)])
+    }
+    private func recordStartupDiagnostic(_ fields: [String: String]) {
+        guard let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let url = directory.appendingPathComponent("CCRStartupDiagnostics.jsonl")
+        var record = fields
+        record["uptime"] = String(ProcessInfo.processInfo.systemUptime)
+        guard var bytes = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys) else { return }
+        bytes.append(10)
+        guard bytes.count <= 65_536 else { return }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        if size + bytes.count > 65_536 || !FileManager.default.fileExists(atPath: url.path) {
+            try? bytes.write(to: url, options: .atomic)
+        } else if let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: bytes)
+            try? handle.close()
+        }
+        print("startup: \(fields)")
+    }
+
+    private func recordStartupCatalog(_ list: WindowList) {
+        let displaySummary = (list.displays ?? []).map { display in
+            "\(display.id):\(display.width)x\(display.height):main=\(display.isMain)"
+        }.joined(separator: ",")
+        let summary: [String: String] = ["event": "catalog", "displaySelection": list.displaySelection.map(String.init) ?? "nil",
+            "autoCap": list.automaticDisplaySelection.map(String.init) ?? "nil",
+            "desktopSelectionRequired": list.desktopSelectionRequired.map(String.init) ?? "nil",
+            "inventory": list.displayInventoryID?.uuidString ?? "nil",
+            "active": list.active == .none ? "none" : list.active == .desktop ? "desktop" : "window",
+            "activeID": list.activeDisplayID.map(String.init) ?? "nil",
+            "selectionRevision": String((list.selectionRevision ?? "nil").prefix(128)),
+            "launchID": String((list.launchID ?? "nil").prefix(128)),
+            "displays": displaySummary]
+        guard summary != lastStartupCatalogDiagnostic else { return }
+        lastStartupCatalogDiagnostic = summary
+        recordStartupDiagnostic(summary)
+    }
+    #endif
 
     private enum ExpectedSourceIntent {
         case source(StreamSource), display(UInt32), launch(String)
@@ -793,6 +941,9 @@ final class StreamClient: ObservableObject {
     private func noteSourceIntent() {
         if let automaticSubmission { link.cancel(automaticSubmission) }
         automaticSubmission = nil
+        pendingDisplaySelection = nil
+        initialDisplayOpportunity = nil
+        automaticDisplayCatalogObserved = true
         explicitSourceIntent &+= 1
         automaticSourceIntent = nil
         expectedSourceIntent = nil
@@ -804,6 +955,13 @@ final class StreamClient: ObservableObject {
     private func beginAutomaticConnectionOpportunity(peer: NWConnection? = nil) {
         if let automaticSubmission { link.cancel(automaticSubmission) }
         automaticSubmission = nil
+        pendingDisplaySelection = nil
+        automaticDisplayCatalogObserved = false
+        initialDisplayOpportunity = nil
+        #if DEBUG
+        lastStartupCatalogDiagnostic = nil
+        startupVideoRecorded = false
+        #endif
         automaticSourceIntent = expectedSourceIntent == nil ? explicitSourceIntent : nil
         scheduledAutomaticTicket = nil
         resumeOpportunity = peer.flatMap { peer in
@@ -815,7 +973,8 @@ final class StreamClient: ObservableObject {
     private func automaticTicket(peer: NWConnection, list: WindowList) -> AutomaticSourceTicket? {
         guard automaticSourceIntent == explicitSourceIntent, scheduledAutomaticTicket == nil else { return nil }
         return AutomaticSourceTicket(intent: explicitSourceIntent, peer: ObjectIdentifier(peer),
-                                     host: list.launchID, revision: list.selectionRevision)
+                                     host: list.launchID, revision: list.selectionRevision,
+                                     inventory: list.displayInventoryID, macID: session?.macID)
     }
 
     private func requestAutomatic(_ source: StreamSource, ticket: AutomaticSourceTicket) {
@@ -1004,6 +1163,7 @@ final class StreamClient: ObservableObject {
                 displays = []
                 activeDisplayID = nil
                 supportsDisplaySelection = false
+                automaticDisplaySelection = nil
                 displayInventoryID = nil
                 desktopSelectionRequired = false
                 displayCatalogPeer = nil
@@ -3778,6 +3938,7 @@ final class StreamClient: ObservableObject {
         displays = []
         activeDisplayID = nil
         supportsDisplaySelection = false
+        automaticDisplaySelection = nil
         displayInventoryID = nil
         desktopSelectionRequired = false
         displayCatalogPeer = nil
@@ -3847,9 +4008,42 @@ final class StreamClient: ObservableObject {
     func selectDisplay(_ display: DisplayInfo) {
         noteSourceIntent()
         expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch)
+        _ = requestDisplay(display)
+    }
+
+    @discardableResult
+    private func requestDisplay(_ display: DisplayInfo, origin: SourceRequest.Origin = .human,
+                                ticket: AutomaticSourceTicket? = nil) -> Bool {
         guard displaySelectionReady, let peer = connection, let displayInventoryID,
-              displays.contains(where: { $0.id == display.id }) else { return }
-        noteAction()
+              displays.filter({ $0.id == display.id }).count == 1 else { return false }
+        if origin == .automatic {
+            guard let ticket, automaticDisplaySelection == 1, active == .none,
+                  let revision = ticket.revision, !revision.isEmpty, revision.utf8.count <= 128,
+                  ObjectIdentifier(peer) == ticket.peer, explicitSourceIntent == ticket.intent,
+                  automaticSourceIntent == ticket.intent || scheduledAutomaticTicket == ticket,
+                  sessionHost == ticket.host, selectionRevision == revision,
+                  displayInventoryID == ticket.inventory, let macID = authenticatedDisplayMacID(),
+                  macID == ticket.macID else { return false }
+        }
+        if origin == .human { noteAction() }
+        let submission = SessionLink.Submission { [weak self] outcome in
+            #if DEBUG
+            self?.recordStartupDiagnostic(["event": "display_submission", "origin": origin.rawValue,
+                "outcome": outcome == .submitted ? "submitted" : "cancelled"])
+            #endif
+        }
+        if origin == .automatic {
+            automaticSubmission = submission
+            automaticSourceIntent = nil
+            scheduledAutomaticTicket = nil
+            lastAutoDesktop = Date()
+            expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch)
+        }
+        if let macID = authenticatedDisplayMacID(), let launchID = sessionHost, !launchID.isEmpty {
+            pendingDisplaySelection = PendingDisplaySelection(
+                display: RememberedDisplay(macID: macID, launchID: launchID, inventoryID: displayInventoryID, displayID: display.id),
+                peer: ObjectIdentifier(peer), intent: explicitSourceIntent, revision: selectionRevision, epoch: sourceCatalogEpoch)
+        }
         #if os(visionOS)
         visionAudio.stop()
         #else
@@ -3860,8 +4054,10 @@ final class StreamClient: ObservableObject {
         #endif
         choicesSent += 1
         let message = StreamMessage(kind: .selectDisplay, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
-                                    payload: Wire.encode(DisplaySelection(displayID: display.id, inventoryID: displayInventoryID)))
-        _ = link.send(message.serialized(), onlyOn: peer)
+                                    payload: Wire.encode(DisplaySelection(displayID: display.id, inventoryID: displayInventoryID,
+                                        origin: origin == .automatic ? .automatic : nil,
+                                        selectionRevision: origin == .automatic ? ticket?.revision : nil)))
+        return link.send(message.serialized(), onlyOn: peer, submission: submission)
     }
 
     /// Asks the host to stream this source: the person's pick (`select`), or this device's own
@@ -4426,6 +4622,7 @@ final class StreamClient: ObservableObject {
                 // The host this session runs on, which a move to the network must reach again
                 // (`moveProbed`); its first list is what lets a move start.
                 self.sessionHost = list.launchID
+                self.observeDisplaySelection(list, peer: peer)
                 self.observeSourceIntent(list)
                 self.sourceCatalogEpoch = list.videoEpoch?.id
                 self.selectionRevision = list.selectionRevision
@@ -4433,11 +4630,15 @@ final class StreamClient: ObservableObject {
                 if self.hostProtocol != list.protocol { self.hostProtocol = list.protocol }
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }
                 self.supportsDisplaySelection = list.displaySelection == 1
+                self.automaticDisplaySelection = list.automaticDisplaySelection
                 self.displays = self.supportsDisplaySelection ? list.displays ?? [] : []
                 self.displayInventoryID = self.supportsDisplaySelection ? list.displayInventoryID : nil
                 self.activeDisplayID = self.supportsDisplaySelection ? list.activeDisplayID : nil
                 self.desktopSelectionRequired = list.desktopSelectionRequired == true
                 self.displayCatalogPeer = ObjectIdentifier(peer)
+                #if DEBUG
+                self.recordStartupCatalog(list)
+                #endif
                 if !self.sessionListed {
                     self.sessionListed = true
                     #if DEBUG
@@ -4482,12 +4683,16 @@ final class StreamClient: ObservableObject {
                        opportunity.intent == self.explicitSourceIntent,
                        opportunity.peer == ObjectIdentifier(peer), opportunity.host == list.launchID,
                        opportunity.accepts(list.selectionRevision),
-                       !Self.noAutoDesktop, !self.desktopSelectionRequired {
+                       !Self.noAutoDesktop, !self.desktopSelectionRequired || self.automaticDisplaySelection == 1 {
                         if list.active == .none, let ticket = self.automaticTicket(peer: peer, list: list) {
                             self.resumeSource = nil
                             self.resumeOpportunity = nil
                             var pick = resume
                             if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
+                            if pick == .desktop, self.automaticDisplaySelection == 1 {
+                                self.requestInitialDisplay(list, peer: peer)
+                                return
+                            }
                             self.requestAutomatic(pick, ticket: ticket)
                             return
                         } else if list.active == resume {
@@ -4503,13 +4708,14 @@ final class StreamClient: ObservableObject {
                         self.automaticSourceIntent = nil
                     }
                 }
+                self.requestInitialDisplay(list, peer: peer)
                 // The device starts on the Desktop, never on an empty panel: on the first list of a
                 // connection, and again when the window being watched has closed. Not when a pick
                 // failed (the host still lists the window): that is the user's to retry. At most
                 // once every 10 s, so a host that cannot start the Desktop does not loop.
-                if let ticket = self.automaticTicket(peer: peer, list: list), list.active == .none, Date().timeIntervalSince(self.lastAutoDesktop) > 10, !Self.noAutoDesktop, !self.desktopSelectionRequired {
+                if let ticket = self.automaticTicket(peer: peer, list: list), list.active == .none, Date().timeIntervalSince(self.lastAutoDesktop) > 10, !Self.noAutoDesktop, !self.desktopSelectionRequired || self.automaticDisplaySelection == 1 {
                     switch previous {
-                    case .none:
+                    case .none where self.automaticDisplaySelection != 1:
                         self.lastAutoDesktop = Date()
                         self.requestAutomatic(.desktop, ticket: ticket)
                     case .window(let id) where !list.windows.contains(where: { $0.id == id }):
@@ -4523,10 +4729,14 @@ final class StreamClient: ObservableObject {
                         let choices = self.choicesSent
                         let wait = 2 + Double(self.lastRttMaxMs ?? 0) / 1000
                         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-                            guard let self, self.connected, self.active == .none, !self.desktopSelectionRequired, self.choicesSent == choices,
+                            guard let self, self.connected, self.active == .none, !self.desktopSelectionRequired || self.automaticDisplaySelection == 1, self.choicesSent == choices,
                                   !self.windows.contains(where: { $0.id == id }) else { return }
                             self.lastAutoDesktop = Date()
-                            self.requestAutomatic(.desktop, ticket: ticket)
+                            if self.automaticDisplaySelection == 1 {
+                                _ = self.requestAutomaticDisplay(ticket: ticket)
+                            } else {
+                                self.requestAutomatic(.desktop, ticket: ticket)
+                            }
                         }
                     default:
                         break
@@ -4667,6 +4877,9 @@ final class StreamClient: ObservableObject {
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // torn down meanwhile: stay nil
             self.linkStats = stats
+            #if DEBUG
+            self.recordStartupVideo()
+            #endif
             if let rtt = stats.rtt {
                 self.lastRttMaxMs = rtt.max   // for the settings timeout
                 self.recentRttMedians = Array((self.recentRttMedians + [rtt.median]).suffix(5))

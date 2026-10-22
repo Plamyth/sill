@@ -26,15 +26,17 @@ def block(text, signature):
         depth += (text[end] == '{') - (text[end] == '}')
         end += 1
     return text[start:end]
-methods = '\n'.join(block(text,s) for s in ['func select(_ source:', 'func selectDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity('])
-client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ',''))
+methods = '\n'.join(block(text,s) for s in ['func select(_ source:', 'func selectDisplay(', 'private func requestDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(', 'private func authenticatedDisplayMacID(', 'private func observeDisplaySelection(', 'private func requestInitialDisplay(', 'private func requestAutomaticDisplay('])
+client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ','').replace('UserDefaults.standard', 'defaults'))
 client = client.replace('// EXPECTED_SOURCE', block(text, 'private enum ExpectedSourceIntent').replace('private ',''))
 client = client.replace('// AUTOMATIC_TICKET', '\n'.join(block(text, s).replace('private ','') for s in ['private struct AutomaticSourceTicket', 'private struct AutomaticConnectionOpportunity']))
+client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('private ','') for s in ['private struct RememberedDisplay', 'private struct PendingDisplaySelection']))
 client = client.replace('// RESUME_SOURCE',block(text,'if let resume = self.resumeSource'))
 client = client.replace('// IDLE_FALLBACK',block(text,'if let ticket = self.automaticTicket'))
 inputs = {name:(root/'Sources/StreamProtocol'/name).read_text() for name in ['Switcher.swift','AudioPrivacy.swift','StreamMessage.swift','AudioRouting.swift']}
 inputs['Client.swift'] = client
 inputs['main.swift'] = (here/'main.swift').read_text()
+if args.suite == 'client': inputs['AutomaticDisplay.swift'] = (here/'AutomaticDisplay.swift').read_text()
 inputs['SessionLink.swift'] = (root/'iOSClient/SessionLink.swift').read_text().replace('import Network\n','')
 if args.suite == 'host':
     inputs.pop('SessionLink.swift')
@@ -65,7 +67,7 @@ runner = runner[:start] + runner[end:]
 runner = runner.replace("not name.endswith('.swift')", "not name.endswith(('.swift', '.swiftparse'))")
 runner = runner.replace('command += [str(mount / name) for name in hashes]', 'command += [str(mount / name) for name in hashes if name.endswith(".swift")]')
 runner = runner.replace('    ok = run(command, timeout=100)', '    parsed = all(run(["/usr/bin/xcrun", "swiftc", "-frontend", "-parse", str(mount / name)], timeout=20) for name in hashes if name.endswith(".swiftparse"))\n    ok = run(command, timeout=100) if parsed else False')
-paths = [root/'iOSClient/SessionLink.swift', root/'Sources/SillHost/StreamServer.swift', source, root/'Sources/SillHost/StreamCoordinator.swift'] + list(here.glob('*.swift')) + [here/'run.py', here.parent/'extended-desktop/remote.py'] + list((root/'Sources/StreamProtocol').glob('*.swift'))
+paths = [root/'iOSClient/SessionLink.swift', root/'Sources/SillHost/StreamServer.swift', source, root/'Sources/SillHost/StreamCoordinator.swift'] + list(here.glob('*.swift')) + [here/'run.py', here/'transport.py', here.parent/'extended-desktop/remote.py'] + list((root/'Sources/StreamProtocol').glob('*.swift'))
 before = {str(p.relative_to(root)):sha(p.read_bytes()) for p in paths}
 if args.preflight:
     import sys

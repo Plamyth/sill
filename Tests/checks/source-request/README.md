@@ -83,3 +83,24 @@ The port from reviewed Vision7f32300 reuses canonical `sendCatalog` and its orig
 Run `python3 -B Tests/checks/source-request/transport.py --suite publication --output ABSOLUTE_ROUTED_PATH`. The wire scaffold and expiry regression commit5e01902 produced26 checks with4 failures. The final fixture executes the actual private query method and actual queued sender/replay methods with controlled wire/owner boundaries. All89 assertions pass. No fake HAL or grant creation path is called. This is not native hardware or live remote acceptance.
 
 Both full Mac and iPad SDK builds pass with unchanged exact product inputs. The SDK receipts initially name scaffold HEAD5e01902 because the product correction was not committed yet; the parent acceptance record binds those input hashes to the final commit. Independent review and canonical integration remain separate gates. The inherited iPad delay before main-thread privacy processing remains a separate client correction.
+
+
+## iPad 자동 화면 선택 후보, 2026-10-22
+
+Pstack의 Bug fix 경로와 Model the Domain 원칙으로 최초 연결 기회, 전송 티켓, 확인 대기 화면을 구분했다. Ponytail full에 따라 기존 SessionLink 취소와 선택 전송 경로를 재사용했다. 기기 재현·SDK 빌드·독립 검수는 부모 담당이며 이 작업에서는 실행하지 않는다. ARENA와 순정 Goal, 커밋은 사용하지 않는다.
+
+자동 kind 211은 `automaticDisplaySelection == 1`, 유효한 최초 revision, 인증된 session.macID, 현재 launchID/inventory/display 목록이 모두 맞을 때만 보낸다. 첫 목록이 준비 중이면 같은 최초 revision·peer·host 안에서만 준비된 목록을 기다린다. revision 변경, 다른 peer, 수동 선택 이후에는 기회를 다시 만들지 않는다. 기억된 화면의 Mac·launch·inventory·현재 목록이 모두 맞으면 복원하고, 그렇지 않으면 유일한 main만 고른다. 새 revision과 새 유효 videoEpoch, 실제 desktop/activeDisplayID, 일치하는 inputGeneration을 확인한 뒤에만 기억한다.
+
+`AutomaticDisplay.swift`는 구형 143 자동 전송 0, 최초 목록 준비 지연과 재기준화 거부, 저장 전 확인, 같은 inventory 복원, main 모호성, 인증 거부, 수동 None과 취소, 다른 peer/revision/inventory, 실제 SessionLink hold, 창 종료 후 지연 복구를 검사한다. 입력·오디오 의도 저장소는 변경하지 않는다. 마이크/HAL/실물 영상의 동작 증거는 이 fixture의 범위 밖이다.
+
+DEBUG에서 `Library/Caches/CCRStartupDiagnostics.jsonl`에 카탈로그 변경 요약, display 전송 결과, 연결당 첫 양수 fps와 videoSize를 기록한다. 파일 상한은 65,536 bytes이고 초과 시 현재 기록으로 교체한다. 키·토큰·창 제목·화면 이름은 넣지 않는다. `submitted`는 네트워크 전송 접수이며 호스트 수용이나 영상 수신의 증거가 아니다.
+
+초기 구현 준비 때는 공통 DTO가 없어 preflight만 수행했다. 이후 부모가 고정 프로토콜 후보0025cb4a를 의미 단위로 반영하고 실제 Mini 클라이언트 검사111개를 통과시켰다. SDK·실기기 결과는 별도 원담당 영수증으로 확인한다. `run.py --preflight --suite client --output <새 storage-route 경로>`는 실제 메서드와 SessionLink를 추출하고 source/input hash를 남긴다. 아래 명령은 현재 트리에서 검사를 다시 생성한다. 기존 preflight 입력을 새 계약 검증에 그대로 재사용하지 않는다.
+
+```sh
+python3 -B Tests/checks/source-request/run.py --suite client --output <새-storage-route-경로>
+python3 -B Tests/checks/source-request/transport.py --suite client --output <별도-새-storage-route-경로>
+python3 -B Tests/checks/source-request/transport.py --suite reconnect --output <별도-새-storage-route-경로>
+```
+
+기존 runner가 `/Users/ambrion/.local/bin/mini heavy`로 실제 Swift 컴파일과 검사를 Mini의 RAM 입력에서 실행한다. 맥북의 Python 실행은 orchestration이며 `mini-ephemeral-source`를 중첩하지 않는다. 기존 원담당 `01a13ace-e372-7ed1-9946-149df37ee1c3`를 유지하고 입력 수신 해시, 원본 불변, `childrenReaped`와 `sourceRemoved`, 실행 종료 코드를 모두 확인한다. 계약 반영 전 preflight와 Python 구문 검사, diff 검사는 Swift 통과나 SDK·실기기 수용으로 세지 않는다.

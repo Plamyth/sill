@@ -13,11 +13,43 @@ final class NWConnection: NSObject, @unchecked Sendable {
         if case .contentProcessed(let done) = completion { done(nil) }
     }
 }
+final class TestDefaults {
+    var values: [String: Data] = [:]
+    func data(forKey key: String) -> Data? { values[key] }
+    func set(_ data: Data, forKey key: String) { values[key] = data }
+}
+struct SavedMac {
+    var macID: String
+    var fingerprintData: Data?
+}
+enum SavedMacs {
+    static func automaticTarget(_ macs: [SavedMac], preferredID: String) -> SavedMac? {
+        macs.first { $0.macID == preferredID }
+    }
+}
 @MainActor final class Client {
     static let noAutoDesktop = false
     // EXPECTED_SOURCE
     var expectedSourceIntent: (choice: ExpectedSourceIntent, revision: String?, epoch: UUID?)?
     // AUTOMATIC_TICKET
+    // DISPLAY_TYPES
+    var defaults = TestDefaults()
+    enum Route { case network, remote; var isRemote: Bool { self == .remote } }
+    enum HomeTrust { case plain, saved(pin: Data) }
+    struct Session {
+        var macID: String? = "trusted-mac"
+        var route = Route.network
+        var home: HomeTrust? = .saved(pin: Data([1]))
+    }
+    var session: Session? = Session()
+    var savedMacs = [SavedMac(macID: "trusted-mac", fingerprintData: Data([1]))]
+    var automaticDisplayCatalogObserved = false
+    var initialDisplayOpportunity: AutomaticConnectionOpportunity?
+    var automaticDisplaySelection: Int?
+    var pendingDisplaySelection: PendingDisplaySelection?
+    var lastStartupCatalogDiagnostic: [String: String]?
+    var startupVideoRecorded = false
+    func recordStartupDiagnostic(_ fields: [String: String]) {}
     var explicitSourceIntent: UInt64 = 0
     var automaticSourceIntent: UInt64? = 0
     var sourceCatalogEpoch: UUID?
@@ -31,6 +63,7 @@ final class NWConnection: NSObject, @unchecked Sendable {
     var remoteAudioControl = AudioControl()
     var link = SessionLink()
     var choicesSent = 0
+    var actions = 0
     var displaySelectionReady = true
     var connection: NWConnection? { get { link.connection } set { link.connection = newValue } }
     init() { link.connection = NWConnection() }
@@ -47,20 +80,28 @@ final class NWConnection: NSObject, @unchecked Sendable {
             return (header.kind, Data(data.dropFirst(StreamMessage.headerLength)))
         }
     }
-    func noteAction() {}
+    func noteAction() { actions += 1 }
     func send(_ kind: StreamMessageKind, _ payload: Data) {
         link.send(StreamMessage(kind: kind, timestamp: 0, isKeyframe: false, payload: payload).serialized())
     }
-    func deliverIdleCatalog(_ list: WindowList) {
+    func deliverIdleCatalog(_ list: WindowList, from incoming: NWConnection? = nil) {
+        guard incoming == nil || incoming === connection else { return }
         let previous = active
         let peer = connection!
         active = list.active
         windows = list.windows
         sessionHost = list.launchID
+        observeDisplaySelection(list, peer: peer)
         observeSourceIntent(list)
         sourceCatalogEpoch = list.videoEpoch?.id
         selectionRevision = list.selectionRevision
+        automaticDisplaySelection = list.automaticDisplaySelection
+        displayInventoryID = list.displayInventoryID
+        displaySelectionReady = list.displaySelection == 1 && list.displayInventoryID != nil
+        desktopSelectionRequired = list.desktopSelectionRequired == true
+        displays = list.displays ?? []
         // RESUME_SOURCE
+        requestInitialDisplay(list, peer: peer)
         // IDLE_FALLBACK
     }
     // CLIENT_METHODS

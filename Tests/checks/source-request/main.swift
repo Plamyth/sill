@@ -108,6 +108,7 @@ import Foundation
         failed.beginAutomaticConnectionOpportunity()
         failed.deliverIdleCatalog(laterIdle)
         expect(failed.allSent.count == 1, "handover cannot recreate a failed explicit choice from stale active state")
+        await automaticDisplayChecks(expect)
         print("SOURCE_REQUEST_CLIENT_CHECKS total=\(checks) failed=\(failures)")
         if failures > 0 { exit(1) }
     }

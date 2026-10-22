@@ -212,9 +212,9 @@ extension StreamClient {
         if pairing != .idle { pairing = .idle }
     }
 
-    /// At launch: saved Macs without this device's key (a restore from a backup: the key is
-    /// ThisDeviceOnly) are useless, and cleared, but only when the Keychain says the key is not
-    /// there (DeviceIdentity.knownMissing). DEBUG: `-SillForgetMacs 1` clears them and the key;
+    /// At launch, keep saved trust even when this device's key is unavailable. Automatic startup
+    /// reports the missing identity without erasing trust or treating this as first registration.
+    /// DEBUG: `-SillForgetMacs 1` clears the saved Macs and the key;
     /// `-SillForgetHomeTLS 1` clears what this device learned of their home doors (`homeTLS`), so it
     /// dials an older Sill.app plainly again (docs/home-pairing-plan.md §3.4); `-SillPairURL`,
     /// `-SillPairCode` with `-SillPairAddress`, and `-SillDialSaved 1` start a pairing or a remote
@@ -239,10 +239,6 @@ extension StreamClient {
             print("home: homeTLS forgotten on every saved Mac")
         }
         #endif
-        if !savedMacs.isEmpty, DeviceIdentity.knownMissing() {
-            savedMacs = []
-            persistSavedMacs()
-        }
         #if DEBUG
         let d = UserDefaults.standard
         if let url = d.string(forKey: "SillPairURL") {

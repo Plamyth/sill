@@ -20,22 +20,29 @@ public struct SourceRequest: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey { case selectionOrigin, selectionRevision }
     public init(from decoder: Decoder) throws {
+        (origin, selectionRevision) = try Self.decodeIntent(from: decoder)
+        // Synthesized enum decoding requires exactly one source key.
+        source = try StreamSource(from: decoder)
+    }
+
+    static func decodeIntent(from decoder: Decoder) throws -> (Origin?, String?) {
         let metadata = try decoder.container(keyedBy: CodingKeys.self)
         if metadata.contains(.selectionOrigin) || metadata.contains(.selectionRevision) {
-            origin = try metadata.decode(Origin.self, forKey: .selectionOrigin)
+            let decodedOrigin = try metadata.decode(Origin.self, forKey: .selectionOrigin)
+            var decodedRevision: String?
             if metadata.contains(.selectionRevision) {
                 let revision = try metadata.decode(String.self, forKey: .selectionRevision)
                 guard !revision.isEmpty, revision.utf8.count <= 128 else {
                     throw DecodingError.dataCorruptedError(forKey: .selectionRevision, in: metadata, debugDescription: "Invalid selection revision")
                 }
-                selectionRevision = revision
-            } else { selectionRevision = nil }
-            if origin == .automatic, selectionRevision == nil {
+                decodedRevision = revision
+            } else { decodedRevision = nil }
+            if decodedOrigin == .automatic, decodedRevision == nil {
                 throw DecodingError.keyNotFound(CodingKeys.selectionRevision, .init(codingPath: decoder.codingPath, debugDescription: "Automatic request needs original revision"))
             }
-        } else { origin = nil; selectionRevision = nil }
-        // Synthesized enum decoding requires exactly one source key.
-        source = try StreamSource(from: decoder)
+            return (decodedOrigin, decodedRevision)
+        }
+        return (nil, nil)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -58,15 +65,35 @@ public struct DisplayInfo: Codable, Equatable, Identifiable {
     }
 }
 
-/// Human display choice, valid only for this host's current inventory.
-/// Automatic display restore is unsupported. Kind 211 has no typed origin/revision admission.
-/// Display IDs are never saved across reconnects.
+/// A display choice, valid only for this host's current inventory.
+/// Automatic restoration requires the advertised capability and the original selection revision.
+/// A saved ID is valid only with the same authenticated Mac, host launch and inventory.
 public struct DisplaySelection: Codable, Equatable {
     public var displayID: UInt32
     public var inventoryID: UUID
+    public var origin: SourceRequest.Origin?
+    public var selectionRevision: String?
 
-    public init(displayID: UInt32, inventoryID: UUID) {
+    public init(displayID: UInt32, inventoryID: UUID, origin: SourceRequest.Origin? = nil, selectionRevision: String? = nil) {
         self.displayID = displayID; self.inventoryID = inventoryID
+        self.origin = origin; self.selectionRevision = selectionRevision
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case displayID, inventoryID, selectionOrigin, selectionRevision
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        displayID = try values.decode(UInt32.self, forKey: .displayID)
+        inventoryID = try values.decode(UUID.self, forKey: .inventoryID)
+        (origin, selectionRevision) = try SourceRequest.decodeIntent(from: decoder)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(displayID, forKey: .displayID)
+        try values.encode(inventoryID, forKey: .inventoryID)
+        try values.encodeIfPresent(origin, forKey: .selectionOrigin)
+        try values.encodeIfPresent(selectionRevision, forKey: .selectionRevision)
     }
 }
 
@@ -130,6 +157,8 @@ public struct WindowList: Codable {
 
     /// The dedicated source-intent CAS, independent of video and input generations.
     public var selectionRevision: String?
+    /// Version 1 admits revision-scoped automatic kind 211 requests.
+    public var automaticDisplaySelection: Int?
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
     /// original input format until they disconnect or negotiate scoped input.
@@ -148,7 +177,7 @@ public struct WindowList: Codable {
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
-                remoteAudio: Int? = nil, selectionRevision: String? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
+                remoteAudio: Int? = nil, selectionRevision: String? = nil, automaticDisplaySelection: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
                 dockApps: [AppInfo]? = nil, audioPrivacy: AudioPrivacyState? = nil,
@@ -157,6 +186,7 @@ public struct WindowList: Codable {
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
         self.selectionRevision = selectionRevision
+        self.automaticDisplaySelection = automaticDisplaySelection
         self.audioPrivacy = audioPrivacy
         self.catalogRefresh = catalogRefresh
         self.responseRequestID = responseRequestID

@@ -55,14 +55,17 @@ for value: Any in ["", "missing", 1] {
     _ = client()
     check("선호키가 값·형식과 무관하게 bootstrap 차단", RemoteConnector.all.isEmpty)
 }
-reset()
-do {
+for denied in [false, true] {
+    reset()
     let c = StreamClient(); c.savedMacs = [SavedMac(macID: fixtureProfile.macID, fingerprint: fixtureProfile.fingerprint,
         name: "이전 Mac", recognitionKey: result().recognitionKey!, remotePort: 7455, addresses: [],
-        infoIssuedAt: 0, pairedAt: Date(), method: "code", homeTLS: true, revoked: true, newKey: true)]
+        infoIssuedAt: 0, pairedAt: Date(), method: "code", homeTLS: true, revoked: denied, newKey: denied)]
+    let original = SavedMacs.encode(c.savedMacs)
+    UserDefaults.standard.set(original, forKey: SavedMacs.defaultsKey)
     DeviceIdentity.present = false; DeviceIdentity.missing = true
     c.startRemote(); c.armSavedMacAutoConnect(); c.wentToBackground(); c.cameForward()
-    check("knownMissing 정리 뒤에도 원래 기록의 최초 차단 보존", c.savedMacs.isEmpty && RemoteConnector.all.isEmpty && DeviceIdentity.creates == 0)
+    check("기기 키 누락에도 정상·차단 신뢰 원본을 그대로 보존", SavedMacs.encode(c.savedMacs) == original && UserDefaults.standard.string(forKey: SavedMacs.defaultsKey) == original && c.persists == 0)
+    check("기기 키 누락을 최초 등록으로 우회하거나 키를 변경하지 않음", RemoteConnector.all.isEmpty && c.dials.isEmpty && DeviceIdentity.creates == 0 && DeviceIdentity.forgets == 0)
 }
 reset()
 do {

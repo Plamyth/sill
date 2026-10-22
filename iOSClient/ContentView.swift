@@ -33,7 +33,15 @@ struct ContentView: View {
             if client.connected {
                 StreamScreen(client: client)
             } else {
+                #if os(iOS)
+                if manualConnectionEnabled {
+                    ConnectScreen(client: client)
+                } else {
+                    automaticConnectionStatus
+                }
+                #else
                 ConnectScreen(client: client)
+                #endif
             }
         }
         .preferredColorScheme(.dark)
@@ -45,7 +53,7 @@ struct ContentView: View {
             SecondWindow.openFromLaunchArgument()   // -SillSecondWindow 1
             #endif
             client.startBrowsing()
-            client.startRemote()                 // saved Macs without a key are cleared; DEBUG pairing arguments
+            client.startRemote()                 // preserve saved trust; DEBUG pairing arguments
             #if DEBUG
             client.connectFromLaunchArgument()   // -SillConnect host:port, for the off-Bonjour test hosts
             Self.orientFromLaunchArgument()      // -SillOrientation landscape|portrait
@@ -77,9 +85,36 @@ struct ContentView: View {
             if !presented, client.audioRouteChooserPresented { client.dismissAudioRoutesByUser() }
         })) { IPadAudioRouteChooser(client: client) }
         #endif
-        // sill://pair from the Camera, Messages or `xcrun simctl openurl`: a confirmation first.
-        .onOpenURL { client.handleOpenURL($0) }
+        .onOpenURL { url in
+            if manualConnectionEnabled { client.handleOpenURL(url) }
+        }
     }
+
+    private var manualConnectionEnabled: Bool {
+        #if !os(iOS)
+        true
+        #elseif DEBUG
+        CommandLine.arguments.contains { $0.hasPrefix("-Sill") }
+        #else
+        false
+        #endif
+    }
+
+    #if os(iOS)
+    private var automaticConnectionStatus: some View {
+        VStack(spacing: 16) {
+            ProgressView("Mac 자동 연결")
+            Text(client.status)
+                .foregroundStyle(Palette.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(24)
+        .onChange(of: client.status, initial: true) { _, line in
+            if !line.isEmpty { AccessibilityNotification.Announcement(line).post() }
+        }
+    }
+    #endif
 
     #if DEBUG
     /// `-SillOrientation landscape|portrait`: the normal app asks its window scene for that

@@ -260,9 +260,10 @@ def augment(inputs, block, root, here):
 
 def client_input(block, root, here):
     text = (root/'iOSClient/StreamClient.swift').read_text()
-    signatures = ['func select(_ source:', 'func selectDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(']
+    signatures = ['func select(_ source:', 'func selectDisplay(', 'private func requestDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(', 'private func authenticatedDisplayMacID(', 'private func observeDisplaySelection(', 'private func requestInitialDisplay(', 'private func requestAutomaticDisplay(']
     methods = '\n'.join(block(text, s) for s in signatures)
-    client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', ''))
+    client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', '').replace('UserDefaults.standard', 'defaults'))
+    client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('private ', '') for s in ['private struct RememberedDisplay', 'private struct PendingDisplaySelection']))
     for marker, signature in [('// EXPECTED_SOURCE', 'private enum ExpectedSourceIntent'), ('// AUTOMATIC_TICKET', 'private struct AutomaticSourceTicket'), ('// RESUME_SOURCE', 'if let resume = self.resumeSource'), ('// IDLE_FALLBACK', 'if let ticket = self.automaticTicket')]:
         replacement = block(text, signature).replace('private ', '')
         if marker == '// AUTOMATIC_TICKET':
