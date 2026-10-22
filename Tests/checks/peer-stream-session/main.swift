@@ -227,6 +227,13 @@ struct Checks {
               "same physical display confirms request without replacing its video epoch")
         repeatedDisplay.finishLaunch(pendingSameLaunch, windowID: 800); await settle()
         check(repeatedDisplay.source == .desktop, "same-display explicit request still cancels pending launch")
+        let staleLaunch = repeatedDisplay.beginLaunch("test.preserved.by.stale.display")
+        let staleRevision = repeatedDisplay.selectionRevision
+        repeatedDisplay.selectDisplay(DisplaySelection(displayID: 1, inventoryID: UUID(), origin: .human)); await settle()
+        check(repeatedDisplay.selectionRevision == staleRevision && repeatedDisplay.epoch == displayedEpoch,
+              "stale inventory cannot receive a same-display processed revision")
+        repeatedDisplay.finishLaunch(staleLaunch, windowID: 801); await settle()
+        check(repeatedDisplay.source == .window(801), "stale inventory cannot cancel a pending launch")
         await repeatedDisplay.close()
         let launched = PeerStreamSession(driver: FakeCapture(), configuration: { .standard }, inventory: { inventory })
         let launch = launched.beginLaunch("test.delayed")
