@@ -22,10 +22,14 @@ package struct PairedDevice: Codable, Hashable, Sendable {
     /// same device then pairs only with the code; Remove frees the device. Nil for a key never seen
     /// on the cable. Optional, so a list from before it decodes, and left out of the JSON when nil.
     package var cableDevice: String?
+    package var ownerPrincipal: String?
+    package var ownerActivationPending: Bool?
 
-    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil) {
+    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil, ownerPrincipal: String? = nil, ownerActivationPending: Bool? = nil) {
         self.fingerprint = fingerprint; self.name = name; self.model = model; self.pairedAt = pairedAt; self.method = method
         self.cableDevice = cableDevice
+        self.ownerPrincipal = ownerPrincipal
+        self.ownerActivationPending = ownerActivationPending
     }
 
     /// How it was paired, as the Devices pane words it: "with the QR code", "with a code", "over
@@ -35,6 +39,7 @@ package struct PairedDevice: Codable, Hashable, Sendable {
     /// The words for a stored method (`displayMethod`; the pane's summaries use it too).
     package static func displayMethod(_ method: String) -> String? {
         switch method {
+        case OwnerMacBootstrap.method: return "같은 사용자 소유 기기로 자동 등록"
         case PairRequest.qr: return "with the QR code"
         case PairRequest.code: return "with a code"
         case PairResult.cable: return "over the USB cable"
@@ -115,6 +120,8 @@ package protocol IdentityStore: AnyObject {
     /// next save would replace it.
     func loadPaired() throws -> [PairedDevice]
     func savePaired(_ devices: [PairedDevice]) throws
+    func loadOwnerRegistry() throws -> Data?
+    func saveOwnerRegistry(_ record: Data) throws
     /// Require pairing (docs/home-pairing-plan.md §4.8), kept beside the trust list and never in
     /// UserDefaults, as the record RemoteAccess writes and judges (RequirePairingValue: off only
     /// with the Mac's own signature): nil when none was ever saved, which reads as on, so a missing
@@ -126,6 +133,13 @@ package protocol IdentityStore: AnyObject {
     /// TEST ONLY: a directory where a test hook may leave the current pairing link and code (the
     /// file store's own, 0700); nil for every other store.
     var testDirectory: URL? { get }
+}
+
+package enum OwnerRegistryStoreError: Error { case unsupported }
+
+extension IdentityStore {
+    package func loadOwnerRegistry() throws -> Data? { throw OwnerRegistryStoreError.unsupported }
+    package func saveOwnerRegistry(_ record: Data) throws { throw OwnerRegistryStoreError.unsupported }
 }
 
 package struct IdentityStoreError: Error, CustomStringConvertible {
@@ -160,6 +174,10 @@ package final class MemoryIdentityStore: IdentityStore {
 
     package func loadPaired() throws -> [PairedDevice] { paired }
     package func savePaired(_ devices: [PairedDevice]) throws { paired = devices }
+
+    private var ownerRegistry: Data?
+    package func loadOwnerRegistry() throws -> Data? { ownerRegistry }
+    package func saveOwnerRegistry(_ record: Data) throws { ownerRegistry = record }
 
     private var requirePairing: Data?
     package func loadRequirePairing() throws -> Data? { requirePairing }
@@ -252,6 +270,14 @@ package final class FileIdentityStore: IdentityStore {
         try Self.writePrivate(try encoder.encode(devices), to: directory.appendingPathComponent("paired.json"))
     }
 
+    package func loadOwnerRegistry() throws -> Data? {
+        try Self.read(directory.appendingPathComponent("owner-registry"))
+    }
+
+    package func saveOwnerRegistry(_ record: Data) throws {
+        try Self.writePrivate(record, to: directory.appendingPathComponent("owner-registry"))
+    }
+
     package func loadRequirePairing() throws -> Data? {
         try Self.read(directory.appendingPathComponent("require-pairing"))
     }
@@ -308,13 +334,36 @@ enum RequirePairingValue {
 /// What both doors' verify blocks and admission read on the network queue: immutable, replaced
 /// whole under a lock on every change. Nothing that reads it ever waits on the main actor.
 struct TrustSnapshot: Sendable {
-    /// Paired fingerprints → display names ("iPad (iPad14,1)").
+    /// 명시적으로 등록한 키와 표시 이름. owner candidate는 별도로 보관한다.
     var paired: [Data: String] = [:]
+    struct OwnerCandidate: Equatable, Sendable {
+        let principal: String
+        let generation: UUID
+        var name: String
+    }
+    struct OwnerGrant: Equatable, Sendable {
+        let principal: String
+        let generation: UUID
+        let epoch: UUID
+    }
+    var ownerCandidates: [Data: OwnerCandidate] = [:]
+    var ownerKnown: Set<Data> = []
+    var ownerAuthorized: [Data: OwnerGrant] = [:]
+
+    func isPaired(_ fingerprint: Data) -> Bool {
+        paired[fingerprint] != nil || (remoteAccess && ownerAuthorized[fingerprint].map {
+            $0.epoch == ownerBootstrapEpoch && $0.principal == ownerCandidates[fingerprint]?.principal
+                && $0.generation == ownerCandidates[fingerprint]?.generation
+        } == true)
+    }
+
+
     /// A pairing window is open: the home door takes its proofs.
     var pairingOpen = false
     /// One the remote door takes proofs for (opened by the Mac's user, or the CLI's --remote),
     /// never one a device opened by asking (docs/home-pairing-plan.md §4.6).
     var remotePairingOpen = false
+    var ownerBootstrapEpoch = UUID()
     var remoteAccess = false
     var internetAccess = false
     /// The home door admits only paired keys (on a TLS home door; the plain one has no pairing).
@@ -325,7 +374,7 @@ struct TrustSnapshot: Sendable {
 
 /// The lock around the current TrustSnapshot.
 final class TrustBox: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private var value = TrustSnapshot()
 
     var snapshot: TrustSnapshot {
@@ -334,6 +383,19 @@ final class TrustBox: @unchecked Sendable {
     }
 
     func update(_ change: (inout TrustSnapshot) -> Void) {
-        lock.lock(); change(&value); lock.unlock()
+        withDecision { change(&value) }
+    }
+
+    func withDecision<T>(_ action: () -> T) -> T {
+        lock.lock(); defer { lock.unlock() }
+        return action()
+    }
+
+    func authorizeOwner(_ fingerprint: Data) {
+        update {
+            if let candidate = $0.ownerCandidates[fingerprint] {
+                $0.ownerAuthorized[fingerprint] = .init(principal: candidate.principal, generation: candidate.generation, epoch: $0.ownerBootstrapEpoch)
+            }
+        }
     }
 }

@@ -8,6 +8,8 @@ import StreamProtocol
 struct LiveRemoteAccessPane: View {
     let model: AppModel
     @Bindable var settings: HostSettings
+    @State private var exportMessage: String?
+    @State private var exporting = false
 
     var body: some View {
         RemoteAccessPane(status: model.coordinator?.status.snapshot.remote ?? RemoteStatus(),
@@ -18,8 +20,34 @@ struct LiveRemoteAccessPane: View {
                          actions: RemoteAccessPane.Actions(
                              setPort: { settings.config.remotePort = $0 },
                              setAddressName: { settings.remoteAddressName = $0 },
-                             showDevices: { model.showSettings?(.devices) }))
+                             showDevices: { model.showSettings?(.devices) },
+                             exportOwnerProfile: exportOwnerProfile,
+                             exportMessage: exportMessage,
+                             exporting: exporting))
     }
+
+    private func exportOwnerProfile() {
+        guard !exporting, let remote = model.coordinator?.remote else { return }
+        exporting = true
+        exportMessage = nil
+        Task { @MainActor in
+            defer { exporting = false }
+            do {
+                let data = try await remote.ownerMacBootstrapProfile()
+                let panel = NSSavePanel()
+                panel.title = "소유 Mac 공개 연결 설정 내보내기"
+                panel.nameFieldStringValue = "CCR-OwnerMacBootstrap.json"
+                panel.canCreateDirectories = true
+                guard await panel.begin() == .OK, let url = panel.url else { return }
+                try data.write(to: url, options: [.atomic])
+                exportMessage = "공개 연결 설정을 저장했습니다. 앱 리소스 공급과 서명은 별도 단계입니다."
+            } catch {
+                let reason = (error as? IdentityStoreError)?.description ?? "저장 위치와 권한을 확인하세요."
+                exportMessage = "공개 연결 설정을 내보내지 못했습니다. \(reason)"
+            }
+        }
+    }
+
 }
 
 /// The Remote Access pane (docs/remote-access-plan.md §6.1): the switch, the Mac's addresses and
@@ -32,6 +60,9 @@ struct RemoteAccessPane: View {
         var setAddressName: (String) -> Void = { _ in }
         /// Show Devices…: Settings on the Devices tab.
         var showDevices: () -> Void = {}
+        var exportOwnerProfile: () -> Void = {}
+        var exportMessage: String? = nil
+        var exporting = false
     }
 
     let status: RemoteStatus
@@ -65,7 +96,16 @@ struct RemoteAccessPane: View {
             } footer: {
                 Footnote("Lets the iPhone and iPad you pair connect to this Mac from other networks: through a VPN such as Tailscale, or through a port you forward on your router. Sill turns away every device you haven’t paired, and encrypts everything the paired ones send and receive.")
             }
-            if on { addresses }
+            if on {
+                addresses
+                Section {
+                    Button(actions.exporting ? "공개 설정 확인 중…" : "소유 Mac 공개 연결 설정 내보내기…", action: actions.exportOwnerProfile)
+                        .disabled(actions.exporting)
+                    if let message = actions.exportMessage { Text(message).font(.callout) }
+                } footer: {
+                    Footnote("현재 호스트의 공개 Mac ID와 TLS 지문, 검증한 Tailscale 주소만 저장합니다.")
+                }
+            }
             pairedDevices
             if on { internet }
             Section {

@@ -32,7 +32,7 @@ public enum RemoteTLS {
     /// host adds a later generation beside these and never drops one: a host that no longer serves
     /// such a device still completes its `sill/1` handshake, reads its hello through the device
     /// gate and says "update"; without `sill/1` the device sees only a failed handshake and redials.
-    public static let serverALPNs = [sessionALPN, pairingALPN]
+    public static let serverALPNs = [sessionALPN, pairingALPN, OwnerMacBootstrap.alpn]
     /// The SNI every client sends, so a dynamic DNS or MagicDNS name never crosses the network in
     /// clear. The host ignores it.
     public static let serverName = "sill"

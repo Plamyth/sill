@@ -30,7 +30,7 @@ import StreamProtocol
 /// TEST ONLY, on a test host only (DoorPolicy.isTestHost): SILL_TEST_BACKOFF_SECONDS=<s> replaces
 /// the 300 s backoff; SILL_TEST_CABLE_INTERFACE=<if> counts a client scoped to that interface as
 /// one on the cable to an "iPad" (CableLink.testInterface).
-final class Door {
+final class Door: @unchecked Sendable {
     /// One pairing attempt, for RemoteAccess to judge on the main actor.
     struct PairAttempt: Sendable {
         let door: DoorPolicy.Door
@@ -50,6 +50,7 @@ final class Door {
         /// Home door only: the iPhone or iPad this connection came over by the USB cable, by the
         /// Mac's own rule (CableLink.device over the arrival interface, read afresh); nil otherwise.
         let cable: CableLink.Ancestry?
+        var ownerSocket: OwnerBootstrapSocket? = nil
     }
 
     static let maxPending = 8
@@ -72,6 +73,7 @@ final class Door {
 
     /// A pairing attempt; the reply may be called from any thread.
     var onPairAttempt: ((PairAttempt, @escaping @Sendable (PairResult) -> Void) -> Void)?
+    var onOwnerSessionProof: ((OwnerBootstrapSocket, @escaping @Sendable (OwnerBootstrapSocket.Evidence?) -> Void) -> Void)?
     /// Home door: plain Sill messages at the TLS door (an older Sill, -9836), for the menu: once one
     /// source has tried so `DoorPolicy.olderSillTries` times within a minute (a TLS 1.2 client, which
     /// fails the same way, usually tries once).
@@ -87,6 +89,8 @@ final class Door {
         /// The door refused it (counted in the minute's summary already), so its end counts one
         /// failure for its source.
         var refused = false
+        var ownerSocket: OwnerBootstrapSocket?
+        let admissionUntil = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
         var deadline: DispatchWorkItem?
     }
     private var pending: [ObjectIdentifier: Pending] = [:]
@@ -140,9 +144,7 @@ final class Door {
 
     /// What DoorPolicy knows about a key, from the snapshot as it is now.
     private func trustFor(_ fp: Data?, _ t: TrustSnapshot) -> DoorPolicy.Trust {
-        DoorPolicy.Trust(hasKey: fp != nil, paired: fp.map { t.paired[$0] != nil } ?? false, requirePairing: t.requirePairing,
-                         remoteAccess: t.remoteAccess, internetAccess: t.internetAccess, pairingOpen: t.pairingOpen,
-                         remotePairingOpen: t.remotePairingOpen)
+        t.doorTrust(fp)
     }
 
     /// On `queue`, in the TLS handshake: trust is the pin and the protocol, nothing else.
@@ -195,7 +197,7 @@ final class Door {
     /// Wireless turned off: an ask or a proof in flight over peer-to-peer Wi-Fi). Its end is no
     /// refusal: nothing is counted.
     func cancelPending(where match: (NWConnection) -> Bool) {
-        for p in pending.values where match(p.connection) { p.connection.cancel() }
+        for p in pending.values where match(p.connection) { p.ownerSocket?.cancel(); p.connection.cancel() }
     }
 
     private func stateChanged(_ id: ObjectIdentifier, _ c: NWConnection, _ state: NWConnection.State) {
@@ -247,8 +249,24 @@ final class Door {
         case .session:
             guard let fp else { refuse(id, "unpaired"); c.cancel(); return }
             admitSession(id, c, fp, t)
+        case .ownerNeedsProof:
+            guard let fp, let p = pending[id], let judge = onOwnerSessionProof,
+                  let socket = OwnerBootstrapSocket.capture(c, trust: trust, purpose: .session, deadline: p.admissionUntil) else {
+                refuse(id, "unpaired"); c.cancel(); return
+            }
+            pending[id]?.ownerSocket = socket
+            judge(socket) { [weak self] evidence in
+                self?.queue.async { [weak self] in self?.admitOwnerSession(id, c, fp, socket, evidence) }
+            }
         case .pairing:
             guard let fp else { refuse(id, "unpaired"); c.cancel(); return }
+            if RemoteTLS.negotiatedALPN(c) == OwnerMacBootstrap.alpn {
+                guard let p = pending[id],
+                      let socket = OwnerBootstrapSocket.capture(c, trust: trust, deadline: p.admissionUntil) else {
+                    refuse(id, "unpaired"); c.cancel(); return
+                }
+                pending[id]?.ownerSocket = socket
+            }
             readPairRequest(id, c, fp)
         case .goodbye(let reason):
             // A paired key the door does not serve now: it proved itself, so its source starts clean.
@@ -310,6 +328,41 @@ final class Door {
         }
     }
 
+    private func admitOwnerSession(_ id: ObjectIdentifier, _ c: NWConnection, _ fp: Data,
+                                   _ socket: OwnerBootstrapSocket, _ evidence: OwnerBootstrapSocket.Evidence?) {
+        guard pending[id]?.ownerSocket === socket, checkOrigin(id, c), let server, evidence != nil else {
+            socket.cancel(); refuse(id, "unpaired"); c.cancel(); return
+        }
+        server.gate(c) { [weak self] hello in
+            guard let self, let server = self.server, let p = self.pending[id], p.ownerSocket === socket else {
+                socket.cancel(); c.cancel(); return
+            }
+            if self.kind == .home, let hello,
+               server.droppedForDirectWireless(c, acceptedPeerToPeer: p.peerToPeer, hello: hello) { socket.cancel(); return }
+            let origin = p.origin ?? .internet
+            let admitted = socket.admit(in: self.trust, evidence: evidence, allowed: { snapshot in
+                DoorPolicy.afterGate(self.kind, wasPaired: true, origin: origin, self.trustFor(fp, snapshot),
+                                     remoteSessions: server.remoteSessionCount) == nil
+            }) { snapshot in
+                self.pending.removeValue(forKey: id)
+                p.deadline?.cancel()
+                self.forgive(p.source)
+                let name = snapshot.ownerCandidates[fp]!.name
+                switch self.kind {
+                case .remote:
+                    let label = OriginPolicy.label(origin, interface: p.interface, serviceName: p.interface.flatMap { snapshot.serviceNames[$0] }) ?? "by address"
+                    server.serve(c, route: .remote(origin: origin, label: label, fingerprint: fp, name: name), hello: hello,
+                                 admitted: { print("원격 소유 기기가 연결되었습니다. \(name) (\(c.endpoint))") })
+                case .home:
+                    let peer = ClientRoute.Peer(fingerprint: fp, name: name, cableDevice: nil)
+                    server.serve(c, route: .home(origin, peer: peer), hello: hello,
+                                 admitted: { print("소유 기기가 연결되었습니다. \(c.endpoint)") })
+                }
+            }
+            if !admitted { socket.cancel(); self.refuse(id, "unpaired"); c.cancel() }
+        }
+    }
+
     /// A session the gate held that `afterGate` refused: the line the change's own `closeSessions`
     /// prints (Remove, Require pairing, Remote Access, internet access; the limit is counted, as at
     /// `.ready`), then the goodbye and the close (`closeWithGoodbye`), never registered. `name`: its
@@ -356,23 +409,35 @@ final class Door {
                 }
                 // The switches as they are now (the internet switch may have gone off since
                 // `.ready`). Gone from `pending`: the deadline passed while the payload came in.
-                guard self.checkOrigin(id, c), let p = self.pending.removeValue(forKey: id) else { c.cancel(); return }
-                p.deadline?.cancel()
+                guard self.checkOrigin(id, c), let p = self.pending[id] else { c.cancel(); return }
+                let owner = RemoteTLS.negotiatedALPN(c) == OwnerMacBootstrap.alpn
+                if !owner {
+                    self.pending.removeValue(forKey: id)
+                    p.deadline?.cancel()
+                }
                 let queue = self.queue
                 let reply: @Sendable (PairResult) -> Void = { result in
-                    queue.async {
+                    queue.async { [weak self] in
+                        if owner {
+                            guard let waiting = self?.pending.removeValue(forKey: id) else { c.cancel(); return }
+                            waiting.deadline?.cancel()
+                            waiting.ownerSocket?.cancel()
+                        }
                         let message = StreamMessage(kind: .pairResult, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                                                     payload: Wire.encode(result)).serialized()
                         c.send(content: message, completion: .contentProcessed { _ in c.cancel() })
                         queue.asyncAfter(deadline: .now() + 0.25) { c.cancel() }
                     }
                 }
-                if DoorPolicy.pairing(self.kind, method: request.method, version: request.v) == .closed {
+                if owner ? !OwnerBootstrapWire.accepts(request) :
+                    DoorPolicy.pairing(self.kind, method: request.method, version: request.v) == .closed {
                     reply(PairResult(ok: false, reason: PairResult.closed))
                     return
                 }
                 guard let judge = self.onPairAttempt else { c.cancel(); return }
-                judge(self.attempt(request, fp, c, p), reply)
+                var attempt = self.attempt(request, fp, c, p)
+                attempt.ownerSocket = p.ownerSocket
+                judge(attempt, reply)
             }
         }
     }
@@ -436,6 +501,7 @@ final class Door {
     private func deadlinePassed(_ id: ObjectIdentifier) {
         guard let p = pending[id] else { return }
         refuse(id, "unpaired")
+        p.ownerSocket?.cancel()
         p.connection.cancel()        // `.cancelled` then counts the failure
     }
 
@@ -449,6 +515,7 @@ final class Door {
     private func endedBeforeAdmission(_ id: ObjectIdentifier, error: NWError?) {
         guard let p = pending.removeValue(forKey: id) else { return }
         p.deadline?.cancel()
+        p.ownerSocket?.cancel()
         var refused = p.refused
         if !refused, let error, let status = RemoteTLS.status(of: error) {
             switch DoorPolicy.handshakeRefusal(kind, status: status) {
@@ -498,5 +565,15 @@ extension InterfaceSnapshot.CableReading {
     var ancestry: CableLink.Ancestry? {
         guard usbDevice else { return nil }
         return CableLink.Ancestry(ncm: ncm, vendor: vendor, productName: productName, serial: serial, session: session)
+    }
+}
+
+extension TrustSnapshot {
+    func doorTrust(_ fingerprint: Data?) -> DoorPolicy.Trust {
+        DoorPolicy.Trust(hasKey: fingerprint != nil, paired: fingerprint.map { paired[$0] != nil } ?? false,
+            ownerKnown: fingerprint.map { ownerKnown.contains($0) } ?? false,
+            ownerCandidate: fingerprint.map { ownerCandidates[$0] != nil } ?? false,
+            requirePairing: requirePairing, remoteAccess: remoteAccess, internetAccess: internetAccess,
+            pairingOpen: pairingOpen, remotePairingOpen: remotePairingOpen)
     }
 }
