@@ -1353,7 +1353,7 @@ struct VaultMarkdownEditor: UIViewRepresentable {
                   let snapshot = beginSelectionCorrection(),
                   let range = Range(snapshot.selection,in:snapshot.text) else { return }
             let alert = UIAlertController(title:"선택 글자 교정",
-                message:"직접 입력하거나 iOS 손글씨 입력을 사용하세요. 적용을 누르면 선택한 글자만 바뀝니다.",preferredStyle:.alert)
+                message:"적용 결과: \(String(snapshot.text[range]).debugDescription)\n직접 입력하거나 iOS 손글씨 입력을 사용하세요.",preferredStyle:.alert)
             alert.addTextField { field in
                 field.text = String(snapshot.text[range])
                 field.placeholder = "바꿀 글자 직접 입력"
@@ -1364,19 +1364,36 @@ struct VaultMarkdownEditor: UIViewRepresentable {
                 field.smartInsertDeleteType = .no
             }
             let field = alert.textFields?.first
+            var input = CanvasPencilTextCorrectionInput(text:snapshot.text,selection:snapshot.selection,raw:field?.text ?? "")
             let apply = UIAlertAction(title:"적용",style:.default) { [weak self, weak field] _ in
                 guard let self else { return }
-                guard let field, field.markedTextRange == nil else { self.cancelSelectionCorrection(snapshot); return }
-                let input = CanvasPencilTextCorrectionInput(text:snapshot.text,selection:snapshot.selection,raw:field.text ?? "")
+                guard let field, field.markedTextRange == nil,
+                      input.raw.utf8.elementsEqual((field.text ?? "").utf8) else { self.cancelSelectionCorrection(snapshot); return }
                 self.confirmSelectionCorrection(snapshot,replacement:input.preferred)
             }
+            let rawApply = UIAlertAction(title:"입력 그대로 적용",style:.default) { [weak self, weak field] _ in
+                guard let self else { return }
+                guard let field, field.markedTextRange == nil,
+                      input.raw.utf8.elementsEqual((field.text ?? "").utf8) else { self.cancelSelectionCorrection(snapshot); return }
+                self.confirmSelectionCorrection(snapshot,replacement:input.raw)
+            }
             apply.isEnabled = false
-            field?.addAction(UIAction { [weak field] _ in
-                guard let field else { return }
+            rawApply.isEnabled = false
+            field?.addAction(UIAction { [weak field, weak alert, weak apply, weak rawApply] _ in
+                guard let field, let alert, let apply, let rawApply else { return }
+                input = CanvasPencilTextCorrectionInput(text:snapshot.text,selection:snapshot.selection,raw:field.text ?? "")
+                var message = "적용 결과: \(input.preferred.debugDescription)"
+                if input.word != nil {
+                    message += "\n단어 적용은 바깥 공백과 분리된 마침표를 정리합니다.\n입력 그대로 적용: \(input.raw.debugDescription)"
+                }
+                alert.message = message
                 apply.isEnabled = field.markedTextRange == nil &&
-                    CanvasPencilTextCorrection.replacement(in:snapshot.text,selection:snapshot.selection,with:field.text ?? "") != nil
+                    CanvasPencilTextCorrection.replacement(in:snapshot.text,selection:snapshot.selection,with:input.preferred) != nil
+                rawApply.isEnabled = input.word != nil && field.markedTextRange == nil &&
+                    CanvasPencilTextCorrection.replacement(in:snapshot.text,selection:snapshot.selection,with:input.raw) != nil
             },for:.editingChanged)
             alert.addAction(UIAlertAction(title:"취소",style:.cancel) { [weak self] _ in self?.cancelSelectionCorrection(snapshot) })
+            alert.addAction(rawApply)
             alert.addAction(apply)
             alert.preferredAction = apply
             correctionAlert = alert

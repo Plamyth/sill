@@ -17,7 +17,29 @@ struct CanvasPencilTextCorrectionInput {
 
     init(text: String, selection: NSRange, raw: String) {
         self.raw = raw
-        word = nil
+        word = Self.word(in:text,selection:selection,raw:raw)
+    }
+
+    private static func word(in text: String, selection: NSRange, raw: String) -> String? {
+        let letters = CharacterSet.letters
+        let wordScalars = letters.union(.nonBaseCharacters)
+        func isWord(_ value: String) -> Bool {
+            value.unicodeScalars.contains(where:letters.contains) &&
+                value.unicodeScalars.allSatisfy(wordScalars.contains)
+        }
+        guard canvasSelectedCharacterRange(in:text,selection:selection) == selection,
+              let range = Range(selection,in:text), isWord(String(text[range])) else { return nil }
+        let continuation = wordScalars.union(.decimalDigits).union(CharacterSet(charactersIn:"_\u{200c}\u{200d}"))
+        if range.lowerBound > text.startIndex,
+           text[text.index(before:range.lowerBound)].unicodeScalars.contains(where:continuation.contains) { return nil }
+        if range.upperBound < text.endIndex,
+           text[range.upperBound].unicodeScalars.contains(where:continuation.contains) { return nil }
+        let spaces = CharacterSet(charactersIn:" ")
+        var candidate = raw.trimmingCharacters(in:spaces)
+        // 실제47에서 관측한 단어 뒤의 분리된 마침표만 후보에서 제외한다.
+        if candidate.hasSuffix(" .") { candidate = String(candidate.dropLast(2)).trimmingCharacters(in:spaces) }
+        guard isWord(candidate), !candidate.utf8.elementsEqual(raw.utf8) else { return nil }
+        return candidate
     }
 }
 
