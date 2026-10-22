@@ -112,6 +112,10 @@ extension StreamClient {
         if !visionDisplayApplicationIsActive() {
             admitVisionDisplays(lease: visionDisplaySelection.lease, foreground: false)
         }
+        if command.automaticRevision == nil {
+            visionDisplaySelection.stopAutomatic()
+            reconcileVisionDisplaySubmission()
+        }
         let known = visionDisplaySelection.known(command.requestID)
         let result = visionDisplaySelection.begin(command)
         guard !known, result.code == .releasing else { return result }

@@ -156,11 +156,13 @@ public struct WindowList: Codable {
     public var sentry: SentryState?
     public var testDestinations: TestDestinationCatalog.Projection?
 
+    /// Source intent CAS, independent of inventory, video and input generations.
+    public var selectionRevision: String?
+    /// Version 1 admits revision-scoped automatic monitor requests.
+    public var automaticDisplaySelection: Int?
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
     /// original input format until they disconnect or negotiate scoped input.
-    public var selectionRevision: String?
-    public var automaticDisplaySelection: Int?
     public var inputGeneration: String?
     public var presentationInput: Int?
     public var videoEpoch: VideoEpoch?

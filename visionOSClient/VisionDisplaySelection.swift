@@ -165,6 +165,7 @@ struct VisionDisplaySelection {
               foreground, let catalog, catalog.launchID == opportunity.launchID,
               catalog.source != .none, catalog.epoch == epoch,
               epoch.matches(source: catalog.source, generation: catalog.generation) else { return }
+        if catalog.source == .desktop, catalog.capability != 1 || !catalog.validInventory { return }
         unresolved = false
         automaticPhase = .hostOwned
     }
