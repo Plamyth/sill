@@ -231,7 +231,7 @@ extension StreamClient {
     }
 
     /// Saved trust survives a missing or temporarily unavailable device key. Automatic startup
-    /// admits only an existing key. DEBUG: `-SillForgetMacs 1` clears saved Macs and the key;
+    /// for saved Macs admits only an existing key. DEBUG: `-SillForgetMacs 1` clears saved Macs and the key;
     /// `-SillForgetHomeTLS 1` clears what this device learned of their home doors (`homeTLS`), so it
     /// dials an older Sill.app plainly again (docs/home-pairing-plan.md §3.4); `-SillPairURL`,
     /// `-SillPairCode` with `-SillPairAddress`, and `-SillDialSaved 1` start a pairing or a remote
