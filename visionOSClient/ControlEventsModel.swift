@@ -163,6 +163,7 @@ struct ControlEventsWork: Equatable, Identifiable, Sendable {
     var activeTurnID: String? = nil
     var recordObservedAt: String? = nil
     var reportedStatus: String? = nil
+    var currentResult: String? = nil
 }
 
 struct ControlEventsProjection: Equatable, Sendable {

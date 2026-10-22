@@ -1,0 +1,257 @@
+{
+  "schema": 1,
+  "producerCommit": "bcab7058ced4a6d21331228c2e354a2f45038cc2",
+  "producerTree": "1a18490dba65ffa3c312c0feed0feab9cb344da4",
+  "coreContractSource": "8603ae8d7a905819419aab8cc07a432093c3ce70",
+  "semantics": "현재 run의 assistant 응답. result 문자열 전체 교체. 전체 이력 또는 원본 이벤트 1:1 계약은 아님.",
+  "maxUTF8Bytes": 12000,
+  "cases": [
+    {
+      "name": "current",
+      "projection": {
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "[\"cursor-cloud\",\"fixture-agent\",\"fixture-run\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "fixture-agent",
+              "sessionId": "fixture-agent",
+              "runId": "fixture-run",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": "fixture",
+              "title": "합성 응답 계약",
+              "status": "FINISHED",
+              "displayStatus": null,
+              "executionStatus": "FINISHED",
+              "statusSource": "cursor-cloud-get-run",
+              "agentStatus": null,
+              "result": "합성 응답입니다.\n원문 전체를 교체합니다.",
+              "observedAt": "2026-10-23T00:00:00Z",
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": null,
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": []
+      }
+    },
+    {
+      "name": "read-denied",
+      "projection": {
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "[\"cursor-cloud\",\"fixture-agent\",\"fixture-run\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "fixture-agent",
+              "sessionId": "fixture-agent",
+              "runId": "fixture-run",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": "fixture",
+              "title": "합성 응답 계약",
+              "status": "FINISHED",
+              "displayStatus": null,
+              "executionStatus": "FINISHED",
+              "statusSource": "cursor-cloud-get-run",
+              "agentStatus": null,
+              "result": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": null,
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": []
+      }
+    },
+    {
+      "name": "null-result",
+      "projection": {
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "[\"cursor-cloud\",\"fixture-agent\",\"fixture-run\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "fixture-agent",
+              "sessionId": "fixture-agent",
+              "runId": "fixture-run",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": "fixture",
+              "title": "합성 응답 계약",
+              "status": "FINISHED",
+              "displayStatus": null,
+              "executionStatus": "FINISHED",
+              "statusSource": "cursor-cloud-get-run",
+              "agentStatus": null,
+              "result": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": null,
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": []
+      }
+    },
+    {
+      "name": "stale",
+      "projection": {
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "[\"cursor-cloud\",\"fixture-agent\",\"fixture-run\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "fixture-agent",
+              "sessionId": "fixture-agent",
+              "runId": "fixture-run",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": "fixture",
+              "title": "합성 응답 계약",
+              "status": "FINISHED",
+              "displayStatus": null,
+              "executionStatus": "FINISHED",
+              "statusSource": "cursor-cloud-get-run",
+              "agentStatus": null,
+              "result": "합성 응답입니다.\n원문 전체를 교체합니다.",
+              "observedAt": "2026-10-23T00:00:00Z",
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "stale",
+              "fresh": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": []
+      }
+    },
+    {
+      "name": "other-run",
+      "projection": {
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "[\"cursor-cloud\",\"fixture-agent\",\"fixture-run-two\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "fixture-agent",
+              "sessionId": "fixture-agent",
+              "runId": "fixture-run-two",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": "fixture",
+              "title": "합성 응답 계약",
+              "status": "FINISHED",
+              "displayStatus": null,
+              "executionStatus": "FINISHED",
+              "statusSource": "cursor-cloud-get-run",
+              "agentStatus": null,
+              "result": "두 번째 실행 응답",
+              "observedAt": "2026-10-23T00:00:00Z",
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": null,
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": []
+      }
+    },
+    {
+      "name": "hidden",
+      "projection": {
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": []
+      }
+    }
+  ]
+}
