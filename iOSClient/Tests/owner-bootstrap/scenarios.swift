@@ -4,6 +4,11 @@ let fixtureProfile = OwnerMacBootstrap(macID: MacID.make(fingerprint: fixturePin
 let fixtureURL = URL(fileURLWithPath: CommandLine.arguments[1])
 try JSONEncoder().encode(fixtureProfile).write(to: fixtureURL)
 var count = 0
+var retryFailures = 0
+func checkRetry(_ value: Bool, _ label: String) {
+    count += 1
+    if !value { retryFailures += 1; print("FAIL " + label) }
+}
 func check(_ name: String, _ value: Bool) { precondition(value, name); count += 1 }
 func reset() {
     Clock.now = 100; Clock.events = []; Clock.main = []; Clock.network = []; Clock.networkPaused = false
@@ -42,6 +47,11 @@ do {
     let saved = c.savedMacs[0]
     check("보수적 homeTLS 정책과 profile 주소 보존", saved.homeTLS == true && saved.method == OwnerMacBootstrap.method && saved.addresses.map(\.host) == fixtureProfile.addresses && saved.remotePort == 7455)
     check("선호 ID 저장과 기존 기기키 재사용", UserDefaults.standard.string(forKey: StreamClient.ownerPreferredKey) == saved.macID && DeviceIdentity.creates == 0 && DeviceIdentity.forgets == 0)
+    c.remoteDialFailed(macID: saved.macID, why: c.dialReasons.last!, failure: .noAnswer, candidate: nil)
+    print("COUNTEREXAMPLE owner-success-dial automatic=\(c.dialReasons.last == .automatic) failures=\(c.reconnect?.remoteFailures ?? -1) retryChecks=\(c.retryChecks)")
+    checkRetry(c.dialReasons.last == .automatic, "자동 owner 등록 성공은 수동 afterPairing 연결로 끝내지 않음")
+    checkRetry(c.reconnect?.remoteFailures == 1 && (c.reconnect?.nextRemoteAt ?? 0) > Clock.now && c.retryChecks == 1,
+               "가짜 자동 등록 뒤 실제 noAnswer 처리도 기존 재시도 의도를 보존")
     c.wentToBackground(); c.cameForward(); Clock.advance(100)
     check("저장 후 활성화는 bootstrap 재발행 안함", RemoteConnector.all.count == 1)
 }
@@ -219,3 +229,13 @@ do {
     check("동기 전송 오류도 잠금 교착 없이 한 번 종료하고 읽기를 시작하지 않음", completions == 1 && socket.cancelled && socket.sent.count == 1 && socket.reads.isEmpty)
 }
 print("PASS \(count) owner bootstrap startup/exchange checks; deterministic stand-ins, no device/network/Keychain effects")
+
+reset()
+do {
+    let manual = StreamClient(); manual.pairing = .working
+    manual.remoteDialFailed(macID: fixtureProfile.macID, why: .afterPairing, failure: .noAnswer, candidate: nil)
+    checkRetry(manual.reconnect == nil && manual.retryChecks == 0 && manual.pairing == .idle,
+               "기존 수동 afterPairing 실패에는 자동 재시도를 추가하지 않음")
+}
+print("OWNER_STARTUP_RETRY failures=\(retryFailures)")
+if retryFailures > 0 { exit(1) }

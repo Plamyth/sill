@@ -26,7 +26,7 @@ owner = owner.replace('import Network\n', '').replace('import UIKit\n', '').repl
 exchange = owner[owner.index('final class OwnerBootstrapExchange'):]
 extension = owner[owner.index('#if true'):owner.index('/// 실제 등록 교환 소켓')]
 remote = (CLIENT / 'StreamClient+Remote.swift').read_text()
-startup += '\n' + block(remote, 'func dialSavedAtStartup(')
+startup += '\n' + block(remote, 'func dialSavedAtStartup(') + '\n' + block(remote, 'func remoteDialFailed(')
 # 실제 startRemote의 정리 순서와 수동 취소 진입점도 사용한다.
 methods = '\n'.join(block(remote, marker) for marker in [
     'func startRemote()', 'func cancelPairing()', 'func pairTyped('])
@@ -44,6 +44,11 @@ for source, marker in [(stream, 'func connect(to mac:'), (stream, 'func connect(
     boundaries.append('func cancellationBoundary' + str(len(boundaries)) + '() {' + prologue + '\n}')
 methods += '\n' + '\n'.join(boundaries)
 fixture = (HERE / 'Standins.swift').read_text().replace('// STARTUP_METHODS', startup + '\n' + methods)
+policy = (CLIENT / 'RemoteDialPolicy.swift').read_text()
+fixture = fixture.replace('// FAILURE_TYPE', block(policy, 'enum Failure:'))
+discovery = (CLIENT / 'DiscoveryPolicy.swift').read_text()
+retry = next(line.strip() for line in discovery.splitlines() if 'static let remoteRetry:' in line)
+fixture = fixture.replace('// RETRY_POLICY', retry + '\n' + block(discovery, 'static func remoteRetryDelay('))
 fixture = fixture.replace('private func cameForward()', 'func cameForward()').replace('private func wentToBackground()', 'func wentToBackground()')
 fixture += '\n' + extension + '\n' + exchange + '\n' + (HERE / 'scenarios.swift').read_text()
 # 공통 타입만 실제 소스로 컴파일한다. Network/Keychain은 호출하지 않는다.

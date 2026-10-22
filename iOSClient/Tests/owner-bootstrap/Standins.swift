@@ -24,6 +24,10 @@ struct DispatchQueue {
     func asyncAfter(deadline: DispatchTime, execute: @escaping () -> Void) { Clock.events.append((deadline.value, execute)) }
     func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) { asyncAfter(deadline: deadline) { execute.run() } }
 }
+struct ProcessInfo {
+    static let processInfo = ProcessInfo()
+    var systemUptime: Double { Clock.now }
+}
 enum Clock {
     static var now = 100.0
     static var main: [() -> Void] = []
@@ -77,6 +81,7 @@ enum DeviceIdentity {
 enum UIDevice { static let current = Device(); struct Device { let name = "검사 iPad" } }
 enum ClientStatsReporter { static let hardwareIdentifier = "iPadFixture" }
 enum RemoteDialPolicy {
+    // FAILURE_TYPE
     static func ownerTailnetScope(_ mac: SavedMac?) -> Bool { mac?.method == OwnerMacBootstrap.method }
     static let pairingReplyDeadline = 8.0
     struct Candidate { let host: String; let port: Int; let kind: String; let via: String; var key: String { "\(host)|\(port)" } }
@@ -120,8 +125,13 @@ final class RemoteConnector {
         onWinner?(.init(connection: c, candidate: candidates[0], fingerprint: c.pin)); return c
     }
 }
+enum RemoteCopy {
+    static func vpnLabel(_ candidate: RemoteDialPolicy.Candidate) -> String? { nil }
+    static func dialFailure(_ failure: RemoteDialPolicy.Failure, mac: String, candidate: RemoteDialPolicy.Candidate?, vpnName: String?, device: String) -> String { "가짜 실패" }
+}
 enum DiscoveryPolicy {
     static let networkFirst = 3.0
+    // RETRY_POLICY
     enum HomeDial { case pinned }
     enum HomeTrust { case saved(pin: Data) }
     enum Method { case network, nearby }
@@ -138,7 +148,14 @@ final class StreamClient {
     let queue = DispatchQueue()
     var connected = false, appInForeground = true
     var connection: NWConnection?
-    struct Reconnect { var rowBudgets: [String: Int] = [:]; var rowListing: String? }
+    struct Reconnect {
+        var macID: String?
+        var remoteAllowed = true
+        var remoteFailures = 0
+        var nextRemoteAt = 0.0
+        var rowBudgets: [String: Int] = [:]
+        var rowListing: String?
+    }
     var reconnect: Reconnect?
     var remoteDial: Int?
     enum Pairing: Equatable { case idle, working, failed(Problem) }
@@ -153,14 +170,20 @@ final class StreamClient {
     var searchingSince = 0.0
     var persists = 0
     var dials: [String] = []
+    var dialReasons: [DialReason] = []
+    var retryChecks = 0
+    var afterPairingWatch: DispatchWorkItem?
+    static let deviceWord = "iPad"
+    func savedMac(_ id: String) -> SavedMac? { savedMacs.first { $0.macID == id } }
+    func reconnectIfListed() { retryChecks += 1 }
     var browsing = false
     struct Life { var rebuildWork: DispatchWorkItem?; var settleWork: DispatchWorkItem? }
     var networkLife = Life(), nearbyLife = Life()
     var nearbyBrowser: Int?, reconnectCheck: DispatchWorkItem?, audioRouteAuthorization: Int?
     enum DialReason { case tap, automatic, afterPairing, connectRemotely, launchArgument }
-    func lostReconnect(session: Int?, saved: SavedMac?, name: String, remoteAllowed: Bool) -> Reconnect { Reconnect() }
+    func lostReconnect(session: Int?, saved: SavedMac?, name: String, remoteAllowed: Bool) -> Reconnect { Reconnect(macID: saved?.macID, remoteAllowed: remoteAllowed) }
     func displayName(_ id: String) -> String { "fixture-Mac" }
-    func dialSaved(_ id: String, why: DialReason) { cancelOwnerBootstrap(); dials.append(id) }
+    func dialSaved(_ id: String, why: DialReason) { cancelOwnerBootstrap(); dials.append(id); dialReasons.append(why) }
     func persistSavedMacs() { persists += 1; UserDefaults.standard.set(SavedMacs.encode(savedMacs), forKey: SavedMacs.defaultsKey) }
     func pair(link: PairLink, overlay: Bool) {}
     func pair(code: String, address: ParsedAddress, overlay: Bool) {}

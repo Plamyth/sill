@@ -37,7 +37,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
 python3 iOSClient/Tests/owner-bootstrap/run.py
 python3 Tests/checks/owner-mac-bootstrap/run.py
 python3 Tests/checks/owner-bootstrap-provision/run.py
-python3 iOSClient/Tests/remote-default/run.py
+REMOTE_DEFAULT_OUTPUT="$(storage-route path development-archive --project BT_CCR-ipad --filename remote-default-checks | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
+python3 iOSClient/Tests/remote-default/run.py --output "$REMOTE_DEFAULT_OUTPUT"
 python3 iOSClient/Tests/remote-default/policies.py --focused
 python3 iOSClient/Tests/remote-default/compare.py
 ```
