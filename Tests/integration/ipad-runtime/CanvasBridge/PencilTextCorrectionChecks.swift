@@ -354,13 +354,21 @@ enum PencilTextCorrectionChecks {
         try check(alert.preferredAction?.isEnabled == false && view.text == source,"교정 입력창 IME 중 적용 비활성")
         field.unmarkText()
         controller.cancelSelectionCorrection()
-        try await Task.sleep(for:.milliseconds(150))
+        for _ in 0..<40 {
+            if presenter.presentedViewController == nil { break }
+            try await Task.sleep(for:.milliseconds(50))
+        }
+        try check(presenter.presentedViewController == nil,"이전 교정 창이 닫힌 뒤 다음 네이티브 입력 검사 시작")
+        view.becomeFirstResponder()
+        try await Task.sleep(for:.milliseconds(200))
         install("가다\n\n보존할 문단\n",range:NSRange(location:0,length:2))
         UIApplication.shared.sendAction(action,to:item.target,from:item,for:nil)
         try await Task.sleep(for:.milliseconds(350))
         guard let wordAlert = presenter.presentedViewController as? UIAlertController,
               let wordField = wordAlert.textFields?.first,
-              let wordSnapshot = controller.pendingCorrection else { throw CocoaError(.validationMissingMandatoryProperty) }
+              let wordSnapshot = controller.pendingCorrection else {
+            throw NSError(domain:"PencilTextCorrectionFixture",code:2,userInfo:[NSLocalizedDescriptionKey:"단어 교정 창 준비 실패 presented=\(String(describing:presenter.presentedViewController)) selection=\(view.selectedRange) pending=\(controller.pendingCorrection != nil)"])
+        }
         wordField.text = " 가구 ."
         wordField.sendActions(for:.editingChanged)
         try check(wordAlert.message?.hasPrefix("적용 결과: \("가구".debugDescription)") == true &&
