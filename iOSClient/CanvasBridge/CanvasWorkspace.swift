@@ -862,7 +862,7 @@ struct CanvasWorkspace: View {
     private var proposalSheet: some View {
         NavigationStack {
             Form {
-                Text("손글씨 입력으로 글자를 교정하거나, ‘펜 교정’을 켜 글자 위를 지그재그로 지우세요. 위로 긋기는 합치기, 아래로 긋기는 나누기입니다. 원본 획과 출처는 유지됩니다.")
+                Text("손글씨로 입력하거나 글자를 선택해 ‘선택 글자 교정’에서 바꿀 글자를 입력하고 적용하세요. ‘펜 교정’을 켜면 지그재그는 삭제, 위로 긋기는 같은 줄의 공백 합치기, 아래로 긋기는 나누기입니다. 원본 획과 출처는 유지됩니다.")
                 VaultMarkdownEditor(text:$store.proposalText,selection:$proposalSelection,
                                     identifier:"canvasNodeTextEditor",label:"요소 글자 편집기",
                                     inputBusy:$proposalInputBusy,
@@ -1053,9 +1053,11 @@ struct VaultMarkdownEditor: UIViewRepresentable {
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
+        context.coordinator.invalidateSelectionCorrection()
         view.isEditable = context.environment.isEnabled && context.coordinator.isCurrent
         guard context.coordinator.isCurrent, view.markedTextRange == nil,
-              !context.coordinator.scribbling, !context.coordinator.correcting else { return }
+              !context.coordinator.scribbling, !context.coordinator.correcting,
+              context.coordinator.pendingCorrection == nil else { return }
         context.coordinator.updating = true
         defer { context.coordinator.updating = false }
         if !view.text.utf8.elementsEqual(text.utf8) {
@@ -1103,10 +1105,13 @@ struct VaultMarkdownEditor: UIViewRepresentable {
         private var undo: UIBarButtonItem?
         private var redo: UIBarButtonItem?
         private var correction: UIBarButtonItem?
+        private var selectionCorrection: UIBarButtonItem?
+        private(set) var pendingCorrection: CanvasPencilTextSnapshot?
+        private weak var correctionAlert: UIAlertController?
         private var correctionGesture: PencilTextGestureRecognizer?
         fileprivate var correcting = false
         fileprivate var correctionEnabled = false
-        private var gestureText: String?
+        private var gestureSnapshot: CanvasPencilTextSnapshot?
         init(_ parent: VaultMarkdownEditor) {
             self.parent = parent
             session = parent.editSession()
@@ -1115,6 +1120,7 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             active && session != nil && session == parent.editSession()
         }
         func retire(_ view: UITextView) {
+            cancelSelectionCorrection()
             if isCurrent { parent.inputBusy.wrappedValue = false }
             active = false
             view.isEditable = false
@@ -1138,7 +1144,9 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             gesture.onTracking = { [weak self, weak view] active in
                 guard let self, let view, self.isCurrent else { return }
                 self.correcting = active
-                self.gestureText = active ? view.text : self.gestureText
+                if active, let session = self.session {
+                    self.gestureSnapshot = CanvasPencilTextSnapshot(text:view.text,session:session,selection:view.selectedRange)
+                }
                 self.publishInputState(view)
             }
             gesture.onPoints = { [weak self, weak view] points in
@@ -1151,8 +1159,9 @@ struct VaultMarkdownEditor: UIViewRepresentable {
                 view.correctionTrace.path = path.cgPath
             }
             gesture.onStroke = { [weak self] points in
-                guard let self, let expected = self.gestureText else { return }
-                self.applyCorrection(points,expectedText:expected)
+                guard let self, let snapshot = self.gestureSnapshot else { return }
+                self.gestureSnapshot = nil
+                self.applyCorrection(points,snapshot:snapshot)
             }
             view.addGestureRecognizer(gesture)
             correctionGesture = gesture
@@ -1172,30 +1181,35 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             let undo = UIBarButtonItem(title:"실행 취소",style:.plain,target:self,action:#selector(undoEdit))
             let redo = UIBarButtonItem(title:"다시 실행",style:.plain,target:self,action:#selector(redoEdit))
             let correction = UIBarButtonItem(title:"펜 교정 켜기",style:.plain,target:self,action:#selector(toggleCorrection))
+            let selectionCorrection = UIBarButtonItem(title:"선택 글자 교정",style:.plain,target:self,action:#selector(showSelectionCorrection))
+            selectionCorrection.accessibilityIdentifier = "canvasSelectedTextCorrection"
+            self.selectionCorrection = selectionCorrection
             correction.accessibilityIdentifier = "canvasPencilCorrectionMode"
             self.correction = correction
             self.erase = erase
             self.undo = undo
             self.redo = redo
-            toolbar.items = [undo,redo,UIBarButtonItem(systemItem:.flexibleSpace),correction,erase]
+            toolbar.items = [undo,redo,UIBarButtonItem(systemItem:.flexibleSpace),correction,selectionCorrection,erase]
             toolbar.sizeToFit()
             view.inputAccessoryView = toolbar
             refreshControls(view)
         }
         func refreshControls(_ view: UITextView) {
-            let ready = isCurrent && view.isEditable && view.markedTextRange == nil && !scribbling && !correcting
+            let ready = isCurrent && view.isEditable && view.markedTextRange == nil && !scribbling && !correcting && pendingCorrection == nil
             correction?.isEnabled = ready
+            selectionCorrection?.isEnabled = ready &&
+                canvasSelectedCharacterRange(in:view.text,selection:view.selectedRange) == view.selectedRange && view.selectedRange.length > 0
             erase?.isEnabled = ready && canvasSelectedCharacterRange(in:view.text,selection:view.selectedRange) != nil
             undo?.isEnabled = ready && view.undoManager?.canUndo == true
             redo?.isEnabled = ready && view.undoManager?.canRedo == true
         }
         private func publishInputState(_ view: UITextView) {
             guard isCurrent else { return }
-            parent.inputBusy.wrappedValue = view.markedTextRange != nil || scribbling || correcting
+            parent.inputBusy.wrappedValue = view.markedTextRange != nil || scribbling || correcting || pendingCorrection != nil
             refreshControls(view)
         }
         @objc private func toggleCorrection() {
-            guard isCurrent, let editor, editor.markedTextRange == nil, !scribbling, !correcting else { return }
+            guard isCurrent, let editor, editor.markedTextRange == nil, !scribbling, !correcting, pendingCorrection == nil else { return }
             correctionEnabled.toggle()
             correctionGesture?.isEnabled = correctionEnabled
             correction?.title = correctionEnabled ? "손글씨 입력으로" : "펜 교정 켜기"
@@ -1204,17 +1218,26 @@ struct VaultMarkdownEditor: UIViewRepresentable {
         }
         func applyCorrection(_ points: [CGPoint], expectedText: String) {
             guard isCurrent, correctionEnabled, let editor, editor.isEditable,
-                  editor.markedTextRange == nil, !scribbling,
+                  editor.markedTextRange == nil, !scribbling, pendingCorrection == nil,
                   editor.text.utf8.elementsEqual(expectedText.utf8),
                   parent.text.utf8.elementsEqual(expectedText.utf8),
                   let gesture = correctionGesture(points,in:editor),
                   let range = correctionRange(points,gesture:gesture,in:editor),
-                  let edit = CanvasPencilTextCorrection.edit(in:editor.text,gesture:gesture,range:range),
-                  let start = editor.position(from:editor.beginningOfDocument,offset:edit.range.location),
+                  let edit = CanvasPencilTextCorrection.edit(in:editor.text,gesture:gesture,range:range) else { return }
+            applyTextChange(edit,in:editor)
+        }
+        func applyCorrection(_ points: [CGPoint], snapshot: CanvasPencilTextSnapshot) {
+            guard let editor, snapshot.matches(text:editor.text,session:parent.editSession(),selection:editor.selectedRange) else { return }
+            applyCorrection(points,expectedText:snapshot.text)
+        }
+        @discardableResult
+        private func applyTextChange(_ edit: CanvasPencilTextChange, in editor: UITextView) -> Bool {
+            guard let start = editor.position(from:editor.beginningOfDocument,offset:edit.range.location),
                   let end = editor.position(from:start,offset:edit.range.length),
-                  let textRange = editor.textRange(from:start,to:end) else { return }
+                  let textRange = editor.textRange(from:start,to:end) else { return false }
             editor.replace(textRange,withText:edit.replacement)
             textViewDidChange(editor)
+            return true
         }
         private func correctionGesture(_ points: [CGPoint], in view: UITextView) -> CanvasPencilTextGesture? {
             guard let first = points.first, let last = points.last,
@@ -1233,12 +1256,21 @@ struct VaultMarkdownEditor: UIViewRepresentable {
         }
         func correctionRange(_ points: [CGPoint], gesture: CanvasPencilTextGesture,
                                      in view: UITextView) -> NSRange? {
-            guard let first = points.first, let last = points.last else { return nil }
+            guard !points.isEmpty, points.count <= 4096,
+                  points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }),
+                  let first = points.first, let last = points.last else { return nil }
             let center = CGPoint(x:(first.x + last.x)/2,y:(first.y + last.y)/2)
             if gesture != .erase {
-                guard let position = view.closestPosition(to:center),
-                      view.caretRect(for:position).insetBy(dx:-20,dy:-12).contains(center) else { return nil }
-                return NSRange(location:view.offset(from:view.beginningOfDocument,to:position),length:0)
+                guard let position = view.closestPosition(to:center) else { return nil }
+                let caret = NSRange(location:view.offset(from:view.beginningOfDocument,to:position),length:0)
+                if gesture == .join {
+                    guard let edit = CanvasPencilTextCorrection.edit(in:view.text,gesture:.join,range:caret),
+                          let start = view.position(from:view.beginningOfDocument,offset:edit.range.location),
+                          let end = view.position(from:start,offset:edit.range.length),
+                          let range = view.textRange(from:start,to:end),
+                          view.selectionRects(for:range).contains(where:{ $0.rect.width > 0 && $0.rect.insetBy(dx:-3,dy:0).contains(center) }) else { return nil }
+                } else if !view.caretRect(for:position).insetBy(dx:-3,dy:0).contains(center) { return nil }
+                return caret
             }
             let minX = points.map(\.x).min()!, maxX = points.map(\.x).max()!
             let minY = points.map(\.y).min()!, maxY = points.map(\.y).max()!
@@ -1271,8 +1303,103 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             guard targets.count == 1 else { return nil }
             return targets[0].range
         }
+        func beginSelectionCorrection() -> CanvasPencilTextSnapshot? {
+            guard isCurrent, let session, let editor, editor.isEditable,
+                  editor.markedTextRange == nil, !scribbling, !correcting, pendingCorrection == nil,
+                  editor.text.utf8.elementsEqual(parent.text.utf8), editor.selectedRange.length > 0,
+                  canvasSelectedCharacterRange(in:editor.text,selection:editor.selectedRange) == editor.selectedRange else { return nil }
+            let snapshot = CanvasPencilTextSnapshot(text:editor.text,session:session,selection:editor.selectedRange)
+            pendingCorrection = snapshot
+            publishInputState(editor)
+            return snapshot
+        }
+        @discardableResult
+        func confirmSelectionCorrection(_ snapshot: CanvasPencilTextSnapshot, replacement: String) -> Bool {
+            guard pendingCorrection?.id == snapshot.id else { return false }
+            guard selectionCorrectionIsCurrent(snapshot), let editor,
+                  let edit = CanvasPencilTextCorrection.replacement(in:snapshot.text,selection:snapshot.selection,with:replacement) else {
+                cancelSelectionCorrection(snapshot)
+                return false
+            }
+            pendingCorrection = nil
+            let applied = applyTextChange(edit,in:editor)
+            correctionAlert?.dismiss(animated:false)
+            correctionAlert = nil
+            publishInputState(editor)
+            return applied
+        }
+        func cancelSelectionCorrection(_ snapshot: CanvasPencilTextSnapshot? = nil) {
+            if let snapshot, pendingCorrection?.id != snapshot.id { return }
+            pendingCorrection = nil
+            correctionAlert?.dismiss(animated:false)
+            correctionAlert = nil
+            if let editor { publishInputState(editor) }
+        }
+        private func selectionCorrectionIsCurrent(_ snapshot: CanvasPencilTextSnapshot) -> Bool {
+            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling, !correcting else { return false }
+            return snapshot.matches(text:editor.text,session:parent.editSession(),selection:editor.selectedRange) &&
+                parent.text.utf8.elementsEqual(snapshot.text.utf8)
+        }
+        fileprivate func invalidateSelectionCorrection() {
+            if let snapshot = pendingCorrection, !selectionCorrectionIsCurrent(snapshot) {
+                cancelSelectionCorrection(snapshot)
+            }
+        }
+        @objc private func showSelectionCorrection() {
+            guard let editor else { return }
+            var responder: UIResponder? = editor
+            while responder != nil && !(responder is UIViewController) { responder = responder?.next }
+            guard let presenter = responder as? UIViewController, presenter.presentedViewController == nil,
+                  let snapshot = beginSelectionCorrection(),
+                  let range = Range(snapshot.selection,in:snapshot.text) else { return }
+            let alert = UIAlertController(title:"선택 글자 교정",
+                message:"직접 입력하거나 iOS 손글씨 입력을 사용하세요. 적용을 누르면 선택한 글자만 바뀝니다.",preferredStyle:.alert)
+            alert.addTextField { field in
+                field.text = String(snapshot.text[range])
+                field.placeholder = "바꿀 글자 직접 입력"
+                field.accessibilityIdentifier = "canvasSelectedTextCorrectionInput"
+                field.autocorrectionType = .no
+                field.smartQuotesType = .no
+                field.smartDashesType = .no
+                field.smartInsertDeleteType = .no
+            }
+            let field = alert.textFields?.first
+            let apply = UIAlertAction(title:"적용",style:.default) { [weak self, weak field] _ in
+                guard let self else { return }
+                guard let field, field.markedTextRange == nil else { self.cancelSelectionCorrection(snapshot); return }
+                self.confirmSelectionCorrection(snapshot,replacement:field.text ?? "")
+            }
+            apply.isEnabled = false
+            field?.addAction(UIAction { [weak field] _ in
+                guard let field else { return }
+                apply.isEnabled = field.markedTextRange == nil &&
+                    CanvasPencilTextCorrection.replacement(in:snapshot.text,selection:snapshot.selection,with:field.text ?? "") != nil
+            },for:.editingChanged)
+            alert.addAction(UIAlertAction(title:"취소",style:.cancel) { [weak self] _ in self?.cancelSelectionCorrection(snapshot) })
+            alert.addAction(apply)
+            alert.preferredAction = apply
+            correctionAlert = alert
+            presenter.present(alert,animated:true)
+        }
+        @available(iOS 16.0, *)
+        func textView(_ textView: UITextView, editMenuForTextIn range: NSRange,
+                      suggestedActions: [UIMenuElement]) -> UIMenu? {
+            guard textView === editor, isCurrent, textView.isEditable, textView.markedTextRange == nil,
+                  !scribbling, !correcting, pendingCorrection == nil,
+                  range == textView.selectedRange, range.length > 0,
+                  canvasSelectedCharacterRange(in:textView.text,selection:range) == range else {
+                return UIMenu(children:suggestedActions)
+            }
+            let source = textView.text ?? ""
+            let action = UIAction(title:"선택 글자 교정…") { [weak self, weak textView] _ in
+                guard let textView, textView.selectedRange == range,
+                      textView.text.utf8.elementsEqual(source.utf8) else { return }
+                self?.showSelectionCorrection()
+            }
+            return UIMenu(children:suggestedActions + [action])
+        }
         @objc private func eraseSelection() {
-            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling,
+            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling, !correcting, pendingCorrection == nil,
                   let range = canvasSelectedCharacterRange(in:editor.text,selection:editor.selectedRange),
                   let start = editor.position(from:editor.beginningOfDocument,offset:range.location),
                   let end = editor.position(from:start,offset:range.length),
@@ -1282,23 +1409,25 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             textViewDidChange(editor)
         }
         @objc private func undoEdit() {
-            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling else { return }
+            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling, !correcting, pendingCorrection == nil else { return }
             editor.undoManager?.undo()
             textViewDidChange(editor)
         }
         @objc private func redoEdit() {
-            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling else { return }
+            guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling, !correcting, pendingCorrection == nil else { return }
             editor.undoManager?.redo()
             textViewDidChange(editor)
         }
         func textViewDidChange(_ view: UITextView) {
             guard !updating, isCurrent, view === editor else { return }
+            invalidateSelectionCorrection()
             parent.text = view.text
             parent.selection = view.selectedRange
             publishInputState(view)
         }
         func textViewDidChangeSelection(_ view: UITextView) {
             guard !updating, isCurrent, view === editor else { return }
+            invalidateSelectionCorrection()
             parent.selection = view.selectedRange
             publishInputState(view)
         }
@@ -1308,10 +1437,11 @@ struct VaultMarkdownEditor: UIViewRepresentable {
 #if !os(visionOS)
 extension VaultMarkdownEditor.Coordinator: UIScribbleInteractionDelegate {
     func scribbleInteraction(_ interaction: UIScribbleInteraction, shouldBeginAt location: CGPoint) -> Bool {
-        isCurrent && !correctionEnabled && editor?.isEditable == true
+        isCurrent && !correctionEnabled && pendingCorrection == nil && editor?.isEditable == true
     }
     func scribbleInteractionWillBeginWriting(_ interaction: UIScribbleInteraction) {
         guard isCurrent else { return }
+        cancelSelectionCorrection()
         scribbling = true
         if let editor { publishInputState(editor) }
     }

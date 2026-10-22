@@ -62,6 +62,7 @@ enum PencilTextCorrectionChecks {
             }
         }
         try check(mode.accessibilityValue == "펜 교정","실제 편집 도구의 펜 교정 전환")
+        try checkJoinSplitGeometry(view:view,controller:controller,check:check)
         let twoLines = "가나다라마바사아자차카타파하\n가나다라마바사아자차카타파하"
         view.text = twoLines
         controller.textViewDidChange(view)
@@ -155,6 +156,7 @@ enum PencilTextCorrectionChecks {
             throw CocoaError(.validationMissingMandatoryProperty)
         }
         try check(controller.scribbleInteraction(scribble,shouldBeginAt:.zero),"기존 Scribble 교정 경로 다시 허용")
+        try await checkSelectionCorrections(view:view,controller:controller,check:check)
         guard let start = view.position(from:view.beginningOfDocument,offset:1),
               let end = view.position(from:start,offset:1),
               let range = view.textRange(from:start,to:end) else { throw CocoaError(.validationMissingMandatoryProperty) }
@@ -163,7 +165,11 @@ enum PencilTextCorrectionChecks {
         try check(view.text == "가구" && store.proposalText == "가구","기존 네이티브 입력의 글자 교정 결과 연결")
         UIApplication.shared.sendAction(action,to:mode.target,from:mode,for:nil)
         try check(store.proposalInputSessionID == session && store.proposalIsCurrent,"수정 중 원래 요소·입력 세션 유지")
+        view.selectedRange = NSRange(location:1,length:1)
+        guard let retiredCorrection = controller.beginSelectionCorrection() else { throw CocoaError(.validationMissingMandatoryProperty) }
         store.confirmProposal()
+        try check(!controller.confirmSelectionCorrection(retiredCorrection,replacement:"오래된 교정") && view.text == "가구",
+                  "노드 확정 후 지연된 선택 교정도 적용하지 않음")
         store.saveNow()
         let reopened = CanvasStore()
         try check(reopened.scene.nodes.first(where:{ $0.id == node.id })?.text == "가구","파일 저장 후 Store 재열기")
@@ -176,6 +182,174 @@ enum PencilTextCorrectionChecks {
         try await checkVaultEditors(host:host,check:check)
         try await checkVaultEditors(host:host,connection:connection,check:check)
         return "PENCIL_CORRECTION total=\(checks) failed=0 productionGeometry=true injectedTrace=true physicalPencil=false vaultRoundTrip=true fixture=REA-Pencil-Obsidian.md"
+    }
+
+    private static func checkJoinSplitGeometry(view: UITextView, controller: VaultMarkdownEditor.Coordinator,
+                                              check: (Bool,String) throws -> Void) throws {
+        func install(_ text: String) {
+            view.text = text
+            controller.textViewDidChange(view)
+            view.layoutManager.ensureLayout(for:view.textContainer)
+            view.undoManager?.removeAllActions()
+        }
+        func vertical(_ point: CGPoint, down: Bool) -> [CGPoint] {
+            (0...6).map { CGPoint(x:point.x,y:point.y + (down ? -24 : 24) + CGFloat($0) * (down ? 8 : -8)) }
+        }
+        for separator in [" ","   "] {
+            let source = "앞" + separator + "👩🏽‍💻뒤\n\n보존할 문단\n"
+            install(source)
+            guard let start = view.position(from:view.beginningOfDocument,offset:1),
+                  let end = view.position(from:start,offset:separator.utf16.count),
+                  let range = view.textRange(from:start,to:end),
+                  let rect = view.selectionRects(for:range).map(\.rect).first(where:{ $0.width > 0 }) else {
+                throw CocoaError(.validationMissingMandatoryProperty)
+            }
+            let points = vertical(CGPoint(x:rect.midX,y:rect.midY),down:false)
+            view.undoManager?.beginUndoGrouping()
+            controller.applyCorrection(points,expectedText:source)
+            view.undoManager?.endUndoGrouping()
+            try check(view.text == "앞👩🏽‍💻뒤\n\n보존할 문단\n","실제 공백 영역 중앙 위 획 합치기와 다른 문단 보존")
+            view.undoManager?.undo(); controller.textViewDidChange(view)
+            try check(view.text.utf8.elementsEqual(source.utf8),"합치기 Undo의 정확 원문 복원")
+            view.undoManager?.redo(); controller.textViewDidChange(view)
+            guard let position = view.position(from:view.beginningOfDocument,offset:1) else { throw CocoaError(.validationMissingMandatoryProperty) }
+            let caret = view.caretRect(for:position)
+            view.undoManager?.beginUndoGrouping()
+            controller.applyCorrection(vertical(CGPoint(x:caret.midX,y:caret.midY),down:true),expectedText:view.text)
+            view.undoManager?.endUndoGrouping()
+            try check(view.text == "앞 👩🏽‍💻뒤\n\n보존할 문단\n","실제 caret 아래 획 나누기와 emoji 보존")
+            view.undoManager?.undo(); controller.textViewDidChange(view)
+            try check(view.text == "앞👩🏽‍💻뒤\n\n보존할 문단\n","나누기 Undo가 추가 공백 하나만 복원")
+        }
+        for separator in ["\n", "\r\n", "  \n", "\n\n", "\t", "\u{a0}", "\u{2028}"] {
+            let source = "앞" + separator + "뒤"
+            install(source)
+            for offset in [1,1+separator.utf16.count] {
+                guard let position = view.position(from:view.beginningOfDocument,offset:offset) else { throw CocoaError(.validationMissingMandatoryProperty) }
+                let caret = view.caretRect(for:position)
+                controller.applyCorrection(vertical(CGPoint(x:caret.midX,y:caret.midY),down:false),expectedText:source)
+                try check(view.text.utf8.elementsEqual(source.utf8),"UIKit replay에서 Markdown 구분자·줄바꿈 합치기 거부")
+            }
+        }
+        install("앞👩🏽‍💻뒤")
+        guard let start = view.position(from:view.beginningOfDocument,offset:1),
+              let end = view.position(from:start,offset:"👩🏽‍💻".utf16.count),
+              let range = view.textRange(from:start,to:end),
+              let rect = view.selectionRects(for:range).map(\.rect).first(where:{ $0.width > 0 }) else {
+            throw CocoaError(.validationMissingMandatoryProperty)
+        }
+        controller.applyCorrection(vertical(CGPoint(x:rect.midX,y:rect.midY),down:true),expectedText:view.text)
+        try check(view.text == "앞👩🏽‍💻뒤","글자 중앙의 세로 획은 가까운 다른 caret에 나누기로 오적용하지 않음")
+        install("가나다")
+        guard let session = controller.parent.editSession(),
+              let position = view.position(from:view.beginningOfDocument,offset:1) else { throw CocoaError(.validationMissingMandatoryProperty) }
+        let caret = view.caretRect(for:position)
+        let points = vertical(CGPoint(x:caret.midX,y:caret.midY),down:true)
+        let snapshot = CanvasPencilTextSnapshot(text:view.text,session:session,selection:view.selectedRange)
+        view.selectedRange = NSRange(location:view.selectedRange.location == 0 ? 1 : 0,length:0)
+        controller.applyCorrection(points,snapshot:snapshot)
+        try check(view.text == "가나다","Pencil 시작 후 선택이 달라지면 snapshot 획 적용 거부")
+    }
+
+    private static func checkSelectionCorrections(view: VaultMarkdownEditor.NodeTextView,
+                                                  controller: VaultMarkdownEditor.Coordinator,
+                                                  check: (Bool,String) throws -> Void) async throws {
+        let source = "앞👩🏽‍💻e\u{301}뒤"
+        let selection = NSRange(location:1,length:"👩🏽‍💻".utf16.count)
+        func install(_ text: String = "앞👩🏽‍💻e\u{301}뒤", range: NSRange? = nil) {
+            controller.cancelSelectionCorrection()
+            view.text = text
+            view.selectedRange = range ?? selection
+            controller.textViewDidChange(view)
+            view.undoManager?.removeAllActions()
+        }
+        func begin() throws -> CanvasPencilTextSnapshot {
+            guard let snapshot = controller.beginSelectionCorrection() else { throw CocoaError(.validationMissingMandatoryProperty) }
+            return snapshot
+        }
+        install()
+        let nativeAction = UIAction(title:"기존 편집") { _ in }
+        let menu = controller.textView(view,editMenuForTextIn:selection,suggestedActions:[nativeAction])
+        try check(menu?.children.contains(where:{ ($0 as? UIAction)?.title == "선택 글자 교정…" }) == true &&
+                  menu?.children.first === nativeAction,"실제 UITextView 편집메뉴에 선택 교정을 추가하고 기본 동작 보존")
+        let cancelled = try begin()
+        controller.cancelSelectionCorrection(cancelled)
+        try check(view.text.utf8.elementsEqual(source.utf8) && view.undoManager?.canUndo != true &&
+                  !controller.confirmSelectionCorrection(cancelled,replacement:"취소 뒤 교정"),"선택 교정 취소는 원문·Undo를 바꾸지 않고 늦은 확정 거부")
+        let snapshot = try begin()
+        controller.cancelSelectionCorrection(cancelled)
+        try check(controller.pendingCorrection?.id == snapshot.id,"이전 창의 취소는 새 교정 요청을 취소하지 않음")
+        view.undoManager?.beginUndoGrouping()
+        let applied = controller.confirmSelectionCorrection(snapshot,replacement:"한글")
+        view.undoManager?.endUndoGrouping()
+        try check(applied && view.text == "앞한글e\u{301}뒤","명시 교정이 선택 emoji 전체만 바꾸고 결합문자 보존")
+        try check(!controller.confirmSelectionCorrection(snapshot,replacement:"중복"),"같은 교정 확정은 한 번만 소비")
+        view.undoManager?.undo(); controller.textViewDidChange(view)
+        try check(view.text.utf8.elementsEqual(source.utf8),"선택 교정 Undo의 UTF8 원문 복원")
+        view.undoManager?.redo(); controller.textViewDidChange(view)
+        try check(view.text == "앞한글e\u{301}뒤","선택 교정 Redo")
+        install()
+        let changedSelection = try begin()
+        view.selectedRange = NSRange(location:0,length:1)
+        controller.textViewDidChangeSelection(view)
+        try check(!controller.confirmSelectionCorrection(changedSelection,replacement:"오적용") && view.text == source,"선택 변경 후 교정 거부")
+        install()
+        let changedSource = try begin()
+        view.text = "새 입력"
+        controller.textViewDidChange(view)
+        try check(!controller.confirmSelectionCorrection(changedSource,replacement:"오적용") && view.text == "새 입력" &&
+                  controller.parent.text == "새 입력","교정 도중 새 입력과 바인딩 보존")
+        install()
+        let changedBinding = try begin()
+        controller.parent.text = "외부에서 갱신한 초안"
+        try check(!controller.confirmSelectionCorrection(changedBinding,replacement:"오적용") &&
+                  controller.parent.text == "외부에서 갱신한 초안" && view.text == source,"화면보다 먼저 갱신된 원문도 덮어쓰지 않음")
+        install()
+        let composition = try begin()
+        view.setMarkedText("조합",selectedRange:NSRange(location:1,length:0))
+        let composingText = view.text
+        try check(!controller.confirmSelectionCorrection(composition,replacement:"오적용") && view.text == composingText &&
+                  controller.beginSelectionCorrection() == nil,"실제 UITextView IME 조합 동안 교정 시작과 확정 거부")
+        view.unmarkText()
+        install()
+        if let scribble = view.interactions.compactMap({ $0 as? UIScribbleInteraction }).first {
+            let writing = try begin()
+            controller.scribbleInteractionWillBeginWriting(scribble)
+            try check(!controller.confirmSelectionCorrection(writing,replacement:"오적용") && controller.beginSelectionCorrection() == nil,
+                      "Scribble 시작은 열린 선택 교정을 무효화")
+            controller.scribbleInteractionDidFinishWriting(scribble)
+        } else { throw CocoaError(.validationMissingMandatoryProperty) }
+        install()
+        let expired = try begin()
+        let session = controller.parent.editSession
+        controller.parent.editSession = { nil }
+        try check(!controller.confirmSelectionCorrection(expired,replacement:"오적용") && view.text == source,"만료 세션의 수동 교정 거부")
+        controller.parent.editSession = session
+        install()
+        guard let toolbar = view.inputAccessoryView as? UIToolbar,
+              let item = toolbar.items?.first(where:{ $0.accessibilityIdentifier == "canvasSelectedTextCorrection" }),
+              let action = item.action else { throw CocoaError(.validationMissingMandatoryProperty) }
+        UIApplication.shared.sendAction(action,to:item.target,from:item,for:nil)
+        try await Task.sleep(for:.milliseconds(350))
+        var responder: UIResponder? = view
+        while responder != nil && !(responder is UIViewController) { responder = responder?.next }
+        guard let presenter = responder as? UIViewController,
+              let alert = presenter.presentedViewController as? UIAlertController,
+              let field = alert.textFields?.first else { throw CocoaError(.validationMissingMandatoryProperty) }
+        try check(alert.title == "선택 글자 교정" && field.accessibilityIdentifier == "canvasSelectedTextCorrectionInput" &&
+                  field.text == "👩🏽‍💻" && alert.actions.map(\.title) == ["취소","적용"] && alert.preferredAction?.isEnabled == false,
+                  "실제 수동 교정 창은 원래 선택 글자·취소·명시 적용을 표시")
+        field.text = "고침"
+        field.sendActions(for:.editingChanged)
+        try check(alert.preferredAction?.isEnabled == true && view.text == source,"대체 입력만으로 원문을 확정하지 않음")
+        field.setMarkedText("조합",selectedRange:NSRange(location:1,length:0))
+        field.sendActions(for:.editingChanged)
+        try check(alert.preferredAction?.isEnabled == false && view.text == source,"교정 입력창 IME 중 적용 비활성")
+        field.unmarkText()
+        controller.cancelSelectionCorrection()
+        try await Task.sleep(for:.milliseconds(150))
+        view.becomeFirstResponder()
+        install("가다",range:NSRange(location:1,length:1))
     }
 
     private static func checkVaultEditors(host: UIHostingController<AnyView>,
@@ -274,6 +448,21 @@ enum PencilTextCorrectionChecks {
             view.replace(range,withText:text)
             controller.textViewDidChange(view)
         }
+        func manuallyCorrect(_ view: UITextView, _ controller: VaultMarkdownEditor.Coordinator, text: String) throws {
+            let before = view.text ?? ""
+            view.selectedRange = NSRange(location:1,length:1)
+            controller.textViewDidChangeSelection(view)
+            guard let cancelled = controller.beginSelectionCorrection() else { throw CocoaError(.validationMissingMandatoryProperty) }
+            try check(store.vaultInputBusy && !store.vaultCanSave && !store.vaultBlockCanSave,
+                      "원문·연결 문단의 명시 교정 중 기존 저장과 CAS 전송 대기")
+            controller.cancelSelectionCorrection(cancelled)
+            try check(!store.vaultInputBusy && view.text == before,"원문·연결 문단의 교정 취소는 초안과 입력 상태 보존")
+            guard let snapshot = controller.beginSelectionCorrection() else { throw CocoaError(.validationMissingMandatoryProperty) }
+            try check(controller.confirmSelectionCorrection(snapshot,replacement:text) && !store.vaultInputBusy,
+                      "원문·연결 문단에 공통 선택 교정 확정 경로 적용")
+            try check(view.text == (before as NSString).replacingCharacters(in:NSRange(location:1,length:1),with:text),
+                      "선택 글자 교정은 블록 표식·인접 문자·나머지 문단 보존")
+        }
         let (whole,wholeController,wholeMode,wholeScribble) = try await mount()
         let wholeSession = store.vaultInputSessionID
         try toggle(wholeMode)
@@ -281,6 +470,7 @@ enum PencilTextCorrectionChecks {
         try check(store.vaultDraft.hasPrefix("가다") && store.vaultInputSessionID == wholeSession,
                   "원문의 교정 결과와 동일 세션 연결")
         try toggle(wholeMode)
+        try manuallyCorrect(whole,wholeController,text:"구")
         wholeController.scribbleInteractionWillBeginWriting(wholeScribble)
         try scribbleReplace(whole,wholeController,text:"구")
         try check(store.vaultDraft.hasPrefix("가구"),"원문 Scribble의 실제 UITextView 교정 결과 연결")
@@ -322,6 +512,7 @@ enum PencilTextCorrectionChecks {
         try check(store.vaultBlockDraft == "가다라" && store.blockRecovery?.draft == "가다라",
                   "문단 Pencil 결과를 기존 복구 기록에 보존")
         try toggle(blockMode)
+        try manuallyCorrect(block,blockController,text:"마")
         blockController.scribbleInteractionWillBeginWriting(blockScribble)
         try scribbleReplace(block,blockController,text:"마")
         try check(store.vaultBlockDraft == "가마라" && store.blockRecovery?.draft == "가마라",

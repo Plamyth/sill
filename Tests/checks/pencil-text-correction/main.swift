@@ -33,7 +33,7 @@ for cluster in clusters {
 }
 check(changed("a👩🏽‍💻e\u{301}z", .erase, NSRange(location: 2, length: 8)) == "az", "양끝 부분 글자 삭제 확대")
 
-for space in [" ", "   ", "\t", "\n", "\r\n", " \t\n ", "\u{a0}", "\u{2003}", "\u{2028}", "\u{3000}"] {
+for space in [" ", "   "] {
     let text = "가" + space + "다"
     var caret = 1
     for character in space {
@@ -44,6 +44,45 @@ for space in [" ", "   ", "\t", "\n", "\r\n", " \t\n ", "\u{a0}", "\u{2003}", "\
     check(changed(text, .join, NSRange(location: caret, length: 0)) == "가다", "구분자 뒤에서 합치기")
     check(changed(text, .split, NSRange(location: caret, length: 0)) == nil, "이미 있는 공백 뒤 나누기 거부")
 }
+for separator in ["\t", "\n", "\r\n", " \t\n ", "\n\n", "  \n", "\u{a0}", "\u{2003}", "\u{2028}", "\u{2029}", "\u{3000}"] {
+    let text = "가" + separator + "다"
+    for offset in 1...(1 + separator.utf16.count) {
+        check(changed(text,.join,NSRange(location:offset,length:0)) == nil,
+              "줄·문단·탭·의미 있는 Unicode 공백 보존 \(separator.debugDescription)/\(offset)")
+    }
+}
+for text in ["앞 \n뒤", "앞\n 뒤", "앞  \r\n뒤", "앞\t 뒤", "앞 \u{a0}뒤", "앞\n\n 뒤"] {
+    for offset in 0...text.utf16.count {
+        check(changed(text,.join,NSRange(location:offset,length:0)) == nil,"Markdown 경계 합치기 거부 \(text.debugDescription)/\(offset)")
+    }
+}
+check(changed("앞 뒤\n\n다 라",.join,NSRange(location:1,length:0)) == "앞뒤\n\n다 라","선택한 같은 줄의 공백만 합치고 다른 문단 보존")
+for cluster in clusters {
+    let text = "앞" + cluster + "뒤"
+    let selection = NSRange(location:1,length:cluster.utf16.count)
+    let edit = CanvasPencilTextCorrection.replacement(in:text,selection:selection,with:"교정")
+    check(edit?.range == selection && edit?.replacement == "교정","선택한 전체 Character의 명시 교정 \(cluster)")
+    if let edit {
+        check((text as NSString).replacingCharacters(in:edit.range,with:edit.replacement) == "앞교정뒤","교정의 인접 글자 보존 \(cluster)")
+    }
+    for offset in 1..<cluster.utf16.count {
+        check(CanvasPencilTextCorrection.replacement(in:text,selection:NSRange(location:1+offset,length:1),with:"교정") == nil,
+              "부분 Character 교정 거부 \(cluster)/\(offset)")
+    }
+    check(CanvasPencilTextCorrection.replacement(in:text,selection:selection,with:cluster) == nil,"동일 UTF8 교정은 변경 없음")
+    check(CanvasPencilTextCorrection.replacement(in:text,selection:selection,with:"") == nil,"빈 교정은 선택 삭제로 우회하지 않음")
+}
+let snapshotSession = UUID()
+let snapshotSelection = NSRange(location:1,length:2)
+let snapshotText = "앞e\u{301}뒤"
+let snapshot = CanvasPencilTextSnapshot(text:snapshotText,session:snapshotSession,selection:snapshotSelection)
+check(snapshot.matches(text:snapshotText,session:snapshotSession,selection:snapshotSelection),"정확한 원문·session·selection snapshot")
+check(!snapshot.matches(text:"앞é뒤",session:snapshotSession,selection:snapshotSelection),"정규화 동등 문자열도 UTF8가 다르면 stale")
+check(!snapshot.matches(text:snapshotText,session:UUID(),selection:snapshotSelection),"새 편집 세션은 stale")
+check(!snapshot.matches(text:snapshotText,session:nil,selection:snapshotSelection),"퇴역 편집 세션은 stale")
+check(!snapshot.matches(text:snapshotText,session:snapshotSession,selection:NSRange(location:0,length:1)),"달라진 선택은 stale")
+let normalizationEdit = CanvasPencilTextCorrection.replacement(in:snapshotText,selection:snapshotSelection,with:"é")
+check(normalizationEdit?.replacement.utf8.elementsEqual("é".utf8) == true,"사용자가 명시한 Unicode 정규화 교정만 허용")
 check(changed("가다", .split, NSRange(location: 1, length: 0)) == "가 다", "한글 나누기")
 check(changed("a b c", .join, NSRange(location: 2, length: 0)) == "ab c", "인접 공백만 합치기")
 for decoratedSpace in [" \u{301}", "\u{a0}\u{301}", " \u{fe0f}"] {
@@ -69,6 +108,9 @@ for text in ["", "가", "가다", "👩🏽‍💻"] {
 let invalid = [NSRange(location: -1, length: 1), NSRange(location: 0, length: -1),
                NSRange(location: NSNotFound, length: 1), NSRange(location: Int.max, length: Int.max),
                NSRange(location: 1, length: Int.max), NSRange(location: 4, length: 0)]
+for range in invalid + [NSRange(location:1,length:0)] {
+    check(CanvasPencilTextCorrection.replacement(in:"가 다",selection:range,with:"교정") == nil,"잘못된 범위·빈 선택의 수동 교정 거부")
+}
 for gesture in [CanvasPencilTextGesture.erase, .join, .split] {
     for range in invalid {
         check(changed("가 다", gesture, range) == nil, "잘못된 범위 거부 \(gesture)/\(range)")

@@ -10,7 +10,25 @@ struct CanvasPencilTextChange {
     let replacement: String
 }
 
+struct CanvasPencilTextSnapshot {
+    let id = UUID()
+    let text: String
+    let session: UUID
+    let selection: NSRange
+
+    func matches(text: String, session: UUID?, selection: NSRange) -> Bool {
+        self.session == session && self.selection == selection && self.text.utf8.elementsEqual(text.utf8)
+    }
+}
+
 enum CanvasPencilTextCorrection {
+    static func replacement(in text: String, selection: NSRange, with replacement: String) -> CanvasPencilTextChange? {
+        guard let whole = canvasSelectedCharacterRange(in:text,selection:selection), whole == selection,
+              let range = Range(whole,in:text), !replacement.isEmpty,
+              !text[range].utf8.elementsEqual(replacement.utf8) else { return nil }
+        return CanvasPencilTextChange(range:whole,replacement:replacement)
+    }
+
     // ponytail: 화면 좌표의 단일 획 휴리스틱이다. 실기기 표본으로 아래 임계치를 교정한다.
     static func gesture(for points: [CGPoint], minimumEraseWidth: CGFloat = 24) -> CanvasPencilTextGesture? {
         guard minimumEraseWidth.isFinite, minimumEraseWidth >= 1, minimumEraseWidth <= 24,
@@ -103,14 +121,14 @@ enum CanvasPencilTextCorrection {
             var lower = caret, upper = caret
             while lower > text.startIndex {
                 let previous = text.index(before: lower)
-                guard text[previous].unicodeScalars.allSatisfy({ $0.properties.isWhitespace }) else { break }
+                guard text[previous] == " " else { break }
                 lower = previous
             }
-            while upper < text.endIndex,
-                  text[upper].unicodeScalars.allSatisfy({ $0.properties.isWhitespace }) {
+            while upper < text.endIndex, text[upper] == " " {
                 upper = text.index(after: upper)
             }
-            guard lower < upper, lower > text.startIndex, upper < text.endIndex else { return nil }
+            guard lower < upper, lower > text.startIndex, upper < text.endIndex,
+                  !text[text.index(before:lower)].isWhitespace, !text[upper].isWhitespace else { return nil }
             return CanvasPencilTextChange(range: NSRange(lower..<upper, in: text), replacement: "")
         case .split:
             guard caret > text.startIndex, caret < text.endIndex,

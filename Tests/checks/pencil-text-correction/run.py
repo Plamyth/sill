@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 
 root = Path(__file__).resolve().parents[3]
 route = json.loads(subprocess.check_output([
     '/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive',
     '--project', 'BT_CCR-ipad'
 ], text=True))
-output = Path(route['path']) / 'pencil-semantic-implementation-20261021/model-checks'
-expected = Path('/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/pencil-semantic-implementation-20261021/model-checks')
-if output != expected or output.resolve() != expected:
+parser = argparse.ArgumentParser(description='Pencil 교정 순수 모델 검사')
+parser.add_argument('--output', type=Path, default=root / '.build/pencil-text-correction-checks')
+output = parser.parse_args().output.resolve()
+if not output.is_relative_to(Path(route['path']).resolve()):
     raise SystemExit('지정된 외장 출력 경로를 확인하지 못했습니다.')
-if len(sys.argv) > 1:
-    raise SystemExit('출력 위치는 고정되어 있습니다. 인자 없이 실행하세요.')
 output.mkdir(parents=True, exist_ok=True)
 model = root / 'iOSClient/CanvasBridge/CanvasModel.swift'
 correction = root / 'iOSClient/CanvasBridge/PencilTextCorrection.swift'
