@@ -3,6 +3,7 @@ import StreamProtocol
 
 typealias NWEndpoint = Int
 enum MoveKind { case fromRemote }
+enum VisionReleaseTestContext { static let isTestBundle = false }
 struct FoundMac {
     let id: String
     let name: String
@@ -43,12 +44,14 @@ final class StreamClient {
     var remoteRequests: [(String,DialReason)] = []
     var remoteDial: Int?
     var reconnect: Reconnect?
+    var reconnectCheck: Work?
+    var appInForeground = true
+    var moveUnderWay = false
     var afterPairingWatch: Work?
     var pairing = Pairing.idle
     var retries = 0, discoveryChanges = 0
     var status = ""
     func displayName(_ id: String) -> String { savedMac(id)?.name ?? "Mac" }
-    func reconnectIfListed() { retries += 1 }
     func discoveryChanged() { discoveryChanges += 1 }
     func savedMac(_ id: String) -> SavedMac? { records.first { $0.macID == id } }
     static func localIPv4Networks() -> [(address:[UInt8],prefix:Int)] { [([192,168,1,2],24)] }

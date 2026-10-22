@@ -659,6 +659,7 @@ extension StreamClient {
         reconnectCheck?.cancel()
         reconnectCheck = nil
         guard appInForeground, !connected, !moveUnderWay, var r = reconnect else { return false }
+        if let id = r.macID, !r.remoteAllowed, RemoteDialPolicy.ownerTailnetScope(savedMac(id)) { return false }
         let lifetime: DiscoveryPolicy.ReconnectLifetime
         #if os(visionOS)
         if let id = r.macID, let saved = savedMac(id), saved.fingerprintData != nil,

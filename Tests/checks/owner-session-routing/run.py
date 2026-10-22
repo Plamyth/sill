@@ -13,6 +13,9 @@ end=dial.index('\n        #if DEBUG',start)
 candidates=dial[start:end]
 methods='\n'.join(m.vision(m.block(stream,marker)) for marker in ['func homeDecision(', 'func dialRow('])
 methods+='\n'+m.vision(m.block(remote,'func remoteDialFailed('))
+retry=m.vision(m.block(remote,'func reconnectIfListed()'))
+retry=retry[:retry.index('        let lifetime:')]+'        retries += 1\n        return true\n    }'
+methods+='\n@discardableResult\n'+retry
 move=m.block(stream,'func moveHomeIfListed()')
 move=move[:move.index('        // Every network row')]+ '\n        homeEligible += 1\n    }'
 start_move=m.block(stream,'private func startMove(')
