@@ -258,7 +258,7 @@ final class OwnerBootstrapChecks {
         }
     }
 
-    @MainActor func testPartialReservationRequiresExplicitRecovery() async throws {
+    @MainActor func testPartialReservationRecoversWithFreshProof() async throws {
         let store = FaultStore(); store.pairedFailure = true
         let host = remote(store)
         assertClosed(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
@@ -266,9 +266,10 @@ final class OwnerBootstrapChecks {
         expectNotNil(try store.loadOwnerRegistry())
         store.pairedFailure = false
         let restarted = remote(store)
-        for key: UInt8 in [1, 2] {
-            assertClosed(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding(key)))))
-        }
+        assertClosed(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding(2)))))
+        assertOK(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        expectEqual(try store.loadPaired().count, 1)
+        expectEqual(remote(store).trust.snapshot.paired.count, 1)
     }
 
     @MainActor func testPairedReadbackAndRemovalFailures() async throws {
@@ -441,6 +442,43 @@ final class OwnerBootstrapChecks {
         expectEqual(try store.loadOwnerRegistry(), original)
     }
 
+    @MainActor func testExistingPairingRecoversWithoutChangingMetadata() async throws {
+        for method in [PairRequest.qr, PairRequest.code, PairResult.cable] {
+            let store = FaultStore(), key = binding().fingerprint
+            let original = PairedDevice(fingerprint: Base64URL.encode(key), name: "기존 이름", model: "기존 모델",
+                pairedAt: 123, method: method, cableDevice: "기존 케이블 식별자")
+            try store.savePaired([original])
+            let host = remote(store)
+            let result = await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding())))
+            assertOK(result)
+            expectEqual(result.method, OwnerMacBootstrap.method)
+            expectNotNil(result.recognitionKey)
+            expectEqual(try store.loadPaired(), [original])
+            expectEqual(host.trust.snapshot.paired.count, 1)
+            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectEqual(try store.loadPaired(), [original])
+        }
+    }
+
+    @MainActor func testPairedWriteInvalidationNeverActivatesAfterRestart() async throws {
+        for expired in [false, true] {
+            let store = FaultStore(), live = LiveFlag(), host = remote(store)
+            let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
+            store.beforePairedSave = {
+                if expired { Thread.sleep(forTimeInterval: 2.10) }
+                else { live.set(false) }
+            }
+            assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
+            expectTrue(host.trust.snapshot.paired.isEmpty)
+            let restarted = remote(store)
+            expectTrue(restarted.trust.snapshot.paired.isEmpty)
+            store.beforePairedSave = nil
+            assertOK(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectEqual(try store.loadPaired().count, 1)
+            expectEqual(remote(store).trust.snapshot.paired.count, 1)
+        }
+    }
+
     func testProofExpirationAndStop() async throws {
         let sensor = SensorFixture().sensor()
         guard case .success(let proof) = await sensor.principal(for: binding()) else { return fail("검사 proof 발급 실패") }
@@ -522,7 +560,7 @@ private struct OwnerHostBootstrapCheck {
         await checks.testWrongLocalEndpointDenied()
         do { try await checks.testRemovalAndRekeyNeverBootstrapAgain() } catch { fail("testRemovalAndRekeyNeverBootstrapAgain 예외") }
         do { try await checks.testRegistryFailureNeverProducesPairingSuccess() } catch { fail("testRegistryFailureNeverProducesPairingSuccess 예외") }
-        do { try await checks.testPartialReservationRequiresExplicitRecovery() } catch { fail("testPartialReservationRequiresExplicitRecovery 예외") }
+        do { try await checks.testPartialReservationRecoversWithFreshProof() } catch { fail("testPartialReservationRecoversWithFreshProof 예외") }
         do { try await checks.testPairedReadbackAndRemovalFailures() } catch { fail("testPairedReadbackAndRemovalFailures 예외") }
         do { try await checks.testTamperedMissingRegistryFailClosedOnlyForOwner() } catch { fail("testTamperedMissingRegistryFailClosedOnlyForOwner 예외") }
         do { try await checks.testExplicitPairingRemainsIndependentOfAutomaticRevocation() } catch { fail("testExplicitPairingRemainsIndependentOfAutomaticRevocation 예외") }
@@ -535,6 +573,8 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testUnsupportedStorePreservesLegacyPairing() } catch { fail("구형 저장소 호환성 검사 예외") }
         do { try checks.testOversizedRegistryNeverOverwritesValidRecord() } catch { fail("원장 크기 한도 검사 예외") }
         do { try await checks.testProofExpirationAndStop() } catch { fail("testProofExpirationAndStop 예외") }
+        do { try await checks.testExistingPairingRecoversWithoutChangingMetadata() } catch { fail("기존 paired 복구 검사 예외") }
+        do { try await checks.testPairedWriteInvalidationNeverActivatesAfterRestart() } catch { fail("paired 저장 중 현재성 검사 예외") }
         checks.testCanonicalSignedSensorRejectsUnexpectedExecutable()
         let (passed, failed) = CheckCounts.shared.result
         print("생산 함수 기반 호스트 검사 \(passed)개 통과, \(failed)개 실패. 네트워크·실제 키체인·설치·오디오 호출 0.")
