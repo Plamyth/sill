@@ -5,9 +5,10 @@ import StreamProtocol
 
 struct OwnerBootstrapRegistry: Codable, Equatable {
     struct Binding: Codable, Equatable {
-        let principal: String
+        enum State: String, Codable { case pending, active, revoked }
+        let principal: String?
         let fingerprint: String
-        var revoked = false
+        var state: State = .pending
     }
 
     private struct Record: Codable {
@@ -15,14 +16,38 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
         let signature: Data
     }
 
+    private struct LegacyBinding: Decodable {
+        let principal: String
+        let fingerprint: String
+        let revoked: Bool
+    }
+
+    private enum CodingKeys: String, CodingKey { case schema, macID, bindings }
     let schema: Int
     let macID: String
     var bindings: [Binding]
 
     init(macID: String) {
-        schema = 1
+        schema = 2
         self.macID = macID
         bindings = []
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try values.decode(Int.self, forKey: .schema)
+        guard version == 1 || version == 2 else {
+            throw IdentityStoreError("지원하지 않는 자동 등록 기록입니다.")
+        }
+        schema = 2
+        macID = try values.decode(String.self, forKey: .macID)
+        if version == 1 {
+            bindings = try values.decode([LegacyBinding].self, forKey: .bindings).map {
+                Binding(principal: $0.principal, fingerprint: $0.fingerprint, state: $0.revoked ? .revoked : .active)
+            }
+        } else {
+            bindings = try values.decode([Binding].self, forKey: .bindings)
+        }
     }
 
     static func principal(user: UInt64, node: String) -> String {
@@ -41,10 +66,13 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
               let record = try? JSONDecoder().decode(Record.self, from: data),
               identity.verifyRecord(message(record.payload), signature: record.signature),
               let registry = try? JSONDecoder().decode(Self.self, from: record.payload),
-              registry.schema == 1, registry.macID == identity.macID,
-              Set(registry.bindings.map(\.principal)).count == registry.bindings.count,
+              registry.macID == identity.macID,
+              Set(registry.bindings.compactMap(\.principal)).count == registry.bindings.compactMap(\.principal).count,
               Set(registry.bindings.map(\.fingerprint)).count == registry.bindings.count,
-              registry.bindings.allSatisfy({ validPrincipal($0.principal) && validFingerprint($0.fingerprint) }) else {
+              registry.bindings.allSatisfy({ binding in
+                  validFingerprint(binding.fingerprint)
+                      && (binding.principal.map(validPrincipal) ?? (binding.state == .revoked))
+              }) else {
             throw IdentityStoreError("자동 등록 철회 기록을 검증하지 못했습니다.")
         }
         return registry
@@ -66,16 +94,29 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
     }
 
     func permits(principal: String, fingerprint: String, paired: [PairedDevice]) -> Bool {
-        if let binding = bindings.first(where: { $0.principal == principal || $0.fingerprint == fingerprint }) {
-            return binding.principal == principal && binding.fingerprint == fingerprint && !binding.revoked
-                && paired.contains { $0.ownerPrincipal == principal && $0.fingerprint == fingerprint }
+        guard !paired.contains(where: { $0.ownerPrincipal == principal && $0.fingerprint != fingerprint }) else { return false }
+        let device = paired.first { $0.fingerprint == fingerprint }
+        if let device {
+            guard device.ownerPrincipal == principal || Self.isExplicitPairing(device) else { return false }
         }
-        return !paired.contains { $0.ownerPrincipal == principal || $0.fingerprint == fingerprint }
+        if let binding = bindings.first(where: { $0.principal == principal || $0.fingerprint == fingerprint }) {
+            guard binding.principal == principal, binding.fingerprint == fingerprint else { return false }
+            switch binding.state {
+            case .pending: return true
+            case .active: return device != nil
+            case .revoked: return false
+            }
+        }
+        return device == nil || device.map(Self.isExplicitPairing) == true
     }
 
     func trusts(_ device: PairedDevice) -> Bool {
         guard let principal = device.ownerPrincipal else { return true }
-        return bindings.contains { $0.principal == principal && $0.fingerprint == device.fingerprint && !$0.revoked }
+        return bindings.contains { $0.principal == principal && $0.fingerprint == device.fingerprint && $0.state == .active }
+    }
+
+    private static func isExplicitPairing(_ device: PairedDevice) -> Bool {
+        device.ownerPrincipal == nil && [PairRequest.qr, PairRequest.code, PairResult.cable, "icloud"].contains(device.method)
     }
 
     private static func message(_ payload: Data) -> Data { Data("sill-owner-registry-v1\n".utf8) + payload }

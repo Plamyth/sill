@@ -449,48 +449,52 @@ package final class RemoteAccess {
         windowClosed(.cancelled, reopen: false)
     }
 
-    /// Removes a paired device: from the store, then the snapshot (its next handshake fails in the
-    /// verify block, at either door), then every session of it, home and remote, gets goodbye
-    /// `removed`. Nil when done; otherwise why not, and nothing changed: a removal the store did
-    /// not keep (a locked login keychain, its prompt cancelled) would trust the device again at the
-    /// next launch while the pane said it could no longer connect, so the device stays listed and
-    /// connected until a save succeeds. Removing it also frees its iPhone or iPad for a pairing by
-    /// itself over the cable.
+    /// 철회 기록을 먼저 보존한다. paired 제거가 실패해도 자동 등록을 다시 허용하지 않는다.
     @discardableResult
     package func remove(fingerprint: String) -> String? {
-        guard let i = paired.firstIndex(where: { $0.fingerprint == fingerprint }) else { return nil }
-        var rest = paired
-        let device = rest.remove(at: i)
+        let device = paired.first { $0.fingerprint == fingerprint }
+        let rest = paired.filter { $0.fingerprint != fingerprint }
         guard let store, let identity else { return "호스트의 등록 저장소를 사용할 수 없습니다." }
-        var registry: OwnerBootstrapRegistry?
-        if device.ownerPrincipal != nil {
-            do { registry = try OwnerBootstrapRegistry.load(store: store, identity: identity) }
-            catch { return "자동 등록 철회 기록을 읽지 못해 제거하지 않았습니다." }
-        }
         do {
-            try store.savePaired(rest)
-            guard try store.loadPaired() == rest else { throw IdentityStoreError("기기 제거 저장을 확인하지 못했습니다.") }
+            var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+            if let index = registry.bindings.firstIndex(where: { $0.fingerprint == fingerprint }) {
+                if registry.bindings[index].state != .revoked {
+                    registry.bindings[index].state = .revoked
+                    try registry.save(store: store, identity: identity)
+                }
+            } else if let device {
+                registry.bindings.append(.init(principal: device.ownerPrincipal, fingerprint: fingerprint, state: .revoked))
+                try registry.save(store: store, identity: identity)
+            } else { return nil }
+            ownerRegistry = registry
+            publishTrust()
+        } catch OwnerRegistryStoreError.unsupported where device?.ownerPrincipal == nil {
+            guard device != nil else { return nil }
         } catch {
-            print("Remote access: \(device.displayName) is still paired: the paired devices could not be saved (\(error)).")
-            return "\(error)"
+            ownerRegistry = try? OwnerBootstrapRegistry.load(store: store, identity: identity)
+            publishTrust()
+            if let device, device.ownerPrincipal != nil, !ownerDeviceTrusted(device), let fp = device.fingerprintData {
+                onMicrophoneTrustRevoked?(fp)
+                server?.closeSessions(Goodbye.removed, matching: { $0.fingerprint == fp })
+            }
+            return "등록 철회 기록을 확인하지 못해 기기 목록을 보존했습니다."
         }
         var removalProblem: String?
-        if var next = registry {
-            for index in next.bindings.indices where next.bindings[index].fingerprint == fingerprint {
-                next.bindings[index].revoked = true
+        if rest != paired {
+            do {
+                try store.savePaired(rest)
+                guard try store.loadPaired() == rest else { throw IdentityStoreError("기기 제거 저장을 확인하지 못했습니다.") }
+                paired = rest
+            } catch {
+                if let saved = try? store.loadPaired() { paired = saved }
+                removalProblem = "등록은 철회했지만 기기 목록 저장을 확인하지 못했습니다. 제거를 다시 시도하세요."
             }
-            do { try next.save(store: store, identity: identity); ownerRegistry = next }
-            catch { removalProblem = "기기 등록은 제거했지만 철회 기록 갱신에 실패했습니다. 자동 재등록은 차단됩니다." }
         }
-        if let fp = device.fingerprintData { onMicrophoneTrustRevoked?(fp) }
-        paired = rest
-        if let fp = device.fingerprintData { lastSeen[RemoteIdentity.shortName(fp)] = nil }
+        let fp = device?.fingerprintData ?? Base64URL.decode(fingerprint)
+        if let fp { onMicrophoneTrustRevoked?(fp); lastSeen[RemoteIdentity.shortName(fp)] = nil }
         publishTrust()
         publish()
-        let fp = device.fingerprintData
-        server?.closeSessions(Goodbye.removed, matching: { fp != nil && $0.fingerprint == fp }, done: { n in
-            print("Removed \(device.displayName); closed \(n) connection\(n == 1 ? "" : "s").")
-        })
+        server?.closeSessions(Goodbye.removed, matching: { fp != nil && $0.fingerprint == fp })
         return removalProblem
     }
 
@@ -626,41 +630,63 @@ package final class RemoteAccess {
         let closed = PairResult(ok: false, reason: PairResult.closed)
         guard attempt.door == .remote, remoteAccess, OwnerBootstrapWire.accepts(attempt.request),
               let socket = attempt.ownerSocket, socket.binding.fingerprint == attempt.deviceFingerprint,
-              socket.binding.sourceIP == attempt.source,
-              socket.withCurrent({ true }) == true else { return closed }
+              socket.binding.sourceIP == attempt.source, socket.isLive else { return closed }
         guard case .success(let proof) = await ownerSensor.principal(for: socket.binding),
               !Task.isCancelled, remoteAccess, proof.binding == socket.binding,
               proof.sourceIP == socket.binding.sourceIP, proof.localIPs.contains(socket.binding.localIP),
               !proof.localIPs.contains(socket.binding.sourceIP), let identity, let store else { return closed }
+        let epoch = trust.snapshot.ownerBootstrapEpoch
+        func current() -> Bool {
+            remoteAccess && trust.snapshot.ownerBootstrapEpoch == epoch && socket.isLive
+                && ownerSensor.isCurrent(proof) && !Task.isCancelled
+        }
         do {
-            let result = try socket.withCurrent { () throws -> PairResult in
-                guard ownerSensor.isCurrent(proof) else { return closed }
-                var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
-                let saved = try store.loadPaired()
-                let fingerprint = Base64URL.encode(attempt.deviceFingerprint)
-                guard registry.permits(principal: proof.principal, fingerprint: fingerprint, paired: saved) else { return closed }
-                if !registry.bindings.contains(where: { $0.principal == proof.principal }) {
-                    registry.bindings.append(.init(principal: proof.principal, fingerprint: fingerprint))
-                    try registry.save(store: store, identity: identity)
+            guard current() else { return closed }
+            var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+            let saved = try store.loadPaired()
+            let fingerprint = Base64URL.encode(attempt.deviceFingerprint)
+            guard registry.permits(principal: proof.principal, fingerprint: fingerprint, paired: saved) else { return closed }
+            var next = saved
+            let index: Int
+            if let existing = registry.bindings.firstIndex(where: { $0.principal == proof.principal }) {
+                index = existing
+            } else {
+                index = registry.bindings.count
+                registry.bindings.append(.init(principal: proof.principal, fingerprint: fingerprint))
+                try registry.save(store: store, identity: identity)
+            }
+            ownerRegistry = registry
+            if registry.bindings[index].state == .pending {
+                if !next.contains(where: { $0.fingerprint == fingerprint }) {
+                    next.append(PairedDevice(fingerprint: fingerprint, name: SafeText.label(attempt.request.name),
+                        model: attempt.request.model.map { SafeText.label($0) }, pairedAt: Date().timeIntervalSince1970,
+                        method: OwnerMacBootstrap.method, ownerPrincipal: proof.principal))
                 }
-                ownerRegistry = registry
-                let device = PairedDevice(fingerprint: fingerprint, name: SafeText.label(attempt.request.name),
-                    model: attempt.request.model.map { SafeText.label($0) }, pairedAt: Date().timeIntervalSince1970,
-                    method: OwnerMacBootstrap.method, ownerPrincipal: proof.principal)
-                var next = saved.filter { $0.fingerprint != fingerprint }
-                next.append(device)
-                guard ownerSensor.isCurrent(proof), socket.isLive else { return closed }
-                try store.savePaired(next)
+                guard current() else { return closed }
+                if next != saved { try store.savePaired(next) }
                 guard try store.loadPaired() == next else { throw IdentityStoreError("자동 등록 저장을 확인하지 못했습니다.") }
                 paired = next
-                publishTrust()
-                publish()
-                return PairResult(ok: true, macID: identity.macID, name: macName,
-                    recognitionKey: Base64URL.encode(identity.recognitionKey), method: OwnerMacBootstrap.method)
+                guard current() else { publishTrust(); return closed }
+                registry.bindings[index].state = .active
+                try registry.save(store: store, identity: identity)
+                guard current() else {
+                    registry.bindings[index].state = .pending
+                    try registry.save(store: store, identity: identity)
+                    ownerRegistry = registry
+                    publishTrust()
+                    return closed
+                }
             }
-            return result ?? closed
+            guard current() else { return closed }
+            paired = next
+            ownerRegistry = registry
+            publishTrust()
+            publish()
+            return PairResult(ok: true, macID: identity.macID, name: macName,
+                recognitionKey: Base64URL.encode(identity.recognitionKey), method: OwnerMacBootstrap.method)
         } catch {
             ownerRegistry = try? OwnerBootstrapRegistry.load(store: store, identity: identity)
+            if let saved = try? store.loadPaired() { paired = saved }
             publishTrust()
             return closed
         }

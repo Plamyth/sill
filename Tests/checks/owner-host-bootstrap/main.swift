@@ -35,6 +35,9 @@ private final class FaultStore: IdentityStore {
     var registryMissing = false
     var afterRegistrySave: (() -> Void)?
     var beforePairedSave: (() -> Void)?
+    var afterPairedSave: (() throws -> Void)?
+    var beforeRegistrySave: (() throws -> Void)?
+    var registryWrites = 0
     var writes = 0
     var summary: String { "격리 검사 메모리" }
     var testDirectory: URL? { nil }
@@ -46,6 +49,7 @@ private final class FaultStore: IdentityStore {
         if pairedFailure { throw IdentityStoreError("검사 저장 실패") }
         if !pairedDrops { try memory.savePaired(devices) }
         writes += 1
+        try afterPairedSave?()
     }
     func loadOwnerRegistry() throws -> Data? {
         if readRegistryFailure { throw IdentityStoreError("검사 읽기 실패") }
@@ -53,6 +57,8 @@ private final class FaultStore: IdentityStore {
         return try memory.loadOwnerRegistry()
     }
     func saveOwnerRegistry(_ record: Data) throws {
+        registryWrites += 1
+        try beforeRegistrySave?()
         if registryFailure { throw IdentityStoreError("검사 원장 저장 실패") }
         if !registryDrops { try memory.saveOwnerRegistry(record) }
         afterRegistrySave?()
@@ -277,16 +283,24 @@ final class OwnerBootstrapChecks {
         let host = remote(dropped)
         assertClosed(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
         expectTrue(host.trust.snapshot.paired.isEmpty)
-        let store = FaultStore()
-        let owner = remote(store)
+        dropped.pairedDrops = false
+        assertOK(await remote(dropped).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        let store = FaultStore(), owner = remote(store), fp = Base64URL.encode(binding().fingerprint)
         assertOK(await owner.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
-        store.pairedFailure = true
-        expectNotNil(owner.remove(fingerprint: Base64URL.encode(binding().fingerprint)))
+        store.registryFailure = true
+        expectNotNil(owner.remove(fingerprint: fp))
         expectEqual(try store.loadPaired().count, 1)
-        store.pairedFailure = false; store.registryFailure = true
-        expectNotNil(owner.remove(fingerprint: Base64URL.encode(binding().fingerprint)))
-        expectTrue(try store.loadPaired().isEmpty)
+        expectEqual(remote(store).trust.snapshot.paired.count, 1)
+        store.registryFailure = false; store.pairedFailure = true
+        expectNotNil(owner.remove(fingerprint: fp))
+        expectEqual(try store.loadPaired().count, 1)
         expectTrue(owner.trust.snapshot.paired.isEmpty)
+        expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+        store.pairedFailure = false
+        let restarted = remote(store)
+        assertClosed(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        expectNil(restarted.remove(fingerprint: fp))
+        expectTrue(try store.loadPaired().isEmpty)
         assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding(2)))))
     }
 
@@ -428,6 +442,9 @@ final class OwnerBootstrapChecks {
         assertClosed(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
         expectEqual(try store.loadPaired(), [legacy])
         expectNotNil(host.trust.snapshot.paired[key])
+        expectNil(host.remove(fingerprint: legacy.fingerprint))
+        expectTrue(try store.loadPaired().isEmpty)
+        expectTrue(host.trust.snapshot.paired.isEmpty)
     }
 
     func testOversizedRegistryNeverOverwritesValidRecord() throws {
@@ -477,6 +494,192 @@ final class OwnerBootstrapChecks {
             expectEqual(try store.loadPaired().count, 1)
             expectEqual(remote(store).trust.snapshot.paired.count, 1)
         }
+    }
+
+    @MainActor func testWriteThenFailureRecoversAndPreservesMetadata() async throws {
+        let store = FaultStore(), host = remote(store)
+        store.afterPairedSave = { throw IdentityStoreError("저장 직후 중단") }
+        assertClosed(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        let partial = try store.loadPaired()
+        expectEqual(partial.count, 1)
+        expectTrue(host.trust.snapshot.paired.isEmpty)
+        store.afterPairedSave = nil
+        let restarted = remote(store)
+        expectTrue(restarted.trust.snapshot.paired.isEmpty)
+        assertOK(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        expectEqual(try store.loadPaired(), partial)
+        let writes = store.writes, registryWrites = store.registryWrites
+        assertOK(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        expectEqual(store.writes, writes)
+        expectEqual(store.registryWrites, registryWrites)
+    }
+
+    @MainActor func testCancellationDuringPairedWrite() async throws {
+        for cancelTask in [false, true] {
+            let store = FaultStore(), host = remote(store)
+            let socket = OwnerBootstrapSocket.fixture(binding: binding())
+            let result = await Task { @MainActor in
+                store.beforePairedSave = {
+                    if cancelTask { withUnsafeCurrentTask { $0?.cancel() } }
+                    else { socket.cancel() }
+                }
+                return await host.judgeOwnerBootstrap(self.attempt(socket))
+            }.value
+            assertClosed(result)
+            expectTrue(host.trust.snapshot.paired.isEmpty)
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            store.beforePairedSave = nil
+            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        }
+    }
+
+    @MainActor func testPendingNeverAcceptsDifferentNodeOrKey() async throws {
+        let store = FaultStore(); store.pairedFailure = true
+        assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        store.pairedFailure = false
+        let changed = SensorFixture(); changed.node["StableID"] = "other-node"
+        assertClosed(await remote(store, fixture: changed).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding(2)))))
+        assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        let other = SensorFixture(); other.node["StableID"] = "other-node"
+        assertClosed(await remote(store, fixture: other).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+    }
+
+    @MainActor func testActivationAndRemovalInterruptionPoints() async throws {
+        for afterWrite in [false, true] {
+            let store = FaultStore(), host = remote(store)
+            if afterWrite {
+                store.afterRegistrySave = { if store.registryWrites == 1 { store.registryFailure = true } }
+            } else {
+                store.beforeRegistrySave = { if store.registryWrites == 2 { throw IdentityStoreError("활성 저장 직전 중단") } }
+            }
+            assertClosed(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            store.afterRegistrySave = nil; store.beforeRegistrySave = nil; store.registryFailure = false
+            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            let fp = Base64URL.encode(binding().fingerprint)
+            store.afterPairedSave = { throw IdentityStoreError("제거 저장 직후 중단") }
+            expectNotNil(remote(store).remove(fingerprint: fp))
+            store.afterPairedSave = nil
+            expectTrue(try store.loadPaired().isEmpty)
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        }
+    }
+
+    @MainActor func testLegacyRemovalTombstoneBlocksRecovery() async throws {
+        let store = FaultStore(), fp = Base64URL.encode(binding().fingerprint)
+        try store.savePaired([PairedDevice(fingerprint: fp, name: "기존 기기", model: nil, pairedAt: 1, method: PairRequest.qr)])
+        expectNil(remote(store).remove(fingerprint: fp))
+        assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        try store.savePaired([PairedDevice(fingerprint: fp, name: "다시 명시적으로 허용", model: nil, pairedAt: 2, method: PairRequest.code)])
+        expectEqual(remote(store).trust.snapshot.paired.count, 1)
+        assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+    }
+
+    private func signedRegistry(_ store: FaultStore, schema: Int, bindings: [[String: Any]]) throws {
+        let identity = try require(HostIdentity(privateKey: store.loadOrCreateKey(), recognitionKey: store.loadOrCreateRecognitionKey()))
+        let payload = try JSONSerialization.data(withJSONObject: ["schema": schema, "macID": identity.macID, "bindings": bindings], options: .sortedKeys)
+        let signature = try require(identity.signRecord(Data("sill-owner-registry-v1\n".utf8) + payload))
+        try store.memory.saveOwnerRegistry(JSONSerialization.data(withJSONObject: ["payload": payload.base64EncodedString(), "signature": signature.base64EncodedString()]))
+    }
+
+    @MainActor func testRegistrySchemaCompatibilityAndCorruption() async throws {
+        let principal = OwnerBootstrapRegistry.principal(user: 7, node: "peer-node")
+        let fp = Base64URL.encode(binding().fingerprint)
+        let original = PairedDevice(fingerprint: fp, name: "v1 기기", model: "보존", pairedAt: 12,
+            method: OwnerMacBootstrap.method, cableDevice: "v1 케이블", ownerPrincipal: principal)
+        for revoked in [false, true] {
+            for missing in [false, true] {
+                let store = FaultStore()
+                if !missing { try store.savePaired([original]) }
+                try signedRegistry(store, schema: 1, bindings: [["principal": principal, "fingerprint": fp, "revoked": revoked]])
+                let host = remote(store)
+                let result = await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding())))
+                expectEqual(result.ok, !revoked && !missing)
+                expectEqual(host.trust.snapshot.paired.count, !revoked && !missing ? 1 : 0)
+                expectEqual(try store.loadPaired(), missing ? [] : [original])
+            }
+        }
+        for rows: [[String: Any]] in [
+            [["principal": principal, "fingerprint": fp, "state": "unknown"]],
+            [["fingerprint": fp, "state": "pending"]],
+            [["principal": principal, "fingerprint": fp, "state": "active"], ["principal": principal, "fingerprint": fp, "state": "pending"]]
+        ] {
+            let store = FaultStore()
+            try store.savePaired([original])
+            try signedRegistry(store, schema: 2, bindings: rows)
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        }
+        let future = FaultStore()
+        try signedRegistry(future, schema: 99, bindings: [])
+        assertClosed(await remote(future).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+    }
+
+    @MainActor func testPendingWithoutPairedCanBeRevoked() async throws {
+        let store = FaultStore(); store.pairedFailure = true
+        let host = remote(store), fp = Base64URL.encode(binding().fingerprint)
+        assertClosed(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        expectTrue(try store.loadPaired().isEmpty)
+        expectNil(host.remove(fingerprint: fp))
+        store.pairedFailure = false; store.registryFailure = true
+        expectNil(remote(store).remove(fingerprint: fp))
+        store.registryFailure = false
+        for key: UInt8 in [1, 2] {
+            assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding(key)))))
+        }
+    }
+
+    @MainActor func testActivationWriteInvalidationRemainsPending() async throws {
+        for expire in [false, true] {
+            let store = FaultStore(), live = LiveFlag(), host = remote(store)
+            store.afterRegistrySave = {
+                if store.registryWrites == 2 {
+                    if expire { Thread.sleep(forTimeInterval: 2.10) }
+                    else { live.set(false) }
+                }
+            }
+            let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
+            assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
+            expectTrue(host.trust.snapshot.paired.isEmpty)
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            let before = try store.loadPaired()
+            store.afterRegistrySave = nil
+            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectEqual(try store.loadPaired(), before)
+        }
+    }
+
+    @MainActor func testDurableTombstoneReadbackFailureNeverRestoresTrust() async throws {
+        let store = FaultStore(), host = remote(store), fp = Base64URL.encode(binding().fingerprint)
+        assertOK(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        store.afterRegistrySave = { store.readRegistryFailure = true }
+        expectNotNil(host.remove(fingerprint: fp))
+        expectTrue(host.trust.snapshot.paired.isEmpty)
+        store.afterRegistrySave = nil; store.readRegistryFailure = false
+        let restarted = remote(store)
+        expectTrue(restarted.trust.snapshot.paired.isEmpty)
+        assertClosed(await restarted.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        expectNil(restarted.remove(fingerprint: fp))
+        expectTrue(try store.loadPaired().isEmpty)
+    }
+
+    @MainActor func testV1MigrationPreservesExistingBinding() async throws {
+        let store = FaultStore(), principal = OwnerBootstrapRegistry.principal(user: 7, node: "peer-node")
+        let original = PairedDevice(fingerprint: Base64URL.encode(binding().fingerprint), name: "이전 등록", model: nil,
+            pairedAt: 1, method: OwnerMacBootstrap.method, ownerPrincipal: principal)
+        try store.savePaired([original])
+        try signedRegistry(store, schema: 1, bindings: [["principal": principal, "fingerprint": original.fingerprint, "revoked": false]])
+        let other = SensorFixture(); other.node["StableID"] = "second-node"
+        assertOK(await remote(store, fixture: other).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding(2)))))
+        expectEqual(try store.loadPaired().first, original)
+        let record = try require(JSONSerialization.jsonObject(with: store.loadOwnerRegistry()!) as? [String: Any])
+        let payload = try require(Data(base64Encoded: record["payload"] as! String))
+        let fields = try require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+        expectEqual(fields["schema"] as? Int, 2)
+        expectEqual(remote(store).trust.snapshot.paired.count, 2)
+        assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
     }
 
     func testProofExpirationAndStop() async throws {
@@ -575,6 +778,16 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testProofExpirationAndStop() } catch { fail("testProofExpirationAndStop 예외") }
         do { try await checks.testExistingPairingRecoversWithoutChangingMetadata() } catch { fail("기존 paired 복구 검사 예외") }
         do { try await checks.testPairedWriteInvalidationNeverActivatesAfterRestart() } catch { fail("paired 저장 중 현재성 검사 예외") }
+        do { try await checks.testWriteThenFailureRecoversAndPreservesMetadata() } catch { fail("저장 직후 실패 복구 검사 예외") }
+        do { try await checks.testCancellationDuringPairedWrite() } catch { fail("저장 중 취소 검사 예외") }
+        do { try await checks.testPendingNeverAcceptsDifferentNodeOrKey() } catch { fail("node와 key 충돌 검사 예외") }
+        do { try await checks.testActivationAndRemovalInterruptionPoints() } catch { fail("활성화와 철회 중단 검사 예외") }
+        do { try await checks.testLegacyRemovalTombstoneBlocksRecovery() } catch { fail("기존 paired 철회 검사 예외") }
+        do { try await checks.testRegistrySchemaCompatibilityAndCorruption() } catch { fail("원장 schema 호환과 손상 검사 예외") }
+        do { try await checks.testPendingWithoutPairedCanBeRevoked() } catch { fail("paired 없는 예약 철회 검사 예외") }
+        do { try await checks.testActivationWriteInvalidationRemainsPending() } catch { fail("활성 저장 중 현재성 검사 예외") }
+        do { try await checks.testDurableTombstoneReadbackFailureNeverRestoresTrust() } catch { fail("철회 readback 실패 검사 예외") }
+        do { try await checks.testV1MigrationPreservesExistingBinding() } catch { fail("v1 원장 이행 검사 예외") }
         checks.testCanonicalSignedSensorRejectsUnexpectedExecutable()
         let (passed, failed) = CheckCounts.shared.result
         print("생산 함수 기반 호스트 검사 \(passed)개 통과, \(failed)개 실패. 네트워크·실제 키체인·설치·오디오 호출 0.")

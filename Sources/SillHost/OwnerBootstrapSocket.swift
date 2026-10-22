@@ -58,16 +58,14 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
         return Binding(generation: generation, fingerprint: fingerprint, sourceIP: remote, localIP: local, interface: interface)
     }
 
-    var isLive: Bool { DispatchTime.now().uptimeNanoseconds < deadline && current() }
-
-    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
-
-    func withCurrent<T>(_ action: () throws -> T) rethrows -> T? {
+    var isLive: Bool {
+        guard DispatchTime.now().uptimeNanoseconds < deadline, current() else { return false }
         lock.lock()
         defer { lock.unlock() }
-        guard !cancelled, DispatchTime.now().uptimeNanoseconds < deadline, current() else { return nil }
-        return try action()
+        return !cancelled && DispatchTime.now().uptimeNanoseconds < deadline
     }
+
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
 
     #if OWNER_BOOTSTRAP_CONTRACT
     static func fixture(binding: Binding, trust: TrustBox? = nil, current: @escaping () -> Bool = { true }) -> OwnerBootstrapSocket {

@@ -133,9 +133,11 @@ package protocol IdentityStore: AnyObject {
     var testDirectory: URL? { get }
 }
 
+package enum OwnerRegistryStoreError: Error { case unsupported }
+
 extension IdentityStore {
-    package func loadOwnerRegistry() throws -> Data? { throw IdentityStoreError("자동 등록 기록 저장을 지원하지 않습니다.") }
-    package func saveOwnerRegistry(_ record: Data) throws { throw IdentityStoreError("자동 등록 기록 저장을 지원하지 않습니다.") }
+    package func loadOwnerRegistry() throws -> Data? { throw OwnerRegistryStoreError.unsupported }
+    package func saveOwnerRegistry(_ record: Data) throws { throw OwnerRegistryStoreError.unsupported }
 }
 
 package struct IdentityStoreError: Error, CustomStringConvertible {
