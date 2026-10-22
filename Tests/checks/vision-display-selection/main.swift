@@ -287,5 +287,16 @@ check(!cancelledModal.modal && cancelledModal.pending == nil &&
       cancelledModal.lastResult?.code == .admissionChanged && cancelledModal.inputBlocked,
       "replacement lease clears modal while cancelled selection remains unresolved")
 
+let (startupDisplay, startupDisplayPeer) = client()
+startupDisplay.session = .init(macID: "0123456789ABCDEF")
+startupDisplay.trustedDisplayPeer = true
+var startupDisplayCatalog = list()
+startupDisplayCatalog.launchID = "host-launch"
+startupDisplayCatalog.automaticDisplaySelection = 1
+startupDisplayCatalog.selectionRevision = "r0"
+startupDisplay.observeVisionDisplays(startupDisplayCatalog, from: startupDisplayPeer)
+check(startupDisplay.releaseCallbacks.count == 1 && startupDisplayPeer.sent.isEmpty,
+      "인증한 최초 빈 화면은 별도 모드 없이 main 선택의 입력 해제를 시작한다")
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)

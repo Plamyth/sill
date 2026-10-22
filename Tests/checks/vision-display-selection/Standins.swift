@@ -14,6 +14,10 @@ final class FakeAudio {
 }
 final class StreamClient {
     var visionDisplayApplicationActive = true
+    struct Session { var macID: String? }
+    var session: Session?
+    var trustedDisplayPeer = false
+    var authenticatedVisionMacAudioPeer: ObjectIdentifier? { trustedDisplayPeer ? connection.map(ObjectIdentifier.init) : nil }
     enum Binding { case awaiting, presented(VideoEpoch) }
     var visionInputBinding = Binding.awaiting
     let visionInputSession: FakeInput? = FakeInput()
