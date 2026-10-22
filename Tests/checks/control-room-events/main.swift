@@ -112,6 +112,16 @@ func stream() -> AsyncStream<ControlRoomEventUpdate> {
         var strict = ControlRoomEventsReducer()
         let validRelayFrame = try frames(frame(event("snapshot",0,fields:["snapshot":snapshot()])))[0]
         _ = try strict.consume(validRelayFrame,contract:.relayProjection)
+        var upstreamFieldsPatch = patch(1)
+        upstreamFieldsPatch["changes"] = [["op":"replace","path":["workspace"],"value":"상류 전용 변경"]]
+        let fieldsEncoder = JSONEncoder()
+        fieldsEncoder.outputFormatting = [.sortedKeys]
+        let beforeFieldsPatch = try fieldsEncoder.encode(strict.snapshot)
+        rejects("상류 전용 필드 차분을 relay SSE에서 거부") {
+            _ = try strict.consume(frames(frame(upstreamFieldsPatch))[0],contract:.relayProjection)
+        }
+        check(try strict.revision == 0 && fieldsEncoder.encode(strict.snapshot) == beforeFieldsPatch,
+              "거부된 상류 필드 차분은 마지막 정상 상태·revision을 바꾸지 않음")
         for removedField in ["connection","sourceObservedAt","threads","catalog","currentGrid","workspaces"] {
             var invalid = snapshot(); invalid.removeValue(forKey:removedField)
             rejects("SSE 필수 메타데이터 누락") {
