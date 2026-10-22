@@ -3,6 +3,13 @@ import Network
 import SwiftUI
 import StreamProtocol
 
+final class UserDefaults {
+    static let standard = UserDefaults()
+    var values: [String: Data] = [:]
+    func data(forKey key: String) -> Data? { values[key] }
+    func set(_ value: Data, forKey key: String) { values[key] = value }
+}
+
 final class FakeInput {
     var allowed = true
     var releases = 0

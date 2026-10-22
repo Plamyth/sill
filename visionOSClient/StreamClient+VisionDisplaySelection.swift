@@ -34,11 +34,14 @@ extension StreamClient {
         dispatchPrecondition(condition: .onQueue(.main))
         visionDisplaySelection.admit(lease: lease, foreground: foreground && visionDisplayApplicationIsActive())
         reconcileVisionDisplaySubmission()
+        reconcileVisionAutomaticDisplay()
     }
 
     func setVisionDisplayModal(_ shown: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         visionDisplaySelection.setModal(shown)
+        reconcileVisionDisplaySubmission()
+        if !shown { reconcileVisionAutomaticDisplay() }
         if shown {
             visionInputSession?.allowed = false
             revokeVisionTextDrafts()
@@ -54,11 +57,52 @@ extension StreamClient {
         visionDisplaySelection.observe(.init(list))
         confirmVisionDisplayPresentation()
         reconcileVisionDisplaySubmission()
+        reconcileVisionAutomaticDisplay()
     }
 
     func confirmVisionDisplayPresentation() {
         dispatchPrecondition(condition: .onQueue(.main))
-        if case .presented(let epoch) = visionInputBinding { visionDisplaySelection.presented(epoch) }
+        if case .presented(let epoch) = visionInputBinding {
+            visionDisplaySelection.presented(epoch)
+            if let macID = visionAutomaticDisplayMacID {
+                visionDisplaySelection.recoverAutomaticPresentation(epoch, macID: macID)
+            }
+            if let macID = visionAutomaticDisplayMacID,
+               let remembered = visionDisplaySelection.rememberedDisplay(macID: macID, epoch: epoch),
+               let bytes = try? JSONEncoder().encode(remembered) {
+                let key = "SillVerifiedDisplay." + macID
+                if UserDefaults.standard.data(forKey: key) != bytes { UserDefaults.standard.set(bytes, forKey: key) }
+            }
+        }
+        reconcileVisionDisplaySubmission()
+    }
+
+    private var visionAutomaticDisplayMacID: String? {
+        guard let peer = connection, peer === visionDisplayPeer,
+              authenticatedVisionMacAudioPeer == ObjectIdentifier(peer) else { return nil }
+        return session?.macID
+    }
+
+    func reconcileVisionAutomaticDisplay() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let macID = visionAutomaticDisplayMacID else {
+            if visionDisplaySelection.hasAutomaticOpportunity {
+                visionDisplaySelection.stopAutomatic()
+                reconcileVisionDisplaySubmission()
+            }
+            return
+        }
+        let data = UserDefaults.standard.data(forKey: "SillVerifiedDisplay." + macID)
+        let remembered = data.flatMap { $0.count <= 4096 ? try? JSONDecoder().decode(VisionDisplaySelection.Remembered.self, from: $0) : nil }
+        if let command = visionDisplaySelection.automaticCommand(macID: macID, remembered: remembered) {
+            _ = selectVisionDisplay(command)
+        }
+        reconcileVisionDisplaySubmission()
+    }
+
+    func prepareVisionManualSource() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        visionDisplaySelection.prepareManualSource()
         reconcileVisionDisplaySubmission()
     }
 
@@ -95,6 +139,12 @@ extension StreamClient {
                 self.admitVisionDisplays(lease: self.visionDisplaySelection.lease, foreground: false)
                 return
             }
+            if command.automaticRevision != nil {
+                guard let macID = self.visionAutomaticDisplayMacID,
+                      self.visionDisplaySelection.automaticIsCurrent(command, macID: macID) else {
+                    self.cancelVisionDisplaySelection(.staleScope); return
+                }
+            }
             guard self.visionDisplaySelection.released(command.requestID, confirmed: confirmed) else {
                 self.reconcileVisionDisplaySubmission(); return
             }
@@ -107,7 +157,9 @@ extension StreamClient {
                 self.reconcileVisionDisplaySubmission()
             }
             self.visionDisplaySubmission = submission
-            let selection = DisplaySelection(displayID: command.displayID, inventoryID: command.token.inventory)
+            let selection = DisplaySelection(displayID: command.displayID, inventoryID: command.token.inventory,
+                                             origin: command.automaticRevision == nil ? .human : .automatic,
+                                             selectionRevision: command.automaticRevision)
             let bytes = StreamMessage(kind: .selectDisplay, timestamp: Date().timeIntervalSince1970,
                                       isKeyframe: false, payload: Wire.encode(selection)).serialized()
             _ = self.visionDisplayLink.send(bytes, onlyOn: expected, submission: submission)
