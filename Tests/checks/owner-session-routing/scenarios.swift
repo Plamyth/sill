@@ -63,6 +63,12 @@ for failure in [RemoteDialPolicy.Failure.revoked, .wrongMac, .remoteOff] {
     _ = c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true)
     c.remoteDialFailed(macID: owner.macID, why: c.remoteRequests.last!.1, failure: failure, candidate: ownerCandidates.first)
     check("\(failure) 응답 뒤 자동 원격 재시도 금지", c.reconnect?.remoteAllowed == false && c.reconnect?.remoteFailures == 0)
+    let count = c.remoteRequests.count
+    let attempted = c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true)
+    check("\(failure) 뒤 남은 Bonjour 행도 자동 재접속을 시작하지 않음", !attempted && c.remoteRequests.count == count)
+    if failure == .remoteOff {
+        check("원격 꺼짐 뒤 명시적 선택은 새 요청으로 처리", c.dialRow(row, macID: owner.macID, trust: .saved(pin: pin), tagNamed: true, tap: true) && c.remoteRequests.last?.1 == .tap)
+    }
 }
 for failure in RemoteDialPolicy.Failure.allCases {
     let text = RemoteCopy.dialFailure(failure, mac: owner.name, candidate: ownerCandidates.first, vpnName: "Tailscale", device: "Vision Pro")
