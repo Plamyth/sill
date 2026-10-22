@@ -27,6 +27,8 @@ markers = [
     "private func trySavedMacAutoConnect()",
     "private func dialUnconstrained(",
     "func disconnect()",
+    "private func cameForward()",
+    "func discoveryChanged()",
     "func connect(to mac:",
 ]
 if "func fallBackFromStartupWired()" in source:

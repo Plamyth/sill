@@ -111,7 +111,16 @@ final class StreamClient {
     static let lookingOnNetwork = "fixture-search"
     func savedMac(_ id: String) -> SavedMac? { savedMacs.first { $0.macID == id } }
     func displayName(_ id: String) -> String { "fixture-Mac" }
-    func discoveryChanged() {}
+    var browsing = false
+    var nearbyBrowser: Int?
+    enum BrowserKind { case network, nearby }
+    func rebuildIfDue(_ kind: BrowserKind, cameForward: Bool) {}
+    func resumeOwnerBootstrapAfterForeground() {}
+    func recomputeMacs() {}
+    func moveToNetworkIfListed() {}
+    func followBestPath() {}
+    func moveHomeIfListed() {}
+    func enterForeground() { cameForward() }
     func updateDiscovery() {}
     func cancelOwnerBootstrap() {}
     func cancelHomeAsk() {}

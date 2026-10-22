@@ -219,5 +219,38 @@ do {
     c.cableUnavailable(cable)
     check(c.remoteDials.isEmpty && c.reconnect == nil, "케이블 실패 전에 기기 키가 사라지면 재시도 권한도 만들지 않음")
 }
+for ending in ["timeout", "session-end"] {
+    Clock.reset()
+    let c = StreamClient(); c.macs = [FoundMac(cable: true)]
+    c.armSavedMacAutoConnect(); let cable = c.connection!
+    c.appInForeground = false
+    if ending == "timeout" { c.cableUnavailable(cable) } else { c.closedBeforeAdmission() }
+    c.macs = []
+    Clock.advance(30); c.evaluate()
+    check(c.remoteDials.isEmpty && c.connection == nil && c.reconnectCheck == nil,
+          "케이블 행이 사라진 배경의 실제 유선 실패는 소켓과 타이머를 시작하지 않음 ending=\(ending)")
+    c.enterForeground()
+    check(c.remoteDials.count == 1 && c.reconnect?.macID == "trusted",
+          "실제 cameForward/discoveryChanged가 보존한 waitingRemote를 Reconnect로 재개 ending=\(ending)")
+    let loss = c.reconnect?.lostAt
+    c.failRemote(.noAnswer)
+    c.appInForeground = false; _ = c.reconnectIfListed(); Clock.advance(5)
+    c.enterForeground(); c.enterForeground()
+    check(c.remoteDials.count == 2 && c.reconnect?.lostAt == loss,
+          "전경 복귀의 기존 재시도는 새 loss나 예산을 만들지 않음 ending=\(ending)")
+    for _ in 0..<14 {
+        if c.remoteDial != nil { c.failRemote(.noAnswer) }
+        Clock.advance(10)
+    }
+    check(c.reconnect?.remoteAllowed == false && c.reconnectCheck == nil,
+          "배경과 전경 전환 뒤에도 원래 120초 예산에서 종료 ending=\(ending)")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.macs = [FoundMac(cable: true)]
+    c.armSavedMacAutoConnect(); c.appInForeground = false; c.closedBeforeAdmission()
+    c.stop(); c.enterForeground()
+    check(c.remoteDials.isEmpty && c.reconnect == nil, "배경 유선 실패 뒤 명시적 중지는 전경 자동 재개도 차단")
+}
 print("\(checks - failures)/\(checks) checks passed; \(failures) failed")
 exit(failures == 0 ? 0 : 1)
