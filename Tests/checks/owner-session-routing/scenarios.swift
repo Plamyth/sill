@@ -34,5 +34,13 @@ for method in ["qr","code","cable","icloud"] {
     c.session=Session(macID:legacy.macID);c.moveHomeIfListed();c.startMove(to:7,kind:.fromRemote,fallback:nil)
     check("기존 \(method) home 이동 경로 보존", c.homeEligible == 1 && c.moveCreated == 1)
 }
+for flag in ["revoked","newKey"] {
+    var invalid=owner
+    if flag == "revoked" { invalid.revoked=true } else { invalid.newKey=true }
+    let c=StreamClient();c.records=[invalid]
+    check("owner \(flag) 기록을 자동 home 신뢰로 승격하지 않음", c.homeDecision(row,macID:invalid.macID,tap:false) != .pinned)
+    _=c.dialRow(row,macID:invalid.macID,trust:.saved(pin:pin),tagNamed:true)
+    check("owner \(flag) 직접 row 호출도 새 연결을 만들지 않음", c.rowConnections == 0 && c.remoteRequests.isEmpty)
+}
 print("Owner session routing \(checks)개, 실패 \(failures)개. 실제 후보/진입 메서드와 I/O 대역 검사.")
 if failures != 0 { exit(1) }

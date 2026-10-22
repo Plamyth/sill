@@ -79,6 +79,12 @@ def emit(root, output):
     pieces['stopVisionCableBootstrap'] = block(adapter, 'func stopVisionCableBootstrap(')
     body = (root / 'Tests/checks/vision-autoconnect/Standins.swift').read_text()
     body = body.replace('/* REAL_CLIENT_METHODS */', '\n'.join(pieces.values()))
+    route = (root / 'iOSClient/RemoteDialPolicy.swift').read_text()
+    body += '\nenum RemoteDialPolicy {\n' + block(route, 'static func ownerTailnetScope(') + '\n}\n'
+    owner_profile = (root / 'Sources/StreamProtocol/OwnerMacBootstrap.swift').read_text()
+    method = next(line.strip() for line in owner_profile.splitlines() if line.strip().startswith('public static let method ='))
+    body += '\nenum OwnerMacBootstrap {\n' + method + '\n}\n'
+
     owner = (root / 'visionOSClient/VisionAppSession.swift').read_text()
     owner_methods = '\n'.join(block(owner, marker) for marker in ['func claim(', 'func owns(', 'func release(',
         'func setScenePhase(', 'func suspendPresentation(', 'func start(', 'func setForeground('])
@@ -120,6 +126,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     record = {'schema': 1, 'scope': 'pure policy and actual extracted startup/ask/save adapters; inert typed Network, key, defaults, timer and session I/O; no device or host acceptance', 'commands': [], 'exitCode': 2}
     source_paths = [root / name for name in [
+        'iOSClient/RemoteDialPolicy.swift', 'Sources/StreamProtocol/OwnerMacBootstrap.swift',
         'visionOSClient/VisionCableBootstrap.swift', 'visionOSClient/VisionAutoConnectStatus.swift',
         'visionOSClient/StreamClient+VisionAutoConnect.swift', 'visionOSClient/VisionAppSession.swift',
         'iOSClient/StreamClient.swift', 'iOSClient/StreamClient+Home.swift', 'iOSClient/StreamClient+Remote.swift', 'iOSClient/SavedMacs.swift',

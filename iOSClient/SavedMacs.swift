@@ -28,7 +28,7 @@ struct SavedMac: Codable, Hashable, Identifiable {
     /// "host|port" of the address that last won a remote dial: dialed first next time.
     var lastWorked: String?
     var pairedAt: Date
-    /// "qr" or "code".
+    /// 최초 신뢰 등록 방식이다. 자동 소유자 등록은 owner-tailnet-v1로 구분한다.
     var method: String
     var lastConnectedAt: Date?
     /// "Tailscale", "your VPN", "the internet" or "by address".
