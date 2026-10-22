@@ -2,10 +2,13 @@ import SwiftUI
 import Combine
 import StreamProtocol
 
+@MainActor
 final class VisionAppSession: ObservableObject {
     let client: StreamClient
     let input = VisionInputSession()
     let stats = ClientStatsReporter()
+    let controlEvents = ControlEventsController()
+    lazy var controlEnrollment = VisionControlEnrollmentController(events: controlEvents)
     @Published private(set) var windowLease: VisionWindowLease?
     var windowOwner: UUID? { windowLease?.window }
     @Published private(set) var message = "Mac 연결을 준비하고 있습니다."
@@ -61,6 +64,8 @@ final class VisionAppSession: ObservableObject {
     }
 
     deinit {
+        let events = controlEvents
+        DispatchQueue.main.async { events.release() }
         #if DEBUG && targetEnvironment(simulator)
         remotePeer?.stop()
         #endif
@@ -75,7 +80,7 @@ final class VisionAppSession: ObservableObject {
     }
 
     func claim(_ window: UUID) {
-        if windowLease == nil { windowLease = VisionWindowLease(window: window) }
+        if windowLease == nil { windowLease = VisionWindowLease(window: window); controlEvents.claim() }
         guard VisionReleaseTestContext.usesSceneLifecycle else { return }
         client.admitVisionDisplays(lease: windowLease, foreground: foreground)
     }
@@ -85,6 +90,7 @@ final class VisionAppSession: ObservableObject {
     func release(_ window: UUID) {
         guard windowOwner == window else { return }
         windowLease = nil
+        controlEvents.release()
         client.stopSavedMacAutoConnect()
         suspendPresentation()
         input.allowed = false
@@ -135,6 +141,7 @@ final class VisionAppSession: ObservableObject {
             }
         }
         #endif
+        controlEnrollment.restore()
         started = true
         self.foreground = foreground
         client.visionStartupForeground = foreground
@@ -158,6 +165,7 @@ final class VisionAppSession: ObservableObject {
     func setForeground(_ active: Bool) {
         guard VisionReleaseTestContext.usesSceneLifecycle else { return }
         foreground = active
+        controlEvents.setForeground(active && windowLease != nil)
         client.admitVisionDisplays(lease: windowLease, foreground: active)
         client.visionStartupForeground = active
         client.visionAudio.setForeground(active)
