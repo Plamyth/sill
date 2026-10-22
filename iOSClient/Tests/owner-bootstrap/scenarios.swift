@@ -5,8 +5,9 @@ let fixtureURL = URL(fileURLWithPath: CommandLine.arguments[1])
 try JSONEncoder().encode(fixtureProfile).write(to: fixtureURL)
 var count = 0
 var retryFailures = 0
+var retryCount = 0
 func checkRetry(_ value: Bool, _ label: String) {
-    count += 1
+    retryCount += 1
     if !value { retryFailures += 1; print("FAIL " + label) }
 }
 func check(_ name: String, _ value: Bool) { precondition(value, name); count += 1 }
@@ -237,5 +238,5 @@ do {
     checkRetry(manual.reconnect == nil && manual.retryChecks == 0 && manual.pairing == .idle,
                "기존 수동 afterPairing 실패에는 자동 재시도를 추가하지 않음")
 }
-print("OWNER_STARTUP_RETRY failures=\(retryFailures)")
+print("OWNER_STARTUP_RETRY total=\(retryCount) failures=\(retryFailures)")
 if retryFailures > 0 { exit(1) }

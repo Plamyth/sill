@@ -121,7 +121,7 @@ extension StreamClient {
         savedMacs = SavedMacs.adding(mac, to: savedMacs)
         persistSavedMacs()
         rememberPreferredMac(mac.macID)
-        dialSaved(mac.macID, why: .afterPairing)
+        dialSavedAtStartup(mac.macID)
     }
 }
 #endif
