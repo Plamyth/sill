@@ -83,6 +83,23 @@ unchanged.prepareVisionPeerSourceChange(.display(12))
 unchanged.visionPeerStreams.observe(shownDisplay)
 check(unchanged.visionPeerStreams.epoch == nil, "a different display cannot be acknowledged by the old display catalog")
 
+let unadmitted = StreamClient(); unadmitted.connection = NWConnection()
+present(unadmitted, desktopEpoch, list: shownDisplay)
+unadmitted.cancelVisionInputs()
+check(unadmitted.visionInputPermit == nil, "opening a modal can revoke the existing monitor permit")
+unadmitted.prepareVisionPeerSourceChange(.display(11))
+unadmitted.visionPeerStreams.observe(shownDisplay)
+check(unadmitted.visionPeerStreams.epoch == nil, "old same-monitor catalog cannot recover the unadmitted selection")
+var processedDisplay = shownDisplay; processedDisplay.selectionRevision = "display-handled-next"
+unadmitted.visionPeerStreams.observe(processedDisplay)
+check(unadmitted.visionPeerStreams.epoch == desktopEpoch && unadmitted.visionInputPermit == nil,
+      "host processed revision restores scope but does not invent a displayed permit")
+unadmitted.visionInputBinding = .awaitingPresentation(desktopEpoch)
+unadmitted.visionPresentationChanged(VisionPresentation.Ticket(epoch: desktopEpoch,
+    peer: ObjectIdentifier(unadmitted.connection!), layer: ObjectIdentifier(unadmitted)))
+check(unadmitted.visionInputBinding == .presented(desktopEpoch) && unadmitted.visionInputPermit != nil,
+      "fresh presentation callback can recover the same monitor epoch after its processed revision")
+
 var displayModel = VisionDisplaySelection()
 displayModel.bind(peerEpoch: UUID())
 displayModel.admit(lease: VisionWindowLease(window: UUID()), foreground: true)
