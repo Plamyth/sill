@@ -177,7 +177,7 @@ for cable in [false, true] {
     check(c.reconnect?.remoteFailures == 1, "최초 원격 실패도 기존 재시도 상태에 기록 cable=\(cable)")
     Clock.advance(10)
     check(c.remoteDials.count == 2, "일시적 noAnswer 뒤 버튼 없이 재연결 cable=\(cable) actual=\(c.remoteDials.count)")
-    c.failRemote(.vpnUnavailable)
+    c.failRemote(.vpnOff)
     Clock.advance(10)
     check(c.remoteDials.count == 3, "VPN 일시 불가 뒤 동일 저장 Mac 재시도 cable=\(cable) actual=\(c.remoteDials.count)")
     c.failRemote(.noAnswer)
@@ -210,6 +210,14 @@ do {
     let c = StreamClient(); c.armSavedMacAutoConnect(); Clock.advance(3); c.failRemote(.noAnswer)
     c.connect(to: FoundMac(macID: "other", cable: true)); Clock.advance(30)
     check(c.remoteDials.count == 1 && c.reconnect == nil, "다른 Mac으로 이동하면 이전 자동 재시도는 끝남")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.macs = [FoundMac(cable: true)]
+    c.armSavedMacAutoConnect(); let cable = c.connection!
+    DeviceIdentity.available = false
+    c.cableUnavailable(cable)
+    check(c.remoteDials.isEmpty && c.reconnect == nil, "케이블 실패 전에 기기 키가 사라지면 재시도 권한도 만들지 않음")
 }
 print("\(checks - failures)/\(checks) checks passed; \(failures) failed")
 exit(failures == 0 ? 0 : 1)

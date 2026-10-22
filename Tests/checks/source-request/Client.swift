@@ -30,7 +30,7 @@ enum SavedMacs {
 @MainActor final class Client {
     static let noAutoDesktop = false
     // EXPECTED_SOURCE
-    var expectedSourceIntent: (choice: ExpectedSourceIntent, revision: String?, epoch: UUID?)?
+    // EXPECTED_SOURCE_STATE
     // AUTOMATIC_TICKET
     // DISPLAY_TYPES
     var defaults = TestDefaults()

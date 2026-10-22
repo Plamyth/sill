@@ -26,6 +26,7 @@ owner = owner.replace('import Network\n', '').replace('import UIKit\n', '').repl
 exchange = owner[owner.index('final class OwnerBootstrapExchange'):]
 extension = owner[owner.index('#if true'):owner.index('/// 실제 등록 교환 소켓')]
 remote = (CLIENT / 'StreamClient+Remote.swift').read_text()
+startup += '\n' + block(remote, 'func dialSavedAtStartup(')
 # 실제 startRemote의 정리 순서와 수동 취소 진입점도 사용한다.
 methods = '\n'.join(block(remote, marker) for marker in [
     'func startRemote()', 'func cancelPairing()', 'func pairTyped('])

@@ -60,7 +60,7 @@ enum SavedMacs {
     }
 }
 enum RemoteDialPolicy {
-    enum Failure { case revoked, wrongMac, remoteOff, noAnswer, vpnUnavailable }
+    // FAILURE_TYPE
     struct Candidate { var host: String; var port: Int; var kind: String; var via: String; var key: String { host } }
     static func ownerTailnetScope(_ mac: SavedMac?) -> Bool { mac?.method == "owner-tailnet-v1" } }
 enum RemoteCopy {
@@ -95,6 +95,7 @@ final class StreamClient {
     var appInForeground = true
     var connected = false
     var connection: NWConnection?
+    // EXTRACTED_STARTUP_DIAL
     // RECONNECT_TYPE
     var reconnect: Reconnect?
     var reconnectCheck: DispatchWorkItem?

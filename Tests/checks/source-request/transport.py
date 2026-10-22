@@ -264,6 +264,7 @@ def client_input(block, root, here):
     methods = '\n'.join(block(text, s) for s in signatures)
     client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', '').replace('UserDefaults.standard', 'defaults'))
     client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('private ', '') for s in ['private struct RememberedDisplay', 'private struct PendingDisplaySelection']))
+    client = client.replace('// EXPECTED_SOURCE_STATE', next(line.strip().replace('private ', '') for line in text.splitlines() if 'private var expectedSourceIntent:' in line))
     for marker, signature in [('// EXPECTED_SOURCE', 'private enum ExpectedSourceIntent'), ('// AUTOMATIC_TICKET', 'private struct AutomaticSourceTicket'), ('// RESUME_SOURCE', 'if let resume = self.resumeSource'), ('// IDLE_FALLBACK', 'if let ticket = self.automaticTicket')]:
         replacement = block(text, signature).replace('private ', '')
         if marker == '// AUTOMATIC_TICKET':

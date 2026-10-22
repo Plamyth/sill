@@ -157,7 +157,9 @@ final class StreamClient {
     struct Life { var rebuildWork: DispatchWorkItem?; var settleWork: DispatchWorkItem? }
     var networkLife = Life(), nearbyLife = Life()
     var nearbyBrowser: Int?, reconnectCheck: DispatchWorkItem?, audioRouteAuthorization: Int?
-    enum DialReason { case tap, afterPairing, connectRemotely, launchArgument }
+    enum DialReason { case tap, automatic, afterPairing, connectRemotely, launchArgument }
+    func lostReconnect(session: Int?, saved: SavedMac?, name: String, remoteAllowed: Bool) -> Reconnect { Reconnect() }
+    func displayName(_ id: String) -> String { "fixture-Mac" }
     func dialSaved(_ id: String, why: DialReason) { cancelOwnerBootstrap(); dials.append(id) }
     func persistSavedMacs() { persists += 1; UserDefaults.standard.set(SavedMacs.encode(savedMacs), forKey: SavedMacs.defaultsKey) }
     func pair(link: PairLink, overlay: Bool) {}

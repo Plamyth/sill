@@ -28,6 +28,7 @@ def block(text, signature):
     return text[start:end]
 methods = '\n'.join(block(text,s) for s in ['func select(_ source:', 'func selectDisplay(', 'private func requestDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(', 'private func authenticatedDisplayMacID(', 'private func observeDisplaySelection(', 'private func requestInitialDisplay(', 'private func requestAutomaticDisplay('])
 client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ','').replace('UserDefaults.standard', 'defaults'))
+client = client.replace('// EXPECTED_SOURCE_STATE', next(line.strip().replace('private ', '') for line in text.splitlines() if 'private var expectedSourceIntent:' in line))
 client = client.replace('// EXPECTED_SOURCE', block(text, 'private enum ExpectedSourceIntent').replace('private ',''))
 client = client.replace('// AUTOMATIC_TICKET', '\n'.join(block(text, s).replace('private ','') for s in ['private struct AutomaticSourceTicket', 'private struct AutomaticConnectionOpportunity']))
 client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('private ','') for s in ['private struct RememberedDisplay', 'private struct PendingDisplaySelection']))

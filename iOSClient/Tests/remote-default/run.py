@@ -31,11 +31,12 @@ markers = [
 ]
 if "func fallBackFromStartupWired()" in source:
     markers.append("func fallBackFromStartupWired()")
-if "func dialSavedAtStartup(" in source:
-    markers.append("func dialSavedAtStartup(")
 methods = "\n".join(block(source, marker) for marker in markers).replace("#if os(iOS)", "#if true")
 fixture = (HERE / "Standins.swift").read_text().replace("// EXTRACTED_METHODS", methods)
 remote = (CLIENT / "StreamClient+Remote.swift").read_text()
+policy = (CLIENT / "RemoteDialPolicy.swift").read_text()
+fixture = fixture.replace("// FAILURE_TYPE", block(policy, "enum Failure:"))
+fixture = fixture.replace("// EXTRACTED_STARTUP_DIAL", block(remote, "func dialSavedAtStartup("))
 fixture = fixture.replace("// RECONNECT_TYPE", block(source, "struct Reconnect"))
 dial = block(remote, "func dialSaved(")
 entry = dial[:dial.index("        let candidates =")].replace("#if os(iOS)", "#if true")
@@ -64,7 +65,7 @@ start = runner.index('    collision = subprocess.run(')
 end = runner.index('    disk = subprocess.check_output(', start)
 runner = runner[:start] + runner[end:]
 runner = runner.replace("'-parse-as-library', ", '')
-paths = [CLIENT/'StreamClient.swift', CLIENT/'StreamClient+Remote.swift', CLIENT/'DiscoveryPolicy.swift', *HERE.glob('*.swift'), HERE/'run.py']
+paths = [CLIENT/'StreamClient.swift', CLIENT/'StreamClient+Remote.swift', CLIENT/'DiscoveryPolicy.swift', CLIENT/'RemoteDialPolicy.swift', *HERE.glob('*.swift'), HERE/'run.py']
 before = {str(p.relative_to(root)): sha(p.read_bytes()) for p in paths}
 p = subprocess.run(['/Users/ambrion/.local/bin/mini', 'heavy', '--cwd', '/private/tmp', '--', 'python3', '-B', '-c', runner], input=payload, capture_output=True, timeout=240, env=dict(os.environ, CODEX_THREAD_ID='01a13ace-e372-7ed1-9946-149df37ee1c3'))
 log = (p.stdout + p.stderr).decode(errors='replace')

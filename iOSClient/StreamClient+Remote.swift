@@ -299,6 +299,15 @@ extension StreamClient {
 
     // MARK: Remote dials
 
+    #if os(iOS)
+    func dialSavedAtStartup(_ macID: String) {
+        guard let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
+              DeviceIdentity.existing() != nil else { return }
+        reconnect = lostReconnect(session: nil, saved: saved, name: displayName(macID), remoteAllowed: true)
+        dialSaved(macID, why: .automatic)
+    }
+    #endif
+
     /// Dials a saved Mac at its saved addresses (§7.5). A tap on its Remote row, Connect Remotely
     /// on its network row, the session after a pairing, the automatic reconnect, `-SillDialSaved`.
     func dialSaved(_ macID: String, why: DialReason) {

@@ -923,7 +923,7 @@ final class StreamClient: ObservableObject {
             }
         }
     }
-    private var expectedSourceIntent: (choice: ExpectedSourceIntent, revision: String?, epoch: UUID?)?
+    private var expectedSourceIntent: (choice: ExpectedSourceIntent, revision: String?, epoch: UUID?, origin: SourceRequest.Origin)?
 
     private func observeSourceIntent(_ list: WindowList) {
         guard let expected = expectedSourceIntent,
@@ -962,6 +962,7 @@ final class StreamClient: ObservableObject {
         lastStartupCatalogDiagnostic = nil
         startupVideoRecorded = false
         #endif
+        if expectedSourceIntent?.origin == .automatic { expectedSourceIntent = nil }
         automaticSourceIntent = expectedSourceIntent == nil ? explicitSourceIntent : nil
         scheduledAutomaticTicket = nil
         resumeOpportunity = peer.flatMap { peer in
@@ -985,7 +986,7 @@ final class StreamClient: ObservableObject {
         let submission = SessionLink.Submission { _ in }
         automaticSubmission = submission
         request(source, origin: .automatic, revision: ticket.revision, onlyOn: peer, submission: submission)
-        expectedSourceIntent = (.source(source), ticket.revision, sourceCatalogEpoch)
+        expectedSourceIntent = (.source(source), ticket.revision, sourceCatalogEpoch, .automatic)
         automaticSourceIntent = nil
         scheduledAutomaticTicket = nil
     }
@@ -1636,7 +1637,7 @@ final class StreamClient: ObservableObject {
             }
         } else if !preferCable || localNetworkDenied || ProcessInfo.processInfo.systemUptime >= searchingSince + DiscoveryPolicy.networkFirst {
             startupAutoConnection = .attempted
-            dialSaved(macID, why: .tap)
+            dialSavedAtStartup(macID)
         }
     }
 
@@ -1657,7 +1658,7 @@ final class StreamClient: ObservableObject {
             startupAutoConnection = .stopped
             return true
         }
-        dialSaved(macID, why: .tap)
+        dialSavedAtStartup(macID)
         return true
     }
     #endif
@@ -4000,14 +4001,14 @@ final class StreamClient: ObservableObject {
     /// answers with a fresh window list. It counts for the tour as something happening.
     func select(_ source: StreamSource) {
         noteSourceIntent()
-        expectedSourceIntent = (.source(source), selectionRevision, sourceCatalogEpoch)
+        expectedSourceIntent = (.source(source), selectionRevision, sourceCatalogEpoch, .human)
         noteAction()
         request(source, origin: .human)
     }
 
     func selectDisplay(_ display: DisplayInfo) {
         noteSourceIntent()
-        expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch)
+        expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch, .human)
         _ = requestDisplay(display)
     }
 
@@ -4037,7 +4038,7 @@ final class StreamClient: ObservableObject {
             automaticSourceIntent = nil
             scheduledAutomaticTicket = nil
             lastAutoDesktop = Date()
-            expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch)
+            expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch, .automatic)
         }
         if let macID = authenticatedDisplayMacID(), let launchID = sessionHost, !launchID.isEmpty {
             pendingDisplaySelection = PendingDisplaySelection(
@@ -4133,7 +4134,7 @@ final class StreamClient: ObservableObject {
     /// Ask the host to launch an installed app; the host selects its first window itself.
     func launch(bundleID: String) {
         noteSourceIntent()
-        expectedSourceIntent = (.launch(bundleID), selectionRevision, sourceCatalogEpoch)
+        expectedSourceIntent = (.launch(bundleID), selectionRevision, sourceCatalogEpoch, .human)
         noteAction()
         choicesSent += 1   // the host picks the launched app's window: a choice, like a pick
         send(.launchApp, Wire.encode(LaunchApp(bundleID: bundleID)))
