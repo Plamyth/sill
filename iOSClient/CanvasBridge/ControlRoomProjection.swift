@@ -914,6 +914,9 @@ struct ControlRoomEventsReducer {
               frame.id == "\(event.generation):\(event.revision)" else { throw ControlRoomEventsError.invalid }
         let raw = try JSONDecoder().decode(ProjectionValue.self,from:frame.data)
         guard Self.safe(raw) else { throw ControlRoomEventsError.invalid }
+        if contract == .relayProjection, case .object(let fields) = raw, fields["changes"] != nil {
+            throw ControlRoomEventsError.invalid
+        }
         if event.type == "heartbeat" {
             return generation == event.generation && revision == event.revision ? .heartbeat : .resync
         }
