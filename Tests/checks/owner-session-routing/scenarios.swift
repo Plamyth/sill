@@ -29,7 +29,7 @@ for method in ["qr","code","cable","icloud"] {
     check("기존 \(method) 후보 순서 보존", StreamClient.candidates(legacy) == expected)
 }
 do {
-    let c=StreamClient();c.records=[owner]
+    let c=StreamClient();c.records=[owner];c.connected=false
     check("owner Bonjour는 LAN 도어 상태로 막지 않고 저장 VPN 경로로 전달", c.homeDecision(row,macID:owner.macID,tap:false) == .pinned)
     check("재연결 상태 없는 owner row는 최초 연결 허용", c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true))
     check("owner row는 home socket 대신 저장 VPN dial", c.rowConnections == 0 && c.remoteRequests.count == 1 && c.remoteRequests.first?.0 == owner.macID)
@@ -52,16 +52,22 @@ do {
     var missing = row; missing.endpoint = nil; missing.wired = true
     check("owner는 Bonjour endpoint 없이도 저장 경로 선택", c.dialRow(missing,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true,tap:true))
     check("owner 원격 끔 뒤 명시 탭은 케이블 대신 저장 경로", c.rowConnections == 0 && c.remoteRequests.count == requestsBeforeTap + 1 && c.remoteRequests.last?.1 == .tap)
-    c.session=Session(macID:owner.macID);c.moveHomeIfListed()
+    c.connected=true;c.session=Session(macID:owner.macID);c.moveHomeIfListed()
     check("owner 자동 home 이동은 준비 단계에서 중지", c.homeEligible == 0)
     for kind in MoveKind.allCases { c.startMove(to:7,kind:kind,fallback:9) }
     check("owner home 이동 socket 생성 직전도 차단", c.moveCreated == 0)
 }
 for failure: RemoteDialPolicy.Failure in [.revoked,.wrongMac,.remoteOff] {
-    let c = StreamClient(); c.records = [owner]; c.reconnect = StreamClient.Retry(macID:owner.macID)
+    let c = StreamClient(); c.records = [owner]; c.reconnect = StreamClient.Retry(macID:owner.macID); c.connected = false
+    let scheduled = Work(); c.reconnectCheck = scheduled
     check("owner \(failure) 실패 전 자동 원격 요청 시작", c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true) && c.remoteRequests.count == 1 && c.remoteRequests.last?.1 == .automatic)
     c.remoteDialFailed(macID:owner.macID,why:.automatic,failure:failure,candidate:ownerCandidates.first)
     check("owner \(failure) 실제 실패 콜백이 자동 원격 재시도 중지", c.reconnect?.remoteAllowed == false)
+    let words = RemoteCopy.dialFailure(failure, mac:owner.name, candidate:ownerCandidates.first, vpnName:"Tailscale", device:"iPad")
+    check("owner \(failure) 실제 재접속 앞부분에서 이후 도달 횟수 0", c.retryChecks == 0)
+    check("owner \(failure) 기존 오류 문구 유지", c.status == words)
+    check("owner \(failure) 기존 예약 취소와 해제 후 새 타이머 없음", scheduled.cancelled && c.reconnectCheck == nil && c.retryChecks == 0)
+    print("owner \(failure) 이후 도달 \(c.retryChecks), 예약 취소 \(scheduled.cancelled), 새 예약 없음 \(c.reconnectCheck == nil), 오류 유지 \(c.status == words)")
     let requestsBeforeRow = c.remoteRequests.count
     let dialed = c.dialRow(row,macID:owner.macID,trust:.saved(pin:pin),tagNamed:true)
     check("owner \(failure) 실패 뒤 자동 Bonjour row 차단", !dialed)
@@ -74,8 +80,10 @@ do {
     check("다른 Mac의 중지 기록이 있으면 owner 최초 연결 이유 유지", c.remoteRequests.count == 1 && c.remoteRequests.last?.1 == .tap && c.rowConnections == 0)
 }
 for method in ["qr","code","cable","icloud"] {
-    let legacy=record(method);let c=StreamClient();c.records=[legacy]
+    let legacy=record(method);let c=StreamClient();c.records=[legacy];c.connected=false
     c.reconnect = StreamClient.Retry(macID:legacy.macID,remoteAllowed:false)
+    check("기존 \(method) 재접속 앞부분 통과", c.reconnectIfListed() && c.retryChecks == 1)
+    c.connected = true
     check("기존 \(method) plain 도어의 업그레이드 요구 보존", c.homeDecision(row,macID:legacy.macID,tap:false) == .updateSill)
     _=c.dialRow(row,macID:legacy.macID,trust:.saved(pin:pin),tagNamed:true)
     check("기존 \(method) row 경로 보존", c.rowConnections == 1 && c.remoteRequests.isEmpty)
@@ -88,6 +96,20 @@ for method in ["qr","code","cable","icloud"] {
     check("기존 \(method) 수동 원격 연결 유지", c.remoteRequests.count == 1)
     c.session=Session(macID:legacy.macID);c.moveHomeIfListed();c.startMove(to:7,kind:.fromRemote,fallback:nil)
     check("기존 \(method) home 이동 경로 보존", c.homeEligible == 1 && c.moveCreated == 1)
+}
+for id: String? in [owner.macID, nil, "other-mac"] {
+    let c = StreamClient(); c.records = [owner]; c.connected = false
+    c.reconnect = StreamClient.Retry(macID:id,remoteAllowed:id == owner.macID)
+    check("허용된 owner 또는 식별자 없음·다른 Mac 재접속 앞부분 통과 \(id ?? "없음")", c.reconnectIfListed() && c.retryChecks == 1)
+}
+for state in ["백그라운드", "연결됨", "이동 중", "재접속 없음"] {
+    let c = StreamClient(); c.records = [owner]; c.connected = false
+    c.reconnect = StreamClient.Retry(macID:owner.macID)
+    if state == "백그라운드" { c.appInForeground = false }
+    if state == "연결됨" { c.connected = true }
+    if state == "이동 중" { c.moveUnderWay = true }
+    if state == "재접속 없음" { c.reconnect = nil }
+    check("기존 재접속 상태 guard 보존 \(state)", !c.reconnectIfListed() && c.retryChecks == 0)
 }
 for flag in ["revoked","newKey"] {
     var invalid=owner

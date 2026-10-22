@@ -16,6 +16,9 @@ start=dial.index('let candidates = RemoteDialPolicy.')
 end=dial.index('\n        #if DEBUG',start)
 candidates=dial[start:end]
 methods='\n'.join(block(stream,marker) for marker in ['func homeDecision(', 'func dialRow('])+'\n'+block(remote,'func remoteDialFailed(')
+retry=block(remote,'func reconnectIfListed()')
+retry=retry[:retry.index('        let now =')]+'        retryChecks += 1\n        return true\n    }'
+methods+='\n@discardableResult\n'+retry
 move=block(stream,'func moveHomeIfListed()')
 move=move[:move.index('        // Every network row')]+ '\n        homeEligible += 1\n    }'
 start_move=block(stream,'private func startMove(')

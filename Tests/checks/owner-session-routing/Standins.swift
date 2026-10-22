@@ -21,8 +21,11 @@ final class StreamClient {
     enum DialReason { case tap, automatic, connectRemotely, afterPairing, launchArgument }
     static let debugBuild = false
     static let deviceWord = "iPad"
-    struct Retry { var macID: String; var remoteAllowed = true; var remoteFailures = 0; var nextRemoteAt = 0.0 }
+    struct Retry { var macID: String?; var remoteAllowed = true; var remoteFailures = 0; var nextRemoteAt = 0.0 }
     var reconnect: Retry?
+    var reconnectCheck: Work?
+    var appInForeground = true
+    var moveUnderWay = false
     var afterPairingWatch: Work?
     enum Pairing { case idle, working }
     var pairing = Pairing.idle
@@ -50,7 +53,6 @@ final class StreamClient {
         /* ACTUAL_CANDIDATES */
     }
     func displayName(_ id: String) -> String { savedMac(id)?.name ?? "Mac" }
-    func reconnectIfListed() { retryChecks += 1 }
     func discoveryChanged() { discoveryChanges += 1 }
     func cancelOwnerBootstrap() {}
     /* ACTUAL_DIAL_ENTRY */
