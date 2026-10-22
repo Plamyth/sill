@@ -245,10 +245,18 @@ func stream() -> AsyncStream<ControlRoomEventUpdate> {
         StubURL.reset([.init(status:401,finish:true)])
         for await _ in stream() { }
         check(StubURL.captured().0.count == 1,"인증 거부 자동 재발급 금지")
-        StubURL.reset([.init(mime:"application/json",data:Data("{}".utf8),finish:true)])
-        var wrongMime = false
-        for await value in stream() { wrongMime = value.message?.contains("지원하지 않습니다") == true }
-        check(wrongMime,"잘못된 MIME 미지원 표시")
+        for mime in ["application/json","text/html"] {
+            StubURL.reset([.init(mime:mime,data:Data(),finish:true),.init(data:full1)])
+            let mimeUpdates = Updates()
+            let mimeConsumer = Task { for await value in stream() { await mimeUpdates.add(value) } }
+            try await wait("잘못된 MIME 뒤 이벤트 복구",until:{
+                await mimeUpdates.all().contains { $0.projection?.workspace == "reconnected" }
+            })
+            check(StubURL.captured().0.count == 2,"\(mime) HTTP200은 영구 종료 대신 재접속")
+            check(StubURL.captured().0[1].value(forHTTPHeaderField:"Last-Event-ID") == nil,
+                  "\(mime) 불완전 초기 응답의 cursor를 수용하지 않음")
+            mimeConsumer.cancel(); await mimeConsumer.value
+        }
 
         var burst = full0
         for revision in 1...120 { burst += try frame(patch(revision,set:["workspace":"revision-\(revision)"])) }

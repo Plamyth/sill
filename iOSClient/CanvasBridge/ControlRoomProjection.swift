@@ -1171,7 +1171,7 @@ enum ControlRoomEventStream {
                         guard http.statusCode == 200 else { throw ControlRoomEventsError.rejected(http.statusCode) }
                         guard http.value(forHTTPHeaderField:"Content-Type")?.split(separator:";").first?
                             .trimmingCharacters(in:.whitespaces).lowercased() == "text/event-stream"
-                        else { throw ControlRoomEventsError.unsupported }
+                        else { throw ControlRoomEventsError.invalid }
                         var parser = ControlRoomSSE()
                         var needsSnapshot = true
                         func apply(_ frame: ControlRoomSSE.Frame) throws {
