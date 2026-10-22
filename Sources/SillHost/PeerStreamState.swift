@@ -71,6 +71,11 @@ struct PeerStreamState {
         failure = reason
     }
 
+    mutating func acknowledgeCurrentSelection() {
+        guard !closed, pending == nil, epoch != nil else { return }
+        sequence &+= 1
+    }
+
     mutating func close() {
         closed = true
         pending = nil

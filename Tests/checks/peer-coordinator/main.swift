@@ -95,6 +95,11 @@ final class Client: @unchecked Sendable {
         let ea = a.catalogs.last!.videoEpoch!, eb = b.catalogs.last!.videoEpoch!
         check(ea.id != eb.id && ea.generation != eb.generation, "separate epoch generations")
         check(a.frames.allSatisfy { $0 == ea.id } && b.frames.allSatisfy { $0 == eb.id }, "frames confined to own peer")
+        let sameRevision = a.catalogs.last!.selectionRevision, sameFrameCount = a.frames.count
+        a.send(.selectSource, SourceRequest(source: .window(10), origin: .human))
+        try await wait("same-source processed intent") { a.catalogs.last?.selectionRevision != sameRevision && a.frames.count > sameFrameCount }
+        check(a.catalogs.last?.videoEpoch == ea && b.catalogs.last?.videoEpoch == eb, "same-source fresh intent reply preserves both peers video epochs")
+        check(a.frames.last == ea.id, "same-source request produces a fresh keyframe on the existing epoch")
         a.send(.input, SourceInput(event: .text("A"), generation: ea.generation, videoEpoch: ea.id))
         b.send(.input, SourceInput(event: .text("B"), generation: eb.generation, videoEpoch: eb.id))
         try await wait("own input admitted") { host.contractPeerInputs.count == 2 }

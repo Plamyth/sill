@@ -76,7 +76,9 @@ final class PeerStreamSession {
                 display.flatMap { inventory().identity(of: $0.displayID) } == displayIdentity)),
            driver.currentBounds() == description?.bounds {
             cancelLaunch()
+            state.acknowledgeCurrentSelection()
             onChanged?()
+            driver.requestKeyframe()
             return
         }
         let snapshot = inventory()

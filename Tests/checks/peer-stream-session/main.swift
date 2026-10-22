@@ -81,8 +81,14 @@ struct Checks {
         check(b.epoch == bEpoch && b.selectionRevision == bRevision, "A selection leaves B epoch and CAS intact")
         check(driverB.starts == 1 && releaseB == 1, "A selection never restarts or releases B")
         let starts = driverA.starts
+        let repeatRevision = a.selectionRevision, repeatEpoch = a.epoch, repeatReleases = releaseA
+        let repeatKeyframes = driverA.keyframes
         a.select(SourceRequest(source: .window(11), origin: .human)); await settle()
         check(driverA.starts == starts, "same source repeat keeps capture")
+        check(driverA.keyframes == repeatKeyframes + 1, "same-source acknowledgement requests a fresh keyframe after catalog publication")
+        check(a.selectionRevision != repeatRevision, "same-source request has a fresh processed-intent revision")
+        check(a.epoch == repeatEpoch && a.generation == repeatEpoch?.generation && releaseA == repeatReleases, "same-source acknowledgement preserves media and input admission")
+        check(b.epoch == bEpoch && b.selectionRevision == bRevision, "same-source acknowledgement cannot change another peer")
         a.updateViewport(Viewport(width: 300, height: 400, scale: 2, fps: 60)); await settle()
         check(driverA.starts == starts, "panel dimensions never resize or restart source")
         a.updateViewport(Viewport(width: 300, height: 400, scale: 2, fps: 30)); await settle()
@@ -211,6 +217,17 @@ struct Checks {
         check(b.epoch == bEpoch && driverB.starts == 1, "display replacement leaves other peer capture intact")
         await displayPeer.close()
 
+        let repeatedDisplay = PeerStreamSession(driver: FakeCapture(), configuration: { .standard }, inventory: { inventory })
+        let repeatedTarget = DisplaySelection(displayID: 1, inventoryID: inventory.revision!, origin: .human)
+        repeatedDisplay.selectDisplay(repeatedTarget); await settle()
+        let displayedEpoch = repeatedDisplay.epoch, displayedRevision = repeatedDisplay.selectionRevision
+        let pendingSameLaunch = repeatedDisplay.beginLaunch("test.cancelled.by.display")
+        repeatedDisplay.selectDisplay(repeatedTarget); await settle()
+        check(repeatedDisplay.selectionRevision != displayedRevision && repeatedDisplay.epoch == displayedEpoch,
+              "same physical display confirms request without replacing its video epoch")
+        repeatedDisplay.finishLaunch(pendingSameLaunch, windowID: 800); await settle()
+        check(repeatedDisplay.source == .desktop, "same-display explicit request still cancels pending launch")
+        await repeatedDisplay.close()
         let launched = PeerStreamSession(driver: FakeCapture(), configuration: { .standard }, inventory: { inventory })
         let launch = launched.beginLaunch("test.delayed")
         launched.finishLaunch(launch, windowID: nil)
