@@ -102,8 +102,11 @@ public struct FetchMenu: Codable, Hashable, Sendable {
     /// logged. Ignored without an id.
     public var title: String?
     public var token: Int?
+    public var generation: String?
+    public var videoEpoch: UUID?
 
-    public init(version: Int? = nil, id: String? = nil, title: String? = nil, token: Int? = nil) {
+    public init(version: Int? = nil, id: String? = nil, title: String? = nil, token: Int? = nil, generation: String? = nil, videoEpoch: UUID? = nil) {
+        self.generation = generation; self.videoEpoch = videoEpoch
         self.version = version; self.id = id; self.title = title; self.token = token
     }
 }
@@ -117,8 +120,11 @@ public struct PressMenuItem: Codable, Hashable, Sendable {
     /// never without one. Never logged: the host's lines give its own titles.
     public var title: String?
     public var token: Int?
+    public var generation: String?
+    public var videoEpoch: UUID?
 
-    public init(version: Int? = nil, id: String? = nil, title: String? = nil, token: Int? = nil) {
+    public init(version: Int? = nil, id: String? = nil, title: String? = nil, token: Int? = nil, generation: String? = nil, videoEpoch: UUID? = nil) {
+        self.generation = generation; self.videoEpoch = videoEpoch
         self.version = version; self.id = id; self.title = title; self.token = token
     }
 }
