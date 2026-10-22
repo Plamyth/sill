@@ -454,5 +454,47 @@ remoteHuman.confirmVisionDisplayPresentation()
 check(!remoteHuman.visionDisplaySelection.inputBlocked && remoteHuman.visionDisplaySelection.lastResult?.code == .sourceChanged && UserDefaults.standard.values.isEmpty,
       "다른 사람 선택의 실제 표시를 따라가되 자동 선택 성공이나 모니터 저장으로 위조하지 않는다")
 
+for stale in [false, true] {
+    let (client, peer) = automaticClient()
+    _ = client.link.hold(peer); client.releaseCallbacks[0](true)
+    let oldDeadline = client.visionDisplayDeadline!
+    let token = client.visionDisplaySelection.token!
+    let manualToken = stale ? VisionDisplaySelection.Token(peerEpoch: token.peerEpoch, window: token.window,
+        admission: token.admission, inventory: token.inventory, revision: token.revision + 1) : token
+    let human = VisionDisplaySelection.Command(requestID: UUID(), displayID: 22, token: manualToken)
+    let result = client.selectVisionDisplay(human)
+    _ = client.link.unhold(peer); drain()
+    check(peer.sent.isEmpty && oldDeadline.isCancelled,
+          "직접 수동 모니터 명령은 거절돼도 이전 자동 큐와 deadline을 취소한다 \(stale)")
+    if stale {
+        check(result.code == .staleScope && client.releaseCallbacks.count == 1,
+              "stale 수동 명령은 새 해제 효과를 만들지 않는다")
+    } else {
+        check(result.code == .releasing && client.releaseCallbacks.count == 2,
+              "유효 수동 모니터는 독립적인 새 입력 해제를 기다린다")
+        client.releaseCallbacks[1](true); drain()
+        let sent = peer.sent.first.flatMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+        check(peer.sent.count == 1 && sent?.origin == .human && sent?.displayID == 22,
+              "직접 수동 해제가 끝난 뒤 human 모니터 명령만 한 번 보낸다")
+    }
+}
+for malformed in ["duplicate", "inventory", "capability", "required"] {
+    let (client, peer) = automaticClient()
+    client.releaseCallbacks[0](true); drain()
+    var display = automaticCatalog(revision: "r1")
+    display.active = .desktop; display.activeDisplayID = 11; display.desktopSelectionRequired = false
+    display.inputGeneration = "invalid-catalog"; display.videoEpoch = epoch("invalid-catalog")
+    switch malformed {
+    case "duplicate": display.displays = [rows[0], rows[0]]
+    case "inventory": display.displayInventoryID = nil
+    case "capability": display.displaySelection = 2
+    default: display.desktopSelectionRequired = true
+    }
+    client.observeVisionDisplays(display, from: peer)
+    client.visionInputBinding = .presented(display.videoEpoch!); client.confirmVisionDisplayPresentation()
+    check(client.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.isEmpty,
+          "표시 epoch만 맞아도 잘못된 desktop 목록은 입력·저장을 수용하지 않는다 \(malformed)")
+}
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
