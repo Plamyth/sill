@@ -613,6 +613,7 @@ extension StreamClient {
         reconnectCheck?.cancel()
         reconnectCheck = nil
         guard appInForeground, !connected, !moveUnderWay, var r = reconnect else { return false }
+        if let id = r.macID, !r.remoteAllowed, RemoteDialPolicy.ownerTailnetScope(savedMac(id)) { return false }
         let now = ProcessInfo.processInfo.systemUptime
         let dialingAutomatically = remoteDial != nil || session?.why == .automatic
         guard connection == nil || dialingAutomatically else { return false }
