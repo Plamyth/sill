@@ -9,7 +9,7 @@ struct CurrentVoicePIP: View {
     var body: some View {
         TimelineView(.periodic(from:.now,by:5)) { context in
             let fresh = projection?.isFresh(now:context.date) == true
-            let card = fresh ? projection?.availableVoiceCard : nil
+            let card = projection?.hasDisplayContent == true ? projection?.availableVoiceCard : nil
             let session = fresh ? projection?.observedSession(now:context.date) : nil
             VStack(alignment:.leading,spacing:0) {
                 HStack {
@@ -30,8 +30,12 @@ struct CurrentVoicePIP: View {
                         }
                         Text(session == nil ? "열린 음성 세션 미확인" : "음성 세션 관측됨")
                             .font(.caption).foregroundStyle(session == nil ? .secondary : .primary)
-                        if let id = fresh ? projection?.activeVoiceId : nil {
+                        if let id = projection?.hasDisplayContent == true ? projection?.activeVoiceId : nil {
                             Text("대화 \(id)").font(.caption2).lineLimit(1).truncationMode(.middle)
+                        }
+                        if !fresh {
+                            Text(message ?? "연결 또는 원본 관측이 오래되었습니다. 마지막 내용 · 읽기 전용")
+                                .font(.caption2).foregroundStyle(.orange).lineLimit(3)
                         }
                         if let session {
                             Text("세션 \(session.sessionId)").font(.caption2).lineLimit(1).truncationMode(.middle)
@@ -44,7 +48,7 @@ struct CurrentVoicePIP: View {
                     .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).padding(12)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain).disabled(card == nil).accessibilityIdentifier("currentVoicePIP")
+                .buttonStyle(.plain).disabled(card == nil || !fresh).accessibilityIdentifier("currentVoicePIP")
                 .accessibilityHint("현재 컨트롤룸 카드 펼치기")
             }
             .background(.regularMaterial,in:RoundedRectangle(cornerRadius:16))
@@ -62,11 +66,16 @@ struct ControlRoomGrid: View {
 
     var body: some View {
         TimelineView(.periodic(from:.now,by:5)) { context in
-            if let projection, projection.isFresh(now:context.date) {
+            if let projection, projection.hasDisplayContent {
                 let navigation = ControlRoomNavigation(projection:projection)
                 let target = navigation.target(for:selection)
                 VStack(alignment:.leading,spacing:6) {
                     controls(navigation)
+                        .disabled(!projection.isFresh(now:context.date))
+                    if !projection.isFresh(now:context.date) {
+                        Text(message ?? "연결 또는 원본 관측이 오래되었습니다. 마지막 내용 · 읽기 전용")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     Text("대화 · 3×3 · 읽기 전용 · \(projection.generatedAt)")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     brainTrinityStatus(projection,now:context.date)
@@ -230,7 +239,7 @@ struct ControlRoomGrid: View {
                 .overlay(RoundedRectangle(cornerRadius:12).stroke(card?.needsInput == true ? Color.orange : Color.secondary.opacity(0.3)))
                 .opacity(matches ? 1 : 0.45)
         }
-        .buttonStyle(.plain).disabled(card == nil)
+        .buttonStyle(.plain).disabled(card == nil || !projection.isFresh(now:now))
         .accessibilityElement(children:.combine)
         .accessibilityIdentifier("controlRoomSlot-\(slot.index)")
         .accessibilityHint(card == nil ? "읽기 전용. 현재 연결된 대화가 없습니다." :
@@ -247,9 +256,13 @@ struct ControlRoomCardDetail: View {
     var body: some View {
         NavigationStack {
             TimelineView(.periodic(from:.now,by:5)) { context in
-                if let projection, projection.isFresh(now:context.date), let card = reference.card(in:projection) {
+                if let projection, projection.hasDisplayContent, let card = reference.card(in:projection) {
                     ScrollView {
                         VStack(alignment:.leading,spacing:16) {
+                            if !projection.isFresh(now:context.date) {
+                                Text(message ?? "연결 또는 원본 관측이 오래되었습니다. 마지막 내용 · 읽기 전용")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
                             Text(card.displayTitle).font(.title2)
                             Text("대화 \(card.id)").font(.caption).textSelection(.enabled)
                             Text(card.status ?? "상태 미제공")

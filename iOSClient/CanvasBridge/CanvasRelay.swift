@@ -147,8 +147,8 @@ struct CanvasRelay {
         try await response(request("/voice/projection"),as:VoiceProjection.self)
     }
 
-    func controlRoomProjection() async throws -> ControlRoomProjection {
-        try await response(request("/control-room/projection"),as:ControlRoomProjection.self)
+    func controlRoomEvents(retaining projection: ControlRoomProjection?) throws -> AsyncStream<ControlRoomEventUpdate> {
+        ControlRoomEventStream.updates(request:try request("/control-room/events"),retaining:projection)
     }
 
     func testDestinations() async throws -> TestDestinationCatalog {

@@ -39,6 +39,7 @@ struct CanvasWorkspace: View {
     @State private var canvasVaultEnabled = true
     @State private var vaultSceneID: UUID?
     @State private var vaultSyncAddress: String?
+    @State private var projectionGeneration = ControlRoomConnectionGeneration()
     @State private var readProjection: ControlRoomProjection?
     @State private var projectionMessage: String?
     @State private var expandedCard: ControlRoomCardReference?
@@ -151,27 +152,35 @@ struct CanvasWorkspace: View {
             }
         }
         .task(id:ProjectionConnection(address:relayAddress,token:relayToken,active:scenePhase == .active)) {
-            readProjection = nil
+            guard !Task.isCancelled else { return }
+            let generation = projectionGeneration.begin(address:relayAddress,token:relayToken)
+            readProjection = generation.retainsContent ? readProjection?.disconnected() : nil
+            store.displayedVoice = nil
+            defer {
+                if projectionGeneration.owns(generation) {
+                    readProjection = readProjection?.disconnected()
+                    store.displayedVoice = nil
+                }
+            }
             guard scenePhase == .active, !relayToken.isEmpty else {
-                projectionMessage = "Mac 연결 필요"
+                projectionMessage = "Mac 연결 필요 · 마지막 내용은 읽기 전용입니다."
                 return
             }
             let connection = relay
-            while !Task.isCancelled {
-                do {
-                    let next = try await connection.controlRoomProjection()
-                    guard !Task.isCancelled else { return }
-                    guard next.isFresh() else { throw CanvasSendError.unavailable }
-                    readProjection = next
-                    projectionMessage = nil
-                    store.displayedVoice = next.observedSession()
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    readProjection = nil
-                    projectionMessage = "읽기 projection 확인 실패 · 연결에서 주소와 상태를 확인하세요."
+            do {
+                for await update in try connection.controlRoomEvents(retaining:readProjection) {
+                    guard !Task.isCancelled, projectionGeneration.owns(generation) else { return }
+                    switch update {
+                    case .snapshot(let projection): readProjection = projection
+                    case .unavailable: readProjection = nil
+                    case .disconnected(let last, _): readProjection = last
+                    }
+                    projectionMessage = update.message
+                    store.displayedVoice = readProjection?.observedSession()
                 }
-                do { try await Task.sleep(for:.seconds(10)) }
-                catch { return }
+            } catch {
+                guard projectionGeneration.owns(generation), !Task.isCancelled else { return }
+                projectionMessage = "관제 이벤트 연결을 시작할 수 없습니다. 주소와 연결 상태를 확인하세요."
             }
         }
         .alert("손글씨 찾기", isPresented:$handwritingSearchOpen) {

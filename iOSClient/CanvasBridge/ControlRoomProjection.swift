@@ -15,8 +15,53 @@ struct ControlRoomProjection: Decodable {
     let sections: [ControlRoomSection]?
     let brainTrinity: BrainTrinityFeed?
 
+    struct Connection: Decodable {
+        enum State: String, Decodable { case connected, stale, unavailable }
+        let connected: Bool
+        let state: State
+    }
+    let sourceObservedAt: String?
+    let connection: Connection?
+    var transportConnected: Bool? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, generatedAt, workspace, activeVoiceId, activeVoiceSession, voiceCard
+        case currentGrid, workspaces, projects, chatgptProjects, chatgptProjectState, sections, brainTrinity
+        case sourceObservedAt, connection
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy:CodingKeys.self)
+        schemaVersion = try c.decode(Int.self,forKey:.schemaVersion)
+        generatedAt = try c.decodeIfPresent(String.self,forKey:.generatedAt) ?? ""
+        workspace = try c.decodeIfPresent(String.self,forKey:.workspace)
+        activeVoiceId = try c.decodeIfPresent(String.self,forKey:.activeVoiceId)
+        activeVoiceSession = try c.decodeIfPresent(VoiceSession.self,forKey:.activeVoiceSession)
+        voiceCard = try c.decodeIfPresent(ControlRoomCard.self,forKey:.voiceCard)
+        currentGrid = try c.decodeIfPresent([ControlRoomSlot].self,forKey:.currentGrid) ?? []
+        workspaces = try c.decodeIfPresent([ControlRoomLayout].self,forKey:.workspaces) ?? []
+        projects = try c.decodeIfPresent([ControlRoomProject].self,forKey:.projects)
+        chatgptProjects = try c.decodeIfPresent([ControlRoomProject].self,forKey:.chatgptProjects)
+        chatgptProjectState = try c.decodeIfPresent(String.self,forKey:.chatgptProjectState)
+        sections = try c.decodeIfPresent([ControlRoomSection].self,forKey:.sections)
+        brainTrinity = try c.decodeIfPresent(BrainTrinityFeed.self,forKey:.brainTrinity)
+        sourceObservedAt = try c.decodeIfPresent(String.self,forKey:.sourceObservedAt)
+        connection = try c.decodeIfPresent(Connection.self,forKey:.connection)
+    }
+
+    var hasDisplayContent: Bool { !generatedAt.isEmpty && connection?.state != .unavailable }
+
     func isFresh(now: Date = Date()) -> Bool {
-        schemaVersion == 1 && Self.recent(generatedAt,now:now)
+        guard schemaVersion == 1, transportConnected != false, Self.recent(generatedAt,now:now) else { return false }
+        guard let connection else { return transportConnected != true }
+        return connection.connected && connection.state == .connected &&
+            sourceObservedAt.map { Self.recent($0,now:now) } == true
+    }
+
+    func disconnected() -> Self {
+        var copy = self
+        copy.transportConnected = false
+        return copy
     }
 
     var availableVoiceCard: ControlRoomCard? {
@@ -632,5 +677,357 @@ struct VoicePIPPlacement {
         let travelY = max(0,container.height-card.height-24)
         anchor = CGPoint(x:travelX > 0 ? min(1,max(0,(origin.x+translation.width-12)/travelX)) : 1,
                          y:travelY > 0 ? min(1,max(0,(origin.y+translation.height-12)/travelY)) : 1)
+    }
+}
+
+// The relay cursor is independent of the source observation clock.
+struct ControlRoomEventsReducer {
+    enum Outcome { case applied, ignored, heartbeat, resync }
+    enum Contract { case common, relayProjection }
+    private(set) var generation: String?
+    private(set) var revision: Int?
+    private(set) var snapshot: [String:ProjectionValue]?
+    private(set) var projection: ControlRoomProjection?
+    var cursor: String? {
+        guard let generation, let revision else { return nil }
+        return "\(generation):\(revision)"
+    }
+
+    struct Event: Decodable {
+        let schema: String
+        let type: String
+        let generation: String
+        let revision: Int
+        let emittedAt: String
+        let snapshot: [String:ProjectionValue]?
+        let baseRevision: Int?
+        let set: [String:ProjectionValue]?
+        let unset: [String]?
+        let threads: Rows?
+        let catalog: Rows?
+    }
+    struct Rows: Decodable {
+        let upsert: [[String:ProjectionValue]]
+        let remove: [String]
+    }
+
+    mutating func consume(_ frame: ControlRoomSSE.Frame, contract: Contract) throws -> Outcome {
+        let event = try JSONDecoder().decode(Event.self,from:frame.data)
+        guard event.schema == "ccr.control-events/v1", UUID(uuidString:event.generation) != nil,
+              event.generation.utf8.count == 36, (0...9_007_199_254_740_991).contains(event.revision),
+              BrainTrinityFeed.date(event.emittedAt) != nil,
+              ["snapshot","patch","heartbeat"].contains(event.type), frame.event == event.type,
+              frame.id == "\(event.generation):\(event.revision)" else { throw ControlRoomEventsError.invalid }
+        let raw = try JSONDecoder().decode(ProjectionValue.self,from:frame.data)
+        guard Self.safe(raw) else { throw ControlRoomEventsError.invalid }
+        if event.type == "heartbeat" {
+            return generation == event.generation && revision == event.revision ? .heartbeat : .resync
+        }
+        var next: [String:ProjectionValue]
+        if event.type == "snapshot" {
+            guard let fields = event.snapshot else { throw ControlRoomEventsError.invalid }
+            if generation == event.generation, let revision, event.revision < revision { return .ignored }
+            next = fields
+        } else {
+            guard let base = event.baseRevision, (0..<9_007_199_254_740_991).contains(base),
+                  event.revision == base + 1, let set = event.set, let unset = event.unset,
+                  unset.allSatisfy({ !Self.forbidden.contains($0) }),
+                  let threads = event.threads, let catalog = event.catalog,
+                  Self.valid(threads), Self.valid(catalog) else { throw ControlRoomEventsError.invalid }
+            guard generation == event.generation, let revision, let snapshot else { return .resync }
+            if event.revision <= revision { return .ignored }
+            guard base == revision else { return .resync }
+            next = snapshot.merging(set) { _,new in new }
+            for key in unset { next.removeValue(forKey:key) }
+            next["threads"] = try Self.apply(next["threads"],rows:threads)
+            next["catalog"] = try Self.apply(next["catalog"],rows:catalog)
+        }
+        guard case .number(1) = next["schemaVersion"] else { throw ControlRoomEventsError.invalid }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        let data = try encoder.encode(ProjectionValue.object(next))
+        guard data.count <= ControlRoomSSE.maxBodyBytes else { throw ControlRoomEventsError.tooLarge }
+        var value = try JSONDecoder().decode(ControlRoomProjection.self,from:data)
+        if contract == .relayProjection {
+            guard let connection = value.connection, let observed = next["sourceObservedAt"],
+                  case .array(let threads) = next["threads"], threads.isEmpty,
+                  case .array(let catalog) = next["catalog"], catalog.isEmpty,
+                  connection.connected == (connection.state == .connected) else { throw ControlRoomEventsError.invalid }
+            switch observed {
+            case .null:
+                guard connection.state == .unavailable else { throw ControlRoomEventsError.invalid }
+            case .string(let date):
+                guard BrainTrinityFeed.date(date) != nil else { throw ControlRoomEventsError.invalid }
+            default: throw ControlRoomEventsError.invalid
+            }
+            if connection.state != .unavailable {
+                guard BrainTrinityFeed.date(value.generatedAt) != nil,
+                      value.sourceObservedAt == value.generatedAt,
+                      case .array = next["currentGrid"], case .array = next["workspaces"]
+                else { throw ControlRoomEventsError.invalid }
+            }
+        }
+        value.transportConnected = true
+        generation = event.generation
+        revision = event.revision
+        snapshot = next
+        projection = value
+        return .applied
+    }
+
+    private static let forbidden: Set<String> = ["__proto__","prototype","constructor"]
+    private static func safe(_ value: ProjectionValue) -> Bool {
+        switch value {
+        case .object(let fields): return fields.allSatisfy { !forbidden.contains($0.key) && safe($0.value) }
+        case .array(let items): return items.allSatisfy(safe)
+        default: return true
+        }
+    }
+    private static func id(_ row: [String:ProjectionValue]) -> String? {
+        guard case .string(let id) = row["id"], !id.isEmpty else { return nil }
+        return id
+    }
+    private static func valid(_ rows: Rows) -> Bool {
+        rows.upsert.allSatisfy { id($0) != nil } && rows.remove.allSatisfy { !$0.isEmpty }
+    }
+    private static func apply(_ previous: ProjectionValue?, rows: Rows) throws -> ProjectionValue {
+        var order = [String]()
+        var values = [String:ProjectionValue]()
+        if let previous {
+            guard case .array(let items) = previous else { throw ControlRoomEventsError.invalid }
+            for item in items {
+                guard case .object(let row) = item, let key = id(row) else { throw ControlRoomEventsError.invalid }
+                if values[key] == nil { order.append(key) }
+                values[key] = item
+            }
+        }
+        for key in rows.remove { values.removeValue(forKey:key) }
+        order.removeAll { values[$0] == nil }
+        for row in rows.upsert {
+            let key = id(row)!
+            if values[key] == nil { order.append(key) }
+            values[key] = .object(row)
+        }
+        return .array(order.compactMap { values[$0] })
+    }
+}
+
+enum ControlRoomEventsError: Error, LocalizedError {
+    case invalid, tooLarge, resync, unsupported, rejected(Int)
+    var errorDescription: String? {
+        switch self {
+        case .invalid: return "관제 이벤트 형식을 확인할 수 없습니다."
+        case .tooLarge: return "관제 이벤트가 8 MiB 전송 한도를 초과했습니다."
+        case .resync: return "관제 이벤트 순서가 달라 전체 상태를 다시 연결합니다."
+        case .unsupported: return "Mac이 관제 이벤트 연결을 지원하지 않습니다. 서버 버전을 확인하세요."
+        case .rejected(let code): return "관제 이벤트 연결이 거부되었습니다. 응답 코드 \(code)"
+        }
+    }
+}
+
+struct ControlRoomSSE {
+    static let maxFrameBytes = 8 * 1024 * 1024
+    static let maxBodyBytes = maxFrameBytes - 8192
+    struct Frame {
+        let id: String
+        let event: String
+        let data: Data
+    }
+    private var line = Data()
+    private var body = Data()
+    private var event = ""
+    private var id = ""
+    private var hasData = false
+    private var frameBytes = 0
+    private var pendingCR = false
+    private var firstLine = true
+
+    private mutating func countByte() throws {
+        frameBytes += 1
+        guard frameBytes <= Self.maxFrameBytes else { throw ControlRoomEventsError.tooLarge }
+    }
+
+    mutating func append(_ byte: UInt8) throws -> Frame? {
+        if pendingCR {
+            pendingCR = false
+            if byte == 10 {
+                try countByte()
+                return try endLine()
+            }
+            let completed = try endLine()
+            try countByte()
+            if byte == 13 { pendingCR = true }
+            else { line.append(byte) }
+            return completed
+        }
+        try countByte()
+        if byte == 13 { pendingCR = true; return nil }
+        if byte == 10 { return try endLine() }
+        line.append(byte)
+        return nil
+    }
+
+    mutating func finish() throws -> Frame? {
+        guard pendingCR else { return nil }
+        pendingCR = false
+        return try endLine()
+    }
+
+    private mutating func endLine() throws -> Frame? {
+        guard var text = String(data:line,encoding:.utf8) else { throw ControlRoomEventsError.invalid }
+        line.removeAll(keepingCapacity:true)
+        if firstLine { firstLine = false; if text.first == "\u{feff}" { text.removeFirst() } }
+        if text.isEmpty {
+            defer {
+                body = Data(); event = ""; id = ""; hasData = false; frameBytes = 0
+            }
+            return hasData ? Frame(id:id,event:event,data:body) : nil
+        }
+        if text.first == ":" { return nil }
+        let parts = text.split(separator:":",maxSplits:1,omittingEmptySubsequences:false)
+        var value = parts.count == 2 ? String(parts[1]) : ""
+        if value.first == " " { value.removeFirst() }
+        switch parts[0] {
+        case "id":
+            guard !value.contains("\0"), value.utf8.count <= 128 else { throw ControlRoomEventsError.invalid }
+            id = value
+        case "event": event = value
+        case "data":
+            if hasData { body.append(10) }
+            body.append(contentsOf:value.utf8)
+            hasData = true
+            guard body.count <= Self.maxBodyBytes else { throw ControlRoomEventsError.tooLarge }
+        default: break
+        }
+        return nil
+    }
+}
+
+struct ControlRoomConnectionGeneration {
+    struct Lease {
+        let generation: UUID
+        let retainsContent: Bool
+    }
+    private struct Source: Equatable { let address: String; let token: String }
+    private var current = UUID()
+    private var source: Source?
+
+    mutating func begin(address: String, token: String) -> Lease {
+        let next = Source(address:address,token:token)
+        let retainsContent = source == next
+        source = next
+        current = UUID()
+        return Lease(generation:current,retainsContent:retainsContent)
+    }
+    func owns(_ lease: Lease) -> Bool { current == lease.generation }
+}
+
+enum ControlRoomEventUpdate {
+    case snapshot(ControlRoomProjection)
+    case unavailable
+    case disconnected(ControlRoomProjection?, String)
+
+    var projection: ControlRoomProjection? {
+        switch self {
+        case .snapshot(let projection): return projection
+        case .unavailable: return nil
+        case .disconnected(let projection, _): return projection
+        }
+    }
+    var message: String? {
+        switch self {
+        case .snapshot: return nil
+        case .unavailable: return "관제 원본 또는 공개 정책을 확인할 수 없습니다. 이전 내용은 표시하지 않습니다."
+        case .disconnected(_, let message): return message
+        }
+    }
+}
+
+final class ControlRoomEventRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+enum ControlRoomEventStream {
+    // Reduce every patch before coalescing display updates, so a slow UI cannot lose a revision.
+    static func updates(request: URLRequest, retaining initial: ControlRoomProjection? = nil,
+                        configuration: URLSessionConfiguration = .ephemeral)
+        -> AsyncStream<ControlRoomEventUpdate> {
+        AsyncStream(bufferingPolicy:.bufferingNewest(1)) { continuation in
+            let worker = Task {
+                let session = URLSession(configuration:configuration,delegate:ControlRoomEventRedirects(),delegateQueue:nil)
+                defer { session.invalidateAndCancel(); continuation.finish() }
+                var reducer = ControlRoomEventsReducer()
+                var cursor: String?
+                var accepted = false
+                var delay = 1
+                while !Task.isCancelled {
+                    do {
+                        var next = request
+                        next.setValue("text/event-stream",forHTTPHeaderField:"Accept")
+                        next.setValue(cursor,forHTTPHeaderField:"Last-Event-ID")
+                        next.timeoutInterval = 45
+                        let (bytes,response) = try await session.bytes(for:next)
+                        defer { bytes.task.cancel() }
+                        guard let http = response as? HTTPURLResponse else { throw ControlRoomEventsError.invalid }
+                        if [404,405,410,501].contains(http.statusCode) { throw ControlRoomEventsError.unsupported }
+                        guard http.statusCode == 200 else { throw ControlRoomEventsError.rejected(http.statusCode) }
+                        guard http.value(forHTTPHeaderField:"Content-Type")?.split(separator:";").first?
+                            .trimmingCharacters(in:.whitespaces).lowercased() == "text/event-stream"
+                        else { throw ControlRoomEventsError.unsupported }
+                        var parser = ControlRoomSSE()
+                        var needsSnapshot = true
+                        func apply(_ frame: ControlRoomSSE.Frame) throws {
+                            if needsSnapshot && frame.event != "snapshot" { throw ControlRoomEventsError.resync }
+                            switch try reducer.consume(frame,contract:.relayProjection) {
+                            case .applied:
+                                needsSnapshot = false
+                                accepted = true
+                                cursor = reducer.cursor
+                                delay = 1
+                                if let value = reducer.projection, value.hasDisplayContent {
+                                    continuation.yield(.snapshot(value))
+                                } else {
+                                    continuation.yield(.unavailable)
+                                }
+                            case .resync: throw ControlRoomEventsError.resync
+                            case .ignored, .heartbeat: break
+                            }
+                        }
+                        for try await byte in bytes {
+                            try Task.checkCancellation()
+                            if let frame = try parser.append(byte) { try apply(frame) }
+                        }
+                        if let frame = try parser.finish() { try apply(frame) }
+                        throw URLError(.networkConnectionLost)
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        let terminal: Bool
+                        switch error {
+                        case ControlRoomEventsError.unsupported: terminal = true
+                        case ControlRoomEventsError.rejected(let code): terminal = (300..<500).contains(code) && code != 408 && code != 429
+                        default: terminal = false
+                        }
+                        switch error {
+                        case ControlRoomEventsError.invalid, ControlRoomEventsError.tooLarge, ControlRoomEventsError.resync:
+                            cursor = nil
+                        default:
+                            if error is DecodingError { cursor = nil }
+                        }
+                        let last = accepted ? reducer.projection : initial
+                        let retained = last?.hasDisplayContent == true ? last?.disconnected() : nil
+                        continuation.yield(.disconnected(retained,
+                            "\(error.localizedDescription) 마지막 내용은 읽기 전용이며 다시 연결을 기다립니다."))
+                        if terminal { return }
+                        do { try await Task.sleep(for:.seconds(delay)) } catch { return }
+                        delay = min(delay * 2,10)
+                    }
+                }
+            }
+            continuation.onTermination = { _ in worker.cancel() }
+        }
     }
 }
