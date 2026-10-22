@@ -320,6 +320,10 @@ extension StreamClient {
         stopSavedMacAutoConnect()
         #endif
         guard let mac = savedMac(macID), let pin = mac.fingerprintData else { return }
+        if RemoteDialPolicy.ownerTailnetScope(mac), mac.revoked == true || mac.newKey == true {
+            status = "소유 Mac의 기존 신뢰를 확인할 수 없습니다."
+            return
+        }
         let name = displayName(macID)
         guard let identity = DeviceIdentity.existing() else {
             status = "This \(Self.deviceWord) has no key for \(name). Pair it again."
@@ -332,8 +336,7 @@ extension StreamClient {
         }
         hostName = name
         status = why == .automatic ? "Reconnecting to \(name) remotely…" : "Connecting to \(name) remotely…"
-        let candidates = RemoteDialPolicy.order(mac.allAddresses, remotePort: mac.remotePort, lastWorked: mac.lastWorked,
-                                                localIPv4: Self.localIPv4Networks())
+        let candidates = RemoteDialPolicy.savedOrder(mac, localIPv4: Self.localIPv4Networks())
         #if DEBUG
         print("remote: dialing \(name) (\(macID)) \(why): \(candidates.map(\.key))")
         #endif
