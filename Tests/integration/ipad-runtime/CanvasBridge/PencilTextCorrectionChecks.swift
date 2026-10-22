@@ -382,10 +382,16 @@ enum PencilTextCorrectionChecks {
         for raw in ["가구."," 가구 다리 "," 3.14 .","`가구`","**가구**","가구\n"," e\u{301} ."] {
             wordField.text = raw
             wordField.sendActions(for:.editingChanged)
-            let input = CanvasPencilTextCorrectionInput(text:wordSnapshot.text,selection:wordSnapshot.selection,raw:raw)
+            let observed = wordField.text ?? ""
+            if raw == "가구\n" {
+                try check(observed == "가구","UIKit 단일 줄 입력칸은 줄바꿈을 받지 않음")
+            } else {
+                try check(observed.utf8.elementsEqual(raw.utf8),"네이티브 입력값의 UTF8 보존 \(raw.debugDescription)")
+            }
+            let input = CanvasPencilTextCorrectionInput(text:wordSnapshot.text,selection:wordSnapshot.selection,raw:observed)
             try check(wordAlert.message?.hasPrefix("적용 결과: \(input.preferred.debugDescription)") == true &&
                       wordAlert.actions[1].isEnabled == (input.word != nil),
-                      "네이티브 미리보기와 적용할 바이트가 일치 \(raw.debugDescription)")
+                      "네이티브 미리보기와 실제 입력 바이트가 일치 \(observed.debugDescription)")
         }
         wordField.text = " 가구 ."
         wordField.sendActions(for:.editingChanged)
