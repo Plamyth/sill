@@ -140,6 +140,9 @@ struct HostStatusSnapshot {
     let injector = Injector()
     let status = Status()
     let gestureChords = Chords()
+    var peerStreams: [ObjectIdentifier: Int] = [:]
+    var peerPolls = 0
+    func pollPeerStreams() { peerPolls += 1 }
     var active = StreamSource.none
     var inputFence = SourceInputFence<ObjectIdentifier>()
     var connections: [ObjectIdentifier: NWConnection] = [:]

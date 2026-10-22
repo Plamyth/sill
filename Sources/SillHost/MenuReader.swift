@@ -216,7 +216,8 @@ final class MenuReader: @unchecked Sendable {
     /// one part is one of the bar's menus: never pressed (the mirror refuses it first). An AppKit app
     /// answers AXPress before it runs the action (the fixture: 2–3 ms); one that answers only after
     /// holds this queue until the timeout, which counts as pressed.
-    func press(pid: pid_t, element: AXUIElement?, path: MenuPath, shownTitle: String?, ancestors: [String]?) -> Pressed {
+    func press(pid: pid_t, element: AXUIElement?, path: MenuPath, shownTitle: String?, ancestors: [String]?,
+               expectedWindow: UInt32? = nil, requireFrontmost: Bool = false) -> Pressed {
         dispatchPrecondition(condition: .onQueue(queue))
         guard AXIsProcessTrusted() else { return Pressed(outcome: .refused(.notTrusted), foundTitle: nil) }
         guard path.indexes.count >= 2 else { return Pressed(outcome: .refused(.changed), foundTitle: nil) }
@@ -252,6 +253,9 @@ final class MenuReader: @unchecked Sendable {
         case .press, .pressFound:
             guard let target else { return Pressed(outcome: .refused(.changed), foundTitle: found) }
             let started = CFAbsoluteTimeGetCurrent()
+            if requireFrontmost, !Self.frontmostMatches(pid: pid, window: expectedWindow) {
+                return Pressed(outcome: .refused(.changed), foundTitle: found)
+            }
             let e = AXUIElementPerformAction(target, kAXPressAction as CFString)
             if e == .success { return Pressed(outcome: .pressed, foundTitle: found) }
             if e == .cannotComplete, CFAbsoluteTimeGetCurrent() - started >= Double(Self.timeout) * 0.9 {
@@ -259,6 +263,14 @@ final class MenuReader: @unchecked Sendable {
             }
             return Pressed(outcome: .refused(Self.refusal(failure(e, started: started, pid: pid))), foundTitle: found)
         }
+    }
+
+    private static func frontmostMatches(pid: pid_t, window: UInt32?) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
+              let front = list.first(where: { ($0[kCGWindowLayer as String] as? Int) == 0 &&
+                  ($0[kCGWindowAlpha as String] as? Double ?? 1) > 0 }) else { return false }
+        guard (front[kCGWindowOwnerPID as String] as? Int32) == pid else { return false }
+        return window == nil || (front[kCGWindowNumber as String] as? UInt32) == window
     }
 
     /// An item as it is now: its title as a device is shown it, its enabled flag, and its children

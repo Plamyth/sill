@@ -1,0 +1,59 @@
+{
+  "base": "320da05b755a20ffacefc854fa6af3e55d944896",
+  "owner": "01a1621c-6e0c-7a90-9836-f25deaf86905",
+  "baseline": {
+    "assertions": 4,
+    "failures": 4,
+    "exit_code": 1
+  },
+  "current": {
+    "assertions": 29,
+    "failures": 0,
+    "exit_code": 0
+  },
+  "current_inputs": {
+    "inputs": {
+      "Sources/SillHost/StreamServer.swift": "030904ea2230e18dc88c29c8a8ca0bcc6a5afd738a23d69e6d399506b71c4270",
+      "Sources/StreamProtocol/StreamMessage.swift": "71aeadd820f0346415655c8d62d23afcacc27cfb919074c77b9df0e5fc60e839",
+      "Sources/StreamProtocol/Switcher.swift": "806a50f95a7a7125e66ad9c339a12797b79c02e790b46696757412e2efabecf8",
+      "Tests/checks/peer-video-transport/Checks.swift": "f0a56df239d54aa7c672d643e3aa3fb2dcf8b9784216409cb12252b0397bc2a0",
+      "Tests/checks/peer-video-transport/Fixture.swift": "43f93fe0985f13ee5a53b9ae9796bada4c2e53567815194a95100c0db23f3b1f"
+    },
+    "program_sha256": "b1acbe2bdd49ce720b32b7ed7bd3e46c19b26e404c1bcb2202fa1fed16def795",
+    "ref": "working-tree"
+  },
+  "baseline_inputs": {
+    "inputs": {
+      "Sources/SillHost/StreamServer.swift": "beee4e33f8b59f5225a223987f654b2da1c3395cd4a657dd5d178d25c710f497",
+      "Sources/StreamProtocol/StreamMessage.swift": "71aeadd820f0346415655c8d62d23afcacc27cfb919074c77b9df0e5fc60e839",
+      "Sources/StreamProtocol/Switcher.swift": "806a50f95a7a7125e66ad9c339a12797b79c02e790b46696757412e2efabecf8",
+      "Tests/checks/peer-video-transport/Checks.swift": "f0a56df239d54aa7c672d643e3aa3fb2dcf8b9784216409cb12252b0397bc2a0",
+      "Tests/checks/peer-video-transport/Fixture.swift": "43f93fe0985f13ee5a53b9ae9796bada4c2e53567815194a95100c0db23f3b1f"
+    },
+    "program_sha256": "c5b5741e3a6adcc217f840d178a11554ee908430eda2394214f1e43f675aeaaa",
+    "ref": "320da05b"
+  },
+  "source_inputs_unchanged_after_execution": true,
+  "mini_execution": {
+    "cleanup_verified": true,
+    "command_argument_count": 2,
+    "command_argv_sha256": "f88d13432e7b72b5028930d8d060d4b6b775188c79e03b1db2e95a89917d2b09",
+    "command_executable": "/bin/sh",
+    "exit_code": 0,
+    "expires_at": "2026-10-23T05:47:49.372835+00:00",
+    "file_count": 8,
+    "finished_at": "2026-10-22T05:47:54.476968+00:00",
+    "job": "peer-video-transport-matrix",
+    "owner": "01a1621c-6e0c-7a90-9836-f25deaf86905",
+    "remote_path": "/Users/sin-wonho/.local/share/mini-ephemeral-source/runs/01a1621c-6e0c-7a90-9836-f25deaf86905/peer-video-transport-matrix",
+    "schema": 1,
+    "source": "/Volumes/BT-Workspace/Development-Archives/CCR-Vision/peer-streams-20261022/transport-source/Tests/checks/peer-video-transport",
+    "source_bytes": 175341,
+    "source_sha256": "66175c06c67801ecad524c67909e03328c71e81116b0a3f9ab5664f80b92140f",
+    "started_at": "2026-10-22T05:47:49.372835+00:00",
+    "status": "completed"
+  },
+  "scope": "production methods with inert I/O; no host/device/UI/audio interaction",
+  "sdk_build": "pending parent integration of PointerWatch overload",
+  "independent_review": "pending parent; implementation author review is not independent"
+}

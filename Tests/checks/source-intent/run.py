@@ -64,7 +64,13 @@ assert(accepted)
         server=(ROOT/'Sources/SillHost/StreamServer.swift').read_text()
         methods='\n'.join(block(server,mark).replace('private ','') for mark in [
             'func prepareVideo(', 'func commitVideo(', 'func sendCatalog(', 'private func replayCatalog(', 'func sendMicrophoneCatalog(', 'private func send(_ raw:'])
-        fixture=(HERE/'Publication.swift').read_text().replace('// PUBLICATION_METHODS',methods)
+        fixture=(HERE/'Publication.swift').read_text()
+        if 'private enum VideoLane:' in server:
+            lane_types='\n'.join(block(server,mark).replace('private ','') for mark in ['private enum VideoLane:', 'private final class PeerVideo {'])
+            helpers='\n'.join(block(server,mark).replace('private ','') for mark in ['private func currentVideoAdmission(', 'private func catalogMatches(', 'private static func isVideo('])
+            fixture=fixture.replace('final class Client {',lane_types+'\nfinal class Client {\n    var videoLane = VideoLane.legacy\n    let peerVideo = PeerVideo()')
+            methods += '\n'+helpers
+        fixture=fixture.replace('// PUBLICATION_METHODS',methods)
         inputs={p.name:p.read_text() for p in (ROOT/'Sources/StreamProtocol').glob('*.swift') if p.name != 'RemoteTLS.swift'}
         inputs['Publication.swift']=fixture
         inputs['Admission.swift']='import Foundation\n'+block(server,'final class SourcePublicationAdmission')

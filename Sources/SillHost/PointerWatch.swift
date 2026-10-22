@@ -234,6 +234,22 @@ final class PointerWatch: @unchecked Sendable {   // every stored var is under `
         return reading
     }
 
+    /// Shared physical ownership, mapped into one peer's current capture rectangle.
+    func sample(devices: [ObjectIdentifier], in rect: CGRect) -> Reading? {
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        lock.lock()
+        let now = clock()
+        let point = synthetic ? (path == nil ? nil : scriptedPointer(now: now)) : readLocation()
+        guard let point else { lock.unlock(); return nil }
+        let handedOver = control.read(point, now: now)
+        let fraction = PointerControl.fraction(of: point, in: rect)
+        let result = Reading(x: fraction.x, y: fraction.y, inside: fraction.inside,
+                             controller: control.controller, moving: control.isMoving(now: now))
+        lock.unlock()
+        if handedOver { Stats.shared.bump("ptr.mac") }
+        return result
+    }
+
     // MARK: The window's re-read (sill.pointer)
 
     /// Under `lock`: marks a re-read of `id` as started and returns the id to dispatch once the

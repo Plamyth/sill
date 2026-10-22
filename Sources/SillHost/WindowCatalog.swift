@@ -17,6 +17,12 @@ import IOKit.graphics
 /// thumbnails. The installed-app scan runs once at startup, off the main thread.
 @MainActor
 final class WindowCatalog {
+    func display(id: CGDirectDisplayID) -> SCDisplay? {
+        guard let version = topology.version, version == inventoryTopologyVersion,
+              displayInventory.revision != nil else { return nil }
+        return displays.first { $0.displayID == id && CGDisplayIsActive(id) != 0 }
+    }
+
     private(set) var windows: [SCWindow] = []
     private(set) var infos: [WindowInfo] = []
     private var displays: [SCDisplay] = []

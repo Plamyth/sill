@@ -43,6 +43,14 @@ final class MenuMirror {
     /// coordinator's `focusForMenus`). True when the app is frontmost as it returns; true at once
     /// for the Desktop and for nothing.
     var prepare: () async -> Bool = { true }
+    /// Explicit menu presses may prepare focus; observational menu reads never use this hook.
+    var preparePress: (() async -> Bool)?
+    var readScopeReady: () -> Bool = { true }
+    private var readScopeBlocked = false
+    private static let readScopeNote = "선택한 창이 Mac의 입력 대상이 아니므로 메뉴 상태를 확인할 수 없습니다."
+    var effectAdmission: SourcePublicationAdmission?
+    var sourceScope: () -> (generation: String, epoch: UUID)? = { nil }
+    var executePress: ((@escaping @MainActor () async -> Void) -> Void)?
     /// The app behind the current source, asked when the first device subscribes (the coordinator
     /// tells the mirror of changes only while someone subscribes).
     var currentTarget: () -> Target? = { nil }
@@ -183,7 +191,11 @@ final class MenuMirror {
             send(MacMenu(version: version, answering: r.token, pressed: false, note: MenuRefusal.changedNote), to: c)
             return
         }
-        enqueue { await self.servePress(r, to: c, who: who, arrived: now) }
+        let admission = effectAdmission
+        let work: @MainActor () async -> Void = {
+            await self.servePress(r, to: c, who: who, arrived: now, admission: admission)
+        }
+        if let executePress { executePress(work) } else { enqueue(work) }
     }
 
     /// A connection's client stats, about once a second: its worst round trip of that second (a
@@ -231,7 +243,12 @@ final class MenuMirror {
         }
     }
 
-    private var needsRetry: Bool { stale || !topRead || untrusted }
+    private var needsRetry: Bool { stale || !topRead || untrusted || readScopeBlocked }
+
+    func sourceScopeChanged() {
+        newVersion()
+        if hasSubscribers { publishTop() }
+    }
 
     // MARK: Serving, one request at a time
 
@@ -277,6 +294,7 @@ final class MenuMirror {
             Stats.shared.bump("menu.cached")
             answer(MacMenu(version: version, answering: r.token, menu: path.id, items: e.items, more: e.more > 0 ? e.more : nil))
         }
+        guard readScopeReady() else { blockReadScope(); refuse(Self.readScopeNote); publishTop(); return }
         // A read an active app's states came from answers any fetch, with no activation.
         if let e = cache.fresh(path.id, title: shown, now: CFAbsoluteTimeGetCurrent(), frontmostNow: true) { cached(e); return }
         // Its device has stopped waiting (it waited behind other requests): nothing is activated or read.
@@ -286,6 +304,7 @@ final class MenuMirror {
         }
         let v = version
         let frontmost = await prepare()
+        guard readScopeReady() else { blockReadScope(); refuse(Self.readScopeNote); publishTop(); return }
         guard v == version, target?.pid == t.pid else { refuse(MenuRefusal.changedNote); return }
         // Still not frontmost: a read now would return the last validation, an inactive app's too.
         if !frontmost, let e = cache.fresh(path.id, title: shown, now: CFAbsoluteTimeGetCurrent(), frontmostNow: false) { cached(e); return }
@@ -307,6 +326,7 @@ final class MenuMirror {
         // last read of the top level, with other requests waiting, or with no time for a top-level
         // read and a whole menu before the answer must go out, only the menu: a sweep across the
         // bar reads the top level once, and the titles checked keep a menu read without it right.
+        guard readScopeReady() else { blockReadScope(); refuse(Self.readScopeNote); publishTop(); return }
         let reader = self.reader
         let onePart = path.indexes.count == 1
         let until = arrived + RequestDeadline.answerBy(rttMs: roundTrips[cid])
@@ -331,6 +351,7 @@ final class MenuMirror {
             return (top, reader.items(pid: t.pid, of: opener, path: path, shown: shown, ancestors: ancestors, until: until))
         }
         guard v == version, target?.pid == t.pid else { refuse(MenuRefusal.changedNote); return }
+        guard readScopeReady() else { blockReadScope(); refuse(Self.readScopeNote); publishTop(); return }
         if let topResult { applyTop(topResult, target: t) }
         // What that read found goes to the subscribers first: a changed top level (a new version), the
         // app gone or not answering, or a top level read here for the first time in this version (its
@@ -406,7 +427,7 @@ final class MenuMirror {
         }
     }
 
-    private func servePress(_ r: PressMenuItem, to c: NWConnection, who: String, arrived: Double) async {
+    private func servePress(_ r: PressMenuItem, to c: NWConnection, who: String, arrived: Double, admission: SourcePublicationAdmission?) async {
         let cid = ObjectIdentifier(c)
         let path = r.id.flatMap(MenuPath.init)
         let app = label(target?.app ?? "")
@@ -428,13 +449,22 @@ final class MenuMirror {
         let waited = CFAbsoluteTimeGetCurrent() - arrived
         if RequestDeadline.expired(waited: waited, rttMs: roundTrips[cid]) { refuse(.late(waited), what: logPath(path, app: t.app)); return }
         let v = version
-        _ = await prepare()
+        _ = await (preparePress ?? prepare)()
         guard v == version, target?.pid == t.pid else { refuse(.changed, what: shownID); return }
         let reader = self.reader
         let kept = elements[path]?.element
         let shown = r.title
         let ancestors = ancestorTitles(path)
-        let result = await onMenus { reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors) }
+        let result: MenuReader.Pressed? = await onMenus {
+            if let admission {
+                var result: MenuReader.Pressed?
+                admission.publish { result = reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors, expectedWindow: t.window, requireFrontmost: true) }
+                return result
+            }
+            return reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors)
+        }
+        guard let result, v == version, target?.pid == t.pid,
+              subscribers[cid] != nil else { return }
         // A press can change any state.
         cache.clear()
         let what = logPath(path, app: t.app, last: result.foundTitle)
@@ -479,11 +509,20 @@ final class MenuMirror {
     /// version or the target moved meanwhile).
     private func readTop(version v: Int) async -> Bool {
         guard v == version, let t = target else { return false }
+        guard readScopeReady() else { blockReadScope(); return true }
         let reader = self.reader
         let result = await onMenus { reader.topLevel(pid: t.pid) }
         guard v == version, target?.pid == t.pid else { return false }
+        guard readScopeReady() else { blockReadScope(); return true }
+        readScopeBlocked = false
         applyTop(result, target: t)
         return true
+    }
+
+    private func blockReadScope() {
+        if !readScopeBlocked { newVersion() }
+        readScopeBlocked = true
+        setTop(TopLevel(titles: [], enabled: []), [], note: Self.readScopeNote)
     }
 
     /// What a read of the bar found: the top level of this version, a changed top level (the
@@ -568,6 +607,7 @@ final class MenuMirror {
         stale = false
         note = nil
         untrusted = false
+        readScopeBlocked = false
     }
 
     private func topMessage(answering: Int?) -> MacMenu {
@@ -604,8 +644,12 @@ final class MenuMirror {
 
     private func send(_ m: MacMenu, to c: NWConnection) {
         guard c.state == .ready else { return }   // it closed meanwhile: nothing to answer
-        server.send(StreamMessage(kind: .macMenu, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
-                                  payload: Wire.encode(m)), to: c)
+        var scoped = m
+        if let scope = sourceScope() { scoped.generation = scope.generation; scoped.videoEpoch = scope.epoch }
+        let message = StreamMessage(kind: .macMenu, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
+                                    payload: Wire.encode(scoped))
+        if let admission = effectAdmission { server.sendScopedMetadata(message, to: c, admission: admission) }
+        else { server.send(message, to: c) }
     }
 
     /// One request after the other, in arrival order (see the class comment). A request's arrival

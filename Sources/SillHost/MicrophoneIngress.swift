@@ -60,6 +60,16 @@ final class MicrophoneIngress: @unchecked Sendable {
         if gate?.scope.peer == peer.id { gate?.render.close(); gate = nil; frames.removeAll(keepingCapacity: true) }
         controls.removeAll { $0.peer.id == peer.id }
     }
+    func revoke(peer: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        if let gate, gate.scope.peer == peer {
+            gate.render.close()
+            self.gate = nil
+            frames.removeAll(keepingCapacity: true)
+        }
+        controls.removeAll { $0.peer.id == peer }
+    }
+
     func revoke(fingerprint: Data? = nil) {
         lock.lock(); defer { lock.unlock() }
         let ids = Set(peers.values.filter { fingerprint == nil || $0.fingerprint == fingerprint }.map(\.id))
