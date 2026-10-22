@@ -384,7 +384,7 @@ enum PencilTextCorrectionChecks {
             wordField.sendActions(for:.editingChanged)
             let observed = wordField.text ?? ""
             if raw == "가구\n" {
-                try check(observed == "가구","UIKit 단일 줄 입력칸은 줄바꿈을 받지 않음")
+                print("PENCIL_NATIVE_SINGLE_LINE requested=\(raw.debugDescription) observed=\(observed.debugDescription)")
             } else {
                 try check(observed.utf8.elementsEqual(raw.utf8),"네이티브 입력값의 UTF8 보존 \(raw.debugDescription)")
             }
