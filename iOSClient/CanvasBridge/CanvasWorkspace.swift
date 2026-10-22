@@ -268,6 +268,11 @@ struct CanvasWorkspace: View {
 
     private var toolsMenu: some View {
         Menu("도구",systemImage:"slider.horizontal.3") {
+            Button("Obsidian 노트",systemImage:"doc.text") {
+                vaultOpen = true
+                Task { await loadVaultEntries() }
+            }
+            Divider()
             Picker("그리기 도구",selection:$store.mode) {
                 ForEach(CanvasMode.allCases,id:\.self) { Text($0.rawValue).tag($0) }
             }
@@ -288,10 +293,6 @@ struct CanvasWorkspace: View {
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("구조 수정 되돌리기",systemImage:"arrow.uturn.backward") { store.undoGraphEdit() }
                 .disabled(!store.canUndoGraph)
-            Button("Obsidian 노트",systemImage:"doc.text") {
-                vaultOpen = true
-                Task { await loadVaultEntries() }
-            }
             Button("연결",systemImage:"network") { connectionOpen = true }
             Button("가져오기") { importOpen = true }
             Button("내보내기") { exportOpen = true }
