@@ -334,8 +334,30 @@ enum RequirePairingValue {
 /// What both doors' verify blocks and admission read on the network queue: immutable, replaced
 /// whole under a lock on every change. Nothing that reads it ever waits on the main actor.
 struct TrustSnapshot: Sendable {
-    /// Paired fingerprints → display names ("iPad (iPad14,1)").
+    /// 명시적으로 등록한 키와 표시 이름. owner candidate는 별도로 보관한다.
     var paired: [Data: String] = [:]
+    struct OwnerCandidate: Equatable, Sendable {
+        let principal: String
+        let generation: UUID
+        var name: String
+    }
+    struct OwnerGrant: Equatable, Sendable {
+        let principal: String
+        let generation: UUID
+        let epoch: UUID
+    }
+    var ownerCandidates: [Data: OwnerCandidate] = [:]
+    var ownerKnown: Set<Data> = []
+    var ownerAuthorized: [Data: OwnerGrant] = [:]
+
+    func isPaired(_ fingerprint: Data) -> Bool {
+        paired[fingerprint] != nil || (remoteAccess && ownerAuthorized[fingerprint].map {
+            $0.epoch == ownerBootstrapEpoch && $0.principal == ownerCandidates[fingerprint]?.principal
+                && $0.generation == ownerCandidates[fingerprint]?.generation
+        } == true)
+    }
+
+
     /// A pairing window is open: the home door takes its proofs.
     var pairingOpen = false
     /// One the remote door takes proofs for (opened by the Mac's user, or the CLI's --remote),
@@ -352,7 +374,7 @@ struct TrustSnapshot: Sendable {
 
 /// The lock around the current TrustSnapshot.
 final class TrustBox: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
     private var value = TrustSnapshot()
 
     var snapshot: TrustSnapshot {
@@ -361,6 +383,19 @@ final class TrustBox: @unchecked Sendable {
     }
 
     func update(_ change: (inout TrustSnapshot) -> Void) {
-        lock.lock(); change(&value); lock.unlock()
+        withDecision { change(&value) }
+    }
+
+    func withDecision<T>(_ action: () -> T) -> T {
+        lock.lock(); defer { lock.unlock() }
+        return action()
+    }
+
+    func authorizeOwner(_ fingerprint: Data) {
+        update {
+            if let candidate = $0.ownerCandidates[fingerprint] {
+                $0.ownerAuthorized[fingerprint] = .init(principal: candidate.principal, generation: candidate.generation, epoch: $0.ownerBootstrapEpoch)
+            }
+        }
     }
 }

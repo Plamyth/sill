@@ -34,6 +34,11 @@ final class RemoteServer {
         set { door.onPairAttempt = newValue }
     }
 
+    var onOwnerSessionProof: ((OwnerBootstrapSocket, @escaping @Sendable (OwnerBootstrapSocket.Evidence?) -> Void) -> Void)? {
+        get { door.onOwnerSessionProof }
+        set { door.onOwnerSessionProof = newValue }
+    }
+
     // On `queue`.
     private var listener: NWListener?
     private var wanted = false

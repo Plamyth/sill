@@ -73,6 +73,7 @@ final class Door: @unchecked Sendable {
 
     /// A pairing attempt; the reply may be called from any thread.
     var onPairAttempt: ((PairAttempt, @escaping @Sendable (PairResult) -> Void) -> Void)?
+    var onOwnerSessionProof: ((OwnerBootstrapSocket, @escaping @Sendable (OwnerBootstrapSocket.Evidence?) -> Void) -> Void)?
     /// Home door: plain Sill messages at the TLS door (an older Sill, -9836), for the menu: once one
     /// source has tried so `DoorPolicy.olderSillTries` times within a minute (a TLS 1.2 client, which
     /// fails the same way, usually tries once).
@@ -89,6 +90,7 @@ final class Door: @unchecked Sendable {
         /// failure for its source.
         var refused = false
         var ownerSocket: OwnerBootstrapSocket?
+        let admissionUntil = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
         var deadline: DispatchWorkItem?
     }
     private var pending: [ObjectIdentifier: Pending] = [:]
@@ -142,9 +144,7 @@ final class Door: @unchecked Sendable {
 
     /// What DoorPolicy knows about a key, from the snapshot as it is now.
     private func trustFor(_ fp: Data?, _ t: TrustSnapshot) -> DoorPolicy.Trust {
-        DoorPolicy.Trust(hasKey: fp != nil, paired: fp.map { t.paired[$0] != nil } ?? false, requirePairing: t.requirePairing,
-                         remoteAccess: t.remoteAccess, internetAccess: t.internetAccess, pairingOpen: t.pairingOpen,
-                         remotePairingOpen: t.remotePairingOpen)
+        t.doorTrust(fp)
     }
 
     /// On `queue`, in the TLS handshake: trust is the pin and the protocol, nothing else.
@@ -249,10 +249,20 @@ final class Door: @unchecked Sendable {
         case .session:
             guard let fp else { refuse(id, "unpaired"); c.cancel(); return }
             admitSession(id, c, fp, t)
+        case .ownerNeedsProof:
+            guard let fp, let p = pending[id], let judge = onOwnerSessionProof,
+                  let socket = OwnerBootstrapSocket.capture(c, trust: trust, purpose: .session, deadline: p.admissionUntil) else {
+                refuse(id, "unpaired"); c.cancel(); return
+            }
+            pending[id]?.ownerSocket = socket
+            judge(socket) { [weak self] evidence in
+                self?.queue.async { [weak self] in self?.admitOwnerSession(id, c, fp, socket, evidence) }
+            }
         case .pairing:
             guard let fp else { refuse(id, "unpaired"); c.cancel(); return }
             if RemoteTLS.negotiatedALPN(c) == OwnerMacBootstrap.alpn {
-                guard let socket = OwnerBootstrapSocket.capture(c, trust: trust) else {
+                guard let p = pending[id],
+                      let socket = OwnerBootstrapSocket.capture(c, trust: trust, deadline: p.admissionUntil) else {
                     refuse(id, "unpaired"); c.cancel(); return
                 }
                 pending[id]?.ownerSocket = socket
@@ -315,6 +325,41 @@ final class Door: @unchecked Sendable {
                 let peer = ClientRoute.Peer(fingerprint: fp, name: snapshot.paired[fp], cableDevice: cable)
                 server.serve(c, route: .home(origin, peer: peer), hello: hello, admitted: { print("Client connected: \(endpoint)") })
             }
+        }
+    }
+
+    private func admitOwnerSession(_ id: ObjectIdentifier, _ c: NWConnection, _ fp: Data,
+                                   _ socket: OwnerBootstrapSocket, _ evidence: OwnerBootstrapSocket.Evidence?) {
+        guard pending[id]?.ownerSocket === socket, checkOrigin(id, c), let server, evidence != nil else {
+            socket.cancel(); refuse(id, "unpaired"); c.cancel(); return
+        }
+        server.gate(c) { [weak self] hello in
+            guard let self, let server = self.server, let p = self.pending[id], p.ownerSocket === socket else {
+                socket.cancel(); c.cancel(); return
+            }
+            if self.kind == .home, let hello,
+               server.droppedForDirectWireless(c, acceptedPeerToPeer: p.peerToPeer, hello: hello) { socket.cancel(); return }
+            let origin = p.origin ?? .internet
+            let admitted = socket.admit(in: self.trust, evidence: evidence, allowed: { snapshot in
+                DoorPolicy.afterGate(self.kind, wasPaired: true, origin: origin, self.trustFor(fp, snapshot),
+                                     remoteSessions: server.remoteSessionCount) == nil
+            }) { snapshot in
+                self.pending.removeValue(forKey: id)
+                p.deadline?.cancel()
+                self.forgive(p.source)
+                let name = snapshot.ownerCandidates[fp]!.name
+                switch self.kind {
+                case .remote:
+                    let label = OriginPolicy.label(origin, interface: p.interface, serviceName: p.interface.flatMap { snapshot.serviceNames[$0] }) ?? "by address"
+                    server.serve(c, route: .remote(origin: origin, label: label, fingerprint: fp, name: name), hello: hello,
+                                 admitted: { print("원격 소유 기기가 연결되었습니다. \(name) (\(c.endpoint))") })
+                case .home:
+                    let peer = ClientRoute.Peer(fingerprint: fp, name: name, cableDevice: nil)
+                    server.serve(c, route: .home(origin, peer: peer), hello: hello,
+                                 admitted: { print("소유 기기가 연결되었습니다. \(c.endpoint)") })
+                }
+            }
+            if !admitted { socket.cancel(); self.refuse(id, "unpaired"); c.cancel() }
         }
     }
 
@@ -520,5 +565,15 @@ extension InterfaceSnapshot.CableReading {
     var ancestry: CableLink.Ancestry? {
         guard usbDevice else { return nil }
         return CableLink.Ancestry(ncm: ncm, vendor: vendor, productName: productName, serial: serial, session: session)
+    }
+}
+
+extension TrustSnapshot {
+    func doorTrust(_ fingerprint: Data?) -> DoorPolicy.Trust {
+        DoorPolicy.Trust(hasKey: fingerprint != nil, paired: fingerprint.map { paired[$0] != nil } ?? false,
+            ownerKnown: fingerprint.map { ownerKnown.contains($0) } ?? false,
+            ownerCandidate: fingerprint.map { ownerCandidates[$0] != nil } ?? false,
+            requirePairing: requirePairing, remoteAccess: remoteAccess, internetAccess: internetAccess,
+            pairingOpen: pairingOpen, remotePairingOpen: remotePairingOpen)
     }
 }

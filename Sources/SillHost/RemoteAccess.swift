@@ -205,9 +205,17 @@ package final class RemoteAccess {
             }
         }
         door.onPairAttempt = judgeHere
+        let ownerProof: (OwnerBootstrapSocket, @escaping @Sendable (OwnerBootstrapSocket.Evidence?) -> Void) -> Void = { [weak self] socket, reply in
+            Task { @MainActor in
+                guard let self else { reply(nil); return }
+                reply(await self.ownerSessionEvidence(for: socket))
+            }
+        }
+        door.onOwnerSessionProof = ownerProof
         self.door = door
         if let home = server.homeDoor {
             home.onPairAttempt = judgeHere
+            home.onOwnerSessionProof = ownerProof
             home.onOlderSill = { [weak self] in Task { @MainActor in self?.olderDeviceSeen() } }
         }
         publishTrust()
@@ -230,8 +238,14 @@ package final class RemoteAccess {
     package func apply(_ config: HostConfig) {
         guard identity != nil else { announceHomeDoor(); publish(); return }
         let wasOn = remoteAccess, wasInternet = internetAccess, wasRequired = requirePairing
-        if remoteAccess != config.remoteAccess || remotePort != config.remotePort {
-            trust.update { $0.ownerBootstrapEpoch = UUID() }
+        if remoteAccess != config.remoteAccess || remotePort != config.remotePort
+            || internetAccess != (config.remoteAccess && config.internetAccess) || requirePairing != config.requirePairing {
+            trust.update {
+                $0.ownerBootstrapEpoch = UUID()
+                $0.ownerAuthorized = [:]
+                $0.remoteAccess = config.remoteAccess
+                $0.internetAccess = config.remoteAccess && config.internetAccess
+            }
         }
         remoteAccess = config.remoteAccess
         remotePort = config.remotePort
@@ -452,6 +466,9 @@ package final class RemoteAccess {
     /// 철회 기록을 먼저 보존한다. paired 제거가 실패해도 자동 등록을 다시 허용하지 않는다.
     @discardableResult
     package func remove(fingerprint: String) -> String? {
+        if let fp = Base64URL.decode(fingerprint) {
+            trust.update { $0.ownerCandidates[fp] = nil; $0.ownerAuthorized[fp] = nil }
+        }
         let device = paired.first { $0.fingerprint == fingerprint }
         let rest = paired.filter { $0.fingerprint != fingerprint }
         guard let store, let identity else { return "호스트의 등록 저장소를 사용할 수 없습니다." }
@@ -487,7 +504,7 @@ package final class RemoteAccess {
                 paired = rest
             } catch {
                 if let saved = try? store.loadPaired() { paired = saved }
-                removalProblem = "등록은 철회했지만 기기 목록 저장을 확인하지 못했습니다. 제거를 다시 시도하세요."
+                removalProblem = "자동 등록 철회는 저장했지만 기존 기기 등록 제거를 확인하지 못했습니다. 제거를 다시 시도하세요."
             }
         }
         let fp = device?.fingerprintData ?? Base64URL.decode(fingerprint)
@@ -539,7 +556,7 @@ package final class RemoteAccess {
 
     /// Whether this key is on the trust list now.
     func isPaired(_ fingerprint: Data) -> Bool {
-        paired.contains { $0.fingerprintData == fingerprint && ownerDeviceTrusted($0) }
+        trust.snapshot.isPaired(fingerprint)
     }
 
     /// The home door refused plain Sill messages from one source, again and again (an older Sill;
@@ -622,23 +639,23 @@ package final class RemoteAccess {
     }
 
     private func ownerDeviceTrusted(_ device: PairedDevice) -> Bool {
-        if device.ownerPrincipal == nil { return device.method != OwnerMacBootstrap.method }
-        return ownerRegistry?.trusts(device) == true
+        device.fingerprintData.map { trust.snapshot.isPaired($0) } ?? false
     }
 
     func judgeOwnerBootstrap(_ attempt: Door.PairAttempt) async -> PairResult {
         let closed = PairResult(ok: false, reason: PairResult.closed)
         guard attempt.door == .remote, remoteAccess, OwnerBootstrapWire.accepts(attempt.request),
-              let socket = attempt.ownerSocket, socket.binding.fingerprint == attempt.deviceFingerprint,
+              let socket = attempt.ownerSocket, socket.purpose == .bootstrap, socket.binding.fingerprint == attempt.deviceFingerprint,
               socket.binding.sourceIP == attempt.source, socket.isLive else { return closed }
-        guard case .success(let proof) = await ownerSensor.principal(for: socket.binding),
+        let sensor = ownerSensor.independent()
+        guard case .success(let proof) = await sensor.principal(for: socket.binding),
               !Task.isCancelled, remoteAccess, proof.binding == socket.binding,
               proof.sourceIP == socket.binding.sourceIP, proof.localIPs.contains(socket.binding.localIP),
               !proof.localIPs.contains(socket.binding.sourceIP), let identity, let store else { return closed }
         let epoch = trust.snapshot.ownerBootstrapEpoch
         func current() -> Bool {
             remoteAccess && trust.snapshot.ownerBootstrapEpoch == epoch && socket.isLive
-                && ownerSensor.isCurrent(proof) && !Task.isCancelled
+                && sensor.isCurrent(proof) && !Task.isCancelled
         }
         var pendingRegistry: OwnerBootstrapRegistry?
         var pendingDevices: [PairedDevice]?
@@ -714,12 +731,40 @@ package final class RemoteAccess {
             ownerRegistry = registry
             publishTrust()
             publish()
-            return PairResult(ok: true, macID: identity.macID, name: macName,
+            let result = PairResult(ok: true, macID: identity.macID, name: macName,
                 recognitionKey: Base64URL.encode(identity.recognitionKey), method: OwnerMacBootstrap.method)
+            let committed = socket.decide(in: trust, evidence: .init(sensor: sensor, proof: proof)) { snapshot in
+                guard !Task.isCancelled, snapshot.remoteAccess, snapshot.ownerBootstrapEpoch == epoch,
+                      snapshot.paired[attempt.deviceFingerprint] != nil
+                        || snapshot.ownerCandidates[attempt.deviceFingerprint]?.principal == proof.principal else { return false }
+                trust.authorizeOwner(attempt.deviceFingerprint)
+                return true
+            }
+            guard committed else { denyIncompleteActivation(); return closed }
+            return result
         } catch {
             denyIncompleteActivation()
             return closed
         }
+    }
+
+    func ownerSessionEvidence(for socket: OwnerBootstrapSocket) async -> OwnerBootstrapSocket.Evidence? {
+        guard socket.purpose == .session, socket.isLive, remoteAccess, let store, let identity else { return nil }
+        let previous = trust.snapshot.ownerAuthorized
+        do {
+            ownerRegistry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+            paired = try store.loadPaired()
+        } catch { ownerRegistry = nil }
+        publishTrust()
+        for key in previous.keys where !trust.snapshot.isPaired(key) {
+            onMicrophoneTrustRevoked?(key)
+            server?.closeSessions(Goodbye.removed, matching: { $0.fingerprint == key })
+        }
+        guard trust.snapshot.ownerCandidates[socket.binding.fingerprint] != nil else { return nil }
+        let sensor = ownerSensor.independent()
+        guard case .success(let proof) = await sensor.principal(for: socket.binding),
+              !Task.isCancelled, socket.isLive else { return nil }
+        return .init(sensor: sensor, proof: proof)
     }
 
     package func ownerMacBootstrapProfile() async throws -> Data {
@@ -742,7 +787,9 @@ package final class RemoteAccess {
     #if OWNER_BOOTSTRAP_CONTRACT
     func configureOwnerBootstrapForTesting(sensor: TailnetDeviceAccess, enabled: Bool) {
         ownerSensor = sensor
-        if remoteAccess != enabled { trust.update { $0.ownerBootstrapEpoch = UUID() } }
+        if remoteAccess != enabled {
+            trust.update { $0.ownerBootstrapEpoch = UUID(); $0.ownerAuthorized = [:]; $0.remoteAccess = enabled }
+        }
         remoteAccess = enabled
         publishTrust()
     }
@@ -1090,14 +1137,36 @@ package final class RemoteAccess {
 
     private func publishTrust() {
         var map: [Data: String] = [:]
-        for d in paired where ownerDeviceTrusted(d) {
-            if let fp = d.fingerprintData { map[fp] = d.displayName }
+        var owners: [Data: (principal: String, name: String)] = [:]
+        var known: Set<Data> = []
+        for d in paired {
+            guard let fp = d.fingerprintData else { continue }
+            if d.ownerPrincipal == nil, d.method != OwnerMacBootstrap.method {
+                map[fp] = d.displayName
+            } else {
+                known.insert(fp)
+                if let principal = ownerRegistry?.candidatePrincipal(d) { owners[fp] = (principal, d.displayName) }
+            }
+        }
+        for binding in ownerRegistry?.bindings ?? [] where binding.principal != nil {
+            if let fp = Base64URL.decode(binding.fingerprint) { known.insert(fp) }
         }
         let open = window.isOpen, remoteOpen = remoteWindowOpen, on = remoteAccess, internet = internetAccess
         let required = requirePairing
         let names = reach?.serviceNames ?? [:]
         trust.update {
             $0.paired = map
+            $0.ownerKnown = known
+            let previous = $0.ownerCandidates
+            $0.ownerCandidates = owners.reduce(into: [:]) { result, entry in
+                let (key, owner) = entry
+                let generation = previous[key].flatMap { $0.principal == owner.principal ? $0.generation : nil } ?? UUID()
+                result[key] = .init(principal: owner.principal, generation: generation, name: owner.name)
+            }
+            let candidates = $0.ownerCandidates, epoch = $0.ownerBootstrapEpoch
+            $0.ownerAuthorized = $0.ownerAuthorized.filter { key, grant in
+                grant.epoch == epoch && grant.principal == candidates[key]?.principal && grant.generation == candidates[key]?.generation
+            }
             $0.pairingOpen = open
             $0.remotePairingOpen = remoteOpen
             $0.remoteAccess = on

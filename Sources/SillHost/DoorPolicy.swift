@@ -24,6 +24,8 @@ enum DoorPolicy {
         var hasKey = true
         /// The peer's key is in the trust list.
         var paired = false
+        var ownerKnown = false
+        var ownerCandidate = false
         /// Require pairing (the home door's; the Mac's alone, never a device's).
         var requirePairing = true
         var remoteAccess = false
@@ -62,15 +64,14 @@ enum DoorPolicy {
 
     // MARK: The verify block
 
-    /// The TLS handshake's verify block: trust is the key and the application protocol, nothing
-    /// else. `sill/1` for a paired key, and at home for any key while Require pairing is off;
-    /// `sill-pair/1` always at home (an ask needs no window), and at the remote door only while a
-    /// window it takes proofs for is open; anything else never.
+    /// owner candidate의 TLS 허용은 키 식별이다. 정상 세션은 ownerNeedsProof에서 새 증거를 검증한다.
     static func trusts(_ door: Door, alpn: String?, _ t: Trust) -> Bool {
         guard t.hasKey else { return false }
         switch alpn {
         case RemoteTLS.sessionALPN?:
-            return door == .home ? t.paired || !t.requirePairing : t.paired
+            if t.paired { return true }
+            if t.ownerKnown { return t.ownerCandidate && t.remoteAccess }
+            return door == .home && !t.requirePairing
         case OwnerMacBootstrap.alpn?:
             return door == .remote && t.remoteAccess
         case RemoteTLS.pairingALPN?:
@@ -85,6 +86,7 @@ enum DoorPolicy {
     enum AtReady: Equatable, Sendable {
         /// A session: registered with its route.
         case session
+        case ownerNeedsProof
         /// A pairing connection: read exactly one kind 19 (at most 4 KiB, within the admission
         /// deadline), then treat it as `pairing(_:method:version:)` says.
         case pairing
@@ -101,6 +103,11 @@ enum DoorPolicy {
     /// `sill-pair/1` is read only while a window the remote door takes proofs for is open.
     static func atReady(_ door: Door, alpn: String?, _ t: Trust, remoteSessions: Int) -> AtReady {
         guard t.hasKey else { return .refuse("unpaired") }
+        if alpn == RemoteTLS.sessionALPN, !t.paired, t.ownerKnown {
+            guard t.ownerCandidate, t.remoteAccess else { return .refuse("unpaired") }
+            if door == .remote, remoteSessions >= maxRemoteSessions { return .goodbye(Goodbye.busy) }
+            return .ownerNeedsProof
+        }
         switch (door, alpn) {
         case (.home, RemoteTLS.sessionALPN?):
             return trusts(.home, alpn: alpn, t) ? .session : .refuse("unpaired")
@@ -134,13 +141,14 @@ enum DoorPolicy {
     static func afterGate(_ door: Door, wasPaired: Bool, origin: OriginPolicy.Origin, _ t: Trust, remoteSessions: Int) -> String? {
         switch door {
         case .remote:
-            if !t.hasKey || !t.paired { return Goodbye.removed }
+            if !t.hasKey || (!t.paired && !t.ownerCandidate) { return Goodbye.removed }
             if !t.remoteAccess { return Goodbye.remoteOff }
             if !OriginPolicy.remoteAdmits(origin, internetAccess: t.internetAccess) { return Goodbye.internetOff }
             if remoteSessions >= maxRemoteSessions { return Goodbye.busy }
             return nil
         case .home:
             if t.paired { return nil }
+            if t.ownerKnown { return t.ownerCandidate && t.remoteAccess ? nil : Goodbye.removed }
             if wasPaired { return Goodbye.removed }
             return t.requirePairing ? Goodbye.pairingRequired : nil
         }

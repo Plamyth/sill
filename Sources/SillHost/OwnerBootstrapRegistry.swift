@@ -110,10 +110,11 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
         return device == nil || device.map(Self.isExplicitPairing) == true
     }
 
-    func trusts(_ device: PairedDevice) -> Bool {
-        guard device.ownerActivationPending != true else { return false }
-        guard let principal = device.ownerPrincipal else { return true }
-        return bindings.contains { $0.principal == principal && $0.fingerprint == device.fingerprint && $0.state == .active }
+    func candidatePrincipal(_ device: PairedDevice) -> String? {
+        guard device.method == OwnerMacBootstrap.method, device.ownerActivationPending != true,
+              let principal = device.ownerPrincipal,
+              bindings.contains(where: { $0.principal == principal && $0.fingerprint == device.fingerprint && $0.state == .active }) else { return nil }
+        return principal
     }
 
     private static func isExplicitPairing(_ device: PairedDevice) -> Bool {

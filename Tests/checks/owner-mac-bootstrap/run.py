@@ -10,7 +10,7 @@ paths.append(Path(__file__).with_name("Checks.swift"))
 before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 with tempfile.TemporaryDirectory(prefix="ccr-owner-profile-") as scratch:
     binary = Path(scratch) / "checks"
-    subprocess.run(["xcrun", "swiftc", "-parse-as-library", *map(str, paths), "-o", str(binary)],
+    subprocess.run(["xcrun", "swiftc", "-parse-as-library", *map(str, paths), "-module-cache-path", str(Path(scratch) / "module-cache"), "-o", str(binary)],
                    check=True, timeout=180)
     subprocess.run([str(binary)], check=True, timeout=30)
 assert all(hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest for name, digest in before.items())

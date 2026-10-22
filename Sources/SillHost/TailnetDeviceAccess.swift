@@ -47,6 +47,10 @@ final class TailnetDeviceAccess: @unchecked Sendable {
 
     init() { read = { command, check in try Self.readCLI(command, check) } }
 
+    private init(read: @escaping Read) { self.read = read }
+
+    func independent() -> TailnetDeviceAccess { Self(read: read) }
+
     #if OWNER_BOOTSTRAP_CONTRACT
     /// 계약 검사만 가짜 센서 결과를 주입한다. 생산 초기화는 고정 CLI를 사용한다.
     init(testingRead: @escaping Read) { read = testingRead }
@@ -71,7 +75,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         }
     }
 
-    /// Door 종료 시 호출한다. 진행 중인 결과와 발급된 짧은 proof를 모두 무효화한다.
+    /// 이 센서의 진행 중인 조회와 발급한 proof를 무효화한다.
     func stop() {
         lock.lock()
         stopped = true
@@ -80,11 +84,14 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         attempt?.finish(.failure(.stopped))
     }
 
-    func isCurrent(_ proof: Proof) -> Bool {
+    func isCurrent(_ proof: Proof) -> Bool { withCurrent(proof) { true } }
+
+    func withCurrent(_ proof: Proof, _ action: () -> Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return !stopped && proof.issuer == issuer
-            && DispatchTime.now().uptimeNanoseconds < proof.deadline && Date() < proof.validUntil
+        guard !stopped, proof.issuer == issuer,
+              DispatchTime.now().uptimeNanoseconds < proof.deadline, Date() < proof.validUntil else { return false }
+        return action()
     }
 
     private func start(_ attempt: Attempt, ip: String?, binding: OwnerBootstrapSocket.Binding?) {

@@ -11,34 +11,48 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
         let interface: String
     }
 
+    enum Purpose { case bootstrap, session }
+    struct Evidence: Sendable {
+        let sensor: TailnetDeviceAccess
+        let proof: TailnetDeviceAccess.Proof
+    }
+
     let binding: Binding
+    let purpose: Purpose
     private let lock = NSLock()
     private var cancelled = false
-    private let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+    private var consumed = false
+    private let deadline: UInt64
     private let current: () -> Bool
+    private let trust: TrustBox?
+    private let epoch: UUID?
+    private let candidate: TrustSnapshot.OwnerCandidate?
 
-    private init(binding: Binding, trust: TrustBox? = nil, current: @escaping () -> Bool) {
+    private init(binding: Binding, purpose: Purpose = .bootstrap, trust: TrustBox? = nil,
+                 deadline: UInt64 = DispatchTime.now().uptimeNanoseconds + 10_000_000_000,
+                 current: @escaping () -> Bool) {
         self.binding = binding
-        let epoch = trust?.snapshot.ownerBootstrapEpoch
-        self.current = {
-            if let trust {
-                let snapshot = trust.snapshot
-                guard snapshot.remoteAccess, snapshot.ownerBootstrapEpoch == epoch else { return false }
-            }
-            return current()
-        }
+        self.purpose = purpose
+        self.trust = trust
+        self.deadline = deadline
+        let snapshot = trust?.snapshot
+        epoch = snapshot?.ownerBootstrapEpoch
+        candidate = snapshot?.ownerCandidates[binding.fingerprint]
+        self.current = current
     }
 
-    static func capture(_ connection: NWConnection, trust: TrustBox) -> OwnerBootstrapSocket? {
-        guard let binding = read(connection, generation: UUID()) else { return nil }
-        return Self(binding: binding, trust: trust) { [weak connection] in
+    static func capture(_ connection: NWConnection, trust: TrustBox, purpose: Purpose = .bootstrap,
+                        deadline: UInt64 = DispatchTime.now().uptimeNanoseconds + 10_000_000_000) -> OwnerBootstrapSocket? {
+        guard let binding = read(connection, generation: UUID(), purpose: purpose) else { return nil }
+        return Self(binding: binding, purpose: purpose, trust: trust, deadline: deadline) { [weak connection] in
             guard let connection else { return false }
-            return read(connection, generation: binding.generation) == binding
+            return read(connection, generation: binding.generation, purpose: purpose) == binding
         }
     }
 
-    private static func read(_ c: NWConnection, generation: UUID) -> Binding? {
-        guard case .ready = c.state, c.currentPath?.status == .satisfied, RemoteTLS.negotiatedALPN(c) == OwnerMacBootstrap.alpn,
+    private static func read(_ c: NWConnection, generation: UUID, purpose: Purpose) -> Binding? {
+        let alpn = purpose == .bootstrap ? OwnerMacBootstrap.alpn : RemoteTLS.sessionALPN
+        guard case .ready = c.state, c.currentPath?.status == .satisfied, RemoteTLS.negotiatedALPN(c) == alpn,
               let fingerprint = RemoteTLS.peerFingerprint(c), fingerprint.count == 32,
               let source = Door.source(of: c), source.scope == nil,
               let remote = TailnetDeviceAccess.numericSource(IPBytes.text(IPBytes.unmapped(source.bytes))),
@@ -59,17 +73,56 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
     }
 
     var isLive: Bool {
-        guard DispatchTime.now().uptimeNanoseconds < deadline, current() else { return false }
-        lock.lock()
-        defer { lock.unlock() }
-        return !cancelled && DispatchTime.now().uptimeNanoseconds < deadline
+        if let trust { return trust.withDecision { live(snapshot: trust.snapshot) } }
+        return live(snapshot: nil)
     }
 
-    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    private func live(snapshot: TrustSnapshot?) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return liveLocked(snapshot: snapshot)
+    }
+
+    private func liveLocked(snapshot: TrustSnapshot?) -> Bool {
+        if let epoch {
+            guard let snapshot, snapshot.remoteAccess, snapshot.ownerBootstrapEpoch == epoch else { return false }
+        }
+        return !cancelled && DispatchTime.now().uptimeNanoseconds < deadline && current()
+    }
+
+    func cancel() {
+        let cancel = { self.lock.lock(); self.cancelled = true; self.lock.unlock() }
+        if let trust { trust.withDecision(cancel) } else { cancel() }
+    }
+
+    func decide(in box: TrustBox, evidence: Evidence, _ action: (TrustSnapshot) -> Bool) -> Bool {
+        box.withDecision {
+            lock.lock(); defer { lock.unlock() }
+            let snapshot = box.snapshot
+            guard trust == nil || trust === box, liveLocked(snapshot: snapshot),
+                  evidence.proof.binding == binding, evidence.proof.sourceIP == binding.sourceIP,
+                  evidence.proof.localIPs.contains(binding.localIP), !evidence.proof.localIPs.contains(binding.sourceIP) else { return false }
+            return evidence.sensor.withCurrent(evidence.proof) { action(snapshot) }
+        }
+    }
+
+    func admit(in box: TrustBox, evidence: Evidence?, allowed: (TrustSnapshot) -> Bool = { _ in true },
+               serve: (TrustSnapshot) -> Void) -> Bool {
+        guard purpose == .session, let evidence, let candidate else { return false }
+        return decide(in: box, evidence: evidence) { snapshot in
+            guard !consumed, snapshot.remoteAccess, snapshot.ownerCandidates[binding.fingerprint] == candidate,
+                  evidence.proof.principal == candidate.principal, allowed(snapshot) else { return false }
+            consumed = true
+            box.authorizeOwner(binding.fingerprint)
+            serve(box.snapshot)
+            return true
+        }
+    }
 
     #if OWNER_BOOTSTRAP_CONTRACT
-    static func fixture(binding: Binding, trust: TrustBox? = nil, current: @escaping () -> Bool = { true }) -> OwnerBootstrapSocket {
-        Self(binding: binding, trust: trust, current: current)
+    static func fixture(binding: Binding, trust: TrustBox? = nil, purpose: Purpose = .bootstrap,
+                        deadline: UInt64 = DispatchTime.now().uptimeNanoseconds + 10_000_000_000,
+                        current: @escaping () -> Bool = { true }) -> OwnerBootstrapSocket {
+        Self(binding: binding, purpose: purpose, trust: trust, deadline: deadline, current: current)
     }
     #endif
 }
