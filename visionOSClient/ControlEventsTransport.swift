@@ -38,11 +38,12 @@ struct ControlEventsGateway: @unchecked Sendable {
 }
 
 enum ControlEventsTransportFailure: Error, Equatable {
-    case configuration, authentication, response, contentType, redirect, payload, streamEnded, capacity
+    case configuration, authentication, serviceUnavailable, response, contentType, redirect, payload, streamEnded, capacity
     var message: String {
         switch self {
         case .configuration: return "연결 정보 미제공 · 인증된 연결 서버 설정을 확인하지 못했습니다."
         case .authentication: return "연결 서버 인증이 거부되었습니다. 이 Vision 앱의 기기 등록을 확인하세요."
+        case .serviceUnavailable: return "연결 서버가 아직 준비되지 않았습니다. 잠시 후 다시 연결합니다."
         case .response: return "연결 서버의 이벤트 응답을 확인하지 못했습니다."
         case .contentType: return "연결 서버 응답이 이벤트 스트림 형식이 아닙니다."
         case .redirect: return "다른 주소로 이동하는 이벤트 연결을 차단했습니다."
@@ -55,6 +56,7 @@ enum ControlEventsTransportFailure: Error, Equatable {
         guard let http = response as? HTTPURLResponse else { throw Self.response }
         if http.statusCode == 401 || http.statusCode == 403 { throw Self.authentication }
         if (300..<400).contains(http.statusCode) { throw Self.redirect }
+        if http.statusCode == 503 { throw Self.serviceUnavailable }
         guard http.statusCode == 200 else { throw Self.response }
         guard http.mimeType?.lowercased() == "text/event-stream" else { throw Self.contentType }
     }
@@ -68,21 +70,16 @@ final class ControlEventsRedirectGuard: NSObject, URLSessionTaskDelegate {
 
 struct ControlEventsRetryPolicy {
     private var attempts = 0
-    private var lastFailure: String?
-    private var repeated = 0
-    mutating func progressed() { attempts = 0; lastFailure = nil; repeated = 0 }
+    mutating func progressed() { attempts = 0 }
     mutating func delay(for error: Error) -> UInt64? {
-        let kind: String
-        if error as? ControlEventsTransportFailure == .streamEnded { kind = "eof" }
-        else if let url = error as? URLError,
-                [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(url.code) {
-            kind = "network-\(url.code.rawValue)"
+        if let failure = error as? ControlEventsTransportFailure {
+            guard failure == .streamEnded || failure == .serviceUnavailable else { return nil }
+        } else if let url = error as? URLError {
+            guard [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
+                   .cannotFindHost, .dnsLookupFailed].contains(url.code) else { return nil }
         } else { return nil }
-        repeated = kind == lastFailure ? repeated + 1 : 1
-        lastFailure = kind
-        guard repeated < 2, attempts < 3 else { return nil }
-        let delay = UInt64(1 << attempts) * 1_000_000_000
-        attempts += 1
+        let delay = UInt64(min(1 << attempts, 30)) * 1_000_000_000
+        attempts = min(attempts + 1, 5)
         return delay
     }
 }
