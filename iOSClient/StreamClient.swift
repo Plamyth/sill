@@ -192,12 +192,16 @@ final class StreamClient: ObservableObject {
         let devicePin: Data
     }
     private var startupRemoteCheck: DispatchWorkItem?
+    @Published var ownerBootstrap = OwnerBootstrapState()
+    var ownerBootstrapDial: RemoteConnector?
+    var ownerBootstrapExchange: OwnerBootstrapExchange?
     #endif
     private enum StartupAutoConnection {
         case unarmed
         #if os(visionOS)
         case waiting(VisionStartupTarget)
         case suspended(VisionStartupTarget)
+        case ownerBootstrap
         #else
         case waiting(String)
         #endif
@@ -920,7 +924,11 @@ final class StreamClient: ObservableObject {
     var visionWindowRetired = false
     var visionStartupStarted = false
     var visionStartupForeground = false {
-        didSet { tryVisionSavedMacAutoConnect() }
+        didSet {
+            if visionStartupForeground && appInForeground { resumeOwnerBootstrapAfterForeground() }
+            else if visionStartupStarted { cancelOwnerBootstrap(resumable: true) }
+            tryVisionSavedMacAutoConnect()
+        }
     }
     @Published var visionCableBootstrap = VisionCableBootstrap<FoundMac>(launch: .ordinary)
     var visionExpectedMacPin: Data? {
@@ -1409,8 +1417,8 @@ final class StreamClient: ObservableObject {
     }
 
     #if os(iOS) || os(visionOS)
-    /// Runs after startRemote has discarded records whose device key is missing. It never creates
-    /// an identity, opens a pairing ask, or chooses a different Mac after a stored preference fails.
+    /// 저장 신뢰가 있으면 기존 키만 사용한다. 최초 빈 저장소는 별도의 소유 Mac 등록 정책을 따른다.
+    /// 저장된 선호 대상의 검증 실패를 다른 Mac의 자동 등록으로 우회하지 않는다.
     func armSavedMacAutoConnect() {
         guard case .unarmed = startupAutoConnection else { return }
         #if os(visionOS)
@@ -1422,7 +1430,12 @@ final class StreamClient: ObservableObject {
         #endif
         let preferred = UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey)
         guard let target = SavedMacs.automaticTarget(savedMacs, preferredID: preferred) else {
+            #if os(visionOS)
+            startupAutoConnection = .ownerBootstrap
+            startOwnerBootstrap()
+            #else
             startupAutoConnection = .stopped
+            #endif
             return
         }
         guard DeviceIdentity.existing() != nil else {
@@ -1442,6 +1455,9 @@ final class StreamClient: ObservableObject {
     }
 
     func stopSavedMacAutoConnect() {
+        #if os(visionOS)
+        cancelOwnerBootstrap()
+        #endif
         startupAutoConnection = .stopped
         #if os(visionOS)
         startupRemoteCheck?.cancel()
@@ -1491,6 +1507,7 @@ final class StreamClient: ObservableObject {
     }
     #if os(visionOS)
     private func tryVisionSavedMacAutoConnect(expired token: UUID? = nil) {
+        if case .ownerBootstrap = startupAutoConnection { startOwnerBootstrap(); return }
         var target: VisionStartupTarget
         switch startupAutoConnection {
         case .waiting(let pending), .suspended(let pending): target = pending
@@ -1616,6 +1633,9 @@ final class StreamClient: ObservableObject {
         microphoneApplicationActive(true)
         #endif
         guard wasInBackground else { return }
+        #if os(visionOS)
+        resumeOwnerBootstrapAfterForeground()
+        #endif
         if browsing {
             rebuildIfDue(.network, cameForward: true)
             if nearbyBrowser != nil { rebuildIfDue(.nearby, cameForward: true) }
@@ -1630,6 +1650,7 @@ final class StreamClient: ObservableObject {
 
     private func wentToBackground(preservingMicrophoneAuthorization: Bool = false) {
         #if os(visionOS)
+        cancelOwnerBootstrap(resumable: true)
         defer { VisionRemoteAudioStore.shared.refresh() }
         admitVisionDisplays(lease: visionDisplaySelection.lease, foreground: false)
         if preservingMicrophoneAuthorization { microphoneApplicationActive(false) }

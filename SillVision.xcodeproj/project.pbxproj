@@ -190,6 +190,42 @@
 			<key>fileRef</key>
 			<string>A9AB86AFCE6A79192529E410</string>
 		</dict>
+		<key>CC7F02FE188DF7BD2C43443F</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/OwnerBootstrapState.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>210A292F7626348968A0D19E</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>CC7F02FE188DF7BD2C43443F</string>
+		</dict>
+		<key>61C53C5CAF3ACACBB835767D</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/OwnerBootstrapExchange.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>665130EA8941C7E41627204A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>61C53C5CAF3ACACBB835767D</string>
+		</dict>
 		<key>038283C0B37B1E9142F742B6</key>
 		<dict>
 			<key>isa</key>
@@ -693,6 +729,24 @@
 			<string>PBXBuildFile</string>
 			<key>fileRef</key>
 			<string>48F453A3A0A3E814F7179DDC</string>
+		</dict>
+		<key>66900D9FAC33E420ED4136A9</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>visionOSClient/StreamClient+VisionOwnerBootstrap.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>0EE7C7FFE6B69310E05C7F72</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>66900D9FAC33E420ED4136A9</string>
 		</dict>
 		<key>A35A325A1D9AC8F8AE7E0E91</key>
 		<dict>
@@ -1404,6 +1458,8 @@
 				<string>A1F6460DB158B9C77E16514E</string>
 				<string>AD30D3802F53E5AB4FA997A8</string>
 				<string>A9AB86AFCE6A79192529E410</string>
+				<string>CC7F02FE188DF7BD2C43443F</string>
+				<string>61C53C5CAF3ACACBB835767D</string>
 				<string>038283C0B37B1E9142F742B6</string>
 				<string>FCB7A6B3C02FEF0FD26CA994</string>
 				<string>8E45927A9B979A2A1BFE808B</string>
@@ -1432,6 +1488,7 @@
 				<string>3479E8EBBFDC8FBE714AE2E1</string>
 				<string>1EC353247B72DF67C513ED2B</string>
 				<string>48F453A3A0A3E814F7179DDC</string>
+				<string>66900D9FAC33E420ED4136A9</string>
 				<string>A35A325A1D9AC8F8AE7E0E91</string>
 				<string>7CD45E8921439881950F3932</string>
 				<string>3454D9B9946EBD2F06842B49</string>
@@ -1493,6 +1550,8 @@
 				<string>4ACDFFE948A78DF23ED0035D</string>
 				<string>3615CE16D06F0F12DA13936D</string>
 				<string>9D8CC73936E51D94491355C6</string>
+				<string>210A292F7626348968A0D19E</string>
+				<string>665130EA8941C7E41627204A</string>
 				<string>981C271352EB325FFF98A019</string>
 				<string>7E1214047D982C4BA8F028A1</string>
 				<string>56D88DC230AA249F058661CC</string>
@@ -1521,6 +1580,7 @@
 				<string>88EACB3A2740149DFB20447F</string>
 				<string>945B89332D433A1D178BA2E4</string>
 				<string>C5942AF7883F30CB41E8925D</string>
+				<string>0EE7C7FFE6B69310E05C7F72</string>
 				<string>CD3BDEEBE03DDE64B75B7B65</string>
 				<string>7E9DA331C16C94FDB48C03C3</string>
 				<string>5E0C7BD5E5E54E80D694B9B9</string>
@@ -1608,6 +1668,48 @@
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
 		</dict>
+		<key>17E1BE2A23CCBF0F253DAF37</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXShellScriptBuildPhase</string>
+			<key>buildActionMask</key>
+			<integer>2147483647</integer>
+			<key>files</key>
+			<array/>
+			<key>inputPaths</key>
+			<array>
+				<string>$(CCR_OWNER_MAC_BOOTSTRAP_INPUT)</string>
+				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
+			</array>
+			<key>outputPaths</key>
+			<array>
+				<string>$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CCR-OwnerMacBootstrap.json</string>
+			</array>
+			<key>name</key>
+			<string>소유 Mac 공개 연결 설정</string>
+			<key>runOnlyForDeploymentPostprocessing</key>
+			<integer>0</integer>
+			<key>alwaysOutOfDate</key>
+			<integer>1</integer>
+			<key>showEnvVarsInLog</key>
+			<integer>0</integer>
+			<key>shellPath</key>
+			<string>/bin/sh</string>
+			<key>shellScript</key>
+			<string>set -eu
+if [ -z "${CCR_OWNER_MAC_BOOTSTRAP_SHA256:-}" ]; then
+    if [ -e "$SCRIPT_OUTPUT_FILE_0" ]; then
+        echo "공개 연결 설정의 출처가 지정되지 않았습니다. 새 빌드 경로를 사용하세요." &gt;&amp;2
+        exit 1
+    fi
+    exit 0
+fi
+/usr/bin/python3 "$SRCROOT/Scripts/provision-owner-bootstrap.py" \
+    --profile "$SCRIPT_INPUT_FILE_0" \
+    --profile-sha256 "$CCR_OWNER_MAC_BOOTSTRAP_SHA256" \
+    --output "$SCRIPT_OUTPUT_FILE_0"
+</string>
+		</dict>
 		<key>BE39DA2D971CBE8832D82034</key>
 		<dict>
 			<key>isa</key>
@@ -1673,6 +1775,8 @@
 				</array>
 				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
 				<string>YES</string>
+				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
+				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
 			</dict>
 		</dict>
 		<key>A4EE9F50BD9F15C067246E7C</key>
@@ -1740,6 +1844,8 @@
 				</array>
 				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
 				<string>YES</string>
+				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
+				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
 			</dict>
 		</dict>
 		<key>BD59A88C5EC2D65E34727A49</key>
@@ -1781,6 +1887,7 @@
 				<string>BCE16DD0260827ECF338C787</string>
 				<string>0189424A5A60FED329FA868E</string>
 				<string>7561BFB015D8F536760CB671</string>
+				<string>17E1BE2A23CCBF0F253DAF37</string>
 			</array>
 			<key>buildRules</key>
 			<array/>
@@ -1859,6 +1966,8 @@
 				</array>
 				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
 				<string>YES</string>
+				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
+				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
 			</dict>
 		</dict>
 		<key>790F698B7CB5B91F44D6403F</key>
@@ -1908,6 +2017,8 @@
 				</array>
 				<key>ENABLE_USER_SCRIPT_SANDBOXING</key>
 				<string>YES</string>
+				<key>CCR_OWNER_MAC_BOOTSTRAP_INPUT</key>
+				<string>$(SRCROOT)/Scripts/provision-owner-bootstrap.py</string>
 			</dict>
 		</dict>
 		<key>1CDE4D4AFFA0608A48956514</key>
@@ -1942,6 +2053,8 @@
 				<string>4ACDFFE948A78DF23ED0035D</string>
 				<string>3615CE16D06F0F12DA13936D</string>
 				<string>9D8CC73936E51D94491355C6</string>
+				<string>210A292F7626348968A0D19E</string>
+				<string>665130EA8941C7E41627204A</string>
 				<string>981C271352EB325FFF98A019</string>
 				<string>7E1214047D982C4BA8F028A1</string>
 				<string>56D88DC230AA249F058661CC</string>
@@ -1970,6 +2083,7 @@
 				<string>88EACB3A2740149DFB20447F</string>
 				<string>945B89332D433A1D178BA2E4</string>
 				<string>C5942AF7883F30CB41E8925D</string>
+				<string>0EE7C7FFE6B69310E05C7F72</string>
 				<string>CD3BDEEBE03DDE64B75B7B65</string>
 				<string>7E9DA331C16C94FDB48C03C3</string>
 				<string>5E0C7BD5E5E54E80D694B9B9</string>
