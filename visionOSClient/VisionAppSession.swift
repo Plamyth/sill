@@ -46,6 +46,7 @@ final class VisionAppSession: ObservableObject {
             client.$homeAsk.map { _ in () }.eraseToAnyPublisher(),
             client.$localNetworkDenied.map { _ in () }.eraseToAnyPublisher(),
             client.$pairing.map { _ in () }.eraseToAnyPublisher(),
+            client.$ownerBootstrap.map { _ in () }.eraseToAnyPublisher(),
             client.$visionInputBinding.map { _ in () }.eraseToAnyPublisher(),
             client.$visionDisplaySelection.map { _ in () }.eraseToAnyPublisher(),
             client.$microphonePhase.map { _ in () }.eraseToAnyPublisher(),
@@ -197,6 +198,7 @@ final class VisionAppSession: ObservableObject {
         if client.connected { phase = .connected }
         else if client.connection != nil { phase = .connecting }
         if client.localNetworkDenied { reason = .permissionRequired }
+        if expectedPin == nil { expectedPin = client.visionExpectedMacPin }
         let expectedMatched: Bool
         if client.connected, let expectedPin, let session = client.session,
            session.macID == MacID.make(fingerprint: expectedPin),
@@ -224,6 +226,14 @@ final class VisionAppSession: ObservableObject {
         if phase == .connected {
             if presented { return "Mac 화면이 준비되었습니다." }
             return catalog ? "Mac에 연결되었습니다. 표시할 화면을 선택해 주세요." : "Mac 화면 정보를 기다리고 있습니다."
+        }
+        if phase == .waiting, client.savedMacs.isEmpty, client.ownerBootstrap.wasInitiallyEmpty {
+            switch client.ownerBootstrap.phase {
+            case .ready: return "소유 Mac에 자동으로 연결할 준비를 하고 있습니다."
+            case .dialing, .exchanging, .finished: return client.status
+            case .stopped: return "자동 연결을 취소했습니다."
+            case .unarmed: break
+            }
         }
         switch phase {
         case .bootstrapDialing, .bootstrapAsking: return "케이블로 Mac 연결을 준비하고 있습니다."

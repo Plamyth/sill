@@ -112,6 +112,11 @@ final class HomeDialer {
 /* REAL_ASK */
 
 final class StreamClient {
+    // 최초 등록은 별도 전송 계약 검사에서 확인한다. 이 fixture는 기존 저장 신뢰의 수명주기만 실행한다.
+    func armOwnerBootstrap() {}
+    func startOwnerBootstrap() {}
+    func resumeOwnerBootstrapAfterForeground() {}
+    func cancelOwnerBootstrap(resumable: Bool = false) {}
     enum PairingPhase: Equatable { case idle, working }
     enum HomeExchange { case answer(PairResult, SymmetricKey?), noAnswer }
     enum Route { case network, remote; var isRemote: Bool { self == .remote } }

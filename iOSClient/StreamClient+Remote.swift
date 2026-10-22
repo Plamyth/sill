@@ -188,6 +188,9 @@ extension StreamClient {
     /// Forget: the record only. The Mac lists this device until it is removed there, and the
     /// status line says so.
     func forget(_ macID: String) {
+        #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
         let name = savedMac(macID) != nil ? displayName(macID) : (macs.first { $0.macID == macID }?.name ?? "the Mac")
         if reconnect?.macID == macID { reconnect = nil }
         savedMacs.removeAll { $0.macID == macID }
@@ -225,6 +228,7 @@ extension StreamClient {
     func startRemote() {
         #if os(visionOS)
         guard !VisionReleaseTestContext.isTestBundle else { return }
+        armOwnerBootstrap()
         #endif
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "SillForgetMacs") {
@@ -803,6 +807,9 @@ extension StreamClient {
     /// which a plain door always opens a window. `mac`: what the overlay calls the Mac.
     func requestPairingCode(mac: String? = nil) {
         #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
+        #if os(visionOS)
         guard !VisionReleaseTestContext.isTestBundle else { return }
         #endif
         if let t = sessionPairingTarget {
@@ -829,6 +836,9 @@ extension StreamClient {
     /// A sill://pair link from outside the app: shown for confirmation, never acted on by itself (a
     /// poster or a message could otherwise add a look-alike "Mac" that collects keystrokes).
     func handleOpenURL(_ url: URL) {
+        #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
         guard url.scheme?.lowercased() == "sill" else { return }
         switch PairLink.parse(url.absoluteString) {
         case .success(let link):
@@ -854,6 +864,9 @@ extension StreamClient {
     /// The typed path: the address and the code as typed, checked here first (a typo never uses up
     /// one of the Mac's five tries, and nothing is sent).
     func pairTyped(code codeText: String, address addressText: String, overlay: Bool) {
+        #if os(visionOS)
+        stopSavedMacAutoConnect()
+        #endif
         #if os(visionOS)
         guard !VisionReleaseTestContext.isTestBundle else {
             status = "시뮬레이터 테스트에서는 실제 Mac과 페어링하지 않습니다."
