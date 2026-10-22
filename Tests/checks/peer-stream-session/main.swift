@@ -10,26 +10,41 @@ final class FakeCapture: PeerCaptureDriver {
     var rect = CGRect(x: 30, y: 50, width: 800, height: 600)
     var resolveGate: CheckedContinuation<Void, Never>?
     var suspendResolve = false
+    var startGate: CheckedContinuation<Void, Never>?
+    var suspendStart = false
+    var stopOnStarts = 0
+    var targetExists = true
+    var plans: [(source: StreamSource, config: HostConfig, viewport: Viewport?)] = []
+    var preparedEpochs: [UUID] = []
     var frames: ((StreamMessage, UUID) -> Void)?
     func resolve(source: StreamSource, display: DisplaySelection?, identity: String?, config: HostConfig,
                  viewport: Viewport?) async throws -> PeerCaptureDescription {
+        plans.append((source, config, viewport))
         if suspendResolve { await withCheckedContinuation { resolveGate = $0 } }
         return PeerCaptureDescription(source: source, bounds: rect, width: 1600, height: 1200,
                                       displayID: display?.displayID, windowPID: nil, title: "격리 화면")
     }
     func start(_ description: PeerCaptureDescription, epoch: VideoEpoch,
-               output: @escaping (StreamMessage, UUID) -> Void) async throws { starts += 1; frames = output }
+               output: @escaping (StreamMessage, UUID) -> Void) async throws {
+        starts += 1
+        frames = output
+        preparedEpochs.append(epoch.id)
+        if starts <= stopOnStarts { onStopped?() }
+        if suspendStart { await withCheckedContinuation { startGate = $0 } }
+    }
     func stop() async { stops += 1 }
     func requestKeyframe() { keyframes += 1 }
-    func currentBounds() -> CGRect? { rect }
+    func currentBounds() -> CGRect? { targetExists ? rect : nil }
 }
 
 @main
 struct Checks {
     @MainActor static func main() async {
         var count = 0
+        var failures = 0
         func check(_ condition: @autoclosure () -> Bool, _ name: String) {
-            precondition(condition(), name); count += 1
+            count += 1
+            if !condition() { failures += 1; print("FAIL \(name)") }
         }
         var inventory = DisplayInventory()
         _ = inventory.update([DisplayInfo(id: 1, name: "주 화면", width: 800, height: 600, isMain: true),
@@ -106,8 +121,103 @@ struct Checks {
         c.selectDisplay(selection); await settle()
         check(c.epoch == current, "old automatic CAS not replayed")
         check(b.epoch == bEpoch, "C automatic selection does not join or overwrite B")
+
+        let stoppedDriver = FakeCapture()
+        stoppedDriver.stopOnStarts = 1
+        let stopped = PeerStreamSession(driver: stoppedDriver, configuration: { .standard }, inventory: { inventory })
+        var stoppedCommits: [UUID] = [], stoppedResets: [UUID?] = []
+        stopped.commit = { epoch, _, _ in stoppedCommits.append(epoch.id) }
+        stopped.reset = { stoppedResets.append($0) }
+        stopped.select(SourceRequest(source: .window(40), origin: .human)); await settle()
+        check(stoppedDriver.starts == 2 && stoppedCommits.count == 1,
+              "start-time stop recovers once before commit; starts=\(stoppedDriver.starts), commits=\(stoppedCommits.count)")
+        check(stoppedCommits.first != stoppedDriver.preparedEpochs.first,
+              "stopped start epoch is never committed")
+        check(!stoppedResets.contains(where: { $0 == nil }), "no reset before the first prepared epoch")
+        check(stoppedResets.compactMap { $0 } == Array(stoppedDriver.preparedEpochs.prefix(1)),
+              "failed prepared epoch is reset with its exact UUID")
+        await stopped.close()
+
+        let brokenDriver = FakeCapture()
+        brokenDriver.stopOnStarts = .max
+        let broken = PeerStreamSession(driver: brokenDriver, configuration: { .standard }, inventory: { inventory })
+        var brokenCommits = 0
+        broken.commit = { _, _, _ in brokenCommits += 1 }
+        broken.select(SourceRequest(source: .window(41), origin: .human)); await settle()
+        check(brokenDriver.starts == 2 && broken.epoch == nil && brokenCommits == 0,
+              "repeated start-time stop terminates recovery; starts=\(brokenDriver.starts), commits=\(brokenCommits)")
+        check(broken.state.failure != nil, "failed recovery reports unavailable source")
+        await broken.close()
+
+        var latestConfig = HostConfig.standard
+        let pendingDriver = FakeCapture()
+        pendingDriver.suspendResolve = true
+        let pending = PeerStreamSession(driver: pendingDriver, configuration: { latestConfig }, inventory: { inventory })
+        pending.select(SourceRequest(source: .window(50), origin: .human)); await settle()
+        latestConfig.bitrate = 8_000_000
+        pending.configurationChanged()
+        pending.updateViewport(Viewport(width: 400, height: 300, scale: nil, fps: 30))
+        pendingDriver.suspendResolve = false
+        pendingDriver.resolveGate?.resume(); pendingDriver.resolveGate = nil
+        await settle()
+        check(pendingDriver.plans.last?.config.bitrate == 8_000_000 && pendingDriver.plans.last?.viewport?.fps == 30,
+              "pending resolve converges to latest config and FPS; bitrate=\(pendingDriver.plans.last?.config.bitrate ?? -1), fps=\(pendingDriver.plans.last?.viewport?.fps ?? -1)")
+        pendingDriver.suspendStart = true
+        pending.select(SourceRequest(source: .window(51), origin: .human)); await settle()
+        check(pendingDriver.startGate != nil, "production start suspended for settings update")
+        latestConfig.bitrate = 6_000_000
+        pending.configurationChanged()
+        pending.updateViewport(Viewport(width: 400, height: 300, scale: nil, fps: 24))
+        pendingDriver.suspendStart = false
+        pendingDriver.startGate?.resume(); pendingDriver.startGate = nil
+        await settle()
+        check(pendingDriver.plans.last?.config.bitrate == 6_000_000 && pendingDriver.plans.last?.viewport?.fps == 24,
+              "pending start converges to latest config and FPS")
+        pendingDriver.suspendResolve = true
+        pending.select(SourceRequest(source: .window(52), origin: .human)); await settle()
+        latestConfig.bitrate = 5_000_000
+        pending.configurationChanged()
+        pending.select(SourceRequest(source: .window(53), origin: .human))
+        pendingDriver.suspendResolve = false
+        pendingDriver.resolveGate?.resume(); pendingDriver.resolveGate = nil
+        await settle()
+        check(pending.source == .window(53) && pendingDriver.plans.last?.config.bitrate == 5_000_000,
+              "settings convergence never restores an older human selection")
+        await pending.close()
+
+        let displayDriver = FakeCapture()
+        let displayPeer = PeerStreamSession(driver: displayDriver, configuration: { .standard }, inventory: { inventory })
+        displayPeer.selectDisplay(DisplaySelection(displayID: 1, inventoryID: inventory.revision!)); await settle()
+        let displayEpoch = displayPeer.epoch, displayStarts = displayDriver.starts
+        inventory.invalidate()
+        displayPeer.catalogChanged(); b.catalogChanged(); await settle()
+        check(displayPeer.epoch == displayEpoch && displayDriver.starts == displayStarts,
+              "inventory observation preserves the selected peer epoch")
+        _ = inventory.update([DisplayInfo(id: 1, name: "주 화면", width: 800, height: 600, isMain: true),
+                              DisplayInfo(id: 2, name: "다른 화면", width: 900, height: 600, isMain: false)],
+                             signatures: ["physical1/rect", "physical2/changed"])
+        displayPeer.catalogChanged(); await settle()
+        check(displayPeer.epoch == displayEpoch && displayDriver.starts == displayStarts,
+              "another display topology change preserves selected physical capture")
+        _ = inventory.update(inventory.infos, signatures: ["replacement/rect", "physical2/changed"])
+        displayPeer.catalogChanged(); await settle()
+        check(displayPeer.source == .none && displayPeer.epoch == nil, "selected physical replacement stops its own scope")
+        check(b.epoch == bEpoch && driverB.starts == 1, "display replacement leaves other peer capture intact")
+        await displayPeer.close()
+
+        let launched = PeerStreamSession(driver: FakeCapture(), configuration: { .standard }, inventory: { inventory })
+        let launch = launched.beginLaunch("test.delayed")
+        launched.finishLaunch(launch, windowID: nil)
+        launched.finishLaunch(launch, windowID: 60); await settle()
+        check(launched.source == .window(60), "launch completion without a window keeps the launch intent")
+        let superseded = launched.beginLaunch("test.cancelled")
+        launched.select(SourceRequest(source: .window(60), origin: .human))
+        launched.finishLaunch(superseded, windowID: 61); await settle()
+        check(launched.source == .window(60), "even a same-source human selection cancels a pending launch")
+        await launched.close()
         await b.close(); await c.close()
         check(commitsA >= 4 && commitsB == 1 && releaseA > releaseB, "production callbacks remain peer scoped")
+        if failures > 0 { print("FAIL \(failures) of \(count) production peer stream session checks"); exit(1) }
         print("PASS \(count) production peer stream session checks; inert capture and transport; no host or device effects")
     }
 }
