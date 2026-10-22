@@ -34,6 +34,7 @@ private final class FaultStore: IdentityStore {
     var readRegistryFailure = false
     var registryMissing = false
     var afterRegistrySave: (() -> Void)?
+    var afterRegistryWrite: (() throws -> Void)?
     var beforePairedSave: (() -> Void)?
     var afterPairedSave: (() throws -> Void)?
     var beforeRegistrySave: (() throws -> Void)?
@@ -61,6 +62,7 @@ private final class FaultStore: IdentityStore {
         try beforeRegistrySave?()
         if registryFailure { throw IdentityStoreError("검사 원장 저장 실패") }
         if !registryDrops { try memory.saveOwnerRegistry(record) }
+        try afterRegistryWrite?()
         afterRegistrySave?()
     }
     func loadRequirePairing() throws -> Data? { try memory.loadRequirePairing() }
@@ -682,6 +684,47 @@ final class OwnerBootstrapChecks {
         assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
     }
 
+    @MainActor func testActiveWriteFailureAndFailedCompensationNeverGrantsTrust() async throws {
+        for loseCurrent in [false, true] {
+            let store = FaultStore(), live = LiveFlag(), host = remote(store)
+            store.afterRegistryWrite = {
+                if store.registryWrites == 2 {
+                    store.registryFailure = true
+                    if loseCurrent { live.set(false) }
+                    else { throw IdentityStoreError("active 저장 직후 실패") }
+                }
+            }
+            let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
+            assertClosed(await host.judgeOwnerBootstrap(attempt(socket)))
+            expectTrue(host.trust.snapshot.paired.isEmpty)
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            store.afterRegistryWrite = nil; store.registryFailure = false
+            assertOK(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectEqual(remote(store).trust.snapshot.paired.count, 1)
+        }
+    }
+
+    @MainActor func testRecoveredLegacyPairingRemovalPreservesRevocation() async throws {
+        for method in [PairRequest.qr, PairRequest.code, PairResult.cable] {
+            let store = FaultStore(), fp = Base64URL.encode(binding().fingerprint)
+            let original = PairedDevice(fingerprint: fp, name: "기존 사용자 이름", model: "기존 모델", pairedAt: 3,
+                method: method, cableDevice: "원래 케이블")
+            try store.savePaired([original])
+            let host = remote(store)
+            assertOK(await host.judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            expectEqual(try store.loadPaired(), [original])
+            store.pairedFailure = true
+            expectNotNil(host.remove(fingerprint: fp))
+            expectEqual(try store.loadPaired(), [original])
+            assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+            store.pairedFailure = false
+            expectNil(remote(store).remove(fingerprint: fp))
+            expectTrue(try store.loadPaired().isEmpty)
+            expectTrue(remote(store).trust.snapshot.paired.isEmpty)
+            assertClosed(await remote(store).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
+        }
+    }
+
     func testProofExpirationAndStop() async throws {
         let sensor = SensorFixture().sensor()
         guard case .success(let proof) = await sensor.principal(for: binding()) else { return fail("검사 proof 발급 실패") }
@@ -788,6 +831,8 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testActivationWriteInvalidationRemainsPending() } catch { fail("활성 저장 중 현재성 검사 예외") }
         do { try await checks.testDurableTombstoneReadbackFailureNeverRestoresTrust() } catch { fail("철회 readback 실패 검사 예외") }
         do { try await checks.testV1MigrationPreservesExistingBinding() } catch { fail("v1 원장 이행 검사 예외") }
+        do { try await checks.testActiveWriteFailureAndFailedCompensationNeverGrantsTrust() } catch { fail("active 저장 후 실패와 보상 실패 검사 예외") }
+        do { try await checks.testRecoveredLegacyPairingRemovalPreservesRevocation() } catch { fail("legacy 복구 후 Remove 검사 예외") }
         checks.testCanonicalSignedSensorRejectsUnexpectedExecutable()
         let (passed, failed) = CheckCounts.shared.result
         print("생산 함수 기반 호스트 검사 \(passed)개 통과, \(failed)개 실패. 네트워크·실제 키체인·설치·오디오 호출 0.")
