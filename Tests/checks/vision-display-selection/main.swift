@@ -144,7 +144,7 @@ rotatedClient.releaseCallbacks[0](true); drain()
 let rotatedSelection = rotatedPeer.sent.first.flatMap { Wire.decode(DisplaySelection.self,
     from: Data($0.dropFirst(StreamMessage.headerLength))) }
 check(rotatedPeer.sent.count == 1 && rotatedPeer.sent[0].first == StreamMessageKind.selectDisplay.rawValue &&
-      rotatedSelection == DisplaySelection(displayID: 22, inventoryID: inventory),
+      rotatedSelection == DisplaySelection(displayID: 22, inventoryID: inventory, origin: .human),
       "rotation sends one exact monitor ID and inventory over the existing scoped transport")
 let (native, peer) = client()
 let request = command(native.visionDisplaySelection)
@@ -157,7 +157,7 @@ check(native.releaseCallbacks.count == 1 && peer.sent.isEmpty, "adapter duplicat
 native.releaseCallbacks[0](true); drain()
 check(peer.sent.count == 1 && peer.sent[0].first == StreamMessageKind.selectDisplay.rawValue, "production adapter sends only kind211")
 let decoded = Wire.decode(DisplaySelection.self, from: Data(peer.sent[0].dropFirst(StreamMessage.headerLength)))
-check(decoded == DisplaySelection(displayID: 22, inventoryID: inventory), "wire uses explicit desired display and exact inventory")
+check(decoded == DisplaySelection(displayID: 22, inventoryID: inventory, origin: .human), "wire uses explicit desired display and exact inventory")
 native.observeVisionDisplays(list(22, source: .desktop, generation: "g1", required: false, epoch: displayed), from: peer)
 check(native.visionDisplaySelection.pending != nil, "adapter catalog observation is not causal ACK")
 native.visionInputBinding = .presented(displayed); native.confirmVisionDisplayPresentation()
@@ -286,6 +286,215 @@ cancelledModal.admit(lease: VisionWindowLease(window: cancelledModal.lease!.wind
 check(!cancelledModal.modal && cancelledModal.pending == nil &&
       cancelledModal.lastResult?.code == .admissionChanged && cancelledModal.inputBlocked,
       "replacement lease clears modal while cancelled selection remains unresolved")
+
+let (startupDisplay, startupDisplayPeer) = client()
+startupDisplay.session = .init(macID: "0123456789ABCDEF")
+startupDisplay.trustedDisplayPeer = true
+var startupDisplayCatalog = list()
+startupDisplayCatalog.launchID = "host-launch"
+startupDisplayCatalog.automaticDisplaySelection = 1
+startupDisplayCatalog.selectionRevision = "r0"
+startupDisplay.observeVisionDisplays(startupDisplayCatalog, from: startupDisplayPeer)
+check(startupDisplay.releaseCallbacks.count == 1 && startupDisplayPeer.sent.isEmpty,
+      "인증한 최초 빈 화면은 별도 모드 없이 main 선택의 입력 해제를 시작한다")
+
+startupDisplay.observeVisionDisplays(startupDisplayCatalog, from: startupDisplayPeer)
+check(startupDisplay.releaseCallbacks.count == 1, "같은 inventory 반복 catalog는 자동 요청을 추가하지 않는다")
+startupDisplay.releaseCallbacks[0](true); drain()
+let initialAutomatic = startupDisplayPeer.sent.first.flatMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+check(initialAutomatic?.displayID == 11 && initialAutomatic?.origin == .automatic && initialAutomatic?.selectionRevision == "r0",
+      "main 자동 요청은 최초 revision과 명시적 automatic을 그대로 보낸다")
+check(UserDefaults.standard.values.isEmpty, "제출만으로 마지막 화면을 저장하지 않는다")
+var startupAccepted = startupDisplayCatalog
+startupAccepted.selectionRevision = "r1"; startupAccepted.active = .desktop
+startupAccepted.activeDisplayID = 11; startupAccepted.desktopSelectionRequired = false
+startupAccepted.inputGeneration = "auto1"; startupAccepted.videoEpoch = epoch("auto1")
+startupDisplay.observeVisionDisplays(startupAccepted, from: startupDisplayPeer)
+check(UserDefaults.standard.values.isEmpty, "catalog만으로 실제 표시를 확정하거나 저장하지 않는다")
+startupDisplay.visionInputBinding = .presented(startupAccepted.videoEpoch!)
+startupDisplay.confirmVisionDisplayPresentation()
+check(!startupDisplay.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.count == 1,
+      "현재 catalog와 실제 표시 epoch가 수렴한 뒤 입력과 저장을 확정한다")
+
+func automaticCatalog(inventoryID: UUID? = inventory, revision: String = "r0") -> WindowList {
+    var result = list()
+    result.launchID = "host-launch"; result.automaticDisplaySelection = 1
+    result.selectionRevision = revision; result.displayInventoryID = inventoryID
+    return result
+}
+func automaticClient(_ catalog: WindowList = automaticCatalog(), trusted: Bool = true) -> (StreamClient, NWConnection) {
+    UserDefaults.standard.values = [:]
+    let (client, peer) = client()
+    client.session = .init(macID: "0123456789ABCDEF"); client.trustedDisplayPeer = trusted
+    client.observeVisionDisplays(catalog, from: peer)
+    return (client, peer)
+}
+for invalid in ["legacy", "cap", "revision", "longRevision", "launch", "main", "twoMain", "unauthenticated"] {
+    var catalog = automaticCatalog()
+    switch invalid {
+    case "legacy": catalog.automaticDisplaySelection = nil
+    case "cap": catalog.automaticDisplaySelection = 2
+    case "revision": catalog.selectionRevision = ""
+    case "longRevision": catalog.selectionRevision = String(repeating: "가", count: 43)
+    case "launch": catalog.launchID = ""
+    case "main": catalog.displays = rows.map { var row = $0; row.isMain = false; return row }
+    case "twoMain": catalog.displays = rows.map { var row = $0; row.isMain = true; return row }
+    default: break
+    }
+    let (client, peer) = automaticClient(catalog, trusted: invalid != "unauthenticated")
+    check(client.releaseCallbacks.isEmpty && peer.sent.isEmpty, "자동 시작 경계가 맞지 않으면 전송0 \(invalid)")
+}
+let (lateAuthentication, lateAuthenticationPeer) = automaticClient(trusted: false)
+lateAuthentication.trustedDisplayPeer = true; lateAuthentication.reconcileVisionAutomaticDisplay()
+check(lateAuthentication.releaseCallbacks.count == 1 && lateAuthenticationPeer.sent.isEmpty,
+      "catalog보다 인증이 늦어도 새 catalog 없이 기존 입력 해제 경로로 진행한다")
+
+let (topologyClient, topologyPeer) = automaticClient()
+let topologyIDs = [inventory, UUID(), UUID()]
+for index in 0..<topologyIDs.count {
+    if index > 0 {
+        topologyClient.observeVisionDisplays(automaticCatalog(inventoryID: nil), from: topologyPeer)
+        topologyClient.observeVisionDisplays(automaticCatalog(inventoryID: topologyIDs[index]), from: topologyPeer)
+    }
+    check(topologyClient.releaseCallbacks.count == index + 1, "새 유효 inventory마다 최초 r0 기회를 한 번 이어간다 \(index)")
+    topologyClient.releaseCallbacks[index](true); drain()
+    topologyClient.observeVisionDisplays(automaticCatalog(inventoryID: topologyIDs[index]), from: topologyPeer)
+    check(topologyClient.releaseCallbacks.count == index + 1, "같은 inventory 중복은 추가 제출0 \(index)")
+}
+let topologySelections = topologyPeer.sent.compactMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+check(topologySelections.count == 3 && topologySelections.allSatisfy { $0.origin == .automatic && $0.selectionRevision == "r0" } && topologySelections.map(\.inventoryID) == topologyIDs,
+      "A에서 B와 C로 바뀌어도 새 inventory와 원래 r0만 전송한다")
+topologyClient.observeVisionDisplays(automaticCatalog(inventoryID: topologyIDs.last!, revision: "r1"), from: topologyPeer)
+let afterAcceptanceCount = topologyClient.releaseCallbacks.count
+let hostRecoveredInventory = UUID()
+topologyClient.observeVisionDisplays(automaticCatalog(inventoryID: hostRecoveredInventory, revision: "r1"), from: topologyPeer)
+check(topologyClient.releaseCallbacks.count == afterAcceptanceCount, "r1 뒤에는 새 inventory라도 client가 재기준화하지 않는다")
+var recoveredCatalog = automaticCatalog(inventoryID: hostRecoveredInventory, revision: "r1")
+recoveredCatalog.active = .desktop; recoveredCatalog.activeDisplayID = 11
+recoveredCatalog.desktopSelectionRequired = false; recoveredCatalog.inputGeneration = "recovered"
+recoveredCatalog.videoEpoch = epoch("recovered")
+topologyClient.observeVisionDisplays(recoveredCatalog, from: topologyPeer)
+check(topologyClient.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.isEmpty,
+      "host-owned 복구 catalog도 실제 표시 전에는 입력·저장 수렴이 아니다")
+topologyClient.visionInputBinding = .presented(recoveredCatalog.videoEpoch!)
+topologyClient.confirmVisionDisplayPresentation()
+check(!topologyClient.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.count == 1,
+      "host-owned 실제 새 epoch를 표시하면 취소된 자동 요청을 ACK로 바꾸지 않고 입력을 복원한다")
+
+for mutation in ["auth", "mac", "host", "cap", "lease", "background", "modal"] {
+    for queued in [false, true] {
+        let (client, peer) = automaticClient()
+        if queued { _ = client.link.hold(peer); client.releaseCallbacks[0](true) }
+        switch mutation {
+        case "auth": client.trustedDisplayPeer = false; client.reconcileVisionAutomaticDisplay()
+        case "mac": client.session = .init(macID: "OTHER-MAC"); client.reconcileVisionAutomaticDisplay()
+        case "host": var changed = automaticCatalog(); changed.launchID = "other-host"; client.observeVisionDisplays(changed, from: peer)
+        case "cap": var changed = automaticCatalog(); changed.automaticDisplaySelection = nil; client.observeVisionDisplays(changed, from: peer)
+        case "lease": client.admitVisionDisplays(lease: nil, foreground: false)
+        case "background": client.visionDisplayApplicationActive = false; client.appWillResign()
+        default: client.setVisionDisplayModal(true)
+        }
+        if queued { _ = client.link.unhold(peer) } else { client.releaseCallbacks[0](true) }
+        drain()
+        check(peer.sent.isEmpty, "해제 대기·실제 큐 전송 중 경계 변경은 이전 제출을 제거한다 \(mutation)/\(queued)")
+    }
+}
+let (manualOverride, manualOverridePeer) = automaticClient()
+_ = manualOverride.link.hold(manualOverridePeer); manualOverride.releaseCallbacks[0](true)
+manualOverride.automatic(.window(81)); _ = manualOverride.link.unhold(manualOverridePeer); drain()
+let manualWindow = manualOverridePeer.sent.first.flatMap { Wire.decode(SourceRequest.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+check(manualOverridePeer.sent.count == 1 && manualWindow?.source == .window(81) && manualWindow?.origin == .human,
+      "명시적 창 선택은 대기 중 자동 화면을 취소하고 human 요청만 보낸다")
+manualOverride.observeVisionDisplays(automaticCatalog(inventoryID: UUID()), from: manualOverridePeer)
+check(manualOverride.releaseCallbacks.count == 1, "명시적 사람 선택 뒤에는 초기 자동 의도를 되살리지 않는다")
+
+for kind in ["matching", "mac", "launch", "inventory", "malformed", "oversized"] {
+    UserDefaults.standard.values = [:]
+    let (client, peer) = client()
+    client.session = .init(macID: "0123456789ABCDEF"); client.trustedDisplayPeer = true
+    let remembered = VisionDisplaySelection.Remembered(macID: kind == "mac" ? "OTHER" : "0123456789ABCDEF",
+        launchID: kind == "launch" ? "OTHER" : "host-launch", inventoryID: kind == "inventory" ? UUID() : inventory, displayID: 22)
+    let bytes = kind == "malformed" ? Data([0, 1]) : kind == "oversized" ? Data(repeating: 0, count: 4097) : try! JSONEncoder().encode(remembered)
+    UserDefaults.standard.values["SillVerifiedDisplay.0123456789ABCDEF"] = bytes
+    client.observeVisionDisplays(automaticCatalog(), from: peer)
+    client.releaseCallbacks[0](true); drain()
+    let selected = peer.sent.first.flatMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+    check(selected?.displayID == (kind == "matching" ? 22 : 11), "마지막 화면은 같은 인증 Mac·host·inventory에서만 복원한다 \(kind)")
+}
+let (forgedAuto, forgedPeer) = client()
+let forgedCommand = VisionDisplaySelection.Command(requestID: UUID(), displayID: 11,
+    token: forgedAuto.visionDisplaySelection.token!, automaticRevision: "forged")
+check(forgedAuto.selectVisionDisplay(forgedCommand).code == .staleScope && forgedAuto.releaseCallbacks.isEmpty && forgedPeer.sent.isEmpty,
+      "외부 구조화 명령이 임의 automatic revision으로 준비·해제 효과를 만들지 않는다")
+for boundary in ["foreground", "admission", "modal"] {
+    let (client, peer) = automaticClient()
+    let lease = client.visionDisplaySelection.lease!
+    if boundary == "foreground" {
+        client.admitVisionDisplays(lease: lease, foreground: false)
+        client.admitVisionDisplays(lease: lease, foreground: true)
+    } else if boundary == "admission" {
+        client.admitVisionDisplays(lease: VisionWindowLease(window: lease.window), foreground: true)
+    } else {
+        client.setVisionDisplayModal(true); client.setVisionDisplayModal(false)
+    }
+    check(client.releaseCallbacks.count == 2, "정상 재입장에서는 같은 r0라도 새 사용권의 해제를 다시 확인한다 \(boundary)")
+    client.releaseCallbacks[0](true); drain()
+    check(peer.sent.isEmpty, "재입장 전 해제 완료는 새 사용권의 요청을 대신 보내지 않는다 \(boundary)")
+    client.releaseCallbacks[1](true); drain()
+    check(peer.sent.count == 1, "새 사용권의 실제 해제 뒤 한 번만 전송한다 \(boundary)")
+}
+let (remoteHuman, remoteHumanPeer) = automaticClient()
+remoteHuman.releaseCallbacks[0](true); drain()
+var remoteHumanCatalog = automaticCatalog(revision: "r1")
+remoteHumanCatalog.active = .window(81); remoteHumanCatalog.desktopSelectionRequired = false
+remoteHumanCatalog.inputGeneration = "human-window"; remoteHumanCatalog.videoEpoch = epoch("human-window", source: .window(81))
+remoteHuman.observeVisionDisplays(remoteHumanCatalog, from: remoteHumanPeer)
+remoteHuman.visionInputBinding = .presented(remoteHumanCatalog.videoEpoch!)
+remoteHuman.confirmVisionDisplayPresentation()
+check(!remoteHuman.visionDisplaySelection.inputBlocked && remoteHuman.visionDisplaySelection.lastResult?.code == .sourceChanged && UserDefaults.standard.values.isEmpty,
+      "다른 사람 선택의 실제 표시를 따라가되 자동 선택 성공이나 모니터 저장으로 위조하지 않는다")
+
+for stale in [false, true] {
+    let (client, peer) = automaticClient()
+    _ = client.link.hold(peer); client.releaseCallbacks[0](true)
+    let oldDeadline = client.visionDisplayDeadline!
+    let token = client.visionDisplaySelection.token!
+    let manualToken = stale ? VisionDisplaySelection.Token(peerEpoch: token.peerEpoch, window: token.window,
+        admission: token.admission, inventory: token.inventory, revision: token.revision + 1) : token
+    let human = VisionDisplaySelection.Command(requestID: UUID(), displayID: 22, token: manualToken)
+    let result = client.selectVisionDisplay(human)
+    _ = client.link.unhold(peer); drain()
+    check(peer.sent.isEmpty && oldDeadline.isCancelled,
+          "직접 수동 모니터 명령은 거절돼도 이전 자동 큐와 deadline을 취소한다 \(stale)")
+    if stale {
+        check(result.code == .staleScope && client.releaseCallbacks.count == 1,
+              "stale 수동 명령은 새 해제 효과를 만들지 않는다")
+    } else {
+        check(result.code == .releasing && client.releaseCallbacks.count == 2,
+              "유효 수동 모니터는 독립적인 새 입력 해제를 기다린다")
+        client.releaseCallbacks[1](true); drain()
+        let sent = peer.sent.first.flatMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+        check(peer.sent.count == 1 && sent?.origin == .human && sent?.displayID == 22,
+              "직접 수동 해제가 끝난 뒤 human 모니터 명령만 한 번 보낸다")
+    }
+}
+for malformed in ["duplicate", "inventory", "capability", "required"] {
+    let (client, peer) = automaticClient()
+    client.releaseCallbacks[0](true); drain()
+    var display = automaticCatalog(revision: "r1")
+    display.active = .desktop; display.activeDisplayID = 11; display.desktopSelectionRequired = false
+    display.inputGeneration = "invalid-catalog"; display.videoEpoch = epoch("invalid-catalog")
+    switch malformed {
+    case "duplicate": display.displays = [rows[0], rows[0]]
+    case "inventory": display.displayInventoryID = nil
+    case "capability": display.displaySelection = 2
+    default: display.desktopSelectionRequired = true
+    }
+    client.observeVisionDisplays(display, from: peer)
+    client.visionInputBinding = .presented(display.videoEpoch!); client.confirmVisionDisplayPresentation()
+    check(client.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.isEmpty,
+          "표시 epoch만 맞아도 잘못된 desktop 목록은 입력·저장을 수용하지 않는다 \(malformed)")
+}
 
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)

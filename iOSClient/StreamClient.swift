@@ -177,6 +177,7 @@ final class StreamClient: ObservableObject {
         didSet {
             #if os(visionOS)
             reconcileVisionTestDestinationAuthentication()
+            reconcileVisionAutomaticDisplay()
             #endif
         }
     }
@@ -220,6 +221,7 @@ final class StreamClient: ObservableObject {
         didSet {
             #if os(visionOS)
             reconcileVisionTestDestinationAuthentication()
+            reconcileVisionAutomaticDisplay()
             #endif
         }
     }
@@ -229,6 +231,7 @@ final class StreamClient: ObservableObject {
         didSet {
             #if os(visionOS)
             reconcileVisionTestDestinationAuthentication()
+            reconcileVisionAutomaticDisplay()
             #endif
         }
     }
@@ -775,6 +778,7 @@ final class StreamClient: ObservableObject {
         didSet {
             #if os(visionOS)
             reconcileVisionTestDestinationAuthentication()
+            reconcileVisionAutomaticDisplay()
             #endif
         }
     }
@@ -3957,6 +3961,7 @@ final class StreamClient: ObservableObject {
     private func request(_ source: StreamSource) {
         #if os(visionOS)
         if source == .desktop && visionDisplaySelection.blocksDesktopRequest { return }
+        prepareVisionManualSource()
         guard !visionDisplaySelection.inputBlocked else { return }
         visionAudioIntentAwaitingSource = source
         microphoneSourceWillChange()
@@ -3965,7 +3970,11 @@ final class StreamClient: ObservableObject {
         remoteAudioControl.sourceWillChange()
         #endif
         choicesSent += 1
+        #if os(visionOS)
+        send(.selectSource, Wire.encode(SourceRequest(source: source, origin: .human)))
+        #else
         send(.selectSource, Wire.encode(source))
+        #endif
         #if DEBUG
         // Layout harness (mock, no connection): show the pick locally so taps can be checked.
         if connection == nil { DispatchQueue.main.async { self.active = source } }
