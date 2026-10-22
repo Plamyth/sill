@@ -105,7 +105,8 @@ struct VisionDisplaySelection {
     }
 
     mutating func prepareManualSource() {
-        let wasAutomatic = pending?.command.automaticRevision != nil
+        let wasAutomatic = pending?.command.automaticRevision != nil ||
+            (pending == nil && automaticOpportunity != nil && automaticPhase != .closed)
         stopAutomatic()
         if wasAutomatic { unresolved = false }
     }
@@ -277,7 +278,14 @@ struct VisionDisplaySelection {
         else if !foreground { code = .foregroundRequired }
         else if lease == nil { code = .windowRequired }
         else if let catalog {
-            if catalog.capability == nil { code = modernSeen ? .unsupportedCapability : .legacyOnly }
+            if command.automaticRevision != nil &&
+                (automaticPhase != .open || automaticOpportunity?.revision != command.automaticRevision ||
+                 automaticOpportunity?.peer != peerEpoch || automaticOpportunity?.launchID != catalog.launchID ||
+                 automaticOpportunity?.window != lease?.window || catalog.automaticCapability != 1 ||
+                 catalog.selectionRevision != command.automaticRevision || catalog.source != .none || modal) {
+                code = .staleScope
+            }
+            else if catalog.capability == nil { code = modernSeen ? .unsupportedCapability : .legacyOnly }
             else if catalog.capability != 1 { code = .unsupportedCapability }
             else if !catalog.validInventory { code = .invalidInventory }
             else if token != command.token { code = .staleScope }
