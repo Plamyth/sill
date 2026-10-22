@@ -1243,7 +1243,7 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             let minY = points.map(\.y).min()!, maxY = points.map(\.y).max()!
             let bounds = CGRect(x:minX,y:minY,width:maxX-minX,height:maxY-minY)
             guard bounds.height <= 80, bounds.width <= 500 else { return nil }
-            var hits: [NSRange] = [], offset = 0
+            var hits: [(range: NSRange, rect: CGRect)] = [], offset = 0
             var firstHitY: CGFloat?
             for character in view.text {
                 let length = String(character).utf16.count
@@ -1257,13 +1257,20 @@ struct VaultMarkdownEditor: UIViewRepresentable {
                 if let hit = hitRects.first {
                     if let firstHitY, abs(hit.midY-firstHitY) > max(3,hit.height/2) { return nil }
                     firstHitY = firstHitY ?? hit.midY
-                    if let previous = hits.last, NSMaxRange(previous) != offset { return nil }
-                    hits.append(NSRange(location:offset,length:length))
+                    if let previous = hits.last, NSMaxRange(previous.range) != offset { return nil }
+                    hits.append((NSRange(location:offset,length:length),hit))
                 }
             }
-            guard let lower = hits.first, let upper = hits.last else { return nil }
-            let range = NSRange(location:lower.location,length:NSMaxRange(upper)-lower.location)
-            return range.length <= 256 ? range : nil
+            // A physical scratch can cross neighbouring glyphs at this font size.
+            // Its centre selects one complete Character; wider deletion stays explicit selection.
+            let ordered = hits.sorted { abs($0.rect.midX-bounds.midX) < abs($1.rect.midX-bounds.midX) }
+            guard let target = ordered.first,
+                  target.rect.insetBy(dx:0,dy:-4).contains(CGPoint(x:bounds.midX,y:bounds.midY)) else { return nil }
+            if ordered.count > 1,
+               abs(abs(ordered[0].rect.midX-bounds.midX)-abs(ordered[1].rect.midX-bounds.midX)) < 0.5 {
+                return nil
+            }
+            return target.range
         }
         @objc private func eraseSelection() {
             guard isCurrent, let editor, editor.isEditable, editor.markedTextRange == nil, !scribbling,

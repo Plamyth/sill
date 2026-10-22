@@ -81,6 +81,20 @@ enum PencilTextCorrectionChecks {
         }
         controller.applyCorrection(narrowScratch,expectedText:view.text)
         try check(view.text == "abde","실제 좁은 영문 글자 c만 지우기")
+        for (word,middleOffset,middleLength,result) in [("가나다",1,1,"가다"),("a👩🏽‍💻b",1,"👩🏽‍💻".utf16.count,"ab")] {
+            view.text = word
+            controller.textViewDidChange(view)
+            let left = try glyph(0), middle = try glyph(middleOffset,length:middleLength)
+            let right = try glyph(word.utf16.count-1)
+            let wideScratch = (0...7).map { index in
+                CGPoint(x:index % 2 == 0 ? left.minX : right.maxX,
+                        y:middle.midY + (index % 2 == 0 ? -4 : 4))
+            }
+            try check(controller.correctionRange(wideScratch,gesture:.erase,in:view) ==
+                NSRange(location:middleOffset,length:middleLength),"넓은 실제 필기 폭에서도 가운데 글자 한 개만 대상")
+            controller.applyCorrection(wideScratch,expectedText:view.text)
+            try check(view.text == result,"넓은 지그재그가 인접 글자를 지우지 않고 전체 Character를 보존")
+        }
         view.text = "가나다"
         controller.textViewDidChange(view)
         view.undoManager?.removeAllActions()
