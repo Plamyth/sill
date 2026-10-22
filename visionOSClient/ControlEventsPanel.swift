@@ -95,14 +95,14 @@ struct ControlEventsPanel: View {
     @ViewBuilder private var sourceDetails: some View {
         if let source = controller.projection?.sources.first(where: { $0.provider == controller.selection.provider }) {
             Text(source.support.label)
-            field("소스 연결 상태 보고", source.connection.state)
-            field("소스 연결 관측", source.connection.observedAt)
-            field("소스 연결 시작", source.connection.connectedAt)
-            field("소스 요약 담당", source.owner)
-            field("소스 요약 세션", source.sessionID)
-            field("소스 요약 실행", source.runID)
-            field("소스 요약 변경 번호", formatted(source.sourceRevision))
-            field("소스 권한 보고", formatted(source.capabilities))
+            field("제공자 요약 연결값", source.connection.state)
+            field("제공자 요약 관측", source.connection.observedAt)
+            field("제공자 요약 연결 시작", source.connection.connectedAt)
+            field("제공자 요약 담당", source.owner)
+            field("제공자 요약 세션", source.sessionID)
+            field("제공자 요약 실행", source.runID)
+            field("제공자 요약 변경 번호", formatted(source.sourceRevision))
+            field("제공자 요약 권한값", formatted(source.capabilities))
             Text("소스 연결 요약은 선택한 세션의 실행 상태나 명령 권한을 보장하지 않습니다.").font(.caption)
         } else { Text("원본 이벤트 지원 여부 미확인 · 소스 연결 정보 미제공") }
         if controller.selection.provider == .cursorDesktop {
@@ -118,7 +118,10 @@ struct ControlEventsPanel: View {
             field("원본 호스트", work.id.hostID)
             field("원본 세션", work.id.sessionID)
             field("원본 실행", work.id.runID)
-            field("원담당", work.ownerID)
+            field("원담당 대화", work.ownerID)
+            if work.reportedOwnerID != work.ownerID {
+                field("미확인 담당 보고값", work.reportedOwnerID)
+            }
             field("담당 확인", work.ownerVerified.map { $0 ? "원본에서 확인됨" : "미확인" })
             field("원본 행 관측", work.recordObservedAt)
             field("원본 상태값", work.reportedStatus)
@@ -128,11 +131,35 @@ struct ControlEventsPanel: View {
             field("원본 읽기 전용", work.readOnly.map { $0 ? "예" : "아니요 · 이 앱의 명령 권한과 별도" })
             field("원본 권한 보고", formatted(work.capabilities))
             Text("권한 보고를 보존하지만 이 Vision 앱에는 실행·전송 명령 경로를 제공하지 않습니다.").font(.caption)
-            field("실행 상태", work.execution.state)
-            field("실행 관측", work.execution.observedAt)
-            field("세션 연결 상태", work.connection.state)
-            field("세션 연결 관측", work.connection.observedAt)
-            field("세션 연결 시작", work.connection.connectedAt)
+            if work.id.provider == .codex {
+                Text(!controller.reducer.isCurrent && work.sourceConnection.isCurrent ? "마지막 관측 · 개별 원본 연결의 현재 상태 미확인" : work.sourceConnection.label)
+                    .accessibilityIdentifier("control-events.session-connection")
+                if !controller.reducer.isCurrent || !work.sourceConnection.isCurrent {
+                    Text("아래 실행 상태와 시각은 마지막 관측입니다. 제공자 요약이나 서버 접속으로 개별 연결을 확인하지 않습니다.").font(.caption)
+                }
+            } else {
+                if !controller.reducer.isCurrent { Text("마지막 관측 · 연결 서버 재접속 전입니다.") }
+                field("세션 이벤트 연결 보고값", work.connection.state)
+                field("세션 이벤트 연결 관측", work.connection.observedAt)
+                field("세션 이벤트 연결 시작", work.connection.connectedAt)
+            }
+            field("실행 상태 관측값", work.execution.state)
+            field("실행 관측 시각", work.execution.observedAt)
+            if let source = work.sourceConnection.observation {
+                field("개별 연결 제공자", source.provider.label)
+                field("실행 환경 담당", source.owner)
+                field("연결 결박 세션", source.sessionID)
+                field("연결 결박 실행", source.runID)
+                field("개별 연결 보고값", source.connection.state)
+                field("개별 연결 여부 보고", source.connected.map { $0 ? "예 · 결박 판정과 별도" : "아니요" })
+                field("개별 연결 관측", source.connection.observedAt)
+                field("개별 연결 시작", source.connection.connectedAt)
+                field("개별 연결 변경 번호", formatted(source.sourceRevision))
+                field("관측기 읽기 전용", source.readOnly.map { $0 ? "예" : "아니요 · 이 앱의 권한과 별도" })
+                field("관측기 권한 보고", formatted(source.capabilities))
+            }
+            field("기존 행 연결 보고값", work.connection.state)
+            Text("기존 행의 연결값과 명령 도우미의 행 권한은 개별 원본 연결과 관측기 권한의 확인 근거가 아닙니다.").font(.caption)
             if work.id.provider == .cursorDesktop {
                 field("로컬 인스턴스", work.id.instanceID)
                 field("인스턴스 시작", work.id.startedAt)

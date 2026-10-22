@@ -70,7 +70,25 @@
             "emptySlot": false,
             "sourceMissing": false,
             "inputRequest": null,
-            "events": []
+            "events": [],
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "owner": "fixture-runtime-owner",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "sourceRevision": 7,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false
           }
         ],
         "catalog": [],
@@ -99,8 +117,8 @@
               "agentStatus": null,
               "observedAt": "2026-10-23T00:00:00.000Z",
               "connectedAt": "2026-10-23T00:00:00.000Z",
-              "sourceRevision": "fixture-1",
-              "connectionState": null,
+              "sourceRevision": 7,
+              "connectionState": "connected",
               "fresh": true,
               "readOnly": false,
               "capabilities": {
@@ -108,7 +126,25 @@
                 "send": true
               },
               "threadId": "33333333-3333-4333-8333-333333333333",
-              "activeTurnId": "44444444-4444-4444-8444-444444444444"
+              "activeTurnId": "44444444-4444-4444-8444-444444444444",
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": "2026-10-23T00:00:00.000Z",
+                "observedAt": "2026-10-23T00:00:00.000Z",
+                "owner": "fixture-runtime-owner",
+                "sessionId": "33333333-3333-4333-8333-333333333333",
+                "runId": "44444444-4444-4444-8444-444444444444",
+                "sourceRevision": 7,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false
             },
             {
               "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
@@ -268,8 +304,8 @@
               "agentStatus": null,
               "observedAt": "2026-10-23T00:00:00.000Z",
               "connectedAt": "2026-10-23T00:00:00.000Z",
-              "sourceRevision": "fixture-1",
-              "connectionState": null,
+              "sourceRevision": 7,
+              "connectionState": "connected",
               "fresh": true,
               "readOnly": false,
               "capabilities": {
@@ -277,7 +313,25 @@
                 "send": true
               },
               "threadId": "33333333-3333-4333-8333-333333333333",
-              "activeTurnId": "44444444-4444-4444-8444-444444444444"
+              "activeTurnId": "44444444-4444-4444-8444-444444444444",
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": "2026-10-23T00:00:00.000Z",
+                "observedAt": "2026-10-23T00:00:00.000Z",
+                "owner": "fixture-runtime-owner",
+                "sessionId": "33333333-3333-4333-8333-333333333333",
+                "runId": "44444444-4444-4444-8444-444444444444",
+                "sourceRevision": 7,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false
             },
             {
               "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
@@ -401,8 +455,8 @@
             "agentStatus": null,
             "observedAt": "2026-10-23T00:00:00.000Z",
             "connectedAt": "2026-10-23T00:00:00.000Z",
-            "sourceRevision": "fixture-1",
-            "connectionState": null,
+            "sourceRevision": 7,
+            "connectionState": "connected",
             "fresh": true,
             "readOnly": false,
             "capabilities": {
@@ -410,7 +464,25 @@
               "send": true
             },
             "threadId": "33333333-3333-4333-8333-333333333333",
-            "activeTurnId": "44444444-4444-4444-8444-444444444444"
+            "activeTurnId": "44444444-4444-4444-8444-444444444444",
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "owner": "fixture-runtime-owner",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "sourceRevision": 7,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false
           },
           {
             "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
@@ -561,7 +633,25 @@
           "emptySlot": false,
           "sourceMissing": false,
           "inputRequest": null,
-          "events": []
+          "events": [],
+          "sourceConnection": {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "connectedAt": "2026-10-23T00:00:00.000Z",
+            "observedAt": "2026-10-23T00:00:00.000Z",
+            "owner": "fixture-runtime-owner",
+            "sessionId": "33333333-3333-4333-8333-333333333333",
+            "runId": "44444444-4444-4444-8444-444444444444",
+            "sourceRevision": 7,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          "stale": false
         }
       ],
       "catalog": [],
@@ -590,8 +680,8 @@
             "agentStatus": null,
             "observedAt": "2026-10-23T00:00:00.000Z",
             "connectedAt": "2026-10-23T00:00:00.000Z",
-            "sourceRevision": "fixture-1",
-            "connectionState": null,
+            "sourceRevision": 7,
+            "connectionState": "connected",
             "fresh": true,
             "readOnly": false,
             "capabilities": {
@@ -599,7 +689,25 @@
               "send": true
             },
             "threadId": "33333333-3333-4333-8333-333333333333",
-            "activeTurnId": "44444444-4444-4444-8444-444444444444"
+            "activeTurnId": "44444444-4444-4444-8444-444444444444",
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": "2026-10-23T00:00:00.000Z",
+              "observedAt": "2026-10-23T00:00:00.000Z",
+              "owner": "fixture-runtime-owner",
+              "sessionId": "33333333-3333-4333-8333-333333333333",
+              "runId": "44444444-4444-4444-8444-444444444444",
+              "sourceRevision": 7,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false
           },
           {
             "key": "[\"cursor-desktop\",\"instance-1\",\"workspace-1\",\"composer-1\"]",
