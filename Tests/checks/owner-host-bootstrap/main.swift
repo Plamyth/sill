@@ -794,6 +794,11 @@ final class OwnerBootstrapChecks {
         }
         let socket = OwnerBootstrapSocket.fixture(binding: binding()) { live.get() }
         let result = await host.judgeOwnerBootstrap(attempt(socket))
+        let restarted = remote(store)
+        expectFalse(result.ok)
+        expectFalse(restarted.isPaired(socket.binding.fingerprint))
+        expectEqual(DoorPolicy.atReady(.remote, alpn: RemoteTLS.sessionALPN,
+            .init(paired: restarted.isPaired(socket.binding.fingerprint), remoteAccess: true), remoteSessions: 0), .refuse("unpaired"))
         let observation: [String: Any] = ["observation": "두 저장소가 완료 표시 쓰기 직후 모두 실패하는 한계",
             "bootstrapOK": result.ok, "currentTrustCount": host.trust.snapshot.paired.count,
             "restartTrustCount": remote(store).trust.snapshot.paired.count, "pairedWrites": store.writes,
