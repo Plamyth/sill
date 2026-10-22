@@ -1468,7 +1468,7 @@ final class StreamClient: ObservableObject {
             $0.route == .network && $0.macID == macID && $0.carriesTag && $0.endpoint != nil
                 && wiredDial(for: $0) != nil && homeDecision($0, macID: macID, tap: false) == .pinned
         }
-        if preferCable, let row {
+        if preferCable, !RemoteDialPolicy.ownerTailnetScope(saved), let row {
             startupAutoConnection = .wired(macID)
             if !dialRow(row, macID: macID, trust: .saved(pin: pin), tagNamed: true, tap: false) {
                 status = "저장된 iPad 기기 키를 사용할 수 없습니다. iPad의 잠금을 해제한 뒤 Sill을 다시 여세요."
@@ -1993,6 +1993,9 @@ final class StreamClient: ObservableObject {
     /// DiscoveryPolicy.homeDial for a row, from what this device knows of its Mac (`macID`).
     func homeDecision(_ mac: FoundMac, macID: String?, tap: Bool) -> DiscoveryPolicy.HomeDial {
         let saved = macID.flatMap { savedMac($0) }
+        if RemoteDialPolicy.ownerTailnetScope(saved), saved?.revoked != true, saved?.newKey != true {
+            return .pinned
+        }
         return DiscoveryPolicy.homeDial(door: mac.door, saved: saved != nil, revoked: saved?.revoked == true,
                                         homeTLS: saved?.homeTLS == true, debug: Self.debugBuild, tap: tap,
                                         newKey: saved?.newKey == true)
@@ -2004,6 +2007,11 @@ final class StreamClient: ObservableObject {
     @discardableResult
     func dialRow(_ mac: FoundMac, macID: String?, trust: DiscoveryPolicy.HomeTrust, tagNamed: Bool, tried: [String] = [],
                  tap: Bool = false) -> Bool {
+        if let id = macID, let saved = savedMac(id), RemoteDialPolicy.ownerTailnetScope(saved) {
+            guard saved.revoked != true, saved.newKey != true, saved.fingerprintData != nil else { return false }
+            dialSaved(id, why: !tap && reconnect?.macID == id ? .automatic : .tap)
+            return true
+        }
         guard let endpoint = mac.endpoint else { return false }
         let row = HomeRow(id: mac.id, tagNamed: tagNamed, tried: tried, tapped: tap)
         if let wired = wiredDial(for: mac) {
@@ -2444,7 +2452,8 @@ final class StreamClient: ObservableObject {
         // A row no longer listed is forgotten, its refusal and its tries: listed again, it is tried afresh.
         homeMoveRows = homeMoveRows.keeping(listed: Set(macs.filter { $0.route == .network }.map(\.id)))
         guard connected, let s = session, s.route.isRemote, s.why != .connectRemotely, sessionListed, moving == nil, !sessionDead,
-              connection != nil, homeInfo.latest != nil, let id = s.macID, let saved = savedMac(id) else { return }
+              connection != nil, homeInfo.latest != nil, let id = s.macID, let saved = savedMac(id),
+              !RemoteDialPolicy.ownerTailnetScope(saved) else { return }
         // Every network row whose tag names the session's saved Mac, by row: one not refused, at a door
         // that speaks TLS, dialed pinned to the saved Mac's key, never plain, never an ask (a plain door
         // is passed over; a Mac that removed this device or has a new key keeps the session remote).
@@ -2590,6 +2599,7 @@ final class StreamClient: ObservableObject {
     /// none (the row as listed could be Wi-Fi again, and never Wi-Fi to Wi-Fi): its wired dial not
     /// ready within wiredWait, or unable to go on, ends the move (`giveUpMove`). Main thread.
     private func startMove(to endpoint: NWEndpoint, kind: MoveKind, fallback: NWEndpoint?) {
+        guard !RemoteDialPolicy.ownerTailnetScope(session?.macID.flatMap { savedMac($0) }) else { return }
         let refused = WeakConnection()
         let c = NWConnection(to: endpoint, using: moveParameters(kind, refused: refused))
         refused.connection = c

@@ -158,5 +158,14 @@ do {
     c.cableUnavailable(cable)
     check(c.remoteDials.isEmpty && c.connection === manual, "stale cable timeout cannot replace a newer connection")
 }
+Clock.reset()
+do {
+    let c = StreamClient(); c.savedMacs[0].method = "owner-tailnet-v1"; c.macs = [FoundMac(cable:true)]
+    c.armSavedMacAutoConnect(); Clock.advance(3)
+    check(c.homeDials.isEmpty && c.remoteDials == ["trusted"], "owner 시작은 보이는 케이블에 관계없이 저장 Tailnet 경로")
+    check(c.startupAttempted, "owner 원격 시작을 wired 진행 상태로 남기지 않음")
+    c.evaluate(); Clock.advance(3)
+    check(c.remoteDials.count == 1, "owner 시작의 지연 콜백도 중복 연결하지 않음")
+}
 print("\(checks - failures)/\(checks) checks passed; \(failures) failed")
 exit(failures == 0 ? 0 : 1)

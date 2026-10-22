@@ -40,12 +40,14 @@ struct SavedMac {
     var macID = "trusted"
     var fingerprintData: Data? = Data([1, 2, 3])
     var eligible = true
+    var method = "qr"
 }
 enum SavedMacs {
     static func automaticTarget(_ list: [SavedMac], preferredID: String?) -> SavedMac? {
         list.first { $0.eligible && $0.fingerprintData != nil && (preferredID == nil || $0.macID == preferredID) }
     }
 }
+enum RemoteDialPolicy { static func ownerTailnetScope(_ mac: SavedMac?) -> Bool { mac?.method == "owner-tailnet-v1" } }
 enum NWEndpoint: Equatable { case cable, bonjour }
 final class NWConnection {
     enum State { case preparing, ready, cancelled }
@@ -106,6 +108,7 @@ final class StreamClient {
     }
     func dialSaved(_ id: String, why: DialReason) { remoteDials.append(id); remoteDial = 1 }
     func tearDown(status: String, restartSearch: Bool) { self.status = status; session = nil }
+    var startupAttempted: Bool { if case .attempted = startupAutoConnection { return true }; return false }
     func evaluate() { trySavedMacAutoConnect() }
     func stop() { startupAutoConnection = .stopped }
     func homeSessionEnded(_ session: Session?, error: Int?, goodbye: String?) -> Bool { securityHandled }

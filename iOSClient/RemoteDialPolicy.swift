@@ -51,6 +51,17 @@ enum RemoteDialPolicy {
         }
     }
 
+    static func ownerTailnetScope(_ mac: SavedMac?) -> Bool {
+        mac?.method == OwnerMacBootstrap.method
+    }
+
+    static func savedOrder(_ mac: SavedMac, localIPv4: [(address: [UInt8], prefix: Int)]) -> [Candidate] {
+        let addresses = ownerTailnetScope(mac)
+            ? mac.allAddresses.filter { OwnerMacBootstrap.isTailnetAddress($0.host) }
+            : mac.allAddresses
+        return order(addresses, remotePort: mac.remotePort, lastWorked: mac.lastWorked, localIPv4: localIPv4)
+    }
+
     /// The dial order: the address that last worked; VPN names, VPN IPv4, VPN IPv6; LAN addresses
     /// in a subnet this device shares (it is at home, and Bonjour failed); internet names, then
     /// internet addresses; the other LAN addresses (reached through a VPN into the home network).

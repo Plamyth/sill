@@ -310,6 +310,10 @@ extension StreamClient {
         cancelOwnerBootstrap()
         #endif
         guard let mac = savedMac(macID), let pin = mac.fingerprintData else { return }
+        if RemoteDialPolicy.ownerTailnetScope(mac), mac.revoked == true || mac.newKey == true {
+            status = "소유 Mac의 기존 신뢰를 확인할 수 없습니다."
+            return
+        }
         let name = displayName(macID)
         guard let identity = DeviceIdentity.existing() else {
             status = "이 \(Self.deviceWord)에 \(name)의 키가 없습니다. 다시 페어링하세요."
@@ -322,8 +326,7 @@ extension StreamClient {
         }
         hostName = name
         status = why == .automatic ? "\(name)에 원격으로 다시 연결하는 중…" : "\(name)에 원격으로 연결하는 중…"
-        let candidates = RemoteDialPolicy.order(mac.allAddresses, remotePort: mac.remotePort, lastWorked: mac.lastWorked,
-                                                localIPv4: Self.localIPv4Networks())
+        let candidates = RemoteDialPolicy.savedOrder(mac, localIPv4: Self.localIPv4Networks())
         #if DEBUG
         print("remote: dialing \(name) (\(macID)) \(why): \(candidates.map(\.key))")
         #endif

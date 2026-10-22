@@ -77,6 +77,7 @@ enum DeviceIdentity {
 enum UIDevice { static let current = Device(); struct Device { let name = "검사 iPad" } }
 enum ClientStatsReporter { static let hardwareIdentifier = "iPadFixture" }
 enum RemoteDialPolicy {
+    static func ownerTailnetScope(_ mac: SavedMac?) -> Bool { mac?.method == OwnerMacBootstrap.method }
     static let pairingReplyDeadline = 8.0
     struct Candidate { let host: String; let port: Int; let kind: String; let via: String; var key: String { "\(host)|\(port)" } }
 }
