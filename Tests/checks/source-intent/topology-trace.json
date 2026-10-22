@@ -1,0 +1,50 @@
+{
+  "source": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/automatic-startup-device-20261022/installed39-host143-diagnostics.jsonl",
+  "sourceSHA256": "395896451700f217e9214c6120fc37c56dd80a87dd27f95b4656cd0c025ed9e9",
+  "sequence": [
+    {
+      "secondsFromFirst": 0.0,
+      "inventory": "B0582473-55BD-421A-9A66-EA3AF6ADBF81",
+      "active": "none",
+      "hasExtended39": false,
+      "capability": "nil",
+      "selectionRevision": "nil"
+    },
+    {
+      "secondsFromFirst": 0.753,
+      "inventory": "nil",
+      "active": "none",
+      "hasExtended39": false,
+      "capability": "nil",
+      "selectionRevision": "nil"
+    },
+    {
+      "secondsFromFirst": 0.924,
+      "inventory": "6CA59975-0C32-423F-8A62-823B69DA1161",
+      "active": "none",
+      "hasExtended39": false,
+      "capability": "nil",
+      "selectionRevision": "nil"
+    },
+    {
+      "secondsFromFirst": 1.103,
+      "inventory": "nil",
+      "active": "none",
+      "hasExtended39": false,
+      "capability": "nil",
+      "selectionRevision": "nil"
+    },
+    {
+      "secondsFromFirst": 1.178,
+      "inventory": "E09D1986-0B93-40D0-A79A-F75642F810C6",
+      "active": "none",
+      "hasExtended39": true,
+      "capability": "nil",
+      "selectionRevision": "nil"
+    }
+  ],
+  "inference": "viewport 확장화면 생성과 같은 초기 구간의 topology 변동. 원인 확정은 별도 생산 경계 검사에서 확인한다.",
+  "host": 143,
+  "client": 39,
+  "automaticSelectionSubmissions": 0
+}

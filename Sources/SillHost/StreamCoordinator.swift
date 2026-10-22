@@ -216,6 +216,14 @@ package final class StreamCoordinator {
     private var selectionRevision: String { "\(launchID):\(pickSequence)" }
     private var sourcePublicationAdmission = SourcePublicationAdmission()
     private var sourceAdmissionPick: SourcePick?
+    private var displayTopologyGeneration: UInt64 = 0
+    private struct AutomaticDisplayRecovery {
+        let pick: SourcePick
+        let displayID: UInt32
+        let identity: String
+        var pending = false
+    }
+    private var automaticDisplayRecovery: AutomaticDisplayRecovery?
     private var switching = false {
         didSet { if switching && !oldValue { gestureScopeToken = UUID() } }
     }
@@ -1037,6 +1045,7 @@ package final class StreamCoordinator {
             }
             desktopGestureSelection?.state = .cancelled
             let pick = reserveSourceIntent(.desktop, displaySelection: selection, from: connection)
+            if selection.origin == .automatic { retainAutomaticDisplay(pick, selection: selection) }
             await select(.desktop, displaySelection: selection, intent: pick)
         case .selectSource:
             guard let request = Wire.decode(SourceRequest.self, from: message.payload) else { return }
@@ -1386,19 +1395,49 @@ package final class StreamCoordinator {
 
     private func automaticSelectionIsAllowed(revision: String?) -> Bool {
         revision == selectionRevision && active == .none && !switching && !shuttingDown &&
-            pendingLaunch == nil && settledPickSequence == pickSequence && pickArrivedWhileSwitching == nil
+            pendingLaunch == nil && automaticDisplayRecovery?.pending != true &&
+            settledPickSequence == pickSequence && pickArrivedWhileSwitching == nil
+    }
+
+    private func replaceSourcePublication() {
+        sourcePublicationAdmission.invalidate()
+        if let connection = sourceAdmissionPick?.connection {
+            sourcePublicationAdmission = SourcePublicationAdmission { [weak connection] in connection?.state == .ready }
+        } else { sourcePublicationAdmission = SourcePublicationAdmission() }
+    }
+
+    private func retainAutomaticDisplay(_ pick: SourcePick, selection: DisplaySelection) {
+        guard let identity = catalog.displayInventory.identity(of: selection.displayID) else { return }
+        automaticDisplayRecovery = AutomaticDisplayRecovery(pick: pick, displayID: selection.displayID, identity: identity)
+    }
+
+    private func recoverAutomaticDisplayIfNeeded() async -> Bool {
+        guard var recovery = automaticDisplayRecovery, recovery.pending,
+              recovery.pick.sequence == pickSequence, !shuttingDown, !switching,
+              active == .none || active == .desktop,
+              let connection = recovery.pick.connection, let participation = recovery.pick.participation,
+              sourcePeerIsLive(connection, participation: participation),
+              catalog.displayInventory.identity(of: recovery.displayID) == recovery.identity,
+              let inventory = catalog.displayInventory.revision else { return false }
+        let selection = DisplaySelection(displayID: recovery.displayID, inventoryID: inventory)
+        guard inputFence.allowsSelection(.desktop, desktopScope: DisplayInventory.scope(selection)) else { return false }
+        let pick = SourcePick(source: .desktop, displaySelection: selection, sequence: recovery.pick.sequence,
+                              connection: connection, participation: participation)
+        recovery.pending = false
+        automaticDisplayRecovery = recovery
+        sourceAdmissionPick = pick
+        await select(.desktop, displaySelection: selection, intent: pick)
+        return true
     }
 
     private func reserveSourceIntent(_ source: StreamSource, displaySelection: DisplaySelection? = nil,
                                      from connection: NWConnection? = nil) -> SourcePick {
-        sourcePublicationAdmission.invalidate()
-        if let connection {
-            sourcePublicationAdmission = SourcePublicationAdmission { [weak connection] in connection?.state == .ready }
-        } else { sourcePublicationAdmission = SourcePublicationAdmission() }
+        automaticDisplayRecovery = nil
         pickSequence &+= 1
         let pick = SourcePick(source: source, displaySelection: displaySelection, sequence: pickSequence,
                               connection: connection, participation: connection.flatMap { inputFence.participationToken(for: ObjectIdentifier($0)) })
         sourceAdmissionPick = pick
+        replaceSourcePublication()
         pendingLaunch = nil
         pickArrivedWhileSwitching = nil
         return pick
@@ -1456,6 +1495,9 @@ package final class StreamCoordinator {
         desktopGestureSelection = ticket
         if case .window = source { gestureChords.forget() }
         let pick = reserveSourceIntent(source, from: connection)
+        if request?.origin == .automatic, source == .desktop, let selection = catalog.displayInventory.current {
+            retainAutomaticDisplay(pick, selection: selection)
+        }
         await handlePick(pick, gestureSelection: ticket)
     }
 
@@ -1503,13 +1545,17 @@ package final class StreamCoordinator {
 
     private func selectStream(_ source: StreamSource, bringForward: Bool, displaySelection: DisplaySelection?,
                               gestureOperation: UUID, intent: SourcePick) async {
-        func current() -> Bool { admissionIsCurrent(intent) }
+        let topology = displayTopologyGeneration
+        func current() -> Bool {
+            admissionIsCurrent(intent) && (source != .desktop || topology == displayTopologyGeneration)
+        }
         let publicationAdmission = sourcePublicationAdmission
         defer {
             if current() { settledPickSequence = intent.sequence }
             switching = false
             finishGestureSelection(gestureOperation)
-            for connection in connections.values { sendMicrophoneCatalog(to: connection, admission: publicationAdmission) }
+            let completedAdmission = source != .desktop && current() ? sourcePublicationAdmission : publicationAdmission
+            for connection in connections.values { sendMicrophoneCatalog(to: connection, admission: completedAdmission) }
             restartOf = nil
             var pick = pickArrivedWhileSwitching
             pickArrivedWhileSwitching = nil
@@ -1546,12 +1592,16 @@ package final class StreamCoordinator {
             if active == .desktop, !synthetic, catalog.display == nil {
                 Task { @MainActor in
                     guard !self.switching, self.active == .desktop, self.catalog.display == nil else { return }
-                    await self.select(.none)
+                    let stop = SourcePick(source: .none, displaySelection: nil, sequence: self.pickSequence, connection: nil, participation: nil)
+                    await self.select(.none, intent: stop)
                 }
             }
             // A stream that did not start (its window gone, capture refused): nothing streams, so
             // the links have nothing to be judged at.
             if active == .none { judgeLinks(nil) }
+            if automaticDisplayRecovery?.pending == true {
+                Task { @MainActor in _ = await self.recoverAutomaticDisplayIfNeeded() }
+            }
         }
 
         // A fresh, bounded inventory read must succeed before changing a desktop pipeline.
@@ -1751,7 +1801,7 @@ package final class StreamCoordinator {
 
         do {
             try await startPipeline(source: source, filter: filter, sourceRect: sourceRect, width: width, height: height, describe: describe,
-                                    title: title, kind: kind, gestureOperation: gestureOperation, intent: intent)
+                                    title: title, kind: kind, gestureOperation: gestureOperation, intent: intent, topology: topology)
         } catch {
             guard current() else { return }
             // `picked`, not a catalog lookup: a staged window may have left the on-screen list.
@@ -1765,7 +1815,7 @@ package final class StreamCoordinator {
                 do {
                     try await startPipeline(source: source, filter: SCContentFilter(desktopIndependentWindow: w), sourceRect: nil,
                                             width: evenPixels(w.frame.width * captureScale), height: evenPixels(w.frame.height * captureScale),
-                                            describe: fallback, title: title, kind: kind, intent: intent)
+                                            describe: fallback, title: title, kind: kind, intent: intent, topology: topology)
                 } catch {
                     guard current() else { return }
                     print("Could not start streaming \(fallback): \(error)")
@@ -1777,15 +1827,18 @@ package final class StreamCoordinator {
                 active = .none
             }
         }
-        if current() { broadcastList(admission: publicationAdmission) }
+        if current() { broadcastList(admission: source == .desktop ? publicationAdmission : sourcePublicationAdmission) }
         // Mid-switch requests (a viewport, the last client leaving) are applied by the defer.
     }
 
     private enum PipelineEpochError: Error { case missingGeometry, superseded }
 
     private func startPipeline(source: StreamSource, filter: SCContentFilter?, sourceRect: CGRect?, width: Int, height: Int, describe: String,
-                               title: String, kind: HostStatusSnapshot.Stream.Kind, gestureOperation: UUID? = nil, intent: SourcePick) async throws {
-        guard admissionIsCurrent(intent) else { throw PipelineEpochError.superseded }
+                               title: String, kind: HostStatusSnapshot.Stream.Kind, gestureOperation: UUID? = nil, intent: SourcePick, topology: UInt64) async throws {
+        func current() -> Bool {
+            admissionIsCurrent(intent) && (source != .desktop || topology == displayTopologyGeneration)
+        }
+        guard current() else { throw PipelineEpochError.superseded }
         let publicationAdmission = sourcePublicationAdmission
         let desktopSelection = source == .desktop && !synthetic ? catalog.displayInventory.current : nil
         guard let bounds = currentSourceRect(source: source, fresh: true) else { throw PipelineEpochError.missingGeometry }
@@ -1823,7 +1876,7 @@ package final class StreamCoordinator {
             syntheticCapture.onFrame = { pixelBuffer, pts in enc.encode(pixelBuffer, pts: pts) }
             syntheticCapture.start(width: width, height: height, fps: fps)
         }
-        guard admissionIsCurrent(intent) else {
+        guard current() else {
             await capture.stop()
             await syntheticCapture.stop()
             capture.onFrame = nil; syntheticCapture.onFrame = nil
@@ -1843,7 +1896,7 @@ package final class StreamCoordinator {
             videoEpoch = epoch
         }
         commitGestureSelection(gestureOperation)
-        server.commitVideo(epoch, catalog: listMessage(), admission: publicationAdmission) { [weak enc] in enc?.requestKeyframe() }
+        server.commitVideo(epoch, catalog: listMessage(), admission: source == .desktop ? publicationAdmission : sourcePublicationAdmission) { [weak enc] in enc?.requestKeyframe() }
         print("Streaming \(describe) at \(width)×\(height), \(fps) fps, \(streamBitrate / 1_000_000) Mbps")
         status.update {
             $0.stream = HostStatusSnapshot.Stream(kind: kind, title: title, width: width, height: height, fps: fps,
@@ -2618,7 +2671,12 @@ package final class StreamCoordinator {
     private func displaysChanged() {
         desktopGestureSelection?.state = .cancelled
         guard !synthetic else { return }
-        cancelSourcePicks()
+        displayTopologyGeneration &+= 1
+        switch sourceAdmissionPick?.source ?? active {
+        case .window: break
+        default: replaceSourcePublication()
+        }
+        if automaticDisplayRecovery?.pick.sequence == pickSequence { automaticDisplayRecovery?.pending = true }
         extendedDesktop.checkDisplay()
         if active == .desktop {
             videoEpoch = nil
@@ -2628,11 +2686,14 @@ package final class StreamCoordinator {
         }
         broadcastList()
         Task { @MainActor in
+            if await self.recoverAutomaticDisplayIfNeeded() { return }
             guard self.catalog.displayInventory.requiresSelection else { return }
+            let sequence = self.pickSequence
             await self.revokeRemoteAudio(reason: "Mac 모니터 구성이 변경되었습니다. 모니터를 다시 선택해 주세요.")
-            // A switch in flight rechecks before commit and stops an invalid desktop in its defer.
-            guard !self.switching, self.active == .desktop, self.catalog.display == nil else { return }
-            await self.select(.none)
+            guard !self.switching, self.active == .desktop, self.catalog.display == nil,
+                  sequence == self.pickSequence else { return }
+            let stop = SourcePick(source: .none, displaySelection: nil, sequence: sequence, connection: nil, participation: nil)
+            await self.select(.none, intent: stop)
         }
     }
 

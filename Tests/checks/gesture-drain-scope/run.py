@@ -56,10 +56,10 @@ def generate(ref):
     members = members.replace("private ", "")
     properties = []
     if "struct SourcePick {" in host:
-        properties += [block(host, marker).replace("private ", "") for marker in ["struct SourcePick {", "private struct PendingLaunch"]]
+        properties += [block(host, marker).replace("private ", "") for marker in ["struct SourcePick {", "private struct PendingLaunch", "private struct AutomaticDisplayRecovery"] if marker in host]
         properties += ["var launchID = \"gesture-host\"", "var selectionRevision: String { \"\\(launchID):\\(pickSequence)\" }"]
-        for marker in ["private var pickSequence:", "private var settledPickSequence:", "private var sourcePublicationAdmission =", "private var sourceAdmissionPick:", "private var pendingLaunch:"]:
-            properties.append(host[host.index(marker):].splitlines()[0].replace("private ", ""))
+        for marker in ["private var pickSequence:", "private var settledPickSequence:", "private var sourcePublicationAdmission =", "private var sourceAdmissionPick:", "private var pendingLaunch:", "private var displayTopologyGeneration:", "private var automaticDisplayRecovery:"]:
+            if marker in host: properties.append(host[host.index(marker):].splitlines()[0].replace("private ", ""))
         shared += "\n" + block(read("Sources/SillHost/StreamServer.swift"), "final class SourcePublicationAdmission")
 
     for marker in ["private var inputGeneration =", "private var videoEpoch:",
@@ -80,7 +80,7 @@ def generate(ref):
                 "changingGestureScope(", "currentGestureDesktop(", "commitGestureSelection(",
                 "finishGestureSelection(", "gestureDesktopIsCurrent(", "gestureIsWaiting("]
                 if "private func " + x in host]
-    methods += [x for x in ["sourcePeerIsLive(", "automaticSelectionIsAllowed(", "reserveSourceIntent(", "admissionIsCurrent(", "rejectSourceIntent("] if "private func " + x in host]
+    methods += [x for x in ["sourcePeerIsLive(", "automaticSelectionIsAllowed(", "replaceSourcePublication(", "retainAutomaticDisplay(", "reserveSourceIntent(", "admissionIsCurrent(", "rejectSourceIntent("] if "private func " + x in host]
     extracted = "\n".join(block(host, "private func " + x) for x in methods)
     ticketed = "private func selectStream(" in host
     selection = block(host, "private func selectStream(" if ticketed else "func select(_ source:")

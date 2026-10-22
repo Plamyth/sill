@@ -127,6 +127,33 @@ final class PublicationServer {
             server.queue.resume(); server.queue.sync {}
             expect(client.connection.packets.count == committedCount, "source change fences pending microphone catalog")
         }
+        do {
+            let server = PublicationServer(), client = Client()
+            server.clients[ObjectIdentifier(client.connection)] = client
+            let epoch = VideoEpoch(generation: UUID().uuidString, source: .desktop,
+                geometry: .init(x: 0, y: 0, width: 100, height: 100), width: 100, height: 100)
+            let recovered = VideoEpoch(generation: UUID().uuidString, source: .desktop,
+                geometry: epoch.geometry, width: 100, height: 100)
+            func catalog(_ epoch: VideoEpoch, _ inventory: UUID) -> StreamMessage {
+                .init(kind: .windowList, timestamp: 0, isKeyframe: false,
+                      payload: Wire.encode(WindowList(macName: "test", windows: [], active: .desktop,
+                          selectionRevision: "accepted-original-intent", videoEpoch: epoch, displayInventoryID: inventory, activeDisplayID: 1)))
+            }
+            var admission = SourcePublicationAdmission()
+            let finalInventory = UUID()
+            server.videoAdmission = .preparing(epoch)
+            server.queue.suspend()
+            var keyframes = 0
+            server.commitVideo(epoch, catalog: catalog(epoch, UUID()), admission: admission) { keyframes += 1 }
+            for _ in 0..<4 { admission.invalidate(); admission = SourcePublicationAdmission() }
+            server.prepareVideo(recovered)
+            server.commitVideo(recovered, catalog: catalog(recovered, finalInventory), admission: admission) { keyframes += 1 }
+            server.queue.resume(); server.queue.sync {}
+            let lists = client.connection.packets.compactMap { Wire.decode(WindowList.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+            expect(keyframes == 1 && lists.count == 1 && lists.first?.displayInventoryID == finalInventory && lists.first?.videoEpoch?.id == recovered.id,
+                   "five-event topology refuses queued old epoch and publishes only recovered inventory")
+            expect(lists.first?.selectionRevision == "accepted-original-intent", "topology publication recovery does not rebase source intent")
+        }
         print("production publication checks passed=\(checks)")
     }
 }

@@ -73,12 +73,16 @@ final class HEVCEncoder {
     var isStaged: Bool { placement != nil }
     var disabledReason: String?
     var prepareBarrier: Barrier?
+    var onPrepare: (() -> Void)?
+    var prepares = 0
     var fail = false
     func leaveFullScreenIfNeeded() async {}
     func release() { placement = nil }
     func releaseWindow() { placement = nil }
     func prepare(window: SCWindow, wanted: CGSize, envelope: CGSize, captureScale: CGFloat, refreshHz: Int) async throws -> Prepared {
         placement = Placement(windowID: window.windowID)
+        prepares += 1
+        onPrepare?()
         if let prepareBarrier { await prepareBarrier.suspend() }
         if fail { throw Failure.refused }
         return Prepared()
@@ -146,6 +150,8 @@ struct HostStatusSnapshot {
     var settledPickSequence: UInt64 = 0
     var pickArrivedWhileSwitching: SourcePick?
     var sourceAdmissionPick: SourcePick?
+    var displayTopologyGeneration: UInt64 = 0
+    var automaticDisplayRecovery: AutomaticDisplayRecovery?
     var pendingLaunch: PendingLaunch?
     var switching = false
     var restartOf: StreamSource?
