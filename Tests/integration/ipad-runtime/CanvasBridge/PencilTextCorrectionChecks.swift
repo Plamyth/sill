@@ -6,7 +6,11 @@ import UIKit
 @MainActor
 enum PencilTextCorrectionChecks {
     static func run(host: UIHostingController<AnyView>) async throws -> String {
-        guard case .isolated = CanvasRuntime.launch else { throw CocoaError(.fileWriteNoPermission) }
+        guard case .isolated(let runtime) = CanvasRuntime.launch,
+              let connection = CanvasRelay.loadConnection(),
+              connection.address == runtime.relayAddress, connection.token == runtime.token else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
         let store = CanvasStore()
         guard let node = store.scene.nodes.first else { throw CocoaError(.fileReadCorruptFile) }
         let originalDrawing = store.scene.drawingBase64
@@ -18,7 +22,7 @@ enum PencilTextCorrectionChecks {
             text:Binding(get:{ store.proposalText },set:{ store.proposalText = $0 }),
             selection:.constant(NSRange(location:0,length:0)),
             identifier:"pencilCorrectionNativeEditor",label:"펜 교정 네이티브 검사",
-            nodeEditing:true,editSession:{ store.proposalInputSessionID })
+            editSession:{ store.proposalInputSessionID })
         host.rootView = AnyView(editor.frame(width:600,height:300))
         try await Task.sleep(for:.milliseconds(250))
         host.view.layoutIfNeeded()
@@ -129,7 +133,215 @@ enum PencilTextCorrectionChecks {
                   "노드 ID·원본 획 참조 보존")
         controller.applyCorrection(scratch,expectedText:view.text)
         try check(view.text == "가구","확정된 이전 편집 세션에 늦은 제스처 적용 금지")
-        return "PENCIL_CORRECTION total=\(checks) failed=0 productionGeometry=true injectedTrace=true physicalPencil=false"
+        try await checkVaultEditors(host:host,check:check)
+        try await checkVaultEditors(host:host,connection:connection,check:check)
+        return "PENCIL_CORRECTION total=\(checks) failed=0 productionGeometry=true injectedTrace=true physicalPencil=false vaultRoundTrip=true fixture=REA-Pencil-Obsidian.md"
+    }
+
+    private static func checkVaultEditors(host: UIHostingController<AnyView>,
+                                         connection: (address: String,token: String)? = nil,
+                                         check: (Bool,String) throws -> Void) async throws {
+        func note(_ text: String, path: String = "Pencil/isolated.md") -> VaultNoteSnapshot {
+            VaultNoteSnapshot(path:path,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"test")
+        }
+        let store = CanvasStore(blockRecoveryURL:FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("recovery.json"))
+        let preservedScene = store.scene
+        defer { store.scene = preservedScene; store.saveNow() }
+        let relay = connection.map { CanvasRelay(address:$0.address,token:$0.token) }
+        var fixture = note("가나다 ^pencil-1\n\n보존할 문단\n")
+        func load(_ path: String) async throws -> VaultNoteSnapshot {
+            if let relay { return try await relay.vaultNote(at:path) }
+            return fixture
+        }
+        func save(_ path: String,_ sha: String,_ text: String) async throws -> VaultNoteSnapshot {
+            if let relay { return try await relay.saveVaultNote(at:path,baseSha256:sha,text:text) }
+            fixture = note(text,path:path)
+            return fixture
+        }
+        store.setNoteConnection(address:connection?.address ?? "http://pencil-fixture.invalid",
+                                token:connection?.token ?? "fixture")
+        let original = try await load(relay == nil ? fixture.path : "REA-Pencil-Obsidian.md")
+        try check(original.text.utf8.elementsEqual("가나다 ^pencil-1\n\n보존할 문단\n".utf8),
+                  "원문·문단 검사의 격리 fixture 본문 확인")
+        await store.openVaultNote(original.path,load:load)
+        store.vaultSelection = NSRange(location:0,length:3)
+        let nodeID = await store.excerptSelectedVaultBlock(save:{ _,_,_ in
+            throw URLError(.badURL)
+        },load:load)
+        guard let nodeID else { throw CocoaError(.validationMissingMandatoryProperty) }
+        _ = store.closeVaultEditor()
+        await store.openVaultNote(original.path,nodeID:nodeID,load:load)
+
+        func mount() async throws -> (VaultMarkdownEditor.NodeTextView,VaultMarkdownEditor.Coordinator,UIBarButtonItem,UIScribbleInteraction) {
+            let block = store.vaultBlockEditing
+            let editor = VaultMarkdownEditor(
+                text:Binding(get:{ block ? store.vaultBlockDraft : store.vaultDraft },set:{
+                    if block { store.vaultBlockDraft = $0 } else { store.vaultDraft = $0 }
+                }),selection:.constant(NSRange(location:0,length:0)),
+                inputBusy:Binding(get:{ store.vaultInputBusy },set:{ store.vaultInputBusy = $0 }),
+                editSession:{ store.vaultInputSessionID })
+            host.rootView = AnyView(editor.id(store.vaultInputSessionID).frame(width:600,height:300))
+            try await Task.sleep(for:.milliseconds(250))
+            host.view.layoutIfNeeded()
+            func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+            guard let view = descendants(host.view).compactMap({ $0 as? VaultMarkdownEditor.NodeTextView }).first,
+                  let controller = view.delegate as? VaultMarkdownEditor.Coordinator,
+                  let toolbar = view.inputAccessoryView as? UIToolbar,
+                  let mode = toolbar.items?.first(where:{ $0.accessibilityIdentifier == "canvasPencilCorrectionMode" }),
+                  let scribble = view.interactions.compactMap({ $0 as? UIScribbleInteraction }).first else {
+                throw CocoaError(.validationMissingMandatoryProperty)
+            }
+            view.becomeFirstResponder()
+            try await Task.sleep(for:.milliseconds(150))
+            host.view.layoutIfNeeded()
+            return (view,controller,mode,scribble)
+        }
+        func toggle(_ mode: UIBarButtonItem) throws {
+            guard let action = mode.action else { throw CocoaError(.validationMissingMandatoryProperty) }
+            UIApplication.shared.sendAction(action,to:mode.target,from:mode,for:nil)
+        }
+        func correct(_ view: UITextView, _ controller: VaultMarkdownEditor.Coordinator) throws -> [CGPoint] {
+            view.layoutManager.ensureLayout(for:view.textContainer)
+            guard let start = view.position(from:view.beginningOfDocument,offset:1),
+                  let end = view.position(from:start,offset:1),
+                  let range = view.textRange(from:start,to:end),
+                  let rect = view.selectionRects(for:range).map(\.rect).first(where:{ $0.width > 0 }) else {
+                throw CocoaError(.validationMissingMandatoryProperty)
+            }
+            let scratch = (0...5).map { index in
+                CGPoint(x:rect.midX + (index % 2 == 0 ? -1 : 1) * rect.width * 0.45,
+                        y:rect.midY + (index % 2 == 0 ? -1 : 1))
+            }
+            controller.applyCorrection(scratch,expectedText:view.text)
+            try check(view.text.hasPrefix("가다"),"Obsidian 편집기에서 실제 글자 폭으로 나 삭제")
+            func vertical(down: Bool) -> [CGPoint] {
+                let caret = view.caretRect(for:start)
+                return (0...6).map { index in
+                    CGPoint(x:caret.midX,y:caret.midY + (down ? -24 : 24) + CGFloat(index) * (down ? 8 : -8))
+                }
+            }
+            controller.applyCorrection(vertical(down:true),expectedText:view.text)
+            try check(view.text.hasPrefix("가 다"),"Obsidian 편집기의 아래 획 나누기")
+            controller.applyCorrection(vertical(down:false),expectedText:view.text)
+            try check(view.text.hasPrefix("가다"),"Obsidian 편집기의 위 획 합치기")
+            return scratch
+        }
+        func scribbleReplace(_ view: UITextView, _ controller: VaultMarkdownEditor.Coordinator, text: String) throws {
+            guard let start = view.position(from:view.beginningOfDocument,offset:1),
+                  let end = view.position(from:start,offset:1),
+                  let range = view.textRange(from:start,to:end) else { throw CocoaError(.validationMissingMandatoryProperty) }
+            view.replace(range,withText:text)
+            controller.textViewDidChange(view)
+        }
+        let (whole,wholeController,wholeMode,wholeScribble) = try await mount()
+        let wholeSession = store.vaultInputSessionID
+        try toggle(wholeMode)
+        let wholeStroke = try correct(whole,wholeController)
+        try check(store.vaultDraft.hasPrefix("가다") && store.vaultInputSessionID == wholeSession,
+                  "원문의 교정 결과와 동일 세션 연결")
+        try toggle(wholeMode)
+        wholeController.scribbleInteractionWillBeginWriting(wholeScribble)
+        try scribbleReplace(whole,wholeController,text:"구")
+        try check(store.vaultDraft.hasPrefix("가구"),"원문 Scribble의 실제 UITextView 교정 결과 연결")
+        try check(store.vaultInputBusy && !store.vaultCanSave && !store.vaultCanAttach,
+                  "원문 Scribble 중 저장과 문단 전환 차단")
+        var writes = 0
+        await store.saveVaultNote { path,sha,text in writes += 1; return try await save(path,sha,text) }
+        try check(writes == 0 && !store.closeVaultEditor(discard:true),"조합 중 원문은 전송하거나 닫지 않음")
+        wholeController.scribbleInteractionDidFinishWriting(wholeScribble)
+        try check(!store.vaultInputBusy && store.vaultCanSave,"Scribble 종료 뒤 저장 재개")
+        await store.saveVaultNote { path,sha,text in
+            try check(sha == original.sha256,"원문 Pencil 결과도 기존 SHA CAS 사용")
+            writes += 1
+            return try await save(path,sha,text)
+        }
+        try check(writes == 1 && !store.vaultDirty,"원문 교정 저장 결과 수용")
+        try toggle(wholeMode)
+        let wholeSaved = store.vaultNote!
+        try check(store.closeVaultEditor(),"원문 교정 저장 뒤 닫기")
+        await store.openVaultNote(original.path,nodeID:nodeID,load:load)
+        try check(store.vaultNote?.sha256 == wholeSaved.sha256 &&
+                  store.vaultDraft.utf8.elementsEqual(wholeSaved.text.utf8),"원문 교정 저장 뒤 같은 SHA로 재열기")
+        let beforeBlockSession = store.vaultInputSessionID
+        try check(store.beginLinkedBlockEdit() && store.vaultInputSessionID != beforeBlockSession,
+                  "문단 진입은 원문 세션을 퇴역시킴")
+        let blockBefore = store.vaultBlockDraft, wholeBefore = store.vaultDraft
+        whole.text = "가나다"
+        wholeController.textViewDidChange(whole)
+        wholeController.applyCorrection(wholeStroke,expectedText:whole.text)
+        wholeController.scribbleInteractionWillBeginWriting(wholeScribble)
+        try check(whole.text == "가나다" && store.vaultDraft == wholeBefore &&
+                  store.vaultBlockDraft == blockBefore && !store.vaultInputBusy,
+                  "문단 전환 후 옛 원문 delegate·제스처·Scribble 거부")
+        let (block,blockController,blockMode,blockScribble) = try await mount()
+        block.text = "가나다라"
+        blockController.textViewDidChange(block)
+        try toggle(blockMode)
+        let blockStroke = try correct(block,blockController)
+        try check(store.vaultBlockDraft == "가다라" && store.blockRecovery?.draft == "가다라",
+                  "문단 Pencil 결과를 기존 복구 기록에 보존")
+        try toggle(blockMode)
+        blockController.scribbleInteractionWillBeginWriting(blockScribble)
+        try scribbleReplace(block,blockController,text:"마")
+        try check(store.vaultBlockDraft == "가마라" && store.blockRecovery?.draft == "가마라",
+                  "문단 Scribble의 실제 교정과 복구 기록 연결")
+        var blockWrites = 0
+        await store.saveLinkedBlock(replace:{ _,_,_ in
+            blockWrites += 1; throw URLError(.badURL)
+        },load:{ _ in original })
+        try check(store.vaultInputBusy && !store.vaultBlockCanSave && blockWrites == 0,
+                  "문단 Scribble 중 부분 입력 전송 차단")
+        blockController.scribbleInteractionDidFinishWriting(blockScribble)
+        let base = store.vaultNote!
+        var saved = base
+        await store.saveLinkedBlock(replace:{ _,id,edit in
+            blockWrites += 1
+            try check(id == "pencil-1" && edit.baseSha256 == base.sha256,"문단 Pencil 결과의 블록 ID와 SHA CAS 유지")
+            if let relay {
+                let result = try await relay.replaceVaultBlock(at:base.path,blockID:id,edit:edit)
+                saved = result.note
+                return result
+            }
+            saved = note(try VaultMarkdownBlocks(base.text).replacing(id,with:edit.replacementText))
+            fixture = saved
+            return VaultBlockEditResult(schemaVersion:1,operationId:edit.operationId,blockID:id,
+                disposition:"committed",quoteSha256:CanvasPacket.sha(Data(edit.replacementText.utf8)),note:saved)
+        },load:load)
+        try check(blockWrites == 1 && !store.vaultDirty && saved.text.hasSuffix("보존할 문단\n"),
+                  "문단 교정 저장과 재조회 뒤 나머지 원문 보존")
+        block.selectedRange = NSRange(location:1,length:0)
+        block.setMarkedText("조합",selectedRange:NSRange(location:1,length:0))
+        try check(store.vaultInputBusy && !store.vaultBlockCanSave,"실제 UITextView 조합 시작을 Store에 연결")
+        block.unmarkText()
+        try check(!store.vaultInputBusy,"실제 UITextView 조합 종료를 Store에 연결")
+        let retained = store.vaultBlockDraft
+        try toggle(blockMode)
+        store.setNoteConnection(address:"http://replacement.invalid",token:"replacement")
+        block.text = "가나다라"
+        blockController.textViewDidChange(block)
+        blockController.applyCorrection(blockStroke,expectedText:block.text)
+        blockController.scribbleInteractionWillBeginWriting(blockScribble)
+        try check(block.text == "가나다라" && store.vaultInputSessionID == nil &&
+                  store.vaultBlockDraft == retained && !store.vaultInputBusy,
+                  "연결 교체 후 옛 문단 입력과 Scribble 거부")
+        blockController.retire(block)
+        blockController.scribbleInteractionDidFinishWriting(blockScribble)
+        try check(store.vaultBlockDraft == retained,"퇴역 뒤 지연된 입력 종료도 초안을 보존")
+        store.setNoteConnection(address:connection?.address ?? "http://pencil-fixture.invalid",
+                                token:connection?.token ?? "fixture")
+        try check(store.closeVaultEditor(discard:true),"전송하지 않은 조합 입력을 닫고 저장 원문 확인 준비")
+        await store.openVaultNote(original.path,nodeID:nodeID,load:load)
+        try check(store.vaultNote?.sha256 == saved.sha256 && store.vaultDraft.utf8.elementsEqual(saved.text.utf8),
+                  "문단 교정 저장 뒤 닫기·재열기와 원문 SHA 재조회")
+        let (last,lastController,_,lastScribble) = try await mount()
+        let finalDraft = store.vaultDraft
+        store.scene = CanvasScene()
+        last.text = "옛 장면의 지연 입력"
+        lastController.textViewDidChange(last)
+        lastController.scribbleInteractionWillBeginWriting(lastScribble)
+        try check(store.vaultInputSessionID == nil && !store.vaultInputBusy && store.vaultDraft == finalDraft,
+                  "장면 교체 후 실제 UITextView와 Scribble의 늦은 콜백 거부")
     }
 }
 

@@ -209,6 +209,14 @@ final class CanvasStore: ObservableObject {
         didSet { noteEditGeneration &+= 1 }
     }
     @Published var vaultSelection = NSRange(location:0,length:0)
+    @Published var vaultInputBusy = false {
+        didSet { if oldValue != vaultInputBusy { noteEditGeneration &+= 1 } }
+    }
+    private var noteInputSession: UUID?
+    var vaultInputSessionID: UUID? {
+        guard vaultNote != nil, noteContext.map(noteContextIsCurrent) == true else { return nil }
+        return noteInputSession
+    }
     @Published private(set) var vaultBlockEditing = false
     @Published var vaultBlockDraft = "" {
         didSet { if !changingBlockState { persistBlockDraft() } }
@@ -261,15 +269,15 @@ final class CanvasStore: ObservableObject {
     }
     var vaultBlockCanSave: Bool {
         vaultBlockEditing && (pendingBlockEdit != nil || vaultBlockTextChanged) &&
-        !vaultSaving && !vaultLoading && noteContext.map(noteContextIsCurrent) == true
+        !vaultInputBusy && !vaultSaving && !vaultLoading && noteContext.map(noteContextIsCurrent) == true
     }
     var vaultBlockHasPendingSave: Bool { pendingBlockEdit != nil }
     var vaultCanSave: Bool {
-        !vaultBlockEditing && vaultNote != nil && vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        !vaultBlockEditing && vaultNote != nil && vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
     var vaultCanAttach: Bool {
-        !vaultBlockEditing && vaultNote != nil && !vaultDirty && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        !vaultBlockEditing && vaultNote != nil && !vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
     var vaultLinkedBlockID: String? { noteContext?.blockID }
@@ -294,6 +302,8 @@ final class CanvasStore: ObservableObject {
     }
 
     private func invalidateNoteRequests() {
+        noteInputSession = nil
+        vaultInputBusy = false
         pendingExcerptAnchor = nil
         noteRequest = nil
         acceptedNoteReads.removeAll()
@@ -324,8 +334,8 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func closeVaultEditor(discard: Bool = false) -> Bool {
-        guard !vaultSaving, !vaultDirty || discard else {
-            vaultStatus = vaultSaving ? "저장 결과를 기다려 주세요. 입력은 유지됩니다." :
+        guard !vaultSaving, !vaultInputBusy, !vaultDirty || discard else {
+            vaultStatus = vaultInputBusy ? "글자 입력과 펜 동작을 마친 뒤 닫아 주세요." : vaultSaving ? "저장 결과를 기다려 주세요. 입력은 유지됩니다." :
                 "저장하지 않은 입력이 있습니다. 저장하거나 입력 버리기를 선택하세요."
             return false
         }
@@ -336,6 +346,7 @@ final class CanvasStore: ObservableObject {
         changingBlockState = true
         defer { changingBlockState = false }
         noteEditorGeneration &+= 1
+        noteInputSession = nil
         noteRequest = nil
         noteContext = nil
         pendingExcerptAnchor = nil
@@ -352,7 +363,7 @@ final class CanvasStore: ObservableObject {
 
     func openVaultNote(_ path: String, nodeID: UUID? = nil,
                        load: (String) async throws -> VaultNoteSnapshot) async {
-        guard !vaultDirty, !vaultSaving else {
+        guard !vaultDirty, !vaultSaving, !vaultInputBusy else {
             vaultStatus = "현재 입력을 먼저 저장하거나 명시적으로 버려 주세요."
             return
         }
@@ -377,6 +388,7 @@ final class CanvasStore: ObservableObject {
             return
         }
         noteEditorGeneration &+= 1
+        noteInputSession = UUID()
         context.editorGeneration = noteEditorGeneration
         noteContext = context
         pendingExcerptAnchor = pending.map { (context:context,id:$0) }
@@ -461,6 +473,7 @@ final class CanvasStore: ObservableObject {
             vaultBlockSelection = NSRange(location:0,length:0)
             pendingBlockEdit = nil
             vaultBlockEditing = true
+            noteInputSession = UUID()
             blockRecoveryWasRestored = false
             vaultStatus = "연결 문단만 수정합니다. 블록 표식과 다른 원문은 보존됩니다."
             return true
@@ -510,7 +523,7 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func discardLinkedBlockRecovery() -> Bool {
-        guard !vaultSaving, !vaultLoading, !vaultDirty, !vaultBlockEditing else { return false }
+        guard !vaultSaving, !vaultLoading, !vaultDirty, !vaultBlockEditing, !vaultInputBusy else { return false }
         do { try writeBlockRecovery(nil); return true }
         catch { vaultStatus = error.localizedDescription; return false }
     }
@@ -520,7 +533,7 @@ final class CanvasStore: ObservableObject {
         do {
             guard blockRecoveryReadable, let record = blockRecovery else { throw VaultBlockRecoveryError.corrupt }
             _ = try record.validated()
-            guard !vaultDirty, !vaultSaving, !vaultLoading, !noteToken.isEmpty,
+            guard !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy, !noteToken.isEmpty,
                   record.sceneID == scene.id, record.relayAddress == noteAddress,
                   let ref = scene.nodes.first(where:{ $0.id == record.nodeID })?.vaultNote,
                   ref.path == record.base.path, ref.blockID == record.blockID,
@@ -528,6 +541,7 @@ final class CanvasStore: ObservableObject {
             changingBlockState = true
             defer { changingBlockState = false }
             noteEditorGeneration &+= 1
+            noteInputSession = UUID()
             noteRequest = nil
             noteContext = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
                 connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
@@ -561,7 +575,8 @@ final class CanvasStore: ObservableObject {
             if blockRecoveryWasRestored {
                 let current = try await load(base.path).validated(at:base.path)
                 guard !Task.isCancelled, noteRequest == request, noteContext == context,
-                      noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256 else { return }
+                      noteContextIsCurrent(context), vaultNote?.sha256 == base.sha256,
+                      !vaultInputBusy else { return }
                 let expected = try pendingBlockEdit.map {
                     try VaultMarkdownBlocks(base.text).replacing(blockID,with:$0.replacementText)
                 }
@@ -606,7 +621,7 @@ final class CanvasStore: ObservableObject {
             vaultNote = saved
             vaultDraft = saved.text
             // A retry may resolve an earlier submission while newer typing remains unsaved.
-            if vaultBlockDraft.utf8.elementsEqual(draftAtSubmission.utf8),
+            if !vaultInputBusy, vaultBlockDraft.utf8.elementsEqual(draftAtSubmission.utf8),
                canonicalBlockText(vaultBlockDraft,original:base.text).utf8.elementsEqual(submitted.replacementText.utf8) {
                 vaultBlockDraft = submitted.replacementText.replacingOccurrences(of:"\r\n",with:"\n")
             }
@@ -732,7 +747,7 @@ final class CanvasStore: ObservableObject {
             noteReadSequence &+= 1
             acceptedNoteReads[base.path] = noteReadSequence
             vaultNote = saved
-            if noteEditGeneration == editGeneration { vaultDraft = saved.text }
+            if !vaultInputBusy, noteEditGeneration == editGeneration { vaultDraft = saved.text }
             vaultSaving = false
             noteRequest = nil
             refreshNoteCache(saved)
@@ -827,7 +842,7 @@ final class CanvasStore: ObservableObject {
                 if vaultBlockEditing { continue }
                 guard let context, noteContext == context, noteContextIsCurrent(context),
                       editorGeneration == noteEditorGeneration, context.path == path,
-                      noteRequest == request, !vaultSaving,
+                      noteRequest == request, !vaultSaving, !vaultInputBusy,
                       vaultNote?.sha256 == base?.sha256, noteEditGeneration == editGeneration else { continue }
                 if vaultLoading && base == nil && !vaultDirty {
                     vaultNote = latest

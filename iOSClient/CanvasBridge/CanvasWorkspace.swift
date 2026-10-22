@@ -344,15 +344,19 @@ struct CanvasWorkspace: View {
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
                     if store.vaultBlockEditing {
                         VaultMarkdownEditor(text:$store.vaultBlockDraft,selection:$store.vaultBlockSelection,
-                            identifier:"obsidianLinkedBlockEditor",label:"Obsidian 연결 문단 편집기")
-                            .frame(minHeight:150).disabled(store.vaultLoading)
+                            identifier:"obsidianLinkedBlockEditor",label:"Obsidian 연결 문단 편집기",
+                            inputBusy:$store.vaultInputBusy,editSession:{ store.vaultInputSessionID })
+                            .id(store.vaultInputSessionID)
+                            .frame(minHeight:150).disabled(store.vaultLoading || store.vaultInputSessionID == nil)
                             .accessibilityIdentifier("obsidianLinkedBlockEditor")
                         Text("연결 문단 편집 · 블록 표식과 다른 문단은 그대로 보존됩니다.")
                             .font(.footnote).padding(.horizontal)
                     } else {
-                        VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection)
+                        VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection,
+                            inputBusy:$store.vaultInputBusy,editSession:{ store.vaultInputSessionID })
+                            .id(store.vaultInputSessionID)
                             .frame(minHeight:150)
-                            .disabled(store.vaultLoading)
+                            .disabled(store.vaultLoading || store.vaultInputSessionID == nil)
                             .accessibilityIdentifier("obsidianMarkdownEditor")
                     }
                     VStack(alignment:.leading,spacing:6) {
@@ -435,7 +439,7 @@ struct CanvasWorkspace: View {
                     }.frame(minWidth:44,minHeight:44)
                 }
             }
-            .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving)
+            .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
             .alert("보존된 입력을 버릴까요?",isPresented:$recoveryDiscardOpen) {
                 Button("입력 버리기",role:.destructive) { _ = store.discardLinkedBlockRecovery() }
                 Button("취소",role:.cancel) {}
@@ -860,7 +864,7 @@ struct CanvasWorkspace: View {
                 Text("손글씨 입력으로 글자를 교정하거나, ‘펜 교정’을 켜 글자 위를 지그재그로 지우세요. 위로 긋기는 합치기, 아래로 긋기는 나누기입니다. 원본 획과 출처는 유지됩니다.")
                 VaultMarkdownEditor(text:$store.proposalText,selection:$proposalSelection,
                                     identifier:"canvasNodeTextEditor",label:"요소 글자 편집기",
-                                    nodeEditing:true,inputBusy:$proposalInputBusy,
+                                    inputBusy:$proposalInputBusy,
                                     editSession:{ store.proposalInputSessionID })
                     .id(store.proposalInputSessionID)
                     .frame(minHeight:240)
@@ -1026,14 +1030,13 @@ struct VaultMarkdownEditor: UIViewRepresentable {
     @Binding var selection: NSRange
     var identifier = "obsidianMarkdownEditor"
     var label = "Obsidian Markdown 원본 편집기"
-    var nodeEditing = false
     var inputBusy: Binding<Bool> = .constant(false)
-    var editSession: () -> UUID? = { nil }
+    var editSession: () -> UUID?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> UITextView {
-        let view: UITextView = nodeEditing ? NodeTextView() : UITextView()
+        let view = NodeTextView()
         view.delegate = context.coordinator
         view.font = UIFontMetrics.default.scaledFont(for:.monospacedSystemFont(ofSize:17,weight:.regular))
         view.adjustsFontForContentSizeCategory = true
@@ -1043,21 +1046,20 @@ struct VaultMarkdownEditor: UIViewRepresentable {
         view.smartInsertDeleteType = .no
         view.accessibilityLabel = label
         view.accessibilityIdentifier = identifier
-        if let nodeView = view as? NodeTextView {
-            context.coordinator.configure(nodeView)
-        }
+        context.coordinator.configure(view)
         return view
     }
 
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
-        view.isEditable = context.environment.isEnabled
-        guard view.markedTextRange == nil, !context.coordinator.scribbling else { return }
+        view.isEditable = context.environment.isEnabled && context.coordinator.isCurrent
+        guard context.coordinator.isCurrent, view.markedTextRange == nil,
+              !context.coordinator.scribbling, !context.coordinator.correcting else { return }
         context.coordinator.updating = true
         defer { context.coordinator.updating = false }
         if !view.text.utf8.elementsEqual(text.utf8) {
             view.text = text
-            if nodeEditing { view.undoManager?.removeAllActions() }
+            view.undoManager?.removeAllActions()
         }
         let start = max(0,min(selection.location,text.utf16.count))
         let range = NSRange(location:start,length:max(0,min(selection.length,text.utf16.count - start)))
@@ -1101,7 +1103,7 @@ struct VaultMarkdownEditor: UIViewRepresentable {
         private var redo: UIBarButtonItem?
         private var correction: UIBarButtonItem?
         private var correctionGesture: PencilTextGestureRecognizer?
-        private var correcting = false
+        fileprivate var correcting = false
         fileprivate var correctionEnabled = false
         private var gestureText: String?
         init(_ parent: VaultMarkdownEditor) {
@@ -1109,10 +1111,12 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             session = parent.editSession()
         }
         fileprivate var isCurrent: Bool {
-            active && (!parent.nodeEditing || session != nil && session == parent.editSession())
+            active && session != nil && session == parent.editSession()
         }
         func retire(_ view: UITextView) {
+            if isCurrent { parent.inputBusy.wrappedValue = false }
             active = false
+            view.isEditable = false
             correctionGesture?.isEnabled = false
             correctionGesture?.onTracking = nil
             correctionGesture?.onStroke = nil
@@ -1131,13 +1135,13 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             let gesture = PencilTextGestureRecognizer(target: nil, action: nil)
             gesture.isEnabled = false
             gesture.onTracking = { [weak self, weak view] active in
-                guard let self, let view else { return }
+                guard let self, let view, self.isCurrent else { return }
                 self.correcting = active
                 self.gestureText = active ? view.text : self.gestureText
                 self.publishInputState(view)
             }
-            gesture.onPoints = { [weak view] points in
-                guard let view else { return }
+            gesture.onPoints = { [weak self, weak view] points in
+                guard let self, let view, self.isCurrent else { return }
                 let path = UIBezierPath()
                 if let first = points.first {
                     path.move(to:first)
@@ -1201,6 +1205,7 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             guard isCurrent, correctionEnabled, let editor, editor.isEditable,
                   editor.markedTextRange == nil, !scribbling,
                   editor.text.utf8.elementsEqual(expectedText.utf8),
+                  parent.text.utf8.elementsEqual(expectedText.utf8),
                   let gesture = correctionGesture(points,in:editor),
                   let range = correctionRange(points,gesture:gesture,in:editor),
                   let edit = CanvasPencilTextCorrection.edit(in:editor.text,gesture:gesture,range:range),
@@ -1281,15 +1286,15 @@ struct VaultMarkdownEditor: UIViewRepresentable {
             textViewDidChange(editor)
         }
         func textViewDidChange(_ view: UITextView) {
-            guard !updating, isCurrent else { return }
+            guard !updating, isCurrent, view === editor else { return }
             parent.text = view.text
             parent.selection = view.selectedRange
-            if parent.nodeEditing { publishInputState(view) }
+            publishInputState(view)
         }
         func textViewDidChangeSelection(_ view: UITextView) {
-            guard !updating, isCurrent else { return }
+            guard !updating, isCurrent, view === editor else { return }
             parent.selection = view.selectedRange
-            if parent.nodeEditing { publishInputState(view) }
+            publishInputState(view)
         }
     }
 }

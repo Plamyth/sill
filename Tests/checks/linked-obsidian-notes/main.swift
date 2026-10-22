@@ -441,9 +441,93 @@ final class NoteProtocol: URLProtocol {
         hierarchy.selectedNode = UUID(); hierarchy.beginChildLink()
         check(hierarchy.linkStart == nil,"missing selected source does not arm connection")
         try await checkBlockExcerpts(check)
+        try await checkVaultInputSessions(check)
         try await checkSelectedInk(check)
         try await checkHandwritingSearch(check)
         print("RESULT \(checks) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
+}
+
+@MainActor
+private func checkVaultInputSessions(_ check: (Bool,String) -> Void) async throws {
+    func note(_ text: String, path: String = "Notes/input.md") -> VaultNoteSnapshot {
+        VaultNoteSnapshot(path:path,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"test")
+    }
+    func store() async -> CanvasStore {
+        let s = CanvasStore(blockRecoveryURL:FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("recovery.json"))
+        s.scene = CanvasScene()
+        s.setNoteConnection(address:"http://test",token:"test-token")
+        await s.openVaultNote("Notes/input.md") { _ in note("가나다 ^input-1\n\n다른 문단\n") }
+        return s
+    }
+    let s = await store(), base = s.vaultNote!, session = s.vaultInputSessionID
+    check(session != nil,"원문 편집기에 현재 NoteContext의 입력 세션 부여")
+    let gate = NoteGate()
+    let refresh = Task { await s.refreshVaultNotes(load:gate.load) }
+    await gate.wait()
+    s.vaultInputBusy = true
+    check(!s.vaultCanAttach && !s.beginLinkedBlockEdit(),"펜 동작 중 발췌와 문단 전환 거부")
+    gate.finish(note("Mac의 다른 원문"))
+    await refresh.value
+    check(s.vaultNote == base && s.vaultDraft == base.text,"펜 동작 중 원격 refresh가 원문을 교체하지 않음")
+    let delayed = NoteGate()
+    let busyRead = Task { await s.refreshVaultNotes(load:delayed.load) }
+    await delayed.wait()
+    s.vaultInputBusy = false
+    delayed.finish(note("늦은 Mac 원문"))
+    await busyRead.value
+    check(s.vaultNote == base && s.vaultDraft == base.text,"입력 중 시작한 refresh는 종료 후에도 옛 세대로 거부")
+    s.vaultDraft = "완료 전 조합"
+    s.vaultInputBusy = true
+    var writes = 0
+    await s.saveVaultNote { path,_,text in writes += 1; return note(text,path:path) }
+    check(!s.vaultCanSave && writes == 0 && !s.closeVaultEditor(discard:true),"조합 중 저장과 문서 닫기는 Store에서도 거부")
+    var loads = 0
+    await s.openVaultNote("Notes/another.md") { path in loads += 1; return note("새 문서",path:path) }
+    check(loads == 0 && s.vaultInputSessionID == session,"입력 중 문서 전환은 기존 초안과 세션 보존")
+    s.vaultInputBusy = false
+    await s.saveVaultNote { path,sha,text in
+        check(sha == base.sha256,"입력 보류 후에도 최초 SHA CAS 유지")
+        writes += 1
+        s.vaultInputBusy = true
+        return note(text,path:path)
+    }
+    check(writes == 1 && s.vaultInputBusy && s.vaultDraft == "완료 전 조합",
+          "저장 응답은 이후 입력 점유 상태를 해제하거나 덮어쓰지 않음")
+    s.vaultInputBusy = false
+    _ = s.closeVaultEditor()
+    await s.openVaultNote(base.path) { _ in base }
+    check(s.vaultInputSessionID != nil && s.vaultInputSessionID != session,"같은 문서를 다시 열어도 이전 세션은 재사용하지 않음")
+    let reopened = s.vaultInputSessionID
+    await s.refreshVaultNotes { _ in base }
+    check(s.vaultInputSessionID == reopened,"같은 문서의 단순 refresh는 입력 세션 유지")
+    await s.openVaultNote("Notes/another.md") { path in note("다른 문서",path:path) }
+    check(s.vaultInputSessionID != reopened,"문서 경로 전환은 입력 세션 교체")
+    let connection = s.vaultInputSessionID
+    s.setNoteConnection(address:"http://other",token:"other")
+    s.setNoteConnection(address:"http://test",token:"test-token")
+    check(s.vaultInputSessionID == nil && connection != nil,"연결이 원래 주소로 돌아와도 옛 세션은 복원하지 않음")
+
+    let linked = await store(), linkedBase = linked.vaultNote!
+    linked.vaultSelection = NSRange(location:0,length:3)
+    let id = await linked.excerptSelectedVaultBlock(save:{ _,_,_ in throw URLError(.badURL) },load:{ _ in linkedBase })!
+    _ = linked.closeVaultEditor()
+    await linked.openVaultNote(linkedBase.path,nodeID:id) { _ in linkedBase }
+    let wholeSession = linked.vaultInputSessionID
+    check(linked.beginLinkedBlockEdit() && linked.vaultInputSessionID != wholeSession,"동일 문서의 연결 문단 전환은 독립 세션")
+    linked.vaultBlockDraft = "문단의 조합"
+    linked.vaultInputBusy = true
+    var blockWrites = 0
+    await linked.saveLinkedBlock(replace:{ _,_,_ in blockWrites += 1; throw URLError(.badURL) },load:{ _ in linkedBase })
+    check(!linked.vaultBlockCanSave && blockWrites == 0 && linked.blockRecovery?.draft == "문단의 조합",
+          "문단 조합은 로컬 복구만 갱신하고 저장 요청은 보내지 않음")
+    linked.scene.nodes[0].vaultNote?.blockID = "replaced-block"
+    check(linked.vaultInputSessionID == nil && !linked.vaultInputBusy && linked.vaultBlockDraft == "문단의 조합",
+          "연결 블록 ID 교체는 초안을 보존하고 입력 세션을 무효화")
+    let scene = await store()
+    scene.vaultInputBusy = true
+    scene.scene = CanvasScene()
+    check(scene.vaultInputSessionID == nil && !scene.vaultInputBusy,"장면 교체는 이전 입력 세션과 busy 상태를 퇴역시킴")
 }
