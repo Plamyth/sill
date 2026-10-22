@@ -153,6 +153,11 @@ public struct WindowList: Codable {
     public var inputGeneration: String?
     public var presentationInput: Int?
     public var videoEpoch: VideoEpoch?
+    /// 1: selection, capture and input scope belong to this connection only.
+    public var independentStreams: Int?
+    /// 0: selecting a source does not activate, move or resize Mac windows or create displays.
+    public var sourceSelectionEffects: Int?
+    public var sourceSelectionFailure: String?
     public var microphone: MicrophoneCapability?
     /// Version 1 permits kind 211. Absent on hosts without monitor selection.
     public var displaySelection: Int?
@@ -197,7 +202,11 @@ public struct WindowCommand: Codable {
     public enum Action: String, Codable { case close, minimize, fullScreen }
     public var id: UInt32
     public var action: Action
-    public init(id: UInt32, action: Action) { self.id = id; self.action = action }
+    public var generation: String?
+    public var videoEpoch: UUID?
+    public init(id: UInt32, action: Action, generation: String? = nil, videoEpoch: UUID? = nil) {
+        self.id = id; self.action = action; self.generation = generation; self.videoEpoch = videoEpoch
+    }
 }
 
 /// JSON payloads. Everything here is small and infrequent; frames never go through JSON.
