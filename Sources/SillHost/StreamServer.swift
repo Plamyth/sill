@@ -72,8 +72,19 @@ final class SourcePublicationAdmission: @unchecked Sendable {
 /// a slow uplink is normal there. A session at a TLS home door is a home client in all of this: the
 /// home rule of `broadcast` and the home eviction, as on the plain door.
 final class StreamServer {
+    private enum VideoLane: Equatable { case unassigned, legacy, peer }
+    private final class PeerVideo {
+        var admission = VideoEpochAdmission.stopped
+        var publication: SourcePublicationAdmission?
+        var lastParameterSets: Data?
+        var streaming = false
+        var lastRemoteKeyframeRequest: TimeInterval = 0
+    }
     private final class Client {
         let connection: NWConnection
+        var videoLane = VideoLane.unassigned
+        let peerVideo = PeerVideo()
+        var peerPointerRect: CGRect?
         /// Set only by the coordinator's first direct catalog, after source-fence admission.
         var catalogSent = false
         var latestCatalog: StreamMessage?
@@ -180,6 +191,7 @@ final class StreamServer {
     /// A client fell behind and lost a delta frame; the encoder should produce a keyframe now
     /// rather than in up to 4 s. Called on the network queue.
     var onKeyframeNeeded: (() -> Void)?
+    var onPeerKeyframeNeeded: ((NWConnection) -> Void)?
     /// Number of connected clients changed. Called on the network queue. Zero means the host can idle.
     var onClientCountChanged: ((Int) -> Void)?
     /// One connection ended (before `onClientCountChanged`), for per-client state such as its rate.
@@ -248,9 +260,13 @@ final class StreamServer {
         queue.async { [self] in streaming = on; updateTicking() }
     }
 
+    private func hasStreamingClients() -> Bool {
+        clients.values.contains { $0.videoLane == .peer ? $0.peerVideo.streaming : ($0.videoLane == .legacy && streaming) }
+    }
+
     /// On the network queue.
     private func updateTicking() {
-        let wanted = !clients.isEmpty && (streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
+        let wanted = !clients.isEmpty && (hasStreamingClients() || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
         if wanted, tickTimer == nil {
             let t = DispatchSource.makeTimerSource(queue: queue)
             t.schedule(deadline: .now(), repeating: Self.tickInterval, leeway: .milliseconds(5))
@@ -265,7 +281,7 @@ final class StreamServer {
 
     /// On the network queue. Re-evaluates the recency rule so the timer stops itself after a quiet spell.
     private func tick() {
-        let live = streaming || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency
+        let live = hasStreamingClients() || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency
         guard live, !clients.isEmpty else { updateTicking(); return }
         let now = Date().timeIntervalSince1970
         // The Mac's pointer, unless the frame-rate sampler has it while it moves.
@@ -300,32 +316,58 @@ final class StreamServer {
     /// the next one goes out once it stops. Starts the frame-rate sampler while the pointer moves
     /// over the source and a device is sent it, faster than the tick, and stops it otherwise
     /// (PointerWatch.samplerInterval). Returns the devices sent one.
+    func setPeerPointerRect(_ rect: CGRect?, for connection: NWConnection) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                  client.videoLane == .peer else { return }
+            client.peerPointerRect = rect
+        }
+    }
+
     @discardableResult
     private func samplePointer(now: TimeInterval) -> Set<ObjectIdentifier> {
-        let ready = clients.compactMap { $0.value.connection.state == .ready ? $0.key : nil }
-        guard let watch = pointerWatch, let reading = watch.sample(devices: ready) else {
-            setPointerSampler(interval: nil)
-            return []
+        guard let watch = pointerWatch else { setPointerSampler(interval: nil); return [] }
+        let legacy = clients.compactMap { id, client in
+            client.videoLane == .legacy && client.connection.state == .ready ? id : nil
         }
+        let legacyReading = legacy.isEmpty ? nil : watch.sample(devices: legacy)
         var sent = Set<ObjectIdentifier>()
-        var watched = false
+        var needsSampler = false
         for (id, client) in clients where client.connection.state == .ready {
-            guard let report = reading.report(for: id, seen: client.inputsRead) else {
-                client.lastPointer = nil
-                continue
+            func publish(_ reading: PointerWatch.Reading?) {
+                guard let reading else {
+                    if client.videoLane == .peer, client.lastPointer != nil {
+                        sendReport(MacPointer(inside: false, seen: client.inputsRead))
+                    }
+                    return
+                }
+                guard let report = reading.report(for: id, seen: client.inputsRead) else {
+                    client.lastPointer = nil
+                    return
+                }
+                if PointerWatch.samplerInterval(moving: reading.moving, inside: reading.inside, watched: true,
+                    frameInterval: watch.frameInterval, tickInterval: Self.tickInterval) != nil { needsSampler = true }
+                sendReport(report)
             }
-            watched = true
-            guard report != client.lastPointer else { continue }
-            client.lastPointer = report
-            let data = StreamMessage(kind: .macPointer, timestamp: now, isKeyframe: false, payload: Wire.encode(report)).serialized()
-            client.connection.send(content: data, completion: .contentProcessed { _ in })   // not counted as inflight
-            client.lastSentAt = now
-            Stats.shared.bump("ptr.sent")
-            sent.insert(id)
+            func sendReport(_ report: MacPointer) {
+                guard report != client.lastPointer else { return }
+                client.lastPointer = report
+                let data = StreamMessage(kind: .macPointer, timestamp: now, isKeyframe: false, payload: Wire.encode(report)).serialized()
+                client.connection.send(content: data, completion: .contentProcessed { _ in })
+                client.lastSentAt = now
+                Stats.shared.bump("ptr.sent")
+                sent.insert(id)
+            }
+            switch client.videoLane {
+            case .unassigned: break
+            case .legacy: publish(legacyReading)
+            case .peer:
+                guard client.peerVideo.admission.current != nil, let rect = client.peerPointerRect,
+                      let admission = client.peerVideo.publication else { publish(nil); continue }
+                admission.publish { publish(watch.sample(devices: [id], in: rect)) }
+            }
         }
-        let every = PointerWatch.samplerInterval(moving: reading.moving, inside: reading.inside, watched: watched,
-                                                 frameInterval: watch.frameInterval, tickInterval: Self.tickInterval)
-        setPointerSampler(interval: every)
+        setPointerSampler(interval: needsSampler ? watch.frameInterval : nil)
         return sent
     }
 
@@ -1255,7 +1297,7 @@ final class StreamServer {
             client.needsKeyframe = true
             client.awaitingFirstKeyframe = true
             if client.catalogSent { replayCatalog(to: client) }
-            onKeyframeNeeded?()
+            requestKeyframe(for: client)
         }
         let c = client.connection
         let name = SafeText.label(hello.device ?? "")
@@ -1326,9 +1368,15 @@ final class StreamServer {
         // sweep asks too, on the same terms (its queue idle, the request due); the encoder then
         // encodes the still window's last frame again (HEVCEncoder.requestKeyframe). While frames
         // come, whichever looks first asks, once.
-        if !waiting.isEmpty, remoteKeyframeDue(now) {
+        for client in waiting where client.videoLane == .peer && remoteKeyframeDue(now, for: client) {
+            noteKeyframeRequest(now, for: client)
+            client.keyframeWanted = false
+            requestKeyframe(for: client)
+        }
+        let legacy = waiting.filter { $0.videoLane == .legacy }
+        if !legacy.isEmpty, remoteKeyframeDue(now) {
             lastRemoteKeyframeRequest = now
-            for client in waiting { client.keyframeWanted = false }
+            for client in legacy { client.keyframeWanted = false }
             onKeyframeNeeded?()
         }
     }
@@ -1352,7 +1400,7 @@ final class StreamServer {
         queue.async { [self] in
             videoAdmission = .stopped
             lastParameterSets = nil
-            for client in clients.values {
+            for client in clients.values where client.videoLane == .legacy {
                 client.needsKeyframe = true
                 client.awaitingFirstKeyframe = true
             }
@@ -1363,7 +1411,7 @@ final class StreamServer {
         queue.async { [self] in
             videoAdmission = .preparing(epoch)
             lastParameterSets = nil
-            for client in clients.values {
+            for client in clients.values where client.videoLane == .legacy {
                 client.needsKeyframe = true
                 client.awaitingFirstKeyframe = true
             }
@@ -1376,7 +1424,7 @@ final class StreamServer {
             admission.publish {
                 guard videoAdmission == .preparing(epoch) else { return }
                 videoAdmission = .committed(epoch)
-                for client in clients.values where client.catalogSent && client.connection.state == .ready {
+                for client in clients.values where client.videoLane == .legacy && client.catalogSent && client.connection.state == .ready {
                     client.latestCatalog = catalog
                     client.catalogAdmission = admission
                     client.microphoneCatalogGrant = nil
@@ -1392,12 +1440,179 @@ final class StreamServer {
     /// reset. A restart that keeps the quality never calls it. Thread-safe.
     func resetLinks() {
         queue.async { [self] in
-            for client in clients.values {
+            for client in clients.values where client.videoLane == .legacy {
                 client.sentThisSecond = 0
                 client.withheldThisSecond = 0
                 if let verdict = client.judge.reset() { onClientLinkChanged?(client.connection, verdict) }
             }
         }
+    }
+
+    /// Must finish before the first peer catalog. A legacy lane cannot be reinterpreted in place.
+    func enablePeerVideo(for connection: NWConnection) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                      connection.state == .ready, client.videoLane != .legacy else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                client.videoLane = .peer
+                continuation.resume(returning: true)
+            }
+        }
+    }
+
+    func resetPeerVideo(for connection: NWConnection, expectedEpoch: UUID) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                  client.videoLane == .peer else { return }
+            let epoch: VideoEpoch
+            switch client.peerVideo.admission {
+            case .preparing(let value), .committed(let value): epoch = value
+            case .stopped: return
+            }
+            guard epoch.id == expectedEpoch else { return }
+            client.peerVideo.admission = .stopped
+            client.peerVideo.publication = nil
+            client.peerVideo.lastParameterSets = nil
+            client.peerVideo.streaming = false
+            client.peerPointerRect = nil
+            client.latestCatalog = nil
+            client.catalogAdmission = nil
+            client.microphoneCatalogGrant = nil
+            client.needsKeyframe = true
+            client.awaitingFirstKeyframe = true
+            client.keyframeWanted = false
+            updateTicking()
+        }
+    }
+
+    func preparePeerVideo(_ epoch: VideoEpoch, for connection: NWConnection, admission: SourcePublicationAdmission) {
+        queue.async { [self] in
+            admission.publish {
+                guard epoch.isValid, let client = clients[ObjectIdentifier(connection)],
+                      client.connection === connection, connection.state == .ready, client.videoLane == .peer else { return }
+                client.peerVideo.admission = .preparing(epoch)
+                client.peerPointerRect = nil
+                client.peerVideo.publication = admission
+                client.peerVideo.lastParameterSets = nil
+                client.latestCatalog = nil
+                client.catalogAdmission = nil
+                client.microphoneCatalogGrant = nil
+                client.needsKeyframe = true
+                client.awaitingFirstKeyframe = true
+                client.keyframeWanted = false
+            }
+        }
+    }
+
+    func commitPeerVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission,
+                         to connection: NWConnection, requestKeyframe: @escaping () -> Void) {
+        queue.async { [self] in
+            admission.publish {
+                guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                      connection.state == .ready, client.videoLane == .peer,
+                      client.peerVideo.publication === admission,
+                      client.peerVideo.admission == .preparing(epoch),
+                      let list = Wire.decode(WindowList.self, from: catalog.payload), catalog.kind == .windowList,
+                      list.videoEpoch == epoch, list.active == epoch.source,
+                      list.inputGeneration == epoch.generation else { return }
+                client.peerVideo.admission = .committed(epoch)
+                client.catalogSent = true
+                client.latestCatalog = catalog
+                client.catalogAdmission = admission
+                client.microphoneCatalogGrant = nil
+                send(catalog.serialized(), to: client)
+                requestKeyframe()
+            }
+        }
+    }
+
+    func sendPeerVideo(_ message: StreamMessage, epoch: UUID, to connection: NWConnection) {
+        guard message.kind == .parameterSets || message.kind == .frame else { return }
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                  connection.state == .ready, client.videoLane == .peer,
+                  let admission = client.peerVideo.publication else { return }
+            var ask = false
+            admission.publish {
+                guard client.peerVideo.admission.admits(epoch), client.catalogSent else { return }
+                let data = PresentationMedia.serialize(message, epoch: epoch)
+                if message.kind == .parameterSets { client.peerVideo.lastParameterSets = data }
+                ask = deliverVideo(message, data: data, to: client)
+            }
+            if ask { requestKeyframe(for: client) }
+        }
+    }
+
+    func setPeerStreaming(_ on: Bool, for connection: NWConnection) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                  client.videoLane == .peer else { return }
+            client.peerVideo.streaming = on && client.peerVideo.admission.current != nil
+            updateTicking()
+        }
+    }
+
+    func sendPeerCatalog(_ message: StreamMessage, to connection: NWConnection, admission: SourcePublicationAdmission) {
+        queue.async { [self] in
+            admission.publish {
+                guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                      connection.state == .ready, client.videoLane == .peer,
+                      catalogMatches(message, client: client) else { return }
+                if client.peerVideo.admission.current != nil {
+                    guard client.peerVideo.publication === admission else { return }
+                } else {
+                    guard client.peerVideo.admission == .stopped else { return }
+                    client.peerVideo.publication = admission
+                }
+                client.catalogSent = true
+                client.latestCatalog = message
+                client.catalogAdmission = admission
+                client.microphoneCatalogGrant = nil
+                send(message.serialized(), to: client)
+            }
+        }
+    }
+
+    private func currentVideoAdmission(for client: Client) -> VideoEpochAdmission {
+        switch client.videoLane {
+        case .unassigned: return .stopped
+        case .legacy: return videoAdmission
+        case .peer: return client.peerVideo.admission
+        }
+    }
+
+    private func catalogMatches(_ message: StreamMessage, client: Client) -> Bool {
+        guard message.kind == .windowList, let list = Wire.decode(WindowList.self, from: message.payload) else { return false }
+        if let epoch = client.peerVideo.admission.current {
+            return list.videoEpoch == epoch && list.active == epoch.source && list.inputGeneration == epoch.generation
+        }
+        return client.peerVideo.admission == .stopped && list.videoEpoch == nil && list.active == .none
+    }
+
+    private func requestKeyframe(for client: Client) {
+        switch client.videoLane {
+        case .unassigned: break
+        case .legacy: onKeyframeNeeded?()
+        case .peer:
+            client.peerVideo.publication?.publish {
+                guard client.peerVideo.admission.current != nil else { return }
+                onPeerKeyframeNeeded?(client.connection)
+            }
+        }
+    }
+
+    private func remoteKeyframeDue(_ now: TimeInterval, for client: Client) -> Bool {
+        client.videoLane == .peer
+            ? now - client.peerVideo.lastRemoteKeyframeRequest >= Self.remoteKeyframeSpacing
+            : remoteKeyframeDue(now)
+    }
+
+    private func noteKeyframeRequest(_ now: TimeInterval, for client: Client) {
+        if client.videoLane == .peer { client.peerVideo.lastRemoteKeyframeRequest = now }
+        else { lastRemoteKeyframeRequest = now }
     }
 
     /// Each connection its own message (the devices' settings states, kind 16, one per connection):
@@ -1406,7 +1621,9 @@ final class StreamServer {
     /// built for a connection the server has just forgotten, before the coordinator hears it left).
     /// Thread-safe.
     func send(each messages: [(NWConnection, StreamMessage)]) {
-        let items = messages.filter { $0.1.kind != .windowList }.map { (ObjectIdentifier($0.0), $0.1.serialized()) }
+        let items = messages.filter {
+            $0.1.kind != .windowList && !Self.isVideo($0.1.kind) && $0.1.kind != .macPointer
+        }.map { (ObjectIdentifier($0.0), $0.1.serialized()) }
         queue.async { [self] in
             for (id, data) in items {
                 guard let client = clients[id], client.connection.state == .ready else { continue }
@@ -1419,7 +1636,9 @@ final class StreamServer {
         queue.async { [self] in
             admission.publish {
                 guard message.kind == .windowList, let client = clients[ObjectIdentifier(connection)],
-                      client.connection === connection, client.connection.state == .ready else { return }
+                      client.connection === connection, client.connection.state == .ready,
+                      client.videoLane != .peer else { return }
+                client.videoLane = .legacy
                 client.catalogSent = true
                 client.latestCatalog = message
                 client.catalogAdmission = admission
@@ -1430,7 +1649,7 @@ final class StreamServer {
     }
 
     func send(_ message: StreamMessage, to connection: NWConnection) {
-        guard message.kind != .windowList else { return }
+        guard message.kind != .windowList, !Self.isVideo(message.kind), message.kind != .macPointer else { return }
         let data = message.serialized()
         queue.async { [self] in
             guard let client = clients[ObjectIdentifier(connection)] else { return }
@@ -1573,7 +1792,7 @@ final class StreamServer {
         admission.publish {
             guard var message = client.latestCatalog else { return }
             if let grant = client.microphoneCatalogGrant,
-               case .committed(let epoch) = videoAdmission, epoch.id == grant.scope.videoEpoch,
+               case .committed(let epoch) = currentVideoAdmission(for: client), epoch.id == grant.scope.videoEpoch,
                client.route.encrypted, client.route.fingerprint == grant.fingerprint,
                grant.whileValid(at: DispatchTime.now().uptimeNanoseconds, { send(message.serialized(), to: client) }) {
                 return
@@ -1594,7 +1813,9 @@ final class StreamServer {
             admission.publish {
                 guard let client = clients[ObjectIdentifier(connection)],
                       client.route.encrypted, client.route.fingerprint == grant.fingerprint,
-                      videoAdmission.current?.id == grant.scope.videoEpoch,
+                      client.connection === connection, client.videoLane != .unassigned,
+                      currentVideoAdmission(for: client).current?.id == grant.scope.videoEpoch,
+                      client.videoLane != .peer || (client.peerVideo.publication === admission && catalogMatches(message, client: client)),
                       client.connection.state == .ready else { return }
                 _ = grant.whileValid(at: DispatchTime.now().uptimeNanoseconds) {
                     client.catalogSent = true
@@ -1639,47 +1860,54 @@ final class StreamServer {
 
     /// Thread-safe: hops onto the network queue.
     func broadcast(_ message: StreamMessage, epoch: UUID? = nil) {
-        guard message.kind != .windowList else { return }
+        guard message.kind != .windowList,
+              message.kind != .epochFrame, message.kind != .epochParameterSets, message.kind != .macPointer else { return }
         queue.async { [self] in
-            let media = message.kind == .parameterSets || message.kind == .frame
+            let media = Self.isVideo(message.kind)
             if media, !videoAdmission.admits(epoch) { return }
             let data = media ? PresentationMedia.serialize(message, epoch: epoch!) : message.serialized()
             if message.kind == .parameterSets { lastParameterSets = data }
             if message.kind == .frame, message.isKeyframe { lastKeyframeAt = Date().timeIntervalSince1970 }
             var wantKeyframe = false
-            defer { if wantKeyframe { onKeyframeNeeded?() } }
             for client in clients.values where client.catalogSent && client.connection.state == .ready {
-                if message.kind == .frame, client.route.isRemote {
-                    if paceRemote(client, message: message, data: data) { wantKeyframe = true }
-                    continue
-                }
-                if message.kind == .frame {
-                    // Its link only counts here (LinkJudge): what it sends and drops is as ever.
-                    if client.needsKeyframe {
-                        guard message.isKeyframe, let ps = lastParameterSets else {
-                            Stats.shared.bump("net.waitKey")
-                            if !client.awaitingFirstKeyframe { client.withheldThisSecond += 1 }
-                            continue
-                        }
-                        send(ps, to: client)
-                        client.needsKeyframe = false
-                        client.awaitingFirstKeyframe = false
-                    } else if client.inflight > 2 && !message.isKeyframe {
-                        // Drop the delta. Every later delta references it, so this client now waits for
-                        // a keyframe (sending deltas anyway is what showed up as flicker on the iPad).
-                        Stats.shared.bump("net.dropped")
-                        client.withheldThisSecond += 1
-                        client.needsKeyframe = true
-                        wantKeyframe = true
-                        continue
-                    }
-                    Stats.shared.bump("net.sent")
-                    client.sentThisSecond += 1
-                }
-                if message.kind == .windowList { client.latestCatalog = message; client.microphoneCatalogGrant = nil }
-                send(data, to: client, isFrame: message.kind == .frame)
+                if media {
+                    guard client.videoLane == .legacy else { continue }
+                    if deliverVideo(message, data: data, to: client) { wantKeyframe = true }
+                } else { send(data, to: client) }
             }
+            if wantKeyframe { onKeyframeNeeded?() }
         }
+    }
+
+    private static func isVideo(_ kind: StreamMessageKind) -> Bool {
+        kind == .frame || kind == .parameterSets || kind == .epochFrame || kind == .epochParameterSets
+    }
+
+    /// On the network queue. Returns whether this encoder needs a new keyframe.
+    private func deliverVideo(_ message: StreamMessage, data: Data, to client: Client) -> Bool {
+        if message.kind == .frame, client.route.isRemote { return paceRemote(client, message: message, data: data) }
+        if message.kind == .frame {
+            if client.needsKeyframe {
+                let sets = client.videoLane == .peer ? client.peerVideo.lastParameterSets : lastParameterSets
+                guard message.isKeyframe, let sets else {
+                    Stats.shared.bump("net.waitKey")
+                    if !client.awaitingFirstKeyframe { client.withheldThisSecond += 1 }
+                    return false
+                }
+                send(sets, to: client)
+                client.needsKeyframe = false
+                client.awaitingFirstKeyframe = false
+            } else if client.inflight > 2 && !message.isKeyframe {
+                Stats.shared.bump("net.dropped")
+                client.withheldThisSecond += 1
+                client.needsKeyframe = true
+                return true
+            }
+            Stats.shared.bump("net.sent")
+            client.sentThisSecond += 1
+        }
+        send(data, to: client, isFrame: message.kind == .frame)
+        return false
     }
 
     /// Remote clients' frames (home clients keep the rule above byte for byte). What is queued is
@@ -1714,14 +1942,15 @@ final class StreamServer {
                 Stats.shared.bump("net.waitKey")
                 if !client.awaitingFirstKeyframe { client.withheldThisSecond += 1 }
                 let now = Date().timeIntervalSince1970
-                if client.keyframeWanted, client.pendingBytes <= Self.remoteIdleBytes, remoteKeyframeDue(now) {
-                    lastRemoteKeyframeRequest = now
+                if client.keyframeWanted, client.pendingBytes <= Self.remoteIdleBytes, remoteKeyframeDue(now, for: client) {
+                    noteKeyframeRequest(now, for: client)
                     client.keyframeWanted = false
                     ask = true
                 }
                 return ask
             }
-            guard client.awaitingFirstKeyframe || client.pendingBytes <= Self.remoteBacklogBudget, let ps = lastParameterSets else {
+            let sets = client.videoLane == .peer ? client.peerVideo.lastParameterSets : lastParameterSets
+            guard client.awaitingFirstKeyframe || client.pendingBytes <= Self.remoteBacklogBudget, let ps = sets else {
                 // Its queue is still full: this keyframe is lost to it too. Ask again once it has
                 // drained (within the spacing) rather than wait for the encoder's own periodic one.
                 Stats.shared.bump("net.waitKey")
@@ -1783,7 +2012,7 @@ final class StreamServer {
     /// hitch (the trackpad stutter's cause 2); it only brings one forward when frames come slower
     /// than the stream's rate. The remote device waits longer after a drop in exchange. On `queue`.
     private func remoteKeyframeDue(_ now: TimeInterval) -> Bool {
-        guard clients.values.contains(where: { !$0.route.isRemote }) else {
+        guard clients.values.contains(where: { $0.videoLane == .legacy && !$0.route.isRemote }) else {
             return now - lastRemoteKeyframeRequest >= Self.remoteKeyframeSpacing
         }
         return now - lastRemoteKeyframeRequest >= Self.remoteKeyframeSpacingBesideHome
@@ -1799,10 +2028,24 @@ final class StreamServer {
 
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
         var raw = raw
-        if let header = StreamMessage.parseHeader(raw), header.kind == .windowList,
+        guard let header = StreamMessage.parseHeader(raw) else { return }
+        if Self.isVideo(header.kind) {
+            guard client.videoLane != .unassigned else { return }
+            if header.kind == .epochFrame || header.kind == .epochParameterSets {
+                guard let payload = PresentationMedia.decode(Data(raw.dropFirst(StreamMessage.headerLength)), kind: header.kind),
+                      currentVideoAdmission(for: client).admits(payload.epoch) else { return }
+            } else if client.videoLane == .peer { return }
+        }
+        if client.videoLane == .peer, header.kind == .windowList {
+            let message = StreamMessage(kind: .windowList, timestamp: header.timestamp, isKeyframe: header.isKeyframe,
+                                        payload: Data(raw.dropFirst(StreamMessage.headerLength)))
+            guard catalogMatches(message, client: client) else { return }
+        }
+        if header.kind == .windowList,
            var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
             catalog.presentationInput = 1
-            catalog.videoEpoch = catalog.videoEpoch == videoAdmission.current ? videoAdmission.current : nil
+            let current = currentVideoAdmission(for: client).current
+            catalog.videoEpoch = catalog.videoEpoch == current ? current : nil
             raw = StreamMessage(kind: .windowList, timestamp: header.timestamp, isKeyframe: header.isKeyframe,
                                 payload: Wire.encode(catalog)).serialized()
         }
