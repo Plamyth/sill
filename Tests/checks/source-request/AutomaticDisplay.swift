@@ -88,6 +88,64 @@ import Foundation
     sourceIdle.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
     sourceInterrupted.deliverIdleCatalog(sourceIdle)
     expect(sourceInterrupted.allSent.contains { $0.0 == .selectSource }, "ACK 이전 자동 source 요청도 새 연결에서 재개 actual=\(sourceInterrupted.allSent.count)")
+    let topology = fresh()
+    let nextInventory = UUID(), finalInventory = UUID()
+    let trace: [UUID?] = [inventory, nil, nextInventory, nil, finalInventory]
+    var topologyLists: [WindowList] = []
+    for identity in trace {
+        var list = idle
+        list.displayInventoryID = identity
+        if identity == finalInventory {
+            list.displays = [main, secondary, DisplayInfo(id: 15, name: "fixture-extended", width: 2700, height: 1952, isMain: false)]
+        }
+        topologyLists.append(list)
+        topology.deliverIdleCatalog(list)
+    }
+    let submitted = picks(topology)
+    print("COUNTEREXAMPLE initial-inventory-continuation submitted=\(submitted.count) expected=3 activeNone=\(topology.active == .none) confirmed=\(topology.defaults.values.count)")
+    expect(submitted.map(\.inventoryID) == [inventory, nextInventory, finalInventory],
+           "동일 r0의 초기 inventory trace는 현재 유효 UUID마다 한 번 계속 제출 actual=\(submitted.count)")
+    expect(submitted.allSatisfy { $0.origin == .automatic && $0.selectionRevision == idle.selectionRevision },
+           "inventory continuation은 원본 r0와 automatic origin을 유지")
+    expect(!topology.automaticDisplayCatalogObserved && topology.defaults.values.isEmpty,
+           "로컬 전송 접수는 최초 기회의 수렴 또는 화면 확인이 아님")
+    topology.deliverIdleCatalog(topologyLists.last!)
+    expect(picks(topology).count == 3, "같은 inventory catalog 반복은 자동 요청을 추가하지 않음")
+    var accepted = topologyLists.last!
+    accepted.selectionRevision = "revision-1"
+    topology.deliverIdleCatalog(accepted)
+    topology.deliverIdleCatalog(accepted)
+    expect(picks(topology).count == 3 && topology.automaticDisplayCatalogObserved,
+           "수용된 r1의 active.none은 새 자동 요청을 만들지 않음")
+    accepted.active = .desktop; accepted.activeDisplayID = main.id
+    topology.deliverIdleCatalog(accepted)
+    expect(topology.defaults.values.isEmpty, "r1과 active display만으로 epoch 확인을 대체하지 않음")
+    accepted.inputGeneration = "input-final"
+    accepted.videoEpoch = VideoEpoch(generation: "input-final", source: .desktop,
+        geometry: .init(x: 0, y: 0, width: 1920, height: 1080), width: 1920, height: 1080)
+    topology.deliverIdleCatalog(accepted)
+    expect(topology.defaults.values.count == 1, "최종 inventory와 새 epoch가 일치할 때만 화면을 저장")
+    for interruption in ["none", "window", "display", "launch", "revision", "peer", "host", "capability"] {
+        let client = fresh()
+        client.deliverIdleCatalog(idle)
+        var changed = idle
+        switch interruption {
+        case "none": client.select(.none)
+        case "window": client.select(.window(42))
+        case "display": client.selectDisplay(main)
+        case "launch": client.launch(bundleID: "fixture.manual")
+        case "revision": changed.selectionRevision = "revision-1"
+        case "peer": client.connection = NWConnection()
+        case "host": changed.launchID = "other-host"
+        default: changed.automaticDisplaySelection = nil
+        }
+        changed.displayInventoryID = nil
+        client.deliverIdleCatalog(changed)
+        let before = client.allSent.count
+        changed.displayInventoryID = nextInventory
+        client.deliverIdleCatalog(changed)
+        expect(client.allSent.count == before, "\(interruption) 뒤 새 inventory로 자동 의도를 재바인딩하지 않음")
+    }
     let restore = fresh()
     seed(restore)
     restore.deliverIdleCatalog(idle)
@@ -164,7 +222,12 @@ import Foundation
         }
         if change != "human-none" && change != "peer" { client.deliverIdleCatalog(changed) }
         _ = client.link.unhold(peer)
-        expect(picks(client).isEmpty, "\(change) cancels a queued automatic display submission")
+        if change == "inventory" {
+            expect(picks(client).count == 1 && picks(client).first?.inventoryID == changed.displayInventoryID,
+                   "inventory 변경은 보류 중인 옛 제출을 취소하고 현재 UUID만 전송")
+        } else {
+            expect(picks(client).isEmpty, "\(change) cancels a queued automatic display submission")
+        }
     }
     for change in ["revision", "inventory", "peer", "mac"] {
         let client = fresh()
