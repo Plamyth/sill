@@ -29,7 +29,10 @@ final class FakeCapture: PeerCaptureDriver {
         starts += 1
         frames = output
         preparedEpochs.append(epoch.id)
-        if starts <= stopOnStarts { onStopped?() }
+        if starts <= stopOnStarts {
+            onStopped?()
+            output(StreamMessage(kind: .frame, timestamp: 0, isKeyframe: true, payload: Data([1])), epoch.id)
+        }
         if suspendStart { await withCheckedContinuation { startGate = $0 } }
     }
     func stop() async { stops += 1 }
@@ -126,6 +129,8 @@ struct Checks {
         stoppedDriver.stopOnStarts = 1
         let stopped = PeerStreamSession(driver: stoppedDriver, configuration: { .standard }, inventory: { inventory })
         var stoppedCommits: [UUID] = [], stoppedResets: [UUID?] = []
+        var stoppedOutputs = 0
+        stopped.output = { _, _ in stoppedOutputs += 1 }
         stopped.commit = { epoch, _, _ in stoppedCommits.append(epoch.id) }
         stopped.reset = { stoppedResets.append($0) }
         stopped.select(SourceRequest(source: .window(40), origin: .human)); await settle()
@@ -133,6 +138,7 @@ struct Checks {
               "start-time stop recovers once before commit; starts=\(stoppedDriver.starts), commits=\(stoppedCommits.count)")
         check(stoppedCommits.first != stoppedDriver.preparedEpochs.first,
               "stopped start epoch is never committed")
+        check(stoppedOutputs == 0, "start-time stop immediately closes old frame publication")
         check(!stoppedResets.contains(where: { $0 == nil }), "no reset before the first prepared epoch")
         check(stoppedResets.compactMap { $0 } == Array(stoppedDriver.preparedEpochs.prefix(1)),
               "failed prepared epoch is reset with its exact UUID")
@@ -215,6 +221,109 @@ struct Checks {
         launched.finishLaunch(superseded, windowID: 61); await settle()
         check(launched.source == .window(60), "even a same-source human selection cancels a pending launch")
         await launched.close()
+
+        let boundaryDriver = FakeCapture()
+        boundaryDriver.suspendResolve = true
+        let boundary = PeerStreamSession(driver: boundaryDriver, configuration: { .standard }, inventory: { inventory })
+        var boundaryResets: [UUID?] = [], boundaryCommits: [UUID] = []
+        var boundaryOutputs = 0
+        boundary.reset = { boundaryResets.append($0) }
+        boundary.commit = { epoch, _, _ in boundaryCommits.append(epoch.id) }
+        boundary.output = { _, _ in boundaryOutputs += 1 }
+        boundary.select(SourceRequest(source: .window(70), origin: .human)); await settle()
+        boundary.select(SourceRequest(source: .window(71), origin: .human))
+        check(boundaryResets.isEmpty, "superseded resolve before prepare performs no transport reset")
+        boundaryDriver.suspendResolve = false
+        boundaryDriver.resolveGate?.resume(); boundaryDriver.resolveGate = nil
+        await settle()
+        check(boundary.source == .window(71) && boundaryDriver.starts == 1, "only latest pre-prepare selection starts capture")
+        let committedEpoch = boundary.epoch!
+        let oldFrame = boundaryDriver.frames, oldStop = boundaryDriver.onStopped
+        boundaryDriver.suspendStart = true
+        boundary.select(SourceRequest(source: .window(72), origin: .human)); await settle()
+        let preparedEpoch = boundaryDriver.preparedEpochs.last!
+        boundary.select(SourceRequest(source: .window(73), origin: .human))
+        check(boundaryResets.compactMap { $0 } == [committedEpoch.id, preparedEpoch],
+              "committed and uncommitted transport epochs reset by their exact UUIDs")
+        oldFrame?(StreamMessage(kind: .frame, timestamp: 0, isKeyframe: true, payload: Data([1])), committedEpoch.id)
+        check(boundaryOutputs == 0, "replaced capture callback cannot publish into the new selection")
+        boundaryDriver.suspendStart = false
+        boundaryDriver.startGate?.resume(); boundaryDriver.startGate = nil
+        await settle()
+        oldStop?(); await settle()
+        check(boundary.source == .window(73) && boundaryCommits.count == 2 && !boundaryCommits.contains(preparedEpoch),
+              "late old stop and old start never replace or commit the newer selection")
+        let finalBoundaryEpoch = boundary.epoch!
+        await boundary.close()
+        check(boundaryResets.compactMap { $0 } == [committedEpoch.id, preparedEpoch, finalBoundaryEpoch.id],
+              "close resets only its final committed epoch")
+
+        let missingDriver = FakeCapture()
+        let missing = PeerStreamSession(driver: missingDriver, configuration: { .standard }, inventory: { inventory })
+        missing.select(SourceRequest(source: .window(80), origin: .human)); await settle()
+        let missingEpoch = missing.epoch
+        inventory.invalidate(); missingDriver.targetExists = false
+        missing.catalogChanged(); await settle()
+        check(missing.epoch == missingEpoch, "incomplete inventory defers even a temporarily missing target")
+        _ = inventory.update(inventory.infos, signatures: ["replacement/rect", "physical2/changed"])
+        missing.catalogChanged(); await settle()
+        check(missing.source == .none && missing.epoch == nil, "valid snapshot confirms target loss and closes only that peer")
+        check(b.epoch == bEpoch && driverB.starts == 1, "target loss never restarts another peer")
+        await missing.close()
+
+        let recoveryDriver = FakeCapture()
+        let recovery = PeerStreamSession(driver: recoveryDriver, configuration: { .standard }, inventory: { inventory })
+        recovery.selectDisplay(DisplaySelection(displayID: 1, inventoryID: inventory.revision!)); await settle()
+        let recoveryEpoch = recovery.epoch!
+        inventory.invalidate()
+        recoveryDriver.onStopped?()
+        check(recovery.inputRect(generation: recoveryEpoch.generation, epoch: recoveryEpoch.id) == nil,
+              "stopped capture immediately rejects input while inventory is observing")
+        _ = inventory.update(inventory.infos, signatures: ["replacement/rect", "physical2/changed"])
+        recovery.catalogChanged(); await settle()
+        check(recovery.epoch != nil && recovery.epoch != recoveryEpoch && recoveryDriver.starts == 2,
+              "deferred capture recovery resumes after a valid inventory")
+        await recovery.close()
+
+        func window(_ id: UInt32, _ bundle: String) -> WindowInfo {
+            WindowInfo(id: id, title: "격리 창", appName: "격리 앱", bundleID: bundle, width: 800, height: 600)
+        }
+        let delayedDriver = FakeCapture()
+        let delayed = PeerStreamSession(driver: delayedDriver, configuration: { .standard }, inventory: { inventory })
+        let delayedToken = delayed.beginLaunch("test.delayed")
+        delayed.windowsChanged([window(90, "test.delayed")]); await settle()
+        check(delayed.epoch == nil, "catalog does not consume a launch before successful completion")
+        delayed.finishLaunch(delayedToken, windowID: nil)
+        delayed.windowsChanged([window(91, "test.unrelated")]); await settle()
+        check(delayed.epoch == nil, "late launch only matches its requested bundle")
+        delayed.windowsChanged([window(90, "test.delayed")]); await settle()
+        check(delayed.source == .window(90), "windowsChanged consumes the first late matching window")
+        let failedToken = delayed.beginLaunch("test.failed")
+        delayed.finishLaunch(failedToken, windowID: nil, failed: true)
+        delayed.windowsChanged([window(92, "test.failed")]); await settle()
+        check(delayed.source == .window(90), "explicit launch failure cancels late-window selection")
+        let oldToken = delayed.beginLaunch("test.old")
+        let newToken = delayed.beginLaunch("test.new")
+        delayed.finishLaunch(oldToken, windowID: 93)
+        delayed.finishLaunch(newToken, windowID: nil)
+        delayed.windowsChanged([window(93, "test.old")]); await settle()
+        check(delayed.source == .window(90), "stale completion and old-bundle windows cannot consume a newer launch")
+        delayed.windowsChanged([window(94, "test.new")]); await settle()
+        check(delayed.source == .window(94), "latest launch retains its own first window")
+        let closeToken = delayed.beginLaunch("test.closed")
+        delayed.finishLaunch(closeToken, windowID: nil)
+        await delayed.close()
+        delayed.windowsChanged([window(95, "test.closed")]); await settle()
+        check(delayed.isClosed && delayed.epoch == nil, "close cancels a launch without reopening capture")
+        let expiring = PeerStreamSession(driver: FakeCapture(), configuration: { .standard }, inventory: { inventory },
+                                        launchTimeout: .milliseconds(20))
+        let expiredToken = expiring.beginLaunch("test.expired")
+        expiring.finishLaunch(expiredToken, windowID: nil)
+        try? await Task.sleep(for: .milliseconds(50))
+        expiring.windowsChanged([window(96, "test.expired")])
+        expiring.finishLaunch(expiredToken, windowID: 96); await settle()
+        check(expiring.epoch == nil, "expired launch cannot select a late window or accept a late completion")
+        await expiring.close()
         await b.close(); await c.close()
         check(commitsA >= 4 && commitsB == 1 && releaseA > releaseB, "production callbacks remain peer scoped")
         if failures > 0 { print("FAIL \(failures) of \(count) production peer stream session checks"); exit(1) }

@@ -16,7 +16,19 @@ final class PeerStreamSession {
     private var transportEpoch: UUID?
     private var displayIdentity: String?
     private var recoveryAttempted = false
-    private var launchIntent: (UUID, String)?
+    private var captureAttempt: UUID?
+    private var stoppedCapture: UUID?
+    private var configurationRevision: UInt64 = 0
+    private var appliedConfigurationRevision: UInt64 = 0
+    private struct LaunchIntent {
+        let token: UUID
+        let bundle: String
+        let deadline: ContinuousClock.Instant
+        var completed = false
+    }
+    private var launchIntent: LaunchIntent?
+    private var launchExpiry: Task<Void, Never>?
+    private let launchTimeout: Duration
     var supportsScopedInput = false
     var onChanged: (() -> Void)?
     var onScopeInvalidated: (() -> Void)?
@@ -26,11 +38,11 @@ final class PeerStreamSession {
     var reset: ((UUID?) -> Void)?
 
     init(driver: any PeerCaptureDriver, configuration: @escaping () -> HostConfig,
-         inventory: @escaping () -> DisplayInventory) {
+         inventory: @escaping () -> DisplayInventory, launchTimeout: Duration = .seconds(10)) {
         self.driver = driver
         self.configuration = configuration
         self.inventory = inventory
-        driver.onStopped = { [weak self] in self?.captureStopped() }
+        self.launchTimeout = launchTimeout
     }
 
     var source: StreamSource { state.source }
@@ -63,6 +75,7 @@ final class PeerStreamSession {
            (source != .desktop || (state.display?.displayID == display?.displayID &&
                 display.flatMap { inventory().identity(of: $0.displayID) } == displayIdentity)),
            driver.currentBounds() == description?.bounds {
+            cancelLaunch()
             onChanged?()
             return
         }
@@ -71,7 +84,7 @@ final class PeerStreamSession {
             onChanged?()
             return
         }
-        launchIntent = nil
+        cancelLaunch()
         displayIdentity = display.flatMap { snapshot.identity(of: $0.displayID) }
         recoveryAttempted = false
         enqueue(ticket)
@@ -79,6 +92,8 @@ final class PeerStreamSession {
 
     private func enqueue(_ ticket: PeerStreamState.Ticket) {
         admission.invalidate()
+        captureAttempt = nil
+        driver.onStopped = nil
         admission = SourcePublicationAdmission()
         onScopeInvalidated?()
         resetTransport()
@@ -89,7 +104,7 @@ final class PeerStreamSession {
     }
 
     private func resetTransport() {
-        let previous = transportEpoch
+        guard let previous = transportEpoch else { return }
         transportEpoch = nil
         reset?(previous)
     }
@@ -98,6 +113,8 @@ final class PeerStreamSession {
         defer { worker = nil }
         while let ticket = desired {
             desired = nil
+            captureAttempt = nil
+            driver.onStopped = nil
             await driver.stop()
             description = nil
             guard state.isCurrent(ticket) else { continue }
@@ -107,12 +124,16 @@ final class PeerStreamSession {
                 continue
             }
             let publication = admission
+            let configurationVersion = configurationRevision
+            let attempt = UUID()
             do {
                 let resolved = try await driver.resolve(source: ticket.source, display: ticket.display,
                     identity: displayIdentity, config: configuration(), viewport: viewport)
                 guard state.isCurrent(ticket) else { continue }
-                if let display = ticket.display {
-                    guard inventory().identity(of: display.displayID) == displayIdentity else { throw NativePeerCaptureDriver.Failure.changed }
+                if configurationVersion != configurationRevision { enqueue(ticket); continue }
+                let snapshot = inventory()
+                if let display = ticket.display, snapshot.revision != nil {
+                    guard snapshot.identity(of: display.displayID) == displayIdentity else { throw NativePeerCaptureDriver.Failure.changed }
                 }
                 let rect = resolved.bounds
                 let epoch = VideoEpoch(generation: UUID().uuidString, source: ticket.source,
@@ -121,6 +142,9 @@ final class PeerStreamSession {
                 guard epoch.isValid else { throw NativePeerCaptureDriver.Failure.invalidGeometry }
                 transportEpoch = epoch.id
                 prepare?(epoch, publication)
+                guard state.isCurrent(ticket) else { continue }
+                captureAttempt = attempt
+                driver.onStopped = { [weak self] in self?.captureStopped(attempt) }
                 let emit = output
                 try await driver.start(resolved, epoch: epoch) { message, id in
                     publication.publish { emit?(message, id) }
@@ -129,18 +153,32 @@ final class PeerStreamSession {
                     await driver.stop()
                     continue
                 }
+                guard stoppedCapture != attempt else { throw NativePeerCaptureDriver.Failure.unavailable }
+                if configurationVersion != configurationRevision { enqueue(ticket); continue }
+                let currentInventory = inventory()
+                if let display = ticket.display, currentInventory.revision != nil {
+                    guard currentInventory.identity(of: display.displayID) == displayIdentity else { throw NativePeerCaptureDriver.Failure.changed }
+                }
                 guard driver.currentBounds() == resolved.bounds else { throw NativePeerCaptureDriver.Failure.changed }
                 guard state.commit(ticket, epoch: epoch) else { continue }
+                appliedConfigurationRevision = configurationVersion
                 description = resolved
                 commit?(epoch, publication, { [weak driver] in Task { @MainActor in driver?.requestKeyframe() } })
                 onChanged?()
             } catch {
+                publication.invalidate()
+                captureAttempt = nil
+                driver.onStopped = nil
                 await driver.stop()
                 guard state.isCurrent(ticket) else { continue }
-                publication.invalidate()
                 admission = SourcePublicationAdmission()
-                state.fail(ticket, reason: "선택한 화면을 현재 위치에서 캡처할 수 없습니다.")
                 resetTransport()
+                if stoppedCapture == attempt, !recoveryAttempted {
+                    recoveryAttempted = true
+                    desired = ticket
+                    continue
+                }
+                state.fail(ticket, reason: "선택한 화면을 현재 위치에서 캡처할 수 없습니다.")
                 onChanged?()
             }
         }
@@ -152,14 +190,18 @@ final class PeerStreamSession {
         let changedFPS = (viewport?.fps ?? 60) != (value.fps ?? 60)
         viewport = value
         // Panel size and scale never resize or move a Mac window.
-        if changedFPS { restartPresentedSource() }
+        if changedFPS { configurationChanged() }
     }
 
-    func configurationChanged() { restartPresentedSource() }
+    func configurationChanged() {
+        configurationRevision &+= 1
+        restartPresentedSource()
+    }
 
     func catalogChanged() {
         guard !state.closed, state.pending == nil, let description else { return }
         let snapshot = inventory()
+        guard snapshot.revision != nil else { return }
         if let id = currentDisplayID, snapshot.identity(of: id) != displayIdentity {
             select(SourceRequest(source: .none, origin: .human))
             return
@@ -168,7 +210,8 @@ final class PeerStreamSession {
             select(SourceRequest(source: .none, origin: .human))
             return
         }
-        if bounds != description.bounds { restartPresentedSource() }
+        if bounds != description.bounds || appliedConfigurationRevision != configurationRevision ||
+           (captureAttempt != nil && captureAttempt == stoppedCapture) { restartPresentedSource() }
     }
 
     private func restartPresentedSource() {
@@ -179,8 +222,11 @@ final class PeerStreamSession {
         enqueue(ticket)
     }
 
-    private func captureStopped() {
-        guard !state.closed, state.pending == nil, state.source != .none else { return }
+    private func captureStopped(_ attempt: UUID) {
+        guard !state.closed, captureAttempt == attempt else { return }
+        stoppedCapture = attempt
+        admission.invalidate()
+        guard state.pending == nil, state.source != .none else { return }
         if recoveryAttempted {
             select(SourceRequest(source: .none, origin: .human))
         } else {
@@ -191,20 +237,45 @@ final class PeerStreamSession {
 
     func beginLaunch(_ bundle: String) -> UUID {
         let token = UUID()
-        launchIntent = (token, bundle)
+        cancelLaunch()
+        guard !state.closed else { return token }
+        let deadline = ContinuousClock.now.advanced(by: launchTimeout)
+        launchIntent = LaunchIntent(token: token, bundle: bundle, deadline: deadline)
+        launchExpiry = Task { [weak self] in
+            do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+            guard self?.launchIntent?.token == token else { return }
+            self?.cancelLaunch()
+        }
         return token
     }
 
-    func finishLaunch(_ token: UUID, windowID: UInt32?) {
-        guard launchIntent?.0 == token, !state.closed else { return }
+    private func cancelLaunch() {
+        launchExpiry?.cancel()
+        launchExpiry = nil
         launchIntent = nil
-        if let windowID { select(SourceRequest(source: .window(windowID), origin: .human)) }
+    }
+
+    func finishLaunch(_ token: UUID, windowID: UInt32?, failed: Bool = false) {
+        guard launchIntent?.token == token, !state.closed else { return }
+        guard let intent = launchIntent, ContinuousClock.now < intent.deadline else { cancelLaunch(); return }
+        if failed { cancelLaunch(); return }
+        launchIntent?.completed = true
+        guard let windowID else { return }
+        cancelLaunch()
+        select(SourceRequest(source: .window(windowID), origin: .human))
+    }
+
+    func windowsChanged(_ windows: [WindowInfo]) {
+        guard let intent = launchIntent, intent.completed,
+              let window = windows.first(where: { $0.bundleID == intent.bundle }) else { return }
+        finishLaunch(intent.token, windowID: window.id)
     }
 
     func requestKeyframe() { driver.requestKeyframe() }
 
     func inputRect(generation: String?, epoch: UUID?) -> CGRect? {
-        guard state.accepts(generation: generation, epoch: epoch), let description,
+        guard captureAttempt != nil, captureAttempt != stoppedCapture,
+              state.accepts(generation: generation, epoch: epoch), let description,
               let live = driver.currentBounds(), live == description.bounds else { return nil }
         return live
     }
@@ -227,6 +298,9 @@ final class PeerStreamSession {
     }
 
     func invalidateForShutdown() {
+        cancelLaunch()
+        captureAttempt = nil
+        driver.onStopped = nil
         admission.invalidate()
         desired = nil
         onScopeInvalidated?()
@@ -235,7 +309,9 @@ final class PeerStreamSession {
     func close() async {
         guard !state.closed else { return }
         state.close()
-        launchIntent = nil
+        cancelLaunch()
+        captureAttempt = nil
+        driver.onStopped = nil
         desired = nil
         admission.invalidate()
         onScopeInvalidated?()
