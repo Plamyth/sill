@@ -43,6 +43,9 @@ final class MenuMirror {
     /// coordinator's `focusForMenus`). True when the app is frontmost as it returns; true at once
     /// for the Desktop and for nothing.
     var prepare: () async -> Bool = { true }
+    /// Explicit menu presses may prepare focus; observational menu reads never use this hook.
+    var preparePress: (() async -> Bool)?
+    var effectAdmission: SourcePublicationAdmission?
     /// The app behind the current source, asked when the first device subscribes (the coordinator
     /// tells the mirror of changes only while someone subscribes).
     var currentTarget: () -> Target? = { nil }
@@ -183,7 +186,8 @@ final class MenuMirror {
             send(MacMenu(version: version, answering: r.token, pressed: false, note: MenuRefusal.changedNote), to: c)
             return
         }
-        enqueue { await self.servePress(r, to: c, who: who, arrived: now) }
+        let admission = effectAdmission
+        enqueue { await self.servePress(r, to: c, who: who, arrived: now, admission: admission) }
     }
 
     /// A connection's client stats, about once a second: its worst round trip of that second (a
@@ -232,6 +236,11 @@ final class MenuMirror {
     }
 
     private var needsRetry: Bool { stale || !topRead || untrusted }
+
+    func sourceScopeChanged() {
+        newVersion()
+        if hasSubscribers { publishTop() }
+    }
 
     // MARK: Serving, one request at a time
 
@@ -406,7 +415,7 @@ final class MenuMirror {
         }
     }
 
-    private func servePress(_ r: PressMenuItem, to c: NWConnection, who: String, arrived: Double) async {
+    private func servePress(_ r: PressMenuItem, to c: NWConnection, who: String, arrived: Double, admission: SourcePublicationAdmission?) async {
         let cid = ObjectIdentifier(c)
         let path = r.id.flatMap(MenuPath.init)
         let app = label(target?.app ?? "")
@@ -428,13 +437,21 @@ final class MenuMirror {
         let waited = CFAbsoluteTimeGetCurrent() - arrived
         if RequestDeadline.expired(waited: waited, rttMs: roundTrips[cid]) { refuse(.late(waited), what: logPath(path, app: t.app)); return }
         let v = version
-        _ = await prepare()
+        _ = await (preparePress ?? prepare)()
         guard v == version, target?.pid == t.pid else { refuse(.changed, what: shownID); return }
         let reader = self.reader
         let kept = elements[path]?.element
         let shown = r.title
         let ancestors = ancestorTitles(path)
-        let result = await onMenus { reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors) }
+        let result: MenuReader.Pressed? = await onMenus {
+            if let admission {
+                var result: MenuReader.Pressed?
+                admission.publish { result = reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors, expectedWindow: t.window, requireFrontmost: true) }
+                return result
+            }
+            return reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors)
+        }
+        guard let result else { refuse(.changed, what: shownID); return }
         // A press can change any state.
         cache.clear()
         let what = logPath(path, app: t.app, last: result.foundTitle)

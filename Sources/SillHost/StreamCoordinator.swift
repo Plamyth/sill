@@ -341,6 +341,13 @@ package final class StreamCoordinator {
     private var flipWaitToken = 0
     /// Each connection whose catalog went out (`sendCatalog`): the ones settings states reach.
     private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var peerStreams: [ObjectIdentifier: PeerStreamSession] = [:]
+    private var peerMenus: [ObjectIdentifier: MenuMirror] = [:]
+    private let peerMenuReader = MenuReader()
+    private var peerInputSerial: UInt64 = 0
+    private var peerHelloCaps: [ObjectIdentifier: Bool] = [:]
+    private var peerGestureChords: [ObjectIdentifier: GestureChords] = [:]
+
     /// Each connection's link while it does not keep up (LinkJudge, docs/remote-bundle-plan.md §6.5):
     /// its kind 16's `link`, and the card's. A state leaves out a report whose bitrate (the running
     /// one when it was judged) is no longer the target's, so the answer to the pick that lowers it
@@ -477,6 +484,7 @@ package final class StreamCoordinator {
         menus.currentTarget = { [weak self] in self?.menuTarget() }
         menus.onSubscribersChanged = { [weak self] any in self?.watchFrontmostApp(any) }
         catalog.onPolled = { [weak self] in
+            self?.pollPeerStreams()
             self?.menusPolled()
             self?.publishAudioRoutes()
         }
@@ -485,7 +493,7 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { return }
                 let id = ObjectIdentifier(connection)
-                guard self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
+                guard !self.synthetic || self.inputFence.join(id, source: self.active, switching: self.switching, desktopScope: self.desktopScope) else {
                     connection.cancel()
                     return
                 }
@@ -510,6 +518,9 @@ package final class StreamCoordinator {
                 self.routesChanged(joined: id, endpoint: "\(connection.endpoint)")
                 // Catalog first: the client's UI needs it even if the keyframe is slow to come.
                 self.catalog.thumbnailsWanted = true
+                if !self.synthetic {
+                    guard await self.installPeerStream(connection) else { connection.cancel(); return }
+                }
                 self.sendCatalog(to: connection)
                 self.encoder?.requestKeyframe()
             }
@@ -518,6 +529,9 @@ package final class StreamCoordinator {
         server.onClientLinkChanged = { [weak self] connection, verdict in
             let id = ObjectIdentifier(connection)
             Task { @MainActor in self?.linkChanged(id, verdict) }
+        }
+        server.onPeerKeyframeNeeded = { [weak self] connection in
+            Task { @MainActor in self?.peerStreams[ObjectIdentifier(connection)]?.requestKeyframe() }
         }
         server.onKeyframeNeeded = { [weak self] in
             // Network queue → encoder lock: the next repaint carries the keyframe, or the last frame is
@@ -539,6 +553,12 @@ package final class StreamCoordinator {
                 let id = ObjectIdentifier(connection)
                 self.extendedDesktop.release(id)
                 self.extendedDesktopViewports[id] = nil
+                if let lane = self.peerStreams.removeValue(forKey: id) {
+                    self.peerMenus.removeValue(forKey: id)?.clientLeft(connection)
+                    Task { @MainActor in await lane.close() }
+                }
+                self.peerHelloCaps[id] = nil
+                self.peerGestureChords[id] = nil
                 self.inputFence.leave(id)
                 self.sourcePeerDeparted(connection)
                 self.gestureArrivals[id] = nil
@@ -651,8 +671,10 @@ package final class StreamCoordinator {
             let name = SafeText.label(hello.device ?? "")
             Task { @MainActor in
                 guard let self else { return }
+                self.peerHelloCaps[id] = hello.sourceInput == 1
                 self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
-                self.requestExtendedDesktop(for: connection, hello: hello)
+                if let lane = self.peerStreams[id] { lane.supportsScopedInput = hello.sourceInput == 1 }
+                if self.synthetic { self.requestExtendedDesktop(for: connection, hello: hello) }
                 guard !name.isEmpty else { return }
                 self.status.update {
                     guard let i = $0.devices.firstIndex(where: { $0.id == id }), $0.devices[i].name == nil else { return }
@@ -822,6 +844,7 @@ package final class StreamCoordinator {
         if !appKitLoop { new.virtualDisplay = false }
         guard new != target else { return false }
         pendingConfig = new
+        for lane in peerStreams.values { lane.configurationChanged() }
         publishSettings()
         Task { @MainActor in await self.applyPending() }   // a burst before it runs is one restart
         return true
@@ -1030,6 +1053,12 @@ package final class StreamCoordinator {
     // MARK: Client messages
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
+        if !synthetic {
+            guard let lane = peerStreams[ObjectIdentifier(connection)],
+                  connections[ObjectIdentifier(connection)] === connection,
+                  connection.state == .ready else { return }
+            if await handlePeerMessage(message, from: connection, lane: lane) { return }
+        }
         switch message.kind {
         case .changeAudioRoute, .fetchAudioRoutes:
             handleAudioRoute(message, from: connection)
@@ -2366,6 +2395,8 @@ package final class StreamCoordinator {
     /// dies of the signal with no goodbye, as before (`releaseKeysForExit`): its devices notice by
     /// liveness.
     package func shutdownForExit() {
+        for lane in peerStreams.values { lane.invalidateForShutdown() }
+        for lane in peerStreams.values { Task { @MainActor in await lane.close() } }
         microphoneOwner?.restoreMicrophoneForExit()
         injector.releaseAll()
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
@@ -2671,6 +2702,11 @@ package final class StreamCoordinator {
     private func displaysChanged() {
         desktopGestureSelection?.state = .cancelled
         guard !synthetic else { return }
+        if !peerStreams.isEmpty {
+            pollPeerStreams()
+            broadcastList()
+            return
+        }
         displayTopologyGeneration &+= 1
         switch sourceAdmissionPick?.source ?? active {
         case .window: break
@@ -2917,6 +2953,23 @@ package final class StreamCoordinator {
     }
 
     private func sendMicrophoneCatalog(to connection: NWConnection, admission: SourcePublicationAdmission? = nil) {
+        if let lane = peerStreams[ObjectIdentifier(connection)] {
+            var message = peerCatalog(to: connection, lane: lane)
+            if let peer = microphoneIngress.peer(connection), let epoch = lane.epoch,
+               let generation = UUID(uuidString: epoch.generation),
+               var list = Wire.decode(WindowList.self, from: message.payload) {
+                list.microphone = microphoneReceiver.capability(peer: peer.id, source: lane.source,
+                    inputGeneration: generation, videoEpoch: epoch.id, fingerprint: peer.fingerprint)
+                message.payload = Wire.encode(list)
+                if let capability = list.microphone,
+                   let grant = microphoneReceiver.advertisedGrant(peer: capability.peer) {
+                    server.sendMicrophoneCatalog(message, to: connection, grant: grant, admission: lane.admission)
+                    return
+                }
+            }
+            server.sendPeerCatalog(message, to: connection, admission: lane.admission)
+            return
+        }
         let message = microphoneCatalog(to: connection)
         if let capability = Wire.decode(WindowList.self, from: message.payload)?.microphone,
            let grant = microphoneReceiver.advertisedGrant(peer: capability.peer) {
@@ -2931,6 +2984,14 @@ package final class StreamCoordinator {
     }
 
     private func microphoneScopeIsCurrent(_ scope: MicrophoneScope, fingerprint: Data) -> Bool {
+        if let connection = microphoneConnection(peer: scope.peer), let lane = peerStreams[ObjectIdentifier(connection)] {
+            guard !shuttingDown, !synthetic, let epoch = lane.epoch,
+                  epoch.id == scope.videoEpoch, epoch.source == scope.source,
+                  UUID(uuidString: epoch.generation) == scope.inputGeneration,
+                  let route = routes[ObjectIdentifier(connection)], route.encrypted,
+                  route.fingerprint == fingerprint, remote?.isPaired(fingerprint) == true else { return false }
+            return true
+        }
         guard !synthetic, !switching, !shuttingDown, let epoch = videoEpoch,
               epoch.id == scope.videoEpoch, epoch.source == active, scope.source == active,
               UUID(uuidString: inputGeneration) == scope.inputGeneration, epoch.generation == inputGeneration,
@@ -3000,7 +3061,8 @@ package final class StreamCoordinator {
 
     private func canEnableRemoteAudio(_ id: ObjectIdentifier, requestID: UUID, action: UInt64,
                                       epoch: UInt64? = nil) -> Bool {
-        !switching && !shuttingDown && !synthetic && active != .none && catalog.display != nil &&
+        !switching && !shuttingDown && !synthetic &&
+        (peerStreams[id]?.epoch != nil || (peerStreams[id] == nil && active != .none)) && peerAudioDisplay(id) != nil &&
         routes[id] != nil && remoteAudioRequests[id] == requestID && remoteAudioActions[id] == action &&
         (epoch == nil || epoch == remoteAudioEpoch)
     }
@@ -3034,7 +3096,7 @@ package final class StreamCoordinator {
             }
             let epoch = remoteAudioEpoch
             if !remoteAudioRunning || !remoteAudioCapture.hasStream {
-                if let display = catalog.display {
+                if let display = peerAudioDisplay(id) {
                     guard canEnableRemoteAudio(id, requestID: request.requestID, action: action,
                                                epoch: epoch) else { return }
                     remoteAudioCapture.onPacket = { [server] payload, sequence in
@@ -3193,12 +3255,24 @@ package final class StreamCoordinator {
                         awayBitrate: t.awayBitrate, awayCaptureScale: Double(t.awayCaptureScale),
                         thisConnectionAway: thisAway, awayRunning: awayWanted)
         }
-        return HostSettingsState(settings: t.streamSettings(away: thisAway),
+        var settings = t.streamSettings(away: thisAway)
+        let lane = peerStreams[id]
+        let ownStream: HostStatusSnapshot.Stream?
+        if let lane {
+            settings.virtualDisplay = false
+            ownStream = lane.epoch.map { epoch in
+                HostStatusSnapshot.Stream(kind: lane.source == .desktop ? .desktop : .window,
+                    title: lane.description?.title ?? "원격 화면", width: epoch.width, height: epoch.height,
+                    fps: min(t.maxFPS, clientFPS[id] ?? 60), mbps: t.effective(away: thisAway).bitrate / 1_000_000,
+                    onVirtualDisplay: false, softwareEncoder: lane.softwareEncoder)
+            }
+        } else { ownStream = s.stream }
+        return HostSettingsState(settings: settings,
                                  persistent: onDeviceSettingsChange != nil,
-                                 virtualDisplayAvailable: appKitLoop,
-                                 virtualDisplayNote: virtualDisplayNote(target: t, snapshot: s),
-                                 softwareEncoder: s.softwareEncoder,
-                                 stream: s.stream?.wire,
+                                 virtualDisplayAvailable: lane == nil && appKitLoop,
+                                 virtualDisplayNote: lane == nil ? virtualDisplayNote(target: t, snapshot: s) : "화면 선택은 Mac 창이나 디스플레이 구성을 변경하지 않습니다.",
+                                 softwareEncoder: lane?.softwareEncoder ?? s.softwareEncoder,
+                                 stream: ownStream?.wire,
                                  answering: answering,
                                  away: away,
                                  link: link)
@@ -3246,4 +3320,244 @@ extension ClientRoute {
     /// not beside ClientRoute in StreamServer.swift, which the pacing harness compiles without the
     /// coordinator's files.
     var isAway: Bool { AwayPolicy.isAway(remoteDoor: isRemote, origin: origin) }
+}
+
+extension StreamCoordinator {
+    private func peerAudioDisplay(_ id: ObjectIdentifier) -> SCDisplay? {
+        guard let lane = peerStreams[id] else { return catalog.display }
+        guard lane.epoch != nil else { return nil }
+        return catalog.display(id: lane.currentDisplayID ?? CGMainDisplayID())
+    }
+
+    private func installPeerStream(_ connection: NWConnection) async -> Bool {
+        let id = ObjectIdentifier(connection)
+        guard !shuttingDown, routes[id] != nil, peerStreams[id] == nil,
+              await server.enablePeerVideo(for: connection),
+              !shuttingDown, routes[id] != nil, connection.state == .ready else { return false }
+        let lane = PeerStreamSession(driver: NativePeerCaptureDriver(), configuration: { [weak self] in
+            guard let self else { return .standard }
+            var value = self.target
+            let quality = value.effective(away: self.routes[id]?.isAway == true)
+            value.captureScale = quality.captureScale
+            value.bitrate = quality.bitrate
+            value.virtualDisplay = false
+            return value
+        }, inventory: { [weak self] in self?.catalog.displayInventory ?? DisplayInventory() })
+        lane.supportsScopedInput = peerHelloCaps[id] == true
+        peerStreams[id] = lane
+        let mirror = MenuMirror(server: server, reader: peerMenuReader)
+        peerMenus[id] = mirror
+        mirror.currentTarget = { [weak self, weak lane] in
+            guard let self, let lane else { return nil }
+            return self.peerMenuTarget(lane)
+        }
+        mirror.prepare = { [weak self, weak lane] in
+            guard let self, let lane else { return false }
+            guard let pid = lane.description?.windowPID else { return lane.source == .desktop }
+            guard Self.activePID(trustAppKit: self.appKitLoop) == pid,
+                  case .window(let windowID) = lane.source,
+                  let window = self.catalog.window(id: windowID),
+                  let element = self.sizer.element(for: window, input: true) else { return false }
+            return WindowSizer.hasKeyboardFocus(element, pid: pid)
+        }
+        mirror.preparePress = { [weak self, weak lane] in
+            guard let self, let lane, let epoch = lane.epoch else { return false }
+            return await self.preparePeerInteraction(lane, epoch: epoch, event: nil)
+        }
+        lane.onScopeInvalidated = { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            self.injector.releaseInput(of: id)
+            self.peerMenus[id]?.sourceScopeChanged()
+            self.server.setPeerPointerRect(nil, for: connection)
+            if let peer = self.microphoneIngress.peer(connection) {
+                self.microphoneIngress.revoke(peer: peer.id)
+                self.microphoneReceiver.forgetCapabilities(peer: peer.id)
+                self.microphoneReceiver.revoke(peer: peer.id, reason: "연결의 화면 범위가 변경되었습니다.")
+            }
+        }
+        lane.reset = { [weak server, weak connection] expectedEpoch in
+            guard let connection, let expectedEpoch else { return }
+            server?.resetPeerVideo(for: connection, expectedEpoch: expectedEpoch)
+        }
+        lane.prepare = { [weak server, weak connection] epoch, admission in
+            guard let connection else { return }
+            server?.preparePeerVideo(epoch, for: connection, admission: admission)
+        }
+        lane.output = { [weak server, weak connection] message, epoch in
+            guard let connection else { return }
+            server?.sendPeerVideo(message, epoch: epoch, to: connection)
+        }
+        lane.commit = { [weak self, weak connection, weak lane] epoch, admission, keyframe in
+            guard let self, let connection, let lane, self.peerStreams[id] === lane else { return }
+            self.server.commitPeerVideo(epoch, catalog: self.peerCatalog(to: connection, lane: lane),
+                admission: admission, to: connection, requestKeyframe: keyframe)
+            self.server.setPeerStreaming(true, for: connection)
+        }
+        lane.onChanged = { [weak self, weak lane, weak connection] in
+            guard let self, let lane, let connection, self.peerStreams[id] === lane else { return }
+            self.peerMenus[id]?.effectAdmission = lane.admission
+            self.peerMenus[id]?.setTarget(self.peerMenuTarget(lane))
+            self.server.setPeerPointerRect(lane.epoch == nil ? nil : lane.description?.bounds, for: connection)
+            self.server.setPeerStreaming(lane.epoch != nil, for: connection)
+            self.sendMicrophoneCatalog(to: connection)
+            self.updatePeerStreamStatus()
+        }
+        return true
+    }
+
+    private func peerCatalog(to connection: NWConnection, lane: PeerStreamSession) -> StreamMessage {
+        var message = listMessage()
+        guard var list = Wire.decode(WindowList.self, from: message.payload) else { return message }
+        lane.decorate(&list)
+        message.payload = Wire.encode(list)
+        return message
+    }
+
+    private func peerMenuTarget(_ lane: PeerStreamSession) -> MenuMirror.Target? {
+        guard lane.epoch != nil else { return nil }
+        if case .window(let id) = lane.source, let window = catalog.window(id: id), let app = window.owningApplication {
+            return MenuMirror.Target(pid: app.processID, app: app.applicationName, bundleID: app.bundleIdentifier, window: id)
+        }
+        guard lane.source == .desktop, let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != WindowCatalog.ownPID,
+              !WindowCatalog.isPrivateApplication(app.bundleIdentifier ?? "") else { return nil }
+        return MenuMirror.Target(pid: app.processIdentifier, app: app.localizedName ?? "Mac 앱", bundleID: app.bundleIdentifier)
+    }
+
+    private func pollPeerStreams() {
+        for (id, lane) in peerStreams {
+            lane.catalogChanged()
+            peerMenus[id]?.setTarget(peerMenuTarget(lane))
+            peerMenus[id]?.catalogPolled()
+        }
+    }
+
+    private func updatePeerStreamStatus() {
+        let live = peerStreams.values.filter { $0.epoch != nil }
+        cursorShapes.running = !live.isEmpty
+        guard let lane = live.first, let epoch = lane.epoch else {
+            if !synthetic { status.update { $0.stream = nil } }
+            return
+        }
+        status.update {
+            $0.stream = HostStatusSnapshot.Stream(kind: lane.source == .desktop ? .desktop : .window,
+                title: live.count > 1 ? "\(live.count)개 기기의 독립 화면" : lane.description?.title ?? "원격 화면",
+                width: epoch.width, height: epoch.height, fps: self.config.maxFPS,
+                mbps: self.config.bitrate / 1_000_000, onVirtualDisplay: false, softwareEncoder: false)
+        }
+    }
+
+    private func handlePeerMessage(_ message: StreamMessage, from connection: NWConnection,
+                                   lane: PeerStreamSession) async -> Bool {
+        let id = ObjectIdentifier(connection)
+        guard !shuttingDown, !lane.isClosed, peerStreams[id] === lane, connections[id] === connection else { return true }
+        switch message.kind {
+        case .selectSource:
+            if let request = Wire.decode(SourceRequest.self, from: message.payload) { lane.select(request) }
+        case .selectDisplay:
+            if let request = Wire.decode(DisplaySelection.self, from: message.payload) { lane.selectDisplay(request) }
+        case .viewport:
+            if let value = Wire.decode(Viewport.self, from: message.payload) { lane.updateViewport(value) }
+        case .input:
+            guard let scoped = Wire.decode(SourceInput.self, from: message.payload) else { return true }
+            if injector.isUpOfSomethingDown(scoped.event, from: id) {
+                injector.apply(scoped.event, in: .null, from: id)
+                return true
+            }
+            guard let epoch = lane.epoch,
+                  lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) != nil else { return true }
+            guard await preparePeerInteraction(lane, epoch: epoch, event: scoped.event),
+                  peerStreams[id] === lane,
+                  let rect = lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) else { return true }
+            logClick(scoped.event, in: rect)
+            injector.apply(scoped.event, in: rect, from: id)
+        case .gesture:
+            guard let gesture = Wire.decode(TrackpadGesture.self, from: message.payload),
+                  let epoch = lane.epoch,
+                  lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return true }
+            let now = CFAbsoluteTimeGetCurrent()
+            var recent = (gestureArrivals[id] ?? []).filter { now - $0 < 1 }
+            guard recent.count < Self.gesturesPerSecond else { return true }
+            recent.append(now); gestureArrivals[id] = recent
+            guard await preparePeerInteraction(lane, epoch: epoch, event: nil),
+                  lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return true }
+            var chords = peerGestureChords[id] ?? GestureChords()
+            let outcome = chords.resolve(gesture.gesture, table: hotKeyTable())
+            if case .chord(_, _, let key, let flags) = outcome { injector.chord(keyCode: key, flags: flags) }
+            peerGestureChords[id] = chords
+        case .fetchMenu:
+            guard let request = Wire.decode(FetchMenu.self, from: message.payload) else { return true }
+            // Initial top-level subscription is observational and allowed before a video exists.
+            if request.id != nil, lane.inputRect(generation: request.generation, epoch: request.videoEpoch) == nil { return true }
+            peerMenus[id]?.fetch(request, from: connection, who: deviceName(connection))
+        case .pressMenuItem:
+            guard let request = Wire.decode(PressMenuItem.self, from: message.payload),
+                  lane.inputRect(generation: request.generation, epoch: request.videoEpoch) != nil else { return true }
+            peerMenus[id]?.effectAdmission = lane.admission
+            peerMenus[id]?.press(request, from: connection, who: deviceName(connection))
+        case .launchApp:
+            guard let request = Wire.decode(LaunchApp.self, from: message.payload),
+                  !WindowCatalog.isPrivateApplication(request.bundleID),
+                  let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: request.bundleID) else { return true }
+            if let window = catalog.infos.first(where: { $0.bundleID == request.bundleID }) {
+                lane.select(SourceRequest(source: .window(window.id), origin: .human))
+                return true
+            }
+            let token = lane.beginLaunch(request.bundleID)
+            let options = NSWorkspace.OpenConfiguration()
+            options.activates = false
+            NSWorkspace.shared.openApplication(at: url, configuration: options) { [weak self, weak lane] _, error in
+                Task { @MainActor in
+                    guard let self, let lane, self.peerStreams[id] === lane else { return }
+                    if error == nil { _ = await self.catalog.refreshWindows() }
+                    lane.finishLaunch(token, windowID: error == nil ? self.catalog.infos.first(where: { $0.bundleID == request.bundleID })?.id : nil)
+                }
+            }
+        case .windowCommand:
+            guard let command = Wire.decode(WindowCommand.self, from: message.payload),
+                  case .window(let windowID) = lane.source, command.id == windowID,
+                  lane.inputRect(generation: command.generation, epoch: command.videoEpoch) != nil,
+                  let window = catalog.window(id: windowID) else { return true }
+            _ = sizer.perform(command.action, on: window)
+            _ = await catalog.refreshWindows()
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func preparePeerInteraction(_ lane: PeerStreamSession, epoch: VideoEpoch,
+                                        event: InputEvent?) async -> Bool {
+        guard lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil else { return false }
+        guard case .window(let id) = lane.source else { return lane.source == .desktop }
+        guard let window = catalog.window(id: id), let app = window.owningApplication else { return false }
+        let activates: Bool
+        switch event {
+        case .pointer(.move, _, _)?: activates = false
+        default: activates = true
+        }
+        if !activates { return true }
+        peerInputSerial &+= 1
+        let serial = peerInputSerial
+        if Self.activePID(trustAppKit: appKitLoop) != app.processID ||
+           sizer.element(for: window, input: true).map({ !WindowSizer.hasKeyboardFocus($0, pid: app.processID) }) ?? true {
+            activateAndRaise(window: window)
+            try? await Task.sleep(for: .milliseconds(60))
+        }
+        guard serial == peerInputSerial,
+              let rect = lane.inputRect(generation: epoch.generation, epoch: epoch.id),
+              Self.activePID(trustAppKit: appKitLoop) == app.processID,
+              let element = sizer.element(for: window, input: true),
+              WindowSizer.hasKeyboardFocus(element, pid: app.processID) else { return false }
+        if let event {
+            let point: CGPoint?
+            switch event {
+            case .pointer(_, let x, let y), .scroll(let x, let y, _, _), .scrollGesture(_, let x, let y):
+                point = CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+            default: point = nil
+            }
+            if let point, Self.topmostWindow(at: point)?.id != id { return false }
+        }
+        return true
+    }
 }
