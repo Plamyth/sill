@@ -75,6 +75,13 @@ private func stubConfiguration() -> URLSessionConfiguration {
 private func response(_ url: URL, _ status: Int = 200, _ type: String = "application/json; charset=utf-8") -> HTTPURLResponse {
     HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": type])!
 }
+private func responseFailure(_ status: Int) -> Error {
+    let response = HTTPURLResponse(url: URL(string: "https://unit.invalid:10443/v1/events")!,
+        statusCode: status, httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": "application/json", "Cache-Control": "no-store"])!
+    do { try ControlEventsTransportFailure.validate(response); fatalError("오류 응답이 수용됨: \(status)") }
+    catch { return error }
+}
 private func gateway() throws -> ControlEventsGateway {
     try VisionControlCredential(origin: VisionControlOrigin("https://unit.invalid:10443"), token: String(repeating: "a", count: 64)).gateway()
 }
@@ -193,14 +200,7 @@ private final class Streams {
         rejects("프레임 상한") { _ = try limited.append(Data("data:123456789".utf8)) }
         var invalidUTF8 = ControlEventsSSEParser()
         rejects("잘못된 UTF-8") { _ = try invalidUTF8.append(Data([0xFF, 10])) }
-        var retry = ControlEventsRetryPolicy()
-        expect(retry.delay(for: ControlEventsTransportFailure.streamEnded) == 1_000_000_000, "EOF 제한 backoff")
-        expect(retry.delay(for: ControlEventsTransportFailure.streamEnded) == nil, "같은 실패 두 번 종료")
-        retry.progressed()
-        expect(retry.delay(for: URLError(.timedOut)) != nil, "일시 네트워크 재접속")
-        expect(retry.delay(for: URLError(.serverCertificateUntrusted)) == nil, "TLS 실패 재시도 금지")
-        expect(retry.delay(for: ControlEventsTransportFailure.authentication) == nil, "인증 실패 재시도 금지")
-        expect(retry.delay(for: ControlEventsTransportFailure.payload) == nil, "계약 실패 재시도 금지")
+        retryChecks()
         let gateway = try gateway()
         let recoveryRequest = try gateway.request()
         expect(recoveryRequest.value(forHTTPHeaderField: "Last-Event-ID") == nil, "전체 snapshot 재접속 정책")
@@ -210,9 +210,42 @@ private final class Streams {
         }
         try await enrollmentChecks()
         try await lifecycleChecks(first: first)
+        try await readinessChecks(first: first)
         let result: ControlEventsValue = .object(["checks": .number(Double(checks)), "externalEffects": .number(0),
             "commonGolden": .array(commonGolden), "mobileGolden": .array(mobileGolden)])
         print(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
+    }
+
+    static func retryChecks() {
+        let unavailable = responseFailure(503)
+        var retry = ControlEventsRetryPolicy()
+        expect(retry.delay(for: unavailable) == 1_000_000_000, "validate의 HTTP 503 오류는 자동 재접속을 예약")
+        let schedule: [UInt64] = [1, 2, 4, 8, 16, 30, 30, 30, 30]
+        let transient: [Error] = [unavailable, ControlEventsTransportFailure.streamEnded] +
+            [URLError.Code.timedOut, .networkConnectionLost, .notConnectedToInternet,
+             .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].map { URLError($0) }
+        for error in transient {
+            retry = ControlEventsRetryPolicy()
+            for seconds in schedule {
+                expect(retry.delay(for: error) == seconds * 1_000_000_000, "같은 transient 오류도 영속 재접속 및 30초 상한")
+            }
+            retry.progressed()
+            expect(retry.delay(for: error) == 1_000_000_000, "원본 patch 진행 후 backoff 초기화")
+        }
+        retry = ControlEventsRetryPolicy()
+        for (index, seconds) in schedule.enumerated() {
+            expect(retry.delay(for: transient[index % transient.count]) == seconds * 1_000_000_000,
+                   "서로 다른 transient 오류도 같은 backoff 상한 사용")
+        }
+        let terminal: [Error] = [401, 403, 302, 307, 500, 429].map { responseFailure($0) } +
+            [ControlEventsTransportFailure.configuration, .authentication, .response, .contentType, .redirect, .payload, .capacity] +
+            [URLError.Code.secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
+             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .clientCertificateRejected,
+             .clientCertificateRequired, .cancelled, .badURL].map { URLError($0) }
+        for error in terminal {
+            expect(retry.delay(for: error) == nil, "인증·TLS·redirect·계약·일반 HTTP 실패 재시도 없음")
+        }
+        expect(ControlEventsTransport.configuration().timeoutIntervalForRequest == 60, "요청 timeout 60초 유지")
     }
 
     static func sessionConnectionChecks(_ fixture: [String: Any]) throws {
@@ -570,11 +603,106 @@ private final class Streams {
         let retrying = ControlEventsController(stream: retryStreams.open, sleep: { delays.value.append($0) })
         retrying.configure(try gateway()); retrying.setVisible(true); retrying.setForeground(true)
         await eventually("재접속 시험 최초 연결") { retryStreams.opened == 1 }
-        retryStreams.continuations[0].finish(throwing: ControlEventsTransportFailure.streamEnded)
-        await eventually("EOF 이후 제한 재접속") { retryStreams.opened == 2 }
-        retryStreams.continuations[1].finish(throwing: ControlEventsTransportFailure.streamEnded)
-        await eventually("동일 오류 두 번 종료") { retrying.reducer.subscription == nil }
-        expect(delays.value == [1_000_000_000], "동일 조건 반복 루프 없음")
+        let schedule: [UInt64] = [1, 2, 4, 8, 16, 30, 30, 30, 30]
+        for index in schedule.indices {
+            retryStreams.continuations[index].finish(throwing: ControlEventsTransportFailure.streamEnded)
+            await eventually("반복 EOF 이후 버튼 없는 재접속 \(index + 1)") { retryStreams.opened == index + 2 }
+        }
+        expect(delays.value == schedule.map { $0 * 1_000_000_000 }, "Controller 반복 EOF도 30초 상한으로 지속")
         retrying.release(); controller.release()
+    }
+
+    @MainActor static func readinessChecks(first: ControlEventsEnvelope) async throws {
+        let streams = Streams()
+        let delays = Box([UInt64]())
+        let sleepGate = Box<CheckedContinuation<Void, Error>?>(nil)
+        let controller = ControlEventsController(stream: streams.open, sleep: { delay in
+            delays.value.append(delay)
+            try await withCheckedThrowingContinuation { sleepGate.value = $0 }
+        })
+        controller.configure(try gateway()); controller.setVisible(true); controller.setForeground(true)
+        await eventually("준비 전 최초 구독") { streams.opened == 1 }
+        for index in 0..<8 {
+            streams.continuations[index].finish(throwing: responseFailure(503))
+            await eventually("반복 503 backoff \(index + 1)") { sleepGate.value != nil }
+            expect(!controller.reducer.isCurrent && controller.reducer.document == nil && controller.projection == nil &&
+                   controller.reducer.version == nil, "최초 snapshot 전 503은 원본 상태를 만들지 않음")
+            let gate = sleepGate.value; sleepGate.value = nil; gate?.resume()
+            await eventually("반복 503 자동 재구독 \(index + 1)") { streams.opened == index + 2 }
+        }
+        expect(delays.value == [1, 2, 4, 8, 16, 30, 30, 30].map { UInt64($0) * 1_000_000_000 },
+               "readiness 반복 503도 세번째 이후 살아 있고 30초 상한")
+        streams.continuations[8].yield(.opened(Date())); streams.continuations[8].yield(.envelope(first))
+        await eventually("readiness 복귀 snapshot 버튼 없이 복원") { controller.reducer.isCurrent }
+        let document = controller.reducer.document
+        let version = controller.reducer.version
+        let projection = controller.projection
+        guard case .snapshot(let originalVersion, let originalDocument) = first else { fatalError() }
+        let originalProjection = try ControlEventsCodec.project(originalDocument)
+        expect(document == originalDocument && version == originalVersion &&
+               projection == originalProjection,
+               "복원 snapshot의 실행·권한·원본 관측은 수신한 원본 그대로")
+        for index in 8..<11 {
+            streams.continuations[index].finish(throwing: responseFailure(503))
+            await eventually("기존 문서 보존 중 503 backoff") { sleepGate.value != nil }
+            expect(!controller.reducer.isCurrent && controller.reducer.document == document &&
+                   controller.reducer.version == version && controller.projection == projection,
+                   "비프레임 503은 stale 문서·revision·observedAt·권한·실행 불변")
+            let gate = sleepGate.value; sleepGate.value = nil; gate?.resume()
+            await eventually("기존 문서 보존 중 자동 재구독") { streams.opened == index + 2 }
+            streams.continuations[index + 1].yield(.opened(Date()))
+            await eventually("SSE 재개는 snapshot 대기") { controller.reducer.transport == .open }
+            expect(!controller.reducer.isCurrent && controller.reducer.document == document &&
+                   controller.reducer.version == version && controller.projection == projection,
+                   "통로 재개만으로 원본 상태·시각·권한 승격 없음")
+        }
+        streams.continuations[11].yield(.envelope(first))
+        await eventually("기존 문서도 snapshot 수신 후 자동 복원") { controller.reducer.isCurrent }
+        expect(controller.reducer.document == document && controller.reducer.version == version && controller.projection == projection,
+               "같은 snapshot 복구는 실행·권한·원본 시간을 새로 만들지 않음")
+        controller.release()
+
+        for action in 0..<4 {
+            let cancelledStreams = Streams()
+            let gate = Box<CheckedContinuation<Void, Error>?>(nil)
+            let cancelled = ControlEventsController(stream: cancelledStreams.open, sleep: { _ in
+                try await withCheckedThrowingContinuation { gate.value = $0 }
+            })
+            cancelled.configure(try gateway()); cancelled.setVisible(true); cancelled.setForeground(true)
+            await eventually("취소 시험 최초 구독") { cancelledStreams.opened == 1 }
+            cancelledStreams.continuations[0].yield(.opened(Date()))
+            cancelledStreams.continuations[0].yield(.envelope(first))
+            await eventually("취소 전 원본 snapshot") { cancelled.reducer.isCurrent }
+            let previousDocument = cancelled.reducer.document
+            let previousVersion = cancelled.reducer.version
+            let previousProjection = cancelled.projection
+            cancelledStreams.continuations[0].finish(throwing: responseFailure(503))
+            await eventually("취소할 503 backoff") { gate.value != nil }
+            switch action {
+            case 0: cancelled.setVisible(false)
+            case 1: cancelled.setForeground(false)
+            case 2: cancelled.release()
+            default: cancelled.configure(nil)
+            }
+            let stoppedDocument = cancelled.reducer.document
+            let stoppedVersion = cancelled.reducer.version
+            let stoppedProjection = cancelled.projection
+            cancelledStreams.continuations[0].yield(.opened(Date()))
+            cancelledStreams.continuations[0].yield(.envelope(first))
+            cancelledStreams.continuations[0].finish(throwing: responseFailure(503))
+            if action == 2 { gate.value?.resume(throwing: CancellationError()) }
+            else { gate.value?.resume() }
+            gate.value = nil
+            try await Task.sleep(nanoseconds: 5_000_000)
+            expect(cancelledStreams.opened == 1 && cancelled.reducer.subscription == nil && !cancelled.reducer.isCurrent,
+                   "숨김·배경·반납·설정 취소 후 추가 구독 없음 \(action)")
+            expect(cancelled.reducer.document == stoppedDocument && cancelled.reducer.version == stoppedVersion &&
+                   cancelled.projection == stoppedProjection, "취소 후 늦은 콜백은 원본 상태를 바꾸지 않음")
+            if action < 3 {
+                expect(stoppedDocument == previousDocument && stoppedVersion == previousVersion && stoppedProjection == previousProjection,
+                       "취소 시 마지막 원본·권한·관측 보존")
+            }
+            cancelled.release()
+        }
     }
 }
