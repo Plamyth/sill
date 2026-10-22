@@ -24,14 +24,20 @@ enum PencilTextCorrectionChecks {
             identifier:"pencilCorrectionNativeEditor",label:"펜 교정 네이티브 검사",
             editSession:{ store.proposalInputSessionID })
         host.rootView = AnyView(editor.frame(width:600,height:300))
-        try await Task.sleep(for:.milliseconds(250))
-        host.view.layoutIfNeeded()
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-        guard let view = descendants(host.view).compactMap({ $0 as? VaultMarkdownEditor.NodeTextView }).first,
-              let controller = view.delegate as? VaultMarkdownEditor.Coordinator,
-              let toolbar = view.inputAccessoryView as? UIToolbar,
-              let mode = toolbar.items?.first(where:{ $0.accessibilityIdentifier == "canvasPencilCorrectionMode" }),
-              let action = mode.action else { throw CocoaError(.validationMissingMandatoryProperty) }
+        for _ in 0..<40 {
+            host.view.layoutIfNeeded()
+            if host.view.window != nil && descendants(host.view).contains(where:{ $0 is VaultMarkdownEditor.NodeTextView }) { break }
+            try await Task.sleep(for:.milliseconds(100))
+        }
+        func missing(_ field: String) -> NSError {
+            NSError(domain:"PencilTextCorrectionFixture",code:1,userInfo:[NSLocalizedDescriptionKey:field])
+        }
+        guard let view = descendants(host.view).compactMap({ $0 as? VaultMarkdownEditor.NodeTextView }).first else { throw missing("편집기 마운트 실패") }
+        guard let controller = view.delegate as? VaultMarkdownEditor.Coordinator else { throw missing("편집기 delegate 없음") }
+        guard let toolbar = view.inputAccessoryView as? UIToolbar else { throw missing("편집 도구 막대 없음") }
+        guard let mode = toolbar.items?.first(where:{ $0.accessibilityIdentifier == "canvasPencilCorrectionMode" }),
+              let action = mode.action else { throw missing("펜 교정 전환 동작 없음") }
         view.becomeFirstResponder()
         try await Task.sleep(for:.milliseconds(200))
         host.view.layoutIfNeeded()
@@ -337,8 +343,9 @@ enum PencilTextCorrectionChecks {
               let alert = presenter.presentedViewController as? UIAlertController,
               let field = alert.textFields?.first else { throw CocoaError(.validationMissingMandatoryProperty) }
         try check(alert.title == "선택 글자 교정" && field.accessibilityIdentifier == "canvasSelectedTextCorrectionInput" &&
-                  field.text == "👩🏽‍💻" && alert.actions.map(\.title) == ["취소","적용"] && alert.preferredAction?.isEnabled == false,
-                  "실제 수동 교정 창은 원래 선택 글자·취소·명시 적용을 표시")
+                  field.text == "👩🏽‍💻" && alert.actions.map(\.title) == ["취소","입력 그대로 적용","적용"] &&
+                  alert.preferredAction?.isEnabled == false && alert.actions[1].isEnabled == false,
+                  "실제 수동 교정 창은 원래 선택 글자·취소·명시 적용과 원문 경로를 표시")
         field.text = "고침"
         field.sendActions(for:.editingChanged)
         try check(alert.preferredAction?.isEnabled == true && view.text == source,"대체 입력만으로 원문을 확정하지 않음")
@@ -347,7 +354,69 @@ enum PencilTextCorrectionChecks {
         try check(alert.preferredAction?.isEnabled == false && view.text == source,"교정 입력창 IME 중 적용 비활성")
         field.unmarkText()
         controller.cancelSelectionCorrection()
+        for _ in 0..<40 {
+            if presenter.presentedViewController == nil { break }
+            try await Task.sleep(for:.milliseconds(50))
+        }
+        try check(presenter.presentedViewController == nil,"이전 교정 창이 닫힌 뒤 다음 네이티브 입력 검사 시작")
+        view.becomeFirstResponder()
+        try await Task.sleep(for:.milliseconds(200))
+        install("가다\n\n보존할 문단\n",range:NSRange(location:0,length:2))
+        UIApplication.shared.sendAction(action,to:item.target,from:item,for:nil)
+        try await Task.sleep(for:.milliseconds(350))
+        guard let wordAlert = presenter.presentedViewController as? UIAlertController,
+              let wordField = wordAlert.textFields?.first,
+              let wordSnapshot = controller.pendingCorrection else {
+            throw NSError(domain:"PencilTextCorrectionFixture",code:2,userInfo:[NSLocalizedDescriptionKey:"단어 교정 창 준비 실패 presented=\(String(describing:presenter.presentedViewController)) selection=\(view.selectedRange) pending=\(controller.pendingCorrection != nil)"])
+        }
+        wordField.text = " 가구 ."
+        wordField.sendActions(for:.editingChanged)
+        try check(wordAlert.message?.hasPrefix("적용 결과: \("가구".debugDescription)") == true &&
+                  wordAlert.message?.contains("입력 그대로 적용: \(" 가구 .".debugDescription)") == true &&
+                  wordAlert.preferredAction?.isEnabled == true && wordAlert.actions[1].isEnabled,
+                  "실제47 관측 입력은 정리된 단어와 원문 두 결과를 표시하고 명시 적용을 기다림")
+        wordField.text = " 가다 ."
+        wordField.sendActions(for:.editingChanged)
+        try check(wordAlert.preferredAction?.isEnabled == false && wordAlert.actions[1].isEnabled,
+                  "정리 결과가 원래 단어와 같으면 기본 변경은 막고 의도한 원문 적용은 허용")
+        for raw in ["가구."," 가구 다리 "," 3.14 .","`가구`","**가구**","가구\n"," e\u{301} ."] {
+            wordField.text = raw
+            wordField.sendActions(for:.editingChanged)
+            let observed = wordField.text ?? ""
+            if raw == "가구\n" {
+                print("PENCIL_NATIVE_SINGLE_LINE requested=\(raw.debugDescription) observed=\(observed.debugDescription)")
+            } else {
+                try check(observed.utf8.elementsEqual(raw.utf8),"네이티브 입력값의 UTF8 보존 \(raw.debugDescription)")
+            }
+            let input = CanvasPencilTextCorrectionInput(text:wordSnapshot.text,selection:wordSnapshot.selection,raw:observed)
+            try check(wordAlert.message?.hasPrefix("적용 결과: \(input.preferred.debugDescription)") == true &&
+                      wordAlert.actions[1].isEnabled == (input.word != nil),
+                      "네이티브 미리보기와 실제 입력 바이트가 일치 \(observed.debugDescription)")
+        }
+        wordField.text = " 가구 ."
+        wordField.sendActions(for:.editingChanged)
+        wordField.setMarkedText("조합",selectedRange:NSRange(location:1,length:0))
+        wordField.sendActions(for:.editingChanged)
+        try check(wordAlert.actions.filter({ $0.style != .cancel }).allSatisfy({ !$0.isEnabled }),
+                  "단어 적용과 원문 적용 모두 교정 입력창 IME 동안 비활성")
+        wordField.unmarkText()
+        controller.cancelSelectionCorrection()
         try await Task.sleep(for:.milliseconds(150))
+        for rawMode in [false,true] {
+            let original = "가다\n\n보존할 문단\n"
+            install(original,range:NSRange(location:0,length:2))
+            let snapshot = try begin()
+            let input = CanvasPencilTextCorrectionInput(text:original,selection:snapshot.selection,raw:" 가구 .")
+            view.undoManager?.beginUndoGrouping()
+            let applied = controller.confirmSelectionCorrection(snapshot,replacement:rawMode ? input.raw : input.preferred)
+            view.undoManager?.endUndoGrouping()
+            let expected = rawMode ? " 가구 .\n\n보존할 문단\n" : "가구\n\n보존할 문단\n"
+            try check(applied && view.text.utf8.elementsEqual(expected.utf8),"명시한 기본·원문 결과만 UITextView 선택 범위에 적용 \(rawMode)")
+            view.undoManager?.undo(); controller.textViewDidChange(view)
+            try check(view.text.utf8.elementsEqual(original.utf8),"기본·원문 교정 Undo 원문 복원 \(rawMode)")
+            view.undoManager?.redo(); controller.textViewDidChange(view)
+            try check(view.text.utf8.elementsEqual(expected.utf8),"기본·원문 교정 Redo 결과 보존 \(rawMode)")
+        }
         view.becomeFirstResponder()
         install("가다",range:NSRange(location:1,length:1))
     }
