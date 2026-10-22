@@ -24,14 +24,20 @@ enum PencilTextCorrectionChecks {
             identifier:"pencilCorrectionNativeEditor",label:"펜 교정 네이티브 검사",
             editSession:{ store.proposalInputSessionID })
         host.rootView = AnyView(editor.frame(width:600,height:300))
-        try await Task.sleep(for:.milliseconds(250))
-        host.view.layoutIfNeeded()
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-        guard let view = descendants(host.view).compactMap({ $0 as? VaultMarkdownEditor.NodeTextView }).first,
-              let controller = view.delegate as? VaultMarkdownEditor.Coordinator,
-              let toolbar = view.inputAccessoryView as? UIToolbar,
-              let mode = toolbar.items?.first(where:{ $0.accessibilityIdentifier == "canvasPencilCorrectionMode" }),
-              let action = mode.action else { throw CocoaError(.validationMissingMandatoryProperty) }
+        for _ in 0..<40 {
+            host.view.layoutIfNeeded()
+            if host.view.window != nil && descendants(host.view).contains(where:{ $0 is VaultMarkdownEditor.NodeTextView }) { break }
+            try await Task.sleep(for:.milliseconds(100))
+        }
+        func missing(_ field: String) -> NSError {
+            NSError(domain:"PencilTextCorrectionFixture",code:1,userInfo:[NSLocalizedDescriptionKey:field])
+        }
+        guard let view = descendants(host.view).compactMap({ $0 as? VaultMarkdownEditor.NodeTextView }).first else { throw missing("편집기 마운트 실패") }
+        guard let controller = view.delegate as? VaultMarkdownEditor.Coordinator else { throw missing("편집기 delegate 없음") }
+        guard let toolbar = view.inputAccessoryView as? UIToolbar else { throw missing("편집 도구 막대 없음") }
+        guard let mode = toolbar.items?.first(where:{ $0.accessibilityIdentifier == "canvasPencilCorrectionMode" }),
+              let action = mode.action else { throw missing("펜 교정 전환 동작 없음") }
         view.becomeFirstResponder()
         try await Task.sleep(for:.milliseconds(200))
         host.view.layoutIfNeeded()
