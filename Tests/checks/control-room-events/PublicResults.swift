@@ -282,6 +282,51 @@ func publicResultChecks() async throws {
         check(choice.sessionID == selected.sessionID && choice.resultDisplay(in:last,now:now) == .lastObserved(body),
             "\(label) read 가능한 마지막 공개 관측은 선택과 보존")
     }
+    for status in [401,403] {
+        StubURL.reset([.init(data:valid,finish:true),.init(status:status,finish:true)])
+        var last: ControlRoomEventUpdate?
+        for await update in stream() { last = update }
+        check(last?.projection == nil, "HTTP \(status) 명시적 접근 회수는 마지막 관측도 소거")
+        var choice = selected
+        choice.reconcile(last?.projection)
+        check(choice.sessionID == nil, "HTTP \(status) 선택 소거")
+    }
+    for removed in [false,true] {
+        let deniedRows = removed ? rows.filter { $0["source"] as? String != "cursor-cloud" } : rows.map { row in
+            guard row["source"] as? String == "cursor-cloud" else { return row }
+            return row.merging(["capabilities":["read":false,"send":false]]) { _,new in new }
+        }
+        let restoredRows = rows.map { row in
+            row["source"] as? String == "cursor-cloud" ? row.merging(["result":"SYNTHETIC_RESTORED"]) { _,new in new } : row
+        }
+        let denied = try frame(patch(1,set:["unifiedControl":["schema":1,"rows":deniedRows,"truncated":false]]))
+        let restored = try frame(patch(2,set:["unifiedControl":["schema":1,"rows":restoredRows,"truncated":false]]))
+        StubURL.reset([.init(data:valid + denied + restored)])
+        let updates = Updates()
+        let task = Task { for await update in stream() { await updates.add(update) } }
+        try await wait("회수 뒤 복구 프레임") {
+            await updates.all().contains { update in
+                update.projection?.sessions(for:.cursorCloud).first?.result == "SYNTHETIC_RESTORED"
+            }
+        }
+        task.cancel(); await task.value
+        let final = await updates.all().last { $0.projection?.sessions(for:.cursorCloud).first?.result == "SYNTHETIC_RESTORED" }!.projection!
+        var choice = selected
+        check(choice.resultDisplay(in:final,now:now) == nil, "중간 회수 UI 생략 뒤 자동 본문 복원 금지")
+        check(initial.sourceSelectionContext != final.sourceSelectionContext,
+            "같은 ID 복구에도 회수 이력이 UI context에 남음")
+        choice.reconcile(final)
+        check(choice.sessionID == nil, "중간 회수 UI 생략 뒤 선택 소거")
+        var sibling = ControlRoomSourceSelection()
+        sibling.select(session:initial.sessions(for:.codex).first { $0.externalId == siblingID }!,in:initial)
+        sibling.reconcile(final)
+        check(sibling.session(in:final)?.externalId == siblingID, "무관한 공개 형제 선택 보존")
+        choice.select(session:final.sessions(for:.cursorCloud)[0],in:final)
+        choice.reconcile(final.disconnected())
+        check(choice.resultDisplay(in:final.disconnected(),now:now) == .lastObserved("SYNTHETIC_RESTORED"),
+            "복구 후 명시적 선택은 새 회수 이력에 결박되고 단절에도 유지")
+    }
+    print("PASS 명시적 HTTP401/403 회수, 병합된 read 회수/행 제거, 무관한 형제·명시적 재선택 보존")
     print("PASS Cloud terminal old observedAt 16case, observation 31/60/89/90초, current/lastObserved, read/unavailable 회수, null 선택 보존, generation/owner/run·복귀 선택, send 승격 0")
     print("PASS 공개 보호 6case source/selection synthetic snapshot·patch, Cloud 전체 교체/read/exact identity/UTF8, invalidframe/disconnect")
 }
