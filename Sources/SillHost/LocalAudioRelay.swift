@@ -325,7 +325,8 @@ final class LocalAudioRelay {
 
     func forwardingEvidence(peer: AudioForwardingPairedDevice, connectionID: UUID,
                             operation: AudioForwardingEvidenceOperation,
-                            admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+                            admission: (@MainActor () -> Bool)? = nil,
+                            onSubmission: (@MainActor () -> Void)? = nil) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         struct Evidence: Encodable {
             let pairedDeviceId: AudioForwardingDeviceID
             let pairingGeneration: UUID
@@ -339,6 +340,7 @@ final class LocalAudioRelay {
                 connectionId: connectionID, operation: operation), admission: { [weak self] in
                 guard let self, admission?() != false, case .connected(let currentBoot) = self.state,
                       currentBoot == boot, self.registeredBoot == boot, self.participants.snapshot == membership else { return false }
+                onSubmission?()
                 return true
             })
         guard admission?() != false, !Task.isCancelled, case .connected(let currentBoot) = state,
@@ -461,6 +463,13 @@ final class LocalAudioRelay {
     func forwardingDisconnect(_ binding: AudioForwardingBinding) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         struct Disconnection: Encodable { let bindingEpoch: UUID }
         return await forwardingCall("forwardingDisconnect", payload: Disconnection(bindingEpoch: binding.bindingEpoch))
+    }
+
+    func waitUntilExited(until deadline: ContinuousClock.Instant) async -> Bool {
+        while process.isRunning, ContinuousClock.now < deadline, !Task.isCancelled {
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
+        }
+        return !process.isRunning
     }
 
     func forwardingLocalReturn(expectedRevision: AudioForwardingRevision,

@@ -3866,9 +3866,12 @@ extension StreamCoordinator {
         do {
             let relay = try LocalAudioRelayLaunch.makeForwardingRelay(participants: audioPrivacy.participants)
             let runtime = HostAudioForwardingRuntime(relay: relay, privacy: audioPrivacy, sentry: sentry,
+                replacement: { try LocalAudioRelayLaunch.makeForwardingRelay(participants: audioPrivacy.participants) },
                 fenceMedia: { [weak self] in
                     guard let self else { return }
                     self.physicalAudioRoutesRetired = true
+                    for connection in self.connections.values { self.server.setRemoteAudio(false, for: connection) }
+                    self.enqueueRemoteAudioRevocation(reason: "공통 음성 권한을 다시 확인합니다.")
                     self.microphoneIngress.revoke()
                     self.microphoneReceiver.forgetCapabilities()
                     self.microphoneReceiver.revoke(reason: "음성 기기 전환을 위해 이전 경로를 종료합니다.")
@@ -3882,7 +3885,10 @@ extension StreamCoordinator {
             nativeAudioBindingAuthorized = { [weak runtime] fingerprint, direction in
                 runtime?.allows(fingerprint, direction: direction) == true
             }
-            audioPrivacy.forwardingInvalidated = { [weak runtime] in runtime?.invalidate() }
+            audioPrivacy.forwardingInvalidated = { [weak runtime] in
+                runtime?.evidenceWillChange()
+                runtime?.invalidate()
+            }
             audioPrivacy.authenticatedLocalReturnWillCommit = { [weak runtime] admission in
                 await runtime?.returnToLocal(admission: admission) == true
             }

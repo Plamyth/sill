@@ -16,15 +16,34 @@ final class HostAudioForwardingRuntime {
     private struct Session {
         let context: AudioForwardingConnectionContext
         let credential: AudioForwardingCredential
+        let generation = UUID()
     }
-    private let relay: LocalAudioRelay
+    private final class Enrollment {
+        let context: AudioForwardingConnectionContext
+        let relay: LocalAudioRelay
+        var submitted = false
+        init(_ context: AudioForwardingConnectionContext, relay: LocalAudioRelay) {
+            self.context = context; self.relay = relay
+        }
+    }
+    private var relay: LocalAudioRelay
+    private let replacement: (() throws -> LocalAudioRelay)?
+    private var enrollments: [UUID: Enrollment] = [:]
+    private var evidenceRevision = UUID()
+    private var recovering: Task<Void, Never>?
+    private var recoveryNeeded = false
+    private var recoveryBlocked = false
+    private var recoveryContexts: [AudioForwardingConnectionContext] = []
+    private var retiredRelay: LocalAudioRelay?
     private let privacy: HostAudioPrivacy
     private let sentry: HostSentry
     private let participants: AudioForwardingParticipants
-    private let protection: AudioForwardingProtection
+    private lazy var protection = AudioForwardingProtection(audio: privacy, sentry: sentry,
+        configuration: { [weak self] in self?.configuration })
     private let fenceMedia: () -> Void
     private let commitMedia: (AudioForwardingCoordinator.Scope?) -> Void
     private var sessions: [UUID: Session] = [:]
+    private var retiringSessions: [UUID: Session] = [:]
     private var polling: Task<Void, Never>?
     private var preparation: Task<Void, Never>?
     private var preparing: UUID?
@@ -59,17 +78,16 @@ final class HostAudioForwardingRuntime {
     ))
 
     init(relay: LocalAudioRelay, privacy: HostAudioPrivacy, sentry: HostSentry,
+         replacement: (() throws -> LocalAudioRelay)? = nil,
          fenceMedia: @escaping () -> Void,
          commitMedia: @escaping (AudioForwardingCoordinator.Scope?) -> Void) {
         self.relay = relay
+        self.replacement = replacement
         self.privacy = privacy
         self.sentry = sentry
         self.fenceMedia = fenceMedia
         self.commitMedia = commitMedia
         participants = AudioForwardingParticipants(registry: privacy.participants)
-        protection = AudioForwardingProtection(audio: privacy, sentry: sentry, configuration: {
-            relay.forwardingConfiguration(privacyGeneration: privacy.forwardingPrivacyGeneration)
-        })
     }
 
     private var configuration: AudioForwardingConfiguration? {
@@ -93,7 +111,7 @@ final class HostAudioForwardingRuntime {
 
     func exchange(_ control: AudioForwardingControl,
                   context: AudioForwardingConnectionContext) async -> AudioForwardingState? {
-        guard running, context.isCurrent(),
+        guard running, recovering == nil, !recoveryNeeded, !recoveryBlocked, context.isCurrent(),
               let bootstrap = await enroll(context), context.isCurrent() else { return nil }
         if control.operation == .observe {
             guard let catalog = try? AudioForwardingCatalog(principal: context.principal,
@@ -120,33 +138,122 @@ final class HostAudioForwardingRuntime {
     }
 
     private func enroll(_ context: AudioForwardingConnectionContext) async -> AudioForwardingBootstrap? {
-        guard context.isCurrent(), privacy.forwardingIntentAllowed else { return nil }
-        if !privacy.latched {
-            guard privacy.forwardingIntentAllowed else { return nil }
-            _ = privacy.armAndVerify()
+        guard context.isCurrent(), privacy.forwardingIntentAllowed, running else { return nil }
+        if !privacy.latched { _ = privacy.armAndVerify() }
+        let owner = Enrollment(context, relay: relay)
+        let generation = evidenceRevision
+        enrollments[context.connectionID] = owner
+        let admitted = { [weak self, weak owner] in
+            guard let self, let owner else { return false }
+            return self.running && !self.recoveryBlocked && self.relay === owner.relay &&
+                self.privacy.forwardingIntentAllowed && self.evidenceRevision == generation &&
+                self.enrollments[context.connectionID] === owner && context.isCurrent()
         }
-        guard case .accepted = await relay.forwardingConfigure(
-                privacyGeneration: privacy.forwardingPrivacyGeneration), context.isCurrent(),
-              case .accepted(let bootstrap) = await relay.forwardingBootstrap(peer: context.peer,
-                admission: context.isCurrent), context.isCurrent(),
-              case .accepted(let value) = await relay.forwardingEvidence(peer: context.peer,
-                connectionID: context.connectionID, operation: .attach, admission: context.isCurrent),
-              context.isCurrent() else { return nil }
+        var retained = false
+        defer {
+            if enrollments[context.connectionID] === owner { enrollments.removeValue(forKey: context.connectionID) }
+            if !retained, owner.submitted, relay === owner.relay { resetAfterUncertainEvidence() }
+        }
+        guard admitted(), case .accepted = await owner.relay.forwardingConfigure(
+                privacyGeneration: privacy.forwardingPrivacyGeneration), admitted(),
+              case .accepted(let bootstrap) = await owner.relay.forwardingBootstrap(peer: context.peer,
+                admission: admitted), admitted(),
+              case .accepted(let value) = await owner.relay.forwardingEvidence(peer: context.peer,
+                connectionID: context.connectionID, operation: .attach, admission: admitted,
+                onSubmission: { owner.submitted = true }), admitted() else { return nil }
         sessions[context.connectionID] = Session(context: context, credential: bootstrap.credential)
+        retained = true
         observe(value)
         return try? AudioForwardingBootstrap(credential: bootstrap.credential,
             ownCursor: bootstrap.ownCursor, snapshot: value)
     }
 
+    func evidenceWillChange() {
+        evidenceRevision = UUID()
+        if enrollments.values.contains(where: { $0.submitted }) { resetAfterUncertainEvidence() }
+    }
+
+    private func resetAfterUncertainEvidence() {
+        guard running, !recoveryBlocked, relay !== retiredRelay else { return }
+        retiredRelay = relay
+        if recovering != nil {
+            recoveryBlocked = true
+            evidenceRevision = UUID()
+            enrollments.removeAll()
+            sessions.removeAll()
+            retiringSessions.removeAll()
+            invalidate()
+            relay.lost()
+            return
+        }
+        guard !recoveryNeeded else { return }
+        recoveryContexts = sessions.values.map(\.context).filter { $0.connectionIsCurrent() }
+        evidenceRevision = UUID()
+        enrollments.removeAll()
+        sessions.removeAll()
+        retiringSessions.removeAll()
+        recoveryNeeded = true
+        invalidate()
+        relay.lost()
+        scheduleRecovery()
+    }
+
+    private func scheduleRecovery() {
+        guard running, recoveryNeeded, recovering == nil, !recoveryBlocked,
+              privacy.forwardingIntentAllowed else { return }
+        recoveryNeeded = false
+        let previous = relay
+        recovering = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.recovering = nil }
+            guard await previous.waitUntilExited(until: .now.advanced(by: .seconds(3))),
+                  self.running, !Task.isCancelled else { self.recoveryBlocked = true; return }
+            guard self.privacy.forwardingIntentAllowed else { self.recoveryNeeded = true; return }
+            do {
+                guard let factory = self.replacement else { self.recoveryBlocked = true; return }
+                let next = try factory()
+                self.relay = next
+                guard await next.start(), self.running, !Task.isCancelled, self.privacy.forwardingIntentAllowed,
+                      case .accepted = await next.forwardingConfigure(
+                        privacyGeneration: self.privacy.forwardingPrivacyGeneration), self.privacy.forwardingIntentAllowed else {
+                    next.lost(); self.recoveryBlocked = true; return
+                }
+                let contexts = self.recoveryContexts
+                self.recoveryContexts.removeAll()
+                for context in contexts where context.connectionIsCurrent() {
+                    let renewed = AudioForwardingConnectionContext(peer: context.peer, principal: context.principal,
+                        role: context.role, connectionID: context.connectionID,
+                        connectionIsCurrent: context.connectionIsCurrent, isCurrent: context.connectionIsCurrent)
+                    _ = await self.enroll(renewed)
+                }
+            } catch {
+                self.recoveryBlocked = true
+            }
+            if self.recoveryBlocked {
+                print("연결 증거를 다시 확인하지 못해 원격 음성을 차단했습니다. 저장된 페어링과 음성 선택은 유지합니다.")
+            }
+        }
+    }
+
     func disconnected(_ connectionID: UUID) {
+        if let enrollment = enrollments.removeValue(forKey: connectionID), enrollment.submitted {
+            resetAfterUncertainEvidence()
+        }
         guard let session = sessions.removeValue(forKey: connectionID) else { return }
         if (active?.binding.pairedDeviceId ?? preparingBinding?.pairedDeviceId) == session.context.peer.id,
            !sessions.values.contains(where: { $0.context.peer.id == session.context.peer.id && $0.context.connectionIsCurrent() }) {
             invalidate()
         }
-        Task { @MainActor [relay] in
-            _ = await relay.forwardingEvidence(peer: session.context.peer, connectionID: connectionID, operation: .detach)
-        }
+        retiringSessions[connectionID] = session
+        Task { @MainActor [weak self] in await self?.retireEvidence(session) }
+    }
+
+    private func retireEvidence(_ session: Session) async {
+        let id = session.context.connectionID, previous = relay
+        let result = await previous.forwardingEvidence(peer: session.context.peer, connectionID: id, operation: .detach)
+        guard retiringSessions[id]?.generation == session.generation else { return }
+        if case .accepted = result { retiringSessions.removeValue(forKey: id) }
+        else if running, relay === previous { resetAfterUncertainEvidence() }
     }
 
     func allows(_ fingerprint: Data, direction: PrivacyAudioScope) -> Bool {
@@ -161,17 +268,32 @@ final class HostAudioForwardingRuntime {
     }
 
     private func refresh() async {
-        guard running, privacy.forwardingIntentAllowed else { return }
+        scheduleRecovery()
+        guard running, recovering == nil, !recoveryNeeded, !recoveryBlocked, privacy.forwardingIntentAllowed else { return }
+        let generation = evidenceRevision
+        for session in Array(retiringSessions.values) {
+            await retireEvidence(session)
+            guard running, evidenceRevision == generation, privacy.forwardingIntentAllowed else { return }
+        }
         for (id, session) in Array(sessions) {
             guard session.context.connectionIsCurrent() else { disconnected(id); continue }
-            guard case .accepted(let value) = await relay.forwardingEvidence(peer: session.context.peer,
-                connectionID: id, operation: .renew, admission: session.context.connectionIsCurrent) else {
-                disconnected(id)
-                continue
+            let result = await relay.forwardingEvidence(peer: session.context.peer,
+                connectionID: id, operation: .renew, admission: { [weak self] in
+                    guard let self else { return false }
+                    return self.running && self.privacy.forwardingIntentAllowed && self.evidenceRevision == generation &&
+                        self.sessions[id]?.generation == session.generation && session.context.connectionIsCurrent()
+                })
+            guard running, privacy.forwardingIntentAllowed, evidenceRevision == generation else { return }
+            guard sessions[id]?.generation == session.generation else { continue }
+            guard case .accepted(let value) = result else {
+                if result == nil { resetAfterUncertainEvidence(); return }
+                disconnected(id); continue
             }
             observe(value)
         }
-        guard let value = await readSnapshot() else { invalidate(); return }
+        guard running, privacy.forwardingIntentAllowed, evidenceRevision == generation else { return }
+        guard let value = await readSnapshot() else { resetAfterUncertainEvidence(); return }
+        guard running, privacy.forwardingIntentAllowed, evidenceRevision == generation else { return }
         observe(value)
     }
 
@@ -232,13 +354,18 @@ final class HostAudioForwardingRuntime {
     }
 
     func returnToLocal(admission: @escaping @MainActor () -> Bool) async -> Bool {
-        guard running, admission() else { return false }
-        let retiring = Array(sessions.values)
+        guard running, recovering == nil, !recoveryNeeded, !recoveryBlocked, admission() else { return false }
+        evidenceWillChange()
+        guard !recoveryNeeded, recovering == nil, admission() else { return false }
+        for (id, session) in sessions { retiringSessions[id] = session }
         sessions.removeAll()
-        for session in retiring {
+        for session in Array(retiringSessions.values) {
             guard admission(), case .accepted = await relay.forwardingEvidence(peer: session.context.peer,
                 connectionID: session.context.connectionID, operation: .detach, admission: admission),
                 admission() else { return false }
+            if retiringSessions[session.context.connectionID]?.generation == session.generation {
+                retiringSessions.removeValue(forKey: session.context.connectionID)
+            }
         }
         guard let current = await readSnapshot(), admission(),
               case .accepted(let cleared) = await relay.forwardingLocalReturn(
@@ -253,8 +380,13 @@ final class HostAudioForwardingRuntime {
         running = false
         polling?.cancel()
         polling = nil
+        recovering?.cancel()
+        recovering = nil
+        enrollments.removeAll()
+        evidenceRevision = UUID()
         invalidate()
         sessions.removeAll()
+        retiringSessions.removeAll()
         relay.lost()
     }
 }
