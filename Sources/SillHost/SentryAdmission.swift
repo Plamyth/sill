@@ -10,7 +10,7 @@ final class SentryAdmission: @unchecked Sendable {
     private let lock = NSLock()
     private let bootID = UUID()
     private var revision = UUID()
-    private var membershipRevision = UUID()
+    private var protectionRevision = UUID()
     private var enabled = false
     private var requested = false
     private var surfacesVerified = false
@@ -24,16 +24,12 @@ final class SentryAdmission: @unchecked Sendable {
 
     struct ProtectionSnapshot: Equatable {
         fileprivate let revision: UUID
-        fileprivate let membershipRevision: UUID
-        fileprivate let sessions: [ObjectIdentifier: UUID]
-        fileprivate let admitted: Set<ObjectIdentifier>
     }
 
     func protectionSnapshot() -> ProtectionSnapshot? {
         lock.lock(); defer { lock.unlock() }
-        guard enabled, requested, persistenceHealthy, !returningLocal else { return nil }
-        return ProtectionSnapshot(revision: revision, membershipRevision: membershipRevision, sessions: sessions.mapValues(\.id),
-                                  admitted: Set(sessions.compactMap { $0.value.admitted ? $0.key : nil }))
+        guard enabled, requested, persistenceHealthy, surfacesVerified, !returningLocal else { return nil }
+        return ProtectionSnapshot(revision: protectionRevision)
     }
 
     func protectionMatches(_ proof: ProtectionSnapshot) -> Bool { protectionSnapshot() == proof }
@@ -46,6 +42,7 @@ final class SentryAdmission: @unchecked Sendable {
     func configure(latched: Bool, persistenceHealthy: Bool) {
         lock.lock(); defer { lock.unlock() }
         enabled = true
+        protectionRevision = UUID()
         requested = requested || latched
         self.persistenceHealthy = persistenceHealthy
         revision = UUID()
@@ -53,24 +50,22 @@ final class SentryAdmission: @unchecked Sendable {
 
     func register(_ peer: ObjectIdentifier, externalRoute: Bool) {
         lock.lock(); defer { lock.unlock() }
-        membershipRevision = UUID()
         sessions[peer] = Session()
         if enabled && externalRoute && !requested {
             requested = true
             surfacesVerified = false
+            protectionRevision = UUID()
             revision = UUID()
         }
     }
 
     func admit(_ peer: ObjectIdentifier) {
         lock.lock(); defer { lock.unlock() }
-        if sessions[peer]?.admitted == false { membershipRevision = UUID() }
         sessions[peer]?.admitted = true
     }
 
     func remove(_ peer: ObjectIdentifier) {
         lock.lock(); defer { lock.unlock() }
-        if sessions[peer] != nil { membershipRevision = UUID() }
         sessions[peer] = nil
         peerCaptureEpochs[peer] = nil
         independentCapturePeers.remove(peer)
@@ -81,6 +76,7 @@ final class SentryAdmission: @unchecked Sendable {
         guard !requested else { return }
         requested = true
         surfacesVerified = false
+        protectionRevision = UUID()
         revision = UUID()
     }
 
@@ -92,6 +88,7 @@ final class SentryAdmission: @unchecked Sendable {
     func update(verified: Bool, persistenceHealthy: Bool, reason: String?) {
         lock.lock(); defer { lock.unlock() }
         guard surfacesVerified != verified || self.persistenceHealthy != persistenceHealthy || self.reason != reason else { return }
+        protectionRevision = UUID()
         surfacesVerified = verified
         self.persistenceHealthy = persistenceHealthy
         self.reason = reason
@@ -175,6 +172,7 @@ final class SentryAdmission: @unchecked Sendable {
         if !requested {
             requested = true
             surfacesVerified = false
+            protectionRevision = UUID()
             revision = UUID()
         }
         return true
@@ -182,6 +180,7 @@ final class SentryAdmission: @unchecked Sendable {
 
     func fenceForLocalReturn() {
         lock.lock(); defer { lock.unlock() }
+        protectionRevision = UUID()
         returningLocal = true
         surfacesVerified = false
         revision = UUID()
@@ -192,6 +191,7 @@ final class SentryAdmission: @unchecked Sendable {
         sessions.removeAll()
         peerCaptureEpochs.removeAll()
         independentCapturePeers.removeAll()
+        protectionRevision = UUID()
         requested = false
         returningLocal = false
         surfacesVerified = false

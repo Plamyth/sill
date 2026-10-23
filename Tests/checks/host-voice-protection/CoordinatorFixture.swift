@@ -40,10 +40,16 @@ private final class BoundaryHardware: AudioRouteHardware {
                        intent: AudioRouteWriteIntent) -> AudioRouteWrite { writes += 1; return .attempted(success: true) }
 }
 
+private final class BoundaryForwardingRuntime {
+    var invalidations = 0
+    func invalidate() { invalidations += 1 }
+}
+
 @MainActor
 private final class PrivacyCoordinatorFixture {
     let audioPrivacy: HostAudioPrivacy?
-    var nativeAudioBindingAuthorized: ((Data) -> Bool)? = { _ in true }
+    var nativeAudioBindingAuthorized: ((Data, PrivacyAudioScope) -> Bool)? = { _, _ in true }
+    var forwardingRuntime: BoundaryForwardingRuntime?
     var physicalAudioRoutesRetired = false
     var peerStreams: [ObjectIdentifier: (epoch: UUID?, unused: Bool)] = [:]
     private func peerAudioDisplay(_ id: ObjectIdentifier) -> Int? { catalog.display }
@@ -96,7 +102,11 @@ private final class PrivacyCoordinatorFixture {
         expect(!canEnableRemoteAudio(id, requestID: request, action: 1), "바인딩 확인 없는 재생 승인 거부")
         expect(Wire.decode(WindowList.self, from: microphoneCatalog(to: peer).payload)?.microphone == nil,
                "바인딩 확인 없는 마이크 capability 거부")
-        nativeAudioBindingAuthorized = { _ in true }
+        nativeAudioBindingAuthorized = { _, _ in true }
+        nativeAudioBindingAuthorized = { _, direction in direction == .output }
+        expect(nativeAudioBindingReady(peer, direction: .output), "정확한 출력 방향만 원장 승인")
+        expect(!nativeAudioBindingReady(peer, direction: .input), "출력 승인은 마이크 승인으로 확대되지 않음")
+        nativeAudioBindingAuthorized = { _, _ in true }
         remoteAudioRequests[id] = request; remoteAudioActions[id] = 1
         expect(canEnableRemoteAudio(id, requestID: request, action: 1) == wasReady, "audio admission requires readback")
         let list = Wire.decode(WindowList.self, from: microphoneCatalog(to: peer).payload)!
@@ -112,7 +122,9 @@ private final class PrivacyCoordinatorFixture {
                    "physical route refusal is correlated")
         }
         remoteAudioSubscribers.insert(id)
+        forwardingRuntime = BoundaryForwardingRuntime()
         audioPrivacyChanged(AudioPrivacyState(protected: false, reason: "시험 실패"))
+        expect(forwardingRuntime?.invalidations == 1, "보호 상실은 공통 native·HTTP 바인딩을 즉시 취소")
         expect(server.disabled == 1 && microphoneIngress.revoked > 0 && microphoneReceiver.revoked > 0 &&
                microphoneReceiver.forgotten > 0, "property failure closes existing audio and microphone gates synchronously")
         expect(remoteAudioRequests.isEmpty && remoteAudioActions.isEmpty, "in-flight subscription cannot revive after failure")

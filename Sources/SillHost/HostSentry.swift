@@ -34,6 +34,7 @@ final class HostSentry {
     private var operation = Operation.idle
     private var membershipGeneration = UUID()
     var changed: (() -> Void)?
+    var protectionInvalidated: (() -> Void)?
 
     init(admission: SentryAdmission, initiallyLatched: Bool, persistenceHealthy: Bool,
          persist: @escaping (SentryJournalState) -> Bool, surfaces: SentrySurfaceOperations,
@@ -49,7 +50,6 @@ final class HostSentry {
     }
 
     struct ForwardingProof: Equatable {
-        fileprivate let membershipGeneration: UUID
         fileprivate let revision: UUID
         fileprivate let admission: SentryAdmission.ProtectionSnapshot
     }
@@ -60,7 +60,7 @@ final class HostSentry {
             forwardingRevision = UUID()
             return nil
         }
-        let proof = ForwardingProof(membershipGeneration: membershipGeneration, revision: forwardingRevision,
+        let proof = ForwardingProof(revision: forwardingRevision,
                                     admission: admissionProof)
         guard surfaces.verify(), forwardingProofCurrent(proof) else {
             forwardingRevision = UUID()
@@ -70,17 +70,19 @@ final class HostSentry {
     }
 
     func forwardingProofCurrent(_ proof: ForwardingProof) -> Bool {
-        operation == .idle && persistenceHealthy && membershipGeneration == proof.membershipGeneration &&
-        forwardingRevision == proof.revision && admission.protectionMatches(proof.admission)
+        operation == .idle && persistenceHealthy && forwardingRevision == proof.revision && admission.protectionMatches(proof.admission)
     }
 
     @discardableResult
     func reconcile() -> Bool {
         guard admission.isRequested, operation == .idle else { return false }
-        forwardingRevision = UUID()
         operation = .reconciling
         let generation = membershipGeneration
         defer { operation = .idle }
+        if let proof = admission.protectionSnapshot(), persistenceHealthy,
+           localReturnUnavailableReason() == nil, surfaces.verify(), audioReady(),
+           generation == membershipGeneration, admission.protectionMatches(proof) { return true }
+        invalidateVerification()
         persistenceHealthy = persist(.latched)
         let recoveryReason = localReturnUnavailableReason()
         guard persistenceHealthy, recoveryReason == nil else {
@@ -107,11 +109,11 @@ final class HostSentry {
 
     func membershipWillChange() {
         membershipGeneration = UUID()
-        invalidateVerification()
     }
 
     private func invalidateVerification() {
         forwardingRevision = UUID()
+        protectionInvalidated?()
         guard admission.isRequested else { return }
         admission.update(verified: false, persistenceHealthy: persistenceHealthy,
                          reason: "현장 화면과 입력 차단을 다시 확인하고 있습니다.")
@@ -119,8 +121,8 @@ final class HostSentry {
     }
 
     func surfacesChanged() {
-        invalidateVerification()
         if operation == .idle { _ = reconcile() }
+        else { invalidateVerification() }
     }
 
     func start(recoverAudio: () -> Void = {}) {

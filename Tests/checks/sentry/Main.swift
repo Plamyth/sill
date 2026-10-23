@@ -178,6 +178,21 @@ import StreamProtocol
         independent.register(lan, externalRoute: false); independent.admit(lan)
         independent.capture(nil, for: lan)
         expect(!independent.allows(lan, epoch: epoch), "reconnected peer cannot reuse old independent capture")
+        let stableGate = SentryAdmission()
+        let stable = HostSentry(admission: stableGate, initiallyLatched: true, persistenceHealthy: true,
+            persist: { _ in true }, surfaces: .init(engage: { true }, verify: { true },
+                release: { true }, reason: { nil }), localReturnUnavailableReason: { nil })
+        stable.start()
+        let surfaceProof = stable.forwardingProof()!
+        stableGate.register(lan, externalRoute: false); stable.joined(lan)
+        stable.membershipWillChange()
+        stableGate.capture(epoch, for: lan)
+        stable.surfacesChanged()
+        expect(stable.forwardingProofCurrent(surfaceProof), "healthy periodic readback and viewer membership retain physical proof")
+        stableGate.capture(nextEpoch, for: lan)
+        expect(stable.forwardingProofCurrent(surfaceProof), "switching one remote monitor does not revoke unrelated audio protection")
+        stableGate.update(verified: false, persistenceHealthy: true, reason: "실제 보호 상실")
+        expect(!stable.forwardingProofCurrent(surfaceProof), "real protection loss invalidates physical proof synchronously")
         print("SENTRY_CHECKS_COMPLETE \(count)")
     }
 }

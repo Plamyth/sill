@@ -463,6 +463,13 @@ final class LocalAudioRelay {
         return await forwardingCall("forwardingDisconnect", payload: Disconnection(bindingEpoch: binding.bindingEpoch))
     }
 
+    func forwardingLocalReturn(expectedRevision: AudioForwardingRevision,
+                               admission: @escaping @MainActor () -> Bool) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+        struct Return: Encodable { let expectedRevision: AudioForwardingRevision }
+        return await forwardingCall("forwardingLocalReturn", payload: Return(expectedRevision: expectedRevision),
+                                    admission: admission)
+    }
+
     func forwardingRevoke(_ peer: AudioForwardingPairedDevice) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         struct Revocation: Encodable { let pairedDeviceId: AudioForwardingDeviceID }
         return await forwardingCall("forwardingRevoke", payload: Revocation(pairedDeviceId: peer.id))

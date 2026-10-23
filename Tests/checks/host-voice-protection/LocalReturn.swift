@@ -58,7 +58,7 @@ private final class ReturnFixture {
     let facts = LocalAudioParticipantFacts(admissionFenced: true, startsSettled: true, mediaDetached: true,
         callbacksDrained: true, buffersEmpty: true, workersExited: true)
 
-    init(relay: Bool = true) {
+    init(relay: Bool = true, forwarding: Bool = false) {
         privacy = HostAudioPrivacy(hal: hal, persist: { [unowned self] in durable = true; return true },
             saveLocal: { [unowned self] state in original = state; durable = state != nil; return true },
             clearLatch: { [unowned self] in commits += 1; durable = false; return true },
@@ -68,7 +68,7 @@ private final class ReturnFixture {
         privacy.revokeForLocalReturn = { [unowned self] in quiescent }
         privacy.inspectForLocalReturn = { [unowned self] in quiescent ? facts : .unknown }
         privacy.authenticatedLocalReturnWillCommit = { [unowned self] admission in
-            expect(authCalls == 1 && privacy.participants.isFenced && hal.restoreCalls == 0 && commits == 0 && admission(),
+            expect(authCalls == intentCommits + 1 && privacy.participants.isFenced && hal.restoreCalls == 0 && commits == 0 && admission(),
                    "원격 의도 commit은 실제 인증·참여자 drain 뒤 로컬 복원 전에 실행")
             expect(!privacy.forwardingIntentAllowed && !privacy.armAndVerify(),
                    "비동기 원격 의도 commit 중 새 intent와 arm 거부")
@@ -83,6 +83,9 @@ private final class ReturnFixture {
             }, inspect: { [unowned self] id in
                 guard let request = relayRequest, request.operationId == id else { return nil }
                 return .init(request, state: quiescent ? .quiescent : .unknown, facts: quiescent ? facts : .unknown)
+            }, supportsForwarding: forwarding, forwardingPrepare: { [unowned self] preparation in
+                .init(preparation.request, state: quiescent ? .quiescent : .unknown,
+                      facts: quiescent ? facts : .unknown)
             }))
         }
     }
@@ -192,12 +195,14 @@ func localReturnChecks() async {
     expect(expired.hal.restoreCalls == 0 && expired.commits == 0, "시간 초과 콜백의 늦은 반환은 로컬 commit 불가")
     expired.privacy.stop()
 
-    let cancelled = ReturnFixture()
+    let cancelled = ReturnFixture(forwarding: true)
+    var oldCallbackCompleted = false
     var releaseCancelled: CheckedContinuation<Void, Never>?
     var cancelledAdmission: (@MainActor () -> Bool)?
     cancelled.intentHook = { admission in
         cancelledAdmission = admission
         await withCheckedContinuation { releaseCancelled = $0 }
+        oldCallbackCompleted = true
         return true
     }
     expect(cancelled.privacy.armAndVerify(), "콜백 취소 fixture 보호")
@@ -208,12 +213,22 @@ func localReturnChecks() async {
     }
     expect(releaseCancelled != nil, "취소 전 CAS 대기 경계 진입")
     cancelTask.cancel()
+    expect(cancelledAdmission?() == false, "요청 취소 직후 다른 Task에서도 CAS admission 거부")
     let cancelledResult = await cancelTask.value
     expect(!cancelledResult && cancelledAdmission?() == false && cancelled.hal.restoreCalls == 0 &&
            cancelled.commits == 0 && cancelled.privacy.forwardingIntentAllowed,
            "요청 취소는 CAS admission을 닫고 로컬 복원·commit을 막음")
+    cancelled.intentHook = { admission in
+        expect(cancelledAdmission?() == false, "다음 복귀 시도 중에도 이전 admission은 영구 무효")
+        return admission()
+    }
+    let retriedCancellation = await cancelled.privacy.requestLocalReturn()
+    expect(retriedCancellation && cancelled.commits == 1, "취소한 원본과 분리된 새 인증 복귀 성공")
     releaseCancelled?.resume()
-    await Task.yield()
+    let oldCallbackDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !oldCallbackCompleted && ContinuousClock.now < oldCallbackDeadline { await Task.yield() }
+    expect(oldCallbackCompleted, "늦은 이전 콜백의 실제 종료 확인")
+    expect(cancelled.commits == 1 && cancelledAdmission?() == false, "늦은 이전 콜백은 새 복귀에 영향 없음")
     cancelled.privacy.stop()
 
     let native = PrivacyFakeHAL(), participant = ReturnFixture()

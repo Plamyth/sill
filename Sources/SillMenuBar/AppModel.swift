@@ -114,6 +114,7 @@ final class AppModel {
                                               microphoneOwner: microphoneOwner, audioPrivacy: audioPrivacy) }
                 c.keepRunningOnListenerFailure()
                 coordinator = c
+                await c.startAudioForwarding()
                 // One path from the controls to the host, synchronous: the host's target equals
                 // settings.config at every main-actor turn, so a device's change and a menu click
                 // never undo each other.

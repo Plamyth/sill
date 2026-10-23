@@ -11,7 +11,7 @@ import shutil
 import subprocess
 
 
-NODE_COMMIT = "1f846e8b776dec9b504cebf78735e57dc1ad5cda"
+NODE_COMMIT = "099dcd8cbd846b7b54395e6a2c9e7df868fd1eea"
 SYSTEM = ("/usr/lib/", "/System/Library/")
 MACHO = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 
@@ -33,7 +33,38 @@ def links(path):
     return sorted(set(loads)), sorted(set(search))
 
 
+def verify(package):
+    package = package.resolve(strict=True)
+    manifest_path = package / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["nodeSourceCommit"] == NODE_COMMIT
+    assert manifest["runtimeABI"] == "native-audio-forwarding-stdio-v3" and manifest["port"] == 17648
+    runtime = package / "runtime"
+    actual = {str(p.relative_to(runtime)): p for p in runtime.rglob("*")}
+    declared = {entry["path"]: entry for entry in manifest["entries"]}
+    assert len(declared) == len(manifest["entries"]) and set(actual) == set(declared)
+    assert not package.is_symlink() and not runtime.is_symlink()
+    for name, path in actual.items():
+        entry = declared[name]
+        assert not path.is_symlink() and path.stat().st_mode & 0o7777 == entry["mode"], name
+        assert path.is_dir() == (entry["kind"] == "directory"), name
+        if path.is_file():
+            assert path.stat().st_size == entry["size"] and sha(path) == entry["sha256"], name
+    host = Path(__file__).resolve().parents[1] / "Sources/SillHost/LocalAudioRelayClosure.swift"
+    expected = dict(re.findall(r'"(server/[^\"]+)": "([a-f0-9]{64})"', host.read_text()))
+    server = {name: entry["sha256"] for name, entry in declared.items()
+              if name.startswith("server/") and entry["kind"] == "file"}
+    assert expected and server == expected
+    print(json.dumps({"verified": True, "nodeSourceCommit": NODE_COMMIT,
+                      "manifestSHA256": sha(manifest_path), "entries": len(declared),
+                      "serverStarted": False, "audioOpened": False}))
+
+
 def main():
+    import sys
+    if len(sys.argv) == 3 and sys.argv[1] == "--verify":
+        verify(Path(sys.argv[2]))
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--node-repo", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)

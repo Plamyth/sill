@@ -107,6 +107,19 @@ enum PrivacyAudioFailure: Error {
     }
 }
 
+private final class LocalReturnCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
+    }
+}
+
 @MainActor
 protocol HostAudioPrivacyHAL: AnyObject {
     func read() throws -> PrivacyAudioSnapshot
@@ -336,7 +349,17 @@ package final class HostAudioPrivacy {
 
     /// This request owns authentication. Callers cannot supply an authentication result.
     package func requestLocalReturn(budgetMilliseconds: Int = 30_000) async -> Bool {
-        guard (1...30_000).contains(budgetMilliseconds), localReturnUnavailableReason == nil else { return false }
+        let cancellation = LocalReturnCancellation()
+        return await withTaskCancellationHandler {
+            defer { cancellation.cancel() }
+            return await performLocalReturn(budgetMilliseconds: budgetMilliseconds, cancellation: cancellation)
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    private func performLocalReturn(budgetMilliseconds: Int, cancellation: LocalReturnCancellation) async -> Bool {
+        guard !cancellation.isCancelled, (1...30_000).contains(budgetMilliseconds), localReturnUnavailableReason == nil else { return false }
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
         guard await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
             await self.nativeStartup.waitUntilInitialized(); return true
@@ -381,7 +404,7 @@ package final class HostAudioPrivacy {
               participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
         let admission: @MainActor () -> Bool = { [weak self] in
             guard let self else { return false }
-            return !Task.isCancelled && ContinuousClock.now < deadline &&
+            return !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < deadline &&
                 self.authenticatingLocal && self.returningLocal &&
                 self.localReturnID == request && self.privacyGeneration == generation &&
                 self.latched && self.persistenceHealthy &&
