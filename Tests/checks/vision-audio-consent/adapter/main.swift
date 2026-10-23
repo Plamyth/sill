@@ -14,7 +14,7 @@ final class VisionAudioPlayer {
         begins.append(grant)
         callbacks.append(onEvent)
     }
-    func receive(_ packet: Data, grant: UUID) { packets.append(grant) }
+    func receive(_ packet: Data, grant: UUID, arrived: TimeInterval, gap: UInt64) { packets.append(grant) }
     func stop() { stops += 1 }
 }
 final class NWConnection {}
@@ -31,7 +31,7 @@ let a = VisionAudioScope(connection: UUID(), source: 1)
 let b = VisionAudioScope(connection: a.connection, source: 2)
 let player = VisionAudioPlayer()
 var sent: [VisionAudioControl] = []
-let controller = VisionAudioController(send: { sent.append($0) }, player: player)
+let controller = VisionAudioController(send: { sent.append($0) }, player: player, permitted: { true })
 controller.receive(Data([1]), scope: a)
 controller.enable()
 check(sent.isEmpty && player.begins.isEmpty && player.packets.isEmpty, "default controller admits no side effects")

@@ -12,6 +12,7 @@ func ready() -> VisionRemoteAudioIntent.Context {
     context.connected = true; context.authenticated = true; context.foreground = true
     context.presented = true; context.inputBlocked = false
     context.privacyVersion = 2; context.protected = true; context.cleanupReady = true
+    context.nativeBindingReady = true
     context.playbackAvailable = true; context.microphoneAvailable = true; context.recordPermissionGranted = true
     return context
 }

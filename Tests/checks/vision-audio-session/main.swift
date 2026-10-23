@@ -272,6 +272,14 @@ func runPlayerChecks() throws {
     d.failDeactivate = false
     player.retryCleanup()
     check(player.cleanupProblem == nil, "real player explicit cleanup recovers shared owner")
+    let delayedGrant = UUID(), beforeDelayed = d.outputs.count
+    player.begin(grant: delayedGrant) { _, event in events.append(event) }
+    player.receive(packet, grant: delayedGrant, arrived: ProcessInfo.processInfo.systemUptime - 0.200)
+    decode.sync {}
+    drain { player.cleanupProblem != nil || d.outputs.count > beforeDelayed }
+    check(d.outputs.count == beforeDelayed && player.cleanupProblem == nil,
+          "real player retains network arrival time and drops already stale ingress before graph start")
+    player.stop()
 }
 final class BarrierPlayback {
     var stopAction: () -> Void = {}

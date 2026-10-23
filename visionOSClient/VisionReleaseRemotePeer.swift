@@ -322,7 +322,7 @@ final class VisionReleaseSilentPlayer: VisionAudioPlaying {
     func begin(grant: UUID, onEvent: @escaping (UUID, VisionAudioPlaybackEvent) -> Void) {
         onEvent(grant, .failed("시뮬레이션 피어는 실제 오디오를 사용하지 않습니다."))
     }
-    func receive(_ packet: Data, grant: UUID) {}
+    func receive(_ packet: Data, grant: UUID, arrived: TimeInterval, gap: UInt64) {}
     func stop() {}
 }
 

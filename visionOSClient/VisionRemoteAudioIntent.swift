@@ -32,10 +32,12 @@ struct VisionRemoteAudioIntent {
         var playbackAvailable = false
         var microphoneAvailable = false
         var recordPermissionGranted = false
-        var eligible: Bool {
+        var nativeBindingReady = false
+        var admitted: Bool {
             hostKey != nil && scope != nil && connected && authenticated && foreground && presented &&
-                !inputBlocked && privacyVersion == 2 && protected && cleanupReady
+                !inputBlocked && privacyVersion == 2 && cleanupReady
         }
+        var eligible: Bool { admitted && protected && nativeBindingReady }
     }
     struct Request: Equatable {
         let hostKey: String
@@ -117,6 +119,7 @@ extension StreamClient {
         return SHA256.hash(data: pin).map { String(format: "%02x", $0) }.joined()
     }
     var visionAudioPrivacyMessage: String {
+        if let problem = visionForwardingProblem { return problem }
         if visionAudioPrivacy?.version != 2 {
             return "Mac 음소거 보호를 지원하는 호스트로 업데이트하면 오디오를 사용할 수 있습니다."
         }
@@ -141,6 +144,7 @@ extension StreamClient {
             VisionAudioSharedHardware.shared.cleanupProblem == nil
         context.playbackAvailable = visionAudio.presentation.canEnable
         context.microphoneAvailable = visionMicrophoneCanStart
+        context.nativeBindingReady = visionForwarding?.binding != nil
         context.recordPermissionGranted = AVAudioApplication.shared.recordPermission == .granted
         if let lease = visionDisplaySelection.lease, lease == microphoneAdmission.lease,
            case .presented(let epoch) = visionInputBinding, active != .none {

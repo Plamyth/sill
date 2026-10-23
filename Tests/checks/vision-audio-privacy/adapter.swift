@@ -34,7 +34,16 @@ final class InertPlayback {
         if !VisionAudioSharedHardware.shared.holdCleanup { VisionAudioSharedHardware.shared.isIdle = true }
     }
 }
+struct InertForwarding {
+    func permits(_ direction: VisionRemoteAudioIntent.Direction) -> Bool { true }
+}
 final class StreamClient {
+    var visionForwarding: InertForwarding? = InertForwarding()
+    var visionPlaybackDesired: Bool { store.model.intent.desired(.playback, hostKey: context.hostKey) }
+    var visionMicrophoneDesired: Bool { store.model.intent.desired(.microphone, hostKey: context.hostKey) }
+    var nativeSelections = 0
+    func suspendVisionForwarding() { store.discardPendingSelections(self) }
+    func reconcileVisionForwarding(manual: Bool = false) { if manual { nativeSelections += 1 } }
     let visionAudioOwnerID = UUID()
     let visionAudio = InertPlayback()
     var context: VisionRemoteAudioIntent.Context
@@ -77,6 +86,7 @@ final class StreamClient {
         context.scope = .init(connection: UUID(), window: UUID(), admission: UUID(), video: UUID(), foreground: UUID(), privacy: 1)
         context.connected = true; context.authenticated = true; context.foreground = true
         context.presented = true; context.inputBlocked = false; context.privacyVersion = 2
+        context.nativeBindingReady = true
         context.protected = true; context.cleanupReady = true; context.playbackAvailable = true
         context.microphoneAvailable = true; context.recordPermissionGranted = true
     }
