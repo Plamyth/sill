@@ -2,11 +2,11 @@ import Foundation
 
 enum LocalAudioRelayClosure {
     private static let serverHashes: [String: String] = [
-        "server/audio-forwarding-authority.js": "8299361f445480186c48cb267749e3f5a82a1f6bcf15c6e3d198480ab8fc5d83",
+        "server/audio-forwarding-authority.js": "ab379aba44070cbfe7da2ccd8e7324c56f4e218fd1781b43a0f951ec23011bbf",
         "server/audio-forwarding-journal.js": "4a9f59926f385019f0e83716ca9840c6cc5c3cbc5e1259322c9e9fb82fce27dc",
         "server/audio-forwarding-proxy.js": "b7cdb3504785a315a2c1ed304e0d62583c60506f70c8fad0f56231c1337ff48c",
         "server/audio-router.py": "a755159ae8c56c1bb902716ad4ffac6c7819782c62f017b14edc22bed88b59e0",
-        "server/audio-session.js": "ff7cdfb81bd8c0004324b4b3705cde9e72ba9af6c10f3b27e7dc3291a65e5943",
+        "server/audio-session.js": "6d8e589c80e3c7faef785f50bc9d04fe95440539b9bdadaa946b6204e55f4e7e",
         "server/control-events-relay.js": "aff9047a4f58cddf10b265bdda9556de659867c9846dd08479778158cb59e51b",
         "server/control-privacy-policy.js": "6c7ab01210c7e1dbaddf0b85e9b23555626019b750e03b0436cb4ebef4f22700",
         "server/control-room-server.js": "54a58e7a80075a6cadc5b30383cb67c7ba694ffa1b72c1bcbb86f8ffab1068c4",
@@ -18,7 +18,7 @@ enum LocalAudioRelayClosure {
         "server/mobile-pc-status.js": "fd1be7219f22ad8eecf1a8511330fa44332911f0efd689d37c924883c61068ec",
         "server/mobile-surface.js": "dda60d218dfdac028fbc94acffd9d4082abfe5b346ac4f7fea753010caf6ed68",
         "server/mobile-update.js": "13015861fb2cc260aae202e0b83e4dfa7c58dd537b034e7f20151366c12cac46",
-        "server/native-audio-control.js": "23e47186121d3522a0cf18b2bd88fa363684266b17ea5df86dc1881bee9db31c",
+        "server/native-audio-control.js": "87fa4e798d51102e8dca620444fd579571082aa6ba7a2d07b3e1b8c8916b710f",
         "server/shared-cards-model.js": "4fa19ac7edc61f14e9128e28cf4d723556d683bcc54625c2472527f769b85d8c",
         "server/shared-cards-surface.js": "64f7a7f9057e451a592f6e1d1aa69aaf5d2dba824d1de3b6702f3c3c12084575",
     ]
