@@ -6,9 +6,11 @@ struct VisionProviderCall {
         let control: ProviderCallControl
         let connection: UUID
         let sentAt: TimeInterval
+        let expiresAt: TimeInterval
     }
     private(set) var connection: UUID
     private(set) var supported = false
+    private(set) var hostKey: String?
     private(set) var pending: Pending?
     private(set) var request: ProviderCallRequest?
     private(set) var result: ProviderCallResult?
@@ -23,9 +25,14 @@ struct VisionProviderCall {
     var canPerform: Bool {
         supported && pending == nil && (request == nil || result.map { [.started, .stopped, .failed, .unsupported].contains($0.status) } == true)
     }
-    mutating func observe(connection next: UUID, capability: Int?) {
+    mutating func observe(connection next: UUID, capability: Int?, hostKey: String?) {
+        let trusted = hostKey.flatMap { $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil ? $0 : nil }
+        if self.hostKey != trusted {
+            self = VisionProviderCall(connection: next, clock: clock)
+            self.hostKey = trusted
+        }
         if connection != next { disconnected(); connection = next }
-        supported = capability == 1
+        supported = capability == 1 && trusted != nil
     }
     mutating func disconnected() {
         supported = false
@@ -53,7 +60,8 @@ struct VisionProviderCall {
         return enqueue(.init(operation: .query, request: request), now: now)
     }
     private mutating func enqueue(_ control: ProviderCallControl, now: TimeInterval) -> ProviderCallControl {
-        pending = .init(control: control, connection: connection, sentAt: now)
+        pending = .init(control: control, connection: connection, sentAt: now,
+                        expiresAt: min(now + 10, (firstSentAt ?? now) + 10))
         return control
     }
     @discardableResult
@@ -62,7 +70,7 @@ struct VisionProviderCall {
         guard let pending, incoming == connection, pending.connection == incoming,
               state.requestDigest == pending.control.request.digest,
               state.result.requestId == pending.control.request.requestId,
-              now.isFinite, now >= pending.sentAt, now - pending.sentAt < 10 else { return false }
+              now.isFinite, now >= pending.sentAt, now < pending.expiresAt else { return false }
         guard state.result.status != .started || pending.control.request.action == .start,
               state.result.status != .stopped || pending.control.request.action == .stop else { return false }
         self.pending = nil
@@ -74,7 +82,7 @@ struct VisionProviderCall {
               self.pending?.sentAt == pending.sentAt,
               self.pending?.control.request == pending.control.request else { return false }
         let now = clock()
-        guard !now.isFinite || now < pending.sentAt || now - pending.sentAt >= 10 else { return false }
+        guard !now.isFinite || now < pending.sentAt || now >= pending.expiresAt else { return false }
         self.pending = nil
         supported = false
         result = try? .init(requestId: pending.control.request.requestId, status: .unknown, reason: "provider_response_timeout")
@@ -99,11 +107,11 @@ import Network
 
 extension StreamClient {
     var visionProviderCanStart: Bool {
-        visionProviderCall.canPerform && visionProviderCall.result?.status != .started &&
+        visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status != .started &&
             visionForwarding?.binding != nil && visionAudioIntentContext.admitted
     }
     var visionProviderCanStop: Bool {
-        visionProviderCall.canPerform && visionProviderCall.result?.status == .started &&
+        visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status == .started &&
             visionProviderCall.result?.callSessionId != nil && visionForwarding?.binding != nil && visionAudioIntentContext.admitted
     }
     func performVisionProviderCall(_ action: ProviderCallRequest.Action) {
@@ -119,7 +127,7 @@ extension StreamClient {
     }
     func observeVisionProviderCalls(_ list: WindowList, from peer: NWConnection) {
         guard connection === peer else { return }
-        visionProviderCall.observe(connection: visionAudioIntentConnection, capability: list.providerCalls)
+        visionProviderCall.observe(connection: visionAudioIntentConnection, capability: list.providerCalls, hostKey: visionAudioTrustedHostKey)
         scheduleVisionProviderQuery(peer)
     }
     private func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) {
@@ -131,7 +139,8 @@ extension StreamClient {
             isKeyframe: false, payload: payload).serialized(), completion: .contentProcessed { [weak self] error in
                 if let error { self?.connectionLost(peer, error: error) }
             })
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self, weak peer] in
+        let remaining = max(0, pending.expiresAt - ProcessInfo.processInfo.systemUptime)
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self, weak peer] in
             guard let self, let peer, self.connection === peer, self.visionAudioIntentConnection == generation,
                   self.visionProviderCall.timeout(pending) else { return }
             peer.cancel()
