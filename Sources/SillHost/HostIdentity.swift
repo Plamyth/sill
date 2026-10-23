@@ -22,12 +22,14 @@ package struct PairedDevice: Codable, Hashable, Sendable {
     /// same device then pairs only with the code; Remove frees the device. Nil for a key never seen
     /// on the cable. Optional, so a list from before it decodes, and left out of the JSON when nil.
     package var cableDevice: String?
+    package var audioPairingGeneration: UUID?
     package var ownerPrincipal: String?
     package var ownerActivationPending: Bool?
 
-    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil, ownerPrincipal: String? = nil, ownerActivationPending: Bool? = nil) {
+    package init(fingerprint: String, name: String, model: String?, pairedAt: Double, method: String, cableDevice: String? = nil, ownerPrincipal: String? = nil, ownerActivationPending: Bool? = nil, audioPairingGeneration: UUID? = nil) {
         self.fingerprint = fingerprint; self.name = name; self.model = model; self.pairedAt = pairedAt; self.method = method
         self.cableDevice = cableDevice
+        self.audioPairingGeneration = audioPairingGeneration
         self.ownerPrincipal = ownerPrincipal
         self.ownerActivationPending = ownerActivationPending
     }
