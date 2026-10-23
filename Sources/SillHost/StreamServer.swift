@@ -175,6 +175,7 @@ final class StreamServer {
     private var clients: [ObjectIdentifier: Client] = [:]
     private var remoteAudioEpoch: UInt64 = 0
     private var lastParameterSets: Data?
+    let sentryAdmission = SentryAdmission()
     private var videoAdmission = VideoEpochAdmission.stopped
     /// A client was admitted (home door at `.ready`, remote door once paired and checked), with
     /// its route (which door, from where) and, for a home client, its link (ClientLink.route; nil
@@ -1045,7 +1046,10 @@ final class StreamServer {
     private func register(_ client: Client) {
         client.connectedAt = Date().timeIntervalSince1970
         client.lastHeardAt = client.connectedAt
-        clients[ObjectIdentifier(client.connection)] = client
+        let peer = ObjectIdentifier(client.connection)
+        sentryAdmission.register(peer, externalRoute: client.route.encrypted && client.route.pairedName != nil &&
+            (client.route.origin == .vpn || client.route.origin == .internet))
+        clients[peer] = client
         onClientCountChanged?(clients.count)
         updateTicking()
         updateSweep()
@@ -1385,6 +1389,7 @@ final class StreamServer {
     /// connection that was never registered (refused, or failed before it was ready) leaves no line.
     private func unregister(_ id: ObjectIdentifier) {
         guard let client = clients.removeValue(forKey: id) else { return }
+        sentryAdmission.remove(id)
         pointerWatch?.clientLeft(id)
         print("Client left: \(client.connection.endpoint)")
         onClientDisconnected?(client.connection)
@@ -2042,6 +2047,11 @@ final class StreamServer {
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
         var raw = raw
         guard let header = StreamMessage.parseHeader(raw) else { return }
+        guard sentryAdmission.allowsWire(raw, for: ObjectIdentifier(client.connection),
+                                        currentEpoch: currentVideoAdmission(for: client).current?.id) else {
+            client.needsKeyframe = true
+            return
+        }
         if Self.isVideo(header.kind) {
             guard client.videoLane != .unassigned else { return }
             if header.kind == .epochFrame || header.kind == .epochParameterSets {
@@ -2056,6 +2066,8 @@ final class StreamServer {
         }
         if header.kind == .windowList,
            var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
+            catalog.sentry = client.route.encrypted && client.route.pairedName != nil
+                ? sentryAdmission.status(for: ObjectIdentifier(client.connection)) : nil
             catalog.presentationInput = 1
             let current = currentVideoAdmission(for: client).current
             catalog.videoEpoch = catalog.videoEpoch == current ? current : nil

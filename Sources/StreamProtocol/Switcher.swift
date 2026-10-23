@@ -144,6 +144,7 @@ public struct WindowList: Codable {
     /// This fork's optional remote sound path. A device sends kind 200 only when this is 1.
     /// Nil from older hosts; older devices ignore this field.
     public var remoteAudio: Int?
+    public var sentry: SentryState?
 
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their

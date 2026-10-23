@@ -39,6 +39,13 @@ package final class StreamCoordinator {
     private var bitrate: Int { config.effective(away: awayRunning).bitrate }
     private var prioritizeSpeed: Bool { config.prioritizeSpeed }
 
+    private var sentry: HostSentry?
+    private var sentryWasRequested = false
+    package var sentryAudioReady: () -> Bool = { false }
+    package var sentryLocalReturnUnavailableReason: () -> String? = {
+        "오디오 보호와 인증된 로컬 복귀 경로를 아직 확인하지 못했습니다."
+    }
+    package var sentryRequestLocalReturn: (() async -> Bool)?
     private let microphoneIngress = MicrophoneIngress()
     private let microphoneOwner: (any HostMicrophoneOriginalOwner)?
     private lazy var audioHardwareRoutes = AudioHardwareRoutes()
@@ -349,6 +356,16 @@ package final class StreamCoordinator {
     private var independentStreamsEnabled: Bool { !synthetic || peerDriverFactory != nil }
     #if PEER_STREAM_CONTRACT
     private(set) var contractPeerInputs: [StreamSource] = []
+    func contractSentryProtection(verified: Bool) {
+        precondition(synthetic && server.isTestHost && server.loopbackOnly)
+        server.sentryAdmission.configure(latched: true, persistenceHealthy: true)
+        for (id, lane) in peerStreams {
+            server.sentryAdmission.admit(id)
+            server.sentryAdmission.capture(lane.epoch?.id, for: id)
+        }
+        server.sentryAdmission.update(verified: verified, persistenceHealthy: true,
+            reason: verified ? nil : "격리 검사에서 보호를 거부했습니다.")
+    }
     func startPeerContract(_ factory: @escaping @MainActor () -> any PeerCaptureDriver) {
         precondition(synthetic && server.isTestHost && server.loopbackOnly)
         peerDriverFactory = factory
@@ -439,6 +456,7 @@ package final class StreamCoordinator {
         // Direct Wireless is the listener's: built with it at start, replaced when it changes (adopt).
         server.setPeerToPeer(config.directWireless)
         stage = VirtualStage(sizer: sizer, catalog: catalog)
+        configureSentry()
         microphoneReceiver.availabilityChanged = { [weak self] in
             guard let self else { return }
             self.status.update { $0.microphoneCleanupGrantID = self.microphoneReceiver.cleanupGrantID }
@@ -507,7 +525,9 @@ package final class StreamCoordinator {
                     connection.cancel()
                     return
                 }
+                self.sentry?.membershipWillChange()
                 self.routes[id] = route
+                self.sentry?.joined(id)
                 if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
                    self.remote?.isPaired(fingerprint) == true {
                     self.microphoneIngress.authorize(connection, fingerprint: fingerprint)
@@ -557,6 +577,8 @@ package final class StreamCoordinator {
                     self.microphoneReceiver.forgetCapabilities(peer: microphonePeer)
                     self.microphoneReceiver.revoke(peer: microphonePeer, reason: "disconnected")
                 }
+                self.sentry?.membershipWillChange()
+                self.sentry?.surfacesChanged()
                 self.clientFPS[ObjectIdentifier(connection)] = nil
                 self.settingsArrivals[ObjectIdentifier(connection)] = nil
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
@@ -1064,6 +1086,20 @@ package final class StreamCoordinator {
     // MARK: Client messages
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
+        if message.kind == .activateSentry {
+            activateSentry(message, from: connection)
+            return
+        }
+        let peer = ObjectIdentifier(connection)
+        switch message.kind {
+        case .selectSource, .selectDisplay, .launchApp, .input, .gesture, .windowCommand,
+             .pressMenuItem, .changeAudioRoute, .changeSettings:
+            guard server.sentryAdmission.allowsActions(peer) else {
+                releaseInput(of: peer)
+                return
+            }
+        default: break
+        }
         if independentStreamsEnabled {
             guard let lane = peerStreams[ObjectIdentifier(connection)],
                   connections[ObjectIdentifier(connection)] === connection,
@@ -1891,6 +1927,7 @@ package final class StreamCoordinator {
         let epoch = VideoEpoch(generation: generation, source: source, geometry: Self.epochGeometry(bounds),
                                width: width, height: height, windowGeometry: windowGeometry)
         guard epoch.isValid else { throw PipelineEpochError.missingGeometry }
+        server.sentryAdmission.capture(nil)
         server.prepareVideo(epoch)
         let enc = try HEVCEncoder(width: width, height: height, fps: fps, bitrate: streamBitrate, prioritizeSpeed: prioritizeSpeed,
                                   software: useSoftwareEncoder)
@@ -1936,6 +1973,7 @@ package final class StreamCoordinator {
             videoEpoch = epoch
         }
         commitGestureSelection(gestureOperation)
+        server.sentryAdmission.capture(epoch.id)
         server.commitVideo(epoch, catalog: listMessage(), admission: source == .desktop ? publicationAdmission : sourcePublicationAdmission) { [weak enc] in enc?.requestKeyframe() }
         print("Streaming \(describe) at \(width)×\(height), \(fps) fps, \(streamBitrate / 1_000_000) Mbps")
         status.update {
@@ -1997,7 +2035,7 @@ package final class StreamCoordinator {
             }
             rect = current
         }
-        guard inputTargetReady(event) else {
+        guard server.sentryAdmission.allowsActions(device), inputTargetReady(event) else {
             injector.releaseInput(of: device)
             Stats.shared.bump("in.focusRejected")
             return
@@ -2840,7 +2878,7 @@ package final class StreamCoordinator {
             guard gestureSelectionIsLive(ticket), case .completed(let desktop) = ticket.state else { return false }
             context = desktop
         }
-        return !switching && !shuttingDown && gestureDesktopIsCurrent(context) &&
+        return server.sentryAdmission.allowsActions(id) && !switching && !shuttingDown && gestureDesktopIsCurrent(context) &&
             inputFence.participationToken(for: id) == pending.participation &&
             connections[id] === pending.connection && CFAbsoluteTimeGetCurrent() < pending.expiresAt
     }
@@ -3386,6 +3424,7 @@ extension StreamCoordinator {
         }
         lane.onScopeInvalidated = { [weak self, weak connection] in
             guard let self, let connection else { return }
+            self.server.sentryAdmission.capture(nil, for: id)
             self.peerInputQueue.cancel(peer: id)
             self.injector.releaseInput(of: id)
             self.peerMenus[id]?.sourceScopeChanged()
@@ -3410,6 +3449,7 @@ extension StreamCoordinator {
         }
         lane.commit = { [weak self, weak connection, weak lane] epoch, admission, keyframe in
             guard let self, let connection, let lane, self.peerStreams[id] === lane else { return }
+            self.server.sentryAdmission.capture(epoch.id, for: id)
             self.server.commitPeerVideo(epoch, catalog: self.peerCatalog(to: connection, lane: lane),
                 admission: admission, to: connection, requestKeyframe: keyframe)
             self.server.setPeerStreaming(true, for: connection)
@@ -3489,10 +3529,10 @@ extension StreamCoordinator {
                     return
                 }
                 guard self.peerStreams[id] === lane, self.connections[id] === connection,
-                      connection.state == .ready, let epoch = lane.epoch,
+                      connection.state == .ready, self.server.sentryAdmission.allowsActions(id), let epoch = lane.epoch,
                       lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) != nil else { return }
                 guard await self.preparePeerInteraction(lane, epoch: epoch, event: scoped.event),
-                      !turn.cancelled, self.peerStreams[id] === lane,
+                      self.server.sentryAdmission.allowsActions(id), !turn.cancelled, self.peerStreams[id] === lane,
                       let rect = lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) else { return }
                 #if PEER_STREAM_CONTRACT
                 self.contractPeerInputs.append(lane.source)
@@ -3515,7 +3555,8 @@ extension StreamCoordinator {
             _ = peerInputQueue.enqueue(peer: id) { [weak self, weak lane] turn in
                 guard let self, let lane, !turn.cancelled, let epoch = lane.epoch,
                       lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return }
-                guard await self.preparePeerInteraction(lane, epoch: epoch, event: nil), !turn.cancelled,
+                guard await self.preparePeerInteraction(lane, epoch: epoch, event: nil),
+                      self.server.sentryAdmission.allowsActions(id), !turn.cancelled,
                       lane.inputRect(generation: gesture.generation, epoch: gesture.videoEpoch) != nil else { return }
                 var chords = self.peerGestureChords[id] ?? GestureChords()
                 let outcome = chords.resolve(gesture.gesture, table: self.hotKeyTable())
@@ -3556,7 +3597,7 @@ extension StreamCoordinator {
                   lane.inputRect(generation: command.generation, epoch: command.videoEpoch) != nil,
                   let window = catalog.window(id: windowID) else { return true }
             _ = peerInputQueue.enqueue(peer: id) { [weak self, weak lane] turn in
-                guard let self, let lane, !turn.cancelled,
+                guard let self, let lane, !turn.cancelled, self.server.sentryAdmission.allowsActions(id),
                       lane.inputRect(generation: command.generation, epoch: command.videoEpoch) != nil else { return }
                 _ = self.sizer.perform(command.action, on: window)
                 _ = await self.catalog.refreshWindows()
@@ -3569,7 +3610,9 @@ extension StreamCoordinator {
 
     private func preparePeerInteraction(_ lane: PeerStreamSession, epoch: VideoEpoch,
                                         event: InputEvent?) async -> Bool {
-        guard lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil else { return false }
+        guard let peer = peerStreams.first(where: { $0.value === lane })?.key,
+              server.sentryAdmission.allowsActions(peer),
+              lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil else { return false }
         if synthetic { return true }
         guard case .window(let id) = lane.source else { return lane.source == .desktop }
         guard let window = catalog.window(id: id), let app = window.owningApplication else { return false }
@@ -3599,4 +3642,78 @@ extension StreamCoordinator {
         }
         return true
     }
+    private func configureSentry() {
+        guard !synthetic, appKitLoop else { return }
+        let platform = HostSentryPlatform()
+        let defaults = UserDefaults.standard
+        let key = "CCRHostSentryLatch.v1"
+        let raw = defaults.object(forKey: key)
+        let sentry = HostSentry(admission: server.sentryAdmission,
+            initiallyLatched: SentryJournalState.requiresProtection(raw),
+            persistenceHealthy: SentryJournalState.isValid(raw), persist: { value in
+                defaults.set(value.rawValue, forKey: key)
+                return defaults.synchronize() && defaults.string(forKey: key) == value.rawValue
+            }, surfaces: .init(engage: { platform.engage() }, verify: { platform.verify() },
+                release: { platform.release() }, reason: { platform.reason },
+                restoreCurtains: { platform.restoreCurtains() }),
+            audioReady: { [weak self] in self?.sentryAudioReady() == true },
+            localReturnUnavailableReason: { [weak self] in
+                guard let self else { return "인증된 로컬 복귀 경로를 확인하지 못했습니다." }
+                return self.sentryLocalReturnUnavailableReason()
+            })
+        self.sentry = sentry
+        platform.changed = { [weak sentry] in sentry?.surfacesChanged() }
+        platform.requestLocalReturn = { [weak self] in
+            Task { @MainActor in _ = await self?.sentryRequestLocalReturn?() }
+        }
+        sentry.changed = { [weak self] in
+            guard let self else { return }
+            let requested = self.server.sentryAdmission.isRequested
+            let firstRequest = requested && !self.sentryWasRequested
+            self.sentryWasRequested = requested
+            self.injector.isolatesPhysicalInput = requested
+            if firstRequest {
+                self.server.sentryAdmission.capture(nil)
+                for (id, lane) in self.peerStreams {
+                    self.server.sentryAdmission.capture(nil, for: id)
+                    lane.privacyChanged()
+                }
+            }
+            for id in self.connections.keys where !self.server.sentryAdmission.allowsActions(id) {
+                self.peerInputQueue.cancel(peer: id)
+                self.releaseInput(of: id)
+            }
+            self.broadcastList()
+            self.encoder?.requestKeyframe()
+            for lane in self.peerStreams.values { lane.requestKeyframe() }
+        }
+    }
+
+    package func completeSentryLocalReturn(commitAudio: () -> Bool) -> Bool {
+        guard let sentry else { return commitAudio() }
+        return sentry.completeAuthenticatedLocalReturn(commitAudio: commitAudio)
+    }
+
+    package func sentryAudioProtectionChanged() {
+        if server.sentryAdmission.isRequested { sentry?.surfacesChanged() }
+    }
+
+    private func activateSentry(_ message: StreamMessage, from connection: NWConnection) {
+        let peer = ObjectIdentifier(connection)
+        guard let sentry, !shuttingDown, connections[peer] === connection,
+              let route = routes[peer], route.encrypted,
+              let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
+              message.payload.count <= StreamMessage.clientPayloadLimit(for: .activateSentry),
+              let activation = Wire.decode(SentryActivation.self, from: message.payload) else { return }
+        let accepted = server.sentryAdmission.accept(activation, from: peer)
+        if accepted {
+            _ = sentry.activate()
+        }
+        guard let state = server.sentryAdmission.status(for: peer) else { return }
+        server.send(StreamMessage(kind: .sentryState, timestamp: Date().timeIntervalSince1970,
+            isKeyframe: false, payload: Wire.encode(SentryResponse(requestID: activation.requestID,
+                accepted: accepted, state: state,
+                reason: accepted ? nil : "연결 또는 보호 상태가 바뀌었습니다. 현재 상태를 다시 확인해 주세요."))), to: connection)
+    }
+
 }

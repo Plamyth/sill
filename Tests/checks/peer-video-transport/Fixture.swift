@@ -41,6 +41,7 @@ struct ClientRoute {
     var isRemote = false
     var encrypted = false
     var fingerprint: Data? = nil
+    var pairedName: String? = nil
     static func home(_ origin: Origin, peer: Int?) -> Self { Self() }
     enum Origin { case loopback }
 }
@@ -59,6 +60,7 @@ final class HostLocalOwnerGrant {
     func whileValid(at time: UInt64, _ body: () -> Void) -> Bool { guard valid else { return false }; body(); return true }
 }
 final class StreamServer {
+    // PRODUCTION_SENTRY
     // PRODUCTION_TYPES
     let queue = DispatchQueue(label: "inert.transport")
     var clients: [ObjectIdentifier: Client] = [:]
