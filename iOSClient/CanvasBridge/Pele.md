@@ -21,6 +21,22 @@
 
 UI의 확정과 AI의 기존 노드 수정은 `CanvasScene.editGraph`를 사용한다. 구조 수정 되돌리기는 마지막으로 적용한 구조 변경 하나를 복원하며, 현재 구조가 그 결과와 일치할 때만 실행한다. 이후 추가된 원본 획과 PencilKit 데이터는 유지한다. 다른 구조 수정이나 원격 갱신 뒤에는 잘못된 되돌리기를 허용하지 않는다.
 
+`CanvasLink`의 `fromAnchor`와 `toAnchor`는 선택값이다. 값은 `{"side":"right","offset":0.5}` 형식이며 `side`는 `top`, `right`, `bottom`, `left` 중 하나다. `offset`은 0부터 1 사이의 유한한 수다. 위·아래 변은 왼쪽에서 오른쪽, 좌·우 변은 위에서 아래로 잰다. 없거나 null이면 상대 노드 중심 방향의 사각형 경계에 자동 부착한다. 저장된 연결점은 노드 이동과 크기 변경 뒤에도 같은 변과 비율을 유지한다. 잘못된 연결점과 넓이·높이가 0 이하이거나 유한하지 않은 프레임은 연결 계산·수정에서 거부한다.
+
+AI의 `expected`에는 수정 전 두 연결점도 포함해야 한다. 수정하지 않는 연결점은 `replacement`에 그대로 넣는다. 기존 `sameLink`, `editGraph`, 원자적 batch와 멱등 재수신 검사가 두 연결점을 함께 비교한다. 구형 AI가 현재 연결점을 누락한 기대 상태로 덮어쓰면 거부한다. `sceneJSONBase64`, 파일 내보내기와 자동 저장에는 같은 Codable 모델이 들어간다. Mermaid는 노드 UUID와 연결 의미를 투영하며 연결점 좌표를 저장하는 형식으로 쓰지 않는다.
+
+원본 그림의 요소 이동 모드에서 선을 선택하면 두 끝점 손잡이가 나타난다. Pencil이나 손가락으로 각 끝점을 끌면 그 끝점의 기존 노드에서 가장 가까운 경계로 이동한다. 드래그 미리보기는 선택 상태에만 있고 저장 revision을 올리지 않는다. 종료 시 전체 링크 기대 상태와 scene generation을 다시 확인한다. 드래그 중 외부 변경이나 도구·장면 전환은 오래된 확정을 막는다. 확정은 기존 구조 되돌리기에 기록한다. 다시 실행도 같은 변경 전후 쌍을 사용하며 최신 원본 획을 보존한다. 실행 이력은 재실행 후 복구하는 영구 원장이 아니다.
+
+화면과 PNG 내보내기는 같은 `CanvasScene.linkEndpoints` 계산을 사용한다. 기존 CCR의 유향 화살표와 `from`·`to` 의미는 유지한다. 원앱에서 관측한 무화살촉 선으로 변환하거나 자동 손그림 인식을 구현하는 범위는 아니다.
+
+연결점 검사는 기기나 UI를 열지 않는 기존 실행기 옵션을 사용한다.
+
+```sh
+python3 -B Tests/checks/pele-live/run.py /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/diagram-endpoints-20261023/verification --diagram-endpoints
+```
+
+이 옵션은 모델·Store와 기존 graph 검사, NativeSceneEncoder 왕복, 전체 CanvasBridge의 iOS SDK 타입 검사를 수행한다. 화면 입력·PNG 픽셀과 실제 동기화 수용은 실기기 후속 검증으로 남긴다.
+
 오프라인 리소스는 npm `pele@1.6.0`의 브라우저 번들이다. 원래 플러그인의 lockfile SHA-512와 대조했으며 SHA-256과 MIT·ISC 라이선스를 `Pele/provenance.json`과 `Pele/LICENSE.txt`에 포함했다. Xcode는 `CanvasPeleView.swift`와 `Pele` 리소스 폴더를 수동 등록한다. 런타임 npm 설치는 필요 없다.
 
 WebKit은 비영구 데이터 저장소를 쓰며 로컬 리소스 폴더만 읽는다. CSP는 네트워크·이미지·프레임·객체 로딩을 차단한다. Pele의 링크와 이미지는 비활성화한다. 원본은 50,000 UTF-8 bytes, 요소 512개, 관계 1,024개, SVG는 1,000,000 bytes로 제한한다. 파싱한 노드 ID와 SVG의 실제 노드 ID를 기대한 UUID 목록에 대조한다. 선택 메시지는 장면 ID·revision·최신 snapshot을 native에서 다시 확인한다.

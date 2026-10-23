@@ -302,6 +302,10 @@ struct CanvasRect: Codable, Equatable {
     var height: Double
 
     var center: CanvasPoint { CanvasPoint(x: x + width / 2, y: y + height / 2) }
+
+    var isValidLinkFrame: Bool {
+        [x,y,width,height,x + width,y + height].allSatisfy(\.isFinite) && width > 0 && height > 0
+    }
 }
 
 struct InkPoint: Codable, Equatable {
@@ -739,14 +743,87 @@ struct CanvasNode: Codable, Identifiable, Equatable {
     var isCollapsed: Bool? = nil
 }
 
+struct CanvasLinkAnchor: Codable, Equatable {
+    enum Side: String, Codable, CaseIterable { case top, right, bottom, left }
+    var side: Side
+    var offset: Double
+
+    var isValid: Bool { offset.isFinite && (0...1).contains(offset) }
+
+    init(side: Side, offset: Double) { self.side = side; self.offset = offset }
+
+    private enum CodingKeys: String, CodingKey { case side, offset }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy:CodingKeys.self)
+        side = try values.decode(Side.self,forKey:.side)
+        offset = try values.decode(Double.self,forKey:.offset)
+        guard isValid else {
+            throw DecodingError.dataCorruptedError(forKey:.offset,in:values,
+                debugDescription:"연결점 위치는 0부터 1 사이의 유한한 값이어야 합니다.")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isValid else {
+            throw EncodingError.invalidValue(self,.init(codingPath:encoder.codingPath,
+                debugDescription:"잘못된 연결점은 저장할 수 없습니다."))
+        }
+        var values = encoder.container(keyedBy:CodingKeys.self)
+        try values.encode(side,forKey:.side)
+        try values.encode(offset,forKey:.offset)
+    }
+
+    func point(in frame: CanvasRect) -> CanvasPoint? {
+        guard isValid, frame.isValidLinkFrame else { return nil }
+        switch side {
+        case .top: return CanvasPoint(x:frame.x + frame.width * offset,y:frame.y)
+        case .right: return CanvasPoint(x:frame.x + frame.width,y:frame.y + frame.height * offset)
+        case .bottom: return CanvasPoint(x:frame.x + frame.width * offset,y:frame.y + frame.height)
+        case .left: return CanvasPoint(x:frame.x,y:frame.y + frame.height * offset)
+        }
+    }
+
+    static func nearest(to point: CanvasPoint, in frame: CanvasRect) -> Self? {
+        guard frame.isValidLinkFrame, point.x.isFinite, point.y.isFinite,
+              (point.x - frame.x).isFinite, (point.y - frame.y).isFinite else { return nil }
+        let x = min(1,max(0,(point.x - frame.x) / frame.width))
+        let y = min(1,max(0,(point.y - frame.y) / frame.height))
+        let candidates = [Self(side:.top,offset:x),Self(side:.right,offset:y),
+                          Self(side:.bottom,offset:x),Self(side:.left,offset:y)]
+        return candidates.min { a,b in
+            guard let p = a.point(in:frame), let q = b.point(in:frame) else { return false }
+            return hypot(p.x - point.x,p.y - point.y) < hypot(q.x - point.x,q.y - point.y)
+        }
+    }
+
+    static func automatic(in frame: CanvasRect, toward target: CanvasPoint) -> CanvasPoint? {
+        guard frame.isValidLinkFrame, target.x.isFinite, target.y.isFinite else { return nil }
+        let center = frame.center
+        let dx = target.x - center.x, dy = target.y - center.y
+        guard dx.isFinite, dy.isFinite else { return nil }
+        if dx == 0 && dy == 0 { return Self(side:.right,offset:0.5).point(in:frame) }
+        let scale = max(abs(dx) / (frame.width / 2),abs(dy) / (frame.height / 2))
+        guard scale.isFinite, scale > 0 else { return nil }
+        return CanvasPoint(x:center.x + dx / scale,y:center.y + dy / scale)
+    }
+}
+
 struct CanvasLink: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case general, parentChild }
+    enum Endpoint: String, CaseIterable { case from, to }
 
     var id: UUID
     var from: UUID
     var to: UUID
     var label: String
     var kind: Kind? = nil
+    var fromAnchor: CanvasLinkAnchor? = nil
+    var toAnchor: CanvasLinkAnchor? = nil
+
+    var hasValidAnchors: Bool {
+        (fromAnchor?.isValid ?? true) && (toAnchor?.isValid ?? true)
+    }
 }
 
 struct CanvasAnnotation: Codable, Identifiable, Equatable {
@@ -777,6 +854,17 @@ struct CanvasScene: Codable, Equatable {
     var nodes: [CanvasNode] = []
     var links: [CanvasLink] = []
     var annotations: [CanvasAnnotation] = []
+
+    func linkEndpoints(_ link: CanvasLink) -> (from: CanvasPoint, to: CanvasPoint)? {
+        guard link.hasValidAnchors,
+              let from = nodes.first(where:{ $0.id == link.from })?.frame,
+              let to = nodes.first(where:{ $0.id == link.to })?.frame,
+              from.isValidLinkFrame, to.isValidLinkFrame,
+              let a = link.fromAnchor?.point(in:from) ?? CanvasLinkAnchor.automatic(in:from,toward:to.center),
+              let b = link.toAnchor?.point(in:to) ?? CanvasLinkAnchor.automatic(in:to,toward:from.center)
+        else { return nil }
+        return (a,b)
+    }
 
     struct Visibility: Equatable {
         let nodeIDs: Set<UUID>
@@ -925,7 +1013,9 @@ struct CanvasScene: Codable, Equatable {
         for edit in linkEdits {
             let value = edit.replacement
             guard value.id == edit.expected.id, value.label.utf8.count <= 4096,
+                  edit.expected.hasValidAnchors, value.hasValidAnchors,
                   value.from != value.to, ids.contains(value.from), ids.contains(value.to),
+                  linkEndpoints(value) != nil,
                   let index = nextLinks.firstIndex(where: { $0.id == edit.expected.id }),
                   Self.sameLink(nextLinks[index],edit.expected) else { return false }
             nextLinks[index] = value
@@ -945,7 +1035,9 @@ struct CanvasScene: Codable, Equatable {
         let linkIds = proposedLinks.map(\.id)
         let nodeEdits = change.nodeEdits ?? []
         let linkEdits = change.linkEdits ?? []
-        guard Set(annotationIds).count == annotationIds.count,
+        guard proposedLinks.allSatisfy(\.hasValidAnchors),
+              linkEdits.allSatisfy({ $0.expected.hasValidAnchors && $0.replacement.hasValidAnchors }),
+              Set(annotationIds).count == annotationIds.count,
               Set(proposalIds).count == proposalIds.count,
               Set(linkIds).count == linkIds.count,
               Set(nodeEdits.map { $0.expected.id }).count == nodeEdits.count,
@@ -1007,7 +1099,8 @@ struct CanvasScene: Codable, Equatable {
             guard next.editGraph(nodeEdits:nodeEdits,linkEdits:linkEdits) else { return false }
         }
         guard next.links.allSatisfy({ $0.from != $0.to && availableIds.contains($0.from) &&
-                  availableIds.contains($0.to) }),
+                  availableIds.contains($0.to) && $0.hasValidAnchors }),
+              proposedLinks.allSatisfy({ next.linkEndpoints($0) != nil }),
               Self.validHierarchy(next.links,nodeIds:availableIds) else { return false }
         next.revision = revision + 1
         self = next

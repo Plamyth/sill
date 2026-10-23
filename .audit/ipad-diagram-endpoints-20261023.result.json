@@ -1,0 +1,125 @@
+{
+  "task": "ipad-diagram-endpoints-20261023",
+  "owner": "01a13ace-e372-7ed1-9946-149df37ee1c3",
+  "base": "ed05bc9095e316ffbed8bb29ad052e15c9c6904e",
+  "branch": "codex/ipad-diagram-endpoints-20261023",
+  "recordedAt": "2026-10-23T01:07:42.777061+00:00",
+  "runner": "Tests/checks/pele-live/run.py --diagram-endpoints",
+  "executionReceipt": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/diagram-endpoints-20261023/verification/result.json",
+  "executionReceiptSHA256": "c5f67012045af832eaf0edbd020ce58e5d76d6af8e53130c32e3943ef56d161f",
+  "results": [
+    {
+      "name": "pele-live-compile",
+      "exitCode": 0
+    },
+    {
+      "name": "pele-live-run",
+      "exitCode": 0
+    },
+    {
+      "name": "ipad-canvas-revisions-compile",
+      "exitCode": 0
+    },
+    {
+      "name": "ipad-canvas-revisions-run",
+      "exitCode": 0
+    },
+    {
+      "name": "canvas-hierarchy-compile",
+      "exitCode": 0
+    },
+    {
+      "name": "canvas-hierarchy-run",
+      "exitCode": 0
+    },
+    {
+      "name": "store-compile",
+      "exitCode": 0
+    },
+    {
+      "name": "store-run",
+      "exitCode": 0
+    },
+    {
+      "name": "endpoints-compile",
+      "exitCode": 0
+    },
+    {
+      "name": "endpoints-run",
+      "exitCode": 0
+    },
+    {
+      "name": "fold-compile",
+      "exitCode": 0
+    },
+    {
+      "name": "fold-run",
+      "exitCode": 0
+    },
+    {
+      "name": "native-scene-encoder-compile",
+      "exitCode": 0
+    },
+    {
+      "name": "native-scene-roundtrip",
+      "exitCode": 0,
+      "equivalent": true
+    },
+    {
+      "name": "ios-module",
+      "exitCode": 0
+    },
+    {
+      "name": "ios-typecheck",
+      "exitCode": 0
+    },
+    {
+      "name": "project-format",
+      "exitCode": 0
+    }
+  ],
+  "endpointAssertions": 190,
+  "hierarchyAssertions": 142,
+  "foldAssertions": 41,
+  "testedSourceHashes": {
+    "iOSClient/CanvasBridge/CanvasStore.swift": "8ba0268adcb7b1dc890e2186a2641f7ddac4ede7e0d07c997edd96b271cff610",
+    "iOSClient/CanvasBridge/PencilTextCorrection.swift": "e5692da4e7ee5e9ea38b36a6a547791e0c081101e62982a12b1a0dcd0f46801b",
+    "iOSClient/CanvasBridge/SceneRenderer.swift": "1e61245761501ab7569f1ae31f1ae3abc217375fbd215c12a08ea1994b89ef0c",
+    "iOSClient/CanvasBridge/CanvasRelay.swift": "2382b205bb0591dd22dfe2aca30c8c81f9369aed8470c6c3cd607125e0d6d3d8",
+    "iOSClient/CanvasBridge/CanvasWorkspace.swift": "b412dab5a82039ff668b1f7bea1ec0bc022db9c11fb27d47876dccb39201e899",
+    "iOSClient/CanvasBridge/SceneFile.swift": "8fbef60d7209078e83eb240262cd50c7b5c0d6dcc174239b51f749a089b37bf3",
+    "iOSClient/CanvasBridge/ControlRoomProjection.swift": "0b619c82ab97f2b58a20f43fdea33729c00b27cca13bde7de92d6dea1e300b6f",
+    "iOSClient/CanvasBridge/CanvasPeleView.swift": "71655376d7c968a9f8cbf0137d12d9d7e9c06b68e5a1808694e78e6f60f4cf70",
+    "iOSClient/CanvasBridge/ControlRoomViews.swift": "d2045ff9954c4b38b1379466042041373207f491b042b71ad9f8e66d0b2f3928",
+    "iOSClient/CanvasBridge/CanvasModel.swift": "a4ff269dd7815a1366cfeb2589b974c316b9045f27572469ea891e3430dd845d",
+    "iOSClient/CanvasBridge/PencilCanvas.swift": "e7c7eadd21d390c5c6f612673a179e046e61371882480308d7cc73a9aecdaf63",
+    "iOSClient/CanvasBridge/CanvasDictation.swift": "a23d839f53b3c7746b05f0a7610d03b1d3013a64a8ff16686417a6fce88ccc2f",
+    "iOSClient/CanvasBridge/Pele/provenance.json": "d62dd92c60adc6479e1b4c116d81672de835b5a67e67a3599f49c9daaaf7f17f",
+    "iOSClient/CanvasBridge/Pele/bridge.js": "407064d8b1aae51ada420e2dfbb6b8cfa20496f37df572ca81a97c82781a819a",
+    "iOSClient/CanvasBridge/Pele/pele.global.js": "b82d1bcd435302779a945e1e0f4a54ea56fb26e010ce3f2122f4216fcfc095d7",
+    "iOSClient/CanvasBridge/Pele/diagram.html": "2a43c3e422a184a949f14ab6b8ecae519d21250e20cc1cb6a9bc6842640338bd",
+    "iOSClient/CanvasBridge/Pele/LICENSE.txt": "311bccc30de6f7b9cbfb64232bb0c911ccb2191abe316550813ae25b2c7925b9",
+    "Tests/checks/pele-live/run.py": "1b21f83cb305d5d512bc22486d2c8cbb9cec6c6f3300d2036774b036ec06f88e",
+    "Tests/checks/pele-live/vault-check.cjs": "ccdd377705dfb91822d65e0935785800ad9d0412bb14426bd84b94a7b1c4ea56",
+    "Tests/checks/pele-live/EndpointChecks.swift": "5c2341c171896dad2ed36fb9ce6526a13fbdfd847b4b28ff0a576e9d2a40b922",
+    "Tests/checks/pele-live/StoreChecks.swift": "be48fd93ef775b9b31e1d5145f407651e44e3c9f6f72ceb50966539e0d88853f",
+    "Tests/checks/pele-live/WebKitChecks.swift": "4fa1b747da0052ecceda46eb8729d946ad48a30a147c54f6fe33bd9630bfcb21",
+    "Tests/checks/pele-live/main.swift": "00309b8cc9af670d49b76f2c4148b25f77e2d73811371b7b36c4da3f2c53bd3b",
+    "iOSClient/Sill.xcodeproj/project.pbxproj": "9b8f73463fc94f95f822d37ee6b3d81db5ac3a98ab4ccfb7a29f077a7d036d5a",
+    "Tests/checks/canvas-hierarchy-fold/main.swift": "27e3b1e2eb59e9a7dd760770741c238be90f1db3715bd15d908441e3dd288343",
+    "Tests/checks/canvas-hierarchy/main.swift": "94b68c86545f028ffa24af0a1726fdff2841314d4a8f976b2de420a9af693a3e",
+    "Tests/checks/ipad-canvas-revisions/main.swift": "2b691eebd7f8333d408ffa90ac83375fafad929de40cc78fe6ff842a4d6ac3de",
+    "Scripts/ipad-test-runtime/NativeSceneEncoder.swift": "c79ea27bfcf3aca3c9fd14d719f345502f79858a60f7910440efeaf845a75420",
+    "Tests/checks/ink-undo/Info.plist": "53d1715084370c7ca182ab098bf1b5f01e3dbc0d54b507ebf1479e0be8b6750f"
+  },
+  "sourceUnchanged": true,
+  "iosSDKTypecheckExit": 0,
+  "deviceExecuted": false,
+  "uiExecuted": false,
+  "pngPixelValidated": false,
+  "sharedHostChanged": false,
+  "externalRelayChanged": false,
+  "externalPush": false,
+  "independentReview": "부모 후속 검수 대기",
+  "exitCode": 0
+}

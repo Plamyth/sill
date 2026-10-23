@@ -1,0 +1,7 @@
+단계	결정	근거
+조사	기존 모델·그래프·저장 경로 재사용	전용 todo의 typed scene 경로 조사
+설계	Anchor와 임시 endpoint drag를 분리	CanvasModel·CanvasStore
+구현	화면과 PNG에서 동일 geometry 사용, 기존 화살촉 유지	CanvasWorkspace·SceneRenderer
+검사	전용 190개 및 기존 graph·Store·SDK 통과	전용 result.json
+relay	부모의 8개 격리 왕복 결과 수용, 변경 불필요	../relay-anchor-roundtrip-result.json
+검수	독립 검수와 실기기 수용은 부모 후속 단계	사용자 직접 지정 범위

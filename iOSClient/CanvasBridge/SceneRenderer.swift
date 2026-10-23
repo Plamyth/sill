@@ -59,8 +59,8 @@ enum SceneRenderer {
                 }
             }
             for link in scene.links where visible.linkIDs.contains(link.id) {
-                guard let from = scene.nodes.first(where: { $0.id == link.from })?.frame.center,
-                      let to = scene.nodes.first(where: { $0.id == link.to })?.frame.center else { continue }
+                guard let endpoints = scene.linkEndpoints(link) else { continue }
+                let from = endpoints.from, to = endpoints.to
                 let a = CGPoint(x: from.x, y: from.y)
                 let b = CGPoint(x: to.x, y: to.y)
                 cg.setStrokeColor(CanvasPalette.link.cgColor)

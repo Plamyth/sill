@@ -111,7 +111,11 @@ final class CanvasInkHistory: ObservableObject {
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
+            linkSceneGeneration &+= 1
             let visible = scene.visibility.nodeIDs
+            if oldValue.id != scene.id || selectedLink.map({ !scene.visibility.linkIDs.contains($0) }) == true {
+                clearLinkSelection()
+            }
             if oldValue.id != scene.id || linkStart.map({ !visible.contains($0) }) == true {
                 clearPendingLink()
             }
@@ -127,6 +131,7 @@ final class CanvasStore: ObservableObject {
         didSet {
             if oldValue != mode {
                 clearPendingLink()
+                clearLinkSelection()
                 if mode != .lasso { setInkSelection([]) }
             }
             handwritingRequest = nil
@@ -137,7 +142,10 @@ final class CanvasStore: ObservableObject {
     @Published var selectedNode: UUID? {
         didSet {
             if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
-            if oldValue != selectedNode { clearPendingLink() }
+            if oldValue != selectedNode {
+                clearPendingLink()
+                if selectedNode != nil { clearLinkSelection() }
+            }
             handwritingRequest = nil
         }
     }
@@ -167,6 +175,12 @@ final class CanvasStore: ObservableObject {
     var pan: CGSize { viewport.pan }
     let inkHistory = CanvasInkHistory()
     @Published private var graphUndo: (before: CanvasScene, after: CanvasScene)?
+    @Published private var graphRedo: (before: CanvasScene, after: CanvasScene)?
+
+    private func recordGraphEdit(before: CanvasScene) {
+        graphUndo = (before,scene)
+        graphRedo = nil
+    }
 
     var canUndoGraph: Bool {
         guard let undo = graphUndo, scene.id == undo.after.id else { return false }
@@ -185,7 +199,121 @@ final class CanvasStore: ObservableObject {
         next.revision += 1
         scene = next
         graphUndo = nil
+        graphRedo = undo
         status = "구조 수정을 되돌렸습니다. 현재 원본 획은 그대로 보존했습니다."
+    }
+
+    var canRedoGraph: Bool {
+        guard let redo = graphRedo, scene.id == redo.before.id else { return false }
+        return scene.hasSameGraph(as:redo.before)
+    }
+
+    func redoGraphEdit() {
+        guard canRedoGraph, let redo = graphRedo else {
+            status = "구조가 바뀌어 다시 실행하지 않았습니다. 최신 내용을 유지합니다."
+            return
+        }
+        var next = scene
+        next.nodes = redo.after.nodes
+        next.links = redo.after.links
+        next.annotations = redo.after.annotations
+        next.revision += 1
+        scene = next
+        graphUndo = redo
+        graphRedo = nil
+        status = "구조 수정을 다시 실행했습니다. 현재 원본 획은 그대로 보존했습니다."
+    }
+
+    struct EndpointDrag {
+        let generation: UInt64
+        let sceneID: UUID
+        let revision: Int
+        let expected: CanvasLink
+        let endpoint: CanvasLink.Endpoint
+        var anchor: CanvasLinkAnchor?
+    }
+    private var linkSceneGeneration: UInt64 = 0
+    @Published private(set) var selectedLink: UUID?
+    @Published private(set) var endpointDrag: EndpointDrag?
+
+    func clearLinkSelection() {
+        selectedLink = nil
+        endpointDrag = nil
+    }
+
+    func cancelEndpointDrag() { endpointDrag = nil }
+
+    func selectLink(_ id: UUID) {
+        guard mode == .select, scene.visibility.linkIDs.contains(id),
+              let link = scene.links.first(where:{ $0.id == id }), scene.linkEndpoints(link) != nil else { return }
+        selectedNode = nil
+        clearPendingLink()
+        endpointDrag = nil
+        selectedLink = id
+        status = "연결선을 선택했습니다. 시작점이나 끝점을 끌어 연결 위치를 바꾸세요."
+    }
+
+    private func endpointDragIsCurrent(_ drag: EndpointDrag) -> Bool {
+        mode == .select && selectedLink == drag.expected.id && drag.generation == linkSceneGeneration &&
+            scene.id == drag.sceneID && scene.revision == drag.revision &&
+            scene.links.contains { CanvasScene.sameLink($0,drag.expected) }
+    }
+
+    @discardableResult
+    func beginEndpointDrag(_ endpoint: CanvasLink.Endpoint, linkID: UUID) -> Bool {
+        guard mode == .select, selectedLink == linkID,
+              let link = scene.links.first(where:{ $0.id == linkID }), scene.linkEndpoints(link) != nil else { return false }
+        endpointDrag = EndpointDrag(generation:linkSceneGeneration,sceneID:scene.id,revision:scene.revision,
+            expected:link,endpoint:endpoint,anchor:endpoint == .from ? link.fromAnchor : link.toAnchor)
+        return true
+    }
+
+    @discardableResult
+    func updateEndpointDrag(to point: CanvasPoint) -> Bool {
+        guard var drag = endpointDrag else { return false }
+        guard endpointDragIsCurrent(drag) else {
+            status = "드래그 중 장면이 바뀌어 연결점을 수정하지 않았습니다. 최신 내용을 유지합니다."
+            return false
+        }
+        let nodeID = drag.endpoint == .from ? drag.expected.from : drag.expected.to
+        guard let frame = scene.nodes.first(where:{ $0.id == nodeID })?.frame,
+              let anchor = CanvasLinkAnchor.nearest(to:point,in:frame) else {
+            endpointDrag = nil
+            status = "연결 위치를 확인할 수 없어 드래그를 취소했습니다."
+            return false
+        }
+        drag.anchor = anchor
+        endpointDrag = drag
+        return true
+    }
+
+    func displayedLink(_ link: CanvasLink) -> CanvasLink {
+        guard let drag = endpointDrag, drag.expected.id == link.id, endpointDragIsCurrent(drag) else { return link }
+        var preview = link
+        if drag.endpoint == .from { preview.fromAnchor = drag.anchor }
+        else { preview.toAnchor = drag.anchor }
+        return preview
+    }
+
+    @discardableResult
+    func finishEndpointDrag() -> Bool {
+        guard let drag = endpointDrag else { return false }
+        let current = endpointDragIsCurrent(drag)
+        let replacement = displayedLink(drag.expected)
+        endpointDrag = nil
+        guard current else {
+            status = "드래그 중 장면이 바뀌어 연결점을 수정하지 않았습니다. 최신 내용을 유지합니다."
+            return false
+        }
+        if CanvasScene.sameLink(drag.expected,replacement) { return true }
+        let before = scene
+        guard scene.editGraph(nodeEdits:[],linkEdits:[.init(expected:drag.expected,replacement:replacement)]) else {
+            status = "연결점 상태를 확인할 수 없어 수정하지 않았습니다."
+            return false
+        }
+        recordGraphEdit(before:before)
+        status = "연결 위치를 바꿨습니다. 구조 수정 되돌리기와 다시 실행을 사용할 수 있습니다."
+        return true
     }
     private var storedDrawing = PKDrawing()
     var drawing: PKDrawing {
@@ -1421,7 +1549,7 @@ final class CanvasStore: ObservableObject {
             status = "내용 한도나 요소 상태를 확인하세요. 연결된 노트는 원본 노트 편집에서 수정하세요."
             return
         }
-        graphUndo = (before,scene)
+        recordGraphEdit(before:before)
         self.proposedNode = nil
         status = "수정한 글자를 확정했습니다. 원본 획 출처는 남겼습니다."
     }
@@ -1456,7 +1584,7 @@ final class CanvasStore: ObservableObject {
         if next.revision != scene.revision {
             let before = scene
             scene = next
-            graphUndo = (before,next)
+            recordGraphEdit(before:before)
         }
         status = "에이전트의 구조 수정과 제안을 반영했습니다. 원본 획과 요소 출처는 보존했습니다."
         return true

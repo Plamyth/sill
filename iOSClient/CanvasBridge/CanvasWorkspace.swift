@@ -123,16 +123,18 @@ struct CanvasWorkspace: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
-        .onDisappear { dictation.cancel(); store.cancelLink(); store.saveNow() }
+        .onDisappear { dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
                 store.cancelLink()
+                store.clearLinkSelection()
                 store.saveNow()
                 dictation.cancel()
             }
             else { Task { await checkConnection() } }
         }
         .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
         .onChange(of:relayToken) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
         .task {
             store.setNoteConnection(address:relayAddress,token:relayToken)
@@ -303,6 +305,8 @@ struct CanvasWorkspace: View {
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("구조 수정 되돌리기",systemImage:"arrow.uturn.backward") { store.undoGraphEdit() }
                 .disabled(!store.canUndoGraph)
+            Button("구조 수정 다시 실행",systemImage:"arrow.uturn.forward") { store.redoGraphEdit() }
+                .disabled(!store.canRedoGraph)
             Button("연결",systemImage:"network") { connectionOpen = true }
             Button("가져오기") { importOpen = true }
             Button("내보내기") { exportOpen = true }
@@ -749,8 +753,18 @@ struct CanvasWorkspace: View {
                 ForEach(store.scene.annotations.filter { visible.annotationIDs.contains($0.id) }) { note in
                     annotationView(note).accessibilityHidden(diagramMode == .diagram)
                 }
+                if store.mode == .select, let id = store.selectedLink,
+                   let link = store.scene.links.first(where:{ $0.id == id }),
+                   let endpoints = store.scene.linkEndpoints(store.displayedLink(link)) {
+                    ForEach(CanvasLink.Endpoint.allCases,id:\.self) { endpoint in
+                        CanvasEndpointHandle(store:store,linkID:id,endpoint:endpoint)
+                            .position(x:endpoint == .from ? endpoints.from.x : endpoints.to.x,
+                                      y:endpoint == .from ? endpoints.from.y : endpoints.to.y)
+                    }
+                }
             }
             .frame(width:store.scene.width,height:store.scene.height)
+            .coordinateSpace(name:"canvasScene")
             .scaleEffect(store.zoom,anchor:.topLeading)
             .offset(store.pan)
         }
@@ -787,11 +801,16 @@ struct CanvasWorkspace: View {
     }
 
     private func linkView(_ link: CanvasLink) -> some View {
-        Path { path in
-            guard let from = store.scene.nodes.first(where:{$0.id == link.from})?.frame.center,
-                  let to = store.scene.nodes.first(where:{$0.id == link.to})?.frame.center else { return }
+        let endpoints = store.scene.linkEndpoints(store.displayedLink(link))
+        let line = Path { path in
+            guard let endpoints else { return }
+            let from = endpoints.from, to = endpoints.to
             path.move(to:CGPoint(x:from.x,y:from.y))
             path.addLine(to:CGPoint(x:to.x,y:to.y))
+        }
+        let arrow = Path { path in
+            guard let endpoints else { return }
+            let from = endpoints.from, to = endpoints.to
             let angle = atan2(to.y-from.y,to.x-from.x)
             for sign in [-1.0,1.0] {
                 path.move(to:CGPoint(x:to.x,y:to.y))
@@ -799,9 +818,20 @@ struct CanvasWorkspace: View {
                                         y:to.y-20*sin(angle+sign*0.45)))
             }
         }
-        .stroke(Color(uiColor:CanvasPalette.link),
-                style:StrokeStyle(lineWidth:3,lineCap:.round))
-        .allowsHitTesting(false)
+        return ZStack {
+            line.stroke(Color(uiColor:CanvasPalette.link),style:StrokeStyle(
+                lineWidth:store.selectedLink == link.id ? 5 : 3,lineCap:.round))
+            arrow.stroke(Color(uiColor:CanvasPalette.link),style:StrokeStyle(lineWidth:3,lineCap:.round))
+        }
+        .contentShape(line.strokedPath(StrokeStyle(lineWidth:24 / store.zoom,lineCap:.round)))
+        .onTapGesture { store.selectLink(link.id) }
+        .allowsHitTesting(store.mode == .select)
+        .accessibilityElement(children:.ignore)
+        .accessibilityLabel(link.label.isEmpty ? "연결선" : "연결선 \(link.label)")
+        .accessibilityValue(store.selectedLink == link.id ? "선택됨. 시작점과 끝점을 끌어 연결 위치 변경" : "선택 안 됨")
+        .accessibilityIdentifier("canvasLink-\(link.id.uuidString)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { store.selectLink(link.id) }
     }
 
     private func nodeView(_ node: CanvasNode) -> some View {
@@ -1062,6 +1092,40 @@ struct CanvasWorkspace: View {
                 store.applyAgentRevision(revision)
             } else { store.status = "에이전트 주석을 기다리고 있습니다." }
         } catch { store.status = "주석 확인 실패: \(error.localizedDescription)" }
+    }
+}
+
+private struct CanvasEndpointHandle: View {
+    @ObservedObject var store: CanvasStore
+    let linkID: UUID
+    let endpoint: CanvasLink.Endpoint
+    @State private var started = false
+
+    var body: some View {
+        Circle().fill(Color(uiColor:CanvasPalette.background))
+            .overlay(Circle().stroke(Color(uiColor:CanvasPalette.link),lineWidth:3 / store.zoom))
+            .frame(width:20 / store.zoom,height:20 / store.zoom)
+            .frame(width:44 / store.zoom,height:44 / store.zoom)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance:0,coordinateSpace:.named("canvasScene"))
+                .onChanged { value in
+                    if !started {
+                        started = true
+                        store.beginEndpointDrag(endpoint,linkID:linkID)
+                    }
+                    store.updateEndpointDrag(to:CanvasPoint(x:value.location.x,y:value.location.y))
+                }.onEnded { value in
+                    defer { started = false }
+                    guard started, store.updateEndpointDrag(to:CanvasPoint(x:value.location.x,y:value.location.y)) else {
+                        store.cancelEndpointDrag()
+                        return
+                    }
+                    store.finishEndpointDrag()
+                })
+            .onDisappear { store.cancelEndpointDrag() }
+            .accessibilityLabel(endpoint == .from ? "연결선 시작점" : "연결선 끝점")
+            .accessibilityHint("끌어서 이 요소 경계의 연결 위치를 바꿉니다.")
+            .accessibilityIdentifier("canvasLinkEndpoint-\(endpoint.rawValue)-\(linkID.uuidString)")
     }
 }
 

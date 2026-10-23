@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile production models and Store, render the bundled Pele in windowless WebKit."""
+"""Run isolated model/Store checks and SDK compilation; endpoint mode never opens UI."""
 import hashlib
 import json
 import os
@@ -14,10 +14,12 @@ archive = json.loads(subprocess.check_output([
     '--project', 'BT_CCR-ipad'], text=True))
 output = Path(sys.argv[1]).resolve()
 review_fix = sys.argv[2:] == ['--review-fix']
-if sys.argv[2:] and not review_fix:
+endpoints = sys.argv[2:] == ['--diagram-endpoints']
+if sys.argv[2:] and not (review_fix or endpoints):
     raise SystemExit('지원하지 않는 검사 옵션입니다.')
 folder = 'pele-review-fix' if review_fix else 'pele-worker'
-if output != Path(archive['path']) / 'pele-rea-20261021' / folder:
+expected = Path(archive['path']) / ('diagram-endpoints-20261023/verification' if endpoints else 'pele-rea-20261021/' + folder)
+if output != expected:
     raise SystemExit('지정된 외장 검증 경로만 사용합니다.')
 output.mkdir(parents=True, exist_ok=True)
 home = output / 'home'
@@ -34,6 +36,12 @@ ui_tests = root / 'Tests/integration/ipad-runtime/CanvasBridgeUITests/CanvasBrid
 ink_checks = root / 'Tests/checks/ink-undo'
 if review_fix:
     inputs += [native,ui_tests,*ink_checks.glob('*.swift'),ink_checks / 'Info.plist']
+if endpoints:
+    inputs += [root / 'Tests/checks/canvas-hierarchy-fold/main.swift',
+               root / 'Tests/checks/canvas-hierarchy/main.swift',
+               root / 'Tests/checks/ipad-canvas-revisions/main.swift',
+               root / 'Scripts/ipad-test-runtime/NativeSceneEncoder.swift',
+               ink_checks / 'Info.plist']
 inputs = [p for p in inputs if p.is_file()]
 hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 manifest = json.loads((resources / 'provenance.json').read_text())
@@ -73,7 +81,27 @@ try:
         '-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',plist,
         '-o',output / 'store-check'])
     run('store-run',[output / 'store-check'],30)
-    if review_fix:
+    if endpoints:
+        for name, checks in [('endpoints', here / 'EndpointChecks.swift'),
+                             ('fold', root / 'Tests/checks/canvas-hierarchy-fold/main.swift')]:
+            run(name + '-compile',base + ['-parse-as-library',model,store,checks,
+                '-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',plist,
+                '-o',output / (name + '-check')])
+            run(name + '-run',[output / (name + '-check')],60)
+        run('native-scene-encoder-compile',base + ['-parse-as-library',model,
+            root / 'Scripts/ipad-test-runtime/NativeSceneEncoder.swift','-o',output / 'native-scene-encoder'])
+        original = (output / 'endpoint-scene.json').read_bytes()
+        typed = subprocess.run([str(output / 'native-scene-encoder')],input=original,env=env,
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
+        (output / 'native-scene-encoder.log').write_bytes(typed.stderr)
+        (output / 'native-scene-readback.json').write_bytes(typed.stdout)
+        equivalent = typed.returncode == 0 and json.loads(original) == json.loads(typed.stdout)
+        results.append(dict(name='native-scene-roundtrip',exitCode=0 if equivalent else 1,
+                            processExitCode=typed.returncode,equivalent=equivalent))
+        if not equivalent:
+            raise RuntimeError('native scene encoder lost data')
+        print('native-scene-roundtrip 0',flush=True)
+    elif review_fix:
         run('ink-history-compile',base + ['-parse-as-library',model,store,
             ink_checks / 'InkUndoChecks.swift',ink_checks / 'main.swift',
             '-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',plist,
@@ -112,5 +140,5 @@ if hashes != after:
 (output / 'result.json').write_text(json.dumps(dict(results=results,inputHashes=hashes,
     inputsUnchanged=hashes == after,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
     realVaultTouched=False,deviceExecuted=False,nativeModeExecuted=False,sharedHostChanged=False,
-    reviewFix=review_fix,exitCode=status),indent=2) + '\n')
+    reviewFix=review_fix,diagramEndpoints=endpoints,exitCode=status),indent=2) + '\n')
 sys.exit(status)
