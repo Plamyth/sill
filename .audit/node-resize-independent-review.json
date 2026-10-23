@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "verdict": "HOLD",
+  "P1": 0,
+  "P2": 1,
+  "recordedAt": "2026-10-23T18:35:58.961444+00:00",
+  "summary": "새 크기 조절 기능에 드래그 이외의 접근성 실행 경로가 없어 P2 한 건을 보류한다. 데이터 보호 경로에서는 추가 P1/P2를 확인하지 못했다. 실물 동작 수용은 이 정적 검수에 포함하지 않는다.",
+  "identity": {
+    "worktree": "/Users/ambrion/.codex/worktrees/ccr-ipad-node-resize-20261024",
+    "exactHEAD": "74d190f34d6c5bced68c836f393eb5f96986a561",
+    "exactTree": "33cc356b51ddd57da0f4af340bc7cd650f0ff4cf",
+    "base": "0c59370020c8b39a67098167027bff21b6d77570",
+    "productCommit": "5c32c64749e33dcf46b4f724e9994b0cc15e55c1",
+    "headAddsOnlyAuditDocument": true,
+    "initialGitStatus": "clean",
+    "fileSHA256": {
+      "iOSClient/CanvasBridge/CanvasStore.swift": "3149a6a291be617d8008c19f7eee67d4dc7230010f1d19e49a9683571a6df815",
+      "iOSClient/CanvasBridge/CanvasWorkspace.swift": "82fdbebdc3314c0f02fbdefb057251b324ffe58be99baff5ba817c3ad158c619",
+      "Tests/checks/node-resize/NodeResizeChecks.swift": "8d0ffb583c86d8c0e060f0cd1aee2983d4304370ffaca6391a99bd0d6e2d0c0c",
+      "Tests/checks/node-resize/run.py": "b8dacd199795c8cae0d0c875455dd5864e4bec3f9ff2eb30cae371222d648ffc",
+      ".audit/node-resize.todo.md": "fefd9f35851dbe85e3be277dd3a01125f6386e9abe1feb5f74abec5e49a35cc1"
+    }
+  },
+  "method": {
+    "kind": "정적 독립 코드·접근성·데이터 보호 검수",
+    "pstackLeaf": "pstack:thermo-nuclear-review / agents/thermo-nuclear-review-subagent.md",
+    "pstackApplied": "추가·변경 코드에 한정해 UI → Store → scene/Undo/저장과 연결점 계산의 관련 호출을 추적했다. 반례와 코드 근거가 있는 P1/P2만 보고한다. no-comments 지침도 읽었으나 사용자 비작성·서브에이전트 금지에 따라 삭제·위임하지 않았다.",
+    "ponytailApplied": "기존 EndpointDrag, CanvasScene.sameNode, isValidLinkFrame, graphUndo/Redo, persistScene 구조의 재사용 여부를 확인했다. 새 추상화·의존성·대체 잉크 구현을 제안하지 않았다.",
+    "scopeAdaptation": "사용자가 지정한 비작성 검수 leaf로 직접 수행했다. PR 조회·네트워크·UI 실행·하위 에이전트·제품/검사 수정·커밋·별도 todo 생성은 제외했다. 유일한 쓰기는 이 JSON이다.",
+    "executed": "Git 로컬 identity/diff 확인, 지정 파일 텍스트 읽기, Python 표준 라이브러리 SHA-256 비교와 JSON 작성/검증만 수행했다.",
+    "notExecuted": [
+      "기존 suite 재실행",
+      "Swift/Node/앱 모듈 임포트",
+      "네이티브 또는 메모리 동작 프로브",
+      "앱·기기·UI·브라우저 실행",
+      "네트워크·relay 호출",
+      "개인 보관함·앱 데이터 접근",
+      "호스트·음성·공유 상태 변경"
+    ],
+    "deviceExecuted": false,
+    "appExecuted": false,
+    "browserExecuted": false,
+    "networkExecuted": false,
+    "realVaultTouched": false,
+    "externalEffects": 0,
+    "productOrTestWrites": 0,
+    "subagents": 0,
+    "arena": false,
+    "nativeGoal": false
+  },
+  "parentEvidence": {
+    "implementationReceipt": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/node-resize-20261024/implementation-result.json",
+      "sha256": "df53a74abbb2fbafbd58ae91f6810ce45c1533fed740de713386b34d9e63ad74"
+    },
+    "latestReceipt": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/node-resize-20261024/latest-result.json",
+      "sha256": "693adfa5d3e85c477f56bfe59d14b4699e098c039c6b8a695da6cc52f2bc346d"
+    },
+    "reportedByParentOrAuthor": {
+      "productionStoreAssertions": 107,
+      "endpointAssertions": 248,
+      "storeRegression": "PASS",
+      "allCanvasIOS27Typecheck": "PASS"
+    },
+    "independentlyVerifiedHere": {
+      "receiptInputCount": 22,
+      "all22ReceiptInputHashesMatchCurrentFiles": true,
+      "exactHEADAndTree": true,
+      "productFilesIdenticalBetween5c32And74d": true
+    },
+    "evidenceLimit": "기존 영수증의 latest-result.head는 검사 시점 기준 커밋 0c5937을 기록한다. 현재 22개 입력 해시는 모두 일치하고 5c32→74d는 문서만 변경됐다. 원 실행 로그와 실행 입력의 전체 인과 대조는 부모 담당이 진행 중이며 이 검수에서 재수행하거나 실행 성공을 독립 재현했다고 표시하지 않는다."
+  },
+  "findings": [
+    {
+      "id": "NR-A11Y-01",
+      "priority": "P2",
+      "title": "크기 조절에 보조 기술로 실행할 수 있는 대체 동작이 없다",
+      "file": "iOSClient/CanvasBridge/CanvasWorkspace.swift",
+      "lineStart": 1154,
+      "lineEnd": 1156,
+      "relatedLines": [
+        1116,
+        1123,
+        1134,
+        1142
+      ],
+      "codeEvidence": "CanvasNodeResizeHandle은 Image에 DragGesture만 연결한다. accessibilityLabel/Hint/Identifier는 있으나 accessibilityAction, accessibilityAdjustableAction, Button 또는 너비·높이 입력은 없다. Workspace 전체의 크기 변경 진입점도 이 손잡이뿐이다.",
+      "counterexample": "선택된 노드가 있는 상태에서 손잡이의 접근성 활성화 또는 조절 액션으로 크기를 바꾸려 해도 beginNodeResize/updateNodeResize/finishNodeResize를 호출하는 접근성 실행 경로가 없다. 일반 드래그를 직접 수행하기 어려운 VoiceOver·Switch Control 사용자는 새 기능을 조작할 대체 수단을 제공받지 못한다.",
+      "impact": "44 screen pt 터치 영역과 한국어 설명만으로 크기 변경 기능의 접근성 실행 가능성이 충족되지 않는다.",
+      "verification": "정적 코드의 실행 경로 부재를 확인했다. 실제 VoiceOver·Switch Control 시험은 수행하지 않았다.",
+      "minimalRemediation": "기존 Store의 begin/update/finish 트랜잭션을 재사용하는 한국어 너비·높이 증감 접근성 액션 또는 접근 가능한 크기 입력을 연결한다. 유효성·stale·Undo 한 번 규칙을 같은 경로에서 유지한다.",
+      "acceptance": "드래그 없이 크기 변경이 실행되고, 한 동작당 Undo 한 번 및 취소·stale 거부를 유지하는지 확인한다."
+    }
+  ],
+  "reviewedPaths": [
+    {
+      "topic": "미리보기/저장/Undo",
+      "evidence": "CanvasStore.swift:246-276, 280-316, 1419-1440",
+      "result": "displayedScene은 복사한 scene의 frame만 바꾼다. finish만 frame/revision을 scene에 한 번 대입하고 기존 recordGraphEdit를 사용한다. no-op은 scene 쓰기와 Undo 덮어쓰기를 피한다. 저장은 displayedScene이 아닌 scene을 인코딩한다. 정적 경로에서 추가 P1/P2 없음."
+    },
+    {
+      "topic": "sourceIDs/native ink/vault reference/동시 쓰기",
+      "evidence": "CanvasStore.swift:113-128, 212-218, 265-275, 285-315; CanvasModel.swift:991-1007",
+      "result": "크기 확정은 frame/revision만 바꾼다. native PKDrawing, strokes, sourceStrokeIds, 텍스트, vault reference를 수정하는 새 경로가 없다. 장면 갱신은 generation 증가와 드래그 폐기로 기존 변경을 보호한다. Undo는 현재 scene의 잉크를 보존하며 그래프 일치 검사 후 그래프만 복원한다. 실제 파일/relay 왕복은 미실행."
+    },
+    {
+      "topic": "sceneGeneration/state owner/stale/invalid",
+      "evidence": "CanvasStore.swift:113-150, 200-275",
+      "result": "scene ID·revision·generation·선택·mode·가시성·sameNode/UTF-8 기대값을 검사한다. 다른 owner의 update/cancel/finish는 거부한다. 선택/모드/scene 변경은 pending resize를 제거한다. 유한 양수 frame 검사 실패 시 취소한다. 기존 Store 검사 소스와도 대조했다."
+    },
+    {
+      "topic": "normalized link anchor/preview",
+      "evidence": "CanvasWorkspace.swift:747-757, 813-816, 853-858; CanvasModel.swift linkEndpoints/CanvasLinkAnchor",
+      "result": "링크와 노드는 같은 displayedScene을 사용하므로 frame 변경에 normalized anchor 끝점과 주석 위치가 따라가는 계산 경로다. 실제 렌더링 동등성은 미검증."
+    },
+    {
+      "topic": "zoom/44pt/노드 드래그 충돌",
+      "evidence": "CanvasWorkspace.swift:758-765, 776-779, 1117-1133, 1758-1765",
+      "result": "44/zoom 크기에 상위 zoom이 적용되는 구조이고 named canvasScene translation을 그대로 Store에 전달한다. 손잡이는 노드와 별도 형제 뷰이며 NodeTile의 move는 resize 상태가 있으면 차단한다. zoom/pan 실화면, hit testing, 다중 터치의 recognizer 경합은 정적으로 확정할 수 없다."
+    },
+    {
+      "topic": "gesture cancel/onEnded/gestureActive 순서",
+      "evidence": "CanvasWorkspace.swift:1134-1152; 기존 CanvasEndpointHandle:1183-1201",
+      "result": "onEnded는 최종 update 성공 시 finish하고 owner를 비운다. gestureActive false 및 onDisappear는 owner 일치 cancel만 호출한다. 기존 EndpointHandle 패턴을 재사용한다. false 관측이 onEnded보다 먼저 처리되면 owner가 없어 확정이 생략되는 분기는 존재하지만 SwiftUI 실제 콜백 순서를 실행하지 않아 재현된 결함으로 보고하지 않는다."
+    },
+    {
+      "topic": "접근성",
+      "evidence": "CanvasWorkspace.swift:1116-1156",
+      "result": "한국어 label/hint와 정적 44pt 의도는 확인했다. 드래그 외 접근 가능한 실행 경로 부재는 NR-A11Y-01로 보고한다."
+    }
+  ],
+  "referenceEvidence": {
+    "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-myscript-diagram-20261023/observed-spec.md",
+    "scope": "선택 손잡이·연결점·이동·재열기 관측을 참고했다. 전체 복각·정밀 도형 인식·실물 동등성·기존 PKLasso/native ink 신규 구현으로 확대하지 않는다."
+  },
+  "remainingPhysicalUnverified": [
+    "정상 Pencil/손가락 드래그의 실제 확정과 취소",
+    "onEnded와 gestureActive reset 관측 순서",
+    "zoom/pan별 44pt 실제 hit testing과 노드 이동/손잡이 충돌",
+    "background·화면 이탈·다중 터치 중단과 복귀",
+    "VoiceOver·Switch Control의 실제 실행",
+    "설치 앱 버전과 저장·재열기·동일 Obsidian 데이터 왕복"
+  ],
+  "completionBoundary": "이 HOLD는 독립 정적 검수 결과다. 부모의 suite 통과를 재실행 결과로 주장하지 않으며 설치·실물 수용·통합·배포 판정이 아니다."
+}

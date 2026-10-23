@@ -739,6 +739,7 @@ struct CanvasWorkspace: View {
 
     private var canvas: some View {
         let visible = store.scene.visibility
+        let displayed = store.displayedScene
         return GeometryReader { _ in
             ZStack(alignment:.topLeading) {
                 Color(uiColor:CanvasPalette.background)
@@ -746,12 +747,21 @@ struct CanvasWorkspace: View {
                 if store.scene.drawingBase64.isEmpty {
                     ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
                 }
-                ForEach(store.scene.links.filter { visible.linkIDs.contains($0.id) }) { link in linkView(link) }
-                ForEach(store.scene.nodes.filter { visible.nodeIDs.contains($0.id) }) { node in
+                ForEach(displayed.links.filter { visible.linkIDs.contains($0.id) }) { link in linkView(link,in:displayed) }
+                ForEach(displayed.nodes.filter { visible.nodeIDs.contains($0.id) }) { node in
                     nodeView(node).accessibilityHidden(diagramMode == .diagram)
                 }
                 ForEach(store.scene.annotations.filter { visible.annotationIDs.contains($0.id) }) { note in
-                    annotationView(note).accessibilityHidden(diagramMode == .diagram)
+                    annotationView(note,in:displayed).accessibilityHidden(diagramMode == .diagram)
+                }
+                if store.mode == .select, let id = store.selectedNode, visible.nodeIDs.contains(id),
+                   let node = store.scene.nodes.first(where:{ $0.id == id }),
+                   let frame = displayed.nodes.first(where:{ $0.id == id })?.frame,
+                   frame.isValidLinkFrame {
+                    CanvasNodeResizeHandle(store:store,node:node,sceneID:store.scene.id)
+                        .position(x:frame.x + frame.width,y:frame.y + frame.height)
+                        .allowsHitTesting(diagramMode != .diagram)
+                        .accessibilityHidden(diagramMode == .diagram)
                 }
                 if store.mode == .select, let id = store.selectedLink,
                    let link = store.scene.links.first(where:{ $0.id == id }),
@@ -800,8 +810,8 @@ struct CanvasWorkspace: View {
         .allowsHitTesting(false)
     }
 
-    private func linkView(_ link: CanvasLink) -> some View {
-        let endpoints = store.scene.linkEndpoints(store.displayedLink(link))
+    private func linkView(_ link: CanvasLink, in displayed: CanvasScene) -> some View {
+        let endpoints = displayed.linkEndpoints(store.displayedLink(link))
         let line = Path { path in
             guard let endpoints else { return }
             let from = endpoints.from, to = endpoints.to
@@ -840,9 +850,9 @@ struct CanvasWorkspace: View {
             .allowsHitTesting(store.mode == .select)
     }
 
-    private func annotationView(_ note: CanvasAnnotation) -> some View {
+    private func annotationView(_ note: CanvasAnnotation, in displayed: CanvasScene) -> some View {
         Group {
-            if let node = store.scene.nodes.first(where:{$0.id == note.nodeId}) {
+            if let node = displayed.nodes.first(where:{$0.id == note.nodeId}) {
                 Text(note.text).font(.callout).foregroundStyle(.black).padding(8)
                     .background(.yellow.opacity(0.9),in:RoundedRectangle(cornerRadius:8))
                     .position(x:node.frame.x+150,y:node.frame.y+node.frame.height+42)
@@ -1092,6 +1102,71 @@ struct CanvasWorkspace: View {
                 store.applyAgentRevision(revision)
             } else { store.status = "에이전트 주석을 기다리고 있습니다." }
         } catch { store.status = "주석 확인 실패: \(error.localizedDescription)" }
+    }
+}
+
+private struct CanvasNodeResizeHandle: View {
+    @ObservedObject var store: CanvasStore
+    let node: CanvasNode
+    let sceneID: UUID
+    @State private var dragOwner: UUID?
+    @GestureState private var gestureActive = false
+
+    var body: some View {
+        Image(systemName:"arrow.up.left.and.arrow.down.right")
+            .font(.system(size:16 / store.zoom,weight:.bold))
+            .foregroundStyle(Color(uiColor:CanvasPalette.link))
+            .frame(width:24 / store.zoom,height:24 / store.zoom)
+            .background(Color(uiColor:CanvasPalette.background),in:RoundedRectangle(cornerRadius:4 / store.zoom))
+            .frame(width:44 / store.zoom,height:44 / store.zoom)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance:0,coordinateSpace:.named("canvasScene"))
+                .updating($gestureActive) { _, active, _ in active = true }
+                .onChanged { value in
+                    if dragOwner == nil {
+                        let owner = UUID()
+                        dragOwner = owner
+                        store.beginNodeResize(node,sceneID:sceneID,owner:owner)
+                    }
+                    guard let owner = dragOwner else { return }
+                    store.updateNodeResize(owner:owner,translation:CanvasPoint(
+                        x:value.translation.width,y:value.translation.height))
+                }.onEnded { value in
+                    guard let owner = dragOwner else { return }
+                    defer { dragOwner = nil }
+                    guard store.updateNodeResize(owner:owner,translation:CanvasPoint(
+                        x:value.translation.width,y:value.translation.height)) else {
+                        store.cancelNodeResize(owner:owner)
+                        return
+                    }
+                    store.finishNodeResize(owner:owner)
+                })
+            .onChange(of:gestureActive) { _, active in
+                if !active, let owner = dragOwner {
+                    store.cancelNodeResize(owner:owner)
+                    dragOwner = nil
+                }
+            }
+            .onDisappear {
+                if let owner = dragOwner { store.cancelNodeResize(owner:owner) }
+                dragOwner = nil
+            }
+            .accessibilityLabel("선택한 요소 크기 조절")
+            .accessibilityHint("우하단 손잡이를 Pencil이나 손가락으로 끌어 너비와 높이를 바꿉니다.")
+            .accessibilityValue(Text("너비 \(node.frame.width,specifier:"%.0f"), 높이 \(node.frame.height,specifier:"%.0f")"))
+            .accessibilityAction(named:Text("너비 늘리기")) {
+                store.adjustNodeSize(node,sceneID:sceneID,by:.init(x:20,y:0))
+            }
+            .accessibilityAction(named:Text("너비 줄이기")) {
+                store.adjustNodeSize(node,sceneID:sceneID,by:.init(x:-20,y:0))
+            }
+            .accessibilityAction(named:Text("높이 늘리기")) {
+                store.adjustNodeSize(node,sceneID:sceneID,by:.init(x:0,y:20))
+            }
+            .accessibilityAction(named:Text("높이 줄이기")) {
+                store.adjustNodeSize(node,sceneID:sceneID,by:.init(x:0,y:-20))
+            }
+            .accessibilityIdentifier("canvasNodeResize-\(node.id.uuidString)")
     }
 }
 
@@ -1693,7 +1768,7 @@ private struct NodeTile: View {
             .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")
             .accessibilityValue(node.isCollapsed == true ? "하위 요소 접힘" : "하위 요소 펼침")
             .gesture(DragGesture().onChanged { value in
-                guard store.scene.visibility.nodeIDs.contains(node.id) else { return }
+                guard store.nodeResizeDrag == nil, store.scene.visibility.nodeIDs.contains(node.id) else { return }
                 if dragOrigin == nil { dragOrigin = CanvasPoint(x:node.frame.x,y:node.frame.y) }
                 guard let dragOrigin else { return }
                 store.selectedNode = node.id

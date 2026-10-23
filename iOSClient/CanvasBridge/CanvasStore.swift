@@ -112,6 +112,7 @@ final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
             linkSceneGeneration &+= 1
+            nodeResizeDrag = nil
             let visible = scene.visibility.nodeIDs
             if oldValue.id != scene.id || selectedLink.map({ !scene.visibility.linkIDs.contains($0) }) == true {
                 clearLinkSelection()
@@ -130,6 +131,7 @@ final class CanvasStore: ObservableObject {
     @Published var mode: CanvasMode = .pen {
         didSet {
             if oldValue != mode {
+                nodeResizeDrag = nil
                 clearPendingLink()
                 clearLinkSelection()
                 if mode != .lasso { setInkSelection([]) }
@@ -143,6 +145,7 @@ final class CanvasStore: ObservableObject {
         didSet {
             if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
             if oldValue != selectedNode {
+                nodeResizeDrag = nil
                 clearPendingLink()
                 if selectedNode != nil { clearLinkSelection() }
             }
@@ -194,6 +197,91 @@ final class CanvasStore: ObservableObject {
     private func recordGraphEdit(before: CanvasScene) {
         graphUndo = (before,scene)
         graphRedo = nil
+    }
+
+    struct NodeResizeDrag {
+        let owner: UUID
+        let generation: UInt64
+        let sceneID: UUID
+        let revision: Int
+        let expected: CanvasNode
+        var frame: CanvasRect
+    }
+    @Published private(set) var nodeResizeDrag: NodeResizeDrag?
+
+    private func nodeResizeIsCurrent(_ drag: NodeResizeDrag) -> Bool {
+        mode == .select && selectedNode == drag.expected.id &&
+            drag.generation == linkSceneGeneration && scene.id == drag.sceneID &&
+            scene.revision == drag.revision && scene.visibility.nodeIDs.contains(drag.expected.id) &&
+            scene.nodes.contains { CanvasScene.sameNode($0,drag.expected) }
+    }
+
+    @discardableResult
+    func beginNodeResize(_ expected: CanvasNode, sceneID: UUID, owner: UUID) -> Bool {
+        guard nodeResizeDrag == nil, endpointDrag == nil, scene.id == sceneID,
+              expected.frame.isValidLinkFrame else { return false }
+        let drag = NodeResizeDrag(owner:owner,generation:linkSceneGeneration,sceneID:sceneID,
+            revision:scene.revision,expected:expected,frame:expected.frame)
+        guard nodeResizeIsCurrent(drag) else { return false }
+        nodeResizeDrag = drag
+        return true
+    }
+
+    @discardableResult
+    func cancelNodeResize(owner: UUID) -> Bool {
+        guard nodeResizeDrag?.owner == owner else { return false }
+        nodeResizeDrag = nil
+        return true
+    }
+
+    @discardableResult
+    func updateNodeResize(owner: UUID, translation: CanvasPoint) -> Bool {
+        guard var drag = nodeResizeDrag, drag.owner == owner else { return false }
+        var frame = drag.expected.frame
+        frame.width += translation.x
+        frame.height += translation.y
+        guard nodeResizeIsCurrent(drag), frame.isValidLinkFrame else {
+            cancelNodeResize(owner:owner)
+            status = "요소 상태나 크기가 바뀌어 크기 조절을 취소했습니다. 최신 내용을 유지합니다."
+            return false
+        }
+        drag.frame = frame
+        nodeResizeDrag = drag
+        return true
+    }
+
+    var displayedScene: CanvasScene {
+        guard let drag = nodeResizeDrag, nodeResizeIsCurrent(drag),
+              let index = scene.nodes.firstIndex(where:{ $0.id == drag.expected.id }) else { return scene }
+        var preview = scene
+        preview.nodes[index].frame = drag.frame
+        return preview
+    }
+
+    @discardableResult
+    func finishNodeResize(owner: UUID) -> Bool {
+        guard let drag = nodeResizeDrag, drag.owner == owner else { return false }
+        let current = nodeResizeIsCurrent(drag)
+        nodeResizeDrag = nil
+        guard current, drag.frame.isValidLinkFrame,
+              let index = scene.nodes.firstIndex(where:{ $0.id == drag.expected.id }) else { return false }
+        guard drag.frame != drag.expected.frame else { return true }
+        let before = scene
+        var next = scene
+        next.nodes[index].frame = drag.frame
+        next.revision += 1
+        scene = next
+        recordGraphEdit(before:before)
+        status = "요소 크기를 바꿨습니다. 구조 수정 되돌리기와 다시 실행을 사용할 수 있습니다."
+        return true
+    }
+
+    @discardableResult
+    func adjustNodeSize(_ expected: CanvasNode, sceneID: UUID, by translation: CanvasPoint) -> Bool {
+        let owner = UUID()
+        guard beginNodeResize(expected,sceneID:sceneID,owner:owner) else { return false }
+        guard updateNodeResize(owner:owner,translation:translation) else { return false }
+        return finishNodeResize(owner:owner)
     }
 
     var canUndoGraph: Bool {
