@@ -107,7 +107,19 @@ class Simulator:
         require((physical.timestamp(lease["expiresAt"]) - physical.now()).total_seconds() >
                 self.args.native_budget_seconds, "lease_renewal_required_before_native_command")
         child = physical.Runner(self.args.native_budget_seconds)
-        result = child.run(command)
+        try:
+            result = child.run(command)
+        except Held as error:
+            timeout = error.__cause__
+            if isinstance(timeout, physical.subprocess.TimeoutExpired):
+                row = {"command": [str(x) for x in command], "timedOut": True,
+                       "timeoutSeconds": timeout.timeout, "reason": str(error)}
+                for key, value in (("stdout", timeout.stdout), ("stderr", timeout.stderr)):
+                    row[key] = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+                path = self.directory / ("native-" + str(len(self.commands)) + ".json")
+                atomic_json(path, row)
+                self.commands.append(evidence(path))
+            raise
         row = {"command": [str(x) for x in command], "stdout": result[0], "stderr": result[1]}
         path = self.directory / ("native-" + str(len(self.commands)) + ".json")
         atomic_json(path, row)
