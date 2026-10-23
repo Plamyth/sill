@@ -11,26 +11,37 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:]]
-commit = '099dcd8cbd846b7b54395e6a2c9e7df868fd1eea'
+commit = '0bec7a9970b0bd4e15390012b8ade02ed54605c2'
 names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
          'AudioForwardingParticipants', 'AudioForwardingProtection', 'HostAudioForwardingRuntime']
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in names]
 protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
-inputs = sources + protocol + list(here.glob('*.*'))
+closure = root / 'Sources/SillHost/LocalAudioRelayClosure.swift'
+inputs = sources + protocol + list(here.glob('*.*')) + [closure]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 pins = dict(re.findall(r'"(server/[^\"]+)": "([a-f0-9]{64})"',
-                     (root / 'Sources/SillHost/LocalAudioRelayClosure.swift').read_text()))
-node_hashes = {}
+                     closure.read_text()))
+if (node_repo / '.git').exists():
+    def node_source(name):
+        return subprocess.check_output(['git', '-C', str(node_repo), 'show', commit + ':' + name])
+    node_files = subprocess.check_output(['git', '-C', str(node_repo), 'ls-tree', '--name-only',
+                                        commit, 'server/'], text=True).splitlines()
+    node_files = {name for name in node_files if name.endswith(('.js', '.py'))}
+else:
+    def node_source(name):
+        return (node_repo / name).read_bytes()
+    node_files = {str(p.relative_to(node_repo)) for p in (node_repo / 'server').iterdir() if p.is_file()}
+assert len(pins) == 19 and node_files == set(pins)
+node_hashes = {name: hashlib.sha256(node_source(name)).hexdigest() for name in sorted(node_files)}
+assert node_hashes == pins
 with tempfile.TemporaryDirectory(prefix='evidence-lifecycle-', dir=archive) as temporary:
     out = Path(temporary)
     node = out / 'node-source'
     node.mkdir()
     for name in ['audio-forwarding-authority.js', 'native-audio-control.js', 'audio-session.js']:
-        data = subprocess.check_output(['git', '-C', str(node_repo), 'show', commit + ':server/' + name])
-        digest = hashlib.sha256(data).hexdigest()
-        assert digest == pins['server/' + name]
+        data = node_source('server/' + name)
+        assert hashlib.sha256(data).hexdigest() == pins['server/' + name]
         (node / name).write_bytes(data)
-        node_hashes[name] = digest
     runtime = out / 'Runtime.swift'
     runtime.write_text(sources[-1].read_text() + '''
 extension HostAudioForwardingRuntime {
@@ -64,6 +75,7 @@ extension HostAudioForwardingRuntime {
         except ProcessLookupError:
             pass
 assert before == {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+assert node_hashes == {name: hashlib.sha256(node_source(name)).hexdigest() for name in sorted(node_files)}
 print(json.dumps({'passed': True, 'sourceUnchanged': True, 'sourceHashes': before,
                   'nodeSourceCommit': commit, 'nodeSourceHashes': node_hashes,
                   'actualAudioOrDeviceActions': 0, 'scratchRemoved': not out.exists()}))

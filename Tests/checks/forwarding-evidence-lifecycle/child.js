@@ -36,7 +36,7 @@ let receipt=null;
 const prove=request=>{const {budgetMilliseconds,...identity}=request;return {...identity,state:'quiescent',facts};};
 const audio={bootId:randomUUID(),close(){},closeBinding(){},commitPreparedBinding(){},
   prepareBinding:async value=>{receipt=prove(value.request);return receipt;},inspect:()=>receipt,
-  prepareLocalReturn:async request=>{receipt=prove(request);return receipt;},
+  prepareLocalReturn:async (request,onAdmitted=()=>{})=>{onAdmitted();receipt=prove(request);return receipt;},
   fenceAndQuiesce:async request=>{receipt=prove(request);return receipt;},
   loseController(){worker?.stdin.end();worker?.kill();}};
 const server=http.createServer((req,res)=>{
