@@ -85,3 +85,12 @@ python3 Tests/checks/control-room-events/sdk.py /Volumes/BT-Workspace/Developmen
 ```
 
 이번 실행은 Foundation 종료 코드 0, `sourceUnchanged=true`, `cleanupVerified=true`, 최종 SDK 종료 코드 `[0, 0]`, `sourceUnchanged=true`입니다. 앱 빌드·설치·push·실제 서비스 네트워크·데이터·Mac UI·기기·음성·relay 8791 변경은 없습니다. 실제 149행의 RAM 비교는 부모의 별도 검증이며 이 합성 결과에 합산하지 않습니다. 독립 검수와 통합 수용도 부모의 후속 단계입니다.
+
+
+## 인증 회수와 병합 중 선택 회수
+
+첫 독립 검수에서 HTTP401·403 인증 거부 뒤 마지막 관측이 남는 P1과, 최신 한 개 버퍼가 중간 read 회수·행 제거를 생략하면 복구 본문이 자동 표시되는 P2를 실제 EventStream과 StubURL로 재현했다. 검수 원본은 작업 산출물의 independent-review.json이며 당시 head는5eb03d90이다. ea081b1 재현 검사는 HTTP401 소거 조건에서 exit133으로 실패했고 Mini 입력 정리는 확인됐다.
+
+명시적401·403은 unavailable을 발행해 본문과 선택을 소거한다. 일반 단절과 신선도 저하는 여전히 마지막 관측을 허용한다. reducer는 현재 선택 가능한 각 행이 연속으로 존재하기 시작한 SSE revision을 내부 wireSelectionRevisions에 보존한다. 행이 회수됐다 복구되면 다른 revision에 묶이므로 UI가 중간 프레임을 건너뛰어도 이전 선택은 승계되지 않는다. 삭제된 행의 기록은 남기지 않아 메타데이터 크기는 현재 행 수에 한정된다. 무관한 공개 형제의 선택과 복구 후 명시적으로 다시 한 선택은 유지된다. 이 내부 값은 wireGeneration과 마찬가지로 공개 JSON에서 주입할 수 없다.
+
+추가 회귀는401·403 소거, read 회수·행 제거 후 늦은 UI reconcile, 공개 형제 보존과 명시적 재선택 뒤 단절을 확인한다. 실제 인증정보 변경이나 네트워크 접근은 합성 검사에 포함되지 않는다.

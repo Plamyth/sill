@@ -26,6 +26,7 @@ struct ControlRoomProjection: Decodable {
     let connection: Connection?
     var transportConnected: Bool? = nil
     fileprivate(set) var wireGeneration: String? = nil
+    fileprivate(set) var wireSelectionRevisions: [ControlRoomSessionID:Int] = [:]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, generatedAt, workspace, activeVoiceId, activeVoiceSession, voiceCard
@@ -322,7 +323,7 @@ extension ControlRoomProjection {
     var sourceSelectionContext: ControlRoomSourceSelection.Context {
         .init(generation:wireGeneration,sessionIDs:ControlRoomSource.allCases.flatMap {
             selectableSessions(for:$0).map(\.id)
-        })
+        },revisions:wireSelectionRevisions)
     }
 }
 
@@ -341,29 +342,36 @@ struct ControlRoomSourceSelection {
     struct Context: Equatable {
         let generation: String?
         let sessionIDs: [ControlRoomSessionID]
+        let revisions: [ControlRoomSessionID:Int]
+    }
+    private struct Selected {
+        let id: ControlRoomSessionID
+        let revision: Int
     }
     private(set) var source: ControlRoomSource = .codex
-    private var selected: [ControlRoomSource:ControlRoomSessionID] = [:]
+    private var selected: [ControlRoomSource:Selected] = [:]
     private var generation: String?
-    var sessionID: ControlRoomSessionID? { selected[source] }
+    var sessionID: ControlRoomSessionID? { selected[source]?.id }
 
     mutating func select(source: ControlRoomSource) { self.source = source }
     mutating func select(session: ControlRoomSourceSession, in projection: ControlRoomProjection) {
         reconcile(projection)
         guard projection.selectableSessions(for:source).contains(where:{ $0.id == session.id }) else { return }
-        selected[source] = session.id
+        selected[source] = Selected(id:session.id,revision:projection.wireSelectionRevisions[session.id] ?? 0)
     }
     mutating func clear() { selected[source] = nil }
     mutating func reconcile(_ projection: ControlRoomProjection?) {
         let context = projection?.sourceSelectionContext
         if generation != context?.generation { selected.removeAll() }
         generation = context?.generation
-        selected = selected.filter { _,id in
-            context?.sessionIDs.contains(id) == true
+        selected = selected.filter { _,value in
+            context?.sessionIDs.contains(value.id) == true &&
+                (context?.revisions[value.id] ?? 0) == value.revision
         }
     }
     func session(in projection: ControlRoomProjection) -> ControlRoomSourceSession? {
-        guard generation == projection.wireGeneration else { return nil }
+        guard generation == projection.wireGeneration, let value = selected[source],
+              (projection.wireSelectionRevisions[value.id] ?? 0) == value.revision else { return nil }
         return projection.selectableSessions(for:source).first { $0.id == sessionID }
     }
     func resultDisplay(in projection: ControlRoomProjection, now: Date = Date()) -> ResultDisplay? {
@@ -1016,6 +1024,10 @@ struct ControlRoomEventsReducer {
         }
         value.transportConnected = true
         value.wireGeneration = event.generation
+        let previousSelections = generation == event.generation ? projection?.wireSelectionRevisions ?? [:] : [:]
+        value.wireSelectionRevisions = Dictionary(uniqueKeysWithValues:value.sourceSelectionContext.sessionIDs.map {
+            ($0,previousSelections[$0] ?? event.revision)
+        })
         generation = event.generation
         revision = event.revision
         snapshot = next
@@ -1253,6 +1265,10 @@ enum ControlRoomEventStream {
                         throw URLError(.networkConnectionLost)
                     } catch {
                         guard !Task.isCancelled else { return }
+                        if case ControlRoomEventsError.rejected(let code) = error, [401,403].contains(code) {
+                            continuation.yield(.unavailable)
+                            return
+                        }
                         let terminal: Bool
                         switch error {
                         case ControlRoomEventsError.unsupported: terminal = true
