@@ -263,3 +263,51 @@ check(lateObservation.snapshot == nil && lateObservation.submitted == nil && !la
       "late observe 218 is not a fresh lifecycle observation")
 
 print("PASS \(assertions) offline native forwarding contract assertions")
+
+var observedClock = 100.0
+var fresh = VisionAudioForwarding(connection: UUID(), device: device, clock: { observedClock })
+fresh.select(desired)
+try observed(&fresh, catalog(empty))
+let freshRequest = fresh.next(desire: desired)!.intent!
+let freshLive = try snapshot(freshRequest, revision: 5, phase: .active)
+try submitted(&fresh, freshLive)
+check(fresh.permits(.microphone) && fresh.freshUntil == 103, "fresh active evidence uses request transmission time")
+observedClock = 101
+_ = fresh.observe()
+observedClock = 102.99
+try observed(&fresh, catalog(freshLive, intent: 1, binding: 1))
+check(fresh.freshUntil == 104 && fresh.permits(.playback), "response delay never adds a fresh lifetime")
+observedClock = 104
+check(!fresh.permits(.microphone), "active capture permission closes at exact freshness boundary before a timer runs")
+fresh.expireFreshness()
+check(fresh.binding == nil && fresh.problem != nil && fresh.next(desire: desired) == nil,
+      "watchdog closes stale actual without automatic ownership acquisition")
+check(desired.microphone && desired.playback, "freshness expiry preserves stored desired")
+
+for invalidClock in [203.0, Double.nan, Double.infinity, -1.0] {
+    observedClock = 200
+    var late = VisionAudioForwarding(connection: UUID(), device: device, clock: { observedClock })
+    let observing = late.observe()!
+    observedClock = invalidClock
+    late.receive(try .init(requestID: observing.requestID, operation: .observe,
+        catalog: catalog(empty), result: nil), from: late.connection)
+    check(late.problem != nil && !late.permits(.microphone) && late.freshUntil == nil,
+          "late or invalid-clock response never grants authority")
+}
+
+observedClock = 300
+var renewal = VisionAudioForwarding(connection: UUID(), device: device, clock: { observedClock })
+renewal.select(desired)
+try observed(&renewal, catalog(empty))
+let renewalRequest = renewal.next(desire: desired)!.intent!
+let renewalLive = try snapshot(renewalRequest, revision: 5, phase: .active)
+try submitted(&renewal, renewalLive)
+observedClock = 301
+try observed(&renewal, catalog(renewalLive, intent: 1, binding: 1))
+observedClock = 303.5
+renewal.expireFreshness()
+check(renewal.permits(.microphone), "old watchdog does not revoke a newer confirmed evidence window")
+observedClock = 304
+renewal.expireFreshness()
+check(!renewal.permits(.microphone), "lost observe response cannot retain a past active binding")
+print("vision-forwarding freshness checks included: \(assertions)")

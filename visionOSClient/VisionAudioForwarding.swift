@@ -7,6 +7,7 @@ struct VisionAudioForwarding {
     struct Pending {
         let control: AudioForwardingControl
         let connection: UUID
+        let sentAt: TimeInterval
     }
     let connection: UUID
     let device: AudioForwardingDeviceID
@@ -21,14 +22,22 @@ struct VisionAudioForwarding {
     private var preparationReads = 0
     private var needsObservation = true
     private var failed = false
+    private let clock: () -> TimeInterval
+    private(set) var freshUntil: TimeInterval?
+    private var freshSince: TimeInterval?
+    static let freshness = 3.0
 
-    init(connection: UUID, device: AudioForwardingDeviceID) {
+    init(connection: UUID, device: AudioForwardingDeviceID,
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.connection = connection
         self.device = device
+        self.clock = clock
     }
 
     var binding: AudioForwardingBinding? {
-        guard !failed, selection == nil, let request = submitted,
+        let now = clock()
+        guard let freshSince, let freshUntil, now.isFinite, now >= freshSince, now < freshUntil,
+              !failed, selection == nil, let request = submitted,
               let intent = snapshot?.intent, let binding = snapshot?.binding,
               intent.pairedDeviceId == device, intent.intentId == request.intentId,
               intent.intentRevision == request.intentRevision,
@@ -56,12 +65,22 @@ struct VisionAudioForwarding {
         resumed = false
         needsObservation = true
         preparationReads = 0
+        freshUntil = nil
+        freshSince = nil
+    }
+    mutating func expireFreshness() {
+        guard submitted != nil, let freshUntil else { return }
+        let now = clock()
+        guard !now.isFinite || now < (freshSince ?? now) || now >= freshUntil else { return }
+        fail("음성 권한 확인이 오래되어 오디오를 중지했습니다. 저장한 음성 선택은 유지합니다.")
     }
     mutating func fail(_ message: String) {
         failed = true
         submitted = nil
         pending = nil
         problem = message
+        freshUntil = nil
+        freshSince = nil
     }
     mutating func preparationTimedOut(_ transport: UUID) {
         guard submitted?.transportId == transport, binding == nil else { return }
@@ -76,7 +95,7 @@ struct VisionAudioForwarding {
         return enqueue(try! AudioForwardingControl(requestID: UUID(), operation: .observe, intent: nil))
     }
     private mutating func enqueue(_ control: AudioForwardingControl) -> AudioForwardingControl {
-        pending = Pending(control: control, connection: connection)
+        pending = Pending(control: control, connection: connection, sentAt: clock())
         return control
     }
 
@@ -126,6 +145,11 @@ struct VisionAudioForwarding {
             fail("이전 음성 권한 응답이 도착해 오디오를 중지했습니다."); return
         }
         self.pending = nil
+        let now = clock(), expiry = pending.sentAt + Self.freshness
+        guard pending.sentAt.isFinite, pending.sentAt >= 0, now.isFinite, now >= pending.sentAt,
+              expiry.isFinite, now < expiry else {
+            fail("음성 권한 응답의 유효 시간이 지나 오디오를 중지했습니다."); return
+        }
         if state.operation == .observe, let incoming = state.catalog {
             guard incoming.role == .viewer, incoming.principal.id == device,
                   incoming.bootstrap.credential.pairedDeviceId == device,
@@ -180,6 +204,8 @@ struct VisionAudioForwarding {
                 submitted = nil
             }
         }
+        freshSince = pending.sentAt
+        freshUntil = expiry
     }
     private mutating func accept(_ value: AudioForwardingSnapshot) -> Bool {
         if let previous = snapshot {
@@ -285,9 +311,23 @@ extension StreamClient {
             if data.count <= 16384, let state = Wire.decode(AudioForwardingState.self, from: data) {
                 self.visionForwarding?.receive(state, from: self.visionAudioIntentConnection)
             } else { self.visionForwarding?.fail("음성 권한 응답을 확인하지 못해 오디오를 중지했습니다.") }
+            self.scheduleVisionForwardingFreshness(peer)
             self.visionForwardingChanged()
         }
         return true
+    }
+
+    private func scheduleVisionForwardingFreshness(_ peer: NWConnection) {
+        guard let deadline = visionForwarding?.freshUntil else { return }
+        let generation = visionAudioIntentConnection
+        let delay = max(0, deadline - ProcessInfo.processInfo.systemUptime)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak peer] in
+            guard let self, let peer, self.connection === peer,
+                  self.visionAudioIntentConnection == generation,
+                  self.visionForwarding?.freshUntil == deadline else { return }
+            self.visionForwarding?.expireFreshness()
+            self.visionForwardingChanged()
+        }
     }
 
     private func visionForwardingChanged() {
