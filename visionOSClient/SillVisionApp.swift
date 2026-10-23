@@ -170,6 +170,17 @@ struct SillVisionWorkspace: View {
                 VisionMicrophoneControls(client: client,
                                          allowStart: audioControlsAllowed,
                                          admit: withWindowOwnership)
+                HStack {
+                    Button("통화 시작") {
+                        withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.start) } }
+                    }
+                    .disabled(!audioControlsAllowed || !client.visionProviderCanStart)
+                    Button("통화 종료") {
+                        withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.stop) } }
+                    }
+                    .disabled(!audioControlsAllowed || !client.visionProviderCanStop)
+                    Text(client.visionProviderCall.message).font(.caption)
+                }
             } else {
                 hosts
             }

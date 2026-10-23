@@ -1194,6 +1194,7 @@ final class StreamClient: ObservableObject {
         authorize: { [weak self] scope in self?.visionMacAudioScopeIsCurrent(scope) == true })
 
     var visionForwarding: VisionAudioForwarding?
+    @Published var visionProviderCall = VisionProviderCall(connection: UUID())
     var visionForwardingPoll: DispatchWorkItem?
     var visionForwardingMediaBinding: AudioForwardingBinding?
     @Published var visionForwardingProblem: String?
@@ -1244,6 +1245,7 @@ final class StreamClient: ObservableObject {
         visionForwardingMediaBinding = nil
         visionForwardingProblem = nil
         visionAudioIntentConnection = UUID()
+        visionProviderCall.disconnected()
         visionAudioPrivacy = nil
         visionAudioPrivacyBlocked = false
         visionAudioIntentNeedsMicrophoneCatalog = true
@@ -4451,6 +4453,7 @@ final class StreamClient: ObservableObject {
     /// On the network queue.
     private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
         #if os(visionOS)
+        if receiveVisionProviderCall(header, data, from: peer) { return }
         if receiveVisionForwarding(header, data, from: peer) { return }
         if receiveVisionMacAudioRoutes(header, data, from: peer) { return }
         if receiveMicrophone(header, data, from: peer) { return }
@@ -4557,6 +4560,7 @@ final class StreamClient: ObservableObject {
                 self.microphoneObserve(list, from: peer)
                 self.visionAudioIntentCatalog = list
                 self.observeVisionAudioPrivacy(list)
+                self.observeVisionProviderCalls(list, from: peer)
                 #endif
                 #if !os(visionOS)
                 self.remoteAudioControl.receive(list, from: ObjectIdentifier(peer))
