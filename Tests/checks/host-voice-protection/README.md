@@ -23,6 +23,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer python3 Tests/checks/ho
 
 실제 `native.sill`과 `s23.audio.relay` 양쪽의 같은 operation·privacy generation·registry revision·boot 영수증이 필요하다. relay가 없거나 종료가 unknown이면 로컬 복귀도 닫힌다. 연결 해제와 일반 마이크 정리는 이전 물리 입력을 복원하지 않는다.
 
+`authenticatedLocalReturnWillCommit`은 LA 인증과 두 참여자의 drain·inspect 뒤, HAL 원본 복원 전에 호출한다. 부모 런타임은 전달된 `admission`을 Node CAS 큐 전후에 검사하며 `localReturn(expectedRevision)`의 성공을 반환해야 한다. 콜백 미연결·실패·시간 초과·취소 또는 세대 변경은 로컬 복원을 거부한다. `forwardingIntentAllowed`는 인증 시작부터 로컬 commit 종료까지 false이며 부모의 새 intent·arm 입장에 사용한다. 조회는 이 gate와 분리한다.
+
+최초 보호는 `LocalAudioJournal.write(latched:original:)`로 원본과 latch를 한 envelope에 저장하고 synchronize·동일 바이트 readback이 성공한 뒤에만 HAL 쓰기를 시작한다. 최초 읽기나 저장 실패는 재시도할 수 있다. 이미 latch가 있으나 원본이 없으면 현재 장치를 새 원본으로 채우지 않는다.
+
+가짜 ScreenCaptureKit 검사에는 `python3 Tests/checks/native-retirement/system-audio.py REPO OUTPUT BUILD`를 사용한다. 실제 `SystemAudioCapture.swift`를 가짜 모듈에 링크하며 실제 오디오와 HAL은 실행하지 않는다. 최초 stop 실패 후 회복, 영구 실패와 후속 재시도, start·stop 경합, 중복 stop, sample 큐 drain, 늦은 구세대 delegate와 start 실패를 확인한다. `BUILD`는 기존 native 빌드의 debug 디렉터리 또는 swiftbuild의 `out/Products/Debug`를 받는다.
+
 ## DN32-LIVE 배타 무음 후보의 범위
 
 `HostExclusiveAudioSilence`는 현재 사용 중인 장치나 기존 hog 소유자를 거부한다. 자신이 취득한 hog와 IOProc만 보유하며, C callback은 입력 PCM을 보관·전달하지 않고 모든 출력 buffer를 0으로 채운다. 장치 UID·ID·채널·sample rate·hog 소유권, 2회 이상 callback, 250ms 이내 heartbeat와 전체 채널 무음 바이트를 함께 확인한다. stop 실패 시 callback context와 hog를 유지하며 다른 소유자의 장치는 해제하지 않는다.

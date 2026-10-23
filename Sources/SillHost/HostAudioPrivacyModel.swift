@@ -136,6 +136,7 @@ package final class HostAudioPrivacy {
     private var returningLocal = false
     var isReturningLocal: Bool { returningLocal }
     private var authenticatingLocal = false
+    package var forwardingIntentAllowed: Bool { !authenticatingLocal && !returningLocal }
     private var privacyGeneration = UUID()
     private var persistenceHealthy = true
     var revokeForLocalReturn: (() async -> Bool)?
@@ -144,6 +145,7 @@ package final class HostAudioPrivacy {
     var membershipChanged: ((LocalAudioParticipantRegistry.MembershipChange) -> Void)?
     var inspectForLocalReturn: (() -> LocalAudioParticipantFacts)?
     var localReturnDidComplete: ((_ commitAudio: () -> Bool) -> Bool)?
+    package var authenticatedLocalReturnWillCommit: ((_ admission: @escaping @MainActor () -> Bool) async -> Bool)?
     package var localReturnUnavailableReason: String? { participants.authenticatedLocalReturnUnavailableReason }
 
     init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
@@ -204,17 +206,23 @@ package final class HostAudioPrivacy {
 
     @discardableResult
     package func armAndVerify() -> Bool {
+        guard forwardingIntentAllowed else { return false }
         invalidateLocalReturn()
-        let wasLatched = latched
-        persistenceHealthy = persist()
-        guard persistenceHealthy else { fail(.persistence); return false }
-        latched = true
-        if !wasLatched {
-            localState = nil
-            guard let snapshot = try? readSnapshot(), let original = try? LocalAudioState(snapshot),
-                  saveLocal(original) else { fail(.persistence); return false }
+        if latched {
+            // A pre-existing latch without an original may follow real device writes.
+            guard localState?.isValid == true else { fail(.persistence); return false }
+            persistenceHealthy = persist()
+        } else {
+            guard let snapshot = try? readSnapshot(), let original = try? LocalAudioState(snapshot), original.isValid else {
+                fail(.readback); return false
+            }
+            // saveLocal commits the original and latch in one journal envelope.
+            persistenceHealthy = saveLocal(original)
+            guard persistenceHealthy else { fail(.persistence); return false }
             localState = original
+            latched = true
         }
+        guard persistenceHealthy else { fail(.persistence); return false }
         return reconcile()
     }
 
@@ -371,6 +379,21 @@ package final class HostAudioPrivacy {
               await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
               localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
               participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
+        let admission: @MainActor () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !Task.isCancelled && ContinuousClock.now < deadline &&
+                self.authenticatingLocal && self.returningLocal &&
+                self.localReturnID == request && self.privacyGeneration == generation &&
+                self.latched && self.persistenceHealthy &&
+                self.participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership)
+        }
+        guard let commitIntent = authenticatedLocalReturnWillCommit,
+              await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
+                  guard admission() else { return false }
+                  return await commitIntent(admission)
+              }) == true, admission(),
+              await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
+              admission() else { return false }
         // A failed removal invalidates the HAL generation even when listeners remain registered.
         watching = false
         guard hal.observe(nil, changed: nil) else {

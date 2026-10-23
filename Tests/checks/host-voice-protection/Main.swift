@@ -12,7 +12,8 @@ func expect(_ condition: @autoclosure () -> Bool, _ label: String) {
 struct HostAudioPrivacyChecks {
     @MainActor static func guardFor(_ fake: PrivacyFakeHAL, latched: Bool = false,
                                    persist: @escaping () -> Bool = { true }) -> HostAudioPrivacy {
-        HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations), latched: latched, persist: persist, localState: latched ? try! LocalAudioState(fake.snapshot) : nil)
+        HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations), latched: latched, persist: persist,
+            localState: latched ? try! LocalAudioState(fake.snapshot) : nil, saveLocal: { _ in persist() })
     }
 
     @MainActor static func main() async {
@@ -126,8 +127,8 @@ struct HostAudioPrivacyChecks {
             guarder.stop()
         }
         let unsaved = PrivacyFakeHAL(), noPersistence = guardFor(unsaved, persist: { false })
-        expect(!noPersistence.armAndVerify() && !noPersistence.latched && unsaved.reads == 0,
-               "persistence failure stops before native boundary")
+        expect(!noPersistence.armAndVerify() && !noPersistence.latched && unsaved.writes.isEmpty,
+               "persistence failure stops before device writes")
         noPersistence.stop()
         await endpointChecks()
         await eventChecks()

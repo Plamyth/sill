@@ -242,6 +242,7 @@ final class LocalAudioJournal {
     }
 
     func write(latched: Bool, original: LocalAudioState?) -> Bool {
+        guard !latched || original?.isValid == true else { return false }
         guard let data = try? JSONEncoder().encode(Envelope(version: 2, latched: latched, original: original)) else { return false }
         store(data)
         guard synchronize(), load() == data else { return false }
