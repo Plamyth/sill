@@ -151,6 +151,7 @@ public struct WindowList: Codable {
     /// Nil from older hosts; older devices ignore this field.
     public var remoteAudio: Int?
     public var audioPrivacy: AudioPrivacyState?
+    public var providerCalls: Int?
     public var catalogRefresh: Int?
     public var responseRequestID: UUID?
     public var sentry: SentryState?
