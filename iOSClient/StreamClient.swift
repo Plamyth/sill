@@ -1226,7 +1226,10 @@ final class StreamClient: ObservableObject {
                 VisionRemoteAudioStore.shared.permits(self, direction: .playback)) else { return }
             self.sendVisionAudio(control)
         }
-    }, player: makeVisionAudioPlayer())
+    }, player: makeVisionAudioPlayer(), permitted: { [weak self] in
+        guard let self else { return false }
+        return VisionRemoteAudioStore.shared.permits(self, direction: .playback)
+    })
 
     private func makeVisionAudioPlayer() -> VisionAudioPlaying {
         #if DEBUG && targetEnvironment(simulator)
@@ -4458,12 +4461,8 @@ final class StreamClient: ObservableObject {
         switch header.kind {
         #if os(visionOS)
         case .audio:
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.connection === peer,
-                      VisionRemoteAudioStore.shared.permits(self, direction: .playback),
-                      let scope = self.visionAudioRoute.scope(for: peer) else { return }
-                self.visionAudio.receive(data, scope: scope)
-            }
+            guard connection === peer, let scope = visionAudioRoute.scope(for: peer) else { return }
+            visionAudio.receive(data, scope: scope)
         case .remoteAudioState:
             guard let response = Wire.decode(RemoteAudioState.self, from: data),
                   let scope = visionAudioRoute.scope(for: peer) else { return }

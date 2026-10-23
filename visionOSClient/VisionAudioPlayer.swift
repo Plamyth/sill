@@ -20,6 +20,7 @@ final class VisionAudioPlayer: @unchecked Sendable {
         var callback: ((UUID, VisionAudioPlaybackEvent) -> Void)?
         var notified: VisionAudioPlaybackEvent?
         var controlScheduled = false
+        var ingressGap: UInt64?
         var cleanupChanged: ((String?) -> Void)?
     }
 
@@ -70,6 +71,7 @@ final class VisionAudioPlayer: @unchecked Sendable {
             value.callback = onEvent
             value.notified = nil
             value.controlScheduled = false
+            value.ingressGap = nil
             return true
         }
         guard accepted else {
@@ -84,10 +86,18 @@ final class VisionAudioPlayer: @unchecked Sendable {
     }
 
     func receive(_ packet: Data, grant: UUID) {
+        receive(packet, grant: grant, arrived: Self.now)
+    }
+
+    func receive(_ packet: Data, grant: UUID, arrived: TimeInterval, gap: UInt64 = 0) {
         let schedule = state.withLock { value -> Bool in
             guard let ticket = value.playback.ticket, ticket.grant == grant,
                   value.playback.admits(ticket) else { return false }
-            return value.playback.mailbox.offer(packet, ticket: ticket, now: Self.now)
+            if value.ingressGap != gap {
+                value.playback.mailbox.invalidateDecode()
+                value.ingressGap = gap
+            }
+            return value.playback.mailbox.offer(packet, ticket: ticket, now: arrived)
         }
         if schedule { decodeQueue.async { [self] in drain() } }
     }

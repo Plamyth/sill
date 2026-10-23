@@ -55,7 +55,7 @@ def main():
         require(base+['-parse-as-library','-whole-module-optimization','-emit-module','-emit-object','-module-name','StreamProtocol']+list(map(str,protocol))+['-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'StreamProtocol.o')], 'protocol-compile')
         def compile_run(paths, label, scenario=None):
             exe = output/label
-            require(base+['-I',str(output)]+list(map(str,paths))+[str(barrier),str(main),str(output/'StreamProtocol.o'),'-o',str(exe)], label+'-compile')
+            require(base+['-I',str(output)]+list(map(str,paths))+[str(root/'visionOSClient/VisionAudioGain.swift'),str(barrier),str(main),str(output/'StreamProtocol.o'),'-o',str(exe)], label+'-compile')
             return run([str(exe)]+([scenario] if scenario else []), label+'-runtime')
         code, log = compile_run(sources, 'baseline')
         if code: raise RuntimeError('baseline runtime\n'+log)
@@ -85,7 +85,7 @@ def main():
         adapted = output/'VisionAudioRoute.swift'
         adapted.write_text(route.read_text().replace('import Network\n','').replace('import StreamProtocol\n',''))
         record['routeFixture'] = {'originalSHA256': hashlib.sha256(route.read_bytes()).hexdigest(), 'emittedSHA256': hashlib.sha256(adapted.read_bytes()).hexdigest(), 'substitution':'imports removed; existing identity-only Network/source fixtures, methods unchanged'}
-        regression.append(('controller',[root/'visionOSClient/VisionAudioState.swift',root/'visionOSClient/VisionAudioController.swift',adapted,root/'Tests/checks/vision-audio-consent/adapter/main.swift']))
+        regression.append(('controller',[root/'visionOSClient/VisionAudioBuffer.swift',root/'visionOSClient/VisionAudioState.swift',root/'visionOSClient/VisionAudioController.swift',adapted,root/'Tests/checks/vision-audio-consent/adapter/main.swift']))
         record['regression'] = {}
         for name, paths in regression:
             exe = output/name

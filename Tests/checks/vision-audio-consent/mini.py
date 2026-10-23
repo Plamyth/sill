@@ -11,6 +11,7 @@ paths={'VisionAudioState.swift':root/'visionOSClient/VisionAudioState.swift','ma
 if '--adapter' in sys.argv:
  paths['main.swift']=pathlib.Path(__file__).resolve().parent/'adapter/main.swift'
  for name in ['VisionAudioController.swift','VisionAudioRoute.swift']:paths[name]=root/'visionOSClient'/name
+ paths['VisionAudioBuffer.swift']=root/'visionOSClient/VisionAudioBuffer.swift'
 if '--review' in sys.argv:
  assert '--adapter' in sys.argv
  paths['Activation.swift']=pathlib.Path(__file__).resolve().parent/'activation/Activation.swift'

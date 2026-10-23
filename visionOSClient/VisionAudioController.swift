@@ -20,7 +20,7 @@ protocol VisionAudioPlaying: AnyObject {
     var onCleanupChange: ((String?) -> Void)? { get set }
     func retryCleanup()
     func begin(grant: UUID, onEvent: @escaping (UUID, VisionAudioPlaybackEvent) -> Void)
-    func receive(_ packet: Data, grant: UUID)
+    func receive(_ packet: Data, grant: UUID, arrived: TimeInterval, gap: UInt64)
     func stop()
 }
 
@@ -30,6 +30,7 @@ final class VisionAudioController: ObservableObject {
     private struct Storage {
         var model = VisionAudioState()
         var revision: UInt64 = 0
+        var ingress = VisionAudioMailbox()
     }
 
     @Published private(set) var presentation = VisionAudioState()
@@ -38,15 +39,18 @@ final class VisionAudioController: ObservableObject {
     private let player: VisionAudioPlaying
     private let send: (VisionAudioControl) -> Void
     private let clock: () -> Double
+    private let permitted: () -> Bool
     private var displayedRevision: UInt64 = 0
     private var deadline: DispatchWorkItem?
     private var observers: [NSObjectProtocol] = []
 
     init(send: @escaping (VisionAudioControl) -> Void, player: VisionAudioPlaying = VisionAudioPlayer(),
-         clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
+         clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
+         permitted: @escaping () -> Bool = { false }) {
         self.send = send
         self.player = player
         self.clock = clock
+        self.permitted = permitted
         self.cleanupProblem = player.cleanupProblem
         player.onCleanupChange = { [weak self] problem in
             DispatchQueue.main.async { self?.cleanupProblem = problem }
@@ -112,10 +116,27 @@ final class VisionAudioController: ObservableObject {
     }
 
     func receive(_ packet: Data, scope: VisionAudioScope) {
-        storage.withLock { state in
+        let arrived = clock()
+        let schedule = storage.withLock { state -> Bool in
             guard let grant = state.model.phase.grant, grant.scope == scope,
-                  state.model.admits(grant, now: clock()) else { return }
-            player.receive(packet, grant: grant.id)
+                  state.model.admits(grant, now: arrived) else { return false }
+            return state.ingress.offer(packet, ticket: .init(grant: grant.id, epoch: grant.id), now: arrived)
+        }
+        guard schedule else { return }
+        if Thread.isMainThread { drainIngress() }
+        else { DispatchQueue.main.async { [weak self] in self?.drainIngress() } }
+    }
+
+    private func drainIngress() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        while let work = storage.withLock({ $0.ingress.next(now: clock()) }) {
+            let allowed = permitted()
+            storage.withLock { state in
+                defer { state.ingress.finish() }
+                guard allowed, let grant = state.model.phase.grant, grant.id == work.ticket.grant,
+                      state.model.admits(grant, now: clock()), state.ingress.isFresh(work, now: clock()) else { return }
+                player.receive(work.data, grant: grant.id, arrived: work.arrived, gap: work.gap)
+            }
         }
     }
 
@@ -144,6 +165,7 @@ final class VisionAudioController: ObservableObject {
             let previous = state.model.phase.grant
             body(&state.model)
             if let previous, state.model.phase.grant != previous {
+                state.ingress.clear()
                 player.stop()
                 send(VisionAudioControl(grant: previous, enabled: false))
             }

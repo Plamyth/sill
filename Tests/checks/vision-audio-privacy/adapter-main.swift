@@ -92,4 +92,69 @@ store.register(legacy)
 _ = store.setDesired(true, client: legacy, direction: .playback, expectedScope: nil)
 store.refresh(); store.refresh()
 check(legacy.queue.work.isEmpty && legacy.visionAudio.starts == 0, "old host unavailable without retry or source selection")
+for client in [a, b, c, d, stopped, legacy] { client.context.foreground = false }
+store.refresh()
+let held = StreamClient("lifecycle-held")
+store.register(held)
+check(store.beginPermission(legacy.visionAudioOwnerID), "hold native election behind existing permission callback")
+_ = store.setDesired(true, client: held, direction: .playback, expectedScope: nil)
+check(held.nativeSelections == 0, "manual native selection remains unsubmitted during cleanup")
+held.context.foreground = false
+store.refresh()
+held.context.foreground = true
+let heldScope = held.context.scope!
+held.context.scope = .init(connection: heldScope.connection, window: heldScope.window,
+    admission: heldScope.admission, video: heldScope.video, foreground: UUID(), privacy: heldScope.privacy)
+store.endPermission(legacy.visionAudioOwnerID)
+check(held.nativeSelections == 0, "background discards store native selection before returning foreground")
+check(store.model.intent.desired(.playback, hostKey: "lifecycle-held") &&
+      VisionRemoteAudioIntent.load(defaults).desired(.playback, hostKey: "lifecycle-held"),
+      "discarded native selection preserves in-memory and persisted desired")
+store.retire(held)
+
+let pendingManualClient = StreamClient("lifecycle-manual")
+store.register(pendingManualClient)
+_ = store.setDesired(true, client: pendingManualClient, direction: .microphone, expectedScope: nil)
+check(pendingManualClient.microphoneStarts == 0, "manual microphone waits correlated fresh catalog")
+pendingManualClient.context.foreground = false
+store.refresh()
+pendingManualClient.context.foreground = true
+pendingManualClient.context.recordPermissionGranted = false
+store.refresh()
+pendingManualClient.respondToQuery()
+check(pendingManualClient.microphoneStarts == 0,
+      "old pending manual cannot prompt microphone after a new foreground lifecycle")
+check(store.model.intent.desired(.microphone, hostKey: "lifecycle-manual"),
+      "cancelled deferred microphone selection preserves desired")
+store.retire(pendingManualClient)
+
+let privacyUpgrade = StreamClient("privacy-upgrade")
+privacyUpgrade.context.recordPermissionGranted = false
+store.register(privacyUpgrade)
+_ = store.setDesired(true, client: privacyUpgrade, direction: .microphone, expectedScope: nil)
+let beforePrivacy = privacyUpgrade.context.scope!
+privacyUpgrade.context.scope = .init(connection: beforePrivacy.connection, window: beforePrivacy.window,
+    admission: beforePrivacy.admission, video: beforePrivacy.video, foreground: beforePrivacy.foreground,
+    privacy: beforePrivacy.privacy + 1)
+store.refresh()
+privacyUpgrade.respondToQuery()
+check(privacyUpgrade.microphoneStarts == 1,
+      "same lifecycle privacy upgrade preserves an explicit microphone choice awaiting fresh capability")
+store.retire(privacyUpgrade)
+
+for change in ["connection", "window", "admission", "foreground"] {
+    let scoped = StreamClient("scoped-" + change)
+    store.register(scoped)
+    check(store.beginPermission(legacy.visionAudioOwnerID), "hold scoped unsubmitted native selection")
+    _ = store.setDesired(true, client: scoped, direction: .playback, expectedScope: nil)
+    let previous = scoped.context.scope!
+    scoped.context.scope = .init(connection: change == "connection" ? UUID() : previous.connection,
+        window: change == "window" ? UUID() : previous.window,
+        admission: change == "admission" ? UUID() : previous.admission,
+        video: previous.video, foreground: change == "foreground" ? UUID() : previous.foreground,
+        privacy: previous.privacy)
+    store.endPermission(legacy.visionAudioOwnerID)
+    check(scoped.nativeSelections == 0, "changed " + change + " cannot replay pending native selection")
+    store.retire(scoped)
+}
 print("RESULT_ASSERTIONS \(checks)")

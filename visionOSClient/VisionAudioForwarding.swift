@@ -50,6 +50,8 @@ struct VisionAudioForwarding {
         needsObservation = true
     }
     mutating func suspend() {
+        selection = nil
+        pending = nil
         submitted = nil
         resumed = false
         needsObservation = true
@@ -202,6 +204,7 @@ extension StreamClient {
     }
 
     func suspendVisionForwarding() {
+        VisionRemoteAudioStore.shared.discardPendingSelections(self)
         visionForwardingPoll?.cancel()
         visionForwardingPoll = nil
         visionForwarding?.suspend()

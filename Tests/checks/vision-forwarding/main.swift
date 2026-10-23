@@ -216,4 +216,50 @@ malformed = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
 malformed["unexpected"] = true
 check((try? JSONDecoder().decode(AudioForwardingCatalog.self,
     from: JSONSerialization.data(withJSONObject: malformed))) == nil, "extra catalog field rejected by exact host DTO")
+var interrupted = VisionAudioForwarding(connection: UUID(), device: device)
+interrupted.select(desired)
+let oldObserve = interrupted.next(desire: desired)!
+interrupted.suspend()
+check(interrupted.pending == nil && interrupted.submitted == nil,
+      "lifecycle interruption cancels the outstanding control and submitted authority")
+let freshObserve = interrupted.next(desire: desired)!
+check(freshObserve.operation == .observe && freshObserve.requestID != oldObserve.requestID,
+      "new lifecycle requires its own fresh observation")
+try observed(&interrupted, catalog(otherLive, intent: 9, binding: 12))
+check(interrupted.next(desire: desired) == nil && !interrupted.permits(.playback),
+      "unsubmitted manual choice cannot steal another device after background and return")
+check(desired.playback && desired.microphone, "discarding manual choice preserves saved desired")
+
+var interruptedOwn = VisionAudioForwarding(connection: UUID(), device: device)
+interruptedOwn.select(desired)
+_ = interruptedOwn.next(desire: desired)
+interruptedOwn.suspend()
+try observed(&interruptedOwn, catalog(live, intent: 9, binding: 12))
+let ownResume = interruptedOwn.next(desire: desired)!.intent!
+check(ownResume.action == .resume && ownResume.intentId == request.intentId &&
+      ownResume.intentRevision == request.intentRevision,
+      "discarded manual choice resumes only the matching own remembered intent")
+
+var interruptedSubmit = VisionAudioForwarding(connection: UUID(), device: device)
+interruptedSubmit.select(desired)
+try observed(&interruptedSubmit, catalog(empty))
+let oldSubmit = interruptedSubmit.next(desire: desired)!
+interruptedSubmit.suspend()
+interruptedSubmit.receive(try .init(requestID: oldSubmit.requestID, operation: .submit,
+    catalog: nil, result: .accepted(snapshot(oldSubmit.intent!, revision: 5, phase: .active))),
+    from: interruptedSubmit.connection)
+check(!interruptedSubmit.permits(.playback) && interruptedSubmit.submitted == nil,
+      "late accepted 218 cannot authorize the new lifecycle")
+interruptedSubmit.timeout(oldSubmit.requestID)
+check(!interruptedSubmit.permits(.microphone), "old control deadline cannot grant new lifecycle media")
+
+var lateObservation = VisionAudioForwarding(connection: UUID(), device: device)
+lateObservation.select(desired)
+let retiredObserve = lateObservation.next(desire: desired)!
+lateObservation.suspend()
+lateObservation.receive(try .init(requestID: retiredObserve.requestID, operation: .observe,
+    catalog: catalog(live, intent: 9, binding: 12), result: nil), from: lateObservation.connection)
+check(lateObservation.snapshot == nil && lateObservation.submitted == nil && !lateObservation.permits(.playback),
+      "late observe 218 is not a fresh lifecycle observation")
+
 print("PASS \(assertions) offline native forwarding contract assertions")

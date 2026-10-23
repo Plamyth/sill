@@ -41,8 +41,9 @@ final class StreamClient {
     var visionForwarding: InertForwarding? = InertForwarding()
     var visionPlaybackDesired: Bool { store.model.intent.desired(.playback, hostKey: context.hostKey) }
     var visionMicrophoneDesired: Bool { store.model.intent.desired(.microphone, hostKey: context.hostKey) }
-    func suspendVisionForwarding() {}
-    func reconcileVisionForwarding(manual: Bool = false) {}
+    var nativeSelections = 0
+    func suspendVisionForwarding() { store.discardPendingSelections(self) }
+    func reconcileVisionForwarding(manual: Bool = false) { if manual { nativeSelections += 1 } }
     let visionAudioOwnerID = UUID()
     let visionAudio = InertPlayback()
     var context: VisionRemoteAudioIntent.Context

@@ -120,7 +120,12 @@ final class VisionRemoteAudioStore {
     private var clients: [UUID: Client] = [:]
     private var refreshing = false
     private var permissionOwner: UUID?
-    private var pendingNativeSelection: UUID?
+    private struct NativeSelection {
+        let owner: UUID
+        let hostKey: String
+        let scope: VisionRemoteAudioIntent.Scope
+    }
+    private var pendingNativeSelection: NativeSelection?
     private struct CatalogRefresh {
         let requestID: UUID
         let owner: UUID
@@ -159,6 +164,24 @@ final class VisionRemoteAudioStore {
             client.visionForwarding?.permits(direction) == true
     }
 
+    private func selectionIsCurrent(_ id: UUID, hostKey: String, scope: VisionRemoteAudioIntent.Scope) -> Bool {
+        guard let client = clients[id]?.value, !client.visionAudioPrivacyBlocked else { return false }
+        let context = client.visionAudioIntentContext
+        guard context.admitted, context.hostKey == hostKey, let current = context.scope else { return false }
+        return current.connection == scope.connection && current.foreground == scope.foreground &&
+            current.window == scope.window && current.admission == scope.admission && current.video == scope.video
+    }
+
+    func discardPendingSelections(_ client: StreamClient) {
+        let id = client.visionAudioOwnerID
+        if let pending = pendingNativeSelection, pending.owner == id,
+           !selectionIsCurrent(id, hostKey: pending.hostKey, scope: pending.scope) { pendingNativeSelection = nil }
+        pendingManual = pendingManual.filter { _, saved in
+            let ticket = saved.0
+            return ticket.owner != id || selectionIsCurrent(id, hostKey: ticket.request.hostKey, scope: ticket.request.scope)
+        }
+    }
+
     @discardableResult
     func setDesired(_ enabled: Bool, client: StreamClient, direction: VisionRemoteAudioIntent.Direction,
                     expectedScope: VisionAudioScope?) -> Bool {
@@ -177,7 +200,9 @@ final class VisionRemoteAudioStore {
             }
         }
         revokeActual(client)
-        pendingNativeSelection = client.visionAudioOwnerID
+        if let scope = client.visionAudioIntentContext.scope, client.visionAudioIntentContext.admitted {
+            pendingNativeSelection = NativeSelection(owner: client.visionAudioOwnerID, hostKey: key, scope: scope)
+        }
         let admitted = refresh(manual: enabled ? (client.visionAudioOwnerID, direction, expectedScope) : nil)
         NotificationCenter.default.post(name: Self.changed, object: nil)
         return !enabled || admitted || client.visionAudioIntentContext.admitted
@@ -236,6 +261,15 @@ final class VisionRemoteAudioStore {
         for (id, entry) in clients {
             model.update(id, context: entry.value?.visionAudioIntentContext)
         }
+        if let pending = pendingNativeSelection {
+            if !selectionIsCurrent(pending.owner, hostKey: pending.hostKey, scope: pending.scope) {
+                pendingNativeSelection = nil
+            }
+        }
+        pendingManual = pendingManual.filter { _, saved in
+            let ticket = saved.0
+            return selectionIsCurrent(ticket.owner, hostKey: ticket.request.hostKey, scope: ticket.request.scope)
+        }
         let previousOwner = model.owner
         // Cancelled OS permission requests retain their slot until their original callback drains.
         func cleanupReady() -> Bool {
@@ -264,13 +298,13 @@ final class VisionRemoteAudioStore {
                                    revision: ticket.request.revision)), saved.1)
             }
         }
-        if let selected = pendingNativeSelection.flatMap({ clients[$0]?.value }),
+        if let selected = pendingNativeSelection.flatMap({ clients[$0.owner]?.value }),
            !selected.visionPlaybackDesired && !selected.visionMicrophoneDesired {
             pendingNativeSelection = nil
             selected.reconcileVisionForwarding(manual: true)
         }
         guard let owner = model.owner, let client = clients[owner]?.value else { return false }
-        let nativeManual = pendingNativeSelection.flatMap { clients[$0]?.value }?.visionAudioTrustedHostKey == client.visionAudioTrustedHostKey
+        let nativeManual = pendingNativeSelection?.hostKey == client.visionAudioTrustedHostKey
         if nativeManual { pendingNativeSelection = nil }
         client.reconcileVisionForwarding(manual: nativeManual)
         if catalogEpoch != model.epoch, client.visionAudioIntentContext.eligible {
