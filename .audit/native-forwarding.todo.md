@@ -26,7 +26,7 @@
 
 - [x] exact DTO 468줄 바이트 동일. SHA-256 `5667ceac9a01cb80ca7a5bd3ecf88a0b7906088fb647a9b116141632fa93b843`. 공식 217/218은 4096/16384 및 역방향 거부. 읽기 원본 예약 kind는 219/220이며 215/216 선언은 없다.
 - [x] 순수 상태 검사 158개, 실제 어댑터 38개, held-main-queue/frame/player 57개 통과. 실제 Xcode 27 iOS SDK의 서명 없는 Sill 앱 빌드 성공.
-- [ ] 비작성 독립 검수와 통합 커밋. 부모가 기존 호스트 원담당 `01a13005-ff61-7780-b0e8-6dc171de1c9d`에게 작성자 checkpoint HEAD/tree/해시를 전달해 회수한다. 작성자는 추가 spawn하지 않았다.
+- [x] 비작성 독립 검수와 로컬 통합 커밋. 공식 원격 게시와 실행 수용은 별도다.
 - [ ] 공식 게시·등록 테스트 설치·실제 양방향 음성. 공통 호스트 교체 구간 및 기존 workflow 인증 장벽과 분리한다.
 
 ## 작성자 실행 결과
@@ -46,3 +46,11 @@ Pstack Feature 하위 작성자로 지정된 독점 WT에서 직접 구현했다
 최종 근거: 외장 `model.log`, `adapter.log`, `admission-held.log`, `nearby.log`, `desired.log`, `intent-adapters.log`, `ios-build.log`, `source-audit.json`, `admission-fixture-diagnosis.json`, `checkpoint-receipt.json`. source hash와 checkpoint commit/tree는 마지막 영수증에 기록한다.
 
 미실행: 비작성 독립 검수, 원 통합/테스트 설치, 실제 호스트 TLS 왕복, 실기기/공유 UI/마이크/스피커 수용, 원격 push. 정상 기기/host 설치 0을 유지했다. 기존 게시·설치 장벽을 우회하지 않았으며 부모의 검수/통합 단계와 구분한다.
+
+## 부모 검수와 로컬 통합
+
+공통 호스트 원담당 01a13005-ff61-7780-b0e8-6dc171de1c9d가 제품 커밋 5c4c3e945c70a4c8ce6187ca2e8e2d1c2c8a78ff, tree86d6e1a9a521facba0ce87fd8bfda3a83f069893의 29파일을 비작성 검수했다. 커밋 바이트와 검사 로그 해시를 대조했고 P1/P2 지적 없이 CLEAR를 반환했다. 검수자의 중복 시험 결과로 합산하지 않는다. 근거는 /Volumes/BT-Workspace/Development-Archives/CCR-Vision/host-provider-call-20261024/ipad-native-forwarding-independent.json이다.
+
+부모는 작성자 종료를 확인하고 capture-local/verify-local을 통과한 같은 커밋을 integration/ccr-ipad에 fast-forward했다. Mac mini에서도 같은 소스의 순수 158검사가 통과했고 작업 전용 한시적 사본 삭제가 확인됐다. 이 검사는 실제 호스트·기기·음성 또는 공식 원격 source gate 수용의 증거가 아니다. 근거는 외장 ipad-native-forwarding-20261024/mini-pure-validation.log다.
+
+동일 TLS의 10초 wire 대기가 끝나도 임의로 새217을 보내지 않는다. 호스트 StreamServer의 10초 연결 취소와 실제 연결 실패·교체를 기다리는 한계를 유지한다. 정상 앱59/호스트149, 페어링·권한·기기 오디오를 변경하지 않았다. 공식 원격 게시·등록 테스트 설치·실제 입출력은 기존 workflow 권한과 공동 호스트 시험 구간이 남아 미완료다.
