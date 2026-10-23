@@ -46,27 +46,55 @@ class AdapterContract(unittest.TestCase):
         self.assertEqual(adapter.pixel()[:8],b'\x89PNG\r\n\x1a\n')
 
     def test_rotation_png_requires_decoded_canvas_and_following_link(self):
-        import io, math
-        from PIL import Image, ImageDraw
-        self.assertFalse(adapter.valid_canvas_png(adapter.pixel()))
-        self.assertFalse(adapter.valid_canvas_png(b'\x89PNG\r\n\x1a\n'+bytes(16)))
-        scene = adapter.fixture(str(uuid.uuid4()))
-        scene['nodes'][0]['rotationDegrees'] = 45
-        scene['nodes'].append(dict(scene['nodes'][0],frame={'x':1050,'y':1000,'width':260,'height':120}))
-        image = Image.new('RGB',(2048,1536),'black')
-        def png():
-            stream=io.BytesIO();image.save(stream,format='PNG');return stream.getvalue()
-        self.assertFalse(adapter.valid_canvas_png(png(),scene))
-        draw=ImageDraw.Draw(image)
-        draw.line([(885,660),(1050,1060)],fill='cyan',width=4)
-        self.assertFalse(adapter.valid_canvas_png(png(),scene))
-        draw.line([(755+130/math.sqrt(2),660+130/math.sqrt(2)),(1050,1060)],fill='cyan',width=4)
-        self.assertFalse(adapter.valid_canvas_png(png(),scene))
-        points=[(755+(x-y)/math.sqrt(2),660+(x+y)/math.sqrt(2))
-                for x,y in [(-130,-60),(130,-60),(130,60),(-130,60)]]
-        draw.polygon(points,fill=(85,85,85))
-        self.assertTrue(adapter.valid_canvas_png(png(),scene))
-        self.assertFalse(adapter.valid_canvas_png(png()[:24],scene))
+        import base64, math, subprocess, zlib
+        with tempfile.TemporaryDirectory() as directory:
+            encoder=Path(directory)/'encoder'
+            repo=Path(__file__).resolve().parents[2]
+            subprocess.run(['xcrun','swiftc','-parse-as-library',
+                str(repo/'iOSClient/CanvasBridge/CanvasModel.swift'),
+                str(Path(__file__).with_name('NativeSceneEncoder.swift')),'-o',str(encoder)],
+                env=adapter.ENV,check=True,capture_output=True)
+            scene=adapter.fixture(str(uuid.uuid4()));scene['nodes'][0]['rotationDegrees']=45
+            scene['nodes'].append(dict(scene['nodes'][0],id=str(uuid.uuid4()),frame={'x':1050,'y':1000,'width':260,'height':120}))
+            check=lambda data:adapter.valid_canvas_png(data,scene,encoder)
+            self.assertFalse(check(adapter.pixel()))
+            self.assertFalse(check(b'\x89PNG\r\n\x1a\n'+bytes(16)))
+            width,height=2048,1536
+            pixels=bytearray(width*height*3)
+            def point(x,y,color):
+                i=(round(y)*width+round(x))*3;pixels[i:i+3]=bytes(color)
+            def line(a,b):
+                for i in range(1500):
+                    t=i/1499;x=round(a[0]+(b[0]-a[0])*t);y=round(a[1]+(b[1]-a[1])*t)
+                    for dx in range(-2,3):
+                        for dy in range(-2,3):point(x+dx,y+dy,(0,255,255))
+            def png():
+                def chunk(k,v):return struct.pack('>I',len(v))+k+v+struct.pack('>I',zlib.crc32(k+v))
+                raw=b''.join(b'\x00'+pixels[y*width*3:(y+1)*width*3] for y in range(height))
+                return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+            self.assertFalse(check(png()))
+            line((885,660),(1050,1060));self.assertFalse(check(png()))
+            line((755+130/math.sqrt(2),660+130/math.sqrt(2)),(1050,1060));self.assertFalse(check(png()))
+            for y in range(510,810):
+                for x in range(605,905):
+                    a=(x-755+y-660)/math.sqrt(2);b=(y-660-(x-755))/math.sqrt(2)
+                    if abs(a)<129 and abs(b)<59:point(x,y,(85,85,85))
+            self.assertTrue(check(png()))
+            self.assertFalse(check(png()[:24]))
+            self.assertFalse(check(png()[:-12]))
+            original=png()
+            position=8
+            while original[position+4:position+8] != b'IDAT':position+=12+struct.unpack('>I',original[position:position+4])[0]
+            size=struct.unpack('>I',original[position:position+4])[0]
+            compressed=original[position+8:position+8+size]
+            suffix=original[position+12+size:]
+            def changed_idat(body):
+                return original[:position]+struct.pack('>I',len(body))+b'IDAT'+body+struct.pack('>I',zlib.crc32(b'IDAT'+body))+suffix
+            bad_crc=bytearray(original);bad_crc[position+8+size]^=1
+            self.assertFalse(check(bytes(bad_crc)))
+            bad_adler=bytearray(compressed);bad_adler[-1]^=1
+            for broken in [bytes(bad_adler),compressed[:-5],compressed[:-100],compressed+zlib.compress(b'extra')]:
+                self.assertFalse(check(changed_idat(broken)))
 
     def test_live_update_occurs_once_only_after_readiness(self):
         with tempfile.TemporaryDirectory() as directory:

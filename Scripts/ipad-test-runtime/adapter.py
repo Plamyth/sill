@@ -3,8 +3,6 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
-import io
-import math
 import hashlib
 import ipaddress
 import json
@@ -294,45 +292,53 @@ def harness(config, work, method, variables=None, on_ready=None):
         run_live_harness(args, log, on_ready)
     return result
 
-def valid_canvas_png(data, scene=None):
+def strict_canvas_png(data):
     try:
-        from PIL import Image
-        with Image.open(io.BytesIO(data)) as encoded:
-            if encoded.format != 'PNG':
-                return False
-            encoded.verify()
-        with Image.open(io.BytesIO(data)) as encoded:
-            image = encoded.convert('RGB')
-            image.load()
-        width, height = image.size
-        if width < 2048 or height < 1536 or width * 1536 != height * 2048:
-            return False
-        if scene is None:
-            return True
-        scale = width / scene['width']
-        def cyan(point):
-            x,y = (round(v * scale) for v in point)
-            radius = max(2,round(2 * scale))
-            return any(r < 100 and g > 150 and b > 150
-                       for r,g,b in image.crop((x-radius,y-radius,x+radius+1,y+radius+1)).getdata())
-        first, second = scene['nodes'][:2]
-        f,g = first['frame'],second['frame']
-        angle = math.radians(first.get('rotationDegrees',0))
-        start = (f['x']+f['width']/2+math.cos(angle)*f['width']/2,
-                 f['y']+f['height']/2+math.sin(angle)*f['width']/2)
-        end = (g['x'],g['y']+g['height']/2)
-        def gray(point):
-            x,y = (round(v * scale) for v in point)
-            r,g,b = image.getpixel((x,y))
-            return 30 < r < 140 and abs(r-g) < 10 and abs(g-b) < 10
-        center = (f['x']+f['width']/2,f['y']+f['height']/2)
-        inside = (center[0]+100*math.cos(angle),center[1]+100*math.sin(angle))
-        outside = (center[0]+120,center[1])
-        if not gray(inside) or gray(outside):
-            return False
-        return all(cyan((start[0]+(end[0]-start[0])*t,start[1]+(end[1]-start[1])*t))
-                   for t in [0.03,0.15,0.35,0.6,0.8,0.97])
-    except (ImportError, OSError, ValueError, KeyError, IndexError, SyntaxError):
+        require(data[:8] == b'\x89PNG\r\n\x1a\n', 'png_signature')
+        position=8; kinds=[]; parts=[]; header=None; idat_ended=False
+        while position < len(data):
+            require(position+12 <= len(data), 'png_chunk_header')
+            size=struct.unpack('>I',data[position:position+4])[0]
+            require(size <= len(data)-position-12, 'png_chunk_length')
+            kind=data[position+4:position+8]; body=data[position+8:position+8+size]
+            crc=struct.unpack('>I',data[position+8+size:position+12+size])[0]
+            require(zlib.crc32(kind+body) == crc, 'png_crc')
+            require(kinds or kind == b'IHDR', 'png_first_chunk')
+            if kind == b'IHDR':
+                require(not kinds and size == 13, 'png_header')
+                header=struct.unpack('>IIBBBBB',body)
+            elif kind == b'IDAT':
+                require(header is not None and not idat_ended, 'png_idat_sequence')
+                parts.append(body)
+            elif parts:
+                idat_ended=True
+            require(kind in [b'IHDR',b'PLTE',b'IDAT',b'IEND'] or kind[0]&32, 'png_unknown_critical')
+            kinds.append(kind);position+=size+12
+            if kind == b'IEND':
+                require(size == 0 and position == len(data), 'png_end')
+        require(header and kinds[-1] == b'IEND' and parts, 'png_incomplete')
+        width,height,depth,color,compression,filtering,interlace=header
+        require(2048 <= width <= 8192 and 1536 <= height <= 8192 and width*1536 == height*2048,
+                'png_dimensions')
+        require(depth == 8 and color in [2,6] and compression == filtering == interlace == 0, 'png_pixel_format')
+        row=1+width*(3 if color == 2 else 4);expected=row*height
+        stream=zlib.decompressobj(); raw=stream.decompress(b''.join(parts),expected+1)
+        require(stream.eof and not stream.unused_data and not stream.unconsumed_tail and len(raw) == expected,
+                'png_deflate_incomplete')
+        require(all(raw[y*row] <= 4 for y in range(height)), 'png_filter')
+        return True
+    except (Held, ValueError, IndexError, struct.error, zlib.error):
+        return False
+
+def valid_canvas_png(data, scene, encoder):
+    if not strict_canvas_png(data):
+        return False
+    try:
+        result = subprocess.run([str(encoder),'--check-rotation-pixels'],
+            input=json.dumps({'image':base64.b64encode(data).decode(),'scene':scene}).encode(),
+            env=ENV,capture_output=True,timeout=30)
+        return result.returncode == 0 and json.loads(result.stdout).get('valid') is True
+    except (OSError, ValueError, subprocess.SubprocessError):
         return False
 
 def accept_rotation(config, work, server, vault, test_id):
@@ -373,14 +379,14 @@ def accept_rotation(config, work, server, vault, test_id):
     assets = vault / 'CCR Canvas/Assets'
     image = next((p for p in assets.iterdir() if sha(p.read_bytes()) == saved['imageSha256']), None)
     require(image is not None and image.read_bytes()[:8] == b'\x89PNG\r\n\x1a\n' and
-            valid_canvas_png(image.read_bytes(),actual), 'rotation_native_png_missing')
+            valid_canvas_png(image.read_bytes(),actual,server['encoder']), 'rotation_native_png_missing')
     require(sha((vault / saved['path']).read_bytes()) == saved['noteSha256'], 'rotation_markdown_hash_mismatch')
     rendered = work / 'rotation-rendered-45.png'; shutil.copyfile(image,rendered)
     reopen = harness(config, work, 'testReopenRotatedScene', {'CCR_ROTATION_EXPECTED':'45'})
     native90 = harness(config, work, 'testRotateAndSave', {'CCR_ROTATION_EXPECTED':'90','CCR_ROTATION_DELTA':'45'})
     right_angle, scene90 = rotated(90)
     image90 = next((p for p in assets.iterdir() if sha(p.read_bytes()) == right_angle['imageSha256']), None)
-    require(image90 is not None and valid_canvas_png(image90.read_bytes(),scene90), 'rotation_90_native_png_missing')
+    require(image90 is not None and valid_canvas_png(image90.read_bytes(),scene90,server['encoder']), 'rotation_90_native_png_missing')
     rendered90 = work / 'rotation-rendered-90.png'; shutil.copyfile(image90,rendered90)
     restore45 = harness(config, work, 'testRotateAndSave', {'CCR_ROTATION_EXPECTED':'45','CCR_ROTATION_DELTA':'-45'})
     saved, actual = rotated(45)
