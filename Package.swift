@@ -11,6 +11,7 @@ let package = Package(
         .executable(name: "SillHost", targets: ["SillHostCLI"]),
         // Sill.app's executable. Scripts/make-app.sh wraps it into the bundle and signs it.
         .executable(name: "SillMenuBar", targets: ["SillMenuBar"]),
+        .executable(name: "ProviderPeerVerifier", targets: ["ProviderPeerVerifier"]),
         // No product for SillHostCore: the iOS project links this package and must never see it.
     ],
     targets: [
@@ -25,6 +26,7 @@ let package = Package(
         .executableTarget(name: "SillHostCLI", dependencies: ["SillHostCore", "StreamProtocol"]),
         // The menu bar app: status item, Settings and Log windows (AppKit lifecycle, SwiftUI panes).
         .executableTarget(name: "SillMenuBar", dependencies: ["SillHostCore", "StreamProtocol"]),
+        .executableTarget(name: "ProviderPeerVerifier"),
         // Milestone 3 spike: virtual display + window move + capture. Its VirtualDisplay.swift
         // is a symlink to the host's copy. Not shipped.
         .executableTarget(name: "CaptureProbe"),
