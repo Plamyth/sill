@@ -30,11 +30,11 @@ struct VisionRemoteAudioAuthority {
 
     mutating func setDesired(_ enabled: Bool, direction: Intent.Direction, hostKey: String, preferred id: UUID) {
         intent.setDesired(enabled, direction: direction, hostKey: hostKey)
-        if enabled, contexts[id]?.eligible == true { preferred = id }
+        if enabled, contexts[id]?.admitted == true { preferred = id }
     }
 
     private func eligible(_ id: UUID) -> Bool {
-        guard let context = contexts[id], context.eligible else { return false }
+        guard let context = contexts[id], context.admitted else { return false }
         return Intent.Direction.allCases.contains { intent.desired($0, hostKey: context.hostKey) }
     }
 
@@ -61,6 +61,12 @@ struct VisionRemoteAudioAuthority {
         preferred = nil
         attempted.removeAll()
         return nil
+    }
+
+    mutating func invalidateCatalog(_ id: UUID) {
+        guard owner == id else { return }
+        freshCatalog = false
+        attempted.removeAll()
     }
 
     mutating func observedCatalog(_ id: UUID, epoch: UUID, scope: Intent.Scope) {
@@ -114,6 +120,7 @@ final class VisionRemoteAudioStore {
     private var clients: [UUID: Client] = [:]
     private var refreshing = false
     private var permissionOwner: UUID?
+    private var pendingNativeSelection: UUID?
     private struct CatalogRefresh {
         let requestID: UUID
         let owner: UUID
@@ -148,7 +155,8 @@ final class VisionRemoteAudioStore {
     }
 
     func permits(_ client: StreamClient, direction: VisionRemoteAudioIntent.Direction) -> Bool {
-        model.permits(client.visionAudioOwnerID, direction: direction) && client.visionAudioIntentContext.eligible
+        model.permits(client.visionAudioOwnerID, direction: direction) && client.visionAudioIntentContext.eligible &&
+            client.visionForwarding?.permits(direction) == true
     }
 
     @discardableResult
@@ -168,9 +176,11 @@ final class VisionRemoteAudioStore {
                 if let value = entry.value, value.visionAudioTrustedHostKey == key { stop(value, direction: direction) }
             }
         }
+        revokeActual(client)
+        pendingNativeSelection = client.visionAudioOwnerID
         let admitted = refresh(manual: enabled ? (client.visionAudioOwnerID, direction, expectedScope) : nil)
         NotificationCenter.default.post(name: Self.changed, object: nil)
-        return !enabled || admitted
+        return !enabled || admitted || client.visionAudioIntentContext.admitted
     }
 
     private func stop(_ client: StreamClient, direction: VisionRemoteAudioIntent.Direction) {
@@ -180,6 +190,7 @@ final class VisionRemoteAudioStore {
 
     private func revokeActual(_ client: StreamClient) {
         // Both roles must be revoked before either close rebuilds the shared graph.
+        client.suspendVisionForwarding()
         VisionAudioSharedHardware.shared.revoke(owner: client.visionAudioOwnerID)
         client.visionAudio.stop()
         client.stopVisionMicrophoneActual()
@@ -197,6 +208,13 @@ final class VisionRemoteAudioStore {
             revokeActual(client)
         }
         refresh()
+    }
+
+    func invalidateNativeCatalog(_ client: StreamClient) {
+        guard model.owner == client.visionAudioOwnerID else { return }
+        model.invalidateCatalog(client.visionAudioOwnerID)
+        catalogEpoch = nil
+        pendingCatalog = nil
     }
 
     func observedCatalog(_ client: StreamClient, list: WindowList, peer: ObjectIdentifier) {
@@ -233,10 +251,29 @@ final class VisionRemoteAudioStore {
         }
         if catalogEpoch != model.epoch {
             pendingCatalog = nil
-            pendingManual.removeAll()
+            pendingManual = pendingManual.compactMapValues { saved in
+                let ticket = saved.0
+                guard model.owner == ticket.owner, let context = model.contexts[ticket.owner],
+                      let scope = context.scope, context.hostKey == ticket.request.hostKey,
+                      scope.connection == ticket.request.scope.connection,
+                      scope.window == ticket.request.scope.window, scope.admission == ticket.request.scope.admission,
+                      scope.video == ticket.request.scope.video, scope.foreground == ticket.request.scope.foreground,
+                      model.intent.desiredRevision(ticket.request.direction, hostKey: ticket.request.hostKey) == ticket.request.revision else { return nil }
+                return (.init(owner: ticket.owner, epoch: model.epoch,
+                    request: .init(hostKey: ticket.request.hostKey, scope: scope, direction: ticket.request.direction,
+                                   revision: ticket.request.revision)), saved.1)
+            }
+        }
+        if let selected = pendingNativeSelection.flatMap({ clients[$0]?.value }),
+           !selected.visionPlaybackDesired && !selected.visionMicrophoneDesired {
+            pendingNativeSelection = nil
+            selected.reconcileVisionForwarding(manual: true)
         }
         guard let owner = model.owner, let client = clients[owner]?.value else { return false }
-        if catalogEpoch != model.epoch {
+        let nativeManual = pendingNativeSelection.flatMap { clients[$0]?.value }?.visionAudioTrustedHostKey == client.visionAudioTrustedHostKey
+        if nativeManual { pendingNativeSelection = nil }
+        client.reconcileVisionForwarding(manual: nativeManual)
+        if catalogEpoch != model.epoch, client.visionAudioIntentContext.eligible {
             catalogEpoch = model.epoch
             if client.visionAudioIntentCatalog?.catalogRefresh == 1,
                let peer = client.visionAudioCatalogPeer, let scope = client.visionAudioIntentContext.scope {

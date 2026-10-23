@@ -52,7 +52,7 @@ check(b.microphoneStarts == 1, "actual recipient response permits one automatic 
 store.refresh(); store.refresh()
 check(b.microphoneStarts == 1, "refresh is not a retry loop")
 store.withdrawPrivacy(b)
-check(b.microphoneStops > 0 && store.model.owner == nil, "protected false revokes I/O synchronously")
+check(b.microphoneStops > 0 && !store.permits(b, direction: .microphone), "protected false revokes I/O synchronously")
 check(store.model.intent.desired(.microphone, hostKey: "mac-a"), "privacy revocation preserves desired true")
 _ = store.setDesired(false, client: b, direction: .microphone, expectedScope: nil)
 b.visionAudioPrivacyBlocked = false

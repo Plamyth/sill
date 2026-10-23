@@ -1193,6 +1193,10 @@ final class StreamClient: ObservableObject {
     lazy var visionMacAudioRoutes = VisionMacAudioController(transport: visionMacAudioTransport,
         authorize: { [weak self] scope in self?.visionMacAudioScopeIsCurrent(scope) == true })
 
+    var visionForwarding: VisionAudioForwarding?
+    var visionForwardingPoll: DispatchWorkItem?
+    var visionForwardingMediaBinding: AudioForwardingBinding?
+    @Published var visionForwardingProblem: String?
     @Published var visionAudioPrivacy: AudioPrivacyState?
     var visionAudioPrivacyBlocked = false
     var visionAudioPrivacyRevision: UInt64 = 0
@@ -1232,6 +1236,10 @@ final class StreamClient: ObservableObject {
     }
 
     private func resetVisionAudio() {
+        suspendVisionForwarding()
+        visionForwarding = nil
+        visionForwardingMediaBinding = nil
+        visionForwardingProblem = nil
         visionAudioIntentConnection = UUID()
         visionAudioPrivacy = nil
         visionAudioPrivacyBlocked = false
@@ -4440,6 +4448,7 @@ final class StreamClient: ObservableObject {
     /// On the network queue.
     private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
         #if os(visionOS)
+        if receiveVisionForwarding(header, data, from: peer) { return }
         if receiveVisionMacAudioRoutes(header, data, from: peer) { return }
         if receiveMicrophone(header, data, from: peer) { return }
         #endif
@@ -4449,15 +4458,27 @@ final class StreamClient: ObservableObject {
         switch header.kind {
         #if os(visionOS)
         case .audio:
-            if let scope = visionAudioRoute.scope(for: peer) { visionAudio.receive(data, scope: scope) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.connection === peer,
+                      VisionRemoteAudioStore.shared.permits(self, direction: .playback),
+                      let scope = self.visionAudioRoute.scope(for: peer) else { return }
+                self.visionAudio.receive(data, scope: scope)
+            }
         case .remoteAudioState:
             guard let response = Wire.decode(RemoteAudioState.self, from: data),
                   let scope = visionAudioRoute.scope(for: peer) else { return }
-            if let id = response.requestID {
-                visionAudio.acknowledge(id: id, enabled: response.enabled, scope: scope,
-                                        reason: response.reason.map { String($0.prefix(160)) })
-            } else if !response.enabled {
-                visionAudio.stop(problem: response.reason.map { String($0.prefix(160)) })
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.connection === peer else { return }
+                if response.enabled && !VisionRemoteAudioStore.shared.permits(self, direction: .playback) {
+                    self.visionAudio.stop()
+                    return
+                }
+                if let id = response.requestID {
+                    self.visionAudio.acknowledge(id: id, enabled: response.enabled, scope: scope,
+                                                reason: response.reason.map { String($0.prefix(160)) })
+                } else if !response.enabled {
+                    self.visionAudio.stop(problem: response.reason.map { String($0.prefix(160)) })
+                }
             }
         #endif
         #if os(visionOS)

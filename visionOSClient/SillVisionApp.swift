@@ -110,7 +110,7 @@ struct SillVisionWorkspace: View {
                             }
                         }
                         .disabled(!client.visionPlaybackDesired && client.visionAudio.presentation.phase.grant == nil &&
-                                  (!audioControlsAllowed || !client.visionAudio.presentation.canEnable))
+                                  (!audioControlsAllowed || !client.visionAudioIntentContext.admitted))
                         Text(client.visionAudioPrivacyMessage)
                         Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
                     }
@@ -598,7 +598,7 @@ private struct VisionAudioControls: View {
                     else if allowStart { client.setVisionAudioDesired(true, direction: .playback) }
                 }
             }
-            .disabled(!running && (!audio.presentation.canEnable || !allowStart || audio.cleanupProblem != nil))
+            .disabled(!running && (!client.visionAudioIntentContext.admitted || !allowStart || audio.cleanupProblem != nil))
             .accessibilityHint(running ? "즉시 소리를 중지합니다." : "이 버튼은 Mac 소리 수신만 켭니다. 마이크 전송은 별도입니다.")
             Text(message).font(.caption).lineLimit(2)
             if audio.cleanupProblem != nil {
@@ -611,6 +611,7 @@ private struct VisionAudioControls: View {
 
     private var message: String {
         if let problem = audio.cleanupProblem { return "오디오 정리가 필요합니다. " + problem }
+        if let problem = client.visionForwardingProblem { return problem }
         switch audio.presentation.phase {
         case .requesting: return "Mac의 소리 전송 확인을 기다립니다."
         case .waiting: return "소리 데이터를 기다립니다."
@@ -644,7 +645,7 @@ private struct VisionMicrophoneControls: View {
                     else if allowStart { client.setVisionAudioDesired(true, direction: .microphone) }
                 }
             }
-            .disabled(!cleanup && !stopping && (!allowStart || !client.visionMicrophoneCanStart || client.visionAudio.cleanupProblem != nil))
+            .disabled(!cleanup && !stopping && (!allowStart || !client.visionAudioIntentContext.admitted || client.visionAudio.cleanupProblem != nil))
             .accessibilityHint(cleanup ? "기존 마이크 자원만 정리합니다. 다시 녹음하지 않습니다." :
                 stopping ? "즉시 음성 전송을 중지합니다." : "직접 허용하면 Vision 마이크를 현재 선택한 Mac으로 전송합니다.")
             Button("수신 확인", systemImage: "checkmark.circle") {
@@ -659,6 +660,7 @@ private struct VisionMicrophoneControls: View {
 
     private var message: String {
         if let problem = client.microphoneCleanupProblem { return problem }
+        if let problem = client.visionForwardingProblem { return problem }
         switch client.microphonePhase {
         case .unavailable: return "이 Mac 연결은 마이크 입력을 지원하지 않습니다."
         case .off: return "Vision 마이크 꺼짐"

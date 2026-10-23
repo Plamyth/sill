@@ -50,10 +50,11 @@ func checkAuthority() {
     check(model.owner == c && model.request(c, direction: .playback) != nil, "different Mac owns independent preferences")
     check(!model.intent.desired(.microphone, hostKey: cc.hostKey), "microphone preference never crosses verified Macs")
     cc.protected = false; model.update(c, context: cc)
-    check(model.advance(cleanupReady: true) == c, "privacy withdrawal revokes actual owner")
+    check(model.advance(cleanupReady: true) == nil && !model.permits(c, direction: .playback), "privacy withdrawal fences actual while request owner remains")
     _ = model.advance(cleanupReady: true)
-    check(model.owner == b, "only eligible protected survivor can be elected")
-    ca.foreground = false; cb.foreground = false
+    check(model.owner == c && model.request(c, direction: .playback) == nil, "unprotected request owner cannot start actual")
+    ca.foreground = false; cb.foreground = false; cc.foreground = false
+    model.update(c, context: cc)
     model.update(a, context: ca); model.update(b, context: cb)
     _ = model.advance(cleanupReady: true); _ = model.advance(cleanupReady: true)
     check(model.owner == nil, "inactive scenes cannot acquire physical ownership")

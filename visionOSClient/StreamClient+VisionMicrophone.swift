@@ -231,6 +231,12 @@ extension StreamClient {
                 microphoneCaptureToken = nil
                 retryMicrophoneCleanup()
             case .send(let peer, let control):
+                #if os(visionOS)
+                if control.operation == .start && !VisionRemoteAudioStore.shared.permits(self, direction: .microphone) {
+                    applyMicrophone(microphonePolicy.backgrounded())
+                    continue
+                }
+                #endif
                 if control.operation == .stop {
                     pendingStops.append((peer, control))
                 } else {
