@@ -12,7 +12,7 @@ const keyFile=path.join(folder,'fixture-key');
 if(!fs.existsSync(keyFile))fs.writeFileSync(keyFile,Buffer.alloc(32,42));
 const authority=audioForwardingAuthority({store,credentialKey:fs.readFileSync(keyFile)});
 const credentials=new Map(),requests=new Map();
-let input='',holdMethod=null,held=null,worker=null;
+let input='',holdMethod=null,held=null,worker=null,releaseTamper=null;
 process.stdin.on('data',chunk=>{
   input+=chunk;
   while(input.includes('\n')) {
@@ -25,6 +25,12 @@ process.stdin.on('data',chunk=>{
 const output=new Writable({write(chunk,_,done){
   const response=JSON.parse(String(chunk)),request=requests.get(response.requestId);
   event({reply:request.method,status:response.result?.state??'accepted',code:response.result?.code??null});
+  if(request.method==='forwardingProviderRelease')event({releaseOutcome:response.result?.outcome,
+    remainingMilliseconds:response.result?.remainingMilliseconds});
+  if(request.method==='forwardingProviderRelease'&&releaseTamper){
+    const {field,value}=releaseTamper;releaseTamper=null;
+    response.result[field]=value;chunk=JSON.stringify(response)+'\n';event({tamperedRelease:field});
+  }
   if(request.method==='forwardingBootstrap')credentials.set(request.payload.pairedDeviceId,response.result.credential.credential);
   const waiting=holdMethod===request.method&&
     (request.method!=='forwardingEvidence'||request.payload.operation==='attach');
@@ -42,6 +48,10 @@ const audio={bootId:randomUUID(),close(){},closeBinding(){},commitPreparedBindin
 const server=http.createServer((req,res)=>{
   const url=new URL(req.url,'http://127.0.0.1');
   if(url.pathname==='/arm'){holdMethod=url.searchParams.get('method');res.end('ok');return;}
+  if(url.pathname==='/tamper-release'){
+    releaseTamper={field:url.searchParams.get('field'),value:JSON.parse(url.searchParams.get('value'))};
+    res.end('ok');return;
+  }
   if(url.pathname==='/release'){const release=held;held=null;release?.();res.end('ok');return;}
   if(url.pathname==='/state'){res.setHeader('content-type','application/json');res.end(JSON.stringify(authority.snapshot()));return;}
   const id=url.searchParams.get('id');
@@ -54,6 +64,6 @@ nativeAudioControl({input:process.stdin,output,audio,forwarding:authority,
   onReady:()=>server.listen(0,'127.0.0.1',()=>{
     worker=spawn(process.execPath,['-e','process.stdin.resume()'],{stdio:['pipe','pipe','pipe']});
     worker.on('close',()=>event({workerExited:true}));
-    fs.writeFileSync(path.join(folder,`child-${index}.json`),JSON.stringify({pid:process.pid,boot:audio.bootId,port:server.address().port}));
+    fs.writeFileSync(path.join(folder,`child-${index}.json`),JSON.stringify({pid:process.pid,workerPid:worker.pid,boot:audio.bootId,port:server.address().port}));
   }),
   onLoss:()=>{event({controllerLost:true});server.close();server.closeAllConnections();process.exitCode=1;}});

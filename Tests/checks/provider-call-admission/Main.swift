@@ -154,7 +154,9 @@ enum CheckError: Error { case setup(String) }
         do {
             let a = try await setup("release-before-proof"), f = a.fixture, p = try await prepared(a)
             let approved = try await approval(a, p)
-            await f.relay.providerRelease(approved, outcome: .notDispatched)
+            let released = await f.relay.providerRelease(approved, outcome: .notDispatched)
+            check("Release refuses not_dispatched after Node Dispatch", !released &&
+                  f.events(1).contains("\"releaseOutcome\":\"unknown\",\"remainingMilliseconds\":0"))
             check("Release reaches Node recorded state", f.events(1).contains("\"reply\":\"forwardingProviderRelease\",\"status\":\"recorded\""))
             let signedAfterRelease = try? signer.dispatchProof(approved, context: a.peer.context)
             check("Release permanently invalidates Approval before first sign", signedAfterRelease == nil)
@@ -162,6 +164,48 @@ enum CheckError: Error { case setup(String) }
             facts.append(["case": "release-before-proof", "signatureIssuedAfterRelease": signedAfterRelease != nil,
                           "approvalStillCurrent": approved.isCurrent])
             await f.finish()
+        }
+        do {
+            let a = try await setup("release-await-revocation"), f = a.fixture, p = try await prepared(a)
+            let approved = try await approval(a, p)
+            _ = await f.http("/arm?method=forwardingProviderRelease")
+            let pending = Task { await f.relay.providerRelease(approved, outcome: .unknown) }
+            try await wait("held Release") { f.events(1).contains("\"held\":\"forwardingProviderRelease\"") }
+            check("Release revokes before awaiting Node reply", !p.isCurrent && !approved.isCurrent)
+            check("held Release prevents first proof", (try? signer.dispatchProof(approved, context: a.peer.context)) == nil)
+            _ = await f.http("/release")
+            check("held Release confirms recorded response", await pending.value)
+            await f.finish()
+        }
+        for (field, value) in [
+            ("state", "\"prepared\""),
+            ("requestId", "\"00000000-0000-0000-0000-000000000001\""),
+            ("scopeId", "\"00000000-0000-0000-0000-000000000002\""),
+            ("nodeGeneration", "\"00000000-0000-0000-0000-000000000003\""),
+            ("remainingMilliseconds", "1"), ("outcome", "\"dispatched\"")
+        ] {
+            let a = try await setup("release-mismatch-" + field), f = a.fixture, p = try await prepared(a)
+            let approved = try await approval(a, p)
+            let query = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
+            _ = await f.http("/tamper-release?field=" + field + "&value=" + query)
+            let released = await f.relay.providerRelease(approved, outcome: .unknown)
+            check("Release rejects mismatched " + field, !released)
+            check("Release mismatch crosses actual Node boundary " + field,
+                  f.events(1).contains("\"reply\":\"forwardingProviderRelease\",\"status\":\"recorded\"") &&
+                  f.events(1).contains("\"tamperedRelease\":\"" + field + "\""))
+            check("Release mismatch cannot restore proof " + field,
+                  !approved.isCurrent && (try? signer.dispatchProof(approved, context: a.peer.context)) == nil)
+            await f.finish()
+        }
+        do {
+            let a = try await setup("foreign-release-owner"), owner = a.fixture, p = try await prepared(a)
+            let approved = try await approval(a, p), foreign = try Fixture("foreign-release-caller")
+            check("foreign relay Release returns false", !(await foreign.relay.providerRelease(approved, outcome: .unknown)))
+            check("foreign relay Release preserves owner approval", approved.isCurrent && p.isCurrent)
+            check("foreign relay Release sends no owner cleanup", methodCount(owner, "forwardingProviderRelease") == 0)
+            _ = try proof(a, approved)
+            check("owner Release still succeeds", await owner.relay.providerRelease(approved, outcome: .unknown))
+            await foreign.finish(); await owner.finish()
         }
         do {
             let a = try await setup("cancel-and-other-scope"), f = a.fixture, p = try await prepared(a)

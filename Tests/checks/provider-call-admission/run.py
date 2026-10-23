@@ -1,4 +1,5 @@
 """Actual Swift admission/signing + pinned Node stdio; no app or key store startup."""
+import argparse
 import hashlib
 import json
 import os
@@ -13,8 +14,13 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 shared = here.parent / 'forwarding-evidence-lifecycle'
-node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:]]
-base_commit = '67603596bbebe3e2b3aaf970859935fd5bfc732f'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('node_repo', type=lambda p: Path(p).resolve(strict=True))
+parser.add_argument('archive', type=lambda p: Path(p).resolve(strict=True))
+parser.add_argument('--source-manifest', required=True, type=lambda p: Path(p).resolve(strict=True))
+parser.add_argument('--source-manifest-sha256', required=True)
+args = parser.parse_args()
+node_repo, archive = args.node_repo, args.archive
 node_commit = '0bec7a9970b0bd4e15390012b8ade02ed54605c2'
 names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract',
          'AudioForwardingCoordinator', 'AudioForwardingParticipants', 'AudioForwardingProtection',
@@ -27,10 +33,13 @@ inputs = sources + protocol + [identity, closure] + list(here.glob('*.*')) + [
     shared / name for name in ['Boundaries.swift', 'Main.swift', 'child.js']]
 sha = lambda data: hashlib.sha256(data).hexdigest()
 before = {str(p.relative_to(root)): sha(p.read_bytes()) for p in inputs}
-if (root / '.git').exists():
-    for path in sources + protocol + [identity, closure]:
-        assert path.read_bytes() == subprocess.check_output([
-            'git', '-C', str(root), 'show', base_commit + ':' + str(path.relative_to(root))])
+manifest_bytes = args.source_manifest.read_bytes()
+assert args.source_manifest_sha256 == sha(manifest_bytes), 'source manifest SHA mismatch'
+manifest = json.loads(manifest_bytes)
+assert manifest['sourceHashes'] == before, 'source or test input SHA mismatch'
+source_identity = dict(sourceCommit=None, sourceTree=None,
+    sourceBaseCommit=manifest['sourceBaseCommit'], sourceAdmission='explicit SHA-256 snapshot',
+    sourceManifestSha256=sha(manifest_bytes), fullGitSourceGuardAccepted=False)
 pins = dict(re.findall(r'"(server/[^\"]+)": "([a-f0-9]{64})"', closure.read_text()))
 if (node_repo / '.git').exists():
     def node_source(name):
@@ -135,9 +144,15 @@ final class HostIdentity {
                 child['absentAfterChecks'] = False
             except ProcessLookupError:
                 child['absentAfterChecks'] = True
+            try:
+                os.kill(child['workerPid'], 0)
+                child['workerAbsentAfterChecks'] = False
+            except ProcessLookupError:
+                child['workerAbsentAfterChecks'] = True
             child['fixture'] = str(info.relative_to(cases))
             result['fixtureChildren'].append(child)
-        assert result['fixtureChildren'] and all(child['absentAfterChecks'] for child in result['fixtureChildren'])
+        assert result['fixtureChildren'] and all(child['absentAfterChecks'] and child['workerAbsentAfterChecks']
+                                                for child in result['fixtureChildren'])
         # Retain only fixture logs, never credential/key files or a real journal.
         result['fixtureLogs'] = {str(p.relative_to(cases)): p.read_text() for p in cases.rglob('*.jsonl')}
         assert worker.returncode == (0 if not result['failures'] else 1)
@@ -148,7 +163,7 @@ final class HostIdentity {
             pass
 assert before == {str(p.relative_to(root)): sha(p.read_bytes()) for p in inputs}
 assert node_hashes == {name: sha(node_source(name)) for name in sorted(files)}
-result.update(sourceCommit=base_commit, sourceTree='0bf2a6f9c116a8894728bb8a57d8066ecabba590',
+result.update(**source_identity,
     sourceUnchanged=True, sourceHashes=before, selectedSource=selections, nodeSourceCommit=node_commit,
     nodeSourceHashes=node_hashes, compileRejections=negative, scratchRemoved=not out.exists(),
     actualAppDeviceHALKeychainProviderActions=0, snapshotOnly=not (root / '.git').exists())

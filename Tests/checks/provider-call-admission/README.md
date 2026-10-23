@@ -1,16 +1,20 @@
 # Provider 호출 승인 경계 검사
 
-기준 Sill `67603596bbebe3e2b3aaf970859935fd5bfc732f` / tree
-`0bf2a6f9c116a8894728bb8a57d8066ecabba590`, Node
+명시적인 전체 입력 SHA manifest로 고정한 Sill 소스와 Node
 `0bec7a9970b0bd4e15390012b8ade02ed54605c2`를 검사한다.
 
 ```sh
-python3 Tests/checks/provider-call-admission/run.py NODE_CHECKOUT EXISTING_OUTPUT_DIRECTORY
+python3 Tests/checks/provider-call-admission/run.py NODE_CHECKOUT EXISTING_OUTPUT_DIRECTORY \
+  --source-manifest MANIFEST --source-manifest-sha256 MANIFEST_SHA256
 ```
 
 새 패키지나 XCTest 없이 기존 Swift 컴파일러, CryptoKit/Security, Node만 사용한다.
 Node checkout에서는 위 커밋의 Git blob을 읽는다. Git 없는 Mini 입력에서는 서버
 19개 전체를 생산 `LocalAudioRelayClosure.swift`의 SHA-256과 대조한다.
+manifest는 `sourceBaseCommit`과 `sourceHashes`를 가진 JSON이다. `sourceHashes`는
+runner의 `inputs` 전체 상대 경로와 SHA-256을 정확히 포함해야 한다.
+누락·추가·내용 차이 또는 manifest 자체 SHA 불일치면 컴파일 전에 거절한다.
+dirty snapshot은 Git commit이나 tree의 수용으로 표시하지 않는다.
 
 ## 실제 실행 범위
 
@@ -23,6 +27,9 @@ Node checkout에서는 위 커밋의 Git blob을 읽는다. Git 없는 Mini 입�
   뜻하지는 않는다.
 - 실제 Node authority/native control/audio session의 private stdio를 사용한다.
   `/arm`은 Node가 실제 응답을 만든 뒤 전송만 늦추며 `/release`가 이를 해제한다.
+  `/tamper-release`는 실제 Node Release 결과에서 지정한 필드 하나를 바꾼다.
+  Release의 state, requestId, scopeId, nodeGeneration, outcome, remainingMilliseconds
+  불일치가 성공으로 보고되지 않는지 검사한다.
 - 생산 runtime 사본에는 테스트 관측 함수와 polling 중지 함수만 덧붙인다.
   polling은 실제 native binding 준비 후 중지해 await 경계에 다른 RPC가 끼지 않게
   한다. 오디오 준비·보호·worker는 기존 inert fixture다.
@@ -36,7 +43,7 @@ Node checkout에서는 위 커밋의 Git blob을 읽는다. Git 없는 Mini 입�
 ## 결과와 정리
 
 각 동작 검사와 실패를 수집해 끝까지 실행한다. `ADMISSION_RESULT=` JSON에
-실패 목록, fixture stdio 로그, 정확한 자식 PID·임시 포트·종료 확인,
+실패 목록, fixture stdio 로그, 정확한 자식 및 inert worker PID·임시 포트·종료 확인,
 원본/선택 소스 SHA와 Node 핀을 남긴다. 제품 결함은
 검사를 성공으로 바꾸지 않으며 종료 코드 1로 반환한다.
 
@@ -50,14 +57,14 @@ Mini 실행은 task 전용 snapshot과 `mini-ephemeral-source` 정리 영수증�
 기록한다. 부모의 source-guard 캡처와 exact base 대조는 별도다. Git 없는 Mini
 snapshot을 source-guard의 checkout 기반 동일 작업 수용으로 주장하지 않는다.
 
-## 기준 소스에서 관측한 실패
+## 회귀 반례
 
-`release-before-proof`는 실제 Node의 `recorded` Release 응답 뒤에도 아직 사용하지
-않은 Approval이 현재 상태로 남고 실제 signer가 서명하는 P2를 재현한다.
-생산 `LocalAudioRelay.swift:576`의 Release는 Prepared의 로컬 철회를 수행하지 않는다.
+이전 기준 `67603596bbebe3e2b3aaf970859935fd5bfc732f`에서는 `release-before-proof`가
+실제 Node의 `recorded` Release 응답 뒤에도 미사용 Approval의 최초 서명을 허용했다.
+현재 검사는 Release 응답 전·후의 서명 차단과 정확한 recorded 응답의 Bool을 확인한다.
+Dispatch 뒤 Node는 `not_dispatched`로 되돌리지 않고 `unknown`을 유지한다.
+따라서 `.notDispatched` Release의 반환값은 false여야 하며 최초 서명은 계속 거절되어야 한다.
 
-`foreign-cancel`은 다른 relay를 receiver로 호출해도 `LocalAudioRelay.swift:567`이
-소유권 검사보다 먼저 원 Prepared를 철회하는 경계를 드러낸다. 이 검사의 기대는
-잘못된 receiver가 다른 actor의 승인을 철회하지 않는 것이다. Node 권한 확대나
-실제 클릭 증거가 아니며, 부모가 의도한 cancel 계약과 별도로 대조할 항목이다.
-같은 actor의 이전 Cancel이 새 scope를 보존하는 검사는 통과한다.
+`foreign-cancel`과 `foreign-release`는 다른 relay가 원 Prepared나 Approval을 철회하지
+않고 원 Node에 cleanup도 보내지 않는지 검사한다. 같은 actor의 이전 Cancel이 새
+scope를 보존하는 기존 반례도 유지한다. 실제 provider 클릭은 실행하지 않는다.
