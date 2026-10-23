@@ -14,14 +14,20 @@ struct ProviderCallSession {
 @MainActor
 final class ProviderCallRuntime {
     private final class Record {
+        enum Stage { case preflight, authority }
         let request: ProviderCallRequest
         let generation: UUID
+        weak var relay: LocalAudioRelay?
+        let authority: LocalAudioRelay.ProviderAuthorityIdentity
+        var stage = Stage.preflight
         let startedAt = ProcessInfo.processInfo.systemUptime
         var lastQueryAt: TimeInterval?
         var queries = 0
         var result: ProviderCallResult
-        init(_ request: ProviderCallRequest, generation: UUID) throws {
+        init(_ request: ProviderCallRequest, generation: UUID, session: ProviderCallSession,
+             authority: LocalAudioRelay.ProviderAuthorityIdentity) throws {
             self.request = request; self.generation = generation
+            relay = session.relay; self.authority = authority
             result = try ProviderCallResult(requestId: request.requestId, status: .pending, reason: "provider_pending")
         }
     }
@@ -45,10 +51,13 @@ final class ProviderCallRuntime {
                   session: ProviderCallSession?) async -> ProviderCallState? {
         let request = control.request
         guard context.role == .viewer, context.isCurrent(), request.pairedDeviceId == context.peer.id,
-              let session, session.admitted() else { return nil }
+              let session, session.admitted(), let authority = session.relay.providerAuthorityIdentity else { return nil }
         if let prior = records[request.requestId] {
             guard prior.request == request, prior.generation == context.peer.pairingGeneration else {
                 return state(request, .failed, "request_id_conflict")
+            }
+            guard prior.relay === session.relay, prior.authority == authority else {
+                return state(request, .unknown, "provider_authority_changed")
             }
             if control.operation == .query, prior.result.status == .pending {
                 let now = ProcessInfo.processInfo.systemUptime
@@ -61,10 +70,16 @@ final class ProviderCallRuntime {
             return try? ProviderCallState(request: request, result: prior.result)
         }
         guard control.operation == .perform else { return state(request, .unknown, "provider_result_unavailable") }
+        guard request.matches(session.snapshot) else { return state(request, .failed, "audio_lease_changed") }
+        guard records.values.filter({ $0.request.pairedDeviceId == request.pairedDeviceId && $0.stage == .preflight }).count < 4 else {
+            return state(request, .failed, "provider_preflight_busy")
+        }
         guard records.count < 256 else { return state(request, .failed, "request_capacity") }
-        guard let record = try? Record(request, generation: context.peer.pairingGeneration) else { return nil }
+        guard let record = try? Record(request, generation: context.peer.pairingGeneration,
+                                      session: session, authority: authority) else { return nil }
         records[request.requestId] = record
-        guard let result = try? await perform(request, context: context, session: session) else { return nil }
+        defer { if record.stage == .preflight { records.removeValue(forKey: request.requestId) } }
+        guard let result = try? await perform(record, context: context, session: session) else { return nil }
         record.result = result
         guard context.isCurrent() else { return nil }
         return try? ProviderCallState(request: request, result: result)
@@ -75,12 +90,14 @@ final class ProviderCallRuntime {
         return try? ProviderCallState(request: request, result: result)
     }
 
-    private func perform(_ request: ProviderCallRequest, context: AudioForwardingConnectionContext,
+    private func perform(_ record: Record, context: AudioForwardingConnectionContext,
                          session: ProviderCallSession) async throws -> ProviderCallResult {
+        let request = record.request
         func result(_ status: ProviderCallResult.Status, _ reason: String) throws -> ProviderCallResult {
             try ProviderCallResult(requestId: request.requestId, status: status, reason: reason)
         }
-        let current = { !Task.isCancelled && context.isCurrent() && session.admitted() }
+        let current = { !Task.isCancelled && context.isCurrent() && session.admitted() &&
+            record.relay === session.relay && record.authority == session.relay.providerAuthorityIdentity }
         guard current(), request.matches(session.snapshot) else { return try result(.failed, "audio_lease_changed") }
         guard await recoveryReady(), current() else { return try result(.failed, "compatible_recovery_unavailable") }
         let overall = ProcessInfo.processInfo.systemUptime + 8
@@ -104,6 +121,7 @@ final class ProviderCallRuntime {
             try identityReply.validate(challenge, request: request)
             guard current(), let initial = await session.readSnapshot(), current(),
                   providerSameSnapshot(initial, session.snapshot) else { throw ProviderCallFailure.superseded }
+            record.stage = .authority
             switch await session.relay.providerAcquire(request, challenge: challenge, challengeStartedAt: challengeStarted,
                 snapshot: initial, peer: session.peer, credential: session.credential, admission: current) {
             case .prepared(let value): prepared = value

@@ -539,6 +539,18 @@ final class LocalAudioRelay {
         return .prepared(record)
     }
 
+    struct ProviderAuthorityIdentity: Equatable {
+        let boot: UUID
+        let pid: pid_t
+        let membership: LocalAudioParticipantRegistry.Snapshot
+    }
+    var providerAuthorityIdentity: ProviderAuthorityIdentity? {
+        let membership = participants.snapshot
+        guard forwarding, case .connected(let boot) = state, registeredBoot == boot,
+              membership.boots[.relay] == boot, process.isRunning else { return nil }
+        return .init(boot: boot, pid: process.processIdentifier, membership: membership)
+    }
+
     func providerDispatch(_ record: ProviderCallPrepared) async -> ProviderCallDispatch {
         guard record.relay === self else { return .notDispatched }
         guard !record.consumed else { return .unknown }
