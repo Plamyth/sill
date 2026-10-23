@@ -181,6 +181,7 @@ package final class StreamCoordinator {
         didSet {
             if oldValue != videoEpoch { gestureScopeToken = UUID() }
             if oldValue?.id != videoEpoch?.id {
+                server.sentryAdmission.capture(nil)
                 microphoneIngress.revoke()
                 microphoneReceiver.forgetCapabilities()
                 microphoneReceiver.revoke(reason: "video epoch changed")
