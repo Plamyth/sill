@@ -48,7 +48,7 @@ inputs = [projection, model, Path(__file__), *[p for p in Path(__file__).parent.
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 stage_hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in stage.iterdir() if p.is_file()}
 result = subprocess.run(['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run', '--source', str(stage),
-    '--owner', '01a13ace-e372-7ed1-9946-149df37ee1c3', '--job', 'ipad-public-source-result-20261023', '--', 'sh', 'run.sh'],
+    '--owner', '01a13ace-e372-7ed1-9946-149df37ee1c3', '--job', 'ipad-cloud-result-freshness-20261023', '--', 'sh', 'run.sh'],
     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 (output / 'foundation.log').write_text(result.stdout)
 print(result.stdout, end='')

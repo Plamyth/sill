@@ -32,6 +32,14 @@ func publicResultChecks() async throws {
     let initial = try projection()
     let selected = cloudSelection(initial)
     let body = cloudRow["result"] as! String
+    var terminal = cloudRow
+    terminal["status"] = "FINISHED"; terminal["executionStatus"] = "FINISHED"
+    terminal["statusSource"] = "cursor-cloud-get-run"; terminal["connectionState"] = "closed"
+    terminal["observedAt"] = "2026-10-22T00:00:00Z"
+    let terminalProjection = try projection([terminal])
+    let terminalResult = cloudSelection(terminalProjection).currentResult(in:terminalProjection,now:now)
+    check(terminalResult == body,
+        "공개 fresh terminal old observedAt expected=\(body) actual=\(terminalResult ?? "nil")")
     check(selected.currentResult(in:initial,now:now) == body, "같은 Cloud agent/run의 공개 현재 응답")
     check(initial.sessions(for:.cursorCloud)[0].observedAt == nil && initial.sourceSummary(for:.cursorCloud)?.capabilities?.read == false,
         "행 관측 null과 summary read 거부는 공개 행 read를 대체하지 않음")
