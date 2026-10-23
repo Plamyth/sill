@@ -222,6 +222,12 @@ let oldObserve = interrupted.next(desire: desired)!
 interrupted.suspend()
 check(interrupted.pending == nil && interrupted.submitted == nil,
       "lifecycle interruption cancels the outstanding control and submitted authority")
+check(interrupted.next(desire: desired) == nil && interrupted.draining?.control.requestID == oldObserve.requestID,
+      "same TLS drains its outstanding wire request before a new lifecycle can observe")
+interrupted.receive(try .init(requestID: oldObserve.requestID, operation: .observe,
+    catalog: catalog(live, intent: 9, binding: 12), result: nil), from: interrupted.connection)
+check(interrupted.snapshot == nil && interrupted.draining == nil,
+      "retired reply drains the wire without adopting stale evidence")
 let freshObserve = interrupted.next(desire: desired)!
 check(freshObserve.operation == .observe && freshObserve.requestID != oldObserve.requestID,
       "new lifecycle requires its own fresh observation")
@@ -232,8 +238,10 @@ check(desired.playback && desired.microphone, "discarding manual choice preserve
 
 var interruptedOwn = VisionAudioForwarding(connection: UUID(), device: device)
 interruptedOwn.select(desired)
-_ = interruptedOwn.next(desire: desired)
+let retiredOwn = interruptedOwn.next(desire: desired)!
 interruptedOwn.suspend()
+interruptedOwn.receive(try .init(requestID: retiredOwn.requestID, operation: .observe,
+    catalog: catalog(live, intent: 9, binding: 12), result: nil), from: interruptedOwn.connection)
 try observed(&interruptedOwn, catalog(live, intent: 9, binding: 12))
 let ownResume = interruptedOwn.next(desire: desired)!.intent!
 check(ownResume.action == .resume && ownResume.intentId == request.intentId &&
@@ -311,3 +319,19 @@ observedClock = 304
 renewal.expireFreshness()
 check(!renewal.permits(.microphone), "lost observe response cannot retain a past active binding")
 print("vision-forwarding freshness checks included: \(assertions)")
+
+var abandoned = VisionAudioForwarding(connection: UUID(), device: device)
+let abandonedWire = abandoned.observe()!
+abandoned.suspend()
+abandoned.suspend()
+check(abandoned.expectsResponse(abandonedWire.requestID), "repeated suspend preserves the original wire slot")
+abandoned.select(desired)
+check(abandoned.next(desire: desired) == nil, "new manual intent cannot overlap the abandoned wire exchange")
+check(!abandoned.timeout(UUID()), "old unrelated timeout cannot retire a current transport")
+check(abandoned.timeout(abandonedWire.requestID), "drain timeout requires retiring that same TLS transport")
+check(abandoned.next(desire: desired) == nil && abandoned.binding == nil,
+      "unknown wire completion never permits a new request on the same TLS")
+abandoned.receive(try .init(requestID: abandonedWire.requestID, operation: .observe,
+    catalog: catalog(live, intent: 9, binding: 12), result: nil), from: abandoned.connection)
+check(abandoned.snapshot == nil && !abandoned.permits(.microphone), "timed out reply cannot revive media")
+print("vision-forwarding wire-drain checks included: \(assertions)")

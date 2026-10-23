@@ -14,6 +14,7 @@ struct VisionAudioForwarding {
     private(set) var catalog: AudioForwardingCatalog?
     private(set) var snapshot: AudioForwardingSnapshot?
     private(set) var pending: Pending?
+    private(set) var draining: Pending?
     private(set) var submitted: AudioForwardingIntentRequest?
     private(set) var problem: String?
     private var selection: Desire?
@@ -60,6 +61,7 @@ struct VisionAudioForwarding {
     }
     mutating func suspend() {
         selection = nil
+        if let pending { draining = pending }
         pending = nil
         submitted = nil
         resumed = false
@@ -77,6 +79,7 @@ struct VisionAudioForwarding {
     mutating func fail(_ message: String) {
         failed = true
         submitted = nil
+        if let pending { draining = pending }
         pending = nil
         problem = message
         freshUntil = nil
@@ -86,12 +89,16 @@ struct VisionAudioForwarding {
         guard submitted?.transportId == transport, binding == nil else { return }
         fail("음성 연결 준비가 끝나지 않아 오디오를 중지했습니다. 다시 선택해 주세요.")
     }
-    mutating func timeout(_ request: UUID) {
-        guard pending?.control.requestID == request else { return }
-        fail("공통 음성 권한 응답이 늦어 오디오를 중지했습니다. 다시 선택해 주세요.")
+    func expectsResponse(_ request: UUID) -> Bool {
+        pending?.control.requestID == request || draining?.control.requestID == request
+    }
+    @discardableResult mutating func timeout(_ request: UUID) -> Bool {
+        guard expectsResponse(request) else { return false }
+        fail("공통 음성 권한 응답이 늦어 연결을 다시 확인합니다. 저장한 음성 선택은 유지합니다.")
+        return true
     }
     mutating func observe() -> AudioForwardingControl? {
-        guard pending == nil, !failed else { return nil }
+        guard pending == nil, draining == nil, !failed else { return nil }
         return enqueue(try! AudioForwardingControl(requestID: UUID(), operation: .observe, intent: nil))
     }
     private mutating func enqueue(_ control: AudioForwardingControl) -> AudioForwardingControl {
@@ -100,7 +107,7 @@ struct VisionAudioForwarding {
     }
 
     mutating func next(desire: Desire) -> AudioForwardingControl? {
-        guard pending == nil, !failed else { return nil }
+        guard pending == nil, draining == nil, !failed else { return nil }
         if needsObservation || catalog == nil { return observe() }
         guard let catalog, let snapshot else { return nil }
         let own = snapshot.intent?.pairedDeviceId == device ? snapshot.intent : nil
@@ -140,6 +147,11 @@ struct VisionAudioForwarding {
 
     mutating func receive(_ state: AudioForwardingState, from generation: UUID) {
         guard generation == connection else { return }
+        if let draining, draining.control.requestID == state.requestID,
+           draining.control.operation == state.operation {
+            self.draining = nil
+            return
+        }
         guard let pending, pending.connection == generation,
               pending.control.requestID == state.requestID, pending.control.operation == state.operation else {
             fail("이전 음성 권한 응답이 도착해 오디오를 중지했습니다."); return
@@ -297,8 +309,11 @@ extension StreamClient {
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self, weak peer] in
             guard let self, let peer, self.connection === peer,
                   self.visionAudioIntentConnection == generation,
-                  self.visionForwarding?.pending?.control.requestID == control.requestID else { return }
-            self.visionForwarding?.timeout(control.requestID)
+                  self.visionForwarding?.expectsResponse(control.requestID) == true else { return }
+            if self.visionForwarding?.timeout(control.requestID) == true {
+                peer.cancel()
+                self.connectionLost(peer, error: .posix(.ETIMEDOUT))
+            }
             self.visionForwardingChanged()
         }
     }
