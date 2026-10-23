@@ -115,6 +115,7 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
             guard !Task.isCancelled, remaining.isFinite, remaining > 0 else { throw ProviderCallFailure.expired }
             var poller = pollfd(fd: fd, events: events, revents: 0)
             let result = poll(&poller, 1, Int32(min(remaining * 1000, 2_000).rounded(.up)))
+            if result == 0 { continue }
             if result < 0, errno == EINTR { continue }
             guard result > 0, poller.revents & Int16(POLLERR | POLLNVAL) == 0,
                   poller.revents & events != 0 else { throw ProviderCallFailure.unavailable }
