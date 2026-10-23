@@ -19,7 +19,10 @@ final class AppModel {
     /// as with the CLI's flag. No onboarding in this mode.
     let synthetic = CommandLine.arguments.contains("--synthetic")
     private(set) var coordinator: StreamCoordinator?
-    private let microphoneOwner = SillVirtualMicrophoneOwner()
+    private let nativeAudioStartup = NativeAudioStartup()
+    @ObservationIgnored private lazy var audioPrivacy: HostAudioPrivacy? = Self.bundled && !synthetic
+        ? HostAudioPrivacy(defaults: .standard, nativeStartup: nativeAudioStartup) : nil
+    @ObservationIgnored private lazy var microphoneOwner = SillVirtualMicrophoneOwner(privacy: audioPrivacy)
     /// The coordinator could not be created (the listener refused its parameters). Shown in the
     /// menu; the app keeps running so the user can read it and quit.
     private(set) var startupError: String?
@@ -83,6 +86,10 @@ final class AppModel {
     static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unbundled" }
 
+    func requestLocalAudioReturn() async -> Bool {
+        await audioPrivacy?.requestLocalReturn() ?? false
+    }
+
     /// Starts the host: the same coordinator as the CLI, under the AppKit loop that is already
     /// running, asking for no permission at launch. Never exits on an error.
     func start() {
@@ -100,10 +107,11 @@ final class AppModel {
                 settings.config.requirePairing = launchRequirePairing(remote)
                 // The window lists carry this Sill's version, when it has one (the bare binary's
                 // "dev" does not parse): later devices can tell which Mac to update.
-                let c = try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
+                if audioPrivacy?.latched == true { _ = audioPrivacy?.reconcile() }
+                let c = try nativeAudioStartup.construct { try StreamCoordinator(config: settings.config, synthetic: synthetic, appKitLoop: true, remote: remote,
                                               homePairing: true, testHooks: !Self.bundled,
                                               hostVersion: SillVersion(Self.version) != nil ? Self.version : nil,
-                                              microphoneOwner: microphoneOwner)
+                                              microphoneOwner: microphoneOwner, audioPrivacy: audioPrivacy) }
                 c.keepRunningOnListenerFailure()
                 coordinator = c
                 // One path from the controls to the host, synchronous: the host's target equals

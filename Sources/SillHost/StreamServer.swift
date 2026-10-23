@@ -174,6 +174,7 @@ final class StreamServer {
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
     private var remoteAudioEpoch: UInt64 = 0
+    private let remoteAudioDrain = DispatchGroup()
     private var lastParameterSets: Data?
     let sentryAdmission = SentryAdmission()
     private var videoAdmission = VideoEpochAdmission.stopped
@@ -1698,6 +1699,19 @@ final class StreamServer {
         }
     }
 
+    func drainRemoteAudio(completion: @escaping (Bool) -> Void) {
+        resetRemoteAudio { [self] _ in
+            var finished = false
+            let finish: (Bool) -> Void = { success in
+                guard !finished else { return }
+                finished = true
+                completion(success)
+            }
+            remoteAudioDrain.notify(queue: queue) { finish(true) }
+            queue.asyncAfter(deadline: .now() + 5) { finish(false) }
+        }
+    }
+
     /// Only current opt-in clients receive sound. Stale capture callbacks and congested links
     /// are dropped before touching NWConnection's ordered send queue.
     func broadcastRemoteAudio(_ payload: Data, epoch: UInt64, sequence: UInt64) {
@@ -2100,7 +2114,10 @@ final class StreamServer {
             client.inflightFrames += 1
             if client.oldestUnackedFrameAt == nil { client.oldestUnackedFrameAt = now }
         }
-        client.connection.send(content: data, completion: .contentProcessed { [weak client] _ in
+        let audio = header.kind == .audio
+        if audio { remoteAudioDrain.enter() }
+        client.connection.send(content: data, completion: .contentProcessed { [remoteAudioDrain, weak client] _ in
+            if audio { remoteAudioDrain.leave() }
             guard let client else { return }
             client.inflight -= 1
             client.pendingBytes -= data.count

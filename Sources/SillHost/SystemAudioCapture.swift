@@ -12,12 +12,19 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     private let queue = DispatchQueue(label: "sill.remote-audio.capture", qos: .userInitiated)
     private let streamLock = NSLock()
     private var stream: SCStream?
+    private var unretiredGenerations: Set<UUID> = []
+    private var startingGenerations: Set<UUID> = []
+    private var captureGeneration = UUID()
     private var packer: RemoteAudioPCM?
     private var sampleSequence: UInt64 = 0
     var onPacket: ((Data, UInt64) -> Void)?
     var onStopped: ((Error) -> Void)?
 
     var hasStream: Bool { streamLock.withLock { stream != nil } }
+    var retirementConfirmed: Bool { streamLock.withLock { stream == nil && unretiredGenerations.isEmpty } }
+    func isStoppedGeneration(_ generation: UUID) -> Bool {
+        streamLock.withLock { captureGeneration == generation && stream == nil }
+    }
 
     /// A capture-queue barrier for a new subscriber. Everything captured before this
     /// point has a sequence no greater than the returned value. Discard the partial
@@ -44,24 +51,44 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
-        streamLock.withLock { self.stream = stream }
+        let generation = UUID()
+        streamLock.withLock {
+            self.stream = stream
+            captureGeneration = generation
+            unretiredGenerations.insert(generation)
+            startingGenerations.insert(generation)
+        }
         do {
             try await stream.startCapture()
+            streamLock.withLock { _ = startingGenerations.remove(generation) }
         } catch {
-            streamLock.withLock { if self.stream === stream { self.stream = nil } }
+            streamLock.withLock {
+                startingGenerations.remove(generation)
+                if self.stream === stream { self.stream = nil }
+            }
             throw error
         }
     }
 
     func stop() async {
-        let stream = streamLock.withLock({ () -> SCStream? in
+        let (stream, generation, startSettled) = streamLock.withLock({ () -> (SCStream?, UUID, Bool) in
             let old = self.stream
             self.stream = nil
-            return old
+            return (old, captureGeneration, !startingGenerations.contains(captureGeneration))
         })
-        if let stream { try? await stream.stopCapture() }
+        let stopped: Bool
+        if let stream {
+            do { try await stream.stopCapture(); stopped = true }
+            catch { stopped = false }
+        } else { stopped = false }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            queue.async { [self] in packer = nil; continuation.resume() }
+            queue.async { [self] in
+                packer = nil
+                streamLock.withLock {
+                    if stopped && startSettled { unretiredGenerations.remove(generation) }
+                }
+                continuation.resume()
+            }
         }
     }
 
@@ -106,12 +133,15 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        guard streamLock.withLock({ () -> Bool in
-            guard stream === self.stream else { return false }
+        guard let generation = streamLock.withLock({ () -> UUID? in
+            guard stream === self.stream else { return nil }
             self.stream = nil
-            return true
+            return captureGeneration
         }) else { return }
-        queue.async { [self] in packer = nil }
+        queue.async { [self] in
+            guard isStoppedGeneration(generation) else { return }
+            packer = nil
+        }
         onStopped?(error)
     }
 }
