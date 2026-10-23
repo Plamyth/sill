@@ -28,11 +28,11 @@ ARENA와 후보 경쟁은 사용자 금지에 따라 실행하지 않는다. arc
 
 ## 완료 증거
 
-- [ ] 회전 모델·Store·SwiftUI·PNG 구현과 관련 회귀/SDK 검사.
+- [x] 회전 모델·Store·SwiftUI·PNG 구현과 관련 회귀/SDK 검사. 통합본 a95fcb2에서 회전140·resize128·endpoint248 및 SDK 검사 통과.
 - [ ] 격리 Obsidian JSON/PNG/Markdown 저장·재열기·Mac 수정 재수신·충돌 보존.
-- [ ] 독립 검수 CLEAR 및 정확한 커밋 통합.
+- [x] 독립 검수 CLEAR 및 로컬 integration a95fcb2 통합. 공식 원격 게시는 아래 인증 장벽으로 미완료.
 - [ ] 등록 테스트 런타임 반영, iPad 실제 회전·선 추종·열린 화면 양방향 갱신 수용.
-- [ ] 원앱 REA 추가 결과와 남은 범위 기록.
+- [x] 원앱 REA 추가 결과와 남은 범위 기록. MyScript 회전·연결선 추종과 실제 종료 후 재열기 유지, MarginNote 발췌 메뉴 조사 근거를 보존했다. 전체 두 앱 조사는 미완료다.
 
 단순 컴파일·소스 검사를 실기기 수용으로 바꾸지 않는다. remote 권한·실기기 보안 장벽이 있으면 그 단계만 미완료로 유지한다.
 
@@ -67,3 +67,11 @@ ARENA와 후보 경쟁은 사용자 금지에 따라 실행하지 않는다. arc
 - iOS 실제 PNG probe 준비: 진단 iOS 타깃에 `Tests/checks/node-rotation/NodeRotationRendererChecks.swift`를 포함하고 `try await NodeRotationRendererChecks.run()` 호출. production SceneRenderer의 0/90도 PNG 픽셀과 두 번째 노드 변환 누수 부재를 검사하고 `[String:Data]` PNG 두 개를 반환한다. 타입 검사는 통과했으나 이 작성자는 UIKit 실행·실기기 PNG 픽셀·손가락/Pencil·VoiceOver·44pt hit·Obsidian relay 양방향 왕복·설치·공유 테스트 런타임을 실행하지 않았다. 부모의 원래 Result 계보에서 수용해야 한다.
 
 작성자 구현/필수 로컬 검사는 완료했다. 위 전체 완료 증거의 실기기·relay·독립 검수·integration 항목은 아직 체크하지 않는다.
+
+## 원담당 통합·실행 결과
+
+- Pstack Feature의 작성자 위임, 부모의 별도 adapter 작성, 비작성자 독립 검수 경로를 사용했다. 두 번째 작성자 생성은 세션 수 제한으로 실패해 부모가 독점 validation worktree에서 구현했다. 첫 검수의 PNG 헤더만 검사하던 허점과 UI 연결선 존재만 검사하던 두 P2를 수정하고 새 비작성자가 CLEAR를 반환했다.
+- 통합 코드 a95fcb2030fb8eb678bdb94b3da596493aba9206, tree d188f44bcae1d221428e89e7e03a3fa0fb7d0b47. capture-local/verify-local을 통과했고 검수된 validation tree와 동일하다. author branch와 이전 통합 계보는 보존했다.
+- 통합본 실제 검사 결과는 node-rotation-20261024/verification-syww9q5a/result.json이며 모든 입력 해시 불변, exit0이다. adapter 단위15개와 XCTest harness 실기기용 빌드도 통과했다. 실제 PNG 검사 전용 앱은 iPad에서 production Model/SceneRenderer를 실행해 0/90도 노드 픽셀·다른 노드 변환 누수 검사를 통과했다. 근거 rotation-device-20261024/renderer-receipt.json. 정상 앱59·host149·음성·사용자 그림을 설치나 API로 바꾸지 않았다.
+- 공식 testDeployed/testAccepted와 iPad 실제 회전 UI·개인/격리 Obsidian relay 왕복은 아직 미완료다. 원격 integration은 2823a151c8233542d23d4a5a93fed27bc61e44a7이며 source guard는 remote_commit_mismatch를 반환했다. workflow scope가 없는 기존 GitHub CLI를 같은 로그인으로 공식 갱신 중이지만 Space8/CAM6의 Authorize 버튼이 disabled다. 같은 인증 한 건을 유지하고 handOff했으며 보호 대상 Space6/CAM4와 공유 Mac 포커스는 바꾸지 않았다. disabled 강제 해제·직접 폼 제출·소스 게이트 우회·새 인증 반복은 하지 않는다.
+- REA 실제 추가 관측은 rea-rotation-followup-20261024/myscript-rotation-persistence-observed.json에 있다. ev_c6f0f1bfd0add85fb2572956df78bd933f6f8d76307229f60b55dbf83b7ffbaf. XCTest 손가락으로 회전한 자체 조사 도형·연결선이 원앱 종료·재실행 후 유지됨을 전후 PNG로 직접 확인했다. 실제 Pencil 회전과 스냅·저장 패키지 각도 필드는 미확인이다. 첫 시도는 원앱 idle 대기로 회전 전에135초를 초과했고 이미 선택된 상태를 재사용한 360초 예산 실행은189.9초 후 통과했다.
