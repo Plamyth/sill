@@ -28,11 +28,12 @@ struct VisionProviderCall {
     mutating func observe(connection next: UUID, capability: Int?, hostKey: String?) {
         let trusted = hostKey.flatMap { $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil ? $0 : nil }
         guard let trusted else {
-            disconnected()
-            connection = next
+            supported = false
+            if connection != next { disconnected(); connection = next }
             return
         }
         if self.hostKey != trusted {
+            guard pending == nil || connection != next else { supported = false; return }
             self = VisionProviderCall(connection: next, clock: clock)
             self.hostKey = trusted
         }
@@ -79,8 +80,13 @@ struct VisionProviderCall {
         guard state.result.status != .started || pending.control.request.action == .start,
               state.result.status != .stopped || pending.control.request.action == .stop else { return false }
         self.pending = nil
-        result = state.result
+        result = supported ? state.result : try? .init(requestId: pending.control.request.requestId,
+            status: .unknown, reason: "provider_authentication_unverified")
         return true
+    }
+    mutating func drain(_ state: ProviderCallState, from incoming: UUID) -> Bool {
+        supported = false
+        return receive(state, from: incoming)
     }
     mutating func timeout(_ pending: Pending) -> Bool {
         guard self.pending?.connection == pending.connection,
@@ -165,10 +171,14 @@ extension StreamClient {
         guard header.kind == .providerCallState else { return false }
         DispatchQueue.main.async { [weak self, weak peer] in
             guard let self, let peer, self.connection === peer,
-                  self.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
                   data.count <= StreamMessage.hostPayloadLimit(for: .providerCallState),
-                  let state = Wire.decode(ProviderCallState.self, from: data),
-                  self.visionProviderCall.receive(state, from: self.visionAudioIntentConnection) else { return }
+                  let state = Wire.decode(ProviderCallState.self, from: data) else { return }
+            guard self.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
+                  self.visionProviderCall.hostKey == self.visionAudioTrustedHostKey else {
+                _ = self.visionProviderCall.drain(state, from: self.visionAudioIntentConnection)
+                return
+            }
+            guard self.visionProviderCall.receive(state, from: self.visionAudioIntentConnection) else { return }
             self.scheduleVisionProviderQuery(peer)
         }
         return true
