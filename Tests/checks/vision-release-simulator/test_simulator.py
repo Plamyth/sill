@@ -207,6 +207,24 @@ class BoundaryTests(unittest.TestCase):
                 native.simctl("install", sim.UDID, "/does-not-run.app")
         self.assertEqual(len(child.calls), 1)
 
+    def test_native_timeout_preserves_actual_partial_output_and_stays_held(self):
+        native = sim.Simulator(self.args, SOURCE, self.status_runner(), self.root)
+        command = [sys.executable, "-B", "-c",
+                   "import os,time; os.write(1,b'native-start\\n'); "
+                   "os.write(2,b'native-error\\xff\\n'); time.sleep(5)"]
+        with self.assertRaisesRegex(sim.Held, "command_timeout"):
+            native.run(command)
+        self.assertEqual(len(native.commands), 1)
+        row = sim.read_json(self.root / "native-0.json")
+        self.assertEqual(row["command"], command)
+        self.assertEqual(row["stdout"], "native-start\n")
+        self.assertEqual(row["stderr"], "native-error\ufffd\n")
+        self.assertTrue(row["timedOut"])
+        self.assertGreater(row["timeoutSeconds"], 0)
+        self.assertLessEqual(row["timeoutSeconds"], self.args.native_budget_seconds)
+        self.assertTrue(row["reason"].startswith("command_timeout:"))
+        self.assertEqual(sim.evidence(self.root / "native-0.json"), native.commands[0])
+
     def test_unregistered_service_rejected(self):
         sim.atomic_json(self.registry, {"services": []})
         with self.assertRaises(sim.Held):
