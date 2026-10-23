@@ -274,6 +274,12 @@ final class FixtureInput {
     func releaseAll() {}
 }
 final class FixtureStats { func attach(to client: FixtureLaunchClient) {} }
+final class FixtureControlEvents {
+    func claim() {}
+    func release() {}
+    func setForeground(_ active: Bool) {}
+}
+final class FixtureControlEnrollment { func restore() {} }
 final class FixtureAppOwner {
     var windowLease: VisionWindowLease?
     var windowOwner: UUID? { windowLease?.window }
@@ -283,6 +289,8 @@ final class FixtureAppOwner {
     let client = FixtureLaunchClient()
     let input = FixtureInput()
     let stats = FixtureStats()
+    let controlEvents = FixtureControlEvents()
+    let controlEnrollment = FixtureControlEnrollment()
     func refresh() {}
     /* REAL_OWNER_METHODS */
 }
