@@ -564,6 +564,7 @@ final class LocalAudioRelay {
     }
 
     func providerCancel(_ record: ProviderCallPrepared) async {
+        guard record.relay === self else { return }
         record.revoke()
         guard record.relay === self, providerChildIsCurrent(record), record.scope.scopeId != nil else { return }
         let cleanup = Task { @MainActor [weak self] in
@@ -573,15 +574,23 @@ final class LocalAudioRelay {
         }
         await cleanup.value
     }
-    func providerRelease(_ approval: ProviderCallApproval, outcome: ProviderCallScope.Outcome) async {
+    @discardableResult
+    func providerRelease(_ approval: ProviderCallApproval, outcome: ProviderCallScope.Outcome) async -> Bool {
         let record = approval.prepared
-        guard record.relay === self, providerChildIsCurrent(record) else { return }
+        guard record.relay === self else { return false }
+        record.revoke()
+        guard providerChildIsCurrent(record) else { return false }
         let cleanup = Task { @MainActor [weak self] in
-            guard let self else { return }
-            _ = await self.providerFollow("forwardingProviderRelease", record: record, outcome: outcome,
+            guard let self else { return false }
+            let reply = await self.providerFollow("forwardingProviderRelease", record: record, outcome: outcome,
                 admission: { [weak self] in self?.providerChildIsCurrent(record) == true })
+            guard self.providerChildIsCurrent(record), case .accepted(let value) = reply,
+                  value.state == .recorded, value.requestId == record.request.requestId,
+                  value.scopeId == record.scope.scopeId, value.nodeGeneration == record.scope.nodeGeneration,
+                  value.remainingMilliseconds == 0, value.outcome == outcome else { return false }
+            return true
         }
-        await cleanup.value
+        return await cleanup.value
     }
     fileprivate func providerChildIsCurrent(_ record: ProviderCallPrepared) -> Bool {
         guard record.relay === self, process.isRunning, process.processIdentifier == record.pid,
@@ -829,6 +838,7 @@ final class LocalAudioRelay {
     fileprivate let prepared: ProviderCallPrepared
     let scope: ProviderCallScope
     private let deadline: TimeInterval
+    var expiresAt: TimeInterval { deadline }
     private var proofIssued = false
     var challenge: ProviderCallChallenge { prepared.challenge }
     var request: ProviderCallRequest { prepared.request }

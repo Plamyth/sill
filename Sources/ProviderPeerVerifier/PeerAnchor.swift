@@ -9,6 +9,8 @@ struct ProviderPeerPolicy {
     let team: String
     static let installed = ProviderPeerPolicy(application: URL(fileURLWithPath: "/Applications/CCR Sill.app"),
         identifier: "com.ambrion.sillcanvas.mac", team: "ZPTXHJ866D")
+    static let core = ProviderPeerPolicy(application: URL(fileURLWithPath: "/Applications/Obsidian.app"),
+        identifier: "md.obsidian", team: "6JSW4SJWN9")
 }
 
 struct ProviderPeerAnchor {

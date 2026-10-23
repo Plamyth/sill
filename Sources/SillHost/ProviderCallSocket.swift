@@ -1,7 +1,13 @@
 import Foundation
 import Darwin
 
-final class ProviderCallSocket: @unchecked Sendable {
+protocol ProviderCallTransport: Sendable {
+    func exchange<Request: Encodable, Reply: Decodable>(_ request: Request, as: Reply.Type,
+                                                       until deadline: TimeInterval) async throws -> Reply
+    func invalidate()
+}
+
+final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "ccr.provider.command-socket")
     private var descriptor: Int32?
@@ -54,6 +60,7 @@ final class ProviderCallSocket: @unchecked Sendable {
         guard try Self.endpoint(path) == expected, ProcessInfo.processInfo.systemUptime < deadline else {
             throw ProviderCallFailure.superseded
         }
+        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
         descriptor = fd
         retained = true
     }
@@ -85,8 +92,10 @@ final class ProviderCallSocket: @unchecked Sendable {
                         lock.unlock()
                         guard fd >= 0 else { throw ProviderCallFailure.unavailable }
                         defer { Darwin.close(fd) }
+                        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
                         try Self.write(frame, to: fd, until: deadline)
                         let bytes = try Self.read(fd, until: deadline)
+                        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
                         try LocalAudioRelayJSON.validate(bytes)
                         let reply = try JSONDecoder().decode(Reply.self, from: bytes)
                         guard ProcessInfo.processInfo.systemUptime < deadline else { throw ProviderCallFailure.expired }

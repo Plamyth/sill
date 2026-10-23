@@ -158,6 +158,7 @@ final class StreamServer {
         var helloSeen = false
         var role = StreamPeerRole.viewer
         var forwardingExchange: ForwardingExchange?
+        var providerExchange: ProviderExchange?
         var forwardingObserved = false
         var presentationInput = false
         /// The input messages (kind 8) read from it. Every kind 26 sent to it carries the count, so the
@@ -192,6 +193,19 @@ final class StreamServer {
         }
         func invalidate() { lock.lock(); defer { lock.unlock() }; valid = false }
     }
+    final class ProviderExchange: @unchecked Sendable {
+        let control: ProviderCallControl
+        let ticket = UUID()
+        private let lock = NSLock()
+        private var valid = true
+        private let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+        init(control: ProviderCallControl) { self.control = control }
+        var isCurrent: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return valid && DispatchTime.now().uptimeNanoseconds < deadline
+        }
+        func invalidate() { lock.lock(); defer { lock.unlock() }; valid = false }
+    }
     private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
     let sentryAdmission = SentryAdmission()
     private var videoAdmission = VideoEpochAdmission.stopped
@@ -203,6 +217,7 @@ final class StreamServer {
     var onControlClientConnected: ((NWConnection, ClientRoute) -> Void)?
     var onControlClientDisconnected: ((NWConnection) -> Void)?
     var onForwardingControl: ((ForwardingExchange, NWConnection, ClientRoute, AudioForwardingCatalog.Role) -> Void)?
+    var onProviderControl: ((ProviderExchange, NWConnection, ClientRoute) -> Void)?
     /// A connected home client's link changed with its connection's path. Only reported, never
     /// acted on: the menu card shows it. Called on the network queue.
     var onClientRouteChanged: ((NWConnection, ClientLink.Route?) -> Void)?
@@ -1429,6 +1444,7 @@ final class StreamServer {
         guard let client = clients.removeValue(forKey: id) else { return }
         sentryAdmission.remove(id)
         client.forwardingExchange?.invalidate()
+        client.providerExchange?.invalidate()
         if client.role.isViewer { pointerWatch?.clientLeft(id) }
         print("Client left: \(client.connection.endpoint)")
         if client.role.isViewer {
@@ -1789,6 +1805,11 @@ final class StreamServer {
                 return
             }
             let deliver = { (payload: Data) in
+                if header.kind == .providerCallControl {
+                    self.receiveProvider(payload, from: client)
+                    self.receiveLoop(client)
+                    return
+                }
                 if header.kind == .forwardingControl {
                     self.receiveForwarding(payload, from: client)
                     self.receiveLoop(client)
@@ -1904,6 +1925,46 @@ final class StreamServer {
             exchange.invalidate()
             if state.operation == .observe { client.forwardingObserved = true }
             send(StreamMessage(kind: .forwardingState, timestamp: Date().timeIntervalSince1970,
+                               isKeyframe: false, payload: payload).serialized(), to: client)
+        }
+    }
+
+    private func receiveProvider(_ payload: Data, from client: Client) {
+        let connection = client.connection
+        guard clients[ObjectIdentifier(connection)] === client, connection.state == .ready,
+              client.role.isViewer, client.route.encrypted, client.route.pairedName != nil,
+              client.forwardingObserved, client.providerExchange == nil,
+              payload.count <= StreamMessage.clientPayloadLimit(for: .providerCallControl),
+              (try? LocalAudioRelayJSON.validate(payload)) != nil,
+              let control = Wire.decode(ProviderCallControl.self, from: payload), let onProviderControl else {
+            connection.cancel(); return
+        }
+        let exchange = ProviderExchange(control: control)
+        client.providerExchange = exchange
+        onProviderControl(exchange, connection, client.route)
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
+            guard let self, let client, self.clients[ObjectIdentifier(connection)] === client,
+                  client.providerExchange?.ticket == exchange.ticket else { return }
+            exchange.invalidate()
+            connection.cancel()
+        }
+    }
+
+    func sendProviderState(_ state: ProviderCallState?, to connection: NWConnection, ticket: UUID) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)],
+                  let exchange = client.providerExchange, exchange.ticket == ticket else { return }
+            guard connection.state == .ready, client.role.isViewer, client.route.encrypted,
+                  client.route.pairedName != nil, exchange.isCurrent, let state,
+                  state.result.requestId == exchange.control.request.requestId,
+                  state.requestDigest == exchange.control.request.digest else { connection.cancel(); return }
+            let payload = Wire.encode(state)
+            guard !payload.isEmpty, payload.count <= StreamMessage.hostPayloadLimit(for: .providerCallState) else {
+                connection.cancel(); return
+            }
+            client.providerExchange = nil
+            exchange.invalidate()
+            send(StreamMessage(kind: .providerCallState, timestamp: Date().timeIntervalSince1970,
                                isKeyframe: false, payload: payload).serialized(), to: client)
         }
     }
