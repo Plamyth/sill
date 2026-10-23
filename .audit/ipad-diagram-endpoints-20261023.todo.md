@@ -24,7 +24,7 @@
 
 ## 기존 경로와 설계
 
-CanvasScene의 CanvasLink에 optional fromAnchor/toAnchor를 붙인다. Anchor는 side와 finite 0...1 offset이다. nil은 상대 중심 방향의 사각형 경계다. CanvasModel의 순수 계산을 화면과 PNG가 공유한다.
+CanvasScene의 CanvasLink에 optional fromAnchor/toAnchor를 붙인다. Anchor는 side와 finite 0...1 offset이다. nil은 상대 중심 방향의 사각형 경계다. 화면과 PNG는 CanvasModel의 양끝점 계산인 linkEndpoints를 공유한다. 화살촉은 화면 20·0.45와 PNG 18·pi/7의 기존 개별 계산이며 공통 geometry 완료 범위에 포함하지 않는다.
 
 CanvasStore.scene은 didSet에서 자동 저장한다. 드래그 미리보기는 별도 임시 값이며 원장 revision을 바꾸지 않는다. 시작 시 scene generation과 링크 전체를 보관한다. 종료 시 generation과 expected를 확인해 editGraph로 한 번만 반영하고 기존 graphUndo 전후 쌍을 기록한다. 같은 전후 쌍을 사용하는 graphRedo를 추가한다. 새 획을 되돌리지 않는다.
 
@@ -76,3 +76,7 @@ Pstack Feature 경로의 how 조사는 현재 Codable·그래프 mutation·Store
 deslop 자체 점검과 `git diff --check`를 완료했다. 새 제품 코드 주석은 0개이며 관련 없는 리팩터링·의존성·서비스·설정 변경은 없다. no-comments를 포함한 독립 검수는 사용자 지정대로 부모가 후속 수행한다. 자체 diff 확인·컴파일·자동 검사로 독립 검수 CLEAR를 대신하지 않는다.
 
 화면과 PNG의 화살촉은 기존 CCR 유향 계약 그대로다. 원앱에서 관측한 무화살촉 선과의 동일성, 자동 손그림 인식, 전체 MyScript 복각을 주장하지 않는다. 부모의 독립 검수 후 실기기에서는 선 선택·두 endpoint Pencil/손가락 입력, 확대·이동 좌표, 그리기·지우기 방해 없음, Undo·Redo, 저장·재열기와 PNG/수신함의 위치를 확인해야 한다. 이 작업은 설치·기기 실행·호스트 교체·공유 UI·오디오·Booster·운영 vault 변경을 수행하지 않았다.
+
+## 독립검수 P2 후속 수정
+
+위 190개 assertion·17개 실행·testedSourceHashes는 수정 전 `1710ea23cadba64bdeecacb6706acf53ad74aeb1` 구현의 과거 결과다. 새 수정의 수용 근거로 재사용하지 않는다. 이번 회귀·검사·검증 범위와 실행 영수증은 `ipad-diagram-endpoints-p2.todo.md` 및 `ipad-diagram-endpoints-p2.result.json`에 구분해 기록한다. 부모 후속 독립검수는 여전히 별도다.

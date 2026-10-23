@@ -2,11 +2,13 @@ import Foundation
 import PencilKit
 
 @main struct EndpointChecks {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         let home = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!
         let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!
         precondition(support.path.hasPrefix(home + "/"))
         let output = URL(fileURLWithPath:ProcessInfo.processInfo.environment["PELE_OUTPUT"]!)
+        let fixture = URL(fileURLWithPath:home).appendingPathComponent("endpoint-fixtures")
+        try FileManager.default.createDirectory(at:fixture,withIntermediateDirectories:true)
         var count = 0
         func check(_ condition: Bool, _ message: String) {
             precondition(condition,message)
@@ -24,16 +26,26 @@ import PencilKit
         check(base.connect(a,to:b,label:"기존 연결"),"기존 연결 생성")
         let original = base.links[0]
         var regressions: [(String,Bool)] = []
-        let overlapping = CanvasStore(blockRecoveryURL:output.appendingPathComponent("p2-overlap.json"))
+        let overlapping = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("p2-overlap.json"))
         overlapping.scene = base
         overlapping.mode = .select
         overlapping.selectLink(original.id)
-        let first = overlapping.beginEndpointDrag(.from,linkID:original.id)
-        let second = overlapping.beginEndpointDrag(.to,linkID:original.id)
-        _ = overlapping.updateEndpointDrag(to:.init(x:170,y:700))
-        _ = overlapping.finishEndpointDrag()
+        let firstOwner = UUID(), secondOwner = UUID()
+        let first = overlapping.beginEndpointDrag(.from,linkID:original.id,owner:firstOwner)
+        let second = overlapping.beginEndpointDrag(.to,linkID:original.id,owner:secondOwner)
+        check(!overlapping.updateEndpointDrag(owner:secondOwner,to:.init(x:800,y:0)) &&
+              !overlapping.finishEndpointDrag(owner:secondOwner) && !overlapping.cancelEndpointDrag(owner:secondOwner),
+              "시작에 실패한 두 번째 포인터의 move·end·cancel·사라짐은 첫 드래그에 영향 없음")
+        _ = overlapping.updateEndpointDrag(owner:firstOwner,to:.init(x:170,y:700))
+        _ = overlapping.finishEndpointDrag(owner:firstOwner)
         regressions.append(("P2-1 시작점·끝점 시작 후 첫 포인터 이동·종료",first && !second &&
             overlapping.scene.links[0].fromAnchor != nil && overlapping.scene.links[0].toAnchor == nil))
+        check(overlapping.beginEndpointDrag(.to,linkID:original.id,owner:secondOwner),"첫 드래그 종료 후 두 번째 포인터의 새 드래그 시작")
+        check(!overlapping.updateEndpointDrag(owner:firstOwner,to:.init(x:0,y:0)) &&
+              !overlapping.finishEndpointDrag(owner:firstOwner) && !overlapping.cancelEndpointDrag(owner:firstOwner) &&
+              overlapping.endpointDrag?.owner == secondOwner,"오래된 첫 포인터 콜백은 새 드래그를 변경하거나 종료하지 않음")
+        check(overlapping.cancelEndpointDrag(owner:secondOwner),"현재 소유자의 취소만 수락")
+        overlapping.saveNow()
         var vendor = try JSONSerialization.jsonObject(with:encoder.encode(original)) as! [String:Any]
         vendor["fromAnchor"] = ["side":"top","offset":0.5,"vendorMeta":["v":1]]
         let vendorBytes = try JSONSerialization.data(withJSONObject:vendor)
@@ -50,7 +62,7 @@ import PencilKit
         corrupt["links"] = corruptLinks
         let corruptBytes = try JSONSerialization.data(withJSONObject:corrupt)
         try CanvasLocalFile.write(corruptBytes,to:sceneURL)
-        let failedRestore = CanvasStore(blockRecoveryURL:output.appendingPathComponent("p2-corrupt.json"))
+        let failedRestore = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("p2-corrupt.json"))
         failedRestore.saveNow()
         regressions.append(("P2-3 복원 실패 후 원본 파일 바이트 보존",try CanvasLocalFile.read(sceneURL) == corruptBytes))
         for (name,passed) in regressions {
@@ -163,6 +175,32 @@ import PencilKit
         for value in badAnchors {
             check((try? decoder.decode(CanvasLinkAnchor.self,from:Data(value.utf8))) == nil,"손상 연결점 JSON 거부")
         }
+        for endpoint in ["fromAnchor","toAnchor"] {
+            var linkWire = try JSONSerialization.jsonObject(with:oldJSON) as! [String:Any]
+            linkWire[endpoint] = ["side":"top","offset":0.5,
+                "vendorMeta":["v":1,"nested":["array":[true,NSNull(),["text":"e\u{301}"]]]]]
+            let linkBytes = try JSONSerialization.data(withJSONObject:linkWire)
+            check((try? decoder.decode(CanvasLink.self,from:linkBytes)) == nil,
+                  "중첩된 알 수 없는 연결점 메타데이터를 조용히 버리지 않고 typed 링크 읽기 거부")
+            var sceneWire = try JSONSerialization.jsonObject(with:encoder.encode(base)) as! [String:Any]
+            sceneWire["links"] = [linkWire]
+            check((try? decoder.decode(CanvasScene.self,from:JSONSerialization.data(withJSONObject:sceneWire))) == nil,
+                  "typed 장면도 알 수 없는 앵커를 읽기 거부")
+            let revision = AgentRevision(sceneId:base.id,baseRevision:base.revision,annotations:[],proposedNodes:[],
+                linkEdits:[.init(expected:original,replacement:original)])
+            for field in ["expected","replacement","proposedLinks"] {
+                var revisionWire = try JSONSerialization.jsonObject(with:encoder.encode(revision)) as! [String:Any]
+                if field == "proposedLinks" { revisionWire[field] = [linkWire] }
+                else {
+                    var edits = revisionWire["linkEdits"] as! [[String:Any]]
+                    edits[0][field] = linkWire
+                    revisionWire["linkEdits"] = edits
+                }
+                let before = try bytes(base)
+                check((try? decoder.decode(AgentRevision.self,from:JSONSerialization.data(withJSONObject:revisionWire))) == nil &&
+                      sameBytes(base,before),"AI 기대·대체·제안의 알 수 없는 앵커를 CAS 전에 거부")
+            }
+        }
         for point in [CanvasPoint(x:.nan,y:0),.init(x:0,y:.infinity)] {
             check(CanvasLinkAnchor.nearest(to:point,in:frame) == nil,"비유한 드래그 좌표 거부")
         }
@@ -211,7 +249,7 @@ import PencilKit
         check(diagramAfter.source == diagramBefore.source && diagramAfter.nodes == diagramBefore.nodes,
               "연결점 편집은 Mermaid 연결 의미와 노드 UUID를 바꾸지 않음")
 
-        let store = CanvasStore(blockRecoveryURL:output.appendingPathComponent("endpoint-recovery.json"))
+        let store = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("endpoint-recovery.json"))
         store.scene = base
         let drawing = PKDrawing(strokes:[PKStroke(ink:PKInk(.pen,color:.white),path:PKStrokePath(controlPoints:[
             PKStrokePoint(location:CGPoint(x:15,y:20),timeOffset:0,size:CGSize(width:3,height:3),
@@ -224,32 +262,33 @@ import PencilKit
         let strokes = store.scene.strokes
         let nodes = store.scene.nodes
         let linkID = original.id
+        let dragOwner = UUID()
         for mode in [CanvasMode.pen,.eraser,.lasso] {
             store.mode = mode
             store.selectLink(linkID)
-            check(store.selectedLink == nil && !store.beginEndpointDrag(.from,linkID:linkID),"그리기·지우기·영역선택 모드에서는 선 편집 차단")
+            check(store.selectedLink == nil && !store.beginEndpointDrag(.from,linkID:linkID,owner:dragOwner),"그리기·지우기·영역선택 모드에서는 선 편집 차단")
         }
         store.mode = .select
         store.selectLink(linkID)
         check(store.selectedLink == linkID && store.selectedNode == nil,"선 선택은 노드 선택과 분리")
         let beforeDrag = store.scene
-        check(store.beginEndpointDrag(.from,linkID:linkID),"시작점 드래그 시작")
-        check(store.updateEndpointDrag(to:.init(x:170,y:700)),"시작점은 원래 노드 경계로 투영")
+        check(store.beginEndpointDrag(.from,linkID:linkID,owner:dragOwner),"시작점 드래그 시작")
+        check(store.updateEndpointDrag(owner:dragOwner,to:.init(x:170,y:700)),"시작점은 원래 노드 경계로 투영")
         check(store.scene == beforeDrag && store.displayedLink(original).fromAnchor != nil,"드래그 미리보기는 scene revision과 분리")
         store.saveNow()
-        let whileDragging = CanvasStore(blockRecoveryURL:output.appendingPathComponent("endpoint-recovery.json"))
+        let whileDragging = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("endpoint-recovery.json"))
         check(whileDragging.scene == beforeDrag,"드래그 중 자동 저장은 미확정 연결점을 기록하지 않음")
-        check(store.finishEndpointDrag() && store.scene.revision == beforeDrag.revision + 1,"드래그 종료는 한 revision으로 확정")
+        check(store.finishEndpointDrag(owner:dragOwner) && store.scene.revision == beforeDrag.revision + 1,"드래그 종료는 한 revision으로 확정")
         check(store.scene.nodes == nodes && store.scene.strokes == strokes && store.scene.drawingBase64 == raw,
               "원본 획·노트·출처·텍스트를 보존")
         check(store.scene.links[0].from == a && store.scene.links[0].to == b &&
               store.scene.links[0].id == linkID && store.scene.links[0].label == original.label,"연결 의미와 안정 ID 보존")
         let afterFrom = store.scene
-        check(store.beginEndpointDrag(.to,linkID:linkID) && store.updateEndpointDrag(to:.init(x:900,y:200)),"끝점 별도 드래그")
-        check(store.finishEndpointDrag() && store.scene.links[0].toAnchor != nil,"끝점 연결 위치 확정")
+        check(store.beginEndpointDrag(.to,linkID:linkID,owner:dragOwner) && store.updateEndpointDrag(owner:dragOwner,to:.init(x:900,y:200)),"끝점 별도 드래그")
+        check(store.finishEndpointDrag(owner:dragOwner) && store.scene.links[0].toAnchor != nil,"끝점 연결 위치 확정")
         let afterBoth = store.scene
         store.saveNow()
-        let reopened = CanvasStore(blockRecoveryURL:output.appendingPathComponent("endpoint-recovery.json"))
+        let reopened = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("endpoint-recovery.json"))
         check(reopened.scene == afterBoth && reopened.endpointDrag == nil && reopened.selectedLink == nil,
               "새 Store 재열기는 양쪽 연결점과 원본을 복원하고 선택은 저장하지 않음")
         let packet = try CanvasPacket(scene:afterBoth,imagePNG:Data([137,80,78,71,13,10,26,10]),
@@ -275,42 +314,141 @@ import PencilKit
 
         store.scene = afterBoth
         store.selectLink(linkID)
-        check(store.beginEndpointDrag(.from,linkID:linkID) && store.updateEndpointDrag(to:.init(x:0,y:250)),"stale 검사 드래그 시작")
+        check(store.beginEndpointDrag(.from,linkID:linkID,owner:dragOwner) && store.updateEndpointDrag(owner:dragOwner,to:.init(x:0,y:250)),"stale 검사 드래그 시작")
         store.scene.nodes[0].text = "외부의 새 입력"
         let external = try bytes(store.scene)
-        check(!store.updateEndpointDrag(to:.init(x:100,y:220)) && !store.finishEndpointDrag() &&
+        check(!store.updateEndpointDrag(owner:dragOwner,to:.init(x:100,y:220)) && !store.finishEndpointDrag(owner:dragOwner) &&
               sameBytes(store.scene,external),"드래그 중 같은 revision의 외부 변경도 generation으로 거부")
-        check(store.beginEndpointDrag(.to,linkID:linkID),"새 드래그는 최신 장면으로 시작")
+        check(store.beginEndpointDrag(.to,linkID:linkID,owner:dragOwner),"새 드래그는 최신 장면으로 시작")
         var aiLink = store.scene.links[0]
         aiLink.toAnchor = .init(side:.left,offset:0.1)
         let incoming = AgentRevision(sceneId:store.scene.id,baseRevision:store.scene.revision,annotations:[],proposedNodes:[],
             linkEdits:[.init(expected:store.scene.links[0],replacement:aiLink)])
         check(store.applyAgentRevision(incoming),"드래그 중 들어오는 정상 AI 변경")
         let afterIncoming = try bytes(store.scene)
-        check(!store.finishEndpointDrag() && sameBytes(store.scene,afterIncoming),"AI 변경을 오래된 드래그로 덮지 않음")
-        check(store.beginEndpointDrag(.to,linkID:linkID),"취소 검사 시작")
-        store.cancelEndpointDrag()
-        check(!store.finishEndpointDrag() && sameBytes(store.scene,afterIncoming),"취소는 장면을 보존")
-        check(store.beginEndpointDrag(.to,linkID:linkID) && store.updateEndpointDrag(to:.init(x:600,y:220)),"비유한 좌표 거부 검사 시작")
-        check(!store.updateEndpointDrag(to:.init(x:.nan,y:0)) && !store.finishEndpointDrag() &&
+        check(!store.finishEndpointDrag(owner:dragOwner) && sameBytes(store.scene,afterIncoming),"AI 변경을 오래된 드래그로 덮지 않음")
+        check(store.beginEndpointDrag(.to,linkID:linkID,owner:dragOwner),"취소 검사 시작")
+        store.cancelEndpointDrag(owner:dragOwner)
+        check(!store.finishEndpointDrag(owner:dragOwner) && sameBytes(store.scene,afterIncoming),"취소는 장면을 보존")
+        check(store.beginEndpointDrag(.to,linkID:linkID,owner:dragOwner) && store.updateEndpointDrag(owner:dragOwner,to:.init(x:600,y:220)),"비유한 좌표 거부 검사 시작")
+        check(!store.updateEndpointDrag(owner:dragOwner,to:.init(x:.nan,y:0)) && !store.finishEndpointDrag(owner:dragOwner) &&
               sameBytes(store.scene,afterIncoming),"잘못된 좌표 뒤 이전 미리보기를 확정하지 않음")
-        check(store.beginEndpointDrag(.to,linkID:linkID),"모드 변경 검사 시작")
+        check(store.beginEndpointDrag(.to,linkID:linkID,owner:dragOwner),"모드 변경 검사 시작")
         store.mode = .pen
-        check(store.endpointDrag == nil && store.selectedLink == nil && !store.finishEndpointDrag(),"도구 변경은 임시 편집 취소")
+        check(store.endpointDrag == nil && store.selectedLink == nil && !store.finishEndpointDrag(owner:dragOwner),"도구 변경은 임시 편집 취소")
         store.mode = .select
         store.selectLink(linkID)
-        check(store.beginEndpointDrag(.to,linkID:linkID),"노드 선택 검사 시작")
+        check(store.beginEndpointDrag(.to,linkID:linkID,owner:dragOwner),"노드 선택 검사 시작")
         store.select(a)
         check(store.endpointDrag == nil && store.selectedLink == nil,"노드 선택은 선 편집 취소")
         store.selectLink(linkID)
-        check(store.beginEndpointDrag(.from,linkID:linkID),"장면 전환 검사 시작")
+        check(store.beginEndpointDrag(.from,linkID:linkID,owner:dragOwner),"장면 전환 검사 시작")
         var other = store.scene
         other.id = UUID()
         try store.importScene(other)
-        check(store.endpointDrag == nil && store.selectedLink == nil && !store.finishEndpointDrag(),"장면 교체 뒤 오래된 드래그 거부")
+        check(store.endpointDrag == nil && store.selectedLink == nil && !store.finishEndpointDrag(owner:dragOwner),"장면 교체 뒤 오래된 드래그 거부")
         store.saveNow()
-        let finalReopen = CanvasStore(blockRecoveryURL:output.appendingPathComponent("endpoint-recovery.json"))
+        let finalReopen = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("endpoint-recovery.json"))
         check(finalReopen.scene == store.scene,"Undo·Redo·외부 변경 이후 저장 재열기 동등")
+        finalReopen.saveNow()
+        try await Task.sleep(for:.milliseconds(350))
+
+        var failedFiles = try badAnchors.map { value -> Data in
+            var valueScene = try JSONSerialization.jsonObject(with:encoder.encode(base)) as! [String:Any]
+            var links = valueScene["links"] as! [[String:Any]]
+            links[0]["fromAnchor"] = try JSONSerialization.jsonObject(with:Data(value.utf8))
+            valueScene["links"] = links
+            return try JSONSerialization.data(withJSONObject:valueScene)
+        }
+        var vendorScene = try JSONSerialization.jsonObject(with:encoder.encode(base)) as! [String:Any]
+        vendorScene["links"] = [vendor]
+        failedFiles.append(try JSONSerialization.data(withJSONObject:vendorScene))
+        failedFiles.append(Data("{ 잘린 JSON 원본".utf8))
+        var futureScene = base
+        futureScene.schemaVersion = 2
+        failedFiles.append(try encoder.encode(futureScene))
+        var corruptDrawing = base
+        corruptDrawing.drawingBase64 = "잘못된 base64 원본!"
+        failedFiles.append(try encoder.encode(corruptDrawing))
+        failedFiles.append(Data(repeating:32,count:4 * 1024 * 1024 + 1))
+        for (index,originalBytes) in failedFiles.enumerated() {
+            try CanvasLocalFile.write(originalBytes,to:sceneURL)
+            let failed = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("failed-scene-\(index).json"))
+            check(!failed.sceneRecoveryNotice.isEmpty && failed.status == failed.sceneRecoveryNotice,
+                  "복원 실패를 파일 없음과 구분하고 한국어로 원본 보호 안내")
+            failed.scene = base
+            failed.saveNow()
+            try await Task.sleep(for:.milliseconds(300))
+            check(try CanvasLocalFile.read(sceneURL) == originalBytes,
+                  "손상·미래 앵커·알 수 없는 필드·장면·획·크기 오류 뒤 명시 저장과 예약 자동 저장이 원본 바이트 보존")
+            try failed.importScene(base)
+            failed.saveNow()
+            check(try !failed.sceneRecoveryNotice.isEmpty && CanvasLocalFile.read(sceneURL) == originalBytes,
+                  "장면 가져오기만으로 읽지 못한 원본의 저장 차단을 자동 해제하지 않음")
+            FileHandle.standardOutput.write(Data("FILE_PRESERVATION case=\(index) bytes=\(originalBytes.count) exact=true\n".utf8))
+        }
+
+        let validBytes = try encoder.encode(base)
+        try CanvasLocalFile.write(validBytes,to:sceneURL)
+        try FileManager.default.setAttributes([.posixPermissions:0],ofItemAtPath:sceneURL.path)
+        check((try? CanvasLocalFile.read(sceneURL)) == nil,"읽기 권한 오류를 실제 파일에서 재현")
+        let unreadable = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("unreadable-scene.json"))
+        unreadable.scene = CanvasScene()
+        unreadable.saveNow()
+        try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:sceneURL.path)
+        check(try !unreadable.sceneRecoveryNotice.isEmpty && CanvasLocalFile.read(sceneURL) == validBytes,
+              "실제 read 실패 후 교체 가능한 파일도 원본 바이트 보존")
+
+        try CanvasLocalFile.write(failedFiles[0],to:sceneURL)
+        let checkpoint = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("blocked-checkpoint.json"))
+        checkpoint.scene = base
+        checkpoint.setNoteConnection(address:"http://test",token:"fixture-token")
+        let noteText = "# 원본\n\n보존할 문단 ^p2\n"
+        let note = VaultNoteSnapshot(path:"Notes/p2.md",text:noteText,
+            sha256:CanvasPacket.sha(Data(noteText.utf8)),modifiedAt:"fixture")
+        checkpoint.scene.nodes[0].vaultNote = .init(path:note.path,sha256:note.sha256,
+            relayAddress:"http://test",blockID:"p2",sourceState:.current)
+        await checkpoint.openVaultNote(note.path,nodeID:a) { _ in note }
+        check(checkpoint.vaultCanAttach && checkpoint.vaultLinkedBlockID == "p2","격리 closure로 문단 checkpoint 진입 조건 충족")
+        check(!checkpoint.beginLinkedBlockEdit() && checkpoint.vaultStatus.contains("기존 파일을 보존"),
+              "문단 복구 checkpoint도 원본 보호 guard 사용")
+        checkpoint.vaultBlockDraft = ""
+        checkpoint.vaultDraft = "수정된 노트 초안"
+        check(checkpoint.noteRecoveryWriteFailed && checkpoint.vaultDraft == "수정된 노트 초안" &&
+              checkpoint.noteRecoveryNotice.contains("기존 파일을 보존"),"노트 복구 checkpoint도 원본 보호하며 입력은 유지")
+        checkpoint.saveNow()
+        check(try CanvasLocalFile.read(sceneURL) == failedFiles[0],"두 복구 checkpoint 이후 실제 원본 파일 바이트 보존")
+
+        try CanvasLocalFile.write(validBytes,to:sceneURL)
+        let repaired = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("repaired-scene.json"))
+        check(repaired.sceneRecoveryNotice.isEmpty && repaired.scene == base,"원본을 정상 복구한 뒤 새 Store에서 저장 권한 회복")
+        repaired.scene.nodes[0].text = "복구 후 정상 수정"
+        repaired.saveNow()
+        check(try decoder.decode(CanvasScene.self,from:CanvasLocalFile.read(sceneURL)) == repaired.scene,
+              "정상 복구 후 수정과 저장 readback")
+        let healthy = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("healthy-checkpoint.json"))
+        healthy.setNoteConnection(address:"http://test",token:"fixture-token")
+        healthy.scene.nodes[0].vaultNote = .init(path:note.path,sha256:note.sha256,
+            relayAddress:"http://test",blockID:"p2",sourceState:.current)
+        await healthy.openVaultNote(note.path,nodeID:a) { _ in note }
+        check(healthy.beginLinkedBlockEdit(),"정상 장면에서는 기존 문단 복구 checkpoint 허용")
+        check(try decoder.decode(CanvasScene.self,from:CanvasLocalFile.read(sceneURL)) == healthy.scene,
+              "정상 문단 checkpoint의 장면 readback")
+        check(healthy.closeVaultEditor(discard:true),"격리 문단 입력의 명시 종료")
+        await healthy.openVaultNote(note.path,nodeID:a) { _ in note }
+        healthy.vaultDraft = "정상 노트 수정"
+        check(!healthy.noteRecoveryWriteFailed && healthy.noteRecovery?.draft == "정상 노트 수정",
+              "정상 장면에서는 노트 복구 checkpoint 허용")
+        healthy.saveNow()
+        let heldBytes = try CanvasLocalFile.read(sceneURL)
+        let held = sceneURL.deletingLastPathComponent().appendingPathComponent("scene-held.json")
+        try FileManager.default.moveItem(at:sceneURL,to:held)
+        let missing = CanvasStore(blockRecoveryURL:fixture.appendingPathComponent("missing-scene.json"))
+        check(missing.sceneRecoveryNotice.isEmpty,"실제 파일 없음은 복원 실패로 표시하지 않음")
+        missing.scene = base
+        missing.saveNow()
+        check(try decoder.decode(CanvasScene.self,from:CanvasLocalFile.read(sceneURL)) == base &&
+              CanvasLocalFile.read(held) == heldBytes,"최초 저장을 허용하고 보관한 fixture도 유지")
         print("ENDPOINT_CHECKS assertions=\(count) deviceExecuted=false")
     }
 }

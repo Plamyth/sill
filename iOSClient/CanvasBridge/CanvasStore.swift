@@ -150,6 +150,20 @@ final class CanvasStore: ObservableObject {
         }
     }
     @Published var status = "Pencil로 그린 뒤 구조를 확인하세요."
+    @Published private(set) var sceneRecoveryNotice = ""
+    private var sceneReadable = true
+
+    private enum ScenePersistenceError: LocalizedError {
+        case unreadable, tooLarge
+        var errorDescription: String? {
+            switch self {
+            case .unreadable:
+                return "칠판 원본을 복원하지 못했습니다. 기존 파일을 보존하며 저장을 중단합니다. 원본 파일을 복구한 뒤 칠판을 다시 여세요."
+            case .tooLarge:
+                return "칠판 저장 크기 한도를 넘었습니다. 마지막 정상 저장본을 유지했습니다."
+            }
+        }
+    }
     @Published var proposalText = "" {
         didSet { handwritingRequest = nil }
     }
@@ -225,6 +239,7 @@ final class CanvasStore: ObservableObject {
     }
 
     struct EndpointDrag {
+        let owner: UUID
         let generation: UInt64
         let sceneID: UUID
         let revision: Int
@@ -241,7 +256,12 @@ final class CanvasStore: ObservableObject {
         endpointDrag = nil
     }
 
-    func cancelEndpointDrag() { endpointDrag = nil }
+    @discardableResult
+    func cancelEndpointDrag(owner: UUID) -> Bool {
+        guard endpointDrag?.owner == owner else { return false }
+        endpointDrag = nil
+        return true
+    }
 
     func selectLink(_ id: UUID) {
         guard mode == .select, scene.visibility.linkIDs.contains(id),
@@ -260,17 +280,17 @@ final class CanvasStore: ObservableObject {
     }
 
     @discardableResult
-    func beginEndpointDrag(_ endpoint: CanvasLink.Endpoint, linkID: UUID) -> Bool {
-        guard mode == .select, selectedLink == linkID,
+    func beginEndpointDrag(_ endpoint: CanvasLink.Endpoint, linkID: UUID, owner: UUID) -> Bool {
+        guard endpointDrag == nil, mode == .select, selectedLink == linkID,
               let link = scene.links.first(where:{ $0.id == linkID }), scene.linkEndpoints(link) != nil else { return false }
-        endpointDrag = EndpointDrag(generation:linkSceneGeneration,sceneID:scene.id,revision:scene.revision,
+        endpointDrag = EndpointDrag(owner:owner,generation:linkSceneGeneration,sceneID:scene.id,revision:scene.revision,
             expected:link,endpoint:endpoint,anchor:endpoint == .from ? link.fromAnchor : link.toAnchor)
         return true
     }
 
     @discardableResult
-    func updateEndpointDrag(to point: CanvasPoint) -> Bool {
-        guard var drag = endpointDrag else { return false }
+    func updateEndpointDrag(owner: UUID, to point: CanvasPoint) -> Bool {
+        guard var drag = endpointDrag, drag.owner == owner else { return false }
         guard endpointDragIsCurrent(drag) else {
             status = "드래그 중 장면이 바뀌어 연결점을 수정하지 않았습니다. 최신 내용을 유지합니다."
             return false
@@ -296,8 +316,8 @@ final class CanvasStore: ObservableObject {
     }
 
     @discardableResult
-    func finishEndpointDrag() -> Bool {
-        guard let drag = endpointDrag else { return false }
+    func finishEndpointDrag(owner: UUID) -> Bool {
+        guard let drag = endpointDrag, drag.owner == owner else { return false }
         let current = endpointDragIsCurrent(drag)
         let replacement = displayedLink(drag.expected)
         endpointDrag = nil
@@ -623,10 +643,7 @@ final class CanvasStore: ObservableObject {
                   let nodeID = context.nodeID else { throw VaultBlockRecoveryError.corrupt }
             let block = try VaultMarkdownBlocks(note.text).resolve(id)
             _ = try VaultMarkdownBlocks(note.text).replacing(id,with:block.quote)
-            guard let sceneURL = Self.sceneURL() else { throw VaultBlockRecoveryError.unavailable }
-            let sceneBytes = try JSONEncoder().encode(scene)
-            guard sceneBytes.count <= Self.sceneByteLimit else { throw VaultBlockRecoveryError.unavailable }
-            try CanvasLocalFile.write(sceneBytes,to:sceneURL)
+            try persistScene()
             try writeBlockRecovery(VaultBlockRecovery(schemaVersion:1,sceneID:context.sceneID,
                 nodeID:nodeID,relayAddress:noteAddress,blockID:id,base:note,
                 draft:block.quote.replacingOccurrences(of:"\r\n",with:"\n"),pending:nil))
@@ -722,10 +739,7 @@ final class CanvasStore: ObservableObject {
                 return true
             }
             if noteRecovery == nil {
-                guard let url = Self.sceneURL() else { throw VaultBlockRecoveryError.unavailable }
-                let bytes = try JSONEncoder().encode(scene)
-                guard bytes.count <= Self.sceneByteLimit else { throw VaultBlockRecoveryError.unavailable }
-                try CanvasLocalFile.write(bytes,to:url)
+                try persistScene()
             }
             try writeNoteRecovery(VaultNoteRecovery(schemaVersion:1,sceneID:context.sceneID,
                 nodeID:context.nodeID,blockID:context.blockID,relayAddress:noteAddress,
@@ -1195,10 +1209,16 @@ final class CanvasStore: ObservableObject {
             return
         }
         #endif
-        if let restored = Self.restoreScene() {
-            scene = restored.scene
-            drawing = restored.drawing
-            status = "저장된 칠판 복원 · 획 \(scene.strokes.count)개"
+        do {
+            if let restored = try Self.restoreScene() {
+                scene = restored.scene
+                drawing = restored.drawing
+                status = "저장된 칠판 복원 · 획 \(scene.strokes.count)개"
+            }
+        } catch {
+            sceneReadable = false
+            sceneRecoveryNotice = ScenePersistenceError.unreadable.localizedDescription
+            status = sceneRecoveryNotice
         }
         do {
             let url = try Self.outboxURL()
@@ -1301,16 +1321,18 @@ final class CanvasStore: ObservableObject {
         try? CanvasRuntime.stateURL(.scene)
     }
 
-    private static func restoreScene() -> (scene: CanvasScene, drawing: PKDrawing)? {
-        guard let url = sceneURL(),let data = try? CanvasLocalFile.read(url),
-              data.count <= sceneByteLimit,
-              let scene = try? JSONDecoder().decode(CanvasScene.self,from:data),
-              scene.schemaVersion == 1,
-              let drawingData = Data(base64Encoded:scene.drawingBase64) else { return nil }
+    private static func restoreScene() throws -> (scene: CanvasScene, drawing: PKDrawing)? {
+        guard let url = sceneURL() else { throw ScenePersistenceError.unreadable }
+        do { _ = try FileManager.default.attributesOfItem(atPath:url.path) }
+        catch CocoaError.fileReadNoSuchFile { return nil }
+        let data = try CanvasLocalFile.read(url)
+        guard data.count <= sceneByteLimit else { throw ScenePersistenceError.unreadable }
+        let scene = try JSONDecoder().decode(CanvasScene.self,from:data)
+        guard scene.schemaVersion == 1,
+              let drawingData = Data(base64Encoded:scene.drawingBase64) else { throw ScenePersistenceError.unreadable }
         let drawing: PKDrawing
         if drawingData.isEmpty { drawing = PKDrawing() }
-        else if let restored = try? PKDrawing(data:drawingData) { drawing = restored }
-        else { return nil }
+        else { drawing = try PKDrawing(data:drawingData) }
         return (scene,drawing)
     }
 
@@ -1325,13 +1347,16 @@ final class CanvasStore: ObservableObject {
 
     func saveNow() {
         saveTask?.cancel()
-        guard let url = Self.sceneURL(),let data = try? JSONEncoder().encode(scene) else { return }
-        guard data.count <= Self.sceneByteLimit else {
-            status = "칠판 저장 크기 한도를 넘었습니다. 마지막 정상 저장본을 유지했습니다."
-            return
-        }
-        do { try CanvasLocalFile.write(data,to:url) }
+        do { try persistScene() }
         catch { status = "칠판 자동 저장 실패: \(error.localizedDescription)" }
+    }
+
+    private func persistScene() throws {
+        guard sceneReadable else { throw ScenePersistenceError.unreadable }
+        guard let url = Self.sceneURL() else { throw ScenePersistenceError.unreadable }
+        let data = try JSONEncoder().encode(scene)
+        guard data.count <= Self.sceneByteLimit else { throw ScenePersistenceError.tooLarge }
+        try CanvasLocalFile.write(data,to:url)
     }
 
     private static let sceneByteLimit = 4*1024*1024

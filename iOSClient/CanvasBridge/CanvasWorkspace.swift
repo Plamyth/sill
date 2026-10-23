@@ -110,7 +110,7 @@ struct CanvasWorkspace: View {
                 .clipped()
                 .onChange(of:geometry.size) { _,_ in pipDragOrigin = nil }
             }
-            Text(store.status)
+            Text(store.sceneRecoveryNotice.isEmpty ? store.status : store.sceneRecoveryNotice)
                 .font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
                 .padding(10).background(Color(uiColor:.secondarySystemBackground))
             if let receipt = store.packet, receipt.state == .rejected {
@@ -1099,7 +1099,8 @@ private struct CanvasEndpointHandle: View {
     @ObservedObject var store: CanvasStore
     let linkID: UUID
     let endpoint: CanvasLink.Endpoint
-    @State private var started = false
+    @State private var dragOwner: UUID?
+    @GestureState private var gestureActive = false
 
     var body: some View {
         Circle().fill(Color(uiColor:CanvasPalette.background))
@@ -1108,21 +1109,34 @@ private struct CanvasEndpointHandle: View {
             .frame(width:44 / store.zoom,height:44 / store.zoom)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance:0,coordinateSpace:.named("canvasScene"))
+                .updating($gestureActive) { _, active, _ in active = true }
                 .onChanged { value in
-                    if !started {
-                        started = true
-                        store.beginEndpointDrag(endpoint,linkID:linkID)
+                    if dragOwner == nil {
+                        let owner = UUID()
+                        dragOwner = owner
+                        store.beginEndpointDrag(endpoint,linkID:linkID,owner:owner)
                     }
-                    store.updateEndpointDrag(to:CanvasPoint(x:value.location.x,y:value.location.y))
+                    guard let owner = dragOwner else { return }
+                    store.updateEndpointDrag(owner:owner,to:CanvasPoint(x:value.location.x,y:value.location.y))
                 }.onEnded { value in
-                    defer { started = false }
-                    guard started, store.updateEndpointDrag(to:CanvasPoint(x:value.location.x,y:value.location.y)) else {
-                        store.cancelEndpointDrag()
+                    guard let owner = dragOwner else { return }
+                    defer { dragOwner = nil }
+                    guard store.updateEndpointDrag(owner:owner,to:CanvasPoint(x:value.location.x,y:value.location.y)) else {
+                        store.cancelEndpointDrag(owner:owner)
                         return
                     }
-                    store.finishEndpointDrag()
+                    store.finishEndpointDrag(owner:owner)
                 })
-            .onDisappear { store.cancelEndpointDrag() }
+            .onChange(of:gestureActive) { _, active in
+                if !active, let owner = dragOwner {
+                    store.cancelEndpointDrag(owner:owner)
+                    dragOwner = nil
+                }
+            }
+            .onDisappear {
+                if let owner = dragOwner { store.cancelEndpointDrag(owner:owner) }
+                dragOwner = nil
+            }
             .accessibilityLabel(endpoint == .from ? "연결선 시작점" : "연결선 끝점")
             .accessibilityHint("끌어서 이 요소 경계의 연결 위치를 바꿉니다.")
             .accessibilityIdentifier("canvasLinkEndpoint-\(endpoint.rawValue)-\(linkID.uuidString)")

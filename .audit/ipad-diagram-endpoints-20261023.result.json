@@ -121,5 +121,14 @@
   "externalRelayChanged": false,
   "externalPush": false,
   "independentReview": "부모 후속 검수 대기",
-  "exitCode": 0
+  "exitCode": 0,
+  "recordScope": "수정 전 구현자의 17개 실행과 190개 assertion 기록이다. P2 수정의 새 수용 증거로 재사용하지 않는다.",
+  "followUpP2": {
+    "result": ".audit/ipad-diagram-endpoints-p2.result.json",
+    "executionReceipt": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/diagram-endpoints-20261023/verification-p2/result.json",
+    "endpointAssertions": 248,
+    "checkCount": 8,
+    "exitCode": 0,
+    "independentReview": "부모 후속 대기"
+  }
 }

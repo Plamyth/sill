@@ -754,7 +754,19 @@ struct CanvasLinkAnchor: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey { case side, offset }
 
+    private struct Field: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+
     init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy:Field.self)
+        guard fields.allKeys.allSatisfy({ CodingKeys(rawValue:$0.stringValue) != nil }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath:decoder.codingPath,
+                debugDescription:"지원하지 않는 연결점 필드가 있습니다. 원본을 보존하며 읽기를 중단합니다."))
+        }
         let values = try decoder.container(keyedBy:CodingKeys.self)
         side = try values.decode(Side.self,forKey:.side)
         offset = try values.decode(Double.self,forKey:.offset)

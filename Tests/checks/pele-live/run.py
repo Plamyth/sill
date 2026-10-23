@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
@@ -26,7 +27,7 @@ if endpoint_p2:
 if output != expected:
     raise SystemExit('지정된 외장 검증 경로만 사용합니다.')
 output.mkdir(parents=True, exist_ok=True)
-home = output / 'home'
+home = Path(tempfile.mkdtemp(prefix='home-',dir=output)) if endpoint_p2 else output / 'home'
 home.mkdir(exist_ok=True)
 resources = root / 'iOSClient/CanvasBridge/Pele'
 relay = Path('/Users/ambrion/Documents/ChatGPT/BT_CCR-Obsidian-relay')
@@ -34,7 +35,13 @@ env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer
            PELE_OUTPUT=str(output), PELE_RESOURCES=str(resources), PELE_RELAY=str(relay),
            CFFIXED_USER_HOME=str(home))
 inputs = list((root / 'iOSClient/CanvasBridge').glob('*.swift')) + list(resources.iterdir()) + list(here.iterdir())
-inputs += [root / 'iOSClient/Sill.xcodeproj/project.pbxproj',relay / 'relay/obsidian-vault.js']
+inputs += [root / 'iOSClient/Sill.xcodeproj/project.pbxproj',
+           root / 'Sources/StreamProtocol/TestDestinations.swift',
+           *[root / ('iOSClient/' + name + '.swift') for name in
+             ['IPadAudioSession','IPadAudioLeaseState','IPadAudioLeaseCoordinator']],
+           root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
+if not endpoint_p2:
+    inputs += [relay / 'relay/obsidian-vault.js']
 native = root / 'Tests/integration/ipad-runtime/CanvasBridge/CanvasModeLifetimeChecks.swift'
 ui_tests = root / 'Tests/integration/ipad-runtime/CanvasBridgeUITests/CanvasBridgeUITests.swift'
 ink_checks = root / 'Tests/checks/ink-undo'
