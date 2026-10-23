@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """생산 transport 메서드를 추출한다. 네트워크·listener·기기 실행은 없다."""
 import argparse
+import re
 import hashlib
 import json
 from pathlib import Path
@@ -27,6 +28,9 @@ def generate(ref):
         return value
     host = read(HOST)
     switcher = read('Sources/StreamProtocol/Switcher.swift')
+    sentry = 'sentryAdmission' in host
+    sentry_types = (read('Sources/StreamProtocol/Sentry.swift') + '\n' +
+        read('Sources/SillHost/SentryAdmission.swift').replace('import StreamProtocol', '')) if sentry else ''
     message = read('Sources/StreamProtocol/StreamMessage.swift')
     admission = block(host, 'final class SourcePublicationAdmission:')
     client = block(host, 'private final class Client {')
@@ -46,9 +50,10 @@ def generate(ref):
     checks = (HERE/'Checks.swift').read_text()
     manifest['Tests/checks/peer-video-transport/Fixture.swift'] = hashlib.sha256(fixture.encode()).hexdigest()
     manifest['Tests/checks/peer-video-transport/Checks.swift'] = hashlib.sha256(checks.encode()).hexdigest()
-    program = '\n'.join([message, switcher, admission, fixture.replace('// PRODUCTION_TYPES', lane+'\n'+peer+'\n'+client).replace('// PRODUCTION_METHODS', members), checks])
+    program = '\n'.join([message, sentry_types, switcher, admission, fixture.replace('// PRODUCTION_SENTRY', 'let sentryAdmission = SentryAdmission()' if sentry else '').replace('// PRODUCTION_TYPES', lane+'\n'+peer+'\n'+client).replace('// PRODUCTION_METHODS', members), checks])
+    program = program.replace('// SENTRY_FLAG', '#if true' if sentry else '#if false')
     # Keep production bodies; only expose private members to this same-file I/O fixture.
-    program = program.replace('private ', '')
+    program = re.sub(r'\bprivate ', '', program)
     if lane: program = '#if true\n'+program.replace('// PEER_FLAG', '#if true')
     else: program = program.replace('// PEER_FLAG', '#if false')
     if lane: program += '\n#endif\n'

@@ -1,7 +1,7 @@
 import Foundation
 
 /// A device's explicit request to hear the Mac through this Sill connection. The host keeps
-/// the Mac's own output active. The first packet after `enabled` is kind 33 AudioPacket.
+/// the Mac's local I/O protected under audioPrivacy v2. The first packet after `enabled` is kind 33 AudioPacket.
 public struct RemoteAudioSubscription: Codable, Sendable, Equatable {
     public let enabled: Bool
     /// Unique for this connection and user action. An old answer cannot grant a new request.

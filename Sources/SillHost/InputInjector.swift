@@ -117,13 +117,17 @@ final class InputInjector {
 
     /// The one place an event reaches the Mac: posted, or in a dry run only counted. True when it
     /// was posted.
+    var isolatesPhysicalInput = false
+
     private func post(_ event: CGEvent) -> Bool {
         if Self.isKeyboard(event.type) { lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
+        if isolatesPhysicalInput && !Self.isKeyboard(event.type) { event.flags = CGEventFlags(rawValue: lastKeyFlags) }
         if dryRun {
             if testLog { logTest(event) }
             Stats.shared.bump("in.dry")
             return false
         }
+        event.setIntegerValueField(.eventSourceUserData, value: HostSentryPlatform.remoteEventTag)
         event.post(tap: .cghidEventTap)
         return true
     }
@@ -475,7 +479,7 @@ final class InputInjector {
             guard let event = CGEvent(keyboardEventSource: source, virtualKey: stroke.virtualKey, keyDown: stroke.down) else { continue }
             event.flags = CGEventFlags(rawValue: stroke.flags)
             // A dry run reads no table: what it would hold is the last event's flags, none of them the Mac's own.
-            let table = stroke.down && !dryRun ? CGEventSource.flagsState(.hidSystemState).rawValue : lastKeyFlags
+            let table = stroke.down && !dryRun && !isolatesPhysicalInput ? CGEventSource.flagsState(.hidSystemState).rawValue : lastKeyFlags
             let check = upCheck.posting(stroke, table: table, posted: lastKeyFlags)
             if post(event) { Stats.shared.bump(letGo ? "in.keyLetGo" : "in.key") }
             guard let check else { continue }
@@ -554,7 +558,7 @@ final class InputInjector {
     /// down. `checkModifiersLeft` says so in the log if the table still holds the chord's modifiers.
     func chord(keyCode: UInt16, flags: UInt64) {
         if !dryRun { remindAboutAccessibilityIfNeeded() }
-        let before = CGEventSource.flagsState(.hidSystemState).rawValue
+        let before = isolatesPhysicalInput ? lastKeyFlags : CGEventSource.flagsState(.hidSystemState).rawValue
         let strokes = KeyStrokes.chord(virtualKey: keyCode, flags: flags, before: before)
         // Both made before either is posted, so a key never goes down without its up.
         let events = strokes.compactMap { CGEvent(keyboardEventSource: source, virtualKey: $0.virtualKey, keyDown: $0.down) }

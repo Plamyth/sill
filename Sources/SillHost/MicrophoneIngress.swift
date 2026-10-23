@@ -127,6 +127,10 @@ final class MicrophoneIngress: @unchecked Sendable {
         frames.removeAll(keepingCapacity: true); scheduled = false
         return result
     }
+    var localReturnDetached: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return gate == nil && controls.isEmpty && frames.isEmpty
+    }
     var overflowCount: UInt64 {
         lock.lock(); defer { lock.unlock() }
         return overflowedFrames

@@ -11,13 +11,26 @@ import StreamProtocol
 final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let queue = DispatchQueue(label: "sill.remote-audio.capture", qos: .userInitiated)
     private let streamLock = NSLock()
-    private var stream: SCStream?
+    // Mutable generation fields are protected by streamLock.
+    private final class Generation: @unchecked Sendable {
+        let stream: SCStream
+        let start: Task<Void, Error>
+        var stop: Task<Void, Never>?
+        var retiring = false
+
+        init(_ stream: SCStream) {
+            self.stream = stream
+            start = Task { try await stream.startCapture() }
+        }
+    }
+    private var current: Generation?
     private var packer: RemoteAudioPCM?
     private var sampleSequence: UInt64 = 0
     var onPacket: ((Data, UInt64) -> Void)?
     var onStopped: ((Error) -> Void)?
 
-    var hasStream: Bool { streamLock.withLock { stream != nil } }
+    var hasStream: Bool { streamLock.withLock { current != nil } }
+    var retirementConfirmed: Bool { streamLock.withLock { current == nil } }
 
     /// A capture-queue barrier for a new subscriber. Everything captured before this
     /// point has a sequence no greater than the returned value. Discard the partial
@@ -32,7 +45,10 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     func start(display: SCDisplay) async throws {
-        guard streamLock.withLock({ self.stream == nil }) else { return }
+        if let existing = streamLock.withLock({ current }) {
+            try await settleStart(existing)
+            return
+        }
         let configuration = SCStreamConfiguration()
         configuration.width = 16
         configuration.height = 16
@@ -44,30 +60,60 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
-        streamLock.withLock { self.stream = stream }
+        let generation = streamLock.withLock {
+            if let current { return current }
+            let generation = Generation(stream)
+            current = generation
+            return generation
+        }
+        try await settleStart(generation)
+    }
+
+    private func settleStart(_ generation: Generation) async throws {
         do {
-            try await stream.startCapture()
+            try await generation.start.value
+            guard streamLock.withLock({ current === generation && !generation.retiring }) else { throw CancellationError() }
         } catch {
-            streamLock.withLock { if self.stream === stream { self.stream = nil } }
+            streamLock.withLock { generation.retiring = true }
             throw error
         }
     }
 
     func stop() async {
-        let stream = streamLock.withLock({ () -> SCStream? in
-            let old = self.stream
-            self.stream = nil
-            return old
-        })
-        if let stream { try? await stream.stopCapture() }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            queue.async { [self] in packer = nil; continuation.resume() }
+        let task = streamLock.withLock { () -> Task<Void, Never>? in
+            guard let generation = current else { return nil }
+            if let stop = generation.stop { return stop }
+            generation.retiring = true
+            let task = Task { [self] in
+                _ = try? await generation.start.value
+                var stopped = false
+                for _ in 0..<2 {
+                    do { try await generation.stream.stopCapture(); stopped = true; break }
+                    catch { continue }
+                }
+                let confirmed = stopped
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    queue.async { [self] in
+                        streamLock.withLock {
+                            if current === generation {
+                                packer = nil
+                                if confirmed { current = nil }
+                            }
+                            generation.stop = nil
+                        }
+                        continuation.resume()
+                    }
+                }
+            }
+            generation.stop = task
+            return task
         }
+        await task?.value
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
-        guard streamLock.withLock({ stream === self.stream }), type == .audio,
+        guard streamLock.withLock({ stream === current?.stream && current?.retiring == false }), type == .audio,
               let description = CMSampleBufferGetFormatDescription(sampleBuffer),
               let format = CMAudioFormatDescriptionGetStreamBasicDescription(description) else { return }
         let value = format.pointee
@@ -106,13 +152,16 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unc
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        guard streamLock.withLock({ () -> Bool in
-            guard stream === self.stream else { return false }
-            self.stream = nil
-            return true
+        guard let generation = streamLock.withLock({ () -> Generation? in
+            guard let current, stream === current.stream, !current.retiring else { return nil }
+            current.retiring = true
+            return current
         }) else { return }
-        queue.async { [self] in packer = nil }
-        onStopped?(error)
+        queue.async { [self] in
+            guard streamLock.withLock({ current === generation }) else { return }
+            packer = nil
+            onStopped?(error)
+        }
     }
 }
 

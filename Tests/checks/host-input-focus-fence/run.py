@@ -23,11 +23,14 @@ def function(source, signature):
 
 def program(host, protocol, sizer):
     names = ["deliver(_", "applyAdmittedInput(_", "releaseHeldInput()", "raiseIfInteracting(_"]
-    names += [n for n in ["inputTargetReady(_", "applyAdmittedChord("] if "private func " + n in host]
+    structured = "private func applyAdmittedChord(_ pending:" in host
+    names += [n for n in ["inputTargetReady(_", "applyAdmittedChord("] if "private func " + n in host and not (structured and n == "applyAdmittedChord(")]
     methods = "\n".join(function(host, "private func " + n) for n in names)
     chord = "" if "private func applyAdmittedChord(" in host else "func applyAdmittedChord(keyCode: UInt16, flags: UInt64) { injector.chord(keyCode: keyCode, flags: flags) }"
+    if structured:
+        chord = "func applyAdmittedChord(_ pending: (UInt16, UInt64)) {}"
     match = function(sizer, "private static func axWindow(matching window:")
-    return protocol.split("public struct SourceInput:", 1)[0] + r'''
+    generated = protocol.split("public struct SourceInput:", 1)[0] + r'''
 import CoreFoundation
 import CoreGraphics
 enum Clock {
@@ -348,6 +351,33 @@ check(Task.pending.isEmpty, "all owned inert activation tasks drained")
 if failures > 0 { print("FAIL \(failures) of \(checks) host focus admission checks"); exit(1) }
 print("PASS \(checks) host focus admission checks; no app/UI/CGEvent invoked")
 '''
+
+    if structured:
+        generated = generated.replace("chord(keyCode: UInt16, flags: UInt64), disconnect", "chord((UInt16, UInt64)), disconnect")
+        generated = generated.replace("func chord() { applyAdmittedChord(keyCode: 123, flags: 0) }", "")
+        for line in ["wrongFront.chord()", "good.chord()", "switching.chord()"]:
+            generated = generated.replace(line, "")
+        generated = "\n".join(line for line in generated.splitlines() if not any(label in line for label in [
+            "wrong OS front posts no shortcut", "verified target accepts shortcut", "shortcut during source switch rejected"]))
+        generated = generated.replace(", .chord(keyCode: 123, flags: 0)", "")
+    if "server.sentryAdmission.allowsActions(device)" in host:
+        generated = generated.replace("final class Host {", """final class FixtureSentryGate {
+    var allowed = true
+    func allowsActions(_ peer: Int) -> Bool { allowed }
+}
+final class FixtureServer { let sentryAdmission = FixtureSentryGate() }
+final class Host {
+    let server = FixtureServer()""")
+        generated = generated.replace("if failures > 0 {", """let privacyDenied = fresh()
+privacyDenied.server.sentryAdmission.allowed = false
+privacyDenied.immediate(down)
+check(privacyDenied.injector.events.isEmpty, "lost protection rejects otherwise focused key input")
+privacyDenied.injector.owed = true
+privacyDenied.immediate(up)
+check(privacyDenied.injector.events == [up] && privacyDenied.injector.nulls == [true], "lost protection retains owed key release")
+if failures > 0 {""")
+    return generated
+
 
 
 def main():

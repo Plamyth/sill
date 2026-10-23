@@ -15,11 +15,12 @@ let package = Package(
     ],
     targets: [
         .target(name: "StreamProtocol"),
+        .target(name: "AudioSilence"),
         // The Mac host itself (capture, encode, network, input, virtual display), shared by the CLI
         // and the menu bar app; they reach it through `package` access. The folder keeps its old
         // name (Sources/SillHost) so the paths in the docs and the VirtualDisplayProbe symlink to
         // ../SillHost/VirtualDisplay.swift stay valid.
-        .target(name: "SillHostCore", dependencies: ["StreamProtocol"], path: "Sources/SillHost"),
+        .target(name: "SillHostCore", dependencies: ["StreamProtocol", "AudioSilence"], path: "Sources/SillHost"),
         // The command-line host: flags, the run loop, the Terminal permission hint.
         .executableTarget(name: "SillHostCLI", dependencies: ["SillHostCore", "StreamProtocol"]),
         // The menu bar app: status item, Settings and Log windows (AppKit lifecycle, SwiftUI panes).

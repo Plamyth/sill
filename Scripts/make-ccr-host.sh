@@ -4,13 +4,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ "$#" -ne 0 ]; then
-    echo "usage: CCR_SILL_SIGN_IDENTITY='<codesign identity>' $0" >&2
+    echo "usage: CCR_SILL_SIGN_IDENTITY='<codesign identity>' CCR_SILL_AUDIO_RUNTIME='<sealed package>' $0" >&2
     exit 2
 fi
 if [ -z "${CCR_SILL_SIGN_IDENTITY:-}" ]; then
     echo "CCR_SILL_SIGN_IDENTITY is required; ad hoc signatures lose Mac privacy grants on rebuild." >&2
     exit 2
 fi
+if [ -z "${CCR_SILL_AUDIO_RUNTIME:-}" ]; then
+    echo "CCR_SILL_AUDIO_RUNTIME must name the sealed LocalAudioRelay package." >&2
+    exit 2
+fi
+python3 Scripts/package-local-audio-runtime.py --verify "$CCR_SILL_AUDIO_RUNTIME"
 
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 swift build -c release --product SillMenuBar --jobs 2
@@ -21,6 +26,8 @@ rm -rf "$stage"
 mkdir -p "$stage/Contents/MacOS" "$stage/Contents/Resources"
 cp "$bin" "$stage/Contents/MacOS/Sill"
 cp Packaging/Info.plist "$stage/Contents/Info.plist"
+cp -R "$CCR_SILL_AUDIO_RUNTIME" "$stage/Contents/Resources/LocalAudioRelay"
+python3 Scripts/package-local-audio-runtime.py --verify "$stage/Contents/Resources/LocalAudioRelay"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.ambrion.sillcanvas.mac' "$stage/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleName CCR Sill' "$stage/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName CCR Sill' "$stage/Contents/Info.plist"

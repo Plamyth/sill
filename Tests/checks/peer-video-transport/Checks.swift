@@ -183,5 +183,60 @@ server.commitVideo(eb, catalog: catalog(eb), admission: ab, requestKeyframe: {})
 server.resetForNewStream(); server.flush()
 check(server.queue.sync { server.videoAdmission.admits(eb.id) }, "baseline unscoped reset does not stop newer B")
 #endif
+// SENTRY_FLAG
+func sentryTransportChecks() async {
+    let host = StreamServer()
+    let first = NWConnection(), second = NWConnection()
+    host.add(first); host.add(second)
+    host.queue.sync {
+        host.clients[ObjectIdentifier(first)]!.route.encrypted = true
+        host.clients[ObjectIdentifier(first)]!.route.pairedName = "fixture A"
+        host.clients[ObjectIdentifier(second)]!.route.encrypted = true
+        host.clients[ObjectIdentifier(second)]!.route.pairedName = "fixture B"
+    }
+    let gate = host.sentryAdmission
+    gate.configure(latched: true, persistenceHealthy: true)
+    let a = ObjectIdentifier(first), b = ObjectIdentifier(second)
+    gate.register(a, externalRoute: false); gate.register(b, externalRoute: true)
+    gate.admit(a); gate.admit(b)
+    let e1 = epoch(101), e2 = epoch(102)
+    gate.capture(e1.id, for: a); gate.capture(e2.id, for: b)
+    let allowedFirst = await host.enablePeerVideo(for: first)
+    let allowedSecond = await host.enablePeerVideo(for: second)
+    check(allowedFirst && allowedSecond, "Sentry preserves two independent transport lanes")
+    let a1 = SourcePublicationAdmission(), a2 = SourcePublicationAdmission()
+    host.preparePeerVideo(e1, for: first, admission: a1)
+    host.commitPeerVideo(e1, catalog: catalog(e1), admission: a1, to: first, requestKeyframe: {})
+    host.preparePeerVideo(e2, for: second, admission: a2)
+    host.commitPeerVideo(e2, catalog: catalog(e2), admission: a2, to: second, requestKeyframe: {})
+    host.sendPeerVideo(msg(.parameterSets, sets), epoch: e1.id, to: first)
+    host.sendPeerVideo(msg(.frame), epoch: e1.id, to: first)
+    host.flush()
+    check(!first.sent.contains { StreamMessage.parseHeader($0)?.kind == .epochFrame }, "wire send refuses video before physical protection readback")
+    let projected = first.sent.last.flatMap { Wire.decode(WindowList.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+    check(projected?.sentry?.requested == true && projected?.sentry?.phase == .pending, "each real catalog send decorates Sentry without inventing success")
+    gate.update(verified: true, persistenceHealthy: true, reason: nil)
+    host.sendPeerVideo(msg(.parameterSets, sets), epoch: e1.id, to: first)
+    host.sendPeerVideo(msg(.frame), epoch: e1.id, to: first)
+    host.sendPeerVideo(msg(.parameterSets, sets), epoch: e2.id, to: second)
+    host.sendPeerVideo(msg(.frame), epoch: e2.id, to: second)
+    host.flush()
+    check(first.sent.contains { StreamMessage.parseHeader($0)?.kind == .epochFrame } && second.sent.contains { StreamMessage.parseHeader($0)?.kind == .epochFrame }, "verified protection streams both independently captured monitors")
+    let before = second.sent.count
+    gate.capture(nil, for: a)
+    host.sendPeerVideo(msg(.frame), epoch: e2.id, to: second)
+    host.flush()
+    check(second.sent.count > before, "A capture retirement does not stop B wire delivery")
+    let sealedCount = second.sent.count
+    gate.update(verified: false, persistenceHealthy: true, reason: "검증 실패")
+    host.sendPeerVideo(msg(.frame), epoch: e2.id, to: second)
+    host.send(msg(.thumbnail), to: second)
+    host.flush()
+    check(second.sent.count == sealedCount, "revoked protection stops queued video and thumbnail on actual send boundary")
+}
+let sentryDone = DispatchSemaphore(value: 0)
+Task { await sentryTransportChecks(); sentryDone.signal() }
+sentryDone.wait()
+#endif
 print("peer-video-transport assertions=\(assertions) failures=\(failures)")
 exit(failures == 0 ? 0 : 1)

@@ -156,6 +156,9 @@ final class StreamServer {
         var acceptedPeerToPeer = false
         /// A hello (kind 23) came on this connection: only the first counts.
         var helloSeen = false
+        var role = StreamPeerRole.viewer
+        var forwardingExchange: ForwardingExchange?
+        var forwardingObserved = false
         var presentationInput = false
         /// The input messages (kind 8) read from it. Every kind 26 sent to it carries the count, so the
         /// device can drop one the host built before it read that device's latest input
@@ -174,13 +177,32 @@ final class StreamServer {
     let queue: DispatchQueue
     private var clients: [ObjectIdentifier: Client] = [:]
     private var remoteAudioEpoch: UInt64 = 0
+    private let remoteAudioDrain = DispatchGroup()
     private var lastParameterSets: Data?
+    final class ForwardingExchange: @unchecked Sendable {
+        let control: AudioForwardingControl
+        let ticket = UUID()
+        private let lock = NSLock()
+        private var valid = true
+        private let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+        init(control: AudioForwardingControl) { self.control = control }
+        var isCurrent: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return valid && DispatchTime.now().uptimeNanoseconds < deadline
+        }
+        func invalidate() { lock.lock(); defer { lock.unlock() }; valid = false }
+    }
+    private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
+    let sentryAdmission = SentryAdmission()
     private var videoAdmission = VideoEpochAdmission.stopped
     /// A client was admitted (home door at `.ready`, remote door once paired and checked), with
     /// its route (which door, from where) and, for a home client, its link (ClientLink.route; nil
     /// when its connection does not say, and always for a remote session). Called on the network
     /// queue.
     var onClientConnected: ((NWConnection, ClientRoute, ClientLink.Route?) -> Void)?
+    var onControlClientConnected: ((NWConnection, ClientRoute) -> Void)?
+    var onControlClientDisconnected: ((NWConnection) -> Void)?
+    var onForwardingControl: ((ForwardingExchange, NWConnection, ClientRoute, AudioForwardingCatalog.Role) -> Void)?
     /// A connected home client's link changed with its connection's path. Only reported, never
     /// acted on: the menu card shows it. Called on the network queue.
     var onClientRouteChanged: ((NWConnection, ClientLink.Route?) -> Void)?
@@ -261,12 +283,12 @@ final class StreamServer {
     }
 
     private func hasStreamingClients() -> Bool {
-        clients.values.contains { $0.videoLane == .peer ? $0.peerVideo.streaming : ($0.videoLane == .legacy && streaming) }
+        clients.values.contains { $0.role.isViewer && ($0.videoLane == .peer ? $0.peerVideo.streaming : ($0.videoLane == .legacy && streaming)) }
     }
 
     /// On the network queue.
     private func updateTicking() {
-        let wanted = !clients.isEmpty && (hasStreamingClients() || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
+        let wanted = viewerCount > 0 && (hasStreamingClients() || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency)
         if wanted, tickTimer == nil {
             let t = DispatchSource.makeTimerSource(queue: queue)
             t.schedule(deadline: .now(), repeating: Self.tickInterval, leeway: .milliseconds(5))
@@ -282,12 +304,12 @@ final class StreamServer {
     /// On the network queue. Re-evaluates the recency rule so the timer stops itself after a quiet spell.
     private func tick() {
         let live = hasStreamingClients() || Date().timeIntervalSince1970 - lastInputAt < Self.inputRecency
-        guard live, !clients.isEmpty else { updateTicking(); return }
+        guard live, viewerCount > 0 else { updateTicking(); return }
         let now = Date().timeIntervalSince1970
         // The Mac's pointer, unless the frame-rate sampler has it while it moves.
         let reported = pointerSampler == nil ? samplePointer(now: now) : []
         let data = StreamMessage(kind: .tick, timestamp: now, isKeyframe: false, payload: Data()).serialized()
-        for (id, client) in clients where client.connection.state == .ready {
+        for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
             // A kind 26 just sent keeps its link awake this turn.
             if reported.contains(id) { continue }
             // Over TLS every record costs CPU (the remote plan's H20): skip a tick right after
@@ -333,7 +355,7 @@ final class StreamServer {
         let legacyReading = legacy.isEmpty ? nil : watch.sample(devices: legacy)
         var sent = Set<ObjectIdentifier>()
         var needsSampler = false
-        for (id, client) in clients where client.connection.state == .ready {
+        for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
             func publish(_ reading: PointerWatch.Reading?) {
                 guard let reading else {
                     if client.videoLane == .peer, client.lastPointer != nil {
@@ -1045,8 +1067,11 @@ final class StreamServer {
     private func register(_ client: Client) {
         client.connectedAt = Date().timeIntervalSince1970
         client.lastHeardAt = client.connectedAt
-        clients[ObjectIdentifier(client.connection)] = client
-        onClientCountChanged?(clients.count)
+        let peer = ObjectIdentifier(client.connection)
+        sentryAdmission.register(peer, externalRoute: client.role.isViewer && client.route.encrypted && client.route.pairedName != nil &&
+            (client.route.origin == .vpn || client.route.origin == .internet))
+        clients[peer] = client
+        if client.role.isViewer { onClientCountChanged?(viewerCount) }
         updateTicking()
         updateSweep()
     }
@@ -1060,6 +1085,7 @@ final class StreamServer {
     func serve(_ connection: NWConnection, route: ClientRoute, hello: Hello?, admitted: () -> Void = {}) {
         let client = Client(connection)
         client.route = route
+        client.role = route.encrypted && route.pairedName != nil && hello == nil ? .awaitingHello : .viewer
         // As its route says: every session a Door admits is TLS (a remote one, or a home one with its
         // peer's key); a home route without a peer is a plain connection and keeps the plain door's
         // tick rule (the pacing harness's home client, Scripts/pacing).
@@ -1089,7 +1115,14 @@ final class StreamServer {
         }
         register(client)
         receiveLoop(client)
-        onClientConnected?(connection, route, client.link)
+        if client.role.isViewer { onClientConnected?(connection, route, client.link) }
+        else {
+            onControlClientConnected?(connection, route)
+            queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
+                guard let self, let client, self.clients[id] === client, client.role == .awaitingHello else { return }
+                client.connection.cancel()
+            }
+        }
         admitted()
         if let hello { took(hello, from: client) }
     }
@@ -1291,6 +1324,15 @@ final class StreamServer {
     /// the floor at "0" every device is served, and above it the gate has judged it already. On
     /// `queue`.
     private func took(_ hello: Hello, from client: Client) {
+        if !client.role.isViewer {
+            client.forwardingExchange?.invalidate()
+            client.forwardingExchange = nil
+            client.forwardingObserved = false
+            client.role = .viewer
+            if client.route.origin == .vpn || client.route.origin == .internet { sentryAdmission.requireProtection() }
+            onClientConnected?(client.connection, client.route, client.link)
+            onClientCountChanged?(viewerCount)
+        }
         client.helloSeen = true
         client.presentationInput = hello.presentationInput == 1
         if client.presentationInput {
@@ -1385,10 +1427,14 @@ final class StreamServer {
     /// connection that was never registered (refused, or failed before it was ready) leaves no line.
     private func unregister(_ id: ObjectIdentifier) {
         guard let client = clients.removeValue(forKey: id) else { return }
-        pointerWatch?.clientLeft(id)
+        sentryAdmission.remove(id)
+        client.forwardingExchange?.invalidate()
+        if client.role.isViewer { pointerWatch?.clientLeft(id) }
         print("Client left: \(client.connection.endpoint)")
-        onClientDisconnected?(client.connection)
-        onClientCountChanged?(clients.count)
+        if client.role.isViewer {
+            onClientDisconnected?(client.connection)
+            onClientCountChanged?(viewerCount)
+        } else { onControlClientDisconnected?(client.connection) }
         updateTicking()
         updateSweep()
     }
@@ -1674,7 +1720,7 @@ final class StreamServer {
     func setRemoteAudio(_ enabled: Bool, for connection: NWConnection,
                         afterSequence: UInt64 = .max) {
         queue.async { [self] in
-            guard let client = clients[ObjectIdentifier(connection)] else { return }
+            guard let client = clients[ObjectIdentifier(connection)], client.role.isViewer else { return }
             client.remoteAudioEnabled = enabled
             client.remoteAudioAfterSequence = enabled ? afterSequence : .max
         }
@@ -1690,6 +1736,19 @@ final class StreamServer {
                 client.remoteAudioAfterSequence = .max
             }
             completion(remoteAudioEpoch)
+        }
+    }
+
+    func drainRemoteAudio(completion: @escaping (Bool) -> Void) {
+        resetRemoteAudio { [self] _ in
+            var finished = false
+            let finish: (Bool) -> Void = { success in
+                guard !finished else { return }
+                finished = true
+                completion(success)
+            }
+            remoteAudioDrain.notify(queue: queue) { finish(true) }
+            queue.asyncAfter(deadline: .now() + 5) { finish(false) }
         }
     }
 
@@ -1722,6 +1781,7 @@ final class StreamServer {
             client.lastHeardAt = Date().timeIntervalSince1970
             // A header can announce up to 4 GiB and the read below would wait for all of it. No
             // client message comes near a megabyte, so a bigger one is a broken or hostile peer.
+            guard client.role.accepts(header.kind) else { c.cancel(); return }
             let payloadLimit = StreamMessage.clientPayloadLimit(for: header.kind)
             if header.payloadLength > payloadLimit {
                 print("Closing \(c.endpoint): it announced a \(header.payloadLength)-byte message (limit \(payloadLimit)).")
@@ -1729,6 +1789,11 @@ final class StreamServer {
                 return
             }
             let deliver = { (payload: Data) in
+                if header.kind == .forwardingControl {
+                    self.receiveForwarding(payload, from: client)
+                    self.receiveLoop(client)
+                    return
+                }
                 if header.kind == .microphoneControl || header.kind == .microphoneFrame {
                     if client.route.encrypted, client.route.fingerprint != nil {
                         self.onMicrophoneMessage?(StreamMessage(kind: header.kind, timestamp: header.timestamp,
@@ -1800,6 +1865,49 @@ final class StreamServer {
         }
     }
 
+    private func receiveForwarding(_ payload: Data, from client: Client) {
+        let connection = client.connection
+        guard clients[ObjectIdentifier(connection)] === client, connection.state == .ready,
+              client.route.encrypted && client.route.pairedName != nil, client.forwardingExchange == nil,
+              payload.count <= StreamMessage.clientPayloadLimit(for: .forwardingControl),
+              (try? LocalAudioRelayJSON.validate(payload)) != nil,
+              let control = Wire.decode(AudioForwardingControl.self, from: payload),
+              control.operation == .observe || client.forwardingObserved,
+              let onForwardingControl else { client.connection.cancel(); return }
+        let exchange = ForwardingExchange(control: control)
+        client.forwardingExchange = exchange
+        if client.role == .awaitingHello { client.role = .controlOnly }
+        let role: AudioForwardingCatalog.Role = client.role.isViewer ? .viewer : .controlOnly
+        onForwardingControl(exchange, connection, client.route, role)
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
+            guard let self, let client, self.clients[ObjectIdentifier(connection)] === client,
+                  client.forwardingExchange?.ticket == exchange.ticket else { return }
+            exchange.invalidate()
+            client.connection.cancel()
+        }
+    }
+
+    func sendForwardingState(_ state: AudioForwardingState?, to connection: NWConnection, ticket: UUID) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)],
+                  let exchange = client.forwardingExchange, exchange.ticket == ticket else { return }
+            guard connection.state == .ready, client.route.encrypted && client.route.pairedName != nil, exchange.isCurrent, let state,
+                  state.requestID == exchange.control.requestID, state.operation == exchange.control.operation,
+                  state.catalog == nil || state.catalog?.role == (client.role.isViewer ? .viewer : .controlOnly) else {
+                client.connection.cancel(); return
+            }
+            let payload = Wire.encode(state)
+            guard !payload.isEmpty, payload.count <= StreamMessage.hostPayloadLimit(for: .forwardingState) else {
+                client.connection.cancel(); return
+            }
+            client.forwardingExchange = nil
+            exchange.invalidate()
+            if state.operation == .observe { client.forwardingObserved = true }
+            send(StreamMessage(kind: .forwardingState, timestamp: Date().timeIntervalSince1970,
+                               isKeyframe: false, payload: payload).serialized(), to: client)
+        }
+    }
+
     private func replayCatalog(to client: Client) {
         guard let admission = client.catalogAdmission else { return }
         admission.publish {
@@ -1824,7 +1932,7 @@ final class StreamServer {
         let data = message.serialized()
         queue.async { [self] in
             admission.publish {
-                guard let client = clients[ObjectIdentifier(connection)],
+                guard let client = clients[ObjectIdentifier(connection)], client.role.isViewer,
                       client.route.encrypted, client.route.fingerprint == grant.fingerprint,
                       client.connection === connection, client.videoLane != .unassigned,
                       currentVideoAdmission(for: client).current?.id == grant.scope.videoEpoch,
@@ -1882,7 +1990,7 @@ final class StreamServer {
             if message.kind == .parameterSets { lastParameterSets = data }
             if message.kind == .frame, message.isKeyframe { lastKeyframeAt = Date().timeIntervalSince1970 }
             var wantKeyframe = false
-            for client in clients.values where client.catalogSent && client.connection.state == .ready {
+            for client in clients.values where client.role.isViewer && client.catalogSent && client.connection.state == .ready {
                 if media {
                     guard client.videoLane == .legacy else { continue }
                     if deliverVideo(message, data: data, to: client) { wantKeyframe = true }
@@ -2041,7 +2149,12 @@ final class StreamServer {
 
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
         var raw = raw
-        guard let header = StreamMessage.parseHeader(raw) else { return }
+        guard let header = StreamMessage.parseHeader(raw), client.role.sends(header.kind) else { return }
+        guard sentryAdmission.allowsWire(raw, for: ObjectIdentifier(client.connection),
+                                        currentEpoch: currentVideoAdmission(for: client).current?.id) else {
+            client.needsKeyframe = true
+            return
+        }
         if Self.isVideo(header.kind) {
             guard client.videoLane != .unassigned else { return }
             if header.kind == .epochFrame || header.kind == .epochParameterSets {
@@ -2056,6 +2169,8 @@ final class StreamServer {
         }
         if header.kind == .windowList,
            var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
+            catalog.sentry = client.route.encrypted && client.route.pairedName != nil
+                ? sentryAdmission.status(for: ObjectIdentifier(client.connection)) : nil
             catalog.presentationInput = 1
             let current = currentVideoAdmission(for: client).current
             catalog.videoEpoch = catalog.videoEpoch == current ? current : nil
@@ -2088,7 +2203,10 @@ final class StreamServer {
             client.inflightFrames += 1
             if client.oldestUnackedFrameAt == nil { client.oldestUnackedFrameAt = now }
         }
-        client.connection.send(content: data, completion: .contentProcessed { [weak client] _ in
+        let audio = header.kind == .audio
+        if audio { remoteAudioDrain.enter() }
+        client.connection.send(content: data, completion: .contentProcessed { [remoteAudioDrain, weak client] _ in
+            if audio { remoteAudioDrain.leave() }
             guard let client else { return }
             client.inflight -= 1
             client.pendingBytes -= data.count

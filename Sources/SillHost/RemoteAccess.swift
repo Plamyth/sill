@@ -3,6 +3,16 @@ import Network
 import Security
 import StreamProtocol
 
+struct AudioForwardingPairedDevice: Sendable {
+    let id: AudioForwardingDeviceID
+    let pairingGeneration: UUID
+    fileprivate init(id: AudioForwardingDeviceID, pairingGeneration: UUID) {
+        self.id = id
+        self.pairingGeneration = pairingGeneration
+    }
+}
+
+
 /// Pairing and remote access on one host (docs/remote-access-plan.md §4.10; pairing at home,
 /// docs/home-pairing-plan.md §4.6): the Mac's identity and trust list, Require pairing, the pairing
 /// window, the asks at the home door (the cable, the limits), the addresses (Reachability,
@@ -555,6 +565,31 @@ package final class RemoteAccess {
     }
 
     /// Whether this key is on the trust list now.
+    func forwardingPeer(fingerprint: Data) -> AudioForwardingPairedDevice? {
+        guard identity != nil, let store, isPaired(fingerprint),
+              let id = AudioForwardingDeviceID(fingerprint: fingerprint) else { return nil }
+        do {
+            var stored = try store.loadPaired()
+            guard stored.count == paired.count, zip(stored, paired).allSatisfy({ pair in
+                let (stored, cached) = pair
+                var lhs = stored, rhs = cached
+                lhs.audioPairingGeneration = nil; rhs.audioPairingGeneration = nil
+                return lhs == rhs && (cached.audioPairingGeneration == nil || cached.audioPairingGeneration == stored.audioPairingGeneration)
+            }), let index = stored.firstIndex(where: { $0.fingerprintData == fingerprint }) else { return nil }
+            if stored[index].audioPairingGeneration == nil {
+                stored[index].audioPairingGeneration = UUID()
+                try store.savePaired(stored)
+                guard try store.loadPaired() == stored else { return nil }
+            }
+            paired = stored
+            guard let generation = stored[index].audioPairingGeneration else { return nil }
+            return AudioForwardingPairedDevice(id: id, pairingGeneration: generation)
+        } catch {
+            print("입출력 기기 자격의 페어링 세대를 저장하거나 확인하지 못했습니다.")
+            return nil
+        }
+    }
+
     func isPaired(_ fingerprint: Data) -> Bool {
         trust.snapshot.isPaired(fingerprint)
     }

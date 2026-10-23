@@ -117,6 +117,17 @@ final class Client: @unchecked Sendable {
         b.send(.input, SourceInput(event: .text("B retained"), generation: eb.generation, videoEpoch: eb.id))
         try await wait("B retained input") { host.contractPeerInputs.count >= 4 }
         check(host.contractPeerInputs.last == .window(20) && b.catalogs.last?.videoEpoch == eb, "A disconnect leaves B scope live")
+        host.contractSentryProtection(verified: false)
+        let beforeBlocked = host.contractPeerInputs.count
+        b.send(.input, SourceInput(event: .text("blocked"), generation: eb.generation, videoEpoch: eb.id))
+        b.send(.selectSource, SourceRequest(source: .window(99), origin: .human))
+        try await Task.sleep(for: .milliseconds(150))
+        check(host.contractPeerInputs.count == beforeBlocked && b.catalogs.last?.active == .window(20),
+            "failed Sentry protection rejects real wire input and source mutations")
+        host.contractSentryProtection(verified: true)
+        b.send(.input, SourceInput(event: .text("verified"), generation: eb.generation, videoEpoch: eb.id))
+        try await wait("protected peer input resumes") { host.contractPeerInputs.count == beforeBlocked + 1 }
+        check(host.contractPeerInputs.last == .window(20), "verified Sentry restores original remote control without a new source")
         print("PASS \(checks) production coordinator + real loopback transport checks; inert capture, dry OS input, no device/audio effects")
     }
 }

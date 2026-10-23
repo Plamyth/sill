@@ -217,6 +217,8 @@ final class PeerStreamSession {
            (captureAttempt != nil && captureAttempt == stoppedCapture) { restartPresentedSource() }
     }
 
+    func privacyChanged() { restartPresentedSource() }
+
     private func restartPresentedSource() {
         guard state.pending == nil, state.source != .none else { return }
         let snapshot = inventory()

@@ -144,6 +144,9 @@ public struct WindowList: Codable {
     /// This fork's optional remote sound path. A device sends kind 200 only when this is 1.
     /// Nil from older hosts; older devices ignore this field.
     public var remoteAudio: Int?
+    public var sentry: SentryState?
+    public var audioForwarding: AudioForwardingCatalog?
+    public var audioPrivacy: AudioPrivacyState?
 
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
@@ -170,7 +173,7 @@ public struct WindowList: Codable {
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil,
-                remoteAudio: Int? = nil, selectionRevision: String? = nil, automaticDisplaySelection: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
+                remoteAudio: Int? = nil, audioPrivacy: AudioPrivacyState? = nil, selectionRevision: String? = nil, automaticDisplaySelection: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
                 dockApps: [AppInfo]? = nil) {
@@ -179,6 +182,7 @@ public struct WindowList: Codable {
         self.selectionRevision = selectionRevision
         self.automaticDisplaySelection = automaticDisplaySelection
         self.remoteAudio = remoteAudio
+        self.audioPrivacy = audioPrivacy
         self.inputGeneration = inputGeneration
         self.presentationInput = presentationInput
         self.videoEpoch = videoEpoch
