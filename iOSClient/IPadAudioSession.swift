@@ -51,7 +51,7 @@ final class IPadAudioSession {
         let session = AVAudioSession.sharedInstance()
         if active.needsMicrophone {
             try session.setCategory(.playAndRecord,mode:.default,
-                                    options:[.defaultToSpeaker,.mixWithOthers])
+                                    options:[.defaultToSpeaker,.mixWithOthers,.allowBluetoothHFP,.allowBluetoothA2DP])
         } else {
             try session.setCategory(.playback,mode:.default,options:[.mixWithOthers])
         }
