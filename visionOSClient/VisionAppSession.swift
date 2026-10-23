@@ -63,7 +63,7 @@ final class VisionAppSession: ObservableObject {
         }
     }
 
-    deinit {
+    isolated deinit {
         let events = controlEvents
         DispatchQueue.main.async { events.release() }
         #if DEBUG && targetEnvironment(simulator)
