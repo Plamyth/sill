@@ -1,6 +1,7 @@
 import StreamProtocol
 import Foundation
 import Darwin
+import os
 
 struct LocalAudioRelayRuntimeExpectation {
     let python: String
@@ -484,6 +485,164 @@ final class LocalAudioRelay {
         return await forwardingCall("forwardingRevoke", payload: Revocation(pairedDeviceId: peer.id))
     }
 
+    func providerAcquire(_ request: ProviderCallRequest, challenge: ProviderCallChallenge,
+                         challengeStartedAt: TimeInterval, snapshot: AudioForwardingSnapshot, peer: AudioForwardingPairedDevice,
+                         credential: AudioForwardingCredential,
+                         admission: @escaping @MainActor () -> Bool) async -> ProviderCallAcquisition {
+        struct Acquire: Encodable {
+            let pairedDeviceId: AudioForwardingDeviceID
+            let credential: String
+            let request: ProviderCallRequest
+            let targetHash: String
+            let intentGeneration: UUID
+            let bindingEpoch: UUID
+        }
+        do { try challenge.validate(request) } catch { return .unavailable }
+        let targetHash = challenge.targetHash
+        let membership = participants.snapshot
+        let now = ProcessInfo.processInfo.systemUptime
+        guard challengeStartedAt.isFinite, challengeStartedAt >= 0, challengeStartedAt <= now,
+              now < challengeStartedAt + Double(challenge.remainingMilliseconds) / 1000,
+              request.pairedDeviceId == peer.id, credential.pairedDeviceId == peer.id,
+              credential.pairingGeneration == peer.pairingGeneration, request.matches(snapshot),
+              let intent = snapshot.intent, let binding = snapshot.binding,
+              case .connected(let boot) = state, registeredBoot == boot,
+              membership.boots[.relay] == boot, process.isRunning,
+              targetHash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              !Task.isCancelled, admission() else { return .unavailable }
+        let pid = process.processIdentifier
+        let current = { [weak self] in
+            guard let self, !Task.isCancelled, admission(), self.process.isRunning,
+                  self.process.processIdentifier == pid, case .connected(let actual) = self.state,
+                  actual == boot, self.registeredBoot == boot, self.participants.snapshot == membership else { return false }
+            return true
+        }
+        let sentAt = ProcessInfo.processInfo.systemUptime
+        let result: AudioForwardingResult<ProviderCallScope>? = await forwardingCall("forwardingProviderAcquire",
+            payload: Acquire(pairedDeviceId: peer.id, credential: credential.credential,
+                request: request, targetHash: targetHash, intentGeneration: intent.intentGeneration,
+                bindingEpoch: binding.bindingEpoch), admission: current)
+        guard case .accepted(let scope) = result else {
+            if case .refused(let code, _) = result, current() { return .refused(code) }
+            return .unavailable
+        }
+        guard scope.requestId == request.requestId else { return .unavailable }
+        let record = ProviderCallPrepared(relay: self, request: request, targetHash: targetHash,
+            scope: scope, challenge: challenge, peer: peer, credential: credential, boot: boot, pid: pid, membership: membership,
+            deadline: min(challengeStartedAt + Double(challenge.remainingMilliseconds) / 1000,
+                          sentAt + Double(scope.remainingMilliseconds) / 1000), admission: admission)
+        guard current() else { await providerCancel(record); return .unavailable }
+        guard scope.state == .prepared else { return .recorded(scope) }
+        guard providerSameSnapshot(scope.snapshot, snapshot), record.isCurrent else {
+            await providerCancel(record); return .unavailable
+        }
+        return .prepared(record)
+    }
+
+    struct ProviderAuthorityIdentity: Equatable {
+        let boot: UUID
+        let pid: pid_t
+        let membership: LocalAudioParticipantRegistry.Snapshot
+    }
+    var providerAuthorityIdentity: ProviderAuthorityIdentity? {
+        let membership = participants.snapshot
+        guard forwarding, case .connected(let boot) = state, registeredBoot == boot,
+              membership.boots[.relay] == boot, process.isRunning else { return nil }
+        return .init(boot: boot, pid: process.processIdentifier, membership: membership)
+    }
+
+    func providerDispatch(_ record: ProviderCallPrepared) async -> ProviderCallDispatch {
+        guard record.relay === self else { return .notDispatched }
+        guard !record.consumed else { return .unknown }
+        guard record.isCurrent else { await providerCancel(record); return .notDispatched }
+        record.consumed = true
+        let sentAt = ProcessInfo.processInfo.systemUptime
+        let result = await withTaskCancellationHandler {
+            await providerFollow("forwardingProviderDispatch", record: record,
+                outcome: nil, admission: { record.isCurrent })
+        } onCancel: { record.revoke() }
+        guard record.isCurrent else { await providerCancel(record); return .unknown }
+        guard case .accepted(let scope) = result,
+              scope.requestId == record.request.requestId, scope.scopeId == record.scope.scopeId,
+              scope.nodeGeneration == record.scope.nodeGeneration else { return .unknown }
+        guard scope.state == .dispatchAuthorized else {
+            return scope.outcome == .notDispatched ? .notDispatched : .unknown
+        }
+        let deadline = min(record.deadline, sentAt + Double(scope.remainingMilliseconds) / 1000)
+        guard providerSameSnapshot(scope.snapshot, record.scope.snapshot), ProcessInfo.processInfo.systemUptime < deadline else {
+            await providerCancel(record); return .unknown
+        }
+        return .approved(ProviderCallApproval(prepared: record, scope: scope, deadline: deadline))
+    }
+
+    func providerCancel(_ record: ProviderCallPrepared) async {
+        guard record.relay === self else { return }
+        record.revoke()
+        guard record.relay === self, providerChildIsCurrent(record), record.scope.scopeId != nil else { return }
+        let cleanup = Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.providerFollow("forwardingProviderCancel", record: record, outcome: nil,
+                admission: { [weak self] in self?.providerChildIsCurrent(record) == true })
+        }
+        await cleanup.value
+    }
+    @discardableResult
+    func providerRelease(_ approval: ProviderCallApproval, outcome: ProviderCallScope.Outcome) async -> Bool {
+        let record = approval.prepared
+        guard record.relay === self else { return false }
+        record.revoke()
+        guard providerChildIsCurrent(record) else { return false }
+        let cleanup = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            let reply = await self.providerFollow("forwardingProviderRelease", record: record, outcome: outcome,
+                admission: { [weak self] in self?.providerChildIsCurrent(record) == true })
+            guard self.providerChildIsCurrent(record), case .accepted(let value) = reply,
+                  value.state == .recorded, value.requestId == record.request.requestId,
+                  value.scopeId == record.scope.scopeId, value.nodeGeneration == record.scope.nodeGeneration,
+                  value.remainingMilliseconds == 0, value.outcome == outcome else { return false }
+            return true
+        }
+        return await cleanup.value
+    }
+    fileprivate func providerChildIsCurrent(_ record: ProviderCallPrepared) -> Bool {
+        guard record.relay === self, process.isRunning, process.processIdentifier == record.pid,
+              case .connected(let boot) = state, boot == record.boot, registeredBoot == boot,
+              participants.snapshot == record.membership else { return false }
+        return true
+    }
+    private func providerFollow(_ method: String, record: ProviderCallPrepared, outcome: ProviderCallScope.Outcome?,
+                                admission: @escaping @MainActor () -> Bool) async -> AudioForwardingResult<ProviderCallScope>? {
+        struct Follow: Encodable {
+            let pairedDeviceId: AudioForwardingDeviceID
+            let credential: String
+            let requestId: UUID
+            let scopeId: UUID
+            let nodeGeneration: UUID
+            let expectedLeaseRevision: AudioForwardingRevision
+            let targetHash: String
+            let outcome: ProviderCallScope.Outcome?
+            enum CodingKeys: String, CodingKey {
+                case pairedDeviceId, credential, requestId, scopeId, nodeGeneration, expectedLeaseRevision, targetHash, outcome
+            }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(pairedDeviceId, forKey: .pairedDeviceId)
+                try c.encode(credential, forKey: .credential)
+                try c.encode(requestId, forKey: .requestId)
+                try c.encode(scopeId, forKey: .scopeId)
+                try c.encode(nodeGeneration, forKey: .nodeGeneration)
+                try c.encode(expectedLeaseRevision, forKey: .expectedLeaseRevision)
+                try c.encode(targetHash, forKey: .targetHash)
+                try c.encodeIfPresent(outcome, forKey: .outcome)
+            }
+        }
+        guard let scopeId = record.scope.scopeId, providerChildIsCurrent(record), admission() else { return nil }
+        return await forwardingCall(method, payload: Follow(pairedDeviceId: record.peer.id,
+            credential: record.credential.credential, requestId: record.request.requestId, scopeId: scopeId,
+            nodeGeneration: record.scope.nodeGeneration, expectedLeaseRevision: record.request.expectedLeaseRevision,
+            targetHash: record.targetHash, outcome: outcome), admission: admission)
+    }
+
     private func forwardingCall<Payload: Encodable, Result: Decodable>(_ method: String,
         payload: Payload, until deadline: ContinuousClock.Instant? = nil,
         admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<Result>? {
@@ -647,4 +806,67 @@ final class LocalAudioRelay {
     }
 
     isolated deinit { lost() }
+}
+
+@MainActor enum ProviderCallAcquisition {
+    case prepared(ProviderCallPrepared), recorded(ProviderCallScope), refused(String), unavailable
+}
+@MainActor enum ProviderCallDispatch {
+    case approved(ProviderCallApproval), notDispatched, unknown
+}
+
+@MainActor final class ProviderCallPrepared {
+    fileprivate weak var relay: LocalAudioRelay?
+    let request: ProviderCallRequest
+    let targetHash: String
+    let scope: ProviderCallScope
+    let challenge: ProviderCallChallenge
+    fileprivate let peer: AudioForwardingPairedDevice
+    fileprivate let credential: AudioForwardingCredential
+    fileprivate let boot: UUID
+    fileprivate let pid: pid_t
+    fileprivate let membership: LocalAudioParticipantRegistry.Snapshot
+    fileprivate let deadline: TimeInterval
+    fileprivate let admission: @MainActor () -> Bool
+    fileprivate var consumed = false
+    private nonisolated let revoked = OSAllocatedUnfairLock(initialState: false)
+    nonisolated func revoke() { revoked.withLock { $0 = true } }
+    fileprivate init(relay: LocalAudioRelay, request: ProviderCallRequest, targetHash: String,
+                     scope: ProviderCallScope, challenge: ProviderCallChallenge,
+                     peer: AudioForwardingPairedDevice, credential: AudioForwardingCredential,
+                     boot: UUID, pid: pid_t, membership: LocalAudioParticipantRegistry.Snapshot,
+                     deadline: TimeInterval, admission: @escaping @MainActor () -> Bool) {
+        self.relay = relay; self.request = request; self.targetHash = targetHash; self.scope = scope
+        self.challenge = challenge
+        self.peer = peer; self.credential = credential; self.boot = boot; self.pid = pid
+        self.membership = membership; self.deadline = deadline; self.admission = admission
+    }
+    var isCurrent: Bool {
+        !Task.isCancelled && !revoked.withLock({ $0 }) && admission() && relay?.providerChildIsCurrent(self) == true &&
+            deadline.isFinite && ProcessInfo.processInfo.systemUptime < deadline
+    }
+}
+@MainActor final class ProviderCallApproval {
+    fileprivate let prepared: ProviderCallPrepared
+    let scope: ProviderCallScope
+    private let deadline: TimeInterval
+    var expiresAt: TimeInterval { deadline }
+    private var proofIssued = false
+    var challenge: ProviderCallChallenge { prepared.challenge }
+    var request: ProviderCallRequest { prepared.request }
+    var targetHash: String { prepared.targetHash }
+    var isCurrent: Bool { prepared.isCurrent && ProcessInfo.processInfo.systemUptime < deadline }
+    var remainingMilliseconds: Int {
+        guard isCurrent else { return 0 }
+        return max(0, min(scope.remainingMilliseconds,
+            Int(((deadline - ProcessInfo.processInfo.systemUptime) * 1000).rounded(.down))))
+    }
+    func claimProof() -> Bool {
+        guard !proofIssued, isCurrent else { return false }
+        proofIssued = true
+        return true
+    }
+    fileprivate init(prepared: ProviderCallPrepared, scope: ProviderCallScope, deadline: TimeInterval) {
+        self.prepared = prepared; self.scope = scope; self.deadline = deadline
+    }
 }

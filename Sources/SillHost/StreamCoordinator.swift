@@ -50,6 +50,7 @@ package final class StreamCoordinator {
     private let microphoneOwner: (any HostMicrophoneOriginalOwner)?
     private let audioPrivacy: HostAudioPrivacy?
     private var forwardingRuntime: HostAudioForwardingRuntime?
+    private var providerRuntime: ProviderCallRuntime?
     private struct ForwardingClient {
         let connection: NWConnection
         let route: ClientRoute
@@ -569,6 +570,12 @@ package final class StreamCoordinator {
             Task { @MainActor in
                 guard let self else { connection.cancel(); return }
                 await self.handleForwarding(exchange, connection: connection, route: route, role: role)
+            }
+        }
+        server.onProviderControl = { [weak self] exchange, connection, route in
+            Task { @MainActor in
+                guard let self else { connection.cancel(); return }
+                await self.handleProvider(exchange, connection: connection, route: route)
             }
         }
         server.onClientConnected = { [weak self] connection, route, link in
@@ -3041,7 +3048,7 @@ package final class StreamCoordinator {
                                                       displayInventoryID: synthetic ? nil : catalog.displayInventory.revision,
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
-                                                      dockApps: synthetic ? nil : dockApps())))
+                                                      dockApps: synthetic ? nil : dockApps(), providerCalls: synthetic ? nil : 1)))
     }
 
     /// Read only the current user's Dock app tiles; no Dock preference is changed.
@@ -3882,6 +3889,7 @@ extension StreamCoordinator {
                     self.broadcastList()
                 })
             forwardingRuntime = runtime
+            if let identity = remote?.identity { providerRuntime = ProviderCallRuntime(identity: identity) }
             nativeAudioBindingAuthorized = { [weak runtime] fingerprint, direction in
                 runtime?.allows(fingerprint, direction: direction) == true
             }
@@ -3907,6 +3915,40 @@ extension StreamCoordinator {
     private func forwardingClientLeft(_ id: ObjectIdentifier) {
         guard let session = forwardingClients.removeValue(forKey: id) else { return }
         forwardingRuntime?.disconnected(session.generation)
+    }
+
+    private func handleProvider(_ exchange: StreamServer.ProviderExchange, connection: NWConnection,
+                                route: ClientRoute) async {
+        let id = ObjectIdentifier(connection)
+        guard !synthetic, !shuttingDown, exchange.isCurrent, connection.state == .ready,
+              route.encrypted, let fingerprint = route.fingerprint,
+              remote?.isPaired(fingerprint) == true,
+              let peer = remote?.forwardingPeer(fingerprint: fingerprint),
+              let session = forwardingClients[id], session.connection === connection, session.route == route else {
+            server.sendProviderState(nil, to: connection, ticket: exchange.ticket); return
+        }
+        let kind: AudioForwardingCatalog.Principal.Kind
+        if route.cableDevice != nil { kind = .cable }
+        else if route.origin == .vpn { kind = .tailnet }
+        else if route.origin != .internet { kind = .localNetwork }
+        else { server.sendProviderState(nil, to: connection, ticket: exchange.ticket); return }
+        let current = { [weak self, weak connection] in
+            guard let self, let connection, !self.shuttingDown, connection.state == .ready,
+                  self.forwardingClients[id]?.generation == session.generation,
+                  self.remote?.isPaired(fingerprint) == true,
+                  let latest = self.remote?.forwardingPeer(fingerprint: fingerprint) else { return false }
+            return latest.id == peer.id && latest.pairingGeneration == peer.pairingGeneration
+        }
+        let context = AudioForwardingConnectionContext(peer: peer,
+            principal: .init(kind: kind, id: peer.id, authorizationGeneration: peer.pairingGeneration), role: .viewer,
+            connectionID: session.generation, connectionIsCurrent: current,
+            isCurrent: { exchange.isCurrent && current() })
+        let admission = await forwardingRuntime?.providerSession(context)
+        let reply = await providerRuntime?.exchange(exchange.control, context: context, session: admission)
+        let request = exchange.control.request
+        let unavailable = try? ProviderCallResult(requestId: request.requestId, status: .failed, reason: "audio_session_unavailable")
+        let fallback = unavailable.flatMap { try? ProviderCallState(request: request, result: $0) }
+        server.sendProviderState(context.isCurrent() ? reply ?? fallback : nil, to: connection, ticket: exchange.ticket)
     }
 
     private func handleForwarding(_ exchange: StreamServer.ForwardingExchange, connection: NWConnection,

@@ -1,0 +1,10 @@
+'use strict';
+const net=require('node:net');
+const {spawn}=require('node:child_process');
+const socket=new net.Socket({fd:Number(process.argv[2]),readable:true,writable:true});
+const child=spawn(process.argv[3],process.argv.slice(4),{stdio:['ignore','pipe','pipe',socket]});
+let out='',error='';
+child.stdout.on('data',data=>{out+=data;});
+child.stderr.on('data',data=>{error+=data;});
+child.on('error',()=>{socket.destroy();process.exitCode=2;});
+child.on('close',code=>{socket.destroy();process.stdout.write(out);process.stderr.write(error);process.exitCode=code??2;});

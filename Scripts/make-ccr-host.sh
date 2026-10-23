@@ -19,12 +19,17 @@ python3 Scripts/package-local-audio-runtime.py --verify "$CCR_SILL_AUDIO_RUNTIME
 
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 swift build -c release --product SillMenuBar --jobs 2
+swift build -c release --product ProviderPeerVerifier --jobs 2
 bin="$(swift build -c release --product SillMenuBar --show-bin-path)/SillMenuBar"
 app="$PWD/.build/CCR Sill.app"
 stage="$PWD/.build/CCR Sill.app.partial"
 rm -rf "$stage"
-mkdir -p "$stage/Contents/MacOS" "$stage/Contents/Resources"
+mkdir -p "$stage/Contents/MacOS" "$stage/Contents/Resources" "$stage/Contents/Helpers"
 cp "$bin" "$stage/Contents/MacOS/Sill"
+cp "$(dirname "$bin")/ProviderPeerVerifier" "$stage/Contents/Helpers/ProviderPeerVerifier"
+codesign --force --options runtime --timestamp=none \
+    --identifier com.ambrion.sillcanvas.provider-peer-verifier \
+    --sign "$CCR_SILL_SIGN_IDENTITY" "$stage/Contents/Helpers/ProviderPeerVerifier"
 cp Packaging/Info.plist "$stage/Contents/Info.plist"
 cp -R "$CCR_SILL_AUDIO_RUNTIME" "$stage/Contents/Resources/LocalAudioRelay"
 python3 Scripts/package-local-audio-runtime.py --verify "$stage/Contents/Resources/LocalAudioRelay"

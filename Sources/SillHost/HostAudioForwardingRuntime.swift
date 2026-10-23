@@ -302,6 +302,29 @@ final class HostAudioForwardingRuntime {
         return value
     }
 
+    func providerSession(_ context: AudioForwardingConnectionContext) async -> ProviderCallSession? {
+        guard context.role == .viewer, context.isCurrent(), let session = sessions[context.connectionID],
+              session.context.peer.id == context.peer.id,
+              session.context.peer.pairingGeneration == context.peer.pairingGeneration else { return nil }
+        let owner = relay, evidence = evidenceRevision
+        let admitted = { [weak self] in
+            guard let self, !Task.isCancelled, self.running, self.recovering == nil,
+                  !self.recoveryNeeded, !self.recoveryBlocked, self.relay === owner,
+                  self.evidenceRevision == evidence, context.isCurrent(), self.privacy.forwardingIntentAllowed,
+                  let latest = self.sessions[context.connectionID] else { return false }
+            return latest.context.peer.id == context.peer.id &&
+                latest.context.peer.pairingGeneration == context.peer.pairingGeneration &&
+                latest.credential.credential == session.credential.credential &&
+                latest.credential.pairingGeneration == session.credential.pairingGeneration
+        }
+        guard admitted(), let value = await readSnapshot(), admitted() else { return nil }
+        return ProviderCallSession(relay: owner, peer: context.peer, credential: session.credential,
+            snapshot: value, admitted: admitted, readSnapshot: { [weak self] in
+                guard admitted(), let self, let latest = await self.readSnapshot(), admitted() else { return nil }
+                return latest
+            })
+    }
+
     private func observe(_ value: AudioForwardingSnapshot) {
         guard running else { return }
         snapshot = value
