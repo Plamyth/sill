@@ -89,10 +89,10 @@ s=p.read_text(); s=s.replace(standins[a:b],render);p.write_text(s)
 flags=['-swift-version','5','-whole-module-optimization','-module-cache-path',str((out/'cache').resolve())]
 protocol=sorted(map(str,(root/'Sources/StreamProtocol').glob('*.swift')))
 def run(command):
-    r=subprocess.run(command)
+    r=subprocess.run(command, timeout=30 if command[0] == str(out/'check') else 150)
     if r.returncode: sys.exit(r.returncode)
 run(['/usr/bin/xcrun','swiftc',*flags,'-emit-library','-emit-module','-module-name','StreamProtocol',*protocol,'-emit-module-path',str(out/'StreamProtocol.swiftmodule'),'-o',str(out/'libStreamProtocol.dylib')])
 files=['IPadMicrophonePCM.swift','IPadMicrophoneFrameGate.swift','IPadRemoteAudioController.swift']
-if new: files+=['IPadAudioAdmission.swift','IPadDesiredAudio.swift','IPadMicrophonePolicy.swift']
+if new: files+=['IPadAudioAdmission.swift','IPadDesiredAudio.swift','IPadAudioForwarding.swift','IPadMicrophonePolicy.swift']
 run(['/usr/bin/xcrun','swiftc',*flags,'-parse-as-library',*(['-D','ADMISSION'] if new else []),'-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out),*[str(root/'iOSClient'/f) for f in files],str(out/'Diagnostics.swift'),str(out/'ClientFixture.swift'),str(out/'PlaybackFixture.swift'),str(Path(__file__).with_name('main.swift')),'-o',str(out/'check')])
 run([str(out/'check'),str(out)])

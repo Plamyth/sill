@@ -8,7 +8,9 @@ private final class RemoteAACDecoder {
     }
 }
 func holdAudioDecode(_ entered: DispatchSemaphore, _ release: DispatchSemaphore) {
-    RemoteAACDecoder.decoding = { entered.signal(); release.wait() }
+    // Balance the borrowed permit so replacing a fixture cannot dispose a semaphore
+    // whose count is below its initial value. The first decode still waits for release.
+    RemoteAACDecoder.decoding = { entered.signal(); release.wait(); release.signal() }
 }
 final class FakeAudioSourceNode {
     init(format: AVAudioFormat, renderBlock: @escaping (UnsafeMutablePointer<ObjCBool>, UnsafePointer<AudioTimeStamp>, AVAudioFrameCount, UnsafeMutablePointer<AudioBufferList>) -> OSStatus) {}

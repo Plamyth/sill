@@ -3,7 +3,7 @@ import importlib.util, subprocess, sys
 root=Path(__file__).resolve().parents[3]
 out=Path(sys.argv[1])
 flags=['-swift-version','5','-whole-module-optimization','-module-cache-path',str((out/'cache').resolve()),'-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out)]
-files=['IPadDesiredAudio.swift','IPadMicrophonePolicy.swift','IPadRemoteAudioController.swift','IPadAudioRoutePolicy.swift','IPadAudioAdmission.swift']
+files=['IPadDesiredAudio.swift','IPadAudioForwarding.swift','IPadMicrophonePolicy.swift','IPadRemoteAudioController.swift','IPadAudioRoutePolicy.swift','IPadAudioAdmission.swift']
 def run(cmd): subprocess.run(cmd,check=True,timeout=150)
 run(['/usr/bin/xcrun','swiftc',*flags,*[str(root/'iOSClient'/n) for n in files],str(root/'Tests/checks/ipad-desired-audio/main.swift'),'-o',str(out/'pure')])
 run([str(out/'pure')])

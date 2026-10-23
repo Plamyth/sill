@@ -30,7 +30,31 @@ enum AVCaptureDevice {
 final class IPadAudioSession { static let shared = IPadAudioSession(); var microphoneAvailable = true }
 final class IPadAudioResumeObserver { init(client: StreamClient) {} }
 final class Frames { func close() {} }
+struct FixtureForwarding {
+ var supported = true
+ var phase = IPadAudioForwarding.Phase.ready
+ var durable: IPadAudioForwarding.Durable?
+ mutating func block() { phase = .blocked }
+}
 final class StreamClient {
+ var audioForwarding = FixtureForwarding()
+ var audioForwardingDevice: AudioForwardingDeviceID?
+ var audioForwardingCatalogAt: TimeInterval?
+ var audioForwardingNow: TimeInterval { 0 }
+ var fixtureLifecycle = UUID()
+ var audioForwardingContext: IPadAudioForwarding.Context? {
+  guard let peer = connection, let identity = desiredAudioIdentity, let scope = desiredAudio.scope,
+        appInForeground, UIApplication.shared.applicationState == .active else { return nil }
+  return .init(peer: ObjectIdentifier(peer), mac: identity, device: AudioForwardingDeviceID(fingerprint: Data(repeating: 1, count: 32))!,
+               source: scope.source, generation: scope.generation, videoEpoch: scope.videoEpoch, lifecycle: fixtureLifecycle)
+ }
+ // Explicit independent common grant for the older desired/lifecycle domain checks.
+ func retireAudioForwardingWire(unless peer: ObjectIdentifier?) {}
+ func reconcileAudioForwarding() {}
+ func selectAudioForwarding(_ selection: IPadDesiredAudio.Selection) {}
+ func applyAudioForwarding(_ command: AudioForwardingControl?) {}
+ func suspendAudioForwarding(discardDraft: Bool = true) { if discardDraft { fixtureLifecycle = UUID() } }
+ func audioForwardingPermits(_ direction: IPadDesiredAudio.Direction) -> Bool { audioForwarding.phase != .blocked }
  struct Trusted { let macID: String; let pin: Data }
  var audioRouteTrustedMac: Trusted? = Trusted(macID: "fixture", pin: Data(repeating: 7, count: 32))
  let audioAdmission = IPadAudioAdmission()
@@ -114,7 +138,7 @@ for name, text in [("Adapter.swift", standins + adapter), ("main.swift", main)]:
     (out / name).write_text(text)
 command = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-I", str(out), "-L", str(out), "-lStreamProtocol",
            "-Xlinker", "-rpath", "-Xlinker", str(out), str(out / "Adapter.swift"),
-           str(root / "iOSClient/IPadDesiredAudio.swift"), str(root / "iOSClient/IPadAudioAdmission.swift"), str(root / "iOSClient/IPadMicrophonePolicy.swift"),
+           str(root / "iOSClient/IPadDesiredAudio.swift"), str(root / "iOSClient/IPadAudioForwarding.swift"), str(root / "iOSClient/IPadAudioAdmission.swift"), str(root / "iOSClient/IPadMicrophonePolicy.swift"),
            str(root / "iOSClient/IPadRemoteAudioController.swift"), str(out / "main.swift"), "-o", str(out / "intent-adapters")]
 subprocess.run(command, check=True, timeout=90)
 subprocess.run([str(out / "intent-adapters")], check=True, timeout=20)

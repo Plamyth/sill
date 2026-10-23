@@ -168,6 +168,15 @@ final class StreamClient: ObservableObject {
     lazy var microphoneFrames = IPadMicrophoneFrameGate(admission: audioAdmission)
     var microphoneCapture: IPadMicrophoneCapture?
     var microphoneCaptureToken: UUID?
+    var audioForwarding = IPadAudioForwarding()
+    var audioForwardingLocalGeneration = UUID()
+    var audioForwardingWake: DispatchWorkItem?
+    var audioForwardingWire: ForwardingExchange?
+    var audioForwardingWireTimeout: DispatchWorkItem?
+    var audioForwardingDevice: AudioForwardingDeviceID?
+    var audioForwardingCatalogAt: TimeInterval?
+    var audioForwardingSubmissionAt: TimeInterval?
+    @Published var audioForwardingPhase = IPadAudioForwarding.Phase.unknown
     var desiredAudio = IPadDesiredAudio()
     let desiredAudioStore = IPadDesiredAudioStore()
     @Published var desiredAudioSelection = IPadDesiredAudio.Selection()
@@ -4539,6 +4548,7 @@ final class StreamClient: ObservableObject {
         if receiveRemoteAudio(header, data, from: peer) { return }
         #if os(iOS)
         if receiveMicrophone(header, data, from: peer) { return }
+        if receiveAudioForwarding(header, data, from: peer) { return }
         #endif
         #endif
         switch header.kind {

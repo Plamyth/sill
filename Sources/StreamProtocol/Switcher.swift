@@ -151,6 +151,7 @@ public struct WindowList: Codable {
     /// This fork's optional remote sound path. A device sends kind 200 only when this is 1.
     /// Nil from older hosts; older devices ignore this field.
     public var remoteAudio: Int?
+    public var audioForwarding: AudioForwardingCatalog?
     public var audioPrivacy: AudioPrivacyState?
     public var catalogRefresh: Int?
     public var responseRequestID: UUID?

@@ -12,7 +12,17 @@ extension StreamClient {
             retryMicrophoneCleanup()
             return
         }
-        setDesiredAudio(.microphone, enabled: !microphonePhase.canStop)
+        if microphonePhase.canStop || desiredAudio.selection.microphone {
+            setDesiredAudio(.microphone, enabled: false)
+            return
+        }
+        guard let context = audioForwardingContext else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let allowed = await self.requestAudioRouteMicrophonePermission()
+            guard allowed, !Task.isCancelled, self.audioForwardingContext == context else { return }
+            self.setDesiredAudio(.microphone, enabled: true)
+        }
     }
 
     func microphoneSetConnection(_ next: NWConnection?) {
@@ -23,6 +33,7 @@ extension StreamClient {
     }
 
     func microphoneSourceWillChange() {
+        suspendAudioForwarding()
         suspendDesiredAudio()
         desiredAudio.sourceWillChange()
         audioRouteAuthorization = nil
@@ -31,12 +42,14 @@ extension StreamClient {
     }
 
     func microphoneBecameInactive() {
+        suspendAudioForwarding(discardDraft: false)
         suspendDesiredAudio(preserveManualPermission: true)
         recordMicrophoneDiagnostic("inactive", ["route": IPadMicrophoneDiagnostics.route()])
         applyMicrophone(microphonePolicy.inactive())
     }
 
     func microphoneInterrupted() {
+        suspendAudioForwarding()
         suspendDesiredAudio()
         audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("interruption_or_route", ["route": IPadMicrophoneDiagnostics.route()])
@@ -44,6 +57,7 @@ extension StreamClient {
     }
 
     func microphoneBackgrounded() {
+        suspendAudioForwarding()
         suspendDesiredAudio()
         audioRouteAuthorization = nil
         recordMicrophoneDiagnostic("background", ["route": IPadMicrophoneDiagnostics.route()])

@@ -173,6 +173,10 @@
 		88DE106CBA3D5BCA0658D3A4 /* Pele in Resources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F014 /* Pele */; };
 		6C23CBF449EF8C657EE497F0 /* OwnerBootstrapState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7200001000000000000F001 /* OwnerBootstrapState.swift */; };
 		671CB6FC67DA6FA1BB3187D6 /* StreamClient+OwnerBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */; };
+		F2170001000000000000A001 /* IPadAudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F001 /* IPadAudioForwarding.swift */; };
+		F2170001000000000000B001 /* IPadAudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F001 /* IPadAudioForwarding.swift */; };
+		F2170001000000000000A002 /* StreamClient+AudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */; };
+		F2170001000000000000B002 /* StreamClient+AudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -262,6 +266,8 @@
 		E7200001000000000000F001 /* OwnerBootstrapState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OwnerBootstrapState.swift"; sourceTree = "<group>"; };
 		E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+OwnerBootstrap.swift"; sourceTree = "<group>"; };
 		1B1B5EBF92F98EDB91D561E2 /* SillPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SillPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F2170001000000000000F001 /* IPadAudioForwarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadAudioForwarding.swift"; sourceTree = "<group>"; };
+		F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+AudioForwarding.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -308,6 +314,8 @@
 				E7200001000000000000F001 /* OwnerBootstrapState.swift */,
 				E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */,
 				A1000001000000000000F003 /* StreamClient.swift */,
+				F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */,
+				F2170001000000000000F001 /* IPadAudioForwarding.swift */,
 				C3000001000000000000F001 /* RemoteAudioPlayer.swift */,
 				C3000001000000000000F004 /* IPadAudioSession.swift */,
 				D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */,
@@ -595,6 +603,8 @@
 				D4000001000000000000A001 /* IPadAudioRoutePolicy.swift in Sources */,
 				D6000001000000000000A001 /* IPadAudioAdmission.swift in Sources */,
 				D5000001000000000000A001 /* IPadDesiredAudio.swift in Sources */,
+				F2170001000000000000A002 /* StreamClient+AudioForwarding.swift in Sources */,
+				F2170001000000000000A001 /* IPadAudioForwarding.swift in Sources */,
 				D5000001000000000000A002 /* StreamClient+DesiredAudio.swift in Sources */,
 				D4000001000000000000A007 /* IPadToolbarVisibility.swift in Sources */,
 				D4000001000000000000A002 /* IPadAudioRouteChooser.swift in Sources */,
@@ -681,6 +691,8 @@
 				49746F0AA90DA6266793DCB1 /* IPadAudioRoutePolicy.swift in Sources */,
 				2938F3F897799BAB40DFBFE7 /* IPadAudioAdmission.swift in Sources */,
 				4AC5A184E29E65112A39BD12 /* IPadDesiredAudio.swift in Sources */,
+				F2170001000000000000B002 /* StreamClient+AudioForwarding.swift in Sources */,
+				F2170001000000000000B001 /* IPadAudioForwarding.swift in Sources */,
 				5A8A07B2D5BFF28BDA22E29B /* StreamClient+DesiredAudio.swift in Sources */,
 				F68DBB46179583E6A988EA6A /* IPadToolbarVisibility.swift in Sources */,
 				95EA8E74BE7D69CD717101D1 /* IPadAudioRouteChooser.swift in Sources */,

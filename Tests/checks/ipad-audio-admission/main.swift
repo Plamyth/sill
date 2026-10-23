@@ -26,7 +26,10 @@ private let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Da
             let sent = OSAllocatedUnfairLock(initialState: 0)
             #if ADMISSION
             client.audioAdmission.bind(ObjectIdentifier(peer))
-            let ticket = client.audioAdmission.observe(catalog(yes), from: ObjectIdentifier(peer))!
+            _ = client.audioAdmission.observe(catalog(yes), from: ObjectIdentifier(peer))
+            client.audioAdmission.forwarding(peer: ObjectIdentifier(peer), microphone: true, playback: true,
+                deadline: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000 + 60)
+            let ticket = client.audioAdmission.ticket(for: ObjectIdentifier(peer))!
             let gate = IPadMicrophoneFrameGate(admission: client.audioAdmission, send: { _,_,_ in sent.withLock { $0 += 1 } })
             let player = PlaybackProbe(admission: client.audioAdmission)
             #else
@@ -69,6 +72,7 @@ private let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Da
         #if ADMISSION
         await boundaries()
         await microphoneReplies()
+        await commonLeaseExpiry()
         #endif
         print("\(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
@@ -119,7 +123,10 @@ private let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Da
 
         client.connection = second
         client.audioAdmission.bind(secondID)
-        let fresh = client.audioAdmission.observe(catalog(yes), from: secondID)!
+        _ = client.audioAdmission.observe(catalog(yes), from: secondID)
+        client.audioAdmission.forwarding(peer: secondID, microphone: true, playback: true,
+            deadline: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000 + 60)
+        let fresh = client.audioAdmission.ticket(for: secondID)!
         expect(client.audioAdmission.observe(catalog(nil), from: firstID) == nil, "old peer downgrade ignored")
         expect(client.audioAdmission.ticket(for: secondID) == fresh, "old peer cannot close newer peer")
         expect(!client.audioAdmission.isCurrent(old), "old peer callbacks invalidated")
@@ -150,12 +157,61 @@ private let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Da
         try? await Task.sleep(nanoseconds: 10_000_000)
         expect(player.currentEngine == nil, "delayed old engine callback cannot start")
         holdAudioDecode(DispatchSemaphore(value: 0), DispatchSemaphore(value: 1))
+        client.audioAdmission.forwarding(peer: secondID, microphone: true, playback: true,
+            deadline: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000 + 60)
         let latest = client.audioAdmission.ticket(for: secondID)!
         player.receive(packet, subscription: UUID(), admission: latest) { _ in }
         player.drainDecode()
         try? await Task.sleep(nanoseconds: 10_000_000)
         expect(player.currentEngine?.node.render().contains { $0 != 0 } == true, "fresh generation can render new samples")
         player.stop()
+    }
+
+    @MainActor static func commonLeaseExpiry() async {
+        let time = OSAllocatedUnfairLock(initialState: 1.0)
+        let admission = IPadAudioAdmission(now: { time.withLock { $0 } })
+        let peer = NWConnection(host: "127.0.0.1", port: 9994, using: .tcp)
+        let id = ObjectIdentifier(peer)
+        admission.bind(id)
+        _ = admission.observe(catalog(yes), from: id)
+        var sent = 0
+        expect(!admission.withAdmission(admission.ticket(for: id), { sent += 1 }), "privacy alone is not common approval")
+        admission.forwarding(peer: id, microphone: true, playback: true, deadline: 4)
+        let ticket = admission.ticket(for: id)!
+        let sends = OSAllocatedUnfairLock(initialState: 0)
+        let gate = IPadMicrophoneFrameGate(admission: admission, send: { _,_,_ in sends.withLock { $0 += 1 } })
+        let capture = UUID()
+        let scope = MicrophoneScope(peer: UUID(), source: .desktop, inputGeneration: UUID(), videoEpoch: UUID(), destination: UUID(), capability: UUID())
+        gate.open(connection: peer, scope: scope, grant: UUID(), captureID: capture, admission: ticket)
+        let player = PlaybackProbe(admission: admission)
+        // The earlier delayed-decode scenario consumed its one release. Give this fixture
+        // an independent permit instead of inheriting that scenario's held decoder.
+        holdAudioDecode(DispatchSemaphore(value: 0), DispatchSemaphore(value: 1))
+        let packet = AudioPacket.packEncoded(sampleRate: 48000, channels: 1, cookie: Data(), packet: Data([1]))
+        player.receive(packet, subscription: UUID(), admission: ticket) { _ in }
+        player.drainDecode()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        guard let engine = player.currentEngine else { fatalError("fresh lease engine missing") }
+        gate.emit(frame, captureID: capture)
+        expect(sends.withLock { $0 } == 1 && engine.node.render().contains { $0 != 0 }, "fresh common proof admits actual frame and render callbacks")
+        DispatchQueue.global().sync {
+            time.withLock { $0 = 4 }
+            gate.emit(frame, captureID: capture)
+            expect(sends.withLock { $0 } == 1, "three-second deadline blocks actual send with main held")
+            expect(engine.node.render().allSatisfy { $0 == 0 }, "three-second deadline silences buffered render with main held")
+            expect(admission.forwardingFaulted, "expired callback latches failed evidence")
+            admission.forwarding(peer: id, microphone: true, playback: true, deadline: 20)
+            expect(!admission.withAdmission(admission.ticket(for: id), { sent += 1 }), "renewal cannot revive a faulted native lease")
+        }
+        player.stop()
+        admission.resetForwardingFault()
+        time.withLock { $0 = 5 }
+        admission.forwarding(peer: id, microphone: true, playback: true, deadline: 8)
+        let current = admission.ticket(for: id)!
+        expect(admission.withAdmission(current, { sent += 1 }), "explicit new admission after reset uses new generation")
+        time.withLock { $0 = 4.5 }
+        expect(!admission.withAdmission(current, { sent += 1 }) && admission.forwardingFaulted, "clock reversal latches media0")
+        expect(!admission.withAdmission(ticket, { sent += 1 }), "retired pre-reset ticket never revives")
     }
 
     @MainActor static func microphoneReplies() async {

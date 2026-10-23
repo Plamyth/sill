@@ -171,6 +171,7 @@ struct IPadDesiredAudioStore {
     private struct Record: Codable {
         let identity: IPadDesiredAudio.Identity
         var selection: IPadDesiredAudio.Selection
+        var forwarding: IPadAudioForwarding.Durable?
     }
     private struct Archive: Codable {
         let version: Int
@@ -193,9 +194,21 @@ struct IPadDesiredAudioStore {
         records.first { $0.identity == identity }?.selection ?? .init()
     }
 
+    func forwarding(for identity: IPadDesiredAudio.Identity) -> IPadAudioForwarding.Durable? {
+        records.first { $0.identity == identity }?.forwarding
+    }
+
+    func saveForwarding(_ forwarding: IPadAudioForwarding.Durable, for identity: IPadDesiredAudio.Identity) {
+        var next = records.filter { $0.identity.macID != identity.macID }
+        next.append(Record(identity: identity, selection: selection(for: identity), forwarding: forwarding))
+        if let data = try? JSONEncoder().encode(Archive(version: 1, records: Array(next.suffix(128)))) {
+            defaults.set(data, forKey: Self.key)
+        }
+    }
+
     func save(_ selection: IPadDesiredAudio.Selection, for identity: IPadDesiredAudio.Identity) {
         var next = records.filter { $0.identity.macID != identity.macID }
-        next.append(Record(identity: identity, selection: selection))
+        next.append(Record(identity: identity, selection: selection, forwarding: records.first { $0.identity == identity }?.forwarding))
         if let data = try? JSONEncoder().encode(Archive(version: 1, records: Array(next.suffix(128)))) {
             defaults.set(data, forKey: Self.key)
         }

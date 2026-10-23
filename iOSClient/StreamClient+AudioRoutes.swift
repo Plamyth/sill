@@ -7,8 +7,8 @@ import StreamProtocol
 extension StreamClient {
     var audioRouteCapabilities: IPadAudioRoutePolicy.Capabilities {
         let protected = audioPrivacyState?.version == 2 && audioPrivacyState?.protected == true
-        return IPadAudioRoutePolicy.Capabilities(microphone: connected && protected && microphonePolicy.scope != nil,
-                                                 playback: connected && protected && active != .none && remoteAudioStatus.available)
+        return IPadAudioRoutePolicy.Capabilities(microphone: connected && protected && audioForwarding.supported && audioForwardingContext != nil,
+                                                 playback: connected && protected && audioForwarding.supported && audioForwardingContext != nil)
     }
 
     var audioRoutePlaybackUnavailableReason: String? {
@@ -16,14 +16,16 @@ extension StreamClient {
         if audioPrivacyState?.version != 2 || audioPrivacyState?.protected != true {
             return "Mac의 마이크·스피커 보호 상태를 확인한 뒤 iPad 오디오를 사용할 수 있습니다. Mac 앱 업데이트가 필요할 수 있습니다."
         }
+        if audioForwarding.phase == .blocked { return "음성 보호 확인이 만료되거나 거절되었습니다. 입력·출력을 다시 선택하면 현재 연결에서 보호 상태를 다시 확인합니다." }
         if active == .none { return "Mac 화면을 선택한 뒤 이 iPad에서 소리를 재생할 수 있습니다." }
         if !remoteAudioStatus.available { return "현재 Mac 연결에서 오디오 재생 지원을 알리지 않았습니다. Mac의 화면·시스템 오디오 기록 권한과 CCR Sill 버전을 확인하세요." }
+        if !audioForwarding.supported { return "공통 음성 보호 계약을 확인하는 중입니다. 확인되지 않으면 iPad 입출력을 시작하지 않습니다." }
         return nil
     }
 
     var audioRouteSelection: IPadAudioRoutePolicy.Selection {
-        IPadAudioRoutePolicy.Selection(input: microphonePhase.canStop ? .iPadMicrophone : .off,
-                                      output: remoteAudioStatus.requested ? .iPadPlayback : .off)
+        IPadAudioRoutePolicy.Selection(input: desiredAudio.selection.microphone ? .iPadMicrophone : .off,
+                                      output: desiredAudio.selection.playback ? .iPadPlayback : .off)
     }
 
     var audioRouteContext: IPadAudioRoutePolicy.Context? {
@@ -88,13 +90,12 @@ extension StreamClient {
         guard connected, appInForeground, audioRouteAppActive, let context, context == audioRouteContext else {
             throw IPadAudioRoutePolicy.Problem.changedConnection
         }
+        guard let forwardingContext = audioForwardingContext else { throw IPadAudioRoutePolicy.Problem.changedConnection }
         let actions = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
                                                       current: audioRouteSelection,
-                                                      canStartMicrophone: microphonePolicy.canStart,
+                                                      canStartMicrophone: microphonePolicy.canStart || audioForwarding.supported,
                                                       cleanupRequired: microphoneCleanupProblem != nil)
-        if selection.input == .off { setDesiredAudio(.microphone, enabled: false) }
-        if selection.output == .off { setDesiredAudio(.playback, enabled: false) }
-        if actions.microphone == true {
+        if actions.microphone == true || (selection.input != .off && AVCaptureDevice.authorizationStatus(for: .audio) != .authorized) {
             let authorization = IPadAudioRoutePolicy.Authorization(context: context)
             audioRouteAuthorization = authorization
             defer { if audioRouteAuthorization == authorization { audioRouteAuthorization = nil } }
@@ -115,18 +116,19 @@ extension StreamClient {
                 }
             }
             guard !Task.isCancelled, audioRouteAuthorization == authorization,
-                  connected, appInForeground, audioRouteAppActive, context == audioRouteContext else {
+                  connected, appInForeground, audioRouteAppActive, context == audioRouteContext,
+                  audioForwardingContext == forwardingContext else {
                 diagnostic.record("routes_permission_cancelled")
                 throw IPadAudioRoutePolicy.Problem.changedConnection
             }
             diagnostic.record("routes_permission_result", ["allowed": String(allowed)])
             guard allowed else { throw IPadAudioRoutePolicy.Problem.permissionDenied }
             _ = try IPadAudioRoutePolicy.actions(for: selection, capabilities: audioRouteCapabilities,
-                current: audioRouteSelection, canStartMicrophone: microphonePolicy.canStart,
+                current: audioRouteSelection, canStartMicrophone: microphonePolicy.canStart || audioForwarding.supported,
                 cleanupRequired: microphoneCleanupProblem != nil)
         }
-        if selection.input != .off { setDesiredAudio(.microphone, enabled: true) }
-        if selection.output != .off { setDesiredAudio(.playback, enabled: true) }
+        guard audioForwardingContext == forwardingContext else { throw IPadAudioRoutePolicy.Problem.changedConnection }
+        setDesiredAudioSelection(.init(microphone: selection.input != .off, playback: selection.output != .off))
     }
 
     @MainActor var audioRouteAppActive: Bool { UIApplication.shared.applicationState == .active }

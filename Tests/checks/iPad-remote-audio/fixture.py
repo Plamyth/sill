@@ -54,7 +54,7 @@ fixture += properties.replace('    private let remoteAudio', '    let remoteAudi
 for line in client.splitlines():
     if any('var ' + name in line for name in [
         'displays:', 'activeDisplayID:', 'supportsDisplaySelection ',
-        'displayInventoryID:', 'desktopSelectionRequired ', 'displayCatalogPeer:']):
+        'displayInventoryID:', 'desktopSelectionRequired ', 'displayCatalogPeer:', 'automaticDisplaySelection:']):
         fixture += line.replace('@Published private(set) ', '') + '\n'
 fixture += connection + '''
     func connectionLost(_ peer: NWConnection, error: Error) {

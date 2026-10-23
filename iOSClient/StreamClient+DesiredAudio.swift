@@ -14,6 +14,9 @@ extension StreamClient {
     func desiredAudioSetConnection(_ connection: NWConnection?) {
         let peer = connection.map(ObjectIdentifier.init)
         guard desiredAudio.peer != peer else { return }
+        retireAudioForwardingWire(unless: peer)
+        suspendAudioForwarding()
+        audioForwardingDevice = nil
         audioAdmission.bind(peer)
         audioCatalogAdmission = nil
         desiredAudio.bind(peer)
@@ -33,10 +36,20 @@ extension StreamClient {
     func desiredAudioObserve(_ list: WindowList, from peer: NWConnection) {
         guard connection === peer else { return }
         let oldScope = desiredAudio.scope
+        audioForwardingCatalogAt = audioForwardingNow
         audioPrivacyState = list.audioPrivacy
         desiredAudio.observe(list, microphone: microphonePolicy.scope, from: ObjectIdentifier(peer))
         if oldScope != desiredAudio.scope { suspendDesiredAudio() }
-        if desiredAudio.privacy != .protected { suspendDesiredAudio() }
+        if desiredAudio.privacy != .protected {
+            audioForwarding.block()
+            applyAudioForwarding(nil)
+            suspendDesiredAudio()
+        }
+        if audioForwarding.phase == .active, audioForwarding.durable?.selection.microphone == true,
+           oldScope?.microphone != nil, desiredAudio.scope?.microphone == nil {
+            audioForwarding.block()
+            applyAudioForwarding(nil)
+        }
     }
 
     func suspendDesiredAudio(preserveManualPermission: Bool = false) {
@@ -61,27 +74,29 @@ extension StreamClient {
     }
 
     func setDesiredAudio(_ direction: IPadDesiredAudio.Direction, enabled: Bool) {
+        var selection = desiredAudio.selection
+        selection[direction] = enabled
+        setDesiredAudioSelection(selection)
+    }
+
+    func setDesiredAudioSelection(_ selection: IPadDesiredAudio.Selection) {
         refreshDesiredAudioIdentity()
+        guard audioForwardingContext != nil || (!selection.microphone && !selection.playback) else { return }
         audioRouteAuthorization = nil
-        desiredAudio.set(direction, desired: enabled)
-        if direction == .microphone { finishPendingAudioPermission() }
+        suspendDesiredAudio()
+        for direction in IPadDesiredAudio.Direction.allCases {
+            desiredAudio.set(direction, desired: selection[direction])
+        }
         desiredAudioSelection = desiredAudio.selection
         if let identity = desiredAudio.identity {
             desiredAudioStore.save(desiredAudio.selection, for: identity)
         }
-        audioAutomaticDirections.remove(direction)
-        guard enabled else {
-            if direction == .microphone { applyMicrophone(microphonePolicy.backgrounded()) }
-            else { remoteAudioControl.sourceWillChange() }
-            return
-        }
-        desiredAudio.markManualAttempt(direction)
-        startDesiredAudio(direction, automatically: false)
+        selectAudioForwarding(selection)
+        reconcileDesiredAudio()
     }
 
     func cancelDesiredAudioRequest() {
-        setDesiredAudio(.microphone, enabled: false)
-        setDesiredAudio(.playback, enabled: false)
+        setDesiredAudioSelection(.init())
     }
 
     private func refreshDesiredAudioIdentity() {
@@ -99,6 +114,7 @@ extension StreamClient {
         refreshDesiredAudioIdentity()
         let foreground = appInForeground && UIApplication.shared.applicationState == .active
         desiredAudio.observeForeground(foreground)
+        reconcileAudioForwarding()
         desiredAudio.observeMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
         guard foreground else {
             if remoteAudioStatus.requested || microphonePolicy.phase.canStop || microphoneCaptureToken != nil {
@@ -113,12 +129,13 @@ extension StreamClient {
         }
         let starts = desiredAudio.takeAutomaticStarts(foreground: foreground,
             microphoneAuthorized: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-            microphoneCanStart: microphonePolicy.canStart && microphoneCleanupProblem == nil && IPadAudioSession.shared.microphoneAvailable,
-            playbackCanStart: remoteAudioStatus.available && !remoteAudioStatus.requested)
+            microphoneCanStart: audioForwardingPermits(.microphone) && microphonePolicy.canStart && microphoneCleanupProblem == nil && IPadAudioSession.shared.microphoneAvailable,
+            playbackCanStart: audioForwardingPermits(.playback) && remoteAudioStatus.available && !remoteAudioStatus.requested)
         for direction in starts { startDesiredAudio(direction, automatically: true) }
     }
 
     func desiredAudioPermits(_ direction: IPadDesiredAudio.Direction) -> Bool {
+        guard audioForwardingPermits(direction) else { return false }
         guard let current = connection,
               audioAdmission.ticket(for: ObjectIdentifier(current)) == audioCatalogAdmission,
               audioCatalogAdmission != nil else { return false }
@@ -151,11 +168,13 @@ final class IPadAudioResumeObserver {
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification,
             object: nil, queue: .main) { [weak client] _ in
+                client?.suspendAudioForwarding(discardDraft: false)
                 client?.desiredAudio.observeForeground(false)
                 client?.suspendDesiredAudio(preserveManualPermission: true)
             })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main) { [weak client] _ in
+                client?.suspendAudioForwarding()
                 client?.desiredAudio.observeForeground(false)
                 client?.suspendDesiredAudio()
             })

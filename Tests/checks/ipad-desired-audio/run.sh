@@ -8,6 +8,6 @@ swiftc -emit-library -emit-module -module-name StreamProtocol \
     Sources/StreamProtocol/*.swift \
     -o "$out/libStreamProtocol.dylib" -emit-module-path "$out/StreamProtocol.swiftmodule"
 swiftc -I "$out" -L "$out" -lStreamProtocol -Xlinker -rpath -Xlinker "$out" \
-    iOSClient/IPadDesiredAudio.swift iOSClient/IPadMicrophonePolicy.swift \
+    iOSClient/IPadDesiredAudio.swift iOSClient/IPadAudioForwarding.swift iOSClient/IPadMicrophonePolicy.swift \
     iOSClient/IPadRemoteAudioController.swift Tests/checks/ipad-desired-audio/main.swift -o "$out/desired-audio-check"
 "$out/desired-audio-check"

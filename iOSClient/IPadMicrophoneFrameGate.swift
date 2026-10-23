@@ -40,7 +40,7 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
         }
         if let admission {
             guard ticket?.peer == ObjectIdentifier(connection) else { return }
-            admission.withAdmission(ticket, open)
+            admission.withAdmission(ticket, direction: .microphone, open)
         } else { open() }
     }
 
@@ -89,7 +89,7 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
                 send(current.connection, bytes) { [weak self] in self?.complete(generation: generation) }
             }
         }
-        if let admission { admission.withAdmission(ticket, emit) }
+        if let admission { admission.withAdmission(ticket, direction: .microphone, emit) }
         else { emit() }
     }
 
