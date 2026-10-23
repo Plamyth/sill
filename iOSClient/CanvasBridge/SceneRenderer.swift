@@ -12,6 +12,7 @@ enum CanvasPalette {
 enum SceneRenderer {
     @MainActor
     static func png(scene: CanvasScene) async -> Data? {
+        guard scene.nodes.allSatisfy(\.hasValidRotation) else { return nil }
         let visible = scene.visibility
         let drawing: PKDrawing?
         if scene.drawingBase64.isEmpty {
@@ -77,6 +78,10 @@ enum SceneRenderer {
             for node in scene.nodes where visible.nodeIDs.contains(node.id) {
                 let frame = CGRect(x: node.frame.x, y: node.frame.y,
                                    width: node.frame.width, height: node.frame.height)
+                cg.saveGState()
+                cg.translateBy(x:node.frame.center.x,y:node.frame.center.y)
+                cg.rotate(by:node.rotationRadians)
+                cg.translateBy(x:-node.frame.center.x,y:-node.frame.center.y)
                 CanvasPalette.nodeFill.setFill()
                 UIBezierPath(roundedRect: frame, cornerRadius: 14).fill()
                 let color = node.confidence == .proposal ? UIColor.systemOrange : CanvasPalette.link
@@ -89,6 +94,7 @@ enum SceneRenderer {
                     .foregroundColor: CanvasPalette.nodeText
                 ]
                 (node.text as NSString).draw(in: frame.insetBy(dx: 16, dy: 16), withAttributes: attributes)
+                cg.restoreGState()
             }
             for note in scene.annotations where visible.annotationIDs.contains(note.id) {
                 guard let node = scene.nodes.first(where: { $0.id == note.nodeId }) else { continue }

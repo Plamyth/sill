@@ -113,6 +113,7 @@ final class CanvasStore: ObservableObject {
         didSet {
             linkSceneGeneration &+= 1
             nodeResizeDrag = nil
+            nodeRotationDrag = nil
             let visible = scene.visibility.nodeIDs
             if oldValue.id != scene.id || selectedLink.map({ !scene.visibility.linkIDs.contains($0) }) == true {
                 clearLinkSelection()
@@ -132,6 +133,7 @@ final class CanvasStore: ObservableObject {
         didSet {
             if oldValue != mode {
                 nodeResizeDrag = nil
+                nodeRotationDrag = nil
                 clearPendingLink()
                 clearLinkSelection()
                 if mode != .lasso { setInkSelection([]) }
@@ -146,6 +148,7 @@ final class CanvasStore: ObservableObject {
             if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
             if oldValue != selectedNode {
                 nodeResizeDrag = nil
+                nodeRotationDrag = nil
                 clearPendingLink()
                 if selectedNode != nil { clearLinkSelection() }
             }
@@ -218,8 +221,8 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func beginNodeResize(_ expected: CanvasNode, sceneID: UUID, owner: UUID) -> Bool {
-        guard nodeResizeDrag == nil, endpointDrag == nil, scene.id == sceneID,
-              expected.frame.isValidLinkFrame else { return false }
+        guard nodeResizeDrag == nil, nodeRotationDrag == nil, endpointDrag == nil, scene.id == sceneID,
+              expected.hasValidRotation, expected.frame.isValidLinkFrame else { return false }
         let drag = NodeResizeDrag(owner:owner,generation:linkSceneGeneration,sceneID:sceneID,
             revision:scene.revision,expected:expected,frame:expected.frame)
         guard nodeResizeIsCurrent(drag) else { return false }
@@ -237,10 +240,20 @@ final class CanvasStore: ObservableObject {
     @discardableResult
     func updateNodeResize(owner: UUID, translation: CanvasPoint) -> Bool {
         guard var drag = nodeResizeDrag, drag.owner == owner else { return false }
+        guard let delta = drag.expected.rotatedVector(translation,inverse:true),
+              let worldHalf = drag.expected.rotatedVector(.init(x:delta.x / 2,y:delta.y / 2)) else {
+            cancelNodeResize(owner:owner)
+            return false
+        }
         var frame = drag.expected.frame
-        frame.width += translation.x
-        frame.height += translation.y
-        guard nodeResizeIsCurrent(drag), frame.isValidLinkFrame else {
+        frame.width += delta.x
+        frame.height += delta.y
+        // 회전된 좌상단을 고정하고 손잡이는 화면 이동량 그대로 추종한다.
+        frame.x += worldHalf.x - delta.x / 2
+        frame.y += worldHalf.y - delta.y / 2
+        var resized = drag.expected
+        resized.frame = frame
+        guard nodeResizeIsCurrent(drag), frame.isValidLinkFrame, resized.hasValidRotation else {
             cancelNodeResize(owner:owner)
             status = "요소 상태나 크기가 바뀌어 크기 조절을 취소했습니다. 최신 내용을 유지합니다."
             return false
@@ -251,10 +264,15 @@ final class CanvasStore: ObservableObject {
     }
 
     var displayedScene: CanvasScene {
-        guard let drag = nodeResizeDrag, nodeResizeIsCurrent(drag),
-              let index = scene.nodes.firstIndex(where:{ $0.id == drag.expected.id }) else { return scene }
         var preview = scene
-        preview.nodes[index].frame = drag.frame
+        if let drag = nodeResizeDrag, nodeResizeIsCurrent(drag),
+           let index = preview.nodes.firstIndex(where:{ $0.id == drag.expected.id }) {
+            preview.nodes[index].frame = drag.frame
+        }
+        if let drag = nodeRotationDrag, nodeRotationIsCurrent(drag),
+           let index = preview.nodes.firstIndex(where:{ $0.id == drag.expected.id }) {
+            preview.nodes[index].rotationDegrees = drag.degrees
+        }
         return preview
     }
 
@@ -280,8 +298,105 @@ final class CanvasStore: ObservableObject {
     func adjustNodeSize(_ expected: CanvasNode, sceneID: UUID, by translation: CanvasPoint) -> Bool {
         let owner = UUID()
         guard beginNodeResize(expected,sceneID:sceneID,owner:owner) else { return false }
-        guard updateNodeResize(owner:owner,translation:translation) else { return false }
+        guard let world = expected.rotatedVector(translation),
+              updateNodeResize(owner:owner,translation:world) else {
+            cancelNodeResize(owner:owner)
+            return false
+        }
         return finishNodeResize(owner:owner)
+    }
+
+    struct NodeRotationDrag {
+        let owner: UUID
+        let generation: UInt64
+        let sceneID: UUID
+        let revision: Int
+        let expected: CanvasNode
+        var degrees: Double?
+    }
+    @Published private(set) var nodeRotationDrag: NodeRotationDrag?
+
+    private func nodeRotationIsCurrent(_ drag: NodeRotationDrag) -> Bool {
+        mode == .select && selectedNode == drag.expected.id &&
+            drag.generation == linkSceneGeneration && scene.id == drag.sceneID &&
+            scene.revision == drag.revision && scene.visibility.nodeIDs.contains(drag.expected.id) &&
+            scene.nodes.contains { CanvasScene.sameNode($0,drag.expected) }
+    }
+
+    @discardableResult
+    func beginNodeRotation(_ expected: CanvasNode, sceneID: UUID, owner: UUID) -> Bool {
+        guard nodeRotationDrag == nil, nodeResizeDrag == nil, endpointDrag == nil,
+              scene.id == sceneID, expected.frame.isValidLinkFrame, expected.hasValidRotation else { return false }
+        let drag = NodeRotationDrag(owner:owner,generation:linkSceneGeneration,sceneID:sceneID,
+            revision:scene.revision,expected:expected,degrees:expected.rotationDegrees)
+        guard nodeRotationIsCurrent(drag) else { return false }
+        nodeRotationDrag = drag
+        return true
+    }
+
+    @discardableResult
+    func cancelNodeRotation(owner: UUID) -> Bool {
+        guard nodeRotationDrag?.owner == owner else { return false }
+        nodeRotationDrag = nil
+        return true
+    }
+
+    @discardableResult
+    func updateNodeRotation(owner: UUID, degrees: Double) -> Bool {
+        guard var drag = nodeRotationDrag, drag.owner == owner else { return false }
+        var rotated = drag.expected
+        rotated.rotationDegrees = degrees
+        guard nodeRotationIsCurrent(drag), rotated.hasValidRotation else {
+            cancelNodeRotation(owner:owner)
+            status = "요소 상태나 회전값을 확인할 수 없어 회전을 취소했습니다. 최신 내용을 유지합니다."
+            return false
+        }
+        // 0도 옛 문서의 nil과 no-op은 저장 표현까지 그대로 둔다.
+        drag.degrees = degrees == (drag.expected.rotationDegrees ?? 0) ? drag.expected.rotationDegrees : degrees
+        nodeRotationDrag = drag
+        return true
+    }
+
+    @discardableResult
+    func updateNodeRotation(owner: UUID, from start: CanvasPoint, to point: CanvasPoint) -> Bool {
+        guard let drag = nodeRotationDrag, drag.owner == owner else { return false }
+        let center = drag.expected.frame.center
+        let a = CanvasPoint(x:start.x - center.x,y:start.y - center.y)
+        let b = CanvasPoint(x:point.x - center.x,y:point.y - center.y)
+        guard [a.x,a.y,b.x,b.y].allSatisfy(\.isFinite),
+              hypot(a.x,a.y) > 0, hypot(b.x,b.y) > 0 else {
+            cancelNodeRotation(owner:owner)
+            return false
+        }
+        let difference = atan2(b.y,b.x) - atan2(a.y,a.x)
+        let delta = atan2(sin(difference),cos(difference)) * 180 / .pi
+        return updateNodeRotation(owner:owner,degrees:(drag.expected.rotationDegrees ?? 0) + delta)
+    }
+
+    @discardableResult
+    func finishNodeRotation(owner: UUID) -> Bool {
+        guard let drag = nodeRotationDrag, drag.owner == owner else { return false }
+        let current = nodeRotationIsCurrent(drag)
+        nodeRotationDrag = nil
+        guard current, let index = scene.nodes.firstIndex(where:{ $0.id == drag.expected.id }) else { return false }
+        guard drag.degrees != drag.expected.rotationDegrees else { return true }
+        let before = scene
+        var next = scene
+        next.nodes[index].rotationDegrees = drag.degrees
+        guard next.nodes[index].hasValidRotation else { return false }
+        next.revision += 1
+        scene = next
+        recordGraphEdit(before:before)
+        status = "요소를 회전했습니다. 구조 수정 되돌리기와 다시 실행을 사용할 수 있습니다."
+        return true
+    }
+
+    @discardableResult
+    func rotateNode(_ expected: CanvasNode, sceneID: UUID, to degrees: Double) -> Bool {
+        let owner = UUID()
+        guard beginNodeRotation(expected,sceneID:sceneID,owner:owner),
+              updateNodeRotation(owner:owner,degrees:degrees) else { return false }
+        return finishNodeRotation(owner:owner)
     }
 
     var canUndoGraph: Bool {
@@ -369,7 +484,7 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func beginEndpointDrag(_ endpoint: CanvasLink.Endpoint, linkID: UUID, owner: UUID) -> Bool {
-        guard endpointDrag == nil, mode == .select, selectedLink == linkID,
+        guard endpointDrag == nil, nodeResizeDrag == nil, nodeRotationDrag == nil, mode == .select, selectedLink == linkID,
               let link = scene.links.first(where:{ $0.id == linkID }), scene.linkEndpoints(link) != nil else { return false }
         endpointDrag = EndpointDrag(owner:owner,generation:linkSceneGeneration,sceneID:scene.id,revision:scene.revision,
             expected:link,endpoint:endpoint,anchor:endpoint == .from ? link.fromAnchor : link.toAnchor)
@@ -384,8 +499,9 @@ final class CanvasStore: ObservableObject {
             return false
         }
         let nodeID = drag.endpoint == .from ? drag.expected.from : drag.expected.to
-        guard let frame = scene.nodes.first(where:{ $0.id == nodeID })?.frame,
-              let anchor = CanvasLinkAnchor.nearest(to:point,in:frame) else {
+        guard let node = scene.nodes.first(where:{ $0.id == nodeID }), node.hasValidRotation,
+              let local = node.scenePoint(point,inverse:true),
+              let anchor = CanvasLinkAnchor.nearest(to:local,in:node.frame) else {
             endpointDrag = nil
             status = "연결 위치를 확인할 수 없어 드래그를 취소했습니다."
             return false
@@ -1670,7 +1786,8 @@ final class CanvasStore: ObservableObject {
     func importScene(_ imported: CanvasScene) throws {
         guard !vaultDirty, !vaultSaving else { throw CocoaError(.userCancelled) }
         guard imported.schemaVersion == 1, imported.width > 0, imported.height > 0,
-              imported.nodes.count < 1000, imported.strokes.count < 10000 else {
+              imported.nodes.count < 1000, imported.strokes.count < 10000,
+              imported.nodes.allSatisfy(\.hasValidRotation) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         guard let drawingData = Data(base64Encoded: imported.drawingBase64) else {

@@ -3,6 +3,8 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import struct
+import sys
 import unittest
 import uuid
 from unittest.mock import patch
@@ -42,6 +44,46 @@ class AdapterContract(unittest.TestCase):
         self.assertEqual(value['nodes'][0]['sourceStrokeIds'],[])
         self.assertEqual(value['nodes'][0]['id'],adapter.NODE)
         self.assertEqual(adapter.pixel()[:8],b'\x89PNG\r\n\x1a\n')
+
+    def test_rotation_png_requires_decoded_canvas_and_following_link(self):
+        import io, math
+        from PIL import Image, ImageDraw
+        self.assertFalse(adapter.valid_canvas_png(adapter.pixel()))
+        self.assertFalse(adapter.valid_canvas_png(b'\x89PNG\r\n\x1a\n'+bytes(16)))
+        scene = adapter.fixture(str(uuid.uuid4()))
+        scene['nodes'][0]['rotationDegrees'] = 45
+        scene['nodes'].append(dict(scene['nodes'][0],frame={'x':1050,'y':1000,'width':260,'height':120}))
+        image = Image.new('RGB',(2048,1536),'black')
+        def png():
+            stream=io.BytesIO();image.save(stream,format='PNG');return stream.getvalue()
+        self.assertFalse(adapter.valid_canvas_png(png(),scene))
+        draw=ImageDraw.Draw(image)
+        draw.line([(885,660),(1050,1060)],fill='cyan',width=4)
+        self.assertFalse(adapter.valid_canvas_png(png(),scene))
+        draw.line([(755+130/math.sqrt(2),660+130/math.sqrt(2)),(1050,1060)],fill='cyan',width=4)
+        self.assertFalse(adapter.valid_canvas_png(png(),scene))
+        points=[(755+(x-y)/math.sqrt(2),660+(x+y)/math.sqrt(2))
+                for x,y in [(-130,-60),(130,-60),(130,60),(-130,60)]]
+        draw.polygon(points,fill=(85,85,85))
+        self.assertTrue(adapter.valid_canvas_png(png(),scene))
+        self.assertFalse(adapter.valid_canvas_png(png()[:24],scene))
+
+    def test_live_update_occurs_once_only_after_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory)/'live.log'
+            calls = []
+            script = "import time; print('CCR_ROTATION_LIVE_READY',flush=True); time.sleep(.3); print('CCR_ROTATION_LIVE_READY',flush=True); time.sleep(.3)"
+            adapter.run_live_harness([sys.executable,'-c',script],log,lambda:calls.append(log.read_text()),3)
+            self.assertEqual(len(calls),1)
+            self.assertIn('CCR_ROTATION_LIVE_READY',calls[0])
+
+    def test_live_update_without_readiness_or_after_failure_is_not_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for script in ["print('not ready')", "import sys; print('CCR_ROTATION_LIVE_READY',flush=True); sys.exit(2)"]:
+                with self.assertRaisesRegex(adapter.Held,'callback_failed'):
+                    adapter.run_live_harness([sys.executable,'-c',script],Path(directory)/'live.log',lambda:None,3)
+            with self.assertRaisesRegex(adapter.Held,'timeout'):
+                adapter.run_live_harness([sys.executable,'-c','import time; time.sleep(5)'],Path(directory)/'timeout.log',lambda:None,.15)
 
     def test_failed_copy_is_not_silently_absent(self):
         import subprocess

@@ -756,10 +756,15 @@ struct CanvasWorkspace: View {
                 }
                 if store.mode == .select, let id = store.selectedNode, visible.nodeIDs.contains(id),
                    let node = store.scene.nodes.first(where:{ $0.id == id }),
-                   let frame = displayed.nodes.first(where:{ $0.id == id })?.frame,
-                   frame.isValidLinkFrame {
+                   let shown = displayed.nodes.first(where:{ $0.id == id }),
+                   let corner = shown.scenePoint(.init(x:shown.frame.x + shown.frame.width,y:shown.frame.y + shown.frame.height)),
+                   let rotationHandle = shown.scenePoint(.init(x:shown.frame.center.x,y:shown.frame.y + shown.frame.height + 44 / store.zoom)) {
                     CanvasNodeResizeHandle(store:store,node:node,sceneID:store.scene.id)
-                        .position(x:frame.x + frame.width,y:frame.y + frame.height)
+                        .position(x:corner.x,y:corner.y)
+                        .allowsHitTesting(diagramMode != .diagram)
+                        .accessibilityHidden(diagramMode == .diagram)
+                    CanvasNodeRotationHandle(store:store,node:node,sceneID:store.scene.id)
+                        .position(x:rotationHandle.x,y:rotationHandle.y)
                         .allowsHitTesting(diagramMode != .diagram)
                         .accessibilityHidden(diagramMode == .diagram)
                 }
@@ -1102,6 +1107,74 @@ struct CanvasWorkspace: View {
                 store.applyAgentRevision(revision)
             } else { store.status = "에이전트 주석을 기다리고 있습니다." }
         } catch { store.status = "주석 확인 실패: \(error.localizedDescription)" }
+    }
+}
+
+private struct CanvasNodeRotationHandle: View {
+    @ObservedObject var store: CanvasStore
+    let node: CanvasNode
+    let sceneID: UUID
+    @State private var dragOwner: UUID?
+    @GestureState private var gestureActive = false
+
+    private var degrees: Double {
+        store.displayedScene.nodes.first(where:{ $0.id == node.id })?.rotationDegrees ?? 0
+    }
+
+    var body: some View {
+        Image(systemName:"arrow.clockwise")
+            .font(.system(size:16 / store.zoom,weight:.bold))
+            .foregroundStyle(Color(uiColor:CanvasPalette.link))
+            .frame(width:24 / store.zoom,height:24 / store.zoom)
+            .background(Color(uiColor:CanvasPalette.background),in:Circle())
+            .frame(width:44 / store.zoom,height:44 / store.zoom)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance:0,coordinateSpace:.named("canvasScene"))
+                .updating($gestureActive) { _, active, _ in active = true }
+                .onChanged { value in
+                    if dragOwner == nil {
+                        let owner = UUID()
+                        dragOwner = owner
+                        store.beginNodeRotation(node,sceneID:sceneID,owner:owner)
+                    }
+                    guard let owner = dragOwner else { return }
+                    store.updateNodeRotation(owner:owner,
+                        from:.init(x:value.startLocation.x,y:value.startLocation.y),
+                        to:.init(x:value.location.x,y:value.location.y))
+                }.onEnded { value in
+                    guard let owner = dragOwner else { return }
+                    defer { dragOwner = nil }
+                    guard store.updateNodeRotation(owner:owner,
+                        from:.init(x:value.startLocation.x,y:value.startLocation.y),
+                        to:.init(x:value.location.x,y:value.location.y)) else {
+                        store.cancelNodeRotation(owner:owner)
+                        return
+                    }
+                    store.finishNodeRotation(owner:owner)
+                })
+            .onChange(of:gestureActive) { _, active in
+                if !active, let owner = dragOwner {
+                    store.cancelNodeRotation(owner:owner)
+                    dragOwner = nil
+                }
+            }
+            .onDisappear {
+                if let owner = dragOwner { store.cancelNodeRotation(owner:owner) }
+                dragOwner = nil
+            }
+            .accessibilityLabel("선택한 요소 회전")
+            .accessibilityHint("손잡이를 요소 중심 둘레로 끌어 회전합니다.")
+            .accessibilityValue(Text("회전 \(degrees,specifier:"%.0f")도"))
+            .accessibilityAction(named:Text("시계 방향으로 15도 회전")) {
+                store.rotateNode(node,sceneID:sceneID,to:(node.rotationDegrees ?? 0) + 15)
+            }
+            .accessibilityAction(named:Text("반시계 방향으로 15도 회전")) {
+                store.rotateNode(node,sceneID:sceneID,to:(node.rotationDegrees ?? 0) - 15)
+            }
+            .accessibilityAction(named:Text("회전 원위치")) {
+                store.rotateNode(node,sceneID:sceneID,to:0)
+            }
+            .accessibilityIdentifier("canvasNodeRotate-\(node.id.uuidString)")
     }
 }
 
@@ -1763,18 +1836,20 @@ private struct NodeTile: View {
                 .stroke(node.confidence == .proposal ? .orange :
                     store.selectedNode == node.id ? Color(uiColor:CanvasPalette.link) : .gray,
                     lineWidth:3))
+            .rotationEffect(.radians(node.rotationRadians))
             .onTapGesture { store.select(node.id) }
             .accessibilityElement(children:.combine)
             .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")
             .accessibilityValue(node.isCollapsed == true ? "하위 요소 접힘" : "하위 요소 펼침")
-            .gesture(DragGesture().onChanged { value in
-                guard store.nodeResizeDrag == nil, store.scene.visibility.nodeIDs.contains(node.id) else { return }
+            .gesture(DragGesture(coordinateSpace:.named("canvasScene")).onChanged { value in
+                guard store.nodeResizeDrag == nil, store.nodeRotationDrag == nil, store.endpointDrag == nil,
+                      store.scene.visibility.nodeIDs.contains(node.id) else { return }
                 if dragOrigin == nil { dragOrigin = CanvasPoint(x:node.frame.x,y:node.frame.y) }
                 guard let dragOrigin else { return }
                 store.selectedNode = node.id
                 store.moveSelected(to:CGPoint(
-                    x:dragOrigin.x+value.translation.width/store.zoom,
-                    y:dragOrigin.y+value.translation.height/store.zoom))
+                    x:dragOrigin.x+value.translation.width,
+                    y:dragOrigin.y+value.translation.height))
             }.onEnded { _ in dragOrigin = nil })
     }
 }

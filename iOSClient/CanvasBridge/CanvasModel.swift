@@ -741,6 +741,88 @@ struct CanvasNode: Codable, Identifiable, Equatable {
     var sourceStrokeIds: [UUID]
     var vaultNote: VaultNoteReference? = nil
     var isCollapsed: Bool? = nil
+    var rotationDegrees: Double? = nil
+
+    var rotationRadians: Double { (rotationDegrees ?? 0).truncatingRemainder(dividingBy:360) * .pi / 180 }
+
+    static func validRotation(_ degrees: Double) -> Bool {
+        degrees.isFinite && (degrees * .pi / 180).isFinite
+    }
+
+    var hasValidRotation: Bool {
+        guard let degrees = rotationDegrees else { return true }
+        guard Self.validRotation(degrees) else { return false }
+        return degrees == 0 || [CanvasPoint(x:frame.x,y:frame.y),
+            .init(x:frame.x + frame.width,y:frame.y),
+            .init(x:frame.x,y:frame.y + frame.height),
+            .init(x:frame.x + frame.width,y:frame.y + frame.height)].allSatisfy { scenePoint($0) != nil }
+    }
+
+    func rotatedVector(_ vector: CanvasPoint, inverse: Bool = false) -> CanvasPoint? {
+        guard Self.validRotation(rotationDegrees ?? 0), vector.x.isFinite, vector.y.isFinite else { return nil }
+        if rotationRadians == 0 { return vector }
+        let angle = inverse ? -rotationRadians : rotationRadians
+        let point = CanvasPoint(x:vector.x * cos(angle) - vector.y * sin(angle),
+                                y:vector.x * sin(angle) + vector.y * cos(angle))
+        return point.x.isFinite && point.y.isFinite ? point : nil
+    }
+
+    // frame과 anchor는 회전 전 좌표이며 모든 표면이 이 중심 변환을 공유한다.
+    func scenePoint(_ point: CanvasPoint, inverse: Bool = false) -> CanvasPoint? {
+        guard frame.isValidLinkFrame, point.x.isFinite, point.y.isFinite else { return nil }
+        if rotationRadians == 0 && Self.validRotation(rotationDegrees ?? 0) { return point }
+        guard let vector = rotatedVector(.init(x:point.x - frame.center.x,y:point.y - frame.center.y),inverse:inverse)
+        else { return nil }
+        let result = CanvasPoint(x:frame.center.x + vector.x,y:frame.center.y + vector.y)
+        return result.x.isFinite && result.y.isFinite ? result : nil
+    }
+
+    func endpoint(anchor: CanvasLinkAnchor?, toward target: CanvasPoint) -> CanvasPoint? {
+        guard hasValidRotation, let localTarget = scenePoint(target,inverse:true),
+              let local = anchor?.point(in:frame) ?? CanvasLinkAnchor.automatic(in:frame,toward:localTarget)
+        else { return nil }
+        return scenePoint(local)
+    }
+}
+
+extension CanvasNode {
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, frame, text, confidence, sourceStrokeIds, vaultNote, isCollapsed, rotationDegrees
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy:CodingKeys.self)
+        id = try values.decode(UUID.self,forKey:.id)
+        kind = try values.decode(Kind.self,forKey:.kind)
+        frame = try values.decode(CanvasRect.self,forKey:.frame)
+        text = try values.decode(String.self,forKey:.text)
+        confidence = try values.decode(Confidence.self,forKey:.confidence)
+        sourceStrokeIds = try values.decode([UUID].self,forKey:.sourceStrokeIds)
+        vaultNote = try values.decodeIfPresent(VaultNoteReference.self,forKey:.vaultNote)
+        isCollapsed = try values.decodeIfPresent(Bool.self,forKey:.isCollapsed)
+        rotationDegrees = try values.decodeIfPresent(Double.self,forKey:.rotationDegrees)
+        guard hasValidRotation else {
+            throw DecodingError.dataCorruptedError(forKey:.rotationDegrees,in:values,
+                debugDescription:"회전값이나 회전 좌표가 유한 범위를 벗어났습니다. 원본을 보존합니다.")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard hasValidRotation else {
+            throw EncodingError.invalidValue(self,.init(codingPath:encoder.codingPath,
+                debugDescription:"잘못된 회전값은 저장할 수 없습니다. 마지막 정상 원본을 유지합니다."))
+        }
+        var values = encoder.container(keyedBy:CodingKeys.self)
+        try values.encode(id,forKey:.id)
+        try values.encode(kind,forKey:.kind)
+        try values.encode(frame,forKey:.frame)
+        try values.encode(text,forKey:.text)
+        try values.encode(confidence,forKey:.confidence)
+        try values.encode(sourceStrokeIds,forKey:.sourceStrokeIds)
+        try values.encodeIfPresent(vaultNote,forKey:.vaultNote)
+        try values.encodeIfPresent(isCollapsed,forKey:.isCollapsed)
+        try values.encodeIfPresent(rotationDegrees,forKey:.rotationDegrees)
+    }
 }
 
 struct CanvasLinkAnchor: Codable, Equatable {
@@ -869,11 +951,10 @@ struct CanvasScene: Codable, Equatable {
 
     func linkEndpoints(_ link: CanvasLink) -> (from: CanvasPoint, to: CanvasPoint)? {
         guard link.hasValidAnchors,
-              let from = nodes.first(where:{ $0.id == link.from })?.frame,
-              let to = nodes.first(where:{ $0.id == link.to })?.frame,
-              from.isValidLinkFrame, to.isValidLinkFrame,
-              let a = link.fromAnchor?.point(in:from) ?? CanvasLinkAnchor.automatic(in:from,toward:to.center),
-              let b = link.toAnchor?.point(in:to) ?? CanvasLinkAnchor.automatic(in:to,toward:from.center)
+              let from = nodes.first(where:{ $0.id == link.from }),
+              let to = nodes.first(where:{ $0.id == link.to }),
+              let a = from.endpoint(anchor:link.fromAnchor,toward:to.frame.center),
+              let b = to.endpoint(anchor:link.toAnchor,toward:from.frame.center)
         else { return nil }
         return (a,b)
     }
@@ -1007,7 +1088,9 @@ struct CanvasScene: Codable, Equatable {
 
     @discardableResult
     mutating func editGraph(nodeEdits: [CanvasNodeTextEdit], linkEdits: [CanvasLinkEdit]) -> Bool {
-        guard !nodeEdits.isEmpty || !linkEdits.isEmpty,
+        guard nodes.allSatisfy(\.hasValidRotation),
+              nodeEdits.allSatisfy({ $0.expected.hasValidRotation }),
+              !nodeEdits.isEmpty || !linkEdits.isEmpty,
               Set(nodes.map(\.id)).count == nodes.count,
               Set(links.map(\.id)).count == links.count,
               Set(nodeEdits.map { $0.expected.id }).count == nodeEdits.count,
@@ -1040,7 +1123,9 @@ struct CanvasScene: Codable, Equatable {
     }
 
     mutating func apply(_ change: AgentRevision, basedOn sent: CanvasScene? = nil) -> Bool {
-        guard change.sceneId == id else { return false }
+        guard change.sceneId == id, nodes.allSatisfy(\.hasValidRotation),
+              change.proposedNodes.allSatisfy(\.hasValidRotation),
+              (change.nodeEdits ?? []).allSatisfy({ $0.expected.hasValidRotation }) else { return false }
         let annotationIds = change.annotations.map(\.id)
         let proposalIds = change.proposedNodes.map(\.id)
         let proposedLinks = change.proposedLinks ?? []

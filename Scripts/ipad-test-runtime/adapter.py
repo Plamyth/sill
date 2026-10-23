@@ -3,10 +3,13 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
+import io
+import math
 import hashlib
 import ipaddress
 import json
 import os
+import signal
 from pathlib import Path
 import plistlib
 import runpy
@@ -29,7 +32,8 @@ NODE = 'D29DDF60-B4C6-48DD-A75A-219C8F2A52A7'
 ORIGINALS = ['CanvasScene.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/ledger.json',
              'CanvasBlockEdit/recovery.json', 'CCR Sill/keyboard-diagnostics.json',
              'CCR Sill/microphone-diagnostics.json']
-ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
+ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
+           PATH='/Applications/Xcode.app/Contents/Developer/usr/bin:' + os.environ.get('PATH', '/usr/bin:/bin'))
 
 class Held(ValueError):
     pass
@@ -100,7 +104,8 @@ def copy_file(config, work, source, destination, direction='from', optional=Fals
 def snapshots(config, work, label):
     result = {}
     installed = work / (label + '-installed-user-app.json')
-    device(config, ['info', 'apps', '--bundle-id', USER_BUNDLE, '--json-output', str(installed)], work / (label + '-apps.log'))
+    device(config, ['info', 'apps', '--filter', 'bundleIdentifier == "' + USER_BUNDLE + '"',
+                    '--json-output', str(installed)], work / (label + '-apps.log'))
     result['installedUserApp'] = read(installed).get('result')
     for relative in ORIGINALS:
         target = work / label / relative
@@ -133,11 +138,14 @@ def fixture(scene_id):
                 {'id': NODE, 'kind': 'note', 'text': '시험 글자', 'confidence': 'confirmed',
                  'frame': {'x': 625, 'y': 600, 'width': 260, 'height': 120}, 'sourceStrokeIds': []}]}
 
-def save_scene(server, scene, image, base):
+def encode_scene(server, scene):
     encoded = subprocess.run([str(server['encoder'])], input=json.dumps(scene, ensure_ascii=False).encode(), env=ENV, capture_output=True, timeout=30)
     require(encoded.returncode == 0, 'native_scene_encoding_failed')
+    return encoded.stdout
+
+def save_scene(server, scene, image, base):
     return request(server, 'PUT', '/vault/canvas?id=' + scene['id'].lower(), {
-        'revision': scene['revision'], 'sceneJSONBase64': base64.b64encode(encoded.stdout).decode(),
+        'revision': scene['revision'], 'sceneJSONBase64': base64.b64encode(encode_scene(server,scene)).decode(),
         'imagePNGBase64': base64.b64encode(image).decode(), 'baseSha256': base})
 
 def runtime_readback(config, work, test_id):
@@ -234,7 +242,29 @@ def deploy(config, work, source):
     stop_owned(config, work)
     return result
 
-def harness(config, work, method):
+def run_live_harness(args, log, on_ready, timeout=180):
+    with log.open('w') as output:
+        process = subprocess.Popen(args, env=ENV, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        deadline = time.monotonic() + timeout
+        applied = False
+        try:
+            while process.poll() is None:
+                require(time.monotonic() < deadline, 'live_rotation_ui_timeout')
+                if not applied and 'CCR_ROTATION_LIVE_READY' in log.read_text():
+                    on_ready()
+                    applied = True
+                time.sleep(0.1)
+            require(process.returncode == 0 and applied, 'live_rotation_ui_or_callback_failed')
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+
+def harness(config, work, method, variables=None, on_ready=None):
     lease(config)
     derived = work / 'HarnessDerivedData'
     if not list((derived / 'Build/Products').glob('*.xctestrun')):
@@ -249,12 +279,132 @@ def harness(config, work, method):
         if isinstance(value, dict) and key != '__xctestrun_metadata__':
             value.setdefault('EnvironmentVariables', {})['CCR_TEST_RUNTIME_ID'] = read(work / 'deployment.json')['testId']
             value['EnvironmentVariables']['CCR_TEST_BUNDLE'] = BUNDLE
+            for name in ['CCR_ROTATION_EXPECTED', 'CCR_ROTATION_DELTA']:
+                value['EnvironmentVariables'].pop(name, None)
+            value['EnvironmentVariables'].update(variables or {})
     runs[0].write_bytes(plistlib.dumps(run))
     result = work / (method + '-' + str(time.time_ns()) + '.xcresult')
-    command(['xcodebuild', 'test-without-building', '-xctestrun', runs[0], '-destination', 'id=' + config['deviceUDID'],
-             '-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/' + method, '-resultBundlePath', result],
-            work / (method + '.log'), 180)
+    args = ['xcodebuild', 'test-without-building', '-xctestrun', str(runs[0]), '-destination', 'id=' + config['deviceUDID'],
+            '-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/' + method, '-resultBundlePath', str(result),
+            '-parallel-testing-enabled', 'NO']
+    log = work / (method + '.log')
+    if on_ready is None:
+        command(args, log, 180)
+    else:
+        run_live_harness(args, log, on_ready)
     return result
+
+def valid_canvas_png(data, scene=None):
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as encoded:
+            if encoded.format != 'PNG':
+                return False
+            encoded.verify()
+        with Image.open(io.BytesIO(data)) as encoded:
+            image = encoded.convert('RGB')
+            image.load()
+        width, height = image.size
+        if width < 2048 or height < 1536 or width * 1536 != height * 2048:
+            return False
+        if scene is None:
+            return True
+        scale = width / scene['width']
+        def cyan(point):
+            x,y = (round(v * scale) for v in point)
+            radius = max(2,round(2 * scale))
+            return any(r < 100 and g > 150 and b > 150
+                       for r,g,b in image.crop((x-radius,y-radius,x+radius+1,y+radius+1)).getdata())
+        first, second = scene['nodes'][:2]
+        f,g = first['frame'],second['frame']
+        angle = math.radians(first.get('rotationDegrees',0))
+        start = (f['x']+f['width']/2+math.cos(angle)*f['width']/2,
+                 f['y']+f['height']/2+math.sin(angle)*f['width']/2)
+        end = (g['x'],g['y']+g['height']/2)
+        def gray(point):
+            x,y = (round(v * scale) for v in point)
+            r,g,b = image.getpixel((x,y))
+            return 30 < r < 140 and abs(r-g) < 10 and abs(g-b) < 10
+        center = (f['x']+f['width']/2,f['y']+f['height']/2)
+        inside = (center[0]+100*math.cos(angle),center[1]+100*math.sin(angle))
+        outside = (center[0]+120,center[1])
+        if not gray(inside) or gray(outside):
+            return False
+        return all(cyan((start[0]+(end[0]-start[0])*t,start[1]+(end[1]-start[1])*t))
+                   for t in [0.03,0.15,0.35,0.6,0.8,0.97])
+    except (ImportError, OSError, ValueError, KeyError, IndexError, SyntaxError):
+        return False
+
+def accept_rotation(config, work, server, vault, test_id):
+    code, prior = request(server, 'GET', '/vault/canvas?id=' + test_id)
+    require(code == 200, 'rotation_seed_lookup_failed')
+    start = fixture(test_id)
+    start['revision'] = prior['revision'] + 1
+    start['nodes'][0]['text'] = '회전 검사'
+    second = '42478F2C-F81D-4AC9-B714-ECBD9DDAC411'
+    start['nodes'].append(dict(start['nodes'][0], id=second, text='연결 대상',
+                              frame={'x':1050,'y':1000,'width':260,'height':120}))
+    start['links'] = [{'id':'8FBAA143-E660-4E64-8EC1-3B20CE1E2DF9','from':NODE,'to':second,
+                      'label':'회전 추종','fromAnchor':{'side':'right','offset':0.5},
+                      'toAnchor':{'side':'left','offset':0.5}}]
+    start = json.loads(encode_scene(server,start))
+    code, _ = save_scene(server, start, pixel(), prior['noteSha256'])
+    require(code == 200, 'rotation_seed_failed')
+    stop_owned(config, work)
+    seed = work / 'rotation-state'; seed.mkdir(exist_ok=True)
+    write(seed / 'CanvasScene.json', start)
+    copy_file(config, work, seed, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', 'to', replace=True)
+    rotated_ui = harness(config, work, 'testRotateAndSave')
+    def rotated(expected):
+        deadline = time.monotonic() + 20
+        while True:
+            code, value = request(server, 'GET', '/vault/canvas?id=' + test_id)
+            require(code == 200, 'rotation_vault_lookup_failed')
+            scene = json.loads(base64.b64decode(value['sceneJSONBase64']))
+            if abs(scene['nodes'][0].get('rotationDegrees',0)-expected) < 1:
+                return value, scene
+            require(time.monotonic() < deadline, 'rotation_not_saved')
+            time.sleep(0.2)
+    saved, actual = rotated(45)
+    angle = actual['nodes'][0]['rotationDegrees']
+    preserved = json.loads(json.dumps(actual))
+    preserved['revision'] = start['revision']; preserved['nodes'][0].pop('rotationDegrees', None)
+    require(preserved == start, 'rotation_changed_unrelated_scene_data')
+    assets = vault / 'CCR Canvas/Assets'
+    image = next((p for p in assets.iterdir() if sha(p.read_bytes()) == saved['imageSha256']), None)
+    require(image is not None and image.read_bytes()[:8] == b'\x89PNG\r\n\x1a\n' and
+            valid_canvas_png(image.read_bytes(),actual), 'rotation_native_png_missing')
+    require(sha((vault / saved['path']).read_bytes()) == saved['noteSha256'], 'rotation_markdown_hash_mismatch')
+    rendered = work / 'rotation-rendered-45.png'; shutil.copyfile(image,rendered)
+    reopen = harness(config, work, 'testReopenRotatedScene', {'CCR_ROTATION_EXPECTED':'45'})
+    native90 = harness(config, work, 'testRotateAndSave', {'CCR_ROTATION_EXPECTED':'90','CCR_ROTATION_DELTA':'45'})
+    right_angle, scene90 = rotated(90)
+    image90 = next((p for p in assets.iterdir() if sha(p.read_bytes()) == right_angle['imageSha256']), None)
+    require(image90 is not None and valid_canvas_png(image90.read_bytes(),scene90), 'rotation_90_native_png_missing')
+    rendered90 = work / 'rotation-rendered-90.png'; shutil.copyfile(image90,rendered90)
+    restore45 = harness(config, work, 'testRotateAndSave', {'CCR_ROTATION_EXPECTED':'45','CCR_ROTATION_DELTA':'-45'})
+    saved, actual = rotated(45)
+    remote = json.loads(json.dumps(actual)); remote['revision'] += 1
+    remote['nodes'][0]['rotationDegrees'] = 90
+    def apply_remote():
+        status, _ = save_scene(server, remote, rendered90.read_bytes(), saved['noteSha256'])
+        require(status == 200, 'rotation_remote_update_failed')
+    live = harness(config, work, 'testLiveRotatedRemoteRevision', on_ready=apply_remote)
+    final_reopen = harness(config, work, 'testReopenRotatedScene', {'CCR_ROTATION_EXPECTED':'90'})
+    code, final = request(server, 'GET', '/vault/canvas?id=' + test_id)
+    require(code == 200 and json.loads(base64.b64decode(final['sceneJSONBase64'])) == remote,
+            'rotation_reverse_scene_mismatch')
+    local = work / 'rotation-device-scene.json'
+    copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/CanvasScene.json', local)
+    require(read(local) == remote, 'rotation_reverse_device_mismatch')
+    proof = {'ui':str(rotated_ui),'reopen':str(reopen),'live':str(live),'finalReopen':str(final_reopen),
+             'native90':str(native90),'restore45':str(restore45),
+             'localRotation':angle,'remoteRotation':90,'scene':actual,'reverseScene':remote,
+             'renderedImage':str(rendered),'remoteRenderedImage':str(rendered90),
+             'remotePNGSource':'실제 iPad의 같은 노드·내용·90도 장면을 production SceneRenderer로 렌더링',
+             'vault':saved,'finalVault':final,'deviceScene':str(local)}
+    write(work / 'rotation-functional-readback.json', proof)
+    return proof
 
 def relay_runtime(config, work, source):
     relay_repo = Path(config['relayRepo']).resolve()
@@ -394,10 +544,12 @@ def accept(config, work, source):
         code, _ = save_scene(server, actual, pixel(), current['noteSha256']); require(code == 200, 'reverse_update_failed')
         command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
         reverse = harness(config, work, 'testReopenRemoteRevision')
+        rotation = accept_rotation(config, work, server, vault, test_id)
         require(snapshots(config, work, 'user-after-accept') == before, 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
         require(all(observed.get(k) == source[k] for k in source) and observed.get('executableSHA256') == deployed['executableSHA256'], 'accepted_runtime_mismatch')
-        proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed, 'originalPreserved': True}
+        proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed,
+                 'rotation':rotation, 'originalPreserved': True}
         write(work / 'functional-readback.json', proof)
         accepted = True
     finally:
