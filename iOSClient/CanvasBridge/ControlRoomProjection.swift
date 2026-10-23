@@ -25,6 +25,7 @@ struct ControlRoomProjection: Decodable {
     let sourceObservedAt: String?
     let connection: Connection?
     var transportConnected: Bool? = nil
+    fileprivate(set) var wireGeneration: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, generatedAt, workspace, activeVoiceId, activeVoiceSession, voiceCard
@@ -239,6 +240,12 @@ struct ControlRoomSourceSession: Decodable, Identifiable {
     var titleLabel: String { title?.isEmpty == false ? title! : externalId ?? "제목 미제공" }
     var ownerLabel: String { ownerVerified == true ? ownerThreadId ?? "미확인" : "미확인" }
 
+    var permitsResultRead: Bool {
+        guard source == "cursor-cloud", isSupported, capabilities?.read == true,
+              let sessionId, sessionId == externalId, let runId else { return false }
+        return [key,sessionId,runId].allSatisfy { !$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty }
+    }
+
     func isFresh(now: Date) -> Bool {
         fresh == true && stale != true && Self.recent(observedAt,now:now)
     }
@@ -307,36 +314,67 @@ extension ControlRoomProjection {
         let matches = sourceConnections?.filter { $0.provider == source.rawValue } ?? []
         return matches.count == 1 ? matches[0] : nil
     }
+    func selectableSessions(for source: ControlRoomSource) -> [ControlRoomSourceSession] {
+        return sessions(for:source).filter {
+            source != .cursorCloud || (wireGeneration != nil && $0.permitsResultRead)
+        }
+    }
+    var sourceSelectionContext: ControlRoomSourceSelection.Context {
+        .init(generation:wireGeneration,sessionIDs:ControlRoomSource.allCases.flatMap {
+            selectableSessions(for:$0).map(\.id)
+        })
+    }
 }
 
 struct ControlRoomSourceSelection {
+    enum ResultDisplay: Equatable {
+        case current(String), lastObserved(String)
+        var text: String {
+            switch self { case .current(let text), .lastObserved(let text): return text }
+        }
+        var isCurrent: Bool {
+            if case .current = self { return true }
+            return false
+        }
+        var label: String { isCurrent ? "현재 응답" : "마지막 관측" }
+    }
+    struct Context: Equatable {
+        let generation: String?
+        let sessionIDs: [ControlRoomSessionID]
+    }
     private(set) var source: ControlRoomSource = .codex
     private var selected: [ControlRoomSource:ControlRoomSessionID] = [:]
+    private var generation: String?
     var sessionID: ControlRoomSessionID? { selected[source] }
 
     mutating func select(source: ControlRoomSource) { self.source = source }
-    mutating func select(session: ControlRoomSourceSession) {
-        guard session.isSupported, session.source == source.rawValue else { return }
+    mutating func select(session: ControlRoomSourceSession, in projection: ControlRoomProjection) {
+        reconcile(projection)
+        guard projection.selectableSessions(for:source).contains(where:{ $0.id == session.id }) else { return }
         selected[source] = session.id
     }
     mutating func clear() { selected[source] = nil }
     mutating func reconcile(_ projection: ControlRoomProjection?) {
-        selected = selected.filter { source,id in
-            projection?.sessions(for:source).contains(where:{ $0.id == id }) == true
+        let context = projection?.sourceSelectionContext
+        if generation != context?.generation { selected.removeAll() }
+        generation = context?.generation
+        selected = selected.filter { _,id in
+            context?.sessionIDs.contains(id) == true
         }
     }
     func session(in projection: ControlRoomProjection) -> ControlRoomSourceSession? {
-        projection.sessions(for:source).first { $0.id == sessionID }
+        guard generation == projection.wireGeneration else { return nil }
+        return projection.selectableSessions(for:source).first { $0.id == sessionID }
+    }
+    func resultDisplay(in projection: ControlRoomProjection, now: Date = Date()) -> ResultDisplay? {
+        guard source == .cursorCloud, let row = session(in:projection),
+              let result = row.result, result.utf8.count <= 12_000 else { return nil }
+        return projection.connection?.connected == true && projection.connection?.state == .connected &&
+            projection.isFresh(now:now) && row.fresh == true && row.stale != true ?
+            .current(result) : .lastObserved(result)
     }
     func currentResult(in projection: ControlRoomProjection, now: Date = Date()) -> String? {
-        guard source == .cursorCloud, projection.isFresh(now:now),
-              let row = session(in:projection), row.capabilities?.read == true,
-              row.fresh == true, row.stale != true,
-              row.observedAt.map({ ControlRoomSourceSession.recent($0,now:now) }) ?? true,
-              let sessionId = row.sessionId, sessionId == row.externalId,
-              let runId = row.runId,
-              [row.key,sessionId,runId].allSatisfy({ !$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty }),
-              let result = row.result, result.utf8.count <= 12_000 else { return nil }
+        guard case .current(let result) = resultDisplay(in:projection,now:now) else { return nil }
         return result
     }
 }
@@ -977,6 +1015,7 @@ struct ControlRoomEventsReducer {
             }
         }
         value.transportConnected = true
+        value.wireGeneration = event.generation
         generation = event.generation
         revision = event.revision
         snapshot = next

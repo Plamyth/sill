@@ -10,9 +10,13 @@ func sourceSessionChecks() throws {
     let summaries = android["sourceConnections"] as! [[String:Any]]
     let now = BrainTrinityFeed.date(clock)!
     func projection(_ sourceRows: [[String:Any]] = rows, extra: [String:Any] = [:]) throws -> ControlRoomProjection {
-        try JSONDecoder().decode(ControlRoomProjection.self,from:encoded(snapshot([
+        let root = snapshot([
             "unifiedControl":["schema":1,"rows":sourceRows,"truncated":false,"error":NSNull()],
-            "sourceConnections":summaries].merging(extra) { _,new in new })))
+            "sourceConnections":summaries].merging(extra) { _,new in new })
+        var reducer = ControlRoomEventsReducer()
+        _ = try reducer.consume(.init(id:"\(generation):0",event:"snapshot",
+            data:encoded(event("snapshot",0,fields:["snapshot":root]))),contract:.relayProjection)
+        return reducer.projection!
     }
     let initial = try projection()
     check(rows.count == 3 && initial.sourceSessions.count == 3,"Android exact DTO 3 provider 보존")
@@ -32,15 +36,15 @@ func sourceSessionChecks() throws {
     check(!cloud.isFresh(now:now.addingTimeInterval(-6)),"미래 행 관측 거부")
 
     var selected = ControlRoomSourceSelection()
-    selected.select(session:codex)
+    selected.select(session:codex,in:initial)
     selected.select(source:.cursorCloud)
     check(selected.sessionID == nil,"provider 전환 자동 선택 금지")
-    selected.select(session:cloud)
+    selected.select(session:cloud,in:initial)
     selected.select(source:.codex)
     check(selected.session(in:initial)?.id == codex.id,"존재하는 Codex 선택만 복원")
     selected.select(source:.cursorCloud)
     check(selected.session(in:initial)?.id == cloud.id,"존재하는 Cloud 선택만 복원")
-    selected.select(session:codex)
+    selected.select(session:codex,in:initial)
     check(selected.sessionID == cloud.id,"다른 provider 행 선택 거부")
 
     let identityFields = ["source","key","externalId","sessionId","runId","hostId","instanceId",
@@ -50,7 +54,7 @@ func sourceSessionChecks() throws {
         changed[field] = "different-\(field)"
         let replacement = try projection([changed,rows[1],rows[2]])
         var choice = ControlRoomSourceSelection()
-        choice.select(session:codex)
+        choice.select(session:codex,in:initial)
         check(choice.session(in:replacement) == nil,"\(field) 교체 자동 승계 금지")
         choice.reconcile(replacement)
         choice.reconcile(initial)
@@ -146,7 +150,7 @@ func sourceSessionChecks() throws {
         "숨김 unavailable 요약과 한국어 안내를 그대로 수용")
     check(hidden.sessions(for:.codex).isEmpty && hidden.sessions(for:.cursorCloud)[0].status == cloud.status,
         "숨김 source 요약을 다른 행 상태와 섞지 않음")
-    var hiddenChoice = ControlRoomSourceSelection(); hiddenChoice.select(session:codex)
+    var hiddenChoice = ControlRoomSourceSelection(); hiddenChoice.select(session:codex,in:initial)
     hiddenChoice.reconcile(hidden); hiddenChoice.reconcile(initial)
     check(hiddenChoice.sessionID == nil,"숨김 제거 뒤 재등장 자동 선택 금지")
     let remainingRow = try projection(extra:["sourceConnections":[hiddenSummary]])
@@ -161,7 +165,7 @@ func sourceSessionChecks() throws {
     var malformedProvider = rows[0]; malformedProvider["provider"] = "cursor-cloud"
     let mismatch = try projection([malformedProvider])
     check(mismatch.sessions(for:.codex).isEmpty,"source/provider 불일치 미지원")
-    var remembered = ControlRoomSourceSelection(); remembered.select(session:codex)
+    var remembered = ControlRoomSourceSelection(); remembered.select(session:codex,in:initial)
     remembered.reconcile(mismatch); remembered.reconcile(initial)
     check(remembered.sessionID == nil && mismatch.sourceSessionIDs.isEmpty,"지원 취소 후 같은 identity 복구 자동 선택 금지")
 

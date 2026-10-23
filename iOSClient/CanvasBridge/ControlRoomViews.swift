@@ -288,7 +288,7 @@ private struct ControlRoomSourcePanel: View {
             .padding(.top,4)
         }
         .accessibilityIdentifier("controlRoomSourceSessions")
-        .onChange(of:projection.sourceSessionIDs,initial:true) { _,_ in selection.reconcile(projection) }
+        .onChange(of:projection.sourceSelectionContext,initial:true) { _,_ in selection.reconcile(projection) }
     }
 
     private var summary: some View {
@@ -332,7 +332,7 @@ private struct ControlRoomSourcePanel: View {
                     if sessions.isEmpty { Text("표시할 세션 없음").foregroundStyle(.secondary) }
                     ForEach(sessions) { session in
                         Button {
-                            selection.select(session:session)
+                            selection.select(session:session,in:projection)
                         } label: {
                             VStack(alignment:.leading,spacing:2) {
                                 Label(session.titleLabel,systemImage:selection.sessionID == session.id ? "checkmark.circle.fill" : "circle")
@@ -359,13 +359,13 @@ private struct ControlRoomSourcePanel: View {
             Text(row.titleLabel).font(.callout.weight(.semibold))
             Text("조회·선택 전용 · 이 화면은 읽기 전용입니다.")
             if selection.source == .cursorCloud {
-                Text("Cloud 현재 응답 · 대화 기록 아님").font(.callout.weight(.semibold))
-                if let result = selection.currentResult(in:projection,now:now) {
-                    if result.isEmpty {
-                        Text("현재 응답이 비어 있습니다.")
+                if let display = selection.resultDisplay(in:projection,now:now) {
+                    Text("Cloud \(display.label) · 대화 기록 아님").font(.callout.weight(.semibold))
+                    if display.text.isEmpty {
+                        Text("\(display.label)이 비어 있습니다.")
                     } else {
-                        Text(verbatim:result).textSelection(.enabled)
-                            .accessibilityIdentifier("controlRoomCurrentResult")
+                        Text(verbatim:display.text).textSelection(.enabled)
+                            .accessibilityIdentifier(display.isCurrent ? "controlRoomCurrentResult" : "controlRoomLastObservedResult")
                     }
                 } else {
                     Text("현재 응답이 미제공이거나 조회 조건을 충족하지 않습니다.")
@@ -380,7 +380,11 @@ private struct ControlRoomSourcePanel: View {
             field("상태 출처",row.statusSource)
             field("에이전트 상태",row.agentStatus)
             field("행 연결 상태",row.connectionState)
-            Text("행 관측 · \(row.isFresh(now:now) ? "최신" : "최신성 미확인")")
+            if selection.source == .cursorCloud {
+                Text("행 읽기 관측 · \(selection.resultDisplay(in:projection,now:now)?.label ?? "본문 미제공")")
+            } else {
+                Text("행 관측 · \(row.isFresh(now:now) ? "최신" : "최신성 미확인")")
+            }
             field("행 관측 시각",row.observedAt)
             field("행 연결 시각",row.connectedAt)
             field("소스 버전",row.sourceRevision?.formatted)

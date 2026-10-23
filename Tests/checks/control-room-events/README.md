@@ -49,9 +49,9 @@ Apple SDK 검증은 전용 `validation/DerivedData`에서 `Sill`과 `SillPhone`�
 
 작업 키는 `ipad-public-source-result-20261023`, 브랜치는 `codex/ipad-public-source-result-20261023`, 기준은 `1db9057682c8f47c12f1de1cfcc0356aa0fcafa2`입니다. Pstack Feature와 Model the Domain으로 기존 optional DTO·복합 ID·선택 모델에 기능을 배치했습니다. Ponytail full로 기존 reducer와 패널을 재사용했습니다. 추가 에이전트와 ARENA를 사용하지 않으며 독립 검수는 부모 담당의 후속 작업입니다.
 
-`ControlRoomSourceSession.result`는 optional 문자열입니다. `ControlRoomSourceSelection.currentResult`는 현재 선택된 Cloud 행의 `capabilities.read == true`, 정확한 복합 ID, 같은 external/session ID와 비어 있지 않은 run ID, 행 `fresh/stale`, projection 최신성, UTF-8 12,000바이트 한도를 확인합니다. 행 관측 시각이 제공되면 그 시각도 확인합니다. producer가 정상 공개 행에 관측 시각 null을 반환할 수 있으므로 이 경우 최신 projection을 사용합니다. owner 확인·전송 권한·source summary는 읽기 권한을 대신하지 않습니다.
+`ControlRoomSourceSession.result`는 optional 문자열입니다. `ControlRoomSourceSelection.currentResult`는 현재 선택된 Cloud 행의 `capabilities.read == true`, 정확한 복합 ID, 같은 external/session ID와 비어 있지 않은 run ID, 행 `fresh/stale`, projection 최신성, UTF-8 12,000바이트 한도를 확인합니다. Cloud 읽기는 공개 행의 `fresh/stale`를 사용하며 개별 `observedAt`에 30초 제한을 덧붙이지 않습니다. owner 확인·전송 권한·source summary는 읽기 권한을 대신하지 않습니다.
 
-응답은 매 projection에서 전체 교체합니다. null·필드 제거는 미제공, 빈 문자열은 빈 응답입니다. 별도 본문 캐시와 history/messages 호출이 없습니다. UI는 한국어 안내와 `Text(verbatim:)`으로 표시합니다. Codex와 Cursor 로컬 본문은 미지원입니다. stale·disconnect·잘못된 프레임은 기존 projection 연결 상태로 이전 응답의 현재 표시를 차단합니다.
+응답은 매 projection에서 전체 교체합니다. null·필드 제거는 미제공, 빈 문자열은 빈 응답입니다. 별도 본문 캐시와 history/messages 호출이 없습니다. UI는 한국어 안내와 `Text(verbatim:)`으로 표시합니다. Codex와 Cursor 로컬 본문은 미지원입니다. stale·disconnect·잘못된 프레임은 기존 projection 연결 상태로 이전 응답의 현재 표시를 차단합니다. read 가능한 같은 행의 문자열은 별도 캐시 없이 마지막 공개 관측으로 표시할 수 있습니다.
 
 `public-fixtures.json`은 제공받은 public-only 6case 파일의 정확한 복사본입니다. producer는 Android commit `9a91483f5e054ad8f30e9a1d43d8e7fd91740c6a`, tree `4f7581661680f466a363ad7199ae1db54874163e`입니다. SHA-256은 `e40d4eaaf634854ff62612bf8c4fad2d33248c2aabf2b93213275713ce4da1fc`이며 `public-fixture-provenance.json`으로 확인합니다. raw 원본은 복사하지 않습니다. producer의 `server/mobile-control.js` 150~179행을 읽었으며 private binding reader를 실행하지 않았습니다.
 
@@ -65,3 +65,23 @@ python3 Tests/checks/control-room-events/sdk.py /Volumes/BT-Workspace/Developmen
 ```
 
 Foundation은 공개 fixture와 필요한 순수 Swift 선언만 `mini-ephemeral-source`의 원담당·고정 작업 키로 전송합니다. `foundation-result.json`은 입력별 전후 해시, 실행 영수증과 `cleanupVerified`를 기록합니다. SDK 검사는 기존 `linked-obsidian-notes/run.py`의 iOS 소스 목록과 타입 검사 명령을 재사용합니다. 앱 빌드·서명·설치를 생성하지 않습니다. 이번 실행은 Foundation 종료 코드 0, Mini 삭제 확인 true, iOS SDK 두 단계 종료 코드 `[0, 0]`입니다. 실제 서비스·기기 수용과 독립 검수는 별도입니다.
+
+
+## Cloud 결과 신선도 계약 수정
+
+작업 키는 `ipad-cloud-result-freshness-20261023`, 원담당은 `01a13ace-e372-7ed1-9946-149df37ee1c3`, 브랜치는 `codex/ipad-cloud-result-freshness-20261023`, 기준은 `fdb5aea79a579e5e6e43cf7915651a329e2561c0`입니다. Pstack Bug fix의 합성 재현 → 원인 확인 → 수정 → 같은 검사 재검증 경로를 사용했습니다. 기존 how/architect 근거와 Model the Domain을 재사용하고 Ponytail full로 기존 선택 모델·reducer·검사 도구를 확장했습니다. failing repro 커밋은 `03cc3836e140b9fcd2818765fd6b3e310c39e089`입니다. 이전 소스에서 `expected=SYNTHETIC_DERIVED_BODY actual=nil`로 실패했습니다.
+
+`select(session:in:)`는 현재 공개 projection에서 정확한 복합 ID를 확인합니다. `wireGeneration`은 reducer가 확인한 SSE 세대만 부여하는 내부 메타데이터이며 공개 JSON의 같은 이름 필드는 무시합니다. Cloud 선택과 응답은 이 세대에 결박됩니다. `sourceSelectionContext`로 같은 ID의 read 회수와 세대 변경도 UI reconcile에 전달합니다.
+
+`resultDisplay(in:now:)`는 `.current(String)`, `.lastObserved(String)`, `nil`을 반환합니다. 현재 결과는 명시적 root `connection.connected=true/state=connected`, projection 신선도와 공개 행 `fresh=true/stale!=true`를 모두 요구합니다. `currentResult(in:now:)`는 `.current`의 문자열만 반환합니다. terminal `closed/expired`를 global 연결 실패로 해석하지 않으며 private provider 상태를 재계산하지 않습니다. `sourceConnections`는 기존 소스 요약으로만 사용합니다.
+
+read 가능한 같은 행의 문자열은 row fresh 취소, transport 단절, global clock 만료 때 마지막 관측으로 구분하고 선택을 보존합니다. null·누락·UTF-8 초과는 본문만 숨기고 메타데이터 선택을 유지합니다. read 회수·보호·unavailable·행 제거·다른 owner/run/generation은 현재·마지막 관측 모두 표시하지 않으며 reconcile 뒤 정상 복귀해도 자동 재선택하지 않습니다. 행 관측 시각은 그대로 표시하며 Cloud 읽기 관측 문구도 결과 분류를 따릅니다. generic `isFresh`, 행 `isFresh`, 개별 연결과 `reportedSendAllowed`는 기준 소스와 같습니다.
+
+Foundation 검사는 공개 fixture와 고정 `clock`을 사용하며 모든 결과 분류 검사에 `now`를 명시 주입합니다. terminal 4상태 × closed/expired × sse/get-run의 16조합, observation 31·60·89·90초, current/lastObserved, read 회수·보호 6case, transport·clock, JSON 세대 주입, owner/run/generation 전환, null/empty/UTF-8 교체와 send 승격 0을 검사합니다. `SourceSessions.swift`의 합성 relay envelope도 실제 reducer를 통과시켜 내부 세대를 받습니다. exact fixture 파일은 변경하지 않습니다.
+
+```sh
+python3 Tests/checks/control-room-events/run.py /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/cloud-result-freshness-20261023/validation/verified
+python3 Tests/checks/control-room-events/sdk.py /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/cloud-result-freshness-20261023/validation/sdk-final
+```
+
+이번 실행은 Foundation 종료 코드 0, `sourceUnchanged=true`, `cleanupVerified=true`, 최종 SDK 종료 코드 `[0, 0]`, `sourceUnchanged=true`입니다. 앱 빌드·설치·push·실제 서비스 네트워크·데이터·Mac UI·기기·음성·relay 8791 변경은 없습니다. 실제 149행의 RAM 비교는 부모의 별도 검증이며 이 합성 결과에 합산하지 않습니다. 독립 검수와 통합 수용도 부모의 후속 단계입니다.
