@@ -23,6 +23,41 @@ import PencilKit
         let b = base.addNode(kind:.box,at:.init(x:600,y:200),text:"도착")
         check(base.connect(a,to:b,label:"기존 연결"),"기존 연결 생성")
         let original = base.links[0]
+        var regressions: [(String,Bool)] = []
+        let overlapping = CanvasStore(blockRecoveryURL:output.appendingPathComponent("p2-overlap.json"))
+        overlapping.scene = base
+        overlapping.mode = .select
+        overlapping.selectLink(original.id)
+        let first = overlapping.beginEndpointDrag(.from,linkID:original.id)
+        let second = overlapping.beginEndpointDrag(.to,linkID:original.id)
+        _ = overlapping.updateEndpointDrag(to:.init(x:170,y:700))
+        _ = overlapping.finishEndpointDrag()
+        regressions.append(("P2-1 시작점·끝점 시작 후 첫 포인터 이동·종료",first && !second &&
+            overlapping.scene.links[0].fromAnchor != nil && overlapping.scene.links[0].toAnchor == nil))
+        var vendor = try JSONSerialization.jsonObject(with:encoder.encode(original)) as! [String:Any]
+        vendor["fromAnchor"] = ["side":"top","offset":0.5,"vendorMeta":["v":1]]
+        let vendorBytes = try JSONSerialization.data(withJSONObject:vendor)
+        let decodedVendor = try? decoder.decode(CanvasLink.self,from:vendorBytes)
+        let vendorPreserved = try decodedVendor.map {
+            let encoded = try JSONSerialization.jsonObject(with:encoder.encode($0)) as! NSDictionary
+            return encoded == (try JSONSerialization.jsonObject(with:vendorBytes) as! NSDictionary)
+        } ?? true
+        regressions.append(("P2-2 typed 메타데이터 보존 또는 읽기 거부",vendorPreserved))
+        let sceneURL = try CanvasRuntime.stateURL(.scene)
+        var corrupt = try JSONSerialization.jsonObject(with:encoder.encode(base)) as! [String:Any]
+        var corruptLinks = corrupt["links"] as! [[String:Any]]
+        corruptLinks[0]["fromAnchor"] = ["side":"future","offset":0.5]
+        corrupt["links"] = corruptLinks
+        let corruptBytes = try JSONSerialization.data(withJSONObject:corrupt)
+        try CanvasLocalFile.write(corruptBytes,to:sceneURL)
+        let failedRestore = CanvasStore(blockRecoveryURL:output.appendingPathComponent("p2-corrupt.json"))
+        failedRestore.saveNow()
+        regressions.append(("P2-3 복원 실패 후 원본 파일 바이트 보존",try CanvasLocalFile.read(sceneURL) == corruptBytes))
+        for (name,passed) in regressions {
+            FileHandle.standardOutput.write(Data("\(passed ? "PASS" : "FAIL") \(name)\n".utf8))
+        }
+        precondition(regressions.allSatisfy(\.1),"독립검수 P2 재현")
+        try CanvasLocalFile.write(encoder.encode(base),to:sceneURL)
         let oldJSON = try encoder.encode(original)
         check(!String(decoding:oldJSON,as:UTF8.self).contains("Anchor"),"기존 JSON에 연결점 생략")
         check(try roundtrip(original) == original,"이전 JSON 하위호환")

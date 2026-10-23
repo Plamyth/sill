@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run isolated model/Store checks and SDK compilation; endpoint mode never opens UI."""
+"""Run model/Store and SDK checks; only the default mode runs WebKit and vault checks."""
 import hashlib
 import json
 import os
@@ -15,10 +15,14 @@ archive = json.loads(subprocess.check_output([
 output = Path(sys.argv[1]).resolve()
 review_fix = sys.argv[2:] == ['--review-fix']
 endpoints = sys.argv[2:] == ['--diagram-endpoints']
-if sys.argv[2:] and not (review_fix or endpoints):
+endpoint_p2 = sys.argv[2:] == ['--diagram-endpoints-p2']
+if sys.argv[2:] and not (review_fix or endpoints or endpoint_p2):
     raise SystemExit('지원하지 않는 검사 옵션입니다.')
 folder = 'pele-review-fix' if review_fix else 'pele-worker'
 expected = Path(archive['path']) / ('diagram-endpoints-20261023/verification' if endpoints else 'pele-rea-20261021/' + folder)
+if endpoint_p2:
+    expected = Path(archive['path']) / 'diagram-endpoints-20261023/verification-p2'
+    endpoints = True
 if output != expected:
     raise SystemExit('지정된 외장 검증 경로만 사용합니다.')
 output.mkdir(parents=True, exist_ok=True)
@@ -70,8 +74,9 @@ try:
             '-module-cache-path',output / 'mac-modules']
     model = root / 'iOSClient/CanvasBridge/CanvasModel.swift'
     store = root / 'iOSClient/CanvasBridge/CanvasStore.swift'
-    for suite in [here / 'main.swift', root / 'Tests/checks/ipad-canvas-revisions/main.swift',
-                  root / 'Tests/checks/canvas-hierarchy/main.swift']:
+    suites = [] if endpoint_p2 else [here / 'main.swift', root / 'Tests/checks/ipad-canvas-revisions/main.swift',
+                                    root / 'Tests/checks/canvas-hierarchy/main.swift']
+    for suite in suites:
         name = suite.parent.name
         binary = output / name
         run(name + '-compile',base + [model,suite,'-o',binary])
@@ -82,8 +87,10 @@ try:
         '-o',output / 'store-check'])
     run('store-run',[output / 'store-check'],30)
     if endpoints:
-        for name, checks in [('endpoints', here / 'EndpointChecks.swift'),
-                             ('fold', root / 'Tests/checks/canvas-hierarchy-fold/main.swift')]:
+        checks = [('endpoints', here / 'EndpointChecks.swift')]
+        if not endpoint_p2:
+            checks.append(('fold', root / 'Tests/checks/canvas-hierarchy-fold/main.swift'))
+        for name, checks in checks:
             run(name + '-compile',base + ['-parse-as-library',model,store,checks,
                 '-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',plist,
                 '-o',output / (name + '-check')])
@@ -129,8 +136,9 @@ try:
         swift_tests = frameworks.parent.parent / 'usr/lib'
         run('ui-tests-typecheck',iosbase + ['-parse-as-library','-F',frameworks,'-I',swift_tests,
             '-typecheck',ui_tests])
-    run('project-format',['plutil','-lint',root / 'iOSClient/Sill.xcodeproj/project.pbxproj',
-        root / 'Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj'])
+    if not endpoint_p2:
+        run('project-format',['plutil','-lint',root / 'iOSClient/Sill.xcodeproj/project.pbxproj',
+            root / 'Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj'])
 except Exception as error:
     print(str(error),flush=True)
     status = 1
@@ -140,5 +148,5 @@ if hashes != after:
 (output / 'result.json').write_text(json.dumps(dict(results=results,inputHashes=hashes,
     inputsUnchanged=hashes == after,head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
     realVaultTouched=False,deviceExecuted=False,nativeModeExecuted=False,sharedHostChanged=False,
-    reviewFix=review_fix,diagramEndpoints=endpoints,exitCode=status),indent=2) + '\n')
+    reviewFix=review_fix,diagramEndpoints=endpoints,endpointP2=endpoint_p2,exitCode=status),indent=2) + '\n')
 sys.exit(status)
