@@ -225,6 +225,31 @@ class BoundaryTests(unittest.TestCase):
         self.assertTrue(row["reason"].startswith("command_timeout:"))
         self.assertEqual(sim.evidence(self.root / "native-0.json"), native.commands[0])
 
+    def test_native_timeout_decodes_missing_or_text_output(self):
+        for stdout, stderr in ((None, None), ("부분 출력", "오류 출력")):
+            with self.subTest(stdout=stdout):
+                native = sim.Simulator(self.args, SOURCE, self.status_runner(), self.root)
+
+                class TimedOut:
+                    def run(self, command):
+                        cause = sim.physical.subprocess.TimeoutExpired(command, 1, output=stdout, stderr=stderr)
+                        raise sim.Held("command_timeout:fixture") from cause
+
+                with patch.object(sim.physical, "Runner", return_value=TimedOut()):
+                    with self.assertRaisesRegex(sim.Held, "command_timeout:fixture"):
+                        native.run(["fixture"])
+                row = sim.read_json(self.root / "native-0.json")
+                self.assertEqual(row["stdout"], stdout or "")
+                self.assertEqual(row["stderr"], stderr or "")
+
+    def test_other_native_refusal_does_not_create_timeout_evidence(self):
+        native = sim.Simulator(self.args, SOURCE, self.status_runner(), self.root)
+        with patch.object(sim.physical, "Runner", return_value=Runner(exit_code=65)):
+            with self.assertRaisesRegex(sim.Held, "command_failed:fixture:65"):
+                native.run(["fixture"])
+        self.assertEqual(native.commands, [])
+        self.assertFalse((self.root / "native-0.json").exists())
+
     def test_unregistered_service_rejected(self):
         sim.atomic_json(self.registry, {"services": []})
         with self.assertRaises(sim.Held):
