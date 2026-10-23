@@ -215,6 +215,7 @@ struct ControlRoomSourceSession: Decodable, Identifiable {
     let executionStatus: String?
     let statusSource: String?
     let agentStatus: String?
+    let result: String?
     let observedAt: String?
     let connectedAt: String?
     let sourceRevision: ProjectionValue?
@@ -326,6 +327,17 @@ struct ControlRoomSourceSelection {
     }
     func session(in projection: ControlRoomProjection) -> ControlRoomSourceSession? {
         projection.sessions(for:source).first { $0.id == sessionID }
+    }
+    func currentResult(in projection: ControlRoomProjection, now: Date = Date()) -> String? {
+        guard source == .cursorCloud, projection.isFresh(now:now),
+              let row = session(in:projection), row.capabilities?.read == true,
+              row.fresh == true, row.stale != true,
+              row.observedAt.map({ ControlRoomSourceSession.recent($0,now:now) }) ?? true,
+              let sessionId = row.sessionId, sessionId == row.externalId,
+              let runId = row.runId,
+              [row.key,sessionId,runId].allSatisfy({ !$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty }),
+              let result = row.result, result.utf8.count <= 12_000 else { return nil }
+        return result
     }
 }
 

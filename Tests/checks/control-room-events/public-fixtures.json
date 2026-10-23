@@ -1,0 +1,2389 @@
+{
+  "schema": "ccr.derived-privacy-fixture/v1",
+  "producerCommit": "9a91483f5e054ad8f30e9a1d43d8e7fd91740c6a",
+  "producerTree": "4f7581661680f466a363ad7199ae1db54874163e",
+  "cases": [
+    {
+      "name": "verified-public-fork",
+      "projected": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "workspace": "all",
+        "workspaceProjectIds": [],
+        "workspaces": [
+          {
+            "id": "all",
+            "label": ""
+          }
+        ],
+        "sections": [],
+        "projects": [],
+        "slots": [
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000001",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000002",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000003",
+            "writable": false
+          }
+        ],
+        "chatgptProjectState": "unavailable",
+        "chatgptProjects": [],
+        "pcStatus": {
+          "generatedAt": "2026-10-23T00:00:00Z",
+          "reviewHub": {
+            "eg2": {
+              "schema": "control-room-eg2-review-hub/v1",
+              "available": false,
+              "writable": false,
+              "items": []
+            }
+          },
+          "cam": {
+            "schema": "control-room-cam-feed/v1",
+            "available": false,
+            "writable": false,
+            "cards": []
+          }
+        },
+        "activeVoiceId": "",
+        "threads": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "slotIndex": 0,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "slotIndex": 1,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 파생 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": [
+              {
+                "id": "",
+                "ts": "",
+                "kind": "",
+                "role": "assistant",
+                "source": "",
+                "text": "SYNTHETIC_DERIVED_BODY"
+              }
+            ]
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "slotIndex": 2,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          }
+        ],
+        "automation": {
+          "workspace": "all",
+          "connected": false,
+          "readOnly": true,
+          "mode": "unknown",
+          "capabilities": [],
+          "reason": "원본 자동 모드 상태가 없거나 오래됐습니다.",
+          "activities": [],
+          "reviewRequests": [],
+          "unassigned": {
+            "activities": 0,
+            "reviews": 0
+          }
+        },
+        "catalog": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "title": "합성 파생 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          }
+        ],
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000001",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 원본",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000001",
+              "activeTurnId": null
+            },
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000002",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000002",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 파생 대화",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000002",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000002",
+              "activeTurnId": null
+            },
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000003",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 공개 대화",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000003",
+              "activeTurnId": null
+            },
+            {
+              "key": "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]",
+              "source": "cursor-cloud",
+              "provider": "cursor-cloud",
+              "hostId": null,
+              "externalId": "bc-fixture-agent",
+              "sessionId": "bc-fixture-agent",
+              "runId": "fixture-run",
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": "abcdefab-0000-4000-8000-000000000002",
+              "ownerVerified": true,
+              "projectId": null,
+              "title": "합성 Cloud 응답",
+              "status": "FINISHED",
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "result": "SYNTHETIC_DERIVED_BODY",
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": null,
+              "fresh": true,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": null,
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "connectedAt": null,
+            "observedAt": "2026-10-23T00:00:00Z",
+            "owner": "fixture-runtime",
+            "sessionId": "abcdefab-0000-4000-8000-000000000002",
+            "runId": null,
+            "sourceRevision": 1,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": "fixture-cloud-runtime",
+            "sessionId": "bc-fixture-agent",
+            "runId": "fixture-run",
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          }
+        ]
+      },
+      "expectSelectedCloudResultRemoved": false,
+      "placeholderIdentitiesPreserved": true
+    },
+    {
+      "name": "hidden-ancestor",
+      "projected": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "workspace": "all",
+        "workspaceProjectIds": [],
+        "workspaces": [
+          {
+            "id": "all",
+            "label": ""
+          }
+        ],
+        "sections": [],
+        "projects": [],
+        "slots": [
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000001",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000002",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000003",
+            "writable": false
+          }
+        ],
+        "chatgptProjectState": "unavailable",
+        "chatgptProjects": [],
+        "pcStatus": {
+          "generatedAt": "2026-10-23T00:00:00Z",
+          "reviewHub": {
+            "eg2": {
+              "schema": "control-room-eg2-review-hub/v1",
+              "available": false,
+              "writable": false,
+              "items": []
+            }
+          },
+          "cam": {
+            "schema": "control-room-cam-feed/v1",
+            "available": false,
+            "writable": false,
+            "cards": []
+          }
+        },
+        "activeVoiceId": "",
+        "threads": [
+          {
+            "sourceConnection": null,
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "slotIndex": 0,
+            "hostId": null,
+            "source": null,
+            "title": "대화 접근 불가",
+            "titleVerified": false,
+            "project": "",
+            "projectId": null,
+            "projectVerified": false,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": false,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": true,
+            "sourceMissing": true,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": null,
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "slotIndex": 1,
+            "hostId": null,
+            "source": null,
+            "title": "대화 접근 불가",
+            "titleVerified": false,
+            "project": "",
+            "projectId": null,
+            "projectVerified": false,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": false,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": true,
+            "sourceMissing": true,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "slotIndex": 2,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          }
+        ],
+        "automation": {
+          "workspace": "all",
+          "connected": false,
+          "readOnly": true,
+          "mode": "unknown",
+          "capabilities": [],
+          "reason": "원본 자동 모드 상태가 없거나 오래됐습니다.",
+          "activities": [],
+          "reviewRequests": [],
+          "unassigned": {
+            "activities": 0,
+            "reviews": 0
+          }
+        },
+        "catalog": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          }
+        ],
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000003",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 공개 대화",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000003",
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          }
+        ]
+      },
+      "expectSelectedCloudResultRemoved": true,
+      "placeholderIdentitiesPreserved": true
+    },
+    {
+      "name": "unverified-child",
+      "projected": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "workspace": "all",
+        "workspaceProjectIds": [],
+        "workspaces": [
+          {
+            "id": "all",
+            "label": ""
+          }
+        ],
+        "sections": [],
+        "projects": [],
+        "slots": [
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000001",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000002",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000003",
+            "writable": false
+          }
+        ],
+        "chatgptProjectState": "unavailable",
+        "chatgptProjects": [],
+        "pcStatus": {
+          "generatedAt": "2026-10-23T00:00:00Z",
+          "reviewHub": {
+            "eg2": {
+              "schema": "control-room-eg2-review-hub/v1",
+              "available": false,
+              "writable": false,
+              "items": []
+            }
+          },
+          "cam": {
+            "schema": "control-room-cam-feed/v1",
+            "available": false,
+            "writable": false,
+            "cards": []
+          }
+        },
+        "activeVoiceId": "",
+        "threads": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "slotIndex": 0,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": null,
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "slotIndex": 1,
+            "hostId": null,
+            "source": null,
+            "title": "대화 접근 불가",
+            "titleVerified": false,
+            "project": "",
+            "projectId": null,
+            "projectVerified": false,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": false,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": true,
+            "sourceMissing": true,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "slotIndex": 2,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          }
+        ],
+        "automation": {
+          "workspace": "all",
+          "connected": false,
+          "readOnly": true,
+          "mode": "unknown",
+          "capabilities": [],
+          "reason": "원본 자동 모드 상태가 없거나 오래됐습니다.",
+          "activities": [],
+          "reviewRequests": [],
+          "unassigned": {
+            "activities": 0,
+            "reviews": 0
+          }
+        },
+        "catalog": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          }
+        ],
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000001",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 원본",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000001",
+              "activeTurnId": null
+            },
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000003",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 공개 대화",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000003",
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          }
+        ]
+      },
+      "expectSelectedCloudResultRemoved": true,
+      "placeholderIdentitiesPreserved": true
+    },
+    {
+      "name": "missing-current-child",
+      "projected": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "workspace": "all",
+        "workspaceProjectIds": [],
+        "workspaces": [
+          {
+            "id": "all",
+            "label": ""
+          }
+        ],
+        "sections": [],
+        "projects": [],
+        "slots": [
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000001",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000002",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000003",
+            "writable": false
+          }
+        ],
+        "chatgptProjectState": "unavailable",
+        "chatgptProjects": [],
+        "pcStatus": {
+          "generatedAt": "2026-10-23T00:00:00Z",
+          "reviewHub": {
+            "eg2": {
+              "schema": "control-room-eg2-review-hub/v1",
+              "available": false,
+              "writable": false,
+              "items": []
+            }
+          },
+          "cam": {
+            "schema": "control-room-cam-feed/v1",
+            "available": false,
+            "writable": false,
+            "cards": []
+          }
+        },
+        "activeVoiceId": "",
+        "threads": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "slotIndex": 0,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": null,
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "slotIndex": 1,
+            "hostId": null,
+            "source": null,
+            "title": "대화 접근 불가",
+            "titleVerified": false,
+            "project": "",
+            "projectId": null,
+            "projectVerified": false,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": false,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": true,
+            "sourceMissing": true,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "slotIndex": 2,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          }
+        ],
+        "automation": {
+          "workspace": "all",
+          "connected": false,
+          "readOnly": true,
+          "mode": "unknown",
+          "capabilities": [],
+          "reason": "원본 자동 모드 상태가 없거나 오래됐습니다.",
+          "activities": [],
+          "reviewRequests": [],
+          "unassigned": {
+            "activities": 0,
+            "reviews": 0
+          }
+        },
+        "catalog": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          }
+        ],
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000001",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 원본",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000001",
+              "activeTurnId": null
+            },
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000003",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 공개 대화",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000003",
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          }
+        ]
+      },
+      "expectSelectedCloudResultRemoved": true,
+      "placeholderIdentitiesPreserved": true
+    },
+    {
+      "name": "retained-placeholder",
+      "projected": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "workspace": "all",
+        "workspaceProjectIds": [],
+        "workspaces": [
+          {
+            "id": "all",
+            "label": ""
+          }
+        ],
+        "sections": [],
+        "projects": [],
+        "slots": [
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000001",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000002",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000003",
+            "writable": false
+          }
+        ],
+        "chatgptProjectState": "unavailable",
+        "chatgptProjects": [],
+        "pcStatus": {
+          "generatedAt": "2026-10-23T00:00:00Z",
+          "reviewHub": {
+            "eg2": {
+              "schema": "control-room-eg2-review-hub/v1",
+              "available": false,
+              "writable": false,
+              "items": []
+            }
+          },
+          "cam": {
+            "schema": "control-room-cam-feed/v1",
+            "available": false,
+            "writable": false,
+            "cards": []
+          }
+        },
+        "activeVoiceId": "",
+        "threads": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "slotIndex": 0,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": null,
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "slotIndex": 1,
+            "hostId": null,
+            "source": null,
+            "title": "대화 접근 불가",
+            "titleVerified": false,
+            "project": "",
+            "projectId": null,
+            "projectVerified": false,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": false,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": true,
+            "sourceMissing": true,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "slotIndex": 2,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          }
+        ],
+        "automation": {
+          "workspace": "all",
+          "connected": false,
+          "readOnly": true,
+          "mode": "unknown",
+          "capabilities": [],
+          "reason": "원본 자동 모드 상태가 없거나 오래됐습니다.",
+          "activities": [],
+          "reviewRequests": [],
+          "unassigned": {
+            "activities": 0,
+            "reviews": 0
+          }
+        },
+        "catalog": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "title": "합성 원본",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          }
+        ],
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000001",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 원본",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000001",
+              "activeTurnId": null
+            },
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000003",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 공개 대화",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000003",
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          }
+        ]
+      },
+      "expectSelectedCloudResultRemoved": true,
+      "placeholderIdentitiesPreserved": true
+    },
+    {
+      "name": "duplicate-missing-root",
+      "projected": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "workspace": "all",
+        "workspaceProjectIds": [],
+        "workspaces": [
+          {
+            "id": "all",
+            "label": ""
+          }
+        ],
+        "sections": [],
+        "projects": [],
+        "slots": [
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000001",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000002",
+            "writable": false
+          },
+          {
+            "kind": "normal",
+            "threadId": "abcdefab-0000-4000-8000-000000000003",
+            "writable": false
+          }
+        ],
+        "chatgptProjectState": "unavailable",
+        "chatgptProjects": [],
+        "pcStatus": {
+          "generatedAt": "2026-10-23T00:00:00Z",
+          "reviewHub": {
+            "eg2": {
+              "schema": "control-room-eg2-review-hub/v1",
+              "available": false,
+              "writable": false,
+              "items": []
+            }
+          },
+          "cam": {
+            "schema": "control-room-cam-feed/v1",
+            "available": false,
+            "writable": false,
+            "cards": []
+          }
+        },
+        "activeVoiceId": "",
+        "threads": [
+          {
+            "sourceConnection": null,
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "slotIndex": 0,
+            "hostId": null,
+            "source": null,
+            "title": "대화 접근 불가",
+            "titleVerified": false,
+            "project": "",
+            "projectId": null,
+            "projectVerified": false,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": false,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": true,
+            "sourceMissing": true,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": null,
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "slotIndex": 1,
+            "hostId": null,
+            "source": null,
+            "title": "대화 접근 불가",
+            "titleVerified": false,
+            "project": "",
+            "projectId": null,
+            "projectVerified": false,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": false,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": true,
+            "sourceMissing": true,
+            "inputRequest": null,
+            "events": []
+          },
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "slotIndex": 2,
+            "hostId": "local",
+            "source": "codex",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "turnStatus": null,
+            "owner": null,
+            "childrenCount": 0,
+            "status": "",
+            "goalActive": null,
+            "activeTurnId": null,
+            "canCompose": true,
+            "voiceCard": false,
+            "voiceState": null,
+            "emptySlot": false,
+            "sourceMissing": false,
+            "inputRequest": null,
+            "events": []
+          }
+        ],
+        "automation": {
+          "workspace": "all",
+          "connected": false,
+          "readOnly": true,
+          "mode": "unknown",
+          "capabilities": [],
+          "reason": "원본 자동 모드 상태가 없거나 오래됐습니다.",
+          "activities": [],
+          "reviewRequests": [],
+          "unassigned": {
+            "activities": 0,
+            "reviews": 0
+          }
+        },
+        "catalog": [
+          {
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "connectedAt": null,
+              "observedAt": "2026-10-23T00:00:00Z",
+              "owner": "fixture-runtime",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "sourceRevision": 1,
+              "readOnly": true,
+              "capabilities": {
+                "read": false,
+                "send": false
+              },
+              "reason": null
+            },
+            "stale": false,
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "title": "합성 공개 대화",
+            "titleVerified": true,
+            "project": "",
+            "projectId": null,
+            "projectVerified": true,
+            "hostId": "local",
+            "source": "codex",
+            "status": "",
+            "turnStatus": null,
+            "activeTurnId": null,
+            "owner": null,
+            "sectionIds": [],
+            "parentThreadId": null,
+            "available": true,
+            "goalActive": null
+          }
+        ],
+        "unifiedControl": {
+          "schema": 1,
+          "rows": [
+            {
+              "key": "codex:abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "provider": "codex",
+              "hostId": "local",
+              "externalId": "abcdefab-0000-4000-8000-000000000003",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "instanceId": null,
+              "startedAt": null,
+              "workspaceIdentity": null,
+              "ownerThreadId": null,
+              "ownerVerified": false,
+              "projectId": null,
+              "title": "합성 공개 대화",
+              "status": null,
+              "displayStatus": null,
+              "executionStatus": null,
+              "statusSource": null,
+              "agentStatus": null,
+              "observedAt": null,
+              "connectedAt": null,
+              "sourceRevision": null,
+              "connectionState": "connected",
+              "fresh": false,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "connectedAt": null,
+                "observedAt": "2026-10-23T00:00:00Z",
+                "owner": "fixture-runtime",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "sourceRevision": 1,
+                "readOnly": true,
+                "capabilities": {
+                  "read": false,
+                  "send": false
+                },
+                "reason": null
+              },
+              "stale": false,
+              "readOnly": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              },
+              "threadId": "abcdefab-0000-4000-8000-000000000003",
+              "activeTurnId": null
+            }
+          ],
+          "truncated": false,
+          "error": null
+        },
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": false,
+            "state": "unavailable",
+            "connectedAt": null,
+            "observedAt": null,
+            "owner": null,
+            "sessionId": null,
+            "runId": null,
+            "sourceRevision": null,
+            "readOnly": true,
+            "capabilities": {
+              "read": false,
+              "send": false
+            },
+            "reason": null
+          }
+        ]
+      },
+      "expectSelectedCloudResultRemoved": true,
+      "placeholderIdentitiesPreserved": true
+    }
+  ]
+}

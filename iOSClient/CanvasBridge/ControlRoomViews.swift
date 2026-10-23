@@ -358,6 +358,22 @@ private struct ControlRoomSourcePanel: View {
         VStack(alignment:.leading,spacing:4) {
             Text(row.titleLabel).font(.callout.weight(.semibold))
             Text("조회·선택 전용 · 이 화면은 읽기 전용입니다.")
+            if selection.source == .cursorCloud {
+                Text("Cloud 현재 응답 · 대화 기록 아님").font(.callout.weight(.semibold))
+                if let result = selection.currentResult(in:projection,now:now) {
+                    if result.isEmpty {
+                        Text("현재 응답이 비어 있습니다.")
+                    } else {
+                        Text(verbatim:result).textSelection(.enabled)
+                            .accessibilityIdentifier("controlRoomCurrentResult")
+                    }
+                } else {
+                    Text("현재 응답이 미제공이거나 조회 조건을 충족하지 않습니다.")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("이 소스의 현재 응답 본문은 미지원입니다.").foregroundStyle(.secondary)
+            }
             field("원본 상태",row.status)
             field("실행 상태",row.executionStatus)
             field("표시 상태",row.displayStatus)

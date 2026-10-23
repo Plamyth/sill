@@ -44,3 +44,24 @@ Apple SDK 검증은 전용 `validation/DerivedData`에서 `Sill`과 `SillPhone`�
 부모 relay의 숨김 보정은 exact Android fixture를 바꾸지 않습니다. 별도 합성 검사에서 숨긴 session·owner·run을 참조하는 provider 요약의 `unavailable`, null 식별자·관측값, 읽기 전용과 거부 capability, 일반 한국어 안내를 그대로 수용합니다. 행 제거는 선택을 해제하며 provider 요약을 남은 행의 연결·권한과 섞지 않습니다.
 
 이번 후보의 Mini Foundation 검사는 종료 코드 0이며 임시 사본 삭제 확인도 통과했습니다. `Sill`과 `SillPhone`의 generic iOS 무서명 빌드도 각각 종료 코드 0입니다. 증거는 전용 `validation` 폴더의 `foundation.log`, `foundation-result.json`, `Sill-generic-ios-result.json`, `SillPhone-generic-ios-result.json`에 있습니다. 실기기 UI와 실제 relay 연결은 미검증이며 설치는 0회입니다. 독립 검수는 부모 담당이 수행합니다.
+
+## Cloud 현재 응답과 공개 보호 fixture
+
+작업 키는 `ipad-public-source-result-20261023`, 브랜치는 `codex/ipad-public-source-result-20261023`, 기준은 `1db9057682c8f47c12f1de1cfcc0356aa0fcafa2`입니다. Pstack Feature와 Model the Domain으로 기존 optional DTO·복합 ID·선택 모델에 기능을 배치했습니다. Ponytail full로 기존 reducer와 패널을 재사용했습니다. 추가 에이전트와 ARENA를 사용하지 않으며 독립 검수는 부모 담당의 후속 작업입니다.
+
+`ControlRoomSourceSession.result`는 optional 문자열입니다. `ControlRoomSourceSelection.currentResult`는 현재 선택된 Cloud 행의 `capabilities.read == true`, 정확한 복합 ID, 같은 external/session ID와 비어 있지 않은 run ID, 행 `fresh/stale`, projection 최신성, UTF-8 12,000바이트 한도를 확인합니다. 행 관측 시각이 제공되면 그 시각도 확인합니다. producer가 정상 공개 행에 관측 시각 null을 반환할 수 있으므로 이 경우 최신 projection을 사용합니다. owner 확인·전송 권한·source summary는 읽기 권한을 대신하지 않습니다.
+
+응답은 매 projection에서 전체 교체합니다. null·필드 제거는 미제공, 빈 문자열은 빈 응답입니다. 별도 본문 캐시와 history/messages 호출이 없습니다. UI는 한국어 안내와 `Text(verbatim:)`으로 표시합니다. Codex와 Cursor 로컬 본문은 미지원입니다. stale·disconnect·잘못된 프레임은 기존 projection 연결 상태로 이전 응답의 현재 표시를 차단합니다.
+
+`public-fixtures.json`은 제공받은 public-only 6case 파일의 정확한 복사본입니다. producer는 Android commit `9a91483f5e054ad8f30e9a1d43d8e7fd91740c6a`, tree `4f7581661680f466a363ad7199ae1db54874163e`입니다. SHA-256은 `e40d4eaaf634854ff62612bf8c4fad2d33248c2aabf2b93213275713ce4da1fc`이며 `public-fixture-provenance.json`으로 확인합니다. raw 원본은 복사하지 않습니다. producer의 `server/mobile-control.js` 150~179행을 읽었으며 private binding reader를 실행하지 않았습니다.
+
+`PublicResults.swift`는 정상 Cloud와 Codex child를 선택한 뒤 hidden ancestor, unverified child, missing target, retained placeholder, duplicate root로 전환합니다. 목록·선택·본문·관련 summary 제거, 공개 형제 유지와 정상 복귀 후 자동 재선택 금지를 snapshot과 patch 양쪽에서 검사합니다. provider·key·external/session/run 변경, read 취소, same-ID 응답 교체, null·empty, UTF-8 한도, malformed result, URLProtocol 격리 invalidframe·disconnect를 검사합니다.
+
+native fixture의 top-level `slots`와 relay `currentGrid`는 서로 다른 계약입니다. native placeholder identity는 JSON에서 직접 확인합니다. source DTO 두 필드만 합성 relay envelope에 넣어 기존 strict reducer로 소비합니다. 이 검사는 실제 relay projection 변환·배포·서비스 연결의 end-to-end 수용이 아닙니다. 부모가 `relay-normalized-before.json`에서 확인한 relay 후보의 result 누락·보호 행 잔류도 이 합성 통과로 해결됐다고 판단하지 않습니다. 실제 relay 공개 프레임 검증은 부모의 별도 relay 수정 결과를 사용해야 합니다.
+
+```sh
+python3 Tests/checks/control-room-events/run.py /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/public-source-result-validation-20261023/foundation
+python3 Tests/checks/control-room-events/sdk.py /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/public-source-result-validation-20261023/sdk
+```
+
+Foundation은 공개 fixture와 필요한 순수 Swift 선언만 `mini-ephemeral-source`의 원담당·고정 작업 키로 전송합니다. `foundation-result.json`은 입력별 전후 해시, 실행 영수증과 `cleanupVerified`를 기록합니다. SDK 검사는 기존 `linked-obsidian-notes/run.py`의 iOS 소스 목록과 타입 검사 명령을 재사용합니다. 앱 빌드·서명·설치를 생성하지 않습니다. 이번 실행은 Foundation 종료 코드 0, Mini 삭제 확인 true, iOS SDK 두 단계 종료 코드 `[0, 0]`입니다. 실제 서비스·기기 수용과 독립 검수는 별도입니다.
