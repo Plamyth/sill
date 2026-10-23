@@ -27,12 +27,17 @@ struct VisionProviderCall {
     }
     mutating func observe(connection next: UUID, capability: Int?, hostKey: String?) {
         let trusted = hostKey.flatMap { $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil ? $0 : nil }
+        guard let trusted else {
+            disconnected()
+            connection = next
+            return
+        }
         if self.hostKey != trusted {
             self = VisionProviderCall(connection: next, clock: clock)
             self.hostKey = trusted
         }
         if connection != next { disconnected(); connection = next }
-        supported = capability == 1 && trusted != nil
+        supported = capability == 1
     }
     mutating func disconnected() {
         supported = false

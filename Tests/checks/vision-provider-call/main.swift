@@ -127,3 +127,17 @@ expect(model.request == nil && model.result == nil && model.hostKey != hostKey &
 model.observe(connection: second, capability: 1, hostKey: nil)
 expect(!model.canPerform && model.query() == nil, "unverified Mac identity cannot use provider capability")
 print("PASS FINAL \(checks) native provider client checks")
+
+now = 600
+model = VisionProviderCall(connection: first, clock: { now })
+model.observe(connection: first, capability: 1, hostKey: hostKey)
+_ = model.perform(request)
+model.disconnected()
+now = 601
+model.observe(connection: second, capability: 1, hostKey: nil)
+expect(!model.supported && model.hostKey == hostKey && model.request == request && model.firstSentAt == 600, "transient missing authentication closes authority while preserving original identity and budget")
+expect(model.perform(request) == nil && model.query() == nil, "unverified connection sends no provider operation")
+model.observe(connection: second, capability: 1, hostKey: hostKey)
+expect(!model.canPerform && model.query()?.request == request, "same verified Mac resumes query rather than creating a new effect")
+expect(model.firstSentAt == 600 && model.queries == 1, "authentication recovery never resets total query budget")
+print("PASS FINAL \(checks) native provider client checks")
