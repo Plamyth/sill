@@ -354,5 +354,30 @@ check(oldPeer.sent.isEmpty && legacyJournal.writes == 0, "v2 capability 없는 H
 oldHost.setVisionSentry(true); oldHost.queue.sync {}; drain()
 check(oldPeer.sent.count == 1 && Wire.decode(SentryActivation.self, from: Data(oldPeer.sent[0].dropFirst(StreamMessage.headerLength)))?.version == 1,
     "기존 Host에는 v1 on 호환")
+
+let lifecycleJournal = Journal()
+var lifecycle = model(lifecycleJournal)
+var lifecycleCompleted = 0
+for index in 0..<256 {
+    guard let request = lifecycle.beginControl(desired: index.isMultiple(of: 2), now: 0, cancel: {}) else { break }
+    check(lifecycle.submitControl(request, to: p, now: 0, send: { true }), "반복 명령은 저장 확인 후 전송")
+    let completed = state(request.desired ? .userSessionProtected : .inactive,
+        requested: request.desired, intent: request.desired ? .on : .off)
+    lifecycle.receiveControl(reply(request, value: completed), from: p, now: 1)
+    check(lifecycle.snapshot.operationState == .applied, "반복 명령 완료 확인")
+    lifecycleCompleted += 1
+    lifecycleJournal.records = try JSONDecoder().decode([VisionSentryStoredRequest].self,
+        from: JSONEncoder().encode(lifecycleJournal.records))
+    if lifecycleCompleted == 128 {
+        check(lifecycleJournal.records.count == 64, "128회 완료 후 bounded journal")
+        lifecycle = model(lifecycleJournal, completed)
+        let restored = begin(lifecycle, desired: nil)
+        check(restored.rawRequest == request.rawRequest, "128회 뒤 재시작도 마지막 원문 그대로 수동 조회")
+        lifecycle.receiveControl(reply(restored, value: completed), from: p, now: 1)
+    }
+}
+check(lifecycleCompleted == 256 && lifecycleJournal.records.count == 64,
+    "256회 정상 on/off와 128회 뒤 재시작에도 새 명령 계속 가능")
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
