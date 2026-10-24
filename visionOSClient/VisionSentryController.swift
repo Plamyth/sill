@@ -81,7 +81,10 @@ final class VisionSentryController {
             if let operationState {
                 switch operationState {
                 case .pending: return accepted == true ? "Mac이 요청을 수락했습니다. 적용 대기 중이며 원문으로 다시 확인할 수 있습니다." : "요청 적용 대기 중"
-                case .applied: return "Mac이 요청 적용을 확인했습니다."
+                case .applied:
+                    let confirmation = "Mac이 요청 적용을 확인했습니다."
+                    return state?.phase == .pending ?
+                        "이전 요청 결과 · \(confirmation) 현재 전환의 완료를 뜻하지 않습니다." : confirmation
                 case .rejected: return accepted == true ? "원장 접수는 확인됐지만 Mac이 적용을 거절했습니다." : "Mac이 요청을 거절했습니다."
                 case .superseded: return "이 요청은 이후의 명시적 보호 설정으로 대체되었습니다."
                 case .unknown: return "요청 결과 미확인 · 새 요청 대신 보존 원문으로 다시 확인하세요."
