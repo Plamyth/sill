@@ -84,6 +84,127 @@ struct Checks {
                 paired: true, device: name), "iPad model hello including custom device name")
         }
 
+        let onDemand = Rig(), onDemandCoordinator = CoordinatorFixture(onDemand.desktop)
+        onDemandCoordinator.independentStreamsEnabled = true
+        onDemandCoordinator.connections[aid] = a
+        onDemandCoordinator.routes[aid] = Route()
+        let peerA = PeerFixture(), peerB = PeerFixture()
+        onDemandCoordinator.peerStreams[aid] = peerA
+        var request = nativeViewport
+        request.extendedDesktopIntent = .request
+        var release = nativeViewport
+        release.extendedDesktopIntent = .release
+        await onDemandCoordinator.receive(request, from: a)
+        expect(onDemand.displays.isEmpty && onDemand.desktop.requesters.isEmpty,
+               "button request before eligible hello is refused")
+        onDemandCoordinator.receiveHello(Hello(), from: a)
+        await onDemandCoordinator.receive(nativeViewport, from: a)
+        expect(onDemand.displays.isEmpty && onDemand.desktop.requesters.isEmpty,
+               "fresh main and ordinary independent viewport must not allocate an extended desktop")
+        expect(onDemandCoordinator.extendedDesktopEligible == [aid] && onDemandCoordinator.extendedDesktopViewports.isEmpty,
+               "eligible hello records identity without allocation or panel-size latch")
+        for var invalid in invalidViewports {
+            invalid.extendedDesktopIntent = .request
+            onDemandCoordinator.updateExtendedDesktopViewport(invalid, from: a)
+            expect(onDemand.displays.isEmpty && onDemand.desktop.requesters.isEmpty,
+                   "invalid explicit request cannot register a requester or create a display")
+        }
+        request.extendedDesktop = .init(width: 1350, height: 976)
+        await onDemandCoordinator.receive(request, from: a)
+        await onDemandCoordinator.receive(request, from: a)
+        onDemandCoordinator.receiveHello(Hello(), from: a)
+        await onDemandCoordinator.receive(keyboard, from: a)
+        expect(onDemand.displays.count == 1 && onDemand.desktop.requesters == [aid] &&
+               onDemand.displays[0].dimensions.heightPt == 976,
+               "explicit peer viewport creates one resource at validated allocation size despite repeats and keyboard")
+        expect(peerA.viewports.last == keyboard, "resource intent preserves the peer's normal viewport delivery")
+        onDemandCoordinator.connections[bid] = b
+        onDemandCoordinator.routes[bid] = Route()
+        onDemandCoordinator.peerStreams[bid] = peerB
+        onDemandCoordinator.receiveHello(Hello(), from: b)
+        await onDemandCoordinator.receive(release, from: b)
+        expect(onDemand.desktop.requesters == [aid], "non-requester release cannot remove another peer")
+        await onDemandCoordinator.receive(request, from: b)
+        expect(onDemand.desktop.requesters == [aid, bid] && onDemand.displays.count == 1,
+               "second explicit requester shares the existing resource")
+        await online(onDemand.displays[0])
+        await onDemandCoordinator.receive(release, from: a)
+        await onDemandCoordinator.receive(release, from: a)
+        expect(onDemand.desktop.requesters == [bid] && onDemand.desktop.displayID == 100 && onDemand.displays[0].destroys == 0,
+               "repeated release removes only its own requester and preserves the other peer")
+        await onDemandCoordinator.receive(nativeViewport, from: a)
+        expect(onDemand.desktop.requesters == [bid], "ordinary viewport after release does not reacquire ownership")
+        onDemandCoordinator.disconnect(b)
+        expect(onDemand.desktop.requesters.isEmpty && onDemand.desktop.displayID == nil &&
+               onDemand.displays[0].destroys == 1 && !onDemandCoordinator.extendedDesktopEligible.contains(bid),
+               "last requester disconnect clears eligibility and destroys exactly once")
+        let beforeStale = peerB.viewports.count
+        _ = await onDemandCoordinator.handlePeerMessage(ViewportMessage(request), from: b, lane: peerB)
+        onDemandCoordinator.updateExtendedDesktopViewport(request, from: b)
+        expect(onDemand.displays.count == 1 && peerB.viewports.count == beforeStale,
+               "late disconnected peer cannot create or update its stream")
+        await onDemandCoordinator.receive(nativeViewport, from: a)
+        expect(onDemand.displays.count == 1 && onDemand.desktop.requesters.isEmpty,
+               "remaining eligible non-requester stays on main without creating a display")
+        await onDemandCoordinator.receive(request, from: a)
+        expect(onDemand.displays.count == 2 && onDemand.desktop.requesters == [aid],
+               "new explicit request after cleanup creates a fresh generation")
+        var invalidRelease = Viewport(width: .nan, height: 0, scale: nil)
+        invalidRelease.extendedDesktopIntent = .release
+        onDemandCoordinator.updateExtendedDesktopViewport(invalidRelease, from: a)
+        expect(onDemand.desktop.requesters.isEmpty && onDemand.displays[1].destroys == 1,
+               "own release does not depend on allocation geometry")
+        await online(onDemand.displays[1])
+        expect(onDemand.desktop.displayID == nil, "late online completion after release cannot publish a display")
+        onDemandCoordinator.disconnect(a)
+        expect(onDemandCoordinator.extendedDesktopEligible.isEmpty && onDemandCoordinator.extendedDesktopViewports.isEmpty,
+               "disconnect clears remembered eligibility and dimensions")
+        onDemand.desktop.shutdown()
+
+        for invalid in 0..<10 {
+            let refused = Rig(), coordinator = CoordinatorFixture(refused.desktop), peer = PeerFixture()
+            coordinator.independentStreamsEnabled = true
+            coordinator.connections[aid] = a; coordinator.routes[aid] = Route(); coordinator.peerStreams[aid] = peer
+            a.state = .ready
+            coordinator.receiveHello(Hello(), from: a)
+            switch invalid {
+            case 0: coordinator.routes[aid] = nil
+            case 1: coordinator.routes[aid]?.encrypted = false
+            case 2: coordinator.routes[aid]?.fingerprint = nil
+            case 3: coordinator.remote?.paired = false
+            case 4: coordinator.connections[aid] = b
+            case 5: a.state = .cancelled
+            case 6: coordinator.shuttingDown = true
+            case 7: peer.isClosed = true
+            case 8: coordinator.peerStreams[aid] = PeerFixture()
+            default: coordinator.receiveHello(Hello(device: "Android"), from: a)
+            }
+            _ = await coordinator.handlePeerMessage(ViewportMessage(request), from: a, lane: peer)
+            expect(refused.displays.isEmpty && refused.desktop.requesters.isEmpty,
+                   "request rechecks live identity, closed lane, current paired TLS and device eligibility \(invalid)")
+            coordinator.disconnect(a)
+        }
+        a.state = .ready
+        let legacyViewport = try! JSONDecoder().decode(Viewport.self, from: Data(#"{"width":1350,"height":890,"scale":1.5}"#.utf8))
+        expect(legacyViewport.extendedDesktopIntent == nil, "old viewport decodes with no resource intent")
+        expect(Viewport(width: 1350, height: 890, scale: nil).extendedDesktopIntent == nil,
+               "existing initializers default to no resource intent")
+        let oldJSON = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(legacyViewport)) as! [String: Any]
+        expect(oldJSON["extendedDesktopIntent"] == nil, "nil intent is omitted for older decoders")
+        for intent in [Viewport.ExtendedDesktopIntent.request, .release] {
+            let viewport = Viewport(width: 1350, height: 890, scale: nil, extendedDesktopIntent: intent)
+            let data = try! JSONEncoder().encode(viewport)
+            let json = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+            expect(json["extendedDesktopIntent"] as? String == intent.rawValue &&
+                   (try! JSONDecoder().decode(Viewport.self, from: data)) == viewport, "intent has exact Codable wire value")
+        }
+        for bad in [#"{"width":1350,"height":890,"extendedDesktopIntent":"create"}"#,
+                    #"{"width":1350,"height":890,"extendedDesktopIntent":1}"#,
+                    #"{"width":1350,"height":890,"extendedDesktopIntent":"request","extendedDesktop":{"width":9000,"height":890}}"#] {
+            expect((try? JSONDecoder().decode(Viewport.self, from: Data(bad.utf8))) == nil,
+                   "invalid intent or allocation fails decoding")
+        }
+
         let rig = Rig(), desktop = rig.desktop
         desktop.request(aid)
         desktop.updateViewport(native, for: aid)

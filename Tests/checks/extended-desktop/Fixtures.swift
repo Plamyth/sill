@@ -15,6 +15,22 @@ final class Trust {
     var paired = true
     func isPaired(_ fingerprint: Data) -> Bool { paired && fingerprint == Data([1]) }
 }
+final class PeerFixture {
+    var isClosed = false
+    var viewports: [Viewport] = []
+    func updateViewport(_ viewport: Viewport) { viewports.append(viewport) }
+}
+struct ViewportMessage {
+    enum Kind { case viewport, other }
+    let kind = Kind.viewport
+    let payload: Data
+    init(_ viewport: Viewport) { payload = try! JSONEncoder().encode(viewport) }
+}
+enum Wire {
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        try? JSONDecoder().decode(type, from: data)
+    }
+}
 
 @MainActor
 final class VirtualDisplay {
@@ -36,6 +52,9 @@ final class CoordinatorFixture {
     var shuttingDown = false
     var appKitLoop = true
     var synthetic = false
+    var independentStreamsEnabled = false
+    var peerStreams: [ObjectIdentifier: PeerFixture] = [:]
+    var extendedDesktopEligible: Set<ObjectIdentifier> = []
     var routes: [ObjectIdentifier: Route] = [:]
     var connections: [ObjectIdentifier: NWConnection] = [:]
     var remote: Trust? = Trust()
@@ -44,11 +63,21 @@ final class CoordinatorFixture {
     init(_ desktop: ExtendedDesktop) { extendedDesktop = desktop }
     // COORDINATOR_METHOD
     // VIEWPORT_METHOD
+    // PEER_VIEWPORT_METHOD
+
+    func receiveHello(_ hello: Hello, from connection: NWConnection) {
+        // HELLO_DESKTOP
+    }
+
+    func receive(_ viewport: Viewport, from connection: NWConnection) async {
+        guard let lane = peerStreams[ObjectIdentifier(connection)] else { return }
+        _ = await handlePeerMessage(ViewportMessage(viewport), from: connection, lane: lane)
+    }
 
     func disconnect(_ connection: NWConnection) {
         let id = ObjectIdentifier(connection)
-        extendedDesktop.release(id)
-        extendedDesktopViewports[id] = nil
+        // DISCONNECT_DESKTOP
+        peerStreams[id] = nil
         connections[id] = nil
         routes[id] = nil
     }

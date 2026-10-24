@@ -24,6 +24,12 @@ public struct Viewport: Codable, Hashable {
     /// Native extended-desktop allocation in Mac points, independent of panel size and Aa scale.
     /// Older hosts ignore this field and use the actual panel dimensions as before.
     public var extendedDesktop: ExtendedDesktopSize?
+    /// A button's resource intent, independent of display selection. nil leaves ownership alone.
+    public var extendedDesktopIntent: ExtendedDesktopIntent?
+
+    public enum ExtendedDesktopIntent: String, Codable, Hashable {
+        case request, release
+    }
 
     public struct ExtendedDesktopSize: Codable, Hashable {
         public let width: Double
@@ -51,9 +57,10 @@ public struct Viewport: Codable, Hashable {
     }
 
     public init(width: Double, height: Double, scale: Double?, localCursor: Bool? = nil, fps: Int? = nil,
-                extendedDesktop: ExtendedDesktopSize? = nil) {
+                extendedDesktop: ExtendedDesktopSize? = nil, extendedDesktopIntent: ExtendedDesktopIntent? = nil) {
         self.width = width; self.height = height; self.scale = scale; self.localCursor = localCursor; self.fps = fps
         self.extendedDesktop = extendedDesktop
+        self.extendedDesktopIntent = extendedDesktopIntent
     }
 }
 
