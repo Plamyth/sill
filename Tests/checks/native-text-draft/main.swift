@@ -408,4 +408,64 @@ do {
     check(outcomes == [.cancelled] && events(peer).isEmpty && client.link.inputsOnSession == 0,
           "network epoch change refuses captured text while main target is stale")
 }
+for (modern, layoutBeforeCallback) in [(false, true), (false, false), (true, true), (true, false)] {
+    let (client, peer) = legacyClient()
+    let controls = VisionInputSession()
+    controls.bind(client)
+    controls.allowed = true
+    let bounds = CGRect(x: 0, y: 0, width: 1240, height: 140)
+    let video = CGSize(width: 64, height: 64)
+    controls.setGeometry(.init(bounds: bounds, video: video))
+    controls.allowed = false
+    let layer = NSObject()
+    if modern {
+        let epoch = VideoEpoch(generation: "draft-layout", source: .desktop,
+            geometry: .init(x: 0, y: 0, width: 64, height: 64), width: 64, height: 64)
+        _ = client.catalog(WindowList(macName: "Fixture", windows: [], active: .desktop,
+            inputGeneration: epoch.generation, presentationInput: 1, videoEpoch: epoch), from: peer)
+        client.ready(VisionPresentation.Ticket(epoch: epoch, peer: ObjectIdentifier(peer), layer: ObjectIdentifier(layer)))
+    }
+    let workspace = DraftWorkspace(client)
+    workspace.textDraft = VisionTextDraft(target: client.captureVisionTextTarget()!)
+    guard case .editing(let editor) = workspace.textDraft!.phase else { fatalError("editing required") }
+    check(workspace.textDraft!.review(VisionDraftObservation(editorID: editor.id, revision: 1,
+        text: "remote fixture 41", marked: false, composition: VisionDraftComposition())), "layout fixture reviews actual draft")
+    let command = workspace.textDraft!.beginSubmission(currentTarget: client.captureVisionTextTarget())!
+    var outcomes: [SessionLink.Submission.Outcome] = []
+    client.submitVisionText(command.0.text, target: command.0.target, requestID: command.1) { outcome in
+        outcomes.append(outcome)
+        workspace.textDraft?.finish(reviewID: command.0.id, requestID: command.1, submitted: outcome == .submitted)
+    }
+    client.queue.sync {}
+    if !layoutBeforeCallback { pump { outcomes.count == 1 } }
+    let scope = client.visionTextScope
+    controls.setGeometry(.init(bounds: CGRect(x: 0, y: 0, width: 1240, height: 119.5), video: video))
+    if client.visionTextScope != scope { workspace.scopeChanged() }
+    check(workspace.draftShown && workspace.textDraft != nil, "modal layout preserves draft sheet after actual send")
+    pump { outcomes.count == 1 }
+    check(outcomes == [.submitted] && events(peer).filter { $0 == .text("remote fixture 41") }.count == 1,
+          "layout has one text handoff and one terminal callback")
+    if case .submitted? = workspace.textDraft?.phase { check(true, "layout preserves submitted acknowledgement state") }
+    else { check(false, "layout preserves submitted acknowledgement state") }
+    client.setVisionPresentationForeground(false)
+    workspace.scopeChanged()
+    check(!workspace.draftShown && workspace.textDraft == nil, "scene loss still clears draft after modal layout")
+}
+do {
+    let (client, peer) = legacyClient()
+    let controls = VisionInputSession()
+    controls.bind(client)
+    controls.allowed = true
+    let geometry = VisionPointer.Geometry(bounds: CGRect(x: 0, y: 0, width: 100, height: 100), video: CGSize(width: 64, height: 64))
+    controls.setGeometry(geometry)
+    _ = client.link.hold(peer)
+    var outcomes: [SessionLink.Submission.Outcome] = []
+    client.submitVisionText("queued", target: client.captureVisionTextTarget()!, requestID: UUID()) { outcomes.append($0) }
+    client.queue.sync {}
+    controls.setGeometry(.init(bounds: CGRect(x: 0, y: 0, width: 100, height: 80), video: geometry.video))
+    client.queue.sync {}
+    pump { outcomes.count == 1 }
+    _ = client.link.unhold(peer)
+    check(outcomes == [.cancelled] && events(peer).isEmpty, "active pointer geometry still cancels queued input")
+}
 print("RESULT_ASSERTIONS \(checks)")

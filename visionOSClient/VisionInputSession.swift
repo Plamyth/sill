@@ -79,7 +79,7 @@ final class VisionInputSession: ObservableObject {
 
     func setGeometry(_ value: VisionPointer.Geometry) {
         guard geometry != value else { return }
-        releaseAll()
+        if allowed { releaseAll() }
         geometry = value
         viewport = VisionViewport()
     }

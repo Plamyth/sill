@@ -31,7 +31,8 @@ def contracts(root):
     check('no capture engine or timer inference', all(word not in editor + model for word in ['AVAudioEngine', 'SFSpeechRecognizer', 'requestRecordPermission', 'asyncAfter', 'Timer(']))
     check('underlying pointer surface disabled', '.allowsHitTesting(!draftShown)' in workspace)
     check('underlying controls disabled', '.disabled(!input.canSend || draftShown)' in workspace)
-    check('input admission excludes draft', '!inputSuspended && !draftShown' in workspace)
+    admission = workspace[workspace.index('private var inputAllowed:'):workspace.index('private var macAudioModalShown:')]
+    check('input admission excludes draft', '!inputSuspended' in admission and '!draftShown' in admission)
     opening = workspace[workspace.index('private func openDraft()'):workspace.index('private func clearDraft()')]
     check('original input owner releases before target capture', opening.index('releaseInput()') < opening.index('captureVisionTextTarget()'))
     check('original keyboard resigns before target capture', opening.index('resignFirstResponder') < opening.index('captureVisionTextTarget()'))
