@@ -20,6 +20,9 @@ final class ClientProbe {
     let remoteAudioControl = IPadRemoteAudioController(send: { _,_ in }, stop: {}, play: { _,_ in }, changed: { _ in })
     func microphoneObserve(_ list: WindowList, from peer: NWConnection) {}
     func desiredAudioObserve(_ list: WindowList, from peer: NWConnection) {}
+    func observeVisionInputCatalog(_ list: WindowList, from peer: NWConnection) {
+        precondition(connection === peer)
+    }
     func suspendDesiredAudio() { suspensions += 1; remoteAudioControl.backgrounded() }
 '''
 if new:
