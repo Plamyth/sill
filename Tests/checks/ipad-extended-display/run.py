@@ -18,6 +18,9 @@ out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
 screen = (root / "iOSClient/StreamScreen.swift").read_text()
 portrait = (root / "iOSClient/PortraitStreamScreen.swift").read_text()
+protocol_path = Path(sys.argv[2]) if len(sys.argv) > 2 else root / "Sources/StreamProtocol/Switcher.swift"
+display_info = block(protocol_path.read_text(), "public struct DisplayInfo:")
+assert "public var role: String?" in display_info, "확정된 DisplayInfo.role 계약을 통합하거나 입력으로 전달해야 합니다."
 button = block(screen, "struct IPadExtendedDisplayButton: View")
 assert 'accessibilityLabel: "iPad 확장 화면", action: selectExtendedDisplay' in button
 assert '.accessibilityIdentifier("iPadExtendedDisplayButton")' in button
@@ -33,14 +36,6 @@ assert 'desktopButton(width: layout.buttonWidth)' in vertical
 assert 'IPadExtendedDisplayButton' not in block(portrait, 'private func phoneRow1(')
 
 standins = '''import Foundation
-struct DisplayInfo: Equatable {
-    var id: UInt32
-    var name: String
-    var width: Int = 1920
-    var height: Int = 1080
-    var isMain: Bool = false
-    var role: String? = nil
-}
 enum StreamSource { case none, desktop, window }
 final class ClientFixture {
     var displays: [DisplayInfo] = []
@@ -54,7 +49,7 @@ final class ClientFixture {
 members = [block(button, marker).replace("private ", "", 1) for marker in [
     "private var candidate:", "private var selected:", "private func selectExtendedDisplay()"
 ]]
-fixture = standins + block(screen, "enum IPadExtendedDisplaySelection {")
+fixture = standins + display_info + '\n' + block(screen, "enum IPadExtendedDisplaySelection {")
 fixture += '\nstruct ButtonFixture {\nlet client: ClientFixture\n' + '\n'.join(members) + '\n}\n'
 (out / "Fixture.swift").write_text(fixture)
 subprocess.run([sys.executable, "-B", str(root / "Tests/checks/ipad-test-destinations/layout.py"),
@@ -62,5 +57,5 @@ subprocess.run([sys.executable, "-B", str(root / "Tests/checks/ipad-test-destina
 subprocess.run(["/usr/bin/swiftc", "-module-cache-path", str(out / "cache"),
                 str(out / "Fixture.swift"), str(out / "Layout.swift"),
                 str(Path(__file__).with_name("main.swift")), "-o", str(out / "check")], check=True)
-subprocess.run([str(out / "check")], check=True)
+subprocess.run([str(out / "check"), *sys.argv[3:4]], check=True)
 print("버튼 연결·식별자·기존 모니터 선택 유지 정적 검사를 통과했습니다.")
