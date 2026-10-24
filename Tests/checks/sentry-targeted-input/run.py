@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--archive', type=Path, required=True)
 parser.add_argument('--label', required=True)
-parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'control', 'affected', 'local-auth-window'], default='all')
+parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'control', 'affected', 'local-auth-window', 'local-auth-sdk'], default='all')
 args = parser.parse_args()
 archive = args.archive.resolve()
 archive.mkdir(parents=True, exist_ok=True)
@@ -85,6 +85,15 @@ authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
     '\n'.join(block(platform, m) for m in ['private static func verifiedAuthenticationOwner(',
         'private func refreshInputObservation(', 'private func isObservedAuthenticationWindow(', 'private func refreshRemoteTarget(', 'private func nextAuthenticationEventTag(']))
 authentication_window = re.sub(r'\bCGEvent\b', 'Event', authentication_window)
+sdk_authentication_window = authentication_window
+start = sdk_authentication_window.index('private final class Event {')
+end = sdk_authentication_window.index('@MainActor private final class Platform {')
+sdk_authentication_window = sdk_authentication_window[:start] + sdk_authentication_window[end:]
+sdk_authentication_window = re.sub(r'\bEvent\b', 'CGEvent', sdk_authentication_window)
+sdk_authentication_window = sdk_authentication_window.replace('@MainActor private final class Platform {',
+    'private extension CGEvent { static func tapIsEnabled(tap: InertTap) -> Bool { tap.enabled } }\n@MainActor private final class Platform {')
+sdk_authentication_window = sdk_authentication_window.replace(block(sdk_authentication_window, '    func run() async {'),
+    read('Tests/checks/local-auth-window-input/SDKChecks.swift'))
 assert 'audioPrivacy?.localAuthenticationWillBegin = { [weak platform] requestID in' in coordinator
 assert 'platform?.localAuthenticationWillBegin(requestID)' in coordinator
 assert 'self?.audioPrivacy?.localAuthenticationChallengeID' in coordinator
@@ -128,9 +137,9 @@ control = read('Tests/checks/sentry-targeted-input/ControlChecks.swift').replace
     '\n'.join(block(coordinator, marker) for marker in ['private func activateSentry(', 'private func grantSentryControl(',
         'private func currentSentryOwner(', 'private func handleSentryControl(']))
 control = read('Sources/SillHost/SentryAdmission.swift') + '\n' + read('Sources/SillHost/HostSentry.swift') + '\n' + control
-payload = {'protocol': protocol, 'control': control, 'local-auth-window': authentication_window, 'platformSDK': authentication_input_policy + '\n' + platform + '\n' + actual + '''
+payload = {'protocol': protocol, 'control': control, 'local-auth-window': authentication_window, 'local-auth-sdk': sdk_authentication_window, 'platformSDK': authentication_input_policy + '\n' + platform + '\n' + actual + '''
 enum StreamCoordinator { static func isSillVirtualDisplay(_ id: CGDirectDisplayID) -> Bool { false } }
-''', 'input': input_program, 'native': native, 'panel': authentication_input_policy + '\n' + fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted','local-auth-window'])}
+''', 'input': input_program, 'native': native, 'panel': authentication_input_policy + '\n' + fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted','local-auth-window','local-auth-sdk'])}
 blob = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
 remote = r'''
 import hashlib,json,pathlib,subprocess,sys,tempfile

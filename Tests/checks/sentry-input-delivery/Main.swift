@@ -79,6 +79,33 @@ private final class HostSentryPlatform: NSObject {
 
         let source = CGEventSource(stateID: .hidSystemState)!
         let injector = InputFixture()
+        for kind in [CGEventType.keyDown, .leftMouseDown, .scrollWheel] {
+            for state in [CGEventSourceStateID.hidSystemState, .privateState] {
+                let e = CGEvent(source: CGEventSource(stateID: state))!
+                e.type = kind; e.location = CGPoint(x: 31, y: 47); e.timestamp = 123456
+                e.flags = [.maskShift]
+                e.setIntegerValueField(.eventSourceUserData, value: 0)
+                e.setIntegerValueField(.keyboardEventKeycode, value: 12)
+                e.setIntegerValueField(.mouseEventDeltaX, value: 7)
+                e.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: -9)
+                let text: [UniChar] = [0x41, 0xD55C, 0xD83D, 0xDE00]
+                e.keyboardSetUnicodeString(stringLength: text.count, unicodeString: text)
+                let integerFields: [CGEventField] = [.keyboardEventKeycode, .mouseEventDeltaX, .scrollWheelEventDeltaAxis1]
+                let payload = integerFields.map { e.getIntegerValueField($0) }
+                let point = e.location, timestamp = e.timestamp, flags = e.flags
+                let before = injector.posted.count
+                Checks.check(injector.send(e) && injector.posted.count == before + 1 &&
+                    injector.posted.last!.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
+                    "SDK 명시적 userdata0 원격 이벤트의 생산 post 경계 마커 갱신·무게시 전송 1개 \(kind.rawValue)/\(state.rawValue)")
+                var chars = [UniChar](repeating: 0, count: 16), length = 0
+                e.keyboardGetUnicodeString(maxStringLength: chars.count, actualStringLength: &length, unicodeString: &chars)
+                Checks.check(e.type == kind && e.flags == flags && e.location == point &&
+                    e.timestamp == timestamp && integerFields.map { e.getIntegerValueField($0) } == payload &&
+                    Array(chars.prefix(length)) == text && e.getIntegerValueField(.eventSourceStateID) == state.rawValue &&
+                    e.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()),
+                    "SDK 원격 키·포인터·scroll·Unicode 합성 payload와 원래 source 보존")
+            }
+        }
         for type in [CGEventType.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
                      .mouseMoved, .leftMouseDragged, .scrollWheel, .keyDown, .keyUp, .flagsChanged] {
             let event = CGEvent(source: source)!
