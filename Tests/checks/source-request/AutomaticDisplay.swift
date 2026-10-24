@@ -15,6 +15,14 @@ import Foundation
     func picks(_ client: Client) -> [DisplaySelection] {
         client.allSent.filter { $0.0 == .selectDisplay }.compactMap { Wire.decode(DisplaySelection.self, from: $0.1) }
     }
+    let legacy = fresh()
+    legacy.deliverIdleCatalog(idle)
+    legacy.deliverIdleCatalog(idle)
+    expect(legacy.allSent.isEmpty && legacy.remoteAudioControl.changes == 0,
+           "최초 catalog에 admission이 없는 구형 Host에는 자동 화면 선택을 보내지 않음")
+    legacy.selectDisplay(main)
+    expect(picks(legacy).count == 1 && picks(legacy).first?.origin == nil,
+           "admission 없는 Host에도 명시적인 수동 화면 선택은 기존 wire로 유지")
     let blocked = catalog(1, ready: false)!, ready = catalog(2, ready: true)!
     let waiting = fresh()
     waiting.deliverIdleCatalog(blocked)
