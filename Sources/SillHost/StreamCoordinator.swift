@@ -517,6 +517,9 @@ package final class StreamCoordinator {
         }
         remote?.onMicrophoneTrustRevoked = { [weak self] fingerprint in
             guard let self else { return }
+            self.server.sentryAdmission.revokeControl(forDeviceID: fingerprint.map { String(format: "%02x", $0) }.joined())
+            self.sentry?.membershipWillChange()
+            self.sentry?.surfacesChanged()
             self.microphoneIngress.revoke(fingerprint: fingerprint)
             self.microphoneReceiver.forgetCapabilities(fingerprint: fingerprint)
             self.microphoneReceiver.checkWatchdog()
@@ -592,6 +595,7 @@ package final class StreamCoordinator {
                 self.sentry?.membershipWillChange()
                 self.routes[id] = route
                 self.sentry?.joined(id)
+                self.grantSentryControl(to: id, route: route)
                 if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
                    self.remote?.isPaired(fingerprint) == true, let privacy = self.audioPrivacy, !privacy.latched {
                     _ = privacy.armAndVerify()
@@ -2111,7 +2115,24 @@ package final class StreamCoordinator {
             return
         }
         logClick(event, in: rect)
-        injector.apply(event, in: rect, from: device)
+        injector.apply(event, in: rect, from: device, protectedScope: protectedPointerScope(device: device, epoch: epoch))
+    }
+
+    private func protectedPointerScope(device: KeyStrokes.Device, epoch: VideoEpoch?,
+                                       isCurrent: @escaping () -> Bool = { true }) -> InputInjector.ProtectedPointerScope? {
+        guard let epoch else { return nil }
+        let lane = peerStreams[device]
+        let isPeer = lane != nil
+        return .init(device: device, epoch: epoch, isCurrent: { [weak self, weak lane] in
+            guard let self, isCurrent(), !self.shuttingDown,
+                  self.server.sentryAdmission.allowsActions(device), self.connections[device]?.state == .ready else { return false }
+            if isPeer {
+                guard let lane else { return false }
+                return self.peerStreams[device] === lane && !lane.isClosed && lane.epoch == epoch &&
+                    lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil
+            }
+            return !self.switching && self.videoEpoch == epoch && self.active == epoch.source
+        })
     }
 
     private func inputTargetReady(_ event: InputEvent) -> Bool {
@@ -3689,7 +3710,8 @@ extension StreamCoordinator {
                 self.contractPeerInputs.append(lane.source)
                 #endif
                 self.logClick(scoped.event, in: rect)
-                self.injector.apply(scoped.event, in: rect, from: id)
+                self.injector.apply(scoped.event, in: rect, from: id,
+                    protectedScope: self.protectedPointerScope(device: id, epoch: epoch, isCurrent: { !turn.cancelled }))
             }) else {
                 peerInputQueue.cancel(peer: id)
                 injector.releaseInput(of: id)
@@ -3765,7 +3787,26 @@ extension StreamCoordinator {
               server.sentryAdmission.allowsActions(peer),
               lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil else { return false }
         if synthetic { return true }
-        guard case .window(let id) = lane.source else { return lane.source == .desktop }
+        let id: CGWindowID
+        switch lane.source {
+        case .window(let selected): id = selected
+        case .desktop:
+            guard injector.isolatesPhysicalInput else { return true }
+            let point: CGPoint
+            guard let rect = lane.inputRect(generation: epoch.generation, epoch: epoch.id) else { return false }
+            switch event {
+            case .pointer(.leftDown, let x, let y)?, .pointer(.rightDown, let x, let y)?,
+                 .scrollGesture(.began, let x, let y)?:
+                point = CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+            case .scroll(let x, let y, _, _)?:
+                if injector.protectedScrollPending { return true }
+                point = CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+            default: return true
+            }
+            guard let target = Self.topmostWindow(at: point) else { return false }
+            id = target.id
+        default: return false
+        }
         guard let window = catalog.window(id: id), let app = window.owningApplication else { return false }
         let activates: Bool
         switch event {
@@ -3796,7 +3837,11 @@ extension StreamCoordinator {
     private func configureSentry() {
         guard !synthetic, appKitLoop else { return }
         let platform = HostSentryPlatform()
+        injector.protectedPointerEgress = { [weak platform] event, scope in
+            platform?.protectedPointerEgress(event, scope: scope) == true
+        }
         platform.localReturnReason = { [weak self] in self?.sentryLocalReturnUnavailableReason() }
+        platform.currentLocalAuthenticationChallenge = { [weak self] in self?.audioPrivacy?.localAuthenticationChallengeID }
         let defaults = UserDefaults.standard
         let key = "CCRHostSentryLatch.v1"
         let raw = defaults.object(forKey: key)
@@ -3807,7 +3852,16 @@ extension StreamCoordinator {
                 return defaults.synchronize() && defaults.string(forKey: key) == value.rawValue
             }, surfaces: .init(engage: { platform.engage() }, verify: { platform.verify() },
                 release: { platform.release() }, reason: { platform.reason },
-                restoreCurtains: { platform.restoreCurtains() }),
+                restoreCurtains: { platform.restoreCurtains() }, released: { platform.releaseVerified }),
+            prepareRelease: { [weak self] in
+                guard let self else { return false }
+                return platform.prepareRelease { self.injector.prepareRelease() }
+            },
+            prepareRemoteRelease: { [weak self] in
+                guard let self else { return false }
+                return platform.prepareRemoteRelease(inputIdle: { !self.injector.hasPendingInput },
+                    cleanup: { self.injector.prepareRelease() })
+            },
             audioReady: { [weak self] in self?.sentryAudioReady() == true },
             localReturnUnavailableReason: { [weak self] in
                 guard let self else { return "인증된 로컬 복귀 경로를 확인하지 못했습니다." }
@@ -3855,8 +3909,12 @@ extension StreamCoordinator {
         guard let sentry, !shuttingDown, connections[peer] === connection,
               let route = routes[peer], route.encrypted,
               let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
-              message.payload.count <= StreamMessage.clientPayloadLimit(for: .activateSentry),
-              let activation = Wire.decode(SentryActivation.self, from: message.payload) else { return }
+              message.payload.count <= StreamMessage.clientPayloadLimit(for: .activateSentry) else { return }
+        if let request = try? SentryControlRequest(rawRequest: message.payload) {
+            handleSentryControl(request, from: connection)
+            return
+        }
+        guard let activation = Wire.decode(SentryActivation.self, from: message.payload) else { return }
         let accepted = server.sentryAdmission.accept(activation, from: peer)
         if accepted {
             _ = sentry.activate()
@@ -3866,6 +3924,55 @@ extension StreamCoordinator {
             isKeyframe: false, payload: Wire.encode(SentryResponse(requestID: activation.requestID,
                 accepted: accepted, state: state,
                 reason: accepted ? nil : "연결 또는 보호 상태가 바뀌었습니다. 현재 상태를 다시 확인해 주세요."))), to: connection)
+    }
+
+    private func grantSentryControl(to peer: ObjectIdentifier, route: ClientRoute) {
+        guard !synthetic, route.encrypted, let fingerprint = route.fingerprint,
+              fingerprint.count == 32, remote?.isPaired(fingerprint) == true,
+              let owner = SentryAdmission.VerifiedOwnerDevice(
+                deviceID: fingerprint.map { String(format: "%02x", $0) }.joined(),
+                encryptedTLS: true, currentPairedOwner: true) else { return }
+        _ = server.sentryAdmission.grantControl(to: peer, verifiedOwner: owner)
+    }
+
+    private func currentSentryOwner(_ connection: NWConnection) -> SentryAdmission.VerifiedOwnerDevice? {
+        let peer = ObjectIdentifier(connection)
+        guard !synthetic, !shuttingDown, connections[peer] === connection, connection.state == .ready,
+              let route = routes[peer], route.encrypted, let fingerprint = route.fingerprint,
+              fingerprint.count == 32, remote?.isPaired(fingerprint) == true else { return nil }
+        return SentryAdmission.VerifiedOwnerDevice(
+            deviceID: fingerprint.map { String(format: "%02x", $0) }.joined(),
+            encryptedTLS: true, currentPairedOwner: true)
+    }
+
+    private func handleSentryControl(_ request: SentryControlRequest, from connection: NWConnection) {
+        let peer = ObjectIdentifier(connection)
+        guard let sentry, let owner = currentSentryOwner(connection) else { return }
+        let response: SentryControlResponse?
+        switch server.sentryAdmission.prepareControl(request, from: peer) {
+        case .unauthorized: return
+        case .readback(let current), .rejected(let current): response = current
+        case .prepared(let ticket, _):
+            let current = {
+                self.currentSentryOwner(connection)?.deviceID == owner.deviceID &&
+                self.server.sentryAdmission.controlTicketIsCurrent(ticket)
+            }
+            let applied = sentry.setRemoteProtection(request.desired, current: current)
+            guard currentSentryOwner(connection)?.deviceID == owner.deviceID else {
+                server.sentryAdmission.revokeControl(forDeviceID: owner.deviceID)
+                sentry.surfacesChanged()
+                return
+            }
+            let result: SentryAdmission.ControlResult = !applied ? .failed : request.desired
+                ? .onPrepared(surfacesVerified: true)
+                : .offVerified(curtainsReleased: true, tapReleased: true, heldInputCleared: true)
+            response = server.sentryAdmission.completeControl(ticket, result: result)
+            sentry.controlDidComplete()
+        }
+        guard currentSentryOwner(connection)?.deviceID == owner.deviceID,
+              let response, let payload = try? response.encodedPayload() else { return }
+        server.send(StreamMessage(kind: .sentryState, timestamp: Date().timeIntervalSince1970,
+            isKeyframe: false, payload: payload), to: connection)
     }
 
     package func startAudioForwarding() async {

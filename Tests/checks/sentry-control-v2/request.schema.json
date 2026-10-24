@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "requestID": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "hostBootID": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sessionID": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "authorizationGeneration": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "desired": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "version",
+    "requestID",
+    "hostBootID",
+    "sessionID",
+    "revision",
+    "authorizationGeneration",
+    "desired"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sentry v2 request",
+  "x-max-utf8-bytes": 512,
+  "description": "중복 키는 Unicode escape 해석 후 모든 객체 깊이에서 거절한다. 수신자는 원본문을 재작성하지 않는다."
+}

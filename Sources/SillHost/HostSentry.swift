@@ -20,6 +20,7 @@ struct SentrySurfaceOperations {
     var release: () -> Bool
     var reason: () -> String?
     var restoreCurtains: () -> Bool = { false }
+    var released: () -> Bool = { false }
 }
 
 @MainActor
@@ -28,6 +29,8 @@ final class HostSentry {
     private let admission: SentryAdmission
     private let persist: (SentryJournalState) -> Bool
     private let surfaces: SentrySurfaceOperations
+    private let prepareRelease: () -> Bool
+    private let prepareRemoteRelease: () -> Bool
     private let audioReady: () -> Bool
     private let localReturnUnavailableReason: () -> String?
     private var persistenceHealthy: Bool
@@ -38,11 +41,15 @@ final class HostSentry {
 
     init(admission: SentryAdmission, initiallyLatched: Bool, persistenceHealthy: Bool,
          persist: @escaping (SentryJournalState) -> Bool, surfaces: SentrySurfaceOperations,
+         prepareRelease: @escaping () -> Bool,
+         prepareRemoteRelease: (() -> Bool)? = nil,
          audioReady: @escaping () -> Bool = { true },
          localReturnUnavailableReason: @escaping () -> String? = { "인증된 로컬 복귀 가능 여부를 확인하지 못했습니다." }) {
         self.admission = admission
         self.persist = persist
         self.surfaces = surfaces
+        self.prepareRelease = prepareRelease
+        self.prepareRemoteRelease = prepareRemoteRelease ?? prepareRelease
         self.audioReady = audioReady
         self.localReturnUnavailableReason = localReturnUnavailableReason
         self.persistenceHealthy = persistenceHealthy
@@ -50,19 +57,30 @@ final class HostSentry {
     }
 
     struct ForwardingProof: Equatable {
+        fileprivate enum Surface: Equatable {
+            case protected(SentryAdmission.ProtectionSnapshot)
+            case released(SentryAdmission.InactiveSnapshot)
+        }
         fileprivate let revision: UUID
-        fileprivate let admission: SentryAdmission.ProtectionSnapshot
+        fileprivate let surface: Surface
     }
     private var forwardingRevision = UUID()
 
     func forwardingProof() -> ForwardingProof? {
-        guard operation == .idle, persistenceHealthy, audioReady(), let admissionProof = admission.protectionSnapshot() else {
+        guard operation == .idle, persistenceHealthy, audioReady() else {
             forwardingRevision = UUID()
             return nil
         }
-        let proof = ForwardingProof(revision: forwardingRevision,
-                                    admission: admissionProof)
-        guard surfaces.verify(), forwardingProofCurrent(proof) else {
+        let proof: ForwardingProof
+        if let protected = admission.protectionSnapshot(), surfaces.verify() {
+            proof = ForwardingProof(revision: forwardingRevision, surface: .protected(protected))
+        } else if let inactive = admission.inactiveSnapshot(), surfaces.released() {
+            proof = ForwardingProof(revision: forwardingRevision, surface: .released(inactive))
+        } else {
+            forwardingRevision = UUID()
+            return nil
+        }
+        guard forwardingProofCurrent(proof) else {
             forwardingRevision = UUID()
             return nil
         }
@@ -70,7 +88,11 @@ final class HostSentry {
     }
 
     func forwardingProofCurrent(_ proof: ForwardingProof) -> Bool {
-        operation == .idle && persistenceHealthy && audioReady() && forwardingRevision == proof.revision && admission.protectionMatches(proof.admission)
+        guard operation == .idle, persistenceHealthy, audioReady(), forwardingRevision == proof.revision else { return false }
+        switch proof.surface {
+        case .protected(let snapshot): return admission.protectionMatches(snapshot)
+        case .released(let snapshot): return admission.inactiveMatches(snapshot) && surfaces.released()
+        }
     }
 
     @discardableResult
@@ -140,6 +162,30 @@ final class HostSentry {
         return reconcile()
     }
 
+    func setRemoteProtection(_ desired: Bool, current: () -> Bool) -> Bool {
+        guard current(), operation == .idle else { return false }
+        if desired { return reconcile() && current() }
+        operation = .returningLocal
+        defer { operation = .idle }
+        forwardingRevision = UUID()
+        protectionInvalidated?()
+        guard prepareRemoteRelease(), current() else { return false }
+        guard persist(.releasing) else {
+            persistenceHealthy = false
+            return false
+        }
+        guard current(), surfaces.release(), surfaces.released(), current() else {
+            return restoreFailedReturn("원격 기기에서 요청한 현장 보호 해제를 확인하지 못했습니다.")
+        }
+        guard persist(.inactive), current() else {
+            return restoreFailedReturn("원격 보호 해제 상태를 저장하거나 인가를 확인하지 못했습니다.")
+        }
+        persistenceHealthy = true
+        return true
+    }
+
+    func controlDidComplete() { changed?() }
+
     func completeAuthenticatedLocalReturn(commitAudio: () -> Bool = { true }) -> Bool {
         guard admission.isRequested else { return commitAudio() }
         guard operation == .idle else { return false }
@@ -147,6 +193,13 @@ final class HostSentry {
         operation = .returningLocal
         defer { operation = .idle }
         admission.fenceForLocalReturn()
+        guard prepareRelease() else {
+            persistenceHealthy = persist(.latched)
+            admission.update(verified: false, persistenceHealthy: persistenceHealthy,
+                             reason: "원래 입력 대상의 종료를 확인하지 못해 보호를 유지합니다.")
+            changed?()
+            return false
+        }
         guard persist(.releasing) else {
             persistenceHealthy = false
             admission.update(verified: false, persistenceHealthy: false,

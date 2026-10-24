@@ -39,6 +39,25 @@ func writable(_ id: UInt32, _ selector: UInt32, _ scope: UInt32, _ element: UInt
         AudioObjectIsPropertySettable(id, &property, &value) == noErr && value.boolValue
 }
 
+func streams(_ id: UInt32, _ scope: UInt32) -> [[String: Any]]? {
+    var property = address(kAudioDevicePropertyStreams, scope), size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(id, &property, 0, nil, &size) == noErr,
+          size <= 512, size % 4 == 0 else { return nil }
+    if size == 0 { return [] }
+    var ids = [UInt32](repeating: 0, count: Int(size) / 4)
+    let capacity = size
+    guard AudioObjectGetPropertyData(id, &property, 0, nil, &size, &ids) == noErr,
+          size == capacity, Set(ids).count == ids.count else { return nil }
+    return ids.map { stream in
+        var row: [String: Any] = ["id": stream,
+            "activeSettable": writable(stream, kAudioStreamPropertyIsActive, kAudioObjectPropertyScopeGlobal, 0)]
+        row["active"] = scalar(stream, kAudioStreamPropertyIsActive, UInt32(0))
+        row["direction"] = scalar(stream, kAudioStreamPropertyDirection, UInt32(0))
+        row["startingChannel"] = scalar(stream, kAudioStreamPropertyStartingChannel, UInt32(0))
+        return row
+    }
+}
+
 let system = UInt32(kAudioObjectSystemObject)
 var property = address(kAudioHardwarePropertyDevices), size: UInt32 = 0
 guard AudioObjectGetPropertyDataSize(system, &property, 0, nil, &size) == noErr,
@@ -54,7 +73,7 @@ for id in devices {
     row["running"] = scalar(id, kAudioDevicePropertyDeviceIsRunningSomewhere, UInt32(0))
     for (name, scope) in [("input", kAudioObjectPropertyScopeInput), ("output", kAudioObjectPropertyScopeOutput)] {
         guard let count = channels(id, scope), (0...1024).contains(count) else { row[name] = "unreadable"; continue }
-        row[name] = ["channels": count,
+        row[name] = ["channels": count, "streams": streams(id, scope) as Any,
             "masterMuteSettable": writable(id, kAudioDevicePropertyMute, scope, 0),
             "channelMuteSettable": (1..<(count + 1)).filter { writable(id, kAudioDevicePropertyMute, scope, UInt32($0)) },
             "masterVolumeSettable": writable(id, kAudioDevicePropertyVolumeScalar, scope, 0),

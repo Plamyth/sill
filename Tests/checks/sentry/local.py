@@ -12,6 +12,10 @@ archive = Path(sys.argv[1]).resolve()
 label = sys.argv[2]
 privacy = '--privacy' in sys.argv[3:]
 legacy_rollback = '--legacy-rollback' in sys.argv[3:]
+if not privacy and not legacy_rollback:
+    runner = root / 'Tests/checks/sentry-targeted-input/run.py'
+    raise SystemExit(subprocess.call([sys.executable, '-B', str(runner), '--suite', 'sentry',
+        '--archive', str(archive), '--label', label]))
 archive.mkdir(parents=True, exist_ok=True)
 receipt, log_path = archive / (label + '.json'), archive / (label + '.log')
 if receipt.exists() or log_path.exists():
@@ -54,9 +58,15 @@ try:
                 '-sdk', sdk, '-target', 'arm64-apple-macosx14.0', '-module-cache-path', str(out / 'cache')]
         stub = out / 'CoordinatorTypecheck.swift'
         stub.write_text('import CoreGraphics\nenum StreamCoordinator { static func isSillVirtualDisplay(_ id: CGDirectDisplayID) -> Bool { false } }\n')
-        if not run(base + ['-typecheck', str(root / 'Sources/SillHost/HostSentryPlatform.swift'), str(stub)]):
-            raise RuntimeError('Actual AppKit platform typecheck failed')
         protocol = sorted(map(str, (root / 'Sources/StreamProtocol').glob('*.swift')))
+        if not run(base + ['-emit-module', '-emit-object', '-module-name', 'StreamProtocol'] + protocol +
+                   ['-emit-module-path', str(out / 'StreamProtocol.swiftmodule'), '-o', str(out / 'StreamProtocol.o')]):
+            raise RuntimeError('Protocol compilation failed')
+        with stub.open('a') as handle:
+            handle.write('\nfinal class PointerWatch { func sillMoved(to point: CGPoint) {} ; func sillMoved() {} }\nfinal class Stats { static let shared = Stats(); func bump(_ name: String) {} }\n')
+        dependencies = [str(root / ('Sources/SillHost/' + name + '.swift')) for name in ['InputInjector', 'KeyStrokes', 'GestureChords']]
+        if not run(base + ['-I', str(out), '-typecheck', str(root / 'Sources/SillHost/HostSentryPlatform.swift'), str(stub)] + dependencies):
+            raise RuntimeError('Actual AppKit platform typecheck failed')
         if not run([sys.executable, '-B', str(root / 'Tests/checks/sentry/emit-curtains.py'), '--output', str(out / 'fixture')], 20):
             raise RuntimeError('Extraction failed')
         record['extraction'] = json.loads((out / 'fixture/manifest.json').read_text())
@@ -64,9 +74,6 @@ try:
             raise RuntimeError('Actual AppKit invisible panel compilation failed')
         if not run([str(out / 'native-panel-checks')], 20):
             raise RuntimeError('Actual AppKit invisible panel level check failed')
-        if not run(base + ['-emit-module', '-emit-object', '-module-name', 'StreamProtocol'] + protocol +
-                   ['-emit-module-path', str(out / 'StreamProtocol.swiftmodule'), '-o', str(out / 'StreamProtocol.o')]):
-            raise RuntimeError('Protocol compilation failed')
         if not run(base + ['-I', str(out), str(root / 'Sources/SillHost/SentryAdmission.swift'), str(root / 'Sources/SillHost/HostSentry.swift'),
                           str(out / 'fixture/Main.swift'), str(out / 'fixture/CurtainChecks.swift'),
                           str(out / 'fixture/CursorChecks.swift'),
