@@ -11,6 +11,10 @@ private extension CGEvent { static func tapIsEnabled(tap: InertTap) -> Bool { ta
     enum State { case idle, engaging, protected, releasing, invalid(String) }
     var state = State.protected
     var tap: InertTap? = InertTap()
+    var annotatedTap: InertTap? = InertTap()
+    var annotatedTapID: UInt32?
+    var localAuthenticationInputPolicy = LocalAuthenticationInputPolicy()
+    func destroyAnnotatedTap() { annotatedTap = nil }
     var changingLifecycle = false
     static var tapOwner: TargetPlatform?
     struct Curtain { let panel: NSPanel }
@@ -163,6 +167,7 @@ final class Peer {}
             ("PID 재사용", { $0.platform.apps[100]?.launchDate = Date(timeIntervalSince1970: 200); $0.platform.foreground = $0.platform.apps[100] }),
             ("창 목록 미확인", { $0.platform.rows = nil }),
             ("OS 인증 앱", { $0.platform.apps[100]?.bundleIdentifier = "com.apple.SecurityAgent" }),
+            ("TCC 권한 앱", { $0.platform.apps[100]?.bundleIdentifier = "com.apple.UserNotificationCenter" }),
             ("Dock", { $0.platform.apps[100]?.bundleIdentifier = "com.apple.dock" }),
             ("자기 앱", { $0.platform.rows = [$0.row(10, pid: getpid())] }),
         ]
