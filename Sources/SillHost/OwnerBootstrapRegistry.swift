@@ -110,6 +110,23 @@ struct OwnerBootstrapRegistry: Codable, Equatable {
         return device == nil || device.map(Self.isExplicitPairing) == true
     }
 
+    func observation(principal: String, fingerprint: String, paired: [PairedDevice]) -> MobileEnrollment.ActiveReason {
+        guard Self.validPrincipal(principal), Self.validFingerprint(fingerprint) else { return .identityChanged }
+        let relevant = bindings.filter { $0.principal == principal || $0.fingerprint == fingerprint }
+        if relevant.contains(where: { $0.state == .revoked }) { return .revoked }
+        guard !relevant.isEmpty else { return .notRegistered }
+        guard relevant.count == 1, let binding = relevant.first,
+              binding.principal == principal, binding.fingerprint == fingerprint else { return .identityChanged }
+        guard binding.state == .active else { return .notRegistered }
+        let devices = paired.filter { $0.fingerprint == fingerprint || $0.ownerPrincipal == principal }
+        guard !devices.isEmpty else { return .notRegistered }
+        guard devices.count == 1, let device = devices.first, device.fingerprint == fingerprint else { return .identityChanged }
+        guard device.ownerActivationPending != true else { return .notRegistered }
+        guard (device.method == OwnerMacBootstrap.method && device.ownerPrincipal == principal)
+                || Self.isExplicitPairing(device) else { return .identityChanged }
+        return .active
+    }
+
     func candidatePrincipal(_ device: PairedDevice) -> String? {
         guard device.method == OwnerMacBootstrap.method, device.ownerActivationPending != true,
               let principal = device.ownerPrincipal,

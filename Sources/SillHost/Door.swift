@@ -402,7 +402,10 @@ final class Door: @unchecked Sendable {
             c.receive(minimumIncompleteLength: h.payloadLength, maximumLength: h.payloadLength) { [weak self] data, _, _, _ in
                 guard let self else { return }
                 guard let data else { c.cancel(); return }
-                guard let request = Wire.decode(PairRequest.self, from: data) else {
+                let owner = RemoteTLS.negotiatedALPN(c) == OwnerMacBootstrap.alpn
+                guard data.count == h.payloadLength,
+                      let request = owner ? OwnerBootstrapWire.decode(data) : Wire.decode(PairRequest.self, from: data),
+                      owner || request.ownerEnrollment == nil else {
                     self.refuse(id, "unpaired")
                     c.cancel()
                     return
@@ -410,7 +413,6 @@ final class Door: @unchecked Sendable {
                 // The switches as they are now (the internet switch may have gone off since
                 // `.ready`). Gone from `pending`: the deadline passed while the payload came in.
                 guard self.checkOrigin(id, c), let p = self.pending[id] else { c.cancel(); return }
-                let owner = RemoteTLS.negotiatedALPN(c) == OwnerMacBootstrap.alpn
                 if !owner {
                     self.pending.removeValue(forKey: id)
                     p.deadline?.cancel()
@@ -423,8 +425,10 @@ final class Door: @unchecked Sendable {
                             waiting.deadline?.cancel()
                             waiting.ownerSocket?.cancel()
                         }
+                        let payload = Wire.encode(result)
+                        guard payload.count <= StreamMessage.maxPairingPayload else { c.cancel(); return }
                         let message = StreamMessage(kind: .pairResult, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
-                                                    payload: Wire.encode(result)).serialized()
+                                                    payload: payload).serialized()
                         c.send(content: message, completion: .contentProcessed { _ in c.cancel() })
                         queue.asyncAfter(deadline: .now() + 0.25) { c.cancel() }
                     }

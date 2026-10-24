@@ -22,6 +22,7 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
     private var consumed = false
+    private var receiptConsumed = false
     private let deadline: UInt64
     private let current: () -> Bool
     private let trust: TrustBox?
@@ -108,6 +109,29 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
         }
     }
 
+    func issueReceipt(in box: TrustBox, evidence: Evidence,
+                      valid: (TrustSnapshot) -> Bool, issue: () throws -> PairResult) -> PairResult? {
+        box.withDecision {
+            lock.lock()
+            guard purpose == .bootstrap, !receiptConsumed, trust == nil || trust === box else {
+                lock.unlock(); return nil
+            }
+            // 결과 불명확·서명 실패도 같은 연결의 발급 기회를 소모한다.
+            receiptConsumed = true
+            lock.unlock()
+            func currentEvidence() -> Bool {
+                live(snapshot: box.snapshot) && evidence.proof.binding == binding
+                    && evidence.proof.sourceIP == binding.sourceIP
+                    && evidence.proof.localIPs.contains(binding.localIP)
+                    && !evidence.proof.localIPs.contains(binding.sourceIP)
+                    && evidence.sensor.isCurrent(evidence.proof) && !Task.isCancelled
+            }
+            guard currentEvidence(), valid(box.snapshot), currentEvidence(), let signed = try? issue(),
+                  valid(box.snapshot), currentEvidence() else { return nil }
+            return signed
+        }
+    }
+
     func admit(in box: TrustBox, evidence: Evidence?, allowed: (TrustSnapshot) -> Bool = { _ in true },
                serve: (TrustSnapshot) -> Void) -> Bool {
         guard purpose == .session, let evidence, let candidate else { return false }
@@ -132,6 +156,12 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
 }
 
 enum OwnerBootstrapWire {
+    static func decode(_ data: Data) -> PairRequest? {
+        guard !data.isEmpty, data.count <= StreamMessage.maxPairingPayload,
+              (try? LocalAudioRelayJSON.validate(data)) != nil else { return nil }
+        return Wire.decode(PairRequest.self, from: data)
+    }
+
     static func accepts(_ request: PairRequest) -> Bool {
         request.v == OwnerMacBootstrap.requestVersion && request.method == OwnerMacBootstrap.method
             && request.proof.isEmpty && request.cable == nil
