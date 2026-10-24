@@ -30,6 +30,9 @@ catalog = (ROOT / 'Sources/SillHost/WindowCatalog.swift').read_text()
 desktop = (ROOT / 'Sources/SillHost/ExtendedDesktop.swift').read_text()
 admit = block(coordinator, 'private func requestExtendedDesktop(').replace('private func', 'func', 1)
 fixture = (HERE / 'Fixtures.swift').read_text().replace('// COORDINATOR_METHOD', admit)
+fixture = fixture.replace('// DISPLAY_INFO\n', block((ROOT / 'Sources/StreamProtocol/Switcher.swift').read_text(), 'public struct DisplayInfo:') + '\n')
+display_construction = block(catalog, 'private func updateDisplays(').split('return DisplayInfo(', 1)[1].split('\n        }', 1)[0]
+fixture = fixture.replace('// DISPLAY_INFO_CONSTRUCTION', ('return DisplayInfo(' + display_construction).replace('CGMainDisplayID()', 'mainID'))
 fixture = fixture.replace('// VIEWPORT_METHOD', block(coordinator, 'private func updateExtendedDesktopViewport(').replace('private func', 'func', 1))
 fixture = fixture.replace('// ONLINE_WAIT_METHOD', block(desktop, 'private static func waitUntilOnline(').replace('private static', 'static', 1))
 fixture = fixture.replace('// CATALOG_METHODS', '\n'.join(block(catalog, signature) for signature in [
@@ -53,6 +56,8 @@ assert viewport_case.index('updateExtendedDesktopViewport(v, from: connection)')
 assert 'extendedDesktop.checkDisplay()' in block(coordinator, 'private func displaysChanged(')
 assert 'ownedID: extendedDesktopID' in block(catalog, 'private func updateDisplays(')
 assert 'id == extendedDesktopID ? ExtendedDesktop.name' in block(catalog, 'private func updateDisplays(')
+assert 'catalog?.setExtendedDesktopDisplay($0)' in desktop
+assert 'self.publishID(display.id)' in desktop
 assert 'CGConfigureDisplayMirrorOfDisplay(config, display.displayID, kCGNullDirectDisplay)' in desktop
 assert 'CGDisplayMirrorsDisplay(id) == kCGNullDirectDisplay' in desktop
 assert 'widthPt: dimensions.widthPt, heightPt: dimensions.heightPt' in desktop
@@ -72,7 +77,7 @@ before = {str(p.relative_to(ROOT)): sha(p.read_bytes()) for p in paths}
 hashes = {name: sha(source.encode()) for name, source in inputs.items()}
 payload = json.dumps({'sources': {name: base64.b64encode(source.encode()).decode() for name, source in inputs.items()}, 'hashes': hashes}).encode()
 runner = (HERE / 'remote.py').read_text()
-audit = ROOT / '.audit'
+audit = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / '.audit'
 audit.mkdir(exist_ok=True)
 receipt_path = audit / ('extended-desktop-' + sha(payload + runner.encode())[:12] + '.json')
 if receipt_path.exists():

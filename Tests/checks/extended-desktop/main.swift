@@ -323,8 +323,42 @@ struct Checks {
             }
         }
         let catalog = CatalogFixture()
+        let decoder = JSONDecoder(), encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let legacyJSON = Data(#"{"id":1,"name":"iPad 확장 화면","width":1350,"height":890,"isMain":true}"#.utf8)
+        let legacy = try! decoder.decode(DisplayInfo.self, from: legacyJSON)
+        expect(legacy.role == nil && legacy.isMain, "legacy display without role decodes without name inference")
+        expect(catalog.displayInfo(id: 1, name: ExtendedDesktop.name).role == nil, "matching name alone never grants role")
+        catalog.setExtendedDesktopDisplay(42)
+        let owned = catalog.displayInfo(id: 42, name: "다른 이름")
+        expect(owned.role == "ipadExtendedDesktop" && !owned.isMain, "exact owned ID grants role independently of name and main")
+        let ownedMain = catalog.displayInfo(id: 42, name: "다른 이름", mainID: 42)
+        expect(ownedMain.isMain && ownedMain.role == owned.role, "role leaves main display identity unchanged")
+        for id: UInt32 in [0, 1, 43, UInt32.max] {
+            expect(catalog.displayInfo(id: id, name: ExtendedDesktop.name).role == nil, "other IDs never inherit owned role")
+        }
+        let encoded = try! encoder.encode(owned)
+        let encodedObject = try! JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        expect(encodedObject["role"] as? String == "ipadExtendedDesktop", "wire role uses exact contract value")
+        expect(try! decoder.decode(DisplayInfo.self, from: encoded) == owned, "owned display round trips")
+        struct LegacyDisplay: Decodable { let id: UInt32; let isMain: Bool }
+        expect(try! decoder.decode(LegacyDisplay.self, from: encoded).id == 42, "legacy consumer ignores additive role")
+        let unknownJSON = Data(#"{"id":42,"name":"iPad 확장 화면","width":1350,"height":890,"isMain":false,"role":"futureRole"}"#.utf8)
+        let unknown = try! decoder.decode(DisplayInfo.self, from: unknownJSON)
+        expect(unknown.role == "futureRole" && unknown.role != "ipadExtendedDesktop", "unknown role stays unsupported without breaking decode")
+        print("DISPLAY_ROLE_FIXTURE_JSON " + String(data: try! encoder.encode([legacy, owned, unknown]), encoding: .utf8)!)
+        let regularObject = try! JSONSerialization.jsonObject(with: encoder.encode(legacy)) as! [String: Any]
+        expect(regularObject["role"] == nil, "nil role is omitted for regular legacy displays")
+        catalog.setExtendedDesktopDisplay(nil)
+        expect(catalog.displayInfo(id: 42, name: ExtendedDesktop.name).role == nil, "release removes role despite unchanged name")
+        catalog.setExtendedDesktopDisplay(43)
+        expect(catalog.displayInfo(id: 42, name: ExtendedDesktop.name).role == nil &&
+            catalog.displayInfo(id: 43, name: "다른 이름").role == "ipadExtendedDesktop", "replacement grants only the current owned ID")
+        catalog.setExtendedDesktopDisplay(0)
+        expect(catalog.displayInfo(id: 0, name: ExtendedDesktop.name).role == nil, "invalid zero owned ID cannot grant role")
+        catalog.setExtendedDesktopDisplay(nil)
         catalog.displays = [.init(displayID: 1), .init(displayID: 42), .init(displayID: 43)]
-        catalog.displayInventory.update([.init(id: 1, isMain: true), .init(id: 42)], signatures: ["physical", "desktop"])
+        catalog.displayInventory.update([legacy, owned], signatures: ["physical", "desktop"])
         let selection = DisplaySelection(displayID: 42, inventoryID: catalog.displayInventory.revision!)
         expect(catalog.displayInventory.select(selection), "existing display selection accepts desktop catalog ID")
         var invalidations = 0

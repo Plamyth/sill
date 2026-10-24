@@ -317,7 +317,8 @@ final class WindowCatalog {
             let id = display.displayID
             let screen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }
             return DisplayInfo(id: id, name: id == extendedDesktopID ? ExtendedDesktop.name : screen?.localizedName ?? "모니터 \(index + 1)",
-                               width: display.width, height: display.height, isMain: id == CGMainDisplayID())
+                               width: display.width, height: display.height, isMain: id == CGMainDisplayID(),
+                               role: id != 0 && id == extendedDesktopID ? "ipadExtendedDesktop" : nil)
         }
         let signatures = displays.map { display in
             let uuid = CGDisplayCreateUUIDFromDisplayID(display.displayID)?.takeRetainedValue()
