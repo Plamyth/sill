@@ -1069,15 +1069,17 @@ struct StreamScreen: View {
     private func landscape(bar plain: BarMetrics, width: CGFloat, fold: FoldInfo) -> some View {
         // The book pose (docs/iphone-duo-plan.md, (a)): nothing on the fold's band; elsewhere as before.
         let (bar, stripWidth) = plain.clearing(fold, width: width)
-        let layout = IPadToolbarLayout(width: width - 2 * bar.padding, baseButtons: 5,
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        let layout = IPadToolbarLayout(width: width - 2 * bar.padding, baseButtons: isPad ? 6 : 5,
                                       buttonWidth: bar.buttonWidth, gap: bar.gap, thumbWidth: bar.thumbWidth,
-                                      isPad: UIDevice.current.userInterfaceIdiom == .pad)
+                                      isPad: isPad)
         return VStack(spacing: 0) {
             TopBar(client: client, metrics: bar, stripWidth: stripWidth, drawerOpen: $drawerOpen,
                    keyboardShown: $keyboardShown,
                    textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
                    settingsOpen: settingsOpen,
                    menusFit: layout.menusInline, workspaceInline: layout.workspaceInline,
+                   buttonWidth: layout.buttonWidth,
                    openCanvas: { workspace = .canvas },
                    openTestDestinations: { workspace = .testDestinations },
                    toggleKeyboard: { overlay.toggleKeyboard() },
@@ -1347,12 +1349,16 @@ struct BarMetrics {
 struct IPadToolbarLayout {
     let workspaceInline: Bool
     let menusInline: Bool
+    let buttonWidth: CGFloat
 
     init(width: CGFloat, baseButtons: Int, buttonWidth: CGFloat, gap: CGFloat, thumbWidth: CGFloat, isPad: Bool) {
+        self.buttonWidth = isPad
+            ? min(buttonWidth, max(44, (width - CGFloat(baseButtons) * gap - thumbWidth - 16) / CGFloat(baseButtons)))
+            : buttonWidth
         workspaceInline = isPad && MacMenuButton.fits(width: width, buttons: baseButtons + 2,
-                                                     buttonWidth: buttonWidth, gap: gap, thumbWidth: thumbWidth)
+                                                     buttonWidth: self.buttonWidth, gap: gap, thumbWidth: thumbWidth)
         menusInline = MacMenuButton.fits(width: width, buttons: baseButtons + (workspaceInline ? 2 : 0) + 1,
-                                        buttonWidth: buttonWidth, gap: gap, thumbWidth: thumbWidth)
+                                        buttonWidth: self.buttonWidth, gap: gap, thumbWidth: thumbWidth)
     }
 }
 
@@ -1441,6 +1447,7 @@ private struct TopBar: View {
     /// Whether the bar holds the Menus button and still a whole thumbnail (`MacMenuButton.fits`).
     let menusFit: Bool
     let workspaceInline: Bool
+    let buttonWidth: CGFloat
     let openCanvas: () -> Void
     let openTestDestinations: () -> Void
     let toggleKeyboard: () -> Void
@@ -1476,7 +1483,7 @@ private struct TopBar: View {
             // window's app's. Only while the Mac sent some, and where the bar holds it: with none the
             // strip takes its room back.
             if client.menus.hasMenus, menusFit {
-                MacMenuButton(client: client, width: metrics.buttonWidth, height: metrics.buttonHeight,
+                MacMenuButton(client: client, width: buttonWidth, height: metrics.buttonHeight,
                               spacing: metrics.buttonSpacing, onOpen: menusOpened, onClose: menusClosed)
                     .opacity(scaleOpen ? 0 : 1)    // under the Aa ruler, as the buttons after Aa
                     .allowsHitTesting(!scaleOpen)
@@ -1500,7 +1507,7 @@ private struct TopBar: View {
             // bigger number means a smaller Mac window and bigger text here. The slider unfolds to
             // the right, over the two buttons after it, which fade while it is open.
             TextScaleControl(scale: $textScale, open: $scaleOpen,
-                             width: metrics.buttonWidth, height: metrics.buttonHeight,
+                             width: buttonWidth, height: metrics.buttonHeight,
                              pointsPerStep: metrics.buttonHeight >= 60 ? 44 : 40)
                 .tourTarget(.textSize)
 
@@ -1511,14 +1518,21 @@ private struct TopBar: View {
                 .allowsHitTesting(!scaleOpen)
                 .tourTarget(.keyboard)
 
-            MacDisplayChooser(client: client, width: metrics.buttonWidth, height: metrics.buttonHeight,
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                IPadExtendedDisplayButton(client: client, width: buttonWidth, height: metrics.buttonHeight,
+                                          spacing: metrics.buttonSpacing)
+                    .opacity(scaleOpen ? 0 : 1)
+                    .allowsHitTesting(!scaleOpen)
+            }
+
+            MacDisplayChooser(client: client, width: buttonWidth, height: metrics.buttonHeight,
                               spacing: metrics.buttonSpacing, onOpenChange: displayMenuChanged)
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
             Group {
                 if UIDevice.current.userInterfaceIdiom == .pad {
-                    IPadWorkspaceMenu(width: metrics.buttonWidth, height: metrics.buttonHeight,
+                    IPadWorkspaceMenu(width: buttonWidth, height: metrics.buttonHeight,
                                       spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,
                                       openSettings: { setSettings(!settingsOpen, true) },
                                       openCanvas: openCanvas, openTestDestinations: openTestDestinations,
@@ -1543,7 +1557,7 @@ private struct TopBar: View {
 
     private func button(open: Bool, symbol: String, label: String, accessibilityLabel: String,
                         action: @escaping () -> Void) -> some View {
-        BarButton(open: open, width: metrics.buttonWidth, height: metrics.buttonHeight,
+        BarButton(open: open, width: buttonWidth, height: metrics.buttonHeight,
                   accessibilityLabel: accessibilityLabel, action: action) {
             VStack(spacing: metrics.buttonSpacing) {
                 Image(systemName: symbol)
@@ -1605,6 +1619,57 @@ struct BarButton<Content: View>: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+enum IPadExtendedDisplaySelection {
+    static func candidate(displays: [DisplayInfo], ready: Bool) -> DisplayInfo? {
+        guard ready, Set(displays.map(\.id)).count == displays.count else { return nil }
+        let owned = displays.filter { $0.role == "ipadExtendedDesktop" }
+        return owned.count == 1 ? owned.first : nil
+    }
+}
+
+struct IPadExtendedDisplayButton: View {
+    @ObservedObject var client: StreamClient
+    let width: CGFloat
+    let height: CGFloat
+    let spacing: CGFloat
+    var iconSize: CGFloat = 22
+    var radius: CGFloat = 16
+
+    private var candidate: DisplayInfo? {
+        IPadExtendedDisplaySelection.candidate(displays: client.displays, ready: client.displaySelectionReady)
+    }
+
+    private var selected: Bool {
+        guard let display = candidate else { return false }
+        return client.active == .desktop && client.activeDisplayID == display.id
+    }
+
+    private func selectExtendedDisplay() {
+        guard let display = IPadExtendedDisplaySelection.candidate(
+            displays: client.displays, ready: client.displaySelectionReady) else { return }
+        client.selectDisplay(display)
+    }
+
+    var body: some View {
+        BarButton(open: selected, width: width, height: height, radius: radius,
+                  accessibilityLabel: "iPad 확장 화면", action: selectExtendedDisplay) {
+            VStack(spacing: spacing) {
+                Image(systemName: "ipad.landscape").font(.system(size: iconSize))
+                    .foregroundStyle(selected ? Palette.accent : Palette.text)
+                Text("iPad 확장 화면")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(selected ? Palette.accent : Palette.barLabel)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+            }
+        }
+        .disabled(candidate == nil)
+        .accessibilityIdentifier("iPadExtendedDisplayButton")
+        .accessibilityValue(candidate == nil ? "사용할 수 없음" : (selected ? "선택됨" : "선택 안 됨"))
+        .accessibilityHint(candidate == nil ? "Mac의 현재 목록에서 iPad 확장 화면을 확인할 수 없습니다." : "기존 iPad 확장 화면으로 전환합니다.")
     }
 }
 

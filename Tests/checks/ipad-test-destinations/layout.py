@@ -16,8 +16,8 @@ root = Path(__file__).resolve().parents[3]
 screen = (root / "iOSClient/StreamScreen.swift").read_text()
 portrait = (root / "iOSClient/PortraitStreamScreen.swift").read_text()
 menus = (root / "iOSClient/MacMenuButton.swift").read_text()
-assert "IPadToolbarLayout(width: width - 2 * bar.padding, baseButtons: 5," in screen
-assert "IPadToolbarLayout(width: width, baseButtons: 4," in portrait
+assert "IPadToolbarLayout(width: width - 2 * bar.padding, baseButtons: isPad ? 6 : 5," in screen
+assert "IPadToolbarLayout(width: width, baseButtons: isPad ? 5 : 4," in portrait
 assert "menusFit: layout.menusInline, workspaceInline: layout.workspaceInline" in screen
 assert "if workspaceInline {" in screen and "if layout.workspaceInline {" in portrait
 assert "if UIDevice.current.userInterfaceIdiom == .pad {" in block(screen, "private struct TopBar: View")
@@ -49,9 +49,9 @@ func checkToolbarBounds() {
             precondition(layout.workspaceInline == workspace, "Wrong workspace placement at \(width) pt")
             precondition(layout.menusInline == menus, "Wrong menu placement at \(width) pt")
             let count = base + (layout.workspaceInline ? 2 : 0) + (hasMenus && layout.menusInline ? 1 : 0)
-            let controls = CGFloat(count) * (button + gap)
+            let controls = CGFloat(count) * (layout.buttonWidth + gap)
             precondition(controls <= available, "Controls overflow at \(width) pt")
-            precondition(button >= 44 && height >= 44, "Touch target shrank")
+            precondition(layout.buttonWidth >= 44 && height >= 44, "Touch target shrank")
             if layout.workspaceInline || hasMenus && layout.menusInline {
                 precondition(available - controls >= thumb + 16, "Inline controls displaced the thumbnail")
             }
@@ -59,20 +59,20 @@ func checkToolbarBounds() {
     }
     let p = PortraitMetrics.compact
     for width: CGFloat in [320, 400, 500] {
-        verify(width: width, padding: p.padSide, base: 4, button: p.buttonWidth,
-               height: p.buttonHeight, gap: 12, thumb: p.thumbWidth, workspace: false, menus: width == 500)
+        verify(width: width, padding: p.padSide, base: 5, button: p.buttonWidth,
+               height: p.buttonHeight, gap: 12, thumb: p.thumbWidth, workspace: false, menus: false)
     }
     let l = BarMetrics.compact
-    verify(width: 500, padding: l.padding, base: 5, button: l.buttonWidth,
+    verify(width: 500, padding: l.padding, base: 6, button: l.buttonWidth,
            height: l.buttonHeight, gap: l.gap, thumb: l.thumbWidth, workspace: false, menus: false)
     let regularPortrait = PortraitMetrics.regular
-    verify(width: 710, padding: regularPortrait.padSide, base: 4, button: regularPortrait.buttonWidth,
-           height: regularPortrait.buttonHeight, gap: 12, thumb: regularPortrait.thumbWidth, workspace: true, menus: true)
+    verify(width: 710, padding: regularPortrait.padSide, base: 5, button: regularPortrait.buttonWidth,
+           height: regularPortrait.buttonHeight, gap: 12, thumb: regularPortrait.thumbWidth, workspace: true, menus: false)
     let regularLandscape = BarMetrics.regular
-    verify(width: 1024, padding: regularLandscape.padding, base: 5, button: regularLandscape.buttonWidth,
+    verify(width: 1024, padding: regularLandscape.padding, base: 6, button: regularLandscape.buttonWidth,
            height: regularLandscape.buttonHeight, gap: regularLandscape.gap, thumb: regularLandscape.thumbWidth,
            workspace: true, menus: true)
-    for base in [4, 5] {
+    for base in [5, 6] {
         let threshold = CGFloat(base + 2) * (l.buttonWidth + l.gap) + l.thumbWidth + 16
         for delta: CGFloat in [-1, 0, 1] {
             let layout = IPadToolbarLayout(width: threshold + delta, baseButtons: base,
@@ -82,6 +82,7 @@ func checkToolbarBounds() {
         let phone = IPadToolbarLayout(width: 2000, baseButtons: base, buttonWidth: l.buttonWidth,
                                      gap: l.gap, thumbWidth: l.thumbWidth, isPad: false)
         precondition(!phone.workspaceInline, "iPad workspace leaked into phone toolbar")
+        precondition(phone.buttonWidth == l.buttonWidth, "Phone button width changed")
     }
     print("Toolbar bounds passed for 320/400/500 pt portrait, 500 pt landscape, regular widths and fit boundaries")
 }

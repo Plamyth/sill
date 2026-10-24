@@ -260,11 +260,12 @@ struct PortraitStreamScreen: View {
     /// Keyboard button (it is in the key row) but with the Aa control, whose ruler opens centred on
     /// it; the strip's end and the Desktop button fade while it is open. `width`: the bar's row.
     private func windowBar(width: CGFloat) -> some View {
-        let layout = IPadToolbarLayout(width: width, baseButtons: 4, buttonWidth: metrics.buttonWidth,
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        let layout = IPadToolbarLayout(width: width, baseButtons: isPad ? 5 : 4, buttonWidth: metrics.buttonWidth,
                                       gap: 12, thumbWidth: metrics.thumbWidth,
-                                      isPad: UIDevice.current.userInterfaceIdiom == .pad)
+                                      isPad: isPad)
         return HStack(spacing: 12) {
-            appsButton()
+            appsButton(width: layout.buttonWidth)
 
             windowStrip
                 .opacity(scaleOpen ? 0.2 : 1)      // the slider unfolds over the strip's end
@@ -272,7 +273,7 @@ struct PortraitStreamScreen: View {
 
             // The Mac's menus, as in the landscape bar: only while the Mac sent some.
             if client.menus.hasMenus, layout.menusInline {
-                MacMenuButton(client: client, width: metrics.buttonWidth, height: metrics.buttonHeight,
+                MacMenuButton(client: client, width: layout.buttonWidth, height: metrics.buttonHeight,
                               radius: metrics.buttonRadius, iconSize: metrics.buttonIcon, spacing: metrics.buttonSpacing,
                               onOpen: menusOpened, onClose: menusClosed)
                     .opacity(scaleOpen ? 0 : 1)
@@ -281,7 +282,7 @@ struct PortraitStreamScreen: View {
             }
 
             if layout.workspaceInline {
-                BarButton(open: false, width: metrics.buttonWidth, height: metrics.buttonHeight,
+                BarButton(open: false, width: layout.buttonWidth, height: metrics.buttonHeight,
                           radius: metrics.buttonRadius, accessibilityLabel: "그림판 열기",
                           action: openCanvas) {
                     VStack(spacing: metrics.buttonSpacing) {
@@ -293,7 +294,7 @@ struct PortraitStreamScreen: View {
                 .accessibilityIdentifier("openCanvasBridge")
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
-                barButton(open: false, symbol: "globe", label: "테스트",
+                barButton(open: false, symbol: "globe", label: "테스트", width: layout.buttonWidth,
                           accessibilityLabel: "프로젝트 테스트 열기", action: openTestDestinations)
                     .accessibilityIdentifier("openTestDestinations")
                     .opacity(scaleOpen ? 0 : 1)
@@ -301,17 +302,25 @@ struct PortraitStreamScreen: View {
             }
 
             TextScaleControl(scale: $textScale, open: $scaleOpen,
-                             width: metrics.buttonWidth, height: metrics.buttonHeight,
+                             width: layout.buttonWidth, height: metrics.buttonHeight,
                              radius: metrics.buttonRadius, pointsPerStep: 36)
                 .tourTarget(.textSize)
 
-            desktopButton()
+            if isPad {
+                IPadExtendedDisplayButton(client: client, width: layout.buttonWidth, height: metrics.buttonHeight,
+                                          spacing: metrics.buttonSpacing, iconSize: metrics.buttonIcon,
+                                          radius: metrics.buttonRadius)
+                    .opacity(scaleOpen ? 0 : 1)
+                    .allowsHitTesting(!scaleOpen)
+            }
+
+            desktopButton(width: layout.buttonWidth)
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
             Group {
                 if UIDevice.current.userInterfaceIdiom == .pad {
-                    IPadWorkspaceMenu(width: metrics.buttonWidth, height: metrics.buttonHeight,
+                    IPadWorkspaceMenu(width: layout.buttonWidth, height: metrics.buttonHeight,
                                       radius: metrics.buttonRadius, iconSize: metrics.buttonIcon,
                                       spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,
                                       openSettings: { setSettings(!settingsOpen, true) },
@@ -319,7 +328,7 @@ struct PortraitStreamScreen: View {
                                       onOpenChange: workspaceMenuChanged)
                         .tourTarget(.settings)
                 } else {
-                    settingsButton()
+                    settingsButton(width: layout.buttonWidth)
                 }
             }
                 .opacity(scaleOpen ? 0 : 1)
