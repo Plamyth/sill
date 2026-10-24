@@ -71,6 +71,27 @@ import Foundation
     maximum.deliverIdleCatalog(catalog(9_007_199_254_740_991 as UInt64, ready: true)!)
     maximum.deliverIdleCatalog(catalog(9_007_199_254_740_991 as UInt64, ready: true)!)
     expect(picks(maximum).count == 1, "53bit 최대 세대도 정확히 한 번 제출")
+    let contradictory = fresh()
+    contradictory.deliverIdleCatalog(blocked)
+    contradictory.deliverIdleCatalog(catalog(1, ready: true)!)
+    expect(picks(contradictory).isEmpty, "같은 세대의 false→true 모순은 허용 전이로 취급하지 않음")
+    contradictory.deliverIdleCatalog(ready)
+    expect(picks(contradictory).count == 1, "모순 이후 올바른 새 세대에서만 최초 선택")
+    let resuming = fresh()
+    resuming.beginAutomaticConnectionOpportunity(peer: resuming.connection)
+    resuming.resumeSource = .window(1001)
+    idle.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
+    resuming.deliverIdleCatalog(catalog(1, ready: false)!)
+    expect(resuming.allSent.isEmpty, "보호 중에는 자동 창 복구 selectSource도 전송하지 않음")
+    resuming.deliverIdleCatalog(catalog(2, ready: true)!)
+    resuming.deliverIdleCatalog(catalog(2, ready: true)!)
+    let firstWindowRequests = resuming.allSent.compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
+    expect(firstWindowRequests.count == 1 && firstWindowRequests.first?.source == .window(1001) && picks(resuming).isEmpty,
+           "허용되면 원래 창 선택을 한 번 복구하고 desktop으로 바꾸지 않음")
+    resuming.deliverIdleCatalog(catalog(4, ready: true)!)
+    let retriedWindows = resuming.allSent.compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
+    expect(retriedWindows.count == 2 && retriedWindows.allSatisfy { $0.source == .window(1001) && $0.selectionRevision == "revision-0" },
+           "중간 차단을 놓친 새 허용 세대에서도 자동 창 선택과 원래 CAS만 재개")
     idle.selectionRevision = "revision-new"
     waiting.deliverIdleCatalog(catalog(8, ready: true)!)
     idle.selectionRevision = "revision-0"
