@@ -47,10 +47,12 @@ def prepare(root):
     view = (root / 'visionOSClient/SillVisionApp.swift').read_text()
     chooser = (root / 'visionOSClient/VisionDisplayChooser.swift').read_text()
     request = block(stream, 'private func request(_ source:')
+    invalid_catalog = block(stream, 'DispatchQueue.main.async { [weak self] in\n                    self?.invalidateVisionDisplayCatalog')
     storage = stream[stream.index('    @Published var visionDisplaySelection ='):stream.index('    var visionStartupStarted =')]
     stub = (root / 'Tests/checks/vision-display-selection/Standins.swift').read_text()
     stub = stub.replace('    // PRODUCTION_DISPLAY_STORAGE', storage.replace('@Published', '@SwiftUI.Published'))
-    stub = stub.replace('    // PRODUCTION_REQUEST', platform.select_platform(request, vision=True))
+    stub = stub.replace('    // PRODUCTION_REQUEST', platform.select_platform(request, vision=True) +
+                        '\n    func receiveMalformedWindowList(from peer: NWConnection) {\n' + invalid_catalog + '\n    }')
     background = block(stream, 'private func wentToBackground(')
     resign = next(line.strip() for line in background.splitlines() if 'admitVisionDisplays(' in line)
     stub = stub.replace('    // PRODUCTION_RESIGN', 'func appWillResign() { ' + resign + ' }')
@@ -99,6 +101,7 @@ def prepare(root):
     manifest = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in files.items()}
     manifest['productionStorage'] = hashlib.sha256(storage.encode()).hexdigest()
     manifest['productionRequest'] = hashlib.sha256(request.encode()).hexdigest()
+    manifest['productionInvalidDisplayCatalog'] = hashlib.sha256(invalid_catalog.encode()).hexdigest()
     manifest['productionResign'] = hashlib.sha256(resign.encode()).hexdigest()
     return files, manifest, checks
 

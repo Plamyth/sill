@@ -33,6 +33,11 @@ struct VisionDisplaySelection {
         let revision: String
         let window: UUID
     }
+    private struct AutomaticInventory {
+        let displayID: UInt32
+        let displays: [DisplayInfo]
+        let admissionGeneration: UInt64
+    }
     private enum AutomaticPhase { case open, hostOwned, closed }
     enum Code: String, Codable {
         case ready, releasing, queued, observing, observed, unchanged
@@ -57,6 +62,7 @@ struct VisionDisplaySelection {
         let source: StreamSource
         let generation: String?
         let epoch: VideoEpoch?
+        let selectionAdmission: SourceSelectionAdmission?
 
         init(_ list: WindowList) {
             capability = list.displaySelection; inventory = list.displayInventoryID
@@ -65,6 +71,7 @@ struct VisionDisplaySelection {
             displays = list.displays; activeDisplay = list.activeDisplayID
             required = list.desktopSelectionRequired == true; source = list.active
             generation = list.inputGeneration; epoch = list.videoEpoch
+            selectionAdmission = list.sourceSelectionAdmission
         }
         var validInventory: Bool {
             guard inventory != nil, let displays, !displays.isEmpty, displays.count <= 64 else { return false }
@@ -94,8 +101,16 @@ struct VisionDisplaySelection {
     private var modernSeen = false
     private var history: [(Command, Result)] = []
     private var automaticOpportunity: AutomaticOpportunity?
-    private var automaticInventories = Set<UUID>()
+    private var automaticInventories: [UUID: AutomaticInventory] = [:]
     private var automaticPhase = AutomaticPhase.open
+    private var newestSelectionAdmission: SourceSelectionAdmission?
+    private var selectionAdmissionConflicted = false
+
+    private var selectionAdmissionIsCurrent: Bool {
+        guard let admission = catalog?.selectionAdmission, admission.ready,
+              !selectionAdmissionConflicted else { return false }
+        return admission == newestSelectionAdmission
+    }
 
     var hasAutomaticOpportunity: Bool { automaticOpportunity != nil }
 
@@ -133,10 +148,15 @@ struct VisionDisplaySelection {
             automaticOpportunity = AutomaticOpportunity(peer: peerEpoch, macID: macID, launchID: host, revision: revision, window: lease.window)
         }
         guard foreground, lease != nil, !modal, pending == nil, catalog.source == .none,
+              selectionAdmissionIsCurrent, let admission = catalog.selectionAdmission,
               catalog.capability == 1, catalog.validInventory, let inventory = catalog.inventory,
-              let token, !automaticInventories.contains(inventory), automaticInventories.count < 64 else { return nil }
+              let token else { return nil }
         let target: DisplayInfo?
-        if let remembered, remembered.macID == macID, remembered.launchID == host,
+        if let previous = automaticInventories[inventory] {
+            guard admission.generation > previous.admissionGeneration, catalog.displays == previous.displays else { return nil }
+            target = choices.first { $0.id == previous.displayID }
+        } else if automaticInventories.count >= 64 { return nil }
+        else if let remembered, remembered.macID == macID, remembered.launchID == host,
            remembered.inventoryID == inventory, choices.filter({ $0.id == remembered.displayID }).count == 1 {
             target = choices.first { $0.id == remembered.displayID }
         } else {
@@ -146,7 +166,8 @@ struct VisionDisplaySelection {
         guard let target else { return nil }
         let command = Command(requestID: UUID(), displayID: target.id, token: token, automaticRevision: revision)
         guard preview(command).code == .ready else { return nil }
-        automaticInventories.insert(inventory)
+        automaticInventories[inventory] = AutomaticInventory(displayID: target.id, displays: choices,
+                                                              admissionGeneration: admission.generation)
         return command
     }
 
@@ -155,7 +176,8 @@ struct VisionDisplaySelection {
         return opportunity.macID == macID && opportunity.peer == peerEpoch &&
             opportunity.launchID == catalog.launchID && opportunity.revision == catalog.selectionRevision &&
             command.automaticRevision == opportunity.revision && token == command.token &&
-            foreground && lease != nil && !modal && catalog.automaticCapability == 1 && catalog.source == .none
+            foreground && lease != nil && !modal && catalog.automaticCapability == 1 && catalog.source == .none &&
+            selectionAdmissionIsCurrent
     }
 
     mutating func recoverAutomaticPresentation(_ epoch: VideoEpoch, macID: String) {
@@ -204,32 +226,46 @@ struct VisionDisplaySelection {
         cancel(.peerChanged)
         self.peerEpoch = peerEpoch; catalog = nil; revision &+= 1
         unresolved = false; modernSeen = false
-        automaticOpportunity = nil; automaticInventories = []; automaticPhase = .open
+        automaticOpportunity = nil; automaticInventories = [:]; automaticPhase = .open
+        newestSelectionAdmission = nil; selectionAdmissionConflicted = false
     }
     mutating func admit(lease: VisionWindowLease?, foreground: Bool) {
         if self.lease != lease {
             cancel(.admissionChanged); revision &+= 1
-            automaticInventories = []
+            automaticInventories = [:]
             modal = false
         } else if self.foreground && !foreground {
             cancel(.foregroundRequired); revision &+= 1
         }
-        if foreground && !self.foreground { automaticInventories = [] }
+        if foreground && !self.foreground { automaticInventories = [:] }
         self.lease = lease; self.foreground = foreground
     }
     mutating func setModal(_ shown: Bool) {
         modal = shown
         if shown, pending?.command.automaticRevision != nil {
-            cancel(.cancelled); automaticInventories = []
+            cancel(.cancelled); automaticInventories = [:]
         }
     }
 
     mutating func observe(_ next: Catalog) {
         let old = catalog
         catalog = next
+        if let admission = next.selectionAdmission {
+            if newestSelectionAdmission == nil || admission.generation > newestSelectionAdmission!.generation {
+                newestSelectionAdmission = admission
+                selectionAdmissionConflicted = false
+            } else if admission.generation == newestSelectionAdmission?.generation && admission != newestSelectionAdmission {
+                selectionAdmissionConflicted = true
+            }
+        }
         if next.capability != nil || next.required { modernSeen = true }
         if old != next { revision &+= 1 }
         guard var waiting = pending else { return }
+        if waiting.command.automaticRevision != nil,
+           !selectionAdmissionIsCurrent || next.selectionAdmission != waiting.original.selectionAdmission {
+            cancel(.admissionChanged)
+            return
+        }
         guard next.capability == 1, next.validInventory,
               next.inventory == waiting.original.inventory,
               next.displays == waiting.original.displays else { cancel(.inventoryChanged); return }
@@ -267,6 +303,11 @@ struct VisionDisplaySelection {
         finish(.observed)
         unresolved = false
     }
+    mutating func invalidateCatalog() {
+        cancel(.catalogRequired)
+        catalog = nil
+        revision &+= 1
+    }
     func preview(_ command: Command) -> Result {
         if let waiting = pending, waiting.command.requestID == command.requestID {
             return Result(requestID: command.requestID, code: waiting.command == command ? waiting.code : .conflictingID)
@@ -283,7 +324,8 @@ struct VisionDisplaySelection {
                 (automaticPhase != .open || automaticOpportunity?.revision != command.automaticRevision ||
                  automaticOpportunity?.peer != peerEpoch || automaticOpportunity?.launchID != catalog.launchID ||
                  automaticOpportunity?.window != lease?.window || catalog.automaticCapability != 1 ||
-                 catalog.selectionRevision != command.automaticRevision || catalog.source != .none || modal) {
+                 catalog.selectionRevision != command.automaticRevision || catalog.source != .none || modal ||
+                 !selectionAdmissionIsCurrent) {
                 code = .staleScope
             }
             else if catalog.capability == nil { code = modernSeen ? .unsupportedCapability : .legacyOnly }
