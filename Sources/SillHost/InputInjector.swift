@@ -362,7 +362,7 @@ final class InputInjector {
     /// A boundary with no delta inside it (a gesture that never moved) posts nothing, so the Mac
     /// never sees an Ended without its Began.
     private enum ScrollState {
-        case handoff                  // gesture ended; only its momentum may continue
+        case handoff
         case idle                     // bare wheel deltas: an older client, or a lone tick
         case gesture(begun: Bool)     // fingers down; begun once the Began event is out
         case momentum(begun: Bool)    // fingers up, client-generated coast

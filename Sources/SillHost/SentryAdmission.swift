@@ -36,7 +36,6 @@ final class SentryAdmission: @unchecked Sendable {
     private var pendingControl: ControlTicket?
     private static let maximumOperations = 128
 
-    /// 호출자가 현재 TLS 암호화·paired owner 지문을 검증한 사실만 전달한다. 오디오 credential은 인가 근거가 아니다.
     struct VerifiedOwnerDevice {
         let deviceID: String
         init?(deviceID: String, encryptedTLS: Bool, currentPairedOwner: Bool) {
@@ -66,7 +65,6 @@ final class SentryAdmission: @unchecked Sendable {
         case unauthorized
     }
 
-    /// OS 효과는 실행하지 않는다. caller가 현재 표면과 capture·held-input의 readback을 전달한다.
     enum ControlResult {
         case pending
         case onPrepared(surfacesVerified: Bool)
@@ -301,8 +299,6 @@ final class SentryAdmission: @unchecked Sendable {
         return true
     }
 
-    /// 동일 신뢰의 재접속에는 기존 세대를 반환한다. remove는 연결 종료이고 revokeControl은 신뢰 회수다.
-    /// 기기 삭제·재등록 시 caller가 먼저 revokeControl을 호출해야 한다.
     @discardableResult
     func grantControl(to peer: ObjectIdentifier, verifiedOwner: VerifiedOwnerDevice) -> UUID? {
         lock.lock(); defer { lock.unlock() }
@@ -331,7 +327,6 @@ final class SentryAdmission: @unchecked Sendable {
             manualOwner = nil
             manualIntent = .automatic
             policyRevision = UUID()
-            // 남은 external 연결이 없으면 inactive, 다음 external 등록부터 자동 보호를 재요청한다.
             requested = sessions.values.contains { $0.externalRoute }
             surfacesVerified = false
             reason = nil
@@ -363,12 +358,10 @@ final class SentryAdmission: @unchecked Sendable {
         }
         guard request.hostBootID == bootID else { return rejection(.unknown, unknown: true) }
         guard request.authorizationGeneration == identity.generation else { return rejection(.notAuthorized) }
-        // 원장을 잃은 이전 boot/session의 본문은 조회 결과 미확인이다. 새 CAS로 바꾸어 실행하지 않는다.
         guard request.sessionID == sessions[peer]?.id else {
             return rejection(.unknown, unknown: true)
         }
         guard !returningLocal, pendingControl == nil else { return rejection(.busy) }
-        // 원장 밖의 오래된 CAS는 결과 미확인이다. 새 요청으로 추정하여 재실행하지 않는다.
         guard request.revision == revision else { return rejection(.unknown, unknown: true) }
         let ticket = ControlTicket(request: request, nonce: UUID(), peer: peer,
                                    deviceID: identity.deviceID, policyRevision: policyRevision)
@@ -396,8 +389,6 @@ final class SentryAdmission: @unchecked Sendable {
         return true
     }
 
-    /// ticket은 현재 pending 작업에만 유효하며 capture 갱신만으로는 만료되지 않는다.
-    /// 철회·교체된 ticket의 completion은 현재 상태와 fence를 변경하지 않는다.
     func completeControl(_ ticket: ControlTicket, result: ControlResult) -> SentryControlResponse? {
         lock.lock(); defer { lock.unlock() }
         guard pendingControl == ticket, policyRevision == ticket.policyRevision,
@@ -428,7 +419,6 @@ final class SentryAdmission: @unchecked Sendable {
         if let failure {
             record.operationState = .rejected
             record.code = failure
-            // 부분 표면 변경 실패는 일반 입력을 fail-closed로 유지한다.
             requested = true
             surfacesVerified = false
             reason = "Sentry 전환의 실제 결과를 확인하지 못했습니다."

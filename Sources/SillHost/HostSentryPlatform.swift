@@ -205,7 +205,6 @@ final class HostSentryPlatform {
         return !changingLifecycle && tap == nil && tapID == nil && curtains.isEmpty && pointerTargets.isEmpty
     }
 
-    // The parent establishes fresh OS authentication and fences remote participants before release.
     func release() -> Bool {
         guard !changingLifecycle else { return false }
         changingLifecycle = true
