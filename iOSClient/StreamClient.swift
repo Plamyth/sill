@@ -547,9 +547,7 @@ final class StreamClient: ObservableObject {
         }
     }
 
-    /// The one display view for the whole session. Landscape and portrait both host it, so a
-    /// rotation reparents the same layer (and its last decoded image) instead of creating a fresh
-    /// view that would sit black until the next keyframe, up to 4 s later. Main thread.
+    /// Landscape and portrait share this view. Reattachment requires a fresh presentation receipt.
     private(set) lazy var displayView: HEVCDisplayView = {
         let view = HEVCDisplayView(frame: .zero)
         view.onVideoSize = { [weak self] size in
@@ -558,12 +556,7 @@ final class StreamClient: ObservableObject {
             self?.recordStartupVideo()
             #endif
         }
-        #if os(visionOS)
         view.onPresentation = { [weak self] ticket in self?.visionPresentationChanged(ticket) }
-        #else
-        onParameterSets = { ps in view.apply(ps) }
-        onFrame = { data, isKey in view.enqueue(data, isKeyframe: isKey) }
-        #endif
         return view
     }()
 
@@ -1330,6 +1323,10 @@ final class StreamClient: ObservableObject {
             remoteAudioControl.setConnection(newValue.map(ObjectIdentifier.init))
             #if os(iOS)
             microphoneSetConnection(newValue)
+            if link.connection !== newValue {
+                replacePresentationConnection(newValue)
+                return
+            }
             #endif
             #endif
             link.connection = newValue
@@ -1346,12 +1343,14 @@ final class StreamClient: ObservableObject {
     lazy var visionInputFence = VisionInputFence(queue: queue)
     weak var visionInputSession: VisionInputSession?
     private var visionMovePreparation: UUID?
+    #endif
     private let visionInputDebt = VisionInputDebt()
     private var visionModernPeer: ObjectIdentifier?
     private var visionWireBinding: (peer: ObjectIdentifier, binding: VisionInputBinding)?
     private var visionWireSource: StreamSource?
     private var visionMediaPS: (epoch: UUID, ps: ParameterSets)?
     private var visionInputPermit: UUID?
+    #if os(visionOS)
     private var visionTextForeground = false
     @Published private(set) var visionTextScope = UUID()
     private var visionTextSubmissions: [UUID: SessionLink.Submission] = [:]
@@ -1428,9 +1427,12 @@ final class StreamClient: ObservableObject {
         }
     }
 
+    #endif
     @Published private(set) var visionInputBinding = VisionInputBinding.awaitingCatalog {
         didSet {
+            #if os(visionOS)
             if oldValue != visionInputBinding { revokeVisionTextDrafts() }
+            #endif
             if !visionInputBinding.isConfirmed {
                 visionInputPermit = nil
                 link.setInputPermit(nil)
@@ -1438,11 +1440,40 @@ final class StreamClient: ObservableObject {
         }
     }
 
+    #if os(iOS)
+    private func invalidatePresentedInput() {
+        visionInputPermit = nil
+        link.setInputPermit(nil)
+        cancelVisionInputs()
+        visionInputBinding = .awaitingCatalog
+        displayView.setPresentation(epoch: nil, peer: nil, modern: true)
+    }
+
+    private func replacePresentationConnection(_ next: NWConnection?) {
+        let old = link.connection
+        link.replaceConnection(next) {
+            self.visionInputDebt.release(on: old).map(Self.visionInputBytes)
+        }
+        let reset = { [weak self] in
+            guard let self, self.link.connection === next else { return }
+            self.visionInputBinding = .awaitingCatalog
+            self.visionInputPermit = nil
+            self.visionModernPeer = nil
+            self.displayView.setPresentation(epoch: nil, peer: nil, modern: true)
+        }
+        if Thread.isMainThread { reset() }
+        else { DispatchQueue.main.async(execute: reset) }
+        queue.async { [weak self] in self?.pendingMove = nil }
+    }
+    #endif
+
+    #if os(visionOS)
     func setVisionPresentationForeground(_ foreground: Bool) {
         visionTextForeground = foreground
         if !foreground { revokeVisionTextDrafts() }
         displayView.setPresentationForeground(foreground)
     }
+    #endif
 
     private func observeVisionInputCatalog(_ list: WindowList, from peer: NWConnection) {
         var bindingCatalog = list
@@ -1455,6 +1486,12 @@ final class StreamClient: ObservableObject {
         if visionWireBinding?.peer != id || visionWireBinding?.binding != binding || visionWireSource != list.active {
             link.observeInputEpoch(binding.epoch?.id, modern: binding.isModern)
             visionMediaPS = nil
+            #if os(iOS)
+            pendingMove = nil
+            _ = link.cancelInputs(onlyOn: peer) {
+                self.visionInputDebt.release(on: peer).map(Self.visionInputBytes)
+            }
+            #endif
         }
         visionWireBinding = (id, binding)
         visionWireSource = list.active
@@ -1473,7 +1510,9 @@ final class StreamClient: ObservableObject {
             if case .awaitingPresentation = visionInputBinding {
                 visionInputPermit = nil
                 link.setInputPermit(nil)
+                #if os(visionOS)
                 _ = visionInputSession?.takeReleases()
+                #endif
                 cancelVisionInputs()
             }
         }
@@ -1500,12 +1539,17 @@ final class StreamClient: ObservableObject {
         if active != list.active || visionInputBinding != binding {
             visionInputPermit = nil
             link.setInputPermit(nil)
+            #if os(visionOS)
             _ = visionInputSession?.takeReleases()
+            #endif
             cancelVisionInputs()
         }
         windows = list.windows
         dockApps = list.dockApps ?? []
         active = list.active
+        #if os(iOS)
+        inputGeneration = list.inputGeneration
+        #endif
         visionInputBinding = binding
         switch binding {
         case .awaitingPresentation(let epoch):
@@ -1523,18 +1567,30 @@ final class StreamClient: ObservableObject {
     }
 
     func cancelVisionInputs(completion: (() -> Void)? = nil) {
+        #if os(visionOS)
         revokeVisionTextDrafts()
+        #endif
         let expected = connection
+        #if os(iOS)
+        _ = link.cancelInputs(onlyOn: expected) {
+            self.visionInputDebt.release(on: expected).map(Self.visionInputBytes)
+        }
+        #endif
         queue.async { [weak self] in
             if let self {
+                #if os(iOS)
+                self.pendingMove = nil
+                #else
                 _ = self.link.cancelInputs(onlyOn: expected) {
                     self.visionInputDebt.release(on: expected).map(Self.visionInputBytes)
                 }
+                #endif
             }
             if let completion { DispatchQueue.main.async(execute: completion) }
         }
     }
 
+    #if os(visionOS)
     private let visionAudioRoute = VisionAudioRoute()
     lazy var visionAudio = VisionAudioController { [weak self] control in
         self?.sendVisionAudio(control)
@@ -1623,7 +1679,7 @@ final class StreamClient: ObservableObject {
 
     // Pointer-move coalescing, all touched on `queue` only.
     private static let moveInterval = 0.008   // 125 Hz ceiling; a Pencil can report at 120+ Hz
-    private var pendingMove: Data?
+    private var pendingMove: (input: CapturedVisionInput, peer: NWConnection, permit: UUID)?
     private var lastMoveAt = 0.0              // CACurrentMediaTime
     private var moveFlushScheduled = false
 
@@ -1666,6 +1722,16 @@ final class StreamClient: ObservableObject {
             self?.wentToBackground()
         }
         #else
+        displayView.setPresentationForeground(UIApplication.shared.applicationState == .active)
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.displayView.setPresentationForeground(true)
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.visionInputPermit = nil
+            self?.link.setInputPermit(nil)
+            self?.cancelVisionInputs()
+            self?.displayView.setPresentationForeground(false)
+        }
         NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.resetLiveness()
             self?.cameForward()
@@ -2634,11 +2700,7 @@ final class StreamClient: ObservableObject {
         if let v = UserDefaults.standard.string(forKey: "SillHelloVersion"), !v.isEmpty { version = v }
         #endif
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        #if os(visionOS)
         let presentationInput: Int? = 1
-        #else
-        let presentationInput: Int? = nil
-        #endif
         return Wire.encode(Hello(appVersion: version, build: build, protocol: SillProtocol.current,
                                  device: ClientStatsReporter.deviceName, sourceInput: 1, presentationInput: presentationInput))
     }()
@@ -3195,6 +3257,9 @@ final class StreamClient: ObservableObject {
             self.finishMoveAfterInputDrain(c, kind: kind, kept: kept)
         }
         #else
+        visionInputPermit = nil
+        link.setInputPermit(nil)
+        cancelVisionInputs()
         finishMoveAfterInputDrain(c, kind: kind, kept: kept)
         #endif
     }
@@ -3214,6 +3279,9 @@ final class StreamClient: ObservableObject {
         visionInputBinding = .awaitingCatalog
         #endif
         #if os(iOS)
+        visionInputBinding = .awaitingCatalog
+        visionModernPeer = nil
+        displayView.setPresentation(epoch: nil, peer: nil, modern: true)
         macRouteTransport.reset()
         macAudioRoutes.bind(ObjectIdentifier(c))
         #endif
@@ -4052,6 +4120,10 @@ final class StreamClient: ObservableObject {
         visionInputSession?.releaseAll()
         visionInputBinding = .awaitingCatalog
         #else
+        visionInputPermit = nil
+        link.setInputPermit(nil)
+        cancelVisionInputs()
+        visionInputBinding = .awaitingCatalog
         remoteAudioControl.setConnection(nil)
         #if os(iOS)
         microphoneSetConnection(nil)
@@ -4184,6 +4256,7 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         visionAudio.stop()
         #else
+        invalidatePresentedInput()
         remoteAudioControl.sourceWillChange()
         #if os(iOS)
         microphoneSourceWillChange()
@@ -4206,6 +4279,7 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         visionAudio.stop()
         #else
+        invalidatePresentedInput()
         remoteAudioControl.sourceWillChange()
         #if os(iOS)
         microphoneSourceWillChange()
@@ -4307,7 +4381,22 @@ final class StreamClient: ObservableObject {
         }
         return
         #else
-        let payload = SourceInput.payload(event, generation: inputGeneration)
+        captureInputSender()(event)
+        #endif
+    }
+
+    #if os(iOS)
+    func captureInputSender() -> (InputEvent) -> Void {
+        guard appInForeground, active != .none, let expected = connection,
+              visionInputBinding.isConfirmed, let permit = visionInputPermit else { return { _ in } }
+        let binding = visionInputBinding
+        return { [weak self] event in
+            self?.sendInput(event, binding: binding, peer: expected, permit: permit)
+        }
+    }
+
+    private func sendInput(_ event: InputEvent, binding: VisionInputBinding, peer expected: NWConnection, permit: UUID) {
+        guard let input = binding.capture(event) else { return }
         // Every input passes here, a hover and a flick's coast included: the tour's rule counts it
         // as something happening (StreamScreen.considerTour).
         lastInputAt = ProcessInfo.processInfo.systemUptime
@@ -4321,10 +4410,9 @@ final class StreamClient: ObservableObject {
             guard let self else { return }
             // Every input hands this device the pointer, coalesced moves included, here where the
             // Mac's reports are judged, so none can slip between an input and its count.
-            self.pointerNoteSent(event)
             guard case .pointer(.move, _, _) = event else {
                 self.flushPendingMove()
-                self.send(.input, payload)
+                self.sendPresentedInput(input, onlyOn: expected, permit: permit)
                 return
             }
             let now = CACurrentMediaTime()
@@ -4332,9 +4420,9 @@ final class StreamClient: ObservableObject {
             if now >= due {
                 self.pendingMove = nil
                 self.lastMoveAt = now
-                self.send(.input, payload)
+                self.sendPresentedInput(input, onlyOn: expected, permit: permit)
             } else {
-                self.pendingMove = payload   // replaces any older pending move, retaining its generation
+                self.pendingMove = (input, expected, permit)
                 if !self.moveFlushScheduled {
                     self.moveFlushScheduled = true
                     self.queue.asyncAfter(deadline: .now() + (due - now)) { [weak self] in
@@ -4345,8 +4433,8 @@ final class StreamClient: ObservableObject {
                 }
             }
         }
-        #endif
     }
+    #endif
 
     /// This device's switch for three-finger gestures (the Settings panel's This iPad group): on
     /// unless turned off. The device's own preference, never sent to the Mac; read at each gesture.
@@ -4387,7 +4475,16 @@ final class StreamClient: ObservableObject {
         guard let move = pendingMove else { return }
         pendingMove = nil
         lastMoveAt = CACurrentMediaTime()
-        send(.input, move)
+        sendPresentedInput(move.input, onlyOn: move.peer, permit: move.permit)
+    }
+
+    private func sendPresentedInput(_ input: CapturedVisionInput, onlyOn peer: NWConnection, permit: UUID) {
+        let accepted = link.send(Self.visionInputBytes(input), onlyOn: peer, permit: permit, admit: { [weak self] in
+            self?.visionInputDebt.permits(input, on: peer) == true
+        }) { [weak self] in
+            self?.visionInputDebt.record(input, on: peer)
+        }
+        if accepted { pointerNoteSent(input.event) }
     }
 
     private func send(_ kind: StreamMessageKind, _ payload: Data) {
@@ -4670,7 +4767,6 @@ final class StreamClient: ObservableObject {
                 visionAudio.stop(problem: response.reason.map { String($0.prefix(160)) })
             }
         #endif
-        #if os(visionOS)
         case .epochParameterSets, .epochFrame:
             guard connection === peer, visionWireBinding?.peer == ObjectIdentifier(peer),
                   let epoch = visionWireBinding?.binding.epoch, let payload = PresentationMedia.decode(data, kind: header.kind),
@@ -4688,54 +4784,41 @@ final class StreamClient: ObservableObject {
                     self.displayView.receiveParameters(ps, epoch: payload.epoch, peer: ObjectIdentifier(peer))
                 } else if header.kind == .epochFrame {
                     self.displayView.receiveFrame(payload.media, keyframe: header.isKeyframe, epoch: payload.epoch, peer: ObjectIdentifier(peer))
+                    #if os(iOS)
+                    self.reconcileDesiredAudio()
+                    #endif
                 }
             }
-        #endif
         case .parameterSets:
-            #if os(visionOS)
             guard visionWireBinding?.peer == ObjectIdentifier(peer),
                   visionWireBinding?.binding.isLegacy == true else { return }
-            #endif
             if let ps = ParameterSets(encoded: data) {
                 lastParameterSets = ps
-                #if os(visionOS)
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.connection === peer else { return }
                     self.displayView.applyLegacy(ps, peer: ObjectIdentifier(peer))
                 }
-                #else
-                onParameterSets?(ps)
-                #endif
             }
         case .frame:
-            #if os(visionOS)
             guard visionWireBinding?.peer == ObjectIdentifier(peer),
                   visionWireBinding?.binding.isLegacy == true else { return }
-            #endif
             noteVideoFrame(header)
-            #if os(visionOS)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.connection === peer else { return }
                 self.displayView.enqueueLegacy(data, isKeyframe: header.isKeyframe, peer: ObjectIdentifier(peer))
-            }
-            #else
-            onFrame?(data, header.isKeyframe)
-            #if os(iOS)
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.connection === peer else { return }
+                #if os(iOS)
                 self.reconcileDesiredAudio()
+                #endif
             }
-            #endif
-            #endif
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
             let from: NWConnection? = peer
             #if os(iOS)
             let audioTicket = audioAdmission.observe(list, from: ObjectIdentifier(peer))
             #endif
-            #if os(visionOS)
             guard connection === peer else { return }
             observeVisionInputCatalog(list, from: peer)
+            #if os(visionOS)
             let availability = visionAudioRoute.observe(peer, source: list.active, supported: list.remoteAudio == 1)
             visionAudio.update(availability)
             #endif
@@ -4802,16 +4885,9 @@ final class StreamClient: ObservableObject {
                 }
                 if self.macName != list.macName { self.macName = list.macName; self.loadWindowOrder() }
                 let previous = self.active
-                #if os(visionOS)
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
-                #else
-                self.windows = list.windows
-                self.dockApps = list.dockApps ?? []
-                self.inputGeneration = list.inputGeneration
-                self.active = list.active
                 #if os(iOS)
                 self.reconcileDesiredAudio()
-                #endif
                 #endif
                 // Forget thumbnails for windows that are gone.
                 let live = Set(list.windows.map(\.id))

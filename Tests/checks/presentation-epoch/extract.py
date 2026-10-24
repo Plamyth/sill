@@ -111,7 +111,7 @@ final class ProbeCap {
     for name in ['Framework.swift', 'main.swift']:
         files[name] = (here / name).read_text()
     native_route_start = stream.index('        case .epochParameterSets, .epochFrame:')
-    native_route_end = stream.index('        #endif', native_route_start)
+    native_route_end = stream.index('        case .parameterSets:', native_route_start)
     media_body = stream[native_route_start:native_route_end]
     files['Accounting.swift'] = '''import Foundation
 import Network

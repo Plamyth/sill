@@ -26,6 +26,7 @@ struct Trackpad: View {
     var verticalSpan: CGFloat? = nil
     /// A three- or four-finger gesture, for the Mac (`StreamClient.sendGesture`). True when it went.
     var sendGesture: (TrackpadGestures.Gesture, Int) -> Bool = { _, _ in false }
+    var captureInputSender: (() -> (InputEvent) -> Void)? = nil
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 22, style: .continuous) }
 
@@ -35,7 +36,7 @@ struct Trackpad: View {
             DotGrid().allowsHitTesting(false)
             TrackpadView(send: send, setPointer: setPointer, feed: feed, onFingers: onFingers,
                          latched: latched, onModifiersConsumed: onModifiersConsumed,
-                         verticalSpan: verticalSpan, sendGesture: sendGesture)
+                         verticalSpan: verticalSpan, sendGesture: sendGesture, captureInputSender: captureInputSender)
             VStack {
                 Spacer(minLength: 0)
                 Text("드래그하면 포인터가 이동합니다. 탭하면 클릭하고, 두 손가락으로 스크롤합니다.")
@@ -85,6 +86,7 @@ struct TrackpadView: UIViewRepresentable {
     let onModifiersConsumed: () -> Void
     var verticalSpan: CGFloat? = nil
     var sendGesture: (TrackpadGestures.Gesture, Int) -> Bool = { _, _ in false }
+    var captureInputSender: (() -> (InputEvent) -> Void)? = nil
 
     func makeUIView(context: Context) -> TrackpadSurface {
         let view = TrackpadSurface(frame: .zero)
@@ -93,11 +95,13 @@ struct TrackpadView: UIViewRepresentable {
         view.setPointer = setPointer
         view.feed = feed
         view.onFingers = onFingers
+        view.captureInputSender = captureInputSender
         return view
     }
 
     func updateUIView(_ uiView: TrackpadSurface, context: Context) {
         uiView.send = send
+        uiView.captureInputSender = captureInputSender
         uiView.setPointer = setPointer
         uiView.feed = feed
         uiView.onFingers = onFingers
@@ -112,6 +116,21 @@ struct TrackpadView: UIViewRepresentable {
 
 final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
     var send: (InputEvent) -> Void = { _ in }
+    var captureInputSender: (() -> (InputEvent) -> Void)?
+    private var recognizerInputs: [ObjectIdentifier: (InputEvent) -> Void] = [:]
+    private var dragSender: ((InputEvent) -> Void)?
+    private var dragOwner: ObjectIdentifier?
+    private var scrollSender: ((InputEvent) -> Void)?
+
+    private func capturedSender() -> (InputEvent) -> Void { captureInputSender?() ?? send }
+
+    private func sender(for gesture: UIGestureRecognizer) -> (InputEvent) -> Void {
+        let id = ObjectIdentifier(gesture)
+        if let send = recognizerInputs[id] { return send }
+        let send = capturedSender()
+        recognizerInputs[id] = send
+        return send
+    }
     /// Writes this device's own pointer (`StreamClient.setOwnPointer`, from the trackpad: a fraction
     /// of the frame). Called with the virtual cursor on every move, click, drag and scroll, so the
     /// sprite follows the finger at touch rate rather than a network round trip behind it. Never
@@ -228,11 +247,13 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         tap.numberOfTapsRequired = 1
         tap.numberOfTouchesRequired = 1
+        tap.delegate = self
         addGestureRecognizer(tap)
 
         let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap))
         twoFingerTap.numberOfTapsRequired = 1
         twoFingerTap.numberOfTouchesRequired = 2
+        twoFingerTap.delegate = self
         addGestureRecognizer(twoFingerTap)
 
         // Press and hold, then drag: the left button goes down and stays down, so a window or a
@@ -263,9 +284,16 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer.numberOfTouches == 0 {
+            recognizerInputs[ObjectIdentifier(gestureRecognizer)] = capturedSender()
+        }
+        return true
+    }
+
     // MARK: - Pointer
 
-    private func moveCursor(dx: CGFloat, dy: CGFloat) {
+    private func moveCursor(dx: CGFloat, dy: CGFloat, using sender: ((InputEvent) -> Void)? = nil) {
         guard bounds.width > 0, bounds.height > 0 else { return }
         catchUp()
         pad.move(dx: Double(dx / bounds.width * Self.travel), dy: Double(dy / ySpan * Self.travel))
@@ -273,7 +301,7 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
         // cursor still has to follow for clicks to land there. No rate limit needed here:
         // sendInput coalesces moves to one every 8 ms.
         setPointer(cursor)
-        send(.pointer(.move, x: cursor.x, y: cursor.y))
+        (sender ?? capturedSender())(.pointer(.move, x: cursor.x, y: cursor.y))
     }
 
     /// A stroke's first finger, or the pad joining a window: the cursor carries on from the anchor,
@@ -307,6 +335,7 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
         guard !strokes.silent else { return }
         switch tracker.state {
         case .began:
+            _ = sender(for: tracker)
             trackSuspended = false
             trackLive = false
             trackLast = tracker.location(in: self)
@@ -321,9 +350,10 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
             let dy = location.y - trackLast.y
             trackLast = location
             guard dx != 0 || dy != 0 else { return }
-            moveCursor(dx: dx, dy: dy)
+            moveCursor(dx: dx, dy: dy, using: sender(for: tracker))
         default:
             trackLive = false
+            recognizerInputs.removeValue(forKey: ObjectIdentifier(tracker))
         }
     }
 
@@ -336,13 +366,19 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
     /// tracker is not already doing it, which it normally is: the pan begins ~10 pt into a stroke,
     /// the tracker at touch-down.
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        let send = sender(for: gesture)
+        defer {
+            if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
+            }
+        }
         guard !strokes.silent else { return }
         switch gesture.state {
         case .began:
             panTouches = gesture.numberOfTouches
             if panTouches >= 2 {
                 lastTranslation = .zero
-                beginScroll()
+                beginScroll(using: send)
             } else {
                 // The pan has already held back its ~10 pt of hysteresis. Rebase past it, and if
                 // this stroke is the pan's to drive, move by it now instead of as a jump on the
@@ -350,7 +386,7 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
                 let translation = gesture.translation(in: self)
                 lastTranslation = translation
                 if !trackerDriving, translation != .zero {
-                    moveCursor(dx: translation.x, dy: translation.y)
+                    moveCursor(dx: translation.x, dy: translation.y, using: send)
                 }
             }
         case .changed:
@@ -360,7 +396,7 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
                 panTouches = gesture.numberOfTouches
                 lastTranslation = translation
                 if panTouches >= 2, !scrolling {
-                    beginScroll()
+                    beginScroll(using: send)
                 } else if panTouches < 2, scrolling {
                     // Fingers rarely lift together, so this is usually the flick's lift-off.
                     endScroll(momentumVelocity: scrollVelocity)
@@ -376,10 +412,10 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
                 guard bounds.width > 0, bounds.height > 0 else { return }
                 catchUp()
                 // Natural sign, same as the direct-touch overlay: fingers down, content down.
-                send(.scroll(x: cursor.x, y: cursor.y,
+                (scrollSender ?? send)(.scroll(x: cursor.x, y: cursor.y,
                              dx: dx / bounds.width, dy: dy / ySpan))
             } else if !trackerDriving {
-                moveCursor(dx: dx, dy: dy)
+                moveCursor(dx: dx, dy: dy, using: send)
             }
         case .ended:
             if scrolling { endScroll(momentumVelocity: gesture.velocity(in: self)) }
@@ -395,9 +431,11 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
 
     /// A new two-finger gesture ends any coast still running first (its `.momentumEnded` goes out
     /// before this `.began`), so the host never has two scrolls open.
-    private func beginScroll() {
+    private func beginScroll(using sender: ((InputEvent) -> Void)? = nil) {
         momentum.stop()
         scrolling = true
+        let send = sender ?? capturedSender()
+        scrollSender = send
         // From here the tracker must not move the pointer under the scroll, even if UIKit never
         // showed it the second finger.
         trackSuspended = true
@@ -413,20 +451,21 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
     /// coast stays at the cursor where the scroll ended, even if one finger then moves the
     /// pointer: the Mac routes a whole gesture, momentum included, to the view it began in.
     private func endScroll(momentumVelocity velocity: CGPoint?) {
+        guard let send = scrollSender else { return }
         scrolling = false
+        scrollSender = nil
         let at = cursor
         send(.scrollGesture(.ended, x: at.x, y: at.y))
         guard let velocity else { return }
         // Begin and end capture the send closure rather than self, so the end still goes out if
         // this view is torn down mid-coast.
-        let send = self.send
         momentum.start(
             velocity: velocity,
             onBegin: { send(.scrollGesture(.momentumBegan, x: at.x, y: at.y)) },
             onStep: { [weak self] step in
                 // Converted to frame fractions exactly as live two-finger deltas are.
                 guard let self, self.bounds.width > 0, self.bounds.height > 0 else { return }
-                self.send(.scroll(x: at.x, y: at.y,
+                send(.scroll(x: at.x, y: at.y,
                                   dx: step.x / self.bounds.width, dy: step.y / self.ySpan))
             },
             onEnd: { send(.scrollGesture(.momentumEnded, x: at.x, y: at.y)) })
@@ -468,37 +507,50 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    @objc private func handleTap() {
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard !strokes.silent else { return }
-        click(down: .leftDown, up: .leftUp)
+        let send = sender(for: gesture)
+        recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
+        click(down: .leftDown, up: .leftUp, using: send)
     }
 
     /// Two fingers is the right button, the way a Mac trackpad's secondary click works.
-    @objc private func handleTwoFingerTap() {
+    @objc private func handleTwoFingerTap(_ gesture: UITapGestureRecognizer) {
         guard !strokes.silent else { return }
-        click(down: .rightDown, up: .rightUp)
+        let send = sender(for: gesture)
+        recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
+        click(down: .rightDown, up: .rightUp, using: send)
     }
 
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
         guard !strokes.silent else { return }
         switch gesture.state {
         case .began:
+            let send = sender(for: gesture)
+            dragSender = send
+            dragOwner = ObjectIdentifier(gesture)
             dragging = true
             // Firmer than a click: the button is now held down.
             clickHaptic.impactOccurred(intensity: 1.0)
             catchUp()
             setPointer(cursor)
-            pressModifiers()
+            pressModifiers(using: send)
             send(.pointer(.leftDown, x: cursor.x, y: cursor.y))
         case .ended, .cancelled, .failed:
-            guard dragging else { return }
+            guard dragging, dragOwner == ObjectIdentifier(gesture), let send = dragSender else {
+                recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
+                return
+            }
             dragging = false
+            dragSender = nil
+            dragOwner = nil
+            recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
             // Softer: the button coming back up.
             clickHaptic.impactOccurred(intensity: 0.5)
             catchUp()
             setPointer(cursor)
             send(.pointer(.leftUp, x: cursor.x, y: cursor.y))
-            releaseModifiers()
+            releaseModifiers(using: send)
             consumeLatch()
         default:
             break
@@ -523,14 +575,15 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
 
     /// The click itself carries no position beyond the cursor and no modifiers: pointer events have
     /// no modifier field at all, which is why the latched ones are pressed around it below.
-    private func click(down: PointerAction, up: PointerAction) {
+    private func click(down: PointerAction, up: PointerAction, using sender: ((InputEvent) -> Void)? = nil) {
+        let send = sender ?? capturedSender()
         clickHaptic.impactOccurred(intensity: 0.8)
         catchUp()
         setPointer(cursor)
-        pressModifiers()
+        pressModifiers(using: send)
         send(.pointer(down, x: cursor.x, y: cursor.y))
         send(.pointer(up, x: cursor.x, y: cursor.y))
-        releaseModifiers()
+        releaseModifiers(using: send)
         consumeLatch()
     }
 
@@ -541,13 +594,13 @@ final class TrackpadSurface: UIView, UIGestureRecognizerDelegate {
     // modifier's own key (ctrl 0xE0, shift 0xE1, opt 0xE2, cmd 0xE3) is pressed before the click and
     // released after it, each event carrying the flags in force at that moment.
 
-    private func pressModifiers() {
+    private func pressModifiers(using sender: ((InputEvent) -> Void)? = nil) {
         held = latchedModifiers
-        KeyChord.modifiersDown(held).forEach(send)
+        KeyChord.modifiersDown(held).forEach(sender ?? capturedSender())
     }
 
-    private func releaseModifiers() {
-        KeyChord.modifiersUp(held).forEach(send)
+    private func releaseModifiers(using sender: ((InputEvent) -> Void)? = nil) {
+        KeyChord.modifiersUp(held).forEach(sender ?? capturedSender())
         held = []
     }
 
@@ -723,7 +776,7 @@ extension TrackpadSurface {
         at(3.2) { [weak self] in
             guard let self else { return }
             print("input test: tap with " + InputTest.describe(self.latchedModifiers) + " latched")
-            self.handleTap()
+            self.handleTap(UITapGestureRecognizer())
         }
         at(3.8) { [weak self] in
             guard let self else { return }

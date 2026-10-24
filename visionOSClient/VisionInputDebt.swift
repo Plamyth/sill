@@ -82,6 +82,19 @@ final class VisionInputDebt {
     private var right: CapturedVisionInput?
     private var scroll: CapturedVisionInput?
 
+    func permits(_ input: CapturedVisionInput, on connection: NWConnection) -> Bool {
+        func matches(_ held: CapturedVisionInput?) -> Bool {
+            peer === connection && held?.generation == input.generation && held?.videoEpoch == input.videoEpoch && held != nil
+        }
+        switch input.event {
+        case .key(let key, false, _): return matches(keys.first { $0.usage == key }?.input)
+        case .pointer(.leftUp, _, _): return matches(left)
+        case .pointer(.rightUp, _, _): return matches(right)
+        case .scrollGesture(.ended, _, _), .scrollGesture(.momentumEnded, _, _): return matches(scroll)
+        default: return true
+        }
+    }
+
     func record(_ input: CapturedVisionInput, on connection: NWConnection) {
         if peer !== connection {
             peer = connection

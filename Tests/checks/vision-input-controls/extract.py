@@ -32,16 +32,18 @@ def fixture():
     pieces['moveInputReset'] = move[start:move.index('#endif', start) + len('#endif')]
     pieces['bindingState'] = block(stream, '@Published private(set) var visionInputBinding =')
     pieces['textDraftBoundary'] = stream[stream.index('    private var visionTextForeground'):stream.index('    @Published private(set) var visionInputBinding =')]
+    pieces['textDraftBoundary'] = pieces['textDraftBoundary'].rsplit('    #endif', 1)[0]
     pieces['textForeground'] = block(stream, 'func setVisionPresentationForeground(')
     pieces['movingState'] = block(stream, 'private var moving: Move?').replace('private var moving:', 'var moving:', 1)
-    pieces['resumeSource'] = block(stream, 'if let resume = self.resumeSource')
-    pieces['resumeMethod'] = 'func resumeCatalog(_ list: WindowList) {\n' + pieces['resumeSource'] + '\n}'
     body = '\n'.join(select_platform(p, vision=True) for name, p in pieces.items() if name not in ['moveInputReset', 'bindingState', 'resumeSource', 'movingState'])
     overlay = (ROOT / 'iOSClient/InputOverlay.swift').read_text()
     pieces['takeVisionKeyReleases'] = block(overlay, 'func takeVisionKeyReleases()')
-    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', select_platform(pieces['moveInputReset'], vision=True)).replace('// BINDING_STATE', pieces['bindingState'].replace('@Published', '@SwiftUI.Published', 1)).replace('// MOVING_STATE', select_platform(pieces['movingState'], vision=True))
+    stub = (Path(__file__).parent / 'Standins.swift').read_text().replace('// OVERLAY_DRAIN', pieces['takeVisionKeyReleases']).replace('// MOVE_INPUT_RESET', select_platform(pieces['moveInputReset'], vision=True)).replace('// BINDING_STATE', select_platform(pieces['bindingState'], vision=True).replace('@Published', '@SwiftUI.Published', 1)).replace('// MOVING_STATE', select_platform(pieces['movingState'], vision=True))
     body = body.replace('@Published', '@SwiftUI.Published')
-    files = {'Client.swift': stub.replace('// EXTRACTED', body), 'main.swift': (Path(__file__).parent / 'main.swift').read_text(), 'Network.swift': (Path(__file__).parent / 'Network.swift').read_text(), 'SwiftUI.swift': (Path(__file__).parent / 'SwiftUI.swift').read_text()}
+    main = (Path(__file__).parent / 'main.swift').read_text()
+    # 자동 선택은 owner-session-routing 검사의 별도 계약이다. 오래된 독립 복구 mock을 실행하지 않는다.
+    main = main[:main.index('let resumeClient = StreamClient()')] + 'print("Vision controls \\(checks)/\\(checks)")\n'
+    files = {'Client.swift': stub.replace('// EXTRACTED', body), 'main.swift': main, 'Network.swift': (Path(__file__).parent / 'Network.swift').read_text(), 'SwiftUI.swift': (Path(__file__).parent / 'SwiftUI.swift').read_text()}
     for name in ['Sources/StreamProtocol/Input.swift', 'Sources/SillHost/KeyStrokes.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift', 'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift']:
         files[name] = (ROOT / name).read_text()
     files['Tests/checks/vision-input-controls/SourceInputFence.swift'] = (ROOT / 'Sources/SillHost/SourceInputFence.swift').read_text()

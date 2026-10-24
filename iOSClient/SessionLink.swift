@@ -121,6 +121,7 @@ final class SessionLink {
         let peer: NWConnection?
         let permit: UUID?
         var submission: Submission? = nil
+        var admit: (() -> Bool)? = nil
     }
     private var waiting: [Waiting] = []
     deinit { for item in waiting { item.submission?.cancel() } }
@@ -198,14 +199,16 @@ final class SessionLink {
     }
 
     @discardableResult
-    func send(_ data: Data, onlyOn expected: NWConnection, permit: UUID? = nil, submission: Submission? = nil, didSend: (() -> Void)? = nil) -> Bool {
+    func send(_ data: Data, onlyOn expected: NWConnection, permit: UUID? = nil, submission: Submission? = nil,
+              admit: (() -> Bool)? = nil, didSend: (() -> Void)? = nil) -> Bool {
         lock.lock(); defer { lock.unlock() }
         if let submission, !submission.claim() { return false }
         guard current === expected else { submission?.cancel(); return false }
         guard permit == nil || permit == inputPermit else { submission?.cancel(); return false }
         if !fences.isEmpty || holding != nil {
-            waiting.append(Waiting(data: data, didSend: didSend, peer: expected, permit: permit, submission: submission))
+            waiting.append(Waiting(data: data, didSend: didSend, peer: expected, permit: permit, submission: submission, admit: admit))
         } else {
+            guard admit?() != false else { submission?.cancel(); return false }
             let send = { expected.send(content: data, completion: .contentProcessed { _ in }) }
             if let submission {
                 guard submission.submit(send) else { return false }
@@ -370,6 +373,11 @@ final class SessionLink {
             guard let current else {
                 item.submission?.cancel()
                 if item.submission != nil, Self.isInput(item.data) { inputs -= 1 }
+                continue
+            }
+            guard item.admit?() != false else {
+                item.submission?.cancel()
+                if Self.isInput(item.data) { inputs -= 1 }
                 continue
             }
             let send = { current.send(content: item.data, completion: .contentProcessed { _ in }) }

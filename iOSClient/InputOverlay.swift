@@ -12,6 +12,19 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     /// ignored until then, since there is nothing on screen to aim at.
     var videoSize: CGSize = .zero
     var send: (InputEvent) -> Void = { _ in }
+    var captureInputSender: (() -> (InputEvent) -> Void)?
+    private var recognizerInputs: [ObjectIdentifier: (InputEvent) -> Void] = [:]
+    private var pointerInputs: [ObjectIdentifier: (send: (InputEvent) -> Void, secondary: Bool)] = [:]
+
+    private func capturedSender() -> (InputEvent) -> Void { captureInputSender?() ?? send }
+
+    private func sender(for gesture: UIGestureRecognizer) -> (InputEvent) -> Void {
+        let id = ObjectIdentifier(gesture)
+        if let send = recognizerInputs[id] { return send }
+        let send = capturedSender()
+        recognizerInputs[id] = send
+        return send
+    }
     /// Show the device's touch Dock. The Mac's auto-hide preference stays untouched.
     var onDockSwipe: () -> Void = {}
     /// Fires when this view takes or loses first responder, i.e. when the software keyboard shows
@@ -73,11 +86,13 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         tap.numberOfTapsRequired = 1
         tap.numberOfTouchesRequired = 1
         tap.allowedTouchTypes = directOnly
+        tap.delegate = self
         addGestureRecognizer(tap)
 
         let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap))
         twoFingerTap.numberOfTouchesRequired = 2
         twoFingerTap.allowedTouchTypes = directOnly
+        twoFingerTap.delegate = self
         addGestureRecognizer(twoFingerTap)
         tap.require(toFail: twoFingerTap)
 
@@ -111,6 +126,13 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer.numberOfTouches == 0 {
+            recognizerInputs[ObjectIdentifier(gestureRecognizer)] = capturedSender()
+        }
+        return true
+    }
+
     // MARK: - Coordinates
 
     /// Where the layer actually draws the video inside this view.
@@ -134,9 +156,10 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     /// Sends `action` at `point` and returns the frame fraction it went out at, or nil when the point
     /// was rejected (the letterbox, or no video yet) and nothing was sent.
     @discardableResult
-    private func sendPointer(_ action: PointerAction, at point: CGPoint, clamped: Bool) -> CGPoint? {
+    private func sendPointer(_ action: PointerAction, at point: CGPoint, clamped: Bool,
+                             using sender: ((InputEvent) -> Void)? = nil) -> CGPoint? {
         guard let p = normalized(point, clamped: clamped) else { return nil }
-        send(.pointer(action, x: p.x, y: p.y))
+        (sender ?? capturedSender())(.pointer(action, x: p.x, y: p.y))
         return CGPoint(x: p.x, y: p.y)
     }
 
@@ -149,7 +172,9 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         recordPencilBoundary("finger-tap")
         #endif
         guard !strokes.silent else { return }
-        tap(at: gesture.location(in: self))
+        let send = sender(for: gesture)
+        recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
+        tap(at: gesture.location(in: self), using: send)
     }
 
     @objc private func handleTwoFingerTap(_ gesture: UITapGestureRecognizer) {
@@ -157,23 +182,27 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         recordPencilBoundary("two-finger-tap")
         #endif
         guard !strokes.silent else { return }
+        let send = sender(for: gesture)
+        recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
         let point = gesture.location(in: self)
         setOwnPointer(nil, .none)
-        guard sendPointer(.move, at: point, clamped: false) != nil else { return }
-        sendPointer(.rightDown, at: point, clamped: false)
-        sendPointer(.rightUp, at: point, clamped: false)
+        guard sendPointer(.move, at: point, clamped: false, using: send) != nil else { return }
+        sendPointer(.rightDown, at: point, clamped: false, using: send)
+        sendPointer(.rightUp, at: point, clamped: false, using: send)
     }
 
     /// A finger's tap at `point`, in this view: the pointer goes there, then clicks.
-    private func tap(at point: CGPoint) {
+    private func tap(at point: CGPoint, using sender: ((InputEvent) -> Void)? = nil) {
+        let send = sender ?? capturedSender()
         setOwnPointer(nil, .none)
-        guard sendPointer(.move, at: point, clamped: false) != nil else { return }
-        sendPointer(.leftDown, at: point, clamped: false)
-        sendPointer(.leftUp, at: point, clamped: false)
+        guard sendPointer(.move, at: point, clamped: false, using: send) != nil else { return }
+        sendPointer(.leftDown, at: point, clamped: false, using: send)
+        sendPointer(.leftUp, at: point, clamped: false, using: send)
     }
 
     /// Hold one finger to keep the left button down while moving it, then release on lift.
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        let send = sender(for: gesture)
         let point = gesture.location(in: self)
         switch gesture.state {
         case .began:
@@ -182,18 +211,20 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
             if scrollGestureOpen {
                 scrollGestureOpen = false
                 let at = normalized(point, clamped: true) ?? (x: 0.5, y: 0.5)
-                send(.scrollGesture(.ended, x: at.x, y: at.y))
+                let scrollSend = scrollPan.map { sender(for: $0) } ?? send
+                scrollSend(.scrollGesture(.ended, x: at.x, y: at.y))
             }
             setOwnPointer(nil, .none)
-            guard sendPointer(.move, at: point, clamped: false) != nil else { return }
+            guard sendPointer(.move, at: point, clamped: false, using: send) != nil else { return }
             fingerDragging = true
-            sendPointer(.leftDown, at: point, clamped: false)
+            sendPointer(.leftDown, at: point, clamped: false, using: send)
         case .changed:
-            if fingerDragging { sendPointer(.move, at: point, clamped: true) }
+            if fingerDragging { sendPointer(.move, at: point, clamped: true, using: send) }
         case .ended, .cancelled, .failed:
             guard fingerDragging else { return }
             fingerDragging = false
-            sendPointer(.leftUp, at: point, clamped: true)
+            recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
+            sendPointer(.leftUp, at: point, clamped: true, using: send)
         default:
             break
         }
@@ -205,6 +236,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     /// Deltas are fractions of the video rect, natural sign (finger down = content down =
     /// positive dy).
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        let send = sender(for: gesture)
         if fingerDragging { return }
         guard !strokes.silent else { return }
         let rect = videoRect
@@ -283,7 +315,8 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
             send(.scrollGesture(.ended, x: p.x, y: p.y))
             // Only a real lift coasts. A cancel means the system took the touch (an alert, a
             // system gesture), and flinging the Mac's content then would be a surprise.
-            if gesture.state == .ended { startMomentum(velocity: gesture.velocity(in: self), at: p) }
+            recognizerInputs.removeValue(forKey: ObjectIdentifier(gesture))
+            if gesture.state == .ended { startMomentum(velocity: gesture.velocity(in: self), at: p, using: send) }
         default:
             edgePan = .none
             lastPanTranslation = .zero
@@ -298,16 +331,16 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         guard scrollGestureOpen else { return }
         scrollGestureOpen = false
         let p = scrollPan.flatMap { normalized($0.location(in: self), clamped: true) } ?? (x: 0.5, y: 0.5)
+        let send = scrollPan.map { sender(for: $0) } ?? capturedSender()
         send(.scrollGesture(.ended, x: p.x, y: p.y))
     }
 
     /// The coast after a flick, at the point the finger lifted. Steps are converted to fractions
     /// of the video rect exactly as live pan deltas are, so the coast continues at the speed the
     /// content was moving under the finger.
-    private func startMomentum(velocity: CGPoint, at p: (x: Double, y: Double)) {
+    private func startMomentum(velocity: CGPoint, at p: (x: Double, y: Double), using send: @escaping (InputEvent) -> Void) {
         // Begin and end capture the send closure rather than self, so the end still goes out if
         // this view is torn down mid-coast.
-        let send = self.send
         momentum.start(
             velocity: velocity,
             onBegin: { send(.scrollGesture(.momentumBegan, x: p.x, y: p.y)) },
@@ -315,7 +348,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
                 guard let self else { return }
                 let rect = self.videoRect
                 guard rect.width > 0, rect.height > 0 else { return }
-                self.send(.scroll(x: p.x, y: p.y,
+                send(.scroll(x: p.x, y: p.y,
                                   dx: Double(step.x / rect.width), dy: Double(step.y / rect.height)))
             },
             onEnd: { send(.scrollGesture(.momentumEnded, x: p.x, y: p.y)) })
@@ -366,13 +399,20 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         touches.first { $0.type == .pencil || $0.type == .indirectPointer }
     }
 
+    private func ownedPointerTouch(in touches: Set<UITouch>) -> UITouch? {
+        #if os(iOS)
+        return touches.first { pointerInputs[ObjectIdentifier($0)] != nil }
+        #else
+        return Self.pointerTouch(in: touches)
+        #endif
+    }
+
     /// This device's own pointer after a pointer touch at `at`: the Pencil's position, from
     /// `.pencil`; none for the iPad's own trackpad or mouse, whose pointer iPadOS draws.
     private func ownPointer(_ at: CGPoint?, for touch: UITouch) {
         if touch.type == .pencil { setOwnPointer(at, .pencil) } else { setOwnPointer(nil, .none) }
     }
     /// Which button the current pointer press holds down, so the up matches the down.
-    private var pointerButtonIsSecondary = false
 
     #if DEBUG
     private func recordPencilBoundary(_ label: String, touch: UITouch? = nil) {
@@ -401,23 +441,31 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         guard let touch = Self.pointerTouch(in: touches) else {
             super.touchesBegan(touches, with: event); return
         }
+        #if os(iOS)
+        // The host has one pointer. Keep its button with the first physical touch until that
+        // touch ends or cancels; a second touch must not replace its down or inherit its release.
+        guard pointerInputs.isEmpty else { return }
+        #endif
         #if DEBUG
         if touch.type == .pencil { recordPencilBoundary("pencil-began", touch: touch) }
         #endif
         let point = touch.location(in: self)
-        guard let at = sendPointer(.move, at: point, clamped: false) else { return }
+        let send = capturedSender()
+        guard let at = sendPointer(.move, at: point, clamped: false, using: send) else { return }
         ownPointer(at, for: touch)
         // A trackpad's secondary click (two fingers, or right button) is a right click on the Mac.
-        pointerButtonIsSecondary = touch.type == .indirectPointer && (event?.buttonMask.contains(.secondary) ?? false)
-        sendPointer(pointerButtonIsSecondary ? .rightDown : .leftDown, at: point, clamped: false)
+        let secondary = touch.type == .indirectPointer && (event?.buttonMask.contains(.secondary) ?? false)
+        pointerInputs[ObjectIdentifier(touch)] = (send, secondary)
+        sendPointer(secondary ? .rightDown : .leftDown, at: point, clamped: false, using: send)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = Self.pointerTouch(in: touches) else {
+        guard let touch = ownedPointerTouch(in: touches) else {
             super.touchesMoved(touches, with: event); return
         }
         // A move while the button is down is a drag on the host's side.
-        if let at = sendPointer(.move, at: touch.location(in: self), clamped: true) { ownPointer(at, for: touch) }
+        guard let input = pointerInputs[ObjectIdentifier(touch)] else { return }
+        if let at = sendPointer(.move, at: touch.location(in: self), clamped: true, using: input.send) { ownPointer(at, for: touch) }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -425,14 +473,14 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         let fingers = touches.filter { $0.type == .direct }.count
         if fingers > 0 { recordPencilBoundary("finger-ended-\(fingers)") }
         #endif
-        guard let touch = Self.pointerTouch(in: touches) else {
+        guard let touch = ownedPointerTouch(in: touches) else {
             super.touchesEnded(touches, with: event); return
         }
         #if DEBUG
         if touch.type == .pencil { recordPencilBoundary("pencil-ended", touch: touch) }
         #endif
-        if let at = sendPointer(pointerButtonIsSecondary ? .rightUp : .leftUp, at: touch.location(in: self), clamped: true) { ownPointer(at, for: touch) }
-        pointerButtonIsSecondary = false
+        guard let input = pointerInputs.removeValue(forKey: ObjectIdentifier(touch)) else { return }
+        if let at = sendPointer(input.secondary ? .rightUp : .leftUp, at: touch.location(in: self), clamped: true, using: input.send) { ownPointer(at, for: touch) }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -440,15 +488,15 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         let fingers = touches.filter { $0.type == .direct }.count
         if fingers > 0 { recordPencilBoundary("finger-cancelled-\(fingers)") }
         #endif
-        guard let touch = Self.pointerTouch(in: touches) else {
+        guard let touch = ownedPointerTouch(in: touches) else {
             super.touchesCancelled(touches, with: event); return
         }
         #if DEBUG
         if touch.type == .pencil { recordPencilBoundary("pencil-cancelled", touch: touch) }
         #endif
         // Never leave the button stuck down.
-        if let at = sendPointer(pointerButtonIsSecondary ? .rightUp : .leftUp, at: touch.location(in: self), clamped: true) { ownPointer(at, for: touch) }
-        pointerButtonIsSecondary = false
+        guard let input = pointerInputs.removeValue(forKey: ObjectIdentifier(touch)) else { return }
+        if let at = sendPointer(input.secondary ? .rightUp : .leftUp, at: touch.location(in: self), clamped: true, using: input.send) { ownPointer(at, for: touch) }
     }
 
     // MARK: - Keyboard
@@ -492,7 +540,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
             sendLatched(usage)
             return
         }
-        send(.text(text))
+        capturedSender()(.text(text))
         consumeLatch()
     }
 
@@ -502,13 +550,13 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
             sendLatched(HIDKey.deleteBackward)
             return
         }
-        send(.text("\u{8}"))
+        capturedSender()(.text("\u{8}"))
         consumeLatch()
     }
 
     /// One key, down and up, carrying the latched modifier bits, then the latch is spent.
     private func sendLatched(_ usage: UInt16) {
-        KeyChord.press(usage, with: latchedModifiers).forEach(send)
+        KeyChord.press(usage, with: latchedModifiers).forEach(capturedSender())
         consumeLatch()
     }
 
@@ -560,14 +608,35 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
 
     /// The hardware keys down on the Mac, so each one's up follows its down.
     private var forwarded = ForwardedKeys()
+    #if os(iOS)
+    private var hardwareInputs: [ObjectIdentifier: (send: (InputEvent) -> Void, usage: UInt16)] = [:]
+    private var hardwareOwners: [UInt16: ObjectIdentifier] = [:]
+    #endif
 
     private func forward(_ presses: Set<UIPress>, down: Bool) -> Set<UIPress> {
         var unhandled: Set<UIPress> = []
         for press in presses {
             guard let key = press.key else { unhandled.insert(press); continue }
             let usage = UInt16(key.keyCode.rawValue)
+            #if os(iOS)
+            let id = ObjectIdentifier(press)
+            if down {
+                if let event = forwarded.began(usage, modifiers: UInt64(key.modifierFlags.rawValue)) {
+                    let send = hardwareInputs[id]?.send ?? capturedSender()
+                    hardwareInputs[id] = (send, usage)
+                    hardwareOwners[usage] = id
+                    send(event)
+                } else { unhandled.insert(press) }
+            } else if let input = hardwareInputs.removeValue(forKey: id) {
+                if hardwareOwners[usage] == id {
+                    hardwareOwners.removeValue(forKey: usage)
+                    if let event = forwarded.ended(usage) { input.send(event) }
+                }
+            } else { unhandled.insert(press) }
+            #else
             let event = down ? forwarded.began(usage, modifiers: UInt64(key.modifierFlags.rawValue)) : forwarded.ended(usage)
             if let event { send(event) } else { unhandled.insert(press) }
+            #endif
         }
         return unhandled
     }
@@ -595,7 +664,15 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
     /// panel took the keyboard, the tour showed) or is leaving the screen, and UIKit sends it no
     /// release for them.
     private func releaseForwardedKeys() {
+        #if os(iOS)
+        for up in forwarded.releaseAll() {
+            if case .key(let usage, _, _) = up, let id = hardwareOwners[usage], let input = hardwareInputs[id] { input.send(up) }
+        }
+        hardwareInputs = [:]
+        hardwareOwners = [:]
+        #else
         for up in forwarded.releaseAll() { send(up) }
+        #endif
     }
 
     #if os(visionOS)
@@ -637,6 +714,7 @@ struct InputOverlay: UIViewRepresentable {
     var onModifiersConsumed: () -> Void = {}
     /// `StreamClient.sendGesture`; see `InputOverlayView.sendGesture`.
     var sendGesture: (TrackpadGestures.Gesture, Int) -> Bool = { _, _ in false }
+    var captureInputSender: (() -> (InputEvent) -> Void)? = nil
 
     func makeUIView(context: Context) -> InputOverlayView {
         let view = InputOverlayView(frame: .zero)
@@ -647,6 +725,7 @@ struct InputOverlay: UIViewRepresentable {
     func updateUIView(_ uiView: InputOverlayView, context: Context) {
         uiView.videoSize = videoSize
         uiView.send = send
+        uiView.captureInputSender = captureInputSender
         uiView.onDockSwipe = onDockSwipe
         uiView.setOwnPointer = setOwnPointer
         uiView.latchedModifiers = latchedModifiers

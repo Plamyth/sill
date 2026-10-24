@@ -6,7 +6,6 @@ import SwiftUI
 import StreamProtocol
 
 final class HEVCDisplayView: UIView {
-    #if os(visionOS)
     override class var layerClass: AnyClass { CALayer.self }
     private var nativeLayer: AVSampleBufferDisplayLayer?
     private var displayLayer: AVSampleBufferDisplayLayer { nativeLayer! }
@@ -25,10 +24,6 @@ final class HEVCDisplayView: UIView {
     private var pendingNativePS: ParameterSets?
     private var pendingNativeIDR: Data?
     var onPresentation: ((VisionPresentation.Ticket?) -> Void)?
-    #else
-    override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
-    private var displayLayer: AVSampleBufferDisplayLayer { layer as! AVSampleBufferDisplayLayer }
-    #endif
 
     private var formatDescription: CMVideoFormatDescription?
     private var waitingForKeyframe = true
@@ -87,13 +82,9 @@ final class HEVCDisplayView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
-        #if os(visionOS)
         presentationShield.backgroundColor = UIColor.black.cgColor
         presentationShield.zPosition = 90
         layer.addSublayer(presentationShield)
-        #else
-        displayLayer.videoGravity = .resizeAspect
-        #endif
         layer.addSublayer(cursorLayer)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -101,24 +92,18 @@ final class HEVCDisplayView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         // A standalone layer renders at 1× unless told otherwise; the arrow should be crisp.
-        #if os(visionOS)
         cursorLayer.contentsScale = traitCollection.displayScale
         if window == nil { invalidateNativeMedia() }
         else { rebuildNativeLayer() }
-        #else
-        if let scale = window?.screen.scale { cursorLayer.contentsScale = scale }
-        #endif
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        #if os(visionOS)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         nativeLayer?.frame = bounds
         presentationShield.frame = bounds
         CATransaction.commit()
-        #endif
         placeCursor()   // rotation and letterbox changes move the video rect under it
         #if DEBUG
         if let debugFrame {
@@ -217,9 +202,7 @@ final class HEVCDisplayView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        #if os(visionOS)
         if case .epoch = nativeBinding, presentation.admitted == nil { cursorLayer.isHidden = true; return }
-        #endif
         let rect = Self.videoRect(in: bounds, videoSize: pointerVideoSize)
         guard let p = pointer, rect.width > 0, rect.height > 0 else {
             cursorLayer.isHidden = true
@@ -267,16 +250,10 @@ final class HEVCDisplayView: UIView {
         return shape
     }
 
-    /// Thread-safe: AVSampleBufferDisplayLayer's enqueue/flush are documented as safe off main.
     func apply(_ ps: ParameterSets) {
-        #if os(visionOS)
         return
-        #else
-        applyFormat(ps)
-        #endif
     }
 
-    #if os(visionOS)
     func applyLegacy(_ ps: ParameterSets, peer: ObjectIdentifier) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.nativeBinding == .legacy, self.nativeLegacyPeer == peer else { return }
@@ -287,7 +264,6 @@ final class HEVCDisplayView: UIView {
             if self.nativeLayer != nil { self.applyFormat(ps) }
         }
     }
-    #endif
 
     private func applyFormat(_ ps: ParameterSets) {
         // The host repeats the parameter sets with every keyframe. Only a real change (a new source,
@@ -310,7 +286,6 @@ final class HEVCDisplayView: UIView {
             parameterSetSizes: sizes, nalUnitHeaderLength: Int32(ps.nalUnitHeaderLength),
             extensions: nil, formatDescriptionOut: &desc)
         guard status == noErr, let desc else { print("format description failed: \(status)"); return }
-        #if os(visionOS)
         if case .epoch(let epoch, _) = nativeBinding {
             let dimensions = CMVideoFormatDescriptionGetDimensions(desc)
             guard epoch.matchesEncodedDimensions(width: Int(dimensions.width), height: Int(dimensions.height)) else {
@@ -318,61 +293,30 @@ final class HEVCDisplayView: UIView {
                 return
             }
         }
-        #endif
         formatDescription = desc
         waitingForKeyframe = true
         let dimensions = CMVideoFormatDescriptionGetDimensions(desc)
         let size = CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height))
-        #if os(visionOS)
         pointerVideoSize = size
         onVideoSize?(size)
         placeCursor()
         onVideoSizeForPointer?(size)
-        #else
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.pointerVideoSize = size
-            self.onVideoSize?(size)
-            self.placeCursor()
-            self.onVideoSizeForPointer?(size)
-        }
-        #endif
         // Remove the last frame too: switching sources should show black until the new keyframe,
         // not the previous window frozen in place.
-        #if !os(visionOS)
-        displayLayer.flushAndRemoveImage()
-        #endif
     }
 
     /// Session over: drop the picture and forget the format so the next Mac starts clean.
     func clear() {
-        #if os(visionOS)
         nativeBinding = .closed
         nativeLegacyPeer = nil
         invalidateNativeMedia()
         return
-        #else
-        formatDescription = nil
-        lastParameterSets = nil
-        waitingForKeyframe = true
-        displayLayer.flushAndRemoveImage()
-        // The pointer's copy of the size is main-thread state; the client zeroes its own alongside.
-        DispatchQueue.main.async { [weak self] in
-            self?.pointerVideoSize = .zero
-            self?.placeCursor()
-        }
-        #endif
     }
 
     func enqueue(_ data: Data, isKeyframe: Bool) {
-        #if os(visionOS)
         return
-        #else
-        enqueueSample(data, isKeyframe: isKeyframe)
-        #endif
     }
 
-    #if os(visionOS)
     func enqueueLegacy(_ data: Data, isKeyframe: Bool, peer: ObjectIdentifier) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.nativeBinding == .legacy, self.nativeLegacyPeer == peer else { return }
@@ -383,7 +327,6 @@ final class HEVCDisplayView: UIView {
             self.enqueueSample(data, isKeyframe: isKeyframe)
         }
     }
-    #endif
 
     private func enqueueSample(_ data: Data, isKeyframe: Bool) {
         guard let desc = formatDescription else { return }
@@ -419,28 +362,17 @@ final class HEVCDisplayView: UIView {
 
         if displayLayer.status == .failed {
             print("display layer failed: \(String(describing: displayLayer.error))")
-            #if os(visionOS)
             invalidateNativeMedia()
-            #else
-            displayLayer.flush()
-            #endif
             waitingForKeyframe = true
             return
         }
-        #if os(visionOS)
         displayLayer.sampleBufferRenderer.enqueue(sample)
-        #else
-        displayLayer.enqueue(sample)
-        #endif
-        #if os(visionOS)
         if let ticket = presentation.ticket {
             if isKeyframe { presentation.enqueuedIDR(ticket) }
             readPresentation(ticket)
         }
-        #endif
     }
 
-    #if os(visionOS)
     func setPresentation(epoch: VideoEpoch?, peer: ObjectIdentifier?, modern: Bool) {
         let next: NativeBinding
         if modern, let epoch, let peer { next = .epoch(epoch, peer) }
@@ -549,7 +481,6 @@ final class HEVCDisplayView: UIView {
         presentationShield.isHidden = admitted != nil
         onPresentation?(admitted)
     }
-    #endif
 }
 
 struct StreamView: UIViewRepresentable {

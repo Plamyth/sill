@@ -12,6 +12,13 @@ final class InputOverlayView {
     // OVERLAY_DRAIN
 }
 final class StreamClient {
+    var selectionRevision: String?
+    var sourceCatalogEpoch: UUID?
+    var resumeOpportunity: UUID?
+    var scheduledAutomaticTicket: UUID?
+    var automaticDisplaySelection: Int?
+    var dockApps: [AppInfo] = []
+    func beginAutomaticConnectionOpportunity() {}
     var displays: [DisplayInfo] = []
     var activeDisplayID: UInt32?
     var supportsDisplaySelection = false
