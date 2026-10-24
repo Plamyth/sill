@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D7250001000000000000A002 /* IPadSentryControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F002 /* IPadSentryControl.swift */; };
+		D7250001000000000000B002 /* IPadSentryControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F002 /* IPadSentryControl.swift */; };
+		D7250001000000000000A003 /* StreamClient+Sentry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F003 /* StreamClient+Sentry.swift */; };
+		D7250001000000000000B003 /* StreamClient+Sentry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F003 /* StreamClient+Sentry.swift */; };
+		D7250001000000000000A001 /* IPadSentryObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F001 /* IPadSentryObservation.swift */; };
+		D7250001000000000000B001 /* IPadSentryObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F001 /* IPadSentryObservation.swift */; };
 		F2250001000000000000A002 /* VisionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2250001000000000000F002 /* VisionPresentation.swift */; };
 		F2250001000000000000B002 /* VisionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2250001000000000000F002 /* VisionPresentation.swift */; };
 		F2250001000000000000A001 /* VisionInputDebt.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2250001000000000000F001 /* VisionInputDebt.swift */; };
@@ -194,6 +200,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		D7250001000000000000F002 /* IPadSentryControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadSentryControl.swift; sourceTree = "<group>"; };
+		D7250001000000000000F003 /* StreamClient+Sentry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+Sentry.swift"; sourceTree = "<group>"; };
+		D7250001000000000000F001 /* IPadSentryObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadSentryObservation.swift; sourceTree = "<group>"; };
 		F2250001000000000000F002 /* VisionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../visionOSClient/VisionPresentation.swift; sourceTree = "<group>"; };
 		F2250001000000000000F001 /* VisionInputDebt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../visionOSClient/VisionInputDebt.swift; sourceTree = "<group>"; };
 		D6000001000000000000F001 /* IPadAudioAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAudioAdmission.swift; sourceTree = "<group>"; };
@@ -338,6 +347,9 @@
 				E7200001000000000000F001 /* OwnerBootstrapState.swift */,
 				E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */,
 				A1000001000000000000F003 /* StreamClient.swift */,
+				D7250001000000000000F001 /* IPadSentryObservation.swift */,
+				D7250001000000000000F002 /* IPadSentryControl.swift */,
+				D7250001000000000000F003 /* StreamClient+Sentry.swift */,
 				F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */,
 				F2170001000000000000F001 /* IPadAudioForwarding.swift */,
 				F2210001000000000000F002 /* StreamClient+ProviderCall.swift */,
@@ -651,6 +663,9 @@
 				E7200001000000000000A001 /* OwnerBootstrapState.swift in Sources */,
 				E7200001000000000000A002 /* StreamClient+OwnerBootstrap.swift in Sources */,
 				A1000001000000000000A003 /* StreamClient.swift in Sources */,
+				D7250001000000000000A001 /* IPadSentryObservation.swift in Sources */,
+				D7250001000000000000A002 /* IPadSentryControl.swift in Sources */,
+				D7250001000000000000A003 /* StreamClient+Sentry.swift in Sources */,
 				C3000001000000000000A001 /* RemoteAudioPlayer.swift in Sources */,
 				C3000001000000000000A004 /* IPadAudioSession.swift in Sources */,
 				D4000001000000000000A001 /* IPadAudioRoutePolicy.swift in Sources */,
@@ -746,6 +761,9 @@
 				6C23CBF449EF8C657EE497F0 /* OwnerBootstrapState.swift in Sources */,
 				671CB6FC67DA6FA1BB3187D6 /* StreamClient+OwnerBootstrap.swift in Sources */,
 				D36621FEB0FE88195964FE48 /* StreamClient.swift in Sources */,
+				D7250001000000000000B001 /* IPadSentryObservation.swift in Sources */,
+				D7250001000000000000B002 /* IPadSentryControl.swift in Sources */,
+				D7250001000000000000B003 /* StreamClient+Sentry.swift in Sources */,
 				063A124602FD7560BE2237A8 /* RemoteAudioPlayer.swift in Sources */,
 				F79CAA0956604D2EFF6DAFFE /* IPadAudioSession.swift in Sources */,
 				49746F0AA90DA6266793DCB1 /* IPadAudioRoutePolicy.swift in Sources */,

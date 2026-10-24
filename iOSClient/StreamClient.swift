@@ -128,6 +128,18 @@ enum RemoteRoute: Equatable {
 /// Finds Macs over Bonjour, connects, and splits the byte stream into messages.
 /// Frame callbacks fire on the network queue; published state hops to main.
 final class StreamClient: ObservableObject {
+    #if os(iOS)
+    @Published var sentryObservation = IPadSentryObservation()
+    @Published var sentryControl = IPadSentryControl(store: .defaults())
+
+    func acceptIPadSentryReply(_ data: Data, from peer: NWConnection, binding: IPadSentryControl.Binding?) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard connection === peer else { return }
+        if let state = sentryControl.receive(data, binding: binding, from: ObjectIdentifier(peer)) {
+            sentryObservation.observe(state: state, from: ObjectIdentifier(peer))
+        }
+    }
+    #endif
     #if !os(visionOS)
     #if os(iOS)
     let audioAdmission = IPadAudioAdmission()
@@ -1285,6 +1297,10 @@ final class StreamClient: ObservableObject {
         get { link.connection }
         set {
             if link.connection !== newValue {
+                #if os(iOS)
+                sentryObservation.bind(newValue.map(ObjectIdentifier.init))
+                sentryControl.bind(newValue.map(ObjectIdentifier.init))
+                #endif
                 beginAutomaticConnectionOpportunity()
                 selectionRevision = nil
                 sourceCatalogEpoch = nil
@@ -4754,6 +4770,10 @@ final class StreamClient: ObservableObject {
         #endif
         #endif
         switch header.kind {
+        #if os(iOS)
+        case .sentryState:
+            receiveIPadSentry(data, from: peer)
+        #endif
         #if os(visionOS)
         case .audio:
             if let scope = visionAudioRoute.scope(for: peer) { visionAudio.receive(data, scope: scope) }
@@ -4841,6 +4861,9 @@ final class StreamClient: ObservableObject {
                 // not at `.ready`: the Mac has admitted this device's key.
                 self.remoteSessionReady()
                 self.homeSessionReady()
+                #if os(iOS)
+                self.observeIPadSentry(catalog: data, from: peer)
+                #endif
                 // The host this session runs on, which a move to the network must reach again
                 // (`moveProbed`); its first list is what lets a move start.
                 self.sessionHost = list.launchID
@@ -5106,6 +5129,9 @@ final class StreamClient: ObservableObject {
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // torn down meanwhile: stay nil
             self.linkStats = stats
+            #if os(iOS)
+            self.sentryControl.checkTimeout(now: ProcessInfo.processInfo.systemUptime)
+            #endif
             #if DEBUG
             self.recordStartupVideo()
             #endif

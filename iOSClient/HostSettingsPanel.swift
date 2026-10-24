@@ -215,6 +215,53 @@ struct HostSettingsPanel: View {
 
     // MARK: Middle (scrolls when short)
 
+    #if os(iOS)
+    private var sentryReport: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("센트리")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Palette.text)
+            Text(client.sentryObservation.statusText)
+                .font(.footnote)
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityHint("수신한 호스트 보고입니다. 현재 보호 효과나 입력 허가를 뜻하지 않습니다.")
+            if !client.sentryControl.statusText.isEmpty {
+                Text(client.sentryControl.statusText)
+                    .font(.footnote)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let problem = client.sentryControl.problem {
+                Text(problem).font(.footnote).foregroundStyle(Palette.muted)
+            }
+            if client.sentryControl.canSet {
+                HStack {
+                    Button { client.setIPadSentry(desired: true) } label: {
+                        Text("센트리 켜기").frame(minHeight: 44)
+                    }
+                        .accessibilityHint("호스트에 센트리 보호를 켜도록 요청합니다.")
+                    Button { client.setIPadSentry(desired: false) } label: {
+                        Text("센트리 끄기").frame(minHeight: 44)
+                    }
+                        .accessibilityHint("호스트의 화면 보호와 로컬 입력 차단 해제를 요청합니다. 오디오와 시스템 권한은 바꾸지 않습니다.")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+            if client.sentryControl.canQuery {
+                Button { client.queryIPadSentry() } label: {
+                    Text("이전 센트리 요청 결과 확인").frame(minHeight: 44)
+                }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("저장한 원래 요청 그대로 결과만 조회합니다.")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("sentryHostReport")
+    }
+    #endif
+
     @ViewBuilder private var middle: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: client.showAudioRoutes) {
@@ -227,6 +274,10 @@ struct HostSettingsPanel: View {
                 .padding(.bottom, 12)
             IPadMicrophoneControl(client: client)
                 .padding(.bottom, 12)
+            #if os(iOS)
+            sentryReport
+                .padding(.bottom, 12)
+            #endif
             if let state = client.settings.host, let shown = client.settings.displayed {
                 if state.softwareEncoder {
                     // Neither a restart nor a return is promised: hosts before 2026-09-25 keep the

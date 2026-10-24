@@ -81,6 +81,8 @@ public enum StreamMessageKind: UInt8 {
     case fetchAudioRoutes = 210  // paired TLS client → host, empty: refresh without changing defaults
     case selectDisplay = 211     // client → host: human DisplaySelection only, displaySelection == 1
     case fetchCatalog = 212      // paired TLS client → host: read-only FetchCatalog
+    case activateSentry = 213
+    case sentryState = 214
     case forwardingControl = 217
     case forwardingState = 218
     case forwardingUplinkReserved = 219
@@ -119,6 +121,8 @@ public struct StreamMessage {
         case .microphoneState, .microphoneReceipt: return -1
         case .changeAudioRoute: return AudioRoutingPolicy.maxSelectionPayload
         case .fetchAudioRoutes: return 0
+        case .activateSentry: return 512
+        case .sentryState: return -1
         case .forwardingControl, .providerCallControl: return 4096
         case .providerCallState, .forwardingState, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         case .fetchCatalog: return 256
@@ -131,7 +135,8 @@ public struct StreamMessage {
         switch kind {
         case .forwardingState, .providerCallState: return 16384
         case .providerCallControl, .forwardingControl, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
-        case .microphoneState, .microphoneReceipt: return 4096
+        case .microphoneState, .microphoneReceipt, .sentryState: return 4096
+        case .activateSentry: return -1
         case .microphoneControl, .microphoneFrame: return 0
         case .audioRoutes: return AudioRoutingPolicy.maxStatePayload
         case .changeAudioRoute, .fetchAudioRoutes, .fetchCatalog: return -1
