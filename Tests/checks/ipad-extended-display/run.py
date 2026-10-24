@@ -10,6 +10,39 @@ if len(sys.argv) != 2:
 OUT = Path(sys.argv[1])
 
 
+def instrument_main_owned(client):
+    import re
+    fields = ['pendingExtendedDesktop', 'connected', 'supportsDisplaySelection', 'displayInventoryID',
+              'displayCatalogPeer', 'session', 'sessionHost', 'savedMacs', 'extendedDesktopControl',
+              'explicitSourceIntent', 'displays']
+    for field in fields:
+        client, count = re.subn(r'(?m)^([ \t]*)(var ' + field + r'(?=[: =]))', r'\1@MainOwned \2', client)
+        assert count == 1, (field, count)
+    return client + """
+final class MainOwnedReads: @unchecked Sendable {
+    static let shared = MainOwnedReads()
+    private let lock = NSLock()
+    private var reads = 0
+    func record() {
+        guard !Thread.isMainThread else { return }
+        lock.lock(); reads += 1; lock.unlock()
+    }
+    func take() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let value = reads; reads = 0; return value
+    }
+}
+@propertyWrapper struct MainOwned<Value> {
+    private var value: Value
+    init(wrappedValue: Value) { value = wrappedValue }
+    var wrappedValue: Value {
+        get { MainOwnedReads.shared.record(); return value }
+        set { value = newValue }
+    }
+}
+"""
+
+
 def augment(inputs, block, root, here):
     screen = (root/'iOSClient/StreamScreen.swift').read_text()
     portrait = (root/'iOSClient/PortraitStreamScreen.swift').read_text()
@@ -27,6 +60,8 @@ def augment(inputs, block, root, here):
         'private var candidate:', 'private var selected:', 'private func selectExtendedDisplay()'])
     inputs['Button.swift'] = 'import Foundation\n@MainActor struct ButtonFixture { let client: Client\n' + members + '\n}'
     inputs['main.swift'] = (HERE/'main.swift').read_text()
+    inputs['Client.swift'] = instrument_main_owned(inputs['Client.swift'])
+
     inputs.pop('AutomaticDisplay.swift', None)
     subprocess.run([sys.executable, '-B', str(root/'Tests/checks/ipad-test-destinations/layout.py'),
                     str(OUT/'Layout.swift')], check=True)

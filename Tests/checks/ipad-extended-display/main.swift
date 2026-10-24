@@ -263,6 +263,47 @@ import Foundation
         expect(decodedOld.extendedDesktopIntent == nil, "이전 wire의 optional 기본값은 nil이어야 합니다.")
         let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(viewport())) as! [String: Any]
         expect(encoded["extendedDesktopIntent"] == nil, "일반 wire에 자원 intent 키를 추가하면 안 됩니다.")
+        var backgroundFailures = 0
+        for operation in ["request", "selection", "release"] {
+            for flush in ["pong", "connectionLost", "unhold"] {
+                let queued = client(displays: operation == "selection" ? [owned] : [main])
+                let old = queued.connection!
+                let target: NWConnection
+                if flush == "unhold" {
+                    target = old
+                    _ = queued.link.hold(target)
+                } else {
+                    target = NWConnection()
+                    queued.connection = target
+                    queued.prepareAutomaticTicketCatalog(catalog(displays: operation == "selection" ? [owned] : [main]))
+                    queued.link.handOver(from: old, to: target, fencePing: Data([255]), nonce: Data([7]))
+                }
+                choose(queued)
+                if operation == "release" { queued.cancelExtendedDesktopRequest() }
+                _ = MainOwnedReads.shared.take()
+                let link = queued.link
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().async {
+                        precondition(!Thread.isMainThread)
+                        switch flush {
+                        case "pong": _ = link.fenceReturned(Data([7]), on: old)
+                        case "connectionLost": _ = link.release(old)
+                        default: _ = link.unhold(target)
+                        }
+                        continuation.resume()
+                    }
+                }
+                let reads = MainOwnedReads.shared.take()
+                if reads != 0 { backgroundFailures += 1 }
+                print("BACKGROUND_ADMISSION \(operation) \(flush) mainOwnedReads=\(reads)")
+                expect(operation == "release" ? intents(target) == [.release] : intents(target) == [.request],
+                       "백그라운드 해제는 허용된 자원 의도를 한 번만 보내야 합니다.")
+                expect(selections(target).count == (operation == "selection" ? 1 : 0),
+                       "백그라운드 해제는 승인된 선택만 보내야 합니다.")
+                await settle()
+            }
+        }
+        expect(backgroundFailures == 0, "network admit가 메인 소유 getter를 읽으면 안 됩니다.")
         checkToolbarBounds()
         print("IPAD_EXTENDED_DISPLAY_CHECKS \(checks)개를 통과했습니다.")
     }
