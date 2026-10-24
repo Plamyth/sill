@@ -82,14 +82,25 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
     let second = UUID()
     let next = Task { await authentication.evaluate(operationId: second) }
     await settle { authentication.activeChallengeID == second }
-    context.decline()
+    context.callback?(true, nil)
     for _ in 0..<20 { await Task.yield() }
     check(authentication.activeChallengeID == second, "late callback cannot close the replacement challenge")
     LAContext.instances.last!.decline()
     check(!(await next.value) && authentication.activeChallengeID == nil, "failed authentication removes the challenge")
     let expires = Task { await authentication.evaluate(operationId: UUID()) }
     await settle { authentication.activeChallengeID != nil }
+    let expiredContext = LAContext.instances.last!
     check(!(await expires.value) && authentication.activeChallengeID == nil, "authentication expiry removes the challenge")
+    let replacementID = UUID()
+    let replacement = Task { await authentication.evaluate(operationId: replacementID) }
+    await settle { authentication.activeChallengeID == replacementID }
+    expiredContext.callback?(true, nil)
+    for _ in 0..<20 { await Task.yield() }
+    check(authentication.activeChallengeID == replacementID,
+          "late success after expiry cannot authenticate or cancel a replacement request")
+    LAContext.instances.last!.decline()
+    check(!(await replacement.value) && authentication.activeChallengeID == nil,
+          "replacement still requires its own actual owner authentication")
     LAContext.capabilityHook = nil
     LAContext.issueHook = nil
 
