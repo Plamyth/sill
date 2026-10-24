@@ -203,7 +203,7 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
     check(humanPrivacy.latched && humanHAL.writes == 0 && humanHAL.restores == 0,
           "extended human wait never changes audio or the protection latch")
     humanPrivacy.stop()
-    print("PASS \(count) native challenge checks; no actual OS authentication or positive approval supplied")
+    print("PASS \(count) native challenge checks; stale success only in inert contexts; actual OS authentication 0")
 }
 
 Task { @MainActor in await challenges(); exit(0) }
