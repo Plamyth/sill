@@ -89,6 +89,8 @@ public enum StreamMessageKind: UInt8 {
     case forwardingDownlinkReserved = 220
     case providerCallControl = 221
     case providerCallState = 222
+    case sentryReturnRequest = 223
+    case sentryReturnState = 224
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -122,6 +124,8 @@ public struct StreamMessage {
         case .changeAudioRoute: return AudioRoutingPolicy.maxSelectionPayload
         case .fetchAudioRoutes: return 0
         case .activateSentry: return 512
+        case .sentryReturnRequest: return SentryReturnControl.maximumPayload
+        case .sentryReturnState: return -1
         case .sentryState: return -1
         case .forwardingControl, .providerCallControl: return 4096
         case .providerCallState, .forwardingState, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
@@ -133,6 +137,8 @@ public struct StreamMessage {
 
     public static func hostPayloadLimit(for kind: StreamMessageKind) -> Int {
         switch kind {
+        case .sentryReturnState: return SentryReturnState.maximumPayload
+        case .sentryReturnRequest: return -1
         case .forwardingState, .providerCallState: return 16384
         case .providerCallControl, .forwardingControl, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         case .microphoneState, .microphoneReceipt, .sentryState: return 4096

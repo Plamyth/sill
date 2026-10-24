@@ -1,0 +1,48 @@
+{
+  "cancelRaw": "{\"authGeneration\":\"00000006-1111-4111-8111-111111111111\",\"operation\":\"cancel\",\"reference\":{\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"requestDigest\":\"efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b\",\"requestID\":\"00000005-1111-4111-8111-111111111111\"},\"schemaVersion\":1}",
+  "capability": {
+    "deviceBoundKey": true,
+    "keyEnrollment": "macLocalRequired",
+    "macLocal": true,
+    "requestKind": 223,
+    "requestMaxBytes": 4096,
+    "schemaVersion": 1,
+    "stateKind": 224,
+    "stateMaxBytes": 16384
+  },
+  "challenge": {
+    "authGeneration": "00000006-1111-4111-8111-111111111111",
+    "authMode": "deviceBoundKey",
+    "deviceFingerprint": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "hostFingerprint": "abababababababababababababababababababababababababababababababab",
+    "keyID": "00000008-1111-4111-8111-111111111111",
+    "lease": {
+      "authorizationGeneration": "00000004-1111-4111-8111-111111111111",
+      "hostBootID": "00000001-1111-4111-8111-111111111111",
+      "revision": "00000003-1111-4111-8111-111111111111",
+      "sessionID": "00000002-1111-4111-8111-111111111111"
+    },
+    "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "ownerID": "owner-fixture-1",
+    "pairingGeneration": "00000007-1111-4111-8111-111111111111",
+    "reference": {
+      "hostBootID": "00000001-1111-4111-8111-111111111111",
+      "requestDigest": "efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b",
+      "requestID": "00000005-1111-4111-8111-111111111111"
+    }
+  },
+  "completedStateRaw": "{\"authGeneration\":\"00000006-1111-4111-8111-111111111111\",\"authStatus\":\"succeeded\",\"challenge\":null,\"code\":\"localReturned\",\"currentProtection\":\"notObserved\",\"nextPolicy\":\"parentAdmissionRequired\",\"operationState\":\"completed\",\"reference\":{\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"requestDigest\":\"efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b\",\"requestID\":\"00000005-1111-4111-8111-111111111111\"},\"remainingMilliseconds\":0,\"schemaVersion\":1}",
+  "currentRaw": "{\"operation\":\"current\",\"reference\":{\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"requestDigest\":\"efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b\",\"requestID\":\"00000005-1111-4111-8111-111111111111\"},\"schemaVersion\":1}",
+  "enrollRaw": "{\"authMode\":\"macLocal\",\"keyEnrollment\":{\"action\":\"enroll\",\"keyID\":\"00000008-1111-4111-8111-111111111111\",\"publicKey\":\"BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU\"},\"lease\":{\"authorizationGeneration\":\"00000004-1111-4111-8111-111111111111\",\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"revision\":\"00000003-1111-4111-8111-111111111111\",\"sessionID\":\"00000002-1111-4111-8111-111111111111\"},\"operation\":\"keyEnrollment\",\"requestID\":\"0000000a-1111-4111-8111-111111111111\",\"schemaVersion\":1}",
+  "pendingStateRaw": "{\"authGeneration\":\"00000006-1111-4111-8111-111111111111\",\"authStatus\":\"pending\",\"challenge\":{\"authGeneration\":\"00000006-1111-4111-8111-111111111111\",\"authMode\":\"deviceBoundKey\",\"deviceFingerprint\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"hostFingerprint\":\"abababababababababababababababababababababababababababababababab\",\"keyID\":\"00000008-1111-4111-8111-111111111111\",\"lease\":{\"authorizationGeneration\":\"00000004-1111-4111-8111-111111111111\",\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"revision\":\"00000003-1111-4111-8111-111111111111\",\"sessionID\":\"00000002-1111-4111-8111-111111111111\"},\"nonce\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"ownerID\":\"owner-fixture-1\",\"pairingGeneration\":\"00000007-1111-4111-8111-111111111111\",\"reference\":{\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"requestDigest\":\"efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b\",\"requestID\":\"00000005-1111-4111-8111-111111111111\"}},\"code\":\"authenticationRequired\",\"currentProtection\":\"notObserved\",\"nextPolicy\":\"parentAdmissionRequired\",\"operationState\":\"authenticating\",\"reference\":{\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"requestDigest\":\"efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b\",\"requestID\":\"00000005-1111-4111-8111-111111111111\"},\"remainingMilliseconds\":120000,\"schemaVersion\":1}",
+  "proofRaw": "{\"authGeneration\":\"00000006-1111-4111-8111-111111111111\",\"operation\":\"prove\",\"reference\":{\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"requestDigest\":\"efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b\",\"requestID\":\"00000005-1111-4111-8111-111111111111\"},\"schemaVersion\":1,\"signature\":\"MEUCIAvUrlWFwfeOzz3Emv9-xS7OvbYmRJp_XTPfn86co4HpAiEA-75puWIhvS9CA14rv3cN_dsTLaOt2iTLToVQD7ECzfA\"}",
+  "publicKeyX963": "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+  "requestDeviceRaw": "{\"authMode\":\"deviceBoundKey\",\"lease\":{\"authorizationGeneration\":\"00000004-1111-4111-8111-111111111111\",\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"revision\":\"00000003-1111-4111-8111-111111111111\",\"sessionID\":\"00000002-1111-4111-8111-111111111111\"},\"operation\":\"request\",\"requestID\":\"00000005-1111-4111-8111-111111111111\",\"schemaVersion\":1}",
+  "requestDeviceSHA256": "efbf0c551aeed2b46a841529ccf5a8a692e6044fd1dbfa2a793ddc550b6c251b",
+  "requestMacRaw": "{\"authMode\":\"macLocal\",\"lease\":{\"authorizationGeneration\":\"00000004-1111-4111-8111-111111111111\",\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"revision\":\"00000003-1111-4111-8111-111111111111\",\"sessionID\":\"00000002-1111-4111-8111-111111111111\"},\"operation\":\"request\",\"requestID\":\"00000009-1111-4111-8111-111111111111\",\"schemaVersion\":1}",
+  "revokeRaw": "{\"authMode\":\"macLocal\",\"keyEnrollment\":{\"action\":\"revoke\",\"keyID\":\"00000008-1111-4111-8111-111111111111\"},\"lease\":{\"authorizationGeneration\":\"00000004-1111-4111-8111-111111111111\",\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"revision\":\"00000003-1111-4111-8111-111111111111\",\"sessionID\":\"00000002-1111-4111-8111-111111111111\"},\"operation\":\"keyEnrollment\",\"requestID\":\"0000000d-1111-4111-8111-111111111111\",\"schemaVersion\":1}",
+  "rotateRaw": "{\"authMode\":\"macLocal\",\"keyEnrollment\":{\"action\":\"rotate\",\"keyID\":\"0000000c-1111-4111-8111-111111111111\",\"previousKeyID\":\"00000008-1111-4111-8111-111111111111\",\"publicKey\":\"BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU\"},\"lease\":{\"authorizationGeneration\":\"00000004-1111-4111-8111-111111111111\",\"hostBootID\":\"00000001-1111-4111-8111-111111111111\",\"revision\":\"00000003-1111-4111-8111-111111111111\",\"sessionID\":\"00000002-1111-4111-8111-111111111111\"},\"operation\":\"keyEnrollment\",\"requestID\":\"0000000b-1111-4111-8111-111111111111\",\"schemaVersion\":1}",
+  "signingBytesBase64URL": "Y2NyLXNlbnRyeS1sb2NhbC1yZXR1cm4tdjEAeyJhdXRoR2VuZXJhdGlvbiI6IjAwMDAwMDA2LTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsImF1dGhNb2RlIjoiZGV2aWNlQm91bmRLZXkiLCJkZXZpY2VGaW5nZXJwcmludCI6ImNkY2RjZGNkY2RjZGNkY2RjZGNkY2RjZGNkY2RjZGNkY2RjZGNkY2RjZGNkY2RjZGNkY2RjZGNkY2RjZGNkY2QiLCJob3N0RmluZ2VycHJpbnQiOiJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiIiwia2V5SUQiOiIwMDAwMDAwOC0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJsZWFzZSI6eyJhdXRob3JpemF0aW9uR2VuZXJhdGlvbiI6IjAwMDAwMDA0LTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsImhvc3RCb290SUQiOiIwMDAwMDAwMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJyZXZpc2lvbiI6IjAwMDAwMDAzLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsInNlc3Npb25JRCI6IjAwMDAwMDAyLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSJ9LCJub25jZSI6IkFBRUNBd1FGQmdjSUNRb0xEQTBPRHhBUkVoTVVGUllYR0JrYUd4d2RIaDgiLCJvd25lcklEIjoib3duZXItZml4dHVyZS0xIiwicGFpcmluZ0dlbmVyYXRpb24iOiIwMDAwMDAwNy0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJyZWZlcmVuY2UiOnsiaG9zdEJvb3RJRCI6IjAwMDAwMDAxLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsInJlcXVlc3REaWdlc3QiOiJlZmJmMGM1NTFhZWVkMmI0NmE4NDE1MjljY2Y1YThhNjkyZTYwNDRmZDFkYmZhMmE3OTNkZGM1NTBiNmMyNTFiIiwicmVxdWVzdElEIjoiMDAwMDAwMDUtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIn19",
+  "signingBytesSHA256": "e44ea4a6ed1e07d0c526245362f080a1bf61864db3579cf8ba1d8278ecbd6573",
+  "version": 1
+}
