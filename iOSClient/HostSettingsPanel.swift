@@ -258,9 +258,47 @@ struct HostSettingsPanel: View {
                     .buttonStyle(.bordered)
                     .accessibilityHint("저장한 원래 요청 그대로 결과만 조회합니다.")
             }
+            sentryReturnControls
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sentryHostReport")
+    }
+
+    private var sentryReturnControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Mac 인증 복귀").font(.subheadline.weight(.semibold))
+            Text(client.sentryReturn.statusText).font(.footnote).fixedSize(horizontal: false, vertical: true)
+            Text(client.hasIPadSentryReturnKey ? "등록된 iPad 전용 인증 키 있음" : "등록된 iPad 전용 인증 키 미확인")
+                .font(.footnote).foregroundStyle(Palette.muted)
+            Text("인증 성공, 과거 복귀 완료, 현재 보호·오디오·입력 상태는 각각 확인합니다. 키 등록·회전·해제는 복귀를 실행하지 않습니다.")
+                .font(.footnote).foregroundStyle(Palette.muted)
+            Button { client.requestIPadSentryReturn(mode: .macLocal) } label: {
+                Text("Mac에서 인증하고 복귀").frame(minHeight: 44)
+            }
+            .disabled(!client.sentryReturn.canRequest || client.sentryReturn.context?.capability.macLocal != true)
+            Button { client.requestIPadSentryReturn(mode: .deviceBoundKey) } label: {
+                Text("이 iPad에서 인증하고 복귀").frame(minHeight: 44)
+            }
+            .disabled(!client.sentryReturn.canRequest || client.sentryReturn.context?.capability.deviceBoundKey != true || !client.hasIPadSentryReturnKey)
+            .accessibilityHint("등록된 전용 키로 이 요청의 서명에 생체 인증 또는 기기 암호를 사용합니다.")
+            Button { client.queryIPadSentryReturn() } label: {
+                Text("인증 복귀 상태 조회").frame(minHeight: 44)
+            }.disabled(!client.sentryReturn.canQuery)
+            Button { client.cancelIPadSentryReturn() } label: {
+                Text("인증 복귀 취소").frame(minHeight: 44)
+            }.disabled(!client.sentryReturn.canCancel && client.sentryReturnKeyOperation == nil)
+            ForEach([SentryReturnKeyEnrollment.Action.enroll, .rotate, .revoke], id: \.rawValue) { action in
+                Button { client.manageIPadSentryReturnKey(action) } label: {
+                    Text(action == .enroll ? "iPad 인증 키 등록" : action == .rotate ? "iPad 인증 키 회전" : "iPad 인증 키 해제")
+                        .frame(minHeight: 44)
+                }
+                .disabled(!client.canManageIPadSentryReturnKey(action))
+            }
+            if let problem = client.sentryReturnKeyProblem { Text(problem).font(.footnote).foregroundStyle(.orange) }
+        }
+        .buttonStyle(.bordered)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("sentryReturnControls")
     }
     #endif
 

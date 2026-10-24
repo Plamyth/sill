@@ -131,6 +131,12 @@ final class StreamClient: ObservableObject {
     #if os(iOS)
     @Published var sentryObservation = IPadSentryObservation()
     @Published var sentryControl = IPadSentryControl(store: .defaults())
+    @Published var sentryReturn = IPadSentryReturn(store: .defaults())
+    @Published var sentryReturnKeyProblem: String?
+    lazy var sentryReturnKeys = IPadSentryReturnKeys(store: IPadSentryReturnKeys.keychainStore(), adapter: .secureEnclave)
+    var sentryReturnKeyOperation: IPadSentryReturnKeys.Operation?
+    var sentryReturnSubmissions: [UUID: SessionLink.Submission] = [:]
+    var sentryReturnDeviceIntent: (reference: SentryReturnReference, peer: ObjectIdentifier)?
 
     func acceptIPadSentryReply(_ data: Data, from peer: NWConnection, binding: IPadSentryControl.Binding?) {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -222,7 +228,14 @@ final class StreamClient: ObservableObject {
     /// The connect screen's rows (DiscoveryPolicy.rows): every Mac the network browser lists, then
     /// those seen only over peer-to-peer Wi-Fi.
     @Published var macs: [FoundMac] = []
-    @Published var connected = false { didSet { refreshExtendedDesktopAdmission() } }
+    @Published var connected = false {
+        didSet {
+            refreshExtendedDesktopAdmission()
+            #if os(iOS)
+            sentryReturnTrustChanged()
+            #endif
+        }
+    }
     /// The nearby (peer-to-peer) browser runs: the status line says so, or under the hint the line
     /// in Search Nearby's place.
     @Published var searchingNearby = false
@@ -251,7 +264,7 @@ final class StreamClient: ObservableObject {
     /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
     #if os(iOS)
     @Published var savedMacs: [SavedMac] = [] {
-        didSet { refreshExtendedDesktopAdmission(); ownerEnrollmentTrustChanged() }
+        didSet { refreshExtendedDesktopAdmission(); sentryReturnTrustChanged(); ownerEnrollmentTrustChanged() }
     }
     #else
     @Published var savedMacs: [SavedMac] = []
@@ -1402,7 +1415,14 @@ final class StreamClient: ObservableObject {
         /// The endpoint dialed (the DEBUG move and path tests start from it).
         var endpoint: NWEndpoint? = nil
     }
-    var session: Session? { didSet { refreshExtendedDesktopAdmission() } }
+    var session: Session? {
+        didSet {
+            refreshExtendedDesktopAdmission()
+            #if os(iOS)
+            sentryReturnTrustChanged()
+            #endif
+        }
+    }
 
     /// The row a session at home was dialed from.
     struct HomeRow: Equatable {
@@ -1500,6 +1520,8 @@ final class StreamClient: ObservableObject {
             if link.connection !== newValue {
                 #if os(iOS)
                 cancelOwnerEnrollment()
+                invalidateIPadSentryReturn()
+                sentryReturn.bind(newValue.map(ObjectIdentifier.init))
                 sentryObservation.bind(newValue.map(ObjectIdentifier.init))
                 sentryControl.bind(newValue.map(ObjectIdentifier.init))
                 #endif
@@ -1552,7 +1574,7 @@ final class StreamClient: ObservableObject {
     }
     /// Where every message to the Mac goes, in the order sent, also across a move's hand-over from
     /// the direct connection to the network one (SessionLink).
-    private let link = SessionLink()
+    let link = SessionLink()
     #if os(iOS)
     lazy var macRouteTransport = MacAudioRouteTransport(link: link)
     #endif
@@ -1946,6 +1968,9 @@ final class StreamClient: ObservableObject {
         }
         NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.visionInputPermit = nil
+            #if os(iOS)
+            self?.invalidateIPadSentryReturn()
+            #endif
             self?.link.setInputPermit(nil)
             self?.cancelVisionInputs()
             self?.displayView.setPresentationForeground(false)
@@ -2170,6 +2195,7 @@ final class StreamClient: ObservableObject {
         visionAudio.setForeground(false)
         #endif
         #if os(iOS)
+        invalidateIPadSentryReturn()
         cancelOwnerEnrollment()
         audioRouteAuthorization = nil
         if ownerBootstrap.phase != .ready { cancelOwnerBootstrap(resumable: true) }
@@ -3497,6 +3523,8 @@ final class StreamClient: ObservableObject {
         #if os(iOS)
         cancelExtendedDesktopRequest()
         extendedDesktopControl = nil
+        invalidateIPadSentryReturn()
+        sentryReturn.bind(ObjectIdentifier(c))
         #endif
         // From here `c` is the session's: the old connection's pings and one-second windows stop at
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
@@ -5026,6 +5054,8 @@ final class StreamClient: ObservableObject {
         #if os(iOS)
         case .sentryState:
             receiveIPadSentry(data, from: peer)
+        case .sentryReturnState:
+            receiveIPadSentryReturn(data, from: peer)
         #endif
         #if os(visionOS)
         case .audio:
@@ -5116,6 +5146,7 @@ final class StreamClient: ObservableObject {
                 self.homeSessionReady()
                 #if os(iOS)
                 self.observeIPadSentry(catalog: data, from: peer)
+                self.observeIPadSentryReturn(catalog: data, from: peer)
                 #endif
                 // The host this session runs on, which a move to the network must reach again
                 // (`moveProbed`); its first list is what lets a move start.
@@ -5385,6 +5416,7 @@ final class StreamClient: ObservableObject {
             self.linkStats = stats
             #if os(iOS)
             self.sentryControl.checkTimeout(now: ProcessInfo.processInfo.systemUptime)
+            self.sentryReturn.checkTimeout(now: ProcessInfo.processInfo.systemUptime)
             #endif
             #if DEBUG
             self.recordStartupVideo()

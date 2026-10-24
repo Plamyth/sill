@@ -4,7 +4,7 @@ import Network
 import StreamProtocol
 
 extension StreamClient {
-    private func sentryBinding(on peer: NWConnection) -> IPadSentryControl.Binding? {
+    func sentryBinding(on peer: NWConnection) -> IPadSentryControl.Binding? {
         guard connection === peer, connected, let session, let id = session.macID,
               let saved = savedMacs.first(where: { $0.macID == id }),
               saved.revoked != true, saved.newKey != true,

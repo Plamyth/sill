@@ -25,6 +25,8 @@
 		<string>_sill._tcp</string>
 	</array>
 	<!-- Add a Mac: the embedded scanner reads the pairing code the Mac shows. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>등록된 iPad 인증 키로 Mac 복귀 요청에 서명할 때 Face ID를 사용합니다.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Mac에 표시된 코드를 스캔하여 페어링합니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
