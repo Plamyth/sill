@@ -39,7 +39,9 @@ final class IPadAppUpdateController: ObservableObject {
          readInstalled: @escaping () -> IPadAppUpdateInstalled = { .read() },
          loadPending: @escaping () -> Data? = { UserDefaults.standard.data(forKey: pendingKey) },
          savePending: @escaping (Data) -> Void = { UserDefaults.standard.set($0, forKey: pendingKey) },
-         fetch: @escaping (IPadAppUpdateConfiguration) async throws -> Data = { try await IPadAppUpdateFeed.fetch($0) },
+         fetch: @escaping (IPadAppUpdateConfiguration) async throws -> Data = {
+             try await IPadAppUpdateFeed.fetch($0, authenticatedRequest: nil)
+         },
          now: @escaping () -> Date = Date.init,
          processID: UUID = IPadAppUpdateController.processID) {
         self.configuration = configuration
@@ -128,7 +130,8 @@ final class IPadAppUpdateController: ObservableObject {
                 state = opened ? .handoffPending(release) : .failed(.openFailed)
             } catch {
                 guard requestID == request else { return }
-                state = .failed(Self.problem(error))
+                let problem = Self.problem(error)
+                state = problem == .unconfigured ? .unconfigured : .failed(problem)
             }
         }
     }
@@ -179,7 +182,10 @@ final class IPadAppUpdateController: ObservableObject {
 
     var message: String {
         switch state {
-        case .unconfigured: return "배포채널 준비중. 승인된 업데이트 주소와 검증 키가 앱에 아직 등록되지 않았습니다."
+        case .unconfigured:
+            return configuration == nil
+                ? "배포채널 준비중. 승인된 업데이트 주소와 검증 키가 앱에 아직 등록되지 않았습니다."
+                : "배포채널 준비중. 서버에 승인된 업데이트가 아직 준비되지 않았습니다. 다시 시도하세요."
         case .checking: return "승인된 최신 업데이트를 조회하고 서명을 확인하는 중입니다."
         case .upToDate(nil): return "아직 최신 업데이트를 조회하지 않았습니다."
         case .upToDate(.some): return "승인된 최신 버전과 현재 실행 중인 앱의 버전·빌드·소스가 일치합니다."

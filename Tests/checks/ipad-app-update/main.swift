@@ -25,27 +25,57 @@ private final class FeedFixture: URLProtocol {
     static var status = 200
     static var data = Data()
     static var requests = 0
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "updates.example.test" }
+    static var lastRequest: URLRequest?
+    static var responseURL: URL?
+    static var contentLength: Int?
+    static var failure: URLError.Code?
+    static var stalls = false
+    static var bodyStalls = false
+    override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.requests += 1
+        Self.lastRequest = request
         precondition(request.httpMethod == "GET")
         precondition(request.value(forHTTPHeaderField: "Cookie") == nil)
-        precondition(request.value(forHTTPHeaderField: "Authorization") == nil)
-        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status,
-                                       httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        if Self.stalls { return }
+        if let failure = Self.failure {
+            client?.urlProtocol(self, didFailWithError: URLError(failure))
+            return
+        }
+        var headers = ["Content-Type": "application/json"]
+        if let length = Self.contentLength { headers["Content-Length"] = String(length) }
+        let response = HTTPURLResponse(url: Self.responseURL ?? request.url!, statusCode: Self.status,
+                                       httpVersion: "HTTP/1.1", headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if Self.bodyStalls { return }
         client?.urlProtocol(self, didLoad: Self.data)
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
 }
 
+private final class ChallengeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) { preconditionFailure("자격증명 사용 금지") }
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+    func cancel(_ challenge: URLAuthenticationChallenge) {}
+    func performDefaultHandling(for challenge: URLAuthenticationChallenge) {}
+    func rejectProtectionSpaceAndContinue(with challenge: URLAuthenticationChallenge) {}
+}
+
 @main
 struct IPadAppUpdateChecks {
     static var count = 0
     static let now = Date(timeIntervalSince1970: 1_800_000_000)
-    static let key = Curve25519.Signing.PrivateKey()
+    static func fixtureKey(_ hex: String) -> Curve25519.Signing.PrivateKey {
+        let bytes = stride(from: 0, to: hex.count, by: 2).map { offset -> UInt8 in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            return UInt8(hex[start..<hex.index(start, offsetBy: 2)], radix: 16)!
+        }
+        return try! Curve25519.Signing.PrivateKey(rawRepresentation: Data(bytes))
+    }
+    static let key = fixtureKey("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+    static let otherKey = fixtureKey("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
     static let commit = String(repeating: "a", count: 40)
     static let tree = String(repeating: "b", count: 40)
 
@@ -92,14 +122,265 @@ struct IPadAppUpdateChecks {
         preconditionFailure("비동기 검사 상태에 도달하지 못함")
     }
 
+    static let syntheticAuthorization = "Bearer " + String(repeating: "a1", count: 32)
+
+    static func authenticatedRequest(_ url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.httpShouldHandleCookies = false
+        request.setValue(syntheticAuthorization, forHTTPHeaderField: "Authorization")
+        return request
+    }
+
+    @MainActor static func feedChecks(configuration: IPadAppUpdateConfiguration, signed: Data) async throws {
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [FeedFixture.self]
+        settings.timeoutIntervalForRequest = 86400
+        settings.timeoutIntervalForResource = 86400
+        settings.httpAdditionalHeaders = ["Authorization": syntheticAuthorization, "Cookie": "fixture=1",
+                                          "X-Canvas-Token": "synthetic-canvas", "X-Unrelated": "synthetic-global"]
+        settings.urlCache = URLCache(memoryCapacity: 1024, diskCapacity: 0)
+        settings.urlCredentialStorage = .shared
+        settings.httpCookieStorage = .shared
+        settings.httpShouldSetCookies = true
+        let isolated = IPadAppUpdateFeed.isolatedConfiguration(settings)
+        check(isolated !== settings && isolated.timeoutIntervalForRequest == 15 && isolated.timeoutIntervalForResource == 30,
+              "실제 production session 구성은 복사본에 15초·30초 고정")
+        check(isolated.httpAdditionalHeaders == nil && isolated.urlCache == nil && isolated.httpCookieStorage == nil &&
+              isolated.urlCredentialStorage == nil && !isolated.httpShouldSetCookies, "실제 session 구성의 전역 인증·쿠키·캐시·자격증명 제거")
+        check(settings.timeoutIntervalForResource == 86400 && settings.httpAdditionalHeaders?.count == 4,
+              "호출자가 빌려준 SSE session 구성은 변경하지 않음")
+        let request = authenticatedRequest(configuration.feedURL)
+        FeedFixture.data = signed
+        let response = try await IPadAppUpdateFeed.fetch(configuration, authenticatedRequest: request, sessionConfiguration: settings)
+        check(response == signed, "명시 인증 production fetch는 원문 바이트 반환")
+        try check(try IPadAppUpdatePolicy.authenticate(response, configuration: configuration, now: now).build == "62",
+                  "production fetch 성공 원문을 production 서명 검증으로 수용")
+        let sent = FeedFixture.lastRequest!
+        check(sent.url == configuration.feedURL && sent.httpMethod == "GET" && sent.timeoutInterval == 15 &&
+              !sent.httpShouldHandleCookies && sent.httpBody == nil && sent.httpBodyStream == nil, "새 GET request의 URL·15초·무본문·쿠키 차단")
+        check(sent.value(forHTTPHeaderField: "Authorization") == syntheticAuthorization &&
+              sent.value(forHTTPHeaderField: "X-Canvas-Token") == nil && sent.value(forHTTPHeaderField: "X-Unrelated") == nil &&
+              sent.value(forHTTPHeaderField: "Accept") == "application/json", "검증한 Authorization 하나만 새 요청에 전달")
+        let legacy = try await IPadAppUpdateFeed.fetch(configuration, sessionConfiguration: settings)
+        check(legacy == signed && FeedFixture.lastRequest?.value(forHTTPHeaderField: "Authorization") == nil,
+              "기존 fetch 원형·익명 동작 보존, 전역 인증 헤더는 전용하지 않음")
+        settings.httpAdditionalHeaders = ["Authorization": 7]
+        _ = try await IPadAppUpdateFeed.fetch(configuration, authenticatedRequest: request, sessionConfiguration: settings)
+        check(FeedFixture.lastRequest?.value(forHTTPHeaderField: "Authorization") == syntheticAuthorization,
+              "잘못된 type의 session 전역 인증은 명시 인증과 혼합하지 않음")
+
+        var requestCase = 0
+        func refuseRequest(_ candidate: URLRequest?, config: IPadAppUpdateConfiguration? = nil) async throws {
+            requestCase += 1
+            let before = FeedFixture.requests
+            do {
+                _ = try await IPadAppUpdateFeed.fetch(config ?? configuration, authenticatedRequest: candidate, sessionConfiguration: settings)
+                preconditionFailure("잘못된 인증 요청 수용: fixture 번호 \(requestCase)")
+            } catch let error as IPadAppUpdateError {
+                check(error == .authentication && FeedFixture.requests == before, "인증·scope 위반은 network 0")
+            }
+        }
+        try await refuseRequest(nil)
+        var invalid = request
+        invalid.setValue(nil, forHTTPHeaderField: "Authorization")
+        try await refuseRequest(invalid)
+        for value in ["Basic fixture", "bearer " + String(repeating: "a", count: 64), "Bearer ", "Bearer    ",
+                      "Bearer " + String(repeating: "A", count: 64), "Bearer " + String(repeating: "a", count: 63),
+                      "Bearer " + String(repeating: "a", count: 65), "Bearer " + String(repeating: "g", count: 64),
+                      syntheticAuthorization + " ", syntheticAuthorization + "\n", "Bearer \r\n" + String(repeating: "a", count: 64)] {
+            invalid = request
+            invalid.setValue(nil, forHTTPHeaderField: "Authorization")
+            invalid.setValue(value, forHTTPHeaderField: "Authorization")
+            try await refuseRequest(invalid)
+        }
+        invalid = request; invalid.addValue(syntheticAuthorization, forHTTPHeaderField: "aUtHoRiZaTiOn")
+        try await refuseRequest(invalid)
+        invalid = request
+        invalid.allHTTPHeaderFields = ["Authorization": syntheticAuthorization, "authorization": syntheticAuthorization]
+        check(invalid.allHTTPHeaderFields?.count == 1, "Foundation은 dictionary 대소문자 중복을 API 진입 전 하나로 축약하므로 원래 중복은 관측 불가")
+        invalid = request; invalid.httpMethod = "get"
+        check(invalid.httpMethod == "GET", "Foundation이 표준 method를 정규화한 뒤 공통 경계에서는 정확 GET 확인")
+        for method in ["POST", "PATCH", "HEAD"] {
+            invalid = request; invalid.httpMethod = method
+            try await refuseRequest(invalid)
+        }
+        invalid = request; invalid.httpBody = Data()
+        try await refuseRequest(invalid)
+        invalid = request; invalid.httpBodyStream = InputStream(data: Data("synthetic".utf8))
+        try await refuseRequest(invalid)
+        invalid = request; invalid.httpShouldHandleCookies = true
+        try await refuseRequest(invalid)
+        invalid = request; invalid.setValue("", forHTTPHeaderField: "cOoKiE")
+        try await refuseRequest(invalid)
+        for url in ["https://other.example.test/v1/releases/latest?platform=ipadOS",
+                    "https://updates.example.test:17649/v1/releases/latest?platform=ipadOS",
+                    "http://updates.example.test/v1/releases/latest?platform=ipadOS"] {
+            invalid = authenticatedRequest(URL(string: url)!)
+            try await refuseRequest(invalid)
+        }
+        for suffix in ["/ipad/latest", "/v1/releases/latest", "/v1/releases/latest/", "/v1/releases/%6catest?platform=ipadOS",
+                       "/v1/releases/latest?platform=%69padOS", "/v1/releases/latest?platform=visionOS",
+                       "/v1/releases/latest?platform=ipadOS&platform=ipadOS", "/v1/releases/latest?platform=ipadOS&token=synthetic",
+                       "/v1/releases/latest?token=synthetic&platform=ipadOS", "/v1/releases/latest?Platform=ipadOS",
+                       "/v1/releases/latest?platform=ipadOS&", "/v1/releases/latest?platform=ipadOS%20"] {
+            let config = try IPadAppUpdateConfiguration(feed: "https://updates.example.test" + suffix,
+                                                       key: key.publicKey.rawRepresentation.base64EncodedString())
+            try await refuseRequest(authenticatedRequest(config.feedURL), config: config)
+        }
+        invalid = request; invalid.setValue("synthetic-input", forHTTPHeaderField: "X-Canvas-Token")
+        _ = try await IPadAppUpdateFeed.fetch(configuration, authenticatedRequest: invalid, sessionConfiguration: settings)
+        check(FeedFixture.lastRequest?.value(forHTTPHeaderField: "X-Canvas-Token") == nil, "명시 request의 관계없는 인증 헤더도 전파하지 않음")
+
+        let notConfigured: [String: Any] = ["schemaVersion": 1, "status": "notConfigured", "code": "release_not_configured", "platform": IPadAppUpdatePolicy.platform]
+        let unconfiguredData = try JSONSerialization.data(withJSONObject: notConfigured)
+        func refuseResponse(_ status: Int, _ data: Data, expected: IPadAppUpdateError) async throws {
+            FeedFixture.status = status; FeedFixture.data = data
+            do {
+                _ = try await IPadAppUpdateFeed.fetch(configuration, authenticatedRequest: request, sessionConfiguration: settings)
+                preconditionFailure("잘못된 HTTP 응답 수용")
+            } catch let error as IPadAppUpdateError { check(error == expected, "production fetch HTTP 상태·본문 분류") }
+        }
+        try await refuseResponse(503, unconfiguredData, expected: .unconfigured)
+        for (field, value) in [("schemaVersion", 0 as Any), ("schemaVersion", -1), ("schemaVersion", 2), ("schemaVersion", true),
+                               ("schemaVersion", "1"), ("schemaVersion", NSNull()), ("platform", "visionOS"),
+                               ("platform", "ipados"), ("status", "notconfigured"), ("code", "release_Not_Configured")] {
+            var body = notConfigured; body[field] = value
+            try await refuseResponse(503, JSONSerialization.data(withJSONObject: body), expected: .network)
+        }
+        for field in notConfigured.keys {
+            var body = notConfigured; body[field] = nil
+            try await refuseResponse(503, JSONSerialization.data(withJSONObject: body), expected: .network)
+            body = notConfigured; body[field.uppercased()] = body.removeValue(forKey: field)
+            try await refuseResponse(503, JSONSerialization.data(withJSONObject: body), expected: .network)
+        }
+        var extra = notConfigured; extra["extra"] = "ignored-is-not-allowed"
+        try await refuseResponse(503, JSONSerialization.data(withJSONObject: extra), expected: .network)
+        for body in [signed, Data("[]".utf8), Data("not JSON".utf8)] {
+            try await refuseResponse(503, body, expected: .network)
+        }
+        for schema in ["1.0", "1e0", "-1", "true", "null"] {
+            let body = Data(("{\"schemaVersion\":" + schema + ",\"status\":\"notConfigured\",\"code\":\"release_not_configured\",\"platform\":\"ipadOS\"}").utf8)
+            try await refuseResponse(503, body, expected: .network)
+        }
+        for status in [301, 302, 307, 308, 400, 404, 429, 500, 502, 504] {
+            try await refuseResponse(status, unconfiguredData, expected: .network)
+        }
+        for status in [401, 403] { try await refuseResponse(status, unconfiguredData, expected: .authentication) }
+        for status in [401, 403] {
+            FeedFixture.contentLength = 32769
+            FeedFixture.bodyStalls = true
+            try await refuseResponse(status, Data(), expected: .authentication)
+            FeedFixture.bodyStalls = false
+            try await refuseResponse(status, Data(repeating: 65, count: 32769), expected: .authentication)
+        }
+        FeedFixture.contentLength = nil
+        for status in [200, 503] {
+            try await refuseResponse(status, Data(repeating: 65, count: 32769), expected: .malformed)
+        }
+        FeedFixture.contentLength = 32769
+        try await refuseResponse(200, Data(), expected: .network)
+        FeedFixture.contentLength = nil
+        FeedFixture.status = 200; FeedFixture.data = Data(repeating: 65, count: 32768)
+        let maximum = try await IPadAppUpdateFeed.fetch(configuration, authenticatedRequest: request, sessionConfiguration: settings)
+        check(maximum.count == 32768, "정확 32768바이트까지 읽고 서명 단계에 반환")
+        FeedFixture.responseURL = URL(string: "https://other.example.test/v1/releases/latest?platform=ipadOS")
+        try await refuseResponse(200, signed, expected: .network)
+        FeedFixture.responseURL = configuration.feedURL.appendingPathComponent("different")
+        try await refuseResponse(200, signed, expected: .network)
+        FeedFixture.responseURL = nil
+
+        FeedFixture.status = 200; FeedFixture.data = signed; FeedFixture.failure = .timedOut
+        do { _ = try await IPadAppUpdateFeed.fetch(configuration, authenticatedRequest: request, sessionConfiguration: settings); preconditionFailure("timeout 누락") }
+        catch let error as URLError { check(error.code == .timedOut, "실제 fetch가 timeout 전달") }
+        FeedFixture.failure = nil; FeedFixture.stalls = true
+        let beforeCancel = FeedFixture.requests
+        let cancelled = Task { try await IPadAppUpdateFeed.fetch(configuration, authenticatedRequest: request, sessionConfiguration: settings) }
+        await settle { FeedFixture.requests > beforeCancel }
+        cancelled.cancel()
+        do { _ = try await cancelled.value; preconditionFailure("fetch 취소 누락") }
+        catch { check(error is CancellationError || (error as? URLError)?.code == .cancelled, "실제 네트워크 대기 취소") }
+        FeedFixture.stalls = false
+
+        var redirected: URLRequest??
+        let fence = IPadAppUpdateFeed.Fence()
+        let temporarySession = URLSession(configuration: isolated)
+        let dummyTask = temporarySession.dataTask(with: request)
+        fence.urlSession(temporarySession, task: dummyTask,
+                         willPerformHTTPRedirection: HTTPURLResponse(url: configuration.feedURL, statusCode: 302, httpVersion: nil, headerFields: nil)!,
+                         newRequest: authenticatedRequest(URL(string: "https://other.example.test/")!)) { redirected = $0 }
+        check(redirected != nil && redirected! == nil, "production redirect callback은 인증 요청을 다음 origin에 전달하지 않음")
+        for method in [NSURLAuthenticationMethodHTTPBasic, NSURLAuthenticationMethodHTTPDigest, NSURLAuthenticationMethodDefault,
+                       NSURLAuthenticationMethodClientCertificate, NSURLAuthenticationMethodServerTrust] {
+            let protection = URLProtectionSpace(host: "updates.example.test", port: 443, protocol: "https", realm: nil, authenticationMethod: method)
+            let challenge = URLAuthenticationChallenge(protectionSpace: protection,
+                                                       proposedCredential: URLCredential(user: "synthetic", password: "synthetic", persistence: .none),
+                                                       previousFailureCount: 0, failureResponse: nil, error: nil, sender: ChallengeSender())
+            var called = false
+            fence.urlSession(temporarySession, task: dummyTask, didReceive: challenge) { disposition, credential in
+                called = true
+                check(credential == nil && disposition == (method == NSURLAuthenticationMethodServerTrust
+                      ? .performDefaultHandling : .cancelAuthenticationChallenge), "production challenge callback은 TLS trust 외 인증과 credential 전달 차단")
+            }
+            check(called, "인증 callback 완료")
+        }
+        temporarySession.invalidateAndCancel()
+
+        let store = PendingStore()
+        var opens = 0
+        let defaultController = IPadAppUpdateController(configuration: configuration, readInstalled: { installed() },
+                                                         loadPending: { store.data }, savePending: { store.save($0) })
+        let beforeDefault = FeedFixture.requests
+        defaultController.checkAndInstall { _ in opens += 1; return true }
+        await settle { defaultController.canCheck }
+        check(defaultController.state == .failed(.authentication) && FeedFixture.requests == beforeDefault && opens == 0 && store.writes == 0,
+              "iPad 기본 controller는 credential 미연결로 authentication, network·저장·설치 전달 0")
+        let controller = IPadAppUpdateController(configuration: configuration, readInstalled: { installed() },
+                                                loadPending: { store.data }, savePending: { store.save($0) },
+                                                fetch: { try await IPadAppUpdateFeed.fetch($0, authenticatedRequest: request, sessionConfiguration: settings) },
+                                                now: { now })
+        FeedFixture.status = 503; FeedFixture.data = unconfiguredData
+        controller.checkAndInstall { _ in opens += 1; return true }
+        await settle { controller.canCheck }
+        check(controller.state == .unconfigured && controller.message.contains("준비중") && controller.message.contains("다시 시도") &&
+              controller.canCheck && opens == 0 && store.writes == 0, "정확 503은 준비중·재시도, 성공·저장·설치 전달 없음")
+        FeedFixture.status = 200
+        controller.checkAndInstall { _ in opens += 1; return true }
+        await settle { controller.canCheck }
+        check(controller.state == .failed(.malformed) && opens == 0 && store.writes == 0, "200 unsigned notConfigured는 계속 서명 봉투 실패")
+        for status in [401, 403, 503, 500] {
+            FeedFixture.status = status; FeedFixture.data = Data("{}".utf8)
+            controller.checkAndInstall { _ in opens += 1; return true }
+            await settle { controller.canCheck }
+            check(controller.state == .failed(status == 401 || status == 403 ? .authentication : .network) && opens == 0 && store.writes == 0,
+                  "거짓 503·다른 HTTP·인증 오류는 최신이나 설치 상태로 승격하지 않음")
+        }
+        FeedFixture.status = 200; FeedFixture.data = signed
+        FeedFixture.failure = .timedOut
+        controller.checkAndInstall { _ in opens += 1; return true }
+        await settle { controller.canCheck }
+        check(controller.state == .failed(.network) && opens == 0 && store.writes == 0, "controller timeout은 재시도 가능한 네트워크 실패")
+        FeedFixture.failure = nil
+        controller.checkAndInstall { _ in opens += 1; return true }
+        await settle { controller.canCheck }
+        try check(controller.state == .handoffPending(try IPadAppUpdatePolicy.authenticate(signed, configuration: configuration, now: now)) &&
+              opens == 1 && store.writes == 2, "실제 production fetch와 controller의 정상 서명 200 전달 경로")
+    }
+
     @MainActor static func main() async throws {
-        let configuration = try IPadAppUpdateConfiguration(feed: "https://updates.example.test/ipad/latest",
+        let configuration = try IPadAppUpdateConfiguration(feed: "https://updates.example.test/v1/releases/latest?platform=ipadOS",
                                                         key: key.publicKey.rawRepresentation.base64EncodedString())
         let signed = try envelope()
         func authenticate(_ data: Data) throws -> IPadAppUpdateRelease {
             try IPadAppUpdatePolicy.authenticate(data, configuration: configuration, now: now)
         }
         let release = try authenticate(signed)
+        var diagnostic = try JSONSerialization.jsonObject(with: signed) as! [String: Any]
+        diagnostic["keyID"] = "untrusted-diagnostic-only"
+        try check(try authenticate(JSONSerialization.data(withJSONObject: diagnostic)) == release, "상위 keyID는 진단 필드로만 무시하고 고정 공개키 서명 사용")
+        let raw = try JSONSerialization.data(withJSONObject: fields(), options: [.prettyPrinted, .sortedKeys])
+        let rawEnvelope = try JSONSerialization.data(withJSONObject: ["payload": raw.base64EncodedString(), "signature": key.signature(for: raw).base64EncodedString(), "keyID": "untrusted"])
+        try check(try authenticate(rawEnvelope) == release, "재직렬화하지 않은 원문 공백·줄바꿈 payload의 서명 확인")
         var nodeFields = fields()
         nodeFields["approvedAt"] = "2027-01-15T07:59:00.000Z"
         nodeFields["expiresAt"] = "2027-01-15T09:00:00.000Z"
@@ -116,7 +397,7 @@ struct IPadAppUpdateChecks {
         try check(try IPadAppUpdatePolicy.installURL(release).absoluteString == fields()["installURL"] as! String, "App Store ID 결합")
         check(SillLinks.appStore == nil, "CCR에서 upstream App Store fallback 제거")
         check(IPadAppUpdateConfiguration.bundled() == nil, "미설정 Bundle 구성")
-        refuses(.signature) { _ = try authenticate(envelope(signer: Curve25519.Signing.PrivateKey())) }
+        refuses(.signature) { _ = try authenticate(envelope(signer: otherKey)) }
         var outer = try JSONSerialization.jsonObject(with: signed) as! [String: Any]
         outer["payload"] = Data("{}".utf8).base64EncodedString()
         refuses(.signature) { _ = try authenticate(JSONSerialization.data(withJSONObject: outer)) }
@@ -221,29 +502,7 @@ struct IPadAppUpdateChecks {
             refuses(.rollback) { _ = try IPadAppUpdatePolicy.validateProgress(release, installed: installed(), previous: upgrade) }
         }
 
-        let sessionConfiguration = URLSessionConfiguration.ephemeral
-        sessionConfiguration.protocolClasses = [FeedFixture.self]
-        FeedFixture.data = signed
-        let response = try await IPadAppUpdateFeed.fetch(configuration, sessionConfiguration: sessionConfiguration)
-        check(response == signed, "실제 URLSession 피드 fetch")
-        for status in [301, 302, 307, 308, 401, 403, 500] {
-            FeedFixture.status = status
-            do { _ = try await IPadAppUpdateFeed.fetch(configuration, sessionConfiguration: sessionConfiguration); preconditionFailure("HTTP 거부 실패") }
-            catch let error as IPadAppUpdateError { check(error == .network, "리다이렉트·HTTP 실패 거부") }
-        }
-        FeedFixture.status = 200
-        FeedFixture.data = Data(repeating: 65, count: 32769)
-        do { _ = try await IPadAppUpdateFeed.fetch(configuration, sessionConfiguration: sessionConfiguration); preconditionFailure("크기 거부 실패") }
-        catch let error as IPadAppUpdateError { check(error == .malformed, "스트림 크기 상한") }
-        var redirected: URLRequest??
-        let fence = IPadAppUpdateFeed.Fence()
-        let temporarySession = URLSession(configuration: .ephemeral)
-        let dummyTask = temporarySession.dataTask(with: configuration.feedURL)
-        fence.urlSession(temporarySession, task: dummyTask,
-                         willPerformHTTPRedirection: HTTPURLResponse(url: configuration.feedURL, statusCode: 302, httpVersion: nil, headerFields: nil)!,
-                         newRequest: URLRequest(url: URL(string: "http://example.test")!)) { redirected = $0 }
-        check(redirected != nil && redirected! == nil, "실제 production delegate가 redirect를 취소")
-        temporarySession.invalidateAndCancel()
+        try await feedChecks(configuration: configuration, signed: signed)
 
         let store = PendingStore()
         var fetches = 0
@@ -325,7 +584,7 @@ struct IPadAppUpdateChecks {
         store.data = beforeRenewal
         let oldPending = store.data
         var pendingJSON = try JSONSerialization.jsonObject(with: oldPending!) as! [String: Any]
-        pendingJSON["envelope"] = try envelope(signer: Curve25519.Signing.PrivateKey()).base64EncodedString()
+        pendingJSON["envelope"] = try envelope(signer: otherKey).base64EncodedString()
         store.data = try JSONSerialization.data(withJSONObject: pendingJSON)
         check(controller(process: UUID()).state == .failed(.signature), "pending 변조 서명 거부")
         store.data = oldPending

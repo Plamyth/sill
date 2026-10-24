@@ -1,9 +1,10 @@
 import Foundation
 import CryptoKit
+import CoreFoundation
 
 enum IPadAppUpdateError: Error, LocalizedError, Equatable {
     case unconfigured, malformed, signature, identity, expired, rollback, unsafeURL
-    case unsupportedChannel, sourceMismatch, network, openFailed, handoffUnknown, storage, cancelled
+    case unsupportedChannel, sourceMismatch, authentication, network, openFailed, handoffUnknown, storage, cancelled
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ enum IPadAppUpdateError: Error, LocalizedError, Equatable {
         case .unsafeURL: return "승인된 Apple 설치 주소가 아닙니다."
         case .unsupportedChannel: return "이 개발 배포채널은 앱 내 업데이트를 지원하지 않습니다."
         case .sourceMismatch: return "실행 중인 앱의 버전·빌드·소스가 승인된 업데이트와 일치하지 않습니다. 설치 완료로 확인하지 않았습니다."
+        case .authentication: return "업데이트 조회 인증을 확인하지 못했습니다. 인증 연결 후 다시 시도하세요."
         case .network: return "업데이트 정보를 가져오지 못했습니다. 네트워크를 확인하고 다시 시도하세요."
         case .openFailed: return "Apple 설치 화면을 열지 못했습니다. 다시 시도하면 최신 승인을 새로 조회합니다."
         case .handoffUnknown: return "Apple 설치 화면 열기의 결과를 확인하지 못했습니다. 설치 완료로 확인하지 않았습니다. 다시 조회하세요."
@@ -93,6 +95,7 @@ struct IPadAppUpdateConfiguration {
 }
 
 enum IPadAppUpdatePolicy {
+    static let platform = "ipadOS"
     static let bundleID = "com.ambrion.sillcanvas.ipad"
     static let teamID = "ZPTXHJ866D"
     static let maximumEnvelopeBytes = 32_768
@@ -183,7 +186,7 @@ enum IPadAppUpdatePolicy {
               isSHA(release.sourceCommit), isSHA(release.sourceTree),
               let appID = number(release.appleAppID), appID > 0,
               release.appleAppID != "6816359860" else { throw IPadAppUpdateError.malformed }
-        guard release.platform == "ipadOS", release.bundleID == bundleID, release.teamID == teamID else {
+        guard release.platform == platform, release.bundleID == bundleID, release.teamID == teamID else {
             throw IPadAppUpdateError.identity
         }
         guard let approved = timestamp(release.approvedAt), let expires = timestamp(release.expiresAt),
@@ -241,19 +244,61 @@ enum IPadAppUpdateFeed {
 
     static func fetch(_ configuration: IPadAppUpdateConfiguration,
                       sessionConfiguration: URLSessionConfiguration = .ephemeral) async throws -> Data {
-        sessionConfiguration.urlCache = nil
-        sessionConfiguration.httpCookieStorage = nil
-        sessionConfiguration.urlCredentialStorage = nil
-        sessionConfiguration.httpShouldSetCookies = false
-        let session = URLSession(configuration: sessionConfiguration, delegate: Fence(), delegateQueue: nil)
+        try await fetchBytes(configuration, authorization: nil, sessionConfiguration: sessionConfiguration)
+    }
+
+    static func fetch(_ configuration: IPadAppUpdateConfiguration, authenticatedRequest: URLRequest?,
+                      sessionConfiguration: URLSessionConfiguration = .ephemeral) async throws -> Data {
+        guard let authenticatedRequest, authenticatedRequest.url == configuration.feedURL,
+              IPadAppUpdatePolicy.httpsURL(configuration.feedURL.absoluteString) != nil,
+              let components = URLComponents(url: configuration.feedURL, resolvingAgainstBaseURL: false),
+              components.percentEncodedPath == "/v1/releases/latest",
+              components.percentEncodedQuery == "platform=\(IPadAppUpdatePolicy.platform)",
+              authenticatedRequest.httpMethod == "GET", authenticatedRequest.httpBody == nil,
+              authenticatedRequest.httpBodyStream == nil, !authenticatedRequest.httpShouldHandleCookies else {
+            throw IPadAppUpdateError.authentication
+        }
+        let headers = authenticatedRequest.allHTTPHeaderFields ?? [:]
+        let authorizationHeaders = headers.filter { $0.key.lowercased() == "authorization" }
+        guard !headers.keys.contains(where: { $0.lowercased() == "cookie" }),
+              authorizationHeaders.count == 1, let authorization = authorizationHeaders.first?.value,
+              authorization.hasPrefix("Bearer ") else { throw IPadAppUpdateError.authentication }
+        let token = authorization.dropFirst("Bearer ".count)
+        guard token.utf8.count == 64,
+              token.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+            throw IPadAppUpdateError.authentication
+        }
+        return try await fetchBytes(configuration, authorization: authorization, sessionConfiguration: sessionConfiguration)
+    }
+
+    static func isolatedConfiguration(_ sessionConfiguration: URLSessionConfiguration) -> URLSessionConfiguration {
+        let isolated = sessionConfiguration.copy() as! URLSessionConfiguration
+        isolated.urlCache = nil
+        isolated.httpCookieStorage = nil
+        isolated.urlCredentialStorage = nil
+        isolated.httpShouldSetCookies = false
+        isolated.httpAdditionalHeaders = nil
+        isolated.timeoutIntervalForRequest = 15
+        isolated.timeoutIntervalForResource = 30
+        return isolated
+    }
+
+    private static func fetchBytes(_ configuration: IPadAppUpdateConfiguration, authorization: String?,
+                                   sessionConfiguration: URLSessionConfiguration) async throws -> Data {
+        try Task.checkCancellation()
+        let session = URLSession(configuration: isolatedConfiguration(sessionConfiguration), delegate: Fence(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         var request = URLRequest(url: configuration.feedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = "GET"
         request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
         let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-              http.url == configuration.feedURL,
-              http.expectedContentLength <= Int64(IPadAppUpdatePolicy.maximumEnvelopeBytes) else {
+        guard let http = response as? HTTPURLResponse, http.url == configuration.feedURL else {
+            throw IPadAppUpdateError.network
+        }
+        if http.statusCode == 401 || http.statusCode == 403 { throw IPadAppUpdateError.authentication }
+        guard http.expectedContentLength <= Int64(IPadAppUpdatePolicy.maximumEnvelopeBytes) else {
             throw IPadAppUpdateError.network
         }
         var data = Data()
@@ -262,6 +307,20 @@ enum IPadAppUpdateFeed {
             guard data.count < IPadAppUpdatePolicy.maximumEnvelopeBytes else { throw IPadAppUpdateError.malformed }
             data.append(byte)
         }
-        return data
+        try Task.checkCancellation()
+        switch http.statusCode {
+        case 200: return data
+        case 503:
+            if let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any], body.count == 4,
+               let schema = body["schemaVersion"] as? NSNumber,
+               CFGetTypeID(schema) != CFBooleanGetTypeID(), !CFNumberIsFloatType(schema as CFNumber), schema == 1,
+               body["status"] as? String == "notConfigured",
+               body["code"] as? String == "release_not_configured",
+               body["platform"] as? String == IPadAppUpdatePolicy.platform {
+                throw IPadAppUpdateError.unconfigured
+            }
+            throw IPadAppUpdateError.network
+        default: throw IPadAppUpdateError.network
+        }
     }
 }
