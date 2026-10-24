@@ -154,6 +154,27 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
           "snapshot invalidation prevents issuing any OS challenge")
     check(privacy.latched && hal.writes == 0 && hal.restores == 0, "invalidated snapshot preserves audio protection")
     privacy.stop()
+    let humanStartup = NativeAudioStartup()
+    humanStartup.construct { () }
+    humanStartup.participants.register(.relay, bootId: UUID(), control: .init(
+        fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
+    let humanHAL = ChallengeHAL(), humanAuth = LocalAudioAuthentication()
+    let humanPrivacy = HostAudioPrivacy(hal: humanHAL, latched: true,
+        localState: try! LocalAudioState(humanHAL.snapshot),
+        authenticateLocal: { await humanAuth.evaluate(operationId: $0) },
+        cancelAuthentication: { humanAuth.cancel() },
+        authenticationChallengeID: { humanAuth.activeChallengeID }, nativeStartup: humanStartup)
+    let human = Task { await humanPrivacy.requestLocalReturn(budgetMilliseconds: 20) }
+    await settle { humanPrivacy.localAuthenticationChallengeID != nil }
+    try? await Task.sleep(for: .milliseconds(35))
+    check(humanPrivacy.localAuthenticationChallengeID != nil,
+          "human authentication wait does not spend the participant work budget")
+    LAContext.instances.last!.decline()
+    check(!(await human.value) && humanPrivacy.localAuthenticationChallengeID == nil,
+          "declined extended human wait closes the exact request without approval")
+    check(humanPrivacy.latched && humanHAL.writes == 0 && humanHAL.restores == 0,
+          "extended human wait never changes audio or the protection latch")
+    humanPrivacy.stop()
     print("PASS \(count) native challenge checks; no actual OS authentication or positive approval supplied")
 }
 
