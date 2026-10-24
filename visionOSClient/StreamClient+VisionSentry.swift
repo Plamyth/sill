@@ -86,8 +86,12 @@ extension StreamClient {
         let now = ProcessInfo.processInfo.systemUptime
         var requestID = UUID()
         let attemptID = UUID()
+        let store = visionSentry.store
+        var rawRequest: Data?
         let submission = SessionLink.Submission(deadline: now + VisionSentryController.timeout, isCurrent: { [weak self] in
-            self?.visionSentryIdentity(expected, checkConnection: false) == identity
+            guard let rawRequest else { return false }
+            return self?.visionSentryIdentity(expected, checkConnection: false) == identity &&
+                store.contains(rawRequest: rawRequest, binding: identity)
         }) { [weak self] outcome in
             guard let self else { return }
             if outcome == .cancelled {
@@ -100,6 +104,7 @@ extension StreamClient {
         guard let request = visionSentry.beginControl(desired: desired, requestID: requestID, attemptID: attemptID, now: now,
             cancel: { link.cancel(submission) }) else { publishVisionSentry(); return }
         requestID = request.requestID
+        rawRequest = request.rawRequest
         publishVisionSentry()
         let bytes = StreamMessage(kind: .activateSentry, timestamp: Date().timeIntervalSince1970,
             isKeyframe: false, payload: request.rawRequest).serialized()

@@ -48,6 +48,11 @@ struct VisionSentryRequestStore {
     static let maximumRecords = 64
     static let unavailable = Self(load: { [] }, save: { _ in throw Failure.storage })
 
+    func contains(rawRequest: Data, binding: VisionSentryStoredRequest.Binding) -> Bool {
+        guard binding.valid, let records = try? load(), records.count <= Self.maximumRecords else { return false }
+        return records.contains { $0.binding == binding && $0.rawRequest == rawRequest }
+    }
+
     static let keychain = Self(load: {
         var query = keychainQuery
         query[kSecReturnData as String] = true

@@ -29,7 +29,7 @@ final class VisionSentryController {
     }
 
     enum Problem: Equatable {
-        case timedOut, sendCancelled, rejected(String?), storage
+        case timedOut, sendCancelled, rejected(String?), storage, capacity
     }
 
     struct Snapshot: Equatable {
@@ -60,8 +60,16 @@ final class VisionSentryController {
         }
 
         var message: String {
+            if state?.phase == .pending {
+                return "Mac이 센츄리 보호 설정을 전환하고 있습니다. " + requestMessage
+            }
+            return requestMessage
+        }
+
+        private var requestMessage: String {
             if pendingID != nil { return "센츄리 요청의 Mac 확인을 기다립니다. 전송은 적용 완료가 아닙니다." }
             if problem == .storage { return "요청 원문을 보호 저장소에서 확인하지 못해 전송을 중지했습니다." }
+            if problem == .capacity { return "미해결 요청 보관 한도에 도달해 새 요청을 거절했습니다. 보존 원문으로 결과를 확인하세요." }
             if readbackNeedsNewSession {
                 let result = operationState == .rejected ? "Mac이 요청을 거절했습니다. " :
                     operationState == .unknown ? "요청 결과 미확인. " : ""
@@ -82,7 +90,7 @@ final class VisionSentryController {
             if storedRequestID != nil { return "보존된 요청이 있습니다. 원문으로 결과를 확인하세요." }
             switch state?.phase {
             case .inactive: return "센츄리 꺼짐 · Mac의 현재 로그인 세션 보호를 켤 수 있습니다."
-            case .pending: return "Mac이 센츄리 보호 설정을 전환하고 있습니다. 적용 완료는 확인되지 않았습니다."
+            case .pending: return "적용 완료는 확인되지 않았습니다."
             case .userSessionProtected: return "Mac 보고 · 현재 로그인 세션의 화면·일반 입력 보호 중"
             case .blocked: return "Mac이 센츄리 보호 완료를 확인하지 못했습니다."
             case nil: return "현재 Mac의 센츄리 보호 상태 미확인"
@@ -124,7 +132,7 @@ final class VisionSentryController {
     private var pending: Pending?
     private var retiredRevisions: Set<UUID> = []
     private var value = Snapshot()
-    private let store: VisionSentryRequestStore
+    let store: VisionSentryRequestStore
     private var identity: VisionSentryStoredRequest.Binding?
     private var records: [VisionSentryStoredRequest] = []
     private var storageHealthy = true
@@ -329,7 +337,8 @@ final class VisionSentryController {
                 var next = records
                 if next.count == VisionSentryRequestStore.maximumRecords {
                     guard let index = next.firstIndex(where: { $0.hasTerminalReceipt }) else {
-                        throw VisionSentryRequestStore.Failure.storage
+                        value.problem = .capacity
+                        return nil
                     }
                     next.remove(at: index)
                 }
@@ -361,6 +370,10 @@ final class VisionSentryController {
               operation.request == request, operation.catalog == catalog, matchesCurrent(request),
               attemptID == nil || attemptID == operation.attemptID else { return false }
         guard now < operation.deadline else { timeoutLocked(); return false }
+        guard let identity, store.contains(rawRequest: request.rawRequest, binding: identity) else {
+            storageHealthy = false
+            finishLocked(); refreshControlLocked(); return false
+        }
         controlPending?.admitted = true
         guard send() else { controlUnknownLocked(); return false }
         return true
