@@ -1,6 +1,18 @@
 import Foundation
 import StreamProtocol
 
+enum VisionCallTarget: String, CaseIterable {
+    case nativeCodex, chatgptDots, grok
+
+    var title: String {
+        switch self {
+        case .nativeCodex: return "Mac Codex 음성"
+        case .chatgptDots: return "ChatGPT Dots"
+        case .grok: return "Grok"
+        }
+    }
+}
+
 struct VisionProviderCall {
     struct Pending {
         let control: ProviderCallControl
@@ -9,6 +21,7 @@ struct VisionProviderCall {
         let expiresAt: TimeInterval
     }
     private(set) var connection: UUID
+    private(set) var target: VisionCallTarget
     private(set) var supported = false
     private(set) var hostKey: String?
     private(set) var pending: Pending?
@@ -19,11 +32,23 @@ struct VisionProviderCall {
     private var lastQueryAt: TimeInterval?
     private let clock: () -> TimeInterval
 
-    init(connection: UUID, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.connection = connection; self.clock = clock
+    init(connection: UUID, target: VisionCallTarget = .nativeCodex,
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.connection = connection; self.target = target; self.clock = clock
+    }
+    var canChangeTarget: Bool {
+        pending == nil && result?.status != .pending
+    }
+    @discardableResult
+    mutating func selectTarget(_ next: VisionCallTarget) -> Bool {
+        guard next != target else { return true }
+        guard canChangeTarget else { return false }
+        target = next
+        return true
     }
     var canPerform: Bool {
-        supported && pending == nil && (request == nil || result.map { [.started, .stopped, .failed, .unsupported].contains($0.status) } == true)
+        target == .chatgptDots && supported && pending == nil &&
+            (request == nil || result.map { [.started, .stopped, .failed, .unsupported].contains($0.status) } == true)
     }
     mutating func observe(connection next: UUID, capability: Int?, hostKey: String?) {
         let trusted = hostKey.flatMap { $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil ? $0 : nil }
@@ -34,7 +59,7 @@ struct VisionProviderCall {
         }
         if self.hostKey != trusted {
             guard pending == nil || connection != next else { supported = false; return }
-            self = VisionProviderCall(connection: next, clock: clock)
+            self = VisionProviderCall(connection: next, target: target, clock: clock)
             self.hostKey = trusted
         }
         if connection != next { disconnected(); connection = next }
@@ -55,7 +80,7 @@ struct VisionProviderCall {
     }
     mutating func query() -> ProviderCallControl? {
         let now = clock()
-        guard supported, pending == nil, let request, let firstSentAt,
+        guard target == .chatgptDots, supported, pending == nil, let request, let firstSentAt,
               result == nil || result?.status == .pending || result?.status == .unknown else { return nil }
         guard now.isFinite, now >= firstSentAt, now - firstSentAt < 10, queries < 4 else {
             result = try? .init(requestId: request.requestId, status: .unknown, reason: "provider_query_budget_exhausted")
@@ -100,15 +125,20 @@ struct VisionProviderCall {
         return true
     }
     var message: String {
-        if pending != nil { return "통화 상태를 확인하고 있습니다." }
-        guard let result else { return supported ? "통화와 음성 입출력 상태는 각각 확인합니다." : "이 Mac 연결은 통화 제어를 지원하지 않습니다." }
+        switch target {
+        case .nativeCodex: return "Mac Codex 음성의 원격 시작·종료는 미확인입니다."
+        case .grok: return "Grok 통화의 원격 시작·종료는 미확인입니다."
+        case .chatgptDots: break
+        }
+        if pending != nil { return "Dots 통화 상태를 확인하고 있습니다." }
+        guard let result else { return supported ? "Dots 통화와 음성 입출력 상태는 각각 확인합니다." : "이 Mac 연결은 Dots 통화 제어를 지원하지 않습니다." }
         switch result.status {
-        case .started: return "Mac 통화 화면에서 시작을 확인했습니다."
-        case .stopped: return "Mac 통화 화면에서 종료를 확인했습니다."
-        case .pending: return "통화 연결 결과를 기다립니다."
-        case .unsupported: return "현재 Mac 통화 화면에서는 이 동작을 확인할 수 없습니다."
-        case .failed: return "통화 명령을 완료하지 못했습니다. 음성 연결과 Mac 통화 화면을 확인하세요."
-        case .unknown: return "통화 결과를 확인하지 못했습니다. 자동으로 다시 누르지 않습니다. Mac 통화 화면을 확인하세요."
+        case .started: return "Mac의 Dots 통화 화면에서 시작을 확인했습니다."
+        case .stopped: return "Mac의 Dots 통화 화면에서 종료를 확인했습니다."
+        case .pending: return "Dots 통화 결과를 기다립니다. 대상은 확인 후 바꿀 수 있습니다."
+        case .unsupported: return "현재 Mac의 Dots 통화 화면에서는 이 동작을 확인할 수 없습니다."
+        case .failed: return "Dots 통화 명령을 완료하지 못했습니다. Mac의 Dots 화면을 확인하세요."
+        case .unknown: return "Dots 통화 결과를 확인하지 못했습니다. 자동 재시도하지 않습니다. Mac의 Dots 화면을 확인하세요."
         }
     }
 }
@@ -118,15 +148,18 @@ import Network
 
 extension StreamClient {
     var visionProviderCanStart: Bool {
-        visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status != .started &&
+        visionProviderCall.target == .chatgptDots &&
+            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status != .started &&
             visionForwarding?.binding != nil && visionAudioIntentContext.admitted
     }
     var visionProviderCanStop: Bool {
-        visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status == .started &&
+        visionProviderCall.target == .chatgptDots &&
+            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status == .started &&
             visionProviderCall.result?.callSessionId != nil && visionForwarding?.binding != nil && visionAudioIntentContext.admitted
     }
     func performVisionProviderCall(_ action: ProviderCallRequest.Action) {
-        guard action == .start ? visionProviderCanStart : visionProviderCanStop,
+        guard visionProviderCall.target == .chatgptDots,
+              action == .start ? visionProviderCanStart : visionProviderCanStop,
               let peer = connection, authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
               let model = visionForwarding, let snapshot = model.snapshot, model.binding != nil,
               let request = try? ProviderCallRequest(requestId: UUID(), action: action,
@@ -143,7 +176,8 @@ extension StreamClient {
     }
     private func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) {
         let generation = visionAudioIntentConnection
-        guard visionProviderCall.connection == generation, let pending = visionProviderCall.pending else { return }
+        guard visionProviderCall.target == .chatgptDots,
+              visionProviderCall.connection == generation, let pending = visionProviderCall.pending else { return }
         let payload = Wire.encode(control)
         guard !payload.isEmpty, payload.count <= StreamMessage.clientPayloadLimit(for: .providerCallControl) else { return }
         peer.send(content: StreamMessage(kind: .providerCallControl, timestamp: Date().timeIntervalSince1970,

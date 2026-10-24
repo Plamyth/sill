@@ -170,16 +170,35 @@ struct SillVisionWorkspace: View {
                 VisionMicrophoneControls(client: client,
                                          allowStart: audioControlsAllowed,
                                          admit: withWindowOwnership)
-                HStack {
-                    Button("통화 시작") {
-                        withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.start) } }
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("통화 제어 대상", selection: Binding(
+                        get: { client.visionProviderCall.target },
+                        set: { target in
+                            withWindowOwnership {
+                                if audioControlsAllowed { client.visionProviderCall.selectTarget(target) }
+                            }
+                        })) {
+                        ForEach(VisionCallTarget.allCases, id: \.self) { target in
+                            Text(target.title).tag(target)
+                        }
                     }
-                    .disabled(!audioControlsAllowed || !client.visionProviderCanStart)
-                    Button("통화 종료") {
-                        withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.stop) } }
+                    .pickerStyle(.menu)
+                    .disabled(!audioControlsAllowed || !client.visionProviderCall.canChangeTarget)
+                    .accessibilityHint("통화 제어 대상을 선택합니다. 통화나 오디오 장치를 자동으로 전환하지 않습니다.")
+                    if client.visionProviderCall.target == .chatgptDots {
+                        HStack {
+                            Button("Dots 통화 시작") {
+                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.start) } }
+                            }
+                            .disabled(!audioControlsAllowed || !client.visionProviderCanStart)
+                            Button("Dots 통화 종료") {
+                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.stop) } }
+                            }
+                            .disabled(!audioControlsAllowed || !client.visionProviderCanStop)
+                        }
                     }
-                    .disabled(!audioControlsAllowed || !client.visionProviderCanStop)
                     Text(client.visionProviderCall.message).font(.caption)
+                    Text("대상 선택만으로 통화나 오디오 장치는 바뀌지 않습니다.").font(.caption)
                 }
             } else {
                 hosts
