@@ -177,6 +177,10 @@
 		F2170001000000000000B001 /* IPadAudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F001 /* IPadAudioForwarding.swift */; };
 		F2170001000000000000A002 /* StreamClient+AudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */; };
 		F2170001000000000000B002 /* StreamClient+AudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */; };
+		F2210001000000000000A001 /* IPadProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F001 /* IPadProviderCall.swift */; };
+		F2210001000000000000B001 /* IPadProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F001 /* IPadProviderCall.swift */; };
+		F2210001000000000000A002 /* StreamClient+ProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F002 /* StreamClient+ProviderCall.swift */; };
+		F2210001000000000000B002 /* StreamClient+ProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F002 /* StreamClient+ProviderCall.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -268,6 +272,8 @@
 		1B1B5EBF92F98EDB91D561E2 /* SillPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SillPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F2170001000000000000F001 /* IPadAudioForwarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadAudioForwarding.swift"; sourceTree = "<group>"; };
 		F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+AudioForwarding.swift"; sourceTree = "<group>"; };
+		F2210001000000000000F001 /* IPadProviderCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadProviderCall.swift"; sourceTree = "<group>"; };
+		F2210001000000000000F002 /* StreamClient+ProviderCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+ProviderCall.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -316,6 +322,8 @@
 				A1000001000000000000F003 /* StreamClient.swift */,
 				F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */,
 				F2170001000000000000F001 /* IPadAudioForwarding.swift */,
+				F2210001000000000000F002 /* StreamClient+ProviderCall.swift */,
+				F2210001000000000000F001 /* IPadProviderCall.swift */,
 				C3000001000000000000F001 /* RemoteAudioPlayer.swift */,
 				C3000001000000000000F004 /* IPadAudioSession.swift */,
 				D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */,
@@ -605,6 +613,8 @@
 				D5000001000000000000A001 /* IPadDesiredAudio.swift in Sources */,
 				F2170001000000000000A002 /* StreamClient+AudioForwarding.swift in Sources */,
 				F2170001000000000000A001 /* IPadAudioForwarding.swift in Sources */,
+				F2210001000000000000A002 /* StreamClient+ProviderCall.swift in Sources */,
+				F2210001000000000000A001 /* IPadProviderCall.swift in Sources */,
 				D5000001000000000000A002 /* StreamClient+DesiredAudio.swift in Sources */,
 				D4000001000000000000A007 /* IPadToolbarVisibility.swift in Sources */,
 				D4000001000000000000A002 /* IPadAudioRouteChooser.swift in Sources */,
@@ -693,6 +703,8 @@
 				4AC5A184E29E65112A39BD12 /* IPadDesiredAudio.swift in Sources */,
 				F2170001000000000000B002 /* StreamClient+AudioForwarding.swift in Sources */,
 				F2170001000000000000B001 /* IPadAudioForwarding.swift in Sources */,
+				F2210001000000000000B002 /* StreamClient+ProviderCall.swift in Sources */,
+				F2210001000000000000B001 /* IPadProviderCall.swift in Sources */,
 				5A8A07B2D5BFF28BDA22E29B /* StreamClient+DesiredAudio.swift in Sources */,
 				F68DBB46179583E6A988EA6A /* IPadToolbarVisibility.swift in Sources */,
 				95EA8E74BE7D69CD717101D1 /* IPadAudioRouteChooser.swift in Sources */,

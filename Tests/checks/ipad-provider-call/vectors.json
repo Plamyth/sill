@@ -1,0 +1,54 @@
+[
+  {
+    "name": "null",
+    "request": {
+      "requestId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "action": "start",
+      "expectedLeaseRevision": "7",
+      "pairedDeviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "desiredInput": true,
+      "desiredOutput": true,
+      "callSessionId": null
+    },
+    "requestDigest": "18d197b4658a01f00d8435e8d4b8e53cbca23c4bb118c190c53691cdbb4901f3"
+  },
+  {
+    "name": "ascii-stop",
+    "request": {
+      "requestId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "action": "stop",
+      "expectedLeaseRevision": "7",
+      "pairedDeviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "desiredInput": false,
+      "desiredOutput": true,
+      "callSessionId": "call-1"
+    },
+    "requestDigest": "1eab3f65f380796b8f68c6c9800fee3d47cfa254c566324fafb264cac887895a"
+  },
+  {
+    "name": "unicode-stop",
+    "request": {
+      "requestId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "action": "stop",
+      "expectedLeaseRevision": "7",
+      "pairedDeviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "desiredInput": true,
+      "desiredOutput": true,
+      "callSessionId": "통화😀é\n\u0000"
+    },
+    "requestDigest": "1fe01734f47e6ecabbb70bcc4ef1e7d35b67b646a4ff78006af0214706a8f232"
+  },
+  {
+    "name": "maximum-revision",
+    "request": {
+      "requestId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "action": "start",
+      "expectedLeaseRevision": "18446744073709551615",
+      "pairedDeviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "desiredInput": true,
+      "desiredOutput": false,
+      "callSessionId": null
+    },
+    "requestDigest": "01bef026c723e454515fe28b64c535693c0795fa2bf42af9e341766258ae5d08"
+  }
+]

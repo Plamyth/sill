@@ -12,6 +12,7 @@ extension StreamClient {
     }
 
     func desiredAudioSetConnection(_ connection: NWConnection?) {
+        providerCallSetConnection(connection)
         let peer = connection.map(ObjectIdentifier.init)
         guard desiredAudio.peer != peer else { return }
         retireAudioForwardingWire(unless: peer)
@@ -35,6 +36,7 @@ extension StreamClient {
 
     func desiredAudioObserve(_ list: WindowList, from peer: NWConnection) {
         guard connection === peer else { return }
+        observeIPadProviderCalls(list, from: peer)
         let oldScope = desiredAudio.scope
         audioForwardingCatalogAt = audioForwardingNow
         audioPrivacyState = list.audioPrivacy

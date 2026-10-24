@@ -168,6 +168,11 @@ final class StreamClient: ObservableObject {
     lazy var microphoneFrames = IPadMicrophoneFrameGate(admission: audioAdmission)
     var microphoneCapture: IPadMicrophoneCapture?
     var microphoneCaptureToken: UUID?
+    @Published var providerCall = IPadProviderCall(connection: UUID())
+    var providerCallConnection = UUID()
+    var providerCallPeer: ObjectIdentifier?
+    var providerCallCapability: Int?
+    var providerCallQueryWake: DispatchWorkItem?
     var audioForwarding = IPadAudioForwarding()
     var audioForwardingLocalGeneration = UUID()
     var audioForwardingWake: DispatchWorkItem?
@@ -4549,6 +4554,7 @@ final class StreamClient: ObservableObject {
         #if os(iOS)
         if receiveMicrophone(header, data, from: peer) { return }
         if receiveAudioForwarding(header, data, from: peer) { return }
+        if receiveIPadProviderCall(header, data, from: peer) { return }
         #endif
         #endif
         switch header.kind {

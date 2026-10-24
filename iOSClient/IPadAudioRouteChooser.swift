@@ -7,6 +7,7 @@ import StreamProtocol
 struct IPadAudioRouteChooser: View {
     @ObservedObject var client: StreamClient
     @Environment(\.dismiss) private var dismiss
+    @State private var callTarget = IPadCallTarget.defaultTarget
     @State private var selection = IPadAudioRoutePolicy.Selection()
     @State private var context: IPadAudioRoutePolicy.Context?
     @State private var acknowledgedMac: IPadAudioRouteAcknowledgments.Identity?
@@ -16,14 +17,54 @@ struct IPadAudioRouteChooser: View {
     @State private var macOutputUID = ""
     @State private var macCatalogToken: MacAudioRouteSession.CatalogToken?
     @State private var macCatalogWaitExpired = false
-    @State private var inputPorts = "iPad가 선택한 마이크"
-    @State private var outputPorts = "iPad가 선택한 출력 장치"
+    @State private var inputPorts = "입력 경로 미확인"
+    @State private var outputPorts = "출력 경로 미확인"
 
     private var mac: String { client.macName.isEmpty ? "연결된 Mac" : client.macName }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("통화 대상", selection: $callTarget) {
+                        ForEach(IPadCallTarget.allCases) { target in
+                            Text(target.title).tag(target)
+                        }
+                    }
+                    .accessibilityIdentifier("iPadCallTarget")
+                    switch callTarget {
+                    case .nativeCodex:
+                        Text("기본 대상은 Mac 순정 Codex 음성입니다. 아래 iPad 입력·출력 선택은 Mac 연결의 공통 음성 전달이며, 특정 Codex 통화에 연결됐다는 뜻은 아닙니다.")
+                        Text("순정 Codex 통화 시작·종료는 아직 지원하지 않습니다. 순정 Codex 권한과 사용자 정의 센츄리 활성 상태가 확인되기 전에는 통화 제어가 준비된 것으로 표시하지 않습니다.")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("iPadNativeCodexCallUnsupported")
+                    case .grokBot:
+                        Text("Grok Bot 통화 시작·종료는 아직 지원하지 않습니다. 다른 대상의 통화 명령으로 대신 실행하지 않습니다.")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("iPadGrokBotCallUnsupported")
+                    case .chatGPTDots:
+                        Button("ChatGPT Dots 통화 시작") { client.performIPadProviderCall(.start, target: callTarget) }
+                            .disabled(!client.iPadProviderCanStart)
+                            .accessibilityIdentifier("iPadProviderCallStart")
+                        Button("ChatGPT Dots 통화 종료", role: .destructive) { client.performIPadProviderCall(.stop, target: callTarget) }
+                            .disabled(!client.iPadProviderCanStop)
+                            .accessibilityIdentifier("iPadProviderCallStop")
+                        Text(client.providerCall.message)
+                            .accessibilityIdentifier("iPadProviderCallStatus")
+                        if client.providerCall.request != nil {
+                            Button("이전 Dots 요청 결과 확인") { client.checkPreviousIPadProviderCall(target: callTarget) }
+                                .disabled(!client.iPadProviderCanCheckPrevious)
+                                .accessibilityIdentifier("iPadProviderCallCheckPrevious")
+                        }
+                        if let history = client.providerCall.historicalMessage {
+                            Text(history).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("iPadProviderCallHistoricalResult")
+                        }
+                    }
+                } header: { Text("통화 대상과 제어") } footer: {
+                    Text("입력·출력 선택은 통화를 시작하지 않습니다. ChatGPT Dots는 별도 추가 기능입니다. 재연결할 때는 이전 Dots 요청 결과만 조회하며, 조회 기록은 현재 통화나 음성 권한을 증명하지 않습니다.")
+                }
+
                 Section {
                     Button("iPad 입력·출력 함께 사용") {
                         selection = .init(input: .iPadMicrophone, output: .iPadPlayback)
@@ -283,8 +324,8 @@ struct IPadAudioRouteChooser: View {
 
     private func readPorts() {
         let route = AVAudioSession.sharedInstance().currentRoute
-        inputPorts = route.inputs.isEmpty ? "iPad가 선택한 마이크" : route.inputs.map(\.portName).joined(separator: ", ")
-        outputPorts = route.outputs.isEmpty ? "iPad가 선택한 출력 장치" : route.outputs.map(\.portName).joined(separator: ", ")
+        inputPorts = route.inputs.isEmpty ? "입력 경로 미확인" : route.inputs.map(\.portName).joined(separator: ", ")
+        outputPorts = route.outputs.isEmpty ? "출력 경로 미확인" : route.outputs.map(\.portName).joined(separator: ", ")
     }
 }
 

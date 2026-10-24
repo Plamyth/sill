@@ -122,6 +122,7 @@ extension StreamClient {
             applyMicrophone(microphonePolicy.backgrounded())
         }
         if !playback && remoteAudioStatus.requested { remoteAudioControl.backgrounded() }
+        reconcileIPadProviderCall()
         guard let wake = audioForwarding.wakeAt, audioForwarding.context == audioForwardingContext,
               audioForwarding.context != nil else { return }
         let work = DispatchWorkItem { [weak self] in
