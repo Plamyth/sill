@@ -70,15 +70,9 @@ extension StreamClient {
     func confirmVisionDisplayPresentation() {
         dispatchPrecondition(condition: .onQueue(.main))
         if case .presented(let epoch) = visionInputBinding {
-            visionDisplaySelection.presented(epoch)
+            visionDisplaySelection.presented(epoch, macID: visionAutomaticDisplayMacID)
             if let macID = visionAutomaticDisplayMacID {
                 visionDisplaySelection.recoverAutomaticPresentation(epoch, macID: macID)
-            }
-            if let macID = visionAutomaticDisplayMacID,
-               let remembered = visionDisplaySelection.rememberedDisplay(macID: macID, epoch: epoch),
-               let bytes = try? JSONEncoder().encode(remembered) {
-                let key = "SillVerifiedDisplay." + macID
-                if UserDefaults.standard.data(forKey: key) != bytes { UserDefaults.standard.set(bytes, forKey: key) }
             }
         }
         reconcileVisionDisplaySubmission()
@@ -99,9 +93,7 @@ extension StreamClient {
             }
             return
         }
-        let data = UserDefaults.standard.data(forKey: "SillVerifiedDisplay." + macID)
-        let remembered = data.flatMap { $0.count <= 4096 ? try? JSONDecoder().decode(VisionDisplaySelection.Remembered.self, from: $0) : nil }
-        if let command = visionDisplaySelection.automaticCommand(macID: macID, remembered: remembered) {
+        if let command = visionDisplaySelection.automaticCommand(macID: macID) {
             _ = selectVisionDisplay(command)
         }
         reconcileVisionDisplaySubmission()
@@ -126,7 +118,7 @@ extension StreamClient {
         let known = visionDisplaySelection.known(command.requestID)
         #if os(visionOS)
         let presented = connection === visionDisplayPeer ? visionPresentedPeerEpoch : nil
-        let result = visionDisplaySelection.begin(command, presented: presented)
+        let result = visionDisplaySelection.begin(command, presented: presented, macID: visionAutomaticDisplayMacID)
         #else
         let result = visionDisplaySelection.begin(command)
         #endif

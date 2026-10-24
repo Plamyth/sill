@@ -103,6 +103,7 @@ struct VisionDisplaySelection {
     private var automaticOpportunity: AutomaticOpportunity?
     private var automaticInventories: [UUID: AutomaticInventory] = [:]
     private var automaticPhase = AutomaticPhase.open
+    private var rememberedManualDisplay: Remembered?
     private var newestSelectionAdmission: SourceSelectionAdmission?
     private var selectionAdmissionConflicted = false
 
@@ -123,10 +124,11 @@ struct VisionDisplaySelection {
         let wasAutomatic = pending?.command.automaticRevision != nil ||
             (pending == nil && automaticOpportunity != nil && automaticPhase != .closed)
         stopAutomatic()
+        rememberedManualDisplay = nil
         if wasAutomatic { unresolved = false }
     }
 
-    mutating func automaticCommand(macID: String, remembered: Remembered?) -> Command? {
+    mutating func automaticCommand(macID: String) -> Command? {
         guard automaticPhase == .open, let peerEpoch, let lease, let catalog else { return nil }
         guard catalog.automaticCapability == 1, let host = catalog.launchID,
               !host.isEmpty, host.utf8.count <= 128, let revision = catalog.selectionRevision,
@@ -156,7 +158,7 @@ struct VisionDisplaySelection {
             guard admission.generation > previous.admissionGeneration, catalog.displays == previous.displays else { return nil }
             target = choices.first { $0.id == previous.displayID }
         } else if automaticInventories.count >= 64 { return nil }
-        else if let remembered, remembered.macID == macID, remembered.launchID == host,
+        else if let remembered = rememberedManualDisplay, remembered.macID == macID, remembered.launchID == host,
            remembered.inventoryID == inventory, choices.filter({ $0.id == remembered.displayID }).count == 1 {
             target = choices.first { $0.id == remembered.displayID }
         } else {
@@ -192,7 +194,7 @@ struct VisionDisplaySelection {
         automaticPhase = .hostOwned
     }
 
-    func rememberedDisplay(macID: String, epoch: VideoEpoch) -> Remembered? {
+    private func rememberedDisplay(macID: String, epoch: VideoEpoch) -> Remembered? {
         guard foreground, lease != nil, let catalog, catalog.capability == 1, catalog.validInventory,
               catalog.source == .desktop, catalog.epoch == epoch,
               epoch.matches(source: .desktop, generation: catalog.generation),
@@ -296,10 +298,13 @@ struct VisionDisplaySelection {
         default: break
         }
     }
-    mutating func presented(_ epoch: VideoEpoch?) {
+    mutating func presented(_ epoch: VideoEpoch?, macID: String? = nil) {
         guard let waiting = pending, waiting.code == .observing,
               let next = waiting.postSendCatalog, let epoch, next.epoch == epoch,
               catalog == next else { return }
+        if waiting.command.automaticRevision == nil, let macID {
+            rememberedManualDisplay = rememberedDisplay(macID: macID, epoch: epoch)
+        }
         finish(.observed)
         unresolved = false
     }
@@ -339,7 +344,7 @@ struct VisionDisplaySelection {
         return Result(requestID: command.requestID, code: code)
     }
     func known(_ id: UUID) -> Bool { pending?.command.requestID == id || history.contains { $0.0.requestID == id } }
-    mutating func begin(_ command: Command, presented: VideoEpoch? = nil) -> Result {
+    mutating func begin(_ command: Command, presented: VideoEpoch? = nil, macID: String? = nil) -> Result {
         if command.automaticRevision == nil { stopAutomatic() }
         let result = preview(command)
         guard !known(command.requestID) else { return result }
@@ -347,6 +352,7 @@ struct VisionDisplaySelection {
         if let presented, catalog.epoch == presented, catalog.source == .desktop,
            catalog.activeDisplay == command.displayID,
            presented.matches(source: .desktop, generation: catalog.generation) {
+            if let macID { rememberedManualDisplay = rememberedDisplay(macID: macID, epoch: presented) }
             unresolved = false
             let unchanged = Result(requestID: command.requestID, code: .unchanged)
             remember(command, unchanged)
