@@ -145,6 +145,9 @@ package final class HostAudioPrivacy {
     private let clearLatch: () -> Bool
     private let authenticateLocal: (UUID) async -> Bool
     private let cancelAuthentication: () -> Void
+    private let authenticationChallengeID: () -> UUID?
+    private var localReturnCancellation: LocalReturnCancellation?
+    private var localReturnDeadline: ContinuousClock.Instant?
     private var localReturnID = UUID()
     private var returningLocal = false
     var isReturningLocal: Bool { returningLocal }
@@ -160,14 +163,24 @@ package final class HostAudioPrivacy {
     var localReturnDidComplete: ((_ commitAudio: () -> Bool) -> Bool)?
     package var authenticatedLocalReturnWillCommit: ((_ admission: @escaping @MainActor () -> Bool) async -> Bool)?
     package var localReturnUnavailableReason: String? { participants.authenticatedLocalReturnUnavailableReason }
+    package var localAuthenticationWillBegin: ((UUID) -> Void)?
+    package var localAuthenticationChallengeID: UUID? {
+        guard authenticatingLocal, !returningLocal, latched, persistenceHealthy,
+              localReturnCancellation?.isCancelled == false,
+              let deadline = localReturnDeadline, ContinuousClock.now < deadline,
+              let challenge = authenticationChallengeID(), challenge == localReturnID else { return nil }
+        return challenge
+    }
 
     init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
          localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
          clearLatch: @escaping () -> Bool = { false }, authenticateLocal: @escaping (UUID) async -> Bool = { _ in false },
-         cancelAuthentication: @escaping () -> Void = {}, nativeStartup: NativeAudioStartup? = nil) {
+         cancelAuthentication: @escaping () -> Void = {}, authenticationChallengeID: @escaping () -> UUID? = { nil },
+         nativeStartup: NativeAudioStartup? = nil) {
         self.hal = hal; self.latched = latched; self.persist = persist
         self.localState = localState; self.saveLocal = saveLocal; self.clearLatch = clearLatch
         self.authenticateLocal = authenticateLocal; self.cancelAuthentication = cancelAuthentication
+        self.authenticationChallengeID = authenticationChallengeID
         let startup = nativeStartup ?? NativeAudioStartup()
         self.nativeStartup = startup
         startup.participants.membershipChanged = { [weak self] phase in
@@ -359,8 +372,9 @@ package final class HostAudioPrivacy {
     }
 
     private func performLocalReturn(budgetMilliseconds: Int, cancellation: LocalReturnCancellation) async -> Bool {
-        guard !cancellation.isCancelled, (1...30_000).contains(budgetMilliseconds), localReturnUnavailableReason == nil else { return false }
+        guard !cancellation.isCancelled, (1...30_000).contains(budgetMilliseconds) else { return false }
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
+        guard await participants.recoverClosedLocalReturn(until: deadline), !cancellation.isCancelled else { return false }
         guard await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
             await self.nativeStartup.waitUntilInitialized(); return true
         }) == true else { return false }
@@ -368,7 +382,11 @@ package final class HostAudioPrivacy {
               latched, persistenceHealthy, !returningLocal, !authenticatingLocal,
               let original = localState, original.isValid else { return false }
         authenticatingLocal = true
+        localReturnCancellation = cancellation
+        localReturnDeadline = deadline
         defer {
+            localReturnCancellation = nil
+            localReturnDeadline = nil
             authenticatingLocal = false
             returningLocal = false
             if latched && !state.protected { schedule() }
@@ -384,9 +402,14 @@ package final class HostAudioPrivacy {
         forwardingInvalidated?()
         publish(AudioPrivacyState(version: 2, protected: false, reason: "로컬 복귀 인증을 확인하는 동안 원격 오디오를 차단합니다."))
         let authenticated = await LocalAudioCompletion<Bool>.wait(until: deadline) {
-            guard !Task.isCancelled, ContinuousClock.now < deadline, self.localReturnID == request,
-                  self.privacyGeneration == generation, self.participants.matches(membership),
-                  self.latched, self.persistenceHealthy else { return false }
+            let current = {
+                !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < deadline &&
+                self.localReturnID == request && self.privacyGeneration == generation &&
+                self.participants.matches(membership) && self.latched && self.persistenceHealthy
+            }
+            guard current() else { return false }
+            self.localAuthenticationWillBegin?(request)
+            guard current() else { return false }
             return await self.authenticateLocal(request)
         }
         guard authenticated == true, !Task.isCancelled, ContinuousClock.now < deadline, localReturnID == request,
