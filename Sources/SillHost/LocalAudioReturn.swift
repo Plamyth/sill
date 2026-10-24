@@ -276,7 +276,7 @@ final class LocalAudioJournal {
          store: @escaping (Data) -> Void, load: @escaping () -> Data?, synchronize: @escaping () -> Bool) {
         self.store = store; self.load = load; self.synchronize = synchronize
         if let data {
-            if let envelope = try? JSONDecoder().decode(Envelope.self, from: data), envelope.version == 2,
+            if let envelope = try? JSONDecoder().decode(Envelope.self, from: data), (envelope.version == 2 || envelope.version == 3),
                (!envelope.latched || envelope.original?.isValid == true) {
                 latched = envelope.latched
                 original = envelope.latched ? envelope.original : nil
@@ -300,7 +300,7 @@ final class LocalAudioJournal {
 
     func write(latched: Bool, original: LocalAudioState?) -> Bool {
         guard !latched || original?.isValid == true else { return false }
-        guard let data = try? JSONEncoder().encode(Envelope(version: 2, latched: latched, original: original)) else { return false }
+        guard let data = try? JSONEncoder().encode(Envelope(version: 3, latched: latched, original: original)) else { return false }
         store(data)
         guard synchronize(), load() == data else { return false }
         self.latched = latched

@@ -1,5 +1,13 @@
 # 호스트 원격 오디오 보호 포팅 검사
 
+## 오디오 저널 구버전 복귀 회귀
+
+`JournalRollback.swift`는 메모리 closure로만 저장한다. `LegacyAudioJournal.swift`는 실제 214 소스 `5c14c5893d336f57c4dd278f439490bf2b7cf77d`의 `Sources/SillHost/LocalAudioReturn.swift`에서 `LocalAudioState`와 `LocalAudioJournal` 블록을 추출하고 두 이름에 `Legacy` 접두사만 붙인 fixture다. Foundation import와 journal의 기존 MainActor 지정을 포함한다.
+
+같은 `CCRHostAudioPrivacyJournal.v2` key에서 새 reader는 envelope 2·3을 읽고 writer는 3을 저장한다. `LocalAudioState.version`과 공개 `audioPrivacy.version`은 2다. 실제 214 codec의 v2 roundtrip은 streams를 잃는다. 새 envelope 3은 214에서 `latched=true/original=nil`로 거부되며 재저장은 실패하고 store 호출이 0이다. 새 reader의 재시작은 모든 stream 필드와 원래 active 값을 보존한다.
+
+`python3 -B Tests/checks/host-audio-privacy/run.py OUTPUT`은 필요한 모듈을 컴파일하고 이 회귀와 기존 주입 검사를 함께 실행한다. legacy v2→v3 전환, 미지원·손상 버전의 fail-closed, 저장·synchronize·readback 실패 시 주입 property 쓰기 0을 확인한다. `OUTPUT`은 존재하지 않는 경로여야 한다. Mini에서는 승인된 `mini-ephemeral-source`로 실행하고 입력 해시와 임시 경로 삭제 영수증을 함께 보관한다. 실제 UserDefaults·HAL·오디오 stream·UI·OS 인증·Host·기기·서비스·설치는 실행하지 않는다.
+
 기준 소스는 `956abdca5056597e1045fc32b5e9422376f80be2`다. `190f2ab`, `a2567e7`의 보호·인증 복귀·참여자·실제 종료 코드와 현재 peer별 카탈로그를 함께 검사한다. 별도 Sentry 구현과 HTTP 원장은 이 변경에 포함하지 않는다.
 
 ## 실행

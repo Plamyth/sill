@@ -93,7 +93,7 @@ func journalRollbackChecks() {
     for latched in [false, true] {
         for failure in ["store", "synchronize", "readback"] {
             let hal = PrivacyFakeHAL()
-            stored = latched ? durable : nil
+            stored = latched ? v2 : nil
             let before = stored
             let failing = LocalAudioJournal(data: stored, store: { if failure != "store" { stored = $0 } },
                 load: { failure == "readback" ? Data([0]) : stored }, synchronize: { failure != "synchronize" })
