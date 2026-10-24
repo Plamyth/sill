@@ -355,13 +355,14 @@ final class SentryAdmission: @unchecked Sendable {
             .rejected(SentryControlResponse(requestID: request.requestID, accepted: false,
                 operationState: unknown ? .unknown : .rejected, code: code, state: state))
         }
-        guard request.hostBootID == bootID else { return rejection(.unknown, unknown: true) }
-        guard request.authorizationGeneration == identity.generation else { return rejection(.notAuthorized) }
         if let record = operations[request.requestID] {
-            guard record.deviceID == identity.deviceID else { return rejection(.notAuthorized) }
+            guard record.deviceID == identity.deviceID,
+                  record.request.authorizationGeneration == identity.generation else { return rejection(.notAuthorized) }
             guard record.request.rawRequest == request.rawRequest else { return rejection(.requestConflict) }
             return .readback(responseLocked(record, for: peer)!)
         }
+        guard request.hostBootID == bootID else { return rejection(.unknown, unknown: true) }
+        guard request.authorizationGeneration == identity.generation else { return rejection(.notAuthorized) }
         // 원장을 잃은 이전 boot/session의 본문은 조회 결과 미확인이다. 새 CAS로 바꾸어 실행하지 않는다.
         guard request.sessionID == sessions[peer]?.id else {
             return rejection(.unknown, unknown: true)

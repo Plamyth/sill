@@ -175,6 +175,13 @@ import StreamProtocol
         expect(duplicate.operationState == .pending && duplicate.state == gate.status(for: peer), "pending 중 동일 원본문은 readback")
         let conflict = response(gate.prepareControl(mutate(off, "desired", true), from: peer))!
         expect(conflict.code == .requestConflict && !conflict.accepted, "동일 ID의 다른 원본문 conflict")
+        for key in ["hostBootID", "sessionID", "revision", "authorizationGeneration"] {
+            expect(response(gate.prepareControl(mutate(off, key, UUID().uuidString.lowercased()), from: peer))?.code == .requestConflict,
+                "알려진 동일 작업의 ID 필드를 고쳐도 원본문 conflict")
+        }
+        let spaced = try! SentryControlRequest(rawRequest: off.rawRequest + Data([32]))
+        expect(response(gate.prepareControl(spaced, from: peer))?.code == .requestConflict,
+            "동일 필드의 공백 변경도 같은 원본문으로 간주하지 않음")
         let epoch = UUID()
         gate.capture(epoch, for: peer)
         let applied = gate.completeControl(ticket, result: .offVerified(curtainsReleased: true, tapReleased: true, heldInputCleared: true))!
@@ -296,6 +303,32 @@ import StreamProtocol
         gate.completeLocalReturn()
         expect(gate.status(for: peer) == nil && response(gate.prepareControl(first, from: peer)) == nil, "로컬 복귀는 세션·권한·원장을 회수")
     }
+    static func reentrantReleaseFenceChecks() {
+        let f = Fixture(), gate = f.gate, peer = f.peer, epoch = UUID()
+        gate.capture(epoch, for: peer)
+        expect(gate.allowsActions(peer) && gate.allows(peer, epoch: epoch), "release 준비 전 일반 입력과 frame 허용 상태")
+        let request = f.request(false), ticket = f.prepare(request)
+        var queuedDownOrKey = 0
+        func verifyReleaseWithSynchronousChangedCallback() {
+            if gate.allowsActions(peer) { queuedDownOrKey += 1 }
+            if gate.allows(peer, epoch: epoch) { queuedDownOrKey += 1 }
+        }
+        verifyReleaseWithSynchronousChangedCallback()
+        expect(queuedDownOrKey == 0 && gate.sourceSelectionAdmission(for: peer)?.ready == false,
+            "표면 verify의 동기 changed 재진입은 종료 부채 뒤 새 down/key를 추가하지 않음")
+        expect(gate.completeControl(ticket, result: .pending)?.operationState == .pending,
+            "물리 release가 아직 끝나지 않았으면 pending fence 유지")
+        verifyReleaseWithSynchronousChangedCallback()
+        expect(queuedDownOrKey == 0 && gate.controlTicketIsCurrent(ticket), "비동기 완료 전 재진입도 현재 실행 fence로 거절")
+        expect(response(gate.prepareControl(request, from: peer))?.operationState == .pending,
+            "generic 입력 fence 동안 제어권한 readback 경로는 계속 열림")
+        _ = gate.completeControl(ticket, result: .offVerified(curtainsReleased: true, tapReleased: true, heldInputCleared: true))
+        expect(gate.allowsActions(peer) && gate.allows(peer, epoch: epoch), "실제 종료 부채 정리와 release 완료 뒤만 일반 경로 재개")
+        let on = f.prepare(f.request(true))
+        _ = gate.completeControl(on, result: .onPrepared(surfacesVerified: true))
+        expect(!gate.controlTicketIsCurrent(on) && gate.allowsActions(peer) && gate.sourceSelectionAdmission(for: peer)?.ready == true,
+            "onPrepared는 실행 fence를 해제하고 검증된 표면의 source selection 준비를 복구")
+    }
     static func preparedOnChecks() {
         let f = Fixture(), gate = f.gate, peer = f.peer
         let request = f.request(true), ticket = f.prepare(request)
@@ -342,6 +375,7 @@ import StreamProtocol
         try codecChecks(URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true))
         admissionChecks()
         lifecycleChecks()
+        reentrantReleaseFenceChecks()
         preparedOnChecks()
         raceChecks()
         print("CHECKS_COMPLETE \(count)")
