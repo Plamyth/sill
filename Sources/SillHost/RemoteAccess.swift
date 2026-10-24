@@ -83,6 +83,8 @@ package final class RemoteAccess {
     private(set) var paired: [PairedDevice] = []
     private var ownerRegistry: OwnerBootstrapRegistry?
     private var ownerSensor = TailnetDeviceAccess()
+    private let mobileEnrollmentDependencies: MobileEnrollmentDependencies
+    private var mobileEnrollmentRuntime: MobileEnrollmentHostRuntime?
 
     private var window = PairingWindow()
     let trust = TrustBox()
@@ -166,7 +168,12 @@ package final class RemoteAccess {
     /// `identityProblem` says why. That includes a trust list that cannot be read: kept with an
     /// empty list, the store would save the next pairing over it and every earlier pairing would be
     /// gone.
-    package init(store: IdentityStore) {
+    package convenience init(store: IdentityStore) {
+        self.init(store: store, mobileEnrollmentDependencies: .init())
+    }
+
+    init(store: IdentityStore, mobileEnrollmentDependencies: MobileEnrollmentDependencies) {
+        self.mobileEnrollmentDependencies = mobileEnrollmentDependencies
         var identity: HostIdentity?
         var problem: String?
         var paired: [PairedDevice] = []
@@ -261,6 +268,7 @@ package final class RemoteAccess {
         remotePort = config.remotePort
         internetAccess = config.remoteAccess && config.internetAccess
         requirePairing = config.requirePairing
+        updateMobileEnrollment()
         if wasOn, !remoteAccess {
             if let w = window.current, w.forRemote { window.close(.cancelled); windowClosed(.cancelled, reopen: false) }
             print("Remote access off.")
@@ -796,6 +804,26 @@ package final class RemoteAccess {
                          publicSPKIDER: SPKI.der(point: point))
     }
 
+    private func updateMobileEnrollment() {
+        guard remoteAccess else { stopMobileEnrollment(); return }
+        if mobileEnrollmentRuntime == nil {
+            guard let identity, let profile = try? mobileEnrollmentHostProfile(identity) else { return }
+            let clock = mobileEnrollmentDependencies.clock
+            mobileEnrollmentRuntime = MobileEnrollmentHostRuntime(identity: identity, host: profile,
+                observeActive: { [weak self] challenge in
+                    guard let self else { throw MobileEnrollmentRuntimeFailure.stopped }
+                    let payload = try self.mobileEnrollmentObservation(challenge: challenge, nowMS: clock().milliseconds)
+                    return .init(reason: payload.reason, checkedAtMilliseconds: payload.checkedAt)
+                }, currentRemoteAccess: { [weak self] in self?.remoteAccess ?? false },
+                dependencies: mobileEnrollmentDependencies)
+        }
+        mobileEnrollmentRuntime?.start()
+    }
+
+    func stopMobileEnrollment() {
+        mobileEnrollmentRuntime?.stop()
+    }
+
     private func currentEnrollmentReason(store: IdentityStore, identity: HostIdentity,
                                          principal: String, fingerprint: String) throws -> MobileEnrollment.ActiveReason {
         let registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
@@ -913,6 +941,8 @@ package final class RemoteAccess {
     }
 
     #if OWNER_BOOTSTRAP_CONTRACT
+    var skipsNetworkWatchersForTesting = false
+
     func configureOwnerBootstrapForTesting(sensor: TailnetDeviceAccess, enabled: Bool) {
         ownerSensor = sensor
         if remoteAccess != enabled {
@@ -1202,6 +1232,9 @@ package final class RemoteAccess {
 
     /// Reachability runs with the door; the router is asked only with the internet switch on.
     private func updateWatchers() {
+        #if OWNER_BOOTSTRAP_CONTRACT
+        if skipsNetworkWatchersForTesting { return }
+        #endif
         let wanted = identity != nil && (remoteAccess || remoteWindowOpen)
         if wanted, reachability == nil {
             let r = Reachability { [weak self] snapshot in self?.reachabilityChanged(snapshot) }
