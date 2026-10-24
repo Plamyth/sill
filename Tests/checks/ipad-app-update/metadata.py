@@ -66,7 +66,7 @@ target = next(value for value in objects.values() if value.get("isa") == "PBXNat
 phases = [objects[ref] for ref in target["buildPhases"]]
 identity_phase = next(phase for phase in phases if phase.get("name") == "Prepare iPad source identity")
 assert "ipad-source-identity.py" in identity_phase["shellScript"]
-assert identity_phase["outputPaths"] == ["$(DERIVED_FILE_DIR)/CCR-Source-Info.plist"]
+assert identity_phase["outputPaths"] == ["$(DERIVED_FILE_DIR)/CCR-Source-Info.plist", "$(DERIVED_FILE_DIR)/CCR-Source-Info.pending.plist"]
 config_list = objects[target["buildConfigurationList"]]
 for reference in config_list["buildConfigurations"]:
     settings = objects[reference]["buildSettings"]

@@ -595,6 +595,7 @@
             name = "Prepare iPad source identity";
             outputPaths = (
                 "$(DERIVED_FILE_DIR)/CCR-Source-Info.plist",
+                "$(DERIVED_FILE_DIR)/CCR-Source-Info.pending.plist",
             );
             runOnlyForDeploymentPostprocessing = 0;
             shellPath = /bin/sh;
