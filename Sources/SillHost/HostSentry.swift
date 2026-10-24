@@ -145,6 +145,13 @@ final class HostSentry {
         else { invalidateVerification() }
     }
 
+    func localReturnActivityChanged(_ active: Bool) {
+        forwardingRevision = UUID()
+        admission.setLocalReturnRequestActive(active)
+        changed?()
+        if !active { surfacesChanged() }
+    }
+
     func start(recoverAudio: () -> Void = {}) {
         if admission.isRequested {
             recoverAudio()

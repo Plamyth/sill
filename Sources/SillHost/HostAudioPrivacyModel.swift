@@ -243,6 +243,8 @@ package final class HostAudioPrivacy {
     private var returningLocal = false
     var isReturningLocal: Bool { returningLocal }
     private var authenticatingLocal = false
+    package var localReturnInProgress: Bool { authenticatingLocal || returningLocal }
+    package var localReturnActivityChanged: (() -> Void)?
     package var forwardingIntentAllowed: Bool { !authenticatingLocal && !returningLocal }
     private var privacyGeneration = UUID()
     private var persistenceHealthy = true
@@ -489,12 +491,14 @@ package final class HostAudioPrivacy {
             localReturnDeadline = nil
             authenticatingLocal = false
             returningLocal = false
+            localReturnActivityChanged?()
             if latched && !state.protected { schedule() }
         }
         let request = UUID()
         let generation = privacyGeneration
         let membership = participants.snapshot
         localReturnID = request
+        localReturnActivityChanged?()
         forwardingRevision = UUID()
         forwardingInvalidated?()
         publish(AudioPrivacyState(version: 2, protected: false, reason: "로컬 복귀 인증을 확인하는 동안 원격 오디오를 차단합니다."))

@@ -31,11 +31,24 @@ import StreamProtocol
             fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
         var bridge: PrivacySentryBridge!
         var calls = 0
+        var newcomers: [NSObject] = []
         let privacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: hal.operations), latched: true,
             localState: try! LocalAudioState(hal.snapshot), authenticateLocal: { _ in
                 calls += 1
                 expect(!bridge.server.sentryAdmission.allowsActions(ObjectIdentifier(peer)),
                        "실제 privacy 연결은 첫 인증 await 전에 메뉴·창 명령 인가를 동기 철회")
+                let newcomer = NSObject(); newcomers.append(newcomer)
+                let next = ObjectIdentifier(newcomer), admission = bridge.server.sentryAdmission
+                admission.register(next, externalRoute: false)
+                admission.admit(next)
+                let owner = SentryAdmission.VerifiedOwnerDevice(deviceID: String(repeating: "a", count: 64),
+                    encryptedTLS: true, currentPairedOwner: true)!
+                expect(admission.grantControl(to: next, verifiedOwner: owner) != nil,
+                       "인증 중 연결된 기존 소유 기기의 권한 식별은 보존")
+                expect(!admission.allowsActions(next) && admission.sourceSelectionAdmission(for: next)?.ready == false,
+                       "새 소유 기기도 인증 대기 중 메뉴·선택 명령은 차단")
+                expect(!admission.allows(ObjectIdentifier(peer), epoch: nil),
+                       "Sentry 비활성 상태에서도 인증 진행 중 미디어 인가 차단")
                 await Task.yield()
                 expect(!bridge.server.sentryAdmission.allowsActions(ObjectIdentifier(peer)),
                        "별도 reconcile 호출 없이 인증 대기 중 원격 명령 인가 유지 차단")

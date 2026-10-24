@@ -484,6 +484,10 @@ package final class StreamCoordinator {
                 self.server.closeSessions("인증된 로컬 복귀로 원격 세션이 종료되었습니다.", matching: { _ in true })
                 return true
             }
+            privacy.localReturnActivityChanged = { [weak self, weak privacy] in
+                guard let self, let privacy else { return }
+                self.sentry?.localReturnActivityChanged(privacy.localReturnInProgress)
+            }
             privacy.changed = { [weak self] state in
                 self?.audioPrivacyChanged(state)
                 self?.sentryAudioProtectionChanged()
