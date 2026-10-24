@@ -3862,7 +3862,7 @@ extension StreamCoordinator {
                 restoreCurtains: { platform.restoreCurtains() }, released: { platform.releaseVerified }),
             prepareRelease: { [weak self] in
                 guard let self else { return false }
-                return platform.prepareRelease { self.injector.prepareRelease() }
+                return platform.prepareAuthenticatedLocalRelease { self.injector.prepareRelease() }
             },
             prepareRemoteRelease: { [weak self] in
                 guard let self else { return false }
