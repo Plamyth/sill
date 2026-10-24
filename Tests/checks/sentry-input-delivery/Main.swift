@@ -18,6 +18,7 @@ private final class HostSentryPlatform: NSObject {
     var changingLifecycle = false
     var localReturnDown: CGWindowID?
     var requestLocalReturn: (() -> Void)?
+    var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
     var usable = true
     var buttonID: CGWindowID? = 90
     private var curtains: [Int: Curtain] = [:]

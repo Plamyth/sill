@@ -7,6 +7,7 @@ final class CurtainPlatformFixture {
     var state = State.idle
     var changed: (() -> Void)?
     var localReturnReason: () -> String? = { nil }
+    var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
     var changingLifecycle = false
     var sessionActive = true, sleeping = false, notifiedLocked = false
     var localReturnDown: UInt32?
