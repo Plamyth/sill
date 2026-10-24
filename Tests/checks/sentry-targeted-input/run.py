@@ -129,7 +129,7 @@ inert = inert.replace(block(injector, 'private func pointerNow()'),
 inert = inert.replace(block(injector, 'private func remindAboutAccessibilityIfNeeded()'),
                       'private func remindAboutAccessibilityIfNeeded() {}')
 egress_markers = ['private struct PointerTarget {', 'private var isProtected:',
-    'func prepareRelease(cleanup:', 'func prepareRemoteRelease(', 'var releaseVerified:', 'func release()', 'func protectedPointerEgress(', 'private func postProtectedPointer(', 'private func pointerTarget(']
+    'func prepareRelease(cleanup:', 'func prepareAuthenticatedLocalRelease(', 'func prepareRemoteRelease(', 'var releaseVerified:', 'func release()', 'func protectedPointerEgress(', 'private func postProtectedPointer(', 'private func pointerTarget(']
 egress = '\n'.join(block(platform, m) for m in egress_markers) + '\nprivate var pointerTargets: [Int: PointerTarget] = [:]\nprivate var scrollHandoff: PointerTarget?\n'
 egress = egress.replace('event.postToPid(target.pid)', 'posted.append((target.pid, event.copy()!))')
 egress = egress.replace('NSRunningApplication(processIdentifier: pid)', 'apps[pid]')
