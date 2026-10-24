@@ -21,6 +21,9 @@ private final class ReturnHAL: HostAudioPrivacyHAL {
             else { snapshot.devices[index].outputMuted = true }
         case .select(let kind, let id):
             switch kind { case .input: snapshot.input = id; case .output: snapshot.output = id; case .systemOutput: snapshot.systemOutput = id }
+        case .deactivateStream:
+            guard let next = snapshot.applying(change) else { return false }
+            snapshot = next
         }
         return true
     }

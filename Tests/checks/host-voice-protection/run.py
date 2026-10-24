@@ -29,6 +29,7 @@ sources = [root / 'Sources/SillHost' / (name + '.swift') for name in [
     'HostAudioPrivacy', 'HostAudioPrivacyModel', 'HostExclusiveAudioSilence', 'LocalAudioReturn', 'LocalAudioParticipants',
     'SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'AudioHardwareRoutes']]
 sources += [here / 'Main.swift', here / 'FakeHAL.swift', here / 'LocalReturn.swift', here / 'Exclusive.swift', output / 'CoordinatorFixture.swift']
+sources += [root / 'Tests/checks/host-audio-privacy/StreamSilence.swift']
 inputs = sorted(set(sources + [root / 'Sources/SillHost/StreamCoordinator.swift', root / 'Package.swift', here / 'CoordinatorFixture.swift', Path(__file__).resolve()] + list((root / 'Sources/StreamProtocol').glob('*.swift')) + [p for p in (root / 'Sources/AudioSilence').rglob('*') if p.is_file()]))
 hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 modules = build / 'Modules'

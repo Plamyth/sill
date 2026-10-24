@@ -135,6 +135,7 @@ struct HostAudioPrivacyChecks {
         await ownerChecks()
         wireChecks()
         await localReturnChecks()
+        await streamSilenceChecks()
         exclusiveSilenceChecks()
         let boundaryHAL = PrivacyFakeHAL(), boundaryPrivacy = guardFor(boundaryHAL)
         expect(boundaryPrivacy.armAndVerify(), "boundary fixture armed")
