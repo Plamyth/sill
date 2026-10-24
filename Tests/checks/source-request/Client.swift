@@ -33,6 +33,7 @@ enum SavedMacs {
     // EXPECTED_SOURCE_STATE
     // AUTOMATIC_TICKET
     // DISPLAY_TYPES
+    // DISPLAY_MEMORY_STATE
     // SOURCE_ADMISSION_STATE
     var defaults = TestDefaults()
     enum Route { case network, remote; var isRemote: Bool { self == .remote } }
@@ -61,7 +62,8 @@ enum SavedMacs {
     var automaticSubmission: SessionLink.Submission?
     var resumeSource: StreamSource?
     var active = StreamSource.window(1001)
-    func invalidatePresentedInput() {}
+    var inputInvalidations = 0
+    func invalidatePresentedInput() { inputInvalidations += 1 }
     var remoteAudioControl = AudioControl()
     var link = SessionLink()
     var choicesSent = 0

@@ -271,6 +271,7 @@ def client_input(block, root, here):
     client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', '').replace('UserDefaults.standard', 'defaults'))
     client = client.replace('// SOURCE_ADMISSION_STATE', block(text, 'private struct SourceSelectionObservation').replace('private ', '') + '\n' + '\n'.join(line.strip().replace('private ', '') for line in text.splitlines() if 'private var sourceSelectionObservation:' in line or 'private var pendingAutomaticSourceTicket:' in line))
     client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('private ', '') for s in ['private struct InitialDisplayOpportunity', 'private struct RememberedDisplay', 'private struct PendingDisplaySelection']))
+    client = client.replace('// DISPLAY_MEMORY_STATE', next(line.strip().replace('private ', '') for line in text.splitlines() if 'private static var rememberedDisplays:' in line))
     client = client.replace('// EXPECTED_SOURCE_STATE', next(line.strip().replace('private ', '') for line in text.splitlines() if 'private var expectedSourceIntent:' in line))
     for marker, signature in [('// EXPECTED_SOURCE', 'private enum ExpectedSourceIntent'), ('// AUTOMATIC_TICKET', 'private struct AutomaticSourceTicket'), ('// RESUME_SOURCE', 'if let resume = self.resumeSource'), ('// IDLE_FALLBACK', 'if let ticket = self.automaticTicket')]:
         replacement = block(text, signature).replace('private ', '')

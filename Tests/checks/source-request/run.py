@@ -33,6 +33,7 @@ client = client.replace('// EXPECTED_SOURCE_STATE', next(line.strip().replace('p
 client = client.replace('// EXPECTED_SOURCE', block(text, 'private enum ExpectedSourceIntent').replace('private ',''))
 client = client.replace('// AUTOMATIC_TICKET', '\n'.join(block(text, s).replace('private ','') for s in ['private struct AutomaticSourceTicket', 'private struct AutomaticConnectionOpportunity']))
 client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('private ','') for s in ['private struct InitialDisplayOpportunity', 'private struct RememberedDisplay', 'private struct PendingDisplaySelection']))
+client = client.replace('// DISPLAY_MEMORY_STATE', next(line.strip().replace('private ', '') for line in text.splitlines() if 'private static var rememberedDisplays:' in line))
 client = client.replace('// RESUME_SOURCE',block(text,'if let resume = self.resumeSource'))
 client = client.replace('// IDLE_FALLBACK',block(text,'if let ticket = self.automaticTicket'))
 inputs = {name:(root/'Sources/StreamProtocol'/name).read_text() for name in ['Switcher.swift','Sentry.swift','SentryControl.swift','AudioPrivacy.swift','AudioForwarding.swift','StreamMessage.swift','AudioRouting.swift']}

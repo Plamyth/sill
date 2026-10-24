@@ -820,8 +820,11 @@ final class StreamClient: ObservableObject {
         let inventoryID: UUID
         let displayID: UInt32
     }
+    // 화면 선택은 앱 프로세스 동안만, StreamClient가 교체되어도 유지한다.
+    private static var rememberedDisplays: [String: RememberedDisplay] = [:]
     private struct PendingDisplaySelection {
         let display: RememberedDisplay
+        let origin: SourceRequest.Origin
         let peer: ObjectIdentifier
         let intent: UInt64
         let revision: String?
@@ -939,8 +942,8 @@ final class StreamClient: ObservableObject {
               let epoch = list.videoEpoch, epoch.isValid, epoch.source == .desktop,
               epoch.generation == list.inputGeneration,
               epoch.id != pending.epoch else { return }
-        if let data = try? JSONEncoder().encode(pending.display) {
-            UserDefaults.standard.set(data, forKey: "SillVerifiedDisplay." + pending.display.macID)
+        if pending.origin == .human {
+            Self.rememberedDisplays[pending.display.macID] = pending.display
         }
         pendingDisplaySelection = nil
     }
@@ -992,8 +995,7 @@ final class StreamClient: ObservableObject {
         guard !Self.noAutoDesktop, automaticDisplaySelection == 1,
               let macID = authenticatedDisplayMacID(), let launchID = sessionHost, !launchID.isEmpty,
               let inventory = displayInventoryID else { return false }
-        let remembered = UserDefaults.standard.data(forKey: "SillVerifiedDisplay." + macID)
-            .flatMap { try? JSONDecoder().decode(RememberedDisplay.self, from: $0) }
+        let remembered = Self.rememberedDisplays[macID]
         let chosen: DisplayInfo?
         if let remembered, remembered.macID == macID, remembered.launchID == launchID,
            remembered.inventoryID == inventory,
@@ -4289,6 +4291,7 @@ final class StreamClient: ObservableObject {
         if let macID = authenticatedDisplayMacID(), let launchID = sessionHost, !launchID.isEmpty {
             pendingDisplaySelection = PendingDisplaySelection(
                 display: RememberedDisplay(macID: macID, launchID: launchID, inventoryID: displayInventoryID, displayID: display.id),
+                origin: origin,
                 peer: ObjectIdentifier(peer), intent: explicitSourceIntent, revision: selectionRevision, epoch: sourceCatalogEpoch)
         }
         #if os(visionOS)

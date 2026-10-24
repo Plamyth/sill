@@ -11,7 +11,10 @@ import Foundation
         object["sourceSelectionAdmission"] = ["schemaVersion": version, "generation": generation, "ready": ready]
         return try? JSONDecoder().decode(WindowList.self, from: JSONSerialization.data(withJSONObject: object))
     }
-    func fresh() -> Client { let client = Client(); client.active = .none; return client }
+    func fresh() -> Client {
+        Client.rememberedDisplays = [:]
+        let client = Client(); client.active = .none; return client
+    }
     func picks(_ client: Client) -> [DisplaySelection] {
         client.allSent.filter { $0.0 == .selectDisplay }.compactMap { Wire.decode(DisplaySelection.self, from: $0.1) }
     }
@@ -227,6 +230,7 @@ import Foundation
         displayInventoryID: inventory, desktopSelectionRequired: true, sourceSelectionAdmission: SourceSelectionAdmission(generation: 1, ready: true))
     idle.automaticDisplaySelection = 1
     func fresh(_ defaults: TestDefaults? = nil) -> Client {
+        Client.rememberedDisplays = [:]
         let client = Client()
         client.active = .none
         if let defaults { client.defaults = defaults }
@@ -237,7 +241,7 @@ import Foundation
     }
     func seed(_ client: Client, mac: String = "trusted-mac", launch: String = "host", inventoryID: UUID? = nil, id: UInt32 = 13) {
         let saved = Client.RememberedDisplay(macID: mac, launchID: launch, inventoryID: inventoryID ?? inventory, displayID: id)
-        client.defaults.set(try! JSONEncoder().encode(saved), forKey: "SillVerifiedDisplay.trusted-mac")
+        Client.rememberedDisplays["trusted-mac"] = saved
     }
     let initial = fresh()
     initial.deliverIdleCatalog(idle)
@@ -245,7 +249,8 @@ import Foundation
     expect(picks(initial).first?.origin == .automatic && picks(initial).first?.selectionRevision == idle.selectionRevision &&
            picks(initial).first?.inventoryID == inventory, "automatic display request carries exact origin, revision and inventory")
     expect(initial.actions == 0 && initial.explicitSourceIntent == 0, "automatic selection is not a human action or intent")
-    expect(initial.defaults.values.isEmpty, "sending a display request never persists an unconfirmed display")
+    expect(Client.rememberedDisplays.isEmpty && initial.defaults.values.isEmpty,
+           "화면 요청만으로 미확인 선택을 기억하거나 영구 저장하지 않음")
     initial.deliverIdleCatalog(idle)
     expect(picks(initial).count == 1, "repeated idle catalog never retries automatic display selection")
     var confirmed = idle
@@ -254,20 +259,18 @@ import Foundation
     confirmed.selectionRevision = "revision-1"
     confirmed.inputGeneration = "input-1"
     initial.deliverIdleCatalog(confirmed)
-    expect(initial.defaults.values.isEmpty, "new revision and active desktop without a video epoch do not persist")
+    expect(Client.rememberedDisplays.isEmpty, "새 revision과 active desktop만으로 선택을 기억하지 않음")
     confirmed.videoEpoch = VideoEpoch(generation: "input-1", source: .desktop,
         geometry: .init(x: 0, y: 0, width: 1920, height: 1080), width: 1920, height: 1080)
     initial.deliverIdleCatalog(confirmed)
-    expect(initial.defaults.values.count == 1, "actual desktop with a new valid video epoch confirms persistence")
-    let stored = initial.defaults.data(forKey: "SillVerifiedDisplay.trusted-mac")
-        .flatMap { try? JSONDecoder().decode(Client.RememberedDisplay.self, from: $0) }
-    expect(stored?.macID == "trusted-mac" && stored?.launchID == "host" && stored?.inventoryID == inventory && stored?.displayID == main.id,
-           "persisted display is bound to authenticated Mac, launch and inventory")
+    expect(initial.pendingDisplaySelection == nil && Client.rememberedDisplays.isEmpty,
+           "새 epoch의 자동 main ACK도 사용자 선택으로 기억하지 않음")
+    expect(initial.defaults.values.isEmpty, "자동 main ACK는 UserDefaults를 쓰지 않음")
     initial.connection = NWConnection()
     initial.beginAutomaticConnectionOpportunity(peer: initial.connection)
     initial.deliverIdleCatalog(idle)
     expect(picks(initial).count == 1 && picks(initial).first?.displayID == main.id,
-           "same client reconnects with its confirmed display and a new peer ticket")
+           "사용자 선택이 없는 같은 실행의 재접속은 현재 main을 새 peer 티켓으로 선택")
     for acknowledgment in ["없음", "revision만"] {
         let interrupted = fresh()
         interrupted.deliverIdleCatalog(idle)
@@ -276,7 +279,7 @@ import Foundation
             withoutEpoch.videoEpoch = nil
             interrupted.deliverIdleCatalog(withoutEpoch)
         }
-        expect(interrupted.defaults.values.isEmpty, "미확인 자동 요청을 저장하지 않음")
+        expect(Client.rememberedDisplays.isEmpty, "미확인 자동 요청을 기억하지 않음")
         interrupted.connection = NWConnection()
         interrupted.beginAutomaticConnectionOpportunity(peer: interrupted.connection)
         interrupted.deliverIdleCatalog(idle)
@@ -321,12 +324,12 @@ import Foundation
         topology.deliverIdleCatalog(list)
     }
     let submitted = picks(topology)
-    print("COUNTEREXAMPLE initial-inventory-continuation submitted=\(submitted.count) expected=3 activeNone=\(topology.active == .none) confirmed=\(topology.defaults.values.count)")
+    print("COUNTEREXAMPLE initial-inventory-continuation submitted=\(submitted.count) expected=3 activeNone=\(topology.active == .none) remembered=\(Client.rememberedDisplays.count)")
     expect(submitted.map(\.inventoryID) == [inventory, nextInventory, finalInventory],
            "동일 r0의 초기 inventory trace는 현재 유효 UUID마다 한 번 계속 제출 actual=\(submitted.count)")
     expect(submitted.allSatisfy { $0.origin == .automatic && $0.selectionRevision == idle.selectionRevision },
            "inventory continuation은 원본 r0와 automatic origin을 유지")
-    expect(!topology.automaticDisplayCatalogObserved && topology.defaults.values.isEmpty,
+    expect(!topology.automaticDisplayCatalogObserved && Client.rememberedDisplays.isEmpty,
            "로컬 전송 접수는 최초 기회의 수렴 또는 화면 확인이 아님")
     topology.deliverIdleCatalog(topologyLists.last!)
     expect(picks(topology).count == 3, "같은 inventory catalog 반복은 자동 요청을 추가하지 않음")
@@ -338,12 +341,14 @@ import Foundation
            "수용된 r1의 active.none은 새 자동 요청을 만들지 않음")
     accepted.active = .desktop; accepted.activeDisplayID = main.id
     topology.deliverIdleCatalog(accepted)
-    expect(topology.defaults.values.isEmpty, "r1과 active display만으로 epoch 확인을 대체하지 않음")
+    expect(topology.pendingDisplaySelection != nil && Client.rememberedDisplays.isEmpty,
+           "r1과 active display만으로 epoch 확인을 대체하지 않음")
     accepted.inputGeneration = "input-final"
     accepted.videoEpoch = VideoEpoch(generation: "input-final", source: .desktop,
         geometry: .init(x: 0, y: 0, width: 1920, height: 1080), width: 1920, height: 1080)
     topology.deliverIdleCatalog(accepted)
-    expect(topology.defaults.values.count == 1, "최종 inventory와 새 epoch가 일치할 때만 화면을 저장")
+    expect(topology.pendingDisplaySelection == nil && Client.rememberedDisplays.isEmpty,
+           "최종 inventory와 새 epoch가 일치하면 자동 ACK를 끝내고 사용자 선택은 만들지 않음")
     topology.deliverIdleCatalog(idle)
     expect(picks(topology).count == 3, "r1 관측 뒤 옛 r0 catalog로 돌아가도 최초 기회를 열지 않음")
     let untrustedContinuation = fresh()
@@ -381,10 +386,14 @@ import Foundation
     let restore = fresh()
     seed(restore)
     restore.deliverIdleCatalog(idle)
-    expect(picks(restore).first?.displayID == secondary.id, "same inventory and launch restore the verified secondary display")
+    expect(picks(restore).first?.displayID == secondary.id, "같은 실행에서 같은 inventory와 Host의 확인된 사용자 선택을 복구")
+    restore.defaults.set(try! JSONEncoder().encode(Client.rememberedDisplays["trusted-mac"]!),
+                         forKey: "SillVerifiedDisplay.trusted-mac")
+    let legacyValues = restore.defaults.values
     let relaunched = fresh(restore.defaults)
     relaunched.deliverIdleCatalog(idle)
-    expect(picks(relaunched).first?.displayID == secondary.id, "app relaunch reads the same scoped remembered display")
+    expect(picks(relaunched).first?.displayID == main.id, "앱 재실행은 영구 저장된 displayID를 무시하고 현재 유일 main을 선택")
+    expect(relaunched.defaults.values == legacyValues, "과거 저장값을 읽거나 수정하지 않고 기존 설정을 보존")
     for mismatch in ["mac", "launch", "inventory", "missing"] {
         let client = fresh()
         seed(client, mac: mismatch == "mac" ? "other-mac" : "trusted-mac",
@@ -490,21 +499,22 @@ import Foundation
     expect(activePeer.allSent.isEmpty, "another peer's later idle revision never rebases a first-catalog opportunity")
     let preserved = fresh()
     seed(preserved)
-    let prior = preserved.defaults.values
+    let prior = Client.rememberedDisplays
     preserved.deliverIdleCatalog(idle)
     preserved.select(.none)
     confirmed.activeDisplayID = secondary.id
     preserved.deliverIdleCatalog(confirmed)
-    expect(preserved.defaults.values == prior && preserved.pendingDisplaySelection == nil,
+    expect(Client.rememberedDisplays == prior && preserved.pendingDisplaySelection == nil,
            "explicit None preserves the remembered display and rejects a late desktop acknowledgement")
     let oldEpoch = fresh()
     oldEpoch.sourceCatalogEpoch = confirmed.videoEpoch?.id
     oldEpoch.deliverIdleCatalog(idle)
     oldEpoch.pendingDisplaySelection = Client.PendingDisplaySelection(
         display: Client.RememberedDisplay(macID: "trusted-mac", launchID: "host", inventoryID: inventory, displayID: secondary.id),
+        origin: .human,
         peer: ObjectIdentifier(oldEpoch.connection!), intent: 0, revision: "revision-0", epoch: confirmed.videoEpoch?.id)
     oldEpoch.deliverIdleCatalog(confirmed)
-    expect(oldEpoch.defaults.values.isEmpty, "same video epoch never confirms a new display selection")
+    expect(Client.rememberedDisplays.isEmpty, "같은 video epoch는 새 사용자 선택을 확인하지 못함")
     let windowResume = fresh()
     windowResume.resumeSource = .window(1001)
     windowResume.beginAutomaticConnectionOpportunity(peer: windowResume.connection)
@@ -522,8 +532,126 @@ import Foundation
     var manualAcknowledgement = confirmed
     manualAcknowledgement.activeDisplayID = main.id
     manual.deliverIdleCatalog(manualAcknowledgement)
-    expect(manual.defaults.values.count == 1 && manual.actions == 1,
-           "a confirmed manual display choice uses the same persistence path")
+    let stored = Client.rememberedDisplays["trusted-mac"]
+    expect(stored?.macID == "trusted-mac" && stored?.launchID == "host" &&
+           stored?.inventoryID == inventory && stored?.displayID == main.id && manual.actions == 1,
+           "확인된 수동 선택만 인증 Mac·Host launch·inventory와 함께 앱 메모리에 기억")
+    expect(manual.defaults.values.isEmpty, "확인된 수동 선택도 UserDefaults에 저장하지 않음")
+
+    func acknowledge(_ display: DisplayInfo) -> WindowList {
+        var list = idle
+        list.active = .desktop
+        list.activeDisplayID = display.id
+        list.selectionRevision = "revision-ack"
+        list.inputGeneration = "input-ack"
+        list.videoEpoch = VideoEpoch(generation: "input-ack", source: .desktop,
+            geometry: .init(x: 0, y: 0, width: 1920, height: 1080), width: 1920, height: 1080)
+        return list
+    }
+    func chooseSecondary() -> Client {
+        let client = fresh()
+        client.prepareAutomaticTicketCatalog(idle)
+        client.selectDisplay(secondary)
+        expect(Client.rememberedDisplays.isEmpty, "명시 선택도 Host 확인 전에는 기억하지 않음")
+        client.deliverIdleCatalog(acknowledge(secondary))
+        expect(Client.rememberedDisplays["trusted-mac"]?.displayID == secondary.id,
+               "실제 수동 요청과 새 epoch의 ACK가 사용자 선택을 확인")
+        return client
+    }
+    var changedMain = idle
+    changedMain.displays = [
+        DisplayInfo(id: main.id, name: main.name, width: main.width, height: main.height, isMain: false),
+        DisplayInfo(id: secondary.id, name: secondary.name, width: secondary.width, height: secondary.height, isMain: true)
+    ]
+    let automaticMain = fresh()
+    automaticMain.deliverIdleCatalog(idle)
+    automaticMain.deliverIdleCatalog(acknowledge(main))
+    expect(Client.rememberedDisplays.isEmpty && automaticMain.expectedSourceIntent == nil,
+           "자동 main 확인은 선택 의도만 끝내고 사용자 선택 상태를 만들지 않음")
+    automaticMain.connection = NWConnection()
+    automaticMain.beginAutomaticConnectionOpportunity(peer: automaticMain.connection)
+    automaticMain.deliverIdleCatalog(changedMain)
+    expect(picks(automaticMain).first?.displayID == secondary.id,
+           "같은 실행·Host·inventory에서도 자동 ACK 뒤 바뀐 main을 선택")
+    let anotherAutomaticClient = Client()
+    anotherAutomaticClient.active = .none
+    anotherAutomaticClient.deliverIdleCatalog(changedMain)
+    expect(picks(anotherAutomaticClient).first?.displayID == secondary.id,
+           "새 StreamClient도 자동 ACK를 사용자 선택으로 오인하지 않음")
+
+    let chosen = chooseSecondary()
+    chosen.connection = NWConnection()
+    chosen.beginAutomaticConnectionOpportunity(peer: chosen.connection)
+    chosen.deliverIdleCatalog(idle)
+    expect(picks(chosen).count == 1 && picks(chosen).first?.displayID == secondary.id,
+           "같은 실행의 재접속은 현재 main보다 확인된 사용자 선택을 우선")
+    let recreated = Client()
+    recreated.active = .none
+    recreated.deliverIdleCatalog(idle)
+    expect(picks(recreated).first?.displayID == secondary.id,
+           "같은 앱 프로세스의 새 StreamClient도 확인된 사용자 선택을 유지")
+    for identity in ["mac", "host", "inventory"] {
+        let client = chooseSecondary()
+        client.connection = NWConnection()
+        client.beginAutomaticConnectionOpportunity(peer: client.connection)
+        var replacement = idle
+        switch identity {
+        case "mac":
+            client.session?.macID = "other-mac"
+            client.savedMacs.append(SavedMac(macID: "other-mac", fingerprintData: Data([1])))
+        case "host": replacement.launchID = "new-host-launch"
+        default: replacement.displayInventoryID = UUID()
+        }
+        client.deliverIdleCatalog(replacement)
+        expect(picks(client).count == 1 && picks(client).first?.displayID == main.id,
+               "재접속의 \(identity) 변경은 과거 사용자 displayID 대신 현재 유일 main을 선택")
+    }
+    for invalid in ["peer", "mac", "host", "inventory", "revision", "epoch", "generation", "active", "missing", "trust"] {
+        let client = fresh()
+        client.prepareAutomaticTicketCatalog(idle)
+        client.selectDisplay(secondary)
+        var ack = acknowledge(secondary)
+        switch invalid {
+        case "peer": client.connection = NWConnection()
+        case "mac": client.session?.macID = "other-mac"
+        case "host": ack.launchID = "other-host"
+        case "inventory": ack.displayInventoryID = UUID()
+        case "revision": ack.selectionRevision = idle.selectionRevision
+        case "epoch": ack.videoEpoch = nil
+        case "generation": ack.inputGeneration = "other-input-generation"
+        case "active": ack.active = .window(99)
+        case "missing": ack.displays = [main]
+        default: client.session?.home = .plain
+        }
+        let invalidations = client.inputInvalidations, audioChanges = client.remoteAudioControl.changes
+        client.deliverIdleCatalog(ack)
+        expect(Client.rememberedDisplays.isEmpty, "\(invalid) 불일치는 사용자 선택을 확인하지 못함")
+        expect(client.inputInvalidations == invalidations && client.remoteAudioControl.changes == audioChanges,
+               "\(invalid) 불일치 catalog는 추가 입력 무효화·오디오 변경을 만들지 않음")
+        if invalid == "generation" {
+            client.deliverIdleCatalog(acknowledge(secondary))
+            expect(Client.rememberedDisplays["trusted-mac"]?.displayID == secondary.id,
+                   "선택 의도가 먼저 끝나도 올바른 input generation의 후속 ACK가 수동 origin을 보존")
+        }
+    }
+    let pendingHuman = fresh()
+    pendingHuman.prepareAutomaticTicketCatalog(idle)
+    pendingHuman.selectDisplay(secondary)
+    pendingHuman.connection = NWConnection()
+    pendingHuman.beginAutomaticConnectionOpportunity(peer: pendingHuman.connection)
+    let inputBeforeReconnect = pendingHuman.inputInvalidations
+    pendingHuman.deliverIdleCatalog(idle)
+    expect(pendingHuman.allSent.isEmpty && Client.rememberedDisplays.isEmpty &&
+           pendingHuman.inputInvalidations == inputBeforeReconnect && pendingHuman.expectedSourceIntent?.origin == .human,
+           "재접속 때 미확인 사용자 선택과 입력을 자동 main으로 덮지 않음")
+    let activeInput = chooseSecondary()
+    activeInput.select(.window(99))
+    let beforeStale = activeInput.allSent.count, invalidations = activeInput.inputInvalidations
+    activeInput.deliverIdleCatalog(idle)
+    activeInput.deliverIdleCatalog(acknowledge(secondary))
+    expect(activeInput.allSent.count == beforeStale && activeInput.inputInvalidations == invalidations &&
+           Client.rememberedDisplays["trusted-mac"]?.displayID == secondary.id && activeInput.expectedSourceIntent?.origin == .human,
+           "지연된 idle·display ACK는 새 창 선택과 활성 입력을 보존")
 
     for preparing in ["inventory", "displays", "capability", "authentication"] {
         let client = fresh()
