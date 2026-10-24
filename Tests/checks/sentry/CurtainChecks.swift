@@ -7,6 +7,7 @@ final class CurtainPlatformFixture {
     var state = State.idle
     var changed: (() -> Void)?
     var localReturnReason: () -> String? = { nil }
+    var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
     var changingLifecycle = false
     var sessionActive = true, sleeping = false, notifiedLocked = false
     var localReturnDown: UInt32?
@@ -73,7 +74,7 @@ extension Checks {
                 fullEngagements += 1; return platform.engage()
             }, verify: { platform.verify() }, release: { false }, reason: { platform.reason }, restoreCurtains: {
                 restores += 1; return platform.restoreCurtains()
-            }), localReturnUnavailableReason: { recoveryReason })
+            }), prepareRelease: { false }, localReturnUnavailableReason: { recoveryReason })
         platform.changed = { [weak owner] in owner?.surfacesChanged() }
         let object = NSObject(), peer = ObjectIdentifier(object), epoch = UUID()
         gate.register(peer, externalRoute: false); gate.capture(epoch)
@@ -136,7 +137,7 @@ extension Checks {
         let gate = SentryAdmission()
         var recoveryAvailable = true, persisted = true
         let owner = HostSentry(admission: gate, initiallyLatched: true, persistenceHealthy: true,
-            persist: { _ in persisted }, surfaces: __PRODUCTION_SURFACES__,
+            persist: { _ in persisted }, surfaces: __PRODUCTION_SURFACES__, prepareRelease: { false },
             localReturnUnavailableReason: { recoveryAvailable ? nil : "복귀 릴레이 미확인" })
         __PRODUCTION_CHANGED__
         owner.start()

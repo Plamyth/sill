@@ -3,6 +3,7 @@ import ApplicationServices
 import Carbon.HIToolbox
 import Darwin
 import Security
+import StreamProtocol
 
 @MainActor
 final class HostSentryPlatform {
@@ -11,8 +12,12 @@ final class HostSentryPlatform {
     var changed: (() -> Void)?
     var requestLocalReturn: (() -> Void)?
     var localReturnReason: () -> String? = { nil }
+    var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
 
     var reason: String? {
+        if currentLocalAuthenticationChallenge() != nil {
+            return "현재 인증 요청과 운영체제 인증창의 연결을 확인하지 못해 입력 차단을 유지합니다."
+        }
         switch state {
         case .invalid(let message): return message
         case .engaging: return "원격 제어 보호 상태를 확인하고 있습니다."
@@ -176,6 +181,16 @@ final class HostSentryPlatform {
         return tapIsEffective(row) && curtainsAreEffective()
     }
 
+    func prepareRelease(cleanup: () -> Bool) -> Bool {
+        guard isProtected, currentLocalAuthenticationChallenge() == nil, verify(),
+              isProtected, let tap, CFMachPortIsValid(tap), CGEvent.tapIsEnabled(tap: tap),
+              cleanup(), verify(), isProtected, currentLocalAuthenticationChallenge() == nil,
+              let finalTap = self.tap, CFMachPortIsValid(finalTap), CGEvent.tapIsEnabled(tap: finalTap),
+              pointerTargets.isEmpty else { return false }
+        scrollHandoff = nil
+        return true
+    }
+
     // The parent establishes fresh OS authentication and fences remote participants before release.
     func release() -> Bool {
         guard !changingLifecycle else { return false }
@@ -184,6 +199,7 @@ final class HostSentryPlatform {
         if case .idle = state { return true }
         state = .releasing
         localReturnDown = nil
+        updateCurtainText()
         changed?()
         destroyTap()
         if let tapID {
@@ -314,9 +330,130 @@ final class HostSentryPlatform {
         tap = nil
     }
 
+    private struct PointerTarget {
+        let scope: InputInjector.ProtectedPointerScope
+        let window: CGWindowID
+        let pid: pid_t
+        let launched: Date
+    }
+    private var pointerTargets: [Int: PointerTarget] = [:]
+    private var scrollHandoff: PointerTarget?
+
+    func protectedPointerEgress(_ event: CGEvent, scope: InputInjector.ProtectedPointerScope?) -> Bool {
+        postProtectedPointer(event, scope: scope)
+    }
+
+    private func postProtectedPointer(_ event: CGEvent, scope: InputInjector.ProtectedPointerScope?) -> Bool {
+        let slot: Int
+        let begins: Bool
+        let ends: Bool
+        var momentumBegins = false, gestureEnds = false
+        switch event.type {
+        case .leftMouseDown: slot = 0; begins = true; ends = false
+        case .rightMouseDown: slot = 1; begins = true; ends = false
+        case .leftMouseDragged: slot = 0; begins = false; ends = false
+        case .rightMouseDragged: slot = 1; begins = false; ends = false
+        case .leftMouseUp: slot = 0; begins = false; ends = true
+        case .rightMouseUp: slot = 1; begins = false; ends = true
+        case .scrollWheel:
+            slot = 2
+            let phase = event.getIntegerValueField(.scrollWheelEventScrollPhase)
+            let momentum = event.getIntegerValueField(.scrollWheelEventMomentumPhase)
+            momentumBegins = momentum == 1
+            gestureEnds = phase == 4
+            if phase == 1 { scrollHandoff = nil }
+            begins = phase == 1 || momentum == 1 || (phase == 0 && momentum == 0)
+            ends = phase == 4 || momentum == 3 || (phase == 0 && momentum == 0)
+        default: return false
+        }
+        guard let scope else { return false }
+        let held = pointerTargets[slot]
+        let handoff = momentumBegins ? scrollHandoff : nil
+        if momentumBegins {
+            guard let handoff, handoff.scope.matches(scope), handoff.scope.isCurrent() else { return false }
+        }
+        let cleanup = ends && !begins && held?.scope.matches(scope) == true
+        guard (cleanup || scope.isCurrent()), scope.epoch.isValid,
+              event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
+              event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()),
+              isProtected, currentLocalAuthenticationChallenge() == nil,
+              let tap, CFMachPortIsValid(tap), CGEvent.tapIsEnabled(tap: tap), verify(),
+              let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]],
+              let target = pointerTarget(at: event.location, rows: rows, scope: scope, held: begins ? handoff : held) else { return false }
+        if begins {
+            guard pointerTargets[slot] == nil else { return false }
+            if let handoff {
+                guard handoff.pid == target.pid, handoff.window == target.window,
+                      handoff.launched == target.launched else { return false }
+            }
+        } else {
+            guard let held, held.scope.matches(scope), cleanup || held.scope.isCurrent(),
+                  held.pid == target.pid, held.window == target.window,
+                  held.launched == target.launched else { return false }
+        }
+        guard (cleanup || scope.isCurrent()), isProtected, currentLocalAuthenticationChallenge() == nil,
+              CFMachPortIsValid(tap), CGEvent.tapIsEnabled(tap: tap) else { return false }
+        if begins {
+            pointerTargets[slot] = target
+            if slot == 2 { scrollHandoff = nil }
+        }
+        event.postToPid(target.pid)
+        if ends {
+            pointerTargets[slot] = nil
+            if slot == 2 { scrollHandoff = gestureEnds ? target : nil }
+        }
+        return true
+    }
+
+    private func pointerTarget(at point: CGPoint, rows: [[String: Any]],
+                               scope: InputInjector.ProtectedPointerScope, held: PointerTarget?) -> PointerTarget? {
+        let geometry = scope.epoch.geometry
+        let sourceRect = CGRect(x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height)
+        guard point.x.isFinite, point.y.isFinite, held != nil || sourceRect.contains(point) else { return nil }
+        let candidates: [[String: Any]]
+        if let held {
+            candidates = rows.filter { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == held.window }
+            guard candidates.count == 1 else { return nil }
+        } else { candidates = rows }
+        let own = Set(curtainWindowIDs)
+        var verifiedCursorOwners: [pid_t: Bool] = [:]
+        for row in candidates {
+            guard let id = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  let pid = (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  let alpha = (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue,
+                  let layer = (row[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                  let bounds = row[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds), !rect.isNull, !rect.isEmpty else { return nil }
+            if own.contains(id) { continue }
+            if alpha == 0 || (held == nil && !rect.contains(point)) { continue }
+            if Self.isSystemCursorWindow(row, verifiedOwners: &verifiedCursorOwners) { continue }
+            guard alpha > 0, layer == 0, pid > 0, pid != getpid(),
+                  let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
+                  app.activationPolicy == .regular, let launched = app.launchDate,
+                  let bundle = app.bundleIdentifier,
+                  !["com.apple.loginwindow", "com.apple.SecurityAgent", "com.apple.LocalAuthentication.UIAgent",
+                    "com.apple.CoreAuthUI", "com.apple.dock"].contains(bundle) else { return nil }
+            if held == nil {
+                guard let foreground = NSWorkspace.shared.frontmostApplication,
+                      foreground.processIdentifier == pid, foreground.launchDate == launched else { return nil }
+            }
+            switch scope.epoch.source {
+            case .window(let expected): guard id == expected else { return nil }
+            case .desktop: break
+            default: return nil
+            }
+            return PointerTarget(scope: scope, window: id, pid: pid, launched: launched)
+        }
+        return nil
+    }
+
     private func filter(_ type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             invalidate("입력 필터가 운영체제에 의해 중단되었습니다. 보호 상태를 다시 확인해야 합니다.")
+            return nil
+        }
+        if currentLocalAuthenticationChallenge() != nil {
+            localReturnDown = nil
             return nil
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
@@ -421,7 +558,7 @@ final class HostSentryPlatform {
     }
 
     private var curtainMessage: (title: String, detail: String) {
-        if isProtected {
+        if isProtected && currentLocalAuthenticationChallenge() == nil {
             return ("원격 제어 모드 활성화",
                     "현재 사용자 데스크톱의 일반 입력 차단을 확인했습니다.\n전원 버튼·시스템 보안 화면의 차단은 보장하지 않습니다.\n로컬 복귀에는 새 운영체제 인증이 필요하며 키보드 입력 차단은 유지됩니다.")
         }
@@ -433,6 +570,7 @@ final class HostSentryPlatform {
     private func updateCurtainText() {
         let message = curtainMessage
         for curtain in curtains.values {
+            curtain.panel.ignoresMouseEvents = false
             curtain.panel.title = message.title
             curtain.title.stringValue = message.title
             curtain.detail.stringValue = message.detail
@@ -447,7 +585,7 @@ final class HostSentryPlatform {
         var verifiedCursorOwners: [pid_t: Bool] = [:]
         for (id, frame) in layout {
             guard let panel = curtains[id]?.panel, panel.isVisible, panel.isOnActiveSpace,
-                  panel.frame == frame, panel.isOpaque, panel.alphaValue == 1,
+                  panel.frame == frame, panel.isOpaque, panel.alphaValue == 1, !panel.ignoresMouseEvents,
                   panel.level == Self.curtainLevel, panel.sharingType == .none,
                   let row = rows.first(where: { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == panel.windowNumber }),
                   (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
@@ -568,7 +706,10 @@ final class HostSentryPlatform {
             })
         }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.changed?() }
+            MainActor.assumeIsolated {
+                self?.updateCurtainText()
+                self?.changed?()
+            }
         }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)

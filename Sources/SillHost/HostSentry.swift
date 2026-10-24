@@ -28,6 +28,7 @@ final class HostSentry {
     private let admission: SentryAdmission
     private let persist: (SentryJournalState) -> Bool
     private let surfaces: SentrySurfaceOperations
+    private let prepareRelease: () -> Bool
     private let audioReady: () -> Bool
     private let localReturnUnavailableReason: () -> String?
     private var persistenceHealthy: Bool
@@ -38,11 +39,13 @@ final class HostSentry {
 
     init(admission: SentryAdmission, initiallyLatched: Bool, persistenceHealthy: Bool,
          persist: @escaping (SentryJournalState) -> Bool, surfaces: SentrySurfaceOperations,
+         prepareRelease: @escaping () -> Bool,
          audioReady: @escaping () -> Bool = { true },
          localReturnUnavailableReason: @escaping () -> String? = { "인증된 로컬 복귀 가능 여부를 확인하지 못했습니다." }) {
         self.admission = admission
         self.persist = persist
         self.surfaces = surfaces
+        self.prepareRelease = prepareRelease
         self.audioReady = audioReady
         self.localReturnUnavailableReason = localReturnUnavailableReason
         self.persistenceHealthy = persistenceHealthy
@@ -147,6 +150,13 @@ final class HostSentry {
         operation = .returningLocal
         defer { operation = .idle }
         admission.fenceForLocalReturn()
+        guard prepareRelease() else {
+            persistenceHealthy = persist(.latched)
+            admission.update(verified: false, persistenceHealthy: persistenceHealthy,
+                             reason: "원래 입력 대상의 종료를 확인하지 못해 보호를 유지합니다.")
+            changed?()
+            return false
+        }
         guard persist(.releasing) else {
             persistenceHealthy = false
             admission.update(verified: false, persistenceHealthy: false,

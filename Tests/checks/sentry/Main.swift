@@ -10,6 +10,7 @@ import StreamProtocol
     }
     final class Peer {}
     @MainActor static func main() {
+        let emptyInputReleaseBarrier: () -> Bool = { true }
         let lanObject = Peer(), externalObject = Peer(), replacement = Peer()
         let lan = ObjectIdentifier(lanObject), external = ObjectIdentifier(externalObject)
         let gate = SentryAdmission(), epoch = UUID(), nextEpoch = UUID()
@@ -105,7 +106,7 @@ import StreamProtocol
                 guard value != .latched else { return false }
                 durableJournal = value
                 return true
-            }, surfaces: .init(engage: { true }, verify: { true }, release: { false }, reason: { nil }), localReturnUnavailableReason: { nil })
+            }, surfaces: .init(engage: { true }, verify: { true }, release: { false }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
         expect(!failedRelease.completeAuthenticatedLocalReturn() && SentryJournalState.requiresProtection(durableJournal.rawValue),
                "failed native release cannot erase durable protection when relatching storage is unavailable")
         expect(durableJournal == .releasing, "durable in-progress return survives failed release and failed rollback write")
@@ -121,7 +122,7 @@ import StreamProtocol
             persist: { value in effects.append(value.rawValue); if persistOK { stored = value != .inactive }; return persistOK },
             surfaces: .init(engage: { effects.append("engage"); return surfaceOK },
                             verify: { effects.append("verify"); return surfaceOK },
-                            release: { effects.append("release"); return releaseOK }, reason: { "가림막 확인 실패" }), localReturnUnavailableReason: { nil })
+                            release: { effects.append("release"); return releaseOK }, reason: { "가림막 확인 실패" }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
         controllerGate.register(lan, externalRoute: false)
         controller.joined(lan)
         expect(effects.isEmpty && controllerGate.allows(lan, epoch: epoch), "ordinary LAN join makes no native protection effects")
@@ -150,7 +151,7 @@ import StreamProtocol
             persist: { callbackEffects.append($0.rawValue); return true },
             surfaces: .init(engage: { callbackEffects.append("engage"); callback?(); return true },
                             verify: { true },
-                            release: { callbackEffects.append("release"); callback?(); return true }, reason: { nil }), localReturnUnavailableReason: { nil })
+                            release: { callbackEffects.append("release"); callback?(); return true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
         callback = { [weak callbackController] in callbackController?.surfacesChanged() }
         callbackController.start()
         callbackEffects.removeAll()
@@ -181,7 +182,7 @@ import StreamProtocol
         let stableGate = SentryAdmission()
         let stable = HostSentry(admission: stableGate, initiallyLatched: true, persistenceHealthy: true,
             persist: { _ in true }, surfaces: .init(engage: { true }, verify: { true },
-                release: { true }, reason: { nil }), localReturnUnavailableReason: { nil })
+                release: { true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
         stable.start()
         let surfaceProof = stable.forwardingProof()!
         stableGate.register(lan, externalRoute: false); stable.joined(lan)
@@ -198,7 +199,7 @@ import StreamProtocol
         var surfacesVerified = true
         let videoOnly = HostSentry(admission: videoOnlyGate, initiallyLatched: true, persistenceHealthy: true,
             persist: { _ in true }, surfaces: .init(engage: { surfacesVerified }, verify: { surfacesVerified },
-                release: { true }, reason: { nil }), audioReady: { audioVerified }, localReturnUnavailableReason: { nil })
+                release: { true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, audioReady: { audioVerified }, localReturnUnavailableReason: { nil })
         videoOnlyGate.register(lan, externalRoute: false)
         videoOnly.start(); videoOnly.joined(lan)
         expect(videoOnlyGate.allowsActions(lan), "verified physical protection permits source selection despite unavailable audio")

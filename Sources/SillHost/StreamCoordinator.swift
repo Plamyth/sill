@@ -2111,7 +2111,24 @@ package final class StreamCoordinator {
             return
         }
         logClick(event, in: rect)
-        injector.apply(event, in: rect, from: device)
+        injector.apply(event, in: rect, from: device, protectedScope: protectedPointerScope(device: device, epoch: epoch))
+    }
+
+    private func protectedPointerScope(device: KeyStrokes.Device, epoch: VideoEpoch?,
+                                       isCurrent: @escaping () -> Bool = { true }) -> InputInjector.ProtectedPointerScope? {
+        guard let epoch else { return nil }
+        let lane = peerStreams[device]
+        let isPeer = lane != nil
+        return .init(device: device, epoch: epoch, isCurrent: { [weak self, weak lane] in
+            guard let self, isCurrent(), !self.shuttingDown,
+                  self.server.sentryAdmission.allowsActions(device), self.connections[device]?.state == .ready else { return false }
+            if isPeer {
+                guard let lane else { return false }
+                return self.peerStreams[device] === lane && !lane.isClosed && lane.epoch == epoch &&
+                    lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil
+            }
+            return !self.switching && self.videoEpoch == epoch && self.active == epoch.source
+        })
     }
 
     private func inputTargetReady(_ event: InputEvent) -> Bool {
@@ -3689,7 +3706,8 @@ extension StreamCoordinator {
                 self.contractPeerInputs.append(lane.source)
                 #endif
                 self.logClick(scoped.event, in: rect)
-                self.injector.apply(scoped.event, in: rect, from: id)
+                self.injector.apply(scoped.event, in: rect, from: id,
+                    protectedScope: self.protectedPointerScope(device: id, epoch: epoch, isCurrent: { !turn.cancelled }))
             }) else {
                 peerInputQueue.cancel(peer: id)
                 injector.releaseInput(of: id)
@@ -3765,7 +3783,26 @@ extension StreamCoordinator {
               server.sentryAdmission.allowsActions(peer),
               lane.inputRect(generation: epoch.generation, epoch: epoch.id) != nil else { return false }
         if synthetic { return true }
-        guard case .window(let id) = lane.source else { return lane.source == .desktop }
+        let id: CGWindowID
+        switch lane.source {
+        case .window(let selected): id = selected
+        case .desktop:
+            guard injector.isolatesPhysicalInput else { return true }
+            let point: CGPoint
+            guard let rect = lane.inputRect(generation: epoch.generation, epoch: epoch.id) else { return false }
+            switch event {
+            case .pointer(.leftDown, let x, let y)?, .pointer(.rightDown, let x, let y)?,
+                 .scrollGesture(.began, let x, let y)?:
+                point = CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+            case .scroll(let x, let y, _, _)?:
+                if injector.protectedScrollPending { return true }
+                point = CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+            default: return true
+            }
+            guard let target = Self.topmostWindow(at: point) else { return false }
+            id = target.id
+        default: return false
+        }
         guard let window = catalog.window(id: id), let app = window.owningApplication else { return false }
         let activates: Bool
         switch event {
@@ -3796,7 +3833,11 @@ extension StreamCoordinator {
     private func configureSentry() {
         guard !synthetic, appKitLoop else { return }
         let platform = HostSentryPlatform()
+        injector.protectedPointerEgress = { [weak platform] event, scope in
+            platform?.protectedPointerEgress(event, scope: scope) == true
+        }
         platform.localReturnReason = { [weak self] in self?.sentryLocalReturnUnavailableReason() }
+        platform.currentLocalAuthenticationChallenge = { [weak self] in self?.audioPrivacy?.localAuthenticationChallengeID }
         let defaults = UserDefaults.standard
         let key = "CCRHostSentryLatch.v1"
         let raw = defaults.object(forKey: key)
@@ -3808,6 +3849,10 @@ extension StreamCoordinator {
             }, surfaces: .init(engage: { platform.engage() }, verify: { platform.verify() },
                 release: { platform.release() }, reason: { platform.reason },
                 restoreCurtains: { platform.restoreCurtains() }),
+            prepareRelease: { [weak self] in
+                guard let self else { return false }
+                return platform.prepareRelease { self.injector.prepareRelease() }
+            },
             audioReady: { [weak self] in self?.sentryAudioReady() == true },
             localReturnUnavailableReason: { [weak self] in
                 guard let self else { return "인증된 로컬 복귀 경로를 확인하지 못했습니다." }

@@ -14,7 +14,7 @@ private final class CursorWindowFixture {
     }
     @MainActor struct Panel {
         let windowNumber = 90
-        var isVisible = true, isOnActiveSpace = true, isOpaque = true
+        var isVisible = true, isOnActiveSpace = true, isOpaque = true, ignoresMouseEvents = false
         let alphaValue = 1.0
         let level = CursorWindowFixture.curtainLevel
         let sharingType = SharingType.none

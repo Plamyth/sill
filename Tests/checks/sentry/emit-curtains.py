@@ -35,18 +35,21 @@ text = text.replace('DistributedNotificationCenter', 'FixtureDistributedCenter')
 changed = block(coordinator, 'platform.changed =').replace('sentry', 'owner')
 text = text.replace('__PRODUCTION_CHANGED__', changed)
 start = coordinator.index('surfaces: .init(')
-end = coordinator.index(',\n            audioReady:', start)
+end = coordinator.index(',\n            prepareRelease:', start)
 surfaces = coordinator[start:end].removeprefix('surfaces: ')
 text = text.replace('__PRODUCTION_SURFACES__', surfaces)
 output.mkdir(parents=True)
 (output / 'CurtainChecks.swift').write_text(text)
 native_markers = ['private struct Curtain {', 'private func makeCurtain(']
+native_markers += ['private var isProtected:', 'private func invalidate(', 'private var curtainMessage:', 'private func updateCurtainText()', 'let timer = Timer(timeInterval: 0.5']
 native_parts = {marker: block(platform, marker) for marker in native_markers}
 level = next(line.strip() for line in platform.splitlines() if 'private static let curtainLevel =' in line)
 native = (root / 'Tests/checks/sentry/NativePanelChecks.swift').read_text()
 native = native.replace('__PRODUCTION_CURTAIN_TYPE__', native_parts[native_markers[0]])
 native = native.replace('__PRODUCTION_CURTAIN_LEVEL__', level)
 native = native.replace('__PRODUCTION_MAKE_CURTAIN__', native_parts[native_markers[1]])
+native = native.replace('__PRODUCTION_PANEL_REFRESH__', '\n'.join(native_parts[m] for m in native_markers[2:6]))
+native = native.replace('__PRODUCTION_REFRESH_TIMER__', native_parts[native_markers[6]])
 (output / 'NativePanelChecks.swift').write_text(native)
 cursor_markers = ['private func curtainsAreEffective()', 'private func visibleReturnButton(', 'private static func isSystemCursorWindow(']
 cursor_parts = {marker: block(platform, marker) for marker in cursor_markers}
