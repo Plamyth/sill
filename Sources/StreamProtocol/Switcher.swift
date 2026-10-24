@@ -173,6 +173,7 @@ public struct WindowList: Codable {
     public var microphone: MicrophoneCapability?
     /// Version 1 permits kind 211. Absent on hosts without monitor selection.
     public var displaySelection: Int?
+    public var extendedDesktopControl: Int?
     public var displays: [DisplayInfo]?
     public var displayInventoryID: UUID?
     public var activeDisplayID: UInt32?
@@ -187,7 +188,7 @@ public struct WindowList: Codable {
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
                 dockApps: [AppInfo]? = nil, audioPrivacy: AudioPrivacyState? = nil,
                 catalogRefresh: Int? = nil, responseRequestID: UUID? = nil, providerCalls: Int? = nil,
-                sourceSelectionAdmission: SourceSelectionAdmission? = nil) {
+                sourceSelectionAdmission: SourceSelectionAdmission? = nil, extendedDesktopControl: Int? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
@@ -203,6 +204,7 @@ public struct WindowList: Codable {
         self.videoEpoch = videoEpoch
         self.microphone = microphone
         self.displaySelection = displaySelection
+        self.extendedDesktopControl = extendedDesktopControl
         self.displays = displays
         self.displayInventoryID = displayInventoryID
         self.activeDisplayID = activeDisplayID

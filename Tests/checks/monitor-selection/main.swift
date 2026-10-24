@@ -72,6 +72,36 @@ check(Wire.decode(DisplaySelection.self, from: Data(#"{"displayID":19}"#.utf8)) 
 check(StreamMessageKind.selectDisplay.rawValue == 211 && StreamMessageKind(rawValue: 6) == .selectSource, "additive message preserves existing kind values")
 check(SillProtocol.current == 1, "additive feature keeps transport protocol version")
 
+check(legacy.extendedDesktopControl == nil && list.extendedDesktopControl == nil, "legacy decode and existing initializer default control capability to nil")
+let legacyObject = try! JSONSerialization.jsonObject(with: Wire.encode(list)) as! [String: Any]
+check(legacyObject["extendedDesktopControl"] == nil, "nil control capability is omitted from wire")
+let requestCapable = WindowList(macName: "Mac", windows: [], active: .desktop, displaySelection: 1,
+    displays: [], displayInventoryID: original, extendedDesktopControl: 1)
+let controlObject = try! JSONSerialization.jsonObject(with: Wire.encode(requestCapable)) as! [String: Any]
+check(controlObject["extendedDesktopControl"] as? Int == 1, "control capability encodes exact integer version 1")
+let controlRoundTrip = Wire.decode(WindowList.self, from: Wire.encode(requestCapable))!
+check(controlRoundTrip.extendedDesktopControl == 1 && controlRoundTrip.displays?.isEmpty == true,
+      "request and release support can exist without any owned display")
+check(controlRoundTrip.displayInventoryID == original && controlRoundTrip.displaySelection == 1,
+      "control capability preserves separate inventory selection binding")
+check(Wire.decode(LegacyList.self, from: Wire.encode(requestCapable))?.active == .desktop,
+      "legacy consumer ignores additive control capability")
+let ownedDisplay = DisplayInfo(id: 42, name: "검사 화면", width: 1350, height: 890,
+                              isMain: false, role: "ipadExtendedDesktop")
+let roleOnly = WindowList(macName: "Mac", windows: [], active: .desktop, displays: [ownedDisplay])
+check(Wire.decode(WindowList.self, from: Wire.encode(roleOnly))?.extendedDesktopControl == nil,
+      "existing owned role never implies lifecycle control support")
+var unknownControl = requestCapable
+unknownControl.extendedDesktopControl = 2
+let unknownRoundTrip = Wire.decode(WindowList.self, from: Wire.encode(unknownControl))!
+check(unknownRoundTrip.extendedDesktopControl == 2 && unknownRoundTrip.extendedDesktopControl != 1,
+      "unknown control version decodes but remains unsupported by exact version check")
+let nullControl = Wire.decode(WindowList.self, from: Data(#"{"macName":"Legacy","windows":[],"active":{"desktop":{}},"extendedDesktopControl":null}"#.utf8))!
+check(nullControl.extendedDesktopControl == nil, "explicit null control capability is nil safe")
+let controlFixtureEncoder = JSONEncoder()
+controlFixtureEncoder.outputFormatting = [.sortedKeys]
+print("EXTENDED_DESKTOP_CONTROL_FIXTURE_JSON " + String(data: try! controlFixtureEncoder.encode([legacy, requestCapable, roleOnly, unknownControl]), encoding: .utf8)!)
+
 let peer = NSObject()
 var stops = 0
 var sends: [RemoteAudioSubscription] = []
