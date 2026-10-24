@@ -526,6 +526,8 @@ do {
     operation.observe(list(state(.pending, intent: .on)), from: p)
     print("OBSERVATION F2 past-applied message=\(operation.snapshot.message)")
     check(operation.snapshot.message.hasPrefix("Mac이 센츄리 보호 설정을 전환"), "F2 현재 pending false를 과거 applied보다 먼저 표시")
+    check(operation.snapshot.message.contains("이전 요청") && operation.snapshot.message.contains("현재 전환의 완료를 뜻하지 않습니다"),
+        "F2 이전 요청의 적용 영수증은 현재 전환 완료와 구분해서 표시")
     check(operation.snapshot.operationState == .applied && operation.snapshot.accepted == true &&
         operation.snapshot.message.contains("요청 적용을 확인") && operation.snapshot.canReadback,
         "F2 과거 적용·접수 이력과 원문 조회는 유지")
