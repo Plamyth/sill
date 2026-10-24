@@ -215,8 +215,14 @@ class AdapterContract(unittest.TestCase):
             work = output / 'work'; work.mkdir()
             repo = Path(__file__).resolve().parents[2]
             config = {'repo':str(repo), 'outputRoot':str(output), 'developmentTeam':'ZPTXHJ866D'}
-            def stop_after_build(args, *rest):
+            common_git = str(repo / '.git')
+            def stop_after_build(args, *rest, **kwargs):
+                if args[0] == 'git':
+                    self.assertEqual(args, ['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+                    self.assertEqual(kwargs, {'cwd': config['repo']})
+                    return common_git
                 self.assertEqual(args[0], 'xcodebuild')
+                self.assertIn('CCR_SOURCE_GIT_COMMON_DIR=' + common_git, args)
                 values = dict(str(arg).split('=',1) for arg in args if str(arg).startswith('CCR_OWNER_MAC_BOOTSTRAP_'))
                 profile = Path(values['CCR_OWNER_MAC_BOOTSTRAP_PROFILE'])
                 self.assertTrue(profile.is_relative_to(output))
