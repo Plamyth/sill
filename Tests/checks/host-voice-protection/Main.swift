@@ -17,6 +17,7 @@ struct HostAudioPrivacyChecks {
     }
 
     @MainActor static func main() async {
+        journalRollbackChecks()
         let untouched = PrivacyFakeHAL(), unarmed = guardFor(untouched)
         expect(!unarmed.verify() && untouched.reads == 0 && untouched.writes.isEmpty, "legacy guard has no automatic HAL effects")
         let nilOwner = SillVirtualMicrophoneOwner(ops: untouched.microphoneOperations)
