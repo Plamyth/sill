@@ -19,7 +19,7 @@ annotated tap은 정확히 PID0 또는 현재 Host PID, HID1, 같은 요청·대
 
 전달표식과 기존 원격 표식은 기존 `1...Int32.max` 범위를 유지한다. 이는 SDK의 64비트 범위 제한을 뜻하지 않는다. MacBook 27.0.1/26A434와 Mini 26.6.2/25G83의 무게시 관측에서 큰 64비트 값의 최초 setter 기록은 성공했고 후속 clear0은 반영되지 않았다. 명시적 userdata0도 후속 setter로 proof를 기록하지 못했다. 첫 기록과 재기록을 범위 문제로 묶지 않는다. native source API의 stamp·clear는 두 userdata0 준비 방식에서 각각 검사한다. 요청·대상이 바뀌면 기존 세대 관리로 다른 태그를 사용한다. 이 표식은 OS 대상 메타데이터의 암호학적 증명이 아니다.
 
-`InputInjector.post(_:)`도 같은 native helper를 사용한다. 원래 source PID가 현재 Host여야 하며 이벤트 state가 InputInjector가 직접 소유한 source 객체의 state와 같아야 한다. 원격 태그는 source 생성 시 한 번 설정한다. 자기 소유 private source의 고유 state ID는 보존하고 외부 private source와 미확인 source는 `setSource` 전에 거절한다. 마커와 출처 readback 실패 시 post와 성공 반환을 차단한다. 기존 dryRun, 보호 포인터 대상, 일반 원격 입력과 tap 게이트는 유지한다.
+`InputInjector.post(_:)`도 같은 native helper를 사용한다. 원래 source PID가 현재 Host여야 하며 이벤트 state가 InputInjector가 직접 소유한 source 객체의 state와 같아야 한다. 원격 태그는 source 생성 시 한 번 설정한다. InputInjector가 생성한 source는 `.hidSystemState`다. 같은 HID state와 현재 Host PID를 확인하고 외부 PID나 다른 state는 `setSource` 전에 거절한다. 마커와 출처 readback 실패 시 post와 성공 반환을 차단한다. 기존 dryRun, 보호 포인터 대상, 일반 원격 입력과 tap 게이트는 유지한다.
 
 입력 callback은 캐시, `CFMachPortIsValid`, `ContinuousClock`, `proc_pidinfo(PROC_PIDTBSDINFO)`, 준비된 source의 getter와 `event.setSource`를 사용한다. source 생성과 태그 변경은 callback 밖에서 끝낸다. `CGEventSource(event:)`는 생산 경로에서 사용하지 않는다. Mini SDK 26.5에서 조작한 state를 가진 무게시 이벤트의 해당 생성자가 10초 안에 반환하지 않은 반례가 있어 제거했다. 이는 내부 IPC를 관측했다는 뜻이 아니다. `proc_pidinfo`는 프로세스 생성시각과 종료 상태를 읽는 커널 메타데이터 syscall이다. WindowServer, Security, AX, NSWorkspace 관측은 callback 밖에서 수행한다. OS tap 중단 callback은 먼저 허용 상태를 폐기하고 UI 갱신은 별도 MainActor 작업으로 넘긴다.
 
