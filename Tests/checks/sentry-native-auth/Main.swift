@@ -6,6 +6,7 @@ private final class Event {
     var fields: [UInt32: Int64] = [41: 0, 42: 0, 45: 1]
     var location = CGPoint.zero
     func getIntegerValueField(_ field: CGEventField) -> Int64 { fields[field.rawValue] ?? 0 }
+    func setIntegerValueField(_ field: CGEventField, value: Int64) { fields[field.rawValue] = value }
     static func tapIsEnabled(tap: Bool) -> Bool { tap }
 }
 private func CFMachPortIsValid(_ tap: Bool) -> Bool { tap }
@@ -20,6 +21,7 @@ private func CFMachPortIsValid(_ tap: Bool) -> Bool { tap }
     private let curtains = [1: Curtain()]
     private var curtainMessage: (title: String, detail: String) { ("비표시 검사", reason ?? "") }
     private var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
+    private var localAuthenticationInputPolicy = LocalAuthenticationInputPolicy()
     private var changed: (() -> Void)?
     private var changingLifecycle = false
     private var localReturnDown: CGWindowID?
@@ -28,6 +30,12 @@ private func CFMachPortIsValid(_ tap: Bool) -> Bool { tap }
     private var usable = true
     private func environmentIsUsable() -> Bool { usable }
     private func visibleReturnButton(at point: CGPoint) -> CGWindowID? { 90 }
+    private var inputEnvironmentVerified: Bool { get { usable } set { usable = newValue } }
+    private var inputTapsAreReady: Bool { true }
+    private var observedReturnButtons: [CGWindowID: CGRect] = [:]
+    private func authenticationInputAllowed(_ type: CGEventType, event: Event, stage: LocalAuthenticationInputPolicy.Stage) -> Bool { false }
+    private func tapStopped(annotated: Bool) { invalidate("검사 필터 중단") }
+    private func observedReturnButton(at point: CGPoint) -> CGWindowID? { visibleReturnButton(at: point) }
     __PRODUCTION__
     func run() {
         let id = UUID()

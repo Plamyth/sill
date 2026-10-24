@@ -13,6 +13,10 @@ final class NativePanelChecks: NSObject {
     private var localReturnReason: () -> String? = { nil }
     private var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
     private var reason: String? { if case .invalid(let value) = state { return value }; return nil }
+    private var inputEnvironmentVerified = false
+    private var localAuthenticationInputPolicy = LocalAuthenticationInputPolicy()
+    private var observedReturnButtons: [UInt32: CGRect] = [:]
+    private func refreshInputObservation() {}
     __PRODUCTION_PANEL_REFRESH__
     private func refreshTimer() -> Timer {
         __PRODUCTION_REFRESH_TIMER__

@@ -19,6 +19,7 @@ private final class HostSentryPlatform: NSObject {
     var localReturnDown: CGWindowID?
     var requestLocalReturn: (() -> Void)?
     var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
+    private var localAuthenticationInputPolicy = LocalAuthenticationInputPolicy()
     var usable = true
     var buttonID: CGWindowID? = 90
     private var curtains: [Int: Curtain] = [:]
@@ -29,9 +30,15 @@ private final class HostSentryPlatform: NSObject {
     }
     func visibleReturnButton(at point: CGPoint) -> CGWindowID? { buttonID }
     @objc func returnRequested() { requestLocalReturn?() }
+    private var inputEnvironmentVerified: Bool { get { usable } set { usable = newValue } }
+    private var inputTapsAreReady: Bool { true }
+    private var observedReturnButtons: [CGWindowID: CGRect] = [:]
+    private func authenticationInputAllowed(_ type: CGEventType, event: CGEvent, stage: LocalAuthenticationInputPolicy.Stage) -> Bool { false }
+    private func tapStopped(annotated: Bool) { invalidate("검사 필터 중단") }
+    private func observedReturnButton(at point: CGPoint) -> CGWindowID? { visibleReturnButton(at: point) }
     __PRODUCTION_PLATFORM__
 
-    func run() {
+    func run() async {
         let curtain = makeCurtain(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
         curtains[1] = curtain
         defer { curtain.panel.close() }
@@ -105,7 +112,11 @@ private final class HostSentryPlatform: NSObject {
         var requests = 0
         requestLocalReturn = { requests += 1 }
         let local = CGEvent(source: source)!
-        Checks.check(filter(.leftMouseDown, event: local) == nil && filter(.leftMouseUp, event: local) == nil && requests == 1,
+        local.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+        local.setIntegerValueField(.eventSourceStateID, value: Int64(CGEventSourceStateID.hidSystemState.rawValue))
+        let down = filter(.leftMouseDown, event: local), up = filter(.leftMouseUp, event: local)
+        await Task.yield()
+        Checks.check(down == nil && up == nil && requests == 1,
                      "물리 복귀 버튼 클릭은 소비하고 복귀 요청만 전달함")
         buttonID = nil
         _ = filter(.leftMouseDown, event: local)
@@ -158,10 +169,10 @@ private enum KeyStrokes { static let capsLock: UInt64 = 0x01_0000 }
         if !value { failed += 1 }
         print("\(value ? "PASS" : "FAIL") \(label)")
     }
-    @MainActor static func main() {
+    @MainActor static func main() async {
         _ = NSApplication.shared.setActivationPolicy(.prohibited)
         guard NSApp.activationPolicy() == .prohibited else { exit(2) }
-        HostSentryPlatform().run()
+        await HostSentryPlatform().run()
         print("SENTRY_INPUT_DELIVERY \(total - failed)/\(total)")
         exit(failed == 0 ? 0 : 1)
     }
