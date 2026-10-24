@@ -68,7 +68,8 @@ extension StreamClient {
     }
 
     func audioForwardingPermits(_ direction: IPadDesiredAudio.Direction) -> Bool {
-        guard desiredAudio.selection == audioForwarding.durable?.selection,
+        guard desiredAudio.sessionPermits(direction),
+              desiredAudio.selection == audioForwarding.durable?.selection,
               desiredAudio.privacy == .protected, let context = audioForwardingContext,
               audioForwarding.permits(direction, in: context, now: audioForwardingNow) else { return false }
         if direction == .microphone {

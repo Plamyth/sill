@@ -75,15 +75,23 @@ extension StreamClient {
         finish?()
     }
 
+    func audioSessionChanged(_ event: IPadDesiredAudio.SessionEvent) {
+        guard desiredAudio.observeSession(event) else { return }
+        microphoneInterrupted()
+        reconcileDesiredAudio()
+    }
+
     func setDesiredAudio(_ direction: IPadDesiredAudio.Direction, enabled: Bool) {
         var selection = desiredAudio.selection
         selection[direction] = enabled
-        setDesiredAudioSelection(selection)
+        setDesiredAudioSelection(selection, confirming: enabled ? [direction] : [])
     }
 
-    func setDesiredAudioSelection(_ selection: IPadDesiredAudio.Selection) {
+    func setDesiredAudioSelection(_ selection: IPadDesiredAudio.Selection,
+                                  confirming directions: [IPadDesiredAudio.Direction] = IPadDesiredAudio.Direction.allCases) {
         refreshDesiredAudioIdentity()
         guard audioForwardingContext != nil || (!selection.microphone && !selection.playback) else { return }
+        desiredAudio.confirmSession(directions.filter { selection[$0] })
         audioRouteAuthorization = nil
         suspendDesiredAudio()
         for direction in IPadDesiredAudio.Direction.allCases {

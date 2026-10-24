@@ -8,7 +8,7 @@ import StreamProtocol
             print((value ? "PASS " : "FAIL ") + label)
             if !value { failures += 1 }
         }
-        for event in ["route", "category", "unplug", "interruption", "reset"] {
+        for event in ["route", "category", "unplug", "interruption", "interruption-no-resume", "reset"] {
             UIApplication.shared.applicationState = .active
             let client = StreamClient(), generation = UUID()
             let peer = client.connection!
@@ -53,7 +53,7 @@ import StreamProtocol
             let durable = client.audioForwarding.durable
             let messages = peer.messages.count
             let reason: AVAudioSession.RouteChangeReason = event == "category" ? .categoryChange : event == "unplug" ? .oldDeviceUnavailable : .newDeviceAvailable
-            if event == "interruption" {
+            if event.hasPrefix("interruption") {
                 client.interrupted(Notification(name: AVAudioSession.interruptionNotification,
                     userInfo: [AVAudioSessionInterruptionTypeKey: NSNumber(value: AVAudioSession.InterruptionType.began.rawValue)]))
             } else if event == "reset" {
@@ -72,9 +72,19 @@ import StreamProtocol
             check(client.desiredAudio.selection == .init(microphone: false, playback: true) && client.audioForwarding.durable == durable,
                 event + " preserves per-direction desire and durable owner")
             client.reconcileDesiredAudio()
-            let fresh = client.command()
+            var fresh = client.command()
             check(fresh.operation == .observe && fresh.requestID != submit.requestID,
                 event + " requires fresh 217 observation")
+            if event == "route" {
+                client.routeChanged(Notification(name: AVAudioSession.routeChangeNotification,
+                    userInfo: [AVAudioSessionRouteChangeReasonKey: NSNumber(value: reason.rawValue)]))
+                client.clock.now = 0.25
+                client.receive(try .init(requestID: fresh.requestID, operation: .observe,
+                    catalog: catalog(original, intent: 1, binding: 1), result: nil))
+                fresh = client.command()
+                check(fresh.operation == .observe && peer.maximumForwardingInFlight == 1,
+                    "consecutive route events drain retired proof before one current observation")
+            }
             client.clock.now = 0.3
             client.receive(try .init(requestID: fresh.requestID, operation: .observe,
                 catalog: catalog(original, intent: 1, binding: 1), result: nil))
@@ -88,7 +98,7 @@ import StreamProtocol
             let starts = client.subscriptions.filter(\.enabled).count
             check(event == "route" ? starts == 2 : starts == 1,
                 event + (event == "route" ? " fresh active proof recovers playback-only without a new microphone scope" : " cannot reopen output without safe recovery"))
-            if event == "unplug" || event == "reset" || event == "interruption" {
+            if event == "unplug" || event == "reset" || event.hasPrefix("interruption") {
                 UIApplication.shared.applicationState = .inactive
                 NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
                 UIApplication.shared.applicationState = .background
@@ -108,6 +118,33 @@ import StreamProtocol
                     result: .accepted(live(afterResume.intent!, revision: 4))))
                 check(client.subscriptions.filter(\.enabled).count == 1,
                     event + " foreground and fresh proof cannot override the unresolved OS pause")
+                if event.hasPrefix("interruption") {
+                    let shouldResume = event == "interruption"
+                    let ended = Notification(name: AVAudioSession.interruptionNotification,
+                        userInfo: [AVAudioSessionInterruptionTypeKey: NSNumber(value: AVAudioSession.InterruptionType.ended.rawValue),
+                            AVAudioSessionInterruptionOptionKey: NSNumber(value: shouldResume ? 1 : 0)])
+                    client.interrupted(ended)
+                    let endedObserve = client.command()
+                    client.clock.now = 0.7
+                    client.receive(try .init(requestID: endedObserve.requestID, operation: .observe,
+                        catalog: catalog(live(afterResume.intent!, revision: 4), intent: 1, binding: 3), result: nil))
+                    let endedResume = client.command()
+                    client.clock.now = 0.8
+                    client.receive(try .init(requestID: endedResume.requestID, operation: .submit, catalog: nil,
+                        result: .accepted(live(endedResume.intent!, revision: 5))))
+                    check(client.subscriptions.filter(\.enabled).count == (shouldResume ? 2 : 1),
+                        "interruption end respects shouldResume and requires fresh active proof")
+                    let beforeDuplicate = peer.messages.count
+                    client.interrupted(ended)
+                    check(peer.messages.count == beforeDuplicate, "duplicate interruption end cannot renew media")
+                }
+                if event != "interruption" {
+                    client.setDesiredAudio(.microphone, enabled: false)
+                    check(!client.desiredAudio.sessionPermits(.playback), "microphone OFF cannot confirm paused output")
+                    client.setDesiredAudio(.playback, enabled: true)
+                    check(client.desiredAudio.sessionPermits(.playback) && client.subscriptions.filter(\.enabled).count == 1,
+                        "explicit output confirmation clears its pause but still waits for new common proof")
+                }
             }
             client.audioForwardingWake?.cancel()
             client.audioForwardingWireTimeout?.cancel()

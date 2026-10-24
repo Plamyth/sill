@@ -49,6 +49,9 @@ final class StreamClient {
                source: scope.source, generation: scope.generation, videoEpoch: scope.videoEpoch, lifecycle: fixtureLifecycle)
  }
  // Explicit independent common grant for the older desired/lifecycle domain checks.
+ func providerCallSetConnection(_ peer: NWConnection?) {}
+ func observeIPadProviderCalls(_ list: WindowList, from peer: NWConnection) {}
+ func microphoneInterrupted() { fatalError("session event is outside this permission fixture") }
  func retireAudioForwardingWire(unless peer: ObjectIdentifier?) {}
  func reconcileAudioForwarding() {}
  func selectAudioForwarding(_ selection: IPadDesiredAudio.Selection) {}

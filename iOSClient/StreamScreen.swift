@@ -436,19 +436,25 @@ struct StreamScreen: View {
             .receive(on: RunLoop.main)) { note in
             let kind = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
             if kind == AVAudioSession.InterruptionType.began.rawValue {
-                client.microphoneInterrupted()
+                client.audioSessionChanged(.interruptionBegan)
+            } else if kind == AVAudioSession.InterruptionType.ended.rawValue {
+                let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
+                client.audioSessionChanged(.interruptionEnded(shouldResume:
+                    AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume)))
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
             .receive(on: RunLoop.main)) { note in
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
             if reason != AVAudioSession.RouteChangeReason.categoryChange.rawValue {
-                client.microphoneInterrupted()
+                let unavailable = reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue ||
+                    reason == AVAudioSession.RouteChangeReason.noSuitableRouteForCategory.rawValue
+                client.audioSessionChanged(unavailable ? .outputUnavailable : .routeChanged)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)
             .receive(on: RunLoop.main)) { _ in
-            client.microphoneInterrupted()
+            client.audioSessionChanged(.mediaReset)
         }
         // One thing open at a time: the Aa ruler and a thumbnail's traffic lights put the Settings
         // panel away. (Opening the panel closes them, the drawer and the keyboard.)

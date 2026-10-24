@@ -3,6 +3,9 @@ import StreamProtocol
 
 struct IPadDesiredAudio {
     enum Direction: String, Codable, CaseIterable, Hashable { case microphone, playback }
+    enum SessionEvent {
+        case routeChanged, outputUnavailable, interruptionBegan, interruptionEnded(shouldResume: Bool), mediaReset
+    }
 
     struct Identity: Codable, Hashable {
         let macID: String
@@ -59,6 +62,37 @@ struct IPadDesiredAudio {
     private var sawPrivacy = false
     private var retiredScope: Scope?
     private var attempts: Set<Attempt> = []
+    private var interrupted = false
+    private var pausedDirections: Set<Direction> = []
+
+    func sessionPermits(_ direction: Direction) -> Bool {
+        !interrupted && !pausedDirections.contains(direction)
+    }
+
+    mutating func confirmSession(_ directions: [Direction]) {
+        pausedDirections.subtract(directions)
+    }
+
+    mutating func observeSession(_ event: SessionEvent) -> Bool {
+        switch event {
+        case .routeChanged: break
+        case .outputUnavailable: pausedDirections.insert(.playback)
+        case .interruptionBegan:
+            guard !interrupted else { return false }
+            interrupted = true
+        case .interruptionEnded(let shouldResume):
+            guard interrupted else { return false }
+            interrupted = false
+            if !shouldResume { pausedDirections.formUnion(Direction.allCases) }
+        case .mediaReset:
+            interrupted = false
+            pausedDirections.formUnion(Direction.allCases)
+        }
+        lifecycle = UUID()
+        attempts.removeAll()
+        invalidate()
+        return true
+    }
 
     mutating func bind(_ peer: ObjectIdentifier?) {
         guard self.peer != peer else { return }
@@ -142,7 +176,7 @@ struct IPadDesiredAudio {
     func permits(_ direction: Direction, automatic: Bool, foreground: Bool,
                  microphoneAuthorized: Bool) -> Bool {
         guard peer != nil, identity != nil, let scope, selection[direction], foreground,
-              privacy == .protected else { return false }
+              privacy == .protected, sessionPermits(direction) else { return false }
         if direction == .microphone {
             guard scope.microphone != nil else { return false }
             if automatic && !microphoneAuthorized { return false }

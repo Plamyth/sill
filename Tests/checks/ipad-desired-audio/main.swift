@@ -128,6 +128,27 @@ expect(starts(&state, permission: false).isEmpty, "permission loss cannot restar
 state.observeMicrophoneAuthorization(true)
 expect(starts(&state) == [.microphone], "new OS authorization cycle gets one fresh microphone attempt")
 
+for muted in IPadDesiredAudio.Direction.allCases {
+    state = ready()
+    state.set(muted, desired: false)
+    _ = state.observeSession(.mediaReset)
+    _ = state.observeSession(.routeChanged)
+    state.observeForeground(false)
+    state.observeForeground(true)
+    expect(starts(&state).isEmpty, "reset pause survives route and foreground changes")
+    state.confirmSession(IPadDesiredAudio.Direction.allCases)
+    expect(starts(&state) == IPadDesiredAudio.Direction.allCases.filter { $0 != muted },
+        "pause confirmation preserves each explicit direction OFF")
+    _ = state.observeSession(.outputUnavailable)
+    state.bind(ObjectIdentifier(b))
+    state.authenticate(identity, saved: .init(microphone: false, playback: false))
+    state.observe(catalog(), microphone: micScope, from: ObjectIdentifier(b))
+    expect(starts(&state).isEmpty, "new connection with explicit OFF cannot inherit audio ON")
+    state.authenticate(otherMac, saved: .init())
+    state.confirmSession(IPadDesiredAudio.Direction.allCases)
+    expect(starts(&state).isEmpty, "different Mac remains OFF even after local pause confirmation")
+}
+
 let suiteName = "IPadDesiredAudioTests." + UUID().uuidString
 let defaults = UserDefaults(suiteName: suiteName)!
 defer { defaults.removePersistentDomain(forName: suiteName) }
