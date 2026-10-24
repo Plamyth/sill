@@ -61,6 +61,7 @@ enum SavedMacs {
     var automaticSubmission: SessionLink.Submission?
     var resumeSource: StreamSource?
     var active = StreamSource.window(1001)
+    func invalidatePresentedInput() {}
     var remoteAudioControl = AudioControl()
     var link = SessionLink()
     var choicesSent = 0
