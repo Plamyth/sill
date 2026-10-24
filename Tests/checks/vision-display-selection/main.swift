@@ -322,8 +322,8 @@ startupDisplay.observeVisionDisplays(startupAccepted, from: startupDisplayPeer)
 check(UserDefaults.standard.values.isEmpty, "catalog만으로 실제 표시를 확정하거나 저장하지 않는다")
 startupDisplay.visionInputBinding = .presented(startupAccepted.videoEpoch!)
 startupDisplay.confirmVisionDisplayPresentation()
-check(!startupDisplay.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.count == 1,
-      "현재 catalog와 실제 표시 epoch가 수렴한 뒤 입력과 저장을 확정한다")
+check(!startupDisplay.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.isEmpty,
+      "현재 catalog와 실제 표시 epoch가 수렴하면 입력을 열고 자동 선택은 영구 저장하지 않는다")
 
 func automaticCatalog(inventoryID: UUID? = inventory, revision: String = "r0") -> WindowList {
     var result = list()
@@ -387,7 +387,7 @@ check(topologyClient.visionDisplaySelection.inputBlocked && UserDefaults.standar
       "host-owned 복구 catalog도 실제 표시 전에는 입력·저장 수렴이 아니다")
 topologyClient.visionInputBinding = .presented(recoveredCatalog.videoEpoch!)
 topologyClient.confirmVisionDisplayPresentation()
-check(!topologyClient.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.count == 1,
+check(!topologyClient.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.isEmpty,
       "host-owned 실제 새 epoch를 표시하면 취소된 자동 요청을 ACK로 바꾸지 않고 입력을 복원한다")
 
 for mutation in ["auth", "mac", "host", "cap", "lease", "background", "modal"] {
@@ -428,8 +428,104 @@ for kind in ["matching", "mac", "launch", "inventory", "malformed", "oversized"]
     client.observeVisionDisplays(automaticCatalog(), from: peer)
     client.releaseCallbacks[0](true); drain()
     let selected = peer.sent.first.flatMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
-    check(selected?.displayID == (kind == "matching" ? 22 : 11), "마지막 화면은 같은 인증 Mac·host·inventory에서만 복원한다 \(kind)")
+    check(selected?.displayID == 11 && selected?.origin == .automatic && selected?.selectionRevision == "r0",
+          "새 앱 실행은 이전 실행의 저장값보다 현재 main을 우선한다 \(kind)")
 }
+
+func confirmedManualDisplay() -> StreamClient {
+    let (client, peer) = automaticClient()
+    let manual = VisionDisplaySelection.Command(requestID: UUID(), displayID: 22, token: client.visionDisplaySelection.token!)
+    check(client.selectVisionDisplay(manual).code == .releasing, "실제 수동 선택은 자동 시작보다 우선한다")
+    client.releaseCallbacks.last!(true); drain()
+    var shown = automaticCatalog(revision: "manual-r1")
+    shown.active = .desktop; shown.activeDisplayID = 22; shown.desktopSelectionRequired = false
+    shown.inputGeneration = "manual-shown"; shown.videoEpoch = epoch("manual-shown")
+    client.observeVisionDisplays(shown, from: peer)
+    client.visionInputBinding = .presented(shown.videoEpoch!)
+    client.confirmVisionDisplayPresentation()
+    check(client.visionDisplaySelection.lastResult?.code == .observed && !client.visionDisplaySelection.inputBlocked,
+          "수동 선택은 catalog와 실제 표시 epoch가 일치해야 확인된다")
+    return client
+}
+func reconnectDisplay(_ client: StreamClient, catalog: WindowList = automaticCatalog()) -> [DisplaySelection] {
+    let window = client.visionDisplaySelection.lease!.window
+    client.admitVisionDisplays(lease: nil, foreground: false)
+    client.connection = nil
+    client.visionInputBinding = .awaiting
+    let peer = NWConnection(); client.connection = peer
+    client.admitVisionDisplays(lease: VisionWindowLease(window: window), foreground: true)
+    let releases = client.releaseCallbacks.count
+    client.observeVisionDisplays(catalog, from: peer)
+    if client.releaseCallbacks.count > releases { client.releaseCallbacks.last!(true); drain() }
+    return peer.sent.compactMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+}
+let processManual = confirmedManualDisplay()
+let processLease = processManual.visionDisplaySelection.lease!
+let processReleaseCount = processManual.releaseCallbacks.count
+processManual.admitVisionDisplays(lease: processLease, foreground: false)
+processManual.admitVisionDisplays(lease: processLease, foreground: true)
+check(processManual.releaseCallbacks.count == processReleaseCount && processManual.visionDisplaySelection.observedDisplay == 22,
+      "foreground 복귀는 cold start가 아니며 같은 실행의 표시된 수동 선택을 유지한다")
+let processRestored = reconnectDisplay(processManual)
+check(processRestored.count == 1 && processRestored[0].displayID == 22 && processRestored[0].origin == .automatic &&
+      processRestored[0].selectionRevision == "r0" && processRestored[0].inventoryID == inventory,
+      "같은 프로세스 재접속은 확인된 수동 화면을 새 peer의 automatic CAS로 복원한다")
+let (newProcess, newProcessPeer) = automaticClient()
+newProcess.releaseCallbacks.last!(true); drain()
+let newProcessSelection = newProcessPeer.sent.first.flatMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+check(newProcessSelection?.displayID == 11, "다른 앱 실행은 이전 프로세스의 수동 화면을 상속하지 않는다")
+
+for boundary in ["mac", "host", "inventory", "removed", "invalid", "source", "admission"] {
+    let client = confirmedManualDisplay()
+    var current = automaticCatalog()
+    switch boundary {
+    case "mac": client.session = .init(macID: "OTHER-MAC")
+    case "host": current.launchID = "new-host-launch"
+    case "inventory": current.displayInventoryID = UUID()
+    case "removed": current.displays = [rows[0]]
+    case "invalid": current.displays = [rows[0], rows[0]]
+    case "source": current.active = .window(81); current.desktopSelectionRequired = false
+    default: current = admissionCatalog(current, admission(2, ready: false))!
+    }
+    let selections = reconnectDisplay(client, catalog: current)
+    if ["invalid", "source", "admission"].contains(boundary) {
+        check(selections.isEmpty, "재접속도 유효 inventory·빈 source·준비 admission 없이는 전송0 \(boundary)")
+    } else {
+        check(selections.count == 1 && selections[0].displayID == 11 && selections[0].inventoryID == current.displayInventoryID,
+              "같은 프로세스의 기억도 새 Mac·host·inventory·실제 목록을 통과해야 사용한다 \(boundary)")
+    }
+}
+var movedMain = automaticCatalog()
+movedMain.displays = rows.map { var row = $0; row.isMain = row.id == 22; return row }
+let automaticOnly = startupDisplay
+let movedMainSelections = reconnectDisplay(automaticOnly, catalog: movedMain)
+check(movedMainSelections.count == 1 && movedMainSelections[0].displayID == 22,
+      "이전 자동 선택의 표시는 수동 기억이 아니며 재접속은 현재 main을 사용한다")
+
+let (unconfirmedManual, _) = automaticClient()
+let unconfirmedCommand = VisionDisplaySelection.Command(requestID: UUID(), displayID: 22,
+    token: unconfirmedManual.visionDisplaySelection.token!)
+_ = unconfirmedManual.selectVisionDisplay(unconfirmedCommand)
+unconfirmedManual.releaseCallbacks.last!(true); drain()
+let unconfirmedRestored = reconnectDisplay(unconfirmedManual)
+check(unconfirmedRestored.count == 1 && unconfirmedRestored[0].displayID == 11,
+      "제출만 한 수동 화면은 표시 확인 전까지 다음 연결의 기억으로 승격하지 않는다")
+
+var alreadyShown = automaticCatalog(revision: "already-shown")
+alreadyShown.active = .desktop; alreadyShown.activeDisplayID = 22; alreadyShown.desktopSelectionRequired = false
+alreadyShown.inputGeneration = "already-shown"; alreadyShown.videoEpoch = epoch("already-shown")
+let (unchangedManual, _) = automaticClient(alreadyShown)
+let unchangedCommand = command(unchangedManual.visionDisplaySelection)
+check(unchangedManual.visionDisplaySelection.begin(unchangedCommand, presented: alreadyShown.videoEpoch,
+    macID: "0123456789ABCDEF").code == .unchanged, "현재 표시 화면을 실제로 고른 경우에도 수동 선택을 기억한다")
+let unchangedRestored = reconnectDisplay(unchangedManual)
+check(unchangedRestored.count == 1 && unchangedRestored[0].displayID == 22,
+      "변경 없는 수동 선택도 새 사용권의 재접속에서 main보다 우선한다")
+let supersededManual = confirmedManualDisplay()
+supersededManual.prepareVisionManualSource()
+let supersededRestored = reconnectDisplay(supersededManual)
+check(supersededRestored.count == 1 && supersededRestored[0].displayID == 11,
+      "새 수동 source 의도는 이전 모니터 기억을 재접속으로 되살리지 않는다")
 let (forgedAuto, forgedPeer) = client()
 let forgedCommand = VisionDisplaySelection.Command(requestID: UUID(), displayID: 11,
     token: forgedAuto.visionDisplaySelection.token!, automaticRevision: "forged")
