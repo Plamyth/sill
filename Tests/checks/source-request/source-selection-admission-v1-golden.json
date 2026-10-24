@@ -1,0 +1,126 @@
+{
+  "automaticSelectionWhenAbsent" : false,
+  "explicitManualSelectionUsesExistingHostGuards" : true,
+  "schemaVersion" : 1,
+  "sideEffects" : 0,
+  "sourceDTOBlob" : "628f9d8afe3d315bb47f0a8702a04dcca879bb87",
+  "vectors" : [
+    {
+      "accepted" : true,
+      "admission" : {
+        "generation" : 1,
+        "ready" : false,
+        "schemaVersion" : 1
+      },
+      "name" : "initialBlocked"
+    },
+    {
+      "accepted" : true,
+      "admission" : {
+        "generation" : 2,
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "readyWithoutCapture"
+    },
+    {
+      "accepted" : true,
+      "admission" : {
+        "generation" : 3,
+        "ready" : false,
+        "schemaVersion" : 1
+      },
+      "name" : "nextBlocked"
+    },
+    {
+      "accepted" : true,
+      "admission" : {
+        "generation" : 4,
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "recoveredReady"
+    },
+    {
+      "accepted" : true,
+      "admission" : {
+        "generation" : 9007199254740991,
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "maximum"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : 0,
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "zero"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : 9007199254740992,
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "tooLarge"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : 1,
+        "ready" : true,
+        "schemaVersion" : 2
+      },
+      "name" : "unsupportedSchema"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : true,
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "booleanGeneration"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : 1.5,
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "fractionalGeneration"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : "1",
+        "ready" : true,
+        "schemaVersion" : 1
+      },
+      "name" : "stringGeneration"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : 1,
+        "ready" : 1,
+        "schemaVersion" : 1
+      },
+      "name" : "numericReady"
+    },
+    {
+      "accepted" : false,
+      "admission" : {
+        "generation" : 1,
+        "schemaVersion" : 1
+      },
+      "name" : "missingReady"
+    }
+  ],
+  "wireKey" : "sourceSelectionAdmission"
+}

@@ -33,6 +33,7 @@ enum SavedMacs {
     // EXPECTED_SOURCE_STATE
     // AUTOMATIC_TICKET
     // DISPLAY_TYPES
+    // SOURCE_ADMISSION_STATE
     var defaults = TestDefaults()
     enum Route { case network, remote; var isRemote: Bool { self == .remote } }
     enum HomeTrust { case plain, saved(pin: Data) }
@@ -88,9 +89,17 @@ enum SavedMacs {
         guard incoming == nil || incoming === connection else { return }
         let previous = active
         let peer = connection!
+        prepareAutomaticTicketCatalog(list)
+        // RESUME_SOURCE
+        requestInitialDisplay(list, peer: peer)
+        // IDLE_FALLBACK
+    }
+    func prepareAutomaticTicketCatalog(_ list: WindowList) {
+        let peer = connection!
         active = list.active
         windows = list.windows
         sessionHost = list.launchID
+        observeSourceSelectionAdmission(list, peer: peer)
         observeDisplaySelection(list, peer: peer)
         observeSourceIntent(list)
         sourceCatalogEpoch = list.videoEpoch?.id
@@ -100,9 +109,6 @@ enum SavedMacs {
         displaySelectionReady = list.displaySelection == 1 && list.displayInventoryID != nil
         desktopSelectionRequired = list.desktopSelectionRequired == true
         displays = list.displays ?? []
-        // RESUME_SOURCE
-        requestInitialDisplay(list, peer: peer)
-        // IDLE_FALLBACK
     }
     // CLIENT_METHODS
 }

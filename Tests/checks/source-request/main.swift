@@ -9,7 +9,7 @@ import Foundation
             if !value { failures += 1; print("FAIL \(label)") }
         }
         let list = try JSONDecoder().decode(WindowList.self, from:Data("""
-        {"selectionRevision":"revision-0","launchID":"host","macName":"fixture","windows":[{"id":1001,"title":"old","appName":"fixture","bundleID":"test","width":600,"height":400}],"active":{"none":{}}}
+        {"sourceSelectionAdmission":{"schemaVersion":1,"generation":1,"ready":true},"selectionRevision":"revision-0","launchID":"host","macName":"fixture","windows":[{"id":1001,"title":"old","appName":"fixture","bundleID":"test","width":600,"height":400}],"active":{"none":{}}}
         """.utf8))
         for choice in ["window","display","launch","none"] {
             let client = Client()
@@ -47,12 +47,14 @@ import Foundation
         expect(idle.allSent.count == 1, "fresh catalog does not rebase a consumed automatic ticket")
         let cancelled = Client()
         cancelled.active = .none
+        cancelled.prepareAutomaticTicketCatalog(list)
         let ticket = cancelled.automaticTicket(peer: cancelled.connection!, list: list)!
         cancelled.select(.none)
         cancelled.deliverIdleCatalog(list)
         cancelled.requestAutomatic(.desktop, ticket: ticket)
         expect(cancelled.allSent.count == 1, "explicit None prevents first-idle and delayed ticket rebasing")
         let replaced = Client()
+        replaced.prepareAutomaticTicketCatalog(list)
         let oldTicket = replaced.automaticTicket(peer: replaced.connection!, list: list)!
         replaced.connection = NWConnection()
         replaced.sessionHost = list.launchID

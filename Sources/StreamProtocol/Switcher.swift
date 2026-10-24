@@ -161,6 +161,7 @@ public struct WindowList: Codable {
     public var selectionRevision: String?
     /// Version 1 admits revision-scoped automatic kind 211 requests.
     public var automaticDisplaySelection: Int?
+    public var sourceSelectionAdmission: SourceSelectionAdmission?
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
     /// scoped connections must echo it. Legacy connections pin source selection and keep their
     /// original input format until they disconnect or negotiate scoped input.
@@ -183,12 +184,14 @@ public struct WindowList: Codable {
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
                 dockApps: [AppInfo]? = nil, audioPrivacy: AudioPrivacyState? = nil,
-                catalogRefresh: Int? = nil, responseRequestID: UUID? = nil, providerCalls: Int? = nil) {
+                catalogRefresh: Int? = nil, responseRequestID: UUID? = nil, providerCalls: Int? = nil,
+                sourceSelectionAdmission: SourceSelectionAdmission? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
         self.selectionRevision = selectionRevision
         self.automaticDisplaySelection = automaticDisplaySelection
+        self.sourceSelectionAdmission = sourceSelectionAdmission
         self.audioPrivacy = audioPrivacy
         self.catalogRefresh = catalogRefresh
         self.responseRequestID = responseRequestID

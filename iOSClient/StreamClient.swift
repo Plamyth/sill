@@ -760,7 +760,17 @@ final class StreamClient: ObservableObject {
         let revision: String?
         let inventory: UUID?
         let macID: String?
+        let admissionGeneration: UInt64?
     }
+    private struct SourceSelectionObservation {
+        let peer: ObjectIdentifier
+        let host: String?
+        let macID: String?
+        var admission: SourceSelectionAdmission?
+        var permitsSelection: Bool
+    }
+    private var sourceSelectionObservation: SourceSelectionObservation?
+    private var pendingAutomaticSourceTicket: AutomaticSourceTicket?
     private struct AutomaticConnectionOpportunity {
         let intent: UInt64
         let peer: ObjectIdentifier
@@ -787,7 +797,7 @@ final class StreamClient: ObservableObject {
     private var automaticDisplayCatalogObserved = false
     private struct InitialDisplayOpportunity {
         let ticket: AutomaticSourceTicket
-        var submittedInventories: Set<UUID> = []
+        var submittedInventories: [UUID: UInt64] = [:]
     }
     private var initialDisplayOpportunity: InitialDisplayOpportunity?
     private struct RememberedDisplay: Codable, Equatable {
@@ -805,6 +815,76 @@ final class StreamClient: ObservableObject {
     }
     private var pendingDisplaySelection: PendingDisplaySelection?
 
+    private func observeSourceSelectionAdmission(_ list: WindowList, peer: NWConnection) {
+        guard connection === peer else { return }
+        if let observed = sourceSelectionObservation,
+           observed.peer != ObjectIdentifier(peer) || observed.host != list.launchID || observed.macID != session?.macID {
+            revokeAutomaticSelection()
+            automaticDisplayCatalogObserved = true
+            initialDisplayOpportunity = nil
+            automaticSourceIntent = nil
+            resumeSource = nil
+            resumeOpportunity = nil
+            pendingAutomaticSourceTicket = nil
+            return
+        }
+        var observed = sourceSelectionObservation ?? SourceSelectionObservation(
+            peer: ObjectIdentifier(peer), host: list.launchID, macID: session?.macID,
+            admission: nil, permitsSelection: false)
+        if let admission = list.sourceSelectionAdmission {
+            if let previous = observed.admission {
+                if admission.generation > previous.generation {
+                    observed.admission = admission
+                    observed.permitsSelection = admission.ready
+                    revokeAutomaticSelection()
+                } else if admission != previous {
+                    observed.permitsSelection = false
+                }
+            } else {
+                observed.admission = admission
+                observed.permitsSelection = admission.ready
+            }
+        } else {
+            observed.permitsSelection = false
+        }
+        if !observed.permitsSelection { revokeAutomaticSelection() }
+        sourceSelectionObservation = observed
+    }
+
+    private func revokeAutomaticSelection() {
+        if let automaticSubmission { link.cancel(automaticSubmission) }
+        automaticSubmission = nil
+        if let ticket = scheduledAutomaticTicket {
+            scheduledAutomaticTicket = nil
+            pendingAutomaticSourceTicket = ticket
+            resumeSource = .desktop
+            resumeOpportunity = AutomaticConnectionOpportunity(intent: ticket.intent, peer: ticket.peer,
+                host: ticket.host, observation: .catalog(ticket.revision))
+            initialDisplayOpportunity = InitialDisplayOpportunity(ticket: ticket)
+            automaticDisplayCatalogObserved = false
+        }
+    }
+
+    private func automaticTicketIsCurrent(_ ticket: AutomaticSourceTicket) -> Bool {
+        guard let peer = connection, ObjectIdentifier(peer) == ticket.peer,
+              explicitSourceIntent == ticket.intent,
+              sessionHost == ticket.host, selectionRevision == ticket.revision,
+              let revision = ticket.revision, !revision.isEmpty, revision.utf8.count <= 128,
+              displayInventoryID == ticket.inventory,
+              let macID = authenticatedDisplayMacID(), macID == ticket.macID,
+              let observed = sourceSelectionObservation, observed.peer == ticket.peer,
+              observed.host == ticket.host, observed.macID == macID, observed.permitsSelection,
+              let admission = observed.admission, admission.ready,
+              admission.generation == ticket.admissionGeneration else { return false }
+        if automaticSourceIntent == ticket.intent || scheduledAutomaticTicket == ticket { return true }
+        guard let previous = pendingAutomaticSourceTicket, expectedSourceIntent?.origin == .automatic,
+              previous.intent == ticket.intent, previous.peer == ticket.peer,
+              previous.host == ticket.host, previous.revision == ticket.revision,
+              previous.inventory == ticket.inventory, previous.macID == ticket.macID,
+              let generation = previous.admissionGeneration, generation < admission.generation else { return false }
+        return true
+    }
+
     private func authenticatedDisplayMacID() -> String? {
         guard connected, let session, let macID = session.macID,
               let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
@@ -815,6 +895,14 @@ final class StreamClient: ObservableObject {
     }
 
     private func observeDisplaySelection(_ list: WindowList, peer: NWConnection) {
+        if let ticket = pendingAutomaticSourceTicket,
+           ticket.revision != list.selectionRevision || ticket.inventory != list.displayInventoryID {
+            revokeAutomaticSelection()
+            pendingAutomaticSourceTicket = nil
+            resumeSource = nil
+            resumeOpportunity = nil
+            automaticSourceIntent = nil
+        }
         if let automaticSubmission,
            selectionRevision != list.selectionRevision || displayInventoryID != list.displayInventoryID ||
             (pendingDisplaySelection != nil && list.automaticDisplaySelection != 1) {
@@ -846,7 +934,10 @@ final class StreamClient: ObservableObject {
     private func requestInitialDisplay(_ list: WindowList, peer: NWConnection) {
         guard !automaticDisplayCatalogObserved else { return }
         if initialDisplayOpportunity == nil {
-            guard let ticket = automaticTicket(peer: peer, list: list) else { return }
+            guard automaticSourceIntent == explicitSourceIntent, scheduledAutomaticTicket == nil else { return }
+            let ticket = AutomaticSourceTicket(intent: explicitSourceIntent, peer: ObjectIdentifier(peer),
+                host: list.launchID, revision: list.selectionRevision, inventory: list.displayInventoryID,
+                macID: session?.macID, admissionGeneration: nil)
             initialDisplayOpportunity = InitialDisplayOpportunity(ticket: ticket)
         }
         guard var opportunity = initialDisplayOpportunity else { return }
@@ -865,8 +956,10 @@ final class StreamClient: ObservableObject {
             }
             return
         }
-        guard let inventory = list.displayInventoryID,
-              !opportunity.submittedInventories.contains(inventory) else { return }
+        guard let observed = sourceSelectionObservation, observed.permitsSelection,
+              let admission = observed.admission, admission == list.sourceSelectionAdmission, admission.ready,
+              let inventory = list.displayInventoryID,
+              opportunity.submittedInventories[inventory] != admission.generation else { return }
         let previousIntent = automaticSourceIntent
         if !opportunity.submittedInventories.isEmpty {
             guard let expected = expectedSourceIntent, expected.origin == .automatic,
@@ -877,7 +970,7 @@ final class StreamClient: ObservableObject {
             automaticSourceIntent = previousIntent
             return
         }
-        opportunity.submittedInventories.insert(inventory)
+        opportunity.submittedInventories[inventory] = admission.generation
         initialDisplayOpportunity = opportunity
     }
 
@@ -987,6 +1080,7 @@ final class StreamClient: ObservableObject {
         resumeSource = nil
         resumeOpportunity = nil
         scheduledAutomaticTicket = nil
+        pendingAutomaticSourceTicket = nil
     }
 
     private func beginAutomaticConnectionOpportunity(peer: NWConnection? = nil) {
@@ -1002,6 +1096,8 @@ final class StreamClient: ObservableObject {
         if expectedSourceIntent?.origin == .automatic { expectedSourceIntent = nil }
         automaticSourceIntent = expectedSourceIntent == nil ? explicitSourceIntent : nil
         scheduledAutomaticTicket = nil
+        sourceSelectionObservation = nil
+        pendingAutomaticSourceTicket = nil
         resumeOpportunity = peer.flatMap { peer in
             guard automaticSourceIntent == explicitSourceIntent else { return nil }
             return AutomaticConnectionOpportunity(intent: explicitSourceIntent, peer: ObjectIdentifier(peer), host: sessionHost)
@@ -1009,23 +1105,26 @@ final class StreamClient: ObservableObject {
     }
 
     private func automaticTicket(peer: NWConnection, list: WindowList) -> AutomaticSourceTicket? {
-        guard automaticSourceIntent == explicitSourceIntent, scheduledAutomaticTicket == nil else { return nil }
-        return AutomaticSourceTicket(intent: explicitSourceIntent, peer: ObjectIdentifier(peer),
+        guard scheduledAutomaticTicket == nil, let admission = list.sourceSelectionAdmission, admission.ready else { return nil }
+        let ticket = AutomaticSourceTicket(intent: explicitSourceIntent, peer: ObjectIdentifier(peer),
                                      host: list.launchID, revision: list.selectionRevision,
-                                     inventory: list.displayInventoryID, macID: session?.macID)
+                                     inventory: list.displayInventoryID, macID: session?.macID,
+                                     admissionGeneration: admission.generation)
+        return automaticTicketIsCurrent(ticket) ? ticket : nil
     }
 
     private func requestAutomatic(_ source: StreamSource, ticket: AutomaticSourceTicket) {
-        guard let peer = connection, ObjectIdentifier(peer) == ticket.peer,
-              explicitSourceIntent == ticket.intent,
-              automaticSourceIntent == ticket.intent || scheduledAutomaticTicket == ticket,
-              sessionHost == ticket.host, selectionRevision == ticket.revision else { return }
+        guard let peer = connection, automaticTicketIsCurrent(ticket) else { return }
         let submission = SessionLink.Submission { _ in }
         automaticSubmission = submission
         request(source, origin: .automatic, revision: ticket.revision, onlyOn: peer, submission: submission)
         expectedSourceIntent = (.source(source), ticket.revision, sourceCatalogEpoch, .automatic)
         automaticSourceIntent = nil
         scheduledAutomaticTicket = nil
+        pendingAutomaticSourceTicket = ticket
+        resumeSource = source
+        resumeOpportunity = AutomaticConnectionOpportunity(intent: ticket.intent, peer: ticket.peer,
+            host: ticket.host, observation: .catalog(ticket.revision))
     }
     #if DEBUG
     /// The reason last printed as "path: kept: …", so that each prints once.
@@ -4055,7 +4154,7 @@ final class StreamClient: ObservableObject {
         guard displaySelectionReady, let peer = connection, let displayInventoryID,
               displays.filter({ $0.id == display.id }).count == 1 else { return false }
         if origin == .automatic {
-            guard let ticket, automaticDisplaySelection == 1, active == .none,
+            guard let ticket, automaticTicketIsCurrent(ticket), automaticDisplaySelection == 1, active == .none,
                   let revision = ticket.revision, !revision.isEmpty, revision.utf8.count <= 128,
                   ObjectIdentifier(peer) == ticket.peer, explicitSourceIntent == ticket.intent,
                   automaticSourceIntent == ticket.intent || scheduledAutomaticTicket == ticket,
@@ -4662,6 +4761,7 @@ final class StreamClient: ObservableObject {
                 // The host this session runs on, which a move to the network must reach again
                 // (`moveProbed`); its first list is what lets a move start.
                 self.sessionHost = list.launchID
+                self.observeSourceSelectionAdmission(list, peer: peer)
                 self.observeDisplaySelection(list, peer: peer)
                 self.observeSourceIntent(list)
                 self.sourceCatalogEpoch = list.videoEpoch?.id
@@ -4724,9 +4824,10 @@ final class StreamClient: ObservableObject {
                        opportunity.peer == ObjectIdentifier(peer), opportunity.host == list.launchID,
                        opportunity.accepts(list.selectionRevision),
                        !Self.noAutoDesktop, !self.desktopSelectionRequired || self.automaticDisplaySelection == 1 {
-                        if list.active == .none, let ticket = self.automaticTicket(peer: peer, list: list) {
-                            self.resumeSource = nil
-                            self.resumeOpportunity = nil
+                        if list.active == .none {
+                            self.resumeOpportunity = AutomaticConnectionOpportunity(intent: opportunity.intent,
+                                peer: opportunity.peer, host: opportunity.host, observation: .catalog(list.selectionRevision))
+                            guard let ticket = self.automaticTicket(peer: peer, list: list) else { return }
                             var pick = resume
                             if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }
                             if pick == .desktop, self.automaticDisplaySelection == 1 {
@@ -4741,11 +4842,13 @@ final class StreamClient: ObservableObject {
                         } else {
                             self.resumeSource = nil
                             self.resumeOpportunity = nil
+                            self.pendingAutomaticSourceTicket = nil
                         }
                     } else {
                         self.resumeSource = nil
                         self.resumeOpportunity = nil
                         self.automaticSourceIntent = nil
+                        self.pendingAutomaticSourceTicket = nil
                     }
                 }
                 self.requestInitialDisplay(list, peer: peer)

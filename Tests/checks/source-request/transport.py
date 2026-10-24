@@ -55,6 +55,7 @@ final class Server {
         let held=Client(); held.active = .none
         let hp=held.connection!
         _=held.link.hold(hp)
+        held.prepareAutomaticTicketCatalog(list)
         let ht=held.automaticTicket(peer:hp,list:list)!
         held.requestAutomatic(.window(1001),ticket:ht)
         held.select(.none)
@@ -69,7 +70,12 @@ final class Server {
             let client = Client(); client.active = .none
             let peer = client.connection!
             _ = client.link.hold(peer)
-            client.requestAutomatic(.desktop, ticket: client.automaticTicket(peer: peer, list: list)!)
+            var manualList = list
+            manualList.displaySelection = 1
+            manualList.displayInventoryID = UUID()
+            manualList.displays = [DisplayInfo(id: 13, name: "fixture", width: 800, height: 600, isMain: true)]
+            client.prepareAutomaticTicketCatalog(manualList)
+            client.requestAutomatic(.desktop, ticket: client.automaticTicket(peer: peer, list: manualList)!)
             switch choice {
             case "window": client.select(.window(1002))
             case "display": client.selectDisplay(client.displays[0])
@@ -118,7 +124,7 @@ def augment(inputs, block, root, here):
       expect(host.selectionRevision != client.selectionRevision,"precondition real host cancel increments dedicated CAS at last departure")
       host.catalog.clientCount=1; host.join(new)
       client.moveWithoutFence(to:new)
-      var list=WindowList(macName:"fixture",windows:[WindowInfo(id:1001,title:"old",appName:"fixture",bundleID:"test",width:640,height:480)],active:.none,launchID:"host",selectionRevision:host.selectionRevision)
+      var list=WindowList(macName:"fixture",windows:[WindowInfo(id:1001,title:"old",appName:"fixture",bundleID:"test",width:640,height:480)],active:.none,launchID:"host",selectionRevision:host.selectionRevision,sourceSelectionAdmission:SourceSelectionAdmission(generation:1,ready:true))
       client.deliverIdleCatalog(list)
       let requests=new.packets.compactMap { Wire.decode(SourceRequest.self,from:Data($0.dropFirst(StreamMessage.headerLength))) }
       expect(requests.count == 1 && requests[0].source == .window(1001),"precondition actual unfenced handover emits remembered window")
@@ -248,7 +254,7 @@ def augment(inputs, block, root, here):
         query = (here/'CatalogQuery.swift').read_text().replace('// QUERY_METHOD',
             block((root/'Sources/SillHost/StreamCoordinator.swift').read_text(), 'private func refreshCatalog(').replace('private ', ''))
         fixture = fixture.replace('// QUERY_FIXTURE', query)
-        keep = ['Switcher.swift', 'AudioPrivacy.swift', 'AudioForwarding.swift', 'StreamMessage.swift', 'AudioRouting.swift', 'SourcePublicationAdmission.swift']
+        keep = ['Switcher.swift', 'Sentry.swift', 'AudioPrivacy.swift', 'AudioForwarding.swift', 'StreamMessage.swift', 'AudioRouting.swift', 'SourcePublicationAdmission.swift']
         selected = {name: inputs[name] for name in keep}
         inputs.clear(); inputs.update(selected)
         inputs['main.swift'] = fixture
@@ -260,9 +266,10 @@ def augment(inputs, block, root, here):
 
 def client_input(block, root, here):
     text = (root/'iOSClient/StreamClient.swift').read_text()
-    signatures = ['func select(_ source:', 'func selectDisplay(', 'private func requestDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(', 'private func authenticatedDisplayMacID(', 'private func observeDisplaySelection(', 'private func requestInitialDisplay(', 'private func requestAutomaticDisplay(']
+    signatures = ['func select(_ source:', 'func selectDisplay(', 'private func requestDisplay(', 'private func request(', 'func launch(bundleID:', 'private func noteSourceIntent(', 'private func automaticTicket(', 'private func requestAutomatic(', 'private func observeSourceIntent(', 'private func beginAutomaticConnectionOpportunity(', 'private func authenticatedDisplayMacID(', 'private func observeDisplaySelection(', 'private func requestInitialDisplay(', 'private func requestAutomaticDisplay(', 'private func observeSourceSelectionAdmission(', 'private func revokeAutomaticSelection(', 'private func automaticTicketIsCurrent(']
     methods = '\n'.join(block(text, s) for s in signatures)
     client = (here/'Client.swift').read_text().replace('// CLIENT_METHODS', methods.replace('private ', '').replace('UserDefaults.standard', 'defaults'))
+    client = client.replace('// SOURCE_ADMISSION_STATE', block(text, 'private struct SourceSelectionObservation').replace('private ', '') + '\n' + '\n'.join(line.strip().replace('private ', '') for line in text.splitlines() if 'private var sourceSelectionObservation:' in line or 'private var pendingAutomaticSourceTicket:' in line))
     client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('private ', '') for s in ['private struct InitialDisplayOpportunity', 'private struct RememberedDisplay', 'private struct PendingDisplaySelection']))
     client = client.replace('// EXPECTED_SOURCE_STATE', next(line.strip().replace('private ', '') for line in text.splitlines() if 'private var expectedSourceIntent:' in line))
     for marker, signature in [('// EXPECTED_SOURCE', 'private enum ExpectedSourceIntent'), ('// AUTOMATIC_TICKET', 'private struct AutomaticSourceTicket'), ('// RESUME_SOURCE', 'if let resume = self.resumeSource'), ('// IDLE_FALLBACK', 'if let ticket = self.automaticTicket')]:

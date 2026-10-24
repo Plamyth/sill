@@ -23,6 +23,27 @@ import Foundation
     legacy.selectDisplay(main)
     expect(picks(legacy).count == 1 && picks(legacy).first?.origin == nil,
            "admission 없는 Host에도 명시적인 수동 화면 선택은 기존 wire로 유지")
+    struct Golden: Decodable {
+        struct Vector: Decodable {
+            let name: String
+            let accepted: Bool
+            let admission: SourceSelectionAdmission?
+            enum CodingKeys: String, CodingKey { case name, accepted, admission }
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                name = try values.decode(String.self, forKey: .name)
+                accepted = try values.decode(Bool.self, forKey: .accepted)
+                admission = try? values.decode(SourceSelectionAdmission.self, forKey: .admission)
+            }
+        }
+        let vectors: [Vector]
+    }
+    let golden = try! JSONDecoder().decode(Golden.self, from: sourceSelectionAdmissionGoldenJSON)
+    expect(golden.vectors.count == 13 && golden.vectors.filter(\.accepted).count == 5,
+           "공용 골든 원문 13개 중 정상 5개와 거부 8개를 그대로 검사")
+    for vector in golden.vectors {
+        expect((vector.admission != nil) == vector.accepted, "공용 골든 parser \(vector.name)")
+    }
     let blocked = catalog(1, ready: false)!, ready = catalog(2, ready: true)!
     let waiting = fresh()
     waiting.deliverIdleCatalog(blocked)
@@ -114,6 +135,59 @@ import Foundation
     idle.selectionRevision = "revision-0"
     waiting.deliverIdleCatalog(catalog(9, ready: true)!)
     expect(picks(waiting).count == 3, "다른 CAS를 관측한 뒤 옛 CAS replay와 새 admission으로 재개하지 않음")
+    expect(catalog(10, ready: true, version: 2) == nil, "미지원 schema는 Host 공통 DTO가 디코딩에서 거절")
+    idle.selectionRevision = "revision-0"
+    for interruption in ["none", "window", "display", "launch", "revision", "inventory", "peer", "host", "mac"] {
+        let client = fresh()
+        client.beginAutomaticConnectionOpportunity(peer: client.connection)
+        client.resumeSource = .window(1001)
+        client.deliverIdleCatalog(catalog(2, ready: true)!)
+        var changed = catalog(3, ready: false)!
+        switch interruption {
+        case "none": client.select(.none)
+        case "window": client.select(.window(99))
+        case "display": client.selectDisplay(main)
+        case "launch": client.launch(bundleID: "fixture.manual")
+        case "revision": changed.selectionRevision = "revision-new"
+        case "inventory": changed.displayInventoryID = UUID()
+        case "peer": client.connection = NWConnection()
+        case "host": changed.launchID = "other-host"
+        default: client.session?.macID = "other-mac"
+        }
+        client.deliverIdleCatalog(changed)
+        let before = client.allSent.count
+        let audioBefore = client.remoteAudioControl.changes
+        client.deliverIdleCatalog(catalog(4, ready: true)!)
+        client.deliverIdleCatalog(catalog(4, ready: true)!)
+        expect(client.allSent.count == before && client.remoteAudioControl.changes == audioBefore,
+               "자동 창 복구도 \(interruption) 뒤 옛 catalog와 새 허용 세대로 재생성하지 않음")
+    }
+    let queuedWindow = fresh()
+    queuedWindow.beginAutomaticConnectionOpportunity(peer: queuedWindow.connection)
+    queuedWindow.resumeSource = .window(1001)
+    let windowPeer = queuedWindow.connection!
+    _ = queuedWindow.link.hold(windowPeer)
+    queuedWindow.deliverIdleCatalog(catalog(2, ready: true)!)
+    queuedWindow.deliverIdleCatalog(catalog(3, ready: false)!)
+    _ = queuedWindow.link.unhold(windowPeer)
+    expect(queuedWindow.allSent.isEmpty, "자동 창 복구도 보호 취소가 실제 보류된 selectSource를 폐기")
+    queuedWindow.deliverIdleCatalog(catalog(4, ready: true)!)
+    queuedWindow.deliverIdleCatalog(catalog(4, ready: true)!)
+    let queuedWindowPicks = queuedWindow.allSent.filter { $0.0 == .selectSource }
+        .compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
+    expect(queuedWindowPicks.count == 1 && queuedWindowPicks[0].source == .window(1001),
+           "보류 취소 뒤 새 세대에서 원래 창만 한 번 재개")
+    for missingAdmission in [true, false] {
+        let client = fresh()
+        var sourceCatalog = idle
+        sourceCatalog.automaticDisplaySelection = nil
+        sourceCatalog.desktopSelectionRequired = false
+        if !missingAdmission { sourceCatalog.sourceSelectionAdmission = SourceSelectionAdmission(generation: 1, ready: false) }
+        client.deliverIdleCatalog(sourceCatalog)
+        client.deliverIdleCatalog(sourceCatalog)
+        expect(client.allSent.isEmpty && client.remoteAudioControl.changes == 0,
+               "일반 자동 selectSource도 nil 또는 false admission에는 효과 없음")
+    }
 }
 
 @MainActor func automaticDisplayChecks(_ expect: (Bool, String) -> Void) async {
@@ -122,7 +196,7 @@ import Foundation
     let inventory = UUID()
     var idle = WindowList(macName: "fixture", windows: [], active: .none, launchID: "host",
         selectionRevision: "revision-0", displaySelection: 1, displays: [main, secondary],
-        displayInventoryID: inventory, desktopSelectionRequired: true)
+        displayInventoryID: inventory, desktopSelectionRequired: true, sourceSelectionAdmission: SourceSelectionAdmission(generation: 1, ready: true))
     idle.automaticDisplaySelection = 1
     func fresh(_ defaults: TestDefaults? = nil) -> Client {
         let client = Client()
@@ -195,6 +269,7 @@ import Foundation
         expect(interrupted.allSent.isEmpty, "새 수동 선택은 자동 display 복구로 덮지 않음 choice=\(choice)")
     }
     let sourceInterrupted = fresh()
+    sourceInterrupted.prepareAutomaticTicketCatalog(idle)
     let sourceTicket = sourceInterrupted.automaticTicket(peer: sourceInterrupted.connection!, list: idle)!
     sourceInterrupted.requestAutomatic(.window(1001), ticket: sourceTicket)
     sourceInterrupted.connection = NWConnection()
@@ -363,6 +438,7 @@ import Foundation
         client.displayInventoryID = inventory
         client.displays = idle.displays!
         client.automaticDisplaySelection = 1
+        client.prepareAutomaticTicketCatalog(idle)
         let ticket = client.automaticTicket(peer: client.connection!, list: idle)!
         switch change {
         case "revision": client.selectionRevision = "newer"
@@ -482,7 +558,45 @@ import Foundation
         client.deliverIdleCatalog(changed)
         recoveryCases.append((change, client))
     }
+    var delayedAdmissionCases: [(Client, Int)] = []
+    for modern in [true, false] {
+        let client = fresh()
+        seed(client)
+        var watching = idle
+        watching.automaticDisplaySelection = modern ? 1 : nil
+        watching.desktopSelectionRequired = modern
+        watching.active = .window(1001)
+        watching.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
+        client.deliverIdleCatalog(watching)
+        var closed = watching
+        closed.active = .none
+        closed.windows = []
+        client.deliverIdleCatalog(closed)
+        expect(client.scheduledAutomaticTicket != nil && client.allSent.isEmpty,
+               "실제 창 종료 지연 티켓이 admission 취소 전에 대기 modern=\(modern)")
+        closed.sourceSelectionAdmission = SourceSelectionAdmission(generation: 2, ready: false)
+        client.deliverIdleCatalog(closed)
+        expect(client.allSent.isEmpty && client.remoteAudioControl.changes == 0,
+               "지연 중 보호 취소는 옛 선택과 오디오 철거를 실행하지 않음")
+        closed.sourceSelectionAdmission = SourceSelectionAdmission(generation: 3, ready: true)
+        client.deliverIdleCatalog(closed)
+        client.deliverIdleCatalog(closed)
+        if modern {
+            expect(picks(client).count == 1 && picks(client).first?.displayID == secondary.id &&
+                   picks(client).first?.selectionRevision == "revision-0" && picks(client).first?.inventoryID == inventory,
+                   "새 허용 세대가 지연 티켓에 막히지 않고 원래 검증 display와 CAS를 한 번 재개")
+        } else {
+            let sources = client.allSent.filter { $0.0 == .selectSource }.compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
+            expect(sources.count == 1 && sources.first?.source == .desktop && sources.first?.selectionRevision == "revision-0",
+                   "selectSource 지연도 새 허용 세대에서 원래 desktop과 CAS만 한 번 재개")
+        }
+        delayedAdmissionCases.append((client, client.allSent.count))
+    }
     try? await Task.sleep(for: .milliseconds(2200))
+    for (client, count) in delayedAdmissionCases {
+        expect(client.allSent.count == count && count == 1,
+               "옛 실제 지연 타이머가 깨어나도 새 세대 제출 뒤 추가 명령은 0회")
+    }
     for (change, client) in recoveryCases {
         if change == "unchanged" {
             expect(picks(client).count == 1 && picks(client).first?.displayID == secondary.id,
