@@ -1,11 +1,48 @@
 import Foundation
 import StreamProtocol
 
-enum PrivacyAudioScope: Hashable { case input, output }
+enum PrivacyAudioScope: String, Codable, Hashable { case input, output }
 enum PrivacyAudioDefault: CaseIterable, Equatable { case input, output, systemOutput }
 
+struct PrivacyAudioStream: Codable, Equatable {
+    struct Format: Codable, Equatable {
+        let sampleRate: Double
+        let formatID: UInt32
+        let flags: UInt32
+        let bytesPerPacket: UInt32
+        let framesPerPacket: UInt32
+        let bytesPerFrame: UInt32
+        let channels: UInt32
+        let bitsPerChannel: UInt32
+        let reserved: UInt32
+
+        var isValid: Bool {
+            let interleavedChannels = flags & (1 << 5) == 0 ? channels : 1
+            guard interleavedChannels > 0 else { return false }
+            return sampleRate.isFinite && sampleRate > 0 && formatID == 0x6c70636d &&
+            (1...1024).contains(channels) && (1...64).contains(bitsPerChannel) &&
+            framesPerPacket == 1 && bytesPerFrame > 0 && bytesPerPacket == bytesPerFrame && reserved == 0 &&
+            bytesPerFrame % interleavedChannels == 0 && UInt64(bitsPerChannel) <= UInt64(bytesPerFrame / interleavedChannels) * 8
+        }
+    }
+    let id: UInt32
+    let ownerID: UInt32
+    let direction: PrivacyAudioScope
+    let startingChannel: UInt32
+    let virtualFormat: Format
+    let physicalFormat: Format
+    var active: Bool
+    let activeSettable: Bool
+
+    func hasSameIdentity(as other: Self) -> Bool {
+        var other = other
+        other.active = active
+        return self == other
+    }
+}
+
 struct PrivacyAudioDevice: Equatable {
-    enum Transport: String, Codable { case builtIn, virtual, other }
+    enum Transport: String, Codable { case builtIn, virtual, other, aggregate, unknown }
     let id: UInt32
     let uid: String
     let transport: Transport
@@ -14,6 +51,26 @@ struct PrivacyAudioDevice: Equatable {
     let outputChannels: Int
     var inputMuted: Bool?
     var outputMuted: Bool?
+    var streams: [PrivacyAudioStream]? = nil
+
+    func validatedStreams(_ scope: PrivacyAudioScope) -> [PrivacyAudioStream]? {
+        guard id != 0, !uid.isEmpty, plugin == nil, transport == .builtIn || transport == .other,
+              let streams, !streams.isEmpty, Set(streams.map(\.id)).count == streams.count,
+              streams.allSatisfy({ $0.id != 0 && $0.id != id && $0.ownerID == id && $0.activeSettable &&
+                  $0.virtualFormat.isValid && $0.physicalFormat.isValid &&
+                  $0.virtualFormat.channels == $0.physicalFormat.channels }) else { return nil }
+        for direction in [PrivacyAudioScope.input, .output] {
+            let channels = direction == .input ? inputChannels : outputChannels
+            guard (0...1024).contains(channels) else { return nil }
+            var next: UInt64 = 1
+            for stream in streams.filter({ $0.direction == direction }).sorted(by: { $0.startingChannel < $1.startingChannel }) {
+                guard UInt64(stream.startingChannel) == next else { return nil }
+                next += UInt64(stream.virtualFormat.channels)
+            }
+            guard next == UInt64(channels) + 1 else { return nil }
+        }
+        return streams.filter { $0.direction == scope }
+    }
 }
 
 struct PrivacyAudioSnapshot: Equatable {
@@ -21,6 +78,14 @@ struct PrivacyAudioSnapshot: Equatable {
     var input: UInt32
     var output: UInt32
     var systemOutput: UInt32
+
+    private var identitiesAreUnique: Bool {
+        let streams = devices.flatMap { $0.streams ?? [] }
+        return devices.allSatisfy { $0.id != 0 && !$0.uid.isEmpty } &&
+            Set(devices.map(\.id)).count == devices.count && Set(devices.map(\.uid)).count == devices.count &&
+            Set(streams.map(\.id)).count == streams.count &&
+            Set(streams.map(\.id)).isDisjoint(with: Set(devices.map(\.id)))
+    }
 
     func target(_ kind: PrivacyAudioDefault) -> UInt32 {
         switch kind { case .input: return input; case .output: return output; case .systemOutput: return systemOutput }
@@ -45,19 +110,21 @@ struct PrivacyAudioSnapshot: Equatable {
                 guard channels > 0 else { return nil }
                 let muted = scope == .input ? device.inputMuted : device.outputMuted
                 let virtual = isolated.contains(device.id)
+                let streams = muted == nil ? device.validatedStreams(scope) : nil
+                let streamProtected = streams?.isEmpty == false && streams?.allSatisfy({ !$0.active }) == true
+                let protected = identitiesAreUnique && (virtual || muted == true || streamProtected)
                 return AudioPrivacyCoverage(uid: device.uid, direction: scope == .input ? .input : .output,
-                    channels: channels, method: virtual ? "validatedVirtualIsolation" : muted == nil ? "unsupported" : "masterMute",
-                    protected: virtual || muted == true,
-                    reason: virtual || muted == true ? nil : muted == nil
-                        ? "전체 \(channels)채널을 차단할 수 있는 쓰기 가능한 전체 음소거 제어가 없습니다. 기본 장치 전환이나 hog PID는 차단 증거가 아닙니다."
-                        : "전체 \(channels)채널의 음소거가 적용되지 않았습니다.",
-                    alternative: muted == nil && device.transport == .other ? "exclusiveIOProcRequiresIndependentDriverAndMixerValidation" : nil)
+                    channels: channels, method: virtual ? "validatedVirtualIsolation" : muted != nil ? "masterMute" :
+                        streams != nil ? "audioStreamInactive" : "unsupported",
+                    protected: protected,
+                    reason: protected ? nil : "전체 \(channels)채널의 음소거 또는 검증된 전체 스트림 비활성화를 확인하지 못했습니다.",
+                    alternative: muted == nil && streams == nil && device.transport == .other ? "exclusiveIOProcRequiresIndependentDriverAndMixerValidation" : nil)
             }
         }
     }
 
     func plan(allowPartial: Bool = false) throws -> [PrivacyAudioWrite] {
-        guard Set(devices.map(\.id)).count == devices.count,
+        guard identitiesAreUnique,
               let inputDevice = virtual(channels: 2), let outputDevice = virtual(channels: 16) else {
             throw PrivacyAudioFailure.virtualIdentity
         }
@@ -69,11 +136,16 @@ struct PrivacyAudioSnapshot: Equatable {
             for scope in [PrivacyAudioScope.input, .output] {
                 let channels = scope == .input ? device.inputChannels : device.outputChannels
                 guard channels > 0 else { continue }
-                guard let muted = scope == .input ? device.inputMuted : device.outputMuted else {
+                if let muted = scope == .input ? device.inputMuted : device.outputMuted {
+                    if !muted { writes.append(.mute(device.id, scope)) }
+                } else if let streams = device.validatedStreams(scope), let topology = device.streams, !streams.isEmpty {
+                    for stream in streams where stream.active {
+                        writes.append(.deactivateStream(uid: device.uid, stream: stream, topology: topology))
+                    }
+                } else {
                     if allowPartial { continue }
                     throw PrivacyAudioFailure.endpointMute(uid: device.uid, scope: scope)
                 }
-                if !muted { writes.append(.mute(device.id, scope)) }
             }
         }
         for kind in PrivacyAudioDefault.allCases {
@@ -82,11 +154,30 @@ struct PrivacyAudioSnapshot: Equatable {
         }
         return writes
     }
+
+    func applying(_ write: PrivacyAudioWrite) -> Self? {
+        guard (try? plan(allowPartial: true).contains(write)) == true else { return nil }
+        var next = self
+        switch write {
+        case .mute(let id, let scope):
+            guard let index = devices.firstIndex(where: { $0.id == id }) else { return nil }
+            if scope == .input { next.devices[index].inputMuted = true }
+            else { next.devices[index].outputMuted = true }
+        case .select(let kind, let id):
+            switch kind { case .input: next.input = id; case .output: next.output = id; case .systemOutput: next.systemOutput = id }
+        case .deactivateStream(let uid, let stream, _):
+            guard let device = devices.firstIndex(where: { $0.uid == uid }),
+                  let index = devices[device].streams?.firstIndex(of: stream) else { return nil }
+            next.devices[device].streams?[index].active = false
+        }
+        return next
+    }
 }
 
 enum PrivacyAudioWrite: Equatable {
     case mute(UInt32, PrivacyAudioScope)
     case select(PrivacyAudioDefault, UInt32)
+    case deactivateStream(uid: String, stream: PrivacyAudioStream, topology: [PrivacyAudioStream])
 }
 
 enum PrivacyAudioFailure: Error {
@@ -269,30 +360,37 @@ package final class HostAudioPrivacy {
     @discardableResult
     package func reconcile() -> Bool {
         guard latched, !reconciling, persistenceHealthy, !returningLocal else { return false }
-        guard localState?.isValid == true else { fail(.persistence); return false }
+        guard let localState, localState.isValid else { fail(.persistence); return false }
         forwardingRevision = UUID()
         reconciling = true
         defer { reconciling = false }
         do {
             var snapshot = try readSnapshot()
             lastSnapshot = snapshot
+            let original = try localState.recordingStreams(snapshot)
+            if original != localState {
+                guard saveLocal(original) else { throw PrivacyAudioFailure.persistence }
+                self.localState = original
+            }
             // Install before changing controls. Failure cannot leave an advertised ready state.
             watching = hal.observe(snapshot, changed: { [weak self] in self?.propertyChanged() })
             guard watching else { throw PrivacyAudioFailure.listeners }
             var plan = try snapshot.plan(allowPartial: true)
             if !plan.isEmpty { fail(.readback) }
             // One bounded pass. Changes during setters fail closed and await a new event/admission.
-            for write in plan {
+            for _ in 0..<plan.count {
+                guard let write = plan.first else { break }
                 let before = try readSnapshot()
-                guard before == snapshot, try before.plan(allowPartial: true).contains(write), hal.write(write) else {
+                guard before == snapshot, let expected = before.applying(write), hal.write(write) else {
                     throw PrivacyAudioFailure.setter
                 }
                 snapshot = try readSnapshot()
                 lastSnapshot = snapshot
+                guard snapshot == expected else { throw PrivacyAudioFailure.readback }
                 plan = try snapshot.plan(allowPartial: true)
                 guard !plan.contains(write) else { throw PrivacyAudioFailure.readback }
             }
-            guard try readSnapshot().plan().isEmpty else { throw PrivacyAudioFailure.readback }
+            guard try readSnapshot() == snapshot, try snapshot.plan().isEmpty else { throw PrivacyAudioFailure.readback }
             publish(AudioPrivacyState(version: 2, protected: true))
             return true
         } catch {

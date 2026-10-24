@@ -29,6 +29,9 @@ final class PrivacyFakeHAL: @unchecked Sendable {
     var emptyInputConfiguration = false
     var zeroInputBuffers = false
     var beforeSet: (() -> Void)?
+    var afterSet: (() -> Void)?
+    var beforeGet: ((AudioObjectID, AudioObjectPropertySelector) -> Void)?
+    var rejectedStreamListener: AudioObjectPropertySelector?
     private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
     var listenerCount: Int { listeners.count }
     private let lock = NSRecursiveLock()
@@ -42,6 +45,7 @@ final class PrivacyFakeHAL: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         reads += 1
         let property = address.pointee
+        beforeGet?(object, property.mSelector)
         if property.mSelector == missingSelector { return -1 }
         func number(_ value: UInt32) -> OSStatus {
             output.storeBytes(of: value, as: UInt32.self); size.pointee = 4; return noErr
@@ -70,12 +74,35 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             return number(wrongResolution ? 999 : snapshot.devices.first(where: { $0.uid == value })?.id ?? 0)
         default: break
         }
+        if let stream = snapshot.devices.compactMap(\.streams).flatMap({ $0 }).first(where: { $0.id == object }) {
+            switch property.mSelector {
+            case kAudioObjectPropertyClass: return number(kAudioStreamClassID)
+            case kAudioObjectPropertyOwner: return number(stream.ownerID)
+            case kAudioStreamPropertyDirection: return number(stream.direction == .input ? 1 : 0)
+            case kAudioStreamPropertyStartingChannel: return number(stream.startingChannel)
+            case kAudioStreamPropertyIsActive: return number(stream.active ? 1 : 0)
+            case kAudioStreamPropertyVirtualFormat, kAudioStreamPropertyPhysicalFormat:
+                let format = property.mSelector == kAudioStreamPropertyVirtualFormat ? stream.virtualFormat : stream.physicalFormat
+                output.storeBytes(of: AudioStreamBasicDescription(mSampleRate: format.sampleRate, mFormatID: format.formatID,
+                    mFormatFlags: format.flags, mBytesPerPacket: format.bytesPerPacket, mFramesPerPacket: format.framesPerPacket,
+                    mBytesPerFrame: format.bytesPerFrame, mChannelsPerFrame: format.channels,
+                    mBitsPerChannel: format.bitsPerChannel, mReserved: format.reserved), as: AudioStreamBasicDescription.self)
+                size.pointee = UInt32(MemoryLayout<AudioStreamBasicDescription>.size); return noErr
+            default: return -1
+            }
+        }
         guard let device = snapshot.devices.first(where: { $0.id == object }) else { return -1 }
         switch property.mSelector {
+        case kAudioObjectPropertyClass: return number(device.transport == .aggregate ? kAudioAggregateDeviceClassID : kAudioDeviceClassID)
         case kAudioDevicePropertyDeviceUID: return string(device.uid)
         case kAudioDevicePropertyTransportType:
             return number(device.transport == .builtIn ? kAudioDeviceTransportTypeBuiltIn :
-                device.transport == .virtual ? kAudioDeviceTransportTypeVirtual : kAudioDeviceTransportTypeUSB)
+                device.transport == .virtual ? kAudioDeviceTransportTypeVirtual :
+                device.transport == .aggregate ? kAudioDeviceTransportTypeAggregate :
+                device.transport == .unknown ? 0 : kAudioDeviceTransportTypeUSB)
+        case kAudioDevicePropertyStreams:
+            guard let streams = device.streams else { return -1 }
+            return array(streams.filter { $0.direction == (property.mScope == kAudioObjectPropertyScopeInput ? .input : .output) }.map(\.id))
         case kAudioDevicePropertyDeviceIsAlive: return number(1)
         case kAudioDevicePropertyNominalSampleRate:
             output.storeBytes(of: Float64(48_000), as: Float64.self); size.pointee = 8; return noErr
@@ -101,6 +128,11 @@ final class PrivacyFakeHAL: @unchecked Sendable {
         }, objectSize: { [self] object, property, size in
             lock.lock(); defer { lock.unlock() }
             switch property.pointee.mSelector {
+            case kAudioDevicePropertyStreams:
+                guard let streams = snapshot.devices.first(where: { $0.id == object })?.streams else { return -1 }
+                size.pointee = UInt32(streams.filter {
+                    $0.direction == (property.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output)
+                }.count * 4)
             case kAudioHardwarePropertyDevices where object == kAudioObjectSystemObject: size.pointee = UInt32(snapshot.devices.count * 4)
             case kAudioPlugInPropertyDeviceList: size.pointee = UInt32(pluginDevices(object).count * 4)
             case kAudioDevicePropertyStreamConfiguration:
@@ -115,6 +147,11 @@ final class PrivacyFakeHAL: @unchecked Sendable {
 
     var operations: HostAudioPrivacyOperations {
         HostAudioPrivacyOperations(read: microphoneOperations, settable: { [self] object, property, value in
+            if property.pointee.mSelector == kAudioStreamPropertyIsActive {
+                let stream = snapshot.devices.compactMap(\.streams).flatMap({ $0 }).first { $0.id == object }
+                value.pointee = DarwinBoolean(writable && stream?.activeSettable == true)
+                return stream == nil ? -1 : noErr
+            }
             let readOnly = property.pointee.mSelector == kAudioDevicePropertyMute &&
                 readOnlyMutes.contains(.mute(object,
                     property.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output))
@@ -126,6 +163,10 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             let value = input.load(as: UInt32.self)
             let change: PrivacyAudioWrite
             switch property.pointee.mSelector {
+            case kAudioStreamPropertyIsActive:
+                guard let device = snapshot.devices.first(where: { $0.streams?.contains(where: { $0.id == object }) == true }),
+                      let stream = device.streams?.first(where: { $0.id == object }), value <= 1 else { return -1 }
+                change = .deactivateStream(uid: device.uid, stream: stream, topology: device.streams!)
             case kAudioDevicePropertyMute:
                 guard value <= 1 else { return -1 }
                 change = .mute(object, property.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output)
@@ -138,15 +179,22 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             if failSetter == writes.count { return -1 }
             if ignoreSetter != writes.count {
                 apply(change)
+                if case .deactivateStream(let uid, let stream, _) = change,
+                   let device = snapshot.devices.firstIndex(where: { $0.uid == uid }),
+                   let index = snapshot.devices[device].streams?.firstIndex(where: { $0.id == stream.id }) {
+                    snapshot.devices[device].streams?[index].active = value == 1
+                }
                 if case .mute(let id, let scope) = change, value == 0,
                    let index = snapshot.devices.firstIndex(where: { $0.id == id }) {
                     if scope == .input { snapshot.devices[index].inputMuted = false }
                     else { snapshot.devices[index].outputMuted = false }
                 }
             }
+            afterSet?()
             return noErr
         }, addListener: { [self] object, address, _, callback in
             if listenerFailure { return -1 }
+            if address.pointee.mSelector == rejectedStreamListener { return -1 }
             if address.pointee.mSelector == kAudioDevicePropertyMute,
                rejectedMuteListener == .mute(object,
                 address.pointee.mScope == kAudioObjectPropertyScopeInput ? .input : .output) { return -1 }
@@ -166,6 +214,11 @@ final class PrivacyFakeHAL: @unchecked Sendable {
             }
         case .select(let kind, let id):
             switch kind { case .input: snapshot.input = id; case .output: snapshot.output = id; case .systemOutput: snapshot.systemOutput = id }
+        case .deactivateStream(let uid, let stream, _):
+            if let device = snapshot.devices.firstIndex(where: { $0.uid == uid }),
+               let index = snapshot.devices[device].streams?.firstIndex(where: { $0.id == stream.id }) {
+                snapshot.devices[device].streams?[index].active = false
+            }
         }
     }
     func safe() { for write in (try? snapshot.plan()) ?? [] { apply(write) } }

@@ -40,10 +40,16 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         try registry.read(object, selector, scope: scope, into: &value)
         return value
     }
-    private func ids(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) throws -> [AudioDeviceID] {
-        var property = address(selector), size: UInt32 = 0
+    private func ids(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                     _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal,
+                     allowEmpty: Bool = false) throws -> [AudioDeviceID] {
+        var property = address(selector, scope), size: UInt32 = 0
         guard ops.read.objectSize(object, &property, &size) == noErr,
-              size > 0, size <= 4096, size % 4 == 0 else { throw PrivacyAudioFailure.readback }
+              size <= 4096, size % 4 == 0 else { throw PrivacyAudioFailure.readback }
+        if size == 0 {
+            guard allowEmpty else { throw PrivacyAudioFailure.readback }
+            return []
+        }
         let capacity = size
         var result = [AudioDeviceID](repeating: 0, count: Int(size) / 4)
         let status = result.withUnsafeMutableBytes {
@@ -73,7 +79,13 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         if count == 0 { return 0 }
         guard count <= 32, offset + count * stride <= Int(size) else { throw PrivacyAudioFailure.readback }
         let list = storage.assumingMemoryBound(to: AudioBufferList.self)
-        return UnsafeMutableAudioBufferListPointer(list).reduce(0) { $0 + min(Int($1.mNumberChannels), 1024) }
+        var total = 0
+        for buffer in UnsafeMutableAudioBufferListPointer(list) {
+            guard buffer.mNumberChannels <= 1024 else { throw PrivacyAudioFailure.readback }
+            total += Int(buffer.mNumberChannels)
+        }
+        guard total <= 1024 else { throw PrivacyAudioFailure.readback }
+        return total
     }
     private func canWrite(_ id: AudioObjectID, _ property: inout AudioObjectPropertyAddress) -> Bool {
         var value = DarwinBoolean(false)
@@ -83,6 +95,41 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         var property = address(kAudioDevicePropertyMute, scope)
         guard canWrite(id, &property), let value = try? scalar(id, kAudioDevicePropertyMute, scope), value <= 1 else { return nil }
         return value == 1
+    }
+
+    private func format(_ stream: AudioObjectID, _ selector: AudioObjectPropertySelector) throws -> PrivacyAudioStream.Format {
+        var value = AudioStreamBasicDescription()
+        try registry.read(stream, selector, into: &value)
+        return .init(sampleRate: value.mSampleRate, formatID: value.mFormatID, flags: value.mFormatFlags,
+            bytesPerPacket: value.mBytesPerPacket, framesPerPacket: value.mFramesPerPacket,
+            bytesPerFrame: value.mBytesPerFrame, channels: value.mChannelsPerFrame,
+            bitsPerChannel: value.mBitsPerChannel, reserved: value.mReserved)
+    }
+
+    private func streams(_ device: AudioDeviceID) throws -> [PrivacyAudioStream] {
+        guard try scalar(device, kAudioObjectPropertyClass) == kAudioDeviceClassID else { throw PrivacyAudioFailure.readback }
+        var result: [PrivacyAudioStream] = []
+        for (scope, direction) in [(kAudioObjectPropertyScopeInput, PrivacyAudioScope.input), (kAudioObjectPropertyScopeOutput, .output)] {
+            let streamIDs = try ids(device, kAudioDevicePropertyStreams, scope, allowEmpty: true)
+            for id in streamIDs {
+                guard try scalar(id, kAudioObjectPropertyClass) == kAudioStreamClassID,
+                      try scalar(id, kAudioObjectPropertyOwner) == device,
+                      try scalar(id, kAudioStreamPropertyDirection) == (direction == .input ? 1 : 0) else {
+                    throw PrivacyAudioFailure.readback
+                }
+                var activeProperty = address(kAudioStreamPropertyIsActive)
+                result.append(try PrivacyAudioStream(id: id, ownerID: device, direction: direction,
+                    startingChannel: scalar(id, kAudioStreamPropertyStartingChannel),
+                    virtualFormat: format(id, kAudioStreamPropertyVirtualFormat),
+                    physicalFormat: format(id, kAudioStreamPropertyPhysicalFormat),
+                    active: scalar(id, kAudioStreamPropertyIsActive) != 0,
+                    activeSettable: canWrite(id, &activeProperty)))
+            }
+            guard try ids(device, kAudioDevicePropertyStreams, scope, allowEmpty: true) == streamIDs else {
+                throw PrivacyAudioFailure.readback
+            }
+        }
+        return result.sorted { $0.id < $1.id }
     }
 
     func read() throws -> PrivacyAudioSnapshot {
@@ -111,11 +158,25 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
                 }
             }
             let builtIn = transport == kAudioDeviceTransportTypeBuiltIn
+            let physicalTransports = [kAudioDeviceTransportTypePCI, kAudioDeviceTransportTypeUSB,
+                kAudioDeviceTransportTypeFireWire, kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE,
+                kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort, kAudioDeviceTransportTypeAVB,
+                kAudioDeviceTransportTypeThunderbolt]
+            let inputMuted = input > 0 ? mute(id, kAudioObjectPropertyScopeInput) : nil
+            let outputMuted = output > 0 ? mute(id, kAudioObjectPropertyScopeOutput) : nil
+            let streamState = (input > 0 && inputMuted == nil) || (output > 0 && outputMuted == nil)
+                ? try? streams(id) : nil
             result.append(PrivacyAudioDevice(id: id, uid: uid,
-                transport: builtIn ? .builtIn : transport == kAudioDeviceTransportTypeVirtual ? .virtual : .other,
+                transport: builtIn ? .builtIn : transport == kAudioDeviceTransportTypeVirtual ? .virtual :
+                    transport == kAudioDeviceTransportTypeAggregate ? .aggregate : physicalTransports.contains(transport) ? .other : .unknown,
                 plugin: owners.first?.0, inputChannels: input, outputChannels: output,
-                inputMuted: input > 0 ? mute(id, kAudioObjectPropertyScopeInput) : nil,
-                outputMuted: output > 0 ? mute(id, kAudioObjectPropertyScopeOutput) : nil))
+                inputMuted: inputMuted, outputMuted: outputMuted, streams: streamState))
+            guard try registry.string(id, kAudioDevicePropertyDeviceUID) == uid,
+                  try registry.resolve(uid) == id,
+                  try scalar(id, kAudioDevicePropertyTransportType) == transport,
+                  try channels(id, kAudioObjectPropertyScopeInput) == input,
+                  try channels(id, kAudioObjectPropertyScopeOutput) == output,
+                  streamState == nil || (try? streams(id)) == streamState else { throw PrivacyAudioFailure.readback }
         }
         guard try ids(system, kAudioHardwarePropertyDevices) == devices,
               try scalar(system, kAudioHardwarePropertyDefaultInputDevice) == defaults.input,
@@ -128,7 +189,7 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
 
     func write(_ change: PrivacyAudioWrite) -> Bool {
         // The injected boundary validates the current identity again, even for a stale command.
-        guard let snapshot = try? read(), (try? snapshot.plan(allowPartial: true).contains(change)) == true else { return false }
+        guard let snapshot = try? read(), let expected = snapshot.applying(change) else { return false }
         let object: AudioObjectID
         var property: AudioObjectPropertyAddress
         var value: UInt32
@@ -141,9 +202,13 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
             object = system; value = id
             property = address(kind == .input ? kAudioHardwarePropertyDefaultInputDevice :
                 kind == .output ? kAudioHardwarePropertyDefaultOutputDevice : kAudioHardwarePropertyDefaultSystemOutputDevice)
+        case .deactivateStream(let uid, let stream, _):
+            guard (try? snapshot.plan().contains(change)) == true,
+                  (try? registry.resolve(uid)) == stream.ownerID else { return false }
+            object = stream.id; property = address(kAudioStreamPropertyIsActive); value = 0
         }
-        guard canWrite(object, &property) else { return false }
-        return ops.set(object, &property, UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+        guard canWrite(object, &property), (try? read()) == snapshot else { return false }
+        return ops.set(object, &property, UInt32(MemoryLayout<UInt32>.size), &value) == noErr && (try? read()) == expected
     }
 
     func restoreLocal(_ original: LocalAudioState) -> Bool {
@@ -151,30 +216,38 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         if original.matches(snapshot) { return true }
         guard (try? snapshot.plan(allowPartial: true).isEmpty) == true,
               Set(snapshot.devices.map(\.uid)) == Set(original.devices.map(\.uid)) else { return false }
-        // Store UIDs and control addresses, never a numeric device ID for a later setter.
-        var changes: [(String, AudioObjectPropertySelector, AudioObjectPropertyScope, UInt32?)] = []
+        // Resolve the UID again before using a saved stream address.
+        var changes: [(uid: String, selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope,
+                       value: UInt32?, streamID: UInt32?)] = []
         for saved in original.devices {
             guard let device = snapshot.devices.first(where: { $0.uid == saved.uid }),
-                  device.transport == saved.transport, device.plugin == saved.plugin,
-                  device.inputChannels == saved.inputChannels, device.outputChannels == saved.outputChannels else { return false }
+                  saved.matches(LocalAudioState.Device(device), includeActive: false) else { return false }
             for (scope, value, current) in [(kAudioObjectPropertyScopeInput, saved.inputMuted, device.inputMuted),
                                             (kAudioObjectPropertyScopeOutput, saved.outputMuted, device.outputMuted)] {
                 guard let value else { continue }
                 guard current != nil else { return false }
-                changes.append((saved.uid, kAudioDevicePropertyMute, scope, value ? 1 : 0))
+                changes.append((saved.uid, kAudioDevicePropertyMute, scope, value ? 1 : 0, nil))
+            }
+            for stream in saved.streams ?? [] {
+                changes.append((saved.uid, kAudioStreamPropertyIsActive, kAudioObjectPropertyScopeGlobal,
+                                stream.active ? 1 : 0, stream.id))
             }
         }
-        changes += [(original.inputUID, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, nil),
-                    (original.outputUID, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, nil),
-                    (original.systemOutputUID, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyScopeGlobal, nil)]
-        for (uid, selector, scope, muteValue) in changes {
+        changes += [(original.inputUID, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, nil, nil),
+                    (original.outputUID, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, nil, nil),
+                    (original.systemOutputUID, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyScopeGlobal, nil, nil)]
+        for (uid, selector, scope, muteValue, streamID) in changes {
             guard let before = try? read(), before == snapshot,
                   let index = before.devices.firstIndex(where: { $0.uid == uid }),
                   let resolved = try? registry.resolve(uid), resolved == before.devices[index].id else { return false }
             var expected = before
             let object: AudioObjectID
             var value: UInt32
-            if let muteValue {
+            if let streamID, let muteValue {
+                guard let streamIndex = before.devices[index].streams?.firstIndex(where: { $0.id == streamID }) else { return false }
+                object = streamID; value = muteValue
+                expected.devices[index].streams?[streamIndex].active = value == 1
+            } else if let muteValue {
                 object = resolved; value = muteValue
                 if scope == kAudioObjectPropertyScopeInput { expected.devices[index].inputMuted = value == 1 }
                 else { expected.devices[index].outputMuted = value == 1 }
@@ -218,10 +291,16 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
                 .map { (device.id, address($0)) }
             for scope in [kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput] {
                 properties.append((device.id, address(kAudioDevicePropertyStreamConfiguration, scope)))
+                properties.append((device.id, address(kAudioDevicePropertyStreams, scope)))
                 if (scope == kAudioObjectPropertyScopeInput ? device.inputMuted : device.outputMuted) != nil,
                    (scope == kAudioObjectPropertyScopeInput ? device.inputChannels : device.outputChannels) > 0 {
                     properties.append((device.id, address(kAudioDevicePropertyMute, scope)))
                 }
+            }
+            for stream in device.streams ?? [] {
+                properties += [kAudioObjectPropertyClass, kAudioObjectPropertyOwner, kAudioStreamPropertyIsActive, kAudioStreamPropertyDirection,
+                    kAudioStreamPropertyStartingChannel, kAudioStreamPropertyVirtualFormat, kAudioStreamPropertyPhysicalFormat]
+                    .map { (stream.id, address($0)) }
             }
         }
         for channels in [2, 16] {

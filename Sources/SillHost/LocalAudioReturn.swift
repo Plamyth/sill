@@ -119,12 +119,38 @@ struct LocalAudioState: Codable, Equatable {
         let outputChannels: Int
         let inputMuted: Bool?
         let outputMuted: Bool?
+        var streams: [PrivacyAudioStream]? = nil
+
+        init(_ device: PrivacyAudioDevice) {
+            uid = device.uid; transport = device.transport; plugin = device.plugin
+            inputChannels = device.inputChannels; outputChannels = device.outputChannels
+            inputMuted = device.inputMuted; outputMuted = device.outputMuted; streams = device.streams
+        }
+
+        var streamTopologyIsValid: Bool {
+            guard let streams else { return true }
+            let device = PrivacyAudioDevice(id: streams.first?.ownerID ?? 0, uid: uid, transport: transport,
+                plugin: plugin, inputChannels: inputChannels, outputChannels: outputChannels,
+                inputMuted: inputMuted, outputMuted: outputMuted, streams: streams)
+            return device.validatedStreams(.input) != nil
+        }
+
+        func matches(_ current: Device, includeActive: Bool = true) -> Bool {
+            guard uid == current.uid, transport == current.transport, plugin == current.plugin,
+                  inputChannels == current.inputChannels, outputChannels == current.outputChannels,
+                  !includeActive || (inputMuted == current.inputMuted && outputMuted == current.outputMuted) else { return false }
+            guard let streams else { return true }
+            guard let currentStreams = current.streams, streams.count == currentStreams.count else { return false }
+            return streams.allSatisfy { saved in
+                currentStreams.contains { includeActive ? saved == $0 : saved.hasSameIdentity(as: $0) }
+            }
+        }
     }
     let version: Int
     let inputUID: String
     let outputUID: String
     let systemOutputUID: String
-    let devices: [Device]
+    var devices: [Device]
 
     init(_ snapshot: PrivacyAudioSnapshot) throws {
         func uid(_ id: UInt32) throws -> String {
@@ -135,14 +161,15 @@ struct LocalAudioState: Codable, Equatable {
         inputUID = try uid(snapshot.input)
         outputUID = try uid(snapshot.output)
         systemOutputUID = try uid(snapshot.systemOutput)
-        devices = snapshot.devices.map { Device(uid: $0.uid, transport: $0.transport, plugin: $0.plugin, inputChannels: $0.inputChannels,
-            outputChannels: $0.outputChannels, inputMuted: $0.inputMuted, outputMuted: $0.outputMuted) }
+        devices = snapshot.devices.map(Device.init)
     }
 
     var isValid: Bool {
-        version == 2 && !devices.isEmpty && Set(devices.map(\.uid)).count == devices.count &&
+        let streamIDs = devices.flatMap { $0.streams ?? [] }.map(\.id)
+        return version == 2 && !devices.isEmpty && Set(devices.map(\.uid)).count == devices.count &&
+        Set(streamIDs).count == streamIDs.count &&
         devices.allSatisfy { !$0.uid.isEmpty && $0.inputChannels >= 0 && $0.outputChannels >= 0 &&
-            ($0.inputMuted == nil || $0.inputChannels > 0) && ($0.outputMuted == nil || $0.outputChannels > 0) } &&
+            ($0.inputMuted == nil || $0.inputChannels > 0) && ($0.outputMuted == nil || $0.outputChannels > 0) && $0.streamTopologyIsValid } &&
         devices.contains { $0.uid == inputUID && $0.inputChannels > 0 } &&
         devices.contains { $0.uid == outputUID && $0.outputChannels > 0 } &&
         devices.contains { $0.uid == systemOutputUID && $0.outputChannels > 0 }
@@ -151,7 +178,33 @@ struct LocalAudioState: Codable, Equatable {
     func matches(_ snapshot: PrivacyAudioSnapshot) -> Bool {
         guard isValid, let current = try? LocalAudioState(snapshot) else { return false }
         return current.inputUID == inputUID && current.outputUID == outputUID && current.systemOutputUID == systemOutputUID &&
-            current.devices.count == devices.count && devices.allSatisfy { saved in current.devices.contains(saved) }
+            current.devices.count == devices.count && devices.allSatisfy { saved in current.devices.contains { saved.matches($0) } }
+    }
+
+    func recordingStreams(_ snapshot: PrivacyAudioSnapshot) throws -> Self {
+        var next = self
+        for device in snapshot.devices where device.streams != nil {
+            guard device.validatedStreams(.input) != nil, let observed = device.streams else {
+                throw PrivacyAudioFailure.readback
+            }
+            var saved = Device(device)
+            if let index = next.devices.firstIndex(where: { $0.uid == device.uid }) {
+                let previous = next.devices[index]
+                let originals = previous.streams ?? []
+                guard previous.transport == device.transport, previous.plugin == device.plugin,
+                      originals.allSatisfy({ original in observed.contains { original.hasSameIdentity(as: $0) } }) else {
+                    throw PrivacyAudioFailure.persistence
+                }
+                saved.streams = observed.map { stream in originals.first { $0.hasSameIdentity(as: stream) } ?? stream }
+                // Original mute values also survive a topology extension.
+                let original = PrivacyAudioDevice(id: device.id, uid: device.uid, transport: device.transport,
+                    plugin: device.plugin, inputChannels: device.inputChannels, outputChannels: device.outputChannels,
+                    inputMuted: previous.inputMuted, outputMuted: previous.outputMuted, streams: saved.streams)
+                next.devices[index] = Device(original)
+            } else { next.devices.append(saved) }
+        }
+        guard next.isValid else { throw PrivacyAudioFailure.persistence }
+        return next
     }
 }
 
