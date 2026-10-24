@@ -89,6 +89,67 @@ import Foundation
 }
 
 @MainActor func runChecks() async {
+    for unavailable in ["participants", "startup", "original", "recovery"] {
+        let fixture = ReturnFixture(), hal = ReturnHAL()
+        if unavailable == "participants" { fixture.registry.unregister(.relay) }
+        if unavailable == "recovery" {
+            await fixture.poisonInspection()
+            fixture.unknownInspection = true
+        }
+        let startup = unavailable == "startup" ? NativeAudioStartup() : fixture.startup
+        var calls = 0, commits = 0, clears = 0
+        let privacy = HostAudioPrivacy(hal: hal, latched: true,
+            localState: unavailable == "original" ? nil : try! LocalAudioState(hal.snapshot),
+            clearLatch: { clears += 1; return true }, authenticateLocal: { _ in
+                calls += 1
+                check(hal.restores == 0 && clears == 0 && commits == 0,
+                      "\(unavailable) starts authentication before any release")
+                return false
+            }, nativeStartup: startup)
+        privacy.authenticatedLocalReturnWillCommit = { _ in commits += 1; return true }
+        check(!(await privacy.requestLocalReturn(budgetMilliseconds: 50)), "\(unavailable) declined authentication retains protection")
+        check(calls == 1, "\(unavailable) requests owner authentication exactly once despite unavailable preparation")
+        check(privacy.latched && hal.restores == 0 && clears == 0 && commits == 0,
+              "\(unavailable) never treats an authentication request as approval")
+        privacy.stop()
+    }
+
+    for unavailable in ["participants", "original", "recovery"] {
+        let fixture = ReturnFixture(), hal = ReturnHAL()
+        if unavailable == "participants" { fixture.registry.unregister(.relay) }
+        if unavailable == "recovery" {
+            await fixture.poisonInspection()
+            fixture.unknownInspection = true
+        }
+        var calls = 0, commits = 0, clears = 0
+        let privacy = HostAudioPrivacy(hal: hal, latched: true,
+            localState: unavailable == "original" ? nil : try! LocalAudioState(hal.snapshot),
+            clearLatch: { clears += 1; return true }, authenticateLocal: { _ in calls += 1; return true },
+            nativeStartup: fixture.startup)
+        privacy.authenticatedLocalReturnWillCommit = { _ in commits += 1; return true }
+        check(!(await privacy.requestLocalReturn(budgetMilliseconds: 50)), "\(unavailable) authenticated preparation still fails closed")
+        check(calls == 1 && privacy.latched && hal.restores == 0 && clears == 0 && commits == 0,
+              "\(unavailable) authentication success alone cannot release protection")
+        check(privacy.localReturnUnavailableReason?.contains("인증은 완료") == true,
+              "\(unavailable) explains post-authentication preparation failure separately")
+        privacy.stop()
+    }
+
+    let duplicateFixture = ReturnFixture(), duplicateHAL = ReturnHAL(), authenticationGate = ReturnGate()
+    var duplicateCalls = 0
+    let duplicatePrivacy = HostAudioPrivacy(hal: duplicateHAL, latched: true,
+        localState: try! LocalAudioState(duplicateHAL.snapshot), authenticateLocal: { _ in
+            duplicateCalls += 1; await authenticationGate.wait(); return false
+        }, nativeStartup: duplicateFixture.startup)
+    let firstRequest = Task { await duplicatePrivacy.requestLocalReturn() }
+    await settle { authenticationGate.entered }
+    check(!(await duplicatePrivacy.requestLocalReturn()) && duplicateCalls == 1,
+          "duplicate button click does not issue another authentication")
+    authenticationGate.release()
+    check(!(await firstRequest.value) && duplicatePrivacy.latched && duplicateHAL.restores == 0,
+          "declined first authentication retains protection after duplicate click")
+    duplicatePrivacy.stop()
+
     let authentication = ReturnFixture()
     await authentication.poisonInspection()
     let hal = ReturnHAL()
