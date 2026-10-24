@@ -194,12 +194,17 @@ final class HostSentry {
     func controlDidComplete() { changed?() }
 
     func completeAuthenticatedLocalReturn(commitAudio: () -> Bool = { true }) -> Bool {
-        guard admission.isRequested else { return commitAudio() }
         guard operation == .idle else { return false }
         forwardingRevision = UUID()
         operation = .returningLocal
         defer { operation = .idle }
         admission.fenceForLocalReturn()
+        if !admission.isRequested {
+            guard commitAudio() else { changed?(); return false }
+            admission.completeLocalReturn()
+            changed?()
+            return true
+        }
         guard prepareRelease() else {
             persistenceHealthy = persist(.latched)
             admission.update(verified: false, persistenceHealthy: persistenceHealthy,
