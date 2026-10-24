@@ -19,6 +19,7 @@ extension StreamClient {
     /// A no-op on the wire without a connection. Main thread.
     func sendViewport(_ v: Viewport) {
         var v = v
+        v.extendedDesktopIntent = nil
         if v.localCursor == nil { v.localCursor = localCursorState.wanted }
         v.extendedDesktop = lastViewport?.extendedDesktop ?? v.extendedDesktop
         lastViewport = v

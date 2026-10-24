@@ -1648,9 +1648,7 @@ struct IPadExtendedDisplayButton: View {
     }
 
     private func selectExtendedDisplay() {
-        guard let display = IPadExtendedDisplaySelection.candidate(
-            displays: client.displays, ready: client.displaySelectionReady) else { return }
-        client.selectDisplay(display)
+        client.selectIPadExtendedDesktop()
     }
 
     var body: some View {
@@ -1659,17 +1657,22 @@ struct IPadExtendedDisplayButton: View {
             VStack(spacing: spacing) {
                 Image(systemName: "ipad.landscape").font(.system(size: iconSize))
                     .foregroundStyle(selected ? Palette.accent : Palette.text)
-                Text("iPad 확장 화면")
+                Text(client.extendedDesktopRequestPending ? "확장 화면 요청 중" :
+                    (client.extendedDesktopProblem == nil ? "iPad 확장 화면" : "확장 화면 요청 실패"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(selected ? Palette.accent : Palette.barLabel)
                     .multilineTextAlignment(.center)
                     .lineLimit(2).minimumScaleFactor(0.8)
             }
         }
-        .disabled(candidate == nil)
+        .disabled(!client.canSelectIPadExtendedDesktop)
         .accessibilityIdentifier("iPadExtendedDisplayButton")
-        .accessibilityValue(candidate == nil ? "사용할 수 없음" : (selected ? "선택됨" : "선택 안 됨"))
-        .accessibilityHint(candidate == nil ? "Mac의 현재 목록에서 iPad 확장 화면을 확인할 수 없습니다." : "기존 iPad 확장 화면으로 전환합니다.")
+        .accessibilityValue(client.extendedDesktopRequestPending ? "요청 진행 중" :
+            (client.extendedDesktopProblem ?? (selected ? "선택됨" : (client.canSelectIPadExtendedDesktop ? "선택 안 됨" : "사용할 수 없음"))))
+        .accessibilityHint(client.extendedDesktopProblem ?? (client.extendedDesktopControl == 1 ?
+            "Mac에 확장 화면 참여를 요청하고 현재 목록의 iPad 확장 화면으로 전환합니다." :
+            "현재 목록의 기존 iPad 확장 화면으로 전환합니다."))
+        .help(client.extendedDesktopProblem ?? "iPad 확장 화면")
     }
 }
 

@@ -380,10 +380,144 @@ final class StreamClient: ObservableObject {
     private var automaticDisplaySelection: Int?
     private var desktopSelectionRequired = false
     private var displayCatalogPeer: ObjectIdentifier?
+    #if os(iOS)
+    @Published private(set) var extendedDesktopControl: Int?
+    @Published private(set) var extendedDesktopProblem: String?
+    private struct PendingExtendedDesktop {
+        let peer: NWConnection
+        let macID: String
+        let host: String
+        let intent: UInt64
+        let deadline: TimeInterval
+        let request: SessionLink.Submission
+        var selection: SessionLink.Submission?
+    }
+    @Published private var pendingExtendedDesktop: PendingExtendedDesktop?
+    var extendedDesktopRequestPending: Bool { pendingExtendedDesktop != nil }
+    #endif
     var displaySelectionReady: Bool {
         connected && supportsDisplaySelection && displayInventoryID != nil &&
             connection.map(ObjectIdentifier.init) == displayCatalogPeer
     }
+
+    #if os(iOS)
+    private var extendedDesktopCandidate: DisplayInfo? {
+        IPadExtendedDisplaySelection.candidate(displays: displays, ready: displaySelectionReady)
+    }
+
+    var canSelectIPadExtendedDesktop: Bool {
+        guard !extendedDesktopRequestPending else { return false }
+        if extendedDesktopCandidate != nil, extendedDesktopControl != 1 { return true }
+        return extendedDesktopRequestReady
+    }
+
+    private var extendedDesktopRequestReady: Bool {
+        guard displaySelectionReady, extendedDesktopControl == 1,
+              authenticatedDisplayMacID() != nil, let host = sessionHost, !host.isEmpty,
+              Set(displays.map(\.id)).count == displays.count,
+              displays.filter({ $0.role == "ipadExtendedDesktop" }).count <= 1,
+              let viewport = lastViewport, viewport.width.isFinite, viewport.height.isFinite,
+              viewport.width > 0, viewport.height > 0,
+              let size = viewport.extendedDesktop,
+              Viewport.ExtendedDesktopSize(width: size.width, height: size.height) != nil else { return false }
+        return true
+    }
+
+    private func extendedDesktopBindingIsCurrent(_ pending: PendingExtendedDesktop) -> Bool {
+        connected && supportsDisplaySelection && displayInventoryID != nil &&
+            displayCatalogPeer == ObjectIdentifier(pending.peer) &&
+            authenticatedDisplayMacID() == pending.macID && sessionHost == pending.host
+    }
+
+    func selectIPadExtendedDesktop() {
+        guard !extendedDesktopRequestPending else { return }
+        if extendedDesktopControl != 1, let display = extendedDesktopCandidate {
+            selectDisplay(display)
+            return
+        }
+        guard extendedDesktopRequestReady, let peer = connection,
+              let macID = authenticatedDisplayMacID(), let host = sessionHost,
+              var viewport = lastViewport else {
+            extendedDesktopProblem = "현재 Mac에서 iPad 확장 화면을 요청할 수 없습니다."
+            return
+        }
+        noteSourceIntent()
+        let intent = explicitSourceIntent
+        let submission = SessionLink.Submission { [weak self, weak peer] outcome in
+            guard let self, let peer, self.pendingExtendedDesktop?.intent == intent,
+                  self.pendingExtendedDesktop?.peer === peer, outcome == .cancelled else { return }
+            self.cancelExtendedDesktopRequest(problem: "확장 화면 요청이 전송 전에 취소되었습니다.")
+        }
+        pendingExtendedDesktop = PendingExtendedDesktop(peer: peer, macID: macID, host: host,
+            intent: intent, deadline: ProcessInfo.processInfo.systemUptime + 15, request: submission)
+        viewport.extendedDesktopIntent = .request
+        let message = StreamMessage(kind: .viewport, timestamp: Date().timeIntervalSince1970,
+            isKeyframe: false, payload: Wire.encode(viewport))
+        guard link.send(message.serialized(), onlyOn: peer, submission: submission, admit: { [weak self] in
+            guard let self, let pending = self.pendingExtendedDesktop else { return false }
+            return pending.intent == intent && self.explicitSourceIntent == intent &&
+                self.extendedDesktopBindingIsCurrent(pending) && self.extendedDesktopControl == 1 &&
+                ProcessInfo.processInfo.systemUptime < pending.deadline
+        }) else {
+            cancelExtendedDesktopRequest(release: false, problem: "확장 화면 요청을 전송하지 못했습니다.")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak peer] in
+            guard let self, let peer, self.pendingExtendedDesktop?.peer === peer,
+                  self.pendingExtendedDesktop?.intent == intent else { return }
+            self.expireExtendedDesktopRequest()
+        }
+        finishExtendedDesktopSelection()
+    }
+
+    private func expireExtendedDesktopRequest(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard let pending = pendingExtendedDesktop, now >= pending.deadline else { return }
+        cancelExtendedDesktopRequest(problem: "확장 화면 응답을 확인하지 못했습니다. 다시 누르면 새로 요청합니다.")
+    }
+
+    private func cancelExtendedDesktopRequest(release: Bool = true, problem: String? = nil) {
+        extendedDesktopProblem = problem
+        guard let pending = pendingExtendedDesktop else { return }
+        pendingExtendedDesktop = nil
+        link.cancel(pending.request)
+        if let selection = pending.selection { link.cancel(selection) }
+        guard release, connection === pending.peer, sessionHost == pending.host,
+              authenticatedDisplayMacID() == pending.macID, var viewport = lastViewport else { return }
+        viewport.extendedDesktopIntent = .release
+        let message = StreamMessage(kind: .viewport, timestamp: Date().timeIntervalSince1970,
+            isKeyframe: false, payload: Wire.encode(viewport))
+        _ = link.send(message.serialized(), onlyOn: pending.peer, submission: SessionLink.Submission { _ in },
+            admit: { [weak self] in self?.extendedDesktopBindingIsCurrent(pending) == true })
+    }
+
+    private func observeExtendedDesktopCatalog(_ list: WindowList, peer: NWConnection) {
+        guard connection === peer else { return }
+        extendedDesktopControl = list.extendedDesktopControl
+        guard let pending = pendingExtendedDesktop else { return }
+        guard pending.peer === peer, pending.macID == authenticatedDisplayMacID(),
+              pending.host == list.launchID, pending.intent == explicitSourceIntent else {
+            cancelExtendedDesktopRequest(release: false, problem: "연결이 바뀌어 확장 화면 요청을 취소했습니다.")
+            return
+        }
+        guard list.extendedDesktopControl == 1, displaySelectionReady,
+              Set(displays.map(\.id)).count == displays.count,
+              displays.filter({ $0.role == "ipadExtendedDesktop" }).count <= 1 else {
+            cancelExtendedDesktopRequest(problem: "Mac의 확장 화면 지원이나 모니터 목록을 확인할 수 없습니다.")
+            return
+        }
+        expireExtendedDesktopRequest()
+        finishExtendedDesktopSelection()
+    }
+
+    private func finishExtendedDesktopSelection() {
+        guard let pending = pendingExtendedDesktop, pending.selection == nil,
+              ProcessInfo.processInfo.systemUptime < pending.deadline,
+              connection === pending.peer, authenticatedDisplayMacID() == pending.macID,
+              sessionHost == pending.host, explicitSourceIntent == pending.intent,
+              extendedDesktopRequestReady, let display = extendedDesktopCandidate else { return }
+        selectDisplay(display, extendedDesktopIntent: pending.intent)
+    }
+    #endif
 
     // The Mac's streaming settings (kinds 16 and 17; see the Host settings section below and
     // HostSettingsLedger.swift). Published on main.
@@ -1085,6 +1219,9 @@ final class StreamClient: ObservableObject {
     }
 
     private func noteSourceIntent() {
+        #if os(iOS)
+        cancelExtendedDesktopRequest()
+        #endif
         if let automaticSubmission { link.cancel(automaticSubmission) }
         automaticSubmission = nil
         pendingDisplaySelection = nil
@@ -1100,6 +1237,10 @@ final class StreamClient: ObservableObject {
     }
 
     private func beginAutomaticConnectionOpportunity(peer: NWConnection? = nil) {
+        #if os(iOS)
+        cancelExtendedDesktopRequest(release: false)
+        extendedDesktopControl = nil
+        #endif
         if let automaticSubmission { link.cancel(automaticSubmission) }
         automaticSubmission = nil
         pendingDisplaySelection = nil
@@ -3304,6 +3445,10 @@ final class StreamClient: ObservableObject {
         // `followBestPath`'s, and through the remote door for the move home.
         guard connected, let old = connection, connectedDirectly == (kind == .fromDirect),
               kind != .fromRemote || session?.route.isRemote == true else { c.cancel(); return }
+        #if os(iOS)
+        cancelExtendedDesktopRequest()
+        extendedDesktopControl = nil
+        #endif
         // From here `c` is the session's: the old connection's pings and one-second windows stop at
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
         // only until the fence's pong (`deliver`), or stops at once without a fence.
@@ -4254,15 +4399,25 @@ final class StreamClient: ObservableObject {
         request(source, origin: .human)
     }
 
-    func selectDisplay(_ display: DisplayInfo) {
+    func selectDisplay(_ display: DisplayInfo, extendedDesktopIntent: UInt64? = nil) {
+        #if os(iOS)
+        if let intent = extendedDesktopIntent {
+            guard let pending = pendingExtendedDesktop, pending.intent == intent,
+                  explicitSourceIntent == intent, pending.selection == nil,
+                  extendedDesktopCandidate == display else { return }
+        } else {
+            noteSourceIntent()
+        }
+        #else
         noteSourceIntent()
+        #endif
         expectedSourceIntent = (.display(display.id), selectionRevision, sourceCatalogEpoch, .human)
-        _ = requestDisplay(display)
+        _ = requestDisplay(display, extendedDesktopIntent: extendedDesktopIntent)
     }
 
     @discardableResult
     private func requestDisplay(_ display: DisplayInfo, origin: SourceRequest.Origin = .human,
-                                ticket: AutomaticSourceTicket? = nil) -> Bool {
+                                ticket: AutomaticSourceTicket? = nil, extendedDesktopIntent: UInt64? = nil) -> Bool {
         guard displaySelectionReady, let peer = connection, let displayInventoryID,
               displays.filter({ $0.id == display.id }).count == 1 else { return false }
         if origin == .automatic {
@@ -4276,11 +4431,23 @@ final class StreamClient: ObservableObject {
         }
         if origin == .human { noteAction() }
         let submission = SessionLink.Submission { [weak self] outcome in
+            #if os(iOS)
+            if let self, let intent = extendedDesktopIntent, self.pendingExtendedDesktop?.intent == intent {
+                if outcome == .submitted {
+                    self.pendingExtendedDesktop = nil
+                } else {
+                    self.cancelExtendedDesktopRequest(problem: "확장 화면 선택이 취소되었습니다.")
+                }
+            }
+            #endif
             #if DEBUG
             self?.recordStartupDiagnostic(["event": "display_submission", "origin": origin.rawValue,
                 "outcome": outcome == .submitted ? "submitted" : "cancelled"])
             #endif
         }
+        #if os(iOS)
+        if extendedDesktopIntent != nil { pendingExtendedDesktop?.selection = submission }
+        #endif
         if origin == .automatic {
             automaticSubmission = submission
             automaticSourceIntent = nil
@@ -4308,7 +4475,23 @@ final class StreamClient: ObservableObject {
                                     payload: Wire.encode(DisplaySelection(displayID: display.id, inventoryID: displayInventoryID,
                                         origin: origin == .automatic ? .automatic : nil,
                                         selectionRevision: origin == .automatic ? ticket?.revision : nil)))
-        return link.send(message.serialized(), onlyOn: peer, submission: submission)
+        #if os(iOS)
+        let intent = explicitSourceIntent
+        #endif
+        return link.send(message.serialized(), onlyOn: peer, submission: submission, admit: { [weak self] in
+            guard let self else { return false }
+            #if os(iOS)
+            guard let extendedDesktopIntent else { return true }
+            guard let pending = self.pendingExtendedDesktop else { return false }
+            return pending.intent == extendedDesktopIntent && self.explicitSourceIntent == intent &&
+                self.extendedDesktopBindingIsCurrent(pending) && self.displayInventoryID == displayInventoryID &&
+                self.extendedDesktopControl == 1 &&
+                ProcessInfo.processInfo.systemUptime < pending.deadline &&
+                IPadExtendedDisplaySelection.candidate(displays: self.displays, ready: true) == display
+            #else
+            return true
+            #endif
+        })
     }
 
     /// Asks the host to stream this source: the person's pick (`select`), or this device's own
@@ -4935,6 +5118,7 @@ final class StreamClient: ObservableObject {
                 let previous = self.active
                 guard self.applyVisionInputCatalog(list, from: from) else { return }
                 #if os(iOS)
+                self.observeExtendedDesktopCatalog(list, peer: peer)
                 self.reconcileDesiredAudio()
                 #endif
                 // Forget thumbnails for windows that are gone.

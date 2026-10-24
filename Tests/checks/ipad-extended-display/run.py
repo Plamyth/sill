@@ -1,61 +1,53 @@
+"""실제 소비 메서드와 SessionLink를 Mini의 해시 검증 RAM에서 검사한다."""
 from pathlib import Path
 import subprocess
 import sys
 
-
-def block(source, marker):
-    start = source.index(marker)
-    end = source.index("{", start) + 1
-    depth = 1
-    while depth:
-        depth += (source[end] == "{") - (source[end] == "}")
-        end += 1
-    return source[start:end]
+ROOT = Path(__file__).resolve().parents[3]
+HERE = Path(__file__).resolve().parent
+if len(sys.argv) != 2:
+    raise SystemExit('usage: run.py ABSOLUTE_FRESH_ROUTED_OUTPUT')
+OUT = Path(sys.argv[1])
 
 
-root = Path(__file__).resolve().parents[3]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=True)
-screen = (root / "iOSClient/StreamScreen.swift").read_text()
-portrait = (root / "iOSClient/PortraitStreamScreen.swift").read_text()
-protocol_path = Path(sys.argv[2]) if len(sys.argv) > 2 else root / "Sources/StreamProtocol/Switcher.swift"
-display_info = block(protocol_path.read_text(), "public struct DisplayInfo:")
-assert "public var role: String?" in display_info, "확정된 DisplayInfo.role 계약을 통합하거나 입력으로 전달해야 합니다."
-button = block(screen, "struct IPadExtendedDisplayButton: View")
-assert 'accessibilityLabel: "iPad 확장 화면", action: selectExtendedDisplay' in button
-assert '.accessibilityIdentifier("iPadExtendedDisplayButton")' in button
-assert '.disabled(candidate == nil)' in button
-assert 'Text("iPad 확장 화면")' in button
-assert '.lineLimit(2)' in button
-landscape = block(screen, "private struct TopBar: View")
-vertical = block(portrait, "private func windowBar(")
-for bar in [landscape, vertical]:
-    assert 'IPadExtendedDisplayButton(client: client,' in bar
-assert 'MacDisplayChooser(client: client,' in landscape
-assert 'desktopButton(width: layout.buttonWidth)' in vertical
-assert 'IPadExtendedDisplayButton' not in block(portrait, 'private func phoneRow1(')
+def augment(inputs, block, root, here):
+    screen = (root/'iOSClient/StreamScreen.swift').read_text()
+    portrait = (root/'iOSClient/PortraitStreamScreen.swift').read_text()
+    button = block(screen, 'struct IPadExtendedDisplayButton: View')
+    assert '.disabled(!client.canSelectIPadExtendedDesktop)' in button
+    assert 'accessibilityLabel: "iPad 확장 화면", action: selectExtendedDisplay' in button
+    assert '.accessibilityIdentifier("iPadExtendedDisplayButton")' in button
+    assert '확장 화면 요청 중' in button and '.lineLimit(2)' in button
+    landscape = block(screen, 'private struct TopBar: View')
+    vertical = block(portrait, 'private func windowBar(')
+    assert all('IPadExtendedDisplayButton(client: client,' in bar for bar in [landscape, vertical])
+    assert 'MacDisplayChooser(client: client,' in landscape and 'desktopButton(width: layout.buttonWidth)' in vertical
+    assert 'IPadExtendedDisplayButton' not in block(portrait, 'private func phoneRow1(')
+    members = '\n'.join(block(button, marker).replace('private ', '') for marker in [
+        'private var candidate:', 'private var selected:', 'private func selectExtendedDisplay()'])
+    inputs['Button.swift'] = 'import Foundation\n@MainActor struct ButtonFixture { let client: Client\n' + members + '\n}'
+    inputs['main.swift'] = (HERE/'main.swift').read_text()
+    inputs.pop('AutomaticDisplay.swift', None)
+    subprocess.run([sys.executable, '-B', str(root/'Tests/checks/ipad-test-destinations/layout.py'),
+                    str(OUT/'Layout.swift')], check=True)
+    inputs['Layout.swift'] = (OUT/'Layout.swift').read_text()
+    stream = (root/'iOSClient/StreamClient.swift').read_text()
+    ready = block(stream, 'var displaySelectionReady:')
+    inputs['Client.swift'] = inputs['Client.swift'].replace('var displaySelectionReady = true', ready)
+    inputs['Client.swift'] = inputs['Client.swift'].replace('        displaySelectionReady = list.displaySelection == 1 && list.displayInventoryID != nil\n', '')
+    accepted = 'guard self.applyVisionInputCatalog(list, from: from) else { return }'
+    callback = 'self.observeExtendedDesktopCatalog(list, peer: peer)'
+    assert stream.index(accepted) < stream.index(callback), '카탈로그 수용 뒤 소비해야 합니다.'
+    class_start = inputs['Client.swift'].index('@MainActor final class Client')
+    non_ipad = inputs['Client.swift'][class_start:].replace('#if true', '#if os(iOS)')
+    inputs['NonIPadClient.swift'] = 'import Foundation\n' + block(non_ipad, '@MainActor final class Client').replace('final class Client', 'final class NonIPadClient', 1)
+    for name in ['StreamClient.swift', 'StreamClient+Viewport.swift', 'StreamScreen.swift']:
+        inputs[name+'.swiftparse'] = (root/'iOSClient'/name).read_text()
+    print('실제 버튼·송신 메서드·카탈로그 수용 메서드·44pt 배치 검사를 결합했습니다.')
 
-standins = '''import Foundation
-enum StreamSource { case none, desktop, window }
-final class ClientFixture {
-    var displays: [DisplayInfo] = []
-    var displaySelectionReady = true
-    var active = StreamSource.none
-    var activeDisplayID: UInt32?
-    var submitted: [DisplayInfo] = []
-    func selectDisplay(_ display: DisplayInfo) { submitted.append(display) }
-}
-'''
-members = [block(button, marker).replace("private ", "", 1) for marker in [
-    "private var candidate:", "private var selected:", "private func selectExtendedDisplay()"
-]]
-fixture = standins + display_info + '\n' + block(screen, "enum IPadExtendedDisplaySelection {")
-fixture += '\nstruct ButtonFixture {\nlet client: ClientFixture\n' + '\n'.join(members) + '\n}\n'
-(out / "Fixture.swift").write_text(fixture)
-subprocess.run([sys.executable, "-B", str(root / "Tests/checks/ipad-test-destinations/layout.py"),
-                str(out / "Layout.swift")], check=True)
-subprocess.run(["/usr/bin/swiftc", "-module-cache-path", str(out / "cache"),
-                str(out / "Fixture.swift"), str(out / "Layout.swift"),
-                str(Path(__file__).with_name("main.swift")), "-o", str(out / "check")], check=True)
-subprocess.run([str(out / "check"), *sys.argv[3:4]], check=True)
-print("버튼 연결·식별자·기존 모니터 선택 유지 정적 검사를 통과했습니다.")
+
+program = ROOT/'Tests/checks/source-request/run.py'
+code = program.read_text().replace('sha = lambda data:', 'augment(inputs, block, root, here)\nsha = lambda data:', 1)
+code = code.replace("+ list((root/'Sources/StreamProtocol').glob('*.swift'))", "+ list((root/'Sources/StreamProtocol').glob('*.swift')) + list((root/'Tests/checks/ipad-extended-display').glob('*'))")
+sys.argv = [str(program), '--suite', 'client', '--output', str(OUT)]
+exec(compile(code, str(program), 'exec'), {'__file__': str(program), 'augment': augment})

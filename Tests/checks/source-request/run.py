@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import os
+import importlib.util
 from pathlib import Path
 import subprocess
 
@@ -36,6 +37,11 @@ client = client.replace('// DISPLAY_TYPES', '\n'.join(block(text, s).replace('pr
 client = client.replace('// DISPLAY_MEMORY_STATE', next(line.strip().replace('private ', '') for line in text.splitlines() if 'private static var rememberedDisplays:' in line))
 client = client.replace('// RESUME_SOURCE',block(text,'if let resume = self.resumeSource'))
 client = client.replace('// IDLE_FALLBACK',block(text,'if let ticket = self.automaticTicket'))
+consumer_path = here.parent/'ipad-extended-display/fixture.py'
+consumer_spec = importlib.util.spec_from_file_location('extended_consumer', consumer_path)
+consumer = importlib.util.module_from_spec(consumer_spec)
+consumer_spec.loader.exec_module(consumer)
+client = consumer.bind_client(client, root, block)
 inputs = {name:(root/'Sources/StreamProtocol'/name).read_text() for name in ['Switcher.swift','Sentry.swift','SentryControl.swift','AudioPrivacy.swift','AudioForwarding.swift','StreamMessage.swift','AudioRouting.swift']}
 golden_path = here/'source-selection-admission-v1-golden.json'
 golden_bytes = golden_path.read_bytes()
@@ -49,6 +55,7 @@ inputs['Client.swift'] = client
 inputs['main.swift'] = (here/'main.swift').read_text()
 if args.suite == 'client': inputs['AutomaticDisplay.swift'] = (here/'AutomaticDisplay.swift').read_text()
 inputs['SessionLink.swift'] = (root/'iOSClient/SessionLink.swift').read_text().replace('import Network\n','')
+if args.suite == 'client': inputs.update(consumer.protocol_inputs(root, block))
 if args.suite == 'host':
     inputs.pop('SessionLink.swift')
     coordinator = (root/'Sources/SillHost/StreamCoordinator.swift').read_text()
@@ -72,6 +79,8 @@ sha = lambda data: hashlib.sha256(data).hexdigest()
 hashes = {name:sha(value.encode()) for name,value in inputs.items()}
 payload = json.dumps({'sources':{name:base64.b64encode(value.encode()).decode() for name,value in inputs.items()},'hashes':hashes}).encode()
 runner = (here.parent/'extended-desktop/remote.py').read_text()
+runner = runner.replace('pure host policy and lifecycle; no AppKit/private display execution',
+                        'extracted source selection methods and SessionLink; no SDK or live device')
 start = runner.find('    collision = subprocess.run(')
 if start != -1:
     end = runner.index('    disk = subprocess.check_output(', start)
@@ -79,7 +88,7 @@ if start != -1:
 runner = runner.replace("not name.endswith('.swift')", "not (name.endswith(('.swift', '.swiftparse')) or name == 'source-selection-admission-v1-golden.json')")
 runner = runner.replace('command += [str(mount / name) for name in hashes]', 'command += [str(mount / name) for name in hashes if name.endswith(".swift")]')
 runner = runner.replace('    ok = run(command, timeout=100)', '    parsed = all(run(["/usr/bin/xcrun", "swiftc", "-frontend", "-parse", str(mount / name)], timeout=20) for name in hashes if name.endswith(".swiftparse"))\n    ok = run(command, timeout=100) if parsed else False')
-paths = [root/'iOSClient/SessionLink.swift', root/'Sources/SillHost/StreamServer.swift', source, root/'Sources/SillHost/StreamCoordinator.swift'] + list(here.glob('*.swift')) + [here/'run.py', here/'transport.py', golden_path, here.parent/'extended-desktop/remote.py'] + list((root/'Sources/StreamProtocol').glob('*.swift'))
+paths = [root/'iOSClient/SessionLink.swift', root/'iOSClient/StreamClient+Viewport.swift', root/'iOSClient/StreamScreen.swift', consumer_path, root/'Sources/SillHost/StreamServer.swift', source, root/'Sources/SillHost/StreamCoordinator.swift'] + list(here.glob('*.swift')) + [here/'run.py', here/'transport.py', golden_path, here.parent/'extended-desktop/remote.py'] + list((root/'Sources/StreamProtocol').glob('*.swift'))
 before = {str(p.relative_to(root)):sha(p.read_bytes()) for p in paths}
 if args.preflight:
     import sys
@@ -88,11 +97,11 @@ if args.preflight:
     (out/'preflight.json').write_text(json.dumps({'sourceHashes': before, 'inputHashes': hashes, 'runtime': 'pending', 'sharedGolden': golden_evidence}, indent=2)+'\n')
     print('PREFLIGHT '+str(out/'preflight.json'))
     raise SystemExit(0)
-p = subprocess.run(['/Users/ambrion/.local/bin/mini','heavy','--cwd','/private/tmp','--','python3','-B','-c',runner],input=payload,capture_output=True,timeout=240,env=dict(os.environ, CODEX_THREAD_ID='01a13ace-e372-7ed1-9946-149df37ee1c3'))
+p = subprocess.run(['/Users/ambrion/.local/bin/mini','heavy','--cwd','/private/tmp','--','python3','-B','-c',runner],input=payload,capture_output=True,timeout=240,env=dict(os.environ))
 log = (p.stdout + p.stderr).decode(errors='replace')
 (out/'run.log').write_text(log)
 records = [json.loads(line[12:]) for line in log.splitlines() if line.startswith('RESULT_JSON ')]
-receipt = {'suite':args.suite,'sharedGolden':golden_evidence,'scope':'actual client methods and SessionLink or full host selection/admission/pipeline; controlled OS/audio/wire endpoints; Mini RAM independent test, not SDK/native/sourceguard transfer acceptance','head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),'sourceHashes':before,'sourceUnchanged':all(sha(p.read_bytes()) == before[str(p.relative_to(root))] for p in paths),'transportHashMatched':'INPUT_SHA256 '+sha(payload) in log,'inputHashes':hashes,'remote':records[-1] if records else None,'exit':p.returncode}
+receipt = {'owner':os.environ.get('CODEX_THREAD_ID'), 'inputSHA256':sha(payload), 'suite':args.suite,'sharedGolden':golden_evidence,'scope':'actual client methods and SessionLink or full host selection/admission/pipeline; controlled OS/audio/wire endpoints; Mini RAM independent test, not SDK/native/sourceguard transfer acceptance','head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),'sourceHashes':before,'sourceUnchanged':all(sha(p.read_bytes()) == before[str(p.relative_to(root))] for p in paths),'transportHashMatched':'INPUT_SHA256 '+sha(payload) in log,'inputHashes':hashes,'remote':records[-1] if records else None,'exit':p.returncode}
 (out/'result.json').write_text(json.dumps(receipt,indent=2)+'\n')
 print(log)
 print('RECEIPT '+str(out/'result.json'))

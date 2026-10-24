@@ -96,6 +96,7 @@ def augment(inputs, block, root, here):
     SUITE = 'client' if mode == 'reconnect' else 'host' if mode == 'queue' else mode
     if mode == 'reconnect':
         inputs['Client.swift'] = client_input(block, root, here)
+        inputs.update(consumer_protocol_inputs(root, block))
     augment_review(inputs, block, root, here)
     SUITE = mode
     if mode == 'reconnect':
@@ -278,7 +279,21 @@ def client_input(block, root, here):
         if marker == '// AUTOMATIC_TICKET':
             replacement += '\n' + block(text, 'private struct AutomaticConnectionOpportunity').replace('private ', '')
         client = client.replace(marker, replacement)
-    return client
+    import importlib.util
+    path = here.parent/'ipad-extended-display/fixture.py'
+    spec = importlib.util.spec_from_file_location('extended_consumer', path)
+    consumer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(consumer)
+    return consumer.bind_client(client, root, block)
+
+
+def consumer_protocol_inputs(root, block):
+    import importlib.util
+    path = root/'Tests/checks/ipad-extended-display/fixture.py'
+    spec = importlib.util.spec_from_file_location('extended_consumer_protocol', path)
+    consumer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(consumer)
+    return consumer.protocol_inputs(root, block)
 
 program = ROOT/'Tests/checks/source-request/run.py'
 code = program.read_text().replace('sha = lambda data:', 'augment(inputs, block, root, here)\nsha = lambda data:', 1)
