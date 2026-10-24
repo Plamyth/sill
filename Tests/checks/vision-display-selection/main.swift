@@ -599,5 +599,32 @@ check(manualOnly.releaseCallbacks.count == 1, "준비 신호가 없어도 명시
 if manualOnly.releaseCallbacks.count == 1 { manualOnly.releaseCallbacks[0](true); drain() }
 check(manualOnlyPeer.sent.count == 1, "명시적 수동 선택은 기존 서버 guard에 제출한다")
 
+let (networkFailure, networkFailurePeer) = automaticClient()
+let malformedQueued = DispatchSemaphore(value: 0)
+DispatchQueue.global().async {
+    networkFailure.receiveMalformedWindowList(from: networkFailurePeer)
+    malformedQueued.signal()
+}
+check(malformedQueued.wait(timeout: .now() + 1) == .success, "실제 해석 실패 분기를 네트워크 큐에서 실행한다")
+drain()
+networkFailure.releaseCallbacks[0](true); drain()
+check(networkFailure.visionDisplaySelection.catalog == nil && networkFailurePeer.sent.isEmpty,
+      "실제 네트워크 분기는 메인 큐에서 선택을 무효화하고 늦은 콜백을 폐기한다")
+
+let (lateInvalidation, lateInvalidationPeer) = automaticClient()
+let oldInvalidationQueued = DispatchSemaphore(value: 0)
+DispatchQueue.global().async {
+    lateInvalidation.receiveMalformedWindowList(from: lateInvalidationPeer)
+    oldInvalidationQueued.signal()
+}
+check(oldInvalidationQueued.wait(timeout: .now() + 1) == .success, "이전 연결의 실패 처리를 메인 큐에 보류한다")
+let replacementDisplayPeer = NWConnection()
+lateInvalidation.connection = replacementDisplayPeer
+lateInvalidation.observeVisionDisplays(automaticCatalog(), from: replacementDisplayPeer)
+let replacementCommand = lateInvalidation.visionDisplaySelection.pending?.command
+drain()
+check(replacementCommand != nil && lateInvalidation.visionDisplaySelection.pending?.command == replacementCommand,
+      "이전 연결의 늦은 실패 처리가 새 연결의 선택을 취소하지 않는다")
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
