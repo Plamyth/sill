@@ -83,6 +83,7 @@ final class Memory {
         }, compareAndSwap: { [self] expected, next in
             guard !casFails, failOnWrite != writes + 1, raw == expected else { throw IPadEnrollmentFailure.storage }
             writes += 1; raw = readbackCorrupts ? Data("corrupt".utf8) : next
+            onWrite?(next)
         }, post: { [self] route, body, done in
             requests.append((route, body))
             if route == .challenge && holdChallenge || route == parkRoute { parked = done; return {} }
@@ -240,6 +241,33 @@ expired.now += 31_000; expired.loseEnroll = false
 _ = try expired.ensure(expired.engine()).get()
 try check(expired.requests.map(\.0) == [.challenge, .enroll, .readbackChallenge, .readback], "만료 후 신규 enroll 없이 fresh signed readback")
 try check(try J.parse(expired.requests.last!.1) == expired.fixture["readbackRequest"]!, "golden readback 서명 요청")
+let expiresDuringSave = try Memory(readbackGolden)
+expiresDuringSave.raw = original; expiresDuringSave.now += 31_000; expiresDuringSave.parkRoute = .readback
+let expiresDuringSaveEngine = expiresDuringSave.engine()
+var expiresDuringSaveResult: Result<P.Credential, Error>?
+expiresDuringSaveEngine.ensure { expiresDuringSaveResult = $0 }
+settle { expiresDuringSave.parked != nil }
+let pendingBeforeExpiry = object(try J.parse(expiresDuringSave.raw!, limit: 1_048_576))["pending"]!
+let expiryDuringSave = expiresDuringSave.now + 1
+let expiringResponse = changed(expiresDuringSave.credential, "expiresAt", .integer(expiryDuringSave))
+let expiringGrant = try P.Credential(data(expiringResponse), binding: expiresDuringSave.binding, observedAt: expiresDuringSave.now)
+expiresDuringSave.onWrite = { _ in expiresDuringSave.now = expiryDuringSave }
+expiresDuringSave.parked?(expiresDuringSave.response(expiringResponse))
+settle { expiresDuringSaveResult != nil }
+reject("CAS/readback 중 만료된 grant 성공 반환 금지") { _ = try expiresDuringSaveResult!.get() }
+try check(expiresDuringSaveEngine.credential == nil && expiresDuringSaveEngine.phase == .waiting,
+          "저장 중 만료 뒤 메모리 ready 차단")
+reject("저장 중 만료 뒤 보호 요청 0") { _ = try expiresDuringSaveEngine.authorizedRequest(path: "/v1/catalog", method: "GET") }
+let savedAfterExpiry = object(try J.parse(expiresDuringSave.raw!, limit: 1_048_576))
+try check(savedAfterExpiry["pending"] == changed(pendingBeforeExpiry, "acceptedTokenHash", .string(expiringGrant.tokenHash)),
+          "저장 중 만료도 원 pending·body·digest 보존")
+try check(savedAfterExpiry["credential"] == .object(["response": .string(Base64URL.encode(data(expiringResponse))),
+          "observedAt": .integer(expiryDuringSave - 1)]), "저장 중 만료도 저장 자격 원문 보존")
+try check(savedAfterExpiry["history"] == .array([]) && savedAfterExpiry["renewalRequired"] == .bool(false) &&
+          savedAfterExpiry["terminal"] == .string("") && savedAfterExpiry["rejectedTokenHash"] == .string(""),
+          "저장 중 만료를 확정 만료·거절 이력으로 바꾸지 않음")
+try check(expiresDuringSave.requests.map(\.0) == [.readbackChallenge, .readback] && expiresDuringSave.receiptCalls == 0,
+          "저장 중 만료로 새 enroll·신뢰 발급·renew 0")
 for (status, code) in [(404,"ENROLLMENT_OPERATION_UNCONFIRMED"),(409,"ENROLLMENT_IDENTITY_CHANGED"),(409,"CHALLENGE_CONFLICT"),(503,"ENROLLMENT_PROVIDER_UNAVAILABLE")] {
     let blocked = try Memory(readbackGolden); blocked.raw = original; blocked.now += 31_000
     blocked.responseOverride = (status, .object(["error": .string(code)]))

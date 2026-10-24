@@ -248,6 +248,7 @@ final class IPadDeviceEnrollment {
         next.rejectedHash = ""
         try save(next)
         guard try journal!.credential(binding: binding) == grant else { throw IPadEnrollmentFailure.storage }
+        guard grant.expiresAt > io.now() else { throw IPadEnrollmentFailure.stale }
         finish(.success(grant))
     }
     private func post(_ route: Route, body: Data, recover: Bool = false, expiresOriginal: Bool = false,
