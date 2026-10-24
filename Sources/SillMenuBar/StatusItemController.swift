@@ -18,7 +18,7 @@ struct MenuEntry: Equatable {
         case setDirectWireless(Bool)
         case setMaxFPS(Int), setBitrate(Int), setCaptureScale(CGFloat)
         case toggleLaunchAtLogin
-        case showLog, showSettings, quit
+        case showLog, showSettings, requestLocalAudioReturn, quit
         /// Settings on one tab (Remote Access…); the plain `showSettings` stays for ⌘,. (Swift
         /// allows no second case named `showSettings`.)
         case showSettingsTab(SettingsTab)
@@ -137,6 +137,7 @@ enum MenuBuilder {
         if p.remoteAccessNote != nil {
             menu.append(MenuEntry(kind: .item, title: "Pair iPhone or iPad…", enabled: p.canPair, action: .showPairing))
         }
+        menu.append(MenuEntry(kind: .item, title: "인증 후 로컬 화면·입출력 복귀…", action: .requestLocalAudioReturn))
         menu.append(MenuEntry(kind: .item, title: "Show Log…", action: .showLog))
         menu.append(MenuEntry(kind: .item, title: "Settings…", key: ",", action: .showSettings))
         menu.append(.separator)
@@ -296,6 +297,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .toggleLaunchAtLogin: model.loginItem.set(!model.loginItem.isOn)
         case .showLog: model.showLog?()
         case .showSettings: model.showSettings?(nil)
+        case .requestLocalAudioReturn: Task { @MainActor in _ = await model.requestLocalAudioReturn() }
         case .showSettingsTab(let tab): model.showSettings?(tab)
         case .showPairing: model.pairDevice()
         case .showPairingRequest(let name, let showing): model.showPairingRequest(name: name, showing: showing)

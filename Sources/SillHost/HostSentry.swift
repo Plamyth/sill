@@ -56,7 +56,7 @@ final class HostSentry {
     private var forwardingRevision = UUID()
 
     func forwardingProof() -> ForwardingProof? {
-        guard operation == .idle, persistenceHealthy, let admissionProof = admission.protectionSnapshot() else {
+        guard operation == .idle, persistenceHealthy, audioReady(), let admissionProof = admission.protectionSnapshot() else {
             forwardingRevision = UUID()
             return nil
         }
@@ -70,7 +70,7 @@ final class HostSentry {
     }
 
     func forwardingProofCurrent(_ proof: ForwardingProof) -> Bool {
-        operation == .idle && persistenceHealthy && forwardingRevision == proof.revision && admission.protectionMatches(proof.admission)
+        operation == .idle && persistenceHealthy && audioReady() && forwardingRevision == proof.revision && admission.protectionMatches(proof.admission)
     }
 
     @discardableResult
@@ -80,7 +80,7 @@ final class HostSentry {
         let generation = membershipGeneration
         defer { operation = .idle }
         if let proof = admission.protectionSnapshot(), persistenceHealthy,
-           localReturnUnavailableReason() == nil, surfaces.verify(), audioReady(),
+           localReturnUnavailableReason() == nil, surfaces.verify(),
            generation == membershipGeneration, admission.protectionMatches(proof) { return true }
         invalidateVerification()
         persistenceHealthy = persist(.latched)
@@ -97,12 +97,10 @@ final class HostSentry {
         }
         let engaged = surfaces.engage()
         let surfacesVerified = engaged && surfaces.verify()
-        let audioVerified = audioReady()
         guard generation == membershipGeneration else { return false }
-        let verified = surfacesVerified && audioVerified
+        let verified = surfacesVerified
         admission.update(verified: verified, persistenceHealthy: persistenceHealthy,
-            reason: !audioVerified ? "Mac 입출력 오디오 보호를 확인하지 못했습니다." :
-                verified ? nil : surfaces.reason() ?? "현장 화면과 입력 차단을 확인하지 못했습니다.")
+            reason: verified ? nil : surfaces.reason() ?? "현장 화면과 입력 차단을 확인하지 못했습니다.")
         changed?()
         return persistenceHealthy && verified
     }
@@ -168,7 +166,7 @@ final class HostSentry {
     private func restoreFailedReturn(_ reason: String) -> Bool {
         persistenceHealthy = persist(.latched)
         let recoveryAvailable = persistenceHealthy && localReturnUnavailableReason() == nil
-        let restored = recoveryAvailable ? surfaces.engage() && surfaces.verify() && audioReady() : surfaces.restoreCurtains()
+        let restored = recoveryAvailable ? surfaces.engage() && surfaces.verify() : surfaces.restoreCurtains()
         let notice: String
         if !restored { notice = " 현장 보호 복구를 확인하지 못했습니다." }
         else if recoveryAvailable { notice = " 현장 보호를 다시 적용했습니다." }

@@ -12,6 +12,7 @@ enum MainMenu {
         sill.addItem(withTitle: "About Sill", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         sill.addItem(.separator())
         sill.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+        sill.addItem(withTitle: "인증 후 로컬 화면·입출력 복귀…", action: #selector(AppDelegate.requestLocalAudioReturn(_:)), keyEquivalent: "")
         sill.addItem(.separator())
         sill.addItem(withTitle: "Quit Sill", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 

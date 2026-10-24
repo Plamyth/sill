@@ -6,6 +6,7 @@ final class CurtainPlatformFixture {
     enum State { case idle, engaging, protected, releasing, invalid(String) }
     var state = State.idle
     var changed: (() -> Void)?
+    var localReturnReason: () -> String? = { nil }
     var changingLifecycle = false
     var sessionActive = true, sleeping = false, notifiedLocked = false
     var localReturnDown: UInt32?
