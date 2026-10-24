@@ -3796,6 +3796,7 @@ extension StreamCoordinator {
     private func configureSentry() {
         guard !synthetic, appKitLoop else { return }
         let platform = HostSentryPlatform()
+        platform.localReturnReason = { [weak self] in self?.sentryLocalReturnUnavailableReason() }
         let defaults = UserDefaults.standard
         let key = "CCRHostSentryLatch.v1"
         let raw = defaults.object(forKey: key)

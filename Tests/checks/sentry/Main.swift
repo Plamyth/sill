@@ -193,6 +193,27 @@ import StreamProtocol
         expect(stable.forwardingProofCurrent(surfaceProof), "switching one remote monitor does not revoke unrelated audio protection")
         stableGate.update(verified: false, persistenceHealthy: true, reason: "실제 보호 상실")
         expect(!stable.forwardingProofCurrent(surfaceProof), "real protection loss invalidates physical proof synchronously")
+        let videoOnlyGate = SentryAdmission()
+        var audioVerified = false
+        var surfacesVerified = true
+        let videoOnly = HostSentry(admission: videoOnlyGate, initiallyLatched: true, persistenceHealthy: true,
+            persist: { _ in true }, surfaces: .init(engage: { surfacesVerified }, verify: { surfacesVerified },
+                release: { true }, reason: { nil }), audioReady: { audioVerified }, localReturnUnavailableReason: { nil })
+        videoOnlyGate.register(lan, externalRoute: false)
+        videoOnly.start(); videoOnly.joined(lan)
+        expect(videoOnlyGate.allowsActions(lan), "verified physical protection permits source selection despite unavailable audio")
+        expect(!videoOnlyGate.allows(lan, epoch: epoch), "video still requires an independent capture exclusion epoch")
+        videoOnlyGate.capture(epoch, for: lan)
+        expect(videoOnlyGate.allows(lan, epoch: epoch), "audio failure does not black out an approved capture")
+        expect(videoOnly.forwardingProof() == nil, "video permission cannot authorize unverified audio forwarding")
+        audioVerified = true
+        let audioProof = videoOnly.forwardingProof()!
+        audioVerified = false
+        expect(!videoOnly.forwardingProofCurrent(audioProof), "audio readback loss synchronously invalidates audio proof")
+        expect(videoOnlyGate.allows(lan, epoch: epoch), "audio proof revocation preserves protected remote video")
+        surfacesVerified = false
+        videoOnly.surfacesChanged()
+        expect(!videoOnlyGate.allowsActions(lan) && !videoOnlyGate.allows(lan, epoch: epoch), "physical protection failure still fences remote input and video")
         print("SENTRY_CHECKS_COMPLETE \(count)")
     }
 }

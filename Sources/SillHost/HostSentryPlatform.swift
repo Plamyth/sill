@@ -9,6 +9,7 @@ final class HostSentryPlatform {
 
     var changed: (() -> Void)?
     var requestLocalReturn: (() -> Void)?
+    var localReturnReason: () -> String? = { nil }
 
     var reason: String? {
         switch state {
@@ -373,7 +374,7 @@ final class HostSentryPlatform {
         panel.level = Self.curtainLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = false
         panel.isFloatingPanel = true
         panel.isReleasedWhenClosed = false
         panel.isOpaque = true
@@ -423,8 +424,9 @@ final class HostSentryPlatform {
             return ("원격 제어 모드 활성화",
                     "현재 사용자 데스크톱의 일반 입력 차단을 확인했습니다.\n전원 버튼·시스템 보안 화면의 차단은 보장하지 않습니다.\n로컬 복귀에는 새 운영체제 인증이 필요하며 키보드 입력 차단은 유지됩니다.")
         }
+        let explanation = localReturnReason() ?? reason ?? "입력 차단과 원격 동작을 다시 확인하고 있습니다."
         return ("원격 제어 보호 복구 중",
-                "화면 가림을 복구하고 있습니다. 입력 차단과 원격 동작은 아직 확인되지 않았습니다.\n기존에 적용된 보호는 유지합니다.\n로컬 복귀 가능 여부를 다시 확인해야 합니다.")
+                "기존 화면 가림을 유지합니다.\n\(explanation)\n로컬 복귀 요청은 새 운영체제 인증으로 확인합니다.")
     }
 
     private func updateCurtainText() {

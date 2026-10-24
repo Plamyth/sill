@@ -108,6 +108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSettings(tab: nil)
     }
 
+    @objc func requestLocalAudioReturn(_ sender: Any?) {
+        Task { @MainActor in _ = await model.requestLocalAudioReturn() }
+    }
+
     func showSettings(tab: SettingsTab?) {
         let controller = settingsWindow ?? SettingsWindowController(model: model)
         settingsWindow = controller
