@@ -17,7 +17,7 @@ FILES = ["Sources/StreamProtocol/Input.swift", "Sources/StreamProtocol/Switcher.
          "iOSClient/StreamClient.swift", "Sources/SillHost/PointerControl.swift",
          "Sources/SillHost/SourceInputFence.swift", "Sources/StreamProtocol/Compatibility.swift",
          "Sources/SillHost/StreamServer.swift", "Sources/StreamProtocol/TestDestinations.swift",
-         "Sources/StreamProtocol/AudioPrivacy.swift", "Sources/StreamProtocol/Sentry.swift"]
+         "Sources/StreamProtocol/AudioPrivacy.swift", "Sources/StreamProtocol/Sentry.swift", "Sources/StreamProtocol/SentryControl.swift"]
 
 
 def function(text, signature):

@@ -40,9 +40,10 @@ public struct SentryState: Codable, Equatable, Sendable {
     public let phase: Phase
     public let reason: String?
     public let limitations: [String]
+    public let control: SentryControlCapability?
 
     public init(hostBootID: UUID, sessionID: UUID, revision: UUID, requested: Bool,
-                phase: Phase, reason: String? = nil, limitations: [String]) {
+                phase: Phase, reason: String? = nil, limitations: [String], control: SentryControlCapability? = nil) {
         version = 1
         self.hostBootID = hostBootID
         self.sessionID = sessionID
@@ -51,6 +52,7 @@ public struct SentryState: Codable, Equatable, Sendable {
         self.phase = phase
         self.reason = reason
         self.limitations = limitations
+        self.control = control
     }
 }
 

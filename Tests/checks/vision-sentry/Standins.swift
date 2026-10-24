@@ -7,6 +7,8 @@ final class StreamClient {
     let link = SessionLink()
     var connected = true
     var visionSentryTrusted = true
+    var sentryTestIdentity: VisionSentryStoredRequest.Binding?
+    enum VisionReleaseTestContext { static let isTestBundle = true }
     var connection: NWConnection? {
         get { link.connection }
         set { bindVisionSentry(to: newValue); link.connection = newValue }

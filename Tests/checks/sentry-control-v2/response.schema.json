@@ -1,0 +1,141 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "requestID": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "operationState": {
+      "enum": [
+        "applied",
+        "pending",
+        "rejected",
+        "superseded",
+        "unknown"
+      ]
+    },
+    "code": {
+      "enum": [
+        "SENTRY_APPLIED",
+        "SENTRY_PENDING",
+        "SENTRY_SUPERSEDED",
+        "SENTRY_UNKNOWN",
+        "SENTRY_UNSUPPORTED",
+        "SENTRY_NOT_AUTHORIZED",
+        "SENTRY_STALE_STATE",
+        "SENTRY_REQUEST_CONFLICT",
+        "SENTRY_BUSY",
+        "SENTRY_CONTROL_FAILED",
+        "SENTRY_TARGET_UNCONFIRMED"
+      ]
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "hostBootID": {
+          "type": "string",
+          "format": "uuid",
+          "description": "기존 Foundation UUID coding을 유지한다. 대문자와 소문자 UUID를 수용한다."
+        },
+        "sessionID": {
+          "type": "string",
+          "format": "uuid",
+          "description": "기존 Foundation UUID coding을 유지한다. 대문자와 소문자 UUID를 수용한다."
+        },
+        "revision": {
+          "type": "string",
+          "format": "uuid",
+          "description": "기존 Foundation UUID coding을 유지한다. 대문자와 소문자 UUID를 수용한다."
+        },
+        "requested": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "inactive",
+            "pending",
+            "userSessionProtected",
+            "blocked"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "control": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 2
+            },
+            "role": {
+              "const": "ownerDevice"
+            },
+            "authorizationGeneration": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "canSet": {
+              "const": true
+            },
+            "manualIntent": {
+              "enum": [
+                "automatic",
+                "on",
+                "off"
+              ]
+            }
+          },
+          "required": [
+            "version",
+            "role",
+            "authorizationGeneration",
+            "canSet",
+            "manualIntent"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "hostBootID",
+        "sessionID",
+        "revision",
+        "requested",
+        "phase",
+        "limitations"
+      ]
+    }
+  },
+  "required": [
+    "version",
+    "requestID",
+    "accepted",
+    "operationState",
+    "code",
+    "state"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sentry v2 response",
+  "x-max-utf8-bytes": 4096,
+  "description": "중복 키는 Unicode escape 해석 후 모든 객체 깊이에서 거절한다. 수신자는 원본문을 재작성하지 않는다."
+}

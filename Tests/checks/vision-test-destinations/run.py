@@ -12,7 +12,7 @@ import signal
 import subprocess
 import sys
 
-PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Sentry', 'TestDestinations']
+PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Sentry', 'SentryControl', 'TestDestinations']
 
 
 def body(source, marker):

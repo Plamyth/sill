@@ -912,7 +912,7 @@ final class StreamClient: ObservableObject {
     var visionTestDestinationPeer: NWConnection?
     var visionTestDestinationGeneration = UUID()
     @Published var visionSentrySnapshot = VisionSentryController.Snapshot()
-    let visionSentry = VisionSentryController()
+    let visionSentry = VisionSentryController(store: VisionReleaseTestContext.isTestBundle ? .unavailable : .keychain)
     var visionSentryDeadline: DispatchWorkItem?
     var visionSentryLink: SessionLink { link }
     var visionSentryTrusted: Bool {
@@ -2858,7 +2858,12 @@ final class StreamClient: ObservableObject {
                     return
                 }
                 guard header.kind == .windowList else { self.probeMove(c, kept: kept, untilMacInfo: untilMacInfo, listed: listed); return }
-                guard let list = Wire.decode(WindowList.self, from: payload) else { c.cancel(); return }
+                #if os(visionOS)
+                let decodedList = VisionSentryController.decodeCatalog(payload)
+                #else
+                let decodedList = Wire.decode(WindowList.self, from: payload)
+                #endif
+                guard let list = decodedList else { c.cancel(); return }
                 if untilMacInfo { DispatchQueue.main.async { self.homeListProbed(c, kept: kept, host: list.launchID) }; return }
                 DispatchQueue.main.async { self.moveProbed(c, kept: kept, host: list.launchID) }
             }
@@ -4535,7 +4540,12 @@ final class StreamClient: ObservableObject {
             onFrame?(data, header.isKeyframe)
             #endif
         case .windowList:
-            guard let list = Wire.decode(WindowList.self, from: data) else {
+            #if os(visionOS)
+            let decodedList = VisionSentryController.decodeCatalog(data)
+            #else
+            let decodedList = Wire.decode(WindowList.self, from: data)
+            #endif
+            guard let list = decodedList else {
                 #if os(visionOS)
                 DispatchQueue.main.async { [weak self] in
                     self?.invalidateVisionDisplayCatalog(from: peer)

@@ -210,14 +210,20 @@ struct SillVisionWorkspace: View {
         .padding(20)
         .frame(minWidth: 700, minHeight: 500)
         .ornament(attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
-            if session.owns(lease), client.connected, client.active != .none, client.visionSentrySnapshot.available {
+            if session.owns(lease), client.connected, client.visionSentrySnapshot.available,
+               client.active != .none || client.visionSentrySnapshot.state?.control != nil {
                 VisionSentryOrnament(snapshot: client.visionSentrySnapshot,
-                                     allowActivation: phase == .active && !transitions.isPending) {
+                                     allowActivation: phase == .active && !transitions.isPending, set: { desired in
                     withWindowOwnership {
                         guard phase == .active, !transitions.isPending else { return }
-                        client.activateVisionSentry()
+                        client.setVisionSentry(desired)
                     }
-                }
+                }, readback: {
+                    withWindowOwnership {
+                        guard phase == .active, !transitions.isPending else { return }
+                        client.readbackVisionSentry()
+                    }
+                })
             }
         }
         .task {
@@ -586,15 +592,27 @@ struct SillVisionWorkspace: View {
 private struct VisionSentryOrnament: View {
     let snapshot: VisionSentryController.Snapshot
     let allowActivation: Bool
-    let activate: () -> Void
+    let set: (Bool) -> Void
+    let readback: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Button("센츄리 보호 켜기", systemImage: "lock.shield", action: activate)
+                Button("센츄리 보호 켜기", systemImage: "lock.shield") { set(true) }
                     .disabled(!allowActivation || !snapshot.canActivate)
                     .accessibilityHint("현재 Mac의 로그인 세션에서 현장 화면과 일반 입력 보호를 요청합니다. 제스처와 오디오 설정은 유지됩니다.")
                 Text(snapshot.message).font(.caption)
+            }
+            HStack {
+                Button("센츄리 보호 끄기", systemImage: "lock.open") { set(false) }
+                    .disabled(!allowActivation || !snapshot.canDeactivate)
+                    .accessibilityHint("현재 Mac의 원격 화면·일반 입력 보호만 해제합니다. Mac 오디오 복귀와 시스템 인증·권한은 별도입니다.")
+                Button("보존 원문으로 결과 확인", systemImage: "arrow.clockwise", action: readback)
+                    .disabled(!allowActivation || !snapshot.canReadback)
+                    .accessibilityHint("같은 요청 원문으로 Mac의 결과만 다시 확인합니다. 새 보호 전환을 만들지 않습니다.")
+            }
+            if snapshot.state?.control == nil {
+                Text("이 Mac은 보호 끄기를 지원하지 않습니다. 기존 보호 켜기만 사용할 수 있습니다.").font(.caption)
             }
             if let reason = snapshot.state?.reason { Text(reason).font(.caption) }
             if case .some(.rejected(.some(let reason))) = snapshot.problem { Text(reason).font(.caption) }
@@ -603,7 +621,7 @@ private struct VisionSentryOrnament: View {
             ForEach(Array((snapshot.state?.limitations ?? []).enumerated()), id: \.offset) { _, limitation in
                 Text(limitation).font(.caption)
             }
-            Text("VPN·인터넷 연결의 자동 활성화는 Mac이 결정합니다. 연결을 끊어도 Mac의 보호는 해제되지 않습니다. 현장 복귀는 Mac에서 새로 시스템 인증해야 합니다.")
+            Text("VPN·인터넷 연결의 자동 활성화는 Mac이 결정합니다. 연결을 끊어도 Mac의 보호는 해제되지 않습니다. 현장 오디오 복귀는 Mac에서 새로 시스템 인증해야 합니다. 원격 보호 끄기는 오디오 복귀·OS 로그인·화면 기록 등 TCC 권한을 승인하지 않습니다.")
                 .font(.caption)
         }
         .padding(16)

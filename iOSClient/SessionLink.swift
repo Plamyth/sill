@@ -50,10 +50,12 @@ final class SessionLink {
         private var outcome: Outcome?
         private var claimed = false
         private let deadline: TimeInterval?
+        private let isCurrent: () -> Bool
         private let terminal: (Outcome) -> Void
 
-        init(deadline: TimeInterval? = nil, terminal: @escaping (Outcome) -> Void) {
+        init(deadline: TimeInterval? = nil, isCurrent: @escaping () -> Bool = { true }, terminal: @escaping (Outcome) -> Void) {
             self.deadline = deadline
+            self.isCurrent = isCurrent
             self.terminal = terminal
         }
 
@@ -67,7 +69,7 @@ final class SessionLink {
         fileprivate func submit(_ send: () -> Void) -> Bool {
             lock.lock()
             guard outcome == nil else { lock.unlock(); return false }
-            if let deadline, ProcessInfo.processInfo.systemUptime >= deadline {
+            if !isCurrent() || deadline.map({ ProcessInfo.processInfo.systemUptime >= $0 }) == true {
                 outcome = .cancelled
                 lock.unlock()
                 notify(.cancelled)
