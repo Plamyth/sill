@@ -72,9 +72,10 @@ sha = lambda data: hashlib.sha256(data).hexdigest()
 hashes = {name:sha(value.encode()) for name,value in inputs.items()}
 payload = json.dumps({'sources':{name:base64.b64encode(value.encode()).decode() for name,value in inputs.items()},'hashes':hashes}).encode()
 runner = (here.parent/'extended-desktop/remote.py').read_text()
-start = runner.index('    collision = subprocess.run(')
-end = runner.index('    disk = subprocess.check_output(',start)
-runner = runner[:start] + runner[end:]
+start = runner.find('    collision = subprocess.run(')
+if start != -1:
+    end = runner.index('    disk = subprocess.check_output(', start)
+    runner = runner[:start] + runner[end:]
 runner = runner.replace("not name.endswith('.swift')", "not (name.endswith(('.swift', '.swiftparse')) or name == 'source-selection-admission-v1-golden.json')")
 runner = runner.replace('command += [str(mount / name) for name in hashes]', 'command += [str(mount / name) for name in hashes if name.endswith(".swift")]')
 runner = runner.replace('    ok = run(command, timeout=100)', '    parsed = all(run(["/usr/bin/xcrun", "swiftc", "-frontend", "-parse", str(mount / name)], timeout=20) for name in hashes if name.endswith(".swiftparse"))\n    ok = run(command, timeout=100) if parsed else False')

@@ -63,9 +63,10 @@ sha = lambda data: hashlib.sha256(data).hexdigest()
 hashes = {name: sha(value.encode()) for name, value in inputs.items()}
 payload = json.dumps({'sources': {name: base64.b64encode(value.encode()).decode() for name, value in inputs.items()}, 'hashes': hashes}).encode()
 runner = (root / 'Tests/checks/extended-desktop/remote.py').read_text()
-start = runner.index('    collision = subprocess.run(')
-end = runner.index('    disk = subprocess.check_output(', start)
-runner = runner[:start] + runner[end:]
+start = runner.find('    collision = subprocess.run(')
+if start != -1:
+    end = runner.index('    disk = subprocess.check_output(', start)
+    runner = runner[:start] + runner[end:]
 runner = runner.replace("'-parse-as-library', ", '')
 paths = [CLIENT/'StreamClient.swift', CLIENT/'StreamClient+Remote.swift', CLIENT/'DiscoveryPolicy.swift', CLIENT/'RemoteDialPolicy.swift', *HERE.glob('*.swift'), HERE/'run.py']
 before = {str(p.relative_to(root)): sha(p.read_bytes()) for p in paths}
