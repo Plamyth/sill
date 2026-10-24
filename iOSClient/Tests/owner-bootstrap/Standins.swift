@@ -147,6 +147,9 @@ final class StreamClient {
     var savedMacsSeeded = false
     let queue = DispatchQueue()
     var connected = false, appInForeground = true
+    var ownerEnrollmentResumes = 0, ownerEnrollmentCancels = 0
+    func resumeOwnerEnrollment() { ownerEnrollmentResumes += 1 }
+    func cancelOwnerEnrollment() { ownerEnrollmentCancels += 1 }
     var connection: NWConnection?
     struct Reconnect {
         var macID: String?

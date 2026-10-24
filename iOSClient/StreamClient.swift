@@ -249,7 +249,13 @@ final class StreamClient: ObservableObject {
 
     // Remote access (StreamClient+Remote.swift). Published on main; the DEBUG harness seeds them.
     /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
+    #if os(iOS)
+    @Published var savedMacs: [SavedMac] = [] {
+        didSet { ownerEnrollmentTrustChanged() }
+    }
+    #else
     @Published var savedMacs: [SavedMac] = []
+    #endif
 
     #if os(iOS)
     private enum StartupAutoConnection {
@@ -265,6 +271,9 @@ final class StreamClient: ObservableObject {
     var ownerBootstrap = OwnerBootstrapState()
     var ownerBootstrapDial: RemoteConnector?
     var ownerBootstrapExchange: OwnerBootstrapExchange?
+    var ownerEnrollment: IPadDeviceEnrollment?
+    var ownerEnrollmentPeer: ObjectIdentifier?
+    var ownerEnrollmentRefusals: [IPadEnrollmentProtocol.Binding: IPadDeviceEnrollment.Refusals] = [:]
     private static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
     #endif
     /// This connection's latest kind 18: who the Mac is and how to reach it from afar. Verified
@@ -1298,6 +1307,7 @@ final class StreamClient: ObservableObject {
         set {
             if link.connection !== newValue {
                 #if os(iOS)
+                cancelOwnerEnrollment()
                 sentryObservation.bind(newValue.map(ObjectIdentifier.init))
                 sentryControl.bind(newValue.map(ObjectIdentifier.init))
                 #endif
@@ -1949,6 +1959,7 @@ final class StreamClient: ObservableObject {
         guard wasInBackground else { return }
         #if os(iOS)
         resumeOwnerBootstrapAfterForeground()
+        resumeOwnerEnrollment()
         #endif
         if browsing {
             rebuildIfDue(.network, cameForward: true)
@@ -1967,6 +1978,7 @@ final class StreamClient: ObservableObject {
         visionAudio.setForeground(false)
         #endif
         #if os(iOS)
+        cancelOwnerEnrollment()
         audioRouteAuthorization = nil
         if ownerBootstrap.phase != .ready { cancelOwnerBootstrap(resumable: true) }
         #endif
@@ -2646,6 +2658,9 @@ final class StreamClient: ObservableObject {
         // home card never comes back for it with the connect screen.
         cancelHomeAsk(idleStatus: false)
         connected = true
+        #if os(iOS)
+        resumeOwnerEnrollment()
+        #endif
         askedNearby = false
         connectedAt = Date()
         pinRefusedRows = []
@@ -3396,6 +3411,9 @@ final class StreamClient: ObservableObject {
         // connection it came on, which the session no longer reads: the menus waiting settle, and
         // the new connection asks for the top level (the same Mac: its menus stay meanwhile).
         menusMoved()
+        #if os(iOS)
+        resumeOwnerEnrollment()
+        #endif
         if fenced {
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.fenceTimeout) { [weak self] in
                 guard let self, let released = self.link.release(old) else { return }
@@ -4088,6 +4106,9 @@ final class StreamClient: ObservableObject {
         if let released = link.release(c) { fenceEnded(c, released, why: "the direct connection closed") }
         DispatchQueue.main.async {
             guard self.connection === c else { return }   // stale callback from a connection we already replaced
+            #if os(iOS)
+            self.cancelOwnerEnrollment()
+            #endif
             #if !os(visionOS)
             self.remoteAudioControl.setConnection(nil)
             #if os(iOS)
@@ -4125,6 +4146,7 @@ final class StreamClient: ObservableObject {
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
         #if os(iOS)
+        cancelOwnerEnrollment()
         audioRouteChooserPresented = false
         audioRoutePresentation = nil
         audioRouteOffer = IPadAudioRouteOffer()

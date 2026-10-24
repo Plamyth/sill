@@ -197,6 +197,18 @@
 		D4240001000000000000B002 /* IPadAppUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F002 /* IPadAppUpdateController.swift */; };
 		D4240001000000000000A003 /* IPadAppUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F003 /* IPadAppUpdateView.swift */; };
 		D4240001000000000000B003 /* IPadAppUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F003 /* IPadAppUpdateView.swift */; };
+		E8250001000000000000A001 /* IPadEnrollmentJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F001 /* IPadEnrollmentJSON.swift */; };
+		E8250001000000000000B001 /* IPadEnrollmentJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F001 /* IPadEnrollmentJSON.swift */; };
+		E8250001000000000000A002 /* IPadEnrollmentProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F002 /* IPadEnrollmentProtocol.swift */; };
+		E8250001000000000000B002 /* IPadEnrollmentProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F002 /* IPadEnrollmentProtocol.swift */; };
+		E8250001000000000000A003 /* IPadDeviceEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F003 /* IPadDeviceEnrollment.swift */; };
+		E8250001000000000000B003 /* IPadDeviceEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F003 /* IPadDeviceEnrollment.swift */; };
+		E8250001000000000000A004 /* IPadEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F004 /* IPadEnrollmentStore.swift */; };
+		E8250001000000000000B004 /* IPadEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F004 /* IPadEnrollmentStore.swift */; };
+		E8250001000000000000A005 /* IPadEnrollmentTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F005 /* IPadEnrollmentTransport.swift */; };
+		E8250001000000000000B005 /* IPadEnrollmentTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F005 /* IPadEnrollmentTransport.swift */; };
+		E8250001000000000000A006 /* StreamClient+OwnerEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F006 /* StreamClient+OwnerEnrollment.swift */; };
+		E8250001000000000000B006 /* StreamClient+OwnerEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F006 /* StreamClient+OwnerEnrollment.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -298,6 +310,12 @@
 		D4240001000000000000F001 /* IPadAppUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdate.swift; sourceTree = "<group>"; };
 		D4240001000000000000F002 /* IPadAppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdateController.swift; sourceTree = "<group>"; };
 		D4240001000000000000F003 /* IPadAppUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdateView.swift; sourceTree = "<group>"; };
+		E8250001000000000000F001 /* IPadEnrollmentJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadEnrollmentJSON.swift"; sourceTree = "<group>"; };
+		E8250001000000000000F002 /* IPadEnrollmentProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadEnrollmentProtocol.swift"; sourceTree = "<group>"; };
+		E8250001000000000000F003 /* IPadDeviceEnrollment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadDeviceEnrollment.swift"; sourceTree = "<group>"; };
+		E8250001000000000000F004 /* IPadEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadEnrollmentStore.swift"; sourceTree = "<group>"; };
+		E8250001000000000000F005 /* IPadEnrollmentTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadEnrollmentTransport.swift"; sourceTree = "<group>"; };
+		E8250001000000000000F006 /* StreamClient+OwnerEnrollment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+OwnerEnrollment.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -345,6 +363,12 @@
 				A1000001000000000000FB01 /* DuoPosture.swift */,
 				A1000001000000000000FB02 /* DuoPostureReader.swift */,
 				E7200001000000000000F001 /* OwnerBootstrapState.swift */,
+				E8250001000000000000F001 /* IPadEnrollmentJSON.swift */,
+				E8250001000000000000F002 /* IPadEnrollmentProtocol.swift */,
+				E8250001000000000000F003 /* IPadDeviceEnrollment.swift */,
+				E8250001000000000000F004 /* IPadEnrollmentStore.swift */,
+				E8250001000000000000F005 /* IPadEnrollmentTransport.swift */,
+				E8250001000000000000F006 /* StreamClient+OwnerEnrollment.swift */,
 				E7200001000000000000F002 /* StreamClient+OwnerBootstrap.swift */,
 				A1000001000000000000F003 /* StreamClient.swift */,
 				D7250001000000000000F001 /* IPadSentryObservation.swift */,
@@ -661,6 +685,12 @@
 				B2000001000000000000A008 /* SceneFile.swift in Sources */,
 				B2000001000000000000A009 /* SceneRenderer.swift in Sources */,
 				E7200001000000000000A001 /* OwnerBootstrapState.swift in Sources */,
+				E8250001000000000000A001 /* IPadEnrollmentJSON.swift in Sources */,
+				E8250001000000000000A002 /* IPadEnrollmentProtocol.swift in Sources */,
+				E8250001000000000000A003 /* IPadDeviceEnrollment.swift in Sources */,
+				E8250001000000000000A004 /* IPadEnrollmentStore.swift in Sources */,
+				E8250001000000000000A005 /* IPadEnrollmentTransport.swift in Sources */,
+				E8250001000000000000A006 /* StreamClient+OwnerEnrollment.swift in Sources */,
 				E7200001000000000000A002 /* StreamClient+OwnerBootstrap.swift in Sources */,
 				A1000001000000000000A003 /* StreamClient.swift in Sources */,
 				D7250001000000000000A001 /* IPadSentryObservation.swift in Sources */,
@@ -759,6 +789,12 @@
 				1FA506E49CA6FC22B8E6DBDC /* SceneFile.swift in Sources */,
 				EA22FC2F0D4E43B6987C2EBC /* SceneRenderer.swift in Sources */,
 				6C23CBF449EF8C657EE497F0 /* OwnerBootstrapState.swift in Sources */,
+				E8250001000000000000B001 /* IPadEnrollmentJSON.swift in Sources */,
+				E8250001000000000000B002 /* IPadEnrollmentProtocol.swift in Sources */,
+				E8250001000000000000B003 /* IPadDeviceEnrollment.swift in Sources */,
+				E8250001000000000000B004 /* IPadEnrollmentStore.swift in Sources */,
+				E8250001000000000000B005 /* IPadEnrollmentTransport.swift in Sources */,
+				E8250001000000000000B006 /* StreamClient+OwnerEnrollment.swift in Sources */,
 				671CB6FC67DA6FA1BB3187D6 /* StreamClient+OwnerBootstrap.swift in Sources */,
 				D36621FEB0FE88195964FE48 /* StreamClient.swift in Sources */,
 				D7250001000000000000B001 /* IPadSentryObservation.swift in Sources */,

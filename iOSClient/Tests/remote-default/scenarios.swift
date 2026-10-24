@@ -252,5 +252,13 @@ do {
     c.stop(); c.enterForeground()
     check(c.remoteDials.isEmpty && c.reconnect == nil, "배경 유선 실패 뒤 명시적 중지는 전경 자동 재개도 차단")
 }
+Clock.reset()
+do {
+    let c = StreamClient(); c.appInForeground = false
+    c.enterForeground(); c.enterForeground()
+    check(c.ownerEnrollmentResumes == 1, "실제 foreground 경계는 별도 등록 모듈을 한 번 재개")
+    c.appInForeground = false; c.enterForeground()
+    check(c.ownerEnrollmentResumes == 2, "다음 foreground 경계는 별도 등록 모듈을 다시 확인")
+}
 print("\(checks - failures)/\(checks) checks passed; \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -116,6 +116,8 @@ final class StreamClient {
     enum BrowserKind { case network, nearby }
     func rebuildIfDue(_ kind: BrowserKind, cameForward: Bool) {}
     func resumeOwnerBootstrapAfterForeground() {}
+    var ownerEnrollmentResumes = 0
+    func resumeOwnerEnrollment() { ownerEnrollmentResumes += 1 }
     func recomputeMacs() {}
     func moveToNetworkIfListed() {}
     func followBestPath() {}

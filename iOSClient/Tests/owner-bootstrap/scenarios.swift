@@ -84,6 +84,10 @@ do {
     check("준비 중 background는 미시도 대기", RemoteConnector.all.isEmpty && c.ownerBootstrap.phase == .ready)
     c.cameForward()
     check("실제 foreground 경계에서 준비 재개", RemoteConnector.all.count == 1)
+    c.cameForward()
+    check("기존 bootstrap과 별도 등록 모듈의 foreground 경계를 유지", c.ownerEnrollmentResumes == 1)
+    c.wentToBackground()
+    check("background는 별도 등록 모듈도 취소", c.ownerEnrollmentCancels == 1)
 }
 reset()
 do {

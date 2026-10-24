@@ -437,6 +437,9 @@ extension StreamClient {
         reconnect = nil
         cancelHomeAsk(idleStatus: false)      // as at home (markConnected): no ask is left for the connect screen
         connected = true
+        #if os(iOS)
+        resumeOwnerEnrollment()
+        #endif
         remoteRoute = r
         askedNearby = false
         connectedAt = Date()
