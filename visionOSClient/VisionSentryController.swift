@@ -326,8 +326,14 @@ final class VisionSentryController {
                 request = try SentryControlRequest(requestID: requestID, hostBootID: catalog.state.hostBootID,
                     sessionID: catalog.state.sessionID, revision: catalog.state.revision,
                     authorizationGeneration: control.authorizationGeneration, desired: desired)
-                guard records.count < VisionSentryRequestStore.maximumRecords else { throw VisionSentryRequestStore.Failure.storage }
-                let next = records + [VisionSentryStoredRequest(binding: identity, rawRequest: request.rawRequest)]
+                var next = records
+                if next.count == VisionSentryRequestStore.maximumRecords {
+                    guard let index = next.firstIndex(where: { $0.hasTerminalReceipt }) else {
+                        throw VisionSentryRequestStore.Failure.storage
+                    }
+                    next.remove(at: index)
+                }
+                next.append(VisionSentryStoredRequest(binding: identity, rawRequest: request.rawRequest))
                 try persistLocked(next)
             } else {
                 guard value.canReadback, let stored else { return nil }
@@ -377,21 +383,23 @@ final class VisionSentryController {
                   operation.request.desired ? response.state.requested && response.state.phase == .userSessionProtected :
                     !response.state.requested && response.state.phase == .inactive else { return }
         }
-        if response.accepted {
-            do {
-                guard let index = records.lastIndex(where: { $0.binding == identity && $0.rawRequest == operation.request.rawRequest }) else {
-                    throw VisionSentryRequestStore.Failure.storage
-                }
-                if !records[index].ledgerAccepted {
-                    var next = records
-                    next[index] = VisionSentryStoredRequest(binding: records[index].binding,
-                        rawRequest: records[index].rawRequest, ledgerAccepted: true)
-                    try persistLocked(next)
-                }
-            } catch {
-                storageHealthy = false
-                finishLocked(); refreshControlLocked(); return
+        do {
+            guard let index = records.lastIndex(where: { $0.binding == identity && $0.rawRequest == operation.request.rawRequest }) else {
+                throw VisionSentryRequestStore.Failure.storage
             }
+            let terminal = response.accepted &&
+                [.applied, .rejected, .superseded].contains(response.operationState)
+            let updated = VisionSentryStoredRequest(binding: records[index].binding,
+                rawRequest: records[index].rawRequest, ledgerAccepted: records[index].ledgerAccepted || response.accepted,
+                hasTerminalReceipt: terminal)
+            if updated != records[index] {
+                var next = records
+                next[index] = updated
+                try persistLocked(next)
+            }
+        } catch {
+            storageHealthy = false
+            finishLocked(); refreshControlLocked(); return
         }
         finishLocked()
         if let old = catalog?.state, old.revision != response.state.revision { retiredRevisions.insert(old.revision) }

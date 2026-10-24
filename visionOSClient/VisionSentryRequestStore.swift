@@ -16,23 +16,27 @@ struct VisionSentryStoredRequest: Codable, Equatable {
     let binding: Binding
     let rawRequest: Data
     let ledgerAccepted: Bool
+    let hasTerminalReceipt: Bool
 
-    init(binding: Binding, rawRequest: Data, ledgerAccepted: Bool = false) {
+    init(binding: Binding, rawRequest: Data, ledgerAccepted: Bool = false, hasTerminalReceipt: Bool = false) {
         self.binding = binding
         self.rawRequest = rawRequest
         self.ledgerAccepted = ledgerAccepted
+        self.hasTerminalReceipt = hasTerminalReceipt
     }
 
-    private enum CodingKeys: String, CodingKey { case binding, rawRequest, ledgerAccepted }
+    private enum CodingKeys: String, CodingKey { case binding, rawRequest, ledgerAccepted, hasTerminalReceipt }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         binding = try values.decode(Binding.self, forKey: .binding)
         rawRequest = try values.decode(Data.self, forKey: .rawRequest)
         ledgerAccepted = try values.decodeIfPresent(Bool.self, forKey: .ledgerAccepted) ?? false
+        hasTerminalReceipt = try values.decodeIfPresent(Bool.self, forKey: .hasTerminalReceipt) ?? false
+        guard !hasTerminalReceipt || ledgerAccepted else { throw VisionSentryRequestStore.Failure.storage }
     }
 
     func request() throws -> SentryControlRequest {
-        guard binding.valid else { throw VisionSentryRequestStore.Failure.storage }
+        guard binding.valid, !hasTerminalReceipt || ledgerAccepted else { throw VisionSentryRequestStore.Failure.storage }
         return try SentryControlRequest(rawRequest: rawRequest)
     }
 }

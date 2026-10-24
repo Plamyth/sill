@@ -86,18 +86,21 @@ check(m.submitControl(request, to: p, now: 1, send: {
     return journal.records.last?.rawRequest == request.rawRequest
 }), "저장 readback 후에만 전송")
 check(!m.submitControl(request, to: p, now: 1, send: { sends += 1; return true }) && sends == 1, "중복 submit 차단")
-check(journal.records.last?.ledgerAccepted == false, "송신 ACK는 접수 확인으로 저장하지 않음")
+check(journal.records.last?.ledgerAccepted == false && journal.records.last?.hasTerminalReceipt == false,
+    "송신 ACK는 접수·종료 확인으로 저장하지 않음")
 check(m.beginControl(desired: false, now: 1, cancel: {}) == nil, "응답 전 중복 전환 차단")
 let prepared = state(.userSessionProtected, requested: true, intent: .on)
 m.receiveControl(reply(request, .pending, value: prepared), from: p, now: 2)
 check(m.snapshot.accepted == true && m.snapshot.operationState == .pending, "onPrepared 수락과 적용 대기 분리")
 check(m.snapshot.message.contains("적용 대기") && m.snapshot.canDeactivate, "capture 전 pending on의 새 off 허용")
 check(journal.records.last?.ledgerAccepted == true && m.snapshot.canReadback, "Host accepted true만 원장 접수로 영속 보존")
+check(journal.records.last?.hasTerminalReceipt == false, "accepted pending은 종료 기록 아님")
 let writesBeforeReadback = journal.writes
 let read = begin(m, desired: nil, now: 3)
 check(read.rawRequest == request.rawRequest && journal.writes == writesBeforeReadback, "pending 원문 재조회는 재인코딩·추가 저장 없음")
 m.receiveControl(reply(read, value: prepared), from: p, now: 4)
 check(m.snapshot.operationState == .applied, "capture 확인 후 같은 원문 applied")
+check(journal.records.last?.hasTerminalReceipt == true, "이미 접수된 pending도 applied 영수증을 별도 영속 저장")
 let off = begin(m, desired: false, now: 5)
 check(off.requestID != request.requestID && !off.desired && journal.records.count == 2, "명시 off는 새 요청이며 옛 원문 보존")
 let pendingOff = state(.pending, requested: false, intent: .on)
@@ -149,7 +152,10 @@ for failure in ["load", "save", "readback", "full"] {
     let bad = Journal()
     bad.failLoad = failure == "load"
     bad.failSave = failure == "save"
-    if failure == "full" { bad.records = Array(repeating: journal.records[0], count: VisionSentryRequestStore.maximumRecords) }
+    if failure == "full" {
+        bad.records = Array(repeating: .init(binding: binding, rawRequest: request.rawRequest, ledgerAccepted: true),
+            count: VisionSentryRequestStore.maximumRecords)
+    }
     let blocked = model(bad)
     bad.corruptReadback = failure == "readback"
     check(blocked.beginControl(desired: true, now: 0, cancel: {}) == nil, "저장 실패 시 전송 불가 \(failure)")
@@ -174,6 +180,7 @@ for invalid in ["peer", "id", "boot", "generation", "session", "offPending", "of
     operation.receiveControl(response, from: invalid == "peer" ? q : p, now: 1)
     check(operation.snapshot.operationState != .applied && operation.snapshot.pendingID == r.requestID,
         "off 완료 거짓 응답 차단 \(invalid)")
+    check(!j.records[0].hasTerminalReceipt, "잘못된 완료 응답은 종료 영수증 저장 금지 \(invalid)")
 }
 
 let timeJournal = Journal(), timed = model(timeJournal), timedRequest = begin(timed, desired: true)
@@ -264,6 +271,7 @@ check(evictedRead.rawRequest == evictedRequest.rawRequest && evictedRead.revisio
 evicted.receiveControl(reply(evictedRead, .unknown, value: afterEviction, accepted: false), from: p, now: 3)
 check(evicted.snapshot.operationState == .unknown && evictedJournal.records.count == 1 && evictedJournal.records[0].ledgerAccepted &&
     !evicted.snapshot.canActivate && !evicted.snapshot.canDeactivate, "원장 eviction unknown은 접수 이력을 유지하고 새 효과 명령 0")
+check(!evictedJournal.records[0].hasTerminalReceipt, "과거 완료 뒤 현재 unknown이면 다시 보존 대상으로 유지")
 
 for unknown in ["version", "role", "canSet"] {
     var fields = try JSONSerialization.jsonObject(with: Wire.encode(list(state()))) as! [String: Any]
@@ -365,6 +373,7 @@ for index in 0..<256 {
         requested: request.desired, intent: request.desired ? .on : .off)
     lifecycle.receiveControl(reply(request, value: completed), from: p, now: 1)
     check(lifecycle.snapshot.operationState == .applied, "반복 명령 완료 확인")
+    check(lifecycleJournal.records.last?.hasTerminalReceipt == true, "정상 종료 영수증 내구 저장")
     lifecycleCompleted += 1
     lifecycleJournal.records = try JSONDecoder().decode([VisionSentryStoredRequest].self,
         from: JSONEncoder().encode(lifecycleJournal.records))
@@ -378,6 +387,110 @@ for index in 0..<256 {
 }
 check(lifecycleCompleted == 256 && lifecycleJournal.records.count == 64,
     "256회 정상 on/off와 128회 뒤 재시작에도 새 명령 계속 가능")
+
+let encodedRecord = try JSONEncoder().encode(journal.records[0])
+var legacyRecord = try JSONSerialization.jsonObject(with: encodedRecord) as! [String: Any]
+legacyRecord.removeValue(forKey: "hasTerminalReceipt")
+let legacyAccepted = try JSONDecoder().decode(VisionSentryStoredRequest.self,
+    from: JSONSerialization.data(withJSONObject: legacyRecord))
+check(legacyAccepted.ledgerAccepted && !legacyAccepted.hasTerminalReceipt, "legacy accepted만으로 종료를 추정하지 않음")
+legacyRecord.removeValue(forKey: "ledgerAccepted")
+let legacyUnconfirmed = try JSONDecoder().decode(VisionSentryStoredRequest.self,
+    from: JSONSerialization.data(withJSONObject: legacyRecord))
+check(!legacyUnconfirmed.ledgerAccepted && !legacyUnconfirmed.hasTerminalReceipt, "legacy 필드 누락은 둘 다 false")
+for malformed in ["not-bool", 1, ["terminal": true]] as [Any] {
+    legacyRecord["hasTerminalReceipt"] = malformed
+    let data = try JSONSerialization.data(withJSONObject: legacyRecord)
+    check((try? JSONDecoder().decode(VisionSentryStoredRequest.self, from: data)) == nil, "종료 표시는 엄격한 Boolean만 허용")
+}
+legacyRecord["hasTerminalReceipt"] = true
+check((try? JSONDecoder().decode(VisionSentryStoredRequest.self,
+    from: JSONSerialization.data(withJSONObject: legacyRecord))) == nil, "원장 접수 없는 종료 표시는 decode 거절")
+let invalidTerminal = VisionSentryStoredRequest(binding: binding, rawRequest: request.rawRequest, hasTerminalReceipt: true)
+check((try? invalidTerminal.request()) == nil, "생성된 record도 종료이면 원장 접수 필수")
+let invalidTerminalJournal = Journal()
+invalidTerminalJournal.records = [invalidTerminal]
+check(!model(invalidTerminalJournal).snapshot.controlAvailable, "잘못된 저장 종료 표시는 새 전송 차단")
+
+for accepted in [false, true] {
+    for status in [SentryControlResponse.OperationState.applied, .rejected, .superseded, .pending, .unknown] {
+        let j = Journal(), operation = model(j)
+        let r = begin(operation, desired: false)
+        operation.receiveControl(reply(r, status, value: state(intent: .off), accepted: accepted), from: p, now: 1)
+        let terminal = accepted && [.applied, .rejected, .superseded].contains(status)
+        check(j.records[0].hasTerminalReceipt == terminal, "수락·종료 상태 조합만 종료 영수증 \(accepted) \(status)")
+        check(j.records[0].ledgerAccepted == accepted && j.records[0].rawRequest == r.rawRequest,
+            "결과 조합에도 접수·원문 바이트 보존 \(accepted) \(status)")
+        if status == .rejected && accepted {
+            check(operation.snapshot.operationState == .rejected && operation.snapshot.message.contains("적용을 거절"),
+                "종료된 거절도 적용 성공으로 표시하지 않음")
+        }
+    }
+}
+
+func fullJournal(terminals: Set<Int>) throws -> Journal {
+    let j = Journal()
+    let oldBoot = UUID()
+    for index in 0..<VisionSentryRequestStore.maximumRecords {
+        let request = try SentryControlRequest(requestID: UUID(), hostBootID: oldBoot, sessionID: session,
+            revision: UUID(), authorizationGeneration: generation, desired: index.isMultiple(of: 2))
+        j.records.append(.init(binding: binding, rawRequest: Data(" \n".utf8) + request.rawRequest,
+            ledgerAccepted: !index.isMultiple(of: 2), hasTerminalReceipt: terminals.contains(index)))
+    }
+    return j
+}
+let mixed = try fullJournal(terminals: [3, 17, 63])
+let preserved = mixed.records
+let compacting = model(mixed)
+let compactedRequest = compacting.beginControl(desired: true, now: 0, cancel: {})!
+check(mixed.records == Array(preserved[..<3]) + Array(preserved[4...]) +
+    [.init(binding: binding, rawRequest: compactedRequest.rawRequest)],
+    "가장 오래된 종료 기록 하나만 제거하고 미해결·다른 종료 원문 순서·바이트 보존")
+check(mixed.writes == 1 && mixed.records.count == 64, "교체와 새 명령을 한 번에 저장·readback")
+var compactedSends = 0
+check(compacting.submitControl(compactedRequest, to: p, now: 0, send: {
+    compactedSends += 1
+    return mixed.records.last?.rawRequest == compactedRequest.rawRequest
+}) && compactedSends == 1, "교체한 원문 확인 뒤에만 새 전송")
+let oldRecord = try preserved[3].request()
+let beforeLateReply = mixed.records
+compacting.receiveControl(reply(oldRecord, value: state(.userSessionProtected, requested: true, intent: .on)), from: p, now: 1)
+check(mixed.records == beforeLateReply && compacting.snapshot.pendingID == compactedRequest.requestID,
+    "제거된 옛 ID의 지연 응답은 새 record·완료 표시를 변경하지 않음")
+
+for failure in ["save", "readback", "all-unresolved"] {
+    let j = try fullJournal(terminals: failure == "all-unresolved" ? [] : [3])
+    let original = j.records
+    let operation = model(j)
+    j.failSave = failure == "save"
+    j.corruptReadback = failure == "readback"
+    var sends = 0
+    if let r = operation.beginControl(desired: true, now: 0, cancel: {}) {
+        _ = operation.submitControl(r, to: p, now: 0, send: { sends += 1; return true })
+    }
+    check(sends == 0 && operation.snapshot.problem == .storage, "교체 실패·미해결 가득 참은 전송 0 \(failure)")
+    if failure != "readback" { check(j.records == original, "저장 실패·미해결 한도에서 원문 불변 \(failure)") }
+    else {
+        check(j.records.filter { !$0.hasTerminalReceipt }.prefix(3) == original.prefix(3),
+            "저장 후 readback 실패에도 미해결 원문 보존")
+    }
+}
+
+for failure in ["save", "readback"] {
+    let j = Journal(), operation = model(j)
+    let r = begin(operation, desired: false)
+    j.failSave = failure == "save"
+    j.corruptReadback = failure == "readback"
+    operation.receiveControl(reply(r, value: state(intent: .off)), from: p, now: 1)
+    check(operation.snapshot.problem == .storage && operation.snapshot.operationState != .applied,
+        "종료 영수증 저장·readback 실패는 완료로 표시하지 않음 \(failure)")
+    check(operation.beginControl(desired: true, now: 2, cancel: {}) == nil, "종료 저장 실패 뒤 새 전송 차단 \(failure)")
+}
+
+let unresolvedTransport = try fullJournal(terminals: [])
+let (blockedTransport, blockedPeer) = client(unresolvedTransport)
+blockedTransport.setVisionSentry(true); blockedTransport.queue.sync {}; drain()
+check(blockedPeer.sent.isEmpty && unresolvedTransport.writes == 0, "64건 미해결이면 실제 adapter 전송·저장 0")
 
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
