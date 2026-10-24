@@ -3898,8 +3898,10 @@ extension StreamCoordinator {
             }
             for id in self.connections.keys where !self.server.sentryAdmission.allowsActions(id) {
                 self.peerInputQueue.cancel(peer: id)
+                self.peerMenus[id]?.sourceScopeChanged()
                 self.releaseInput(of: id)
             }
+            self.menus.sourceScopeChanged()
             self.broadcastList()
             self.encoder?.requestKeyframe()
             for lane in self.peerStreams.values { lane.requestKeyframe() }

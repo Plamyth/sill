@@ -44,7 +44,9 @@ import StreamProtocol
         boundary(declinedReader.presses == 0,
                  "preparePress 거부 뒤 reader.press 호출: 기대 0, 실제 \(declinedReader.presses)")
 
+        for scoped in [false, true] {
         let (queuedReader, queued, queuedConnection, queuedFixture) = pair()
+        queued.effectAdmission = scoped ? SourcePublicationAdmission() : nil
         queued.preparePress = { true }
         let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
         queuedReader.queue.raw.async { entered.signal(); release.wait() }
@@ -56,6 +58,8 @@ import StreamProtocol
         boundary(queuedReader.queue.submissions == 1, "실제 메뉴 reader 큐에 제출된 요청 관측")
         queuedFixture.revoke()
         queuedFixture.resume()
+        boundary(queuedFixture.server.sentryAdmission.allowsActions(ObjectIdentifier(queuedConnection)),
+                 "현재 인가가 다시 true인 상태에서도 옛 메뉴 세대는 복원하지 않음")
         release.signal()
         await queuedFixture.peerInputQueue.drain()
         boundary(queuedReader.presses == 0,
@@ -65,6 +69,7 @@ import StreamProtocol
                      from: queuedConnection, who: "격리 연결")
         await queuedFixture.peerInputQueue.drain()
         boundary(queuedReader.presses == prior + 1, "재개 후 새 메뉴 세대 요청은 정상 실행")
+        }
         if failures > 0 { exit(1) }
         print("PASS \(checks) production menu scope checks; inert AX reader, no listener, focus, or OS input")
     }
