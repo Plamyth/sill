@@ -12,12 +12,19 @@ private final class Event {
     init?(source: Any?) {}
     func getIntegerValueField(_ field: CGEventField) -> Int64 { fields[field] ?? 0 }
     func setIntegerValueField(_ field: CGEventField, value: Int64) { fields[field] = value }
+    func setSource(_ source: EventSource) { fields[.eventSourceUserData] = source.userData }
     static func tapIsEnabled(tap: InertTap) -> Bool { tap.enabled }
     func copy() -> Event? {
         let e = Event(source: nil)!
         e.type = type; e.flags = flags; e.location = location; e.fields = fields
         return e
     }
+}
+
+private final class EventSource {
+    var userData: Int64 = 0
+    let sourceStateID: CGEventSourceStateID
+    init?(stateID: CGEventSourceStateID) { sourceStateID = stateID }
 }
 
 @MainActor private final class Platform {
@@ -128,13 +135,58 @@ private final class Event {
     private func transit(_ event: Event) -> Bool {
         filter(event.type, event: event) != nil && filterAnnotated(event.type, event: event) != nil
     }
+
+    func additionalReviewChecks() async {
+        fresh()
+        Self.apps[700]!.bundleIdentifier = "com.apple.SecurityAgent"
+        Self.apps[700]!.executableURL = URL(fileURLWithPath: Self.authenticationExecutables["com.apple.SecurityAgent"]!)
+        Self.paths[700] = Self.apps[700]!.executableURL!.path
+        refreshInputObservation()
+        Checks.check(transit(event()), "독립 SecurityAgent 관측과 생산 callback 양성")
+        fresh(); let queued = event()
+        Checks.check(filter(.keyDown, event: queued) != nil, "독립 기한 전 session enqueue")
+        try? await Task.sleep(for: .milliseconds(280))
+        Checks.check(filterAnnotated(.keyDown, event: queued) == nil, "독립 clock 만료 뒤 queued annotated 거절")
+        refreshInputObservation()
+        Checks.check(filterAnnotated(.keyDown, event: queued) == nil && transit(event()), "독립 재관측 옛 tag 거절·새 입력 수용")
+        fresh(); let crossed = event(); _ = filter(.keyDown, event: crossed)
+        crossed.setIntegerValueField(.eventTargetUnixProcessID, value: 100)
+        Checks.check(filterAnnotated(.keyDown, event: crossed) == nil, "독립 callback 사이 OS 대상 변경 거절")
+        fresh(); let reused = event(); _ = filter(.keyDown, event: reused)
+        Self.identities[700] = .init(pid: 700, startSeconds: 100, startMicroseconds: 11)
+        Checks.check(filterAnnotated(.keyDown, event: reused) == nil, "독립 callback 사이 같은 초 PID 재사용 거절")
+        fresh(); let hidden = event(); _ = filter(.keyDown, event: hidden)
+        rows = []; refreshInputObservation()
+        Checks.check(filterAnnotated(.keyDown, event: hidden) == nil, "독립 queued pass 뒤 창 소실 관측 거절")
+        fresh(); let stopped = event(); _ = filter(.keyDown, event: stopped)
+        _ = filter(.tapDisabledByTimeout, event: event())
+        Checks.check(filterAnnotated(.keyDown, event: stopped) == nil, "독립 session tap 중단 queued annotated 거절")
+        await Task.yield()
+        fresh(); let noAuth = event(); _ = filter(.keyDown, event: noAuth); challengeID = nil
+        Checks.check(filterAnnotated(.keyDown, event: noAuth) == nil && !transit(event()), "독립 auth 종료 후 proof·tag 권한 없음")
+        fresh()
+        for (type,key,flags): (CGEventType,Int64,CGEventFlags) in [(.keyDown,48,[]),(.keyDown,51,[]),(.keyDown,36,[]),(.keyUp,36,[]),(.flagsChanged,56,[.maskShift]),(.flagsChanged,60,[.maskShift]),(.flagsChanged,57,[.maskAlphaShift])] {
+            let e=event(type); e.flags=flags; e.setIntegerValueField(.keyboardEventKeycode,value:key)
+            Checks.check(transit(e), "독립 편집·Tab·Return·Shift/Caps 양성 \(key)/\(type.rawValue)")
+        }
+        fresh(); let newWindow=event(.leftMouseDown); _=filter(.leftMouseDown,event:newWindow)
+        newWindow.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent,value:80)
+        Checks.check(filterAnnotated(.leftMouseDown,event:newWindow)==nil, "독립 callback 사이 클릭 처리창 변경 거절")
+        fresh(); layout=1; refreshInputObservation()
+        Checks.check(!transit(event()), "독립 layout 변경 양성 경로 폐기")
+        layout=0; fresh(); let oldTag=localAuthenticationInputPolicy.observation!.handoffTag
+        rows=[]; refreshInputObservation(); rows=[window()]; refreshInputObservation()
+        Checks.check(localAuthenticationInputPolicy.observation!.handoffTag != oldTag && transit(event()), "독립 관측 복구 전달 세대 갱신")
+    }
+
     func run() async {
+        await additionalReviewChecks()
         fresh()
         Checks.check(CGEventField.eventTargetUnixProcessID.rawValue == 40 && CGEventTapLocation.cgAnnotatedSessionEventTap.rawValue == 2,
                      "공개 Mac SDK targetPID 필드와 annotated tap 확인")
         Checks.check(localAuthenticationInputPolicy.observation != nil, "생산 observer는 검증한 공식 ownerAuth 창의 proof 생성")
         Checks.check((1...Int64(Int32.max)).contains(localAuthenticationInputPolicy.observation!.handoffTag),
-                     "전달표식은 실제 SDK eventSourceUserData에서 확인한 기록 가능 범위")
+                     "전달표식은 원격 표식과 분리한 현재 요청의 세대 범위")
         Checks.check(isObservedAuthenticationWindow(window()) && !isObservedAuthenticationWindow(window(71)),
                      "가림 예외는 현재 proof의 정확한 auth window만 인정")
         for kind in [CGEventType.keyDown, .keyUp, .leftMouseDown, .leftMouseUp] {

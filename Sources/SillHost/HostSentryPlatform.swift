@@ -9,15 +9,36 @@ import StreamProtocol
 final class HostSentryPlatform {
     static let remoteEventTag = Int64.random(in: 1...Int64(Int32.max))
 
+    static func stampEventSource(_ event: CGEvent, source: CGEventSource?, tag: Int64) -> Bool {
+        let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
+        let state = event.getIntegerValueField(.eventSourceStateID)
+        guard pid == Int64(getpid()) ||
+                (pid == 0 && state == CGEventSourceStateID.hidSystemState.rawValue),
+              let source, source.userData == tag, source.sourceStateID.rawValue == state else { return false }
+        event.setSource(source)
+        let updatedPID = event.getIntegerValueField(.eventSourceUnixProcessID)
+        return event.getIntegerValueField(.eventSourceUserData) == tag &&
+            event.getIntegerValueField(.eventSourceStateID) == state &&
+            (updatedPID == pid || updatedPID == Int64(getpid()))
+    }
+
     var changed: (() -> Void)?
     var requestLocalReturn: (() -> Void)?
     var localReturnReason: () -> String? = { nil }
     var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
     private var localAuthenticationInputPolicy = LocalAuthenticationInputPolicy()
     private var authenticationEventTag = Int64.random(in: 1...Int64(Int32.max))
+    private struct AuthenticationEventSources {
+        let requestID: UUID
+        let tag: Int64
+        let stamped: CGEventSource
+        let cleared: CGEventSource
+    }
+    private var authenticationEventSources: AuthenticationEventSources?
 
     func localAuthenticationWillBegin(_ requestID: UUID) {
         localReturnDown = nil
+        authenticationEventSources = nil
         localAuthenticationInputPolicy.willBegin(requestID)
     }
 
@@ -556,9 +577,7 @@ final class HostSentryPlatform {
         if currentLocalAuthenticationChallenge() != nil {
             localReturnDown = nil
             guard authenticationInputAllowed(type, event: event, stage: .session),
-                  let proof = localAuthenticationInputPolicy.current(
-                    challengeID: currentLocalAuthenticationChallenge(), now: .now) else { return nil }
-            event.setIntegerValueField(.eventSourceUserData, value: proof.handoffTag)
+                  stampAuthenticationEvent(event, stage: .session) else { return nil }
             return Unmanaged.passUnretained(event)
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
@@ -588,8 +607,8 @@ final class HostSentryPlatform {
             return nil
         }
         if currentLocalAuthenticationChallenge() != nil {
-            guard authenticationInputAllowed(type, event: event, stage: .annotated) else { return nil }
-            event.setIntegerValueField(.eventSourceUserData, value: 0)
+            guard authenticationInputAllowed(type, event: event, stage: .annotated),
+                  stampAuthenticationEvent(event, stage: .annotated) else { return nil }
             return Unmanaged.passUnretained(event)
         }
         guard event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
@@ -605,6 +624,27 @@ final class HostSentryPlatform {
         guard sessionTapVerified, annotatedTapVerified, ContinuousClock.now < inputObservationExpires,
               let tap, let annotatedTap else { return false }
         return CFMachPortIsValid(tap) && CFMachPortIsValid(annotatedTap)
+    }
+
+    private func prepareAuthenticationEventSources(_ proof: LocalAuthenticationInputPolicy.Observation) -> Bool {
+        if let sources = authenticationEventSources,
+           sources.requestID == proof.requestID, sources.tag == proof.handoffTag { return true }
+        guard let stamped = CGEventSource(stateID: .hidSystemState),
+              let cleared = CGEventSource(stateID: .hidSystemState) else { return false }
+        stamped.userData = proof.handoffTag
+        cleared.userData = 0
+        authenticationEventSources = .init(requestID: proof.requestID, tag: proof.handoffTag,
+                                           stamped: stamped, cleared: cleared)
+        return true
+    }
+
+    private func stampAuthenticationEvent(_ event: CGEvent, stage: LocalAuthenticationInputPolicy.Stage) -> Bool {
+        guard let proof = localAuthenticationInputPolicy.current(
+            challengeID: currentLocalAuthenticationChallenge(), now: .now),
+              let sources = authenticationEventSources,
+              sources.requestID == proof.requestID, sources.tag == proof.handoffTag else { return false }
+        return Self.stampEventSource(event, source: stage == .session ? sources.stamped : sources.cleared,
+                                    tag: stage == .session ? proof.handoffTag : 0)
     }
 
     private func authenticationInputAllowed(_ type: CGEventType, event: CGEvent,
@@ -727,16 +767,16 @@ final class HostSentryPlatform {
             }
             localAuthenticationInputPolicy.observe(target, challengeID: challenge, now: now,
                                                     tag: nextAuthenticationEventTag())
-            guard localAuthenticationInputPolicy.current(challengeID: challenge, now: .now) != nil,
-                  curtainsAreEffective() else {
+            guard let proof = localAuthenticationInputPolicy.current(challengeID: challenge, now: .now),
+                  curtainsAreEffective(), prepareAuthenticationEventSources(proof) else {
                 inputEnvironmentVerified = false
                 localAuthenticationInputPolicy.revoke()
                 return
             }
-            // Retained, verified input filters remain usable while the audio owner fences remote admission.
             state = .protected
         } else {
             localAuthenticationInputPolicy.revoke()
+            authenticationEventSources = nil
             refreshReturnButtons(rows: rows)
             refreshRemoteTarget()
         }

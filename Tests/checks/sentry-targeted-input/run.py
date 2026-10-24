@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--archive', type=Path, required=True)
 parser.add_argument('--label', required=True)
-parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'control', 'affected', 'local-auth-window'], default='all')
+parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'control', 'affected', 'local-auth-window', 'local-auth-sdk'], default='all')
 args = parser.parse_args()
 archive = args.archive.resolve()
 archive.mkdir(parents=True, exist_ok=True)
@@ -62,7 +62,8 @@ final class PointerWatch { func sillMoved(to point: CGPoint) {} ; func sillMoved
 final class Stats { static let shared = Stats(); func bump(_ name: String) {} }
 '''
 level = next(line.strip() for line in platform.splitlines() if 'private static let curtainLevel =' in line)
-markers = ['private struct Curtain {', 'private var isProtected:', 'private func makeCurtain(',
+stamp = block(platform, 'static func stampEventSource(')
+markers = ['private struct Curtain {', 'private var isProtected:', 'private func makeCurtain(', 'static func stampEventSource(',
            'private func updateCurtainText()', 'private func invalidate(', 'private func filter(']
 input_program = read('Tests/checks/sentry-input-delivery/Main.swift').replace(
     '__PRODUCTION_PLATFORM__', level + '\n' + '\n'.join(block(platform, m) for m in markers))
@@ -75,16 +76,33 @@ native = read('Tests/checks/sentry-native-auth/Main.swift').replace('__PRODUCTIO
     '\n'.join(block(platform, m) for m in ['private var isProtected:', 'private func invalidate(', 'private func filter(',
         'private func updateCurtainText()', 'var reason: String?'])))
 native = authentication_input_policy + '\n' + native
+native = native.replace('@MainActor private final class Platform {',
+    '@MainActor private final class Platform {\n    private func stampAuthenticationEvent(_ event: Event, stage: LocalAuthenticationInputPolicy.Stage) -> Bool { false }')
 authentication_window = authentication_input_policy + '\n' + read('Tests/checks/local-auth-window-input/Main.swift').replace(
     '__PRODUCTION__', re.sub(r'\bCGEvent\b', 'Event', '\n'.join(block(platform, m) for m in [
         'private var isProtected:', 'private func invalidate(', 'private func filter(', 'private func filterAnnotated(', 'private func authenticationInputAllowed(',
         'private var inputTapsAreReady:', 'private func tapStopped(', 'private func observedReturnButton(',
-        'var reason: String?', 'func localAuthenticationWillBegin('])))
+        'var reason: String?', 'func localAuthenticationWillBegin(', 'static func stampEventSource(',
+        'private struct AuthenticationEventSources {', 'private func prepareAuthenticationEventSources(',
+        'private func stampAuthenticationEvent('])))
+authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
+    'private var authenticationEventSources: AuthenticationEventSources?\n__PRODUCTION_OBSERVER__')
 authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
     platform[platform.index('    private static let authenticationExecutables ='):platform.index('    private static func processIdentity(')] + '\n' +
     '\n'.join(block(platform, m) for m in ['private static func verifiedAuthenticationOwner(',
         'private func refreshInputObservation(', 'private func isObservedAuthenticationWindow(', 'private func refreshRemoteTarget(', 'private func nextAuthenticationEventTag(']))
 authentication_window = re.sub(r'\bCGEvent\b', 'Event', authentication_window)
+authentication_window = re.sub(r'\bCGEventSource\b', 'EventSource', authentication_window)
+sdk_authentication_window = authentication_window
+start = sdk_authentication_window.index('private final class Event {')
+end = sdk_authentication_window.index('@MainActor private final class Platform {')
+sdk_authentication_window = sdk_authentication_window[:start] + sdk_authentication_window[end:]
+sdk_authentication_window = re.sub(r'\bEvent\b', 'CGEvent', sdk_authentication_window)
+sdk_authentication_window = re.sub(r'\bEventSource\b', 'CGEventSource', sdk_authentication_window)
+sdk_authentication_window = sdk_authentication_window.replace('@MainActor private final class Platform {',
+    'private extension CGEvent { static func tapIsEnabled(tap: InertTap) -> Bool { tap.enabled } }\n@MainActor private final class Platform {')
+sdk_authentication_window = sdk_authentication_window.replace(block(sdk_authentication_window, '    func run() async {'),
+    read('Tests/checks/local-auth-window-input/SDKChecks.swift'))
 assert 'audioPrivacy?.localAuthenticationWillBegin = { [weak platform] requestID in' in coordinator
 assert 'platform?.localAuthenticationWillBegin(requestID)' in coordinator
 assert 'self?.audioPrivacy?.localAuthenticationChallengeID' in coordinator
@@ -113,7 +131,7 @@ egress = '\n'.join(block(platform, m) for m in egress_markers) + '\nprivate var 
 egress = egress.replace('event.postToPid(target.pid)', 'posted.append((target.pid, event.copy()!))')
 egress = egress.replace('NSRunningApplication(processIdentifier: pid)', 'apps[pid]')
 egress = egress.replace('NSWorkspace.shared.frontmostApplication', 'foreground')
-tag = 'enum HostSentryPlatform { static let remoteEventTag: Int64 = 0x435352 }\n'
+tag = 'enum HostSentryPlatform { static let remoteEventTag: Int64 = 0x435352\n' + stamp + '\n}\n'
 coord = read('Tests/checks/sentry-targeted-input/CoordinatorChecks.swift').replace('__PRODUCTION_COORDINATOR__',
     '\n'.join(block(coordinator, m) for m in ['private func preparePeerInteraction(', 'private func protectedPointerScope(']))
 assert 'self.peerStreams[device] === lane' in coord
@@ -124,13 +142,14 @@ assert coordinator.count('protectedScope: self.protectedPointerScope(device: id,
 assert 'platform?.protectedPointerEgress(event, scope: scope) == true' in coordinator
 filter_body = block(platform, 'private func filter(')
 assert not any(token in filter_body for token in ['CGWindowList', 'SecCode', 'AXUIElement', 'postToPid', 'NSWorkspace', 'environmentIsUsable', 'visibleReturnButton'])
+assert 'CGEventSource(event:' not in platform + injector
 control = read('Tests/checks/sentry-targeted-input/ControlChecks.swift').replace('__PRODUCTION_CONTROL__',
     '\n'.join(block(coordinator, marker) for marker in ['private func activateSentry(', 'private func grantSentryControl(',
         'private func currentSentryOwner(', 'private func handleSentryControl(']))
 control = read('Sources/SillHost/SentryAdmission.swift') + '\n' + read('Sources/SillHost/HostSentry.swift') + '\n' + control
-payload = {'protocol': protocol, 'control': control, 'local-auth-window': authentication_window, 'platformSDK': authentication_input_policy + '\n' + platform + '\n' + actual + '''
+payload = {'protocol': protocol, 'control': control, 'local-auth-window': authentication_window, 'local-auth-sdk': sdk_authentication_window, 'platformSDK': authentication_input_policy + '\n' + platform + '\n' + actual + '''
 enum StreamCoordinator { static func isSillVirtualDisplay(_ id: CGDirectDisplayID) -> Bool { false } }
-''', 'input': input_program, 'native': native, 'panel': authentication_input_policy + '\n' + fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted','local-auth-window'])}
+''', 'input': input_program, 'native': native, 'panel': authentication_input_policy + '\n' + fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted','local-auth-window','local-auth-sdk'])}
 blob = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
 remote = r'''
 import hashlib,json,pathlib,subprocess,sys,tempfile
@@ -161,10 +180,14 @@ with tempfile.TemporaryDirectory(prefix='ccr-targeted-binaries-') as temporary:
   records[-1]['cases']=[]
   cases=[('curtains',['--curtains']),('refresh',['--refresh']),('sentry',[]),('cursor',['--cursor'])] if name=='sentry' else [(name,[])]
   for case,args in cases:
-   result=subprocess.run([str(binary)]+args,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
-   output=result.stdout.decode(errors='replace'); print(output,end='',flush=True)
-   records[-1]['cases'].append({'name':case,'exitCode':result.returncode,'passedAssertions':sum(line.startswith('PASS ') for line in output.splitlines()),'failures':[line for line in output.splitlines() if line.startswith('FAIL ')]})
-   finalCode=max(finalCode,result.returncode)
+   try:
+    result=subprocess.run([str(binary)]+args,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
+    code=result.returncode; output=result.stdout.decode(errors='replace')
+   except subprocess.TimeoutExpired as error:
+    code=124; output=(error.stdout or b'').decode(errors='replace')
+   print(output,end='',flush=True)
+   records[-1]['cases'].append({'name':case,'exitCode':code,'passedAssertions':sum(line.startswith('PASS ') for line in output.splitlines()),'failures':[line for line in output.splitlines() if line.startswith('FAIL ')],'timedOut':code==124})
+   finalCode=max(finalCode,code)
  del payload,blob
 print('REMOTE_RESULT '+json.dumps({'records':records,'temporaryFilesRemoved':not out.exists(),'sourceFilesWritten':0,'actualOSAuthentication':0,'actualEventPosts':0,'visibleWindows':0,'hostLaunches':0,'HALWrites':0,'serviceWrites':0}),flush=True)
 raise SystemExit(finalCode)
