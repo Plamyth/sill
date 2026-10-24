@@ -65,7 +65,7 @@ check('Vision에 iPad Sentry published·함수·UI 없음', 'sentryControl' not 
 for marker in ['var connection: NWConnection?', 'private func handle(', 'private func closeWindow(']:
     check(marker + ' Vision 실행 코드 불변', block(vision, marker) == block(base_vision, marker))
 check('native kind214 switch 수신 wiring', 'case .sentryState:\n            receiveIPadSentry(data, from: peer)' in block(ios, 'private func handle('))
-check('MessageReader 원본 불변', (ROOT / 'iOSClient/MessageReader.swift').read_text() == subprocess.check_output(['git', 'show', 'HEAD:iOSClient/MessageReader.swift'], cwd=ROOT, text=True))
+check('MessageReader 원본 불변', (ROOT / 'iOSClient/MessageReader.swift').read_text() == subprocess.check_output(['git', 'show', 'e88f8dc0e48bb9a75ebdadb9d66f68fef547fd36:iOSClient/MessageReader.swift'], cwd=ROOT, text=True))
 view = block(ui, 'private var sentryReport:')
 check('명시 on/off·수동 조회 버튼의 정확한 desired', all(s in view for s in ['Button { client.setIPadSentry(desired: true) }', 'Button { client.setIPadSentry(desired: false) }', 'Button { client.queryIPadSentry() }']) and view.count('.frame(minHeight: 44)') == 3)
 check('Sentry UI 자동 송신 경로 없음', all(s not in view for s in ['.onChange', '.onAppear', '.task(', 'Toggle(']))
@@ -80,7 +80,7 @@ changed = subprocess.check_output(['git', 'diff', '--name-only'], cwd=ROOT, text
 untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
 check('허용 파일 외 Host·서명·부모 변경 파일 쓰기 0', all(p in allowed or p.startswith('Tests/checks/ipad-sentry-observation/') for p in changed + untracked))
 wire = (ROOT / 'Sources/StreamProtocol/StreamMessage.swift').read_text()
-wire_base = subprocess.check_output(['git', 'show', 'HEAD:Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT, text=True)
+wire_base = subprocess.check_output(['git', 'show', 'e88f8dc0e48bb9a75ebdadb9d66f68fef547fd36:Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT, text=True)
 wire_expected = wire_base.replace('    case forwardingControl = 217', '    case activateSentry = 213\n    case sentryState = 214\n    case forwardingControl = 217', 1).replace('        case .fetchAudioRoutes: return 0', '        case .fetchAudioRoutes: return 0\n        case .activateSentry: return 512\n        case .sentryState: return -1', 1).replace('        case .microphoneState, .microphoneReceipt: return 4096', '        case .microphoneState, .microphoneReceipt, .sentryState: return 4096\n        case .activateSentry: return -1', 1)
 check('StreamMessage는 허용된 2 kind·방향별 cap만 포트', wire == wire_expected)
 host = subprocess.check_output(['git', 'show', 'e9c556f8cd610414df7340074ed30073e9f11fec:Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT, text=True)
