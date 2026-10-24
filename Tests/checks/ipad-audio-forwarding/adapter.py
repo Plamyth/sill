@@ -10,8 +10,6 @@ from swift_platform import select_platform
 def extension(file):
     s = select_platform((root/'iOSClient'/file).read_text(), vision=False, ios=True)
     s = s[s.index('extension StreamClient'):]
-    if 'final class IPadAudioResumeObserver' in s:
-        s = s[:s.index('final class IPadAudioResumeObserver')]
     return s
 
 forward = extension('StreamClient+AudioForwarding.swift').replace(
@@ -48,7 +46,21 @@ enum NWError: Error { case posix(POSIXErrorCode) }
 final class UIApplication {
  enum State { case active, inactive, background }
  static let shared = UIApplication(); var applicationState = State.active
+ static let willResignActiveNotification = Notification.Name("fixture.resign")
+ static let didEnterBackgroundNotification = Notification.Name("fixture.background")
+ static let didBecomeActiveNotification = Notification.Name("fixture.active")
 }
+enum AVAudioSession {
+ enum RouteChangeReason: UInt { case unknown = 0, newDeviceAvailable = 1, oldDeviceUnavailable = 2, categoryChange = 3, override = 4, wakeFromSleep = 6, noSuitableRouteForCategory = 7, routeConfigurationChange = 8 }
+ enum InterruptionType: UInt { case ended = 0, began = 1 }
+ struct InterruptionOptions: OptionSet { let rawValue: UInt; static let shouldResume = Self(rawValue: 1) }
+ static let routeChangeNotification = Notification.Name("fixture.route")
+ static let interruptionNotification = Notification.Name("fixture.interruption")
+ static let mediaServicesWereResetNotification = Notification.Name("fixture.reset")
+}
+let AVAudioSessionRouteChangeReasonKey = "reason"
+let AVAudioSessionInterruptionTypeKey = "type"
+let AVAudioSessionInterruptionOptionKey = "options"
 struct UIDevice { enum Idiom { case pad, phone }; static let current = UIDevice(); var userInterfaceIdiom: Idiom { .pad } }
 enum AVCaptureDevice {
  enum Media { case audio }; enum Status { case authorized, denied, notDetermined }
@@ -61,12 +73,12 @@ enum DeviceIdentity {
  static func existing() -> Identity? { Identity() }
 }
 final class IPadAudioSession { static let shared = IPadAudioSession(); var microphoneAvailable = true }
-final class IPadAudioResumeObserver { init(client: StreamClient) {} }
-final class Frames { func close() {} }
+final class Frames { var closes = 0; func close() { closes += 1 } }
 final class IPadMicrophoneDiagnostics {
  final class Attempt { func record(_ s: String, _ fields: [String:String] = [:]) {} }
  static let shared = IPadMicrophoneDiagnostics()
  func attempt(_ id: UUID) -> Attempt { Attempt() }
+ static func route() -> String { "controlled route" }
 }
 final class StreamClient {
  struct Saved { let macID: String; let fingerprintData: Data? }
@@ -108,9 +120,10 @@ final class StreamClient {
  var microphoneCleanupProblem: String?
  var microphoneCaptureToken: UUID?
  var microphoneAttempts = 0
+ var playbackStops = 0
  var subscriptions: [RemoteAudioSubscription] = []
  lazy var remoteAudioControl = IPadRemoteAudioController(send: { [weak self] peer, request in self?.subscriptions.append(request); self?.sendRemoteAudio(request, to: peer) },
-     stop: {}, play: { _, _ in }, changed: { _ in })
+     stop: { [weak self] in self?.playbackStops += 1 }, play: { _, _ in }, changed: { _ in })
  var remoteAudioStatus: IPadRemoteAudioController.Status { remoteAudioControl.status }
  var authenticatedMacAudioRoutePeer: ObjectIdentifier? { authenticated && connected ? connection.map(ObjectIdentifier.init) : nil }
  var session: Session? = Session()
@@ -127,6 +140,7 @@ final class StreamClient {
     microphoneAttempts += 1
     if desiredAudioPermits(.microphone) { applyMicrophone(microphonePolicy.permissionResolved(true, requestID: request, scope: scope, from: peer)) }
    case .send(let peer, let control): sendMicrophoneControl(control, to: peer)
+   case .closeFrames: microphoneFrames.close()
    default: break
    }
   }
@@ -134,6 +148,7 @@ final class StreamClient {
  var connectionLosses = 0
  func connectionLost(_ c: NWConnection, error: NWError) { connectionLosses += 1 }
  func beginRemoteAudioRequest() { remoteAudioControl.toggle() }
+ func recordMicrophoneDiagnostic(_ event: String, _ fields: [String: String]) {}
  func fixtureObserve(_ list: WindowList) {
   let peer = connection!
   let ticket = audioAdmission.observe(list, from: ObjectIdentifier(peer))
@@ -158,8 +173,20 @@ def method(file, name):
     start = s.index('    private func ' + name) if '    private func ' + name in s else s.index('    func ' + name)
     end = s.index('\n    }', start) + len('\n    }')
     return select_platform(s[start:end], vision=False, ios=True)
-transport = 'extension StreamClient {\n' + method('StreamClient+Audio.swift', 'sendRemoteAudio') + '\n' + method('StreamClient+Microphone.swift', 'sendMicrophoneControl') + '\n}\n'
-(out/'Adapter.swift').write_text(fixture + forward + desired + routes + transport + extension('StreamClient+ProviderCall.swift'))
+transport = 'extension StreamClient {\n' + method('StreamClient+Audio.swift', 'sendRemoteAudio') + '\n' + method('StreamClient+Microphone.swift', 'sendMicrophoneControl') + '\n' + method('StreamClient+Microphone.swift', 'microphoneInterrupted') + '\n}\n'
+screen = (root/'iOSClient/StreamScreen.swift').read_text()
+callbacks = ''
+for event, name in [('routeChangeNotification', 'routeChanged'), ('interruptionNotification', 'interrupted'), ('mediaServicesWereResetNotification', 'mediaReset')]:
+    start = screen.index('.onReceive(NotificationCenter.default.publisher(for: AVAudioSession.' + event)
+    start = screen.index('{', start) + 1
+    end = start
+    depth = 1
+    while depth:
+        depth += (screen[end] == '{') - (screen[end] == '}')
+        end += 1
+    body = screen[start:end-1].split(' in\n', 1)[1].replace('client.', 'self.')
+    callbacks += ' func ' + name + '(_ note: Notification) {\n' + body + '\n }\n'
+(out/'Adapter.swift').write_text(fixture + forward + desired + routes + transport + extension('StreamClient+ProviderCall.swift') + '\nextension StreamClient {\n' + callbacks + '}\n')
 flags=['-module-cache-path',str(out/'cache'),'-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out)]
 files=['IPadProviderCall.swift','IPadAudioForwarding.swift','IPadDesiredAudio.swift','IPadAudioAdmission.swift','IPadMicrophonePolicy.swift','IPadRemoteAudioController.swift','IPadAudioRoutePolicy.swift']
 subprocess.run(['xcrun','swiftc','-parse-as-library',*flags,*[str(root/'iOSClient'/f) for f in files],str(out/'Adapter.swift'),str(Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).with_name('adapter-main.swift')),'-o',str(out/'adapter-check')],check=True)
