@@ -6,6 +6,8 @@ final class SentryAdmission: @unchecked Sendable {
         let id = UUID()
         var admitted = false
         var requests: Set<UUID> = []
+        var selectionReady = false
+        var selectionGeneration: UInt64?
     }
     private let lock = NSLock()
     private let bootID = UUID()
@@ -21,6 +23,7 @@ final class SentryAdmission: @unchecked Sendable {
     private var reason: String?
     private var sessions: [ObjectIdentifier: Session] = [:]
     private var returningLocal = false
+    private var selectionGeneration: UInt64 = 0
 
     struct ProtectionSnapshot: Equatable {
         fileprivate let revision: UUID
@@ -46,6 +49,7 @@ final class SentryAdmission: @unchecked Sendable {
         requested = requested || latched
         self.persistenceHealthy = persistenceHealthy
         revision = UUID()
+        refreshSelectionAdmissionLocked()
     }
 
     func register(_ peer: ObjectIdentifier, externalRoute: Bool) {
@@ -57,11 +61,13 @@ final class SentryAdmission: @unchecked Sendable {
             protectionRevision = UUID()
             revision = UUID()
         }
+        refreshSelectionAdmissionLocked()
     }
 
     func admit(_ peer: ObjectIdentifier) {
         lock.lock(); defer { lock.unlock() }
         sessions[peer]?.admitted = true
+        refreshSelectionAdmissionLocked()
     }
 
     func remove(_ peer: ObjectIdentifier) {
@@ -78,6 +84,7 @@ final class SentryAdmission: @unchecked Sendable {
         surfacesVerified = false
         protectionRevision = UUID()
         revision = UUID()
+        refreshSelectionAdmissionLocked()
     }
 
     var isRequested: Bool {
@@ -93,6 +100,7 @@ final class SentryAdmission: @unchecked Sendable {
         self.persistenceHealthy = persistenceHealthy
         self.reason = reason
         revision = UUID()
+        refreshSelectionAdmissionLocked()
     }
 
     func capture(_ epoch: UUID?) {
@@ -123,9 +131,35 @@ final class SentryAdmission: @unchecked Sendable {
 
     func allowsActions(_ peer: ObjectIdentifier) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        return allowsActionsLocked(peer)
+    }
+
+    private func allowsActionsLocked(_ peer: ObjectIdentifier) -> Bool {
         guard enabled else { return true }
         guard !returningLocal, sessions[peer]?.admitted == true else { return false }
         return !requested || (persistenceHealthy && surfacesVerified)
+    }
+
+    func sourceSelectionAdmission(for peer: ObjectIdentifier) -> SourceSelectionAdmission? {
+        lock.lock(); defer { lock.unlock() }
+        guard enabled, let session = sessions[peer], let generation = session.selectionGeneration else { return nil }
+        return SourceSelectionAdmission(generation: generation, ready: session.selectionReady)
+    }
+
+    private func refreshSelectionAdmissionLocked() {
+        for peer in sessions.keys {
+            guard var session = sessions[peer] else { continue }
+            let ready = allowsActionsLocked(peer)
+            guard session.selectionGeneration == nil || session.selectionReady != ready else { continue }
+            session.selectionReady = ready
+            if selectionGeneration < SourceSelectionAdmission.maximumGeneration {
+                selectionGeneration += 1
+                session.selectionGeneration = selectionGeneration
+            } else {
+                session.selectionGeneration = nil
+            }
+            sessions[peer] = session
+        }
     }
 
     func allowsWire(_ data: Data, for peer: ObjectIdentifier, currentEpoch: UUID?) -> Bool {
@@ -174,6 +208,7 @@ final class SentryAdmission: @unchecked Sendable {
             surfacesVerified = false
             protectionRevision = UUID()
             revision = UUID()
+            refreshSelectionAdmissionLocked()
         }
         return true
     }
@@ -184,6 +219,7 @@ final class SentryAdmission: @unchecked Sendable {
         returningLocal = true
         surfacesVerified = false
         revision = UUID()
+        refreshSelectionAdmissionLocked()
     }
 
     func completeLocalReturn() {
