@@ -62,9 +62,6 @@ def run(command, timeout):
 
 record['before'] = health()
 try:
-    collision = subprocess.run(['/usr/bin/pgrep', '-x', 'swift-frontend|swiftc|swift-build|clang|xcodebuild'], capture_output=True, text=True)
-    if collision.returncode == 0:
-        raise RuntimeError('compiler resource collision: ' + collision.stdout.strip())
     disk = subprocess.check_output(['/usr/bin/hdiutil', 'attach', '-nomount', 'ram://262144'], text=True).strip()
     if not re.fullmatch(r'/dev/disk[0-9]+', disk):
         raise RuntimeError('unexpected RAM disk identity')

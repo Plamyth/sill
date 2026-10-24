@@ -59,9 +59,11 @@ public struct DisplayInfo: Codable, Equatable, Identifiable {
     public var width: Int
     public var height: Int
     public var isMain: Bool
+    public var role: String?
 
-    public init(id: UInt32, name: String, width: Int, height: Int, isMain: Bool) {
+    public init(id: UInt32, name: String, width: Int, height: Int, isMain: Bool, role: String? = nil) {
         self.id = id; self.name = name; self.width = width; self.height = height; self.isMain = isMain
+        self.role = role
     }
 }
 

@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-struct DisplayInfo: Equatable { let id: UInt32; var isMain = false }
+// DISPLAY_INFO
 struct DisplaySelection { let displayID: UInt32; let inventoryID: UUID }
 typealias CGDirectDisplayID = UInt32
 
@@ -64,6 +64,13 @@ final class CatalogFixture {
     var clientCount = 0
     var refreshes = 0
     @discardableResult func refreshWindows() async -> Bool { refreshes += 1; return true }
+    func displayInfo(id: UInt32, name: String, mainID: UInt32 = 1) -> DisplayInfo {
+        struct Screen { let localizedName: String }
+        let screen: Screen? = Screen(localizedName: name)
+        let display = (width: 1350, height: 890)
+        let index = 0
+        // DISPLAY_INFO_CONSTRUCTION
+    }
     // CATALOG_METHODS
 }
 
