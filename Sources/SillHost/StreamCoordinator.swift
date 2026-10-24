@@ -2535,6 +2535,7 @@ package final class StreamCoordinator {
     /// dies of the signal with no goodbye, as before (`releaseKeysForExit`): its devices notice by
     /// liveness.
     package func shutdownForExit() {
+        remote?.stopMobileEnrollment()
         for lane in peerStreams.values { lane.invalidateForShutdown() }
         for lane in peerStreams.values { Task { @MainActor in await lane.close() } }
         forwardingRuntime?.stop()
@@ -2552,6 +2553,7 @@ package final class StreamCoordinator {
     /// every key and button a device holds down on the Mac goes up, and nothing else happens (no
     /// goodbye, nothing printed), as before.
     package func releaseKeysForExit() {
+        remote?.stopMobileEnrollment()
         forwardingRuntime?.stop()
         audioPrivacy?.stop()
         microphoneOwner?.restoreMicrophoneForExit()

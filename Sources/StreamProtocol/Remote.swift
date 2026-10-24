@@ -129,9 +129,32 @@ public struct PairRequest: Codable, Sendable {
     /// (DiscoveryPolicy.onCable); absent otherwise. The Mac pairs by itself only when its own rule
     /// (CableLink) agrees as well, so the claim can only narrow what the Mac does.
     public var cable: Bool?
+    public var ownerEnrollment: OwnerEnrollmentRequest?
+    private enum CodingKeys: String, CodingKey { case v, method, proof, name, model, cable, ownerEnrollment }
 
-    public init(v: Int = PairRequest.version, method: String, proof: String, name: String, model: String?, cable: Bool? = nil) {
+    public init(v: Int = PairRequest.version, method: String, proof: String, name: String, model: String?, cable: Bool? = nil,
+                ownerEnrollment: OwnerEnrollmentRequest? = nil) {
         self.v = v; self.method = method; self.proof = proof; self.name = name; self.model = model; self.cable = cable
+        self.ownerEnrollment = ownerEnrollment
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        v = try c.decode(Int.self, forKey: .v)
+        method = try c.decode(String.self, forKey: .method)
+        proof = try c.decode(String.self, forKey: .proof)
+        name = try c.decode(String.self, forKey: .name)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        cable = try c.decodeIfPresent(Bool.self, forKey: .cable)
+        ownerEnrollment = try c.contains(.ownerEnrollment) ? c.decode(OwnerEnrollmentRequest.self, forKey: .ownerEnrollment) : nil
+        if c.contains(.ownerEnrollment) {
+            let all = try decoder.container(keyedBy: OwnerCodingKey.self)
+            guard Set(all.allKeys.map(\.stringValue)).isSubset(of: ["v", "method", "proof", "name", "model", "ownerEnrollment"]),
+                  v == 2, method == OwnerMacBootstrap.method, proof.isEmpty else {
+                throw MobileEnrollment.Failure.invalidFields
+            }
+            if c.contains(.model) { _ = try c.decode(String.self, forKey: .model) }
+        }
     }
 
     public static let qr = "qr", code = "code", ask = "ask"
@@ -176,13 +199,17 @@ public struct PairResult: Codable, Sendable {
     /// public build (`knownReasons`, which its devices word themselves): a later host sends one
     /// with any reason it adds, as a new goodbye carries its `message`.
     public var message: String?
+    public var ownerEnrollmentVersion: Int?
+    public var ownerReceipt: MobileEnrollment.Envelope?
 
     public init(ok: Bool, proof: String? = nil, macID: String? = nil, name: String? = nil, recognitionKey: String? = nil,
                 reason: String? = nil, triesLeft: Int? = nil, retryAfter: Double? = nil, method: String? = nil,
-                message: String? = nil) {
+                message: String? = nil, ownerEnrollmentVersion: Int? = nil,
+                ownerReceipt: MobileEnrollment.Envelope? = nil) {
         self.ok = ok; self.proof = proof; self.macID = macID; self.name = name; self.recognitionKey = recognitionKey
         self.reason = reason; self.triesLeft = triesLeft; self.retryAfter = retryAfter; self.method = method
         self.message = message
+        self.ownerEnrollmentVersion = ownerEnrollmentVersion; self.ownerReceipt = ownerReceipt
     }
 
     public static let code = "code", closed = "closed", expired = "expired", stopped = "stopped", busy = "busy"
