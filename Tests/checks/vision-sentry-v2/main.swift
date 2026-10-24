@@ -468,7 +468,8 @@ for failure in ["save", "readback", "all-unresolved"] {
     if let r = operation.beginControl(desired: true, now: 0, cancel: {}) {
         _ = operation.submitControl(r, to: p, now: 0, send: { sends += 1; return true })
     }
-    check(sends == 0 && operation.snapshot.problem == .storage, "교체 실패·미해결 가득 참은 전송 0 \(failure)")
+    check(sends == 0 && (failure == "all-unresolved" ? operation.snapshot.problem != .storage : operation.snapshot.problem == .storage),
+        "교체 실패와 정상 미해결 한도 거절을 구분하고 전송 0 \(failure)")
     if failure != "readback" { check(j.records == original, "저장 실패·미해결 한도에서 원문 불변 \(failure)") }
     else {
         check(j.records.filter { !$0.hasTerminalReceipt }.prefix(3) == original.prefix(3),
@@ -491,6 +492,105 @@ let unresolvedTransport = try fullJournal(terminals: [])
 let (blockedTransport, blockedPeer) = client(unresolvedTransport)
 blockedTransport.setVisionSentry(true); blockedTransport.queue.sync {}; drain()
 check(blockedPeer.sent.isEmpty && unresolvedTransport.writes == 0, "64건 미해결이면 실제 adapter 전송·저장 0")
+
+do {
+    let j = try fullJournal(terminals: [])
+    j.records.removeLast()
+    let preserved = j.records
+    let operation = model(j), r = begin(operation, desired: true)
+    let pending = state(.userSessionProtected, requested: true, intent: .on)
+    operation.receiveControl(reply(r, .pending, value: pending), from: p, now: 1)
+    let beforeRefusal = j.records, writes = j.writes
+    check(operation.snapshot.canReadback && operation.snapshot.canDeactivate, "F1 64건 미해결 상태의 기존 pending 조회 가능")
+    let refused = operation.beginControl(desired: false, now: 2, cancel: {})
+    print("OBSERVATION F1 refused=\(refused == nil) readback=\(operation.snapshot.canReadback) storageFailure=\(operation.snapshot.problem == .storage)")
+    check(refused == nil && j.records == beforeRefusal && j.writes == writes, "F1 한도 거절은 미해결 원문·접수·저장을 변경하지 않음")
+    check(operation.snapshot.problem != .storage && operation.snapshot.controlAvailable && operation.snapshot.canReadback,
+        "F1 정상 한도 거절 뒤 저장소와 기존 원문 조회 유지")
+    if let read = operation.beginControl(desired: nil, now: 3, cancel: {}) {
+        check(read.rawRequest == r.rawRequest && read.requestID == r.requestID && read.revision == r.revision,
+            "F1 거절 뒤 exact raw·ID·옛 CAS로 조회")
+        check(operation.submitControl(read, to: p, now: 3, send: { true }), "F1 거절 뒤 기존 조회 전송 허용")
+        operation.receiveControl(reply(read, value: pending), from: p, now: 4)
+        check(j.records.last?.hasTerminalReceipt == true && Array(j.records.prefix(63)) == preserved,
+            "F1 한도에서도 종료 영수증 저장·다른 미해결 기록 보존")
+        let off = operation.beginControl(desired: false, now: 5, cancel: {})
+        check(off?.desired == false && j.records.count == 64 && Array(j.records.prefix(63)) == preserved,
+            "F1 종료 확인 뒤에만 해당 종료 기록 교체 가능")
+    } else { check(false, "F1 한도 거절 뒤 수동 조회가 실제 시작됨") }
+}
+
+do {
+    let j = Journal(), operation = model(j), r = begin(operation, desired: false)
+    operation.receiveControl(reply(r, value: state(intent: .off)), from: p, now: 1)
+    operation.observe(list(state(.pending, intent: .on)), from: p)
+    print("OBSERVATION F2 past-applied message=\(operation.snapshot.message)")
+    check(operation.snapshot.message.hasPrefix("Mac이 센츄리 보호 설정을 전환"), "F2 현재 pending false를 과거 applied보다 먼저 표시")
+    check(operation.snapshot.operationState == .applied && operation.snapshot.accepted == true &&
+        operation.snapshot.message.contains("요청 적용을 확인") && operation.snapshot.canReadback,
+        "F2 과거 적용·접수 이력과 원문 조회는 유지")
+    let restored = model(j, state(.pending, intent: .on))
+    print("OBSERVATION F2 restored message=\(restored.snapshot.message)")
+    check(restored.snapshot.message.hasPrefix("Mac이 센츄리 보호 설정을 전환") && restored.snapshot.message.contains("보존된 요청"),
+        "F2 복원 원문 안내와 현재 pending false 전환을 함께 표시")
+    let unreceived = Journal(), original = model(unreceived), _ = original.beginControl(desired: false, now: 0, cancel: {})
+    let restricted = model(unreceived, state(.pending, intent: .on))
+    check(restricted.snapshot.message.hasPrefix("Mac이 센츄리 보호 설정을 전환") &&
+        restricted.snapshot.message.contains("같은 세션에서는 재전송하지 않습니다") &&
+        restricted.snapshot.readbackNeedsNewSession && !restricted.snapshot.canReadback,
+        "F2 현재 pending false 표시가 미접수 원문의 같은 세션 조회 제한을 보존")
+}
+
+func mutateDurableRaw(_ j: Journal, _ change: String) {
+    let old = j.records[0]
+    switch change {
+    case "missing": j.records = []
+    case "raw": j.records[0] = .init(binding: old.binding, rawRequest: Data(" ".utf8) + old.rawRequest)
+    case "binding": j.records[0] = .init(binding: .init(macID: "다른 Mac", hostFingerprint: binding.hostFingerprint,
+        deviceFingerprint: binding.deviceFingerprint), rawRequest: old.rawRequest)
+    case "load-failure": j.failLoad = true
+    case "receipt": j.records[0] = .init(binding: old.binding, rawRequest: old.rawRequest, ledgerAccepted: true)
+    default: break
+    }
+}
+
+for change in ["missing", "raw", "binding", "load-failure", "unchanged", "receipt"] {
+    let j = Journal(), operation = model(j)
+    let r = operation.beginControl(desired: false, now: 0, cancel: {})!
+    mutateDurableRaw(j, change)
+    let preserved = j.records, writes = j.writes
+    var sends = 0
+    let submitted = operation.submitControl(r, to: p, now: 1, send: { sends += 1; return true })
+    let allowed = change == "unchanged" || change == "receipt"
+    print("OBSERVATION durable-first \(change) submitted=\(submitted) sends=\(sends)")
+    check(submitted == allowed && sends == (allowed ? 1 : 0), "최초 submit의 durable raw·binding 대조 \(change)")
+    check(j.records == preserved && j.writes == writes, "최초 submit은 유실 원문 재작성·새 ID 생성 없음 \(change)")
+}
+
+for held in [false, true] {
+    for change in ["missing", "raw", "binding", "load-failure", "unchanged", "receipt"] {
+        let j = Journal(), (c, peer) = client(j)
+        if held { _ = c.link.hold(peer) } else { c.queue.suspend() }
+        c.setVisionSentry(false)
+        if held { c.queue.sync {} }
+        check(peer.sent.isEmpty && j.records.count == 1 && j.writes == 1,
+            "실제 adapter는 save·readback 뒤 최종 송신 전 대기 \(held) \(change)")
+        let raw = j.records[0].rawRequest
+        mutateDurableRaw(j, change)
+        let preserved = j.records
+        if held { _ = c.link.unhold(peer) } else { c.queue.resume(); c.queue.sync {} }
+        drain()
+        let allowed = change == "unchanged" || change == "receipt"
+        print("OBSERVATION durable-network held=\(held) \(change) sends=\(peer.sent.count)")
+        check(peer.sent.count == (allowed ? 1 : 0), "실제 SessionLink·Network 최종 송신의 durable raw 재대조 \(held) \(change)")
+        if let sent = peer.sent.first {
+            check(Data(sent.dropFirst(StreamMessage.headerLength)) == raw, "최종 송신도 저장한 exact raw 바이트 유지 \(held) \(change)")
+        }
+        check(j.records == preserved && j.writes == 1, "최종 송신 검사는 원문·접수 이력 재작성 없음 \(held) \(change)")
+        c.queue.sync {}; drain()
+        check(peer.sent.count == (allowed ? 1 : 0), "취소·무응답 뒤 자동 TLS 재전송 없음 \(held) \(change)")
+    }
+}
 
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
