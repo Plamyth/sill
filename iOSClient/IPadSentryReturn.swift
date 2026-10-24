@@ -40,6 +40,7 @@ struct IPadSentryReturn {
         var rawChallengeState: Data?
         var unboundCompletion: Data?
         var locallyCancelled = false
+        var cancelForwarded: Bool?
         var proofStarted = false
         var request: SentryReturnRequest { try! .init(rawRequest: rawRequest) }
         var state: SentryReturnState? { rawState.flatMap { try? .decodePayload($0) } }
@@ -142,6 +143,7 @@ struct IPadSentryReturn {
         guard entries.count < 64 else { problem = "인증 복귀 원장이 가득 찼습니다. 기존 요청은 보존합니다."; return nil }
         var next = entries; next.append(.init(binding: context.binding, rawRequest: request.rawRequest))
         guard persist(next) else { return nil }
+        challengeDeadline = nil
         return outbound(.request(request), now: now)
     }
 
@@ -152,9 +154,18 @@ struct IPadSentryReturn {
     }
     mutating func cancel(binding: Binding?, from peer: ObjectIdentifier, now: TimeInterval) -> Outbound? {
         guard valid(binding, peer), canCancel, var entry = latest else { return nil }
-        invalidate(); entry.locallyCancelled = true
+        invalidate(); entry.locallyCancelled = true; entry.cancelForwarded = false
         var next = entries; next[next.count - 1] = entry
-        guard persist(next), let generation = entry.state?.authGeneration else { return nil }
+        guard persist(next) else { return nil }
+        return forwardCancellation(binding: binding, from: peer, now: now)
+    }
+    mutating func forwardCancellation(binding: Binding?, from peer: ObjectIdentifier, now: TimeInterval) -> Outbound? {
+        guard valid(binding, peer), var entry = latest, entry.locallyCancelled, !entry.terminal,
+              entry.cancelForwarded == false, let generation = entry.state?.authGeneration,
+              now.isFinite, now >= 0 else { return nil }
+        entry.cancelForwarded = true
+        var next = entries; next[next.count - 1] = entry
+        guard persist(next) else { return nil }
         return outbound(.cancel(entry.request.reference, authGeneration: generation), now: now)
     }
 
@@ -166,7 +177,11 @@ struct IPadSentryReturn {
         if entry.rawState == raw { confirmed = true; deadline = nil; return true }
         if entry.unboundCompletion != nil { return false }
         if entry.terminal { return false }
-        if entry.locallyCancelled && ![.cancelled, .unknown].contains(state.operationState) { return false }
+        if entry.locallyCancelled {
+            let lateChallenge = entry.state?.authGeneration == nil && entry.rawChallengeState == nil && state.challenge != nil
+            guard lateChallenge || [.cancelled, .expired, .failed, .rejected, .unknown].contains(state.operationState) else { return false }
+            if lateChallenge, entry.cancelForwarded == nil { entry.cancelForwarded = false }
+        }
         if let prior = entry.state {
             guard prior.authGeneration == nil || prior.authGeneration == state.authGeneration,
                   prior.authStatus != .succeeded || state.authStatus == .succeeded,
@@ -199,7 +214,7 @@ struct IPadSentryReturn {
         entry.rawState = raw
         var next = entries; next[next.count - 1] = entry
         guard persist(next) else { return false }
-        if entry.terminal { admission.invalidate() }
+        if entry.terminal { admission.invalidate(); challengeDeadline = nil }
         if state.challenge != nil {
             let received = now + Double(state.remainingMilliseconds) / 1000
             challengeDeadline = min(challengeDeadline ?? received, received)
@@ -235,8 +250,12 @@ struct IPadSentryReturn {
         return outbound(.prove(proof.reference, authGeneration: proof.challenge.authGeneration, signature: signature), now: now)
     }
 
-    mutating func checkTimeout(now: TimeInterval) {
-        if let deadline, !now.isFinite || now >= deadline || now < deadline - 10 { invalidate() }
+    @discardableResult mutating func checkTimeout(now: TimeInterval) -> Bool {
+        if (deadline != nil || challengeDeadline != nil) && (!now.isFinite || now < 0) ||
+            deadline.map({ now >= $0 || now < $0 - 10 }) == true || challengeDeadline.map({ now >= $0 }) == true {
+            invalidate(); return true
+        }
+        return false
     }
     private func valid(_ binding: Binding?, _ peer: ObjectIdentifier) -> Bool {
         !storageFailed && self.peer == peer && binding != nil && context?.binding == binding

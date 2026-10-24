@@ -135,6 +135,8 @@ final class StreamClient: ObservableObject {
     @Published var sentryReturnKeyProblem: String?
     lazy var sentryReturnKeys = IPadSentryReturnKeys(store: IPadSentryReturnKeys.keychainStore(), adapter: .secureEnclave)
     var sentryReturnKeyOperation: IPadSentryReturnKeys.Operation?
+    var sentryReturnIsActive = UIApplication.shared.applicationState == .active
+    var sentryReturnKeyCompletion: (() -> Void)?
     var sentryReturnSubmissions: [UUID: SessionLink.Submission] = [:]
     var sentryReturnDeviceIntent: (reference: SentryReturnReference, peer: ObjectIdentifier)?
 
@@ -1965,11 +1967,14 @@ final class StreamClient: ObservableObject {
         displayView.setPresentationForeground(UIApplication.shared.applicationState == .active)
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.displayView.setPresentationForeground(true)
+            #if os(iOS)
+            self?.resumeIPadSentryReturn()
+            #endif
         }
         NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.visionInputPermit = nil
             #if os(iOS)
-            self?.invalidateIPadSentryReturn()
+            self?.suspendIPadSentryReturn()
             #endif
             self?.link.setInputPermit(nil)
             self?.cancelVisionInputs()
@@ -5416,7 +5421,7 @@ final class StreamClient: ObservableObject {
             self.linkStats = stats
             #if os(iOS)
             self.sentryControl.checkTimeout(now: ProcessInfo.processInfo.systemUptime)
-            self.sentryReturn.checkTimeout(now: ProcessInfo.processInfo.systemUptime)
+            self.checkIPadSentryReturnTimeout(now: ProcessInfo.processInfo.systemUptime)
             #endif
             #if DEBUG
             self.recordStartupVideo()

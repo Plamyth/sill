@@ -23,7 +23,7 @@ paths = list((root / 'Sources/StreamProtocol').glob('*.swift'))
 paths += [root / 'iOSClient' / name for name in ['IPadSentryObservation.swift', 'IPadSentryControl.swift',
     'IPadSentryReturn.swift', 'IPadSentryReturnKeys.swift', 'SessionLink.swift', 'StreamClient+SentryReturn.swift',
     'StreamClient.swift', 'StreamClient+Sentry.swift']]
-paths += [here / 'Main.swift', fixture]
+paths += [here / 'Main.swift', here / 'run.py', root / 'Tests/checks/reconnect-glue/mini.py', fixture]
 original = {str(path.relative_to(root)): sha(path.read_bytes()) for path in paths}
 files = {str(path.relative_to(root)): path.read_bytes() for path in paths}
 network = b'''import Foundation
@@ -72,8 +72,7 @@ background = inactive[inactive.index('#if os(iOS)'):inactive.index('        reco
 properties += '\n' + '\n'.join(line.strip() for line in stream.splitlines()
     if line.strip().startswith(('var sentryReturnIsActive', 'var sentryReturnKeyCompletion')))
 properties = properties.replace('UIApplication.shared.applicationState == .active', 'true')
-if 'var sentryReturnKeyCompletion' not in properties:
-    properties += '\nvar sentryReturnKeyCompletion: (() -> Void)?'
+assert properties.count('var sentryReturnKeyCompletion') == 1
 lifecycle = 'func resignActive() {' + resign + '}\nfunc becomeActive() {' + active + '}\nfunc enterBackground() {' + background + '}\n'
 timeout = next(line.strip() for line in stream.splitlines() if 'self.sentryReturn.checkTimeout(' in line or 'self.checkIPadSentryReturnTimeout(' in line)
 lifecycle += 'func checkReturnTimeout(now: TimeInterval) { ' + timeout.replace('ProcessInfo.processInfo.systemUptime', 'now') + ' }'
@@ -165,9 +164,10 @@ records = [line[len('RESULT_JSON '):] for line in log.decode(errors='replace').s
 remote = json.loads(records[-1]) if records else None
 record = dict(exitCode=process.returncode, sourceHEAD=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
     sourceSHA256=original, emittedSHA256=emitted, inputSHA256=sha(payload),
+    extractionSHA256={'trustProperties': sha(properties.encode()), 'lifecycle': sha(lifecycle.encode()), 'client': sha(files['Client.swift']), 'runner': sha(runner.encode())},
     sourceUnchanged=all(sha((root / name).read_bytes()) == value for name, value in original.items()),
     inputHashMatched=('INPUT_SHA256 ' + sha(payload)).encode() in log,
-    remote=remote, checks=sum(line.startswith('PASS ') and not line.startswith('PASS total ') for line in log.decode(errors='replace').splitlines()),
+    remote=remote, checks=sum(line.startswith('PASS ') and not line.startswith(('PASS total ', 'PASS regression ')) for line in log.decode(errors='replace').splitlines()),
     realKeyCreation=0, biometricUI=0, hostEffects=0, sdkBuild='parent', independentReview='parent',
     scope='실제 consumer/키 adapter/SessionLink. Network는 기록 대역, 키 연산은 알려진 fixture 전용. codex-source-guard 작업 이전 수용과 별도.')
 (out / (label + '.json')).write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')

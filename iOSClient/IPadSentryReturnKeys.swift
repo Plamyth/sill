@@ -23,8 +23,12 @@ final class IPadSentryReturnKeys {
         private let lock = NSLock()
         private var cancelled = false
         private var cancelAuthentication: (() -> Void)?
+        var hasAuthenticationContext: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return !cancelled && cancelAuthentication != nil
+        }
         func cancel() {
-            lock.lock(); cancelled = true; let cancel = cancelAuthentication; lock.unlock(); cancel?()
+            lock.lock(); cancelled = true; let cancel = cancelAuthentication; cancelAuthentication = nil; lock.unlock(); cancel?()
         }
         func check() throws {
             lock.lock(); defer { lock.unlock() }

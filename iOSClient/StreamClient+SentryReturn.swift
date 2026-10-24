@@ -17,6 +17,39 @@ extension StreamClient {
         cancelIPadSentryReturnWork()
         sentryReturn.invalidate()
     }
+    func suspendIPadSentryReturn() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        sentryReturnIsActive = false
+        if sentryReturnKeyOperation?.hasAuthenticationContext != true { invalidateIPadSentryReturn() }
+    }
+    func resumeIPadSentryReturn() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        sentryReturnIsActive = true
+        let completion = sentryReturnKeyCompletion; sentryReturnKeyCompletion = nil
+        completion?()
+    }
+    func checkIPadSentryReturnTimeout(now: TimeInterval) {
+        if sentryReturn.checkTimeout(now: now) { cancelIPadSentryReturnWork() }
+    }
+    private func completeIPadSentryReturnKeyOperation(_ operation: IPadSentryReturnKeys.Operation,
+        context: IPadSentryReturn.Context, admission: IPadSentryReturnAdmission.Ticket, peer: NWConnection,
+        completion: @escaping (StreamClient, NWConnection) -> Void) {
+        guard sentryReturnKeyOperation === operation else { return }
+        checkIPadSentryReturnTimeout(now: ProcessInfo.processInfo.systemUptime)
+        guard sentryReturnKeyOperation === operation else { return }
+        guard connection === peer, sentryBinding(on: peer) == context.binding, sentryReturn.context == context,
+              admission.permits(), (try? operation.check()) != nil else { invalidateIPadSentryReturn(); return }
+        guard sentryReturnIsActive, appInForeground else {
+            guard operation.hasAuthenticationContext else { cancelIPadSentryReturnWork(); return }
+            sentryReturnKeyCompletion = { [weak self, weak peer] in
+                guard let self, let peer else { return }
+                self.completeIPadSentryReturnKeyOperation(operation, context: context, admission: admission, peer: peer, completion: completion)
+            }
+            return
+        }
+        sentryReturnKeyCompletion = nil; sentryReturnKeyOperation = nil
+        completion(self, peer)
+    }
     func sentryReturnTrustChanged() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let expected = sentryReturn.context?.binding else { return }
@@ -26,6 +59,7 @@ extension StreamClient {
     }
     private func cancelIPadSentryReturnWork() {
         sentryReturnDeviceIntent = nil
+        sentryReturnKeyCompletion = nil
         sentryReturnKeyOperation?.cancel(); sentryReturnKeyOperation = nil
         sentryReturnKeys.invalidateSignatures()
         for submission in sentryReturnSubmissions.values { link.cancel(submission) }
@@ -41,7 +75,7 @@ extension StreamClient {
     }
     func requestIPadSentryReturn(mode: SentryReturnAuthMode) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard appInForeground, let peer = connection, let binding = sentryBinding(on: peer),
+        guard appInForeground, sentryReturnIsActive, let peer = connection, let binding = sentryBinding(on: peer),
               mode != .deviceBoundKey || sentryReturnKeys.approved(binding: binding) != nil else { return }
         cancelIPadSentryReturnWork()
         if let outbound = sentryReturn.request(mode: mode, binding: binding, from: ObjectIdentifier(peer), now: ProcessInfo.processInfo.systemUptime) {
@@ -53,7 +87,7 @@ extension StreamClient {
     }
     func queryIPadSentryReturn() {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard appInForeground, let peer = connection else { return }
+        guard appInForeground, sentryReturnIsActive, let peer = connection else { return }
         cancelIPadSentryReturnWork()
         if let outbound = sentryReturn.query(binding: sentryBinding(on: peer), from: ObjectIdentifier(peer), now: ProcessInfo.processInfo.systemUptime) {
             sendIPadSentryReturn(outbound, to: peer)
@@ -63,38 +97,39 @@ extension StreamClient {
         dispatchPrecondition(condition: .onQueue(.main))
         cancelIPadSentryReturnWork()
         guard let peer = connection else { sentryReturn.invalidate(); return }
-        if let outbound = sentryReturn.cancel(binding: sentryBinding(on: peer), from: ObjectIdentifier(peer), now: ProcessInfo.processInfo.systemUptime), appInForeground {
+        if let outbound = sentryReturn.cancel(binding: sentryBinding(on: peer), from: ObjectIdentifier(peer), now: ProcessInfo.processInfo.systemUptime), appInForeground, sentryReturnIsActive {
             sendIPadSentryReturn(outbound, to: peer)
         }
     }
     func proveIPadSentryReturn() {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard appInForeground, let peer = connection, let binding = sentryBinding(on: peer),
+        guard appInForeground, sentryReturnIsActive, let peer = connection, let binding = sentryBinding(on: peer),
               let key = sentryReturnKeys.approved(binding: binding), let owner = key.owner else { return }
         cancelIPadSentryReturnWork()
         guard let proof = sentryReturn.beginProof(approvedOwner: owner, keyID: key.keyID, binding: binding,
             from: ObjectIdentifier(peer), now: ProcessInfo.processInfo.systemUptime) else { return }
         let operation = IPadSentryReturnKeys.Operation(); sentryReturnKeyOperation = operation
+        guard let context = sentryReturn.context else { return }
         let keys = sentryReturnKeys
         DispatchQueue.global(qos: .userInitiated).async { [weak self, weak peer] in
             let result = Result { try keys.sign(proof, operation: operation) }
             DispatchQueue.main.async {
-                guard let self, let peer, self.connection === peer, self.appInForeground,
-                      self.sentryReturnKeyOperation === operation, self.sentryBinding(on: peer) == binding else { return }
-                self.sentryReturnKeyOperation = nil
-                switch result {
-                case .success(let (signature, der)):
-                    if let outbound = self.sentryReturn.finishProof(proof, signature: signature, publicKey: der, now: ProcessInfo.processInfo.systemUptime) {
-                        self.sendIPadSentryReturn(outbound, to: peer)
+                guard let self, let peer else { return }
+                self.completeIPadSentryReturnKeyOperation(operation, context: context, admission: proof.admission, peer: peer) { client, peer in
+                    switch result {
+                    case .success(let (signature, der)):
+                        if let outbound = client.sentryReturn.finishProof(proof, signature: signature, publicKey: der, now: ProcessInfo.processInfo.systemUptime) {
+                            client.sendIPadSentryReturn(outbound, to: peer)
+                        }
+                    case .failure: client.sentryReturnKeyProblem = "iPad 인증 서명을 완료하지 못했습니다. 자동 재시도하지 않습니다."
                     }
-                case .failure: self.sentryReturnKeyProblem = "iPad 인증 서명을 완료하지 못했습니다. 자동 재시도하지 않습니다."
                 }
             }
         }
     }
     func manageIPadSentryReturnKey(_ action: SentryReturnKeyEnrollment.Action) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard appInForeground, canManageIPadSentryReturnKey(action),
+        guard appInForeground, sentryReturnIsActive, canManageIPadSentryReturnKey(action),
               let peer = connection, let binding = sentryBinding(on: peer), sentryReturnKeyOperation == nil else { return }
         cancelIPadSentryReturnWork(); sentryReturnKeyProblem = nil
         let prior = sentryReturnKeys.approved(binding: binding)
@@ -109,21 +144,23 @@ extension StreamClient {
             publicKey: publicKey.base64EncodedString(), previousKeyID: action == .rotate ? prior?.keyID : nil) {
             submitIPadSentryReturnEnrollment(enrollment, binding: binding, peer: peer); return
         }
+        guard let context = sentryReturn.context else { return }
+        let admission = sentryReturn.admission.ticket()
         let keys = sentryReturnKeys
         let operation = IPadSentryReturnKeys.Operation(); sentryReturnKeyOperation = operation
         DispatchQueue.global(qos: .userInitiated).async { [weak self, weak peer] in
             let result = Result { try keys.prepare(binding: binding, rotating: action == .rotate, operation: operation) }
             DispatchQueue.main.async {
-                guard let self, let peer, self.connection === peer, self.appInForeground,
-                      self.sentryReturnKeyOperation === operation, self.sentryBinding(on: peer) == binding else { return }
-                self.sentryReturnKeyOperation = nil
-                switch result {
-                case .success(let candidate):
-                    guard let publicKey = candidate.publicKey,
-                          let enrollment = try? SentryReturnKeyEnrollment(action: action, keyID: candidate.keyID,
-                            publicKey: publicKey.base64EncodedString(), previousKeyID: action == .rotate ? prior?.keyID : nil) else { return }
-                    self.submitIPadSentryReturnEnrollment(enrollment, binding: binding, peer: peer)
-                case .failure: self.sentryReturnKeyProblem = "전용 키 준비를 확인하지 못했습니다. 기존 키와 준비 기록을 보존합니다. 시뮬레이터에서는 지원하지 않습니다."
+                guard let self, let peer else { return }
+                self.completeIPadSentryReturnKeyOperation(operation, context: context, admission: admission, peer: peer) { client, peer in
+                    switch result {
+                    case .success(let candidate):
+                        guard let publicKey = candidate.publicKey,
+                              let enrollment = try? SentryReturnKeyEnrollment(action: action, keyID: candidate.keyID,
+                                publicKey: publicKey.base64EncodedString(), previousKeyID: action == .rotate ? prior?.keyID : nil) else { return }
+                        client.submitIPadSentryReturnEnrollment(enrollment, binding: binding, peer: peer)
+                    case .failure: client.sentryReturnKeyProblem = "전용 키 준비를 확인하지 못했습니다. 기존 키와 준비 기록을 보존합니다. 시뮬레이터에서는 지원하지 않습니다."
+                    }
                 }
             }
         }
@@ -135,7 +172,7 @@ extension StreamClient {
         }
     }
     private func sendIPadSentryReturn(_ outbound: IPadSentryReturn.Outbound, to peer: NWConnection) {
-        guard appInForeground, connection === peer, sentryBinding(on: peer) == sentryReturn.context?.binding,
+        guard appInForeground, sentryReturnIsActive, connection === peer, sentryBinding(on: peer) == sentryReturn.context?.binding,
               outbound.bytes.first == 223, outbound.bytes.count <= StreamMessage.headerLength + 4096,
               outbound.admission.permits() else { return }
         let ticket = outbound.admission
@@ -150,9 +187,15 @@ extension StreamClient {
     }
     func receiveIPadSentryReturn(_ data: Data, from peer: NWConnection) {
         DispatchQueue.main.async { [weak self, weak peer] in
-            guard let self, let peer, self.connection === peer, self.appInForeground,
+            guard let self, let peer, self.connection === peer, self.appInForeground, self.sentryReturnIsActive,
                   self.sentryReturn.receive(data, binding: self.sentryBinding(on: peer), from: ObjectIdentifier(peer), now: ProcessInfo.processInfo.systemUptime),
                   let entry = self.sentryReturn.latest else { return }
+            if entry.locallyCancelled {
+                if let outbound = self.sentryReturn.forwardCancellation(binding: self.sentryBinding(on: peer), from: ObjectIdentifier(peer), now: ProcessInfo.processInfo.systemUptime) {
+                    self.sendIPadSentryReturn(outbound, to: peer)
+                }
+                return
+            }
             if let intent = self.sentryReturnDeviceIntent, intent.peer == ObjectIdentifier(peer),
                intent.reference == entry.request.reference, self.sentryReturn.canProve {
                 self.sentryReturnDeviceIntent = nil

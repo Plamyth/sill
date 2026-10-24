@@ -10,7 +10,9 @@
 
 `WindowList.sentryReturn` 원문 하위 객체만 엄격 decode한다. 필드 부재나 잘못된 capability는 다른 catalog 소비자를 실패시키지 않는다. 실제 Host 217·218의 광고와 glue는 아직 없으므로 실제 송신은 미지원이다. source/fixture 준비를 Host 실행 지원으로 표시하지 않는다.
 
-송신은 실제 `SessionLink`의 `onlyOn`, `Submission`, 잠금 보호 불변 ticket을 사용한다. admit callback은 main 소유 배열·UI·consumer를 읽지 않고 main.sync도 호출하지 않는다. 연결 교체·취소·비활성·세대 변경은 보류된 송신과 인증 operation을 무효화한다. savedMacs·session·connected의 메인 observer는 revoked/newKey/pin·session binding 변경 시 같은 gate와 보류 Submission을 무효화한다. 명시적 기기 복귀 버튼의 메모리상 일회성 intent만 같은 요청의 challenge를 native 서명으로 이어 준다. current·catalog·재시작은 인증 UI를 시작하지 않는다.
+송신은 실제 `SessionLink`의 `onlyOn`, `Submission`, 잠금 보호 불변 ticket을 사용한다. admit callback은 main 소유 배열·UI·consumer를 읽지 않고 main.sync도 호출하지 않는다. 연결 교체·취소·background·세대 변경은 보류된 송신과 인증 operation을 무효화한다. `willResignActive`는 같은 operation에 native authentication context가 설치된 구간만 보존하고, 나머지 비활성은 취소한다. 화면과 입력 fence는 비활성 즉시 유지한다. 비활성 중 native 결과는 메모리에만 보관하며 `didBecomeActive`에서 같은 operation·peer·binding·lease·admission·expiry를 다시 확인해 원래 결과만 한 번 완료한다. 복귀 알림으로 인증이나 요청을 새로 만들지 않는다. savedMacs·session·connected의 메인 observer는 revoked/newKey/pin·session binding 변경 시 같은 gate와 보류 Submission을 무효화한다. 명시적 기기 복귀 버튼의 메모리상 일회성 intent만 같은 요청의 challenge를 native 서명으로 이어 준다. current·catalog·재시작은 인증 UI를 시작하지 않는다.
+
+취소가 첫 challenge보다 앞서면 원래 취소 의도와 raw reference를 보존한다. 검증된 늦은 challenge의 generation은 원래 취소 전송에만 사용한다. `cancelForwarded`를 송신 전에 저장하므로 중복 challenge·재시작으로 재전송하지 않는다. 실제 전달 확인이 없는 상태를 취소 완료로 표시하지 않으며 명시 current는 원래 reference 조회로 남긴다. 기존 원장의 전달 여부 미확인·generation 보유 취소는 자동 재전송하지 않는다. 취소와 경합한 같은 reference/generation의 expired·failed·rejected는 원문을 저장하고 다시 열기와 current 후 새 명시 요청을 허용한다. 늦은 completed 성공은 실행권한으로 수용하지 않는다.
 
 ## 전용 키
 
@@ -24,7 +26,7 @@ CryptoKit 생성자에 `SecAccessControl`의 `.privateKeyUsage`, `.userPresence`
 
 ## 검사 실행
 
-`python3 Tests/checks/ipad-sentry-return/run.py 고유-label`은 기존 reconnect-glue Mini RAM helper를 재사용한다. 실제 protocol·consumer·키 adapter·SessionLink·StreamClient extension을 컴파일한다. Network는 기록 대역이며 native 키 연산은 알려진 golden fixture 키만 사용한다. 소스/입력 해시와 RAM·임시 출력 제거 영수증을 storage-route가 정한 외장 경로에 남긴다. codex-source-guard의 작업 이전 수용과는 별도인 좁은 검사다.
+`python3 Tests/checks/ipad-sentry-return/run.py 고유-label`은 기존 reconnect-glue Mini RAM helper를 재사용한다. 실제 protocol·consumer·키 adapter·SessionLink·StreamClient extension을 컴파일한다. Network는 기록 대역이며 native 키 연산은 알려진 golden fixture 키만 사용한다. 기존 131개 검사에 더해 실제 iOS notification 본문을 추출한 inactive/active/background, native 결과 전후 무효화, 늦은 취소와 terminal 경합을 검사한다. run.py와 기존 RAM helper도 입력 해시에 포함한다. 소스/입력 해시와 RAM·임시 출력 제거 영수증을 storage-route가 정한 외장 경로에 남긴다. codex-source-guard의 작업 이전 수용과는 별도인 좁은 검사다.
 
 `python3 Tests/checks/ipad-sentry-return/sdk.py 고유-label`은 맥북에만 설치된 iOS SDK에서 실제 adapter/consumer를 typecheck하고 StreamClient/UI를 parse한다. 전체 iOS 앱의 link/build는 부모 범위다. 실키 생성·생체 UI·등록 송신·Host·음성·설치 조작은 실행하지 않는다.
 
@@ -34,4 +36,4 @@ Host의 Owner-only current glue와 Snapshot=nil 회귀, 최초 challenge를 잃�
 
 Hello.clientRunID의 process 수명과 Host의 검증 owner/device/auth generation/run 집합은 별도 생산자 범위다. 이 소비부는 Hello 필드를 추가하거나 legacy nil에 재잠금 억제 예외를 주지 않는다. 정확 후속 commit·fixture·독립 검수 전에는 생산자 수용을 주장하지 않는다.
 
-Pstack Feature에서 단일 소유 consumer·키 원장·UI를 구현했다. Model the Domain과 Boundary Discipline을 Entry/Owner/Proof 및 입출력 검증에 적용했다. Ponytail full은 기존 DTO·SessionLink·플랫폼 API 재사용에 적용했다. ARENA·순정 Goal·새 하위 에이전트는 실행하지 않았다. 독립 계약 검수, 최종 SDK·공식 integration·설치와 실물 수용은 부모가 소유한다.
+Pstack Feature에서 단일 소유 consumer·키 원장·UI를 구현했다. 이번 생명주기·취소 경합 수정은 Pstack Bug fix/TDD로 실패 검사를 먼저 커밋하고 수정 후 같은 대역을 재실행한다. Model the Domain과 Boundary Discipline을 Entry/Owner/Proof 및 입출력 검증에 적용했다. Ponytail full은 기존 DTO·SessionLink·플랫폼 API 재사용에 적용했다. ARENA·순정 Goal·새 하위 에이전트는 실행하지 않았다. 독립 계약 검수, 최종 SDK·공식 integration·설치와 실물 수용은 부모가 소유한다.
