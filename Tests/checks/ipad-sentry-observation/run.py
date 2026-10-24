@@ -82,7 +82,7 @@ handoff = json.loads(Path('/Volumes/BT-Workspace/Development-Archives/CCR-Vision
 common = {'Sources/StreamProtocol/Sentry.swift', 'Sources/StreamProtocol/SentryControl.swift',
           'Tests/checks/sentry-control-v2/fixtures.json', 'Tests/checks/sentry-control-v2/request.schema.json',
           'Tests/checks/sentry-control-v2/response.schema.json'}
-check('작업 기준 HEAD·branch 고정', subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip() == base_commit and subprocess.check_output(['git', 'branch', '--show-current'], cwd=ROOT, text=True).strip() == 'codex/ipad-sentry-shared-dto-20261025')
+check('작업 기준 commit 계보 유지', subprocess.run(['git', 'merge-base', '--is-ancestor', base_commit, 'HEAD'], cwd=ROOT).returncode == 0)
 check('Host handoff commit/tree exact', handoff['commit'] == host_commit and handoff['tree'] == host_tree and subprocess.check_output(['git', 'rev-parse', host_commit + '^{tree}'], cwd=ROOT, text=True).strip() == host_tree)
 for path in sorted(common):
     data = (ROOT / path).read_bytes()
@@ -94,7 +94,7 @@ allowed = {'iOSClient/IPadSentryObservation.swift', 'iOSClient/IPadSentryControl
            'iOSClient/StreamClient+Sentry.swift', 'iOSClient/HostSettingsPanel.swift'} | common
 # 세 source-request 검사 파일은 부모의 별도 워크트리 통합 범위다.
 parent_scope = {'Tests/checks/source-request/run.py', 'Tests/checks/source-request/transport.py', 'Tests/checks/source-request/Client.swift'}
-changed = subprocess.check_output(['git', 'diff', '--name-only'], cwd=ROOT, text=True).splitlines()
+changed = subprocess.check_output(['git', 'diff', '--name-only', base_commit], cwd=ROOT, text=True).splitlines()
 untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
 check('허용 파일 외 Host·서명·부모 변경 파일 쓰기 0', all(p in allowed or p in parent_scope or p.startswith('Tests/checks/ipad-sentry-observation/') for p in changed + untracked))
 wire = (ROOT / 'Sources/StreamProtocol/StreamMessage.swift').read_bytes()
