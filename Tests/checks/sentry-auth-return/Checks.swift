@@ -17,6 +17,7 @@ import Foundation
     var registry: LocalAudioParticipantRegistry { startup.participants }
     let generation = UUID()
     var nativeGate: ReturnGate?
+    var relayGate: ReturnGate?
     var nativeStopped = false
     var relayRequest: LocalAudioParticipantRequest?
     var unknownInspection = false
@@ -46,6 +47,7 @@ import Foundation
         registry.register(.relay, bootId: UUID(), control: .init(fenceAndQuiesce: { request in
             self.relayStops += 1
             self.relayRequest = request
+            if let gate = self.relayGate { await gate.wait() }
             return .init(request, state: .quiescent, facts: self.facts(true))
         }, inspect: { id in
             self.inspections += 1
@@ -139,6 +141,13 @@ import Foundation
         }
         check(f.registry.isFenced && f.registry.authenticatedLocalReturnUnavailableReason != nil,
               "\(failure) never clears uncertainty or media fence")
+        if failure == "cancel" || failure == "timeout" {
+            f.inspectionGate = nil
+            for _ in 0..<20 { await Task.yield() }
+            check(await f.registry.recoverClosedLocalReturn(until: .now.advanced(by: .seconds(2))),
+                  "\(failure) terminal callback requires fresh inspection before recovery")
+            check(f.registry.isFenced, "recovery after \(failure) keeps media fenced")
+        }
     }
 
     let late = ReturnFixture(), gate = ReturnGate()
@@ -156,6 +165,24 @@ import Foundation
     check(!(await late.registry.recoverClosedLocalReturn(until: .now.advanced(by: .seconds(2)))),
           "late native termination alone cannot prove an unprepared relay stopped")
     check(late.registry.isFenced && late.relayStops == 0, "unprepared participant remains fenced")
+
+    let relay = ReturnFixture(), relayGate = ReturnGate()
+    relay.relayGate = relayGate
+    let relayOperation = UUID(), relaySnapshot = relay.registry.snapshot
+    let relayTicket = relay.registry.beginLocalReturn(operationId: relayOperation,
+        privacyGeneration: relay.generation, membership: relaySnapshot)!
+    check(!(await relay.registry.fenceAndQuiesce(operationId: relayOperation, privacyGeneration: relay.generation,
+        membership: relaySnapshot, budgetMilliseconds: 50)), "relay terminal callback outlives original deadline")
+    relay.registry.endLocalReturn(relayTicket)
+    check(!(await relay.registry.recoverClosedLocalReturn(until: .now.advanced(by: .seconds(2)))),
+          "pending relay stop cannot be recovered")
+    relayGate.release()
+    await settle { relayGate.exited }
+    for _ in 0..<20 { await Task.yield() }
+    check(await relay.registry.recoverClosedLocalReturn(until: .now.advanced(by: .seconds(2))),
+          "late relay completion plus fresh native and relay inspection permits new authentication")
+    check(relay.registry.isFenced && relay.nativeStops == 1 && relay.relayStops == 1,
+          "late completion never repeats stops or opens the media fence")
 #endif
     print("PASS \(assertionCount) authentication-return checks; actual LA/HAL/UI/journal/device actions 0")
 }

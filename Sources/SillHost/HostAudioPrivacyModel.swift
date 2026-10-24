@@ -359,8 +359,9 @@ package final class HostAudioPrivacy {
     }
 
     private func performLocalReturn(budgetMilliseconds: Int, cancellation: LocalReturnCancellation) async -> Bool {
-        guard !cancellation.isCancelled, (1...30_000).contains(budgetMilliseconds), localReturnUnavailableReason == nil else { return false }
+        guard !cancellation.isCancelled, (1...30_000).contains(budgetMilliseconds) else { return false }
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
+        guard await participants.recoverClosedLocalReturn(until: deadline), !cancellation.isCancelled else { return false }
         guard await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
             await self.nativeStartup.waitUntilInitialized(); return true
         }) == true else { return false }
