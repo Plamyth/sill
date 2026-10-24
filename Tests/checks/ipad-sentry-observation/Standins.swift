@@ -6,12 +6,13 @@ final class NWConnection {
     enum Completion { case contentProcessed((NWError?) -> Void) }
     var sent: [Data] = []
     var failSend = false
+    var acknowledgeSend = true
     var wire = Data()
     var pin = Data(repeating: 1, count: 32)
     var alpn: String? = "sill/1"
     func send(content: Data?, completion: Completion) {
         if let content { sent.append(content) }
-        if case .contentProcessed(let callback) = completion { callback(failSend ? .failed : nil) }
+        if acknowledgeSend, case .contentProcessed(let callback) = completion { callback(failSend ? .failed : nil) }
     }
     func receive(minimumIncompleteLength: Int, maximumLength: Int,
                  completion: (Data?, Int?, Bool, NWError?) -> Void) {

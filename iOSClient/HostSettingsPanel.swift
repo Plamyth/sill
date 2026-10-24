@@ -240,10 +240,12 @@ struct HostSettingsPanel: View {
                     Button { client.setIPadSentry(desired: true) } label: {
                         Text("센트리 켜기").frame(minHeight: 44)
                     }
+                        .disabled(!client.sentryControl.canSet(desired: true))
                         .accessibilityHint("호스트에 센트리 보호를 켜도록 요청합니다.")
                     Button { client.setIPadSentry(desired: false) } label: {
                         Text("센트리 끄기").frame(minHeight: 44)
                     }
+                        .disabled(!client.sentryControl.canSet(desired: false))
                         .accessibilityHint("호스트의 화면 보호와 로컬 입력 차단 해제를 요청합니다. 오디오와 시스템 권한은 바꾸지 않습니다.")
                 }
                 .buttonStyle(.bordered)

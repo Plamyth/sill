@@ -1,44 +1,56 @@
-# iPad Sentry 소비자 원장
+# iPad Sentry 공유 DTO 소비자 인계
 
-작업 키는 `ipad-sentry-control-20261025`이다. 단독 소유 워크트리는 `/Users/ambrion/.codex/worktrees/ccr-ipad-sentry-control-20261025`, 브랜치는 `codex/ipad-sentry-control-20261025`, 기준은 `e88f8dc0e48bb9a75ebdadb9d66f68fef547fd36`이다. 부모의 `deab1b282c0a1686f90ff8f717f2d957c1b9fddd` 통합은 별도 작업이며 이 워크트리에서 rebase/cherry-pick하지 않는다.
+작업 키는 `ipad-sentry-shared-dto-20261025`이다. 단독 워크트리는 `/Users/ambrion/.codex/worktrees/ccr-ipad-sentry-shared-dto-20261025`, 브랜치는 `codex/ipad-sentry-shared-dto-20261025`, 기준 커밋은 `3beab7f8abd337c082617a31e53224759e35719f`이다. 커밋, rebase, cherry-pick, SDK, 설치, 실제 기기, Host, UI, HAL, 네트워크, Keychain 조작은 이 담당 범위에 없다.
 
-## Pstack Feature 진행
+## Pstack Feature 절차
 
-1. `how` over the affected subsystem. 완료. `WindowList`는 `Switcher.swift`의 Codable 모델이다. 수신 큐가 decode한 뒤 main에서 현재 connection을 다시 확인한다. 별도 Sentry decoder가 같은 원본 catalog의 `sentry`만 읽으므로 손상된 Sentry가 영상 catalog decode를 막지 않는다. `connection` setter가 관찰과 제어 context를 즉시 무효화한다.
-2. `architect` for parallel design exploration. 사용자 ARENA 금지에 따라 후보 경쟁을 하지 않는다. 정해진 `unknown/reported` 상태와 peer/boot/session 범위, 별도의 요청 상태를 그대로 사용한다. how/architect의 추가 에이전트 도구는 이 세션에 없으며 독립 검수는 부모가 수행한다.
-3. Write the throughput checkpoint as four todo items.
-   - **Blocking first steps.** clean e88와 적용 AGENTS·최신 결정을 확인했다. Host213 긴급 구간을 보호하며 기기·네트워크·권한·설치·키체인을 실행하지 않는다.
-   - **Independent workstreams.** 원 부모와 별도 WT로 독립 구현한다. 부모 검수·SDK는 앱 소스 동결 뒤 병렬 실행할 수 있다.
-   - **Shared mutable state.** 이 WT의 소비자와 검사만 쓴다. Host·원66 서명·다른 담당 변경은 보존한다. Protocol의 유일 예외는 부모가 지정한 두 enum case와 방향별 cap이다.
-   - **Smallest safe decomposition.** 관찰·제어·wiring·UI는 하나의 상태 계약이므로 이 담당이 한 번에 구현한다. store closure로 실제 UserDefaults 없이 실패를 주입하며 추가 프레임워크나 timer를 만들지 않는다.
-4. Delegate code-writing to a subagent. 별도 WT를 받은 구현 담당이 직접 작성한다. 부모가 비작성 독립 검수를 맡으므로 이 담당의 자가 검토를 CLEAR로 세지 않는다.
-5. Verify on the matching surface. 실제 Swift 모델·소비자·frontend 함수·MessageReader를 메모리 stand-in으로 실행하고 실제 iOS/Vision wiring을 정적으로 대조한다. SDK/UI/실기기는 이 검사의 수용 범위가 아니다.
-6. Rebase into small, ordered commits. skip. 사용자 지시로 직접 커밋·rebase·cherry-pick하지 않는다. diff와 freeze 영수증을 부모에게 반환한다.
-7. If the design is contested, `interrogate` before shipping. skip. 제공 계약을 구현하며 미확정 Host 소스를 대체 발명하지 않는다. 독립 검수는 부모 소유다.
-8. Run **Opening a PR**. skip. 이 작업은 소스·검사 인계이며 통합·배포 권한이 없다.
+- [x] 1. `how` over the affected subsystem. 실제 `StreamClient`는 현재 peer를 확인한 뒤 main에서 같은 catalog를 관찰과 제어에 전달한다. `StreamClient+Sentry`는 기존 Mac 등록, 현재 pinned TLS와 공개 기기 지문을 검사한다. Store 저장과 readback 뒤에만 packet을 반환한다. MessageReader와 기존 영상 catalog, input epoch와 fence는 기준 소스를 유지한다.
+- [x] 2. `architect` for parallel design exploration. 사용자 ARENA 금지를 우선하여 후보 경쟁은 실행하지 않았다. 기존 Phase와 public Store/Binding을 유지하고 공유 typed request, response, capability를 사용한다. Stored에 optional `priorRawRequest` 한 슬롯을 더한다. 관찰 adapter는 표준 JSONSerialization으로 control을 분리하며 v1 core도 공통 SentryState로 decode한다. 별도 Request/Reply/Control/Report와 자체 parser는 없다.
+- [x] 3. Write the throughput checkpoint as four todo items.
+  - **Blocking first steps.** 기준 HEAD/branch, AGENTS, 최신 결정과 저장 정책을 확인했다. 부모가 포트한 공유 5파일을 e17 exact blob과 handoff SHA에 대조했다.
+  - **Independent workstreams.** 이 담당은 소비자와 이 검사를 작성한다. 부모는 다른 WT에서 계약 대조와 source-request 검사 3파일을 수정한다. 부모가 동결 후 독립 검수와 SDK를 수행한다.
+  - **Shared mutable state.** 이 WT의 지정 소비자 3파일과 ipad-sentry-observation 검사만 수정한다. 공통 5파일은 읽기 전용이다. Host 배선, 실제 앱, 다른 담당 파일은 쓰지 않는다.
+  - **Smallest safe decomposition.** 요청 상태와 저장 복원은 하나의 상태 계약이므로 단독 구현한다. 기존 closure store로 저장 실패를 주입하고 기존 stand-in으로 실제 frontend와 reader를 실행한다. 추가 parser, timer, history UI, 테스트 전용 query API를 만들지 않는다.
+- [x] 4. Delegate code-writing to a subagent. 부모 Feature에서 단독 WT로 위임받은 실제 구현 담당이다. 중첩 spawn 도구는 없으며 직접 diff를 작성한다. 부모의 비작성 독립 검수를 별도 gate로 유지한다.
+- [x] 5. Verify on the matching surface. `python3 -B Tests/checks/ipad-sentry-observation/run.py`로 공통 DTO, 소비자, 실제 frontend 함수와 MessageReader를 실행한다. Host 고정 fixture의 raw와 SHA를 읽고 추가 반례는 메모리에서만 만든다. 최종 실행 결과와 소스 SHA는 `.build/checks/ipad-sentry-observation/`에 기록한다.
+- [ ] 부모 독립 검수. 이 담당의 검사와 자가 diff 검토를 독립 CLEAR로 세지 않는다.
+- [ ] 부모 iOS SDK. 이 담당이 SDK를 실행하지 않는다.
+- [x] 6. Rebase into small, ordered commits. skip. 직접 사용자 지시로 커밋, rebase, cherry-pick을 하지 않는다. 구현 diff와 sdk-ready marker를 인계한다.
+- [x] 7. If the design is contested, `interrogate` before shipping. skip. 부모의 구체 계약과 추가 반례를 수용하며 ARENA를 간접 호출하지 않는다.
+- [x] 8. Run **Opening a PR**. skip. 이 담당은 소스 동결까지 맡고 게시와 통합은 부모 범위다.
 
-Ponytail full을 적용했다. 기존 `SentryState`·JSONDecoder·StreamMessage를 재사용하고, 관찰은 typed state로 모델링했다. Boundary Discipline에 따라 wire 검증을 소비자 경계에 모았다. 입력 epoch/fence, 오디오 credential, Host 코드는 변경하지 않는다.
+Ponytail full은 기존 공통 DTO, Foundation, Store/Binding, 원문 query 경로를 재사용하는 선택에 적용했다. Model the Domain 원칙은 공유 UUID/enum과 기존 Phase로 상태를 표현하는 선택에 적용했다. Test Behavior, Not Implementation 원칙은 반환 packet, 보존 raw, UI 상태, 재시작과 저장 실패를 실제 소비자에서 검증하는 데 적용했다.
 
-## 확정 계약과 소비자 정책
+## 확정 계약
 
-- 부모 계약 원장은 `/Volumes/BT-Workspace/Development-Archives/ccr/ccr-local-only-input-20261025/sentry-control-contract-v2.json`이다. 최초 읽기 시 `sourceCommit=null`이었다. 후속 직접 지시가 성공 code와 새 session 조회 규칙을 확정했다. state.version은 1, optional control.version은 2다. code는 필수 nonnull String이며 operationState와 고정 code를 함께 검증한다.
-- native kind213 `activateSentry`와 kind214 `sentryState`, client 512 bytes/host 4096 bytes cap 및 반대 방향 거부는 `e9c556f8cd610414df7340074ed30073e9f11fec:Sources/StreamProtocol/StreamMessage.swift`의 원문을 읽어 지정된 구문만 포트했다. MessageReader는 기준 원문을 유지한다.
-- 관찰은 수신한 보고다. v1에는 공통 monotonic 필드가 없으므로 revision UUID·벽시계로 신선도나 실제 보호 효과를 판정하지 않는다. 같은 peer의 boot/session 충돌은 연결 교체 전까지 미확인이다.
-- control 없음·손상·미지원 version·다른 role·canSet=false는 조회만 허용한다. v1 자동 on이나 off fallback을 새로 추가하지 않는다. ownerDevice/canSet/authGen 광고와 현재 등록 Mac/pin, TLS sill/1, 현재 DeviceIdentity의 공개 fingerprint를 모두 검사한 명시 버튼만 요청을 만든다.
-- `Sill.sentryPending.v2` 하나에 MacID/pin·기기 공개 fingerprint·원래 JSON bytes를 보존한다. secret·private key·audio credential은 저장하지 않는다. store.save 성공과 readback 일치 전에는 전송 bytes를 반환하지 않는다. 재조회는 직렬화하지 않고 저장된 원문을 그대로 사용한다.
-- pending·unknown 상태의 원요청이 있으면 새 명시 on/off도 막는다. boot/authGen/Host/device가 바뀌어 원요청을 조회할 수 없어도 이 차단은 유지한다. 자동 새 ID·자동 토글·자동 원문 재전송은 없다. 같은 boot/기기/authGen을 현재 TLS와 capability로 확인한 수동 결과 조회만 새 session에서 원문을 재전송한다. 종결 applied/rejected/superseded 뒤에는 다음 명시 요청을 허용한다. 종결 원문은 다음 명시 요청이 내구 저장에 성공할 때까지 유지한다.
-- applied는 accepted=true이고 desired=false이면 requested=false/phase=inactive, desired=true이면 requested=true/phase=userSessionProtected일 때만 인정한다. 현재 peer/Host/device/authGen/scope가 맞아야 한다. pending·unknown·superseded·rejected는 ON/OFF 완료가 아니다. 무효 응답은 unknown이며 credential 만료나 새 ID 재시도로 바꾸지 않는다.
-- timeout은 기존 link 측정 tick의 monotonic 시간을 사용해 요청 대기만 해제한다. 이 시간은 Sentry 보고의 신선도나 권한 판단에 쓰지 않는다. 새 timer는 없다.
-- off 요청은 화면 보호와 로컬 HID 차단 해제 의미만 갖는다. OS/TCC/오디오 복원 코드는 없다. Host의 manual off 유지·실제 보호 readback·Sentry authority 발급은 Host 담당 책임이다.
+Authoritative Host는 `e17ec2abec7d9ea47b6262531674fc17fe22c6af`, tree는 `667e2199977d0cc8ac600e79682095613284b9a2`다. 계약과 handoff는 `/Volumes/BT-Workspace/Development-Archives/CCR-Vision/sentry-control-v2-contract-20261025/`에 있다. 부모가 같은 바이트로 포트한 `Sentry.swift`, `SentryControl.swift`, `fixtures.json`, `request.schema.json`, `response.schema.json`을 수정하지 않는다. run.py와 freeze.py는 정확한 blob과 SHA를 다시 검사한다.
 
-## Host exact 소스·fixture 수령 후 검증 계획
+`SentryControlRequest(rawRequest:)`가 정확 7필드, 중복, 알 수 없는 필드, 타입, lowercase UUID와 512-byte cap을 검증한다. 편의 init은 새 명시 요청만 생성한다. immutable rawRequest를 저장하고 수동 query에는 재인코딩 없이 사용한다. `SentryControlResponse.decodePayload`가 정확 6필드와 4096-byte cap, typed operation/code를 검증한다. rejected의 accepted=true와 false는 모두 실패 결과이며 UI rejected로 표현한다.
 
-현재 Request/Reply/Control/Report는 제공 계약의 private 소비자 형태다. Host가 authoritative Swift 파일·commit/tree·SHA와 JSON fixture를 반환하면 먼저 그 SHA를 대조한다. `IPadSentryControl.swift`의 private DTO와 packet decode 경계만 exact 공통 DTO로 교체하고 관찰·요청 상태·store·UI 정책은 유지한다. `Sources/StreamProtocol/Sentry.swift`는 이번 담당이 수정하지 않는다.
+기존 `Sill.sentryPending.v2`와 public Binding은 유지한다. priorRawRequest 없는 기존 Stored와 키순서가 임의인 정상 7필드 원문을 그대로 읽는다. pending-on에서 명시 off를 보낼 때 두 원문을 같은 저장 레코드에 영속화하고 readback한 뒤 packet을 반환한다. off 거절은 원 on을 active raw로, 거절 off를 prior raw로 저장 복원한 뒤 unknown으로 두고 수동 query를 허용한다. 거절 설명은 problem에 남긴다. 복원 저장 실패는 두 원문을 보존하고 unknown에서 새 요청을 막는다. off unknown과 재시작도 두 원문을 유지한다.
 
-fixture의 on/off·pending·거절·superseded·unknown을 그대로 소비자에 넣고 현재 합성 회귀의 실제 expected와 대조한다. JSON key 정렬은 서명 근거가 아니며, 재조회 원문 bytes가 바뀌지 않는지는 별도로 검사한다. v2 request UUID lowercase, authGen canonical, packet512/reply4096 및 조기 framing 거부도 exact source에서 재검증한다. Host source SHA 불일치나 fixture 부재는 계약 소스 수용 대기로 남긴다.
+미응답 inFlight와 unknown은 새 요청을 차단한다. 유효한 pending 응답을 받은 원 요청이 on이며 현재 typed control.manualIntent가 on이면 명시 off만 허용한다. off pending에는 세 번째 명령을 허용하지 않는다. 새 peer의 새 session에서는 먼저 old raw 그대로 수동 query한다. receive가 현재 session 응답을 검증한 뒤 확인된 pending-on이면 새 current session/revision과 새 ID의 명시 off를 허용한다. old raw는 바뀌지 않는다. Host busy는 on 원문 복원 경로로 처리한다. applied와 superseded는 증거를 보존한 채 다음 명시 요청을 허용한다.
 
-## 완료 경계
+Host e17의 statusLocked는 pendingControl이 있으면 requested와 관계없이 phase.pending을 보고한다. prepareControl은 on일 때만 requested=true로 바꾼다. 따라서 pending/false는 합법적인 prepared-off이며 완료가 아니다. 관찰 문구는 `보호 전환 중`이다. inactive/true, userSessionProtected/false와 blocked/false는 계속 모순으로 거절한다. applied off는 inactive/false일 때만 수용한다.
 
-실행 명령은 `python3 -B Tests/checks/ipad-sentry-observation/run.py`다. 검사 로그·결과와 source freeze/SDK-ready 표식은 `.build/checks/ipad-sentry-observation/`에 둔다. 이 담당은 직접 커밋·SDK 설치·앱 실행·기기 조회·실제 송신·Keychain 쓰기·권한 변경·Host 변경을 하지 않는다.
+Host 공통 정책은 trusted 정상 v1 state의 기존 v1 on-only 제어를 허용하고 off를 허용하지 않는다. 기준 iPad 3beab에는 v1 활성화 송신과 UI가 없으므로 이 iPad v2 소비자는 control capability가 없을 때 관찰만 지원한다. 이 지원 범위를 공통 legacy query-only 금지 정책으로 해석하지 않는다. 공유 SentryActivation과 SentryResponse의 원문을 보존하고 이번 작업에 별도 legacy 제어기를 추가하지 않는다.
 
-부모의 독립 검수와 iOS SDK 빌드, authoritative Host DTO/fixture 수용, 설치와 실물 UI·접근성 검증은 별도다. Sentry 소비자 구현·모델 검사는 통화 제어, 실제 마이크/스피커 입출력, 실제 재접속이나 제품 전체 완료를 뜻하지 않는다.
+잘못되거나 미래의 control은 catalog adapter에서 nil로 낮추고 v1 core 관찰을 유지한다. 유효한 shared control은 그대로 보존한다. 영상 catalog decode는 변경하지 않는다. 성공 reply의 잘못된 capability는 strict decoder가 거절하며 소비자는 원문을 unknown으로 보존한다.
+
+## 원장 접수 확인 후속 교정
+
+부모는 이전 소스 SHA `74af2f3bb2a48635492506a7c88c4e7c1c00db8a0cbd6203df8f015060ec002e`의 SDK BUILD SUCCEEDED와 프로세스 exit 0을 보고했다. 이전 독립 검수는 미접수 원문의 같은 session query P1 외에 추가 P1/P2가 없다고 보고했다. 이전 결과와 SDK 보고 출처를 `.build/checks/ipad-sentry-observation/previous-74af/`에 보존한다. 이 담당이 SDK 로그를 직접 읽거나 이 후속 버전의 SDK 통과를 확인한 것은 아니다. 부모는 SDK 종료 뒤 후속 변경을 승인했고 같은 WT의 쓰기·검사를 중단했다. 새 버전의 delta 독립 검수와 SDK는 부모가 다시 수행한다.
+
+Stored에 optional `ledgerAccepted`, `priorLedgerAccepted`를 추가한다. 없는 값은 false로 취급해 이전 저장 형식과 호환한다. 새 명시 요청은 false이며 prior on을 보존할 때 그 원문의 접수 값도 같이 저장한다. 현재 peer와 binding, boot, auth, 현재 응답 session에 일치하고 공통 strict decoder를 통과한 accepted=true 응답만 해당 원문의 true를 저장한다. 저장과 readback이 확인되기 전에 가용성을 바꾸지 않는다. 저장 실패는 unknown이며 원문을 유지한다. accepted=false는 기존 true를 내리지 않는다. Host가 확정한 원장 128개 eviction은 revision을 옛값으로 복원하지 않으므로 접수된 old CAS의 같은 session 조회도 미등록이면 unknown과 최초 효과 0이다. 소비자 검사는 보존된 원문 조회에 eviction unknown 응답을 주입해 true를 eligibility로만 유지하고 완료·새 명령·CAS 수정을 허용하지 않는지 확인한다. flags는 원장 접수 증거이며 권한이나 완료 상태가 아니다. failed/rejected의 accepted=true도 접수 증거이고 완료는 아니다.
+
+원장의 접수가 확인되지 않은 원문은 같은 TLS session에서 조회 재전송하지 않는다. 저장만 한 경우, 송신 직전 중단, contentProcessed 성공·실패, ACK 미확인, 응답 timeout도 true로 승격하지 않는다. 같은 binding/device/boot/auth의 새 session에서는 old session과 revision을 포함한 원문 그대로 수동 조회할 수 있다. 미등록 응답이 unknown이면 최초 효과와 접수 proof를 만들지 않는다. 저장된 true도 matches의 trust와 scope 검사를 통과해야 사용할 수 있다. BUSY 복원은 on true와 off false를 원문에 맞춰 교환하고 재시작 뒤에도 유지한다. 같은 session 미접수 상태에는 기존 상태 텍스트로 연결을 다시 맺은 뒤 확인하라는 안내만 표시한다. 새 wire kind, query kind, 재실행 버튼이나 history UI는 없다.
+
+이번 후속 제품 변경은 IPadSentryControl.swift 한 파일에만 둔다. main.swift의 기존 302개 회귀 기대 중 미접수 같은 session query와 저장 키 기대를 canonical 계약에 맞게 교정하고 새 반례를 추가한다. Standins.swift에는 ACK 생략 시험을 위한 메모리 flag만 추가한다. 공통 5파일과 schema 및 실제 frontend/reader wiring은 보존한다. run.py의 기존 exact source·40개 정적 검사는 재사용하며 새 결과로 source SHA와 marker를 재발급한다.
+
+## 검증과 완료 경계
+
+원 Host fixture on/off bytes와 SHA, 공통 request/reply decode, 소비자의 실제 on/off 경로, accepted true/false rejected, pending-on 후 off, busy와 다른 거절 복원, 재시작, unknown, 저장 실패와 readback 실패, 늦은 peer와 session 및 Host/device/auth 경계를 검사한다. strict payload의 중복과 추가·누락 필드, 타입, UUID, capability와 operation/code 반례도 검사한다. 추가 fixture는 메모리에서 만들고 고정 Host fixture를 변경하지 않는다.
+
+run.py의 과거 e88 guard는 기준3beab의 실제 불변 코드와 Host e17의 exact blob을 대조하도록 갱신했다. 부모의 비중복 `source-request/{run.py,transport.py,Client.swift}` 변경을 허용 목록에 명시했다. 이 담당은 그 파일을 수정하지 않는다.
+
+`freeze.py`는 검사 입력과 현재 소스의 SHA가 같을 때만 `.build/checks/ipad-sentry-observation/sdk-ready.json`을 만든다. 결과, 로그, implementation.diff와 소스 SHA를 같은 디렉터리에 둔다. 소스와 DTO 수용은 실제 Host 배선·설치·기기·네트워크·보호 효과 수용이 아니다. producer가 없는 native Codex call은 unsupported로 유지한다.

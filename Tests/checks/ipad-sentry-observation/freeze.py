@@ -13,7 +13,13 @@ assert manifest == result['sourceFiles'], '검사 뒤 소스가 바뀌었습니�
 source_sha = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 assert source_sha == result['sourceCodeSha256']
 head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-assert head == 'e88f8dc0e48bb9a75ebdadb9d66f68fef547fd36'
+assert head == '3beab7f8abd337c082617a31e53224759e35719f'
+assert subprocess.check_output(['git', 'branch', '--show-current'], cwd=ROOT, text=True).strip() == 'codex/ipad-sentry-shared-dto-20261025'
+for path, digest in result['commonFileSHA256'].items():
+    data = (ROOT / path).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == digest
+    assert data == subprocess.check_output(['git', 'show', result['authoritativeHostCommit'] + ':' + path], cwd=ROOT)
+
 tracked = subprocess.check_output(['git', 'diff', '--binary'], cwd=ROOT)
 untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
 for path in untracked:
@@ -24,12 +30,12 @@ for path in untracked:
 (OUT / 'source-sha256.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
 log = (OUT / 'checks.log').read_text()
 runtime = [line for line in log.splitlines() if line.startswith('소비자 회귀 ')][-1]
-marker = dict(status='sdk-ready-source-frozen', worktree=str(ROOT), branch='codex/ipad-sentry-control-20261025',
+marker = dict(status='sdk-ready-source-frozen', worktree=str(ROOT), branch='codex/ipad-sentry-shared-dto-20261025',
               baseCommit=head, sourceCodeSha256=source_sha, sourceFiles=manifest,
               diffSha256=hashlib.sha256(tracked).hexdigest(), runtimeResult=runtime,
               staticCheckCount=len(result['staticChecks']), sdkBuild='pending-parent', independentReview='pending-parent',
-              authoritativeHostDTO='pending-source-and-fixture',
+              authoritativeHostDTO='accepted-exact-e17-source-and-fixture-not-runtime', authoritativeHostCommit=result['authoritativeHostCommit'], authoritativeHostTree=result['authoritativeHostTree'], commonFileSHA256=result['commonFileSHA256'],
               nativeCodexCall='unsupported-no-native-producer',
-              deviceNetworkKeychainHostActions=0, committed=False)
+              deviceNetworkKeychainHostActions=0, runtimeAccepted=False, physicalAcceptance=False, committed=False)
 (OUT / 'sdk-ready.json').write_text(json.dumps(marker, ensure_ascii=False, indent=2) + '\n')
 print(json.dumps({k: v for k, v in marker.items() if k != 'sourceFiles'}, ensure_ascii=False, indent=2))

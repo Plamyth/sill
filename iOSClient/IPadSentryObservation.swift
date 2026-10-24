@@ -13,8 +13,15 @@ struct IPadSentryObservation: Equatable {
         let sessionID: UUID
     }
 
-    private struct Catalog: Decodable {
-        let sentry: SentryState?
+    static func decodeCatalog(_ data: Data) -> SentryState? {
+        guard let catalog = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var sentry = catalog["sentry"] as? [String: Any],
+              let raw = try? JSONSerialization.data(withJSONObject: sentry) else { return nil }
+        if let state = try? JSONDecoder().decode(SentryState.self, from: raw) { return state }
+        // 미래 capability나 손상된 control이 기존 v1 관찰을 가리지 않도록 분리한다.
+        sentry.removeValue(forKey: "control")
+        guard let core = try? JSONSerialization.data(withJSONObject: sentry) else { return nil }
+        return try? JSONDecoder().decode(SentryState.self, from: core)
     }
 
     private(set) var status: Status = .unknown
@@ -31,7 +38,7 @@ struct IPadSentryObservation: Equatable {
     mutating func observe(catalog: Data, from peer: ObjectIdentifier) {
         guard self.peer == peer else { return }
         guard !scopeConflicted,
-              let state = try? JSONDecoder().decode(Catalog.self, from: catalog).sentry else {
+              let state = Self.decodeCatalog(catalog) else {
             status = .unknown
             return
         }
@@ -55,7 +62,7 @@ struct IPadSentryObservation: Equatable {
     static func isConsistent(_ state: SentryState) -> Bool {
         guard state.version == 1 else { return false }
         switch (state.phase, state.requested) {
-        case (.inactive, false), (.pending, true), (.userSessionProtected, true), (.blocked, true):
+        case (.inactive, false), (.pending, _), (.userSessionProtected, true), (.blocked, true):
             return true
         default:
             return false
@@ -68,7 +75,7 @@ struct IPadSentryObservation: Equatable {
         case .reported(let state):
             switch state.phase {
             case .userSessionProtected: return "호스트 보고: 켜짐·보호 확인"
-            case .pending: return "호스트 보고: 보호 준비"
+            case .pending: return "호스트 보고: 보호 전환 중"
             case .blocked: return "호스트 보고: 보호 확인 실패"
             case .inactive: return "호스트 보고: 꺼짐"
             }

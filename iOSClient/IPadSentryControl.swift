@@ -32,73 +32,25 @@ struct IPadSentryControl {
     private struct Stored: Codable {
         let binding: Binding
         let rawRequest: Data
+        let priorRawRequest: Data?
+        let ledgerAccepted: Bool?
+        let priorLedgerAccepted: Bool?
     }
     private struct Pending {
         let stored: Stored
-        let request: Request
+        let request: SentryControlRequest
     }
     private struct Context {
         let binding: Binding
         let state: SentryState
-        let control: Control
+        let control: SentryControlCapability
     }
     private enum StoreFailure: Error { case unconfirmed }
 
-    // Private transport DTOs are replaced by the Host's exact Swift DTOs when supplied.
-    private struct Request: Codable {
-        let version: Int
-        let requestID: String
-        let hostBootID: String
-        let sessionID: String
-        let revision: String
-        let authorizationGeneration: String
-        let desired: Bool
-
-        var isValid: Bool {
-            version == 2 && [requestID, hostBootID, sessionID, revision, authorizationGeneration]
-                .allSatisfy(IPadSentryControl.canonicalUUID)
-        }
-    }
-    private struct Control: Decodable {
-        let version: Int
-        let role: String
-        let authorizationGeneration: String
-        let canSet: Bool
-        let manualIntent: String
-
-        var isValid: Bool {
-            version == 2 && role == "ownerDevice" && canSet &&
-                IPadSentryControl.canonicalUUID(authorizationGeneration) &&
-                ["automatic", "on", "off"].contains(manualIntent)
-        }
-    }
-    private struct Report: Decodable {
-        let state: SentryState
-        let control: Control?
-        private enum CodingKeys: String, CodingKey { case control }
-        init(from decoder: Decoder) throws {
-            state = try SentryState(from: decoder)
-            control = try? decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(Control.self, forKey: .control)
-        }
-    }
-    private struct Catalog: Decodable { let sentry: Report? }
-    private struct Reply: Decodable {
-        let version: Int
-        let requestID: String
-        let accepted: Bool
-        let operationState: String
-        let code: String
-        let state: Report
-    }
-
     static let requestKind: UInt8 = 213
     static let responseKind: UInt8 = 214
-    static let requestCap = 512
-    static let responseCap = 4096
-    private static let rejectionCodes: Set<String> = [
-        "SENTRY_UNSUPPORTED", "SENTRY_NOT_AUTHORIZED", "SENTRY_STALE_STATE", "SENTRY_REQUEST_CONFLICT",
-        "SENTRY_BUSY", "SENTRY_CONTROL_FAILED", "SENTRY_TARGET_UNCONFIRMED", "SENTRY_SUPERSEDED"
-    ]
+    static let requestCap = SentryControlRequest.maximumPayload
+    static let responseCap = SentryControlResponse.maximumPayload
     private let store: Store
     private var peer: ObjectIdentifier?
     private var context: Context?
@@ -115,7 +67,8 @@ struct IPadSentryControl {
         guard let stored = try? JSONDecoder().decode(Stored.self, from: data),
               stored.binding.hostPin.count == 32, stored.binding.deviceFingerprint.count == 32,
               !stored.binding.macID.isEmpty,
-              let request = Self.request(stored.rawRequest) else {
+              let request = Self.request(stored.rawRequest),
+              Self.validPrior(stored.priorRawRequest, for: request) else {
             problem = "이전 센트리 요청 저장 내용을 확인하지 못했습니다."
             return
         }
@@ -132,8 +85,8 @@ struct IPadSentryControl {
     mutating func observe(catalog: Data, observation: IPadSentryObservation, binding: Binding?, from peer: ObjectIdentifier) {
         guard self.peer == peer else { return }
         guard case .reported(let state) = observation.status,
-              let binding, let report = try? JSONDecoder().decode(Catalog.self, from: catalog).sentry,
-              report.state == state, let control = report.control, control.isValid else {
+              let binding, let report = IPadSentryObservation.decodeCatalog(catalog),
+              report == state, let control = report.control else {
             context = nil
             unconfirmed()
             return
@@ -147,44 +100,46 @@ struct IPadSentryControl {
         if let pending, !matches(pending) { unconfirmed() }
     }
 
-    var canSet: Bool {
+    var canSet: Bool { canSet(desired: true) || canSet(desired: false) }
+
+    func canSet(desired: Bool) -> Bool {
         guard context != nil, peer != nil, !inFlight else { return false }
-        if pending == nil { return phase == .idle }
+        guard let pending else { return phase == .idle }
+        guard matches(pending) else { return false }
         switch phase {
         case .applied, .rejected, .superseded: return true
+        case .pending:
+            return !desired && pending.request.desired && context?.control.manualIntent == .on
         default: return false
         }
     }
     var canQuery: Bool {
         guard let pending, !inFlight else { return false }
-        return matches(pending)
+        return matches(pending) && (pending.stored.ledgerAccepted == true ||
+            pending.request.sessionID != context?.state.sessionID)
     }
     var originalRequest: Data? { pending?.stored.rawRequest }
+    var priorRequest: Data? { pending?.stored.priorRawRequest }
 
     mutating func perform(desired: Bool, binding: Binding?, from peer: ObjectIdentifier,
                           now: TimeInterval, requestID: UUID? = nil) -> Data? {
         guard self.peer == peer else { return nil }
         revalidate(binding: binding)
-        guard canSet, let context, context.binding == binding else { return nil }
+        guard canSet(desired: desired), let context, context.binding == binding else { return nil }
         let requestID = requestID ?? UUID()
-        guard pending?.request.requestID != requestID.uuidString.lowercased() else { return nil }
-        let request = Request(version: 2, requestID: requestID.uuidString.lowercased(),
-            hostBootID: context.state.hostBootID.uuidString.lowercased(), sessionID: context.state.sessionID.uuidString.lowercased(),
-            revision: context.state.revision.uuidString.lowercased(),
-            authorizationGeneration: context.control.authorizationGeneration, desired: desired)
-        guard let raw = try? JSONEncoder().encode(request), Self.request(raw) != nil else { return nil }
-        let stored = Stored(binding: context.binding, rawRequest: raw)
-        guard let data = try? JSONEncoder().encode(stored) else { return nil }
-        do {
-            try store.save(data)
-            guard store.load() == data else { throw StoreFailure.unconfirmed }
-        } catch {
-            problem = "센트리 요청을 저장하지 못해 전송하지 않았습니다."
-            return nil
-        }
+        guard pending?.request.requestID != requestID,
+              pending?.stored.priorRawRequest.flatMap(Self.request)?.requestID != requestID,
+              let request = try? SentryControlRequest(requestID: requestID,
+                hostBootID: context.state.hostBootID, sessionID: context.state.sessionID,
+                revision: context.state.revision,
+                authorizationGeneration: context.control.authorizationGeneration, desired: desired) else { return nil }
+        let prior = phase == .pending ? pending?.stored.rawRequest : nil
+        let stored = Stored(binding: context.binding, rawRequest: request.rawRequest, priorRawRequest: prior,
+                            ledgerAccepted: false, priorLedgerAccepted: prior == nil ? nil : pending?.stored.ledgerAccepted)
+        guard persist(stored) else { return nil }
         pending = Pending(stored: stored, request: request)
         problem = nil
-        return begin(raw, now: now)
+        return begin(request.rawRequest, now: now)
     }
 
     mutating func query(binding: Binding?, from peer: ObjectIdentifier, now: TimeInterval) -> Data? {
@@ -217,43 +172,67 @@ struct IPadSentryControl {
     mutating func receive(_ data: Data, binding: Binding?, from peer: ObjectIdentifier) -> SentryState? {
         guard self.peer == peer else { return nil }
         revalidate(binding: binding)
-        guard let pending, matches(pending), let context, context.binding == binding,
+        guard var pending, matches(pending), let context, context.binding == binding,
               data.count <= Self.responseCap,
-              let reply = try? JSONDecoder().decode(Reply.self, from: data), reply.version == 2,
-              Self.canonicalUUID(reply.requestID), reply.requestID == pending.request.requestID,
-              IPadSentryObservation.isConsistent(reply.state.state),
-              reply.state.state.hostBootID == context.state.hostBootID,
-              reply.state.state.sessionID == context.state.sessionID,
-              let control = reply.state.control, control.isValid,
+              let reply = try? SentryControlResponse.decodePayload(data),
+              reply.requestID == pending.request.requestID,
+              IPadSentryObservation.isConsistent(reply.state),
+              reply.state.hostBootID == context.state.hostBootID,
+              reply.state.sessionID == context.state.sessionID,
+              let control = reply.state.control,
               control.authorizationGeneration == context.control.authorizationGeneration else {
             unconfirmed()
             return nil
         }
-        let state = reply.state.state
+        if reply.accepted && pending.stored.ledgerAccepted != true {
+            let stored = Stored(binding: pending.stored.binding, rawRequest: pending.stored.rawRequest,
+                                priorRawRequest: pending.stored.priorRawRequest,
+                                ledgerAccepted: true, priorLedgerAccepted: pending.stored.priorLedgerAccepted)
+            guard persist(stored) else { return nil }
+            pending = Pending(stored: stored, request: pending.request)
+            self.pending = pending
+        }
+        let state = reply.state
         switch (reply.operationState, reply.code) {
-        case ("applied", "SENTRY_APPLIED"):
+        case (.applied, .applied):
             guard reply.accepted,
                   pending.request.desired ? state.requested && state.phase == .userSessionProtected : !state.requested && state.phase == .inactive else {
                 unconfirmed(); return nil
             }
             phase = .applied
-        case ("pending", "SENTRY_PENDING"): phase = .pending
-        case ("unknown", "SENTRY_UNKNOWN"): phase = .unknown
-        case ("superseded", "SENTRY_SUPERSEDED"): phase = .superseded
-        case ("rejected", let code) where !reply.accepted && Self.rejectionCodes.contains(code): phase = .rejected(code)
+        case (.pending, .pending): phase = .pending
+        case (.unknown, .unknown): phase = .unknown
+        case (.superseded, .superseded): phase = .superseded
+        case (.rejected, let code): phase = .rejected(code.rawValue)
         default: unconfirmed(); return nil
         }
         inFlight = false
         deadline = nil
-        problem = nil
         self.context = Context(binding: context.binding, state: state, control: control)
+        if case .rejected = phase {
+            let rejection = statusText
+            problem = rejection
+            if !pending.request.desired, let raw = pending.stored.priorRawRequest,
+               let request = Self.request(raw), request.desired {
+                let stored = Stored(binding: pending.stored.binding, rawRequest: raw,
+                                    priorRawRequest: pending.stored.rawRequest,
+                                    ledgerAccepted: pending.stored.priorLedgerAccepted,
+                                    priorLedgerAccepted: pending.stored.ledgerAccepted)
+                if persist(stored) {
+                    self.pending = Pending(stored: stored, request: request)
+                } else {
+                    problem = rejection + " " + (problem ?? "")
+                }
+                unconfirmed()
+            }
+        }
         return state
     }
 
     private func matches(_ pending: Pending) -> Bool {
         guard let context else { return false }
         return context.binding == pending.stored.binding &&
-            context.state.hostBootID.uuidString.lowercased() == pending.request.hostBootID &&
+            context.state.hostBootID == pending.request.hostBootID &&
             context.control.authorizationGeneration == pending.request.authorizationGeneration
     }
     private mutating func revalidate(binding: Binding?) {
@@ -267,13 +246,27 @@ struct IPadSentryControl {
         guard self.peer == peer, inFlight, let pending, matches(pending), context?.binding == binding else { return false }
         return Self.packet(pending.stored.rawRequest) == packet
     }
-    private static func canonicalUUID(_ value: String) -> Bool {
-        UUID(uuidString: value)?.uuidString.lowercased() == value
+    private mutating func persist(_ stored: Stored) -> Bool {
+        do {
+            let data = try JSONEncoder().encode(stored)
+            try store.save(data)
+            guard store.load() == data else { throw StoreFailure.unconfirmed }
+            return true
+        } catch {
+            problem = "센트리 요청 저장을 확인하지 못했습니다. 원래 요청을 보존하고 결과를 다시 확인하세요."
+            unconfirmed()
+            return false
+        }
     }
-    private static func request(_ raw: Data) -> Request? {
-        guard !raw.isEmpty, raw.count <= requestCap,
-              let request = try? JSONDecoder().decode(Request.self, from: raw), request.isValid else { return nil }
-        return request
+    private static func request(_ raw: Data) -> SentryControlRequest? {
+        try? SentryControlRequest(rawRequest: raw)
+    }
+    private static func validPrior(_ raw: Data?, for request: SentryControlRequest) -> Bool {
+        guard let raw else { return true }
+        guard let prior = Self.request(raw) else { return false }
+        return prior.requestID != request.requestID && prior.desired != request.desired &&
+            prior.hostBootID == request.hostBootID &&
+            prior.authorizationGeneration == request.authorizationGeneration
     }
     static func packet(_ raw: Data) -> Data? {
         guard request(raw) != nil else { return nil }
@@ -284,7 +277,12 @@ struct IPadSentryControl {
         switch phase {
         case .idle: return ""
         case .pending: return "센트리 요청 결과 대기 중"
-        case .unknown: return "센트리 요청 결과 미확인 · 원래 요청 보존"
+        case .unknown:
+            if let pending, matches(pending), pending.stored.ledgerAccepted != true,
+               pending.request.sessionID == context?.state.sessionID {
+                return "호스트 접수 미확인 · 연결을 다시 맺은 뒤 원래 요청 결과를 확인하세요."
+            }
+            return "센트리 요청 결과 미확인 · 원래 요청 보존"
         case .applied: return "센트리 요청 적용 확인"
         case .superseded: return "다른 명시 요청으로 대체됨 · 현재 호스트 보고 확인"
         case .rejected(let code):

@@ -29,7 +29,7 @@ checks = []
 
 def source_manifest():
     paths = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
-    paths = sorted(p for p in paths if p == 'Package.swift' or (p.startswith(('iOSClient/', 'visionOSClient/', 'Sources/StreamProtocol/')) and Path(p).suffix in {'.swift', '.pbxproj', '.plist', '.xcconfig'}))
+    paths = sorted(p for p in paths if p == 'Package.swift' or (p.startswith(('iOSClient/', 'visionOSClient/', 'Sources/StreamProtocol/')) and Path(p).suffix in {'.swift', '.pbxproj', '.plist', '.xcconfig'}) or p.startswith(('Tests/checks/ipad-sentry-observation/', 'Tests/checks/sentry-control-v2/')) and Path(p).suffix in {'.swift', '.py', '.json', '.md'})
     return {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in paths}
 
 
@@ -47,7 +47,7 @@ ui = (ROOT / 'iOSClient/HostSettingsPanel.swift').read_text()
 extension = (ROOT / 'iOSClient/StreamClient+Sentry.swift').read_text()
 ios = select_platform(stream, vision=False, ios=True)
 vision = select_platform(stream, vision=True)
-base = subprocess.check_output(['git', 'show', 'e88f8dc0e48bb9a75ebdadb9d66f68fef547fd36:iOSClient/StreamClient.swift'], cwd=ROOT, text=True)
+base = subprocess.check_output(['git', 'show', '3beab7f8abd337c082617a31e53224759e35719f:iOSClient/StreamClient.swift'], cwd=ROOT, text=True)
 base_vision = select_platform(base, vision=True)
 connection = block(ios, 'var connection: NWConnection?')
 check('connection setter에서 즉시 관찰·제어 무효화', connection.index('sentryObservation.bind(') < connection.index('replacePresentationConnection(') and 'sentryControl.bind(' in connection)
@@ -65,7 +65,7 @@ check('Vision에 iPad Sentry published·함수·UI 없음', 'sentryControl' not 
 for marker in ['var connection: NWConnection?', 'private func handle(', 'private func closeWindow(']:
     check(marker + ' Vision 실행 코드 불변', block(vision, marker) == block(base_vision, marker))
 check('native kind214 switch 수신 wiring', 'case .sentryState:\n            receiveIPadSentry(data, from: peer)' in block(ios, 'private func handle('))
-check('MessageReader 원본 불변', (ROOT / 'iOSClient/MessageReader.swift').read_text() == subprocess.check_output(['git', 'show', 'e88f8dc0e48bb9a75ebdadb9d66f68fef547fd36:iOSClient/MessageReader.swift'], cwd=ROOT, text=True))
+check('MessageReader 원본 불변', (ROOT / 'iOSClient/MessageReader.swift').read_text() == subprocess.check_output(['git', 'show', '3beab7f8abd337c082617a31e53224759e35719f:iOSClient/MessageReader.swift'], cwd=ROOT, text=True))
 view = block(ui, 'private var sentryReport:')
 check('명시 on/off·수동 조회 버튼의 정확한 desired', all(s in view for s in ['Button { client.setIPadSentry(desired: true) }', 'Button { client.setIPadSentry(desired: false) }', 'Button { client.queryIPadSentry() }']) and view.count('.frame(minHeight: 44)') == 3)
 check('Sentry UI 자동 송신 경로 없음', all(s not in view for s in ['.onChange', '.onAppear', '.task(', 'Toggle(']))
@@ -75,16 +75,36 @@ check('새 timer 없음', all(s not in extension + (ROOT / 'iOSClient/IPadSentry
 project = (ROOT / 'iOSClient/Sill.xcodeproj/project.pbxproj').read_text()
 for name in ['IPadSentryObservation.swift', 'IPadSentryControl.swift', 'StreamClient+Sentry.swift']:
     check(name + ' iPad·iPhone build 참조', project.count('/* ' + name + ' in Sources */ =') == 2 and project.count('path = "' + name + '";') + project.count('path = ' + name + ';') == 1)
-allowed = {'iOSClient/IPadSentryObservation.swift', 'iOSClient/IPadSentryControl.swift', 'iOSClient/StreamClient+Sentry.swift', 'iOSClient/StreamClient.swift', 'iOSClient/HostSettingsPanel.swift', 'iOSClient/Sill.xcodeproj/project.pbxproj', 'Sources/StreamProtocol/StreamMessage.swift'}
+base_commit = '3beab7f8abd337c082617a31e53224759e35719f'
+host_commit = 'e17ec2abec7d9ea47b6262531674fc17fe22c6af'
+host_tree = '667e2199977d0cc8ac600e79682095613284b9a2'
+handoff = json.loads(Path('/Volumes/BT-Workspace/Development-Archives/CCR-Vision/sentry-control-v2-contract-20261025/handoff.json').read_text())
+common = {'Sources/StreamProtocol/Sentry.swift', 'Sources/StreamProtocol/SentryControl.swift',
+          'Tests/checks/sentry-control-v2/fixtures.json', 'Tests/checks/sentry-control-v2/request.schema.json',
+          'Tests/checks/sentry-control-v2/response.schema.json'}
+check('작업 기준 HEAD·branch 고정', subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip() == base_commit and subprocess.check_output(['git', 'branch', '--show-current'], cwd=ROOT, text=True).strip() == 'codex/ipad-sentry-shared-dto-20261025')
+check('Host handoff commit/tree exact', handoff['commit'] == host_commit and handoff['tree'] == host_tree and subprocess.check_output(['git', 'rev-parse', host_commit + '^{tree}'], cwd=ROOT, text=True).strip() == host_tree)
+for path in sorted(common):
+    data = (ROOT / path).read_bytes()
+    check('공통 5파일 exact blob·handoff SHA ' + path, data == subprocess.check_output(['git', 'show', host_commit + ':' + path], cwd=ROOT) and hashlib.sha256(data).hexdigest() == handoff['fileSHA256'][path])
+host_fixture = json.loads((ROOT / 'Tests/checks/sentry-control-v2/fixtures.json').read_text())
+for name in ['On', 'Off']:
+    check('Host 원 request raw SHA256 ' + name, hashlib.sha256(host_fixture['request' + name + 'Raw'].encode()).hexdigest() == host_fixture['request' + name + 'SHA256'])
+allowed = {'iOSClient/IPadSentryObservation.swift', 'iOSClient/IPadSentryControl.swift',
+           'iOSClient/StreamClient+Sentry.swift', 'iOSClient/HostSettingsPanel.swift'} | common
+# 세 source-request 검사 파일은 부모의 별도 워크트리 통합 범위다.
+parent_scope = {'Tests/checks/source-request/run.py', 'Tests/checks/source-request/transport.py', 'Tests/checks/source-request/Client.swift'}
 changed = subprocess.check_output(['git', 'diff', '--name-only'], cwd=ROOT, text=True).splitlines()
 untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
-check('허용 파일 외 Host·서명·부모 변경 파일 쓰기 0', all(p in allowed or p.startswith('Tests/checks/ipad-sentry-observation/') for p in changed + untracked))
-wire = (ROOT / 'Sources/StreamProtocol/StreamMessage.swift').read_text()
-wire_base = subprocess.check_output(['git', 'show', 'e88f8dc0e48bb9a75ebdadb9d66f68fef547fd36:Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT, text=True)
-wire_expected = wire_base.replace('    case forwardingControl = 217', '    case activateSentry = 213\n    case sentryState = 214\n    case forwardingControl = 217', 1).replace('        case .fetchAudioRoutes: return 0', '        case .fetchAudioRoutes: return 0\n        case .activateSentry: return 512\n        case .sentryState: return -1', 1).replace('        case .microphoneState, .microphoneReceipt: return 4096', '        case .microphoneState, .microphoneReceipt, .sentryState: return 4096\n        case .activateSentry: return -1', 1)
-check('StreamMessage는 허용된 2 kind·방향별 cap만 포트', wire == wire_expected)
-host = subprocess.check_output(['git', 'show', 'e9c556f8cd610414df7340074ed30073e9f11fec:Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT, text=True)
-check('포트 구문이 Host e9 exact source에 존재', all(line in host for line in ['    case activateSentry = 213', '    case sentryState = 214', '        case .activateSentry: return 512', '        case .sentryState: return -1', '        case .microphoneState, .microphoneReceipt, .sentryState: return 4096', '        case .activateSentry: return -1']))
+check('허용 파일 외 Host·서명·부모 변경 파일 쓰기 0', all(p in allowed or p in parent_scope or p.startswith('Tests/checks/ipad-sentry-observation/') for p in changed + untracked))
+wire = (ROOT / 'Sources/StreamProtocol/StreamMessage.swift').read_bytes()
+wire_base = subprocess.check_output(['git', 'show', base_commit + ':Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT)
+check('StreamMessage kind·방향별 cap은 기준3beab 원본 불변', wire == wire_base)
+host = subprocess.check_output(['git', 'show', host_commit + ':Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT, text=True)
+check('포트 구문이 Host e17 exact source에 존재', all(line in host for line in ['    case activateSentry = 213', '    case sentryState = 214', '        case .activateSentry: return 512', '        case .sentryState: return -1', '        case .microphoneState, .microphoneReceipt, .sentryState: return 4096', '        case .activateSentry: return -1']))
+check('명시 두 버튼 desired별 disabled', '.disabled(!client.sentryControl.canSet(desired: true))' in view and '.disabled(!client.sentryControl.canSet(desired: false))' in view)
+control_source = (ROOT / 'iOSClient/IPadSentryControl.swift').read_text()
+check('공유 DTO 파서 사용과 private DTO 제거', all('private struct ' + name not in control_source for name in ['Request', 'Reply', 'Control', 'Report']) and 'SentryControlResponse.decodePayload(data)' in control_source and 'SentryControlRequest(rawRequest: raw)' in control_source)
 
 fixture = select_platform(extension, vision=False, ios=True).replace('import Network\n', '')
 (OUT / 'Wiring.swift').write_text(fixture)
@@ -110,12 +130,12 @@ run(['/usr/bin/swiftc', *flags, '-emit-library', '-emit-module', '-module-name',
 run(['/usr/bin/swiftc', *flags, '-I', str(OUT), '-L', str(OUT), '-lStreamProtocol', '-Xlinker', '-rpath', '-Xlinker', str(OUT),
      str(ROOT / 'iOSClient/IPadSentryObservation.swift'), str(ROOT / 'iOSClient/IPadSentryControl.swift'),
      str(OUT / 'Standins.swift'), str(OUT / 'Wiring.swift'), str(OUT / 'Reader.swift'), str(HERE / 'main.swift'), '-o', str(OUT / 'check')])
-run([str(OUT / 'check')])
+run([str(OUT / 'check'), str(ROOT / 'Tests/checks/sentry-control-v2/fixtures.json')])
 run(['git', 'diff', '--check'])
 check('검사 전후 앱·Protocol 소스 동일', source_manifest() == before)
 source_sha = hashlib.sha256(json.dumps(before, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 result = dict(status='passed', staticChecks=checks, sdkBuild='pending-parent', independentReview='pending-parent',
-              fixtureOrigin='synthetic-from-provided-contract-not-Host-runtime', externalEffects=0,
+              fixtureOrigin='authoritative-Host-e17-exact-raw-and-memory-derived-cases', authoritativeHostCommit=host_commit, authoritativeHostTree=host_tree, commonFileSHA256={p: handoff['fileSHA256'][p] for p in sorted(common)}, externalEffects=0,
               sourceCodeSha256=source_sha, sourceFiles=before)
 (OUT / 'checks.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
-print('실제 소비자·reader 회귀 및 정적 wiring 검사 통과. SDK·Host fixture·실기기 수용은 별도입니다.')
+print('실제 소비자·reader 회귀 및 정적 wiring 검사 통과. Host exact DTO·fixture 소스 수용까지 통과했습니다. SDK·설치·실기기·런타임 수용은 별도입니다.')
