@@ -34,12 +34,13 @@ def main():
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', TMPDIR=str(output / 'tmp'))
     Path(env['TMPDIR']).mkdir(exist_ok=True)
     base = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-path', str(output / 'cache')]
-    protocol = ['Sources/StreamProtocol/' + name + '.swift' for name in ['Input', 'Switcher', 'StreamMessage', 'Compatibility', 'AudioRouting', 'AudioPrivacy', 'Sentry', 'TestDestinations']]
-    sources = ['Client.swift', 'ScrollMomentum.swift', 'MomentumDriver.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift',
+    protocol = ['Sources/StreamProtocol/' + name + '.swift' for name in ['Input', 'Switcher', 'StreamMessage', 'Compatibility', 'SafeText', 'AudioRouting', 'AudioPrivacy', 'Sentry', 'TestDestinations']]
+    sources = ['Client.swift', 'VisionWindowLease.swift', 'visionOSClient/VisionDisplaySelection.swift',
+               'ScrollMomentum.swift', 'MomentumDriver.swift', 'iOSClient/SessionLink.swift', 'iOSClient/KeyChords.swift',
                'Sources/SillHost/KeyStrokes.swift', 'visionOSClient/VisionPointer.swift',
                'visionOSClient/VisionInputSession.swift', 'visionOSClient/VisionInputDebt.swift',
                'visionOSClient/VisionPresentation.swift', 'visionOSClient/VisionRemoteKey.swift',
-               'visionOSClient/VisionTextDraft.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift', 'main.swift']
+               'visionOSClient/VisionTextDraft.swift', 'Tests/checks/vision-input-controls/SourceInputFence.swift', 'DraftWorkspace.swift', 'main.swift']
     objects = [str(output / (name + '.o')) for name in ['Network', 'SwiftUI', 'StreamProtocol']]
 
     def run(command, label):
