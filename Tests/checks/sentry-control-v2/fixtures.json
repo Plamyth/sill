@@ -1,0 +1,11 @@
+{
+  "kindRequest" : 213,
+  "kindResponse" : 214,
+  "requestOffRaw" : "{\"authorizationGeneration\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"desired\":false,\"hostBootID\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"requestID\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"revision\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"sessionID\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"version\":2}",
+  "requestOffSHA256" : "67994edee9f945740ab5fcc5b8c42f265706f8c4140ea8792b26ee49fff5af74",
+  "requestOnRaw" : "{\"authorizationGeneration\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"desired\":true,\"hostBootID\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"requestID\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"revision\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"sessionID\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"version\":2}",
+  "requestOnSHA256" : "8bc2148d87e222879a3004a5d0dfa5a032af20cdbc0163f28bac3081bb7a8426",
+  "responseOffRaw" : "{\"version\":2,\"requestID\":\"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"accepted\":true,\"code\":\"SENTRY_APPLIED\",\"state\":{\"control\":{\"authorizationGeneration\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"manualIntent\":\"off\",\"role\":\"ownerDevice\",\"version\":2,\"canSet\":true},\"version\":1,\"sessionID\":\"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA\",\"hostBootID\":\"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA\",\"requested\":false,\"limitations\":[\"한국어 범위\"],\"phase\":\"inactive\",\"revision\":\"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA\"},\"operationState\":\"applied\"}",
+  "responseOnRaw" : "{\"state\":{\"control\":{\"authorizationGeneration\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"manualIntent\":\"on\",\"role\":\"ownerDevice\",\"version\":2,\"canSet\":true},\"hostBootID\":\"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA\",\"phase\":\"userSessionProtected\",\"version\":1,\"revision\":\"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA\",\"sessionID\":\"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA\",\"limitations\":[\"한국어 범위\"],\"requested\":true},\"operationState\":\"applied\",\"code\":\"SENTRY_APPLIED\",\"version\":2,\"requestID\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"accepted\":true}",
+  "version" : 2
+}
