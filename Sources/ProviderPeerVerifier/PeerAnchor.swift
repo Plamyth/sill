@@ -4,13 +4,27 @@ import Security
 import CryptoKit
 
 struct ProviderPeerPolicy {
+    struct Renderer {
+        let application: URL
+        let identifier: String
+    }
     let application: URL
     let identifier: String
     let team: String
+    let renderer: Renderer?
+    init(application: URL, identifier: String, team: String, renderer: Renderer? = nil) {
+        self.application = application
+        self.identifier = identifier
+        self.team = team
+        self.renderer = renderer
+    }
     static let installed = ProviderPeerPolicy(application: URL(fileURLWithPath: "/Applications/CCR Sill.app"),
         identifier: "com.ambrion.sillcanvas.mac", team: "ZPTXHJ866D")
     static let core = ProviderPeerPolicy(application: URL(fileURLWithPath: "/Applications/Obsidian.app"),
-        identifier: "md.obsidian", team: "6JSW4SJWN9")
+        identifier: "md.obsidian", team: "6JSW4SJWN9",
+        renderer: Renderer(application: URL(fileURLWithPath:
+            "/Applications/Obsidian.app/Contents/Frameworks/Obsidian Helper (Renderer).app"),
+            identifier: "md.obsidian.helper.Renderer"))
 }
 
 struct ProviderPeerAnchor {
@@ -43,20 +57,42 @@ struct ProviderPeerAnchor {
         var dynamic: SecCode?
         guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributeAudit: before] as CFDictionary, [], &dynamic) == errSecSuccess,
               let dynamic else { throw Failure.peerUnavailable }
+        var running: SecStaticCode?
+        guard SecCodeCopyStaticCode(dynamic, [], &running) == errSecSuccess, let running else { throw Failure.peerUnavailable }
+        var rawPath: CFURL?
+        guard SecCodeCopyPath(running, [], &rawPath) == errSecSuccess, let rawPath else { throw Failure.pathMismatch }
+        let parent = policy.application.standardizedFileURL
+        guard parent.resolvingSymlinksInPath() == parent else { throw Failure.pathMismatch }
+        let canonical: URL
+        let identifier: String
+        if let renderer = policy.renderer, (rawPath as URL).standardizedFileURL == renderer.application.standardizedFileURL {
+            canonical = renderer.application.standardizedFileURL
+            identifier = renderer.identifier
+            var parentRequirement: SecRequirement?
+            let text = "identifier \"\(policy.identifier)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(policy.team)\""
+            var installedParent: SecStaticCode?
+            var parentPath: CFURL?
+            guard SecRequirementCreateWithString(text as CFString, [], &parentRequirement) == errSecSuccess,
+                  let parentRequirement,
+                  SecStaticCodeCreateWithPath(parent as CFURL, [], &installedParent) == errSecSuccess,
+                  let installedParent,
+                  SecCodeCopyPath(installedParent, [], &parentPath) == errSecSuccess,
+                  let parentPath, (parentPath as URL).standardizedFileURL == parent,
+                  SecStaticCodeCheckValidity(installedParent, SecCSFlags(rawValue: kSecCSStrictValidate),
+                    parentRequirement) == errSecSuccess else { throw Failure.installedCodeMismatch }
+        } else {
+            canonical = parent
+            identifier = policy.identifier
+        }
+        guard canonical.resolvingSymlinksInPath() == canonical,
+              (rawPath as URL).standardizedFileURL == canonical else { throw Failure.pathMismatch }
         var requirement: SecRequirement?
-        let text = "identifier \"\(policy.identifier)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(policy.team)\""
+        let text = "identifier \"\(identifier)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(policy.team)\""
         guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess,
               let requirement,
               SecCodeCheckValidity(dynamic, SecCSFlags(rawValue: kSecCSStrictValidate), requirement) == errSecSuccess else {
             throw Failure.signatureMismatch
         }
-        var running: SecStaticCode?
-        guard SecCodeCopyStaticCode(dynamic, [], &running) == errSecSuccess, let running else { throw Failure.peerUnavailable }
-        var rawPath: CFURL?
-        guard SecCodeCopyPath(running, [], &rawPath) == errSecSuccess, let rawPath else { throw Failure.pathMismatch }
-        let canonical = policy.application.standardizedFileURL
-        guard canonical.resolvingSymlinksInPath() == canonical,
-              (rawPath as URL).standardizedFileURL == canonical else { throw Failure.pathMismatch }
         var installed: SecStaticCode?
         guard SecStaticCodeCreateWithPath(canonical as CFURL, [], &installed) == errSecSuccess,
               let installed,
@@ -66,7 +102,7 @@ struct ProviderPeerAnchor {
         let liveInfo = try information(running), diskInfo = try information(installed)
         guard let liveHash = liveInfo[kSecCodeInfoUnique as String] as? Data, !liveHash.isEmpty,
               liveHash == diskInfo[kSecCodeInfoUnique as String] as? Data,
-              liveInfo[kSecCodeInfoIdentifier as String] as? String == policy.identifier,
+              liveInfo[kSecCodeInfoIdentifier as String] as? String == identifier,
               liveInfo[kSecCodeInfoTeamIdentifier as String] as? String == policy.team else {
             throw Failure.installedCodeMismatch
         }
@@ -80,7 +116,7 @@ struct ProviderPeerAnchor {
         }
         try requireLiveSocket(fd)
         return ["schemaVersion": 1, "state": "verified", "pid": Int(pid),
-                "application": canonical.path, "bundleIdentifier": policy.identifier, "teamIdentifier": policy.team,
+                "application": canonical.path, "bundleIdentifier": identifier, "teamIdentifier": policy.team,
                 "codeDirectoryHash": liveHash.map { String(format: "%02x", $0) }.joined(),
                 "peerTokenSHA256": SHA256.hash(data: before).map { String(format: "%02x", $0) }.joined()]
     }
