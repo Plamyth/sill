@@ -15,7 +15,7 @@ func response(_ status: ProviderCallResult.Status, request: ProviderCallRequest 
     try .init(request: request, result: .init(requestId: request.requestId, status: status, reason: "fixture_result", callSessionId: session))
 }
 var now = 100.0
-var model = VisionProviderCall(connection: first, clock: { now })
+var model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
 expect(model.perform(request) == nil, "capability absent sends no perform")
 for capability in [nil, 0, 2] as [Int?] {
     model.observe(connection: first, capability: capability, hostKey: hostKey)
@@ -58,7 +58,7 @@ model.observe(connection: second, capability: 1, hostKey: hostKey)
 expect(model.query() == nil, "reconnect does not renew count budget")
 
 now = 200
-model = VisionProviderCall(connection: first, clock: { now })
+model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
 model.observe(connection: first, capability: 1, hostKey: hostKey)
 _ = model.perform(request)
 let timed = model.pending!
@@ -72,7 +72,7 @@ expect(model.query() == nil && model.firstSentAt == 200, "reconnect does not ren
 expect(!model.receive(try response(.started), from: first), "late ACK on retired connection creates no authority")
 
 now = 300
-model = VisionProviderCall(connection: first, clock: { now })
+model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
 model.observe(connection: first, capability: 1, hostKey: hostKey)
 _ = model.perform(request)
 model.disconnected()
@@ -90,7 +90,7 @@ expect(!model.receive(try response(.started, request: stop), from: second), "sto
 expect(model.receive(try response(.stopped, request: stop), from: second), "actual stop ACK is separate from media protection")
 
 for invalid in [Double.nan, Double.infinity, -1] {
-    model = VisionProviderCall(connection: first, clock: { invalid })
+    model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { invalid })
     model.observe(connection: first, capability: 1, hostKey: hostKey)
     expect(model.perform(request) == nil, "invalid monotonic clock sends no perform")
 }
@@ -102,10 +102,10 @@ expect(StreamMessage.clientPayloadLimit(for: .forwardingUplinkReserved) == -1 &&
 let bytes = try JSONEncoder().encode(ProviderCallControl(operation: .perform, request: request))
 let decoded = try JSONDecoder().decode(ProviderCallControl.self, from: bytes)
 expect(decoded.request == request, "shared request roundtrip preserves digest")
-print("PASS \(checks) native provider client checks; actual provider, device, audio and UI effects 0")
+print("PASS \(checks) Dots provider client checks; actual provider, device, audio and UI effects 0")
 
 now = 400
-model = VisionProviderCall(connection: first, clock: { now })
+model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
 model.observe(connection: first, capability: 1, hostKey: hostKey)
 _ = model.perform(request)
 now = 408.5
@@ -117,7 +117,7 @@ now = 411
 expect(!model.receive(try response(.started, session: "call-late"), from: first), "query cannot extend total ten-second response budget")
 expect(model.timeout(originalDeadlineQuery), "query timeout uses initial deadline")
 now = 500
-model = VisionProviderCall(connection: first, clock: { now })
+model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
 model.observe(connection: first, capability: 1, hostKey: hostKey)
 _ = model.perform(request)
 expect(model.receive(try response(.started, session: "old-host-call"), from: first), "first host result fixture")
@@ -126,10 +126,10 @@ model.observe(connection: second, capability: 1, hostKey: String(repeating: "d",
 expect(model.request == nil && model.result == nil && model.hostKey != hostKey && model.canPerform, "different trusted Mac never inherits old call session")
 model.observe(connection: second, capability: 1, hostKey: nil)
 expect(!model.canPerform && model.query() == nil, "unverified Mac identity cannot use provider capability")
-print("PASS FINAL \(checks) native provider client checks")
+print("PASS FINAL \(checks) Dots provider client checks")
 
 now = 600
-model = VisionProviderCall(connection: first, clock: { now })
+model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
 model.observe(connection: first, capability: 1, hostKey: hostKey)
 _ = model.perform(request)
 model.disconnected()
@@ -140,10 +140,10 @@ expect(model.perform(request) == nil && model.query() == nil, "unverified connec
 model.observe(connection: second, capability: 1, hostKey: hostKey)
 expect(!model.canPerform && model.query()?.request == request, "same verified Mac resumes query rather than creating a new effect")
 expect(model.firstSentAt == 600 && model.queries == 1, "authentication recovery never resets total query budget")
-print("PASS FINAL \(checks) native provider client checks")
+print("PASS FINAL \(checks) Dots provider client checks")
 
 now = 700
-model = VisionProviderCall(connection: first, clock: { now })
+model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
 model.observe(connection: first, capability: 1, hostKey: hostKey)
 _ = model.perform(request)
 let sameWire = model.pending!
@@ -157,4 +157,95 @@ expect(model.drain(try response(.started, session: "not-authority"), from: first
 expect(model.pending == nil && model.result?.status == .unknown && !model.canPerform, "draining unverified response never adopts call authority")
 model.observe(connection: first, capability: 1, hostKey: hostKey)
 expect(model.query()?.request == request, "same original request can query only after wire drain")
-print("PASS FINAL \(checks) native provider client checks")
+print("PASS FINAL \(checks) Dots provider client checks")
+
+let regressionChecks = checks
+expect(checks == 68, "all original 68 checks ran with explicit Dots selection")
+
+now = 800
+var selection = VisionProviderCall(connection: first, clock: { now })
+expect(VisionCallTarget.allCases == [.nativeCodex, .chatgptDots, .grok], "typed control targets are native Codex, Dots and Grok")
+expect(selection.target == .nativeCodex && selection.canChangeTarget, "default is native Codex without a call")
+selection.observe(connection: first, capability: 1, hostKey: hostKey)
+expect(selection.supported && !selection.canPerform, "Dots capability never authorizes default native target")
+expect(selection.perform(request) == nil && selection.perform(stop) == nil && selection.query() == nil,
+       "native target cannot send Dots start, stop or query")
+expect(selection.request == nil && selection.pending == nil && selection.result == nil,
+       "selecting native never reports connection or call success")
+expect(selection.message == "Mac Codex 음성의 원격 시작·종료는 미확인입니다.", "native adapter stays explicitly unverified")
+expect(selection.selectTarget(.grok), "idle target can change to Grok")
+expect(selection.perform(request) == nil && selection.perform(stop) == nil && selection.query() == nil,
+       "Grok cannot send Dots start, stop or query")
+expect(selection.request == nil && selection.result == nil && selection.firstSentAt == nil,
+       "target selection never starts a call or query budget")
+expect(selection.message == "Grok 통화의 원격 시작·종료는 미확인입니다.", "Grok adapter stays explicitly unverified")
+selection.observe(connection: second, capability: 1, hostKey: String(repeating: "d", count: 64))
+expect(selection.target == .grok && !selection.canPerform, "trusted host change preserves selected target and cannot enable Grok")
+expect(selection.selectTarget(.chatgptDots) && selection.canPerform, "explicit Dots choice can use existing capability")
+expect(selection.request == nil && selection.pending == nil, "Dots selection alone creates no operation")
+expect(selection.perform(request)?.operation == .perform, "explicit Dots action uses existing perform")
+let targetWire = selection.pending!
+expect(!selection.canChangeTarget && !selection.selectTarget(.nativeCodex) && !selection.selectTarget(.grok),
+       "in-flight Dots wire blocks target transition")
+expect(selection.target == .chatgptDots && selection.pending?.control.request == targetWire.control.request &&
+       selection.pending?.sentAt == targetWire.sentAt && selection.pending?.expiresAt == targetWire.expiresAt,
+       "blocked transition preserves original wire and deadline")
+expect(selection.selectTarget(.chatgptDots) && selection.pending != nil, "reselecting Dots cannot replace pending wire")
+selection.observe(connection: second, capability: 1, hostKey: nil)
+expect(!selection.selectTarget(.nativeCodex) && selection.pending?.sentAt == targetWire.sentAt,
+       "same TLS missing pin cannot clear wire through target selection")
+selection.observe(connection: second, capability: 1, hostKey: hostKey)
+expect(!selection.supported && !selection.selectTarget(.grok) && selection.pending != nil,
+       "same TLS changed pin cannot clear wire through target selection")
+expect(selection.drain(try response(.started, session: "untrusted-target"), from: second),
+       "untrusted Dots response still drains exact wire")
+expect(selection.result?.status == .unknown && selection.pending == nil && selection.canChangeTarget,
+       "untrusted drain releases selection without adopting call success")
+expect(selection.selectTarget(.nativeCodex) && selection.query() == nil && selection.perform(request) == nil,
+       "native after drain cannot issue Dots recovery or a new effect")
+expect(selection.request == request && selection.firstSentAt == 800 && selection.queries == 0,
+       "target change preserves original Dots identity and recovery budget")
+expect(selection.message.contains("미확인"), "native never displays prior Dots result as native success")
+expect(selection.selectTarget(.chatgptDots), "return to Dots for query-only recovery")
+selection.observe(connection: second, capability: 1, hostKey: String(repeating: "d", count: 64))
+now += 0.5
+expect(!selection.canPerform && selection.query()?.operation == .query, "Dots recovery remains query-only")
+expect(selection.firstSentAt == 800 && selection.queries == 1, "target round trip never renews query budget")
+expect(!selection.selectTarget(.nativeCodex), "in-flight query blocks target transition")
+expect(selection.receive(try response(.pending), from: second), "query pending fixture")
+expect(selection.pending == nil && !selection.canChangeTarget && !selection.selectTarget(.grok),
+       "pending provider result blocks transition between wire requests")
+expect(selection.query() == nil, "target transition attempt cannot bypass half-second query spacing")
+now += 0.5
+expect(selection.query()?.operation == .query, "blocked target transition preserves scheduled query")
+expect(selection.receive(try response(.started, session: "dots-only-session"), from: second), "Dots result resolves pending selection lock")
+expect(selection.canChangeTarget && selection.message.contains("Dots"), "completed Dots result releases target selection")
+let selectedStop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLeaseRevision: .init(7),
+    pairedDeviceId: device, desiredInput: true, desiredOutput: true, callSessionId: "dots-only-session")
+expect(selection.selectTarget(.nativeCodex) && !selection.canPerform && selection.perform(selectedStop) == nil,
+       "native cannot stop a retained Dots session")
+expect(selection.result?.callSessionId == "dots-only-session" && selection.message.contains("미확인"),
+       "retained Dots session never becomes native success")
+expect(selection.selectTarget(.grok) && selection.perform(selectedStop) == nil && selection.query() == nil,
+       "Grok cannot control retained Dots session")
+expect(selection.selectTarget(.chatgptDots) && selection.perform(selectedStop)?.request.callSessionId == "dots-only-session",
+       "explicit return to Dots retains existing stop adapter contract")
+selection.disconnected()
+expect(selection.target == .chatgptDots && selection.pending == nil && selection.canChangeTarget,
+       "disconnect retires wire and permits target selection without changing target")
+expect(selection.selectTarget(.nativeCodex), "native can be selected after disconnected Dots request")
+selection.observe(connection: first, capability: 1, hostKey: String(repeating: "d", count: 64))
+expect(selection.query() == nil && selection.perform(request) == nil && selection.result?.status == .unknown,
+       "reconnected native target sends no Dots recovery")
+expect(selection.selectTarget(.chatgptDots) && selection.query()?.operation == .query,
+       "same verified Mac can resume only original Dots query after target round trip")
+let targetTimeout = selection.pending!
+now = targetTimeout.expiresAt
+expect(selection.timeout(targetTimeout) && selection.canChangeTarget && selection.result?.status == .unknown,
+       "timeout releases target lock and preserves unknown result")
+expect(selection.selectTarget(.nativeCodex) && selection.query() == nil,
+       "native after timeout cannot issue Dots query")
+selection.observe(connection: second, capability: 1, hostKey: hostKey)
+expect(selection.target == .nativeCodex && selection.request == nil && !selection.canPerform,
+       "new trusted Mac clears old Dots state and keeps native selection")
+print("PASS \(checks) total client checks; original Dots 68, new target checks \(checks - regressionChecks); actual provider, app, device, audio effects 0")
