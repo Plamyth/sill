@@ -263,6 +263,7 @@ import Foundation
         expect(decodedOld.extendedDesktopIntent == nil, "이전 wire의 optional 기본값은 nil이어야 합니다.")
         let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(viewport())) as! [String: Any]
         expect(encoded["extendedDesktopIntent"] == nil, "일반 wire에 자원 intent 키를 추가하면 안 됩니다.")
+        let baselineChecks = checks
         var backgroundFailures = 0
         for operation in ["request", "selection", "release"] {
             for flush in ["pong", "connectionLost", "unhold"] {
@@ -281,15 +282,10 @@ import Foundation
                 choose(queued)
                 if operation == "release" { queued.cancelExtendedDesktopRequest() }
                 _ = MainOwnedReads.shared.take()
-                let link = queued.link
+                let delivery = NetworkDelivery(queued.link)
                 await withCheckedContinuation { continuation in
                     DispatchQueue.global().async {
-                        precondition(!Thread.isMainThread)
-                        switch flush {
-                        case "pong": _ = link.fenceReturned(Data([7]), on: old)
-                        case "connectionLost": _ = link.release(old)
-                        default: _ = link.unhold(target)
-                        }
+                        delivery.flush(flush, old: old, target: target)
                         continuation.resume()
                     }
                 }
@@ -303,8 +299,116 @@ import Foundation
                 await settle()
             }
         }
+        for operation in ["request", "selection", "release"] {
+            let changes = operation == "release" ? ["host", "mac", "trust", "peer", "connected", "support", "inventoryNil"] :
+                ["host", "mac", "trust", "peer", "connected", "support", "inventoryNil", "cap", "source", "timeout"] +
+                (operation == "selection" ? ["inventory", "role"] : [])
+            for change in changes {
+                let queued = client(displays: operation == "selection" ? [owned] : [main])
+                let peer = queued.connection!
+                _ = queued.link.hold(peer)
+                choose(queued)
+                if operation == "release" { queued.cancelExtendedDesktopRequest() }
+                switch change {
+                case "host": queued.sessionHost = "changed"
+                case "mac": queued.session?.macID = "changed"
+                case "trust": queued.savedMacs.removeAll()
+                case "peer": queued.connection = NWConnection()
+                case "connected": queued.connected = false
+                case "support": queued.supportsDisplaySelection = false
+                case "inventoryNil": queued.displayInventoryID = nil
+                case "cap": queued.extendedDesktopControl = 2
+                case "source": queued.select(.none)
+                case "inventory": queued.displayInventoryID = UUID()
+                case "role": queued.displays = [main]
+                default: queued.expireExtendedDesktopRequest(now: queued.pendingExtendedDesktop!.deadline)
+                }
+                let delivery = NetworkDelivery(queued.link)
+                _ = MainOwnedReads.shared.take()
+                await withCheckedContinuation { continuation in
+                    DispatchQueue.global().async {
+                        delivery.flush("unhold", old: peer, target: peer)
+                        continuation.resume()
+                    }
+                }
+                expect(MainOwnedReads.shared.take() == 0, "무효화 뒤 background admit도 메인 getter를 읽으면 안 됩니다.")
+                if operation == "release" {
+                    expect(intents(peer).isEmpty, "다른 연결·신뢰·Host에는 보류된 release를 보내면 안 됩니다.")
+                } else {
+                    expect(selections(peer).isEmpty, "무효화 뒤 보류된 확장 선택이 나가면 안 됩니다.")
+                    if !["inventory", "role"].contains(change) {
+                        expect(!intents(peer).contains(.request), "무효화 뒤 보류된 request가 나가면 안 됩니다.")
+                    }
+                }
+                await settle()
+            }
+        }
+        // The terminal callback releases the stalled admission only after cancellation won the Submission lock.
+        for mode in ["pong", "connectionLost", "unhold"] {
+            let peer = NWConnection(), old = NWConnection()
+            let link = SessionLink()
+            link.connection = peer
+            if mode == "unhold" { _ = link.hold(peer) }
+            else { link.handOver(from: old, to: peer, fencePing: Data([255]), nonce: Data([7])) }
+            let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
+            let terminal = TerminalProbe(resume: resume)
+            let submission = SessionLink.Submission { outcome in terminal.record(outcome) }
+            expect(link.send(Data([211]), onlyOn: peer, submission: submission, admit: {
+                entered.signal()
+                precondition(resume.wait(timeout: .now() + 5) == .success)
+                return true
+            }), "경합 검사의 제출은 보류되어야 합니다.")
+            let delivery = NetworkDelivery(link)
+            let flushed = Task.detached {
+                delivery.flush(mode, old: old, target: peer)
+            }
+            precondition(entered.wait(timeout: .now() + 5) == .success)
+            let cancelled = Task.detached { delivery.link.cancel(submission) }
+            await cancelled.value
+            await flushed.value
+            expect(peer.packets.isEmpty && terminal.cancelledOnceOnMain,
+                   "admit 중 취소가 이기면 늦은 send는 0회, terminal은 main에서 한 번이어야 합니다.")
+        }
+        for operation in ["request", "selection", "release"] {
+            var owner: Client? = client(displays: operation == "selection" ? [owned] : [main])
+            weak var observedOwner = owner
+            let peer = owner!.connection!
+            let delivery = NetworkDelivery(owner!.link)
+            _ = owner!.link.hold(peer)
+            choose(owner!)
+            if operation == "release" { owner!.cancelExtendedDesktopRequest() }
+            owner = nil
+            expect(observedOwner == nil, "admission은 UI 소유자를 유지하면 안 됩니다.")
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    delivery.flush("unhold", old: peer, target: peer)
+                    continuation.resume()
+                }
+            }
+            expect(intents(peer).isEmpty && selections(peer).isEmpty, "소유자 종료 뒤 보류 신호가 나가면 안 됩니다.")
+        }
+        print("ADMISSION_CONCURRENCY_CHECKS baseline=\(baselineChecks) added=\(checks - baselineChecks + 1)")
+        fflush(stdout)
         expect(backgroundFailures == 0, "network admit가 메인 소유 getter를 읽으면 안 됩니다.")
         checkToolbarBounds()
         print("IPAD_EXTENDED_DISPLAY_CHECKS \(checks)개를 통과했습니다.")
+    }
+}
+
+final class TerminalProbe: @unchecked Sendable {
+    let resume: DispatchSemaphore
+    private let lock = NSLock()
+    private var outcomes: [SessionLink.Submission.Outcome] = []
+    private var onMain = true
+    init(resume: DispatchSemaphore) { self.resume = resume }
+    func record(_ outcome: SessionLink.Submission.Outcome) {
+        lock.lock()
+        outcomes.append(outcome); onMain = onMain && Thread.isMainThread
+        lock.unlock()
+        resume.signal()
+    }
+    var cancelledOnceOnMain: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return outcomes == [.cancelled] && onMain
     }
 }

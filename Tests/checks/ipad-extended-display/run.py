@@ -67,6 +67,29 @@ def augment(inputs, block, root, here):
                     str(OUT/'Layout.swift')], check=True)
     inputs['Layout.swift'] = (OUT/'Layout.swift').read_text()
     stream = (root/'iOSClient/StreamClient.swift').read_text()
+    delivery = block(stream, 'private func deliver(').replace('private ', '')
+    loss = block(stream, 'if let released = link.release(c)')
+    inputs['NetworkDelivery.swift'] = """import Foundation
+final class NetworkDelivery: @unchecked Sendable {
+    let link: SessionLink
+    var connection: NWConnection? { link.connection }
+    init(_ link: SessionLink) { self.link = link }
+    func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) { preconditionFailure("잘못된 fixture 경로") }
+    func fenceEnded(_ peer: NWConnection, _ released: SessionLink.Released, why: String) {}
+""" + delivery + """
+    func flush(_ mode: String, old: NWConnection, target: NWConnection) {
+        precondition(!Thread.isMainThread)
+        switch mode {
+        case "pong": deliver(StreamHeader(kind: .pong, timestamp: 0, isKeyframe: false, payloadLength: 1), Data([7]), from: old)
+        case "connectionLost": connectionLost(old)
+        default: _ = link.unhold(target)
+        }
+    }
+    func connectionLost(_ c: NWConnection) {
+""" + loss + """
+    }
+}
+"""
     ready = block(stream, 'var displaySelectionReady:')
     inputs['Client.swift'] = inputs['Client.swift'].replace('var displaySelectionReady = true', ready)
     inputs['Client.swift'] = inputs['Client.swift'].replace('        displaySelectionReady = list.displaySelection == 1 && list.displayInventoryID != nil\n', '')

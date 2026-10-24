@@ -222,7 +222,7 @@ final class StreamClient: ObservableObject {
     /// The connect screen's rows (DiscoveryPolicy.rows): every Mac the network browser lists, then
     /// those seen only over peer-to-peer Wi-Fi.
     @Published var macs: [FoundMac] = []
-    @Published var connected = false
+    @Published var connected = false { didSet { refreshExtendedDesktopAdmission() } }
     /// The nearby (peer-to-peer) browser runs: the status line says so, or under the hint the line
     /// in Search Nearby's place.
     @Published var searchingNearby = false
@@ -251,7 +251,7 @@ final class StreamClient: ObservableObject {
     /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
     #if os(iOS)
     @Published var savedMacs: [SavedMac] = [] {
-        didSet { ownerEnrollmentTrustChanged() }
+        didSet { refreshExtendedDesktopAdmission(); ownerEnrollmentTrustChanged() }
     }
     #else
     @Published var savedMacs: [SavedMac] = []
@@ -373,15 +373,15 @@ final class StreamClient: ObservableObject {
     @Published var thumbnails: [UInt32: UIImage] = [:] // by window ID
     @Published var icons: [String: UIImage] = [:]      // by bundle ID
     @Published var apps: [AppInfo] = []                // installed apps, for "All apps"
-    @Published private(set) var displays: [DisplayInfo] = []
+    @Published private(set) var displays: [DisplayInfo] = [] { didSet { refreshExtendedDesktopAdmission() } }
     @Published private(set) var activeDisplayID: UInt32?
-    @Published private(set) var supportsDisplaySelection = false
-    private var displayInventoryID: UUID?
+    @Published private(set) var supportsDisplaySelection = false { didSet { refreshExtendedDesktopAdmission() } }
+    private var displayInventoryID: UUID? { didSet { refreshExtendedDesktopAdmission() } }
     private var automaticDisplaySelection: Int?
     private var desktopSelectionRequired = false
-    private var displayCatalogPeer: ObjectIdentifier?
+    private var displayCatalogPeer: ObjectIdentifier? { didSet { refreshExtendedDesktopAdmission() } }
     #if os(iOS)
-    @Published private(set) var extendedDesktopControl: Int?
+    @Published private(set) var extendedDesktopControl: Int? { didSet { refreshExtendedDesktopAdmission() } }
     @Published private(set) var extendedDesktopProblem: String?
     private struct PendingExtendedDesktop {
         let peer: NWConnection
@@ -392,7 +392,7 @@ final class StreamClient: ObservableObject {
         let request: SessionLink.Submission
         var selection: SessionLink.Submission?
     }
-    @Published private var pendingExtendedDesktop: PendingExtendedDesktop?
+    @Published private var pendingExtendedDesktop: PendingExtendedDesktop? { didSet { refreshExtendedDesktopAdmission() } }
     var extendedDesktopRequestPending: Bool { pendingExtendedDesktop != nil }
     #endif
     var displaySelectionReady: Bool {
@@ -423,10 +423,42 @@ final class StreamClient: ObservableObject {
         return true
     }
 
-    private func extendedDesktopBindingIsCurrent(_ pending: PendingExtendedDesktop) -> Bool {
-        connected && supportsDisplaySelection && displayInventoryID != nil &&
-            displayCatalogPeer == ObjectIdentifier(pending.peer) &&
-            authenticatedDisplayMacID() == pending.macID && sessionHost == pending.host
+    private final class ExtendedDesktopAdmission {
+        struct Binding: Equatable {
+            let peer: ObjectIdentifier
+            let macID: String
+            let host: String
+        }
+        struct Snapshot {
+            let binding: Binding?
+            let intent: UInt64?
+            let deadline: TimeInterval?
+            let inventory: UUID?
+            let candidate: DisplayInfo?
+        }
+        private let lock = NSLock()
+        private var snapshot: Snapshot?
+
+        func replace(_ snapshot: Snapshot) {
+            lock.lock(); defer { lock.unlock() }
+            self.snapshot = snapshot
+        }
+
+        func allows(_ binding: Binding, intent: UInt64? = nil,
+                    inventory: UUID? = nil, display: DisplayInfo? = nil) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard let snapshot, snapshot.binding == binding else { return false }
+            guard let intent else { return true }
+            return snapshot.intent == intent &&
+                ProcessInfo.processInfo.systemUptime < (snapshot.deadline ?? 0) &&
+                (inventory == nil || snapshot.inventory == inventory) &&
+                (display == nil || snapshot.candidate == display)
+        }
+    }
+    private let extendedDesktopAdmission = ExtendedDesktopAdmission()
+
+    private func extendedDesktopBinding(_ pending: PendingExtendedDesktop) -> ExtendedDesktopAdmission.Binding {
+        ExtendedDesktopAdmission.Binding(peer: ObjectIdentifier(pending.peer), macID: pending.macID, host: pending.host)
     }
 
     func selectIPadExtendedDesktop() {
@@ -448,16 +480,16 @@ final class StreamClient: ObservableObject {
                   self.pendingExtendedDesktop?.peer === peer, outcome == .cancelled else { return }
             self.cancelExtendedDesktopRequest(problem: "확장 화면 요청이 전송 전에 취소되었습니다.")
         }
-        pendingExtendedDesktop = PendingExtendedDesktop(peer: peer, macID: macID, host: host,
+        let pending = PendingExtendedDesktop(peer: peer, macID: macID, host: host,
             intent: intent, deadline: ProcessInfo.processInfo.systemUptime + 15, request: submission)
+        pendingExtendedDesktop = pending
         viewport.extendedDesktopIntent = .request
         let message = StreamMessage(kind: .viewport, timestamp: Date().timeIntervalSince1970,
             isKeyframe: false, payload: Wire.encode(viewport))
-        guard link.send(message.serialized(), onlyOn: peer, submission: submission, admit: { [weak self] in
-            guard let self, let pending = self.pendingExtendedDesktop else { return false }
-            return pending.intent == intent && self.explicitSourceIntent == intent &&
-                self.extendedDesktopBindingIsCurrent(pending) && self.extendedDesktopControl == 1 &&
-                ProcessInfo.processInfo.systemUptime < pending.deadline
+        let admission = extendedDesktopAdmission
+        let binding = extendedDesktopBinding(pending)
+        guard link.send(message.serialized(), onlyOn: peer, submission: submission, admit: { [weak admission] in
+            admission?.allows(binding, intent: intent) == true
         }) else {
             cancelExtendedDesktopRequest(release: false, problem: "확장 화면 요청을 전송하지 못했습니다.")
             return
@@ -486,8 +518,10 @@ final class StreamClient: ObservableObject {
         viewport.extendedDesktopIntent = .release
         let message = StreamMessage(kind: .viewport, timestamp: Date().timeIntervalSince1970,
             isKeyframe: false, payload: Wire.encode(viewport))
+        let admission = extendedDesktopAdmission
+        let binding = extendedDesktopBinding(pending)
         _ = link.send(message.serialized(), onlyOn: pending.peer, submission: SessionLink.Submission { _ in },
-            admit: { [weak self] in self?.extendedDesktopBindingIsCurrent(pending) == true })
+            admit: { [weak admission] in admission?.allows(binding) == true })
     }
 
     private func observeExtendedDesktopCatalog(_ list: WindowList, peer: NWConnection) {
@@ -518,6 +552,21 @@ final class StreamClient: ObservableObject {
         selectDisplay(display, extendedDesktopIntent: pending.intent)
     }
     #endif
+
+    private func refreshExtendedDesktopAdmission() {
+        #if os(iOS)
+        let binding: ExtendedDesktopAdmission.Binding?
+        if connected, supportsDisplaySelection, displayInventoryID != nil,
+           let peer = displayCatalogPeer, let macID = authenticatedDisplayMacID(), let host = sessionHost {
+            binding = ExtendedDesktopAdmission.Binding(peer: peer, macID: macID, host: host)
+        } else { binding = nil }
+        let pending = pendingExtendedDesktop
+        extendedDesktopAdmission.replace(.init(binding: binding,
+            intent: extendedDesktopControl == 1 && pending?.intent == explicitSourceIntent ? pending?.intent : nil,
+            deadline: pending?.deadline, inventory: displayInventoryID,
+            candidate: IPadExtendedDisplaySelection.candidate(displays: displays, ready: true)))
+        #endif
+    }
 
     // The Mac's streaming settings (kinds 16 and 17; see the Host settings section below and
     // HostSettingsLedger.swift). Published on main.
@@ -822,7 +871,7 @@ final class StreamClient: ObservableObject {
     /// (`WindowList.launchID`; nil from an older host): a move hands the session only to a
     /// connection whose first list names the same host (`moveProbed`), so none starts before.
     private var sessionListed = false
-    private var sessionHost: String?
+    private var sessionHost: String? { didSet { refreshExtendedDesktopAdmission() } }
     /// The network listing (its `sightings.since`) a move found to be another Mac: not tried again
     /// while it lasts (DiscoveryPolicy.moveToNetwork).
     private var refusedListing: Double?
@@ -935,7 +984,7 @@ final class StreamClient: ObservableObject {
             self.intent = intent; self.peer = peer; self.host = host; self.observation = observation
         }
     }
-    private var explicitSourceIntent: UInt64 = 0
+    private var explicitSourceIntent: UInt64 = 0 { didSet { refreshExtendedDesktopAdmission() } }
     private var automaticSourceIntent: UInt64? = 0
     private var selectionRevision: String?
     private var sourceCatalogEpoch: UUID?
@@ -1353,7 +1402,7 @@ final class StreamClient: ObservableObject {
         /// The endpoint dialed (the DEBUG move and path tests start from it).
         var endpoint: NWEndpoint? = nil
     }
-    var session: Session?
+    var session: Session? { didSet { refreshExtendedDesktopAdmission() } }
 
     /// The row a session at home was dialed from.
     struct HomeRow: Equatable {
@@ -4476,22 +4525,18 @@ final class StreamClient: ObservableObject {
                                         origin: origin == .automatic ? .automatic : nil,
                                         selectionRevision: origin == .automatic ? ticket?.revision : nil)))
         #if os(iOS)
-        let intent = explicitSourceIntent
-        #endif
-        return link.send(message.serialized(), onlyOn: peer, submission: submission, admit: { [weak self] in
-            guard let self else { return false }
-            #if os(iOS)
+        let admission = extendedDesktopAdmission
+        let binding = pendingExtendedDesktop.map(extendedDesktopBinding)
+        let admit: () -> Bool = { [weak admission] in
+            guard let admission else { return false }
             guard let extendedDesktopIntent else { return true }
-            guard let pending = self.pendingExtendedDesktop else { return false }
-            return pending.intent == extendedDesktopIntent && self.explicitSourceIntent == intent &&
-                self.extendedDesktopBindingIsCurrent(pending) && self.displayInventoryID == displayInventoryID &&
-                self.extendedDesktopControl == 1 &&
-                ProcessInfo.processInfo.systemUptime < pending.deadline &&
-                IPadExtendedDisplaySelection.candidate(displays: self.displays, ready: true) == display
-            #else
-            return true
-            #endif
-        })
+            guard let binding else { return false }
+            return admission.allows(binding, intent: extendedDesktopIntent, inventory: displayInventoryID, display: display)
+        }
+        #else
+        let admit = { [weak self] in self != nil }
+        #endif
+        return link.send(message.serialized(), onlyOn: peer, submission: submission, admit: admit)
     }
 
     /// Asks the host to stream this source: the person's pick (`select`), or this device's own
