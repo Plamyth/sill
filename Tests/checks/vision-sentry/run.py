@@ -15,7 +15,8 @@ import subprocess
 import sys
 import time
 
-PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compatibility', 'Sentry', 'TestDestinations']
+PROTOCOL = ['Switcher', 'StreamMessage', 'AudioRouting', 'AudioPrivacy', 'Compatibility', 'Sentry', 'SentryControl', 'TestDestinations']
+CHECK_SUITE = 'vision-sentry'
 
 
 def prepare(root):
@@ -26,9 +27,11 @@ def prepare(root):
     storage = stream[stream.index('    @Published var visionSentrySnapshot ='):stream.index('    var visionSentryTrusted:')]
     stub = (root / 'Tests/checks/vision-sentry/Standins.swift').read_text().replace(
         '    // PRODUCTION_SENTRY_STORAGE', storage.replace('@Published ', ''))
+    if CHECK_SUITE != 'vision-sentry':
+        stub = (root / 'Tests/checks' / CHECK_SUITE / 'Standins.swift').read_text()
     checks = {
         'native ornament independent of input controls': '.ornament(attachmentAnchor: .scene(.bottom)' in view and
-            'client.visionSentrySnapshot.available' in view and 'client.activateVisionSentry()' in view,
+            'client.visionSentrySnapshot.available' in view and 'client.setVisionSentry(desired)' in view,
         'catalog observed on network queue before UI dispatch': stream.index('observeVisionSentry(list, from: peer)') <
             stream.index('receiveVisionAudioCatalogBarrier(list)'),
         'disconnect and handover clear Sentry binding': 'self.bindVisionSentry(to: nil)' in stream and
@@ -55,12 +58,17 @@ def prepare(root):
     if failed:
         raise AssertionError(failed)
     files = {'Client.swift': stub, 'Network.swift': (root / 'Tests/checks/vision-input-controls/Network.swift').read_text()}
-    for path in ['visionOSClient/VisionSentryController.swift', 'visionOSClient/StreamClient+VisionSentry.swift',
-                 'iOSClient/SessionLink.swift', 'Tests/checks/vision-sentry/main.swift'] + [
+    for path in ['visionOSClient/VisionSentryController.swift', 'visionOSClient/VisionSentryRequestStore.swift', 'visionOSClient/StreamClient+VisionSentry.swift',
+                 'iOSClient/SessionLink.swift', 'Tests/checks/' + CHECK_SUITE + '/main.swift'] + [
                      'Sources/StreamProtocol/' + name + '.swift' for name in PROTOCOL]:
         files[path] = (root / path).read_text()
     manifest = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in files.items()}
     manifest['productionStorage'] = hashlib.sha256(storage.encode()).hexdigest()
+    if CHECK_SUITE != 'vision-sentry':
+        for name in ['fixtures.json', 'request.schema.json', 'response.schema.json']:
+            path = 'Tests/checks/sentry-control-v2/' + name
+            files[path] = (root / path).read_text()
+            manifest[path] = hashlib.sha256(files[path].encode()).hexdigest()
     return files, manifest, checks
 
 
@@ -77,6 +85,8 @@ def main():
     tracked = [path for folder in ['visionOSClient', 'iOSClient', 'Sources/StreamProtocol', 'Tests/checks/vision-sentry']
                for path in (root / folder).glob('*.swift')]
     tracked += list((root / 'Tests/checks/vision-sentry').glob('*.py'))
+    tracked += list((root / 'Tests/checks' / CHECK_SUITE).glob('*.*'))
+    tracked += list((root / 'Tests/checks/sentry-control-v2').glob('*.json'))
     tracked += [root / 'SillVision.xcodeproj/project.pbxproj', root / 'Scripts/make-vision-project.py',
                 root / 'Tests/checks/vision-input-controls/Network.swift']
     hashes = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in tracked}
@@ -122,12 +132,12 @@ def main():
             run(base + ['-parse-as-library', '-whole-module-optimization', '-emit-module', '-emit-object', '-module-name', name] +
                 [str(generated / path) for path in paths] + ['-emit-module-path', str(output / (name + '.swiftmodule')),
                 '-o', str(output / (name + '.o'))], 'compile-' + name)
-        sources = ['Client.swift', 'iOSClient/SessionLink.swift', 'visionOSClient/VisionSentryController.swift',
-                   'visionOSClient/StreamClient+VisionSentry.swift', 'Tests/checks/vision-sentry/main.swift']
+        sources = ['Client.swift', 'iOSClient/SessionLink.swift', 'visionOSClient/VisionSentryController.swift', 'visionOSClient/VisionSentryRequestStore.swift',
+                   'visionOSClient/StreamClient+VisionSentry.swift', 'Tests/checks/' + CHECK_SUITE + '/main.swift']
         # Swift's executable entry file must be named main.swift even when its parent is nested.
         run(base + ['-D', 'VISION_SENTRY_CHECKS', '-I', str(output)] + [str(generated / path) for path in sources] +
             [str(output / (name + '.o')) for name, _ in modules] + ['-o', str(output / 'checks')], 'compile-checks')
-        log = run([str(output / 'checks')], 'runtime-checks')
+        log = run([str(output / 'checks'), str(generated / 'Tests/checks/sentry-control-v2/fixtures.json')], 'runtime-checks')
         match = re.search(r'^RESULT_ASSERTIONS (\d+)$', log, re.M)
         if not match:
             raise RuntimeError('runtime assertion count missing')

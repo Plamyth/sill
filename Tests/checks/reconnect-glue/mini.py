@@ -30,7 +30,7 @@ if '--cancel-mutation' in sys.argv:
     }
 paths = [ROOT / p for p in ['iOSClient/StreamClient.swift', 'iOSClient/StreamClient+Remote.swift', 'iOSClient/DiscoveryPolicy.swift']]
 if '--pointer' in sys.argv:
-    for name in ['Sources/StreamProtocol/Input.swift', 'Sources/StreamProtocol/Switcher.swift', 'Sources/StreamProtocol/AudioRouting.swift', 'Sources/StreamProtocol/AudioPrivacy.swift', 'Sources/StreamProtocol/Sentry.swift', 'Sources/StreamProtocol/TestDestinations.swift', 'Sources/StreamProtocol/StreamMessage.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputFence.swift', 'visionOSClient/VisionTransition.swift', 'Tests/vision-pointer/main.swift']:
+    for name in ['Sources/StreamProtocol/Input.swift', 'Sources/StreamProtocol/Switcher.swift', 'Sources/StreamProtocol/AudioRouting.swift', 'Sources/StreamProtocol/AudioPrivacy.swift', 'Sources/StreamProtocol/Sentry.swift', 'Sources/StreamProtocol/SentryControl.swift', 'Sources/StreamProtocol/TestDestinations.swift', 'Sources/StreamProtocol/StreamMessage.swift', 'iOSClient/KeyChords.swift', 'visionOSClient/VisionPointer.swift', 'visionOSClient/VisionInputFence.swift', 'visionOSClient/VisionTransition.swift', 'Tests/vision-pointer/main.swift']:
         p = ROOT / name
         paths.append(p)
         files[name] = p.read_text()
@@ -68,7 +68,7 @@ try:
  if (package/'cancel-mutant/main.swift').exists():
   commands += [['/usr/bin/xcrun','swiftc',str(package/'DiscoveryPolicy.swift'),str(package/'cancel-mutant/main.swift'),str(package/'sleep.swift'),'-o',str(output/'cancel-mutant'),'-module-cache-path',cache],[str(output/'cancel-mutant')]]
  if (package/'Tests/vision-pointer/main.swift').exists():
-  commands += [['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-whole-module-optimization','-module-name','StreamProtocol']+[str(package/('Sources/StreamProtocol/'+name+'.swift')) for name in ['Input','Switcher','StreamMessage','AudioRouting','AudioPrivacy','Sentry','TestDestinations']]+['-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'Input.o'),'-module-cache-path',cache],['/usr/bin/xcrun','swiftc','-I',str(output),str(package/'visionOSClient/VisionPointer.swift'),str(package/'iOSClient/KeyChords.swift'),str(package/'visionOSClient/VisionInputFence.swift'),str(package/'visionOSClient/VisionTransition.swift'),str(package/'Tests/vision-pointer/main.swift'),str(output/'Input.o'),'-o',str(output/'pointer'),'-module-cache-path',cache],[str(output/'pointer')]]
+  commands += [['/usr/bin/xcrun','swiftc','-parse-as-library','-emit-module','-emit-object','-whole-module-optimization','-module-name','StreamProtocol']+[str(package/('Sources/StreamProtocol/'+name+'.swift')) for name in ['Input','Switcher','StreamMessage','AudioRouting','AudioPrivacy','Sentry', 'SentryControl','TestDestinations']]+['-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'Input.o'),'-module-cache-path',cache],['/usr/bin/xcrun','swiftc','-I',str(output),str(package/'visionOSClient/VisionPointer.swift'),str(package/'iOSClient/KeyChords.swift'),str(package/'visionOSClient/VisionInputFence.swift'),str(package/'visionOSClient/VisionTransition.swift'),str(package/'Tests/vision-pointer/main.swift'),str(output/'Input.o'),'-o',str(output/'pointer'),'-module-cache-path',cache],[str(output/'pointer')]]
  record['commandExitCodes']=[]
  for command in commands:
   child=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)

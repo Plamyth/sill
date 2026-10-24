@@ -31,7 +31,7 @@ adapter = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-pat
            str(root / 'visionOSClient/VisionRemoteAudioAuthority.swift'), str(output / 'Store.swift'),
            str(root / 'Tests/checks/vision-audio-privacy/adapter.swift'), str(output / 'CatalogTransport.swift'),
            *[str(root / 'Sources/StreamProtocol' / name) for name in
-             ['StreamMessage.swift', 'Switcher.swift', 'Sentry.swift', 'TestDestinations.swift', 'AudioPrivacy.swift', 'AudioRouting.swift']], str(output / 'main.swift'),
+             ['StreamMessage.swift', 'Switcher.swift', 'Sentry.swift', 'SentryControl.swift', 'TestDestinations.swift', 'AudioPrivacy.swift', 'AudioRouting.swift']], str(output / 'main.swift'),
            '-o', str(output / 'adapter')]
 server = (root / 'Sources/SillHost/StreamServer.swift').read_text()
 start = server.index('    func sendMicrophoneCatalog(')
@@ -57,7 +57,7 @@ catalog_dir.mkdir(exist_ok=True)
 catalog_adapter = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-path', str(output / 'cache'),
                    *(['-D', 'CATALOG_QUERY_FALLBACK'] if has_fallback else []),
                    *[str(root / 'Sources/StreamProtocol' / name) for name in
-                     ['StreamMessage.swift', 'Switcher.swift', 'Sentry.swift', 'TestDestinations.swift', 'AudioPrivacy.swift', 'AudioRouting.swift', 'MicrophoneUplink.swift']],
+                     ['StreamMessage.swift', 'Switcher.swift', 'Sentry.swift', 'SentryControl.swift', 'TestDestinations.swift', 'AudioPrivacy.swift', 'AudioRouting.swift', 'MicrophoneUplink.swift']],
                    str(catalog_dir / 'main.swift'), '-o', str(catalog_dir / 'adapter')]
 result = {'scope': __doc__, 'commands': [], 'exitCode': 1,
           'catalogSendSHA256': hashlib.sha256(catalog_send.encode()).hexdigest(),
