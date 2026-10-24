@@ -184,6 +184,7 @@ final class HostSentryPlatform {
         if case .idle = state { return true }
         state = .releasing
         localReturnDown = nil
+        updateCurtainText()
         changed?()
         destroyTap()
         if let tapID {
@@ -432,7 +433,11 @@ final class HostSentryPlatform {
 
     private func updateCurtainText() {
         let message = curtainMessage
+        let passesInput = isProtected && tap.map {
+            CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0)
+        } == true
         for curtain in curtains.values {
+            curtain.panel.ignoresMouseEvents = passesInput
             curtain.panel.title = message.title
             curtain.title.stringValue = message.title
             curtain.detail.stringValue = message.detail
