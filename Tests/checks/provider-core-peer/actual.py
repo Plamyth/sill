@@ -12,6 +12,7 @@ repo = here.parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', required=True, type=Path)
 parser.add_argument('--expected', choices=['refused', 'verified'], required=True)
+parser.add_argument('--module-cache', type=Path)
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 endpoint = Path.home() / 'Library/Application Support/CodexControlRoom/command.sock'
@@ -35,7 +36,7 @@ def snapshot():
 
 binary = args.output / 'actual-core-probe'
 subprocess.run(['/usr/bin/xcrun', 'swiftc', str(repo / 'Sources/ProviderPeerVerifier/PeerAnchor.swift'),
-    str(here / 'ActualCore.swift'), '-module-cache-path', str(args.output / 'cache'), '-o', str(binary)],
+    str(here / 'ActualCore.swift'), '-module-cache-path', str(args.module_cache or args.output / 'cache'), '-o', str(binary)],
     check=True, timeout=120)
 before = snapshot()
 value = json.loads(subprocess.check_output([str(binary)], text=True, timeout=15))
