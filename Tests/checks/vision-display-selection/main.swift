@@ -518,6 +518,8 @@ check(blockedSelectionPeer.sent.count == 1, "새 허용 세대는 기존 입력 
 
 let (coalescedSelection, coalescedPeer) = automaticClient()
 coalescedSelection.releaseCallbacks[0](true); drain()
+let otherRemembered = VisionDisplaySelection.Remembered(macID: "0123456789ABCDEF", launchID: "host-launch", inventoryID: inventory, displayID: 22)
+UserDefaults.standard.values["SillVerifiedDisplay.0123456789ABCDEF"] = try! JSONEncoder().encode(otherRemembered)
 coalescedSelection.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(3))!, from: coalescedPeer)
 check(coalescedSelection.releaseCallbacks.count == 2,
       "중간 불가 목록이 생략돼도 새 허용 세대에서 미확인 원래 선택을 재개한다")
@@ -558,6 +560,44 @@ let (changedCAS, changedCASPeer) = automaticClient()
 changedCAS.releaseCallbacks[0](true); drain()
 changedCAS.observeVisionDisplays(admissionCatalog(automaticCatalog(revision: "r1"), admission(3))!, from: changedCASPeer)
 check(changedCAS.releaseCallbacks.count == 1, "다른 선택 CAS에서는 새 허용 세대로 재기준화하지 않는다")
+
+let (queuedRevocation, queuedRevocationPeer) = automaticClient()
+_ = queuedRevocation.link.hold(queuedRevocationPeer)
+queuedRevocation.releaseCallbacks[0](true)
+queuedRevocation.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(2, ready: false))!, from: queuedRevocationPeer)
+_ = queuedRevocation.link.unhold(queuedRevocationPeer); drain()
+check(queuedRevocationPeer.sent.isEmpty && queuedRevocation.visionDisplaySelection.pending == nil,
+      "준비 허가가 회수되면 실제 SessionLink 보류 티켓을 취소한다")
+queuedRevocation.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(3))!, from: queuedRevocationPeer)
+check(queuedRevocation.releaseCallbacks.count == 2, "새 허용 세대는 폐기된 큐의 입력 해제를 재사용하지 않는다")
+if queuedRevocation.releaseCallbacks.count == 2 { queuedRevocation.releaseCallbacks[1](true); drain() }
+check(queuedRevocationPeer.sent.count == 1, "큐 폐기 뒤 새 세대의 원래 선택만 한 번 전송한다")
+
+let (invalidatedCatalog, invalidatedPeer) = automaticClient()
+invalidatedCatalog.invalidateVisionDisplayCatalog(from: NWConnection())
+check(invalidatedCatalog.visionDisplaySelection.pending != nil, "다른 연결의 잘못된 목록은 현재 선택을 취소하지 않는다")
+invalidatedCatalog.invalidateVisionDisplayCatalog(from: invalidatedPeer)
+invalidatedCatalog.releaseCallbacks[0](true); drain()
+check(invalidatedCatalog.visionDisplaySelection.catalog == nil && invalidatedPeer.sent.isEmpty,
+      "현재 연결의 목록 해석 실패는 선택 범위와 늦은 해제 콜백을 폐기한다")
+invalidatedCatalog.observeVisionDisplays(automaticCatalog(), from: invalidatedPeer)
+check(invalidatedCatalog.releaseCallbacks.count == 1, "목록 복구만으로 이미 사용한 허용 세대를 재사용하지 않는다")
+invalidatedCatalog.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(3))!, from: invalidatedPeer)
+check(invalidatedCatalog.releaseCallbacks.count == 2, "목록 복구 뒤 새 허용 세대에서만 원래 선택을 재개한다")
+
+let (changedRows, changedRowsPeer) = automaticClient()
+changedRows.releaseCallbacks[0](true); drain()
+var changedRowsCatalog = admissionCatalog(automaticCatalog(), admission(3))!
+changedRowsCatalog.displays = [rows[0]]
+changedRows.observeVisionDisplays(changedRowsCatalog, from: changedRowsPeer)
+check(changedRows.releaseCallbacks.count == 1, "같은 inventory 식별자라도 원래 모니터 목록이 바뀌면 재개하지 않는다")
+
+let (manualOnly, manualOnlyPeer) = automaticClient(admissionCatalog(automaticCatalog(), nil)!)
+check(manualOnly.releaseCallbacks.isEmpty, "준비 신호가 없는 옛 호스트에는 자동 선택을 보내지 않는다")
+_ = manualOnly.selectVisionDisplay(command(manualOnly.visionDisplaySelection))
+check(manualOnly.releaseCallbacks.count == 1, "준비 신호가 없어도 명시적 수동 모니터 선택은 기존 해제 경로를 유지한다")
+if manualOnly.releaseCallbacks.count == 1 { manualOnly.releaseCallbacks[0](true); drain() }
+check(manualOnlyPeer.sent.count == 1, "명시적 수동 선택은 기존 서버 guard에 제출한다")
 
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)

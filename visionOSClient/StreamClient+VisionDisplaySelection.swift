@@ -60,6 +60,13 @@ extension StreamClient {
         reconcileVisionAutomaticDisplay()
     }
 
+    func invalidateVisionDisplayCatalog(from peer: NWConnection) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard connection === peer else { return }
+        visionDisplaySelection.invalidateCatalog()
+        reconcileVisionDisplaySubmission()
+    }
+
     func confirmVisionDisplayPresentation() {
         dispatchPrecondition(condition: .onQueue(.main))
         if case .presented(let epoch) = visionInputBinding {

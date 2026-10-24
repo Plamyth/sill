@@ -4537,6 +4537,7 @@ final class StreamClient: ObservableObject {
         case .windowList:
             guard let list = Wire.decode(WindowList.self, from: data) else {
                 #if os(visionOS)
+                invalidateVisionDisplayCatalog(from: peer)
                 invalidateVisionSentryCatalog(from: peer)
                 invalidateVisionTestDestinations(from: peer)
                 #endif
