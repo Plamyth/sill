@@ -62,6 +62,28 @@ struct ProviderAdapterChecks {
         expect(client.receiveIPadProviderCall(header, data, from: peer), "222 dispatched through actual adapter")
         await flush()
     }
+    @MainActor static func pauseAndRenew(_ client: StreamClient, event: IPadDesiredAudio.SessionEvent) throws {
+        let snapshot = client.audioForwarding.snapshot!, previous = client.audioForwarding.catalog!
+        let cursor = previous.bootstrap.ownCursor
+        client.audioSessionChanged(event)
+        let observe = client.command()
+        let catalog = try AudioForwardingCatalog(principal: previous.principal, role: previous.role,
+            bootstrap: .init(credential: previous.bootstrap.credential,
+                ownCursor: .init(intentRevision: snapshot.intent!.intentRevision,
+                    bindingRevision: .init(cursor.bindingRevision.value + 1)), snapshot: snapshot))
+        client.clock.now += 0.1
+        client.receive(try .init(requestID: observe.requestID, operation: .observe, catalog: catalog, result: nil))
+        let resume = client.command(), request = resume.intent!
+        expect(request.action == .resume && request.intentId == snapshot.intent?.intentId,
+            "OS pause recovery uses only own existing intent")
+        let binding = snapshot.binding!
+        let active = try AudioForwardingSnapshot(revision: .init(snapshot.revision.value + 1), intent: snapshot.intent,
+            binding: .init(pairedDeviceId: binding.pairedDeviceId, intentGeneration: binding.intentGeneration,
+                bindingEpoch: UUID(), transportId: request.transportId, transportKind: .native,
+                operationId: UUID(), phase: .active, configuration: binding.configuration))
+        client.clock.now += 0.1
+        client.receive(try .init(requestID: resume.requestID, operation: .submit, catalog: nil, result: .accepted(active)))
+    }
     @MainActor static func main() async throws {
         let client = try await ready(), peer = client.connection!
         client.performIPadProviderCall(.start, target: .nativeCodex)
@@ -155,6 +177,23 @@ struct ProviderAdapterChecks {
         stopped.clock.now = 4
         stopped.performIPadProviderCall(.start, target: .chatGPTDots)
         expect(controls(stopPeer).count == 2, "expired217media evidence cannot perform even before main timer fires")
+        for event: IPadDesiredAudio.SessionEvent in [.interruptionBegan, .outputUnavailable, .mediaReset] {
+            let paused = try await ready(), pausedPeer = paused.connection!
+            try pauseAndRenew(paused, event: event)
+            expect(!paused.iPadProviderCanStart, "local OS pause denies start even after fresh active217")
+            paused.performIPadProviderCall(.start, target: .chatGPTDots)
+            expect(controls(pausedPeer).isEmpty, "local OS pause sends no new provider perform")
+
+            let ending = try await ready(), endingPeer = ending.connection!
+            ending.performIPadProviderCall(.start, target: .chatGPTDots)
+            let originalStart = controls(endingPeer).last!.request
+            try await deliver(ending, .started, request: originalStart, peer: endingPeer, session: "paused-call")
+            try pauseAndRenew(ending, event: event)
+            expect(ending.iPadProviderCanStop, "OS pause preserves explicit stop of current direct call")
+            ending.performIPadProviderCall(.stop, target: .chatGPTDots)
+            expect(controls(endingPeer).last?.request.action == .stop &&
+                controls(endingPeer).last?.request.callSessionId == "paused-call", "stop retains exact current call session during pause")
+        }
         print("PASS \(checks) actual iPad adapter checks; device/host/audio/network effects0")
     }
 }

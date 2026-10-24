@@ -33,6 +33,10 @@ extension StreamClient {
               snapshot.intent?.pairedDeviceId == context.device,
               snapshot.intent?.intentId == durable.intentID,
               snapshot.intent?.intentGeneration == durable.generation else { return false }
+        if action == .start {
+            guard (!desiredAudio.selection.microphone || desiredAudio.sessionPermits(.microphone)) &&
+                  (!desiredAudio.selection.playback || desiredAudio.sessionPermits(.playback)) else { return false }
+        }
         if action == .stop && binding.phase == .off { return audioForwarding.phase == .ready }
         guard binding.phase == .active, audioForwarding.phase == .active,
               let deadline = audioForwarding.mediaDeadline, audioForwardingNow < deadline else { return false }
