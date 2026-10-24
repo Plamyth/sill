@@ -1,5 +1,6 @@
 import Foundation
 import StreamProtocol
+import os
 
 struct MobileEnrollmentTime: Sendable {
     let milliseconds: Int64
@@ -24,7 +25,6 @@ struct MobileEnrollmentDependencies: Sendable {
     }
 }
 
-/// registry를 만들거나 읽지 않는다. 정본 identity와 신뢰한 profile, 현재 관측은 composition 소유다.
 @MainActor
 final class MobileEnrollmentHostRuntime {
     struct Observation: Sendable {
@@ -52,7 +52,6 @@ final class MobileEnrollmentHostRuntime {
         self.currentRemoteAccess = currentRemoteAccess; self.commandPath = commandPath; self.dependencies = dependencies
     }
 
-    /// transport 부재/EOF는 이 lifecycle 안에서 0.25초부터 최대 30초 간격으로 재접속한다.
     func start() {
         guard task == nil, currentRemoteAccess() else { return }
         let lease = MobileEnrollmentLifetime()
@@ -74,7 +73,6 @@ final class MobileEnrollmentHostRuntime {
                     try await channel.run()
                 } catch {
                     if Task.isCancelled || lease.isStopped { break }
-                    // 형식·재생·시계 오류는 같은 입력에 다시 접속해 우회하지 않는다.
                     if let failure = error as? MobileEnrollmentRuntimeFailure {
                         switch failure {
                         case .unavailable: break
@@ -100,7 +98,6 @@ final class MobileEnrollmentHostRuntime {
         task = nil; lifetime = nil
     }
 
-    /// composition은 Remote Access 설정이 바뀐 같은 MainActor 구간에서 호출한다.
     func remoteAccessChanged() { if !currentRemoteAccess() { stop() } }
 
     private func finished(_ lease: MobileEnrollmentLifetime) {
@@ -111,53 +108,65 @@ final class MobileEnrollmentHostRuntime {
     deinit { lifetime?.stop(); task?.cancel() }
 }
 
-private final class MobileEnrollmentLifetime: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stopped = false
-    private var transport: (any MobileEnrollmentTransport)?
-    var isStopped: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
+private final class MobileEnrollmentLifetime: Sendable {
+    private struct State: Sendable {
+        var stopped = false
+        var transport: (any MobileEnrollmentTransport)?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    var isStopped: Bool { state.withLock { $0.stopped } }
     func check() throws {
         guard !isStopped, !Task.isCancelled else { throw MobileEnrollmentRuntimeFailure.stopped }
     }
     func install(_ value: any MobileEnrollmentTransport) throws {
-        lock.lock()
-        guard !stopped else {
-            lock.unlock(); value.invalidate(); throw MobileEnrollmentRuntimeFailure.stopped
+        let installed = state.withLock { state in
+            guard !state.stopped else { return false }
+            state.transport = value
+            return true
         }
-        transport = value; lock.unlock()
+        guard installed else {
+            value.invalidate(); throw MobileEnrollmentRuntimeFailure.stopped
+        }
     }
     func clear() {
-        lock.lock(); transport = nil; lock.unlock()
+        state.withLock { $0.transport = nil }
     }
     func stop() {
-        lock.lock(); stopped = true
-        let value = transport; transport = nil; lock.unlock()
+        let value = state.withLock { state in
+            state.stopped = true
+            let value = state.transport
+            state.transport = nil
+            return value
+        }
         value?.invalidate()
     }
 }
 
-/// 요청 이력은 채널의 TTL 창이 소유한다. 여기에는 시계와 마지막 handshake만 남는다.
-private final class MobileEnrollmentHistory: @unchecked Sendable {
-    private let lock = NSLock()
-    private var last: MobileEnrollmentTime?
-    private var lastGeneration: String?
-    private var lastHostNonce: String?
+private final class MobileEnrollmentHistory: Sendable {
+    private struct State: Sendable {
+        var last: MobileEnrollmentTime?
+        var lastGeneration: String?
+        var lastHostNonce: String?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
     func time(_ clock: @Sendable () -> MobileEnrollmentTime) throws -> MobileEnrollmentTime {
-        lock.lock(); defer { lock.unlock() }
-        let value = clock()
-        guard value.milliseconds >= 0, value.milliseconds <= MobileEnrollment.maximumSafeInteger,
-              value.uptime.isFinite, value.uptime >= 0,
-              last.map({ value.milliseconds >= $0.milliseconds && value.uptime >= $0.uptime }) ?? true else {
-            throw MobileEnrollmentRuntimeFailure.clockRollback
+        try state.withLock { state in
+            let value = clock()
+            guard value.milliseconds >= 0, value.milliseconds <= MobileEnrollment.maximumSafeInteger,
+                  value.uptime.isFinite, value.uptime >= 0,
+                  state.last.map({ value.milliseconds >= $0.milliseconds && value.uptime >= $0.uptime }) ?? true else {
+                throw MobileEnrollmentRuntimeFailure.clockRollback
+            }
+            state.last = value; return value
         }
-        last = value; return value
     }
     func host(_ value: MobileEnrollment.HostChallenge) throws {
-        lock.lock(); defer { lock.unlock() }
-        guard value.coreGeneration != lastGeneration, value.nonce != lastHostNonce else {
-            throw MobileEnrollmentRuntimeFailure.replay
+        try state.withLock { state in
+            guard value.coreGeneration != state.lastGeneration, value.nonce != state.lastHostNonce else {
+                throw MobileEnrollmentRuntimeFailure.replay
+            }
+            state.lastGeneration = value.coreGeneration; state.lastHostNonce = value.nonce
         }
-        lastGeneration = value.coreGeneration; lastHostNonce = value.nonce
     }
 }
 
@@ -271,7 +280,6 @@ private actor MobileEnrollmentChannel {
         let challenge = try MobileEnrollment.decodeActiveChallenge(frame, receivedAtMilliseconds: received.milliseconds)
         guard challenge.coreGeneration == generation else { throw MobileEnrollmentRuntimeFailure.replay }
         guard pending.count + (processing == nil ? 0 : 1) < 32 else { throw MobileEnrollmentRuntimeFailure.capacity }
-        // 생존 기간은 해당 요청 deadline까지다. 과거 frame 자체는 typed decoder의 deadline 검사가 거부한다.
         usedRequests = usedRequests.filter { $0.value > received.milliseconds }
         usedNonces = usedNonces.filter { $0.value > received.milliseconds }
         guard usedRequests[challenge.requestId] == nil, usedNonces[challenge.nonce] == nil,

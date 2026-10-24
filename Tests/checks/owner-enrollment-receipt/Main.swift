@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Security
 import StreamProtocol
 @testable import SillHostCore
@@ -36,23 +37,44 @@ private final class Store: IdentityStore {
     func saveRequirePairing(_ record: Data) throws { writes += 1; try memory.saveRequirePairing(record) }
 }
 
-private final class Sensor: @unchecked Sendable {
-    var user = 7
-    var node = "peer-node"
-    var expiry: String?
-    var beforeRead: (() -> Void)?
+private final class Sensor: Sendable {
+    private struct State: Sendable {
+        var user = 7
+        var node = "peer-node"
+        var expiry: String?
+        var beforeRead: (@Sendable () -> Void)?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    var user: Int {
+        get { state.withLock { $0.user } }
+        set { state.withLock { $0.user = newValue } }
+    }
+    var node: String {
+        get { state.withLock { $0.node } }
+        set { state.withLock { $0.node = newValue } }
+    }
+    var expiry: String? {
+        get { state.withLock { $0.expiry } }
+        set { state.withLock { $0.expiry = newValue } }
+    }
+    var beforeRead: (@Sendable () -> Void)? {
+        get { state.withLock { $0.beforeRead } }
+        set { state.withLock { $0.beforeRead = newValue } }
+    }
     func make() -> TailnetDeviceAccess {
         TailnetDeviceAccess(testingRead: { [self] command, check in
             try check(); beforeRead?()
-            switch command {
-            case .status:
-                return try JSONSerialization.data(withJSONObject: ["BackendState":"Running", "Self":
-                    ["ID":"host-node", "UserID":7, "TailscaleIPs":["100.64.0.1"], "Expired":false]])
-            case .whois:
-                var peer: [String:Any] = ["StableID":node,"User":user,"MachineAuthorized":true,
-                    "Addresses":["100.64.0.2/32"],"Expired":false]
-                peer["KeyExpiry"] = expiry
-                return try JSONSerialization.data(withJSONObject:["Node":peer,"UserProfile":["ID":user]])
+            return try state.withLock { state in
+                switch command {
+                case .status:
+                    return try JSONSerialization.data(withJSONObject: ["BackendState":"Running", "Self":
+                        ["ID":"host-node", "UserID":7, "TailscaleIPs":["100.64.0.1"], "Expired":false]])
+                case .whois:
+                    var peer: [String:Any] = ["StableID":state.node,"User":state.user,"MachineAuthorized":true,
+                        "Addresses":["100.64.0.2/32"],"Expired":false]
+                    peer["KeyExpiry"] = state.expiry
+                    return try JSONSerialization.data(withJSONObject:["Node":peer,"UserProfile":["ID":state.user]])
+                }
             }
         })
     }

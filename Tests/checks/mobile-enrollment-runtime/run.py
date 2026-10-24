@@ -1,4 +1,3 @@
-"""Production runtime/socket SDK check and inert byte transport; no OS socket is opened."""
 import argparse
 import hashlib
 import json

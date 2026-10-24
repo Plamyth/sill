@@ -116,7 +116,6 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
             guard purpose == .bootstrap, !receiptConsumed, trust == nil || trust === box else {
                 lock.unlock(); return nil
             }
-            // 결과 불명확·서명 실패도 같은 연결의 발급 기회를 소모한다.
             receiptConsumed = true
             lock.unlock()
             func currentEvidence() -> Bool {

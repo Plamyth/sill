@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import os
 
 enum MobileEnrollmentRuntimeFailure: Error {
     case unavailable, unsafeEndpoint, invalidFrame, expired, clockRollback, replay, capacity, stopped
@@ -12,12 +13,10 @@ protocol MobileEnrollmentTransport: Sendable {
     func invalidate()
 }
 
-/// 클라이언트 전용이다. 수신은 chunk를 돌려주며 newline 조립과 요청 기한은 runtime이 소유한다.
-final class MobileEnrollmentSocket: MobileEnrollmentTransport, @unchecked Sendable {
-    private let lock = NSLock()
+final class MobileEnrollmentSocket: MobileEnrollmentTransport {
+    private let descriptor = OSAllocatedUnfairLock<Int32?>(initialState: nil)
     private let input = DispatchQueue(label: "ccr.enrollment.socket.read")
     private let output = DispatchQueue(label: "ccr.enrollment.socket.write")
-    private var descriptor: Int32?
     private let path: String
     private let endpoint: String
 
@@ -75,29 +74,29 @@ final class MobileEnrollmentSocket: MobileEnrollmentTransport, @unchecked Sendab
             throw MobileEnrollmentRuntimeFailure.unavailable
         }
         try verify(fd)
-        descriptor = fd
+        descriptor.withLock { $0 = fd }
         retained = true
     }
 
     deinit { invalidate() }
 
     func invalidate() {
-        lock.lock()
-        if let fd = descriptor {
-            descriptor = nil
-            _ = shutdown(fd, SHUT_RDWR)
-            Darwin.close(fd)
+        descriptor.withLock { descriptor in
+            if let fd = descriptor {
+                descriptor = nil
+                _ = shutdown(fd, SHUT_RDWR)
+                Darwin.close(fd)
+            }
         }
-        lock.unlock()
     }
 
     private func duplicate() throws -> Int32 {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let descriptor else { throw MobileEnrollmentRuntimeFailure.stopped }
-        let fd = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
-        guard fd >= 0 else { throw MobileEnrollmentRuntimeFailure.unavailable }
-        return fd
+        try descriptor.withLock { descriptor in
+            guard let descriptor else { throw MobileEnrollmentRuntimeFailure.stopped }
+            let fd = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+            guard fd >= 0 else { throw MobileEnrollmentRuntimeFailure.unavailable }
+            return fd
+        }
     }
 
     private func verify(_ fd: Int32) throws {

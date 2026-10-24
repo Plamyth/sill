@@ -879,7 +879,6 @@ package final class RemoteAccess {
     static func enrollmentNodeExpirySeconds(_ date: Date) throws -> Int64 {
         let value = floor(date.timeIntervalSince1970)
         guard value.isFinite, value >= 0 else { throw MobileEnrollment.Failure.invalidTime }
-        // distantFuture도 밀리초 safe epoch 안으로 제한한 뒤 정수로 변환한다.
         return Int64(min(value, Double(MobileEnrollment.maximumSafeInteger / 1000)))
     }
 

@@ -1,4 +1,3 @@
-"""Compile the production Host, run memory-only contracts, and verify inert Node interoperability."""
 import argparse
 import hashlib
 import json

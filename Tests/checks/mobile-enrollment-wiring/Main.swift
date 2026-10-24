@@ -1,27 +1,31 @@
 import Foundation
+import os
 import Security
 import StreamProtocol
 @testable import SillHostCore
 
-private final class MemoryTransport: MobileEnrollmentTransport, @unchecked Sendable {
-    private let lock = NSLock()
-    private var chunks: [Data] = []
-    private var frames: [Data] = []
-    private var closed = false
-    private var peerOK = true
-    private var peerChecks = 0
-    private var loseResult = false
-    func feed(_ data: Data) { lock.lock(); chunks.append(data); lock.unlock() }
-    func invalidate() { lock.lock(); closed = true; lock.unlock() }
-    func rejectPeer() { lock.lock(); peerOK = false; lock.unlock() }
-    func failResultWrite() { lock.lock(); loseResult = true; lock.unlock() }
-    var ended: Bool { lock.lock(); defer { lock.unlock() }; return closed }
-    var sent: [Data] { lock.lock(); defer { lock.unlock() }; return frames }
-    var verified: Int { lock.lock(); defer { lock.unlock() }; return peerChecks }
+private final class MemoryTransport: MobileEnrollmentTransport {
+    private struct State: Sendable {
+        var chunks: [Data] = []
+        var frames: [Data] = []
+        var closed = false
+        var peerOK = true
+        var peerChecks = 0
+        var loseResult = false
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    func feed(_ data: Data) { state.withLock { $0.chunks.append(data) } }
+    func invalidate() { state.withLock { $0.closed = true } }
+    func rejectPeer() { state.withLock { $0.peerOK = false } }
+    func failResultWrite() { state.withLock { $0.loseResult = true } }
+    var ended: Bool { state.withLock { $0.closed } }
+    var sent: [Data] { state.withLock { $0.frames } }
+    var verified: Int { state.withLock { $0.peerChecks } }
     private func take() throws -> Data? {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed else { throw MobileEnrollmentRuntimeFailure.unavailable }
-        return chunks.isEmpty ? nil : chunks.removeFirst()
+        try state.withLock { state in
+            guard !state.closed else { throw MobileEnrollmentRuntimeFailure.unavailable }
+            return state.chunks.isEmpty ? nil : state.chunks.removeFirst()
+        }
     }
     func receive(until deadline: TimeInterval) async throws -> Data? {
         while ProcessInfo.processInfo.systemUptime < deadline {
@@ -32,41 +36,51 @@ private final class MemoryTransport: MobileEnrollmentTransport, @unchecked Senda
         return nil
     }
     private func append(_ data: Data) throws {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed, peerOK else { throw MobileEnrollmentRuntimeFailure.unavailable }
-        if loseResult, String(decoding: data, as: UTF8.self).contains("enrollment.active.result") {
-            closed = true
-            throw MobileEnrollmentRuntimeFailure.unavailable
+        try state.withLock { state in
+            guard !state.closed, state.peerOK else { throw MobileEnrollmentRuntimeFailure.unavailable }
+            if state.loseResult, String(decoding: data, as: UTF8.self).contains("enrollment.active.result") {
+                state.closed = true
+                throw MobileEnrollmentRuntimeFailure.unavailable
+            }
+            state.frames.append(data)
         }
-        frames.append(data)
     }
     func send(_ frame: Data, until deadline: TimeInterval) async throws {
         guard ProcessInfo.processInfo.systemUptime < deadline else { throw MobileEnrollmentRuntimeFailure.expired }
         try append(frame)
     }
     private func verify() throws {
-        lock.lock(); defer { lock.unlock() }
-        guard !closed, peerOK else { throw MobileEnrollmentRuntimeFailure.invalidFrame }
-        peerChecks += 1
+        try state.withLock { state in
+            guard !state.closed, state.peerOK else { throw MobileEnrollmentRuntimeFailure.invalidFrame }
+            state.peerChecks += 1
+        }
     }
     func checkPeer() async throws { try verify() }
 }
 
-private final class Factory: @unchecked Sendable {
-    private let lock = NSLock()
-    private var sockets: [MemoryTransport]
-    private var count = 0
-    private var delays: [Double] = []
-    var failure: MobileEnrollmentRuntimeFailure = .unavailable
-    init(_ sockets: [MemoryTransport]) { self.sockets = sockets }
-    var attempts: Int { lock.lock(); defer { lock.unlock() }; return count }
-    var sleeps: [Double] { lock.lock(); defer { lock.unlock() }; return delays }
-    func add(_ socket: MemoryTransport) { lock.lock(); sockets.append(socket); lock.unlock() }
-    func recordSleep(_ value: Double) { lock.lock(); delays.append(value); lock.unlock() }
+private final class Factory: Sendable {
+    private struct State: Sendable {
+        var sockets: [MemoryTransport]
+        var count = 0
+        var delays: [Double] = []
+        var failure: MobileEnrollmentRuntimeFailure = .unavailable
+    }
+    private let state: OSAllocatedUnfairLock<State>
+    init(_ sockets: [MemoryTransport]) { state = OSAllocatedUnfairLock(initialState: State(sockets: sockets)) }
+    var failure: MobileEnrollmentRuntimeFailure {
+        get { state.withLock { $0.failure } }
+        set { state.withLock { $0.failure = newValue } }
+    }
+    var attempts: Int { state.withLock { $0.count } }
+    var sleeps: [Double] { state.withLock { $0.delays } }
+    func add(_ socket: MemoryTransport) { state.withLock { $0.sockets.append(socket) } }
+    func recordSleep(_ value: Double) { state.withLock { $0.delays.append(value) } }
     func next() throws -> any MobileEnrollmentTransport {
-        lock.lock(); defer { lock.unlock() }; count += 1
-        guard !sockets.isEmpty else { throw failure }
-        return sockets.removeFirst()
+        try state.withLock { state in
+            state.count += 1
+            guard !state.sockets.isEmpty else { throw state.failure }
+            return state.sockets.removeFirst()
+        }
     }
 }
 

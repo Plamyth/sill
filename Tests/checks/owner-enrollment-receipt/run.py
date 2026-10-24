@@ -1,4 +1,3 @@
-"""Build production Host sources; run only memory store/sensor/socket fixtures."""
 from pathlib import Path
 import argparse, subprocess, os, json, hashlib
 p=argparse.ArgumentParser(); p.add_argument('--output', type=Path, required=True); p.add_argument('--red',action='store_true'); p.add_argument('--sdk-developer-dir'); a=p.parse_args()
@@ -23,7 +22,6 @@ objects=sorted((output/'StreamProtocol.build').glob('*.o'))+sorted((output/'Sill
 description=json.loads((output/'description.json').read_text()); arguments=next(c['otherArguments'] for c in description['swiftCommands'].values() if c['moduleName']=='SillHostCore'); package=arguments[arguments.index('-package-name')+1]
 subprocess.run(swift+['-parse-as-library','-package-name',package,'-I',str(modules),'-I',str(output/'AudioSilence.build'),str(Path(__file__).with_name('Main.swift')),*map(str,objects),'-o',str(b/'checks')],cwd=r,env=env,check=True)
 subprocess.run([str(b/'checks')],cwd=r,env=env,check=True,timeout=120)
-# Existing owner's regression suite links the identical production objects.
 subprocess.run(swift+['-parse-as-library','-package-name',package,'-I',str(modules),'-I',str(output/'AudioSilence.build'),str(r/'Tests/checks/owner-host-bootstrap/main.swift'),*map(str,objects),'-o',str(b/'owner-regressions')],cwd=r,env=env,check=True)
 subprocess.run([str(b/'owner-regressions')],cwd=r,env=env,check=True)
 results=[]
