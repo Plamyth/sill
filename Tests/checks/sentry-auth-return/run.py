@@ -20,8 +20,9 @@ local = paths[1].read_text()
 start, end = local.index('@MainActor\nfinal class LocalAudioAuthentication'), local.index('@MainActor\nfinal class LocalAudioJournal')
 local = (local if challenge else local[:start] + local[end:]).replace('import LocalAuthentication\n', '')
 if challenge:
-    assert local.count('Task.sleep(for: .seconds(45))') == 1
-    local = local.replace('Task.sleep(for: .seconds(45))', 'Task.sleep(for: .milliseconds(50))')
+    assert local.count('Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))') == 1
+    assert 'static let maximumWaitMilliseconds = 120_000' in local
+    local = local.replace('Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))', 'Task.sleep(for: .milliseconds(200))')
 participants = paths[2].read_text()
 program = '\n'.join([paths[0].read_text(), local, participants,
     paths[3].read_text().replace('import StreamProtocol\n', ''), paths[4].read_text()])
@@ -41,6 +42,6 @@ if '--local' not in sys.argv:
 result = subprocess.run(command, input=program, text=True, timeout=160)
 after = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 print(json.dumps({'sourceSHA256': before, 'sourceUnchanged': before == after,
-    'authenticationBoundary': 'inert LAContext; expiry shortened to 50 ms' if challenge else 'authentication class excluded',
+    'authenticationBoundary': 'inert LAContext; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
     'actualAuthenticationHALUIJournalDeviceActions': 0, 'exitCode': result.returncode}), flush=True)
 sys.exit(result.returncode if before == after else 2)

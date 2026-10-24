@@ -361,29 +361,34 @@ package final class HostAudioPrivacy {
     }
 
     /// This request owns authentication. Callers cannot supply an authentication result.
-    package func requestLocalReturn(budgetMilliseconds: Int = 30_000) async -> Bool {
+    package func requestLocalReturn(budgetMilliseconds: Int = 30_000,
+                                    authenticationBudgetMilliseconds: Int = 120_000) async -> Bool {
         let cancellation = LocalReturnCancellation()
         return await withTaskCancellationHandler {
             defer { cancellation.cancel() }
-            return await performLocalReturn(budgetMilliseconds: budgetMilliseconds, cancellation: cancellation)
+            return await performLocalReturn(budgetMilliseconds: budgetMilliseconds,
+                authenticationBudgetMilliseconds: authenticationBudgetMilliseconds, cancellation: cancellation)
         } onCancel: {
             cancellation.cancel()
         }
     }
 
-    private func performLocalReturn(budgetMilliseconds: Int, cancellation: LocalReturnCancellation) async -> Bool {
-        guard !cancellation.isCancelled, (1...30_000).contains(budgetMilliseconds) else { return false }
-        let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
-        guard await participants.recoverClosedLocalReturn(until: deadline), !cancellation.isCancelled else { return false }
-        guard await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
+    private func performLocalReturn(budgetMilliseconds: Int, authenticationBudgetMilliseconds: Int,
+                                    cancellation: LocalReturnCancellation) async -> Bool {
+        guard !cancellation.isCancelled, (1...30_000).contains(budgetMilliseconds),
+              (1...120_000).contains(authenticationBudgetMilliseconds) else { return false }
+        let preparationDeadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
+        guard await participants.recoverClosedLocalReturn(until: preparationDeadline), !cancellation.isCancelled else { return false }
+        guard await LocalAudioCompletion<Bool>.wait(until: preparationDeadline, operation: {
             await self.nativeStartup.waitUntilInitialized(); return true
         }) == true else { return false }
-        guard !Task.isCancelled, ContinuousClock.now < deadline, localReturnUnavailableReason == nil,
+        guard !Task.isCancelled, ContinuousClock.now < preparationDeadline, localReturnUnavailableReason == nil,
               latched, persistenceHealthy, !returningLocal, !authenticatingLocal,
               let original = localState, original.isValid else { return false }
         authenticatingLocal = true
         localReturnCancellation = cancellation
-        localReturnDeadline = deadline
+        let authenticationDeadline = ContinuousClock.now.advanced(by: .milliseconds(authenticationBudgetMilliseconds))
+        localReturnDeadline = authenticationDeadline
         defer {
             localReturnCancellation = nil
             localReturnDeadline = nil
@@ -401,9 +406,9 @@ package final class HostAudioPrivacy {
         forwardingRevision = UUID()
         forwardingInvalidated?()
         publish(AudioPrivacyState(version: 2, protected: false, reason: "로컬 복귀 인증을 확인하는 동안 원격 오디오를 차단합니다."))
-        let authenticated = await LocalAudioCompletion<Bool>.wait(until: deadline) {
+        let authenticated = await LocalAudioCompletion<Bool>.wait(until: authenticationDeadline) {
             let current = {
-                !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < deadline &&
+                !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < authenticationDeadline &&
                 self.localReturnID == request && self.privacyGeneration == generation &&
                 self.participants.matches(membership) && self.latched && self.persistenceHealthy
             }
@@ -412,11 +417,14 @@ package final class HostAudioPrivacy {
             guard current() else { return false }
             return await self.authenticateLocal(request)
         }
-        guard authenticated == true, !Task.isCancelled, ContinuousClock.now < deadline, localReturnID == request,
+        guard authenticated == true, !cancellation.isCancelled, !Task.isCancelled,
+              ContinuousClock.now < authenticationDeadline, localReturnID == request,
               privacyGeneration == generation, participants.matches(membership), latched, persistenceHealthy else {
             cancelAuthentication()
             return false
         }
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
+        localReturnDeadline = deadline
         returningLocal = true
         pending?.cancel(); pending = nil
         publish(AudioPrivacyState(version: 2, protected: false, reason: "인증된 로컬 입출력으로 복귀 중입니다."))
