@@ -110,7 +110,8 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
             prepared = operation
         }
         check(privacy.localAuthenticationChallengeID == nil, "\(ending) starts without an input exemption")
-        let work = Task { await privacy.requestLocalReturn(budgetMilliseconds: ending == "deadline" ? 20 : 2000) }
+        let work = Task { await privacy.requestLocalReturn(budgetMilliseconds: 2000,
+            authenticationBudgetMilliseconds: ending == "deadline" ? 20 : 2000) }
         await settle { privacy.localAuthenticationChallengeID != nil }
         check(privacy.localAuthenticationChallengeID == auth.activeChallengeID,
               "\(ending) model exposes only its current actual challenge")
@@ -164,11 +165,27 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
         authenticateLocal: { await humanAuth.evaluate(operationId: $0) },
         cancelAuthentication: { humanAuth.cancel() },
         authenticationChallengeID: { humanAuth.activeChallengeID }, nativeStartup: humanStartup)
+    for (workBudget, authenticationBudget) in [(0, 120_000), (30_001, 120_000), (30_000, 0), (30_000, 120_001)] {
+        let contexts = LAContext.instances.count
+        check(!(await humanPrivacy.requestLocalReturn(budgetMilliseconds: workBudget,
+            authenticationBudgetMilliseconds: authenticationBudget)),
+            "invalid work/authentication budget \(workBudget)/\(authenticationBudget) rejects the request")
+        check(LAContext.instances.count == contexts && humanPrivacy.localAuthenticationChallengeID == nil &&
+              humanPrivacy.latched && humanHAL.writes == 0 && humanHAL.restores == 0,
+              "invalid budgets never issue authentication or change audio protection")
+    }
     let human = Task { await humanPrivacy.requestLocalReturn(budgetMilliseconds: 20) }
     await settle { humanPrivacy.localAuthenticationChallengeID != nil }
     try? await Task.sleep(for: .milliseconds(35))
     check(humanPrivacy.localAuthenticationChallengeID != nil,
           "human authentication wait does not spend the participant work budget")
+    for budget in [0, 30_000, 30_001, 120_000] {
+        let request = LocalAudioParticipantRequest(schemaVersion: 1, operationId: UUID(), privacyGeneration: UUID(),
+            registryRevision: "1", participantId: .relay, bootId: UUID(), budgetMilliseconds: budget)
+        let decoded = try? JSONDecoder().decode(LocalAudioParticipantRequest.self, from: JSONEncoder().encode(request))
+        check((decoded != nil) == (budget == 30_000),
+              "pending human authentication retains the participant 30-second wire limit for \(budget) ms")
+    }
     LAContext.instances.last!.decline()
     check(!(await human.value) && humanPrivacy.localAuthenticationChallengeID == nil,
           "declined extended human wait closes the exact request without approval")

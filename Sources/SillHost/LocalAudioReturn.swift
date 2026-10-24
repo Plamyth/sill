@@ -157,6 +157,7 @@ struct LocalAudioState: Codable, Equatable {
 
 @MainActor
 final class LocalAudioAuthentication {
+    static let maximumWaitMilliseconds = 120_000
     private var context: LAContext?
     private var attemptID: UUID?
     private(set) var activeChallengeID: UUID?
@@ -178,7 +179,7 @@ final class LocalAudioAuthentication {
         return await withCheckedContinuation { continuation in
             completion = continuation
             expiry = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(45))
+                try? await Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))
                 if !Task.isCancelled { self?.finish(false) }
             }
             context.evaluatePolicy(.deviceOwnerAuthentication,
