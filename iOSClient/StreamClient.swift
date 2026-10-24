@@ -4827,6 +4827,16 @@ final class StreamClient: ObservableObject {
                         if list.active == .none {
                             self.resumeOpportunity = AutomaticConnectionOpportunity(intent: opportunity.intent,
                                 peer: opportunity.peer, host: opportunity.host, observation: .catalog(list.selectionRevision))
+                            if self.pendingAutomaticSourceTicket != nil, case .window(let id) = resume,
+                               !list.windows.contains(where: { $0.id == id }) {
+                                self.revokeAutomaticSelection()
+                                self.resumeSource = nil
+                                self.resumeOpportunity = nil
+                                self.pendingAutomaticSourceTicket = nil
+                                self.expectedSourceIntent = nil
+                                self.automaticSourceIntent = nil
+                                return
+                            }
                             guard let ticket = self.automaticTicket(peer: peer, list: list) else { return }
                             var pick = resume
                             if case .window(let id) = resume, !list.windows.contains(where: { $0.id == id }) { pick = .desktop }

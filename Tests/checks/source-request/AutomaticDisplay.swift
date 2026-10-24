@@ -133,12 +133,16 @@ import Foundation
     for modern in [true, false] {
         for held in [false, true] {
             idle.automaticDisplaySelection = modern ? 1 : nil
+            idle.desktopSelectionRequired = modern
             idle.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
             let missing = fresh(), peer = missing.connection!
             missing.beginAutomaticConnectionOpportunity(peer: peer)
             missing.resumeSource = .window(1001)
             if held { _ = missing.link.hold(peer) }
             missing.deliverIdleCatalog(catalog(2, ready: true)!)
+            let originalRequests = missing.allSent.compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
+            expect(originalRequests.count == (held ? 0 : 1) && originalRequests.allSatisfy { $0.source == .window(1001) },
+                   "반례 사전조건: 원래 창 선택이 제출되거나 보류됨 modern=\(modern) held=\(held)")
             idle.windows = []
             missing.deliverIdleCatalog(catalog(4, ready: true)!)
             if held { _ = missing.link.unhold(peer) }
@@ -152,6 +156,7 @@ import Foundation
         }
     }
     idle.automaticDisplaySelection = 1
+    idle.desktopSelectionRequired = true
     idle.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
     idle.selectionRevision = "revision-new"
     waiting.deliverIdleCatalog(catalog(8, ready: true)!)
