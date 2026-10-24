@@ -42,9 +42,9 @@ current = (ROOT / paths[0]).read_text()
 base = 'edc219582e153f142f832d35f968e69b2bbafd3c'
 source = subprocess.check_output(['git', 'show', base + ':' + paths[0]], cwd=ROOT, text=True) if args.baseline else current
 markers = ['private var isProtected:', 'private func invalidate(', 'private func filter(',
-           'private func updateCurtainText()', 'var reason: String?']
+           'private func updateCurtainText()', 'var reason: String?', '@objc private func returnRequested(']
 bodies = {m: block(source, m) for m in markers}
-program = (ROOT / paths[2]).read_text().replace('__PRODUCTION__', re.sub(r'\bCGEvent\b', 'Event', '\n'.join(bodies.values())))
+program = (ROOT / paths[2]).read_text().replace('__PRODUCTION__', re.sub(r'\bCGEvent\b', 'Event', '\n'.join(bodies.values())).replace('@objc ', ''))
 program = (ROOT / 'Sources/SillHost/LocalAuthenticationInputPolicy.swift').read_text() + '\n' + program
 record = {'scope': '실제 Platform 본문 추출과 가짜 창 목록·이벤트로 비허용 검사. OS 창 결박/키 중계/커튼 하향 구현 없음. 실제 prompt/post/Host/UI/HAL/journal 0.',
           'nativeUIAccepted': False, 'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),

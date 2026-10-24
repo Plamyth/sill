@@ -17,6 +17,7 @@ final class CurtainPlatformFixture {
     var timer: Timer?
     var layout = 0, displayLayout = 1
     var curtains = false, tap = false, readable = true
+    var tapID: UInt32?, annotatedTapID: UInt32?
     var installs = 0, rebuilds = 0
     var duringReadback: (() -> Void)?
     var reason: String? { if case .invalid(let value) = state { return value }; return nil }

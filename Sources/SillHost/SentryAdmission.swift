@@ -26,6 +26,7 @@ final class SentryAdmission: @unchecked Sendable {
     private var reason: String?
     private var sessions: [ObjectIdentifier: Session] = [:]
     private var returningLocal = false
+    private var localReturnRequestActive = false
     private var selectionGeneration: UInt64 = 0
     private var controlGrants: [String: UUID] = [:]
     private var manualIntent: SentryManualIntent = .automatic
@@ -88,7 +89,7 @@ final class SentryAdmission: @unchecked Sendable {
 
     func protectionSnapshot() -> ProtectionSnapshot? {
         lock.lock(); defer { lock.unlock() }
-        guard enabled, requested, persistenceHealthy, surfacesVerified, !returningLocal, pendingControl == nil else { return nil }
+        guard enabled, requested, persistenceHealthy, surfacesVerified, !returningLocal && !localReturnRequestActive, pendingControl == nil else { return nil }
         return ProtectionSnapshot(revision: protectionRevision)
     }
 
@@ -100,7 +101,7 @@ final class SentryAdmission: @unchecked Sendable {
 
     func inactiveSnapshot() -> InactiveSnapshot? {
         lock.lock(); defer { lock.unlock() }
-        guard enabled, !requested, !returningLocal, pendingControl == nil, manualIntent == .off,
+        guard enabled, !requested, !returningLocal && !localReturnRequestActive, pendingControl == nil, manualIntent == .off,
               let owner = manualOwner, controlGrants[owner] != nil else { return nil }
         return InactiveSnapshot(revision: inactiveRevision)
     }
@@ -200,6 +201,7 @@ final class SentryAdmission: @unchecked Sendable {
 
     func allows(_ peer: ObjectIdentifier, epoch: UUID?) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        guard !localReturnRequestActive else { return false }
         guard enabled else { return true }
         guard !returningLocal, pendingControl == nil, sessions[peer]?.admitted == true else { return false }
         return !requested || (persistenceHealthy && surfacesVerified && epoch != nil && captureForPeer(peer) == epoch)
@@ -211,6 +213,7 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     private func allowsActionsLocked(_ peer: ObjectIdentifier) -> Bool {
+        guard !localReturnRequestActive else { return false }
         guard enabled else { return true }
         guard !returningLocal, pendingControl == nil, sessions[peer]?.admitted == true else { return false }
         return !requested || (persistenceHealthy && surfacesVerified)
@@ -248,7 +251,7 @@ final class SentryAdmission: @unchecked Sendable {
             return allows(peer, epoch: nil)
         case .thumbnail:
             lock.lock(); defer { lock.unlock() }
-            return !enabled || (!requested && !returningLocal && pendingControl == nil && sessions[peer]?.admitted == true)
+            return !localReturnRequestActive && (!enabled || (!requested && !returningLocal && pendingControl == nil && sessions[peer]?.admitted == true))
         default:
             return true
         }
@@ -262,7 +265,8 @@ final class SentryAdmission: @unchecked Sendable {
     private func statusLocked(for peer: ObjectIdentifier) -> SentryState? {
         guard enabled, let session = sessions[peer] else { return nil }
         let phase: SentryState.Phase
-        if pendingControl != nil { phase = .pending }
+        if localReturnRequestActive { phase = .blocked }
+        else if pendingControl != nil { phase = .pending }
         else if !requested { phase = .inactive }
         else if !persistenceHealthy || reason != nil || returningLocal { phase = .blocked }
         else if surfacesVerified && captureForPeer(peer) != nil { phase = .userSessionProtected }
@@ -271,12 +275,12 @@ final class SentryAdmission: @unchecked Sendable {
             SentryControlCapability(authorizationGeneration: $0.generation, manualIntent: manualIntent)
         }
         return SentryState(hostBootID: bootID, sessionID: session.id, revision: revision,
-                           requested: requested, phase: phase, reason: reason, limitations: Self.limitations, control: control)
+                           requested: requested, phase: phase, reason: localReturnRequestActive ? "로컬 복귀 인증과 정리 중에는 원격 명령을 차단합니다." : reason, limitations: Self.limitations, control: control)
     }
 
     func accept(_ activation: SentryActivation, from peer: ObjectIdentifier) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard enabled, !returningLocal, pendingControl == nil, activation.version == 1, activation.hostBootID == bootID,
+        guard enabled, !returningLocal && !localReturnRequestActive, pendingControl == nil, activation.version == 1, activation.hostBootID == bootID,
               var session = sessions[peer], session.admitted,
               activation.sessionID == session.id else { return false }
         if session.requests.contains(activation.requestID) { return true }
@@ -361,7 +365,7 @@ final class SentryAdmission: @unchecked Sendable {
         guard request.sessionID == sessions[peer]?.id else {
             return rejection(.unknown, unknown: true)
         }
-        guard !returningLocal, pendingControl == nil else { return rejection(.busy) }
+        guard !returningLocal && !localReturnRequestActive, pendingControl == nil else { return rejection(.busy) }
         guard request.revision == revision else { return rejection(.unknown, unknown: true) }
         let ticket = ControlTicket(request: request, nonce: UUID(), peer: peer,
                                    deviceID: identity.deviceID, policyRevision: policyRevision)
@@ -382,7 +386,7 @@ final class SentryAdmission: @unchecked Sendable {
 
     func controlTicketIsCurrent(_ ticket: ControlTicket) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard pendingControl == ticket, !returningLocal, policyRevision == ticket.policyRevision,
+        guard pendingControl == ticket, !returningLocal && !localReturnRequestActive, policyRevision == ticket.policyRevision,
               let identity = controlIdentityLocked(ticket.peer), identity.deviceID == ticket.deviceID,
               identity.generation == ticket.request.authorizationGeneration,
               sessions[ticket.peer]?.id == ticket.request.sessionID else { return false }
@@ -485,6 +489,17 @@ final class SentryAdmission: @unchecked Sendable {
         inactiveRevision = UUID()
         returningLocal = true
         surfacesVerified = false
+        revision = UUID()
+        refreshSelectionAdmissionLocked()
+    }
+
+    func setLocalReturnRequestActive(_ active: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        guard localReturnRequestActive != active else { return }
+        localReturnRequestActive = active
+        if active { cancelPendingLocked() }
+        protectionRevision = UUID()
+        inactiveRevision = UUID()
         revision = UUID()
         refreshSelectionAdmissionLocked()
     }

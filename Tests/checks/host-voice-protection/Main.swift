@@ -136,6 +136,7 @@ struct HostAudioPrivacyChecks {
         await ownerChecks()
         wireChecks()
         await localReturnChecks()
+        await privacySentryAdmissionChecks()
         await streamSilenceChecks()
         exclusiveSilenceChecks()
         let boundaryHAL = PrivacyFakeHAL(), boundaryPrivacy = guardFor(boundaryHAL)

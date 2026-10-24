@@ -111,6 +111,7 @@ final class HostSentryPlatform {
 
     func engage() -> Bool {
         guard !changingLifecycle else { return false }
+        if refreshActiveAuthenticationInput() { return false }
         if case .protected = state { return verify() }
         guard Self.tapOwner == nil || Self.tapOwner === self else {
             invalidate("다른 원격 제어 보호 작업이 이벤트 필터를 사용 중입니다.")
@@ -144,6 +145,7 @@ final class HostSentryPlatform {
 
     func restoreCurtains() -> Bool {
         guard !changingLifecycle else { return false }
+        if refreshActiveAuthenticationInput() { return false }
         changingLifecycle = true
         defer { changingLifecycle = false }
         invalidate("가림 화면을 복구하고 있습니다. 입력 차단과 원격 동작은 아직 확인되지 않았습니다.")
@@ -247,7 +249,9 @@ final class HostSentryPlatform {
     }
 
     func verify() -> Bool {
-        guard isProtected, !changingLifecycle else { return false }
+        guard !changingLifecycle else { return false }
+        if refreshActiveAuthenticationInput() { return false }
+        guard isProtected else { return false }
         changingLifecycle = true
         defer { changingLifecycle = false }
         guard environmentIsUsable() else { return false }
@@ -289,6 +293,16 @@ final class HostSentryPlatform {
         return true
     }
 
+    func prepareAuthenticatedLocalRelease(cleanup: () -> Bool) -> Bool {
+        guard !changingLifecycle, currentLocalAuthenticationChallenge() == nil,
+              Self.tapOwner == nil || Self.tapOwner === self,
+              cleanup(), !changingLifecycle, currentLocalAuthenticationChallenge() == nil,
+              Self.tapOwner == nil || Self.tapOwner === self,
+              pointerTargets.isEmpty else { return false }
+        scrollHandoff = nil
+        return true
+    }
+
     func prepareRemoteRelease(inputIdle: () -> Bool, cleanup: () -> Bool) -> Bool {
         guard !changingLifecycle, currentLocalAuthenticationChallenge() == nil else { return false }
         if inputIdle(), pointerTargets.isEmpty {
@@ -308,20 +322,21 @@ final class HostSentryPlatform {
         guard !changingLifecycle, currentLocalAuthenticationChallenge() == nil else { return false }
         changingLifecycle = true
         defer { changingLifecycle = false }
-        if case .idle = state { return true }
         state = .releasing
         localReturnDown = nil
         updateCurtainText()
         changed?()
         destroyTap()
         destroyAnnotatedTap()
-        if tapID != nil || annotatedTapID != nil {
-            guard let rows = eventTapList() else {
-                return recoverFailedRelease("운영체제에서 입력 필터 해제 상태를 읽지 못했습니다.")
-            }
-            guard !rows.contains(where: { ($0.eventTapID == tapID || $0.eventTapID == annotatedTapID) && $0.enabled }) else {
-                return recoverFailedRelease("운영체제에서 입력 필터 해제를 확인하지 못했습니다.")
-            }
+        guard let rows = eventTapList() else {
+            return recoverFailedRelease("운영체제에서 입력 필터 해제 상태를 읽지 못했습니다.")
+        }
+        guard !rows.contains(where: {
+            $0.enabled && ($0.eventTapID == tapID || $0.eventTapID == annotatedTapID ||
+                ($0.tappingProcess == getpid() &&
+                    ($0.tapPoint == .cgSessionEventTap || $0.tapPoint == .cgAnnotatedSessionEventTap)))
+        }) else {
+            return recoverFailedRelease("운영체제에서 입력 필터 해제를 확인하지 못했습니다.")
         }
         let closingWindowIDs = Set(curtainWindowIDs)
         for curtain in curtains.values { curtain.panel.close() }
@@ -356,8 +371,10 @@ final class HostSentryPlatform {
         state = .engaging
         changingLifecycle = false
         let restored = restoreCurtains()
-        _ = installAnnotatedTap()
-        _ = installTap()
+        if tapID != nil || annotatedTapID != nil {
+            _ = installAnnotatedTap()
+            _ = installTap()
+        }
         changingLifecycle = true
         invalidate(restored ? message + " 가림 화면만 복구했습니다. 입력 차단은 아직 확인되지 않았습니다." :
             message + " 현장 보호 복구를 확인하지 못해 원격 동작을 중지합니다.")
@@ -383,7 +400,7 @@ final class HostSentryPlatform {
         changed?()
     }
 
-    private func environmentIsUsable() -> Bool {
+    private func environmentIsUsable(allowSecureInput: Bool = false) -> Bool {
         guard AXIsProcessTrusted() else {
             invalidate("기존 손쉬운 사용 권한이 필요합니다. 권한 요청은 자동으로 표시하지 않습니다.")
             return false
@@ -396,7 +413,7 @@ final class HostSentryPlatform {
             invalidate("화면 잠금·절전 또는 사용자 전환 중에는 보호 상태를 보장할 수 없습니다.")
             return false
         }
-        guard !IsSecureEventInputEnabled() else {
+        guard allowSecureInput || !IsSecureEventInputEnabled() else {
             invalidate("보안 입력이 활성화되어 일반 키보드 입력 차단을 보장할 수 없습니다.")
             return false
         }
@@ -674,8 +691,7 @@ final class HostSentryPlatform {
     }
 
     private func observedReturnButton(at point: CGPoint) -> CGWindowID? {
-        guard isProtected, inputEnvironmentVerified, inputTapsAreReady,
-              ContinuousClock.now < inputObservationExpires else { return nil }
+        guard ContinuousClock.now < inputObservationExpires else { return nil }
         return observedReturnButtons.first(where: { $0.value.contains(point) })?.key
     }
 
@@ -720,12 +736,29 @@ final class HostSentryPlatform {
         return identity
     }
 
+    private func refreshActiveAuthenticationInput() -> Bool {
+        guard let challenge = currentLocalAuthenticationChallenge(),
+              challenge == localAuthenticationInputPolicy.preparedRequestID else { return false }
+        refreshInputObservation()
+        return true
+    }
+
     private func refreshInputObservation() {
         observedReturnButtons.removeAll()
         observedRemoteTarget = nil
         let challenge = currentLocalAuthenticationChallenge()
         let authenticating = challenge != nil && challenge == localAuthenticationInputPolicy.preparedRequestID
-        guard (isProtected || authenticating), environmentIsUsable(), currentLayout() == layout,
+        let environmentUsable = (isProtected || authenticating) &&
+            environmentIsUsable(allowSecureInput: authenticating) && currentLayout() == layout
+        guard let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else {
+            inputEnvironmentVerified = false
+            localAuthenticationInputPolicy.revoke()
+            return
+        }
+        let now = ContinuousClock.now
+        inputObservationExpires = now.advanced(by: .milliseconds(250))
+        if challenge == nil { refreshReturnButtons(rows: rows) }
+        guard environmentUsable,
               let tap, let annotatedTap,
               CFMachPortIsValid(tap), CFMachPortIsValid(annotatedTap),
               CGEvent.tapIsEnabled(tap: tap), CGEvent.tapIsEnabled(tap: annotatedTap),
@@ -735,13 +768,6 @@ final class HostSentryPlatform {
             return
         }
         inputEnvironmentVerified = true
-        guard let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else {
-            inputEnvironmentVerified = false
-            localAuthenticationInputPolicy.revoke()
-            return
-        }
-        let now = ContinuousClock.now
-        inputObservationExpires = now.advanced(by: .milliseconds(250))
         if let challenge {
             var candidates: [(Int, LocalAuthenticationInputPolicy.Target)] = []
             for (index, row) in rows.enumerated() {
@@ -777,7 +803,6 @@ final class HostSentryPlatform {
         } else {
             localAuthenticationInputPolicy.revoke()
             authenticationEventSources = nil
-            refreshReturnButtons(rows: rows)
             refreshRemoteTarget()
         }
     }
@@ -800,7 +825,6 @@ final class HostSentryPlatform {
 
     private func refreshReturnButtons(rows: [[String: Any]]) {
         guard let main = NSScreen.screens.first else { return }
-        let own = Set(curtainWindowIDs)
         for curtain in curtains.values {
             let panel = curtain.panel, button = curtain.returnButton
             guard panel.isVisible, panel.isOnActiveSpace, panel.alphaValue == 1,
@@ -813,14 +837,18 @@ final class HostSentryPlatform {
             let id = CGWindowID(panel.windowNumber)
             guard !visible.isEmpty, let index = rows.firstIndex(where: {
                 ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id
-            }) else { continue }
+            }), (rows[index][kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
+                (rows[index][kCGWindowAlpha as String] as? NSNumber)?.doubleValue == 1,
+                let bounds = rows[index][kCGWindowBounds as String] as? NSDictionary,
+                let panelRect = CGRect(dictionaryRepresentation: bounds),
+                !rect.isEmpty, !rect.isInfinite, panelRect.contains(rect) else { continue }
             var cursorOwners: [pid_t: Bool] = [:]
             let blocked = rows.prefix(index).contains { row in
                 guard let number = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
                       let alpha = (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue,
                       let bounds = row[kCGWindowBounds as String] as? NSDictionary,
                       let other = CGRect(dictionaryRepresentation: bounds) else { return true }
-                return !own.contains(number) && alpha > 0 && other.intersects(rect) &&
+                return number != id && alpha > 0 && other.intersects(rect) &&
                     !Self.isSystemCursorWindow(row, verifiedOwners: &cursorOwners)
             }
             if !blocked { observedReturnButtons[id] = rect }

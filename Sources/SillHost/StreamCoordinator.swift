@@ -484,6 +484,10 @@ package final class StreamCoordinator {
                 self.server.closeSessions("인증된 로컬 복귀로 원격 세션이 종료되었습니다.", matching: { _ in true })
                 return true
             }
+            privacy.localReturnActivityChanged = { [weak self, weak privacy] in
+                guard let self, let privacy else { return }
+                self.sentry?.localReturnActivityChanged(privacy.localReturnInProgress)
+            }
             privacy.changed = { [weak self] state in
                 self?.audioPrivacyChanged(state)
                 self?.sentryAudioProtectionChanged()
@@ -3842,7 +3846,9 @@ extension StreamCoordinator {
         injector.protectedPointerEgress = { [weak platform] event, scope in
             platform?.protectedPointerEgress(event, scope: scope) == true
         }
-        platform.localReturnReason = { [weak self] in self?.sentryLocalReturnUnavailableReason() }
+        platform.localReturnReason = { [weak self] in
+            self?.audioPrivacy?.localReturnStatusReason ?? self?.sentryLocalReturnUnavailableReason()
+        }
         platform.currentLocalAuthenticationChallenge = { [weak self] in self?.audioPrivacy?.localAuthenticationChallengeID }
         audioPrivacy?.localAuthenticationWillBegin = { [weak platform] requestID in
             platform?.localAuthenticationWillBegin(requestID)
@@ -3860,7 +3866,7 @@ extension StreamCoordinator {
                 restoreCurtains: { platform.restoreCurtains() }, released: { platform.releaseVerified }),
             prepareRelease: { [weak self] in
                 guard let self else { return false }
-                return platform.prepareRelease { self.injector.prepareRelease() }
+                return platform.prepareAuthenticatedLocalRelease { self.injector.prepareRelease() }
             },
             prepareRemoteRelease: { [weak self] in
                 guard let self else { return false }
@@ -3892,8 +3898,10 @@ extension StreamCoordinator {
             }
             for id in self.connections.keys where !self.server.sentryAdmission.allowsActions(id) {
                 self.peerInputQueue.cancel(peer: id)
+                self.peerMenus[id]?.sourceScopeChanged()
                 self.releaseInput(of: id)
             }
+            self.menus.sourceScopeChanged()
             self.broadcastList()
             self.encoder?.requestKeyframe()
             for lane in self.peerStreams.values { lane.requestKeyframe() }

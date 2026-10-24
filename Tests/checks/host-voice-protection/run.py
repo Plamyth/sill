@@ -25,12 +25,21 @@ methods = [block(coordinator, 'private func ' + name + '(').replace('NWConnectio
     'nativeAudioBindingReady', 'audioPrivacyReady', 'audioPrivacyChanged', 'microphoneCatalog', 'canEnableRemoteAudio',
     'audioRouteAuthorized', 'sendAudioRouteState', 'publishAudioRoutes', 'handleAudioRoute']]
 (output / 'CoordinatorFixture.swift').write_text((here / 'CoordinatorFixture.swift').read_text().replace('// PRODUCTION_BOUNDARIES', '\n'.join(methods)))
+privacy_fixture = (here / 'PrivacySentry.swift').read_text().replace('__PRIVACY_CHANGED__',
+    block(coordinator, 'privacy.changed = {'))
+privacy_fixture = privacy_fixture.replace('__PRIVACY_ACTIVITY__',
+    block(coordinator, 'privacy.localReturnActivityChanged = {') if 'privacy.localReturnActivityChanged = {' in coordinator else '')
+privacy_fixture = privacy_fixture.replace('__SENTRY_PRIVACY_CHANGED__',
+    block(coordinator, 'package func sentryAudioProtectionChanged(').replace('package func', 'func'))
+(output / 'PrivacySentryFixture.swift').write_text(privacy_fixture)
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in [
-    'HostAudioPrivacy', 'HostAudioPrivacyModel', 'HostExclusiveAudioSilence', 'LocalAudioReturn', 'LocalAudioParticipants',
+    'HostAudioPrivacy', 'HostAudioPrivacyModel', 'HostSentry', 'SentryAdmission', 'HostExclusiveAudioSilence', 'LocalAudioReturn', 'LocalAudioParticipants',
     'SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'AudioHardwareRoutes']]
 sources += [here / 'Main.swift', here / 'JournalRollback.swift', here / 'LegacyAudioJournal.swift', here / 'FakeHAL.swift', here / 'LocalReturn.swift', here / 'Exclusive.swift', output / 'CoordinatorFixture.swift']
+sources += [output / 'PrivacySentryFixture.swift']
 sources += [root / 'Tests/checks/host-audio-privacy/StreamSilence.swift']
 inputs = sorted(set(sources + [root / 'Sources/SillHost/StreamCoordinator.swift', root / 'Package.swift', here / 'CoordinatorFixture.swift', Path(__file__).resolve()] + list((root / 'Sources/StreamProtocol').glob('*.swift')) + [p for p in (root / 'Sources/AudioSilence').rglob('*') if p.is_file()]))
+inputs += [here / 'PrivacySentry.swift']
 hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 modules = build / 'Modules'
 objects = sorted((build / 'StreamProtocol.build').glob('*.o')) + sorted((build / 'AudioSilence.build').rglob('*.o'))

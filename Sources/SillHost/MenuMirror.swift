@@ -49,6 +49,7 @@ final class MenuMirror {
     private var readScopeBlocked = false
     private static let readScopeNote = "선택한 창이 Mac의 입력 대상이 아니므로 메뉴 상태를 확인할 수 없습니다."
     var effectAdmission: SourcePublicationAdmission?
+    private var pressAdmission = SourcePublicationAdmission()
     var sourceScope: () -> (generation: String, epoch: UUID)? = { nil }
     var executePress: ((@escaping @MainActor () async -> Void) -> Void)?
     /// The app behind the current source, asked when the first device subscribes (the coordinator
@@ -192,8 +193,9 @@ final class MenuMirror {
             return
         }
         let admission = effectAdmission
+        let pressAdmission = self.pressAdmission
         let work: @MainActor () async -> Void = {
-            await self.servePress(r, to: c, who: who, arrived: now, admission: admission)
+            await self.servePress(r, to: c, who: who, arrived: now, admission: admission, pressAdmission: pressAdmission)
         }
         if let executePress { executePress(work) } else { enqueue(work) }
     }
@@ -427,7 +429,7 @@ final class MenuMirror {
         }
     }
 
-    private func servePress(_ r: PressMenuItem, to c: NWConnection, who: String, arrived: Double, admission: SourcePublicationAdmission?) async {
+    private func servePress(_ r: PressMenuItem, to c: NWConnection, who: String, arrived: Double, admission: SourcePublicationAdmission?, pressAdmission: SourcePublicationAdmission) async {
         let cid = ObjectIdentifier(c)
         let path = r.id.flatMap(MenuPath.init)
         let app = label(target?.app ?? "")
@@ -449,19 +451,22 @@ final class MenuMirror {
         let waited = CFAbsoluteTimeGetCurrent() - arrived
         if RequestDeadline.expired(waited: waited, rttMs: roundTrips[cid]) { refuse(.late(waited), what: logPath(path, app: t.app)); return }
         let v = version
-        _ = await (preparePress ?? prepare)()
+        guard await (preparePress ?? prepare)() else { refuse(.changed, what: shownID); return }
         guard v == version, target?.pid == t.pid else { refuse(.changed, what: shownID); return }
         let reader = self.reader
         let kept = elements[path]?.element
         let shown = r.title
         let ancestors = ancestorTitles(path)
         let result: MenuReader.Pressed? = await onMenus {
-            if let admission {
-                var result: MenuReader.Pressed?
-                admission.publish { result = reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors, expectedWindow: t.window, requireFrontmost: true) }
-                return result
+            var result: MenuReader.Pressed?
+            pressAdmission.publish {
+                if let admission {
+                    admission.publish { result = reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors, expectedWindow: t.window, requireFrontmost: true) }
+                } else {
+                    result = reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors)
+                }
             }
-            return reader.press(pid: t.pid, element: kept, path: path, shownTitle: shown, ancestors: ancestors)
+            return result
         }
         guard let result, v == version, target?.pid == t.pid,
               subscribers[cid] != nil else { return }
@@ -587,6 +592,7 @@ final class MenuMirror {
     /// version moves, what was read in the old one goes, and the same top level goes out again with
     /// the new version, so every device's older ids are refused and its open menus say so.
     private func treeChanged() {
+        invalidatePresses()
         version += 1
         cache.clear()
         elements = [:]
@@ -594,7 +600,13 @@ final class MenuMirror {
         publishTop()
     }
 
+    private func invalidatePresses() {
+        pressAdmission.invalidate()
+        pressAdmission = SourcePublicationAdmission()
+    }
+
     private func newVersion() {
+        invalidatePresses()
         version += 1
         cache.clear()
         elements = [:]

@@ -105,16 +105,23 @@ extension Checks {
                   "\(label) 시 releasing·tap제거·audio commit 없이 원 버튼 부채와 latch 유지")
         }
         let noTap = ReturnFixture(); noTap.input.platform.tap = nil
-        check(!noTap.complete() && noTap.effects == ["latched"],
-              "입력 부채가 없어도 live 보호 tap 없으면 prepareRelease가 성공하지 않음")
+        check(!noTap.input.platform.prepareRelease { true },
+              "일반 보호 해제 준비는 기존 live tap 검증을 계속 요구")
+        check(noTap.complete() && noTap.effects == ["releasing", "surface-release", "audio", "inactive"] &&
+              noTap.journal == .inactive && noTap.input.platform.releaseVerified,
+              "인증 완료 뒤 입력 부채 없는 tap0 복구 상태는 소유 tap 부재·커튼 제거 확인 후 복귀")
         let afterCleanup = ReturnFixture(); afterCleanup.input.send(.leftDown)
-        var verifications = 0
-        afterCleanup.input.platform.onVerify = {
-            verifications += 1
-            if verifications == 3 { afterCleanup.input.platform.tap = nil }
+        var lostAfterCleanup = false
+        afterCleanup.duringRelease = {
+            if case .releasing = afterCleanup.input.platform.state {
+                lostAfterCleanup = !afterCleanup.input.debt()
+                afterCleanup.input.platform.tap = nil
+            }
         }
-        check(!afterCleanup.complete() && !afterCleanup.input.debt() && afterCleanup.effects == ["latched"],
-              "terminal 뒤 마지막 검증에서 tap을 잃어도 surface 해제·audio 없이 latch 유지")
+        check(afterCleanup.complete() && lostAfterCleanup && !afterCleanup.input.debt() &&
+              afterCleanup.effects == ["releasing", "surface-release", "audio", "inactive"] &&
+              afterCleanup.input.platform.releaseVerified,
+              "인증 후 terminal이 끝난 tap 소실은 OS 소유 필터 부재와 커튼 제거를 확인한 뒤 복귀")
         let storage = ReturnFixture(); storage.input.send(.leftDown); storage.releasingWriteOK = false
         check(!storage.complete() && !storage.input.debt() && storage.journal == .latched &&
               storage.effects == ["releasing"] && storage.input.platform.tap != nil,

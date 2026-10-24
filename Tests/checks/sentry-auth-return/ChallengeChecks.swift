@@ -82,14 +82,25 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
     let second = UUID()
     let next = Task { await authentication.evaluate(operationId: second) }
     await settle { authentication.activeChallengeID == second }
-    context.decline()
+    context.callback?(true, nil)
     for _ in 0..<20 { await Task.yield() }
     check(authentication.activeChallengeID == second, "late callback cannot close the replacement challenge")
     LAContext.instances.last!.decline()
     check(!(await next.value) && authentication.activeChallengeID == nil, "failed authentication removes the challenge")
     let expires = Task { await authentication.evaluate(operationId: UUID()) }
     await settle { authentication.activeChallengeID != nil }
+    let expiredContext = LAContext.instances.last!
     check(!(await expires.value) && authentication.activeChallengeID == nil, "authentication expiry removes the challenge")
+    let replacementID = UUID()
+    let replacement = Task { await authentication.evaluate(operationId: replacementID) }
+    await settle { authentication.activeChallengeID == replacementID }
+    expiredContext.callback?(true, nil)
+    for _ in 0..<20 { await Task.yield() }
+    check(authentication.activeChallengeID == replacementID,
+          "late success after expiry cannot authenticate or cancel a replacement request")
+    LAContext.instances.last!.decline()
+    check(!(await replacement.value) && authentication.activeChallengeID == nil,
+          "replacement still requires its own actual owner authentication")
     LAContext.capabilityHook = nil
     LAContext.issueHook = nil
 
@@ -116,6 +127,8 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
         check(privacy.localAuthenticationChallengeID == auth.activeChallengeID,
               "\(ending) model exposes only its current actual challenge")
         check(prepared == auth.activeChallengeID, "\(ending) snapshot and active challenge share the operation")
+        check(privacy.localReturnStatusReason?.contains("macOS에 로컬 복귀 인증을 요청") == true,
+              "\(ending) own UI status identifies an issued OS request without claiming acceptance")
         switch ending {
         case "cancel":
             work.cancel()
@@ -136,6 +149,8 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
         }
         check(!(await work.value) && privacy.localAuthenticationChallengeID == nil,
               "\(ending) terminal request retains no challenge")
+        check(privacy.localReturnStatusReason?.contains("macOS에 로컬 복귀 인증을 요청") != true,
+              "\(ending) terminal request clears the issued authentication UI status")
         check(privacy.latched && hal.writes == 0 && hal.restores == 0,
               "\(ending) never restores audio or clears the durable protection latch")
         privacy.stop()
@@ -192,7 +207,7 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
     check(humanPrivacy.latched && humanHAL.writes == 0 && humanHAL.restores == 0,
           "extended human wait never changes audio or the protection latch")
     humanPrivacy.stop()
-    print("PASS \(count) native challenge checks; no actual OS authentication or positive approval supplied")
+    print("PASS \(count) native challenge checks; stale success only in inert contexts; actual OS authentication 0")
 }
 
 Task { @MainActor in await challenges(); exit(0) }
