@@ -29,7 +29,7 @@ public struct SentryReturnKeyEnrollment: Codable, Equatable, Sendable {
     public enum Action: String, Codable, Sendable { case enroll, rotate, revoke }
     public let action: Action
     public let keyID: String
-    /// Uncompressed P-256 X9.63, 65 bytes, canonical unpadded base64url. Never a TLS identity replacement.
+    /// Canonical P-256 SPKI DER, 91 bytes, padded RFC4648 base64. Never a TLS identity replacement.
     public let publicKey: String?
     public let previousKeyID: String?
     private enum CodingKeys: String, CodingKey { case action, keyID, publicKey, previousKeyID }
@@ -38,11 +38,11 @@ public struct SentryReturnKeyEnrollment: Codable, Equatable, Sendable {
         switch action {
         case .enroll:
             guard previousKeyID == nil, let publicKey, let bytes = returnBase64(publicKey),
-                  (try? P256.Signing.PublicKey(x963Representation: bytes)) != nil else { throw SentryReturnFailure.invalidPayload }
+                  returnPublicKey(bytes) != nil else { throw SentryReturnFailure.invalidPayload }
         case .rotate:
             guard let previousKeyID, returnUUID(previousKeyID), previousKeyID != keyID,
                   let publicKey, let bytes = returnBase64(publicKey),
-                  (try? P256.Signing.PublicKey(x963Representation: bytes)) != nil else { throw SentryReturnFailure.invalidPayload }
+                  returnPublicKey(bytes) != nil else { throw SentryReturnFailure.invalidPayload }
         case .revoke:
             guard publicKey == nil, previousKeyID == nil else { throw SentryReturnFailure.invalidPayload }
         }
@@ -131,7 +131,7 @@ public enum SentryReturnControl: Equatable, Sendable {
         case .prove:
             guard let reference = e.reference, let generation = e.authGeneration, returnUUID(generation),
                   let encoded = e.signature, let signature = returnBase64(encoded),
-                  (try? P256.Signing.ECDSASignature(derRepresentation: signature)) != nil else {
+                  (8...72).contains(signature.count), (try? P256.Signing.ECDSASignature(derRepresentation: signature)) != nil else {
                 throw SentryReturnFailure.invalidPayload
             }
             return .prove(reference, authGeneration: generation, signature: signature)
@@ -147,7 +147,7 @@ public enum SentryReturnControl: Equatable, Sendable {
             object["operation"] = "cancel"; object["reference"] = try returnObject(reference); object["authGeneration"] = generation
         case .prove(let reference, let generation, let signature):
             object["operation"] = "prove"; object["reference"] = try returnObject(reference)
-            object["authGeneration"] = generation; object["signature"] = Base64URL.encode(signature)
+            object["authGeneration"] = generation; object["signature"] = signature.base64EncodedString()
         }
         let data = try returnJSON(object)
         _ = try Self.decodePayload(data)
@@ -164,7 +164,7 @@ public struct SentryReturnChallenge: Codable, Equatable, Sendable {
     public let authMode: SentryReturnAuthMode
     public let keyID: String?
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case reference, lease, authGeneration, nonce, ownerID, hostFingerprint, deviceFingerprint, pairingGeneration, authMode, keyID
+        case reference, lease, authGeneration, nonce, ownerID, hostFingerprint, deviceFingerprint, pairingGeneration, authMode, keyID, signingPayloadBase64
     }
     public init(reference: SentryReturnReference, lease: SentryReturnLease, authGeneration: String, nonce: String,
                 ownerID: String, hostFingerprint: String, deviceFingerprint: String, pairingGeneration: String,
@@ -189,6 +189,8 @@ public struct SentryReturnChallenge: Codable, Equatable, Sendable {
             hostFingerprint: c.decode(String.self, forKey: .hostFingerprint), deviceFingerprint: c.decode(String.self, forKey: .deviceFingerprint),
             pairingGeneration: c.decode(String.self, forKey: .pairingGeneration), authMode: c.decode(SentryReturnAuthMode.self, forKey: .authMode),
             keyID: c.decodeIfPresent(String.self, forKey: .keyID))
+        let payload = try c.decode(String.self, forKey: .signingPayloadBase64)
+        guard let bytes = returnBase64(payload), bytes.count <= 2048, bytes == (try signingBytes()) else { throw SentryReturnFailure.invalidPayload }
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -197,11 +199,17 @@ public struct SentryReturnChallenge: Codable, Equatable, Sendable {
         try c.encode(ownerID, forKey: .ownerID); try c.encode(hostFingerprint, forKey: .hostFingerprint)
         try c.encode(deviceFingerprint, forKey: .deviceFingerprint); try c.encode(pairingGeneration, forKey: .pairingGeneration)
         try c.encode(authMode, forKey: .authMode); try c.encode(keyID, forKey: .keyID)
+        try c.encode(signingPayloadBase64, forKey: .signingPayloadBase64)
     }
+    public var signingPayloadBase64: String { try! signingBytes().base64EncodedString() }
     /// ASCII purpose + NUL + compact sorted-key UTF-8 JSON. No slash escaping, floats or Unicode normalization.
     public func signingBytes() throws -> Data {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return Data((Self.purpose + "\0").utf8) + (try encoder.encode(self))
+        let body: [String: Any] = ["reference": try returnObject(reference), "lease": try returnObject(lease),
+            "authGeneration": authGeneration, "nonce": nonce, "ownerID": ownerID, "hostFingerprint": hostFingerprint,
+            "deviceFingerprint": deviceFingerprint, "pairingGeneration": pairingGeneration,
+            "authMode": authMode.rawValue, "keyID": keyID.map { $0 as Any } ?? NSNull()]
+        let bytes = Data((Self.purpose + "\0").utf8) + (try returnJSON(body))
+        guard bytes.count <= 2048 else { throw SentryReturnFailure.payloadTooLarge }; return bytes
     }
 }
 
@@ -346,7 +354,11 @@ private func returnKeys(_ decoder: Decoder, _ keys: Set<String>) throws {
 private func returnUUID(_ value: String) -> Bool { UUID(uuidString: value)?.uuidString.lowercased() == value }
 private func returnHex(_ value: String) -> Bool { value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } }
 private func returnBase64(_ value: String) -> Data? {
-    guard let bytes = Base64URL.decode(value), Base64URL.encode(bytes) == value else { return nil }; return bytes
+    guard let bytes = Data(base64Encoded: value), bytes.base64EncodedString() == value else { return nil }; return bytes
+}
+private func returnPublicKey(_ bytes: Data) -> P256.Signing.PublicKey? {
+    guard bytes.count == 91, let key = try? P256.Signing.PublicKey(derRepresentation: bytes),
+          key.derRepresentation == bytes else { return nil }; return key
 }
 private func returnObject<T: Encodable>(_ value: T) throws -> Any { try JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) }
 private func returnJSON(_ value: [String: Any]) throws -> Data {

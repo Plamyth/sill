@@ -27,10 +27,10 @@ import CryptoKit
         let challengeBytes = try JSONSerialization.data(withJSONObject: f["challenge"]!)
         let challenge = try JSONDecoder().decode(SentryReturnChallenge.self, from: challengeBytes)
         let signed = try challenge.signingBytes()
-        check(Base64URL.encode(signed) == f["signingBytesBase64URL"] as? String &&
+        check(signed.base64EncodedString() == f["signingPayloadBase64"] as? String &&
             SentryReturnRequest.digest(signed) == f["signingBytesSHA256"] as? String, "Android와 Apple의 canonical 서명 바이트 golden")
         guard case .prove(_, _, let signature) = try SentryReturnControl.decodePayload(Data((f["proofRaw"] as! String).utf8)) else { fatalError() }
-        let key = try P256.Signing.PublicKey(x963Representation: Base64URL.decode(f["publicKeyX963"] as! String)!)
+        let key = try P256.Signing.PublicKey(derRepresentation: Data(base64Encoded: f["publicKeySPKIBase64"] as! String)!)
         let proof = try P256.Signing.ECDSASignature(derRepresentation: signature)
         check(key.isValidSignature(proof, for: signed), "고정 P256 DER proof를 실제 CryptoKit 검증")
         for name in ["pendingStateRaw", "completedStateRaw"] {
