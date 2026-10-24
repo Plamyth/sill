@@ -92,6 +92,15 @@ import Foundation
     let retriedWindows = resuming.allSent.compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
     expect(retriedWindows.count == 2 && retriedWindows.allSatisfy { $0.source == .window(1001) && $0.selectionRevision == "revision-0" },
            "중간 차단을 놓친 새 허용 세대에서도 자동 창 선택과 원래 CAS만 재개")
+    let queued = fresh()
+    let queuedPeer = queued.connection!
+    _ = queued.link.hold(queuedPeer)
+    queued.deliverIdleCatalog(catalog(2, ready: true)!)
+    queued.deliverIdleCatalog(catalog(3, ready: false)!)
+    _ = queued.link.unhold(queuedPeer)
+    expect(picks(queued).isEmpty, "보호 취소가 실제 SessionLink에 보류된 옛 자동 제출도 폐기")
+    queued.deliverIdleCatalog(catalog(4, ready: true)!)
+    expect(picks(queued).count == 1, "보류 제출 취소 뒤 새 허용 세대에서 현재 티켓만 제출")
     idle.selectionRevision = "revision-new"
     waiting.deliverIdleCatalog(catalog(8, ready: true)!)
     idle.selectionRevision = "revision-0"
