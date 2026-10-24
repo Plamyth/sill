@@ -11,8 +11,12 @@ final class HostSentryPlatform {
     var changed: (() -> Void)?
     var requestLocalReturn: (() -> Void)?
     var localReturnReason: () -> String? = { nil }
+    var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
 
     var reason: String? {
+        if currentLocalAuthenticationChallenge() != nil {
+            return "현재 인증 요청과 운영체제 인증창의 연결을 확인하지 못해 입력 차단을 유지합니다."
+        }
         switch state {
         case .invalid(let message): return message
         case .engaging: return "원격 제어 보호 상태를 확인하고 있습니다."
@@ -184,6 +188,7 @@ final class HostSentryPlatform {
         if case .idle = state { return true }
         state = .releasing
         localReturnDown = nil
+        updateCurtainText()
         changed?()
         destroyTap()
         if let tapID {
@@ -319,6 +324,10 @@ final class HostSentryPlatform {
             invalidate("입력 필터가 운영체제에 의해 중단되었습니다. 보호 상태를 다시 확인해야 합니다.")
             return nil
         }
+        if currentLocalAuthenticationChallenge() != nil {
+            localReturnDown = nil
+            return nil
+        }
         if event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
            event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()) {
             guard isProtected, environmentIsUsable() else { return nil }
@@ -421,7 +430,7 @@ final class HostSentryPlatform {
     }
 
     private var curtainMessage: (title: String, detail: String) {
-        if isProtected {
+        if isProtected && currentLocalAuthenticationChallenge() == nil {
             return ("원격 제어 모드 활성화",
                     "현재 사용자 데스크톱의 일반 입력 차단을 확인했습니다.\n전원 버튼·시스템 보안 화면의 차단은 보장하지 않습니다.\n로컬 복귀에는 새 운영체제 인증이 필요하며 키보드 입력 차단은 유지됩니다.")
         }
@@ -432,7 +441,11 @@ final class HostSentryPlatform {
 
     private func updateCurtainText() {
         let message = curtainMessage
+        let passesInput = currentLocalAuthenticationChallenge() == nil && isProtected && tap.map {
+            CFMachPortIsValid($0) && CGEvent.tapIsEnabled(tap: $0)
+        } == true
         for curtain in curtains.values {
+            curtain.panel.ignoresMouseEvents = passesInput
             curtain.panel.title = message.title
             curtain.title.stringValue = message.title
             curtain.detail.stringValue = message.detail
@@ -568,7 +581,10 @@ final class HostSentryPlatform {
             })
         }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.changed?() }
+            MainActor.assumeIsolated {
+                self?.updateCurtainText()
+                self?.changed?()
+            }
         }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)

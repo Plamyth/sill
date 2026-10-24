@@ -216,6 +216,7 @@ final class LocalAudioParticipantRegistry {
         init(_ ticket: ForwardingTicket) { self.ticket = ticket }
     }
     private var localReturn: LocalReturnTicket?
+    private var localReturnRecovery: UUID?
     private var forwarding: Forwarding?
     private var consumedEpochs: Set<UUID> = []
     private var tail: Task<Void, Never>?
@@ -275,6 +276,31 @@ final class LocalAudioParticipantRegistry {
         localReturn = nil
     }
 
+    func recoverClosedLocalReturn(until deadline: ContinuousClock.Instant) async -> Bool {
+        guard let old = operation, old.closed, old.uncertain else {
+            return authenticatedLocalReturnUnavailableReason == nil
+        }
+        guard localReturnRecovery == nil, localReturn == nil, pendingCalls == 0,
+              matches(old.snapshot), !Task.isCancelled, ContinuousClock.now < deadline else { return false }
+        let recovery = UUID()
+        localReturnRecovery = recovery
+        defer { localReturnRecovery = nil }
+        let current = {
+            self.localReturnRecovery == recovery && self.localReturn == nil &&
+            self.operation?.id == old.id && self.operation?.closed == true &&
+            self.operation?.uncertain == true && self.matches(old.snapshot) && !Task.isCancelled
+        }
+        for request in old.requests {
+            guard let member = members[request.participantId],
+                  let response = await serialized(until: deadline, allowed: current, operation: {
+                      await member.control.inspect(old.id)
+                  }), let receipt = response, receipt.proves(request), current() else { return false }
+        }
+        guard current(), pendingCalls == 0, ContinuousClock.now < deadline else { return false }
+        operation = nil
+        return authenticatedLocalReturnUnavailableReason == nil
+    }
+
     func beginForwarding(epoch: UUID, intentGeneration: UUID, operationId: UUID, privacyGeneration: UUID,
                          membership: Snapshot, identity: [String]) -> ForwardingTicket? {
         guard localReturn == nil, operation?.closed != false, operation?.uncertain != true,
@@ -321,7 +347,8 @@ final class LocalAudioParticipantRegistry {
 
     func requestIsCurrent(_ request: LocalAudioParticipantRequest) -> Bool {
         guard request.isValid, !Task.isCancelled else { return false }
-        if let operation, !operation.closed, !operation.uncertain, matches(operation.snapshot),
+        if let operation, ((!operation.closed && !operation.uncertain) ||
+            (localReturnRecovery != nil && operation.closed && operation.uncertain)), matches(operation.snapshot),
            operation.requests.contains(where: { sameRequest($0, request) }) { return true }
         guard let work = forwarding, owns(work), matches(request, ticket: work.ticket),
               let prepared = work.preparations[request.participantId] else { return false }
