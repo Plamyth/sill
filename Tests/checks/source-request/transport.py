@@ -248,7 +248,7 @@ def augment(inputs, block, root, here):
         query = (here/'CatalogQuery.swift').read_text().replace('// QUERY_METHOD',
             block((root/'Sources/SillHost/StreamCoordinator.swift').read_text(), 'private func refreshCatalog(').replace('private ', ''))
         fixture = fixture.replace('// QUERY_FIXTURE', query)
-        keep = ['Switcher.swift', 'AudioPrivacy.swift', 'StreamMessage.swift', 'AudioRouting.swift', 'SourcePublicationAdmission.swift']
+        keep = ['Switcher.swift', 'AudioPrivacy.swift', 'AudioForwarding.swift', 'StreamMessage.swift', 'AudioRouting.swift', 'SourcePublicationAdmission.swift']
         selected = {name: inputs[name] for name in keep}
         inputs.clear(); inputs.update(selected)
         inputs['main.swift'] = fixture
