@@ -69,12 +69,13 @@ try:
             raise RuntimeError('Protocol compilation failed')
         if not run(base + ['-I', str(out), str(root / 'Sources/SillHost/SentryAdmission.swift'), str(root / 'Sources/SillHost/HostSentry.swift'),
                           str(out / 'fixture/Main.swift'), str(out / 'fixture/CurtainChecks.swift'),
+                          str(out / 'fixture/CursorChecks.swift'),
                           str(out / 'StreamProtocol.o'), '-o', str(out / 'checks')]):
             raise RuntimeError('Targeted compilation failed')
         record['extraction'] = json.loads((out / 'fixture/manifest.json').read_text())
         record['checks'] = {'native-panel': True}
         record['checks'].update({name: run([str(out / 'checks')] + args, 20)
-                            for name, args in [('curtains', ['--curtains']), ('refresh', ['--refresh']), ('sentry', [])]})
+                            for name, args in [('curtains', ['--curtains']), ('refresh', ['--refresh']), ('sentry', []), ('cursor', ['--cursor'])]})
         if privacy:
             package = out / 'privacy'
             if not run([sys.executable, '-B', str(root / 'Tests/checks/host-audio-privacy/emit.py'), '--output', str(package)], 20):
