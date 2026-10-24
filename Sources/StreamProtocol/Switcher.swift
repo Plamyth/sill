@@ -162,6 +162,7 @@ public struct WindowList: Codable {
     /// 0: selecting a source does not activate, move or resize Mac windows or create displays.
     public var sourceSelectionEffects: Int?
     public var sourceSelectionFailure: String?
+    public var sourceSelectionAdmission: SourceSelectionAdmission?
     public var microphone: MicrophoneCapability?
     /// Version 1 permits kind 211. Absent on hosts without monitor selection.
     public var displaySelection: Int?
@@ -177,7 +178,8 @@ public struct WindowList: Codable {
                 remoteAudio: Int? = nil, audioPrivacy: AudioPrivacyState? = nil, selectionRevision: String? = nil, automaticDisplaySelection: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
-                dockApps: [AppInfo]? = nil, providerCalls: Int? = nil) {
+                dockApps: [AppInfo]? = nil, providerCalls: Int? = nil,
+                sourceSelectionAdmission: SourceSelectionAdmission? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.selectionRevision = selectionRevision
@@ -195,6 +197,7 @@ public struct WindowList: Codable {
         self.desktopSelectionRequired = desktopSelectionRequired
         self.dockApps = dockApps
         self.providerCalls = providerCalls
+        self.sourceSelectionAdmission = sourceSelectionAdmission
     }
 }
 

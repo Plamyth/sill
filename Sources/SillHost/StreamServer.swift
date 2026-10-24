@@ -2232,6 +2232,8 @@ final class StreamServer {
            var catalog = Wire.decode(WindowList.self, from: Data(raw.dropFirst(StreamMessage.headerLength))) {
             catalog.sentry = client.route.encrypted && client.route.pairedName != nil
                 ? sentryAdmission.status(for: ObjectIdentifier(client.connection)) : nil
+            catalog.sourceSelectionAdmission = client.route.encrypted && client.route.pairedName != nil
+                ? sentryAdmission.sourceSelectionAdmission(for: ObjectIdentifier(client.connection)) : nil
             catalog.presentationInput = 1
             let current = currentVideoAdmission(for: client).current
             catalog.videoEpoch = catalog.videoEpoch == current ? current : nil
