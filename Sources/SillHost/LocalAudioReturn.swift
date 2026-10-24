@@ -196,7 +196,6 @@ struct LocalAudioState: Codable, Equatable {
                     throw PrivacyAudioFailure.persistence
                 }
                 saved.streams = observed.map { stream in originals.first { $0.hasSameIdentity(as: stream) } ?? stream }
-                // Original mute values also survive a topology extension.
                 let original = PrivacyAudioDevice(id: device.id, uid: device.uid, transport: device.transport,
                     plugin: device.plugin, inputChannels: device.inputChannels, outputChannels: device.outputChannels,
                     inputMuted: previous.inputMuted, outputMuted: previous.outputMuted, streams: saved.streams)

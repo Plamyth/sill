@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Build the production HAL boundary and run injected stream and voice regressions."""
 import hashlib
 import json
 import os

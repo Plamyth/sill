@@ -326,14 +326,12 @@ package final class HostAudioPrivacy {
         guard forwardingIntentAllowed else { return false }
         invalidateLocalReturn()
         if latched {
-            // A pre-existing latch without an original may follow real device writes.
             guard localState?.isValid == true else { fail(.persistence); return false }
             persistenceHealthy = persist()
         } else {
             guard let snapshot = try? readSnapshot(), let original = try? LocalAudioState(snapshot), original.isValid else {
                 fail(.readback); return false
             }
-            // saveLocal commits the original and latch in one journal envelope.
             persistenceHealthy = saveLocal(original)
             guard persistenceHealthy else { fail(.persistence); return false }
             localState = original
@@ -372,12 +370,10 @@ package final class HostAudioPrivacy {
                 guard saveLocal(original) else { throw PrivacyAudioFailure.persistence }
                 self.localState = original
             }
-            // Install before changing controls. Failure cannot leave an advertised ready state.
             watching = hal.observe(snapshot, changed: { [weak self] in self?.propertyChanged() })
             guard watching else { throw PrivacyAudioFailure.listeners }
             var plan = try snapshot.plan(allowPartial: true)
             if !plan.isEmpty { fail(.readback) }
-            // One bounded pass. Changes during setters fail closed and await a new event/admission.
             for _ in 0..<plan.count {
                 guard let write = plan.first else { break }
                 let before = try readSnapshot()

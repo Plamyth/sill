@@ -188,7 +188,6 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
     }
 
     func write(_ change: PrivacyAudioWrite) -> Bool {
-        // The injected boundary validates the current identity again, even for a stale command.
         guard let snapshot = try? read(), let expected = snapshot.applying(change) else { return false }
         let object: AudioObjectID
         var property: AudioObjectPropertyAddress
@@ -216,7 +215,6 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         if original.matches(snapshot) { return true }
         guard (try? snapshot.plan(allowPartial: true).isEmpty) == true,
               Set(snapshot.devices.map(\.uid)) == Set(original.devices.map(\.uid)) else { return false }
-        // Resolve the UID again before using a saved stream address.
         var changes: [(uid: String, selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope,
                        value: UInt32?, streamID: UInt32?)] = []
         for saved in original.devices {
@@ -311,7 +309,6 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
             let status = withUnsafePointer(to: &bundle) {
                 ops.read.objectGet(system, &property, UInt32(MemoryLayout<CFString>.size), $0, &size, &plugin)
             }
-            // System listeners remain installed when a required plugin is absent at startup.
             if status == noErr, size == MemoryLayout<AudioObjectID>.size, plugin != kAudioObjectUnknown {
                 properties.append((plugin, address(kAudioPlugInPropertyDeviceList)))
                 properties.append((plugin, address(kAudioPlugInPropertyBundleID)))
