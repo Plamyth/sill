@@ -40,12 +40,23 @@ surfaces = coordinator[start:end].removeprefix('surfaces: ')
 text = text.replace('__PRODUCTION_SURFACES__', surfaces)
 output.mkdir(parents=True)
 (output / 'CurtainChecks.swift').write_text(text)
+native_markers = ['private struct Curtain {', 'private func makeCurtain(']
+native_parts = {marker: block(platform, marker) for marker in native_markers}
+level = next(line.strip() for line in platform.splitlines() if 'private static let curtainLevel =' in line)
+native = (root / 'Tests/checks/sentry/NativePanelChecks.swift').read_text()
+native = native.replace('__PRODUCTION_CURTAIN_TYPE__', native_parts[native_markers[0]])
+native = native.replace('__PRODUCTION_CURTAIN_LEVEL__', level)
+native = native.replace('__PRODUCTION_MAKE_CURTAIN__', native_parts[native_markers[1]])
+(output / 'NativePanelChecks.swift').write_text(native)
 (output / 'manifest.json').write_text(json.dumps({
     'scope': 'Actual owner, extracted platform lifecycle, timer and production callback. Injected window/HID/notification boundaries only.',
     'platformBodiesSHA256': {marker: hashlib.sha256(block(platform, marker).encode()).hexdigest() for marker in markers},
     'changedSHA256': hashlib.sha256(changed.encode()).hexdigest(),
     'surfacesSHA256': hashlib.sha256(surfaces.encode()).hexdigest(),
-    'emittedSHA256': hashlib.sha256(text.encode()).hexdigest()
+    'emittedSHA256': hashlib.sha256(text.encode()).hexdigest(),
+    'nativePanelBodiesSHA256': {marker: hashlib.sha256(value.encode()).hexdigest() for marker, value in native_parts.items()},
+    'nativePanelLevelSHA256': hashlib.sha256(level.encode()).hexdigest(),
+    'nativePanelEmittedSHA256': hashlib.sha256(native.encode()).hexdigest()
 }, indent=2) + '\n')
 
 main = (root / 'Tests/checks/sentry/Main.swift').read_text()

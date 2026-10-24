@@ -371,11 +371,11 @@ final class HostSentryPlatform {
     private func makeCurtain(frame: CGRect) -> Curtain {
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = curtainMessage.title
+        panel.isFloatingPanel = true
         panel.level = Self.curtainLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
-        panel.isFloatingPanel = true
         panel.isReleasedWhenClosed = false
         panel.isOpaque = true
         panel.backgroundColor = .black

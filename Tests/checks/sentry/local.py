@@ -59,6 +59,11 @@ try:
         protocol = sorted(map(str, (root / 'Sources/StreamProtocol').glob('*.swift')))
         if not run([sys.executable, '-B', str(root / 'Tests/checks/sentry/emit-curtains.py'), '--output', str(out / 'fixture')], 20):
             raise RuntimeError('Extraction failed')
+        record['extraction'] = json.loads((out / 'fixture/manifest.json').read_text())
+        if not run(base + [str(out / 'fixture/NativePanelChecks.swift'), '-o', str(out / 'native-panel-checks')]):
+            raise RuntimeError('Actual AppKit invisible panel compilation failed')
+        if not run([str(out / 'native-panel-checks')], 20):
+            raise RuntimeError('Actual AppKit invisible panel level check failed')
         if not run(base + ['-emit-module', '-emit-object', '-module-name', 'StreamProtocol'] + protocol +
                    ['-emit-module-path', str(out / 'StreamProtocol.swiftmodule'), '-o', str(out / 'StreamProtocol.o')]):
             raise RuntimeError('Protocol compilation failed')
@@ -67,8 +72,9 @@ try:
                           str(out / 'StreamProtocol.o'), '-o', str(out / 'checks')]):
             raise RuntimeError('Targeted compilation failed')
         record['extraction'] = json.loads((out / 'fixture/manifest.json').read_text())
-        record['checks'] = {name: run([str(out / 'checks')] + args, 20)
-                            for name, args in [('curtains', ['--curtains']), ('refresh', ['--refresh']), ('sentry', [])]}
+        record['checks'] = {'native-panel': True}
+        record['checks'].update({name: run([str(out / 'checks')] + args, 20)
+                            for name, args in [('curtains', ['--curtains']), ('refresh', ['--refresh']), ('sentry', [])]})
         if privacy:
             package = out / 'privacy'
             if not run([sys.executable, '-B', str(root / 'Tests/checks/host-audio-privacy/emit.py'), '--output', str(package)], 20):
