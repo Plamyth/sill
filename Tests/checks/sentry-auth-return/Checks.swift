@@ -97,6 +97,10 @@ import Foundation
             fixture.unknownInspection = true
         }
         let startup = unavailable == "startup" ? NativeAudioStartup() : fixture.startup
+        if unavailable == "startup" {
+            startup.participants.register(.relay, bootId: UUID(), control: .init(
+                fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
+        }
         var calls = 0, commits = 0, clears = 0
         let privacy = HostAudioPrivacy(hal: hal, latched: true,
             localState: unavailable == "original" ? nil : try! LocalAudioState(hal.snapshot),
@@ -114,23 +118,28 @@ import Foundation
         privacy.stop()
     }
 
-    for unavailable in ["participants", "original", "recovery"] {
+    for unavailable in ["participants", "startup", "original", "recovery"] {
         let fixture = ReturnFixture(), hal = ReturnHAL()
         if unavailable == "participants" { fixture.registry.unregister(.relay) }
         if unavailable == "recovery" {
             await fixture.poisonInspection()
             fixture.unknownInspection = true
         }
+        let startup = unavailable == "startup" ? NativeAudioStartup() : fixture.startup
+        if unavailable == "startup" {
+            startup.participants.register(.relay, bootId: UUID(), control: .init(
+                fenceAndQuiesce: { .init($0, state: .unknown, facts: .unknown) }, inspect: { _ in nil }))
+        }
         var calls = 0, commits = 0, clears = 0
         let privacy = HostAudioPrivacy(hal: hal, latched: true,
             localState: unavailable == "original" ? nil : try! LocalAudioState(hal.snapshot),
             clearLatch: { clears += 1; return true }, authenticateLocal: { _ in calls += 1; return true },
-            nativeStartup: fixture.startup)
+            nativeStartup: startup)
         privacy.authenticatedLocalReturnWillCommit = { _ in commits += 1; return true }
         check(!(await privacy.requestLocalReturn(budgetMilliseconds: 50)), "\(unavailable) authenticated preparation still fails closed")
         check(calls == 1 && privacy.latched && hal.restores == 0 && clears == 0 && commits == 0,
               "\(unavailable) authentication success alone cannot release protection")
-        check(privacy.localReturnUnavailableReason?.contains("인증은 완료") == true,
+        check(privacy.localReturnStatusReason?.contains("인증은 완료") == true,
               "\(unavailable) explains post-authentication preparation failure separately")
         privacy.stop()
     }

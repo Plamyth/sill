@@ -3842,7 +3842,9 @@ extension StreamCoordinator {
         injector.protectedPointerEgress = { [weak platform] event, scope in
             platform?.protectedPointerEgress(event, scope: scope) == true
         }
-        platform.localReturnReason = { [weak self] in self?.sentryLocalReturnUnavailableReason() }
+        platform.localReturnReason = { [weak self] in
+            self?.audioPrivacy?.localReturnStatusReason ?? self?.sentryLocalReturnUnavailableReason()
+        }
         platform.currentLocalAuthenticationChallenge = { [weak self] in self?.audioPrivacy?.localAuthenticationChallengeID }
         audioPrivacy?.localAuthenticationWillBegin = { [weak platform] requestID in
             platform?.localAuthenticationWillBegin(requestID)

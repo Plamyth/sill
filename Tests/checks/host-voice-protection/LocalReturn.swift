@@ -124,8 +124,9 @@ func localReturnChecks() async {
     let missing = ReturnFixture(relay: false)
     expect(missing.privacy.armAndVerify(), "참여자 누락 fixture 차단")
     let missingResult = await missing.privacy.requestLocalReturn()
-    expect(!missingResult && missing.authCalls == 0 && missing.privacy.latched,
-           "실제 relay 미연결은 인증과 복원을 열지 않음")
+    expect(!missingResult && missing.authCalls == 1 && missing.privacy.latched &&
+           missing.hal.restoreCalls == 0 && missing.intentCommits == 0,
+           "실제 relay 미연결에도 인증은 요청하고 복원은 차단")
     missing.privacy.stop()
 
     let unsettled = ReturnFixture(); unsettled.quiescent = false
