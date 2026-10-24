@@ -72,6 +72,16 @@ func completed(for r: SentryReturnRequest, code: SentryReturnState.Code) -> Data
     static func main() throws {
         fixtures = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))) as! [String: Any]
         request = try .init(rawRequest: raw("requestDeviceRaw"))
+        if CommandLine.arguments.count > 2 {
+            switch CommandLine.arguments[2] {
+            case "lifecycle": try lifecycleChecks()
+            case "late-cancel": lateCancelChecks()
+            case "cancel-terminal": cancelTerminalChecks()
+            default: fatalError("unknown regression")
+            }
+            print("PASS regression \(CommandLine.arguments[2]) total \(checks)")
+            return
+        }
         let pending = raw("pendingStateRaw"), done = raw("completedStateRaw")
         for name in ["requestDeviceRaw", "enrollRaw", "currentRaw", "cancelRaw", "proofRaw"] {
             let data = raw(name)
@@ -406,4 +416,133 @@ func wiringChecks(keys: IPadSentryReturnKeys, keyID: String) {
     moving.queryIPadSentryReturn()
     check(other.sent.count == oldCount + 1,
         "new pinned connection permits only explicit current after new catalog")
+}
+
+
+func spinMain(_ until: () -> Bool) {
+    let end = Date().addingTimeInterval(3)
+    while !until() && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+}
+
+func lifecycleChecks() throws {
+    let fixtureKey = try P256.Signing.PrivateKey(rawRepresentation: Data(repeating: 0, count: 31) + Data([1]))
+    let keyID = "00000008-1111-4111-8111-111111111111"
+    for stop in ["resume", "background", "cancel", "trust", "handover", "lease", "expiry", "timeout", "no-context"] {
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let store = Memory()
+        let keys = IPadSentryReturnKeys(store: store.store, adapter: .init(create: { _ in
+            .init(opaqueKey: Data([1]), publicKey: fixtureKey.publicKey.derRepresentation)
+        }, sign: { _, bytes, op in
+            if stop != "no-context" { try op.installCancellation {} }
+            entered.signal()
+            guard release.wait(timeout: .now() + 5) == .success else { throw IPadSentryReturnKeys.Failure.cancelled }
+            return try fixtureKey.signature(for: bytes).derRepresentation
+        }))
+        _ = try keys.prepare(binding: binding, rotating: false, operation: .init(), keyID: keyID)
+        var enrollment = consumer(); let enrollmentRequest = try SentryReturnRequest(rawRequest: raw("enrollRaw"))
+        _ = start(&enrollment, request: enrollmentRequest)
+        receive(&enrollment, challengeState(for: enrollmentRequest)); receive(&enrollment, completed(for: enrollmentRequest, code: .keyEnrolled))
+        try keys.acceptEnrollment(enrollment.latest!)
+        let c = StreamClient(); c.connection = peer; c.sentryReturn = consumer(); c.sentryReturnKeys = keys
+        c.requestIPadSentryReturn(mode: .deviceBoundKey)
+        let original = c.sentryReturn.latest!.request
+        c.receiveIPadSentryReturn(challengeState(for: original, keyID: keyID), from: peer)
+        spinMain { c.sentryReturnKeyOperation != nil }
+        check(entered.wait(timeout: .now() + 3) == .success, "native fixture entered before inactive \(stop)")
+        let operation = c.sentryReturnKeyOperation!
+        let ticket = c.sentryReturn.admission.ticket()
+        let count = peer.sent.count
+        c.resignActive()
+        if stop == "no-context" {
+            check(c.sentryReturnKeyOperation == nil && !ticket.permits(), "inactive without native context cancels operation and ticket")
+        } else {
+            check(c.sentryReturnKeyOperation === operation && ticket.permits(), "own native context survives temporary inactive \(stop)")
+        }
+        release.signal()
+        spinMain { c.sentryReturnKeyCompletion != nil || c.sentryReturnKeyOperation == nil }
+        check(peer.sent.count == count, "native result sends zero while inactive \(stop)")
+        if stop != "no-context" {
+            check(c.sentryReturnKeyCompletion != nil && c.sentryReturnKeyOperation === operation, "inactive result retained on same operation \(stop)")
+        }
+        switch stop {
+        case "background": c.enterBackground()
+        case "cancel": c.cancelIPadSentryReturn()
+        case "trust": c.savedMacs[0].revoked = true
+        case "handover": c.connection = other; c.sentryReturn.bind(ObjectIdentifier(other))
+        case "lease":
+            let changedLease = try SentryReturnLease(hostBootID: original.lease.hostBootID, sessionID: UUID().uuidString.lowercased(),
+                revision: original.lease.revision, authorizationGeneration: original.lease.authorizationGeneration)
+            c.observeIPadSentryReturn(catalog: catalog(changedLease), from: peer)
+        case "expiry": c.checkReturnTimeout(now: ProcessInfo.processInfo.systemUptime + 121)
+        case "timeout": _ = c.sentryReturn.query(binding: binding, from: ObjectIdentifier(peer), now: 1); c.checkReturnTimeout(now: 12)
+        default: break
+        }
+        c.becomeActive(); c.becomeActive()
+        spinMain { c.sentryReturnKeyOperation == nil }
+        check(peer.sent.count == count + (stop == "resume" ? 1 : 0), "active completes original once or drops invalid result \(stop)")
+        check(c.sentryReturnKeyCompletion == nil && c.sentryReturnKeyOperation == nil, "completion and operation cleared \(stop)")
+        check(c.sentryReturn.latest?.request.reference == original.reference && c.sentryReturn.latest?.proofStarted == true,
+            "lifecycle never creates new request or restarts proof \(stop)")
+        if stop == "resume" {
+            let sent = try SentryReturnControl.decodePayload(Data(peer.sent.last!.dropFirst(StreamMessage.headerLength)))
+            if case .prove(let reference, let generation, _) = sent {
+                check(reference == original.reference && generation == (try! SentryReturnState.decodePayload(challengeState(for: original, keyID: keyID))).authGeneration,
+                    "active sends proof for original reference and generation")
+            } else { check(false, "active must send original proof") }
+        }
+    }
+    let op = IPadSentryReturnKeys.Operation(); op.cancel()
+    check((try? op.installCancellation {}) == nil, "context installed after cancellation is rejected")
+}
+
+func lateCancelChecks() {
+    let c = StreamClient(); c.connection = peer; c.sentryReturn = consumer()
+    c.requestIPadSentryReturn(mode: .macLocal)
+    let original = c.sentryReturn.latest!.request
+    let count = peer.sent.count
+    c.cancelIPadSentryReturn()
+    check(peer.sent.count == count && c.sentryReturn.latest?.locallyCancelled == true, "cancel before first challenge preserves intent with zero packet")
+    let challenge = challengeState(for: original)
+    c.receiveIPadSentryReturn(challenge, from: peer)
+    spinMain { peer.sent.count > count }
+    check(peer.sent.count == count + 1, "late verified challenge forwards original cancellation exactly once through SessionLink")
+    let generation = try! SentryReturnState.decodePayload(challenge).authGeneration!
+    check(Data(peer.sent.last!.dropFirst(StreamMessage.headerLength)) == (try? SentryReturnControl.cancel(original.reference, authGeneration: generation).encodedPayload()),
+        "late cancellation preserves raw reference and received generation")
+    c.receiveIPadSentryReturn(challenge, from: peer)
+    c.receiveIPadSentryReturn(challenge, from: peer)
+    DispatchQueue.main.async { c.becomeActive() }
+    spinMain { c.sentryReturnSubmissions.isEmpty }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+    check(peer.sent.count == count + 1 && !c.sentryReturn.canProve && c.sentryReturnKeyOperation == nil,
+        "duplicate late challenges never resend or start native authentication")
+    check(c.sentryReturn.latest?.rawChallengeState == challenge && c.sentryReturn.originalRequest == original.rawRequest,
+        "late cancellation keeps original intent and raw challenge")
+}
+
+func cancelTerminalChecks() {
+    let pending = raw("pendingStateRaw")
+    let generation = try! SentryReturnState.decodePayload(pending).authGeneration!
+    let cases: [(SentryReturnState.OperationState, SentryReturnState.AuthStatus, SentryReturnState.Code)] = [
+        (.expired, .expired, .expired), (.failed, .failed, .authenticationFailed), (.rejected, .pending, .invalidProof)]
+    for (terminal, auth, code) in cases {
+        let store = Memory(); var c = consumer(store); _ = start(&c); receive(&c, pending)
+        _ = c.cancel(binding: binding, from: ObjectIdentifier(peer), now: 3)
+        let rawTerminal = try! SentryReturnState(reference: request.reference, authGeneration: generation, authStatus: auth,
+            operationState: terminal, code: code, challenge: nil, remainingMilliseconds: 0).encodedPayload()
+        let wrongGeneration = changed(rawTerminal) { $0["authGeneration"] = UUID().uuidString.lowercased() }
+        check(!receive(&c, wrongGeneration), "cancel terminal rejects changed generation \(terminal)")
+        check(receive(&c, rawTerminal) && c.latest?.terminal == true && c.canRequest, "cancel race accepts non-success terminal and reopens explicit request \(terminal)")
+        check(c.latest?.locallyCancelled == true && c.latest?.rawState == rawTerminal, "cancel intent and terminal raw preserved \(terminal)")
+        var reopened = consumer(store)
+        let current = reopened.query(binding: binding, from: ObjectIdentifier(peer), now: 4)
+        check(current.map { Data($0.bytes.dropFirst(StreamMessage.headerLength)) } == raw("currentRaw") && receive(&reopened, rawTerminal) && reopened.canRequest,
+            "reopen and explicit current keep non-success terminal \(terminal)")
+        let next = reopened.request(mode: .macLocal, binding: binding, from: ObjectIdentifier(peer), now: 5)
+        check(next != nil && reopened.latest?.request.reference != request.reference, "new request requires explicit action after terminal \(terminal)")
+    }
+    var cancelled = consumer(); _ = start(&cancelled); receive(&cancelled, pending)
+    _ = cancelled.cancel(binding: binding, from: ObjectIdentifier(peer), now: 3)
+    check(!receive(&cancelled, raw("completedStateRaw")) && !cancelled.canRequest && cancelled.latest?.locallyCancelled == true,
+        "late success after cancel remains effect-unknown without execution authority")
 }

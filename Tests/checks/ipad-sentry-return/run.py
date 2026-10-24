@@ -62,7 +62,22 @@ assert move.index('invalidateIPadSentryReturn()') < move.index('link.handOver(')
 assert move.index('sentryReturn.bind(ObjectIdentifier(c))') < move.index('link.adopt(')
 inactive = block(stream, 'private func wentToBackground()')
 assert 'invalidateIPadSentryReturn()' in inactive
-assert 'self?.invalidateIPadSentryReturn()' in stream[stream.index('UIApplication.willResignActiveNotification', stream.index('#else\n        displayView.setPresentationForeground')):]
+ios = stream[stream.index('#else\n        displayView.setPresentationForeground'):]
+def notification(name):
+    body = block(ios, 'NotificationCenter.default.addObserver(forName: UIApplication.' + name)
+    return body[body.index(' _ in') + len(' _ in'):-1].replace('self?', 'self')
+resign = notification('willResignActiveNotification')
+active = notification('didBecomeActiveNotification')
+background = inactive[inactive.index('#if os(iOS)'):inactive.index('        reconnectCheck?.cancel()')]
+properties += '\n' + '\n'.join(line.strip() for line in stream.splitlines()
+    if line.strip().startswith(('var sentryReturnIsActive', 'var sentryReturnKeyCompletion')))
+properties = properties.replace('UIApplication.shared.applicationState == .active', 'true')
+if 'var sentryReturnKeyCompletion' not in properties:
+    properties += '\nvar sentryReturnKeyCompletion: (() -> Void)?'
+lifecycle = 'func resignActive() {' + resign + '}\nfunc becomeActive() {' + active + '}\nfunc enterBackground() {' + background + '}\n'
+timeout = next(line.strip() for line in stream.splitlines() if 'self.sentryReturn.checkTimeout(' in line or 'self.checkIPadSentryReturnTimeout(' in line)
+lifecycle += 'func checkReturnTimeout(now: TimeInterval) { ' + timeout.replace('ProcessInfo.processInfo.systemUptime', 'now') + ' }'
+
 files['Client.swift'] = b'''import Foundation
 import Network
 import StreamProtocol
@@ -93,6 +108,17 @@ final class StreamClient {
         var home: Home? = .saved(pin: Data(repeating: 0xab, count: 32))
     }
     __TRUST_PROPERTIES__
+    __LIFECYCLE__
+    var visionInputPermit: Int?
+    struct Display { func setPresentationForeground(_ value: Bool) {} }
+    let displayView = Display()
+    func cancelVisionInputs() {}
+    func cancelOwnerEnrollment() {}
+    var audioRouteAuthorization: Int?
+    struct Bootstrap { enum Phase { case ready }; let phase = Phase.ready }
+    let ownerBootstrap = Bootstrap()
+    func cancelOwnerBootstrap(resumable: Bool) {}
+
     func refreshExtendedDesktopAdmission() {}
     func ownerEnrollmentTrustChanged() {}
     let link = SessionLink()
@@ -110,7 +136,7 @@ final class StreamClient {
     var sentryReturnDeviceIntent: (reference: SentryReturnReference, peer: ObjectIdentifier)?
 }
 '''
-files['Client.swift'] = files['Client.swift'].replace(b'__TRUST_PROPERTIES__', properties.encode())
+files['Client.swift'] = files['Client.swift'].replace(b'__TRUST_PROPERTIES__', properties.encode()).replace(b'__LIFECYCLE__', lifecycle.replace('#if os(iOS)', '#if true').encode())
 module = ast.parse((root / 'Tests/checks/reconnect-glue/mini.py').read_text())
 runner = next(ast.literal_eval(node.value) for node in module.body if isinstance(node, ast.Assign)
     and any(isinstance(target, ast.Name) and target.id == 'runner' for target in node.targets))
@@ -122,7 +148,7 @@ commands = ''' flags=['-swift-version','5','-parse-as-library','-module-cache-pa
  commands=[['/usr/bin/xcrun','swiftc',*flags,'-emit-module','-emit-object','-whole-module-optimization','-module-name','Network',str(package/'Network.swift'),'-emit-module-path',str(output/'Network.swiftmodule'),'-o',str(output/'Network.o')],
  ['/usr/bin/xcrun','swiftc',*flags,'-emit-module','-emit-object','-whole-module-optimization','-module-name','StreamProtocol',*protocol,'-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'StreamProtocol.o')],
  ['/usr/bin/xcrun','swiftc',*flags,'-I',str(output),*consumer,str(package/'Client.swift'),str(package/'Tests/checks/ipad-sentry-return/Main.swift'),str(output/'Network.o'),str(output/'StreamProtocol.o'),'-o',str(output/'consumer')],
- [str(output/'consumer'),str(package/'Tests/checks/sentry-return/fixtures.json')]]
+ [str(output/'consumer'),str(package/'Tests/checks/sentry-return/fixtures.json')]] + [[str(output/'consumer'),str(package/'Tests/checks/sentry-return/fixtures.json'),mode] for mode in ['lifecycle','late-cancel','cancel-terminal']]
 '''
 runner = runner[:start] + commands + runner[end:]
 runner = runner.replace('CCRReconnect', 'CCRReturn').replace('ccr-reconnect-output-', 'ccr-return-output-')
