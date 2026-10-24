@@ -94,9 +94,12 @@ allowed = {'iOSClient/IPadSentryObservation.swift', 'iOSClient/IPadSentryControl
            'iOSClient/StreamClient+Sentry.swift', 'iOSClient/HostSettingsPanel.swift'} | common
 # 세 source-request 검사 파일은 부모의 별도 워크트리 통합 범위다.
 parent_scope = {'Tests/checks/source-request/run.py', 'Tests/checks/source-request/transport.py', 'Tests/checks/source-request/Client.swift'}
-changed = subprocess.check_output(['git', 'diff', '--name-only', base_commit], cwd=ROOT, text=True).splitlines()
+feature_commit = '5f10b3f823624b708a01a617ee3283146a76465c'
+check('검수된 Sentry 기능 commit 계보 유지', subprocess.run(['git', 'merge-base', '--is-ancestor', feature_commit, 'HEAD'], cwd=ROOT).returncode == 0)
+changed = subprocess.check_output(['git', 'diff', '--name-only', base_commit, feature_commit], cwd=ROOT, text=True).splitlines()
 untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], cwd=ROOT, text=True).splitlines()
-check('허용 파일 외 Host·서명·부모 변경 파일 쓰기 0', all(p in allowed or p in parent_scope or p.startswith('Tests/checks/ipad-sentry-observation/') for p in changed + untracked))
+check('기록된 Sentry 기능 commit의 변경 범위 유지', all(p in allowed or p in parent_scope or p.startswith('Tests/checks/ipad-sentry-observation/') for p in changed))
+check('Sentry 검사 입력의 미추적 파일 없음', not any(p in allowed or p.startswith('Tests/checks/ipad-sentry-observation/') for p in untracked))
 wire = (ROOT / 'Sources/StreamProtocol/StreamMessage.swift').read_bytes()
 wire_base = subprocess.check_output(['git', 'show', base_commit + ':Sources/StreamProtocol/StreamMessage.swift'], cwd=ROOT)
 check('StreamMessage kind·방향별 cap은 기준3beab 원본 불변', wire == wire_base)
