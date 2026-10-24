@@ -29,6 +29,7 @@ final class CurtainPlatformFixture {
     func installTap() -> Bool { installs += 1; tap = true; return true }
     func verify() -> Bool { isProtected && tap && readable && layout == displayLayout }
     func release() -> Bool { false }
+    var releaseVerified: Bool { false }
     func updateCurtainText() {}
     func loseVerification() { invalidate("입력 필터 확인 실패") }
     func failRelease() -> Bool { recoverFailedRelease("해제 읽기 확인 실패") }

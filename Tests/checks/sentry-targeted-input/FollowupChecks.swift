@@ -49,6 +49,25 @@ import StreamProtocol
 
 extension Checks {
     @MainActor static func followupChecks() {
+        let uncovered = Fixture()
+        uncovered.platform.state = .invalid("권한창이 가림 화면 위에 있습니다.")
+        uncovered.platform.tap = nil
+        check(uncovered.platform.prepareRemoteRelease(inputIdle: { !uncovered.injector.hasPendingInput },
+                  cleanup: { uncovered.injector.prepareRelease() }) && uncovered.platform.posted.isEmpty,
+              "입력 부채가 없는 승인 원격 해제는 권한창이나 tap 소실 상태에서 OS 입력 없이 준비")
+        uncovered.platform.currentLocalAuthenticationChallenge = { UUID() }
+        check(!uncovered.platform.prepareRemoteRelease(inputIdle: { true }, cleanup: { true }),
+              "실제 OS 인증 진행 중에는 원격 보호 해제를 준비하지 않음")
+        uncovered.platform.currentLocalAuthenticationChallenge = { nil }
+        uncovered.platform.changingLifecycle = true
+        check(!uncovered.platform.prepareRemoteRelease(inputIdle: { true }, cleanup: { true }),
+              "다른 현장 보호 전환 중 원격 해제 거절")
+        let remoteDebt = Fixture()
+        remoteDebt.send(.leftDown)
+        remoteDebt.platform.state = .invalid("권한창이 가림 화면 위에 있습니다.")
+        check(!remoteDebt.platform.prepareRemoteRelease(inputIdle: { !remoteDebt.injector.hasPendingInput },
+                  cleanup: { remoteDebt.injector.prepareRelease() }) && remoteDebt.debt(),
+              "권한창 상태에서 원격 버튼 부채를 임의 폐기하거나 OS 창에 종료 입력을 전달하지 않음")
         let returned = ReturnFixture(); returned.input.send(.leftDown)
         check(returned.complete() && !returned.input.debt() && returned.journal == .inactive,
               "F1 복귀 성공 전에 still-protected tap에서 원 버튼 terminal 부채 정리")

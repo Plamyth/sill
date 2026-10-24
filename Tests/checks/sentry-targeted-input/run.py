@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--archive', type=Path, required=True)
 parser.add_argument('--label', required=True)
-parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'affected'], default='all')
+parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'control', 'affected'], default='all')
 args = parser.parse_args()
 archive = args.archive.resolve()
 archive.mkdir(parents=True, exist_ok=True)
@@ -90,7 +90,7 @@ inert = inert.replace(block(injector, 'private func pointerNow()'),
 inert = inert.replace(block(injector, 'private func remindAboutAccessibilityIfNeeded()'),
                       'private func remindAboutAccessibilityIfNeeded() {}')
 egress_markers = ['private struct PointerTarget {', 'private var isProtected:',
-    'func prepareRelease(cleanup:', 'func release()', 'func protectedPointerEgress(', 'private func postProtectedPointer(', 'private func pointerTarget(']
+    'func prepareRelease(cleanup:', 'func prepareRemoteRelease(', 'var releaseVerified:', 'func release()', 'func protectedPointerEgress(', 'private func postProtectedPointer(', 'private func pointerTarget(']
 egress = '\n'.join(block(platform, m) for m in egress_markers) + '\nprivate var pointerTargets: [Int: PointerTarget] = [:]\nprivate var scrollHandoff: PointerTarget?\n'
 egress = egress.replace('event.postToPid(target.pid)', 'posted.append((target.pid, event.copy()!))')
 egress = egress.replace('NSRunningApplication(processIdentifier: pid)', 'apps[pid]')
@@ -106,7 +106,11 @@ assert coordinator.count('protectedScope: self.protectedPointerScope(device: id,
 assert 'platform?.protectedPointerEgress(event, scope: scope) == true' in coordinator
 filter_body = block(platform, 'private func filter(')
 assert not any(token in filter_body for token in ['CGWindowList', 'SecCode', 'AXUIElement', 'postToPid'])
-payload = {'protocol': protocol, 'platformSDK': platform + '\n' + actual + '''
+control = read('Tests/checks/sentry-targeted-input/ControlChecks.swift').replace('__PRODUCTION_CONTROL__',
+    '\n'.join(block(coordinator, marker) for marker in ['private func activateSentry(', 'private func grantSentryControl(',
+        'private func currentSentryOwner(', 'private func handleSentryControl(']))
+control = read('Sources/SillHost/SentryAdmission.swift') + '\n' + read('Sources/SillHost/HostSentry.swift') + '\n' + control
+payload = {'protocol': protocol, 'control': control, 'platformSDK': platform + '\n' + actual + '''
 enum StreamCoordinator { static func isSillVirtualDisplay(_ id: CGDirectDisplayID) -> Bool { false } }
 ''', 'input': input_program, 'native': native, 'panel': fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted'])}
 blob = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()

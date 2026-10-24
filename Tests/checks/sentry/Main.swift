@@ -215,6 +215,47 @@ import StreamProtocol
         surfacesVerified = false
         videoOnly.surfacesChanged()
         expect(!videoOnlyGate.allowsActions(lan) && !videoOnlyGate.allows(lan, epoch: epoch), "physical protection failure still fences remote input and video")
+        remoteProtectionChecks()
         print("SENTRY_CHECKS_COMPLETE \(count)")
+    }
+
+    @MainActor static func remoteProtectionChecks() {
+        for failure in ["none", "debt", "releasing", "release", "readback", "inactive", "revoked"] {
+            let gate = SentryAdmission()
+            var effects: [String] = []
+            var released = false, current = true
+            let host = HostSentry(admission: gate, initiallyLatched: true, persistenceHealthy: true,
+                persist: { state in
+                    effects.append(state.rawValue)
+                    return !(failure == "releasing" && state == .releasing) && !(failure == "inactive" && state == .inactive)
+                }, surfaces: .init(engage: { false }, verify: { false }, release: {
+                    effects.append("surface")
+                    released = failure != "release"
+                    if failure == "revoked" { current = false }
+                    return released
+                }, reason: { nil }, restoreCurtains: { true }, released: { released && failure != "readback" }),
+                prepareRelease: { effects.append("local-authenticated-path"); return false },
+                prepareRemoteRelease: { effects.append("remote-debt"); return failure != "debt" },
+                localReturnUnavailableReason: { "로컬 오디오 복귀는 별도 인증이 필요합니다." })
+            gate.update(verified: false, persistenceHealthy: true, reason: "권한창이 가림 화면 위에 있습니다.")
+            let result = host.setRemoteProtection(false, current: { current })
+            expect(result == (failure == "none"), "remote off requires independent physical readback and current trust: \(failure)")
+            expect(!effects.contains("local-authenticated-path"), "remote off never invokes authenticated audio return: \(failure)")
+            expect(gate.isRequested, "physical result alone cannot commit control authority or clear session state: \(failure)")
+            if failure == "none" {
+                expect(effects == ["remote-debt", "releasing", "surface", "inactive"],
+                       "remote off persists around verified surface release without audio actions")
+            } else if failure == "debt" {
+                expect(effects == ["remote-debt"], "unsettled input cannot begin physical release")
+            }
+        }
+        let gate = SentryAdmission()
+        var effects = 0
+        let host = HostSentry(admission: gate, initiallyLatched: true, persistenceHealthy: true,
+            persist: { _ in effects += 1; return true }, surfaces: .init(engage: { true }, verify: { true },
+                release: { effects += 1; return true }, reason: { nil }), prepareRelease: { true },
+            localReturnUnavailableReason: { nil })
+        expect(!host.setRemoteProtection(false, current: { false }) && effects == 0,
+               "revoked remote authority cannot touch journal or native surfaces")
     }
 }

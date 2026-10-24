@@ -632,7 +632,11 @@ final class InputInjector {
 
     func prepareRelease() -> Bool {
         releaseAll()
-        return keys.down.isEmpty && keyReleaseDebts.isEmpty && !left.isDown && !right.isDown && !protectedScrollPending
+        return !hasPendingInput
+    }
+
+    var hasPendingInput: Bool {
+        !keys.down.isEmpty || !keyReleaseDebts.isEmpty || left.isDown || right.isDown || protectedScrollPending
     }
 
     /// Shift, control, option and command: the modifiers that change a click or a scroll.
