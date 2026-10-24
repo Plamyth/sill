@@ -56,6 +56,7 @@
                 let flags: CGEventFlags = type == .flagsChanged || type == .keyDown ? [.maskShift] : []
                 let e = sdkEvent(type, explicitZero: explicit, key: key, flags: flags)
                 let payload = Payload(e), proof = localAuthenticationInputPolicy.observation!
+                let sources = authenticationEventSources!
                 Checks.check(e.getIntegerValueField(.eventSourceUnixProcessID) == 0 &&
                     e.getIntegerValueField(.eventSourceStateID) == 1 && e.getIntegerValueField(.eventSourceUserData) == 0,
                     "SDK 양성 전제 PID0·HID1·tag0 explicit=\(explicit) type=\(type.rawValue)")
@@ -75,8 +76,19 @@
                 Checks.check(filterAnnotated(type, event: e) == nil, "SDK clear한 이벤트 재사용 거절")
                 Checks.check(observed == observationCalls && signatures == Self.signatureCalls,
                     "SDK callback의 WindowServer·Security 관측 호출 0")
+                Checks.check(authenticationEventSources!.stamped === sources.stamped &&
+                    authenticationEventSources!.cleared === sources.cleared &&
+                    sources.stamped.userData == proof.handoffTag && sources.cleared.userData == 0,
+                    "SDK callback은 준비된 source 객체·proof 태그를 바꾸지 않음")
             }
         }
+        fresh()
+        let hosted = sdkEvent(pid: Int64(getpid()))
+        Checks.check(filter(hosted.type, event: hosted) == nil, "SDK HostPID는 원래 physical session 조건을 통과하지 못함")
+        Checks.check(Self.stampEventSource(hosted, source: authenticationEventSources!.stamped,
+            tag: localAuthenticationInputPolicy.observation!.handoffTag) &&
+            filterAnnotated(hosted.type, event: hosted) != nil && hosted.getIntegerValueField(.eventSourceUserData) == 0,
+            "SDK 현재 proof·HID1의 정확한 HostPID annotated 형태와 clear0 양성")
         for explicit in [false, true] {
             for state in [CGEventSourceStateID.privateState, .combinedSessionState] {
                 fresh()

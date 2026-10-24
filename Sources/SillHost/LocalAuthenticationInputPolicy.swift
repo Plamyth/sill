@@ -70,13 +70,18 @@ struct LocalAuthenticationInputPolicy {
                 liveIdentity: ProcessIdentity?, receiverReady: Bool) -> Bool {
         guard receiverReady, let proof = current(challengeID: challengeID, now: now),
               liveIdentity == proof.target.process,
-              input.sourcePID == 0, input.sourceState == CGEventSourceStateID.hidSystemState.rawValue,
-              (stage == .session ? input.tag == 0 : input.tag == proof.handoffTag) else { return false }
+              input.sourceState == CGEventSourceStateID.hidSystemState.rawValue else { return false }
+        switch stage {
+        case .session:
+            guard input.sourcePID == 0, input.tag == 0 else { return false }
+        case .annotated:
+            guard input.sourcePID == 0 || input.sourcePID == Int64(getpid()),
+                  input.tag == proof.handoffTag else { return false }
+        }
         let allowedFlags: CGEventFlags = [.maskShift, .maskAlphaShift, .maskNumericPad, .maskNonCoalesced]
         guard input.flags.rawValue & ~allowedFlags.rawValue == 0 else { return false }
         switch input.type {
         case .keyDown, .keyUp:
-            // Text keys, editing keys and numeric keypad only. Function/media/global chords stay blocked.
             guard (0...51).contains(input.keyCode) || [53, 65, 67, 69, 71, 75, 76, 78, 81,
                 82, 83, 84, 85, 86, 87, 88, 89, 91, 92, 123, 124, 125, 126].contains(input.keyCode) else { return false }
         case .flagsChanged:

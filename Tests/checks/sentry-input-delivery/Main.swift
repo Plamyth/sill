@@ -34,6 +34,7 @@ private final class HostSentryPlatform: NSObject {
     private var inputTapsAreReady: Bool { true }
     private var observedReturnButtons: [CGWindowID: CGRect] = [:]
     private func authenticationInputAllowed(_ type: CGEventType, event: CGEvent, stage: LocalAuthenticationInputPolicy.Stage) -> Bool { false }
+    private func stampAuthenticationEvent(_ event: CGEvent, stage: LocalAuthenticationInputPolicy.Stage) -> Bool { false }
     private func tapStopped(annotated: Bool) { invalidate("검사 필터 중단") }
     private func observedReturnButton(at point: CGPoint) -> CGWindowID? { visibleReturnButton(at: point) }
     __PRODUCTION_PLATFORM__
@@ -78,10 +79,15 @@ private final class HostSentryPlatform: NSObject {
         Checks.check(!curtain.panel.ignoresMouseEvents, "무효화와 동시에 pass-through 해제")
 
         let source = CGEventSource(stateID: .hidSystemState)!
+        source.userData = Self.remoteEventTag
         let injector = InputFixture()
+        injector.source = source
         for kind in [CGEventType.keyDown, .leftMouseDown, .scrollWheel] {
             for state in [CGEventSourceStateID.hidSystemState, .privateState] {
-                let e = CGEvent(source: CGEventSource(stateID: state))!
+                let owned = CGEventSource(stateID: state)!
+                owned.userData = Self.remoteEventTag
+                injector.source = owned
+                let e = CGEvent(source: owned)!
                 e.type = kind; e.location = CGPoint(x: 31, y: 47); e.timestamp = 123456
                 e.flags = [.maskShift]
                 e.setIntegerValueField(.eventSourceUserData, value: 0)
@@ -93,6 +99,7 @@ private final class HostSentryPlatform: NSObject {
                 let integerFields: [CGEventField] = [.keyboardEventKeycode, .mouseEventDeltaX, .scrollWheelEventDeltaAxis1]
                 let payload = integerFields.map { e.getIntegerValueField($0) }
                 let point = e.location, timestamp = e.timestamp, flags = e.flags
+                let sourceState = e.getIntegerValueField(.eventSourceStateID)
                 let before = injector.posted.count
                 Checks.check(injector.send(e) && injector.posted.count == before + 1 &&
                     injector.posted.last!.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
@@ -101,11 +108,31 @@ private final class HostSentryPlatform: NSObject {
                 e.keyboardGetUnicodeString(maxStringLength: chars.count, actualStringLength: &length, unicodeString: &chars)
                 Checks.check(e.type == kind && e.flags == flags && e.location == point &&
                     e.timestamp == timestamp && integerFields.map { e.getIntegerValueField($0) } == payload &&
-                    Array(chars.prefix(length)) == text && e.getIntegerValueField(.eventSourceStateID) == state.rawValue &&
+                    Array(chars.prefix(length)) == text && e.getIntegerValueField(.eventSourceStateID) == sourceState &&
                     e.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()),
                     "SDK 원격 키·포인터·scroll·Unicode 합성 payload와 원래 source 보존")
             }
         }
+        injector.source = source
+        for pid: Int64 in [0, Int64(getpid()) + 1] {
+            let e = CGEvent(source: CGEventSource(stateID: .privateState))!
+            e.type = .keyDown; e.setIntegerValueField(.eventSourceUnixProcessID, value: pid)
+            let before = injector.posted.count
+            Checks.check(!injector.send(e) && injector.posted.count == before,
+                "SDK 원격 post는 자기 소유가 아닌 private source PID를 거절 \(pid == 0 ? "0" : "foreign")")
+        }
+        let unknown = CGEvent(source: source)!
+        unknown.type = .keyDown; unknown.setIntegerValueField(.eventSourceStateID, value: 12345678)
+        let unknownBefore = injector.posted.count
+        Checks.check(!injector.send(unknown) && injector.posted.count == unknownBefore,
+            "SDK 미확인 source state는 마커나 실제 post 없이 거절")
+        injector.dryRun = true
+        let dry = CGEvent(source: source)!
+        dry.type = .keyDown; dry.setIntegerValueField(.eventSourceUserData, value: 0)
+        let dryBefore = injector.posted.count
+        Checks.check(!injector.send(dry) && injector.posted.count == dryBefore &&
+            dry.getIntegerValueField(.eventSourceUserData) == 0, "SDK dryRun은 native stamp와 외부 post 효과 0")
+        injector.dryRun = false
         for type in [CGEventType.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
                      .mouseMoved, .leftMouseDragged, .scrollWheel, .keyDown, .keyUp, .flagsChanged] {
             let event = CGEvent(source: source)!
@@ -138,9 +165,11 @@ private final class HostSentryPlatform: NSObject {
         updateCurtainText()
         var requests = 0
         requestLocalReturn = { requests += 1 }
-        let local = CGEvent(source: source)!
+        let local = CGEvent(source: CGEventSource(stateID: .hidSystemState))!
         local.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
         local.setIntegerValueField(.eventSourceStateID, value: Int64(CGEventSourceStateID.hidSystemState.rawValue))
+        Checks.check(local.getIntegerValueField(.eventSourceUserData) == 0,
+                     "물리 복귀 fixture는 원격 표식이 없는 독립 HID source 사용")
         let down = filter(.leftMouseDown, event: local), up = filter(.leftMouseUp, event: local)
         await Task.yield()
         Checks.check(down == nil && up == nil && requests == 1,
@@ -176,6 +205,7 @@ private enum KeyStrokes { static let capsLock: UInt64 = 0x01_0000 }
     func bump(_ name: String) {}
 }
 @MainActor private final class InputFixture {
+    var source: CGEventSource?
     private var lastKeyFlags: UInt64 = 0
     private static let modifierBits: UInt64 = 0x1E_0000
     struct ProtectedPointerScope {}
