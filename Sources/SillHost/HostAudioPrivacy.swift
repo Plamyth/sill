@@ -264,6 +264,7 @@ extension HostAudioPrivacy {
                 journal.write(latched: original != nil, original: original)
             }, clearLatch: { journal.write(latched: false, original: nil) },
             authenticateLocal: { attempt in await authentication.evaluate(operationId: attempt) }, cancelAuthentication: { authentication.cancel() },
+            authenticationChallengeID: { authentication.activeChallengeID },
             nativeStartup: nativeStartup)
     }
 }
