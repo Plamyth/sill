@@ -25,7 +25,8 @@ def block(text, marker):
 platform = (root / 'Sources/SillHost/HostSentryPlatform.swift').read_text()
 coordinator = (root / 'Sources/SillHost/StreamCoordinator.swift').read_text()
 markers = ['func engage()', 'private var isProtected:', 'private func invalidate(', 'private func observeChanges()',
-           'private func recoverFailedRelease(', 'private var curtainMessage:', 'func restoreCurtains()']
+           'private func recoverFailedRelease(', 'private var curtainMessage:', 'func restoreCurtains()',
+           'private func refreshActiveAuthenticationInput(']
 parts = [block(platform, marker) for marker in markers]
 text = (root / 'Tests/checks/sentry/CurtainChecks.swift').read_text()
 text = text.replace('__PRODUCTION_LIFECYCLE__', '\n\n'.join(parts))

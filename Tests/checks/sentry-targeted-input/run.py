@@ -74,17 +74,20 @@ input_program = input_program.replace('static let remoteEventTag: Int64 = 0x4353
 input_program = authentication_input_policy + '\n' + input_program
 native = read('Tests/checks/sentry-native-auth/Main.swift').replace('__PRODUCTION__', re.sub(r'\bCGEvent\b', 'Event',
     '\n'.join(block(platform, m) for m in ['private var isProtected:', 'private func invalidate(', 'private func filter(',
-        'private func updateCurtainText()', 'var reason: String?'])))
+        'private func updateCurtainText()', 'var reason: String?', '@objc private func returnRequested('])).replace('@objc ', ''))
 native = authentication_input_policy + '\n' + native
 native = native.replace('@MainActor private final class Platform {',
     '@MainActor private final class Platform {\n    private func stampAuthenticationEvent(_ event: Event, stage: LocalAuthenticationInputPolicy.Stage) -> Bool { false }')
-authentication_window = authentication_input_policy + '\n' + read('Tests/checks/local-auth-window-input/Main.swift').replace(
+authentication_window = authentication_input_policy + '\n' + read('Sources/SillHost/SentryAdmission.swift') + '\n' + read('Sources/SillHost/HostSentry.swift') + '\n' + read('Tests/checks/local-auth-window-input/Main.swift').replace(
     '__PRODUCTION__', re.sub(r'\bCGEvent\b', 'Event', '\n'.join(block(platform, m) for m in [
         'private var isProtected:', 'private func invalidate(', 'private func filter(', 'private func filterAnnotated(', 'private func authenticationInputAllowed(',
         'private var inputTapsAreReady:', 'private func tapStopped(', 'private func observedReturnButton(',
         'var reason: String?', 'func localAuthenticationWillBegin(', 'static func stampEventSource(',
         'private struct AuthenticationEventSources {', 'private func prepareAuthenticationEventSources(',
-        'private func stampAuthenticationEvent('])))
+        'private func stampAuthenticationEvent(', 'private func environmentIsUsable(', 'private func refreshReturnButtons(',
+        'func verify()', 'func engage()', 'func restoreCurtains()', 'func prepareRelease(cleanup:', 'func prepareRemoteRelease(',
+        'private func refreshActiveAuthenticationInput(', 'func release()', 'var releaseVerified:', 'private func recoverFailedRelease(',
+        'func prepareAuthenticatedLocalRelease('])))
 authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
     'private var authenticationEventSources: AuthenticationEventSources?\n__PRODUCTION_OBSERVER__')
 authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
@@ -187,7 +190,7 @@ with tempfile.TemporaryDirectory(prefix='ccr-targeted-binaries-') as temporary:
     code=124; output=(error.stdout or b'').decode(errors='replace')
    print(output,end='',flush=True)
    records[-1]['cases'].append({'name':case,'exitCode':code,'passedAssertions':sum(line.startswith('PASS ') for line in output.splitlines()),'failures':[line for line in output.splitlines() if line.startswith('FAIL ')],'timedOut':code==124})
-   finalCode=max(finalCode,code)
+   finalCode=max(finalCode,code if code >= 0 else 128 - code)
  del payload,blob
 print('REMOTE_RESULT '+json.dumps({'records':records,'temporaryFilesRemoved':not out.exists(),'sourceFilesWritten':0,'actualOSAuthentication':0,'actualEventPosts':0,'visibleWindows':0,'hostLaunches':0,'HALWrites':0,'serviceWrites':0}),flush=True)
 raise SystemExit(finalCode)

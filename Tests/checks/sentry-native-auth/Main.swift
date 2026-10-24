@@ -70,6 +70,11 @@ private func CFMachPortIsValid(_ tap: Bool) -> Bool { tap }
         usable = false
         remote.fields[41] = Int64(getpid())
         Checks.check(filter(.keyDown, event: remote) == nil, "보안 입력 등 일반 환경 실패의 원격 거절 유지")
+        state = .invalid("전체 가림 증명 실패"); tap = nil
+        var requests = 0
+        requestLocalReturn = { requests += 1 }
+        returnRequested()
+        Checks.check(requests == 1, "tap 없는 보호 복구 중에도 순정 버튼 action은 즉시 인증 요청 전달")
     }
 }
 

@@ -41,20 +41,81 @@ private final class EventSource {
     private var changed: (() -> Void)?
     private var sessionTapVerified = true, annotatedTapVerified = true, inputEnvironmentVerified = true
     private var tap: InertTap? = InertTap(), annotatedTap: InertTap? = InertTap()
+    private var tapID: UInt32? = 10, annotatedTapID: UInt32? = 11
+    private var pointerTargets: [Int: Int] = [:], scrollHandoff: Int?
+    private var rebuilds = 0, installations = 0
+    private var tapReadbackAvailable = true, windowReadbackAvailable = true, windowRemains = false
+    private var remainingTapPID: pid_t?
+    private var timer: Timer?
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    private var lockObservers: [NSObjectProtocol] = []
+    private enum DistributedNotificationCenter { static func `default`() -> NotificationCenter { .default } }
+    private func destroyTap() { tap = nil; sessionTapVerified = false; inputEnvironmentVerified = false }
+    private func destroyAnnotatedTap() { annotatedTap = nil; annotatedTapVerified = false; localAuthenticationInputPolicy.revoke() }
+    private static var tapOwner: Platform?
+    private func observeChanges() {}
+    private func rebuildCurtains() -> Bool { rebuilds += 1; return surfacesSafe }
+    private func installTap() -> Bool { installations += 1; return tap != nil && sessionTapVerified }
+    private func installAnnotatedTap() -> Bool { installations += 1; return annotatedTap != nil && annotatedTapVerified }
+    private func eventTapList() -> [CGEventTapInformation]? {
+        guard tapReadbackAvailable else { return nil }
+        var session = CGEventTapInformation(), annotated = CGEventTapInformation()
+        session.eventTapID = 10; annotated.eventTapID = 11
+        var rows = [session, annotated]
+        if let pid = remainingTapPID {
+            var remaining = CGEventTapInformation()
+            remaining.eventTapID = 444; remaining.tappingProcess = pid
+            remaining.tapPoint = .cgSessionEventTap; remaining.enabled = true
+            rows.append(remaining)
+        }
+        return rows
+    }
+    private func tapIsEffective(_ row: CGEventTapInformation, at point: CGEventTapLocation = .cgSessionEventTap) -> Bool {
+        sessionTapVerified && annotatedTapVerified
+    }
     private var observedReturnButtons: [CGWindowID: CGRect] = [:]
     private var observedRemoteTarget: LocalAuthenticationInputPolicy.ProcessIdentity?
     private var inputObservationExpires = ContinuousClock.now
     private var usable = true, surfacesSafe = true
-    private var layout = 0
-    private func currentLayout() -> Int? { 0 }
+    private var secureInput = false
+    private var notifiedLocked = false, sessionActive = true, sleeping = false
+    private func AXIsProcessTrusted() -> Bool { usable }
+    private func CGPreflightListenEventAccess() -> Bool { usable }
+    private func IsSecureEventInputEnabled() -> Bool { secureInput }
+    private func CGSessionCopyCurrentDictionary() -> CFDictionary? {
+        [kCGSessionOnConsoleKey as String: true, kCGSessionLoginDoneKey as String: true,
+         kCGSessionUserIDKey as String: getuid()] as CFDictionary
+    }
+    private var layout = [0: 0]
+    private func currentLayout() -> [Int: Int]? { [0: 0] }
     private func curtainsAreEffective() -> Bool { surfacesSafe }
     private var rows: [[String: Any]] = []
     private var observationCalls = 0
     private func updateCurtainText() {}
-    private func environmentIsUsable() -> Bool { observationCalls += 1; return usable }
-    private func refreshReturnButtons(rows: [[String: Any]]) {}
+    private final class Button {
+        var isHiddenOrHasHiddenAncestor = false, isEnabled = true, ancestorsHaveFullOpacity = true
+        var bounds = CGRect(x: 0, y: 0, width: 100, height: 40)
+        var visibleRect = CGRect(x: 0, y: 0, width: 100, height: 40)
+        func convert(_ rect: CGRect, to: Any?) -> CGRect { rect }
+    }
+    private final class Panel {
+        var isVisible = true, isOnActiveSpace = true, alphaValue = 1.0
+        var windowNumber = 90
+        func convertToScreen(_ rect: CGRect) -> CGRect { rect.offsetBy(dx: 20, dy: 800) }
+        func close() { isVisible = false }
+    }
+    private struct Curtain { let panel = Panel(); let returnButton = Button() }
+    private var curtains: [Int: Curtain] = [:]
+    private var curtainWindowIDs: [CGWindowID] { curtains.values.map { CGWindowID($0.panel.windowNumber) } }
+    private struct Screen { let frame = CGRect(x: 0, y: 0, width: 1000, height: 1000) }
+    private enum NSScreen { static let screens = [Screen()] }
     private func CGWindowListCopyWindowInfo(_ options: CGWindowListOption, _ id: CGWindowID) -> CFArray? {
-        observationCalls += 1; return rows as CFArray
+        observationCalls += 1
+        guard windowReadbackAvailable else { return nil }
+        let closed = Set(curtains.values.filter { !$0.panel.isVisible }.map { CGWindowID($0.panel.windowNumber) })
+        return rows.filter { row in
+            windowRemains || !closed.contains((row[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0)
+        } as CFArray
     }
     private static func isSystemCursorWindow(_ row: [String: Any], verifiedOwners: inout [pid_t: Bool]) -> Bool {
         row["verifiedCursor"] as? Bool == true
@@ -109,6 +170,9 @@ private final class EventSource {
     }
     private func fresh() {
         state = .protected; usable = true; surfacesSafe = true; inputEnvironmentVerified = true
+        secureInput = false; notifiedLocked = false; sessionActive = true; sleeping = false; curtains = [:]
+        tapReadbackAvailable = true; windowReadbackAvailable = true; windowRemains = false; remainingTapPID = nil
+        tapID = 10; annotatedTapID = 11; pointerTargets = [:]; layout = [0: 0]
         tap = InertTap(); annotatedTap = InertTap(); sessionTapVerified = true; annotatedTapVerified = true
         let id = UUID(); localAuthenticationWillBegin(id); challengeID = id
         Self.apps = [700: App()]
@@ -172,15 +236,18 @@ private final class EventSource {
         fresh(); let newWindow=event(.leftMouseDown); _=filter(.leftMouseDown,event:newWindow)
         newWindow.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent,value:80)
         Checks.check(filterAnnotated(.leftMouseDown,event:newWindow)==nil, "독립 callback 사이 클릭 처리창 변경 거절")
-        fresh(); layout=1; refreshInputObservation()
+        fresh(); layout=[0: 1]; refreshInputObservation()
         Checks.check(!transit(event()), "독립 layout 변경 양성 경로 폐기")
-        layout=0; fresh(); let oldTag=localAuthenticationInputPolicy.observation!.handoffTag
+        layout=[0: 0]; fresh(); let oldTag=localAuthenticationInputPolicy.observation!.handoffTag
         rows=[]; refreshInputObservation(); rows=[window()]; refreshInputObservation()
         Checks.check(localAuthenticationInputPolicy.observation!.handoffTag != oldTag && transit(event()), "독립 관측 복구 전달 세대 갱신")
     }
 
     func run() async {
         await additionalReviewChecks()
+        await selfReturnChecks()
+        authenticationInterleavingChecks()
+        authenticatedReleaseChecks()
         fresh()
         Checks.check(CGEventField.eventTargetUnixProcessID.rawValue == 40 && CGEventTapLocation.cgAnnotatedSessionEventTap.rawValue == 2,
                      "공개 Mac SDK targetPID 필드와 annotated tap 확인")
@@ -300,6 +367,197 @@ private final class EventSource {
         fresh(); state = .invalid("커튼 소실"); surfacesSafe = false
         refreshInputObservation()
         Checks.check(!transit(event()), "커튼 미검증 상태는 실제 challenge가 있어도 입력 거절")
+    }
+
+    private func selfReturnChecks() async {
+        fresh(); secureInput = true
+        refreshInputObservation()
+        Checks.check(localAuthenticationInputPolicy.observation != nil && transit(event()),
+                     "일치하는 자체 challenge의 secure input은 인증 proof를 폐기하지 않음")
+        fresh(); secureInput = true
+        Checks.check(!verify() && localAuthenticationInputPolicy.observation != nil && transit(event()),
+                     "verify는 일반 보호 승인 없이 자체 secure input 인증 유지")
+        fresh(); secureInput = true
+        Checks.check(!engage() && localAuthenticationInputPolicy.observation != nil && transit(event()),
+                     "protected engage는 일반 보호 승인 없이 자체 secure input 인증 유지")
+        fresh(); secureInput = true; state = .invalid("보호 재검증")
+        Checks.check(!engage() && localAuthenticationInputPolicy.observation != nil && transit(event()),
+                     "복구 engage는 일반 보호 승인 없이 자체 secure input 인증 유지")
+        fresh(); secureInput = true; invalidate("실제 보호 증명 소실")
+        Checks.check(localAuthenticationInputPolicy.observation == nil && !transit(event()),
+                     "자체 secure input 중에도 실제 invalidate는 proof 폐기·입력 차단")
+        fresh(); secureInput = true; tap = nil
+        Checks.check(!verify() && localAuthenticationInputPolicy.observation == nil && !transit(event()),
+                     "자체 secure input 중 tap 소실 verify는 proof 폐기·입력 차단")
+        fresh(); secureInput = true
+        refreshInputObservation()
+        for field in [CGEventField.eventSourceUnixProcessID, .eventSourceUserData] {
+            let remote = event(); remote.setIntegerValueField(field, value: 999)
+            Checks.check(!transit(remote), "secure input 중에도 미확인·원격 출처 거절")
+        }
+        fresh(); secureInput = true; usable = false; refreshInputObservation()
+        Checks.check(!transit(event()), "secure input 예외도 기존 권한 실패를 우회하지 않음")
+        fresh(); secureInput = true; notifiedLocked = true; refreshInputObservation()
+        Checks.check(!transit(event()), "secure input 예외도 잠금을 우회하지 않음")
+        fresh(); secureInput = true; sessionActive = false; refreshInputObservation()
+        Checks.check(!transit(event()), "secure input 예외도 다른 세션을 우회하지 않음")
+        fresh(); secureInput = true; sleeping = true; refreshInputObservation()
+        Checks.check(!transit(event()), "secure input 예외도 절전을 우회하지 않음")
+        fresh(); secureInput = true; challengeID = UUID(); refreshInputObservation()
+        Checks.check(!transit(event()), "준비 ID가 불일치하면 secure input 거절")
+        fresh(); secureInput = true; challengeID = nil; refreshInputObservation()
+        Checks.check(!inputEnvironmentVerified && !isProtected, "인증 밖 secure input은 기존대로 보호 무효")
+
+        var requests = 0
+        requestLocalReturn = { requests += 1 }
+        let buttonRect = CGRect(x: 20, y: 160, width: 100, height: 40)
+        func recover() {
+            fresh(); challengeID = nil; state = .invalid("보호 복구 중"); surfacesSafe = false
+            inputEnvironmentVerified = false; sessionTapVerified = false; annotatedTapVerified = false
+            tap = nil; annotatedTap = nil; curtains = [1: Curtain()]
+            rows = [window(90, pid: getpid(), rect: CGRect(x: 0, y: 0, width: 1000, height: 1000))]
+            refreshInputObservation()
+        }
+        func click(_ type: CGEventType, point: CGPoint = CGPoint(x: 50, y: 180)) {
+            let e = event(type); e.location = point
+            Checks.check(filter(type, event: e) == nil, "자기 버튼 입력은 일반 앱으로 통과시키지 않음")
+        }
+        recover()
+        Checks.check(observedReturnButton(at: CGPoint(x: 50, y: 180)) == 90,
+                     "tap0·전체 cover 미증명인 복구 중에도 자기 버튼만 관측")
+        click(.leftMouseDown); click(.leftMouseUp); await Task.yield()
+        Checks.check(requests == 1, "복구 중 같은 자기 버튼 down/up만 복귀 요청")
+        click(.leftMouseUp); await Task.yield()
+        Checks.check(requests == 1, "down 없는 up은 요청하지 않음")
+        click(.leftMouseDown); click(.leftMouseUp, point: .zero); await Task.yield()
+        Checks.check(requests == 1, "버튼 밖 up은 요청하지 않음")
+        click(.leftMouseDown)
+        observedReturnButtons = [91: buttonRect]
+        click(.leftMouseUp); await Task.yield()
+        Checks.check(requests == 1, "다른 자기 버튼 up은 요청하지 않음")
+        recover(); click(.leftMouseDown)
+        rows.insert(window(91, pid: getpid(), rect: buttonRect), at: 0); refreshInputObservation()
+        click(.leftMouseUp); await Task.yield()
+        Checks.check(requests == 1, "다른 자기 커튼이 가려도 최상단 증명 거절")
+        for mutate: (Platform) -> Void in [
+            { $0.rows.insert($0.window(80, rect: buttonRect), at: 0) },
+            { $0.curtains[1]!.panel.isVisible = false },
+            { $0.curtains[1]!.returnButton.isEnabled = false },
+            { $0.curtains[1]!.returnButton.ancestorsHaveFullOpacity = false },
+            { $0.rows = [$0.window(90, pid: 999, rect: buttonRect)] },
+            { $0.rows = [$0.window(90, pid: getpid(), rect: .zero)] }
+        ] {
+            recover(); mutate(self); refreshInputObservation()
+            Checks.check(observedReturnButton(at: CGPoint(x: 50, y: 180)) == nil,
+                         "자기 버튼의 비표시·가림·소유자·영역 증명 실패 거절")
+        }
+        recover(); inputObservationExpires = .now
+        Checks.check(observedReturnButton(at: CGPoint(x: 50, y: 180)) == nil, "기한이 지난 자기 버튼 증명 거절")
+        recover()
+        for field in [CGEventField.eventSourceUnixProcessID, .eventSourceStateID, .eventSourceUserData] {
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                let e = event(type); e.location = CGPoint(x: 50, y: 180)
+                e.setIntegerValueField(field, value: 999); _ = filter(type, event: e)
+            }
+        }
+        await Task.yield()
+        Checks.check(requests == 1, "미확인·원격 출처는 자기 버튼 callback에도 도달하지 않음")
+        Checks.check(!transit(event()), "자기 버튼 예외는 일반 물리 입력을 허용하지 않음")
+        requestLocalReturn = nil
+    }
+
+    private func authenticationInterleavingChecks() {
+        fresh(); challengeID = nil
+        let admission = SentryAdmission(), peer = NSObject()
+        var unavailable: String?
+        let owner = HostSentry(admission: admission, initiallyLatched: true, persistenceHealthy: true,
+            persist: { _ in true }, surfaces: .init(engage: { self.engage() }, verify: { self.verify() },
+                release: { false }, reason: { nil }, restoreCurtains: { self.restoreCurtains() }),
+            prepareRelease: { self.prepareRelease { true } }, localReturnUnavailableReason: { unavailable })
+        let connection = ObjectIdentifier(peer)
+        admission.register(connection, externalRoute: true); admission.admit(connection); admission.capture(UUID())
+        Checks.check(owner.reconcile() && owner.forwardingProof() != nil && admission.allowsActions(connection),
+                     "자체 인증 전 정상 보호·원격 admission 양성 대조")
+        let id = UUID(); localAuthenticationWillBegin(id); challengeID = id; secureInput = true
+        refreshInputObservation()
+        let previousRebuilds = rebuilds, previousInstallations = installations
+        Checks.check(owner.forwardingProof() == nil && localAuthenticationInputPolicy.observation != nil,
+                     "secure input 중 forwardingProof tick은 일반 권한 없이 인증 proof 보존")
+        Checks.check(!owner.reconcile() && !admission.allowsActions(connection) &&
+                     localAuthenticationInputPolicy.observation != nil && transit(event()),
+                     "실제 reconcile→verify→engage 교차 호출도 원격 차단·native 입력 유지")
+        unavailable = "오디오 안전 복구 대기"
+        owner.surfacesChanged()
+        Checks.check(localAuthenticationInputPolicy.observation != nil && transit(event()) &&
+                     !admission.allowsActions(connection),
+                     "실제 reconcile→restoreCurtains 복구 분기도 인증창을 덮거나 취소하지 않음")
+        Checks.check(!prepareRelease { true } && !prepareRemoteRelease(inputIdle: { true }, cleanup: { true }) &&
+                     localAuthenticationInputPolicy.observation != nil,
+                     "인증 중 로컬·원격 prepareRelease는 해제 거절·native proof 보존")
+        let remote = event(); remote.setIntegerValueField(.eventSourceUnixProcessID, value: Int64(getpid()))
+        remote.setIntegerValueField(.eventSourceUserData, value: Self.remoteEventTag)
+        Checks.check(!transit(remote) && rebuilds == previousRebuilds && installations == previousInstallations,
+                     "인증 교차 호출 중 일반 remote 차단·커튼 재구성0·tap 설치0")
+        tap = nil; annotatedTap = nil
+        Checks.check(!engage() && !restoreCurtains() && !verify() && !transit(event()) &&
+                     rebuilds == previousRebuilds && installations == previousInstallations,
+                     "tap0 자체 challenge도 일반 입력 허용·새 tap 설치·커튼 재구성 없음")
+        challengeID = nil
+        Checks.check(!verify() && localAuthenticationInputPolicy.observation == nil,
+                     "challenge 종료 뒤 남은 secure input은 일반 보호를 승인하지 않음")
+    }
+
+    private func authenticatedReleaseChecks() {
+        func recovery() {
+            fresh(); challengeID = nil; state = .invalid("전체 보호 미검증")
+            tap = nil; annotatedTap = nil; tapID = nil; annotatedTapID = nil; Self.tapOwner = nil
+            curtains = [1: Curtain()]
+            rows = [window(90, pid: getpid(), rect: CGRect(x: 0, y: 0, width: 1000, height: 1000))]
+        }
+        recovery()
+        let admission = SentryAdmission()
+        var effects: [String] = []
+        let owner = HostSentry(admission: admission, initiallyLatched: true, persistenceHealthy: true,
+            persist: { effects.append($0.rawValue); return true },
+            surfaces: .init(engage: { false }, verify: { false }, release: { self.release() },
+                reason: { nil }, released: { self.releaseVerified }),
+            prepareRelease: { self.prepareAuthenticatedLocalRelease { effects.append("cleanup"); return true } },
+            localReturnUnavailableReason: { "HAL 복원은 원담당 소유" })
+        let priorInstalls = installations
+        Checks.check(owner.completeAuthenticatedLocalReturn { effects.append("audio"); return true } &&
+                     releaseVerified && !admission.isRequested && installations == priorInstalls &&
+                     effects == ["cleanup", "releasing", "audio", "inactive"],
+                     "인증 완료 뒤 tap0·복구 상태도 cleanup→실제 소유 커튼 정리→오디오 commit 완료")
+        recovery(); tapReadbackAvailable = false
+        Checks.check(!release() && curtains[1]?.panel.isVisible == true && installations == priorInstalls,
+                     "tap0이어도 OS tap 목록 readback 실패면 커튼 유지·신규 tap 설치0")
+        recovery(); remainingTapPID = getpid()
+        Checks.check(!release() && curtains[1]?.panel.isVisible == true && installations == priorInstalls,
+                     "기록 ID 없는 자기 활성 tap이 남아 있으면 커튼 제거·복귀 수용 거절")
+        recovery(); remainingTapPID = getpid() + 1
+        Checks.check(release() && releaseVerified,
+                     "다른 소유자의 tap은 조작하지 않고 자기 tap 부재·커튼 제거만 확인")
+        recovery(); challengeID = UUID()
+        var cleanupCalls = 0
+        Checks.check(!prepareAuthenticatedLocalRelease { cleanupCalls += 1; return true } && cleanupCalls == 0,
+                     "진행 중 challenge에서는 인증 완료 전용 cleanup 호출0")
+        recovery()
+        Checks.check(!prepareAuthenticatedLocalRelease { false } && curtains[1]?.panel.isVisible == true,
+                     "인증 완료 전용 경로도 injector cleanup 실패 시 보호 유지")
+        recovery(); pointerTargets[0] = 1
+        Checks.check(!prepareAuthenticatedLocalRelease { true }, "인증 뒤에도 남은 원 대상 held 입력은 임의 폐기하지 않음")
+        recovery()
+        Checks.check(!prepareAuthenticatedLocalRelease { self.challengeID = UUID(); return true },
+                     "cleanup 사이 새 challenge가 시작되면 인증 완료 해제 거절")
+        recovery(); Self.tapOwner = Platform()
+        Checks.check(!prepareAuthenticatedLocalRelease { cleanupCalls += 1; return true } && cleanupCalls == 0,
+                     "다른 보호 소유자가 있으면 인증 완료 cleanup도 호출하지 않음")
+        recovery(); windowRemains = true
+        Checks.check(!release() && !releaseVerified && installations == priorInstalls,
+                     "커튼 제거 readback 실패도 복귀 성공·신규 tap 설치로 처리하지 않음")
+        recovery(); secureInput = true
+        Checks.check(prepareAuthenticatedLocalRelease { true } && release() && releaseVerified,
+                     "인증 종료 뒤 남은 secure input은 OS 상태 변경 없이 소유 자원 제거만 검증")
     }
 }
 
