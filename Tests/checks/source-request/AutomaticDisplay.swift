@@ -1,5 +1,83 @@
 import Foundation
 
+@MainActor func sourceSelectionAdmissionChecks(_ expect: (Bool, String) -> Void) {
+    let main = DisplayInfo(id: 14, name: "fixture-main", width: 1920, height: 1080, isMain: true)
+    let inventory = UUID()
+    var idle = WindowList(macName: "fixture", windows: [], active: .none, launchID: "host",
+        selectionRevision: "revision-0", automaticDisplaySelection: 1,
+        displaySelection: 1, displays: [main], displayInventoryID: inventory, desktopSelectionRequired: true)
+    func catalog(_ generation: Any, ready: Bool, version: Int = 1) -> WindowList? {
+        var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(idle)) as! [String: Any]
+        object["sourceSelectionAdmission"] = ["schemaVersion": version, "generation": generation, "ready": ready]
+        return try? JSONDecoder().decode(WindowList.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+    func fresh() -> Client { let client = Client(); client.active = .none; return client }
+    func picks(_ client: Client) -> [DisplaySelection] {
+        client.allSent.filter { $0.0 == .selectDisplay }.compactMap { Wire.decode(DisplaySelection.self, from: $0.1) }
+    }
+    let blocked = catalog(1, ready: false)!, ready = catalog(2, ready: true)!
+    let waiting = fresh()
+    waiting.deliverIdleCatalog(blocked)
+    waiting.deliverIdleCatalog(blocked)
+    expect(picks(waiting).isEmpty && waiting.remoteAudioControl.changes == 0,
+           "보호 준비 중에는 화면 선택과 오디오 해제를 보내지 않고 최초 기회를 보존")
+    waiting.deliverIdleCatalog(ready)
+    waiting.deliverIdleCatalog(ready)
+    expect(picks(waiting).count == 1, "같은 inventory의 새 허용 세대에서 최초 선택 한 번, 반복 catalog는 중복 없음")
+    waiting.deliverIdleCatalog(catalog(4, ready: true)!)
+    waiting.deliverIdleCatalog(catalog(4, ready: true)!)
+    expect(picks(waiting).count == 2, "중간 false가 생략돼도 새 ready 세대에서 미확인 선택만 한 번 재개")
+    expect(picks(waiting).allSatisfy { $0.selectionRevision == "revision-0" && $0.inventoryID == inventory },
+           "복구는 원래 CAS와 inventory를 보존")
+    waiting.deliverIdleCatalog(ready)
+    expect(picks(waiting).count == 2, "오래된 ready 세대는 재제출하지 않음")
+    waiting.deliverIdleCatalog(catalog(5, ready: false)!)
+    waiting.deliverIdleCatalog(idle)
+    expect(picks(waiting).count == 2, "현대 admission 관측 뒤 false와 필드 누락은 legacy로 격하해 제출하지 않음")
+    waiting.deliverIdleCatalog(catalog(6, ready: true)!)
+    expect(picks(waiting).count == 3, "차단 이후 더 새로운 허용 세대가 원래 선택 기회를 복구")
+    for change in ["none", "window", "display", "launch", "revision", "peer", "host", "mac"] {
+        let client = fresh()
+        client.deliverIdleCatalog(blocked)
+        var next = ready
+        switch change {
+        case "none": client.select(.none)
+        case "window": client.select(.window(99))
+        case "display": client.selectDisplay(main)
+        case "launch": client.launch(bundleID: "fixture.manual")
+        case "revision": next.selectionRevision = "another-choice"
+        case "peer": client.connection = NWConnection()
+        case "host": next.launchID = "another-host"
+        default: client.session?.macID = "another-mac"
+        }
+        let count = client.allSent.count
+        client.deliverIdleCatalog(next)
+        client.deliverIdleCatalog(ready)
+        expect(client.allSent.count == count, "새 허용 세대가 \(change)로 취소된 자동 선택을 되살리지 않음")
+    }
+    let foreign = fresh()
+    foreign.deliverIdleCatalog(blocked)
+    foreign.deliverIdleCatalog(ready, from: NWConnection())
+    expect(picks(foreign).isEmpty, "다른 peer의 ready catalog는 현재 선택을 재개하지 않음")
+    let invalidValues: [Any] = [0, -1, 9_007_199_254_740_992 as UInt64, 1.5, true, "2"]
+    for invalid in invalidValues {
+        expect(catalog(invalid, ready: true) == nil, "잘못된 admission 세대는 catalog 디코딩에서 거절: \(invalid)")
+    }
+    if let unknown = catalog(7, ready: true, version: 2) {
+        let client = fresh(); client.deliverIdleCatalog(unknown)
+        expect(picks(client).isEmpty, "미지원 admission schema는 자동 선택을 허용하지 않음")
+    }
+    let maximum = fresh()
+    maximum.deliverIdleCatalog(catalog(9_007_199_254_740_991 as UInt64, ready: true)!)
+    maximum.deliverIdleCatalog(catalog(9_007_199_254_740_991 as UInt64, ready: true)!)
+    expect(picks(maximum).count == 1, "53bit 최대 세대도 정확히 한 번 제출")
+    idle.selectionRevision = "revision-new"
+    waiting.deliverIdleCatalog(catalog(8, ready: true)!)
+    idle.selectionRevision = "revision-0"
+    waiting.deliverIdleCatalog(catalog(9, ready: true)!)
+    expect(picks(waiting).count == 3, "다른 CAS를 관측한 뒤 옛 CAS replay와 새 admission으로 재개하지 않음")
+}
+
 @MainActor func automaticDisplayChecks(_ expect: (Bool, String) -> Void) async {
     let main = DisplayInfo(id: 14, name: "fixture-main", width: 1920, height: 1080, isMain: true)
     let secondary = DisplayInfo(id: 13, name: "fixture-secondary", width: 1200, height: 800, isMain: false)
