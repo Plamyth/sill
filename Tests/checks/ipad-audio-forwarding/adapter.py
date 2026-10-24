@@ -23,12 +23,14 @@ fixture = '''import Foundation
 import StreamProtocol
 final class Clock: @unchecked Sendable { var now = 0.0 }
 final class NWConnection {
- enum Completion { case contentProcessed((Error?) -> Void) }
+ enum Completion { case contentProcessed((NWError?) -> Void) }
  var messages: [Data] = []
+ var cancellations = 0
+ func cancel() { cancellations += 1 }
  enum SendFailure: Error { case fixture }
  var holdSendCompletions = false
- var completions: [(Error?) -> Void] = []
- func failSends() { let old = completions; completions = []; old.forEach { $0(SendFailure.fixture) } }
+ var completions: [(NWError?) -> Void] = []
+ func failSends() { let old = completions; completions = []; old.forEach { $0(.posix(.EIO)) } }
  var forwardingInFlight = 0
  var maximumForwardingInFlight = 0
  func send(content: Data?, completion: Completion) {
@@ -42,6 +44,7 @@ final class NWConnection {
   if case .contentProcessed(let f) = completion { if holdSendCompletions { completions.append(f) } else { f(nil) } }
  }
 }
+enum NWError: Error { case posix(POSIXErrorCode) }
 final class UIApplication {
  enum State { case active, inactive, background }
  static let shared = UIApplication(); var applicationState = State.active
@@ -80,6 +83,13 @@ final class StreamClient {
  var audioAutomaticDirections: Set<IPadDesiredAudio.Direction> = []
  var audioRouteAuthorization: IPadAudioRoutePolicy.Authorization?
  var audioResumeObserver: IPadAudioResumeObserver?
+ lazy var providerCall = IPadProviderCall(connection: UUID(), clock: { [clock] in clock.now })
+ var providerCallConnection = UUID()
+ var providerCallPeer: ObjectIdentifier?
+ var providerCallCapability: Int?
+ var providerCallQueryWake: DispatchWorkItem?
+ var inputPaused = false
+ var authenticated = true
  var audioForwarding = IPadAudioForwarding()
  var audioForwardingLocalGeneration = UUID()
  var audioForwardingWake: DispatchWorkItem?
@@ -102,7 +112,7 @@ final class StreamClient {
  lazy var remoteAudioControl = IPadRemoteAudioController(send: { [weak self] peer, request in self?.subscriptions.append(request); self?.sendRemoteAudio(request, to: peer) },
      stop: {}, play: { _, _ in }, changed: { _ in })
  var remoteAudioStatus: IPadRemoteAudioController.Status { remoteAudioControl.status }
- var authenticatedMacAudioRoutePeer: ObjectIdentifier? { connection.map(ObjectIdentifier.init) }
+ var authenticatedMacAudioRoutePeer: ObjectIdentifier? { authenticated && connected ? connection.map(ObjectIdentifier.init) : nil }
  var session: Session? = Session()
  var savedMacs = [Saved(macID: "fixture", fingerprintData: Data(repeating: 7, count: 32))]
  var audioRouteOffer = IPadAudioRouteOffer()
@@ -121,7 +131,8 @@ final class StreamClient {
    }
   }
  }
- func connectionLost(_ c: NWConnection, error: Error) {}
+ var connectionLosses = 0
+ func connectionLost(_ c: NWConnection, error: NWError) { connectionLosses += 1 }
  func beginRemoteAudioRequest() { remoteAudioControl.toggle() }
  func fixtureObserve(_ list: WindowList) {
   let peer = connection!
@@ -134,12 +145,12 @@ final class StreamClient {
   reconcileDesiredAudio()
  }
  func command() -> AudioForwardingControl {
-  let message = connection!.messages.last!
+  let message = connection!.messages.last { $0.first == 217 }!
   return Wire.decode(AudioForwardingControl.self, from: Data(message.dropFirst(StreamMessage.headerLength)))!
  }
  func receive(_ state: AudioForwardingState) { connection!.forwardingInFlight = 0; acceptAudioForwarding(state, from: connection!) }
 
- deinit { audioForwardingWake?.cancel(); audioForwardingWireTimeout?.cancel(); UserDefaults.standard.removePersistentDomain(forName: suite) }
+ deinit { providerCallQueryWake?.cancel(); audioForwardingWake?.cancel(); audioForwardingWireTimeout?.cancel(); UserDefaults.standard.removePersistentDomain(forName: suite) }
 }
 '''
 def method(file, name):
@@ -148,8 +159,8 @@ def method(file, name):
     end = s.index('\n    }', start) + len('\n    }')
     return select_platform(s[start:end], vision=False, ios=True)
 transport = 'extension StreamClient {\n' + method('StreamClient+Audio.swift', 'sendRemoteAudio') + '\n' + method('StreamClient+Microphone.swift', 'sendMicrophoneControl') + '\n}\n'
-(out/'Adapter.swift').write_text(fixture + forward + desired + routes + transport)
+(out/'Adapter.swift').write_text(fixture + forward + desired + routes + transport + extension('StreamClient+ProviderCall.swift'))
 flags=['-module-cache-path',str(out/'cache'),'-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out)]
-files=['IPadAudioForwarding.swift','IPadDesiredAudio.swift','IPadAudioAdmission.swift','IPadMicrophonePolicy.swift','IPadRemoteAudioController.swift','IPadAudioRoutePolicy.swift']
-subprocess.run(['xcrun','swiftc','-parse-as-library',*flags,*[str(root/'iOSClient'/f) for f in files],str(out/'Adapter.swift'),str(Path(__file__).with_name('adapter-main.swift')),'-o',str(out/'adapter-check')],check=True)
+files=['IPadProviderCall.swift','IPadAudioForwarding.swift','IPadDesiredAudio.swift','IPadAudioAdmission.swift','IPadMicrophonePolicy.swift','IPadRemoteAudioController.swift','IPadAudioRoutePolicy.swift']
+subprocess.run(['xcrun','swiftc','-parse-as-library',*flags,*[str(root/'iOSClient'/f) for f in files],str(out/'Adapter.swift'),str(Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).with_name('adapter-main.swift')),'-o',str(out/'adapter-check')],check=True)
 subprocess.run([str(out/'adapter-check')],check=True)
