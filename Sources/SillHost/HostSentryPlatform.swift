@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import Darwin
+import Security
 
 @MainActor
 final class HostSentryPlatform {
@@ -443,6 +444,7 @@ final class HostSentryPlatform {
             invalidate("운영체제에서 가림 화면 표시 상태를 읽지 못했습니다.")
             return false
         }
+        var verifiedCursorOwners: [pid_t: Bool] = [:]
         for (id, frame) in layout {
             guard let panel = curtains[id]?.panel, panel.isVisible, panel.isOnActiveSpace,
                   panel.frame == frame, panel.isOpaque, panel.alphaValue == 1,
@@ -463,6 +465,7 @@ final class HostSentryPlatform {
                       (covering[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0,
                       let bounds = covering[kCGWindowBounds as String] as? NSDictionary,
                       let coveringRect = CGRect(dictionaryRepresentation: bounds), coveringRect.intersects(rect) else { continue }
+                if Self.isSystemCursorWindow(covering, verifiedOwners: &verifiedCursorOwners) { continue }
                 invalidate("다른 화면이 가림 화면 위에 표시되어 보호 상태를 보장할 수 없습니다.")
                 return false
             }
@@ -470,9 +473,29 @@ final class HostSentryPlatform {
         return true
     }
 
+    private static func isSystemCursorWindow(_ row: [String: Any], verifiedOwners: inout [pid_t: Bool]) -> Bool {
+        guard let level = row[kCGWindowLayer as String] as? Int32,
+              level == CGWindowLevelForKey(.cursorWindow),
+              let pid = row[kCGWindowOwnerPID as String] as? pid_t, pid > 0 else { return false }
+        if let verified = verifiedOwners[pid] { return verified }
+        var guest: SecCode?
+        var requirement: SecRequirement?
+        guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary,
+                                            [], &guest) == errSecSuccess, let guest,
+              SecRequirementCreateWithString("anchor apple and identifier \"com.apple.WindowServer\"" as CFString,
+                                             [], &requirement) == errSecSuccess, let requirement else {
+            verifiedOwners[pid] = false
+            return false
+        }
+        let verified = SecCodeCheckValidity(guest, [], requirement) == errSecSuccess
+        verifiedOwners[pid] = verified
+        return verified
+    }
+
     private func visibleReturnButton(at point: CGPoint) -> CGWindowID? {
         guard let main = NSScreen.screens.first,
               let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else { return nil }
+        var verifiedCursorOwners: [pid_t: Bool] = [:]
         let appPoint = CGPoint(x: point.x, y: main.frame.maxY - point.y)
         for curtain in curtains.values {
             let panel = curtain.panel
@@ -489,7 +512,7 @@ final class HostSentryPlatform {
                 guard (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0,
                       let bounds = row[kCGWindowBounds as String] as? NSDictionary,
                       let rect = CGRect(dictionaryRepresentation: bounds) else { return false }
-                return rect.contains(point)
+                return rect.contains(point) && !Self.isSystemCursorWindow(row, verifiedOwners: &verifiedCursorOwners)
             }
             let id = CGWindowID(panel.windowNumber)
             if (front?[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id { return id }
