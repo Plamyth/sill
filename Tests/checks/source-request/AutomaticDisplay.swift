@@ -130,6 +130,29 @@ import Foundation
     expect(picks(queued).isEmpty, "보호 취소가 실제 SessionLink에 보류된 옛 자동 제출도 폐기")
     queued.deliverIdleCatalog(catalog(4, ready: true)!)
     expect(picks(queued).count == 1, "보류 제출 취소 뒤 새 허용 세대에서 현재 티켓만 제출")
+    for modern in [true, false] {
+        for held in [false, true] {
+            idle.automaticDisplaySelection = modern ? 1 : nil
+            idle.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
+            let missing = fresh(), peer = missing.connection!
+            missing.beginAutomaticConnectionOpportunity(peer: peer)
+            missing.resumeSource = .window(1001)
+            if held { _ = missing.link.hold(peer) }
+            missing.deliverIdleCatalog(catalog(2, ready: true)!)
+            idle.windows = []
+            missing.deliverIdleCatalog(catalog(4, ready: true)!)
+            if held { _ = missing.link.unhold(peer) }
+            let requests = missing.allSent.compactMap { Wire.decode(SourceRequest.self, from: $0.1) }
+            expect(requests.count == (held ? 0 : 1) && requests.allSatisfy { $0.source == .window(1001) } && picks(missing).isEmpty,
+                   "이미 미확인인 창이 사라져도 다른 목표로 바꾸지 않고 보류 요청 폐기 modern=\(modern) held=\(held)")
+            let count = missing.allSent.count
+            idle.windows = [WindowInfo(id: 1001, title: "reused", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
+            missing.deliverIdleCatalog(catalog(6, ready: true)!)
+            expect(missing.allSent.count == count, "취소된 미확인 창을 같은 ID 재등장으로 되살리지 않음 modern=\(modern) held=\(held)")
+        }
+    }
+    idle.automaticDisplaySelection = 1
+    idle.windows = [WindowInfo(id: 1001, title: "fixture", appName: "fixture", bundleID: "fixture", width: 800, height: 600)]
     idle.selectionRevision = "revision-new"
     waiting.deliverIdleCatalog(catalog(8, ready: true)!)
     idle.selectionRevision = "revision-0"
