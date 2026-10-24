@@ -71,4 +71,18 @@ import StreamProtocol
                "공개 상태 중복 제거를 유지하면서 인증 진행 통지만 별도로 전달")
         privacy.stop()
     }
+    let inactive = SentryAdmission(), peer = NSObject()
+    let local = HostSentry(admission: inactive, initiallyLatched: false, persistenceHealthy: true,
+        persist: { _ in true }, surfaces: .init(engage: { false }, verify: { false },
+            release: { false }, reason: { nil }), prepareRelease: { false })
+    inactive.register(ObjectIdentifier(peer), externalRoute: false)
+    inactive.admit(ObjectIdentifier(peer))
+    local.localReturnActivityChanged(true)
+    expect(local.completeAuthenticatedLocalReturn { true }, "Sentry 비활성 분기의 인증된 오디오 커밋")
+    local.localReturnActivityChanged(false)
+    expect(!inactive.allowsActions(ObjectIdentifier(peer)) &&
+           !inactive.allows(ObjectIdentifier(peer), epoch: nil) &&
+           inactive.sourceSelectionAdmission(for: ObjectIdentifier(peer)) == nil &&
+           inactive.status(for: ObjectIdentifier(peer)) == nil,
+           "비활성 복귀도 비동기 closeSessions 전에 기존 명령·선택·영상·제어 세션 인가를 동기 철회")
 }
