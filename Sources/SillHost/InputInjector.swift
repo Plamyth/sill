@@ -24,8 +24,17 @@ final class InputInjector {
     private static let multiClickInterval: CFTimeInterval = 0.35
     private static let multiClickSlop: CGFloat = 12
 
+    struct ProtectedPointerScope {
+        let device: KeyStrokes.Device
+        let epoch: VideoEpoch
+        let isCurrent: () -> Bool
+
+        func matches(_ other: Self) -> Bool { device == other.device && epoch == other.epoch }
+    }
+
     private struct ButtonState {
         var owner: KeyStrokes.Device?
+        var protectedScope: ProtectedPointerScope?
         var isDown: Bool { owner != nil }
         var clicks: Int64 = 1
         var lastDownAt: CFAbsoluteTime = -1_000
@@ -73,7 +82,11 @@ final class InputInjector {
     /// `rect` is the streamed source's rectangle, or `.null` for
     /// input with nowhere to land that still goes (`isUpOfSomethingDown`: StreamCoordinator), a
     /// button's up then going where the pointer is.
-    func apply(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device) {
+    func apply(_ event: InputEvent, in rect: CGRect, from device: KeyStrokes.Device,
+               protectedScope: ProtectedPointerScope? = nil) {
+        let previous = postingScope
+        postingScope = isolatesPhysicalInput ? protectedScope : nil
+        defer { postingScope = previous }
         if !dryRun { remindAboutAccessibilityIfNeeded() }
         switch event {
         case .pointer(let action, let x, let y):
@@ -91,10 +104,18 @@ final class InputInjector {
             }
             pointer(action, at: point(x, y, in: rect), from: device)
         case .scroll(let x, let y, let dx, let dy):
+            if let owner = scrollScope {
+                guard let protectedScope, owner.matches(protectedScope), owner.isCurrent() else { return }
+            }
+            if isolatesPhysicalInput, scrollScope == nil { scrollScope = protectedScope }
             scroll(at: point(x, y, in: rect), dx: dx * rect.width, dy: dy * rect.height)
         case .text(let string):
             type(string, from: device)
         case .scrollGesture(let phase, let x, let y):
+            if phase == .began, !protectedScrollPending { scrollScope = nil }
+            if let owner = scrollScope {
+                guard let protectedScope, owner.matches(protectedScope), owner.isCurrent() else { return }
+            }
             scrollGesture(phase, at: point(x, y, in: rect))
         case .key(let hidUsage, let down, let modifiers):
             key(hidUsage: hidUsage, down: down, modifiers: modifiers, from: device)
@@ -118,16 +139,23 @@ final class InputInjector {
     /// The one place an event reaches the Mac: posted, or in a dry run only counted. True when it
     /// was posted.
     var isolatesPhysicalInput = false
+    var protectedPointerEgress: ((CGEvent, ProtectedPointerScope?) -> Bool)?
+    private var postingScope: ProtectedPointerScope?
+    private var scrollScope: ProtectedPointerScope?
+    private(set) var protectedScrollPending = false
 
     private func post(_ event: CGEvent) -> Bool {
         if Self.isKeyboard(event.type) { lastKeyFlags = event.flags.rawValue & (KeyStrokes.capsLock | Self.modifierBits) }
-        if isolatesPhysicalInput && !Self.isKeyboard(event.type) { event.flags = CGEventFlags(rawValue: lastKeyFlags) }
+        if (isolatesPhysicalInput || postingScope != nil) && !Self.isKeyboard(event.type) { event.flags = CGEventFlags(rawValue: lastKeyFlags) }
         if dryRun {
             if testLog { logTest(event) }
             Stats.shared.bump("in.dry")
             return false
         }
         event.setIntegerValueField(.eventSourceUserData, value: HostSentryPlatform.remoteEventTag)
+        if (isolatesPhysicalInput || postingScope != nil) && !Self.isKeyboard(event.type) && event.type != .mouseMoved {
+            return protectedPointerEgress?(event, postingScope) == true
+        }
         event.post(tap: .cghidEventTap)
         return true
     }
@@ -172,16 +200,31 @@ final class InputInjector {
     // MARK: Pointer
 
     private func pointer(_ action: PointerAction, at location: CGPoint, from device: KeyStrokes.Device) {
+        let previousScope = postingScope
+        defer { postingScope = previousScope }
         let type: CGEventType
         let button: CGMouseButton
         var clicks: Int64 = 1
+        let previousLeft = left, previousRight = right
+        if !isolatesPhysicalInput, left.protectedScope != nil || right.protectedScope != nil {
+            guard action == .leftUp || action == .rightUp else { return }
+        }
+        if isolatesPhysicalInput, action == .move {
+            let held = left.owner == device ? left.protectedScope : right.owner == device ? right.protectedScope : nil
+            if left.isDown || right.isDown {
+                guard let held, let current = postingScope, held.matches(current), held.isCurrent() else { return }
+            }
+        }
 
         switch action {
         case .move:
             // A move with a button held is a drag; sending .mouseMoved instead would break
             // text selection and window dragging.
-            if left.isDown { type = .leftMouseDragged; button = .left; clicks = left.clicks }
-            else if right.isDown { type = .rightMouseDragged; button = .right; clicks = right.clicks }
+            if left.isDown && (!isolatesPhysicalInput || left.owner == device) {
+                type = .leftMouseDragged; button = .left; clicks = left.clicks
+            } else if right.isDown && (!isolatesPhysicalInput || right.owner == device) {
+                type = .rightMouseDragged; button = .right; clicks = right.clicks
+            }
             else { type = .mouseMoved; button = .left }
         case .leftDown:
             guard left.owner == nil else { return }
@@ -189,7 +232,6 @@ final class InputInjector {
             type = .leftMouseDown; button = .left; clicks = left.clicks
         case .leftUp:
             guard left.owner == device else { return }
-            left.owner = nil
             type = .leftMouseUp; button = .left; clicks = left.clicks   // the up carries the down's count
         case .rightDown:
             guard right.owner == nil else { return }
@@ -197,25 +239,46 @@ final class InputInjector {
             type = .rightMouseDown; button = .right; clicks = right.clicks
         case .rightUp:
             guard right.owner == device else { return }
-            right.owner = nil
             type = .rightMouseUp; button = .right; clicks = right.clicks
         }
 
+        if isolatesPhysicalInput || left.protectedScope != nil || right.protectedScope != nil {
+            switch action {
+            case .leftDown: left.protectedScope = postingScope
+            case .rightDown: right.protectedScope = postingScope
+            case .leftUp: postingScope = left.protectedScope
+            case .rightUp: postingScope = right.protectedScope
+            case .move: break
+            }
+        }
         guard let event = CGEvent(mouseEventSource: source, mouseType: type,
-                                  mouseCursorPosition: location, mouseButton: button) else { return }
+                                  mouseCursorPosition: location, mouseButton: button) else {
+            left = previousLeft; right = previousRight
+            return
+        }
         if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: clicks) }
         // One synthetic "finger": a constant event number keeps a down/drag/up sequence coherent.
         event.setIntegerValueField(.mouseEventNumber, value: 0)
         watch?.sillMoved(to: location)   // before the post (see `watch`); a dry run moves the scripted pointer
         lastPointerLocation = location
-        if post(event) { Stats.shared.bump("in.pointer") }
+        let attempted = post(event)
+        if attempted { Stats.shared.bump("in.pointer") }
+        switch action {
+        case .leftDown where !attempted && !dryRun: left = previousLeft
+        case .rightDown where !attempted && !dryRun: right = previousRight
+        case .leftUp where attempted || dryRun: left.owner = nil; left.protectedScope = nil
+        case .rightUp where attempted || dryRun: right.owner = nil; right.protectedScope = nil
+        default: break
+        }
     }
 
     /// Whether this input is the up of a key or a button the Mac has down, which still goes when the
     /// input has nowhere to land (DroppedInput, StreamCoordinator): its down was posted, its up has
     /// not been.
     func isUpOfSomethingDown(_ event: InputEvent, from device: KeyStrokes.Device) -> Bool {
-        DroppedInput.stillGoes(event, keyDown: keys.isDown, leftDown: left.owner == device, rightDown: right.owner == device)
+        DroppedInput.stillGoes(event, keyDown: { usage in
+            keys.isDown(usage) || KeyStrokes.virtualKeys[usage].flatMap { keyReleaseDebts[$0]?.owner } == device
+        }, leftDown: left.owner == device, rightDown: right.owner == device)
     }
 
     private func beginClick(_ state: inout ButtonState, at location: CGPoint, from device: KeyStrokes.Device) {
@@ -260,16 +323,20 @@ final class InputInjector {
         let w1 = Int32(wheel1), w2 = Int32(wheel2)
 
         switch scrollState {
+        case .handoff:
+            return
         case .idle:
             postScroll(at: location, wheel1: w1, wheel2: w2, phase: nil, momentum: nil)
         case .gesture(let begun):
-            postScroll(at: location, wheel1: w1, wheel2: w2,
-                       phase: begun ? .changed : .began, momentum: nil)
-            scrollState = .gesture(begun: true)
+            if postScroll(at: location, wheel1: w1, wheel2: w2,
+                          phase: begun ? .changed : .began, momentum: nil) || dryRun {
+                scrollState = .gesture(begun: true)
+            }
         case .momentum(let begun):
-            postScroll(at: location, wheel1: w1, wheel2: w2,
-                       phase: nil, momentum: begun ? .continuous : .begin)
-            scrollState = .momentum(begun: true)
+            if postScroll(at: location, wheel1: w1, wheel2: w2,
+                          phase: nil, momentum: begun ? .continuous : .begin) || dryRun {
+                scrollState = .momentum(begun: true)
+            }
         }
         lastScrollLocation = location
         rearmScrollWatchdog()
@@ -295,6 +362,7 @@ final class InputInjector {
     /// A boundary with no delta inside it (a gesture that never moved) posts nothing, so the Mac
     /// never sees an Ended without its Began.
     private enum ScrollState {
+        case handoff
         case idle                     // bare wheel deltas: an older client, or a lone tick
         case gesture(begun: Bool)     // fingers down; begun once the Began event is out
         case momentum(begun: Bool)    // fingers up, client-generated coast
@@ -318,21 +386,34 @@ final class InputInjector {
         switch phase {
         case .began:
             closeScroll(at: location)   // defensive: anything still open ends first
+            guard !protectedScrollPending else { return }
+            scrollScope = postingScope
             scrollState = .gesture(begun: false)
             scrollRemainder = .zero
         case .ended:
             if case .gesture(begun: true) = scrollState {
                 postScroll(at: location, wheel1: 0, wheel2: 0, phase: .ended, momentum: nil)
             }
-            scrollState = .idle
+            if !protectedScrollPending {
+                scrollState = scrollScope == nil ? .idle : .handoff
+            }
         case .momentumBegan:
-            closeScroll(at: location)
+            if isolatesPhysicalInput || scrollScope != nil {
+                guard case .handoff = scrollState, let scope = scrollScope,
+                      let current = postingScope, scope.matches(current), scope.isCurrent() else {
+                    if !protectedScrollPending { scrollState = .handoff }
+                    return
+                }
+            } else {
+                closeScroll(at: location)
+            }
+            guard !protectedScrollPending else { return }
             scrollState = .momentum(begun: false)
         case .momentumEnded:
             if case .momentum(begun: true) = scrollState {
                 postScroll(at: location, wheel1: 0, wheel2: 0, phase: nil, momentum: .end)
             }
-            scrollState = .idle
+            if !protectedScrollPending { scrollState = .idle; scrollScope = nil }
         }
         lastScrollLocation = location
         rearmScrollWatchdog()
@@ -348,14 +429,17 @@ final class InputInjector {
         default:
             break
         }
-        scrollState = .idle
+        if !protectedScrollPending {
+            scrollState = .idle
+            scrollScope = nil
+        }
     }
 
     private func rearmScrollWatchdog() {
         scrollWatchdog?.cancel()
         let timeout: Double
         switch scrollState {
-        case .idle: scrollWatchdog = nil; return
+        case .idle, .handoff: scrollWatchdog = nil; return
         case .gesture: timeout = Self.gestureIdleTimeout
         case .momentum: timeout = Self.momentumIdleTimeout
         }
@@ -373,10 +457,11 @@ final class InputInjector {
     private func scrollWentQuiet() {
         let state = scrollState
         closeScroll(at: lastScrollLocation)
+        guard !protectedScrollPending else { return }
         switch state {
         case .gesture: scrollState = .gesture(begun: false)
         case .momentum: scrollState = .momentum(begun: false)
-        case .idle: break
+        case .idle, .handoff: break
         }
         Stats.shared.bump("in.scrollTimeout")
     }
@@ -395,10 +480,11 @@ final class InputInjector {
     ///     line-based `deltaY`; writing the point deltas there would inflate that tenfold for
     ///     every app still reading it. (`setDoubleValueField` would do the 16.16 conversion if it
     ///     ever needs setting — CGEventField exposes all of these in Swift, nothing is missing.)
+    @discardableResult
     private func postScroll(at location: CGPoint, wheel1: Int32, wheel2: Int32,
-                            phase: CGScrollPhase?, momentum: CGMomentumScrollPhase?) {
+                            phase: CGScrollPhase?, momentum: CGMomentumScrollPhase?) -> Bool {
         guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
-                                  wheel1: wheel1, wheel2: wheel2, wheel3: 0) else { return }
+                                  wheel1: wheel1, wheel2: wheel2, wheel3: 0) else { return false }
         // A scroll event carries its own location; without it the scroll lands wherever the
         // cursor happens to be rather than under the client's finger. Every event, the closing
         // zero-delta ones included, so the whole gesture is routed to the same window.
@@ -414,7 +500,16 @@ final class InputInjector {
         // Whether a scroll event posted with a location moves the cursor is not known: the note
         // comes first either way (see `watch`).
         watch?.sillMoved()
-        _ = post(event)
+        let previous = postingScope
+        if isolatesPhysicalInput || scrollScope != nil { postingScope = scrollScope }
+        defer { postingScope = previous }
+        let attempted = post(event)
+        if isolatesPhysicalInput || scrollScope != nil {
+            let terminal = phase == .ended || momentum == .end
+            if attempted { protectedScrollPending = !terminal && (phase != nil || momentum != nil) }
+            if !protectedScrollPending && phase != .ended { scrollScope = nil }
+        }
+        return attempted
     }
 
     // MARK: Text
@@ -422,7 +517,8 @@ final class InputInjector {
     private func type(_ string: String, from device: KeyStrokes.Device) {
         // A device types text with none of its modifier keys down: any it still holds goes up first
         // (KeyStrokes.text), as the characters carry no flags either.
-        post(keys.text(from: device))
+        let owners = keyOwners
+        post(keys.text(from: device), owners: owners)
         for character in string {
             switch character {
             case "\n": tap(virtualKey: 36)          // Return
@@ -462,26 +558,44 @@ final class InputInjector {
     /// pure): a key's up leaves only what modifier keys still hold, so no chord leaves its modifiers
     /// in the HID state table that the next click and scroll start from.
     private var keys = KeyStrokes()
+    private var keyReleaseDebts: [UInt16: (owner: KeyStrokes.Device, stroke: KeyStroke)] = [:]
+    private var keyOwners: [UInt16: KeyStrokes.Device] {
+        Dictionary(uniqueKeysWithValues: keys.down.compactMap { usage, owner in
+            KeyStrokes.virtualKeys[usage].map { ($0, owner) }
+        })
+    }
 
     private func key(hidUsage: UInt16, down: Bool, modifiers: UInt64, from device: KeyStrokes.Device) {
+        if let key = KeyStrokes.virtualKeys[hidUsage], let debt = keyReleaseDebts[key] {
+            guard !down, debt.owner == device else { return }
+        }
+        let owners = keyOwners
         guard let strokes = keys.key(usage: hidUsage, down: down, modifiers: modifiers, from: device) else {
             Stats.shared.bump("in.unknownKey")
             return
         }
-        post(strokes)
+        post(strokes, owners: owners)
     }
 
     /// Posts KeyStrokes' events in order, each made from `source` with exactly its flags (a modifier's
     /// own keycode makes a flags-changed event), and has each up checked a quarter of a second later
     /// (KeyUpCheck: the table read just before each down, a read that needs no permission).
-    private func post(_ strokes: [KeyStroke], letGo: Bool = false) {
+    private func post(_ strokes: [KeyStroke], letGo: Bool = false,
+                      owners: [UInt16: KeyStrokes.Device] = [:]) {
         for stroke in strokes {
+            if !stroke.down, let owner = owners[stroke.virtualKey] {
+                keyReleaseDebts[stroke.virtualKey] = (owner, stroke)
+            }
             guard let event = CGEvent(keyboardEventSource: source, virtualKey: stroke.virtualKey, keyDown: stroke.down) else { continue }
             event.flags = CGEventFlags(rawValue: stroke.flags)
             // A dry run reads no table: what it would hold is the last event's flags, none of them the Mac's own.
             let table = stroke.down && !dryRun && !isolatesPhysicalInput ? CGEventSource.flagsState(.hidSystemState).rawValue : lastKeyFlags
             let check = upCheck.posting(stroke, table: table, posted: lastKeyFlags)
-            if post(event) { Stats.shared.bump(letGo ? "in.keyLetGo" : "in.key") }
+            let attempted = post(event)
+            if attempted { Stats.shared.bump(letGo ? "in.keyLetGo" : "in.key") }
+            if attempted || dryRun {
+                if !stroke.down { keyReleaseDebts[stroke.virtualKey] = nil }
+            }
             guard let check else { continue }
             if !dryRun { checkKeyModifiersLeft(check.id, key: stroke.virtualKey); continue }
             // A dry run's table is its own: the check reads it at once, and it holds nothing it should not.
@@ -493,7 +607,12 @@ final class InputInjector {
     /// A device left: its keys and buttons go up, a button where the pointer is now.
     /// Another device's buttons stay down. Key releases count as `in.keyLetGo` when posted.
     func releaseInput(of device: KeyStrokes.Device) {
-        post(keys.release(device), letGo: true)
+        if scrollScope?.device == device { closeScroll(at: lastScrollLocation) }
+        post(keyReleaseDebts.values.filter { $0.owner == device }.map {
+            KeyStroke(virtualKey: $0.stroke.virtualKey, down: false, flags: keys.heldFlags)
+        }, letGo: true)
+        let owners = keyOwners
+        post(keys.release(device), letGo: true, owners: owners)
         if left.owner == device { pointer(.leftUp, at: pointerNow(), from: device) }
         if right.owner == device { pointer(.rightUp, at: pointerNow(), from: device) }
     }
@@ -501,9 +620,23 @@ final class InputInjector {
     /// The host is going: every key any device holds down goes up (KeyStrokes.releaseAll), then a
     /// button still down, where the pointer is, so nothing a device pressed outlives Sill on the Mac.
     func releaseAll() {
-        post(keys.releaseAll(), letGo: true)
+        if scrollScope != nil { closeScroll(at: lastScrollLocation) }
+        post(keyReleaseDebts.values.map {
+            KeyStroke(virtualKey: $0.stroke.virtualKey, down: false, flags: keys.heldFlags)
+        }, letGo: true)
+        let owners = keyOwners
+        post(keys.releaseAll(), letGo: true, owners: owners)
         if let device = left.owner { pointer(.leftUp, at: pointerNow(), from: device) }
         if let device = right.owner { pointer(.rightUp, at: pointerNow(), from: device) }
+    }
+
+    func prepareRelease() -> Bool {
+        releaseAll()
+        return !hasPendingInput
+    }
+
+    var hasPendingInput: Bool {
+        !keys.down.isEmpty || !keyReleaseDebts.isEmpty || left.isDown || right.isDown || protectedScrollPending
     }
 
     /// Shift, control, option and command: the modifiers that change a click or a scroll.

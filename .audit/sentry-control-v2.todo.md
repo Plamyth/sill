@@ -1,0 +1,14 @@
+# Sentry v2 writer
+- [x] 1. `how` over the affected subsystem.
+- [x] 2. `architect` for parallel design exploration. skip: 사용자 ARENA와 자식 생성 금지. 기존 Admission 상태 확장으로 고정.
+- [x] 3. Write the throughput checkpoint as four todo items.
+  - Blocking first steps. 지정 bf89 clean, 저장 정책과 실제 wire/Admission 확인.
+  - Independent workstreams. 부모가 실제 TLS/Host 표면 배선, writer는 DTO/Admission/신규 검사만.
+  - Shared mutable state. 기존 Admission lock에서 CAS와 입력 fence를 원자적으로 관리.
+  - Smallest safe decomposition. 기존 구현 writer 한 명. 신규 controller/service 없음.
+- [x] 4. Delegate code-writing to a subagent. 부모가 위임한 writer이며 자식 생성 금지.
+- [x] 5. Verify on the matching surface. production 순수 계약 413개와 3 SDK 검증 통과. 기존 source-selection 172개와 Sentry 136개 통과. 실제 표면은 부모 소유.
+- [x] 6. Rebase into small, ordered commits. 한 계약 단위의 scoped commit. rebase와 공유 ref 변경은 하지 않음.
+- [x] 7. If the design is contested, `interrogate` before shipping. skip: 상세 계약 사용자 지정, 독립 검수는 부모 별도 소유.
+- [x] 8. Run **Opening a PR**. skip: push/PR/통합/설치는 부모 소유.
+- [ ] BLOCKED: independent review. 부모 별도 검수 전까지 통합/런타임 수용 아님.
