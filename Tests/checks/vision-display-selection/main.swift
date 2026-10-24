@@ -9,6 +9,14 @@ func check(_ condition: @autoclosure () -> Bool, _ label: String) {
     if !condition() { failures += 1; print("FAIL \(label)") }
 }
 func drain() { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.015)) }
+func admissionCatalog(_ catalog: WindowList, _ admission: [String: Any]?) -> WindowList? {
+    var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(catalog)) as! [String: Any]
+    object["sourceSelectionAdmission"] = admission
+    return try? JSONDecoder().decode(WindowList.self, from: JSONSerialization.data(withJSONObject: object))
+}
+func admission(_ generation: UInt64 = 1, ready: Bool = true) -> [String: Any] {
+    ["schemaVersion": 1, "generation": generation, "ready": ready]
+}
 let inventory = UUID()
 let rows = [DisplayInfo(id: 11, name: "호스트 원문 A", width: 1920, height: 1080, isMain: true),
             DisplayInfo(id: 22, name: "Host B", width: 2560, height: 1440, isMain: false)]
@@ -294,6 +302,7 @@ var startupDisplayCatalog = list()
 startupDisplayCatalog.launchID = "host-launch"
 startupDisplayCatalog.automaticDisplaySelection = 1
 startupDisplayCatalog.selectionRevision = "r0"
+startupDisplayCatalog = admissionCatalog(startupDisplayCatalog, admission())!
 startupDisplay.observeVisionDisplays(startupDisplayCatalog, from: startupDisplayPeer)
 check(startupDisplay.releaseCallbacks.count == 1 && startupDisplayPeer.sent.isEmpty,
       "인증한 최초 빈 화면은 별도 모드 없이 main 선택의 입력 해제를 시작한다")
@@ -320,7 +329,7 @@ func automaticCatalog(inventoryID: UUID? = inventory, revision: String = "r0") -
     var result = list()
     result.launchID = "host-launch"; result.automaticDisplaySelection = 1
     result.selectionRevision = revision; result.displayInventoryID = inventoryID
-    return result
+    return admissionCatalog(result, admission())!
 }
 func automaticClient(_ catalog: WindowList = automaticCatalog(), trusted: Bool = true) -> (StreamClient, NWConnection) {
     UserDefaults.standard.values = [:]
@@ -495,6 +504,60 @@ for malformed in ["duplicate", "inventory", "capability", "required"] {
     check(client.visionDisplaySelection.inputBlocked && UserDefaults.standard.values.isEmpty,
           "표시 epoch만 맞아도 잘못된 desktop 목록은 입력·저장을 수용하지 않는다 \(malformed)")
 }
+
+let (blockedSelection, blockedSelectionPeer) = automaticClient(admissionCatalog(automaticCatalog(), admission(1, ready: false))!)
+check(blockedSelection.releaseCallbacks.isEmpty && blockedSelectionPeer.sent.isEmpty,
+      "보호 준비 중에는 자동 선택의 해제와 전송 기회를 소모하지 않는다")
+let readySelection = admissionCatalog(automaticCatalog(), admission(2))!
+blockedSelection.observeVisionDisplays(readySelection, from: blockedSelectionPeer)
+check(blockedSelection.releaseCallbacks.count == 1, "같은 inventory의 새 허용 세대에서 자동 선택을 시작한다")
+blockedSelection.observeVisionDisplays(readySelection, from: blockedSelectionPeer)
+check(blockedSelection.releaseCallbacks.count == 1, "같은 허용 세대의 반복 목록은 해제를 중복 요청하지 않는다")
+if blockedSelection.releaseCallbacks.count == 1 { blockedSelection.releaseCallbacks[0](true); drain() }
+check(blockedSelectionPeer.sent.count == 1, "새 허용 세대는 기존 입력 해제 뒤 한 번만 전송한다")
+
+let (coalescedSelection, coalescedPeer) = automaticClient()
+coalescedSelection.releaseCallbacks[0](true); drain()
+coalescedSelection.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(3))!, from: coalescedPeer)
+check(coalescedSelection.releaseCallbacks.count == 2,
+      "중간 불가 목록이 생략돼도 새 허용 세대에서 미확인 원래 선택을 재개한다")
+if coalescedSelection.releaseCallbacks.count == 2 { coalescedSelection.releaseCallbacks[1](true); drain() }
+check(coalescedPeer.sent.count == 2, "미확인 선택은 새 허용 세대에만 한 번 재제출한다")
+coalescedSelection.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(3))!, from: coalescedPeer)
+check(coalescedSelection.releaseCallbacks.count == 2 && coalescedPeer.sent.count == 2,
+      "같은 세대의 반복 목록은 재전송하지 않는다")
+let recoveredSelections = coalescedPeer.sent.compactMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+check(recoveredSelections.count == 2 && recoveredSelections.allSatisfy { $0.displayID == 11 && $0.inventoryID == inventory && $0.selectionRevision == "r0" && $0.origin == .automatic },
+      "재개는 원래 모니터와 inventory와 CAS와 자동 의도를 유지한다")
+
+for invalidAdmission: [String: Any]? in [nil, admission(1, ready: false),
+    ["schemaVersion": 2, "generation": 1, "ready": true], admission(0), admission(9_007_199_254_740_992),
+    ["schemaVersion": 1, "generation": true, "ready": true],
+    ["schemaVersion": 1, "generation": 1.5, "ready": true],
+    ["schemaVersion": 1, "generation": 1, "ready": 1],
+    ["schemaVersion": 1, "generation": "1", "ready": true]] {
+    if let catalog = admissionCatalog(automaticCatalog(), invalidAdmission) {
+        let (client, peer) = automaticClient(catalog)
+        check(client.releaseCallbacks.isEmpty && peer.sent.isEmpty, "미확인·잘못된 선택 허가로 자동 효과를 만들지 않는다")
+    } else { check(true, "잘못된 선택 허가는 원본 DTO에서 거부한다") }
+}
+let (backwardSelection, backwardPeer) = automaticClient(admissionCatalog(automaticCatalog(), admission(5, ready: false))!)
+backwardSelection.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(4))!, from: backwardPeer)
+check(backwardSelection.releaseCallbacks.isEmpty, "역행한 허용 세대로 자동 선택을 만들지 않는다")
+backwardSelection.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(5))!, from: backwardPeer)
+check(backwardSelection.releaseCallbacks.isEmpty, "같은 세대의 상충한 ready 값은 허가로 사용하지 않는다")
+backwardSelection.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(6))!, from: backwardPeer)
+check(backwardSelection.releaseCallbacks.count == 1, "상충 뒤의 새 정상 세대에서만 자동 선택을 진행한다")
+
+let (manualStop, manualStopPeer) = automaticClient()
+manualStop.releaseCallbacks[0](true); drain()
+manualStop.automatic(.none)
+manualStop.observeVisionDisplays(admissionCatalog(automaticCatalog(), admission(3))!, from: manualStopPeer)
+check(manualStop.releaseCallbacks.count == 1, "사람이 화면 없음을 고르면 새 허용 세대가 자동 의도를 되살리지 않는다")
+let (changedCAS, changedCASPeer) = automaticClient()
+changedCAS.releaseCallbacks[0](true); drain()
+changedCAS.observeVisionDisplays(admissionCatalog(automaticCatalog(revision: "r1"), admission(3))!, from: changedCASPeer)
+check(changedCAS.releaseCallbacks.count == 1, "다른 선택 CAS에서는 새 허용 세대로 재기준화하지 않는다")
 
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
