@@ -3844,6 +3844,9 @@ extension StreamCoordinator {
         }
         platform.localReturnReason = { [weak self] in self?.sentryLocalReturnUnavailableReason() }
         platform.currentLocalAuthenticationChallenge = { [weak self] in self?.audioPrivacy?.localAuthenticationChallengeID }
+        audioPrivacy?.localAuthenticationWillBegin = { [weak platform] requestID in
+            platform?.localAuthenticationWillBegin(requestID)
+        }
         let defaults = UserDefaults.standard
         let key = "CCRHostSentryLatch.v1"
         let raw = defaults.object(forKey: key)

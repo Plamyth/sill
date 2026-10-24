@@ -7,16 +7,45 @@ import StreamProtocol
 
 @MainActor
 final class HostSentryPlatform {
-    static let remoteEventTag = Int64.random(in: 1...Int64.max)
+    static let remoteEventTag = Int64.random(in: 1...Int64(Int32.max))
+
+    static func stampEventSource(_ event: CGEvent, source: CGEventSource?, tag: Int64) -> Bool {
+        let pid = event.getIntegerValueField(.eventSourceUnixProcessID)
+        let state = event.getIntegerValueField(.eventSourceStateID)
+        guard pid == Int64(getpid()) ||
+                (pid == 0 && state == CGEventSourceStateID.hidSystemState.rawValue),
+              let source, source.userData == tag, source.sourceStateID.rawValue == state else { return false }
+        event.setSource(source)
+        let updatedPID = event.getIntegerValueField(.eventSourceUnixProcessID)
+        return event.getIntegerValueField(.eventSourceUserData) == tag &&
+            event.getIntegerValueField(.eventSourceStateID) == state &&
+            (updatedPID == pid || updatedPID == Int64(getpid()))
+    }
 
     var changed: (() -> Void)?
     var requestLocalReturn: (() -> Void)?
     var localReturnReason: () -> String? = { nil }
     var currentLocalAuthenticationChallenge: () -> UUID? = { nil }
+    private var localAuthenticationInputPolicy = LocalAuthenticationInputPolicy()
+    private var authenticationEventTag = Int64.random(in: 1...Int64(Int32.max))
+    private struct AuthenticationEventSources {
+        let requestID: UUID
+        let tag: Int64
+        let stamped: CGEventSource
+        let cleared: CGEventSource
+    }
+    private var authenticationEventSources: AuthenticationEventSources?
+
+    func localAuthenticationWillBegin(_ requestID: UUID) {
+        localReturnDown = nil
+        authenticationEventSources = nil
+        localAuthenticationInputPolicy.willBegin(requestID)
+    }
 
     var reason: String? {
-        if currentLocalAuthenticationChallenge() != nil {
-            return "현재 인증 요청과 운영체제 인증창의 연결을 확인하지 못해 입력 차단을 유지합니다."
+        if currentLocalAuthenticationChallenge() != nil &&
+            localAuthenticationInputPolicy.current(challengeID: currentLocalAuthenticationChallenge(), now: .now) == nil {
+            return "현재 운영체제 인증창의 연결·대상과 입력 보호 상태를 확인하고 있습니다."
         }
         switch state {
         case .invalid(let message): return message
@@ -62,6 +91,15 @@ final class HostSentryPlatform {
     private var tap: CFMachPort?
     private var tapID: UInt32?
     private var tapSource: CFRunLoopSource?
+    private var annotatedTap: CFMachPort?
+    private var annotatedTapID: UInt32?
+    private var annotatedTapSource: CFRunLoopSource?
+    private var sessionTapVerified = false
+    private var annotatedTapVerified = false
+    private var inputEnvironmentVerified = false
+    private var observedReturnButtons: [CGWindowID: CGRect] = [:]
+    private var observedRemoteTarget: LocalAuthenticationInputPolicy.ProcessIdentity?
+    private var inputObservationExpires: ContinuousClock.Instant = .now
     private var timer: Timer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var lockObservers: [NSObjectProtocol] = []
@@ -88,7 +126,7 @@ final class HostSentryPlatform {
         observeChanges()
         guard rebuildCurtains() else { return false }
         guard environmentIsUsable() else { return false }
-        guard installTap() else { return false }
+        guard installAnnotatedTap(), installTap() else { return false }
         guard environmentIsUsable() else { return false }
         guard currentLayout() == layout else {
             invalidate("화면 구성이 바뀌어 보호 상태를 확인할 수 없습니다.")
@@ -96,10 +134,12 @@ final class HostSentryPlatform {
         }
         guard curtainsAreEffective() else { return false }
         state = .protected
+        inputEnvironmentVerified = true
+        refreshInputObservation()
         updateCurtainText()
         changingLifecycle = false
         changed?()
-        return isProtected
+        return isProtected && inputEnvironmentVerified && inputTapsAreReady
     }
 
     func restoreCurtains() -> Bool {
@@ -125,7 +165,10 @@ final class HostSentryPlatform {
                 invalidate("운영체제에서 입력 필터를 확인할 수 없습니다.")
                 return false
             }
-            if row.eventsOfInterest & Self.eventMask == Self.eventMask { return tapIsEffective(row) }
+            if row.eventsOfInterest & Self.eventMask == Self.eventMask {
+                sessionTapVerified = tapIsEffective(row)
+                return sessionTapVerified
+            }
             invalidate("입력 필터의 실제 권한 또는 키보드·마우스 차단 범위가 부족합니다.")
         }
         destroyTap()
@@ -156,7 +199,51 @@ final class HostSentryPlatform {
             return false
         }
         tapID = row.eventTapID
-        return tapIsEffective(row)
+        sessionTapVerified = tapIsEffective(row)
+        return sessionTapVerified
+    }
+
+    private func installAnnotatedTap() -> Bool {
+        if let annotatedTap, CFMachPortIsValid(annotatedTap), let annotatedTapID,
+           CGEvent.tapIsEnabled(tap: annotatedTap), let rows = eventTapList(),
+           let row = rows.first(where: { $0.eventTapID == annotatedTapID }),
+           tapIsEffective(row, at: .cgAnnotatedSessionEventTap) {
+            annotatedTapVerified = true
+            return true
+        }
+        destroyAnnotatedTap()
+        annotatedTapID = nil
+        guard let before = eventTapList() else { return false }
+        let previous = Set(before.map(\.eventTapID))
+        annotatedTap = CGEvent.tapCreate(tap: .cgAnnotatedSessionEventTap, place: .tailAppendEventTap,
+            options: .defaultTap, eventsOfInterest: Self.eventMask, callback: { _, type, event, _ in
+                MainActor.assumeIsolated { HostSentryPlatform.tapOwner?.filterAnnotated(type, event: event) }
+            }, userInfo: nil)
+        guard let annotatedTap, let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, annotatedTap, 0) else {
+            invalidate("인증 대상 입력 필터를 만들 수 없습니다.")
+            return false
+        }
+        annotatedTapSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        guard let after = eventTapList() else { return false }
+        let added = after.filter { !previous.contains($0.eventTapID) && $0.tappingProcess == getpid() &&
+            $0.tapPoint == .cgAnnotatedSessionEventTap }
+        guard added.count == 1, let row = added.first else {
+            invalidate("인증 대상 입력 필터의 운영체제 식별자를 확정할 수 없습니다.")
+            return false
+        }
+        annotatedTapID = row.eventTapID
+        annotatedTapVerified = tapIsEffective(row, at: .cgAnnotatedSessionEventTap)
+        return annotatedTapVerified
+    }
+
+    private func destroyAnnotatedTap() {
+        annotatedTapVerified = false
+        localAuthenticationInputPolicy.revoke()
+        if let annotatedTap { CFMachPortInvalidate(annotatedTap) }
+        if let annotatedTapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), annotatedTapSource, .commonModes) }
+        annotatedTapSource = nil
+        annotatedTap = nil
     }
 
     func verify() -> Bool {
@@ -178,7 +265,18 @@ final class HostSentryPlatform {
             invalidate("운영체제에서 입력 필터를 확인할 수 없습니다.")
             return false
         }
-        return tapIsEffective(row) && curtainsAreEffective()
+        sessionTapVerified = tapIsEffective(row)
+        guard let annotatedTap, CFMachPortIsValid(annotatedTap), CGEvent.tapIsEnabled(tap: annotatedTap),
+              let annotatedTapID, let receiver = rows.first(where: { $0.eventTapID == annotatedTapID }),
+              tapIsEffective(receiver, at: .cgAnnotatedSessionEventTap) else {
+            annotatedTapVerified = false
+            invalidate("인증 대상 입력 필터를 확인하지 못해 입력 차단을 유지합니다.")
+            return false
+        }
+        annotatedTapVerified = true
+        inputEnvironmentVerified = true
+        refreshInputObservation()
+        return inputEnvironmentVerified && inputTapsAreReady && curtainsAreEffective()
     }
 
     func prepareRelease(cleanup: () -> Bool) -> Bool {
@@ -202,11 +300,12 @@ final class HostSentryPlatform {
 
     var releaseVerified: Bool {
         guard case .idle = state else { return false }
-        return !changingLifecycle && tap == nil && tapID == nil && curtains.isEmpty && pointerTargets.isEmpty
+        return !changingLifecycle && tap == nil && tapID == nil && annotatedTap == nil && annotatedTapID == nil &&
+            curtains.isEmpty && pointerTargets.isEmpty
     }
 
     func release() -> Bool {
-        guard !changingLifecycle else { return false }
+        guard !changingLifecycle, currentLocalAuthenticationChallenge() == nil else { return false }
         changingLifecycle = true
         defer { changingLifecycle = false }
         if case .idle = state { return true }
@@ -215,11 +314,12 @@ final class HostSentryPlatform {
         updateCurtainText()
         changed?()
         destroyTap()
-        if let tapID {
+        destroyAnnotatedTap()
+        if tapID != nil || annotatedTapID != nil {
             guard let rows = eventTapList() else {
                 return recoverFailedRelease("운영체제에서 입력 필터 해제 상태를 읽지 못했습니다.")
             }
-            guard !rows.contains(where: { $0.eventTapID == tapID && $0.enabled }) else {
+            guard !rows.contains(where: { ($0.eventTapID == tapID || $0.eventTapID == annotatedTapID) && $0.enabled }) else {
                 return recoverFailedRelease("운영체제에서 입력 필터 해제를 확인하지 못했습니다.")
             }
         }
@@ -234,6 +334,8 @@ final class HostSentryPlatform {
             return recoverFailedRelease("가림 화면 해제를 운영체제에서 확인하지 못했습니다.")
         }
         tapID = nil
+        annotatedTapID = nil
+        localAuthenticationInputPolicy.revoke()
         timer?.invalidate()
         timer = nil
         for (center, token) in observers { center.removeObserver(token) }
@@ -254,6 +356,8 @@ final class HostSentryPlatform {
         state = .engaging
         changingLifecycle = false
         let restored = restoreCurtains()
+        _ = installAnnotatedTap()
+        _ = installTap()
         changingLifecycle = true
         invalidate(restored ? message + " 가림 화면만 복구했습니다. 입력 차단은 아직 확인되지 않았습니다." :
             message + " 현장 보호 복구를 확인하지 못해 원격 동작을 중지합니다.")
@@ -266,6 +370,9 @@ final class HostSentryPlatform {
     }
 
     private func invalidate(_ message: String) {
+        inputEnvironmentVerified = false
+        localAuthenticationInputPolicy.revoke()
+        observedReturnButtons.removeAll()
         localReturnDown = nil
         if case .invalid(let previous) = state, previous == message { return }
         state = .invalid(message)
@@ -326,9 +433,9 @@ final class HostSentryPlatform {
         return Array(rows.prefix(Int(actual)))
     }
 
-    private func tapIsEffective(_ row: CGEventTapInformation) -> Bool {
+    private func tapIsEffective(_ row: CGEventTapInformation, at point: CGEventTapLocation = .cgSessionEventTap) -> Bool {
         guard row.tappingProcess == getpid(), row.processBeingTapped == 0,
-              row.tapPoint == .cgSessionEventTap, row.options == .defaultTap, row.enabled,
+              row.tapPoint == point, row.options == .defaultTap, row.enabled,
               row.eventsOfInterest & Self.eventMask == Self.eventMask else {
             invalidate("입력 필터의 실제 권한 또는 키보드·마우스 차단 범위가 부족합니다.")
             return false
@@ -337,6 +444,8 @@ final class HostSentryPlatform {
     }
 
     private func destroyTap() {
+        sessionTapVerified = false
+        inputEnvironmentVerified = false
         if let tap { CFMachPortInvalidate(tap) }
         if let tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), tapSource, .commonModes) }
         tapSource = nil
@@ -445,7 +554,7 @@ final class HostSentryPlatform {
                   app.activationPolicy == .regular, let launched = app.launchDate,
                   let bundle = app.bundleIdentifier,
                   !["com.apple.loginwindow", "com.apple.SecurityAgent", "com.apple.LocalAuthentication.UIAgent",
-                    "com.apple.CoreAuthUI", "com.apple.dock"].contains(bundle) else { return nil }
+                    "com.apple.CoreAuthUI", "com.apple.UserNotificationCenter", "com.apple.dock"].contains(bundle) else { return nil }
             if held == nil {
                 guard let foreground = NSWorkspace.shared.frontmostApplication,
                       foreground.processIdentifier == pid, foreground.launchDate == launched else { return nil }
@@ -462,29 +571,271 @@ final class HostSentryPlatform {
 
     private func filter(_ type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            invalidate("입력 필터가 운영체제에 의해 중단되었습니다. 보호 상태를 다시 확인해야 합니다.")
+            tapStopped(annotated: false)
             return nil
         }
         if currentLocalAuthenticationChallenge() != nil {
             localReturnDown = nil
-            return nil
+            guard authenticationInputAllowed(type, event: event, stage: .session),
+                  stampAuthenticationEvent(event, stage: .session) else { return nil }
+            return Unmanaged.passUnretained(event)
         }
         if event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
            event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()) {
-            guard isProtected, environmentIsUsable() else { return nil }
+            guard isProtected, inputEnvironmentVerified, inputTapsAreReady else { return nil }
             return Unmanaged.passUnretained(event)
         }
+        guard event.getIntegerValueField(.eventSourceUnixProcessID) == 0,
+              event.getIntegerValueField(.eventSourceStateID) == CGEventSourceStateID.hidSystemState.rawValue,
+              event.getIntegerValueField(.eventSourceUserData) == 0 else { return nil }
         if type == .leftMouseDown {
-            localReturnDown = visibleReturnButton(at: event.location)
+            localReturnDown = observedReturnButton(at: event.location)
         } else if type == .leftMouseUp {
             let down = localReturnDown
             localReturnDown = nil
-            if let down, visibleReturnButton(at: event.location) == down {
-                // Consume the click here. No local input is passed to an authentication window.
-                requestLocalReturn?()
+            if let down, observedReturnButton(at: event.location) == down {
+                // Invoke outside the tap callback; authentication and UI observation can perform IPC.
+                Task { @MainActor [weak self] in self?.requestLocalReturn?() }
             }
         }
         return nil
+    }
+
+    private func filterAnnotated(_ type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            tapStopped(annotated: true)
+            return nil
+        }
+        if currentLocalAuthenticationChallenge() != nil {
+            guard authenticationInputAllowed(type, event: event, stage: .annotated),
+                  stampAuthenticationEvent(event, stage: .annotated) else { return nil }
+            return Unmanaged.passUnretained(event)
+        }
+        guard event.getIntegerValueField(.eventSourceUserData) == Self.remoteEventTag,
+              event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()),
+              isProtected, inputEnvironmentVerified, inputTapsAreReady,
+              let target = observedRemoteTarget,
+              event.getIntegerValueField(.eventTargetUnixProcessID) == Int64(target.pid),
+              Self.processIdentity(target.pid) == target else { return nil }
+        return Unmanaged.passUnretained(event)
+    }
+
+    private var inputTapsAreReady: Bool {
+        guard sessionTapVerified, annotatedTapVerified, ContinuousClock.now < inputObservationExpires,
+              let tap, let annotatedTap else { return false }
+        return CFMachPortIsValid(tap) && CFMachPortIsValid(annotatedTap)
+    }
+
+    private func prepareAuthenticationEventSources(_ proof: LocalAuthenticationInputPolicy.Observation) -> Bool {
+        if let sources = authenticationEventSources,
+           sources.requestID == proof.requestID, sources.tag == proof.handoffTag { return true }
+        guard let stamped = CGEventSource(stateID: .hidSystemState),
+              let cleared = CGEventSource(stateID: .hidSystemState) else { return false }
+        stamped.userData = proof.handoffTag
+        cleared.userData = 0
+        authenticationEventSources = .init(requestID: proof.requestID, tag: proof.handoffTag,
+                                           stamped: stamped, cleared: cleared)
+        return true
+    }
+
+    private func stampAuthenticationEvent(_ event: CGEvent, stage: LocalAuthenticationInputPolicy.Stage) -> Bool {
+        guard let proof = localAuthenticationInputPolicy.current(
+            challengeID: currentLocalAuthenticationChallenge(), now: .now),
+              let sources = authenticationEventSources,
+              sources.requestID == proof.requestID, sources.tag == proof.handoffTag else { return false }
+        return Self.stampEventSource(event, source: stage == .session ? sources.stamped : sources.cleared,
+                                    tag: stage == .session ? proof.handoffTag : 0)
+    }
+
+    private func authenticationInputAllowed(_ type: CGEventType, event: CGEvent,
+                                            stage: LocalAuthenticationInputPolicy.Stage) -> Bool {
+        let challenge = currentLocalAuthenticationChallenge()
+        guard isProtected, !changingLifecycle, inputEnvironmentVerified,
+              let proof = localAuthenticationInputPolicy.current(challengeID: challenge, now: .now) else { return false }
+        let input = LocalAuthenticationInputPolicy.Input(type: type, flags: event.flags,
+            keyCode: event.getIntegerValueField(.keyboardEventKeycode), point: event.location,
+            sourcePID: event.getIntegerValueField(.eventSourceUnixProcessID),
+            sourceState: event.getIntegerValueField(.eventSourceStateID),
+            tag: event.getIntegerValueField(.eventSourceUserData),
+            targetPID: event.getIntegerValueField(.eventTargetUnixProcessID),
+            windowUnderPointer: event.getIntegerValueField(.mouseEventWindowUnderMousePointer),
+            windowHandlingPointer: event.getIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent))
+        return localAuthenticationInputPolicy.allows(input, stage: stage, challengeID: challenge, now: .now,
+            liveIdentity: Self.processIdentity(proof.target.process.pid), receiverReady: inputTapsAreReady)
+    }
+
+    private func tapStopped(annotated: Bool) {
+        if annotated { annotatedTapVerified = false } else { sessionTapVerified = false }
+        inputEnvironmentVerified = false
+        localAuthenticationInputPolicy.revoke()
+        Task { @MainActor [weak self] in
+            self?.invalidate("입력 필터가 운영체제에 의해 중단되었습니다. 보호 상태를 다시 확인해야 합니다.")
+        }
+    }
+
+    private func observedReturnButton(at point: CGPoint) -> CGWindowID? {
+        guard isProtected, inputEnvironmentVerified, inputTapsAreReady,
+              ContinuousClock.now < inputObservationExpires else { return nil }
+        return observedReturnButtons.first(where: { $0.value.contains(point) })?.key
+    }
+
+    // These two installed executables were checked from filesystem metadata. No general Apple allowlist.
+    private static let authenticationExecutables = [
+        "com.apple.LocalAuthentication.UIAgent": "/System/Library/Frameworks/LocalAuthentication.framework/Support/coreautha.bundle/Contents/MacOS/coreautha",
+        "com.apple.SecurityAgent": "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
+    ]
+
+    private static func processIdentity(_ pid: pid_t) -> LocalAuthenticationInputPolicy.ProcessIdentity? {
+        guard pid > 0 else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.pbi_pid == UInt32(pid), info.pbi_uid == getuid(), info.pbi_status != 5,
+              info.pbi_start_tvsec > 0 else { return nil }
+        // proc_pidinfo is a kernel process-metadata syscall, not WindowServer/Security/AX IPC.
+        return .init(pid: pid, startSeconds: info.pbi_start_tvsec, startMicroseconds: info.pbi_start_tvusec)
+    }
+
+    private static func processPath(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let count = buffer.withUnsafeMutableBytes { proc_pidpath(pid, $0.baseAddress, UInt32($0.count)) }
+        guard count > 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path
+    }
+
+    private static func verifiedAuthenticationOwner(_ pid: pid_t) -> LocalAuthenticationInputPolicy.ProcessIdentity? {
+        guard let identity = processIdentity(pid), let app = NSRunningApplication(processIdentifier: pid),
+              !app.isTerminated, app.launchDate != nil, let identifier = app.bundleIdentifier,
+              let installed = authenticationExecutables[identifier], let executable = app.executableURL else { return nil }
+        let expected = URL(fileURLWithPath: installed).resolvingSymlinksInPath().path
+        guard executable.resolvingSymlinksInPath().path == expected, processPath(pid) == expected else { return nil }
+        var guest: SecCode?
+        var requirement: SecRequirement?
+        guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: NSNumber(value: pid)] as CFDictionary,
+            [], &guest) == errSecSuccess, let guest,
+            SecRequirementCreateWithString("anchor apple and identifier \"\(identifier)\"" as CFString,
+                [], &requirement) == errSecSuccess, let requirement,
+            SecCodeCheckValidity(guest, [], requirement) == errSecSuccess,
+            processIdentity(pid) == identity, processPath(pid) == expected else { return nil }
+        return identity
+    }
+
+    private func refreshInputObservation() {
+        observedReturnButtons.removeAll()
+        observedRemoteTarget = nil
+        let challenge = currentLocalAuthenticationChallenge()
+        let authenticating = challenge != nil && challenge == localAuthenticationInputPolicy.preparedRequestID
+        guard (isProtected || authenticating), environmentIsUsable(), currentLayout() == layout,
+              let tap, let annotatedTap,
+              CFMachPortIsValid(tap), CFMachPortIsValid(annotatedTap),
+              CGEvent.tapIsEnabled(tap: tap), CGEvent.tapIsEnabled(tap: annotatedTap),
+              sessionTapVerified, annotatedTapVerified else {
+            inputEnvironmentVerified = false
+            localAuthenticationInputPolicy.revoke()
+            return
+        }
+        inputEnvironmentVerified = true
+        guard let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else {
+            inputEnvironmentVerified = false
+            localAuthenticationInputPolicy.revoke()
+            return
+        }
+        let now = ContinuousClock.now
+        inputObservationExpires = now.advanced(by: .milliseconds(250))
+        if let challenge {
+            var candidates: [(Int, LocalAuthenticationInputPolicy.Target)] = []
+            for (index, row) in rows.enumerated() {
+                guard let pid = (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                      let id = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                      (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue == 1,
+                      let bounds = row[kCGWindowBounds as String] as? NSDictionary,
+                      let rect = CGRect(dictionaryRepresentation: bounds), !rect.isEmpty, !rect.isInfinite,
+                      let identity = Self.verifiedAuthenticationOwner(pid) else { continue }
+                candidates.append((index, .init(process: identity, window: id, bounds: rect)))
+            }
+            var target: LocalAuthenticationInputPolicy.Target?
+            if candidates.count == 1, let (index, candidate) = candidates.first {
+                var cursorOwners: [pid_t: Bool] = [:]
+                let covered = rows.prefix(index).contains { row in
+                    guard let alpha = (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue,
+                          let bounds = row[kCGWindowBounds as String] as? NSDictionary,
+                          let rect = CGRect(dictionaryRepresentation: bounds) else { return true }
+                    return alpha > 0 && rect.intersects(candidate.bounds) &&
+                        !Self.isSystemCursorWindow(row, verifiedOwners: &cursorOwners)
+                }
+                if !covered { target = candidate }
+            }
+            localAuthenticationInputPolicy.observe(target, challengeID: challenge, now: now,
+                                                    tag: nextAuthenticationEventTag())
+            guard let proof = localAuthenticationInputPolicy.current(challengeID: challenge, now: .now),
+                  curtainsAreEffective(), prepareAuthenticationEventSources(proof) else {
+                inputEnvironmentVerified = false
+                localAuthenticationInputPolicy.revoke()
+                return
+            }
+            state = .protected
+        } else {
+            localAuthenticationInputPolicy.revoke()
+            authenticationEventSources = nil
+            refreshReturnButtons(rows: rows)
+            refreshRemoteTarget()
+        }
+    }
+
+    private func nextAuthenticationEventTag() -> Int64 {
+        repeat {
+            authenticationEventTag = authenticationEventTag == Int64(Int32.max) ? 1 : authenticationEventTag + 1
+        } while authenticationEventTag == Self.remoteEventTag
+        return authenticationEventTag
+    }
+
+    private func refreshRemoteTarget() {
+        guard let app = NSWorkspace.shared.frontmostApplication, !app.isTerminated,
+              app.activationPolicy == .regular, let identifier = app.bundleIdentifier,
+              Self.authenticationExecutables[identifier] == nil,
+              !["com.apple.UserNotificationCenter", "com.apple.loginwindow", "com.apple.CoreAuthUI", "com.apple.dock"].contains(identifier)
+        else { return }
+        observedRemoteTarget = Self.processIdentity(app.processIdentifier)
+    }
+
+    private func refreshReturnButtons(rows: [[String: Any]]) {
+        guard let main = NSScreen.screens.first else { return }
+        let own = Set(curtainWindowIDs)
+        for curtain in curtains.values {
+            let panel = curtain.panel, button = curtain.returnButton
+            guard panel.isVisible, panel.isOnActiveSpace, panel.alphaValue == 1,
+                  panel.windowNumber > 0, !button.isHiddenOrHasHiddenAncestor, button.isEnabled,
+                  button.ancestorsHaveFullOpacity else { continue }
+            let visible = button.visibleRect.intersection(button.bounds)
+            let appRect = panel.convertToScreen(button.convert(visible, to: nil))
+            let rect = CGRect(x: appRect.minX, y: main.frame.maxY - appRect.maxY,
+                              width: appRect.width, height: appRect.height)
+            let id = CGWindowID(panel.windowNumber)
+            guard !visible.isEmpty, let index = rows.firstIndex(where: {
+                ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id
+            }) else { continue }
+            var cursorOwners: [pid_t: Bool] = [:]
+            let blocked = rows.prefix(index).contains { row in
+                guard let number = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                      let alpha = (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue,
+                      let bounds = row[kCGWindowBounds as String] as? NSDictionary,
+                      let other = CGRect(dictionaryRepresentation: bounds) else { return true }
+                return !own.contains(number) && alpha > 0 && other.intersects(rect) &&
+                    !Self.isSystemCursorWindow(row, verifiedOwners: &cursorOwners)
+            }
+            if !blocked { observedReturnButtons[id] = rect }
+        }
+    }
+
+    private func isObservedAuthenticationWindow(_ row: [String: Any]) -> Bool {
+        guard let proof = localAuthenticationInputPolicy.current(challengeID: currentLocalAuthenticationChallenge(), now: .now),
+              Self.processIdentity(proof.target.process.pid) == proof.target.process,
+              (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == proof.target.process.pid,
+              (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value == proof.target.window,
+              (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue == 1,
+              let bounds = row[kCGWindowBounds as String] as? NSDictionary,
+              CGRect(dictionaryRepresentation: bounds) == proof.target.bounds else { return false }
+        return true
     }
 
     private func currentLayout() -> [CGDirectDisplayID: CGRect]? {
@@ -617,6 +968,7 @@ final class HostSentryPlatform {
                       let bounds = covering[kCGWindowBounds as String] as? NSDictionary,
                       let coveringRect = CGRect(dictionaryRepresentation: bounds), coveringRect.intersects(rect) else { continue }
                 if Self.isSystemCursorWindow(covering, verifiedOwners: &verifiedCursorOwners) { continue }
+                if isObservedAuthenticationWindow(covering) { continue }
                 invalidate("다른 화면이 가림 화면 위에 표시되어 보호 상태를 보장할 수 없습니다.")
                 return false
             }
@@ -718,10 +1070,20 @@ final class HostSentryPlatform {
                 }
             })
         }
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+        let exitToken = workspace.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil, queue: .main) { [weak self] notification in
             MainActor.assumeIsolated {
+                guard let self, let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.processIdentifier == self.localAuthenticationInputPolicy.observation?.target.process.pid else { return }
+                self.localAuthenticationInputPolicy.revoke()
+            }
+        }
+        observers.append((workspace, exitToken))
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshInputObservation()
                 self?.updateCurtainText()
-                self?.changed?()
+                if self?.currentLocalAuthenticationChallenge() == nil { self?.changed?() }
             }
         }
         self.timer = timer
@@ -729,6 +1091,8 @@ final class HostSentryPlatform {
     }
 
     deinit {
+        if let annotatedTap { CFMachPortInvalidate(annotatedTap) }
+        if let annotatedTapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), annotatedTapSource, .commonModes) }
         if let tap { CFMachPortInvalidate(tap) }
         if let tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), tapSource, .commonModes) }
         timer?.invalidate()

@@ -31,6 +31,7 @@ private final class CursorWindowFixture {
     func invalidate(_ message: String) { reason = message }
     func CGDisplayBounds(_ id: CGDirectDisplayID) -> CGRect { layout[id] ?? .zero }
     func CGWindowListCopyWindowInfo(_ options: CGWindowListOption, _ id: CGWindowID) -> CFArray? { rows as CFArray }
+    private func isObservedAuthenticationWindow(_ row: [String: Any]) -> Bool { false }
     __PRODUCTION_CURSOR_BOUNDARY__
 
     struct SecCode { let pid: pid_t }

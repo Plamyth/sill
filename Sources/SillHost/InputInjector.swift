@@ -43,7 +43,11 @@ final class InputInjector {
 
     /// `.hidSystemState` merges with the real HID state, so a modifier physically held on the Mac
     /// still applies to an injected click. Keyboard events below set their flags explicitly anyway.
-    private let source = CGEventSource(stateID: .hidSystemState)
+    private let source: CGEventSource? = {
+        let source = CGEventSource(stateID: .hidSystemState)
+        source?.userData = HostSentryPlatform.remoteEventTag
+        return source
+    }()
     private var lastMoveArrival: CFTimeInterval = 0   // jitter probe, see apply()
     private var left = ButtonState()
     private var right = ButtonState()
@@ -152,7 +156,8 @@ final class InputInjector {
             Stats.shared.bump("in.dry")
             return false
         }
-        event.setIntegerValueField(.eventSourceUserData, value: HostSentryPlatform.remoteEventTag)
+        guard event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()),
+              HostSentryPlatform.stampEventSource(event, source: source, tag: HostSentryPlatform.remoteEventTag) else { return false }
         if (isolatesPhysicalInput || postingScope != nil) && !Self.isKeyboard(event.type) && event.type != .mouseMoved {
             return protectedPointerEgress?(event, postingScope) == true
         }

@@ -75,6 +75,8 @@ extension Checks {
               returned.input.platform.posted.map { $0.1.type } == [.leftMouseDown, .leftMouseUp],
               "원 대상 terminal 성공 뒤에만 releasing·surface 해제·audio·inactive 순서 진행")
 
+        check(returned.input.platform.tap == nil && returned.input.platform.annotatedTap == nil,
+              "검증된 정상 복귀 뒤 두 tap을 함께 종료")
         let reentrant = ReturnFixture(); reentrant.input.send(.leftDown)
         var fenced = false, nestedReturn = true
         reentrant.input.platform.onVerify = {

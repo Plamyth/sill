@@ -15,7 +15,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer python3 Tests/checks/ho
 
 ## 보호와 연결 경계
 
-`audioPrivacy.version=2`, `latched`, 장치별 입력·출력 채널 수, `masterMute` 또는 `unsupported` coverage를 실제 카탈로그에 전달한다. 미지원 장치가 있어도 지원되는 전체 음소거와 세 가상 기본값은 적용하며, 전체 보호와 원격 오디오는 거부한다.
+`audioPrivacy.version=2`, `latched`, 장치별 입력·출력 채널 수와 coverage를 실제 카탈로그에 전달한다. coverage는 일반 음소거인 `masterMute`, 검증된 전체 스트림 비활성화인 `audioStreamInactive`, 미지원인 `unsupported`를 구분한다. 스트림 방식은 현재 장치 소유권·방향·형식과 전체 채널 범위를 확인하고 쓰기 전후를 다시 읽는다. 미지원 장치가 있어도 지원되는 전체 음소거와 세 가상 기본값은 적용하며, 전체 보호와 원격 오디오는 거부한다.
 
 `StreamCoordinator.nativeAudioBindingAuthorized`는 검증된 단일 원장 어댑터가 현재 페어링 fingerprint의 네이티브 바인딩을 확인하는 경계다. 연결이 없으면 false다. HTTP 바인딩이나 읽기 전용 voiceState를 네이티브 시작 ACK로 사용할 수 없다. 재생 승인·PCM 전달·마이크 승인에서 확인한다.
 

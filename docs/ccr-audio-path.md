@@ -1,5 +1,21 @@
 # CCR Sill audio path
 
+## 현재 원격 음성 계약, 2026-10-25
+
+원격 음성은 `AudioForwardingIntentRequest`와 공통 Node 권한 원장 하나를 사용한다. 기기를 전환할 때 호스트는 기존 미디어를 먼저 차단하고 두 참여자의 정지 영수증을 확인한 뒤 새 바인딩을 승인한다. 연결 종료는 기억한 입출력 의도와 로컬 보호를 해제하지 않는다. 같은 기기의 재접속도 현재 신뢰와 새 전송 바인딩을 확인해야 음성을 재개한다.
+
+`HostAudioPrivacy`는 승인된 가상 경로를 제외한 모든 로컬 장치의 입력과 출력을 검사한다. 일반 음소거가 있는 방향에는 `masterMute`를 적용한다. 일반 음소거가 없는 방향은 장치 소유권, 스트림 식별자, 방향, 형식과 전체 채널 범위를 확인한 뒤 모든 스트림을 비활성화하고 다시 읽는다. 카탈로그의 방식 이름은 `audioStreamInactive`다. 미확인 장치나 불완전한 범위는 `unsupported`이며 전체 원격 음성을 승인하지 않는다.
+
+원래 장치 상태는 HAL 쓰기 전에 저널에 저장하고 동일 바이트로 다시 읽는다. 연결 종료와 일반 정지는 로컬 입출력을 복원하지 않는다. 로컬 복귀에는 새 macOS 인증, 양쪽 참여자의 실제 정지 확인과 현재 공통 원장의 전환이 필요하다. 복원은 저장한 원상태만 사용한다.
+
+통화 명령은 미디어 전송과 구분한다. `221/222`의 실행 대상은 ChatGPT Dots이며 순정 Codex 데스크톱 통화의 실행기로 해석하지 않는다. 현재 순정 데스크톱의 특정 통화를 조건부로 시작하거나 종료하고 마이크 해제까지 확인하는 producer는 연결되지 않았다. 공개 CLI 요청 형식만으로 해당 데스크톱 통화를 제어할 권한을 만들지 않는다.
+
+DN32-LIVE의 입력과 출력 각 32채널 스트림은 읽기 전용으로 관측했고, 생산 HAL과 저널은 주입 장치로 검사했다. 실제 스트림 쓰기, M32R의 물리 스피커 무음, 기기 간 통화 전환과 프로세스 종료 뒤 보호 지속성은 별도 실물 수용 항목이다. 소스 검사와 서명 후보는 이 수용을 대신하지 않는다.
+
+## 과거 구현 기록
+
+아래 기록의 로컬 출력 유지와 재접속 시 수동 음성 선택은 당시 실험 조건이다. 현재 계약은 위의 원격 보호와 바인딩 규칙을 따른다.
+
 ## Intended behavior
 
 The iPad plays the Mac's sound while the Mac keeps its current output device and volume. The iPad user turns remote sound on or off. Audio must stop when the Sill session ends. A later microphone path must bind input to the intended Codex voice session or an explicit Mac input device.

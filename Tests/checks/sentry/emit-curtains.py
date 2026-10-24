@@ -30,6 +30,7 @@ parts = [block(platform, marker) for marker in markers]
 text = (root / 'Tests/checks/sentry/CurtainChecks.swift').read_text()
 text = text.replace('__PRODUCTION_LIFECYCLE__', '\n\n'.join(parts))
 text = text.replace('HostSentryPlatform', 'CurtainPlatformFixture')
+text = text.replace('NSRunningApplication', 'FixtureRunningApplication')
 text = text.replace('NSWorkspace', 'FixtureWorkspace').replace('NSApplication', 'FixtureApplication')
 text = text.replace('DistributedNotificationCenter', 'FixtureDistributedCenter')
 changed = block(coordinator, 'platform.changed =').replace('sentry', 'owner')
@@ -41,7 +42,7 @@ text = text.replace('__PRODUCTION_SURFACES__', surfaces)
 output.mkdir(parents=True)
 (output / 'CurtainChecks.swift').write_text(text)
 native_markers = ['private struct Curtain {', 'private func makeCurtain(']
-native_markers += ['private var isProtected:', 'private func invalidate(', 'private var curtainMessage:', 'private func updateCurtainText()', 'let timer = Timer(timeInterval: 0.5']
+native_markers += ['private var isProtected:', 'private func invalidate(', 'private var curtainMessage:', 'private func updateCurtainText()', 'let timer = Timer(timeInterval: 0.1']
 native_parts = {marker: block(platform, marker) for marker in native_markers}
 level = next(line.strip() for line in platform.splitlines() if 'private static let curtainLevel =' in line)
 native = (root / 'Tests/checks/sentry/NativePanelChecks.swift').read_text()

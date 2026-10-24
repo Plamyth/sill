@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 @MainActor
@@ -26,7 +27,7 @@ final class CurtainPlatformFixture {
     }
     func curtainsAreEffective() -> Bool { duringReadback?(); return readable && curtains }
     func environmentIsUsable() -> Bool { true }
-    func installTap() -> Bool { installs += 1; tap = true; return true }
+    func installTap() -> Bool { if !tap { installs += 1; tap = true }; return true }
     func verify() -> Bool { isProtected && tap && readable && layout == displayLayout }
     func release() -> Bool { false }
     var releaseVerified: Bool { false }
@@ -41,12 +42,21 @@ final class CurtainPlatformFixture {
         observers.removeAll(); lockObservers.removeAll()
         if Self.tapOwner === self { Self.tapOwner = nil }
     }
+    private var inputEnvironmentVerified = false
+    private var localAuthenticationInputPolicy = LocalAuthenticationInputPolicy()
+    private var observedReturnButtons: [UInt32: CGRect] = [:]
+    private func refreshInputObservation() {}
+    private var inputTapsAreReady: Bool { tap }
+    private func installAnnotatedTap() -> Bool { true }
     __PRODUCTION_LIFECYCLE__
 }
 
+final class FixtureRunningApplication { var processIdentifier: pid_t = 0 }
 final class FixtureWorkspace {
     static let shared = FixtureWorkspace()
     let notificationCenter = NotificationCenter()
+    static let didTerminateApplicationNotification = Notification.Name("fixture.exit")
+    static let applicationUserInfoKey = "fixture.application"
     static let activeSpaceDidChangeNotification = Notification.Name("fixture.space")
     static let sessionDidResignActiveNotification = Notification.Name("fixture.resign")
     static let sessionDidBecomeActiveNotification = Notification.Name("fixture.active")
@@ -87,7 +97,7 @@ extension Checks {
                "partial Korean curtain text makes no verified input block claim")
         expect(!gate.allowsActions(peer) && !gate.allows(peer, epoch: epoch) && gate.status(for: peer)?.phase == .blocked,
                "verified curtain recovery cannot grant remote actions or capture admission")
-        expect(platform.observers.count == 8 && platform.lockObservers.count == 2 && platform.timer != nil,
+        expect(platform.observers.count == 9 && platform.lockObservers.count == 2 && platform.timer != nil,
                "repeated curtain restore keeps one observer and timer lifecycle")
         let timer = platform.timer
         platform.displayLayout = 2
@@ -116,7 +126,7 @@ extension Checks {
         expect(!owner.reconcile() && platform.curtains && platform.tap && platform.installs == 1,
                "lost recovery retains existing curtain and HID protection without reinstalling or releasing")
         platform.duringReadback = nil
-        expect(platform.timer === timer && platform.observers.count == 8,
+        expect(platform.timer === timer && platform.observers.count == 9,
                "partial to full to partial transitions retain the existing observation lifecycle")
         var reentered = 0
         platform.duringReadback = {
