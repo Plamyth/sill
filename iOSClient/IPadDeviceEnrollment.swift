@@ -13,6 +13,7 @@ final class IPadDeviceEnrollment {
     final class Refusals {
         var tokenHashes: Set<String> = []
         var terminal = ""
+        var lastAccepted: (id: String, expiresAt: Int64, tokenHash: String)?
     }
     struct HTTPReply { let status: Int; let contentType: String; let body: Data }
     struct IO {
@@ -130,7 +131,10 @@ final class IPadDeviceEnrollment {
                   code == 401 || code == 403 && ["DEVICE_REVOKED", "OWNER_TRUST_DENIED"].contains(reason) else { throw error }
             guard refused.binding == binding else { throw IPadEnrollmentFailure.stale }
             if let current = credential, current != refused { done(.success(current)); return }
-            if cached == refused { quarantine(refused, status: code, reason: reason) }
+            if let accepted = refusals.lastAccepted {
+                guard accepted == (refused.id, refused.expiresAt, refused.tokenHash) else { throw IPadEnrollmentFailure.stale }
+                quarantine(refused, status: code, reason: reason)
+            }
             try reload()
             guard var next = journal else { throw IPadEnrollmentFailure.storage }
             guard try next.credential(binding: binding) == refused else { ensure(done); return }
@@ -294,7 +298,9 @@ final class IPadDeviceEnrollment {
     private func finish(_ result: Result<Credential, Error>) {
         let cancel = cancellation; cancellation = nil; running = false
         switch result {
-        case .success(let grant): cached = grant; phase = .ready
+        case .success(let grant):
+            refusals.lastAccepted = (grant.id, grant.expiresAt, grant.tokenHash)
+            cached = grant; phase = .ready
         case .failure: cached = nil; if phase != .denied && phase != .renewalRequired { phase = .waiting }
         }
         let callbacks = waiters; waiters = []

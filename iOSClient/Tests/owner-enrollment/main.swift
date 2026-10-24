@@ -332,6 +332,76 @@ for (status, code) in [(401, "CREDENTIAL_INVALID"), (403, "DEVICE_REVOKED")] {
     try check(try result!.get() == otherGrant && otherEngine.credential == otherGrant, "읽기 오류 중 늦은 옛 거절은 새 cached 자격 보존 \(code)")
     other.loadFails = false
 }
+var emptyCacheRefusalFailures: [String] = []
+for (status, code) in [(401, "CREDENTIAL_INVALID"), (403, "DEVICE_REVOKED")] {
+    for recreateBeforeRefusal in [false, true] {
+        let memory = try Memory(readbackGolden)
+        var lifecycle = memory.engine()
+        let rejected = try memory.ensure(lifecycle).get()
+        let original = memory.raw
+        let originalRequests = memory.requests.count
+        memory.now += 31_000; memory.loadFails = true
+        reject("ensure 읽기 오류로 접근 캐시 비우기 \(code)") { _ = try memory.ensure(lifecycle).get() }
+        try check(lifecycle.credential == nil && lifecycle.phase == .waiting, "거절 전 캐시 빈 waiting \(code)")
+        if recreateBeforeRefusal { lifecycle.cancel(); lifecycle = memory.engine() }
+        var result: Result<P.Credential, Error>?
+        lifecycle.unauthorized(rejected, status: status, body: data(.object(["error": .string(code)]))) { result = $0 }
+        settle { result != nil }
+        reject("캐시 빈 거절과 읽기 실패 반환 \(code)") { _ = try result!.get() }
+        try check(memory.raw == original && memory.requests.count == originalRequests, "읽기 실패 동안 저장과 등록 요청 0 \(code)")
+        reject("캐시 빈 거절 직후 보호 요청 0 \(code)") { _ = try lifecycle.authorizedRequest(path: "/v1/catalog", method: "GET") }
+        memory.loadFails = false
+        for recreateAfterRefusal in [false, true] {
+            if recreateAfterRefusal { lifecycle.cancel(); lifecycle = memory.engine() }
+            let recovery = memory.ensure(lifecycle)
+            let accepted: Bool
+            if case .success = recovery { accepted = true } else { accepted = false }
+            let authorized = (try? lifecycle.authorizedRequest(path: "/v1/catalog", method: "GET")) != nil
+            if accepted || lifecycle.credential != nil || authorized {
+                let failure = "\(code) recreateBefore=\(recreateBeforeRefusal) recreateAfter=\(recreateAfterRefusal) 재수용=\(accepted) authorizedRequest=\(authorized)"
+                emptyCacheRefusalFailures.append(failure)
+                print("RED 캐시 빈 거절 이력: " + failure)
+            }
+        }
+        try check(memory.requests.filter { $0.0 == .enroll }.count == 1 && memory.receiptCalls == 1,
+                  "캐시 빈 거절 복구 뒤 새 enroll·신뢰 발급 0 \(code)")
+        let journal = object(try J.parse(memory.raw!, limit: 1_048_576))
+        let originalJournal = object(try J.parse(original!, limit: 1_048_576))
+        let expectedPending = status == 401 ? changed(originalJournal["pending"]!, "mode", .string("readback")) : originalJournal["pending"]!
+        try check(journal["pending"] == expectedPending && journal["credential"] == originalJournal["credential"],
+                  "캐시 빈 거절 원문·기존 자격 보존 \(code)")
+        try check(status == 401 ? journal["rejectedTokenHash"] == .string(rejected.tokenHash) && journal["terminal"] == .string("") :
+                  journal["terminal"] == .string(code) && journal["rejectedTokenHash"] == .string(""),
+                  "캐시 빈 거절 token401과 terminal403 분리 \(code)")
+        try check(journal["history"] == .array([]) && journal["renewalRequired"] == .bool(false),
+                  "캐시 빈 거절로 확정 만료·renew 전환 없음 \(code)")
+    }
+    for recreateBeforeRefusal in [false, true] {
+        let memory = try Memory(readbackGolden)
+        var lifecycle = memory.engine()
+        let old = try memory.ensure(lifecycle).get()
+        memory.raw = other.raw
+        let latest = try memory.ensure(lifecycle).get()
+        try check(latest == otherGrant && latest != old, "G 뒤 H 최신 수용 \(code)")
+        let latestRaw = memory.raw, requests = memory.requests.count
+        memory.loadFails = true
+        reject("H 수용 후 읽기 실패로 캐시 비우기 \(code)") { _ = try memory.ensure(lifecycle).get() }
+        try check(lifecycle.credential == nil, "H도 접근 캐시는 비움 \(code)")
+        if recreateBeforeRefusal { lifecycle.cancel(); lifecycle = memory.engine() }
+        var result: Result<P.Credential, Error>?
+        lifecycle.unauthorized(old, status: status, body: data(.object(["error": .string(code)]))) { result = $0 }
+        settle { result != nil }
+        try check(lifecycle.credential == nil && memory.raw == latestRaw && memory.requests.count == requests,
+                  "캐시 빈 옛 G 거절이 H 저장을 변경하지 않음 \(code)")
+        memory.loadFails = false
+        try check(try memory.ensure(lifecycle).get() == latest, "캐시 빈 옛 G 거절 뒤 H 보존 \(code)")
+        try check(try lifecycle.authorizedRequest(path: "/v1/catalog", method: "GET").value(forHTTPHeaderField: "Authorization") == latest.authorizationValue,
+                  "복구 뒤 보호 요청에는 H만 사용 \(code)")
+        try check(memory.raw == latestRaw && memory.requests.count == requests && memory.receiptCalls == 1,
+                  "늦은 G 거절로 새 enroll·신뢰 발급·renew 0 \(code)")
+    }
+}
+try check(emptyCacheRefusalFailures.isEmpty, "캐시 빈 거절 복구 후 G 재수용 0 실패: " + emptyCacheRefusalFailures.joined(separator: "; "))
 let readbackFailed = try Memory(readbackGolden), readbackFailedEngine = readbackFailed.engine()
 let readbackRefused = try readbackFailed.ensure(readbackFailedEngine).get()
 readbackFailed.responseOverride = (503, .object(["error": .string("ENROLLMENT_PROVIDER_UNAVAILABLE")]))
