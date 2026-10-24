@@ -159,6 +159,7 @@ struct LocalAudioState: Codable, Equatable {
 final class LocalAudioAuthentication {
     private var context: LAContext?
     private var attemptID: UUID?
+    private(set) var activeChallengeID: UUID?
     private var completion: CheckedContinuation<Bool, Never>?
     private var expiry: Task<Void, Never>?
 
@@ -168,6 +169,7 @@ final class LocalAudioAuthentication {
         guard completion == nil else { return false }
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 0
+        context.localizedFallbackTitle = "macOS 로그인 암호 사용"
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
         self.context = context
@@ -180,12 +182,13 @@ final class LocalAudioAuthentication {
                 if !Task.isCancelled { self?.finish(false) }
             }
             context.evaluatePolicy(.deviceOwnerAuthentication,
-                localizedReason: "Mac의 로컬 마이크와 스피커로 복귀") { [weak self] accepted, _ in
+                localizedReason: "Touch ID 또는 macOS 로그인 암호로 로컬 입출력 복귀") { [weak self] accepted, _ in
                 Task { @MainActor in
                     guard let self, self.attemptID == attempt else { return }
                     self.finish(accepted)
                 }
             }
+            activeChallengeID = attempt
         }
     }
 
@@ -195,6 +198,7 @@ final class LocalAudioAuthentication {
         let old = context
         context = nil
         attemptID = nil
+        activeChallengeID = nil
         expiry?.cancel(); expiry = nil
         old?.invalidate()
         continuation?.resume(returning: accepted)
