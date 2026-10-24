@@ -194,6 +194,8 @@ def deploy(config, work, source):
              '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-allowProvisioningUpdates',
              'DEVELOPMENT_TEAM=' + config['developmentTeam'], 'CURRENT_PROJECT_VERSION=' + version,
              'PRODUCT_BUNDLE_IDENTIFIER=' + BUNDLE, 'INFOPLIST_FILE=' + str(metadata_path),
+             'CCR_SOURCE_EXTERNAL_INFO_FILE=' + str(metadata_path),
+             'CCR_SOURCE_GIT_COMMON_DIR=' + command(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], cwd=config['repo']).strip(),
              'CCR_OWNER_MAC_BOOTSTRAP_PROFILE=' + owner_profile['path'],
              'CCR_OWNER_MAC_BOOTSTRAP_SHA256=' + owner_profile['sha256'], 'build'],
             work / 'build.log', 1200)

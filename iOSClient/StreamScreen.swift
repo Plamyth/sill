@@ -1356,6 +1356,7 @@ struct IPadToolbarLayout {
 }
 
 struct IPadWorkspaceMenu: View {
+    @Environment(\.openIPadAppUpdate) private var openAppUpdate
     let width: CGFloat
     let height: CGFloat
     var radius: CGFloat = 16
@@ -1383,6 +1384,7 @@ struct IPadWorkspaceMenu: View {
         .overlay {
             IPadWorkspaceMenuTrigger(settingsOpen: settingsOpen, openSettings: openSettings,
                 openCanvas: openCanvas, openTestDestinations: openTestDestinations,
+                openAppUpdate: openAppUpdate,
                 onOpenChange: onOpenChange)
         }
         .onDisappear { onOpenChange(false) }
@@ -1394,6 +1396,7 @@ private struct IPadWorkspaceMenuTrigger: UIViewRepresentable {
     let openSettings: () -> Void
     let openCanvas: () -> Void
     let openTestDestinations: () -> Void
+    let openAppUpdate: () -> Void
     let onOpenChange: (Bool) -> Void
 
     func makeUIView(context: Context) -> MacMenuTriggerButton {
@@ -1403,7 +1406,7 @@ private struct IPadWorkspaceMenuTrigger: UIViewRepresentable {
         button.backgroundColor = .clear
         button.isAccessibilityElement = true
         button.accessibilityTraits = .button
-        button.accessibilityLabel = "더 보기. 설정, 그림판, 프로젝트 테스트"
+        button.accessibilityLabel = "더 보기. 설정, 그림판, 프로젝트 테스트, iPad 앱 업데이트"
         button.accessibilityIdentifier = "workspaceOverflow"
         updateUIView(button, context: context)
         return button
@@ -1416,7 +1419,8 @@ private struct IPadWorkspaceMenuTrigger: UIViewRepresentable {
         button.menu = UIMenu(children: [
             UIAction(title: title, image: UIImage(systemName: "gearshape")) { _ in openSettings() },
             UIAction(title: "그림판", image: UIImage(systemName: "pencil.tip.crop.circle")) { _ in openCanvas() },
-            UIAction(title: "프로젝트 테스트", image: UIImage(systemName: "globe")) { _ in openTestDestinations() }
+            UIAction(title: "프로젝트 테스트", image: UIImage(systemName: "globe")) { _ in openTestDestinations() },
+            UIAction(title: "iPad 앱 업데이트", image: UIImage(systemName: "arrow.down.app")) { _ in openAppUpdate() }
         ])
     }
 }
@@ -1512,7 +1516,7 @@ private struct TopBar: View {
                 .allowsHitTesting(!scaleOpen)
 
             Group {
-                if UIDevice.current.userInterfaceIdiom == .pad, !workspaceInline {
+                if UIDevice.current.userInterfaceIdiom == .pad {
                     IPadWorkspaceMenu(width: metrics.buttonWidth, height: metrics.buttonHeight,
                                       spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,
                                       openSettings: { setSettings(!settingsOpen, true) },

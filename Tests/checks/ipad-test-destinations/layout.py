@@ -20,8 +20,8 @@ assert "IPadToolbarLayout(width: width - 2 * bar.padding, baseButtons: 5," in sc
 assert "IPadToolbarLayout(width: width, baseButtons: 4," in portrait
 assert "menusFit: layout.menusInline, workspaceInline: layout.workspaceInline" in screen
 assert "if workspaceInline {" in screen and "if layout.workspaceInline {" in portrait
-assert "if UIDevice.current.userInterfaceIdiom == .pad, !workspaceInline {" in screen
-assert "if UIDevice.current.userInterfaceIdiom == .pad, !layout.workspaceInline {" in portrait
+assert "if UIDevice.current.userInterfaceIdiom == .pad {" in block(screen, "private struct TopBar: View")
+assert "if UIDevice.current.userInterfaceIdiom == .pad {" in block(portrait, "private func windowBar(")
 assert "IPadWorkspaceMenu(" in block(screen, "private struct TopBar: View")
 assert "IPadWorkspaceMenu(" in block(portrait, "private func windowBar(")
 assert "IPadWorkspaceMenuTrigger(" in block(screen, "struct IPadWorkspaceMenu: View")
@@ -30,6 +30,11 @@ assert "onOpenChange: workspaceMenuChanged" in block(screen, "private struct Top
 assert "onOpenChange: workspaceMenuChanged" in block(portrait, "private func windowBar(")
 assert screen.count("workspaceMenuChanged: { workspaceMenuOpen = $0 }") == 2
 assert "MacMenuTriggerButton" in block(screen, "private struct IPadWorkspaceMenuTrigger:")
+assert 'UIAction(title: "iPad 앱 업데이트"' in block(screen, "private struct IPadWorkspaceMenuTrigger:")
+assert "openAppUpdate: openAppUpdate" in block(screen, "struct IPadWorkspaceMenu: View")
+content = (root / "iOSClient/ContentView.swift").read_text()
+assert 'Button("iPad 앱 업데이트"' in content and "if !client.connected {" in content
+assert '.environment(\\.openIPadAppUpdate, { appUpdatePresented = true })' in content
 types = [block(screen, "struct IPadToolbarLayout {"), block(screen, "struct BarMetrics {")]
 types.append(block(portrait, "struct PortraitMetrics {").split("    static let phone = PortraitMetrics(")[0] + "}")
 types.append("struct MacMenuButton {" + block(menus, "static func fits(") + "}")

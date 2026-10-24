@@ -310,7 +310,7 @@ struct PortraitStreamScreen: View {
                 .allowsHitTesting(!scaleOpen)
 
             Group {
-                if UIDevice.current.userInterfaceIdiom == .pad, !layout.workspaceInline {
+                if UIDevice.current.userInterfaceIdiom == .pad {
                     IPadWorkspaceMenu(width: metrics.buttonWidth, height: metrics.buttonHeight,
                                       radius: metrics.buttonRadius, iconSize: metrics.buttonIcon,
                                       spacing: metrics.buttonSpacing, settingsOpen: settingsOpen,

@@ -181,6 +181,12 @@
 		F2210001000000000000B001 /* IPadProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F001 /* IPadProviderCall.swift */; };
 		F2210001000000000000A002 /* StreamClient+ProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F002 /* StreamClient+ProviderCall.swift */; };
 		F2210001000000000000B002 /* StreamClient+ProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F002 /* StreamClient+ProviderCall.swift */; };
+		D4240001000000000000A001 /* IPadAppUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F001 /* IPadAppUpdate.swift */; };
+		D4240001000000000000B001 /* IPadAppUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F001 /* IPadAppUpdate.swift */; };
+		D4240001000000000000A002 /* IPadAppUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F002 /* IPadAppUpdateController.swift */; };
+		D4240001000000000000B002 /* IPadAppUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F002 /* IPadAppUpdateController.swift */; };
+		D4240001000000000000A003 /* IPadAppUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F003 /* IPadAppUpdateView.swift */; };
+		D4240001000000000000B003 /* IPadAppUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4240001000000000000F003 /* IPadAppUpdateView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -274,6 +280,9 @@
 		F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+AudioForwarding.swift"; sourceTree = "<group>"; };
 		F2210001000000000000F001 /* IPadProviderCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadProviderCall.swift"; sourceTree = "<group>"; };
 		F2210001000000000000F002 /* StreamClient+ProviderCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+ProviderCall.swift"; sourceTree = "<group>"; };
+		D4240001000000000000F001 /* IPadAppUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdate.swift; sourceTree = "<group>"; };
+		D4240001000000000000F002 /* IPadAppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdateController.swift; sourceTree = "<group>"; };
+		D4240001000000000000F003 /* IPadAppUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdateView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -303,6 +312,9 @@
 				A1000001000000000000F002 /* ContentView.swift */,
 				B2000001000000000000C001 /* CanvasBridge */,
 				A1000001000000000000F201 /* SillLinks.swift */,
+				D4240001000000000000F003 /* IPadAppUpdateView.swift */,
+				D4240001000000000000F002 /* IPadAppUpdateController.swift */,
+				D4240001000000000000F001 /* IPadAppUpdate.swift */,
 				A1000001000000000000F011 /* StreamClient+Viewport.swift */,
 				A1000001000000000000F010 /* DiagnosticsHUD.swift */,
 				D4200001000000000000F001 /* TestDestinationsPolicy.swift */,
@@ -427,6 +439,7 @@
 				A1000001000000000000B002 /* Frameworks */,
 				A1000001000000000000B003 /* Resources */,
 				E7200001000000000000B001 /* Embed owner bootstrap */,
+				D4240001000000000000C001 /* Prepare iPad source identity */,
 			);
 			buildRules = (
 			);
@@ -567,6 +580,26 @@
             shellPath = /bin/sh;
             shellScript = "\"$SRCROOT/../Scripts/embed-owner-bootstrap.sh\"";
         };
+        D4240001000000000000C001 /* Prepare iPad source identity */ = {
+            isa = PBXShellScriptBuildPhase;
+            alwaysOutOfDate = 1;
+            buildActionMask = 2147483647;
+            files = ();
+            inputPaths = (
+                "$(SRCROOT)/..",
+                "$(CCR_SOURCE_GIT_COMMON_DIR)",
+                "$(CCR_SOURCE_EXTERNAL_INFO_FILE)",
+                "$(SRCROOT)/$(CCR_SOURCE_BASE_INFOPLIST_FILE)",
+                "$(SRCROOT)/../Scripts/ipad-source-identity.py",
+            );
+            name = "Prepare iPad source identity";
+            outputPaths = (
+                "$(DERIVED_FILE_DIR)/CCR-Source-Info.plist",
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+            shellPath = /bin/sh;
+            shellScript = "/usr/bin/python3 \"$SRCROOT/../Scripts/ipad-source-identity.py\" --repo \"$SRCROOT/..\" --base \"$SRCROOT/$CCR_SOURCE_BASE_INFOPLIST_FILE\" --output \"$DERIVED_FILE_DIR/CCR-Source-Info.plist\" --selected-info \"$INFOPLIST_FILE\" --configuration \"$CONFIGURATION\"";
+        };
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -577,6 +610,9 @@
 				A1000001000000000000A001 /* SillApp.swift in Sources */,
 				A1000001000000000000A002 /* ContentView.swift in Sources */,
 				A1000001000000000000A201 /* SillLinks.swift in Sources */,
+				D4240001000000000000A003 /* IPadAppUpdateView.swift in Sources */,
+				D4240001000000000000A002 /* IPadAppUpdateController.swift in Sources */,
+				D4240001000000000000A001 /* IPadAppUpdate.swift in Sources */,
 				A1000001000000000000A011 /* StreamClient+Viewport.swift in Sources */,
 				A1000001000000000000A010 /* DiagnosticsHUD.swift in Sources */,
 				D4200001000000000000A001 /* TestDestinationsPolicy.swift in Sources */,
@@ -667,6 +703,9 @@
 				0274BB864247B3610E1B3466 /* SillApp.swift in Sources */,
 				9A5F3E713DFAB16ED1B466CF /* ContentView.swift in Sources */,
 				01C81636C46C717F42E2731F /* SillLinks.swift in Sources */,
+				D4240001000000000000B003 /* IPadAppUpdateView.swift in Sources */,
+				D4240001000000000000B002 /* IPadAppUpdateController.swift in Sources */,
+				D4240001000000000000B001 /* IPadAppUpdate.swift in Sources */,
 				4F02749E779DC0FD4C8B8620 /* StreamClient+Viewport.swift in Sources */,
 				4A7B0B6188FCC59DACD77366 /* DiagnosticsHUD.swift in Sources */,
 				896C62CBA18F0ED33A685943 /* TestDestinationsPolicy.swift in Sources */,
@@ -886,7 +925,10 @@
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Info-Debug.plist";
+				CCR_SOURCE_GIT_COMMON_DIR = "$(SRCROOT)/../.git";
+				CCR_SOURCE_EXTERNAL_INFO_FILE = "$(SRCROOT)/Info-Debug.plist";
+				CCR_SOURCE_BASE_INFOPLIST_FILE = "Info-Debug.plist";
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/CCR-Source-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "CCR Sill";
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -919,7 +961,10 @@
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Info.plist;
+				CCR_SOURCE_GIT_COMMON_DIR = "$(SRCROOT)/../.git";
+				CCR_SOURCE_EXTERNAL_INFO_FILE = "$(SRCROOT)/Info.plist";
+				CCR_SOURCE_BASE_INFOPLIST_FILE = "Info.plist";
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/CCR-Source-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "CCR Sill";
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

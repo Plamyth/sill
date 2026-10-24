@@ -4,13 +4,31 @@ import StreamProtocol
 
 struct ContentView: View {
     @StateObject private var client = StreamClient()
+    @StateObject private var appUpdate = IPadAppUpdateController()
+    @State private var appUpdatePresented = false
     /// Tells the host what this device sees, once a second while connected. Also covers the DEBUG
     /// harness's `-SillLive 1` session, which runs on this same client.
     @StateObject private var statsReporter = ClientStatsReporter()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        root.onAppear { statsReporter.attach(to: client) }
+        root
+            .environment(\.openIPadAppUpdate, { appUpdatePresented = true })
+            .overlay(alignment: .topTrailing) {
+                if !client.connected {
+                    Menu {
+                        Button("iPad 앱 업데이트", systemImage: "arrow.down.app") { appUpdatePresented = true }
+                    } label: {
+                        Label("앱 메뉴", systemImage: "ellipsis.circle")
+                            .padding(12).frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("앱 메뉴. iPad 앱 업데이트")
+                    .padding()
+                }
+            }
+            .sheet(isPresented: $appUpdatePresented) { IPadAppUpdateView(controller: appUpdate) }
+            .onAppear { statsReporter.attach(to: client) }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { appUpdate.readback() } }
     }
 
     @ViewBuilder private var root: some View {
