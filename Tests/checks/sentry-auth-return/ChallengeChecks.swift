@@ -127,6 +127,8 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
         check(privacy.localAuthenticationChallengeID == auth.activeChallengeID,
               "\(ending) model exposes only its current actual challenge")
         check(prepared == auth.activeChallengeID, "\(ending) snapshot and active challenge share the operation")
+        check(privacy.localReturnStatusReason?.contains("macOS에 로컬 복귀 인증을 요청") == true,
+              "\(ending) own UI status identifies an issued OS request without claiming acceptance")
         switch ending {
         case "cancel":
             work.cancel()
@@ -147,6 +149,8 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
         }
         check(!(await work.value) && privacy.localAuthenticationChallengeID == nil,
               "\(ending) terminal request retains no challenge")
+        check(privacy.localReturnStatusReason?.contains("macOS에 로컬 복귀 인증을 요청") != true,
+              "\(ending) terminal request clears the issued authentication UI status")
         check(privacy.latched && hal.writes == 0 && hal.restores == 0,
               "\(ending) never restores audio or clears the durable protection latch")
         privacy.stop()

@@ -255,7 +255,12 @@ package final class HostAudioPrivacy {
     package var authenticatedLocalReturnWillCommit: ((_ admission: @escaping @MainActor () -> Bool) async -> Bool)?
     private var localReturnFailureReason: String?
     package var localReturnUnavailableReason: String? { participants.authenticatedLocalReturnUnavailableReason }
-    package var localReturnStatusReason: String? { localReturnFailureReason ?? localReturnUnavailableReason }
+    package var localReturnStatusReason: String? {
+        if localAuthenticationChallengeID != nil {
+            return "macOS에 로컬 복귀 인증을 요청했습니다. 운영체제의 본인 인증이 끝날 때까지 보호를 유지합니다."
+        }
+        return localReturnFailureReason ?? localReturnUnavailableReason
+    }
     package var localAuthenticationWillBegin: ((UUID) -> Void)?
     package var localAuthenticationChallengeID: UUID? {
         guard authenticatingLocal, !returningLocal,
