@@ -83,6 +83,8 @@ package final class RemoteAccess {
     private(set) var paired: [PairedDevice] = []
     private var ownerRegistry: OwnerBootstrapRegistry?
     private var ownerSensor = TailnetDeviceAccess()
+    private let mobileEnrollmentDependencies: MobileEnrollmentDependencies
+    private var mobileEnrollmentRuntime: MobileEnrollmentHostRuntime?
 
     private var window = PairingWindow()
     let trust = TrustBox()
@@ -166,7 +168,12 @@ package final class RemoteAccess {
     /// `identityProblem` says why. That includes a trust list that cannot be read: kept with an
     /// empty list, the store would save the next pairing over it and every earlier pairing would be
     /// gone.
-    package init(store: IdentityStore) {
+    package convenience init(store: IdentityStore) {
+        self.init(store: store, mobileEnrollmentDependencies: .init())
+    }
+
+    init(store: IdentityStore, mobileEnrollmentDependencies: MobileEnrollmentDependencies) {
+        self.mobileEnrollmentDependencies = mobileEnrollmentDependencies
         var identity: HostIdentity?
         var problem: String?
         var paired: [PairedDevice] = []
@@ -261,6 +268,7 @@ package final class RemoteAccess {
         remotePort = config.remotePort
         internetAccess = config.remoteAccess && config.internetAccess
         requirePairing = config.requirePairing
+        updateMobileEnrollment()
         if wasOn, !remoteAccess {
             if let w = window.current, w.forRemote { window.close(.cancelled); windowClosed(.cancelled, reopen: false) }
             print("Remote access off.")
@@ -688,6 +696,10 @@ package final class RemoteAccess {
               proof.sourceIP == socket.binding.sourceIP, proof.localIPs.contains(socket.binding.localIP),
               !proof.localIPs.contains(socket.binding.sourceIP), let identity, let store else { return closed }
         let epoch = trust.snapshot.ownerBootstrapEpoch
+        if let request = attempt.request.ownerEnrollment {
+            return ownerEnrollmentReceipt(request, socket: socket, sensor: sensor, proof: proof,
+                                          epoch: epoch, identity: identity, store: store) ?? closed
+        }
         func current() -> Bool {
             remoteAccess && trust.snapshot.ownerBootstrapEpoch == epoch && socket.isLive
                 && sensor.isCurrent(proof) && !Task.isCancelled
@@ -783,6 +795,114 @@ package final class RemoteAccess {
         }
     }
 
+    private func mobileEnrollmentHostProfile(_ identity: HostIdentity) throws -> MobileEnrollment.HostProfile {
+        guard let key = SecKeyCopyPublicKey(identity.remote.privateKey),
+              let point = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+            throw MobileEnrollment.Failure.invalidKey
+        }
+        return try .init(macID: identity.macID, trustedFingerprint: Base64URL.encode(identity.fingerprint),
+                         publicSPKIDER: SPKI.der(point: point))
+    }
+
+    private func updateMobileEnrollment() {
+        guard remoteAccess else { stopMobileEnrollment(); return }
+        if mobileEnrollmentRuntime == nil {
+            guard let identity, let profile = try? mobileEnrollmentHostProfile(identity) else { return }
+            let clock = mobileEnrollmentDependencies.clock
+            mobileEnrollmentRuntime = MobileEnrollmentHostRuntime(identity: identity, host: profile,
+                observeActive: { [weak self] challenge in
+                    guard let self else { throw MobileEnrollmentRuntimeFailure.stopped }
+                    let payload = try self.mobileEnrollmentObservation(challenge: challenge, nowMS: clock().milliseconds)
+                    return .init(reason: payload.reason, checkedAtMilliseconds: payload.checkedAt)
+                }, currentRemoteAccess: { [weak self] in self?.remoteAccess ?? false },
+                dependencies: mobileEnrollmentDependencies)
+        }
+        mobileEnrollmentRuntime?.start()
+    }
+
+    func stopMobileEnrollment() {
+        mobileEnrollmentRuntime?.stop()
+    }
+
+    private func currentEnrollmentReason(store: IdentityStore, identity: HostIdentity,
+                                         principal: String, fingerprint: String) throws -> MobileEnrollment.ActiveReason {
+        let registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+        let devices = try store.loadPaired()
+        let confirmation = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+        let confirmedDevices = try store.loadPaired()
+        guard registry == confirmation, devices == confirmedDevices else { return .unavailable }
+        return registry.observation(principal: principal, fingerprint: fingerprint, paired: devices)
+    }
+
+    private func ownerEnrollmentReceipt(_ request: OwnerEnrollmentRequest, socket: OwnerBootstrapSocket,
+                                        sensor: TailnetDeviceAccess, proof: TailnetDeviceAccess.Proof,
+                                        epoch: UUID, identity: HostIdentity, store: IdentityStore) -> PairResult? {
+        let fingerprint = Base64URL.encode(socket.binding.fingerprint)
+        var signedInput: MobileEnrollment.ReceiptInput?
+        return socket.issueReceipt(in: trust, evidence: .init(sensor: sensor, proof: proof), valid: { snapshot in
+            guard !Task.isCancelled, self.remoteAccess, snapshot.remoteAccess, snapshot.ownerBootstrapEpoch == epoch else { return false }
+            guard (try? self.currentEnrollmentReason(store: store, identity: identity,
+                principal: proof.principal, fingerprint: fingerprint)) == .active,
+                  !Task.isCancelled, self.remoteAccess, self.trust.snapshot.ownerBootstrapEpoch == epoch else { return false }
+            if let input = signedInput {
+                guard let now = try? Self.enrollmentMilliseconds(Date()), now >= input.nowMilliseconds,
+                      let payload = try? input.payload(), now / 1000 < payload.expiresAt else { return false }
+            }
+            return true
+        }, issue: {
+            let nowMS = try Self.enrollmentMilliseconds(Date())
+            guard let deviceKey = Base64URL.decode(request.devicePublicKey) else { throw MobileEnrollment.Failure.invalidKey }
+            let input = try MobileEnrollment.ReceiptInput(host: self.mobileEnrollmentHostProfile(identity),
+                challenge: request.challenge, devicePublicSPKIDER: deviceKey,
+                socketDeviceFingerprint: fingerprint, ownerPrincipal: proof.principal,
+                nowMilliseconds: nowMS, nodeExpiresAtSeconds: Self.enrollmentNodeExpirySeconds(proof.nodeExpiry))
+            signedInput = input
+            let receipt = try MobileEnrollmentSigner.receipt(input, identity: identity)
+            let result = PairResult(ok: true, macID: identity.macID, method: OwnerMacBootstrap.method,
+                                    ownerEnrollmentVersion: 1, ownerReceipt: receipt)
+            guard Wire.encode(result).count <= StreamMessage.maxPairingPayload,
+                  try Self.enrollmentMilliseconds(Date()) / 1000 < input.payload().expiresAt else {
+                throw MobileEnrollment.Failure.invalidTime
+            }
+            return result
+        })
+    }
+
+    static func enrollmentMilliseconds(_ date: Date) throws -> Int64 {
+        let value = floor(date.timeIntervalSince1970 * 1000)
+        guard value.isFinite, value >= 0, value <= Double(MobileEnrollment.maximumSafeInteger) else {
+            throw MobileEnrollment.Failure.invalidTime
+        }
+        return Int64(value)
+    }
+
+    static func enrollmentNodeExpirySeconds(_ date: Date) throws -> Int64 {
+        let value = floor(date.timeIntervalSince1970)
+        guard value.isFinite, value >= 0 else { throw MobileEnrollment.Failure.invalidTime }
+        return Int64(min(value, Double(MobileEnrollment.maximumSafeInteger / 1000)))
+    }
+
+    package func mobileEnrollmentObservation(challenge: MobileEnrollment.ActiveChallenge,
+                                             nowMS: Int64) throws -> MobileEnrollment.ActiveResultPayload {
+        guard let identity else { throw MobileEnrollment.Failure.identityMismatch }
+        return try trust.withDecision { Result<MobileEnrollment.ActiveResultPayload, Error> {
+            let epoch = trust.snapshot.ownerBootstrapEpoch
+            var reason: MobileEnrollment.ActiveReason = .disabled
+            if remoteAccess, trust.snapshot.remoteAccess {
+                if let store {
+                    reason = (try? currentEnrollmentReason(store: store, identity: identity,
+                        principal: challenge.ownerPrincipal, fingerprint: challenge.deviceFingerprint)) ?? .unavailable
+                } else { reason = .unavailable }
+            }
+            if !remoteAccess || !trust.snapshot.remoteAccess { reason = .disabled }
+            else if trust.snapshot.ownerBootstrapEpoch != epoch { reason = .unavailable }
+            let expiry = nowMS.addingReportingOverflow(1000)
+            guard !expiry.overflow else { throw MobileEnrollment.Failure.invalidTime }
+            return try .init(challenge: challenge, host: mobileEnrollmentHostProfile(identity), reason: reason,
+                checkedAtMilliseconds: nowMS, expiresAtMilliseconds: expiry.partialValue, nowMilliseconds: nowMS)
+        } }.get()
+    }
+
     func ownerSessionEvidence(for socket: OwnerBootstrapSocket) async -> OwnerBootstrapSocket.Evidence? {
         guard socket.purpose == .session, socket.isLive, remoteAccess, let store, let identity else { return nil }
         let previous = trust.snapshot.ownerAuthorized
@@ -820,6 +940,8 @@ package final class RemoteAccess {
     }
 
     #if OWNER_BOOTSTRAP_CONTRACT
+    var skipsNetworkWatchersForTesting = false
+
     func configureOwnerBootstrapForTesting(sensor: TailnetDeviceAccess, enabled: Bool) {
         ownerSensor = sensor
         if remoteAccess != enabled {
@@ -1109,6 +1231,9 @@ package final class RemoteAccess {
 
     /// Reachability runs with the door; the router is asked only with the internet switch on.
     private func updateWatchers() {
+        #if OWNER_BOOTSTRAP_CONTRACT
+        if skipsNetworkWatchersForTesting { return }
+        #endif
         let wanted = identity != nil && (remoteAccess || remoteWindowOpen)
         if wanted, reachability == nil {
             let r = Reachability { [weak self] snapshot in self?.reachabilityChanged(snapshot) }
