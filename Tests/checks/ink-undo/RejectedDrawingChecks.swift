@@ -72,6 +72,27 @@ import PencilKit
             edits.edit(second, tool: tool)
             await settle()
             check(store.drawing == second && manager.canUndo, "accepted edits have history tool=\(tool)")
+            canvas.undoManager?.undo()
+            await settle()
+            check(store.drawing == first && canvas.undoManager?.canRedo == true,
+                  "standard undo uses the accepted branch tool=\(tool)")
+            store.inkHistory.undo()
+            await settle()
+            check(store.drawing.strokes.isEmpty,
+                  "toolbar undo after standard undo never resurrects ink tool=\(tool)")
+            canvas.undoManager?.redo()
+            await settle()
+            store.inkHistory.redo()
+            await settle()
+            check(store.drawing == second && canvas.drawing == second,
+                  "mixed standard and toolbar redo restore both accepted edits tool=\(tool)")
+            coordinator.canvasViewDidBeginUsingTool(canvas)
+            check(canvas.undoManager?.canUndo == false && canvas.undoManager?.canRedo == false,
+                  "standard availability is disabled during Pencil input tool=\(tool)")
+            canvas.undoManager?.undo()
+            check(store.drawing == second, "standard undo cannot interrupt Pencil input tool=\(tool)")
+            coordinator.canvasViewDidEndUsingTool(canvas)
+            await settle()
             var falseStyle = store.scene
             falseStyle.strokes[0].style!.transform.tx += 100
             check(await SceneRenderer.png(scene: falseStyle) == nil,

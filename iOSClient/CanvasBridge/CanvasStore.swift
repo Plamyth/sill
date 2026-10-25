@@ -81,17 +81,22 @@ final class CanvasInkHistory: ObservableObject {
     }
 
     func undo() {
-        guard let manager, !usingTool, !manager.isUndoing, !manager.isRedoing,
-              manager.groupingLevel <= 1, manager.canUndo else { return }
+        guard commandAvailability.canUndo, let manager else { return }
         manager.undo()
         scheduleRefresh()
     }
 
     func redo() {
-        guard let manager, !usingTool, !manager.isUndoing, !manager.isRedoing,
-              manager.groupingLevel == 0, manager.canRedo else { return }
+        guard commandAvailability.canRedo, let manager else { return }
         manager.redo()
         scheduleRefresh()
+    }
+
+    var commandAvailability: Availability {
+        guard let manager, !usingTool, !manager.isUndoing, !manager.isRedoing,
+              manager.groupingLevel <= 1 else { return Availability() }
+        return Availability(canUndo: manager.canUndo,
+                            canRedo: manager.groupingLevel == 0 && manager.canRedo)
     }
 
     func scheduleRefresh() {
@@ -102,12 +107,7 @@ final class CanvasInkHistory: ObservableObject {
             self.refreshScheduled = false
             self.refreshing = true
             defer { self.refreshing = false }
-            let next: Availability
-            if let manager = self.manager, !self.usingTool, !manager.isUndoing,
-               !manager.isRedoing, manager.groupingLevel <= 1 {
-                next = Availability(canUndo: manager.canUndo,
-                    canRedo: manager.groupingLevel == 0 && manager.canRedo)
-            } else { next = Availability() }
+            let next = self.commandAvailability
             if self.availability != next { self.availability = next }
         }
     }

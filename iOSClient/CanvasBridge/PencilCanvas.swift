@@ -3,9 +3,18 @@ import SwiftUI
 import UIKit
 import UIKit.UIGestureRecognizerSubclass
 
+final class CanvasNativeUndoManager: UndoManager {
+    weak var history: CanvasInkHistory?
+    override var canUndo: Bool { MainActor.assumeIsolated { history?.commandAvailability.canUndo == true } }
+    override var canRedo: Bool { MainActor.assumeIsolated { history?.commandAvailability.canRedo == true } }
+    override func undo() { MainActor.assumeIsolated { history?.undo() } }
+    override func redo() { MainActor.assumeIsolated { history?.redo() } }
+    override func undoNestedGroup() { MainActor.assumeIsolated { history?.undo() } }
+}
+
 final class CanvasInkView: PKCanvasView {
     let inkUndoManager = UndoManager()
-    let nativeUndoManager = UndoManager()
+    let nativeUndoManager = CanvasNativeUndoManager()
     override var undoManager: UndoManager? { nativeUndoManager }
 }
 
@@ -144,7 +153,12 @@ struct PencilCanvas: UIViewRepresentable {
                              UIGestureRecognizerDelegate {
         let store: CanvasStore
         let traceOwner = UUID()
-        weak var canvas: CanvasInkView?
+        weak var canvas: CanvasInkView? {
+            didSet {
+                oldValue?.nativeUndoManager.history = nil
+                canvas?.nativeUndoManager.history = store.inkHistory
+            }
+        }
         var renderedModelDrawing = PKDrawing()
         var renderedGeneration = UUID()
         private var replacingDrawing = false
