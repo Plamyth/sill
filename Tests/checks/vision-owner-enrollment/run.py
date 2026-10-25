@@ -1,6 +1,7 @@
 """Vision 생산 어댑터·갱신 타이머를 공개 fixture와 메모리 I/O로만 실행한다."""
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -46,7 +47,20 @@ enum SavedMacs {
 }
 '''
     runtime = runtime.replace('"/v1/snapshot"', '"/v1/events"').replace('"/v1/catalog"', '"/v1/events"')
+    spec = importlib.util.spec_from_file_location('move_extractor', ROOT / 'Tests/checks/vision-autoconnect/run.py')
+    extractor = importlib.util.module_from_spec(spec); spec.loader.exec_module(extractor)
+    stream = (ROOT / 'iOSClient/StreamClient.swift').read_text()
+    moves = '\n'.join(vision(extractor.block(stream, marker)).replace('private func ', 'func ') for marker in ['private func finishMove(', 'private func finishMoveAfterInputDrain('])
+    runtime = runtime.replace('    var appInForeground = true', (HERE / 'move-standins.swift').read_text() + '\n' + moves + '\n    var appInForeground = true')
+    old = '    var connection: NWConnection? { didSet { if oldValue !== connection { cancelOwnerEnrollment() } } }'
+    assert runtime.count(old) == 1
+    runtime = runtime.replace(old, '    let link = SessionLink()\n    var connectionSetterCalls = 0\n    var connection: NWConnection? {\n        get { link.connection }\n        set { connectionSetterCalls += 1; if link.connection !== newValue { cancelOwnerEnrollment() }; link.connection = newValue }\n    }')
+    runtime = runtime.replace('struct Session { var macID: String? }', 'struct Session {\n        var macID: String?\n        var route = MemorySessionRoute.network\n        var candidate: Int?\n        var bonjourName: String?\n        var home: Int?\n        var row: Int?\n        var endpoint: Int?\n    }')
+    runtime = runtime.replace('    var state: State = .ready', '    enum Completion { case contentProcessed((Error?) -> Void) }\n    var sent: [Data] = []\n    let endpoint = 1, currentPath = 1\n    func send(content: Data?, completion: Completion) {\n        if let content { sent.append(content) }\n        if case .contentProcessed(let done) = completion { done(nil) }\n    }\n    func cancel() { state = .cancelled }\n    func forceCancel() { cancel() }\n    var state: State = .ready')
+    runtime = runtime.replace('    static func automaticTarget', '    static func seenOverTLS(_ ids: [String], in rows: [StreamClient.Saved]) -> [StreamClient.Saved]? { nil }\n    static func automaticTarget')
+    runtime += '\nstruct MemorySessionRoute { var isRemote = false; static let network = Self() }\nenum MemorySource { case none, screen }\nfinal class MemoryMoveInput {\n    var moves: [Bool] = []\n    var releases = 0\n    func setMoving(_ value: Bool) { moves.append(value) }\n    func takeReleases() -> [Int] { releases += 1; return [] }\n}\nfinal class MemoryPointerFeed { func handedOver() -> Bool { false } }\nfinal class MemoryMoveSettings { var resets = 0; func reset() { resets += 1 } }\nenum DiscoveryPolicy { struct HomeMoveInfo {} }\n'
     (out / 'runtime.swift').write_text(runtime)
+    (out / 'SessionLink.swift').write_text((ROOT / 'iOSClient/SessionLink.swift').read_text().replace('import Network\n', ''))
     extension = vision((ROOT / 'iOSClient/StreamClient+OwnerEnrollment.swift').read_text())
     extension = extension.replace('import Network\n', '').replace('import Security\n', '')
     clock = 'now: { Int64(Date().timeIntervalSince1970 * 1000) }'
@@ -69,7 +83,7 @@ enum SavedMacs {
 ''')
     renewal = renewal.replace('        stream.cancelOwnerEnrollment()', '        _ = control\n        stream.cancelOwnerEnrollment()')
     (out / 'renewal.swift').write_text(renewal)
-    main = (IPAD / 'main.swift').read_text() + '\ntry MainActor.assumeIsolated { try visionChecks() }\n'
+    main = (IPAD / 'main.swift').read_text() + '\ntry MainActor.assumeIsolated { try visionChecks(); try moveChecks() }\n'
     (out / 'main.swift').write_text(main)
     fixture = json.loads((IPAD / 'fixtures/device-enrollment-readback-golden.json').read_text())
     payload = json.loads(base64.urlsafe_b64decode(fixture['enrollRequest']['ownerReceipt']['payload'] + '==='))
@@ -80,7 +94,7 @@ enum SavedMacs {
     (out / 'lease.swift').write_text(lease)
     sources = [ROOT / 'iOSClient' / p for p in ['IPadEnrollmentJSON.swift', 'IPadEnrollmentProtocol.swift', 'IPadDeviceEnrollment.swift']]
     sources += [ROOT / 'visionOSClient' / (p + '.swift') for p in ['ControlEventsModel', 'ControlEventsReducer', 'ControlEventsSSEParser', 'ControlEventsCodec', 'ControlEventsProjection', 'ControlEventsTransport', 'ControlEventsController', 'VisionControlEnrollment']]
-    sources += [out / p for p in ['main.swift', 'runtime.swift', 'renewal.swift', 'extension.swift', 'lease.swift']]
-    sources += [IPAD / 'signed-payload.swift', HERE / 'vision.swift']
+    sources += [out / p for p in ['main.swift', 'runtime.swift', 'renewal.swift', 'extension.swift', 'lease.swift', 'SessionLink.swift']]
+    sources += [IPAD / 'signed-payload.swift', HERE / 'vision.swift', HERE / 'move.swift']
     subprocess.run(common + ['-I', str(out), '-L', str(out), '-lStreamProtocol', '-Xlinker', '-rpath', '-Xlinker', str(out), *map(str, sources), '-o', str(out / 'checks')], check=True, env=env, timeout=180)
     subprocess.run([str(out / 'checks'), str(IPAD / 'fixtures'), str(profile_path)], check=True, env=env, timeout=60)

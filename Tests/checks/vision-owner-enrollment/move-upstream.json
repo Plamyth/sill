@@ -1,0 +1,8 @@
+{
+  "base": "650f81ecd93808ab2ce6db5e15c68d1ed5fdb283",
+  "methods": {
+    "private func finishMove(": "a969abd58f737a4af45b0241c7465e16408e873426771981f746b57d47861bef",
+    "private func finishMoveAfterInputDrain(": "a545be6632201763224916fe634cbc6571c12860e546dad56f70ff79fd668676"
+  },
+  "SessionLinkSHA256": "cc836dc81de4a973e7f9538ab61ca2b8d3ae0e1ef20ef9ad6b582d68d3d7b24e"
+}

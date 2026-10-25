@@ -3037,6 +3037,7 @@ final class StreamClient: ObservableObject {
         // their next turn, since each checks that it is still `connection`, and its read loop goes on
         // only until the fence's pong (`deliver`), or stops at once without a fence.
         #if os(visionOS)
+        cancelOwnerEnrollment()
         resetVisionPeerStreams()
         bindVisionSentry(to: c)
         bindVisionDisplays(to: c)
@@ -3135,6 +3136,9 @@ final class StreamClient: ObservableObject {
         // connection it came on, which the session no longer reads: the menus waiting settle, and
         // the new connection asks for the top level (the same Mac: its menus stay meanwhile).
         menusMoved()
+        #if os(visionOS)
+        resumeOwnerEnrollment()
+        #endif
         if fenced {
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.fenceTimeout) { [weak self] in
                 guard let self, let released = self.link.release(old) else { return }

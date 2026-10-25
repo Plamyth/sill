@@ -47,3 +47,13 @@ check('cancelOwnerEnrollment()' in block(selection, 'func admitVisionDisplays(')
 session = (ROOT / 'visionOSClient/VisionAppSession.swift').read_text()
 check('controlEnrollment.restore()' not in session and 'client: client' in session, '수동 토큰 복원 대신 실제 client 바인딩')
 print(f'PASS {checks} Vision 생산 배선·수동 UI 제거·원형 보존 정적 검사. 렌더·기기 수용 아님.')
+move = json.loads((Path(__file__).parent / 'move-upstream.json').read_text())
+for marker, digest in move['methods'].items():
+    method = block(stream, marker)
+    if marker == 'private func finishMoveAfterInputDrain(':
+        check(method.index('cancelOwnerEnrollment()') < method.index('link.handOver(') and method.index('cancelOwnerEnrollment()') < method.index('link.adopt('), '두 실제 link 우회 전환 전 등록 취소')
+        check(method.index('menusMoved()') < method.index('resumeOwnerEnrollment()') < method.index('followBestPath()'), '실제 새 peer 메뉴 전환 이후 등록 재개')
+        method = method.replace('        cancelOwnerEnrollment()\n', '').replace('        #if os(visionOS)\n        resumeOwnerEnrollment()\n        #endif\n', '')
+    check(hashlib.sha256(method.encode()).hexdigest() == digest, '등록 훅 외 실제 입력·handover·media 원형 보존 ' + marker)
+check(hashlib.sha256((ROOT / 'iOSClient/SessionLink.swift').read_bytes()).hexdigest() == move['SessionLinkSHA256'], '실제 SessionLink fence/adopt 원형 보존')
+print('PASS 5 peer handover 등록 배선 및 입력·media·fence 원형 보존 정적 검사.')
