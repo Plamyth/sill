@@ -91,6 +91,7 @@ private final class EventSource {
     private func curtainsAreEffective() -> Bool { surfacesSafe }
     private var rows: [[String: Any]] = []
     private var observationCalls = 0
+    private var closedWindowObservations = 0
     private func updateCurtainText() {}
     private final class Button {
         var isHiddenOrHasHiddenAncestor = false, isEnabled = true, ancestorsHaveFullOpacity = true
@@ -135,6 +136,7 @@ private final class EventSource {
         observationCalls += 1
         guard windowReadbackAvailable else { return nil }
         let closed = Set(curtains.values.filter { !$0.panel.isVisible }.map { CGWindowID($0.panel.windowNumber) })
+        if !closed.isEmpty { closedWindowObservations += 1 }
         return rows.filter { row in
             windowRemains || !closed.contains((row[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0)
         } as CFArray
@@ -327,6 +329,7 @@ private final class EventSource {
     }
 
     func run() async {
+        await delayedSurfaceReleaseChecks()
         ownedContainerChecks()
         await additionalReviewChecks()
         await selfReturnChecks()
@@ -642,6 +645,27 @@ private final class EventSource {
         recovery(); secureInput = true
         Checks.check(prepareAuthenticatedLocalRelease { true } && release() && releaseVerified,
                      "인증 종료 뒤 남은 secure input은 OS 상태 변경 없이 소유 자원 제거만 검증")
+    }
+
+    private func delayedSurfaceReleaseChecks() async {
+        fresh(); challengeID = nil
+        curtains = [1: Curtain()]
+        rows = [window(90, pid: getpid(), rect: CGRect(x: 0, y: 0, width: 1000, height: 1000))]
+        windowRemains = true
+        let initialReads = closedWindowObservations
+        var finished = false
+        let task = Task { @MainActor in
+            let result = await self.release()
+            finished = true
+            return result
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while closedWindowObservations == initialReads && !finished && ContinuousClock.now < deadline { await Task.yield() }
+        Checks.check(closedWindowObservations > initialReads && !finished && !releaseVerified,
+                     "WindowServer가 닫힌 자기 창을 아직 보고하면 해제 결과를 확정하지 않고 대기")
+        windowRemains = false
+        Checks.check(await task.value && releaseVerified,
+                     "실제 창 부재 ACK 뒤에만 동일 surface 해제 완료")
     }
 }
 
