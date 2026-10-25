@@ -108,6 +108,7 @@ final class InputInjector {
             }
             pointer(action, at: point(x, y, in: rect), from: device)
         case .scroll(let x, let y, let dx, let dy):
+            if case .rejectedMomentum = scrollState { return }
             if case .handoff = scrollState, !protectedScrollPending, scrollScope != nil {
                 scrollState = .idle
                 scrollScope = nil
@@ -333,7 +334,7 @@ final class InputInjector {
         let w1 = Int32(wheel1), w2 = Int32(wheel2)
 
         switch scrollState {
-        case .handoff:
+        case .handoff, .rejectedMomentum:
             return
         case .idle:
             postScroll(at: location, wheel1: w1, wheel2: w2, phase: nil, momentum: nil)
@@ -373,6 +374,7 @@ final class InputInjector {
     /// never sees an Ended without its Began.
     private enum ScrollState {
         case handoff
+        case rejectedMomentum
         case idle                     // bare wheel deltas: an older client, or a lone tick
         case gesture(begun: Bool)     // fingers down; begun once the Began event is out
         case momentum(begun: Bool)    // fingers up, client-generated coast
@@ -401,6 +403,7 @@ final class InputInjector {
             scrollState = .gesture(begun: false)
             scrollRemainder = .zero
         case .ended:
+            if case .rejectedMomentum = scrollState { return }
             if case .gesture(begun: true) = scrollState {
                 postScroll(at: location, wheel1: 0, wheel2: 0, phase: .ended, momentum: nil)
             }
@@ -411,7 +414,7 @@ final class InputInjector {
             if isolatesPhysicalInput || scrollScope != nil {
                 guard case .handoff = scrollState, let scope = scrollScope,
                       let current = postingScope, scope.matches(current), scope.isCurrent() else {
-                    if !protectedScrollPending { scrollState = .handoff }
+                    if !protectedScrollPending { scrollState = .rejectedMomentum }
                     return
                 }
             } else {
@@ -449,7 +452,7 @@ final class InputInjector {
         scrollWatchdog?.cancel()
         let timeout: Double
         switch scrollState {
-        case .idle, .handoff: scrollWatchdog = nil; return
+        case .idle, .handoff, .rejectedMomentum: scrollWatchdog = nil; return
         case .gesture: timeout = Self.gestureIdleTimeout
         case .momentum: timeout = Self.momentumIdleTimeout
         }
@@ -471,7 +474,7 @@ final class InputInjector {
         switch state {
         case .gesture: scrollState = .gesture(begun: false)
         case .momentum: scrollState = .momentum(begun: false)
-        case .idle, .handoff: break
+        case .idle, .handoff, .rejectedMomentum: break
         }
         Stats.shared.bump("in.scrollTimeout")
     }
