@@ -108,6 +108,11 @@ final class InputInjector {
             }
             pointer(action, at: point(x, y, in: rect), from: device)
         case .scroll(let x, let y, let dx, let dy):
+            if case .handoff = scrollState, !protectedScrollPending, scrollScope != nil {
+                scrollState = .idle
+                scrollScope = nil
+                scrollRemainder = .zero
+            }
             if let owner = scrollScope {
                 guard let protectedScope, owner.matches(protectedScope), owner.isCurrent() else { return }
             }
@@ -282,7 +287,7 @@ final class InputInjector {
     /// not been.
     func isUpOfSomethingDown(_ event: InputEvent, from device: KeyStrokes.Device) -> Bool {
         DroppedInput.stillGoes(event, keyDown: { usage in
-            keys.isDown(usage) || KeyStrokes.virtualKeys[usage].flatMap { keyReleaseDebts[$0]?.owner } == device
+            keys.down[usage] == device || KeyStrokes.virtualKeys[usage].flatMap { keyReleaseDebts[$0]?.owner } == device
         }, leftDown: left.owner == device, rightDown: right.owner == device)
     }
 
@@ -571,6 +576,7 @@ final class InputInjector {
     }
 
     private func key(hidUsage: UInt16, down: Bool, modifiers: UInt64, from device: KeyStrokes.Device) {
+        if !down, let owner = keys.down[hidUsage], owner != device { return }
         if let key = KeyStrokes.virtualKeys[hidUsage], let debt = keyReleaseDebts[key] {
             guard !down, debt.owner == device else { return }
         }
