@@ -420,7 +420,7 @@ def comment_fixture(test_id):
     scene = fixture(test_id)
     scene['nodes'][0]['frame']['y'] = 300
     scene['nodes'].append(dict(scene['nodes'][0], id='42478F2C-F81D-4AC9-B714-ECBD9DDAC411',
-                               text='댓글 없는 카드', frame={'x':1050,'y':700,'width':260,'height':120}))
+                               text='댓글 없는 카드', frame={'x':1050,'y':500,'width':260,'height':120}))
     scene['annotations'] = [{'id':'9A061215-B87D-4549-8548-56DDC78FC103','nodeId':NODE,
                              'text':'보존할 AI 주석 👩🏽‍💻','author':'AI'}]
     return scene

@@ -71,6 +71,7 @@ final class CanvasBridgeUITests: XCTestCase {
         app.buttons["요소 이동"].firstMatch.tap()
         let node = app.descendants(matching:.any).matching(identifier:"canvasNode-\(nodeID)").firstMatch
         XCTAssertTrue(node.waitForExistence(timeout:8))
+        XCTAssertTrue(node.isHittable)
         node.tap()
         app.buttons["도구"].firstMatch.tap()
         app.buttons["구조 데이터"].tap()
