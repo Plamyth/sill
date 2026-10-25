@@ -580,21 +580,23 @@ package final class HostAudioPrivacy {
         guard hal.observe(nil, changed: nil) else {
             fail(.listeners)
             schedule()
-            return false
+            return failedReturn("HAL 감시 종료")
         }
         guard localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
               participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
               let beforeRestore = try? readSnapshot(), original.matches(beforeRestore) || (try? beforeRestore.plan(allowPartial: true).isEmpty) == true,
               localReturnID == request, privacyGeneration == generation,
-              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
-        guard hal.restoreLocal(original), let restored = try? readSnapshot(), original.matches(restored),
+              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return failedReturn("원본 HAL·요청 재검증") }
+        let restorationApplied = hal.restoreLocal(original)
+        guard restorationApplied, let restored = try? readSnapshot(), original.matches(restored),
               !Task.isCancelled, ContinuousClock.now < deadline,
               localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
               participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else {
             fail(.readback)
             returningLocal = false
             _ = reconcile()
-            return false
+            print("[로컬 복귀 단계] HAL 복원 반환 applied=\(restorationApplied)")
+            return failedReturn("원본 HAL 복원·재조회")
         }
         var audioAttempted = false
         var audioCommitted = false
@@ -615,7 +617,8 @@ package final class HostAudioPrivacy {
             fail(.persistence)
             returningLocal = false
             if persistenceHealthy { _ = reconcile() }
-            return false
+            print("[로컬 복귀 단계] 최종 commit 반환 surfacesCompleted=\(completed) audioAttempted=\(audioAttempted) audioCommitted=\(audioCommitted)")
+            return failedReturn("화면·입력 보호 해제와 완료 저장")
         }
         latched = false
         localState = nil

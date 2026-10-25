@@ -211,13 +211,18 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
     }
 
     func restoreLocal(_ original: LocalAudioState) -> Bool {
+        var phase = "초기 원본·HAL 읽기"
+        var restored = false
+        defer { print("[로컬 HAL 복원] completed=\(restored) phase=\(phase)") }
         guard original.isValid, var snapshot = try? read() else { return false }
-        if original.matches(snapshot) { return true }
+        if original.matches(snapshot) { restored = true; return true }
+        phase = "보호 상태·장치 집합"
         guard (try? snapshot.plan(allowPartial: true).isEmpty) == true,
               Set(snapshot.devices.map(\.uid)) == Set(original.devices.map(\.uid)) else { return false }
         var changes: [(uid: String, selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope,
                        value: UInt32?, streamID: UInt32?)] = []
         for saved in original.devices {
+            phase = "장치 불변 식별"
             guard let device = snapshot.devices.first(where: { $0.uid == saved.uid }),
                   saved.matches(LocalAudioState.Device(device), includeActive: false) else { return false }
             for (scope, value, current) in [(kAudioObjectPropertyScopeInput, saved.inputMuted, device.inputMuted),
@@ -234,7 +239,9 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         changes += [(original.inputUID, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, nil, nil),
                     (original.outputUID, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, nil, nil),
                     (original.systemOutputUID, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyScopeGlobal, nil, nil)]
-        for (uid, selector, scope, muteValue, streamID) in changes {
+        for (index, item) in changes.enumerated() {
+            let (uid, selector, scope, muteValue, streamID) = item
+            phase = "단계 \(index) 원본 재조회"
             guard let before = try? read(), before == snapshot,
                   let index = before.devices.firstIndex(where: { $0.uid == uid }),
                   let resolved = try? registry.resolve(uid), resolved == before.devices[index].id else { return false }
@@ -257,23 +264,38 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
                 default: expected.systemOutput = resolved
                 }
             }
+            phase = "단계 \(index) 쓰기 가능·현재 식별 재검증"
             var property = address(selector, scope)
             guard canWrite(object, &property),
                   let final = try? read(), final == before,
                   (try? registry.resolve(uid)) == resolved else { return false }
             if expected == before { continue }
-            guard ops.set(object, &property, 4, &value) == noErr,
-                  let after = try? read(), after == expected else { return false }
+            phase = "단계 \(index) setter"
+            let status = ops.set(object, &property, 4, &value)
+            if status != noErr { print("[로컬 HAL 복원] setter 거부 selector=\(selector) status=\(status)") }
+            guard status == noErr else { return false }
+            phase = "단계 \(index) setter 후 재조회"
+            guard let after = try? read() else { return false }
+            guard after == expected else {
+                print("[로컬 HAL 복원] setter 재조회 불일치 selector=\(selector) inputMatches=\(after.input == expected.input) outputMatches=\(after.output == expected.output) systemOutputMatches=\(after.systemOutput == expected.systemOutput) devicesMatch=\(after.devices == expected.devices)")
+                return false
+            }
             snapshot = expected
         }
-        return original.matches(snapshot)
+        phase = "최종 원본 일치"
+        restored = original.matches(snapshot)
+        return restored
     }
 
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool {
         observationID = nil
         var retained: [Listener] = []
         for var listener in listeners {
-            if ops.removeListener(listener.object, &listener.address, .main, listener.block) != noErr { retained.append(listener) }
+            let status = ops.removeListener(listener.object, &listener.address, .main, listener.block)
+            if status != noErr {
+                print("[로컬 HAL 감시] listener 제거 거부 selector=\(listener.address.mSelector) status=\(status)")
+                retained.append(listener)
+            }
         }
         listeners = retained
         guard retained.isEmpty else { return false }
