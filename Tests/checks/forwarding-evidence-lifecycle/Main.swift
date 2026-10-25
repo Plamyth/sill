@@ -115,7 +115,7 @@ import StreamProtocol
             let arms = f.privacy.arms
             await f.finish()
             print("FIRST_HTTP active=\(allowed) arms=\(arms) (expected active=true arms=1)")
-            if !allowed || arms != 1 { throw CocoaError(.validationMissingMandatoryProperty) }
+            if !allowed || arms != 1 { throw NSError(domain: "FirstHTTPBinding", code: 1) }
             return
         }
         if CommandLine.arguments.contains("--observe-only") {
