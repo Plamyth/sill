@@ -20,10 +20,12 @@ private final class VisionAudioNativeGraph: VisionAudioGraphDriving {
         if previous == nil {
             previous = Previous(category: session.category, mode: session.mode, options: session.categoryOptions)
         }
+        let options: AVAudioSession.CategoryOptions = profile == .microphone
+            ? [.mixWithOthers, .allowBluetoothHFP, .allowBluetoothA2DP] : [.mixWithOthers]
         expected = Previous(category: profile == .microphone ? .playAndRecord : .playback,
-                            mode: .default, options: [.mixWithOthers])
+                            mode: .default, options: options)
         try session.setCategory(profile == .microphone ? .playAndRecord : .playback,
-                                mode: .default, options: [.mixWithOthers])
+                                mode: .default, options: options)
         try session.setActive(true)
     }
 
