@@ -123,7 +123,10 @@ extension StreamClient {
         if visionAudioPrivacy?.version != 2 {
             return "Mac 음소거 보호를 지원하는 호스트로 업데이트하면 오디오를 사용할 수 있습니다."
         }
-        if visionAudioPrivacy?.protected != true { return "Mac 음소거 보호를 확인하지 못해 오디오를 중지했습니다." }
+        if visionAudioPrivacy?.protected != true {
+            return visionAudioPrivacyBlocked ? "Mac 음소거 보호를 확인하지 못해 오디오를 중지했습니다." :
+                "원격 오디오를 선택하면 Mac 음소거 보호를 준비합니다."
+        }
         return "Mac은 음소거를 유지합니다. 허용한 오디오는 같은 저장된 Mac에 다시 연결할 때만 자동 재개합니다."
     }
     var visionPlaybackDesired: Bool { VisionRemoteAudioStore.shared.model.intent.desired(.playback, hostKey: visionAudioTrustedHostKey) }
@@ -175,8 +178,7 @@ extension StreamClient {
             if !wasProtected { visionAudioPrivacyRevision &+= 1 }
             visionAudioPrivacyBlocked = false
         }
-        if list.audioPrivacy?.protected == false ||
-            (wasProtected && (list.audioPrivacy?.version != 2 || list.audioPrivacy?.protected != true)) {
+        if wasProtected && (list.audioPrivacy?.version != 2 || list.audioPrivacy?.protected != true) {
             visionAudioPrivacyBlocked = true
             VisionRemoteAudioStore.shared.withdrawPrivacy(self)
         }
