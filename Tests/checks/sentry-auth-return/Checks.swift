@@ -91,6 +91,47 @@ import Foundation
 }
 
 @MainActor func runChecks() async {
+    for expire in [false, true] {
+        let fixture = ReturnFixture(), hal = ReturnHAL(), newlyQueuedStop = ReturnGate()
+        var stops = 0, intentClears = 0, latchClears = 0
+        hal.restoreSucceeds = true
+        let privacy = HostAudioPrivacy(hal: hal, latched: true,
+            localState: try! LocalAudioState(hal.snapshot),
+            clearLatch: { latchClears += 1; return true }, authenticateLocal: { _ in true },
+            nativeStartup: fixture.startup)
+        privacy.revokeForLocalReturn = {
+            stops += 1
+            if stops == 2 { await newlyQueuedStop.wait() }
+            fixture.nativeStopped = true
+            return true
+        }
+        privacy.inspectForLocalReturn = { fixture.facts(fixture.nativeStopped) }
+        privacy.authenticatedLocalReturnWillCommit = { admission in
+            guard admission() else { return false }
+            intentClears += 1
+            fixture.nativeStopped = false
+            return true
+        }
+        let task = Task { await privacy.requestLocalReturn(budgetMilliseconds: expire ? 100 : 2_000) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while !newlyQueuedStop.entered, ContinuousClock.now < deadline { await Task.yield() }
+        check(newlyQueuedStop.entered, "intent 해제가 새로 예약한 native Stop을 최종 검사 전에 기다림")
+        check(intentClears == 1 && latchClears == 0 && hal.restores == 0 && fixture.registry.isFenced,
+              "새 Stop이 진행 중인 동안 HAL·latch·입력 복귀로 진행하지 않음")
+        if expire {
+            check(!(await task.value), "intent 후 Stop 대기가 기한을 넘으면 복귀 거절")
+            newlyQueuedStop.release()
+            for _ in 0..<30 { await Task.yield() }
+            check(privacy.latched && latchClears == 0 && hal.restores == 0,
+                  "늦게 끝난 Stop은 만료된 복귀의 HAL·latch를 해제하지 않음")
+        } else {
+            newlyQueuedStop.release()
+            check(await task.value, "같은 요청의 실제 native Stop 종료 후 로컬 복귀 완료")
+            check(stops == 2 && latchClears == 1 && hal.restores == 1 && !privacy.latched,
+                  "검증된 두 번째 종료 뒤 HAL과 latch는 한 번만 복귀")
+        }
+        privacy.stop()
+    }
     for unavailable in ["participants", "startup", "original", "recovery"] {
         let fixture = ReturnFixture(), hal = ReturnHAL()
         if unavailable == "participants" { fixture.registry.unregister(.relay) }
@@ -329,10 +370,11 @@ import Foundation
               inputChannels: 0, outputChannels: 2, inputMuted: nil, outputMuted: false)
     ], input: 1, output: 2, systemOutput: 2)
     var writes = 0, restores = 0
+    var restoreSucceeds = false
     func read() throws -> PrivacyAudioSnapshot { snapshot }
     func write(_ change: PrivacyAudioWrite) -> Bool { writes += 1; return false }
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool { true }
-    func restoreLocal(_ state: LocalAudioState) -> Bool { restores += 1; return false }
+    func restoreLocal(_ state: LocalAudioState) -> Bool { restores += 1; return restoreSucceeds }
 }
 
 Task { @MainActor in await runChecks(); exit(0) }
