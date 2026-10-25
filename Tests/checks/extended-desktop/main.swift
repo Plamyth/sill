@@ -161,18 +161,21 @@ struct Checks {
                "disconnect clears remembered eligibility and dimensions")
         onDemand.desktop.shutdown()
 
-        let earlyHello = Rig(), earlyCoordinator = CoordinatorFixture(earlyHello.desktop)
-        earlyCoordinator.independentStreamsEnabled = true
-        earlyCoordinator.connections[aid] = a
-        earlyCoordinator.routes[aid] = Route()
-        earlyCoordinator.receiveHello(Hello(), from: a)
-        expect(earlyHello.displays.isEmpty, "비동기 화면 세션 준비 전 hello는 가상 화면을 만들지 않음")
-        earlyCoordinator.peerStreams[aid] = PeerFixture()
-        await earlyCoordinator.receive(request, from: a)
-        expect(earlyHello.displays.count == 1 && earlyHello.desktop.requesters == [aid],
-               "hello 뒤 화면 세션이 준비돼도 명시 요청으로 확장 화면을 생성함")
-        earlyCoordinator.disconnect(a)
-        earlyHello.desktop.shutdown()
+        for catalogPublished in [false, true] {
+            let earlyHello = Rig(), earlyCoordinator = CoordinatorFixture(earlyHello.desktop)
+            earlyCoordinator.independentStreamsEnabled = true
+            if catalogPublished { earlyCoordinator.connections[aid] = a }
+            earlyCoordinator.routes[aid] = Route()
+            earlyCoordinator.receiveHello(Hello(), from: a)
+            expect(earlyHello.displays.isEmpty, "비동기 화면 세션 준비 전 hello는 가상 화면을 만들지 않음")
+            earlyCoordinator.connections[aid] = a
+            earlyCoordinator.peerStreams[aid] = PeerFixture()
+            await earlyCoordinator.receive(request, from: a)
+            expect(earlyHello.displays.count == 1 && earlyHello.desktop.requesters == [aid],
+                   "카탈로그 준비 \(catalogPublished) 상태의 hello 뒤 명시 요청으로 확장 화면을 생성함")
+            earlyCoordinator.disconnect(a)
+            earlyHello.desktop.shutdown()
+        }
 
         for invalid in 0..<10 {
             let refused = Rig(), coordinator = CoordinatorFixture(refused.desktop), peer = PeerFixture()
