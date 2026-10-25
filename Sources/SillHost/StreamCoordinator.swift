@@ -2505,8 +2505,7 @@ package final class StreamCoordinator {
         let paired = route?.fingerprint.map { remote?.isPaired($0) == true } ?? false
         guard !shuttingDown, ExtendedDesktop.eligible(appKitLoop: appKitLoop, synthetic: synthetic,
             connected: connections[id] === connection && connection.state == .ready,
-            encrypted: route?.encrypted == true, paired: paired, device: hello.device),
-            !independentStreamsEnabled || peerStreams[id]?.isClosed == false else {
+            encrypted: route?.encrypted == true, paired: paired, device: hello.device) else {
             extendedDesktopEligible.remove(id)
             return
         }
