@@ -10,6 +10,7 @@ import os
 import signal
 from pathlib import Path
 import plistlib
+import re
 import runpy
 import secrets
 import shutil
@@ -242,7 +243,7 @@ def deploy(config, work, source):
     stop_owned(config, work)
     return result
 
-def run_live_harness(args, log, on_ready, timeout=180):
+def run_live_harness(args, log, on_ready, timeout=180, ready_marker='CCR_ROTATION_LIVE_READY'):
     with log.open('w') as output:
         process = subprocess.Popen(args, env=ENV, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.monotonic() + timeout
@@ -250,7 +251,7 @@ def run_live_harness(args, log, on_ready, timeout=180):
         try:
             while process.poll() is None:
                 require(time.monotonic() < deadline, 'live_rotation_ui_timeout')
-                if not applied and 'CCR_ROTATION_LIVE_READY' in log.read_text():
+                if not applied and ready_marker in log.read_text():
                     on_ready()
                     applied = True
                 time.sleep(0.1)
@@ -264,7 +265,7 @@ def run_live_harness(args, log, on_ready, timeout=180):
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
 
-def harness(config, work, method, variables=None, on_ready=None):
+def harness(config, work, method, variables=None, on_ready=None, ready_marker='CCR_ROTATION_LIVE_READY'):
     lease(config)
     derived = work / 'HarnessDerivedData'
     if not list((derived / 'Build/Products').glob('*.xctestrun')):
@@ -281,6 +282,9 @@ def harness(config, work, method, variables=None, on_ready=None):
             value['EnvironmentVariables']['CCR_TEST_BUNDLE'] = BUNDLE
             for name in ['CCR_ROTATION_EXPECTED', 'CCR_ROTATION_DELTA']:
                 value['EnvironmentVariables'].pop(name, None)
+            for name in list(value['EnvironmentVariables']):
+                if name.startswith('CCR_REVIEW_'):
+                    del value['EnvironmentVariables'][name]
             value['EnvironmentVariables'].update(variables or {})
     runs[0].write_bytes(plistlib.dumps(run))
     result = work / (method + '-' + str(time.time_ns()) + '.xcresult')
@@ -291,7 +295,7 @@ def harness(config, work, method, variables=None, on_ready=None):
     if on_ready is None:
         command(args, log, 180)
     else:
-        run_live_harness(args, log, on_ready)
+        run_live_harness(args, log, on_ready, ready_marker=ready_marker)
     return result
 
 def strict_canvas_png(data):
@@ -415,6 +419,179 @@ def accept_rotation(config, work, server, vault, test_id):
     write(work / 'rotation-functional-readback.json', proof)
     return proof
 
+def review_fixture(test_id):
+    # Same canonical header and four markers as VaultReviewCard; all other bytes are sentinels.
+    metadata = {'cardID':'11111111-1111-4111-8111-111111111111',
+                'eventID':'22222222-2222-4222-8222-222222222222',
+                'ratedAt':1700000000, 'dueAt':1700086400}
+    return {'path':'CCR-Review-' + test_id + '.md', 'metadata':metadata,
+            'prefix':'---\r\ntitle: 복습 자체 검사\r\n---\r\n\r\n바깥 원문 👩🏽‍💻 e\u0301 한\r\n\r\n',
+            'suffix':'바깥 끝 · 유지\r\n```text\r\n수정 금지\r\n```\r\n',
+            'question':'한글 질문 👩🏽‍💻 e\u0301', 'answer':'원래 답 한 · 보존'}
+
+def review_text(fixture, question, answer, metadata):
+    return fixture['prefix'] + '\n'.join([
+        '<!-- ccr-review-card:v1 ' + json.dumps(metadata,ensure_ascii=False,sort_keys=True,separators=(',',':')) + ' -->',
+        '<!-- ccr-review-front -->',question,'<!-- ccr-review-back -->',answer,'<!-- /ccr-review-card -->','']) + fixture['suffix']
+
+def review_note(server, vault, path, expected=None):
+    code, note = request(server,'GET','/vault/note?' + urllib.parse.urlencode({'path':path}))
+    require(code == 200 and note.get('path') == path and isinstance(note.get('text'),str), 'review_note_readback_failed')
+    raw = note['text'].encode()
+    require(note.get('sha256') == sha(raw) and (vault / path).read_bytes() == raw, 'review_note_hash_mismatch')
+    require(expected is None or raw == expected.encode(), 'review_note_bytes_mismatch')
+    return note
+
+def review_journal(config, work, test_id, label, expected=None):
+    destination = work / ('review-journal-' + label + '.json')
+    copy_file(config,work,'Library/Application Support/CCRIntegrationTests/' + test_id +
+              '/state/CanvasNoteEdit/recovery.json',destination)
+    envelope = read(destination)
+    raw = base64.b64decode(envelope.get('payload') or '',validate=True)
+    require(envelope.get('schemaVersion') == 1 and envelope.get('sha256') == sha(raw), 'review_journal_hash_mismatch')
+    record = json.loads(raw) if raw else None
+    if expected is None:
+        require(record is None, 'review_journal_not_cleared')
+    else:
+        require(record is not None and record.get('schemaVersion') == 1 and
+                record.get('sceneID','').lower() == test_id.lower() and
+                all(record.get(k) == v for k,v in expected.items()) and
+                record.get('submittedText') is None and record.get('nodeID') is None and record.get('blockID') is None,
+                'review_journal_draft_mismatch')
+    return str(destination)
+
+def review_writes(work, path):
+    audit = work / 'review-note-writes.jsonl'
+    require(audit.is_file(), 'review_wire_evidence_missing')
+    rows = [json.loads(line) for line in audit.read_text().splitlines()]
+    return [row for row in rows if row.get('path') == path]
+
+def accept_review(config, work, server, vault, test_id):
+    card = review_fixture(test_id)
+    path = card['path']; endpoint = '/vault/note?' + urllib.parse.urlencode({'path':path})
+    metadata = card['metadata']
+    original = review_text(card,card['question'],card['answer'],metadata)
+    other_path = 'CCR-Review-Other-' + test_id + '.md'
+    other = dict(metadata,cardID='33333333-3333-4333-8333-333333333333')
+    other_text = review_text(card,'다른 노트 질문','다른 노트 답',other)
+    for name, text in [(path,original),(other_path,other_text)]:
+        url = '/vault/note?' + urllib.parse.urlencode({'path':name})
+        code, _ = request(server,'GET',url)
+        require(code == 404, 'review_fixture_already_exists')
+        code, _ = request(server,'PUT',url,{'baseSha256':None,'text':text})
+        require(code == 200, 'review_fixture_seed_failed')
+        review_note(server,vault,name,text)
+    baseline = work / 'review-scene-before.json'
+    state = 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/CanvasScene.json'
+    copy_file(config,work,state,baseline)
+    seed = review_note(server,vault,path,original)
+    question = card['question'] + ' / UIKit question'
+    answer = card['answer'] + ' / UIKit answer'
+    draft = review_text(card,question,answer,metadata)
+    variables = {'CCR_REVIEW_NOTE':path, 'CCR_REVIEW_INITIAL_QUESTION':card['question'],
+                 'CCR_REVIEW_INITIAL_ANSWER':card['answer'], 'CCR_REVIEW_QUESTION':question,
+                 'CCR_REVIEW_ANSWER':answer, 'CCR_REVIEW_DRAFT':draft}
+    results = {}
+    results['draft'] = str(harness(config,work,'testReviewEditDraftPreserved',variables))
+    review_note(server,vault,path,original)
+    pending = review_journal(config,work,test_id,'draft',
+        {'relayAddress':server['address'],'base':seed,'draft':draft})
+    results['save'] = str(harness(config,work,'testReviewSaveDraft',variables))
+    edited = review_note(server,vault,path,draft)
+    cleared = [review_journal(config,work,test_id,'saved')]
+    results['reopen'] = str(harness(config,work,'testReviewReopen',variables))
+    review_note(server,vault,path,draft)
+
+    remote_question = question + ' / Mac 외부 수정'
+    remote_answer = answer + ' / 양방향 👩🏽‍💻'
+    remote_text = review_text(card,remote_question,remote_answer,metadata)
+    def remote_update(base, text):
+        code, _ = request(server,'PUT',endpoint,{'baseSha256':base,'text':text})
+        require(code == 200, 'review_remote_update_failed')
+        review_note(server,vault,path,text)
+    remote_variables = dict(variables,CCR_REVIEW_REMOTE_QUESTION=remote_question,
+                            CCR_REVIEW_REMOTE_ANSWER=remote_answer,CCR_REVIEW_REMOTE_TEXT=remote_text)
+    results['live'] = str(harness(config,work,'testReviewLiveRemoteRevision',remote_variables,
+        on_ready=lambda:remote_update(edited['sha256'],remote_text),ready_marker='CCR_REVIEW_LIVE_READY'))
+    latest = review_note(server,vault,path,remote_text)
+    variables.update(CCR_REVIEW_QUESTION=remote_question,CCR_REVIEW_ANSWER=remote_answer,CCR_REVIEW_DRAFT=remote_text)
+    results['remoteReopen'] = str(harness(config,work,'testReviewReopen',variables))
+    started = int(time.time())
+    before_grade = review_writes(work,path)
+    results['good'] = str(harness(config,work,'testReviewGood',variables))
+    rated = review_note(server,vault,path)
+    headers = re.findall(r'^<!-- ccr-review-card:v1 (.+) -->$',rated['text'],re.MULTILINE)
+    require(len(headers) == 1, 'review_metadata_missing')
+    grade = json.loads(headers[0])
+    require(set(grade) == set(metadata) and grade['cardID'] == metadata['cardID'], 'review_card_identity_changed')
+    event = grade['eventID']
+    require(isinstance(event,str) and str(uuid.UUID(event)) == event and
+            event not in [metadata['eventID'],metadata['cardID'],str(uuid.UUID(int=0))], 'review_event_identity_invalid')
+    require(type(grade['ratedAt']) is int and type(grade['dueAt']) is int and
+            started <= grade['ratedAt'] <= int(time.time()) and grade['dueAt']-grade['ratedAt'] == 86400,
+            'review_good_interval_invalid')
+    rated_text = review_text(card,remote_question,remote_answer,grade)
+    review_note(server,vault,path,rated_text)
+    grade_writes = review_writes(work,path)[len(before_grade):]
+    require(grade_writes == [{'path':path,'status':200,'baseSha256':latest['sha256'],
+                              'textSha256':rated['sha256']}], 'review_duplicate_or_failed_grade_request')
+    cleared.append(review_journal(config,work,test_id,'rated'))
+    variables['CCR_REVIEW_DRAFT'] = rated_text
+    results['ratedReopen'] = str(harness(config,work,'testReviewReopen',variables))
+    unchanged = review_note(server,vault,path,rated_text)
+    require(unchanged['sha256'] == rated['sha256'] and unchanged['modifiedAt'] == rated['modifiedAt'],
+            'review_duplicate_rating_effect')
+    require(review_writes(work,path) == before_grade + grade_writes, 'review_reopen_repeated_grade_request')
+
+    stale_question = remote_question + ' / stale 차단'
+    stale_text = review_text(card,stale_question,remote_answer,grade)
+    stale_variables = dict(variables,CCR_REVIEW_REMOTE_QUESTION=stale_question,
+                           CCR_REVIEW_REMOTE_ANSWER=remote_answer,CCR_REVIEW_REMOTE_TEXT=stale_text)
+    before_stale = review_writes(work,path)
+    results['stale'] = str(harness(config,work,'testReviewStaleSessionRejected',stale_variables,
+        on_ready=lambda:remote_update(rated['sha256'],stale_text),ready_marker='CCR_REVIEW_STALE_READY'))
+    current = review_note(server,vault,path,stale_text)
+    require(review_writes(work,path) == before_stale + [{'path':path,'status':200,
+            'baseSha256':rated['sha256'],'textSha256':current['sha256']}], 'review_stale_ui_submitted_write')
+    code, _ = request(server,'PUT',endpoint,{'baseSha256':latest['sha256'],'text':remote_text})
+    require(code == 409, 'review_stale_cas_not_rejected')
+    code, _ = request(server,'PUT',endpoint,{'baseSha256':current['sha256'],'text':'unauthorized'},authenticated=False)
+    require(code == 401, 'review_unauthenticated_write_not_rejected')
+    review_note(server,vault,path,stale_text)
+    before_missing = review_writes(work,path)
+    variables.update(CCR_REVIEW_QUESTION=stale_question,CCR_REVIEW_DRAFT=stale_text)
+    held = work / 'review-missing-source-held.md'
+    require(not held.exists(), 'review_missing_source_backup_exists')
+    def hide_source():
+        (vault / path).rename(held)
+        code, _ = request(server,'GET',endpoint)
+        require(code == 404, 'review_missing_source_not_observed')
+    try:
+        results['missing'] = str(harness(config,work,'testReviewMissingSourceRejected',variables,
+            on_ready=hide_source,ready_marker='CCR_REVIEW_MISSING_READY'))
+    finally:
+        if held.exists():
+            require(not (vault / path).exists(), 'review_source_recreated_while_missing')
+            held.rename(vault / path)
+    review_note(server,vault,path,stale_text)
+    cleared.append(review_journal(config,work,test_id,'rejected'))
+    results['finalReopen'] = str(harness(config,work,'testReviewReopen',variables))
+    final = review_note(server,vault,path,stale_text)
+    require(final['sha256'] == current['sha256'] and final['modifiedAt'] == current['modifiedAt'],
+            'review_rejected_operation_changed_note')
+    require(review_writes(work,path) == before_missing, 'review_missing_source_submitted_write')
+    review_note(server,vault,other_path,other_text)
+    after = work / 'review-scene-after.json'
+    copy_file(config,work,state,after)
+    require(read(after) == read(baseline), 'review_changed_unrelated_scene')
+    proof = {'ui':results,'edited':edited,'rated':rated,'final':final,'metadata':grade,
+             'draftJournal':pending,'clearedJournals':cleared,'sceneBefore':str(baseline),'sceneAfter':str(after),
+             'otherNotePreserved':True,'scenePreserved':True,'singleRatingEffect':True,
+             'gradeRequests':grade_writes,'wireEvidence':str(work / 'review-note-writes.jsonl'),
+             'inputSource':'UIKit keyboard automation; not Apple Pencil'}
+    write(work / 'review-functional-readback.json',proof)
+    return proof
+
 def relay_runtime(config, work, source):
     relay_repo = Path(config['relayRepo']).resolve()
     require(command(['git', 'rev-parse', 'HEAD'], cwd=relay_repo).strip() == config['relayCommit'], 'relay_source_mismatch')
@@ -428,7 +605,8 @@ def relay_runtime(config, work, source):
              Path(config['repo']) / 'Scripts/ipad-test-runtime/NativeSceneEncoder.swift', '-o', encoder], work / 'scene-encoder-build.log')
     ctx = read(work / 'context.json'); server = {'token': ctx['token'], 'address': ctx['relayAddress'], 'encoder': encoder}
     conf = {'relayRepo': str(relay_repo), 'vault': str(vault), 'store': str(work / 'relay-store'),
-            'snapshot': str(snapshot), 'hidden': str(hidden), 'token': ctx['token'], 'host': config['relayHost'], 'port': config['relayPort']}
+            'snapshot': str(snapshot), 'hidden': str(hidden), 'token': ctx['token'], 'host': config['relayHost'], 'port': config['relayPort'],
+            'noteAudit':str(work / 'review-note-writes.jsonl')}
     write(work / 'relay-private.json', conf)
     lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
     previous = work / 'relay-lease.json'
@@ -554,11 +732,12 @@ def accept(config, work, source):
         command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
         reverse = harness(config, work, 'testReopenRemoteRevision')
         rotation = accept_rotation(config, work, server, vault, test_id)
+        review = accept_review(config, work, server, vault, test_id)
         require(snapshots(config, work, 'user-after-accept') == before, 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
         require(all(observed.get(k) == source[k] for k in source) and observed.get('executableSHA256') == deployed['executableSHA256'], 'accepted_runtime_mismatch')
         proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed,
-                 'rotation':rotation, 'originalPreserved': True}
+                 'rotation':rotation, 'review':review, 'originalPreserved': True}
         write(work / 'functional-readback.json', proof)
         accepted = True
     finally:

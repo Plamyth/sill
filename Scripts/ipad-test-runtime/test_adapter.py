@@ -245,5 +245,161 @@ class AdapterContract(unittest.TestCase):
                     adapter.deploy({'outputRoot':str(root),'buildCache':str(root)},root/'work',{'commit':'a'*40,'tree':'b'*40})
                 command.assert_not_called()
 
+class ReviewAcceptance(unittest.TestCase):
+    def exercise(self, directory, failure=None):
+        work = Path(directory); vault = work / 'isolated-vault'; vault.mkdir()
+        test_id = '12345678-1234-4234-8234-123456789abc'
+        methods = []; saved = {}
+        def record(path, status, body):
+            row = {'path':path,'status':status,'baseSha256':body['baseSha256'],
+                   'textSha256':adapter.sha(body['text'].encode())}
+            with (work / 'review-note-writes.jsonl').open('a') as output:
+                output.write(json.dumps(row)+'\n')
+        def request(server, method, endpoint, body=None, authenticated=True):
+            import urllib.parse
+            path = urllib.parse.parse_qs(urllib.parse.urlsplit(endpoint).query)['path'][0]
+            file = vault / path
+            if not authenticated:
+                if method == 'PUT': record(path,401,body)
+                return (200 if failure == 'unauth_not_rejected' else 401), {'error':'Unauthorized'}
+            if method == 'PUT':
+                current = adapter.sha(file.read_bytes()) if file.exists() else None
+                if current != body['baseSha256']:
+                    record(path,409,body)
+                    return (200 if failure == 'stale_not_rejected' else 409), {'error':'stale'}
+                file.write_bytes(body['text'].encode())
+                record(path,200,body)
+            if not file.exists():
+                return (200 if failure == 'missing_not_rejected' and saved.get('rated') else 404), {'error':'missing'}
+            if failure == 'server_readback_absent' and saved.get('saved'):
+                return 503, {'error':'missing result'}
+            text = file.read_bytes().decode()
+            return 200, {'path':path, 'text':text, 'sha256':adapter.sha(file.read_bytes()), 'modifiedAt':'fixture'}
+        def journal(destination, payload):
+            import base64
+            raw = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else b''
+            adapter.write(destination, {'schemaVersion':1, 'sha256':adapter.sha(raw),
+                **({'payload':base64.b64encode(raw).decode()} if payload is not None else {})})
+        def copy(config, target, source, destination, **kwargs):
+            if source.endswith('CanvasScene.json'):
+                adapter.write(destination, {'id':test_id, 'revision':8 if failure == 'scene' and saved.get('rated') else 7,
+                                            'nodes':[{'text':'unrelated'}]})
+            else:
+                payload = saved.get('pending')
+                journal(destination, payload)
+                if failure == 'journal_hash' and payload:
+                    envelope = adapter.read(destination); envelope['sha256'] = '0'*64
+                    adapter.write(destination,envelope)
+        def harness(config, target, method, variables=None, on_ready=None, **kwargs):
+            methods.append(method)
+            v = variables or {}; path = v['CCR_REVIEW_NOTE']; file = vault / path
+            if method == 'testReviewEditDraftPreserved':
+                base = request({},'GET','/vault/note?path='+path)[1]
+                saved['pending'] = {'schemaVersion':1, 'sceneID':test_id,
+                    'relayAddress':'http://127.0.0.1:8793', 'base':base, 'draft':v['CCR_REVIEW_DRAFT']}
+            elif method == 'testReviewSaveDraft':
+                if failure != 'ui_did_not_save': file.write_bytes(v['CCR_REVIEW_DRAFT'].encode())
+                saved['saved'] = True
+                if failure != 'journal_not_cleared': saved['pending'] = None
+            elif method == 'testReviewGood':
+                if failure != 'ui_did_not_rate':
+                    import re
+                    text = file.read_bytes().decode(); header = re.search(r'<!-- ccr-review-card:v1 (.*?) -->',text)
+                    metadata = json.loads(header[1])
+                    metadata.update(eventID='44444444-4444-4444-8444-444444444444', ratedAt=1800000000,
+                                    dueAt=1800086400 if failure != 'wrong_due' else 1800086401)
+                    if failure == 'card_id': metadata['cardID']='55555555-5555-4555-8555-555555555555'
+                    if failure == 'event_id': metadata['eventID']='invalid'
+                    if failure == 'event_id_reused': metadata['eventID']='22222222-2222-4222-8222-222222222222'
+                    text = text[:header.start(1)] + json.dumps(metadata,sort_keys=True,separators=(',',':')) + text[header.end(1):]
+                    if failure == 'outside': text += 'unrequested'
+                    body = {'baseSha256':adapter.sha(file.read_bytes()),'text':text}
+                    request({},'PUT','/vault/note?path='+path,body)
+                    if failure == 'duplicate_grade_request': record(path,200,body)
+            if on_ready: on_ready()
+            if method == 'testReviewReopen' and failure == 'duplicate_rating' and 'rated' in saved:
+                file.write_bytes(file.read_bytes().replace(b'1800000000',b'1800000001').replace(b'1800086400',b'1800086401'))
+            if method == 'testReviewGood': saved['rated']=True
+            if failure == 'other_note':
+                for other in vault.glob('*.md'):
+                    if other != file: other.write_bytes(b'damaged')
+            return work / (method + '.xcresult')
+        with patch.object(adapter,'request',side_effect=request), patch.object(adapter,'copy_file',side_effect=copy), \
+             patch.object(adapter,'harness',side_effect=harness), patch.object(adapter.time,'time',return_value=1800000000):
+            result = adapter.accept_review({},work,{'address':'http://127.0.0.1:8793'},vault,test_id)
+        return result, methods
+
+    def test_review_ui_to_note_and_journal_roundtrip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proof, methods = self.exercise(directory)
+            self.assertEqual(proof['metadata']['dueAt']-proof['metadata']['ratedAt'],86400)
+            self.assertEqual(proof['metadata']['eventID'],'44444444-4444-4444-8444-444444444444')
+            self.assertIn('testReviewEditDraftPreserved',methods)
+            self.assertIn('testReviewLiveRemoteRevision',methods)
+            self.assertIn('testReviewStaleSessionRejected',methods)
+            self.assertIn('testReviewMissingSourceRejected',methods)
+            self.assertTrue(proof['otherNotePreserved'])
+            self.assertTrue(proof['scenePreserved'])
+            self.assertTrue(proof['singleRatingEffect'])
+
+    def test_review_cannot_accept_ui_only_or_corrupt_results(self):
+        for failure in ['ui_did_not_save','ui_did_not_rate','wrong_due','card_id','event_id',
+                        'outside','other_note','journal_hash','duplicate_rating','duplicate_grade_request',
+                        'server_readback_absent','stale_not_rejected','unauth_not_rejected','missing_not_rejected',
+                        'journal_not_cleared','scene','event_id_reused']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises((adapter.Held,ValueError)):
+                    self.exercise(directory,failure)
+
+    def test_review_wire_audit_observes_existing_endpoint_without_changing_response(self):
+        import subprocess
+        script = r'''
+const assert = require('node:assert/strict'), vm = require('node:vm');
+const {EventEmitter} = require('node:events');
+const source = require('node:fs').readFileSync(0,'utf8');
+const server = new EventEmitter(); server.listen = () => {};
+const audit = [], config = {relayRepo:'/relay',noteAudit:'/owned/audit'};
+const files = {readFileSync:() => JSON.stringify(config),appendFileSync:(path,text) => {
+  assert.equal(path,'/owned/audit'); audit.push(JSON.parse(text));
+}};
+vm.runInNewContext(source,{process:{argv:['node','relay.js','config']},URL,Buffer,
+  require:name => name === 'node:fs' ? files : name === '/relay/relay/server.js'
+    ? {createServer:() => server} : require(name)});
+function request(method,url,status,body) {
+  const req = new EventEmitter(), res = new EventEmitter();
+  req.method=method; req.url=url; res.statusCode=status;
+  server.emit('request',req,res);
+  const bytes = Buffer.from(JSON.stringify(body));
+  req.emit('data',bytes.subarray(0,3)); req.emit('data',bytes.subarray(3));
+  req.emit('end'); res.emit('finish'); assert.equal(res.statusCode,status);
+}
+request('GET','/vault/note?path=untouched.md',200,{});
+request('PUT','/vault/canvas?id=unrelated',200,{});
+assert.equal(audit.length,0);
+const text='한글 👩🏽‍💻 e\u0301';
+for (const status of [200,409,401,503])
+  request('PUT','/vault/note?path=%ED%95%9C%EA%B8%80.md',status,{baseSha256:'a'.repeat(64),text});
+assert.deepEqual(audit.map(row=>row.status),[200,409,401,503]);
+for (const row of audit) {
+  assert.equal(row.path,'한글.md');
+  assert.equal(row.textSha256,require('node:crypto').createHash('sha256').update(text).digest('hex'));
+  assert.equal(row.baseSha256,'a'.repeat(64));
+  assert.deepEqual(Object.keys(row).sort(),['baseSha256','path','status','textSha256']);
+}
+console.log('note audit: four actual response statuses, no response mutation, no raw text/token');
+'''
+        result = subprocess.run(['node','-e',script],input=Path(__file__).with_name('relay.js').read_text(),
+                                text=True,capture_output=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_review_callback_uses_its_own_readiness_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            adapter.run_live_harness([sys.executable,'-c',
+                "import time; print('CCR_ROTATION_LIVE_READY',flush=True); time.sleep(.2); "
+                "print('CCR_REVIEW_LIVE_READY',flush=True); time.sleep(.3)"],Path(directory)/'live.log',
+                lambda:calls.append(True),3,ready_marker='CCR_REVIEW_LIVE_READY')
+            self.assertEqual(calls,[True])
+
 if __name__ == '__main__':
     unittest.main()
