@@ -1,6 +1,5 @@
 import Foundation
 import LocalAuthentication
-import LocalAuthenticationEmbeddedUI
 
 /// Owns the interval before StreamCoordinator installs its real revocation barrier.
 @MainActor
@@ -212,16 +211,18 @@ struct LocalAudioState: Codable, Equatable {
 final class LocalAudioAuthentication {
     static let maximumWaitMilliseconds = 120_000
     @MainActor private final class Attempt {
-        enum Phase { case checking, resetting, authorizing, retired }
+        enum Phase { case preparing, authorizing, retired }
         let operationID: UUID
-        let right = LARight(requirement: .biometry(fallback: .devicePasscode))
+        let context = LAContext()
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(LocalAudioAuthentication.maximumWaitMilliseconds))
-        var phase = Phase.checking
+        var phase = Phase.preparing
         var callbackPending = false
-        var revocationPending = false
-        var revocationAcknowledged = false
-        var needsFinalRevocation = false
-        init(_ operationID: UUID) { self.operationID = operationID }
+        init(_ operationID: UUID) {
+            self.operationID = operationID
+            context.touchIDAuthenticationAllowableReuseDuration = 0
+            context.interactionNotAllowed = false
+            context.localizedCancelTitle = "취소"
+        }
     }
     private var attempt: Attempt?
     private var retiring: Attempt?
@@ -237,13 +238,9 @@ final class LocalAudioAuthentication {
     func cancel() { finish(false) }
 
     func evaluate(operationId: UUID) async -> Bool {
-        guard attempt == nil, !Task.isCancelled else { return false }
-        guard retiring == nil else {
-            print("[로컬 복귀 인증] 이전 권한 폐기와 운영체제 콜백 종료가 미확인입니다. 새 인증을 겹치지 않습니다.")
-            return false
-        }
-        let attempt = Attempt(operationId)
-        self.attempt = attempt
+        guard attempt == nil, retiring == nil, !Task.isCancelled else { return false }
+        let candidate = Attempt(operationId)
+        attempt = candidate
         let accepted = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 completion = continuation
@@ -251,24 +248,39 @@ final class LocalAudioAuthentication {
                     try? await Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))
                     if !Task.isCancelled { self?.finish(false) }
                 }
-                guard attempt.right.state == .unknown else { finish(false); return }
-                attempt.callbackPending = true
-                attempt.right.checkCanAuthorize { [weak self] error in
-                    let errorCode = (error as NSError?)?.code
-                    Task { @MainActor in
-                        attempt.callbackPending = false
-                        guard let self, self.remainsCurrent(attempt) else { return }
-                        guard errorCode == nil else {
-                            print("[로컬 복귀 인증] 정책 사용 불가 code=\(errorCode!)")
-                            self.finish(false); return
+                Task { @MainActor [weak self] in
+                    guard let self, self.remainsCurrent(candidate) else { return }
+                    let window = await self.presentation.begin(invalidated: { [weak self] in
+                        guard self?.attempt === candidate else { return }
+                        self?.cancel()
+                    })
+                    guard self.remainsCurrent(candidate) else { return }
+                    guard window != nil else { self.finish(false); return }
+                    var error: NSError?
+                    guard candidate.context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+                        print("[로컬 복귀 인증] 시스템 인증 정책 사용 불가 code=\(error?.code.description ?? "none")")
+                        self.finish(false)
+                        return
+                    }
+                    candidate.phase = .authorizing
+                    candidate.callbackPending = true
+                    print("[로컬 복귀 인증] 새 LAContext의 시스템 인증창을 요청합니다. 잠금화면 인증 재사용 시간=0.")
+                    candidate.context.evaluatePolicy(.deviceOwnerAuthentication,
+                        localizedReason: "Touch ID 또는 Mac 로그인 암호로 로컬 입출력 복귀") { [weak self] accepted, error in
+                        let errorCode = (error as NSError?)?.code
+                        Task { @MainActor in
+                            candidate.callbackPending = false
+                            guard let self else { return }
+                            guard self.remainsCurrent(candidate) else { return }
+                            print("[로컬 복귀 인증] 시스템 정책 응답 operation=\(candidate.operationID) accepted=\(accepted) errorCode=\(errorCode.map(String.init) ?? "none")")
+                            self.finish(accepted && errorCode == nil)
                         }
-                        self.resetAndAuthorize(attempt)
                     }
                 }
             }
         } onCancel: {
             Task { @MainActor [weak self] in
-                guard self?.attempt === attempt else { return }
+                guard self?.attempt === candidate else { return }
                 self?.finish(false)
             }
         }
@@ -281,39 +293,6 @@ final class LocalAudioAuthentication {
         return true
     }
 
-    private func resetAndAuthorize(_ candidate: Attempt) {
-        candidate.phase = .resetting
-        candidate.callbackPending = true
-        candidate.right.deauthorize { [weak self] in
-            Task { @MainActor in
-                candidate.callbackPending = false
-                guard let self, self.remainsCurrent(candidate) else { return }
-                guard candidate.right.state == .notAuthorized || candidate.right.state == .unknown,
-                      let window = await self.presentation.begin(invalidated: { [weak self] in
-                          guard self?.attempt === candidate else { return }
-                          self?.cancel()
-                      }) else {
-                    if self.remainsCurrent(candidate) { self.finish(false) }
-                    return
-                }
-                guard self.remainsCurrent(candidate) else { return }
-                candidate.callbackPending = true
-                candidate.right.authorize(localizedReason: "Touch ID 또는 macOS 로그인 암호로 로컬 입출력 복귀",
-                                          in: window) { [weak self] error in
-                    let errorCode = (error as NSError?)?.code
-                    Task { @MainActor in
-                        candidate.callbackPending = false
-                        guard let self, self.remainsCurrent(candidate) else { return }
-                        let accepted = errorCode == nil && candidate.right.state == .authorized
-                        print("[로컬 복귀 인증] anchored 권한 응답 operation=\(candidate.operationID) accepted=\(accepted) state=\(candidate.right.state.rawValue) errorCode=\(errorCode.map(String.init) ?? "none")")
-                        self.finish(accepted)
-                    }
-                }
-                candidate.phase = .authorizing
-            }
-        }
-    }
-
     private func finish(_ accepted: Bool) {
         guard let candidate = attempt else { return }
         let continuation = completion
@@ -322,38 +301,16 @@ final class LocalAudioAuthentication {
         candidate.phase = .retired
         retiring = candidate
         expiry?.cancel(); expiry = nil
+        candidate.context.invalidate()
         presentation.end()
-        candidate.needsFinalRevocation = candidate.callbackPending
-        revoke(candidate)
+        settleRetired(candidate)
         continuation?.resume(returning: accepted)
     }
 
-    private func revoke(_ candidate: Attempt) {
-        candidate.revocationPending = true
-        candidate.revocationAcknowledged = false
-        candidate.right.deauthorize { [weak self] in
-            Task { @MainActor in
-                candidate.revocationPending = false
-                candidate.revocationAcknowledged = true
-                self?.settleRetired(candidate)
-            }
-        }
-    }
-
     private func settleRetired(_ candidate: Attempt) {
-        guard retiring === candidate, !candidate.callbackPending, !candidate.revocationPending,
-              candidate.revocationAcknowledged else { return }
-        if candidate.right.state == .authorized, candidate.needsFinalRevocation {
-            candidate.needsFinalRevocation = false
-            revoke(candidate)
-            return
-        }
-        guard candidate.right.state == .notAuthorized || candidate.right.state == .unknown else {
-            print("[로컬 복귀 인증] 권한 폐기 상태 미확인. 재요청을 보류합니다.")
-            return
-        }
+        guard retiring === candidate, !candidate.callbackPending else { return }
         retiring = nil
-        print("[로컬 복귀 인증] 권한 폐기와 콜백 종료 확인. 운영체제 인증창 종료는 별도 확인이 필요합니다.")
+        print("[로컬 복귀 인증] 시스템 인증 context 폐기와 콜백 종료 확인.")
     }
 }
 
