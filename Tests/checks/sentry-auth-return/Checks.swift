@@ -27,6 +27,7 @@ import Foundation
     var nativeStops = 0
     var relayStops = 0
     var inspectHook: (() -> Void)?
+    var relayQuiesceHook: (() -> Void)?
     var inspectionReceipt: ((LocalAudioParticipantRequest) -> LocalAudioParticipantReceipt)?
 
     init() {
@@ -49,6 +50,7 @@ import Foundation
             self.relayStops += 1
             self.relayRequest = request
             if let gate = self.relayGate { await gate.wait() }
+            self.relayQuiesceHook?()
             return .init(request, state: .quiescent, facts: self.facts(true))
         }, inspect: { id in
             self.inspections += 1
@@ -91,6 +93,62 @@ import Foundation
 }
 
 @MainActor func runChecks() async {
+    for outcome in ["settle", "deadline", "cancel", "membership"] {
+        let fixture = ReturnFixture(), hal = ReturnHAL(), queuedStop = ReturnGate()
+        let lifecycle = RemoteAudioCaptureLifecycle()
+        var stops = 0, intentClears = 0, latchClears = 0, finished = false
+        hal.restoreSucceeds = true
+        let privacy = HostAudioPrivacy(hal: hal, latched: true,
+            localState: try! LocalAudioState(hal.snapshot),
+            clearLatch: { latchClears += 1; return true }, authenticateLocal: { _ in true },
+            nativeStartup: fixture.startup)
+        privacy.revokeForLocalReturn = {
+            stops += 1
+            await lifecycle.waitUntilIdle()
+            return lifecycle.isIdle
+        }
+        privacy.inspectForLocalReturn = {
+            .init(admissionFenced: fixture.registry.isFenced, startsSettled: lifecycle.isIdle,
+                  mediaDetached: lifecycle.isIdle, callbacksDrained: lifecycle.isIdle,
+                  buffersEmpty: true, workersExited: lifecycle.isIdle)
+        }
+        fixture.relayQuiesceHook = {
+            check(stops == 1 && lifecycle.isIdle, "relay 중지 전 native 첫 종료는 실제 idle")
+            lifecycle.enqueueStop { await queuedStop.wait() }
+        }
+        privacy.authenticatedLocalReturnWillCommit = { admission in
+            guard admission() else { return false }
+            intentClears += 1
+            return true
+        }
+        let task = Task {
+            let result = await privacy.requestLocalReturn(budgetMilliseconds: outcome == "deadline" ? 100 : 2_000)
+            finished = true
+            return result
+        }
+        await settle { queuedStop.entered && (stops >= 2 || finished) }
+        print("첫 재조회 경계 outcome=\(outcome) stops=\(stops) finished=\(finished) idle=\(lifecycle.isIdle) buffersEmpty=true HAL=\(hal.restores) latch=\(latchClears)")
+        check(!finished && stops == 2 && !lifecycle.isIdle,
+              "뒤 참여자가 예약한 native Stop을 첫 재조회 전에 기다림")
+        check(hal.restores == 0 && latchClears == 0 && intentClears == 0 && fixture.registry.isFenced,
+              "첫 재조회 전 Stop 대기 중 HAL·latch·intent 해제는 0")
+        if outcome == "cancel" { task.cancel() }
+        if outcome == "membership" { fixture.registry.unregister(.relay) }
+        if outcome != "deadline" { queuedStop.release() }
+        let result = await task.value
+        if outcome == "settle" {
+            check(result && lifecycle.isIdle && hal.restores == 1 && latchClears == 1 && intentClears == 1,
+                  "후속 Stop 종료·새 증거 확인 뒤 같은 인증 요청으로 한 번만 복귀")
+        } else {
+            check(!result && privacy.latched && hal.restores == 0 && latchClears == 0 && intentClears == 0,
+                  "\(outcome) 변경은 새 barrier 뒤에도 보호 해제 거절")
+            if outcome == "deadline" { queuedStop.release() }
+            await settle { queuedStop.exited }
+            check(privacy.latched && hal.restores == 0 && latchClears == 0,
+                  "\(outcome) 이후 늦은 native 종료는 HAL·latch를 해제하지 않음")
+        }
+        privacy.stop()
+    }
     for expire in [false, true] {
         let fixture = ReturnFixture(), hal = ReturnHAL(), newlyQueuedStop = ReturnGate()
         var stops = 0, intentClears = 0, latchClears = 0
@@ -101,7 +159,7 @@ import Foundation
             nativeStartup: fixture.startup)
         privacy.revokeForLocalReturn = {
             stops += 1
-            if stops == 2 { await newlyQueuedStop.wait() }
+            if intentClears == 1 { await newlyQueuedStop.wait() }
             fixture.nativeStopped = true
             return true
         }
@@ -127,8 +185,8 @@ import Foundation
         } else {
             newlyQueuedStop.release()
             check(await task.value, "같은 요청의 실제 native Stop 종료 후 로컬 복귀 완료")
-            check(stops == 2 && latchClears == 1 && hal.restores == 1 && !privacy.latched,
-                  "검증된 두 번째 종료 뒤 HAL과 latch는 한 번만 복귀")
+            check(stops == 3 && latchClears == 1 && hal.restores == 1 && !privacy.latched,
+                  "참여자·intent 후 종료를 각각 확인한 뒤 HAL과 latch는 한 번만 복귀")
         }
         privacy.stop()
     }
