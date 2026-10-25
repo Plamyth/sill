@@ -14,7 +14,7 @@ here = Path(__file__).resolve().parent
 node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:3]]
 flags = sys.argv[3:]
 assert flags in [[], ['--observe-only'], ['--http-first']]
-commit = '0bec7a9970b0bd4e15390012b8ade02ed54605c2'
+commit = '4916c2b64ec9e0ce6f34c913ef0f1d2d2f3b6b57'
 names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
          'AudioForwardingParticipants', 'AudioForwardingProtection', 'HostAudioForwardingRuntime']
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in names]
@@ -52,17 +52,17 @@ else:
     def node_source(name):
         return (node_repo / name).read_bytes()
     node_files = {str(p.relative_to(node_repo)) for p in (node_repo / 'server').iterdir() if p.is_file()}
-assert len(pins) == 19 and node_files == set(pins)
+assert len(pins) == 24 and node_files == set(pins)
 node_hashes = {name: hashlib.sha256(node_source(name)).hexdigest() for name in sorted(node_files)}
 assert node_hashes == pins
 with tempfile.TemporaryDirectory(prefix='evidence-lifecycle-', dir=archive) as temporary:
     out = Path(temporary)
     node = out / 'node-source'
     node.mkdir()
-    for name in ['audio-forwarding-authority.js', 'native-audio-control.js', 'audio-session.js']:
-        data = node_source('server/' + name)
-        assert hashlib.sha256(data).hexdigest() == pins['server/' + name]
-        (node / name).write_bytes(data)
+    for name in sorted(pins):
+        data = node_source(name)
+        assert hashlib.sha256(data).hexdigest() == pins[name]
+        (node / Path(name).name).write_bytes(data)
     runtime = out / 'Runtime.swift'
     runtime.write_text(sources[-1].read_text() + '''
 extension HostAudioForwardingRuntime {
