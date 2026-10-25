@@ -874,20 +874,8 @@ final class HostSentryPlatform {
     }
 
     private func ownedAuthenticationWindows() -> [NSWindow] {
-        guard let requestID = localAuthenticationInputPolicy.preparedRequestID,
-              let root = LocalAuthenticationPresentation.registeredWindow(for: requestID),
-              root.identifier?.rawValue == "CCR.LocalAuthentication", root.isVisible, root.isOnActiveSpace,
-              root.windowNumber > 0, root.isOpaque, root.alphaValue == 1,
-              !root.ignoresMouseEvents, root.sharingType == .none,
-              root.level.rawValue == Self.curtainLevel.rawValue + 1,
-              let screen = LocalAuthenticationPresentation.builtinScreen(in: NSScreen.screens),
-              root.screen === screen, screen.frame.contains(root.frame) else { return [] }
-        guard let sheet = root.attachedSheet else { return [root] }
-        guard sheet.sheetParent === root, sheet.isVisible, sheet.isOnActiveSpace,
-              sheet.windowNumber > 0, sheet.alphaValue == 1,
-              sheet.level.rawValue >= root.level.rawValue,
-              sheet.screen === screen, screen.frame.contains(sheet.frame) else { return [] }
-        return [root, sheet]
+        guard let requestID = localAuthenticationInputPolicy.preparedRequestID else { return [] }
+        return LocalAuthenticationPresentation.validatedWindows(for: requestID)
     }
 
     private func ownedAuthenticationWindow(_ row: [String: Any]) -> NSWindow? {

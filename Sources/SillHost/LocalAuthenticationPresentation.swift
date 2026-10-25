@@ -21,11 +21,25 @@ final class LocalAuthenticationPresentation {
         return owner.window
     }
 
+    static func validatedWindows(for operationID: UUID) -> [NSWindow] {
+        guard let root = registeredWindow(for: operationID),
+              root.identifier?.rawValue == "CCR.LocalAuthentication", root.isVisible, root.isOnActiveSpace,
+              root.windowNumber > 0, root.isOpaque, root.alphaValue == 1,
+              !root.ignoresMouseEvents, root.sharingType == .none,
+              root.level.rawValue == Int(CGWindowLevelForKey(.screenSaverWindow)) + 2,
+              let screen = builtinScreen(in: NSScreen.screens), root.screen === screen,
+              screen.frame.contains(root.frame) else { return [] }
+        guard let sheet = root.attachedSheet else { return [root] }
+        guard sheet.sheetParent === root, sheet.isVisible, sheet.isOnActiveSpace,
+              sheet.windowNumber > 0, sheet.alphaValue == 1,
+              sheet.level.rawValue >= root.level.rawValue,
+              sheet.screen === screen, screen.frame.contains(sheet.frame) else { return [] }
+        return [root, sheet]
+    }
+
     func matches(operationID: UUID) -> Bool {
-        guard Self.registeredOwner === self, self.operationID == operationID,
-              let window, window.isVisible,
-              let screen = Self.builtinScreen(in: NSScreen.screens), window.screen === screen else { return false }
-        return screen.frame.contains(window.frame) && window.level.rawValue == Int(CGWindowLevelForKey(.screenSaverWindow)) + 2
+        guard Self.registeredOwner === self, self.operationID == operationID, let window else { return false }
+        return Self.validatedWindows(for: operationID).first === window
     }
 
     func begin(operationID: UUID, invalidated: @escaping @MainActor () -> Void) async -> NSWindow? {

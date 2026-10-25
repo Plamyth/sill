@@ -19,13 +19,21 @@ paths = [root / name for name in [
 ]] + [here / ('SystemContextChecks.swift' if system_context else 'ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 local = paths[1].read_text()
+evaluated_revision = 'working-tree'
 if '--baseline' in sys.argv:
+    evaluated_revision = '438569be69099b2d369d12ebc494be81cf3ae7da'
     local = subprocess.check_output(['git', 'show',
         '438569be69099b2d369d12ebc494be81cf3ae7da:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
 elif '--right-layer-baseline' in sys.argv:
+    evaluated_revision = '229c02613b341139981edbe280df0243553bc144'
     local = subprocess.check_output(['git', 'show',
         '229c02613b341139981edbe280df0243553bc144:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
+elif system_context:
+    evaluated_revision = '4af9d14db8bbbc7392d9f25b108cd8e2f3358a8b'
+    local = subprocess.check_output(['git', 'show',
+        evaluated_revision + ':Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
 elif legacy:
+    evaluated_revision = '8c6e1d90dbc3c75dfcb682a12b9fa9d9f1e7d6e7'
     local = subprocess.check_output(['git', 'show',
         '8c6e1d90dbc3c75dfcb682a12b9fa9d9f1e7d6e7:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
 authentication_hash = hashlib.sha256(local.encode()).hexdigest()
@@ -59,7 +67,7 @@ result = subprocess.run(command, input=program, text=True, timeout=160)
 after = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 print(json.dumps({'sourceSHA256': before, 'sourceUnchanged': before == after,
     'evaluatedAuthenticationSHA256': authentication_hash,
-    'evaluatedRevision': '8c6e1d90dbc3c75dfcb682a12b9fa9d9f1e7d6e7' if legacy else 'working-tree',
+    'evaluatedRevision': evaluated_revision,
     'unanchoredMutant': '--unanchored-mutant' in sys.argv,
     'authenticationBoundary': ('inert LAContext' if legacy or system_context else 'inert LARight and NSWindow') + '; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
     'actualAuthenticationHALUIJournalDeviceActions': 0, 'exitCode': result.returncode}), flush=True)

@@ -128,6 +128,7 @@ private final class EventSource {
         static var requestID: UUID?
         static func registeredWindow(for id: UUID) -> Panel? { requestID == id ? root : nil }
         static func builtinScreen(in screens: [Screen]) -> Screen? { screens.first }
+        __PRODUCTION_WINDOW_VALIDATION__
     }
 
     private func CGWindowListCopyWindowInfo(_ options: CGWindowListOption, _ id: CGWindowID) -> CFArray? {

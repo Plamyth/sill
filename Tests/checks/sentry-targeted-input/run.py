@@ -94,6 +94,7 @@ authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
     platform[platform.index('    private static let authenticationExecutables ='):platform.index('    private static func processIdentity(')] + '\n' +
     '\n'.join(block(platform, m) for m in ['private static func verifiedAuthenticationOwner(',
         'private func refreshInputObservation(', 'private func isObservedAuthenticationWindow(', 'private func ownedAuthenticationWindows(', 'private func ownedAuthenticationWindow(', 'private func refreshRemoteTarget(', 'private func nextAuthenticationEventTag(']))
+authentication_window = authentication_window.replace('__PRODUCTION_WINDOW_VALIDATION__', block(read('Sources/SillHost/LocalAuthenticationPresentation.swift'), 'static func validatedWindows('))
 authentication_window = re.sub(r'\bCGEvent\b', 'Event', authentication_window)
 authentication_window = re.sub(r'\bCGEventSource\b', 'EventSource', authentication_window)
 sdk_authentication_window = authentication_window
