@@ -206,6 +206,7 @@ final class HostSentry {
             return true
         }
         guard prepareRelease() else {
+            print("[로컬 화면·입력 복귀] 입력 대상 종료·보호 해제 준비를 확인하지 못했습니다.")
             persistenceHealthy = persist(.latched)
             admission.update(verified: false, persistenceHealthy: persistenceHealthy,
                              reason: "원래 입력 대상의 종료를 확인하지 못해 보호를 유지합니다.")
@@ -213,6 +214,7 @@ final class HostSentry {
             return false
         }
         guard persist(.releasing) else {
+            print("[로컬 화면·입력 복귀] releasing 상태 저장을 확인하지 못했습니다.")
             persistenceHealthy = false
             admission.update(verified: false, persistenceHealthy: false,
                              reason: "로컬 복귀 상태를 저장하지 못해 보호를 유지합니다.")
@@ -229,6 +231,7 @@ final class HostSentry {
     }
 
     private func restoreFailedReturn(_ reason: String) -> Bool {
+        print("[로컬 화면·입력 복귀] 해제 거부 reason=\(reason)")
         persistenceHealthy = persist(.latched)
         let recoveryAvailable = persistenceHealthy && localReturnUnavailableReason() == nil
         let restored = recoveryAvailable ? surfaces.engage() && surfaces.verify() : surfaces.restoreCurtains()
