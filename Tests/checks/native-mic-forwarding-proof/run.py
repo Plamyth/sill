@@ -14,7 +14,8 @@ names = ['HostAudioPrivacyModel', 'LocalAudioParticipants', 'SillVirtualMicropho
 sources = [host / (name + '.swift') for name in names]
 protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
 fake = root / 'Tests/checks/host-voice-protection/FakeHAL.swift'
-inputs = sources + protocol + [fake, here / 'Main.swift', Path(__file__).resolve(),
+network = root / 'Tests/checks/microphone-uplink/Network.swift'
+inputs = sources + protocol + [fake, network, here / 'Main.swift', Path(__file__).resolve(),
     host / 'LocalAudioReturn.swift', host / 'HostAudioPrivacy.swift', host / 'StreamCoordinator.swift']
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 record = {'sourceSHA256': hashes, 'actualMicrophoneOrHALWrites': 0, 'actualStreamStarts': 0,
@@ -25,15 +26,30 @@ with tempfile.TemporaryDirectory(prefix='native-mic-proof-') as temporary:
     core = (host / 'HostAudioPrivacy.swift').read_text().split('\nextension HostAudioPrivacy {', 1)[0]
     startup = (host / 'LocalAudioReturn.swift').read_text().split('\n@MainActor\nfinal class LocalAudioAuthentication', 1)[0]
     generated = {'CoreAudioPrivacyHAL.swift': core, 'NativeAudioStartup.swift': startup}
+    coordinator = (host / 'StreamCoordinator.swift').read_text()
+    start = coordinator.index('    private func nativeAudioBindingReady(')
+    end = coordinator.index('\n    private func audioPrivacyReady()', start)
+    boundary = coordinator[start:end].replace('private func', 'func')
+    generated['BindingBoundary.swift'] = '''import Foundation
+import Network
+@MainActor final class BindingBoundary {
+    struct Route { let fingerprint: Data? }
+    var routes: [ObjectIdentifier: Route] = [:]
+    var authenticated = true
+    var nativeAudioBindingAuthorized: ((Data, PrivacyAudioScope) -> Bool)?
+    func audioRouteAuthorized(_ connection: NWConnection) -> Bool { authenticated }
+''' + boundary + '\n}\n'
     for name, text in generated.items():
         (out / name).write_text(text)
     record['productionExtractionSHA256'] = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in generated.items()}
     base = ['xcrun', 'swiftc', '-package-name', 'Sill', '-module-cache-path', str(out / 'cache')]
     commands = [
+        ('network', base + ['-emit-library', '-emit-module', '-module-name', 'Network', str(network),
+            '-o', str(out / 'libNetwork.dylib'), '-emit-module-path', str(out / 'Network.swiftmodule')]),
         ('protocol', base + ['-emit-library', '-emit-module', '-module-name', 'StreamProtocol',
             *map(str, protocol), '-o', str(out / 'libStreamProtocol.dylib'),
             '-emit-module-path', str(out / 'StreamProtocol.swiftmodule')]),
-        ('compile', base + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
+        ('compile', base + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol', '-lNetwork',
             '-Xlinker', '-rpath', '-Xlinker', str(out), *map(str, sources),
             *[str(out / name) for name in generated], str(fake), str(here / 'Main.swift'), '-o', str(out / 'checks')]),
         ('checks', [str(out / 'checks')])]
