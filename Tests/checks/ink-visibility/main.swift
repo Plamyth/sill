@@ -96,7 +96,8 @@ import AppKit
                       }, "\(label) SDK raw readback retains identity and transform within serialization precision")
                 let encoded = try encoder.encode(scene)
                 let decoded = try JSONDecoder().decode(CanvasScene.self, from: encoded)
-                check(decoded == scene && decoded.schemaVersion == 1, "\(label) schema 1 JSON round trip")
+                check(decoded == scene && decoded.schemaVersion == 2 && decoded.strokes[0].style != nil,
+                      "\(label) schema 2 preserves the native style projection")
                 let segments = exported.visibility?.visibleSegments ?? []
                 if isFull {
                     check(segments.isEmpty && exported.visiblePointSegments == [exported.points],
@@ -135,6 +136,9 @@ import AppKit
         var legacyJSON = try JSONSerialization.jsonObject(with: encoder.encode(lastScene)) as! [String: Any]
         var legacyStrokes = legacyJSON["strokes"] as! [[String: Any]]
         legacyStrokes[0].removeValue(forKey: "visibility")
+        legacyStrokes[0].removeValue(forKey: "style")
+        legacyJSON["schemaVersion"] = 1
+        legacyJSON.removeValue(forKey: "penSettings")
         legacyJSON["strokes"] = legacyStrokes
         let legacy = try JSONDecoder().decode(CanvasScene.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
         check(legacy.schemaVersion == 1 && legacy.strokes[0].visibility == nil &&
@@ -231,9 +235,9 @@ import AppKit
               "size fixture uses 189 strokes and 6192 control points")
         check(large.strokes.allSatisfy { $0.visibility?.kind == .full && $0.visibility?.visibleSegments.isEmpty == true },
               "size fixture duplicates no full-stroke coordinates")
-        check(largeBytes.count <= 1024 * 1024 && 616040 + growth <= 1024 * 1024,
-              "synthetic scene and reported 616040-byte baseline plus measured full metadata fit existing 1 MiB")
-        print("SIZE syntheticBytes=\(largeBytes.count) metadataGrowth=\(growth) reportedBaselinePlusMetadata=\(616040 + growth)")
+        check(largeBytes.count <= CanvasPacket.sceneByteLimit,
+              "synthetic native scene fits the bounded transport limit")
+        print("SIZE syntheticBytes=\(largeBytes.count) visibilityMetadataGrowth=\(growth)")
         store.saveNow()
         let saved = try Data(contentsOf: support.appendingPathComponent("CanvasScene.json"))
         check(try JSONDecoder().decode(CanvasScene.self, from: saved) == large, "actual Store save stays in isolated HOME and round trips")

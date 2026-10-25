@@ -121,7 +121,7 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
         timeOffset:Double(i) * 0.1,size:CGSize(width:5,height:5),opacity:1,force:0.5,azimuth:0,altitude:1) }
     let islands = NSBezierPath(rect:CGRect(x:15,y:10,width:35,height:60))
     islands.appendRect(CGRect(x:90,y:10,width:35,height:60))
-    let stroke = PKStroke(ink:PKInk(.pen,color:.white),
+    let stroke = PKStroke(ink:PKInk(.pen,color:.yellow),
         path:PKStrokePath(controlPoints:points,creationDate:Date(timeIntervalSince1970:1)),
         transform:CGAffineTransform(translationX:8,y:12),mask:islands)
     let drawing = PKDrawing(strokes:[stroke])
@@ -129,6 +129,7 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     canvas.scene = CanvasScene()
     canvas.scene.width = 256
     canvas.scene.height = 192
+    canvas.choosePenSettings(.init(color: .cyan, width: 8), expectedScene: canvas.scene)
     canvas.updateDrawing(drawing)
     _ = canvas.scene.addNode(kind:.note,at:CanvasPoint(x:140,y:20),text:"iPad 글자 교정 결과 가방")
     let firstScene = canvas.scene
@@ -147,6 +148,11 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     try restored.importScene(firstDecoded)
     check(restored.scene == firstScene && firstRead.noteSha256 == firstSave.noteSha256,
           "actual Obsidian scene JSON is reimported with the same scene and source identities")
+    check(firstScene.effectivePenSettings == .init(color: .cyan, width: 8) &&
+          restored.scene.penSettings == firstScene.penSettings &&
+          firstDecoded.strokes[0].style == firstScene.strokes[0].style &&
+          firstDecoded.strokes[0].style?.color?.red == 1 && firstDecoded.strokes[0].style?.color?.green == 1,
+          "actual ObsidianVault preserves next-pen settings independently of existing yellow stroke styles")
     check(!restored.rulerEnabled && !restored.rulerIsActive(isVisible:true) && restored.scene == firstScene,
           "a new Store reopens the exact vault scene with the session-only ruler initially off")
     let nativeStroke = restored.drawing.strokes[0]
@@ -168,7 +174,9 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     check(pixels(image) == pixels(reopenedImage),
           "native ink pixels including the erased gap remain identical after Obsidian reopen")
     var changedScene = firstDecoded
-    changedScene.revision += 1
+    let remotePen = CanvasPenSettingsChange(expected: firstDecoded.effectivePenSettings,
+        settings: .init(color: .white, width: 2))
+    _ = try changedScene.setPenSettings(remotePen, sceneID: changedScene.id, baseRevision: changedScene.revision)
     changedScene.nodes[0].text = "에이전트가 Obsidian 자료를 보완했습니다"
     let changedSave = try bridge.saveCanvas(changedScene,png:png,sha:firstSave.noteSha256)
     let changedRead = try bridge.canvas(firstScene.id)
@@ -177,6 +185,9 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     check(restored.scene.nodes[0].text == changedScene.nodes[0].text &&
           restored.scene.drawingBase64 == firstScene.drawingBase64 && changedRead.noteSha256 == changedSave.noteSha256,
           "external structured edit returns to the Store without replacing original ink")
+    check(restored.scene.effectivePenSettings == remotePen.settings &&
+          restored.scene.strokes == firstScene.strokes && restored.penTool.width == 2,
+          "vault readback applies remote next-pen settings while retaining original native stroke colors")
     do {
         _ = try bridge.saveCanvas(firstScene,png:png,sha:firstSave.noteSha256)
         check(false,"stale scene save must be refused")

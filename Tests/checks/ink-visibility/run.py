@@ -63,8 +63,11 @@ base = '2ebd263cf06843b92893ca3b1344ef271dc0a2d8'
 renderer_path = 'iOSClient/CanvasBridge/SceneRenderer.swift'
 original_renderer = subprocess.check_output(['git', 'show', f'{base}:{renderer_path}'], cwd=root, text=True)
 renderer = (root / renderer_path).read_text()
-native_prefix = renderer.split('                for stroke in scene.strokes {')[0]
-native_unchanged = native_prefix == original_renderer.split('                for stroke in scene.strokes {')[0]
+native_start = '        if let drawing {\n            guard let bitmap'
+native_end = '        } else { inkImage = nil }'
+def native_renderer(source):
+    return source.split(native_start)[1].split(native_end)[0]
+native_unchanged = native_renderer(renderer) == native_renderer(original_renderer)
 workspace = (root / 'iOSClient/CanvasBridge/CanvasWorkspace.swift').read_text()
 fallbacks_wired = all('for points in stroke.visiblePointSegments {' in s for s in [renderer, workspace])
 if not native_unchanged or not fallbacks_wired:

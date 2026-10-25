@@ -151,7 +151,7 @@ struct CanvasWorkspace: View {
             do { try await Task.sleep(for:.milliseconds(700)) } catch { return }
             while !Task.isCancelled {
                 if canvasVaultEnabled && (!store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
-                    !store.scene.links.isEmpty) {
+                    !store.scene.links.isEmpty || store.scene.penSettings != nil) {
                     await refreshCanvasFromVault()
                     await synchronizeCanvasToVault()
                 }
@@ -256,10 +256,15 @@ struct CanvasWorkspace: View {
             guard let packet = store.packet else { return }
             for _ in 0..<90 {
                 if Task.isCancelled { return }
-                if let change = try? await relay.revision(for:packet.packetId) {
-                    store.applyAgentRevision(change)
+                do {
+                    if let change = try await relay.revision(for:packet.packetId) {
+                        store.applyAgentRevision(change)
+                        return
+                    }
+                } catch let error as CanvasPenSettingsError {
+                    store.status = "\(error.rawValue) · \(error.localizedDescription)"
                     return
-                }
+                } catch { }
                 try? await Task.sleep(for:.seconds(2))
             }
         }
@@ -300,6 +305,7 @@ struct CanvasWorkspace: View {
             Picker("그리기 도구",selection:$store.mode) {
                 ForEach(CanvasMode.allCases,id:\.self) { Text($0.rawValue).tag($0) }
             }
+            penSettingsMenu
             Toggle("자", isOn: $store.rulerEnabled)
                 .accessibilityHint("그리기 화면에서만 표시합니다. 자를 끄면 손가락으로 캔버스를 이동하고 확대할 수 있습니다.")
                 .accessibilityIdentifier("canvasRuler")
@@ -336,6 +342,32 @@ struct CanvasWorkspace: View {
             Button("내보내기") { exportOpen = true }
         }
         .frame(minWidth:44,minHeight:44)
+    }
+
+    private var penSettingsMenu: some View {
+        let scene = store.scene
+        let settings = scene.effectivePenSettings
+        return Menu("다음 획의 펜 설정") {
+            Picker("펜 색", selection: Binding(get: { settings.color }, set: { color in
+                store.choosePenSettings(.init(color: color, width: settings.width), expectedScene: scene)
+            })) {
+                ForEach(CanvasPenSettings.Color.allCases, id: \.self) { color in
+                    Text(color.label).frame(minWidth: 44, minHeight: 44).tag(color)
+                }
+            }.accessibilityIdentifier("canvasPenColor")
+            Picker("펜 굵기 · CCR 포인트", selection: Binding(get: { settings.width }, set: { width in
+                store.choosePenSettings(.init(color: settings.color, width: width), expectedScene: scene)
+            })) {
+                ForEach(CanvasPenSettings.widths, id: \.self) { width in
+                    Text("\(Int(width))포인트").frame(minWidth: 44, minHeight: 44).tag(width)
+                }
+            }.accessibilityIdentifier("canvasPenWidth")
+        }
+        .disabled(store.inkBusy)
+        .accessibilityLabel("다음 획의 펜 설정")
+        .accessibilityValue("\(settings.color.label), \(Int(settings.width))포인트")
+        .accessibilityHint("기존 획은 바꾸지 않으며 다음에 그리는 펜 획부터 적용합니다.")
+        .accessibilityIdentifier("canvasPenSettings")
     }
 
     private var foldButton: some View {
@@ -643,6 +675,7 @@ struct CanvasWorkspace: View {
               let priorDrawing = try? PKDrawing(data:priorDrawingData),
               prior.id == local.id, prior.schemaVersion == local.schemaVersion,
               prior.width == local.width, prior.height == local.height,
+              prior.effectivePenSettings == local.effectivePenSettings,
               prior.revision < local.revision,
               prior.strokes.count < local.strokes.count,
               priorDrawing.strokes.count == prior.strokes.count,
@@ -877,6 +910,7 @@ struct CanvasWorkspace: View {
 
     private func strokeView(_ stroke: InkStroke) -> some View {
         Path { path in
+            guard stroke.style == nil else { return }
             for points in stroke.visiblePointSegments {
                 guard let first = points.first else { continue }
                 path.move(to:CGPoint(x:first.x,y:first.y))
@@ -1245,6 +1279,8 @@ struct CanvasWorkspace: View {
             if let revision = try await relay.revision(for:packet.packetId) {
                 store.applyAgentRevision(revision)
             } else { store.status = "에이전트 주석을 기다리고 있습니다." }
+        } catch let error as CanvasPenSettingsError {
+            store.status = "\(error.rawValue) · \(error.localizedDescription)"
         } catch { store.status = "주석 확인 실패: \(error.localizedDescription)" }
     }
 }
