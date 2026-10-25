@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 route = json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'CCR-Vision'], text=True))
-ARCHIVE = Path(route['path']) / 'vision-native-gestures-20261026'
+ARCHIVE = Path(route['path']) / 'vision-gesture-intervals-20261026'
 assert ARCHIVE.is_dir()
 paths = ['iOSClient/StreamClient.swift','iOSClient/InputOverlay.swift','iOSClient/KeyChords.swift','iOSClient/SessionLink.swift','Sources/SillHost/KeyStrokes.swift','Sources/SillHost/SourceInputFence.swift','Tests/vision-pointer/main.swift','Tests/checks/fence/main.swift','Tests/checks/swift_platform.py']
 for directory in ['visionOSClient','Sources/StreamProtocol','Tests/checks/vision-input-controls']:
@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='native-input-', dir=ARCHIVE) as folder:
     for p in paths:
         target=temp/p; target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(ROOT/p,target)
     (temp/'received-source-sha256.json').write_text(json.dumps(before))
-    result=subprocess.run(['/Users/ambrion/.local/bin/mini-ephemeral-source','run','--source',str(temp),'--owner','01a13005-ff61-7780-b0e8-6dc171de1c9d','--job','vision-native-gestures-20261026','--','python3','-B','Tests/checks/vision-input-controls/native-run.py'],capture_output=True,text=True)
+    result=subprocess.run(['/Users/ambrion/.local/bin/mini-ephemeral-source','run','--source',str(temp),'--owner','01a13005-ff61-7780-b0e8-6dc171de1c9d','--job','vision-gesture-intervals-20261026','--','python3','-B','Tests/checks/vision-input-controls/native-run.py'],capture_output=True,text=True)
     log=result.stdout+result.stderr
     (ARCHIVE/'worker-result.log').write_text(log); print(log,end='')
 after={p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in paths}

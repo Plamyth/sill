@@ -166,6 +166,23 @@ func runLifecycleTests() {
         coalesced.balanced("coalesced native pinches balance both click pairs")
     }
 
+    let recovered = LifecycleRig()
+    recovered.view.changed(contact(0, id: 71))
+    recovered.view.changed(contact(0.02, id: 72))
+    recovered.view.changed(GestureValue(first: [
+        contact(0.10, 300, 400, .ended, id: 71).first![0],
+        contact(0.11, 300, 400, .ended, id: 72).first![0],
+        contact(0.12, id: 73).first![0]
+    ]))
+    recovered.view.ended(contact(0.22, 300, 400, .ended, id: 73))
+    let recoveredClicks = recovered.sent.filter {
+        if case .pointer(.leftDown, _, _) = $0 { return true }; return false
+    }.count
+    FileHandle.standardOutput.write(Data("native temporal overlap recovery clicks=\(recoveredClicks) expected=1\n".utf8))
+    check(recovered.sent == [.pointer(.move, x: 0.3, y: 0.4)] + clickEvents,
+          "native pinch after completed overlapping contacts is admitted in the same collection")
+    recovered.balanced("native overlap recovery balances only the new click")
+
     let lateScroll = LifecycleRig()
     lateScroll.view.changed(contact(0))
     lateScroll.view.changed(contact(0.8, 500, 600))
