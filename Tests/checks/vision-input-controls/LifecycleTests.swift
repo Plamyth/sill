@@ -151,6 +151,89 @@ func runLifecycleTests() {
                                .pointer(.leftUp, x: 0.3, y: 0.4)]
     check(doubleTap.sent == clickEvents + clickEvents, "two quick native pinches send exactly two balanced clicks")
 
+    for reversed in [false, true] {
+        let coalesced = LifecycleRig()
+        coalesced.view.changed(contact(0, id: 71))
+        let terminal = contact(0.10, 300, 400, .ended, id: 71).first![0]
+        let next = contact(0.12, id: 72).first![0]
+        let batch = reversed ? [next, terminal] : [terminal, next]
+        coalesced.view.changed(GestureValue(first: batch))
+        coalesced.view.ended(contact(0.22, 300, 400, .ended, id: 72))
+        let count = coalesced.sent.filter { if case .pointer(.leftDown, _, _) = $0 { return true }; return false }.count
+        FileHandle.standardOutput.write(Data("native temporal pinch handoff reversed=\(reversed) clicks=\(count) expected=2\n".utf8))
+        check(coalesced.sent == clickEvents + clickEvents,
+              "nonoverlapping native pinch batch retains two clicks in either collection order")
+        coalesced.balanced("coalesced native pinches balance both click pairs")
+    }
+
+    let recovered = LifecycleRig()
+    recovered.view.changed(contact(0, id: 71))
+    recovered.view.changed(contact(0.02, id: 72))
+    recovered.view.changed(GestureValue(first: [
+        contact(0.10, 300, 400, .ended, id: 71).first![0],
+        contact(0.11, 300, 400, .ended, id: 72).first![0],
+        contact(0.12, id: 73).first![0]
+    ]))
+    recovered.view.ended(contact(0.22, 300, 400, .ended, id: 73))
+    let recoveredClicks = recovered.sent.filter {
+        if case .pointer(.leftDown, _, _) = $0 { return true }; return false
+    }.count
+    FileHandle.standardOutput.write(Data("native temporal overlap recovery clicks=\(recoveredClicks) expected=1\n".utf8))
+    check(recovered.sent == [.pointer(.move, x: 0.3, y: 0.4)] + clickEvents,
+          "native pinch after completed overlapping contacts is admitted in the same collection")
+    recovered.balanced("native overlap recovery balances only the new click")
+
+    let intervalOrders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+    for order in intervalOrders {
+        for nextStart in [0.105, 0.11, 0.12] {
+            let rig = LifecycleRig()
+            rig.view.changed(contact(0, id: 71))
+            rig.view.changed(contact(0.02, id: 72))
+            let batch = [contact(0.10, 300, 400, .ended, id: 71).first![0],
+                         contact(0.11, 300, 400, .ended, id: 72).first![0],
+                         contact(nextStart, id: 73).first![0]]
+            rig.view.changed(GestureValue(first: order.map { batch[$0] }))
+            rig.view.ended(contact(0.22, 300, 400, .ended, id: 73))
+            let expected = [.pointer(.move, x: 0.3, y: 0.4)] + (nextStart > 0.11 ? clickEvents : [])
+            check(rig.sent == expected,
+                  "overlap and equal-time handoffs stay suppressed while a later pinch survives every collection order")
+            rig.balanced("interval boundary collection balances its admitted click")
+        }
+    }
+
+    for reversed in [false, true] {
+        let chain = LifecycleRig()
+        chain.view.changed(contact(0, id: 81))
+        chain.view.changed(contact(0.02, id: 82))
+        let batch = [contact(0.10, 300, 400, .ended, id: 81).first![0],
+                     contact(0.11, 300, 400, .ended, id: 82).first![0],
+                     contact(0.105, id: 83).first![0],
+                     contact(0.15, id: 84).first![0]]
+        chain.view.changed(GestureValue(first: reversed ? Array(batch.reversed()) : batch))
+        let ends = [contact(0.20, 300, 400, .ended, id: 83).first![0],
+                    contact(0.21, 300, 400, .ended, id: 84).first![0],
+                    contact(0.22, id: 85).first![0]]
+        chain.view.changed(GestureValue(first: reversed ? Array(ends.reversed()) : ends))
+        chain.view.ended(contact(0.32, 300, 400, .ended, id: 85))
+        check(chain.sent == [.pointer(.move, x: 0.3, y: 0.4)] + clickEvents,
+              "transitively overlapping native contacts stay suppressed until the entire live chain ends")
+        chain.balanced("overlap chain admits only the independent final click")
+
+        let surrounded = LifecycleRig()
+        surrounded.view.changed(contact(0, id: 91))
+        let middle = [contact(0.10, 300, 400, .ended, id: 91).first![0],
+                      contact(0.12, id: 92).first![0], contact(0.13, id: 93).first![0]]
+        surrounded.view.changed(GestureValue(first: reversed ? Array(middle.reversed()) : middle))
+        let final = [contact(0.20, 300, 400, .ended, id: 92).first![0],
+                     contact(0.21, 300, 400, .ended, id: 93).first![0],
+                     contact(0.22, id: 94).first![0]]
+        surrounded.view.changed(GestureValue(first: reversed ? Array(final.reversed()) : final))
+        surrounded.view.ended(contact(0.32, 300, 400, .ended, id: 94))
+        check(surrounded.sent == clickEvents + clickEvents,
+              "a competing interval cannot suppress independent native clicks before or after it")
+        surrounded.balanced("independent clicks around an overlap retain both balanced pairs")
+    }
+
     let lateScroll = LifecycleRig()
     lateScroll.view.changed(contact(0))
     lateScroll.view.changed(contact(0.8, 500, 600))

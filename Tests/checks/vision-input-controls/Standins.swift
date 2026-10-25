@@ -14,6 +14,7 @@ final class InputOverlayView {
 final class StreamClient {
     var visionStartupStarted = false
     func stopSavedMacAutoConnect() {}
+    func cancelOwnerEnrollment() {}
     func microphoneSetConnection(_ peer: NWConnection?) {}
     var visionDisplaySelection = VisionDisplaySelection()
     var steppedDisplays: [Int] = []
