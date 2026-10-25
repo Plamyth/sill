@@ -205,7 +205,7 @@ extension Checks {
                   "창·launch·epoch·source·peer 변경은 momentum 새 target 권한이 아님 \(mode)")
         }
         let orphan = Fixture(); orphan.source = .desktop
-        orphan.scroll(.momentumBegan); orphan.scroll()
+        orphan.scroll(.momentumBegan); orphan.scroll(); orphan.scroll(); orphan.scroll()
         check(orphan.platform.posted.isEmpty && !orphan.injector.protectedScrollPending,
               "유효 gesture handoff 없는 momentum과 뒤따르는 delta 거절")
         let cancelled = Fixture(); cancelled.scroll(.began); cancelled.scroll(); cancelled.scroll(.ended)

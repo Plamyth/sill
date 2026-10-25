@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -10,8 +11,11 @@ ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--archive', type=Path, required=True)
 parser.add_argument('--label', required=True)
-parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'control', 'affected', 'local-auth-window', 'local-auth-sdk'], default='all')
+parser.add_argument('--owner', default=os.environ.get('CODEX_THREAD_ID'))
+parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'peer-gesture', 'common-input', 'control', 'affected', 'local-auth-window', 'local-auth-sdk'], default='all')
 args = parser.parse_args()
+if not args.owner or not re.fullmatch(r'[A-Za-z0-9-]+', args.owner):
+    parser.error('--owner 또는 CODEX_THREAD_ID에 원담당 ID가 필요합니다.')
 archive = args.archive.resolve()
 archive.mkdir(parents=True, exist_ok=True)
 log, receipt = [archive / (args.label + suffix) for suffix in ['.log', '.json']]
@@ -138,7 +142,20 @@ egress = egress.replace('NSRunningApplication(processIdentifier: pid)', 'apps[pi
 egress = egress.replace('NSWorkspace.shared.frontmostApplication', 'foreground')
 tag = 'enum HostSentryPlatform { static let remoteEventTag: Int64 = 0x435352\n' + stamp + '\n}\n'
 coord = read('Tests/checks/sentry-targeted-input/CoordinatorChecks.swift').replace('__PRODUCTION_COORDINATOR__',
-    '\n'.join(block(coordinator, m) for m in ['private func preparePeerInteraction(', 'private func protectedPointerScope(']))
+    '\n'.join(block(coordinator, m) for m in ['private func preparePeerInteraction(', 'private func protectedPointerScope(', 'static func gestureInput(']))
+peer_handler = block(coordinator, 'private func handlePeerMessage(')
+input_case = peer_handler[peer_handler.index('        case .input:'):peer_handler.index('        case .fetchMenu:')]
+coord = coord.replace('__PRODUCTION_INPUT__', '''
+    func receiveInput(_ message: StreamMessage, from connection: Connection, lane: PeerStreamSession) async -> Bool {
+        let id = ObjectIdentifier(connection)
+        switch message.kind {
+''' + input_case + '''
+        default: return false
+        }
+        return true
+    }
+''')
+coord += '\n' + read('Tests/checks/sentry-targeted-input/CommonInputChecks.swift')
 assert 'self.peerStreams[device] === lane' in coord
 targeted = authentication_input_policy + '\n' + read('Sources/SillHost/SentryAdmission.swift') + '\n' + read('Sources/SillHost/HostSentry.swift') + '\n' + inert + '\n' + tag + read('Sources/SillHost/PeerInputQueue.swift') + '\n' + coord + '\n' + read('Tests/checks/sentry-targeted-input/Main.swift').replace('__PRODUCTION_EGRESS__', egress) + '\n' + read('Tests/checks/sentry-targeted-input/FollowupChecks.swift').replace('__PRODUCTION_RELEASE_BARRIER__', block(coordinator, 'prepareRelease: { [weak self] in').removeprefix('prepareRelease: '))
 assert not any(token in targeted + input_program for token in ['event.post(', '.postToPid(', '__PRODUCTION_'])
@@ -155,6 +172,9 @@ control = read('Sources/SillHost/SentryAdmission.swift') + '\n' + read('Sources/
 payload = {'protocol': protocol, 'control': control, 'local-auth-window': authentication_window, 'local-auth-sdk': sdk_authentication_window, 'platformSDK': authentication_input_policy + '\n' + read('Sources/SillHost/LocalAuthenticationPresentation.swift') + '\n' + platform + '\n' + actual + '''
 enum StreamCoordinator { static func isSillVirtualDisplay(_ id: CGDirectDisplayID) -> Bool { false } }
 ''', 'input': input_program, 'native': native, 'panel': authentication_input_policy + '\n' + fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted','local-auth-window','local-auth-sdk'])}
+payload['peer-gesture'] = targeted
+payload['common-input'] = targeted
+payload['owner'] = args.owner
 blob = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
 remote = r'''
 import hashlib,json,pathlib,subprocess,sys,tempfile
@@ -162,7 +182,7 @@ blob=sys.stdin.buffer.read()
 payload=json.loads(blob)
 print('received_sha256='+hashlib.sha256(blob).hexdigest(),flush=True)
 records=[]; finalCode=0
-with tempfile.TemporaryDirectory(prefix='ccr-targeted-binaries-') as temporary:
+with tempfile.TemporaryDirectory(prefix='ccr-targeted-' + payload['owner'] + '-') as temporary:
  out=pathlib.Path(temporary)
  sdk=subprocess.check_output(['/usr/bin/xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
  compiler=subprocess.check_output(['/usr/bin/xcrun','--find','swiftc'],text=True).strip()
@@ -183,7 +203,8 @@ with tempfile.TemporaryDirectory(prefix='ccr-targeted-binaries-') as temporary:
   if not compile(name,payload[name],['-I',str(out),str(obj),'-o',str(binary)]):
    finalCode=max(finalCode,2); continue
   records[-1]['cases']=[]
-  cases=[('curtains',['--curtains']),('refresh',['--refresh']),('sentry',[]),('cursor',['--cursor'])] if name=='sentry' else [(name,[])]
+  if name=='common-input': cases=[('targeted',[]),('peer-gesture',['--peer-gesture-state'])]
+  else: cases=[('curtains',['--curtains']),('refresh',['--refresh']),('sentry',[]),('cursor',['--cursor'])] if name=='sentry' else [(name,['--peer-gesture-state'] if name=='peer-gesture' else [])]
   for case,args in cases:
    try:
     result=subprocess.run([str(binary)]+args,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=30)
@@ -194,7 +215,7 @@ with tempfile.TemporaryDirectory(prefix='ccr-targeted-binaries-') as temporary:
    records[-1]['cases'].append({'name':case,'exitCode':code,'passedAssertions':sum(line.startswith('PASS ') for line in output.splitlines()),'failures':[line for line in output.splitlines() if line.startswith('FAIL ')],'timedOut':code==124})
    finalCode=max(finalCode,code if code >= 0 else 128 - code)
  del payload,blob
-print('REMOTE_RESULT '+json.dumps({'records':records,'temporaryFilesRemoved':not out.exists(),'sourceFilesWritten':0,'actualOSAuthentication':0,'actualEventPosts':0,'visibleWindows':0,'hostLaunches':0,'HALWrites':0,'serviceWrites':0}),flush=True)
+print('REMOTE_RESULT '+json.dumps({'records':records,'temporaryPath':str(out),'temporaryFilesRemoved':not out.exists(),'sourceFilesWritten':0,'actualOSAuthentication':0,'actualEventPosts':0,'visibleWindows':0,'hostLaunches':0,'HALWrites':0,'serviceWrites':0}),flush=True)
 raise SystemExit(finalCode)
 '''
 with log.open('xb') as output:
