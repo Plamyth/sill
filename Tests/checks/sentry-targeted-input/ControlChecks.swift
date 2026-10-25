@@ -170,10 +170,14 @@ final class ControlServer {
 
 extension ControlChecks {
     @MainActor static func delayedControlChecks() async {
-        for outcome in ["ack", "owner", "cancel"] {
+        for (outcome, initiallyOn) in [("ack", false), ("owner", false), ("cancel", false),
+                                     ("ack", true), ("owner", true), ("cancel", true)] {
             let coordinator = ControlCoordinator(), connection = NWConnection(), gate = ReleaseGate()
             let key = Data(repeating: 9, count: 32)
             coordinator.join(connection, fingerprint: key)
+            if initiallyOn {
+                _ = await coordinator.receive(coordinator.request(true, from: connection).rawRequest, from: connection)
+            }
             coordinator.effects.removeAll()
             coordinator.releaseGate = gate
             let off = coordinator.request(false, from: connection)
@@ -183,11 +187,12 @@ extension ControlChecks {
             check(gate.entered, "원격 off가 실제 surface ACK를 기다리는 지점에 도달")
             let pending = await coordinator.receive(off.rawRequest, from: connection)
             check(pending?.operationState == .pending && pending?.state.requested == true &&
-                  pending?.state.phase == .pending && coordinator.effects == ["releasing", "release"],
+                  pending?.state.phase == .pending && coordinator.effects == [initiallyOn ? "releasing" : "inactive", "release"],
                   "대기 중 동일 원문 request 재조회는 pending·requested=true만 반환하고 효과 반복0")
             let concurrent = coordinator.request(false, from: connection)
             let rejected = await coordinator.receive(concurrent.rawRequest, from: connection)
-            check(rejected?.operationState != .applied && !coordinator.effects.contains("inactive"),
+            check(rejected?.operationState != .applied &&
+                  coordinator.effects == [initiallyOn ? "releasing" : "inactive", "release"],
                   "재진입 off는 기존 ticket을 빼앗거나 inactive를 먼저 게시하지 않음")
             if outcome == "owner" { coordinator.remote?.keys.remove(key) }
             if outcome == "cancel" { task.cancel() }
@@ -195,7 +200,7 @@ extension ControlChecks {
             let result = await task.value
             if outcome == "ack" {
                 check(result?.operationState == .applied && result?.state.phase == .inactive &&
-                      result?.state.requested == false && coordinator.effects == ["releasing", "release", "inactive"],
+                      result?.state.requested == false && coordinator.effects == [initiallyOn ? "releasing" : "inactive", "release", "inactive"],
                       "동일 ticket의 실제 ACK 뒤 terminal applied와 inactive를 함께 반환")
                 let effects = coordinator.effects
                 let recovered = await coordinator.receive(off.rawRequest, from: connection)
@@ -214,9 +219,10 @@ extension ControlChecks {
                 check(await repeated.value?.operationState == .applied,
                       "새 OFF ticket도 자기 ACK 후에만 terminal 반환")
             } else {
-                check(result?.operationState != .applied && !coordinator.effects.contains("inactive") &&
-                      coordinator.effects.contains("latched") && coordinator.surface,
-                      "\(outcome) 뒤 늦은 ACK는 owner/current를 넘지 못하고 보호 복구")
+                check(result?.operationState != .applied &&
+                      coordinator.effects.contains("latched") == initiallyOn && coordinator.surface == initiallyOn &&
+                      coordinator.server.sentryAdmission.isRequested == initiallyOn,
+                      "\(outcome) 뒤 늦은 ACK는 owner/current를 넘지 못하고 기존 선택을 보존")
             }
         }
     }

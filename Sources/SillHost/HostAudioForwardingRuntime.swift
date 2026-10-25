@@ -36,10 +36,10 @@ final class HostAudioForwardingRuntime {
     private var recoveryContexts: [AudioForwardingConnectionContext] = []
     private var retiredRelay: LocalAudioRelay?
     private let privacy: HostAudioPrivacy
-    private let sentry: HostSentry
     private let participants: AudioForwardingParticipants
-    private lazy var protection = AudioForwardingProtection(audio: privacy, sentry: sentry,
-        configuration: { [weak self] in self?.configuration })
+    private lazy var protection = AudioForwardingProtection(audio: privacy,
+        configuration: { [weak self] in self?.configuration },
+        quiescenceCurrent: { [weak self] scope in self?.participants.current(scope) == true })
     private let fenceMedia: () -> Void
     private let commitMedia: (AudioForwardingCoordinator.Scope?) -> Void
     private var sessions: [UUID: Session] = [:]
@@ -77,14 +77,13 @@ final class HostAudioForwardingRuntime {
         commit: { [weak self] command in await self?.relay.forwardingCommit(command) }
     ))
 
-    init(relay: LocalAudioRelay, privacy: HostAudioPrivacy, sentry: HostSentry,
+    init(relay: LocalAudioRelay, privacy: HostAudioPrivacy,
          replacement: (() throws -> LocalAudioRelay)? = nil,
          fenceMedia: @escaping () -> Void,
          commitMedia: @escaping (AudioForwardingCoordinator.Scope?) -> Void) {
         self.relay = relay
         self.replacement = replacement
         self.privacy = privacy
-        self.sentry = sentry
         self.fenceMedia = fenceMedia
         self.commitMedia = commitMedia
         participants = AudioForwardingParticipants(registry: privacy.participants)
@@ -92,6 +91,18 @@ final class HostAudioForwardingRuntime {
 
     private var configuration: AudioForwardingConfiguration? {
         relay.forwardingConfiguration(privacyGeneration: privacy.forwardingPrivacyGeneration)
+    }
+
+    private func accepted<Value: Decodable>(_ result: AudioForwardingResult<Value>?, phase: String) -> Value? {
+        switch result {
+        case .accepted(let value): return value
+        case .refused(let code, _):
+            let safe = code.count <= 96 && code.utf8.allSatisfy { (97...122).contains($0) || (48...57).contains($0) || $0 == 95 }
+            print("[원격 오디오 준비] phase=\(phase) code=\(safe ? code : "refused")")
+        case nil:
+            print("[원격 오디오 준비] phase=\(phase) code=reply_unavailable")
+        }
+        return nil
     }
 
     func start() async -> Bool {
@@ -122,10 +133,10 @@ final class HostAudioForwardingRuntime {
         guard privacy.forwardingIntentAllowed, let intent = control.intent, intent.pairedDeviceId == context.peer.id,
               intent.transportKind == .native, let session = sessions[context.connectionID],
               context.isCurrent() else { return nil }
-        if !privacy.latched { _ = privacy.armAndVerify() }
-        _ = sentry.activate()
-        guard case .accepted = await relay.forwardingConfigure(
-            privacyGeneration: privacy.forwardingPrivacyGeneration), context.isCurrent(), privacy.forwardingIntentAllowed,
+        if (intent.inputDesired || intent.outputDesired), !privacy.latched { _ = privacy.armAndVerify() }
+        let configured = await relay.forwardingConfigure(privacyGeneration: privacy.forwardingPrivacyGeneration)
+        guard context.isCurrent(), privacy.forwardingIntentAllowed,
+              accepted(configured, phase: "submit_configuration") != nil,
               let result = await relay.forwardingRequest(intent, peer: context.peer,
                 credential: session.credential, admission: { [weak privacy] in
                     context.isCurrent() && privacy?.forwardingIntentAllowed == true
@@ -139,7 +150,6 @@ final class HostAudioForwardingRuntime {
 
     private func enroll(_ context: AudioForwardingConnectionContext) async -> AudioForwardingBootstrap? {
         guard context.isCurrent(), privacy.forwardingIntentAllowed, running else { return nil }
-        if !privacy.latched { _ = privacy.armAndVerify() }
         let owner = Enrollment(context, relay: relay)
         let generation = evidenceRevision
         enrollments[context.connectionID] = owner
@@ -154,13 +164,15 @@ final class HostAudioForwardingRuntime {
             if enrollments[context.connectionID] === owner { enrollments.removeValue(forKey: context.connectionID) }
             if !retained, owner.submitted, relay === owner.relay { resetAfterUncertainEvidence() }
         }
-        guard admitted(), case .accepted = await owner.relay.forwardingConfigure(
-                privacyGeneration: privacy.forwardingPrivacyGeneration), admitted(),
-              case .accepted(let bootstrap) = await owner.relay.forwardingBootstrap(peer: context.peer,
-                admission: admitted), admitted(),
-              case .accepted(let value) = await owner.relay.forwardingEvidence(peer: context.peer,
-                connectionID: context.connectionID, operation: .attach, admission: admitted,
-                onSubmission: { owner.submitted = true }), admitted() else { return nil }
+        guard admitted() else { return nil }
+        let configured = await owner.relay.forwardingConfigure(privacyGeneration: privacy.forwardingPrivacyGeneration)
+        guard admitted(), accepted(configured, phase: "enrollment_configuration") != nil else { return nil }
+        let bootstrapped = await owner.relay.forwardingBootstrap(peer: context.peer, admission: admitted)
+        guard admitted(), let bootstrap = accepted(bootstrapped, phase: "enrollment_bootstrap") else { return nil }
+        let attached = await owner.relay.forwardingEvidence(peer: context.peer,
+            connectionID: context.connectionID, operation: .attach, admission: admitted,
+            onSubmission: { owner.submitted = true })
+        guard admitted(), let value = accepted(attached, phase: "enrollment_attach") else { return nil }
         sessions[context.connectionID] = Session(context: context, credential: bootstrap.credential)
         retained = true
         observe(value)
@@ -335,14 +347,33 @@ final class HostAudioForwardingRuntime {
         }
         guard preparing != scope.binding.bindingEpoch else { return }
         invalidate()
-        if !privacy.latched { _ = privacy.armAndVerify() }
-        _ = sentry.activate()
+        if scope.requiresAudioIsolation, !privacy.latched, !privacy.armAndVerify() {
+            print("[원격 오디오 준비] phase=privacy_configuration code=isolation_unverified")
+            return
+        }
         let generation = revision
+        let owner = relay, evidence = evidenceRevision
         preparing = scope.binding.bindingEpoch
         preparingBinding = scope.binding
         preparation = Task { @MainActor [weak self] in
-            guard let self, self.running, generation == self.revision,
-                  let latest = await self.readSnapshot(), scope.matches(latest) else { return }
+            guard let self else { return }
+            let admitted = { [weak self] in
+                guard let self else { return false }
+                return self.running && !Task.isCancelled && generation == self.revision &&
+                    evidence == self.evidenceRevision && self.relay === owner && self.privacy.forwardingIntentAllowed
+            }
+            guard admitted(), let latest = await self.readSnapshot(), admitted(), scope.matches(latest) else { return }
+            if scope.binding.configuration != self.configuration {
+                guard let expected = self.configuration,
+                      let configured = self.accepted(await owner.forwardingConfigure(
+                        privacyGeneration: expected.privacyGeneration, admission: admitted), phase: "privacy_configuration"),
+                      admitted(), self.configuration == expected else { return }
+                self.preparation = nil
+                self.preparing = nil
+                self.preparingBinding = nil
+                self.observe(configured)
+                return
+            }
             let outcome = await self.coordinator.reconcile(latest)
             guard self.running, generation == self.revision, !Task.isCancelled else { return }
             self.preparation = nil
@@ -351,7 +382,16 @@ final class HostAudioForwardingRuntime {
                 self.active = committed
                 self.snapshot = result
                 self.commitMedia(committed)
-            case .blocked, .waiting:
+                if self.running, generation == self.revision, self.active == committed,
+                   self.coordinator.isCurrent(committed), let intent = result.intent {
+                    self.logState("committed", binding: committed.binding,
+                        intent: intent, generation: generation)
+                }
+            case .blocked(let failure):
+                print("[원격 오디오 준비] phase=media_preparation code=\(failure)")
+                self.active = nil
+                self.commitMedia(nil)
+            case .waiting:
                 self.active = nil
                 self.commitMedia(nil)
             }
@@ -361,6 +401,7 @@ final class HostAudioForwardingRuntime {
     func invalidate() {
         let binding = active?.binding ?? preparingBinding
         revision = UUID()
+        if let binding { logState("invalidated", binding: binding, intent: nil, generation: revision) }
         preparation?.cancel()
         preparation = nil
         preparing = nil
@@ -374,6 +415,23 @@ final class HostAudioForwardingRuntime {
         if let binding {
             Task { @MainActor [relay] in _ = await relay.forwardingDisconnect(binding) }
         }
+    }
+
+    private func logState(_ event: String, binding: AudioForwardingBinding,
+                          intent: AudioForwardingSnapshot.Intent?, generation: UUID) {
+        var fields: [String: Any] = ["schemaVersion": 1, "event": event,
+            "processId": ProcessInfo.processInfo.processIdentifier, "runtimeGeneration": generation.uuidString,
+            "controllerBootId": binding.configuration.controllerBootId.uuidString,
+            "privacyGeneration": binding.configuration.privacyGeneration.uuidString,
+            "bindingEpoch": binding.bindingEpoch.uuidString, "operationId": binding.operationId.uuidString]
+        if let intent {
+            fields["inputDesired"] = intent.inputDesired
+            fields["outputDesired"] = intent.outputDesired
+            fields["sentryDesired"] = intent.sentryDesired
+            fields["localMutedDesired"] = intent.localMutedDesired
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) { print("[원격 오디오 상태] \(json)") }
     }
 
     func returnToLocal(admission: @escaping @MainActor () -> Bool) async -> Bool {

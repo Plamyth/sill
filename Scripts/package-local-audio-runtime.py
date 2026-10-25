@@ -11,7 +11,8 @@ import shutil
 import subprocess
 
 
-NODE_COMMIT = "0bec7a9970b0bd4e15390012b8ade02ed54605c2"
+NODE_COMMIT = "4916c2b64ec9e0ce6f34c913ef0f1d2d2f3b6b57"
+NODE_TREE = "100102da5a7e99137bf113c3ff6c868ba480ca8c"
 SYSTEM = ("/usr/lib/", "/System/Library/")
 MACHO = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 
@@ -84,7 +85,7 @@ def main():
         repo = args.node_repo.resolve(strict=True)
         def git(*parts):
             return subprocess.check_output(["git", "-C", str(repo), *parts])
-        assert git("rev-parse", NODE_COMMIT + "^{tree}").decode().strip() == review["candidateTree"]
+        assert git("rev-parse", NODE_COMMIT + "^{tree}").decode().strip() == review["candidateTree"] == NODE_TREE
         server = runtime / "server"
         server.mkdir()
         names = git("ls-tree", "--name-only", NODE_COMMIT, "server/").decode().splitlines()

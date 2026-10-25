@@ -9,6 +9,7 @@ final class AudioForwardingCoordinator {
         let intentRevision: AudioForwardingRevision
         let inputDesired: Bool
         let outputDesired: Bool
+        var requiresAudioIsolation: Bool { inputDesired || outputDesired }
 
         init?(_ snapshot: AudioForwardingSnapshot) {
             guard let binding = snapshot.binding, binding.phase == .quiescing, let intent = snapshot.intent,
@@ -29,7 +30,7 @@ final class AudioForwardingCoordinator {
                 intent.intentId == intentId && intent.intentRevision == intentRevision &&
                 intent.intentGeneration == binding.intentGeneration && intent.pairedDeviceId == binding.pairedDeviceId &&
                 intent.inputDesired == inputDesired && intent.outputDesired == outputDesired &&
-                intent.sentryDesired && intent.localMutedDesired
+                intent.localMutedDesired
         }
     }
 
@@ -69,11 +70,12 @@ final class AudioForwardingCoordinator {
         }
 
         @MainActor
-        fileprivate init(scope: Scope, receipts: [LocalAudioParticipantReceipt], admission: @escaping @MainActor () -> Bool) {
+        fileprivate init(scope: Scope, receipts: [LocalAudioParticipantReceipt], localMutedVerified: Bool,
+                         admission: @escaping @MainActor () -> Bool) {
             intentGeneration = scope.binding.intentGeneration; bindingEpoch = scope.binding.bindingEpoch
             operationId = scope.binding.operationId; configuration = scope.binding.configuration
             self.receipts = receipts
-            localProtection = .init(sentryVerified: true, localMutedVerified: true)
+            localProtection = .init(sentryVerified: false, localMutedVerified: localMutedVerified)
             submission = Submission(admission: admission)
         }
 
@@ -251,25 +253,32 @@ final class AudioForwardingCoordinator {
             guard self.owns(scope, token: token, deadline: deadline) else { return nil as ProtectionReadback? }
             return await self.dependencies.protection(scope, deadline)
         }), let readback, readback.scope == scope, readback.observedAt >= requestedAt,
-              readback.observedAt <= ContinuousClock.now, readback.sentryVerified, readback.localMutedVerified,
+              readback.observedAt <= ContinuousClock.now, (!scope.requiresAudioIsolation || readback.localMutedVerified),
               dependencies.protectionCurrent(readback) else { return .blocked(.protection) }
         guard await current(scope, token: token, deadline: deadline), dependencies.protectionCurrent(readback) else {
             return .blocked(.stale)
         }
+        let command = Commit(scope: scope, receipts: receipts, localMutedVerified: readback.localMutedVerified,
+            admission: { [weak self] in
+                guard let self else { return false }
+                return self.dependencies.protectionCurrent(readback) && self.owns(scope, token: token, deadline: deadline)
+            })
         guard let response = await call(until: deadline, operation: { [self] in
             guard self.dependencies.protectionCurrent(readback), self.owns(scope, token: token, deadline: deadline) else {
                 return nil as AudioForwardingResult<AudioForwardingSnapshot>?
             }
-            return await self.dependencies.commit(Commit(scope: scope, receipts: receipts, admission: { [weak self] in
-                guard let self else { return false }
-                return self.dependencies.protectionCurrent(readback) && self.owns(scope, token: token, deadline: deadline)
-            }))
+            return await self.dependencies.commit(command)
         }), let response, case .accepted(let committed) = response,
               owns(scope, token: token, deadline: deadline), scope.matches(committed, committed: true),
               dependencies.protectionCurrent(readback) else { return .blocked(.commit) }
         guard await current(scope, token: token, deadline: deadline, committed: true),
               dependencies.protectionCurrent(readback) else { return .blocked(.stale) }
         protection = readback
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        if let data = try? encoder.encode(command), let json = String(data: data, encoding: .utf8) {
+            print("[원격 오디오 커밋] \(json)")
+        }
         return .committed(scope, committed)
     }
 }

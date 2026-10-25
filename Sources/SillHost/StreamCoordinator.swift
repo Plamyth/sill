@@ -602,10 +602,6 @@ package final class StreamCoordinator {
                 self.sentry?.joined(id)
                 self.grantSentryControl(to: id, route: route)
                 if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
-                   self.remote?.isPaired(fingerprint) == true, let privacy = self.audioPrivacy, !privacy.latched {
-                    _ = privacy.armAndVerify()
-                }
-                if !self.synthetic, route.encrypted, let fingerprint = route.fingerprint,
                    self.remote?.isPaired(fingerprint) == true {
                     self.microphoneIngress.authorize(connection, fingerprint: fingerprint)
                 }
@@ -4024,7 +4020,7 @@ extension StreamCoordinator {
               let audioPrivacy, let sentry else { return }
         do {
             let relay = try LocalAudioRelayLaunch.makeForwardingRelay(participants: audioPrivacy.participants)
-            let runtime = HostAudioForwardingRuntime(relay: relay, privacy: audioPrivacy, sentry: sentry,
+            let runtime = HostAudioForwardingRuntime(relay: relay, privacy: audioPrivacy,
                 replacement: { try LocalAudioRelayLaunch.makeForwardingRelay(participants: audioPrivacy.participants) },
                 fenceMedia: { [weak self] in
                     guard let self else { return }
@@ -4052,7 +4048,6 @@ extension StreamCoordinator {
             audioPrivacy.authenticatedLocalReturnWillCommit = { [weak runtime] admission in
                 await runtime?.returnToLocal(admission: admission) == true
             }
-            sentry.protectionInvalidated = { [weak runtime] in runtime?.invalidate() }
             guard await runtime.start() else {
                 runtime.stop()
                 print("공통 음성 원장의 실제 중계 실행을 확인하지 못해 원격 입출력을 차단합니다.")

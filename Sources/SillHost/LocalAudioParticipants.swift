@@ -345,6 +345,12 @@ final class LocalAudioParticipantRegistry {
         if forwarding?.ticket == ticket { invalidateForwarding() }
     }
 
+    func forwardingIsCurrent(_ ticket: ForwardingTicket) -> Bool {
+        guard let work = forwarding, work.ticket == ticket, owns(work),
+              work.preparations.count == members.count else { return false }
+        return work.preparations.values.allSatisfy { $0.ready }
+    }
+
     private func invalidateForwarding() {
         forwarding?.cancellation.cancel()
         forwarding = nil

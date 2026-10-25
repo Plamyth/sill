@@ -46,4 +46,9 @@ final class AudioForwardingParticipants {
         if let ticket { registry.cancelForwarding(ticket) }
         scope = nil; ticket = nil
     }
+
+    func current(_ scope: AudioForwardingCoordinator.Scope) -> Bool {
+        guard self.scope == scope, let ticket else { return false }
+        return registry.forwardingIsCurrent(ticket)
+    }
 }

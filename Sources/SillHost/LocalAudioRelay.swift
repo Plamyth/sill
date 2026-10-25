@@ -349,12 +349,16 @@ final class LocalAudioRelay {
         return result
     }
 
-    func forwardingConfigure(privacyGeneration: UUID) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
+    func forwardingConfigure(privacyGeneration: UUID,
+                             admission: (@MainActor () -> Bool)? = nil) async -> AudioForwardingResult<AudioForwardingSnapshot>? {
         let membership = participants.snapshot
-        guard let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
+        guard admission?() != false, !Task.isCancelled,
+              let configuration = try? AudioForwardingConfiguration(controllerBootId: controllerBootId,
             privacyGeneration: privacyGeneration, membership: membership) else { return nil }
-        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingConfigure", payload: configuration)
+        let result: AudioForwardingResult<AudioForwardingSnapshot>? = await forwardingCall("forwardingConfigure",
+            payload: configuration, admission: admission)
         guard participants.matches(membership) else { lost(); return nil }
+        guard admission?() != false, !Task.isCancelled else { return nil }
         return result
     }
 
