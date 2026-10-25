@@ -300,6 +300,9 @@ struct CanvasWorkspace: View {
             Picker("그리기 도구",selection:$store.mode) {
                 ForEach(CanvasMode.allCases,id:\.self) { Text($0.rawValue).tag($0) }
             }
+            Toggle("자", isOn: $store.rulerEnabled)
+                .accessibilityHint("그리기 화면에서만 표시합니다. 자를 끄면 손가락으로 캔버스를 이동하고 확대할 수 있습니다.")
+                .accessibilityIdentifier("canvasRuler")
             Picker("지우기 방식", selection: $store.eraserStyle) {
                 ForEach(CanvasEraserStyle.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }

@@ -1,5 +1,6 @@
 import Foundation
 import PencilKit
+import SwiftUI
 
 @main struct StoreChecks {
     @MainActor static func main() throws {
@@ -8,6 +9,29 @@ import PencilKit
         let out = URL(fileURLWithPath:ProcessInfo.processInfo.environment["PELE_OUTPUT"]!)
         let store = CanvasStore(blockRecoveryURL:out.appendingPathComponent("recovery.json"))
         store.scene = CanvasScene()
+        let rulerScene = store.scene
+        let rulerViewport = store.viewport
+        let rulerGeneration = store.inkHistory.generation
+        let rulerBinding = ObservedObject(wrappedValue:store).projectedValue.rulerEnabled
+        precondition(!rulerBinding.wrappedValue && !store.rulerIsActive(isVisible:true))
+        rulerBinding.wrappedValue = true
+        for mode in CanvasMode.allCases {
+            store.mode = mode
+            precondition(store.rulerEnabled && store.rulerIsActive(isVisible:true) == (mode == .pen))
+            precondition(!store.rulerIsActive(isVisible:false))
+        }
+        store.mode = .pen
+        precondition(store.rulerIsActive(isVisible:true))
+        rulerBinding.wrappedValue = false
+        precondition(!store.rulerIsActive(isVisible:true))
+        precondition(store.scene == rulerScene && store.viewport == rulerViewport &&
+            store.inkHistory.generation == rulerGeneration)
+        rulerBinding.wrappedValue = true
+        store.saveNow()
+        let rulerReopened = CanvasStore(blockRecoveryURL:out.appendingPathComponent("recovery.json"))
+        precondition(!rulerReopened.rulerEnabled && rulerReopened.scene == store.scene)
+        rulerBinding.wrappedValue = false
+        print("PASS 자의 실제 ObservedObject binding·전체 도구 모드·숨김 전환·세션 내 의도 유지·비영속화와 장면·뷰포트·이력 불변")
         let drawing = PKDrawing(strokes:[PKStroke(ink:PKInk(.pen,color:.white),
             path:PKStrokePath(controlPoints:[PKStrokePoint(location:CGPoint(x:15,y:20),timeOffset:0,
                 size:CGSize(width:3,height:3),opacity:1,force:0.7,azimuth:0,altitude:1)],creationDate:Date()))])

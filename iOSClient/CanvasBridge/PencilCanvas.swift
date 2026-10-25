@@ -55,6 +55,7 @@ struct PencilCanvas: UIViewRepresentable {
         overlay.layer.addSublayer(hoverLayer)
 
         context.coordinator.canvas = canvas
+        canvas.isRulerActive = store.rulerIsActive(isVisible: isVisible)
         store.inkHistory.attach(canvas.inkUndoManager)
         context.coordinator.replaceDrawingFromStore()
 
@@ -108,6 +109,7 @@ struct PencilCanvas: UIViewRepresentable {
             context.coordinator.replaceDrawingFromStore()
         }
         canvas.isUserInteractionEnabled = store.mode != .select
+        canvas.isRulerActive = store.rulerIsActive(isVisible: isVisible)
         switch store.mode {
         case .pen: canvas.tool = PKInkingTool(.pen, color: CanvasPalette.ink, width: 4)
         case .eraser: canvas.tool = store.eraserTool
@@ -115,13 +117,15 @@ struct PencilCanvas: UIViewRepresentable {
         case .select: break
         }
         if canvas.selection != store.inkSelection { canvas.selection = store.inkSelection }
-        context.coordinator.previewLayer.isHidden = store.mode == .eraser && store.eraserPreviewWidth == nil
+        context.coordinator.previewLayer.isHidden = canvas.isRulerActive ||
+            (store.mode == .eraser && store.eraserPreviewWidth == nil)
         context.coordinator.previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : 4
         context.coordinator.updateHover()
     }
 
     static func dismantleUIView(_ host: UIView, coordinator: Coordinator) {
         guard let canvas = coordinator.canvas else { return }
+        canvas.isRulerActive = false
         canvas.delegate = nil
         if coordinator.renderedGeneration == coordinator.store.inkHistory.generation,
            canvas.drawing != coordinator.store.drawing {
@@ -200,7 +204,8 @@ struct PencilCanvas: UIViewRepresentable {
                 previewPath.move(to: point)
                 previewLayer.strokeColor = store.mode == .eraser ?
                     UIColor.systemRed.withAlphaComponent(0.7).cgColor : CanvasPalette.ink.cgColor
-                previewLayer.isHidden = store.mode == .eraser && store.eraserPreviewWidth == nil
+                previewLayer.isHidden = canvas?.isRulerActive == true ||
+                    (store.mode == .eraser && store.eraserPreviewWidth == nil)
                 previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : 4
             case .moved:
                 previewPath.addLine(to: point)
@@ -271,6 +276,14 @@ struct PencilCanvas: UIViewRepresentable {
                     centerShift:CGSize(width:center.x-pinchCenter.x,height:center.y-pinchCenter.y))
             default: break
             }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            if canvas?.isRulerActive == true,
+               gestureRecognizer is UIPanGestureRecognizer || gestureRecognizer is UIPinchGestureRecognizer {
+                return false
+            }
+            return true
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,

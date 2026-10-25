@@ -149,6 +149,10 @@ final class CanvasStore: ObservableObject {
             handwritingRequest = nil
         }
     }
+    @Published var rulerEnabled = false
+    func rulerIsActive(isVisible: Bool) -> Bool {
+        rulerEnabled && mode == .pen && isVisible
+    }
     @Published private(set) var inkSelection: Set<UUID> = []
     static let eraserStyleKey = "canvasEraserStyle"
     static let eraserSizeKey = "canvasPartialEraserWidth"

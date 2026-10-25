@@ -74,6 +74,34 @@ enum CanvasModeLifetimeChecks {
             }
         }
         try check(manager.canUndo && store.inkHistory.availability.canUndo,"전환 전 제어된 잉크 Undo 등록")
+        let pan = UIPanGestureRecognizer()
+        let pinch = UIPinchGestureRecognizer()
+        try check(!canvas.isRulerActive && coordinator.gestureRecognizerShouldBegin(pan) &&
+            coordinator.gestureRecognizerShouldBegin(pinch),"자 기본 꺼짐과 기존 캔버스 이동·확대 허용")
+        let rulerScene = store.scene
+        store.rulerEnabled = true
+        for tool in CanvasMode.allCases {
+            store.mode = tool
+            try await settle()
+            let active = tool == .pen
+            try check(canvas.isRulerActive == active && store.rulerEnabled,
+                "도구 \(tool.rawValue)에서 실제 native 자 표시와 사용자 의도 분리")
+            try check(coordinator.gestureRecognizerShouldBegin(pan) == !active &&
+                coordinator.gestureRecognizerShouldBegin(pinch) == !active,
+                "자 조작 중 부모 캔버스 이동·확대만 차단")
+            if active {
+                try check(coordinator.previewLayer.isHidden,"자 사용 중 자유선 미리보기 숨김")
+            }
+        }
+        store.mode = .pen
+        store.rulerEnabled = false
+        try await settle()
+        try check(!canvas.isRulerActive && coordinator.gestureRecognizerShouldBegin(pan),
+            "자 끄기에서 native 표시 해제와 캔버스 이동 복구")
+        try check(store.scene == rulerScene && store.viewport == viewport &&
+            store.inkHistory.generation == generation,"자 토글과 도구 전환에서 원본·뷰포트·이력 보존")
+        store.rulerEnabled = true
+        try await settle()
         var undone = false
         for mode in [1,2,0,2,1,0] {
             picker.selectedSegmentIndex = mode
@@ -85,6 +113,8 @@ enum CanvasModeLifetimeChecks {
                 "보기 \(mode) 전환에서 실제 PKCanvasView·Coordinator·UndoManager 동일성 유지")
             try check(store.viewport == viewport && store.scene.nodes == nodes,
                 "보기 \(mode) 전환에서 뷰포트·줌·노드 좌표 유지")
+            try check(canvas.isRulerActive == (mode != 1) && store.rulerEnabled,
+                "보기 \(mode) 숨김 전환에서 native 자 해제와 복귀 의도 유지")
             try check(canvas.superview?.accessibilityElementsHidden == (mode == 1) &&
                 canvas.superview?.isAccessibilityElement == (mode != 1) &&
                 canvas.superview?.isHidden == (mode == 1) &&
@@ -115,6 +145,7 @@ enum CanvasModeLifetimeChecks {
         try await settle()
         try check(canvas.delegate == nil && coordinator.canvas == nil && !manager.canUndo && !manager.canRedo,
             "진짜 뷰 해제에서는 dismantle·detach와 Undo 정리 유지")
+        try check(!canvas.isRulerActive && store.rulerEnabled,"진짜 뷰 해제에서는 자 표시만 종료")
         return "CANVAS_MODE_LIFETIME total=\(checks) failed=0 controlledRegistrations=true pencilInputExecuted=false"
     }
 }
