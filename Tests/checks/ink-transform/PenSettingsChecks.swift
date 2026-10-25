@@ -112,8 +112,27 @@ import Foundation
             _ = try decoder.decode(CanvasScene.self, from: JSONSerialization.data(withJSONObject: future))
             preconditionFailure("future writer decoded")
         } catch { check(true, "future scene versions refuse before a lossy writer can save") }
-        check(CanvasPacket.sceneByteLimit == 1024 * 1024 && CanvasScene.localByteLimit == 4 * 1024 * 1024,
-              "packet and local scene limits remain distinct")
+        check(CanvasPacket.sceneByteLimit == CanvasScene.localByteLimit && CanvasScene.localByteLimit == 4 * 1024 * 1024,
+              "packet and local scene accept the same bounded 4 MiB scene")
+        let image = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDPcAAAAASUVORK5CYII=")!
+        let session = VoiceSession(threadId: UUID(), sessionId: "scene-capacity-fixture", observedAt: "fixture")
+        for delta in [-1, 0, 1] {
+            var candidate = CanvasScene()
+            _ = candidate.addNode(kind: .note, at: .init(x: 0, y: 0), text: "")
+            let overhead = try encoder.encode(candidate).count
+            candidate.nodes[0].text = String(repeating: "x", count: CanvasScene.localByteLimit + delta - overhead)
+            let bytes = try encoder.encode(candidate)
+            check(bytes.count == CanvasScene.localByteLimit + delta, "exact scene boundary fixture \(delta)")
+            if delta <= 0 {
+                let packet = try CanvasPacket(scene: candidate, imagePNG: image, session: session)
+                check(try packet.frozenScene() == candidate, "bounded packet freezes the entire scene \(delta)")
+            } else {
+                do {
+                    _ = try CanvasPacket(scene: candidate, imagePNG: image, session: session)
+                    preconditionFailure("oversized packet accepted")
+                } catch { check(error as? CanvasSendError == .invalidPacket, "4 MiB plus one byte refuses") }
+            }
+        }
         check(stroke.style == nil, "legacy stroke style remains unknown")
         var projected = scene
         projected.strokes[0].style = .init(inkType: "pen", color: nil,

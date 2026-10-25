@@ -40,7 +40,7 @@ UI는 `CanvasStore.choosePenSettings`에서 `setPenSettings`를 호출한다. �
 
 PencilKit 내부 편집용 `nativeUndoManager`와 Store가 수용한 편집용 `inkUndoManager`를 분리한다. Coordinator는 수용한 PKDrawing 전이에만 undo를 등록한다. 거부된 편집의 복원과 수용 이력의 undo·redo는 실제 canvas drawing을 바꾸며 native 임시 이력만 초기화한다. 실패 편집은 기존 수용 이력과 redo 분기를 바꾸지 않는다. 외부 import·장면 교체·generation 변경은 기존 의도대로 전체 수용 이력을 초기화한다. 센서가 만든 native 동작과 시스템 키보드의 responder 경로 수용은 실기기 검증 항목이다.
 
-로컬 장면 한도는 4 MiB이며 기존 대화 패킷은 1 MiB다. SceneFile·CanvasRelay와 ObsidianVault의 기존 generic JSON 경로를 사용한다. 자동 동기화의 prefix 안전 비교에도 다음 펜 설정 동일성이 필요하다. 테스트는 실제 ObsidianVault 모듈의 격리 파일 왕복이며 live HTTP·Obsidian 화면·실제 Pencil 입력 수용을 뜻하지 않는다.
+로컬 장면과 대화 패킷의 장면 한도는 4 MiB로 같다. PNG 한도는 5 MiB이며 일반 Markdown 노트는 1 MiB를 유지한다. SceneFile·CanvasRelay와 ObsidianVault의 기존 generic JSON 경로를 사용한다. 자동 동기화의 prefix 안전 비교에도 다음 펜 설정 동일성이 필요하다. 테스트는 실제 ObsidianVault 모듈의 격리 파일 왕복이며 live HTTP·Obsidian 화면·실제 Pencil 입력 수용을 뜻하지 않는다.
 
 순수 명령 회귀는 `python3 Tests/checks/ink-transform/settings-run.py <storage-route 외장 출력 경로>`로 Mini에서 실행한다. native 및 SDK 검사는 기존 `ink-transform/run.py`, `ink-visibility/run.py`, `ink-undo/run.py`, `linked-obsidian-notes/run.py`를 사용한다. 설치와 최종 실물 입력은 부모 담당의 검증 묶음에서 별도로 수용한다.
 

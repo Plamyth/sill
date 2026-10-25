@@ -1835,7 +1835,7 @@ enum CanvasSendError: LocalizedError {
         case .unavailable: return "현재 열린 음성 세션을 확인하지 못했습니다."
         case .changedSession: return "표시한 음성 대화 또는 세션이 바뀌었습니다. 다시 확인하세요."
         case .missingTarget: return "음성 대화가 없으면 받는 대화 카드를 먼저 선택하세요."
-        case .invalidPacket: return "장면 1 MiB, PNG 5 MiB 한도 또는 패킷 바이트를 확인하세요."
+        case .invalidPacket: return "장면 4 MiB, PNG 5 MiB 한도 또는 패킷 바이트를 확인하세요."
         case .unresolvedPacket: return "이전 패킷의 접수 결과를 먼저 확인해야 합니다. 자동 재전송하지 않습니다."
         case .receiptMismatch: return "영수증의 패킷·대화·세션·해시가 일치하지 않습니다."
         case .outboxUnavailable: return "전송 원장을 읽거나 저장하지 못했습니다. 전송을 중단했습니다."
@@ -1844,7 +1844,7 @@ enum CanvasSendError: LocalizedError {
 }
 
 struct CanvasPacket: Codable, Equatable {
-    static let sceneByteLimit = 1024*1024
+    static let sceneByteLimit = CanvasScene.localByteLimit
     let packetId: UUID
     let threadId: UUID
     let sessionId: String
