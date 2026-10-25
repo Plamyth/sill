@@ -215,33 +215,52 @@ final class LocalAudioAuthentication {
     private(set) var activeChallengeID: UUID?
     private var completion: CheckedContinuation<Bool, Never>?
     private var expiry: Task<Void, Never>?
+    private let presentation = LocalAuthenticationPresentation()
 
     func cancel() { finish(false) }
 
     func evaluate(operationId: UUID) async -> Bool {
-        guard completion == nil else { return false }
+        guard completion == nil, !Task.isCancelled else { return false }
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 0
         context.localizedFallbackTitle = "macOS 로그인 암호 사용"
         var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            print("[로컬 복귀 인증] 정책 사용 불가 code=\(error?.code ?? 0)")
+            context.invalidate()
+            return false
+        }
         self.context = context
-        let attempt = operationId
+        let attempt = UUID()
         attemptID = attempt
-        return await withCheckedContinuation { continuation in
-            completion = continuation
-            expiry = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))
-                if !Task.isCancelled { self?.finish(false) }
-            }
-            context.evaluatePolicy(.deviceOwnerAuthentication,
-                localizedReason: "Touch ID 또는 macOS 로그인 암호로 로컬 입출력 복귀") { [weak self] accepted, _ in
-                Task { @MainActor in
-                    guard let self, self.attemptID == attempt else { return }
-                    self.finish(accepted)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                completion = continuation
+                expiry = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))
+                    if !Task.isCancelled { self?.finish(false) }
                 }
+                guard presentation.begin(invalidated: { [weak self] in
+                    guard self?.attemptID == attempt else { return }
+                    self?.cancel()
+                }) else { finish(false); return }
+                guard attemptID == attempt else { return }
+                context.evaluatePolicy(.deviceOwnerAuthentication,
+                    localizedReason: "Touch ID 또는 macOS 로그인 암호로 로컬 입출력 복귀") { [weak self] accepted, error in
+                    let errorCode = (error as NSError?)?.code
+                    Task { @MainActor in
+                        guard let self, self.attemptID == attempt else { return }
+                        print("[로컬 복귀 인증] 운영체제 응답 accepted=\(accepted) errorCode=\(errorCode.map(String.init) ?? "none")")
+                        self.finish(accepted && errorCode == nil)
+                    }
+                }
+                activeChallengeID = operationId
             }
-            activeChallengeID = attempt
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard self?.attemptID == attempt else { return }
+                self?.finish(false)
+            }
         }
     }
 
@@ -254,6 +273,7 @@ final class LocalAudioAuthentication {
         activeChallengeID = nil
         expiry?.cancel(); expiry = nil
         old?.invalidate()
+        presentation.end()
         continuation?.resume(returning: accepted)
     }
 }
