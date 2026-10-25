@@ -12,12 +12,13 @@ system_context = '--system-context' in sys.argv
 embedded_context = '--embedded-context' in sys.argv or ('--challenge' in sys.argv and '--right-layer-baseline' not in sys.argv and '--legacy-context' not in sys.argv)
 challenge = '--challenge' in sys.argv or system_context or embedded_context
 legacy = '--legacy-context' in sys.argv
+lifecycle_path = root / 'Sources/SillHost/RemoteAudioCaptureLifecycle.swift'
 paths = [root / name for name in [
     'Sources/StreamProtocol/AudioPrivacy.swift',
     'Sources/SillHost/LocalAudioReturn.swift',
     'Sources/SillHost/LocalAudioParticipants.swift',
     'Sources/SillHost/HostAudioPrivacyModel.swift',
-]] + [here / ('SystemContextChecks.swift' if system_context else 'EmbeddedContextChecks.swift' if embedded_context else 'ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
+]] + [here / ('SystemContextChecks.swift' if system_context else 'EmbeddedContextChecks.swift' if embedded_context else 'ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve(), lifecycle_path]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 local = paths[1].read_text()
 evaluated_revision = 'working-tree'
@@ -50,7 +51,7 @@ if '--unanchored-mutant' in sys.argv:
     local = local.replace(anchor, ')')
 participants = paths[2].read_text()
 program = '\n'.join([paths[0].read_text(), local, participants,
-    paths[3].read_text().replace('import StreamProtocol\n', ''), paths[4].read_text()])
+    paths[3].read_text().replace('import StreamProtocol\n', ''), lifecycle_path.read_text(), paths[4].read_text()])
 flags = ['-D', 'RECOVERY'] if 'func recoverClosedLocalReturn(' in participants else []
 runner = '''import hashlib,subprocess,sys
 source=sys.stdin.buffer.read()
