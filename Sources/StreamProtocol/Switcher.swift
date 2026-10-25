@@ -59,9 +59,11 @@ public struct DisplayInfo: Codable, Equatable, Identifiable {
     public var width: Int
     public var height: Int
     public var isMain: Bool
+    public var role: String?
 
-    public init(id: UInt32, name: String, width: Int, height: Int, isMain: Bool) {
+    public init(id: UInt32, name: String, width: Int, height: Int, isMain: Bool, role: String? = nil) {
         self.id = id; self.name = name; self.width = width; self.height = height; self.isMain = isMain
+        self.role = role
     }
 }
 
@@ -166,6 +168,7 @@ public struct WindowList: Codable {
     public var microphone: MicrophoneCapability?
     /// Version 1 permits kind 211. Absent on hosts without monitor selection.
     public var displaySelection: Int?
+    public var extendedDesktopControl: Int?
     public var displays: [DisplayInfo]?
     public var displayInventoryID: UUID?
     public var activeDisplayID: UInt32?
@@ -179,7 +182,7 @@ public struct WindowList: Codable {
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
                 dockApps: [AppInfo]? = nil, providerCalls: Int? = nil,
-                sourceSelectionAdmission: SourceSelectionAdmission? = nil) {
+                sourceSelectionAdmission: SourceSelectionAdmission? = nil, extendedDesktopControl: Int? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.selectionRevision = selectionRevision
@@ -191,6 +194,7 @@ public struct WindowList: Codable {
         self.videoEpoch = videoEpoch
         self.microphone = microphone
         self.displaySelection = displaySelection
+        self.extendedDesktopControl = extendedDesktopControl
         self.displays = displays
         self.displayInventoryID = displayInventoryID
         self.activeDisplayID = activeDisplayID

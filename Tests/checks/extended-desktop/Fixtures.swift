@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 
-struct DisplayInfo: Equatable { let id: UInt32; var isMain = false }
+// DISPLAY_INFO
 struct DisplaySelection { let displayID: UInt32; let inventoryID: UUID }
 typealias CGDirectDisplayID = UInt32
 
@@ -14,6 +14,22 @@ struct Route { var encrypted = true; var fingerprint: Data? = Data([1]) }
 final class Trust {
     var paired = true
     func isPaired(_ fingerprint: Data) -> Bool { paired && fingerprint == Data([1]) }
+}
+final class PeerFixture {
+    var isClosed = false
+    var viewports: [Viewport] = []
+    func updateViewport(_ viewport: Viewport) { viewports.append(viewport) }
+}
+struct ViewportMessage {
+    enum Kind { case viewport, other }
+    let kind = Kind.viewport
+    let payload: Data
+    init(_ viewport: Viewport) { payload = try! JSONEncoder().encode(viewport) }
+}
+enum Wire {
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data) -> T? {
+        try? JSONDecoder().decode(type, from: data)
+    }
 }
 
 @MainActor
@@ -36,6 +52,9 @@ final class CoordinatorFixture {
     var shuttingDown = false
     var appKitLoop = true
     var synthetic = false
+    var independentStreamsEnabled = false
+    var peerStreams: [ObjectIdentifier: PeerFixture] = [:]
+    var extendedDesktopEligible: Set<ObjectIdentifier> = []
     var routes: [ObjectIdentifier: Route] = [:]
     var connections: [ObjectIdentifier: NWConnection] = [:]
     var remote: Trust? = Trust()
@@ -44,11 +63,21 @@ final class CoordinatorFixture {
     init(_ desktop: ExtendedDesktop) { extendedDesktop = desktop }
     // COORDINATOR_METHOD
     // VIEWPORT_METHOD
+    // PEER_VIEWPORT_METHOD
+
+    func receiveHello(_ hello: Hello, from connection: NWConnection) {
+        // HELLO_DESKTOP
+    }
+
+    func receive(_ viewport: Viewport, from connection: NWConnection) async {
+        guard let lane = peerStreams[ObjectIdentifier(connection)] else { return }
+        _ = await handlePeerMessage(ViewportMessage(viewport), from: connection, lane: lane)
+    }
 
     func disconnect(_ connection: NWConnection) {
         let id = ObjectIdentifier(connection)
-        extendedDesktop.release(id)
-        extendedDesktopViewports[id] = nil
+        // DISCONNECT_DESKTOP
+        peerStreams[id] = nil
         connections[id] = nil
         routes[id] = nil
     }
@@ -64,6 +93,13 @@ final class CatalogFixture {
     var clientCount = 0
     var refreshes = 0
     @discardableResult func refreshWindows() async -> Bool { refreshes += 1; return true }
+    func displayInfo(id: UInt32, name: String, mainID: UInt32 = 1) -> DisplayInfo {
+        struct Screen { let localizedName: String }
+        let screen: Screen? = Screen(localizedName: name)
+        let display = (width: 1350, height: 890)
+        let index = 0
+        // DISPLAY_INFO_CONSTRUCTION
+    }
     // CATALOG_METHODS
 }
 

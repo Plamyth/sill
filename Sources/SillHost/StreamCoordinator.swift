@@ -105,6 +105,7 @@ package final class StreamCoordinator {
     private let appKitLoop: Bool
     let stage: VirtualStage
     private lazy var extendedDesktop = ExtendedDesktop(catalog: catalog)
+    private var extendedDesktopEligible: Set<ObjectIdentifier> = []
     private var extendedDesktopViewports: [ObjectIdentifier: ExtendedDesktop.Dimensions] = [:]
     /// What the menu bar app shows. Written here, at the moment things happen; never read back.
     package let status: HostStatus
@@ -661,6 +662,7 @@ package final class StreamCoordinator {
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
                 let id = ObjectIdentifier(connection)
                 self.extendedDesktop.release(id)
+                self.extendedDesktopEligible.remove(id)
                 self.extendedDesktopViewports[id] = nil
                 if let lane = self.peerStreams.removeValue(forKey: id) {
                     self.peerMenus.removeValue(forKey: id)?.clientLeft(connection)
@@ -784,7 +786,7 @@ package final class StreamCoordinator {
                 self.peerHelloCaps[id] = hello.sourceInput == 1
                 self.inputFence.negotiate(id, supportsScoped: hello.sourceInput == 1)
                 if let lane = self.peerStreams[id] { lane.supportsScopedInput = hello.sourceInput == 1 }
-                if !self.independentStreamsEnabled { self.requestExtendedDesktop(for: connection, hello: hello) }
+                self.requestExtendedDesktop(for: connection, hello: hello)
                 guard !name.isEmpty else { return }
                 self.status.update {
                     guard let i = $0.devices.firstIndex(where: { $0.id == id }), $0.devices[i].name == nil else { return }
@@ -2502,8 +2504,14 @@ package final class StreamCoordinator {
         let route = routes[id]
         let paired = route?.fingerprint.map { remote?.isPaired($0) == true } ?? false
         guard !shuttingDown, ExtendedDesktop.eligible(appKitLoop: appKitLoop, synthetic: synthetic,
-            connected: connections[id] === connection && connection.state == .ready,
-            encrypted: route?.encrypted == true, paired: paired, device: hello.device) else { return }
+            connected: connection.state == .ready && (connections[id] === connection ||
+                (independentStreamsEnabled && connections[id] == nil && route != nil)),
+            encrypted: route?.encrypted == true, paired: paired, device: hello.device) else {
+            extendedDesktopEligible.remove(id)
+            return
+        }
+        extendedDesktopEligible.insert(id)
+        guard !independentStreamsEnabled else { return }
         extendedDesktop.request(id)
         if let dimensions = extendedDesktopViewports[id] {
             extendedDesktop.updateViewport(dimensions, for: id)
@@ -2513,6 +2521,21 @@ package final class StreamCoordinator {
     private func updateExtendedDesktopViewport(_ viewport: Viewport, from connection: NWConnection) {
         let id = ObjectIdentifier(connection)
         guard !shuttingDown, connections[id] === connection, connection.state == .ready,
+              !independentStreamsEnabled || peerStreams[id]?.isClosed == false else { return }
+        if viewport.extendedDesktopIntent == .release {
+            extendedDesktop.release(id)
+            extendedDesktopViewports[id] = nil
+            return
+        }
+        if viewport.extendedDesktopIntent == .request {
+            let route = routes[id]
+            guard extendedDesktopEligible.contains(id), route?.encrypted == true,
+                  let fingerprint = route?.fingerprint, remote?.isPaired(fingerprint) == true,
+                  let dimensions = ExtendedDesktop.Dimensions(viewport: viewport) else { return }
+            extendedDesktop.request(id)
+            if extendedDesktopViewports[id] == nil { extendedDesktopViewports[id] = dimensions }
+        }
+        guard !independentStreamsEnabled || extendedDesktop.requesters.contains(id),
               let dimensions = extendedDesktopViewports[id] ?? ExtendedDesktop.Dimensions(viewport: viewport) else { return }
         extendedDesktopViewports[id] = dimensions
         extendedDesktop.updateViewport(dimensions, for: id)
@@ -2549,6 +2572,7 @@ package final class StreamCoordinator {
         server.goodbyeAll(Goodbye(reason: Goodbye.quit), within: 0.1)
         shuttingDown = true
         extendedDesktop.shutdown()
+        extendedDesktopEligible.removeAll()
         extendedDesktopViewports.removeAll()
         stage.release()
     }
@@ -3075,7 +3099,8 @@ package final class StreamCoordinator {
                                                       displayInventoryID: synthetic ? nil : catalog.displayInventory.revision,
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
-                                                      dockApps: synthetic ? nil : dockApps(), providerCalls: synthetic ? nil : 1)))
+                                                      dockApps: synthetic ? nil : dockApps(), providerCalls: synthetic ? nil : 1,
+                                                      extendedDesktopControl: synthetic ? nil : 1)))
     }
 
     /// Read only the current user's Dock app tiles; no Dock preference is changed.
@@ -3697,7 +3722,10 @@ extension StreamCoordinator {
         case .selectDisplay:
             if let request = Wire.decode(DisplaySelection.self, from: message.payload) { lane.selectDisplay(request) }
         case .viewport:
-            if let value = Wire.decode(Viewport.self, from: message.payload) { lane.updateViewport(value) }
+            if let value = Wire.decode(Viewport.self, from: message.payload) {
+                updateExtendedDesktopViewport(value, from: connection)
+                lane.updateViewport(value)
+            }
         case .input:
             guard let scoped = Wire.decode(SourceInput.self, from: message.payload) else { return true }
             guard peerInputQueue.enqueue(peer: id, { [weak self, weak lane, weak connection] turn in
