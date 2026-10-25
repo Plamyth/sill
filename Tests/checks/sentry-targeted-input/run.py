@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -10,8 +11,11 @@ ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--archive', type=Path, required=True)
 parser.add_argument('--label', required=True)
+parser.add_argument('--owner', default=os.environ.get('CODEX_THREAD_ID'))
 parser.add_argument('--suite', choices=['all', 'input', 'native', 'sentry', 'targeted', 'peer-gesture', 'common-input', 'control', 'affected', 'local-auth-window', 'local-auth-sdk'], default='all')
 args = parser.parse_args()
+if not args.owner or not re.fullmatch(r'[A-Za-z0-9-]+', args.owner):
+    parser.error('--owner 또는 CODEX_THREAD_ID에 원담당 ID가 필요합니다.')
 archive = args.archive.resolve()
 archive.mkdir(parents=True, exist_ok=True)
 log, receipt = [archive / (args.label + suffix) for suffix in ['.log', '.json']]
@@ -170,6 +174,7 @@ enum StreamCoordinator { static func isSillVirtualDisplay(_ id: CGDirectDisplayI
 ''', 'input': input_program, 'native': native, 'panel': authentication_input_policy + '\n' + fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted','local-auth-window','local-auth-sdk'])}
 payload['peer-gesture'] = targeted
 payload['common-input'] = targeted
+payload['owner'] = args.owner
 blob = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
 remote = r'''
 import hashlib,json,pathlib,subprocess,sys,tempfile
@@ -177,7 +182,7 @@ blob=sys.stdin.buffer.read()
 payload=json.loads(blob)
 print('received_sha256='+hashlib.sha256(blob).hexdigest(),flush=True)
 records=[]; finalCode=0
-with tempfile.TemporaryDirectory(prefix='ccr-targeted-binaries-') as temporary:
+with tempfile.TemporaryDirectory(prefix='ccr-targeted-' + payload['owner'] + '-') as temporary:
  out=pathlib.Path(temporary)
  sdk=subprocess.check_output(['/usr/bin/xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
  compiler=subprocess.check_output(['/usr/bin/xcrun','--find','swiftc'],text=True).strip()
@@ -210,7 +215,7 @@ with tempfile.TemporaryDirectory(prefix='ccr-targeted-binaries-') as temporary:
    records[-1]['cases'].append({'name':case,'exitCode':code,'passedAssertions':sum(line.startswith('PASS ') for line in output.splitlines()),'failures':[line for line in output.splitlines() if line.startswith('FAIL ')],'timedOut':code==124})
    finalCode=max(finalCode,code if code >= 0 else 128 - code)
  del payload,blob
-print('REMOTE_RESULT '+json.dumps({'records':records,'temporaryFilesRemoved':not out.exists(),'sourceFilesWritten':0,'actualOSAuthentication':0,'actualEventPosts':0,'visibleWindows':0,'hostLaunches':0,'HALWrites':0,'serviceWrites':0}),flush=True)
+print('REMOTE_RESULT '+json.dumps({'records':records,'temporaryPath':str(out),'temporaryFilesRemoved':not out.exists(),'sourceFilesWritten':0,'actualOSAuthentication':0,'actualEventPosts':0,'visibleWindows':0,'hostLaunches':0,'HALWrites':0,'serviceWrites':0}),flush=True)
 raise SystemExit(finalCode)
 '''
 with log.open('xb') as output:

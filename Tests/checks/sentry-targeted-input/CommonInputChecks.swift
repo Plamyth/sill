@@ -77,6 +77,45 @@ import StreamProtocol
         Checks.check(posted.last?.getIntegerValueField(.scrollWheelEventScrollPhase) == 1,
             "다른 peer의 새 began은 기존에도 다음 gesture를 시작할 수 있음")
         await send(.scrollGesture(.ended, x: 0.25, y: 0.75), from: b)
+        await send(.scrollGesture(.momentumEnded, x: 0.25, y: 0.75), from: b)
+        let orphanPhases: [[ScrollPhase]] = [[], [.ended], [.momentumBegan], [.ended, .momentumBegan]]
+        for (index, phases) in orphanPhases.enumerated() {
+            for otherPeer in [false, true] {
+                posted.removeAll()
+                await send(keyDown)
+                await phase(.momentumBegan)
+                await send(delta)
+                print("TRACE orphan phases=\(index) otherPeer=\(otherPeer) delta=1 expected=0 actual=\(posted.count)")
+                for phase in phases { await send(.scrollGesture(phase, x: 0.25, y: 0.75)) }
+                let peer = otherPeer ? b : a
+                for number in 2...3 {
+                    await send(delta, from: peer)
+                    print("TRACE orphan phases=\(index) otherPeer=\(otherPeer) delta=\(number) expected=0 actual=\(posted.count)")
+                }
+                Checks.check(posted.isEmpty && !injector.protectedScrollPending,
+                    "생산 decode/queue의 orphan 반복 delta·phase는 wheel이나 scroll 부채를 만들지 않음 \(index)/\(otherPeer)")
+                let beforeForeignUp = injector.globalPosts.count
+                await send(keyUp, from: b)
+                Checks.check(injector.globalPosts.count == beforeForeignUp &&
+                    injector.isUpOfSomethingDown(keyUp, from: idA) && !injector.isUpOfSomethingDown(keyUp, from: idB),
+                    "orphan 거절 뒤 다른 peer는 원 key 부채를 가져오거나 해제하지 않음 \(index)/\(otherPeer)")
+                await send(keyUp)
+                await phase(.momentumEnded)
+                _ = injector.prepareRelease()
+            }
+        }
+        posted.removeAll()
+        await phase(.momentumBegan); await send(delta)
+        await send(.scrollGesture(.began, x: 0.25, y: 0.75), from: b)
+        await send(delta, from: b)
+        await send(.scrollGesture(.ended, x: 0.25, y: 0.75), from: b)
+        await send(.scrollGesture(.momentumBegan, x: 0.25, y: 0.75), from: b)
+        await send(delta, from: b)
+        await send(.scrollGesture(.momentumEnded, x: 0.25, y: 0.75), from: b)
+        Checks.check(posted.map { $0.getIntegerValueField(.scrollWheelEventScrollPhase) } == [1, 4, 0, 0] &&
+            posted.map { $0.getIntegerValueField(.scrollWheelEventMomentumPhase) } == [0, 0, 1, 3] &&
+            !injector.protectedScrollPending,
+            "orphan 뒤 다른 peer의 명시적 began은 새 gesture와 유효 momentum을 정상 재개")
         posted.removeAll()
         await send(.pointer(.leftDown, x: 0.2, y: 0.3))
         await send(.pointer(.move, x: 0.7, y: 0.8))
