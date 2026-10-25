@@ -688,6 +688,7 @@ extension StreamClient {
     /// tries), then `sill-pair/1` to the connection the ask reached, pinned to the key it saw, kind
     /// 19 `code` with proof_D from the PBKDF2 key.
     func pairHome(code text: String) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -817,6 +818,7 @@ extension StreamClient {
     /// Pair This iPad…'s typed code: over a TLS session at home, on the session's row; over any
     /// other, through the connection's kind 18 address as before.
     func pairOverlayTyped(code text: String, mac: String) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -885,6 +887,7 @@ extension StreamClient {
     /// (`link`), else the words. `busy`: one silent retry.
     private func homeProof(targets: [HomeDialer.Target], pin: Data, method: String, key makeKey: @escaping (Data) -> SymmetricKey?,
                            name: String, overlay: Bool, link: PairLink?, scannedSecret: Data?, busyRetried: Bool = false) {
+        guard Self.manualPairingEnabled else { return }
         guard let identity = deviceIdentity() else { return }
         lastScannedSecret = scannedSecret
         homeDialer?.cancel()

@@ -21,7 +21,8 @@ check("release는 합성 필드로도 수동 UI 불허", !c.manualPairingUIEnabl
 #endif
 c.ingress0(); c.ingress1(); c.ingress2(); c.ingress3(); c.ingress4(); c.ingress5()
 c.ingress6(); c.ingress7(); c.ingress8(); c.ingress9(); c.ingress10()
-check("합성 UI도 11개 실제 수동 ingress의 부작용을 허용하지 않음", c.effects == 0)
+c.ingress11(); c.ingress12(); c.ingress13()
+check("합성 UI도 14개 실제 수동 ingress의 부작용을 허용하지 않음", c.effects == 0)
 let ingress = StreamClient()
 ingress.ownerBootstrap.arm(savedKeyPresent: false, preferredKeyPresent: false, hasRecords: false, explicitLaunch: false)
 let ingressToken = ingress.ownerBootstrap.begin()!

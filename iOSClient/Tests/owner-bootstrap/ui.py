@@ -25,7 +25,8 @@ home = (CLIENT / 'StreamClient+Home.swift').read_text()
 entries = [(remote, name) for name in [
     'func requestPairingCode(', 'func handleOpenURL(', 'func confirmPendingLink(',
     'func pairTyped(', 'func scanned(', 'func pair(link:', 'func pair(code:', 'private func startPairing(']]
-entries += [(home, name) for name in ['func startAsk(', 'func askOverStream(', 'func pairLinkAtHome(']]
+entries += [(home, name) for name in ['func startAsk(', 'func askOverStream(', 'func pairLinkAtHome(',
+                                    'func pairHome(', 'func pairOverlayTyped(', 'private func homeProof(']]
 guards = []
 for source, name in entries:
     body = block(source, name)
@@ -33,7 +34,6 @@ for source, name in entries:
     guard = 'guard Self.manualPairingEnabled else { return }'
     assert prologue.startswith(guard), name + ' must refuse before cancellation, parsing, keys or sockets'
     guards.append(f'func ingress{len(guards)}() {{ {prologue[:len(guard)]}\n effects += 1\n }}')
-# UI 도달성은 구조 검사로 보조하며 실제 실행 검사와 구분한다.
 content = (CLIENT / 'ContentView.swift').read_text()
 assert 'manualConnectionEnabled' not in content
 assert '#if DEBUG || !os(iOS)\nstruct ConnectScreen' in content
@@ -46,7 +46,6 @@ screen = (CLIENT / 'StreamScreen.swift').read_text()
 assert 'client.manualPairingUIEnabled &&' in block(screen, 'private var overlayShown:')
 for name in ['private func openPairingOverlay()', 'private func openLinkOverlay()']:
     assert block(screen, name).split('{', 1)[1].lstrip().startswith('guard client.manualPairingUIEnabled else { return }')
-# Sill과 SillPhone은 같은 소스를 두 Sources phase에서 사용한다.
 project = (CLIENT / 'Sill.xcodeproj/project.pbxproj').read_text()
 for name in ['ContentView.swift', 'HostSettingsPanel.swift', 'StreamScreen.swift', 'StreamClient.swift',
              'StreamClient+Home.swift', 'StreamClient+Remote.swift', 'StreamClient+OwnerBootstrap.swift']:
