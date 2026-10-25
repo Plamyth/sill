@@ -9,14 +9,15 @@ import sys
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 system_context = '--system-context' in sys.argv
-challenge = '--challenge' in sys.argv or system_context
+embedded_context = '--embedded-context' in sys.argv or ('--challenge' in sys.argv and '--right-layer-baseline' not in sys.argv and '--legacy-context' not in sys.argv)
+challenge = '--challenge' in sys.argv or system_context or embedded_context
 legacy = '--legacy-context' in sys.argv
 paths = [root / name for name in [
     'Sources/StreamProtocol/AudioPrivacy.swift',
     'Sources/SillHost/LocalAudioReturn.swift',
     'Sources/SillHost/LocalAudioParticipants.swift',
     'Sources/SillHost/HostAudioPrivacyModel.swift',
-]] + [here / ('SystemContextChecks.swift' if system_context else 'ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
+]] + [here / ('SystemContextChecks.swift' if system_context else 'EmbeddedContextChecks.swift' if embedded_context else 'ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 local = paths[1].read_text()
 evaluated_revision = 'working-tree'
@@ -69,6 +70,6 @@ print(json.dumps({'sourceSHA256': before, 'sourceUnchanged': before == after,
     'evaluatedAuthenticationSHA256': authentication_hash,
     'evaluatedRevision': evaluated_revision,
     'unanchoredMutant': '--unanchored-mutant' in sys.argv,
-    'authenticationBoundary': ('inert LAContext' if legacy or system_context else 'inert LARight and NSWindow') + '; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
+    'authenticationBoundary': ('inert LAContext' if legacy or system_context or embedded_context else 'inert LARight and NSWindow') + '; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
     'actualAuthenticationHALUIJournalDeviceActions': 0, 'exitCode': result.returncode}), flush=True)
 sys.exit(result.returncode if before == after else 2)
