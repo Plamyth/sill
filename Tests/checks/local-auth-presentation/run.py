@@ -38,5 +38,5 @@ result = subprocess.run(command, input=sdk_input, text=True, timeout=120)
 unchanged = all(hashlib.sha256((root / name).read_bytes()).hexdigest() == sha for name, sha in hashes.items())
 print(json.dumps({'sourceSHA256': hashes, 'sourceUnchanged': unchanged, 'sdk': sdk,
     'sdkInputSHA256': hashlib.sha256(sdk_input.encode()).hexdigest(), 'sdkTypecheckExit': result.returncode,
-    'actualAuthenticationUIHALInputActions': 0, 'boundary': 'inert selector only; AppKit and LAContext are typechecked, never executed'}))
+    'actualAuthenticationUIHALInputActions': 0, 'boundary': 'inert selector only; AppKit and LARight are typechecked, never executed'}))
 sys.exit(result.returncode if unchanged else 2)

@@ -9,23 +9,32 @@ import sys
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 challenge = '--challenge' in sys.argv
+legacy = '--legacy-context' in sys.argv
 paths = [root / name for name in [
     'Sources/StreamProtocol/AudioPrivacy.swift',
     'Sources/SillHost/LocalAudioReturn.swift',
     'Sources/SillHost/LocalAudioParticipants.swift',
     'Sources/SillHost/HostAudioPrivacyModel.swift',
-]] + [here / ('ChallengeChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
+]] + [here / ('ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 local = paths[1].read_text()
 if '--baseline' in sys.argv:
     local = subprocess.check_output(['git', 'show',
         '438569be69099b2d369d12ebc494be81cf3ae7da:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
+elif legacy:
+    local = subprocess.check_output(['git', 'show',
+        '8c6e1d90dbc3c75dfcb682a12b9fa9d9f1e7d6e7:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
+authentication_hash = hashlib.sha256(local.encode()).hexdigest()
 start, end = local.index('@MainActor\nfinal class LocalAudioAuthentication'), local.index('@MainActor\nfinal class LocalAudioJournal')
-local = (local if challenge else local[:start] + local[end:]).replace('import LocalAuthentication\n', '')
+local = (local if challenge else local[:start] + local[end:]).replace('import LocalAuthentication\n', '').replace('import LocalAuthenticationEmbeddedUI\n', '')
 if challenge:
     assert local.count('Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))') == 1
     assert 'static let maximumWaitMilliseconds = 120_000' in local
-    local = local.replace('Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))', 'Task.sleep(for: .milliseconds(200))')
+    local = local.replace('static let maximumWaitMilliseconds = 120_000', 'static let maximumWaitMilliseconds = 200')
+if '--unanchored-mutant' in sys.argv:
+    anchor = ',\n                                          in: window)'
+    assert local.count(anchor) == 1
+    local = local.replace(anchor, ')')
 participants = paths[2].read_text()
 program = '\n'.join([paths[0].read_text(), local, participants,
     paths[3].read_text().replace('import StreamProtocol\n', ''), paths[4].read_text()])
@@ -45,6 +54,9 @@ if '--local' not in sys.argv:
 result = subprocess.run(command, input=program, text=True, timeout=160)
 after = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 print(json.dumps({'sourceSHA256': before, 'sourceUnchanged': before == after,
-    'authenticationBoundary': 'inert LAContext; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
+    'evaluatedAuthenticationSHA256': authentication_hash,
+    'evaluatedRevision': '8c6e1d90dbc3c75dfcb682a12b9fa9d9f1e7d6e7' if legacy else 'working-tree',
+    'unanchoredMutant': '--unanchored-mutant' in sys.argv,
+    'authenticationBoundary': ('inert LAContext' if legacy else 'inert LARight and NSWindow') + '; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
     'actualAuthenticationHALUIJournalDeviceActions': 0, 'exitCode': result.returncode}), flush=True)
 sys.exit(result.returncode if before == after else 2)
