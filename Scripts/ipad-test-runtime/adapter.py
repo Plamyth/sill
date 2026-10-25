@@ -279,7 +279,7 @@ def harness(config, work, method, variables=None, on_ready=None):
         if isinstance(value, dict) and key != '__xctestrun_metadata__':
             value.setdefault('EnvironmentVariables', {})['CCR_TEST_RUNTIME_ID'] = read(work / 'deployment.json')['testId']
             value['EnvironmentVariables']['CCR_TEST_BUNDLE'] = BUNDLE
-            for name in ['CCR_ROTATION_EXPECTED', 'CCR_ROTATION_DELTA']:
+            for name in ['CCR_ROTATION_EXPECTED', 'CCR_ROTATION_DELTA', 'CCR_COMMENT_TEXT', 'CCR_COMMENT_PREVIOUS']:
                 value['EnvironmentVariables'].pop(name, None)
             value['EnvironmentVariables'].update(variables or {})
     runs[0].write_bytes(plistlib.dumps(run))
@@ -413,6 +413,76 @@ def accept_rotation(config, work, server, vault, test_id):
              'remotePNGSource':'실제 iPad의 같은 노드·내용·90도 장면을 production SceneRenderer로 렌더링',
              'vault':saved,'finalVault':final,'deviceScene':str(local)}
     write(work / 'rotation-functional-readback.json', proof)
+    return proof
+
+def comment_fixture(test_id):
+    scene = fixture(test_id)
+    scene['nodes'].append(dict(scene['nodes'][0], id='42478F2C-F81D-4AC9-B714-ECBD9DDAC411',
+                               text='댓글 없는 카드', frame={'x':1050,'y':1000,'width':260,'height':120}))
+    scene['annotations'] = [{'id':'9A061215-B87D-4549-8548-56DDC78FC103','nodeId':NODE,
+                             'text':'보존할 AI 주석 👩🏽‍💻','author':'AI'}]
+    return scene
+
+def verify_comment_scene(scene, baseline, text, comment_id=None):
+    comments = [row for row in scene['annotations'] if row['author'] == '사용자']
+    require(len(comments) == 1 and comments[0].get('nodeId') == NODE and comments[0]['text'] == text,
+            'comment_text_or_target_mismatch')
+    current = comments[0]
+    try:
+        parsed = uuid.UUID(current['id'])
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise Held('comment_id_invalid')
+    require(parsed.int != 0 and (comment_id is None or current['id'] == comment_id), 'comment_id_changed')
+    require(len({row['id'] for row in scene['annotations']}) == len(scene['annotations']), 'comment_id_collision')
+    preserved = dict(scene, revision=baseline['revision'],
+                     annotations=[row for row in scene['annotations'] if row is not current])
+    require(scene['revision'] > baseline['revision'] and preserved == baseline,
+            'comment_changed_original_or_ai_annotation')
+    return current['id']
+
+def accept_comments(config, work, server, test_id):
+    code, prior = request(server, 'GET', '/vault/canvas?id=' + test_id)
+    require(code == 200, 'comment_seed_lookup_failed')
+    baseline = comment_fixture(test_id)
+    baseline['revision'] = prior['revision'] + 1
+    baseline = json.loads(encode_scene(server,baseline))
+    code, _ = save_scene(server,baseline,pixel(),prior['noteSha256'])
+    require(code == 200, 'comment_seed_failed')
+    stop_owned(config,work)
+    seed = work / 'comment-state'; seed.mkdir(exist_ok=True)
+    write(seed / 'CanvasScene.json',baseline)
+    root = 'Library/Application Support/CCRIntegrationTests/' + test_id
+    copy_file(config,work,seed,root + '/state','to',replace=True)
+    copy_file(config,work,work / 'context.json',root + '/context.json','to')
+    results = []
+    previous = ''
+    comment_id = None
+    for text in ['첫 댓글 👩🏽‍💻 원문 보존','수정 댓글 · 같은 카드']:
+        ui = harness(config,work,'testCommentSave',{'CCR_COMMENT_TEXT':text,'CCR_COMMENT_PREVIOUS':previous})
+        code, saved = request(server,'GET','/vault/canvas?id=' + test_id)
+        require(code == 200, 'comment_vault_readback_failed')
+        scene = json.loads(base64.b64decode(saved['sceneJSONBase64']))
+        comment_id = verify_comment_scene(scene,baseline,text,comment_id)
+        local = work / ('comment-device-' + str(len(results)) + '.json')
+        copy_file(config,work,root + '/state/CanvasScene.json',local)
+        require(read(local) == scene, 'comment_device_vault_mismatch')
+        reopened = harness(config,work,'testCommentReopen',{'CCR_COMMENT_TEXT':text})
+        results.append({'ui':str(ui),'reopen':str(reopened),'vault':saved,'deviceScene':str(local)})
+        previous = text
+    stale = harness(config,work,'testStaleCommentDraftRequiresExplicitDiscard',{'CCR_COMMENT_TEXT':previous})
+    reopen = harness(config,work,'testCommentReopen',{'CCR_COMMENT_TEXT':previous})
+    ruler = harness(config,work,'testRulerToggleAcrossDrawingAndSelection')
+    code, final = request(server,'GET','/vault/canvas?id=' + test_id)
+    require(code == 200 and final == saved, 'comment_discard_or_ruler_changed_vault')
+    local = work / 'comment-final-device-scene.json'
+    copy_file(config,work,root + '/state/CanvasScene.json',local)
+    require(read(local) == scene, 'comment_discard_or_ruler_changed_device')
+    proof = {'edits':results,'staleDraftDiscard':str(stale),'finalReopen':str(reopen),'rulerToggle':str(ruler),
+             'commentID':comment_id,'baseline':baseline,'finalVault':final,'deviceScene':str(local),
+             'input':'XCTest keyboard UI; Apple Pencil sensor input unverified',
+             'rulerScope':'native menu toggle and drawing/selection mode; physical ruler geometry unverified',
+             'nativeLifetimeProbe':'separate opt-in testNativeModeLifetimeProbe; not executed by this flow'}
+    write(work / 'comment-functional-readback.json',proof)
     return proof
 
 def relay_runtime(config, work, source):
@@ -554,11 +624,12 @@ def accept(config, work, source):
         command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
         reverse = harness(config, work, 'testReopenRemoteRevision')
         rotation = accept_rotation(config, work, server, vault, test_id)
+        comments = accept_comments(config, work, server, test_id)
         require(snapshots(config, work, 'user-after-accept') == before, 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
         require(all(observed.get(k) == source[k] for k in source) and observed.get('executableSHA256') == deployed['executableSHA256'], 'accepted_runtime_mismatch')
         proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed,
-                 'rotation':rotation, 'originalPreserved': True}
+                 'rotation':rotation, 'comments':comments, 'originalPreserved': True}
         write(work / 'functional-readback.json', proof)
         accepted = True
     finally:
