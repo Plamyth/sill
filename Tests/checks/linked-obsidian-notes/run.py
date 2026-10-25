@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 import signal
+import shutil
+import uuid
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +18,7 @@ if not output.is_relative_to(Path(archive['path']).resolve()):
 output.mkdir(parents=True, exist_ok=True)
 sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            root / 'iOSClient/CanvasBridge/CanvasStore.swift',
+           root / 'iOSClient/CanvasBridge/PencilTextCorrection.swift',
            root / 'iOSClient/CanvasBridge/CanvasRelay.swift',
            root / 'iOSClient/CanvasBridge/ControlRoomProjection.swift',
            root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift',
@@ -23,13 +26,18 @@ sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            Path(__file__).with_name('SelectedInkChecks.swift'),
            Path(__file__).with_name('HandwritingSearchChecks.swift'),
            Path(__file__).with_name('WholeNoteRecoveryChecks.swift'),
+           Path(__file__).with_name('PencilVaultRoundtripChecks.swift'),
            Path(__file__).with_name('main.swift')]
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 ios = sorted((root / 'iOSClient/CanvasBridge').glob('*.swift')) + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
 ios += [root / 'iOSClient/IPadAudioSession.swift', root / 'iOSClient/IPadAudioLeaseState.swift',
         root / 'iOSClient/IPadAudioLeaseCoordinator.swift']
 inputs = list(dict.fromkeys(sources + ios + [protocol, Path(__file__)]))
+inputs += [Path(__file__).with_name('vault-roundtrip.cjs')]
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+relay = Path('/Users/ambrion/Documents/ChatGPT/BT_CCR-Obsidian-relay')
+relay_inputs = [relay / 'relay/obsidian-vault.js', relay / 'relay/canvas-diagram.js'] if '--vault-roundtrip' in sys.argv[2:] else []
+relay_hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in relay_inputs}
 tool_env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], env=tool_env, text=True).strip()
 command = ['xcrun', 'swiftc', '-sdk', sdk, '-target', 'arm64e-apple-macos27.0',
@@ -65,6 +73,13 @@ if code == 0:
     home = output / 'home'
     home.mkdir(exist_ok=True)
     env = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home))
+    if '--vault-roundtrip' in sys.argv[2:]:
+        node = shutil.which('node')
+        if node is None:
+            raise SystemExit('기존 Node 실행 파일을 찾지 못했습니다.')
+        env.update(PENCIL_NODE=node, PENCIL_RELAY_REPO=str(relay),
+                   PENCIL_TEST_VAULT=str(output / 'isolated-vault'), PENCIL_FIXTURE_ID=str(uuid.uuid4()),
+                   PENCIL_VAULT_HELPER=str(Path(__file__).with_name('vault-roundtrip.cjs')))
     result = run([str(output / 'check'), *sys.argv[2:]], env, 90)
     (output / 'runtime.log').write_text(result.stdout)
     print(result.stdout, end='')
@@ -88,10 +103,15 @@ if ios_result.returncode != 0:
     code = ios_result.returncode
 after = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 unchanged = after == hashes
-if not unchanged:
+relay_unchanged = all(hashlib.sha256(p.read_bytes()).hexdigest() == relay_hashes[str(p)] for p in relay_inputs)
+if not unchanged or not relay_unchanged:
     code = 1
 (output / 'result.json').write_text(json.dumps({'sourceHashes': hashes, 'sourceHashesAfter': after,
     'sourceUnchanged': unchanged, 'sdk': sdk, 'command': command, 'moduleCommand': module_command,
     'iosCommand': ios_check, 'iosSDKTypecheckExit': ios_result.returncode, 'deviceExecuted': False,
+    'relaySourceHashes': relay_hashes, 'relaySourceUnchanged': relay_unchanged,
+    'actualVaultModuleFileRoundtrip': '--vault-roundtrip' in sys.argv[2:],
+    'PNGScope': 'native PencilKit ink fixture; full scene visual parity not asserted',
+    'HTTPOrOpenScreenRoundtrip': False, 'physicalPencilInput': False,
     'exitCode': code}, indent=2) + '\n')
 sys.exit(code if code >= 0 else 1)

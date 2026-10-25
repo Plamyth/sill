@@ -80,6 +80,11 @@ final class NoteProtocol: URLProtocol {
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
         }
+        if CommandLine.arguments.contains("--vault-roundtrip") {
+            try await checkPencilVaultRoundtrip(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         func snapshot(_ text: String, path: String = "Notes/test.md") -> VaultNoteSnapshot {
             VaultNoteSnapshot(path:path,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"now")
         }

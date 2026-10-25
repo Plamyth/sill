@@ -15,3 +15,8 @@ Excerpt eligibility is deliberately conservative: plain paragraphs with an inlin
 Recovery checks reopen the production Store from the same isolated scene and recovery files. They cover Unicode drafts, explicit restore/discard, scene/card/relay binding, persisted operation IDs before dispatch, response loss, later typing, source preflight, journal IO failure, checksum corruption, and external file replacement. Credential bytes are not stored. A single active linked-block editor is supported; full-note unsaved drafts are outside this recovery path.
 
 These checks do not establish installed iPad UI acceptance, Pencil gesture parity, or an actual operating-system process termination and relaunch. The recovery lifecycle is exercised through independent Store instances and on-disk files.
+# 실제 Obsidian 파일 모듈과 Pencil 결과의 자동 왕복
+
+`python3 -B Tests/checks/linked-obsidian-notes/run.py STORAGE_ROUTED_OUTPUT --vault-roundtrip`는 기존 macOS PencilKit·Store 실행 경로와 실제 `ObsidianVault` 모듈을 사용한다. 자체 마커가 있는 격리 보관함에서 교정 결과 ‘가방’ 저장·새 Store 재열기·Mac 수정 역수신·동시 편집 CAS 거부·부분 지우기 mask/transform/ID가 있는 장면의 저장·재열기·역방향 구조 편집과 원래 fixture 값 복원을 확인한다.
+
+실사용 보관함이나 릴레이 서비스를 열지 않는다. PNG는 실제 macOS PencilKit이 만든 잉크 fixture이며 전체 iPad SceneRenderer의 구조 요소 시각 동등성은 주장하지 않는다. 파일 계층 자동 왕복과 실제 HTTP·열린 iPad 화면·Pencil 센서 입력 수용은 구분한다. 원본 relay 소스 해시와 입력 불변성도 기록한다.
