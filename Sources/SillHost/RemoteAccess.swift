@@ -807,7 +807,14 @@ package final class RemoteAccess {
     private func updateMobileEnrollment() {
         guard remoteAccess else { stopMobileEnrollment(); return }
         if mobileEnrollmentRuntime == nil {
-            guard let identity, let profile = try? mobileEnrollmentHostProfile(identity) else { return }
+            guard let identity else { return }
+            mobileEnrollmentDependencies.diagnostic(.init(stage: .profilePreparation))
+            let profile: MobileEnrollment.HostProfile
+            do { profile = try mobileEnrollmentHostProfile(identity) }
+            catch {
+                mobileEnrollmentDependencies.diagnostic(.init(stage: .profilePreparation, code: .init(error)))
+                return
+            }
             let clock = mobileEnrollmentDependencies.clock
             mobileEnrollmentRuntime = MobileEnrollmentHostRuntime(identity: identity, host: profile,
                 observeActive: { [weak self] challenge in
