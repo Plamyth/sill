@@ -113,8 +113,9 @@ import StreamProtocol
             }
             let allowed = f.runtime.allows(Data(repeating: 0xcd, count: 32), direction: .input)
             let arms = f.privacy.arms
+            let sameGeneration = f.runtime.snapshot?.binding?.configuration.privacyGeneration == f.privacy.forwardingPrivacyGeneration
             await f.finish()
-            print("FIRST_HTTP active=\(allowed) arms=\(arms) (expected active=true arms=1)")
+            FileHandle.standardOutput.write(Data("FIRST_HTTP active=\(allowed) arms=\(arms) sameGeneration=\(sameGeneration) (expected active=true arms=1)\n".utf8))
             if !allowed || arms != 1 { throw NSError(domain: "FirstHTTPBinding", code: 1) }
             return
         }
