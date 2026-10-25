@@ -241,8 +241,19 @@ final class CanvasStore: ObservableObject {
     }
 
     @discardableResult
+    func discardComment(sessionID: UUID) -> Bool {
+        guard !commentInputBusy, commentSession?.id == sessionID else { return false }
+        commentSession = nil
+        commentContext = nil
+        commentText = ""
+        status = "저장 전 댓글 초안을 버렸습니다. 저장된 댓글은 그대로 유지됩니다."
+        return true
+    }
+
+    @discardableResult
     func confirmComment(sessionID: UUID) -> Bool {
-        guard !commentInputBusy, commentSession?.id == sessionID, commentIsCurrent,
+        guard commentSession?.id == sessionID else { return false }
+        guard !commentInputBusy, commentIsCurrent,
               let session = commentSession else {
             status = "요소나 장면이 바뀌었거나 입력 중입니다. 댓글 입력을 보존하며 덮어쓰지 않습니다."
             return false

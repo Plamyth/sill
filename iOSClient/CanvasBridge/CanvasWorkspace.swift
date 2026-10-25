@@ -22,6 +22,7 @@ struct CanvasWorkspace: View {
     @State private var pendingNodeEdit: (sceneID: UUID, node: CanvasNode)?
     @State private var pendingCommentEdit: UUID?
     @State private var commentEditorOpen = false
+    @State private var commentDiscardSession: UUID?
     @State private var commentSelection = NSRange(location:0,length:0)
     @State private var proposalSelection = NSRange(location:0,length:0)
     @State private var proposalInputBusy = false
@@ -1021,34 +1022,61 @@ struct CanvasWorkspace: View {
     }
 
     private var commentSheet: some View {
-        NavigationStack {
+        let sessionID = store.commentSession?.id
+        return NavigationStack {
             Form {
                 Text("선택한 카드의 사용자 댓글입니다. 손글씨나 키보드로 입력하세요. 닫아도 저장 전 입력은 이 편집기에 남습니다.")
-                VaultMarkdownEditor(text:$store.commentText,selection:$commentSelection,
+                VaultMarkdownEditor(text:Binding(get:{ store.commentSession?.id == sessionID ? store.commentText : "" },
+                    set:{ if store.commentSession?.id == sessionID { store.commentText = $0 } }),selection:$commentSelection,
                     identifier:"canvasCommentTextEditor",label:"카드 댓글 편집기",
-                    inputBusy:$store.commentInputBusy,editSession:{ store.commentSession?.id })
-                    .id(store.commentSession?.id).frame(minHeight:240)
+                    inputBusy:Binding(get:{ store.commentInputBusy },
+                        set:{ if store.commentSession?.id == sessionID { store.commentInputBusy = $0 } }),
+                    editSession:{ store.commentSession?.id })
+                    .id(sessionID).frame(minHeight:240)
                 if !store.commentIsCurrent {
-                    Text("요소나 장면이 바뀌었습니다. 입력을 복사해 보관할 수 있으며 기존 댓글은 덮어쓰지 않습니다.")
+                    Text("요소나 장면이 바뀌었습니다. 초안을 복사해 보관하거나 버린 뒤 원하는 카드를 선택해 다시 편집하세요. 기존 댓글은 덮어쓰지 않습니다.")
                         .foregroundStyle(.orange)
                 }
+                Button("초안 전체 복사") {
+                    guard store.commentSession?.id == sessionID else { return }
+                    UIPasteboard.general.string = store.commentText
+                }.disabled(store.commentInputBusy)
+                    .accessibilityIdentifier("canvasCopyCommentDraft")
+                Button("초안 버리기",role:.destructive) {
+                    guard !store.commentInputBusy, store.commentSession?.id == sessionID else { return }
+                    commentDiscardSession = sessionID
+                }.disabled(store.commentInputBusy)
+                    .accessibilityIdentifier("canvasDiscardCommentDraft")
                 Text(store.status).font(.footnote)
             }
             .navigationTitle("카드 댓글")
             .toolbar {
                 ToolbarItem(placement:.confirmationAction) {
                     Button("저장") {
-                        if let id = store.commentSession?.id, store.confirmComment(sessionID:id) {
+                        if let sessionID, store.confirmComment(sessionID:sessionID) {
                             commentEditorOpen = false
                         }
                     }.disabled(!store.commentIsCurrent || store.commentInputBusy)
                 }
                 ToolbarItem(placement:.cancellationAction) {
-                    Button("나중에") { commentEditorOpen = false }.disabled(store.commentInputBusy)
+                    Button("나중에") {
+                        guard !store.commentInputBusy, store.commentSession?.id == sessionID else { return }
+                        commentEditorOpen = false
+                    }.disabled(store.commentInputBusy)
                 }
             }
         }
         .interactiveDismissDisabled(store.commentInputBusy)
+        .alert("댓글 초안을 버릴까요?",isPresented:Binding(
+            get:{ commentDiscardSession != nil },
+            set:{ if !$0 { commentDiscardSession = nil } }),presenting:commentDiscardSession) { id in
+            Button("초안 버리기",role:.destructive) {
+                if store.discardComment(sessionID:id) { commentEditorOpen = false }
+            }.disabled(store.commentInputBusy)
+            Button("계속 편집",role:.cancel) { }
+        } message: { _ in
+            Text("저장 전 입력은 복구할 수 없습니다. 필요하면 취소하고 초안을 먼저 복사하세요. 저장된 댓글은 바뀌지 않습니다.")
+        }
     }
 
     private var proposalSheet: some View {

@@ -25,8 +25,15 @@ sources += [root / ('iOSClient/' + name + '.swift') for name in
             ['IPadAudioSession', 'IPadAudioLeaseState', 'IPadAudioLeaseCoordinator']]
 sources += [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
 module = root / 'Sources/StreamProtocol/TestDestinations.swift'
-pure_suites = [here / 'main.swift']
-store_suites = [here / 'StoreChecks.swift']
+pure_suites = [here / 'main.swift', root / 'Tests/checks/ipad-canvas-revisions/main.swift',
+               root / 'Tests/checks/canvas-hierarchy/main.swift']
+store_suites = [here / 'StoreChecks.swift', root / 'Tests/checks/node-rotation/NodeRotationChecks.swift',
+                root / 'Tests/checks/node-resize/NodeResizeChecks.swift',
+                root / 'Tests/checks/pele-live/StoreChecks.swift',
+                root / 'Tests/checks/pele-live/EndpointChecks.swift']
+if '--focused' in sys.argv or '--store-only' in sys.argv:
+    pure_suites = pure_suites[:1]
+    store_suites = store_suites[:1]
 inputs = sorted(set(sources + [module, plist, Path(__file__).resolve()] + pure_suites + store_suites))
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
@@ -99,7 +106,14 @@ try:
     renderer = (root / 'iOSClient/CanvasBridge/SceneRenderer.swift').read_text()
     assert 'pendingCommentEdit' in workspace.split('.sheet(isPresented:$inspectorOpen,onDismiss:',1)[1].split('NavigationStack',1)[0]
     sheet = workspace.split('private var commentSheet:',1)[1].split('private var proposalSheet:',1)[0]
-    assert 'VaultMarkdownEditor' in sheet and 'inputBusy:$store.commentInputBusy' in sheet
+    assert 'VaultMarkdownEditor' in sheet and 'store.commentInputBusy = $0' in sheet
+    assert 'let sessionID = store.commentSession?.id' in sheet
+    assert 'guard store.commentSession?.id == sessionID' in sheet
+    assert 'set:{ if store.commentSession?.id == sessionID { store.commentText = $0 } }' in sheet
+    assert 'if let sessionID, store.confirmComment(sessionID:sessionID)' in sheet
+    assert 'presenting:commentDiscardSession' in sheet and 'store.discardComment(sessionID:id)' in sheet
+    assert 'commentDiscardSession = sessionID' in sheet and 'role:.cancel' in sheet
+    assert 'canvasCopyCommentDraft' in sheet and 'UIPasteboard.general.string = store.commentText' in sheet
     assert '.interactiveDismissDisabled(store.commentInputBusy)' in sheet and '.disabled(store.commentInputBusy)' in sheet
     assert 'let annotationFrames = displayed.annotationFrames' in workspace and 'scene.annotationFrames' in renderer
     assert '.lineLimit(3)' in workspace and 'cg.clip(to:frame)' in renderer

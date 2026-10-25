@@ -85,13 +85,41 @@ import AppKit
               "재현: 선택이 바뀐 초안은 저장할 수 없음")
         let workspace = try String(contentsOfFile:env["COMMENT_WORKSPACE"]!,encoding:.utf8)
         check(workspace.contains("canvasDiscardCommentDraft"),"재현: stale 초안을 명시적으로 해제할 UI가 있어야 함")
+        check(store.beginCommentEdit() == recovery && store.commentText == draft,
+              "버리기 확인 전·취소 후 초안과 세션 보존")
+        store.commentInputBusy = true
+        check(!store.discardComment(sessionID:recovery) && store.commentSession?.id == recovery &&
+              store.commentText == draft && bytes(store.scene) == recoveryScene,"미확정 IME·손글씨 중 초안 해제 거부")
+        store.commentInputBusy = false
+        check(!store.discardComment(sessionID:UUID()) && store.commentSession?.id == recovery &&
+              store.commentText == draft,"다른 세션의 버리기 요청 거부")
+        check(store.discardComment(sessionID:recovery) && store.commentSession == nil &&
+              store.commentText.isEmpty && bytes(store.scene) == recoveryScene,"확인한 stale 초안만 해제·장면 쓰기 없음")
+        check(store.commentSession == nil,"해제만으로 새 노드에 자동 배정하지 않음")
+        let next = store.beginCommentEdit()!
+        check(next != recovery && store.commentSession?.node.id == b && store.commentText.isEmpty,
+              "명시적 재진입으로 선택한 새 노드 편집 시작")
+        store.commentText = "새 노드에 작성한 댓글"
+        let nextStatus = store.status
+        check(!store.discardComment(sessionID:recovery) && !store.confirmComment(sessionID:recovery) &&
+              store.commentSession?.id == next && store.commentText == "새 노드에 작성한 댓글" &&
+              store.status == nextStatus,"오래된 버리기·저장 콜백은 새 세션에 영향 없음")
+        store.commentInputBusy = true
+        check(!store.discardComment(sessionID:recovery) && store.commentInputBusy &&
+              store.commentSession?.id == next,"이전 콜백은 새 세션의 입력 상태도 보존")
+        store.commentInputBusy = false
+        check(store.confirmComment(sessionID:next) && store.scene.annotations.contains(where:{
+            $0.nodeId == b && $0.author == "사용자" && $0.text == "새 노드에 작성한 댓글"
+        }),"stale 해제 뒤 새 노드 댓글 실제 저장")
+        store.scene = editable
+        store.selectedNode = a
         for invalid in ["", " \r\n\t"] {
             let token = store.beginCommentEdit()!
             store.commentText = invalid
             let before = bytes(store.scene)
             check(!store.confirmComment(sessionID:token) && bytes(store.scene) == before &&
                   store.commentText == invalid,"빈 입력 저장 거부·입력 보존")
-            store.commentText = store.commentSession!.text
+            check(store.discardComment(sessionID:token),"빈 초안도 명시적으로 해제")
         }
         for mutation: (CanvasStore) -> Void in [
             { $0.selectedNode = b }, { $0.selectedNode = b; $0.selectedNode = a },
@@ -103,7 +131,6 @@ import AppKit
         ] {
             store.scene = editable
             store.selectedNode = a
-            if let session = store.commentSession { store.commentText = session.text }
             let token = store.beginCommentEdit()!
             store.commentText = "저장 전 입력 보존"
             mutation(store)
@@ -112,19 +139,20 @@ import AppKit
             let before = bytes(store.scene)
             check(!store.commentIsCurrent && !store.confirmComment(sessionID:token) &&
                   bytes(store.scene) == before && store.commentText == "저장 전 입력 보존","선택·노드·주석·장면 변경 뒤 오래된 저장 거부")
+            check(store.discardComment(sessionID:token) && store.commentSession == nil &&
+                  bytes(store.scene) == before,"선택·장면 변경으로 막힌 초안의 명시적 복구·장면 보존")
         }
         store.scene = editable
         store.selectedNode = b
-        if let session = store.commentSession { store.commentText = session.text }
         let hidden = store.beginCommentEdit()!
         store.commentText = "숨김 중 입력"
         _ = store.scene.toggleChildren(of:a)
         let folded = bytes(store.scene)
         check(!store.confirmComment(sessionID:hidden) && bytes(store.scene) == folded &&
               store.commentText == "숨김 중 입력","계층 숨김 뒤 원문 덮기 없음")
+        check(store.discardComment(sessionID:hidden),"숨김으로 막힌 초안도 명시적으로 해제")
         store.scene = editable
         store.selectedNode = a
-        if let session = store.commentSession { store.commentText = session.text }
         store.scene.annotations.append(.init(id:UUID(),nodeId:a,text:"중복",author:"사용자"))
         let ambiguous = bytes(store.scene)
         check(store.beginCommentEdit() == nil && bytes(store.scene) == ambiguous,"여러 사용자 댓글이면 진입 거부·보존")
