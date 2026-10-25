@@ -159,7 +159,7 @@ import Foundation
             nativeStartup: fixture.startup)
         privacy.revokeForLocalReturn = {
             stops += 1
-            if stops == 2 { await newlyQueuedStop.wait() }
+            if intentClears == 1 { await newlyQueuedStop.wait() }
             fixture.nativeStopped = true
             return true
         }
@@ -185,8 +185,8 @@ import Foundation
         } else {
             newlyQueuedStop.release()
             check(await task.value, "같은 요청의 실제 native Stop 종료 후 로컬 복귀 완료")
-            check(stops == 2 && latchClears == 1 && hal.restores == 1 && !privacy.latched,
-                  "검증된 두 번째 종료 뒤 HAL과 latch는 한 번만 복귀")
+            check(stops == 3 && latchClears == 1 && hal.restores == 1 && !privacy.latched,
+                  "참여자·intent 후 종료를 각각 확인한 뒤 HAL과 latch는 한 번만 복귀")
         }
         privacy.stop()
     }

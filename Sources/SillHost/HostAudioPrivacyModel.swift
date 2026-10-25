@@ -551,17 +551,26 @@ package final class HostAudioPrivacy {
         defer { participants.endLocalReturn(ticket) }
         pending?.cancel(); pending = nil
         publish(AudioPrivacyState(version: 2, protected: false, reason: "인증된 로컬 입출력으로 복귀 중입니다."))
+        let current: @MainActor () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < deadline &&
+                self.authenticatingLocal && self.returningLocal &&
+                self.localReturnID == request && self.privacyGeneration == generation &&
+                self.latched && self.persistenceHealthy && self.participants.isFenced &&
+                self.participants.matches(membership)
+        }
         guard await participants.fenceAndQuiesce(operationId: request, privacyGeneration: generation,
                     membership: membership, budgetMilliseconds: budgetMilliseconds, deadline: deadline),
+              await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
+                  guard current() else { return false }
+                  return await self.nativeStartup.quiesce(using: self.revokeForLocalReturn, while: current)
+              }) == true, current(),
               await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
               localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
               participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return failedReturn("오디오 참여자 중지·상태 증거") }
         let admission: @MainActor () -> Bool = { [weak self] in
             guard let self else { return false }
-            return !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < deadline &&
-                self.authenticatingLocal && self.returningLocal &&
-                self.localReturnID == request && self.privacyGeneration == generation &&
-                self.latched && self.persistenceHealthy &&
+            return current() &&
                 self.participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership)
         }
         guard let commitIntent = authenticatedLocalReturnWillCommit,
