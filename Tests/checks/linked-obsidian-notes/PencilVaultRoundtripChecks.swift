@@ -275,5 +275,56 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     if hiddenReadback.sha256 != hiddenBase.sha256 {
         _ = try bridge.saveNote(hiddenPath,hiddenReadback.sha256,hiddenSource)
     }
+    let fieldsPath = "질문과 답 필드 자동 왕복.md"
+    _ = try bridge.saveNote(fieldsPath,nil,reviewSource)
+    let fieldsStore = store()
+    await fieldsStore.openVaultNote(fieldsPath) { try bridge.note($0) }
+    let fieldsSession = fieldsStore.vaultReviewEditSession!
+    let question = " \t질문 e\u{301} 👩🏽‍💻\r\n두 번째 줄\r\n "
+    let answer = "Pencil로 보완한 답\n세 번째 줄\n"
+    check(fieldsStore.editVaultReview(.front,text:question,session:fieldsSession) &&
+          fieldsStore.editVaultReview(.back,text:answer,session:fieldsSession),
+          "native question and answer fields edit the existing production vault draft")
+    await fieldsStore.saveVaultNote { try bridge.saveNote($0,$1,$2) }
+    let fieldsRead = try PencilVaultBridge().note(fieldsPath)
+    let fieldsCard = try VaultReviewCard.parse(fieldsRead.text)!
+    check(fieldsCard.text(for:.front).utf8.elementsEqual(question.utf8) &&
+          fieldsCard.text(for:.back).utf8.elementsEqual(answer.utf8) && !fieldsStore.vaultDirty,
+          "field edits save complete leading whitespace, Unicode and multiline content without extra punctuation")
+    let initialCard = try VaultReviewCard.parse(reviewSource)!
+    check(fieldsCard.metadata == initialCard.metadata &&
+          fieldsRead.text.hasPrefix("\u{feff}# 원문 👩🏽‍💻 e\u{301}\r\n그대로 둘 문단 ^keep\r\n") &&
+          fieldsRead.text.hasSuffix("\r\n마지막 원문 문단"),
+          "question and answer persistence preserves card metadata and bytes outside the card")
+    let fieldsReopened = store()
+    await fieldsReopened.openVaultNote(fieldsPath) { try bridge.note($0) }
+    let reopenedFields = try VaultReviewCard.parse(fieldsReopened.vaultDraft)!
+    check(reopenedFields.text(for:.front).utf8.elementsEqual(question.utf8) &&
+          reopenedFields.text(for:.back).utf8.elementsEqual(answer.utf8),
+          "new Store and vault process reopen the exact question and answer field bytes")
+    let oldFieldsSession = fieldsReopened.vaultReviewEditSession!
+    let externalAnswer = "에이전트가 Obsidian에서 보완한 답 👩🏽‍💻"
+    let externalFieldsText = try reopenedFields.replacing(.back,with:externalAnswer)
+    _ = try bridge.saveNote(fieldsPath,fieldsRead.sha256,externalFieldsText)
+    await fieldsReopened.refreshVaultNotes { try bridge.note($0) }
+    let refreshedFields = try VaultReviewCard.parse(fieldsReopened.vaultDraft)!
+    check(refreshedFields.text(for:.back) == externalAnswer && refreshedFields.metadata == initialCard.metadata,
+          "external Obsidian answer is reflected in the same field model with unchanged card identity")
+    check(!fieldsReopened.editVaultReview(.back,text:"늦은 기존 편집",session:oldFieldsSession) &&
+          fieldsReopened.vaultDraft == externalFieldsText,
+          "field callback from the old SHA cannot overwrite the externally refreshed answer")
+    let emptySession = fieldsReopened.vaultReviewEditSession!
+    check(fieldsReopened.editVaultReview(.front,text:"",session:emptySession),
+          "an empty question remains an editable draft instead of being silently replaced")
+    await fieldsReopened.saveVaultNote { try bridge.saveNote($0,$1,$2) }
+    let emptyRead = try bridge.note(fieldsPath)
+    let emptyReopened = store()
+    await emptyReopened.openVaultNote(fieldsPath) { try bridge.note($0) }
+    check(try VaultReviewCard.parse(emptyRead.text)!.text(for:.front).isEmpty &&
+          emptyReopened.beginVaultReview() == nil && emptyReopened.vaultDraft == emptyRead.text,
+          "saved empty question reopens unchanged but cannot be graded as a complete card")
+    _ = try bridge.saveNote(fieldsPath,emptyRead.sha256,reviewSource)
+    check(try bridge.note(fieldsPath).text == reviewSource,
+          "owned field editing fixture returns to its original note source")
     print("SCOPE actual Store + PencilKit + ObsidianVault file roundtrip; no HTTP, UI, device or physical Pencil input")
 }
