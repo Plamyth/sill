@@ -660,7 +660,7 @@ package final class HostAudioPrivacy {
             print("[로컬 복귀 단계] 오디오 계획 mode=preserveLocal")
         }
         var audioAttempted = false
-        var audioCommitted = false
+        var audioCommitReceipt: LocalAudioParticipantRegistry.LocalReturnTicket?
         let commitAudio = {
             guard !audioAttempted else { return false }
             audioAttempted = true
@@ -668,14 +668,18 @@ package final class HostAudioPrivacy {
                   self.localReturnID == request, self.privacyGeneration == generation,
                   self.localReturnAudioPlanCurrent(audioPlan),
                   self.participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
+            let committed: Bool
             switch audioPlan {
-            case .restoreOriginal: audioCommitted = self.clearLatch()
-            case .preserveLocal: audioCommitted = admission()
+            case .restoreOriginal: committed = self.clearLatch()
+            case .preserveLocal: committed = admission()
             }
-            return audioCommitted
+            if committed { audioCommitReceipt = ticket }
+            return audioCommitReceipt == ticket
         }
         let completed = await localReturnDidComplete?(deadline, admission, commitAudio) ?? commitAudio()
-        guard completed && audioCommitted && admission() else {
+        let audioCommitted = audioCommitReceipt == ticket
+        // Sentry has revalidated current through its inactive commit before returning success.
+        guard completed, let receipt = audioCommitReceipt, receipt == ticket else {
             if case .restoreOriginal(let original) = audioPlan {
                 let originalSaved = !audioCommitted || saveLocal(original)
                 persistenceHealthy = persist() && originalSaved

@@ -72,6 +72,7 @@ import Darwin
     var authHook: (() -> Void)?, intentHook: (() -> Void)?, surfaceHook: (() -> Void)?
     var postCompletionHook: (() -> Void)?
     var sentryCompleted = false
+    var surfaceJournalHook: ((SentryJournalState) -> Void)?
     var events: [String] = []
     var finishedIntent = false
     var releasedWithoutProof = false
@@ -111,6 +112,7 @@ import Darwin
         sentry = HostSentry(admission: admission, initiallyLatched: true, persistenceHealthy: true,
             persist: { [unowned self] state in
                 sentryStates.append(state.rawValue); events.append("surface-journal-" + state.rawValue)
+                surfaceJournalHook?(state)
                 return journalOK
             }, surfaces: .init(engage: { [unowned self] in curtain = true; tap = true; return true },
                 verify: { [unowned self] in curtain && tap },
@@ -182,6 +184,8 @@ import Darwin
             "nativeStops": f.nativeStops, "relayStops": f.relayStops, "inspections": f.inspections,
             "releases": f.releases, "countsWriteRestoreSavePersistClear": f.counts,
             "latched": f.privacy.latched, "durable": f.durable, "curtain": f.curtain, "tap": f.tap,
+            "sentryRequested": f.admission.isRequested, "remoteManualOffSnapshot": f.admission.inactiveSnapshot() != nil,
+            "sentryPersistMode": f.sentryStates.last ?? "none", "modelPhase": f.privacy.localReturnStatusReason ?? "completed",
             "events": f.events, "status": f.privacy.localReturnStatusReason ?? "none"])
     }
     @MainActor static func settle(_ condition: () -> Bool) async {
@@ -203,13 +207,62 @@ import Darwin
     @MainActor static func main() async throws {
         let output = URL(fileURLWithPath: CommandLine.arguments[1])
         if CommandLine.arguments.contains("--postcommit") {
-            let f = Fixture()
-            f.postCompletionHook = { f.hal.readFails = true }
-            let result = await f.privacy.requestLocalReturn()
-            let split = f.sentryCompleted && !result && !f.curtain && !f.tap && f.sentryStates.last == "inactive"
-            print("POSTCOMMIT_REPRO sentryCompleted=\(f.sentryCompleted) modelResult=\(result) curtain=\(f.curtain) tap=\(f.tap) durableSurface=\(f.sentryStates.last ?? "none")")
-            check(!split, "Sentry 완료 뒤 HAL 재조회 실패가 Model 실패·보호 유지 문구와 이미 해제된 표면 상태로 분열하지 않음")
-            trace("postcommit-readback-failure", f)
+            for mode in ["read-failure", "snapshot-change", "restore-read-failure", "missing-audio-commit",
+                         "callback-false", "precommit-read-failure", "inactive-current-failure", "duplicate-commit"] {
+                let f = Fixture()
+                if mode == "restore-read-failure" { check(f.privacy.armAndVerify(), "원본 복원 postcommit fixture 실제 arm") }
+                let before = f.counts
+                var readsAtCompletion: Int?
+                if ["read-failure", "snapshot-change", "restore-read-failure"].contains(mode) {
+                    f.postCompletionHook = {
+                        readsAtCompletion = f.hal.reads
+                        if mode == "snapshot-change" { f.hal.snapshot.devices[0].outputMuted = true }
+                        else { f.hal.readFails = true }
+                    }
+                }
+                if mode == "missing-audio-commit" { f.privacy.localReturnDidComplete = { _, _, _ in true } }
+                if mode == "callback-false" {
+                    f.privacy.localReturnDidComplete = { _, _, commitAudio in
+                        check(commitAudio(), "실제 current/proof를 통과한 audio commit receipt만 생성")
+                        return false
+                    }
+                }
+                if mode == "precommit-read-failure" { f.surfaceHook = { f.hal.readFails = true } }
+                if mode == "inactive-current-failure" {
+                    f.surfaceJournalHook = { state in if state == .inactive { f.hal.readFails = true } }
+                }
+                if mode == "duplicate-commit" {
+                    f.privacy.localReturnDidComplete = { deadline, current, commitAudio in
+                        let result = await f.sentry.completeAuthenticatedLocalReturn(until: deadline, current: current, commitAudio: {
+                            let first = commitAudio(), duplicate = commitAudio()
+                            check(first && !duplicate, "같은 ticket의 audio commit은 정확히 한 번만 수용")
+                            return first
+                        })
+                        f.sentryCompleted = result
+                        return result
+                    }
+                }
+                let result = await f.privacy.requestLocalReturn()
+                let split = f.sentryCompleted && !result && !f.curtain && !f.tap && f.sentryStates.last == "inactive"
+                print("POSTCOMMIT_REPRO mode=\(mode) sentryCompleted=\(f.sentryCompleted) modelResult=\(result) curtain=\(f.curtain) tap=\(f.tap) durableSurface=\(f.sentryStates.last ?? "none")")
+                check(!split, "\(mode): Sentry 완료 영수증 뒤 Model 결과와 표면·저장 상태 분열0")
+                if ["read-failure", "snapshot-change", "restore-read-failure", "duplicate-commit"].contains(mode) {
+                    check(result && f.sentryCompleted && !f.curtain && !f.tap && f.sentryStates.last == "inactive" &&
+                        f.privacy.localReturnStatusReason == nil && !f.admission.isRequested && f.admission.inactiveSnapshot() == nil,
+                        "\(mode): 검증된 ticket 완료와 실제 local admission requested=false가 일치하고 원격 OFF grant를 만들지 않음")
+                    if let readsAtCompletion { check(f.hal.reads == readsAtCompletion, "\(mode): 완료된 거래를 새 HAL 재조회로 다시 열지 않음") }
+                    if mode == "restore-read-failure" {
+                        check(f.hal.restores == 1 && f.clears == 1 && !f.privacy.latched,
+                            "기존 원본 복원은 receipt 확정 뒤 메모리 latch 정리까지 한 번만 완료")
+                    } else { check(f.counts == before, "\(mode): preserve HAL·원본·latch 쓰기0") }
+                } else {
+                    check(!result && !f.sentryCompleted && f.curtain && f.counts == before &&
+                        f.admission.isRequested && f.admission.inactiveSnapshot() == nil,
+                        "\(mode): callback 또는 ticket 영수증 누락/current 실패는 계속 거부")
+                }
+                trace("postcommit-" + mode, f)
+                f.privacy.stop()
+            }
             try JSONSerialization.data(withJSONObject: ["passed": failures.isEmpty, "failures": failures,
                 "assertions": assertions, "cases": traces, "actualEffects": 0] as [String: Any],
                 options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("postcommit-return.json"))
