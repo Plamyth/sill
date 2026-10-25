@@ -115,7 +115,7 @@ import StreamProtocol
             let arms = f.privacy.arms
             await f.finish()
             print("FIRST_HTTP active=\(allowed) arms=\(arms) (expected active=true arms=1)")
-            precondition(allowed && arms == 1, "첫 HTTP 요청은 보호 세대 동기화 후 한 번에 활성화되어야 합니다")
+            if !allowed || arms != 1 { throw CocoaError(.validationMissingMandatoryProperty) }
             return
         }
         if CommandLine.arguments.contains("--observe-only") {
