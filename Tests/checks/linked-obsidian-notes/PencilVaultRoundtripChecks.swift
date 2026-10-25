@@ -60,8 +60,8 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     let path = "펜 편집 자동 왕복.md"
     let original = "# 자동 검증\r\n\r\n가구\r\ne\u{301} 👩🏽‍💻\r\n"
     let base = try bridge.saveNote(path, nil, original)
-    func store() -> CanvasStore {
-        let journal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    func store(journal: URL? = nil) -> CanvasStore {
+        let journal = journal ?? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let defaults = UserDefaults(suiteName:journal.appendingPathComponent("preferences").path)!
         let value = CanvasStore(noteRecoveryURL:journal.appendingPathComponent("note.json"),defaults:defaults)
         value.setNoteConnection(address:"http://fixture.invalid",token:"fixture-only")
@@ -186,5 +186,74 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     let resetNote = try bridge.note(path), resetCanvas = try bridge.canvas(firstScene.id)
     check(resetNote.text == base.text && resetCanvas.sceneSha256 == firstRead.sceneSha256,
           "owned test note and scene return to their original fixture values")
+    let reviewPath = "복습 카드 자동 왕복.md"
+    let reviewSource = ["\u{feff}# 원문 👩🏽‍💻 e\u{301}","그대로 둘 문단 ^keep","",
+        "<!-- ccr-review-card:v1 {\"cardID\":\"11111111-1111-4111-8111-111111111111\",\"dueAt\":null,\"eventID\":null,\"ratedAt\":null} -->",
+        "<!-- ccr-review-front -->","가방의 안에는 무엇이 있나요?","<!-- ccr-review-back -->",
+        "정답 A: e\u{301} 👩🏽‍💻","<!-- /ccr-review-card -->","","마지막 원문 문단"].joined(separator:"\r\n")
+    _ = try bridge.saveNote(reviewPath,nil,reviewSource)
+    let reviewStore = store()
+    await reviewStore.openVaultNote(reviewPath) { try bridge.note($0) }
+    let session = reviewStore.beginVaultReview()!
+    var ratingWrites = 0
+    let rated = await reviewStore.rateVaultReviewGood(session,
+        injectedDate:Date(timeIntervalSince1970:1_800_000_000), save:{ path,sha,text in
+            ratingWrites += 1
+            return try bridge.saveNote(path,sha,text)
+        }, load:{ try bridge.note($0) })
+    let ratingNote = try PencilVaultBridge().note(reviewPath)
+    let parsed = try VaultReviewCard.parse(ratingNote.text)!
+    check(rated && ratingWrites == 1 && parsed.metadata.ratedAt == 1_800_000_000 &&
+          parsed.metadata.dueAt == 1_800_086_400 && parsed.metadata.eventID == session.id.uuidString.lowercased(),
+          "review grade is saved once and read back with the same event and explicit 24-hour due time")
+    check(parsed.front == session.card.front && parsed.back == session.card.back &&
+          ratingNote.text.hasPrefix("\u{feff}# 원문 👩🏽‍💻 e\u{301}\r\n그대로 둘 문단 ^keep\r\n") &&
+          ratingNote.text.hasSuffix("\r\n마지막 원문 문단"),
+          "review metadata update preserves front/back and surrounding Unicode/CRLF source bytes")
+    let reopenedReview = store()
+    await reopenedReview.openVaultNote(reviewPath) { try bridge.note($0) }
+    let reopenedSession = reopenedReview.beginVaultReview()!
+    check(reopenedSession.card.metadata == parsed.metadata && reopenedSession.card.front == parsed.front &&
+          reopenedSession.card.back == parsed.back,
+          "new Store and actual vault process reopen the same review card and due date")
+    let changedAnswer = ratingNote.text.replacingOccurrences(of:"정답 A:",with:"정답 B:")
+    let answerNote = try bridge.saveNote(reviewPath,ratingNote.sha256,changedAnswer)
+    await reopenedReview.refreshVaultNotes { try bridge.note($0) }
+    let answerSession = reopenedReview.beginVaultReview()!
+    check(answerSession.card.back.contains("정답 B:") && answerSession.card.metadata == parsed.metadata,
+          "external Obsidian answer edit is received while preserving the existing review schedule")
+    let duplicate = await reviewStore.rateVaultReviewGood(session,
+        injectedDate:Date(timeIntervalSince1970:1_800_000_010), save:{ path,sha,text in
+            ratingWrites += 1
+            return try bridge.saveNote(path,sha,text)
+        }, load:{ try bridge.note($0) })
+    let afterDuplicate = try bridge.note(reviewPath)
+    check(!duplicate && ratingWrites == 1 && afterDuplicate.sha256 == answerNote.sha256,
+          "late duplicate review callback does not submit a second grade or overwrite the external answer")
+
+    let lostJournal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let lostStore = store(journal:lostJournal)
+    await lostStore.openVaultNote(reviewPath) { try bridge.note($0) }
+    let lostSession = lostStore.beginVaultReview()!
+    var lostWrites = 0
+    let lostResult = await lostStore.rateVaultReviewGood(lostSession,
+        injectedDate:Date(timeIntervalSince1970:1_800_000_100), save:{ path,sha,text in
+            lostWrites += 1
+            _ = try bridge.saveNote(path,sha,text)
+            throw URLError(.networkConnectionLost)
+        }, load:{ try bridge.note($0) })
+    let committedReview = try bridge.note(reviewPath)
+    check(!lostResult && lostWrites == 1 && lostStore.noteRecovery?.submittedText == committedReview.text,
+          "lost grade response preserves the exact submitted event and source in the existing journal")
+    let committedCard = try VaultReviewCard.parse(committedReview.text)!
+    let recoveredStore = store(journal:lostJournal)
+    recoveredStore.scene = lostStore.scene
+    await recoveredStore.restoreNoteDraft { try bridge.note($0) }
+    check(lostWrites == 1 && recoveredStore.noteRecovery == nil && recoveredStore.vaultNote?.sha256 == committedReview.sha256 &&
+          committedCard.metadata.eventID == lostSession.id.uuidString.lowercased(),
+          "actual vault readback reconciles the committed grade without a new event or duplicate write")
+    _ = try bridge.saveNote(reviewPath,committedReview.sha256,reviewSource)
+    check(try bridge.note(reviewPath).text == reviewSource,
+          "owned review fixture returns to the exact unrated source")
     print("SCOPE actual Store + PencilKit + ObsidianVault file roundtrip; no HTTP, UI, device or physical Pencil input")
 }
