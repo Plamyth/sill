@@ -298,6 +298,7 @@ final class InputOverlayView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
             case .none:
                 break
             }
+            guard scrollGestureOpen else { return }
             let dx = (translation.x - lastPanTranslation.x) / rect.width
             let dy = (translation.y - lastPanTranslation.y) / rect.height
             lastPanTranslation = translation

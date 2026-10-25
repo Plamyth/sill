@@ -38,7 +38,6 @@ import CoreGraphics
 import StreamProtocol
 protocol UIViewRepresentable {}
 typealias Context = Void
-enum TrackpadGestures { enum Gesture { case swipe } }
 final class Box<Value> { var value: Value; init(_ value: Value) { self.value = value } }
 @propertyWrapper struct Binding<Value> {
     let box: Box<Value>

@@ -25,7 +25,6 @@ def fixture(root, baseline=False, trackpad_baseline=False, include_adapter=True)
     adapter = '''
 protocol UIViewRepresentable {}
 typealias Context = Void
-enum TrackpadGestures { enum Gesture { case swipe } }
 ''' + ex.block(trackpad, 'struct TrackpadView: UIViewRepresentable') if include_adapter else ''
     return '''import Foundation
 import CoreGraphics
@@ -124,4 +123,4 @@ final class TrackpadSurface {
     func pressModifiers(using sender: ((InputEvent) -> Void)? = nil) {}
     func releaseModifiers(using sender: ((InputEvent) -> Void)? = nil) {}
     func consumeLatch() {}
-''' + trackpad_body.replace('private ', '').replace('@objc ', '') + '\n}\n' + adapter
+''' + trackpad_body.replace('private ', '').replace('@objc ', '') + '\n}\n' + adapter + '\n' + (root / 'iOSClient/TrackpadGestures.swift').read_text()

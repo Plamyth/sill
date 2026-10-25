@@ -32,6 +32,28 @@ def fixture():
     body += '\n' + '\n'.join(select(block(current, m)) for m in core)
     body += '\n' + select(block(current, '@Published private(set) var visionInputBinding =')).replace('@Published private(set) ', '')
     coalescer = stream[stream.index('    // Pointer-move coalescing,'):stream.index('    /// DEBUG: saved Macs seeded')]
+    gestures = ''
+    if '// MARK: - iPad gesture admission' in current:
+        gestures = select(current[current.index('    // MARK: - iPad gesture admission'):current.index("    /// This device's switch for three-finger gestures")])
+        gestures += '\n' + block(current, 'func sendGesture(')
+        gestures += '\n' + select(block(current, 'private func request(_ source:'))
+        gestures += '''
+    var connected = true
+    var hostGestures: Int? = 1
+    static var gesturesOn: Bool { true }
+    var explicitSourceIntent: UInt64 = 0
+    var selectionRevision: String?
+    var sourceCatalogEpoch: UUID?
+    enum ExpectedSourceIntent { case source(StreamSource) }
+    var expectedSourceIntent: (choice: ExpectedSourceIntent, revision: String?, epoch: UUID?, origin: SourceRequest.Origin)?
+    var choicesSent = 0
+    final class AudioControl { func sourceWillChange() {} }
+    let remoteAudioControl = AudioControl()
+    func microphoneSourceWillChange() {}
+    func noteAction() {}
+    func noteSourceIntent() { explicitSourceIntent &+= 1 }
+    func select(_ source: StreamSource) { noteSourceIntent(); request(source) }
+'''
     return '''import Foundation
 import Network
 import StreamProtocol
@@ -59,21 +81,26 @@ final class StreamClient {
     func pointerNoteSent(_ event: InputEvent) {}
     func catalog(_ list: WindowList, peer: NWConnection) {
         queue.sync { observeVisionInputCatalog(list, from: peer) }
+        selectionRevision = list.selectionRevision
+        sourceCatalogEpoch = list.videoEpoch?.id
         _ = applyVisionInputCatalog(list, from: peer)
     }
     func ready(_ ticket: VisionPresentation.Ticket?) { visionPresentationChanged(ticket) }
     func cancel() { invalidatePresentedInput() }
     func flush() { queue.sync { flushPendingMove() } }
     func coalesceNextMove() { queue.sync { lastMoveAt = CACurrentMediaTime() + 1 } }
-''' + coalescer + body.replace('private ', '') + '''
+''' + coalescer + gestures.replace('private ', '') + body.replace('private ', '') + '''
 }
 final class FixtureDisplay {
     var epoch: VideoEpoch?
     var peer: ObjectIdentifier?
     var mainOnly = true
+    var onRevoke: (() -> Void)?
     func setPresentation(epoch: VideoEpoch?, peer: ObjectIdentifier?, modern: Bool) {
         mainOnly = mainOnly && Thread.isMainThread
+        let changed = self.epoch != epoch || self.peer != peer
         self.epoch = epoch; self.peer = peer
+        if changed { onRevoke?() }
     }
 }
 '''
