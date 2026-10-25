@@ -27,3 +27,11 @@ This fixture does not prove SwiftUI recognizer scheduling, real gesture values, 
 첫 pinch의 ended 처리 시각이 0.10초이고 두 번째 pinch의 active 시각이 0.12초인 경우에도, 이전 pointer는 한 callback의 서로 다른 ID 수만 보고 두 손 동시 입력으로 처리했다. 실제 callback 대역의 클릭 수는 2회 대신 0회였다. `VisionPointer.receive`는 ID별 오래된 값·종료 이후 값을 먼저 제외하고, 기록된 contact 생애가 실제로 겹치는지를 판정한다. 겹치지 않는 생애만 timestamp 순서로 처리한다. 같은 시각의 교대와 실제 겹침은 계속 억제한다. timestamp는 Apple API의 이벤트 처리 시각이며 실제 손 센서 시각으로 해석하지 않는다.
 
 collection 배열 두 순서 모두 두 번의 균형 잡힌 클릭을 검증했다. 기존 aspect-fit·letterbox·확대 역좌표, 확대율과 독립적인 물리 scroll delta, phase·관성, hold·modifier drag, 회전 monitor step, 취소·admission·route·scope·debt·fence와 callback 변이 검사를 함께 실행한다. 이 검사는 공개 SpatialEvent DTO와 실제 생산 메서드의 대역 결과다. 실제 SwiftUI recognizer의 스케줄링·손·시선·OS batch 빈도·Host 전달·체감 지연은 수용하지 않는다. 연속 raw gaze나 private API를 추가하지 않았다.
+
+## 2026-10-26 겹침 생애 종료 뒤 새 pinch 회귀
+
+`native-mini.py`의 작업 키와 출력 폴더는 `vision-gesture-intervals-20261026`이다. 기존 native runner와 production callback 추출을 재사용한다. A(0초)와 B(0.02초)가 겹친 뒤 같은 collection에 A 종료(0.10초), B 종료(0.11초), C 시작(0.12초)이 들어오고 C가 0.22초에 끝나는 반례는 클릭 1회가 기대값이다. 기존 collection 전체 억제는 0회를 반환했다.
+
+`VisionPointer.receive`는 겹치는 생애의 ID만 모으고 해당 sample에 도달할 때 기존 cancel·suppressed 상태를 사용한다. 종료와 시작이 같은 시각이면 계속 겹침으로 취급한다. live contact가 모두 끝나면 기존 idle 상태로 돌아가 이후 독립 pinch를 허용한다. 여섯 collection 배열 순서, 실제 겹침·동시각 교대, callback을 넘는 겹침 사슬과 그 앞뒤의 독립 클릭을 검사한다. 순차 두 pinch의 양쪽 배열 순서와 기존 취소·stale·timestamp·lease·ticket·원격 좌표·scroll·hold·zoom·rotation 회귀 및 다섯 callback 변이 검사를 유지한다.
+
+이 검사는 inert transport의 production callback 결과이며 실제 UI·기기·Host 입력 전송과 SDK 전체 빌드·서명·설치는 실행하지 않는다. 부모 담당이 새 head의 SDK 검사·독립 재검수·PR66 갱신·통합을 수행한다. 기존 2bb2078 SDK 결과는 새 head의 SDK 증거로 사용하지 않는다.

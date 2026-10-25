@@ -144,19 +144,27 @@ struct VisionPointer {
                 spans[sample.id] = (sample.timestamp, .infinity)
             } else if sample.phase != .active { spans[sample.id]?.end = sample.timestamp }
         }
-        let intervals = Array(spans.values)
-        let competing = intervals.enumerated().contains { index, span in
-            intervals.dropFirst(index + 1).contains { max(span.start, $0.start) <= min(span.end, $0.end) }
+        let intervals = Array(spans)
+        var competing = Set<AnyHashable>()
+        for (index, span) in intervals.enumerated() {
+            for other in intervals.dropFirst(index + 1) where
+                max(span.value.start, other.value.start) <= min(span.value.end, other.value.end) {
+                competing.insert(span.key)
+                competing.insert(other.key)
+            }
         }
-        var events = competing ? cancel() : []
-        if competing { stroke = .suppressed }
+        var events: [InputEvent] = []
         for sample in fresh {
             guard !retired.contains(sample.id), sample.timestamp >= (live[sample.id] ?? -.infinity) else { continue }
+            if competing.contains(sample.id) {
+                events += cancel()
+                stroke = .suppressed
+            }
             let known = live[sample.id] != nil
             if sample.phase == .active { live[sample.id] = sample.timestamp }
             else { live.removeValue(forKey: sample.id); retired.insert(sample.id) }
             if case .suppressed = stroke {
-                if !competing && live.isEmpty { stroke = .idle }
+                if live.isEmpty { stroke = .idle }
                 continue
             }
             if sample.phase == .cancelled { events += cancel(); continue }
