@@ -59,9 +59,9 @@ def main():
     if '--epoch-regression' in sys.argv:
         files['Producer.swift'] = producer.fixture(ROOT)
         files['main.swift'] = (ROOT / 'Tests/checks/ipad-input-epoch/main.swift').read_text()
-    elif '--gesture-admission' in sys.argv:
+    elif '--gesture-admission' in sys.argv or '--legacy-admission' in sys.argv:
         files['Producer.swift'] = (ROOT / 'iOSClient/TrackpadGestures.swift').read_text()
-        files['main.swift'] = Path(__file__).with_name('admission.swift').read_text()
+        files['main.swift'] = Path(__file__).with_name('legacy.swift' if '--legacy-admission' in sys.argv else 'admission.swift').read_text()
     for name, source in files.items():
         (out / name).write_text(source)
     paths = list((ROOT / 'Sources/StreamProtocol').glob('*.swift')) + [

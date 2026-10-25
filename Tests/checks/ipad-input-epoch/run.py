@@ -33,8 +33,8 @@ def fixture():
     body += '\n' + select(block(current, '@Published private(set) var visionInputBinding =')).replace('@Published private(set) ', '')
     coalescer = stream[stream.index('    // Pointer-move coalescing,'):stream.index('    /// DEBUG: saved Macs seeded')]
     gestures = ''
-    if '// MARK: - iPad gesture admission' in current:
-        gestures = select(current[current.index('    // MARK: - iPad gesture admission'):current.index("    /// This device's switch for three-finger gestures")])
+    if 'private struct IPadGestureTarget' in current:
+        gestures = select(current[current.index('    private struct IPadGestureTarget'):current.index("    /// This device's switch for three-finger gestures")].rsplit('    #endif', 1)[0])
         gestures += '\n' + block(current, 'func sendGesture(')
         gestures += '\n' + select(block(current, 'private func request(_ source:'))
         gestures += '''

@@ -1780,6 +1780,9 @@ final class StreamClient: ObservableObject {
             bindingCatalog.videoEpoch = nil
         }
         let binding = VisionInputBinding(catalog: bindingCatalog)
+        #if os(iOS)
+        ipadGestureCatalog.observe(bindingCatalog, peer: peer)
+        #endif
         if visionWireBinding?.peer != id || visionWireBinding?.binding != binding || visionWireSource != list.active {
             link.observeInputEpoch(binding.epoch?.id, modern: binding.isModern)
             visionMediaPS = nil
@@ -4814,17 +4817,35 @@ final class StreamClient: ObservableObject {
     }
     #endif
 
-    // MARK: - iPad gesture admission
-
     #if os(iOS)
     private struct IPadGestureTarget {
         let peer: NWConnection
         let binding: VisionInputBinding
         let permit: UUID
+        let source: StreamSource
+        let revision: String?
+    }
+
+    private final class IPadGestureCatalog {
+        private let lock = NSLock()
+        private var current: (peer: ObjectIdentifier, binding: VisionInputBinding, source: StreamSource, revision: String?)?
+
+        func observe(_ list: WindowList, peer: NWConnection) {
+            lock.lock(); defer { lock.unlock() }
+            current = (ObjectIdentifier(peer), VisionInputBinding(catalog: list), list.active, list.selectionRevision)
+        }
+
+        func allows(_ target: IPadGestureTarget) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard let current, current.peer == ObjectIdentifier(target.peer),
+                  current.source == target.source, current.revision == target.revision else { return false }
+            if target.binding.isLegacy { return current.binding == target.binding }
+            return target.binding.epoch != nil && current.binding.epoch == target.binding.epoch
+        }
     }
 
     private struct PendingIPadDesktopGesture {
-        enum Phase { case selecting, awaitingDesktop, awaitingPresentation(VideoEpoch) }
+        enum Phase { case selecting, awaitingDesktop, awaitingPresentation(VideoEpoch), legacyDesktop(VisionInputBinding) }
         let id: UUID
         let payload: Data
         let origin: IPadGestureTarget
@@ -4835,7 +4856,7 @@ final class StreamClient: ObservableObject {
         var phase: Phase = .selecting
     }
 
-    // Main-thread lifecycle; SessionLink owns the synchronized final peer/permit/submission checks.
+    private let ipadGestureCatalog = IPadGestureCatalog()
     private var pendingIPadDesktopGesture: PendingIPadDesktopGesture?
     private var ipadGestureSubmissions: [UUID: SessionLink.Submission] = [:]
 
@@ -4855,34 +4876,55 @@ final class StreamClient: ObservableObject {
             link.cancel(pending.selection); link.cancel(pending.gesture)
             return nil
         }
-        guard appInForeground, connected, pending.origin.peer === peer, pending.intent == explicitSourceIntent,
-              let origin = pending.origin.binding.epoch,
-              case .awaitingPresentation(let observed) = VisionInputBinding(catalog: list),
-              let observed else { return reject() }
+        guard appInForeground, connected, pending.origin.peer === peer,
+              pending.intent == explicitSourceIntent else { return reject() }
+        let observed = VisionInputBinding(catalog: list)
         switch pending.phase {
         case .selecting, .awaitingDesktop:
-            if list.active == origin.source, observed == origin { return pending }
+            if pending.origin.binding.isLegacy {
+                guard observed.isLegacy else { return reject() }
+                if list.active == pending.origin.source, observed == pending.origin.binding,
+                   list.selectionRevision == pending.revision { return pending }
+                guard case .awaitingDesktop = pending.phase, list.active == .desktop,
+                      pending.revision == nil || (list.selectionRevision != nil && list.selectionRevision != pending.revision)
+                else { return reject() }
+                pending.phase = .legacyDesktop(observed)
+                return pending
+            }
+            guard let origin = pending.origin.binding.epoch,
+                  case .awaitingPresentation(let epoch) = observed, let epoch else { return reject() }
+            if list.active == origin.source, epoch == origin { return pending }
             guard case .awaitingDesktop = pending.phase, list.active == .desktop,
                   list.selectionRevision == nil || list.selectionRevision != pending.revision,
-                  observed.source == .desktop, observed.id != origin.id else { return reject() }
-            pending.phase = .awaitingPresentation(observed)
+                  epoch.source == .desktop, epoch.id != origin.id else { return reject() }
+            pending.phase = .awaitingPresentation(epoch)
         case .awaitingPresentation(let epoch):
-            guard list.active == .desktop, observed == epoch else { return reject() }
+            guard list.active == .desktop, observed == .awaitingPresentation(epoch) else { return reject() }
+        case .legacyDesktop(let binding):
+            guard list.active == .desktop, observed == binding else { return reject() }
         }
         return pending
     }
 
     private func resumeIPadDesktopGesture() {
-        guard let pending = pendingIPadDesktopGesture,
-              case .awaitingPresentation(let epoch) = pending.phase else { return }
+        guard let pending = pendingIPadDesktopGesture else { return }
+        switch pending.phase {
+        case .awaitingPresentation(let epoch):
+            guard visionInputBinding == .presented(epoch) else { return }
+        case .legacyDesktop(let binding):
+            guard visionInputBinding.isLegacy, visionInputBinding == binding else { return }
+        case .selecting, .awaitingDesktop:
+            return
+        }
         guard appInForeground, connected, connection === pending.origin.peer,
               explicitSourceIntent == pending.intent, active == .desktop else {
             cancelIPadGestures(); return
         }
-        guard visionInputBinding == .presented(epoch), let permit = visionInputPermit else { return }
+        guard let permit = visionInputPermit, permit != pending.origin.permit else { return }
         pendingIPadDesktopGesture = nil
         enqueueIPadGesture(pending.payload, target: IPadGestureTarget(peer: pending.origin.peer,
-            binding: visionInputBinding, permit: permit), id: pending.id, submission: pending.gesture)
+            binding: visionInputBinding, permit: permit, source: active, revision: selectionRevision),
+            id: pending.id, submission: pending.gesture)
     }
 
     private func enqueueIPadGesture(_ payload: Data, target: IPadGestureTarget, id: UUID,
@@ -4891,10 +4933,12 @@ final class StreamClient: ObservableObject {
         let bytes = StreamMessage(kind: .gesture, timestamp: Date().timeIntervalSince1970,
                                   isKeyframe: false, payload: payload).serialized()
         let link = self.link
+        let catalog = ipadGestureCatalog
         queue.async { [weak self] in
             guard let self, target.binding.isConfirmed else { link.cancel(submission); return }
             self.flushPendingMove()
-            _ = link.send(bytes, onlyOn: target.peer, permit: target.permit, submission: submission)
+            _ = link.send(bytes, onlyOn: target.peer, permit: target.permit, submission: submission,
+                          admit: { catalog.allows(target) })
         }
     }
     #endif
@@ -4934,16 +4978,17 @@ final class StreamClient: ObservableObject {
             hostGestures: hostGestures, generation: TrackpadGesture.generation,
             windowStreams: { if case .window = active { return true }; return false }())
         guard plan.send else { link.cancel(submission); return false }
-        let target = IPadGestureTarget(peer: peer, binding: binding, permit: permit)
+        let target = IPadGestureTarget(peer: peer, binding: binding, permit: permit, source: active, revision: selectionRevision)
         let payload = Wire.encode(TrackpadGesture(gesture: gesture.rawValue, fingers: fingers))
         if !plan.desktopFirst {
             enqueueIPadGesture(payload, target: target, id: id, submission: submission)
             return true
         }
-        guard case .presented(let origin) = binding, origin.source == active else {
-            link.cancel(submission); return false
+        if !binding.isLegacy {
+            guard case .presented(let origin) = binding, origin.source == active else {
+                link.cancel(submission); return false
+            }
         }
-        // Use select's existing intent/request flow with its scoped submission receipt.
         noteSourceIntent()
         expectedSourceIntent = (.source(.desktop), selectionRevision, sourceCatalogEpoch, .human)
         noteAction()
