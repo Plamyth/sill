@@ -8,7 +8,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 route = json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'CCR-Vision'], text=True))
-ARCHIVE = Path(route['path']) / 'code-free-enrollment-20261026'
+ARCHIVE = Path(route['path']) / 'code-free-enrollment-20261026' / 'refusal-budget'
+ARCHIVE.mkdir(exist_ok=True)
 assert ARCHIVE.is_dir()
 paths = ['iOSClient/StreamClient.swift', 'iOSClient/StreamClient+Remote.swift', 'iOSClient/StreamClient+Home.swift',
     'iOSClient/OwnerBootstrapState.swift', 'iOSClient/OwnerBootstrapExchange.swift', 'iOSClient/RemoteConnector.swift',
@@ -30,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='worker-input-', dir=ARCHIVE) as folder:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, target)
     result = subprocess.run(['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run', '--source', str(temp),
-        '--owner', '01a13005-ff61-7780-b0e8-6dc171de1c9d', '--job', 'vision-code-free-consumer-20261026', '--',
+        '--owner', '01a13005-ff61-7780-b0e8-6dc171de1c9d', '--job', 'vision-enrollment-refusal-budget-20261026', '--',
         'python3', 'Tests/checks/vision-owner-enrollment/all.py'], capture_output=True, text=True)
     log = result.stdout + result.stderr
     (ARCHIVE / 'worker-result.log').write_text(log)

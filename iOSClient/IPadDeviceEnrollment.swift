@@ -122,7 +122,7 @@ final class IPadDeviceEnrollment {
     }
 
     /// 반드시 해당 HTTP 요청에 사용한 자격을 전달한다. 늦은 옛 401은 새 자격을 거절하지 않는다.
-    func unauthorized(_ refused: Credential, status: Int, body: Data, done: @escaping Completion) {
+    func unauthorized(_ refused: Credential, status: Int, body: Data, allowRenewal: Bool = true, done: @escaping Completion) {
         precondition(Thread.isMainThread)
         do {
             guard io.current(), !running else { throw IPadEnrollmentFailure.stale }
@@ -137,7 +137,10 @@ final class IPadDeviceEnrollment {
             }
             try reload()
             guard var next = journal else { throw IPadEnrollmentFailure.storage }
-            guard try next.credential(binding: binding) == refused else { ensure(done); return }
+            guard try next.credential(binding: binding) == refused else {
+                guard allowRenewal else { throw error }
+                ensure(done); return
+            }
             quarantine(refused, status: code, reason: reason)
             if code == 403 && ["DEVICE_REVOKED", "OWNER_TRUST_DENIED"].contains(reason) {
                 next.terminal = reason; try save(next)
@@ -147,6 +150,7 @@ final class IPadDeviceEnrollment {
             next.rejectedHash = refused.tokenHash
             if next.pending != .null { next.pending = try pendingWithMode(next.pending, mode: "readback") }
             try save(next)
+            guard allowRenewal else { throw error }
             ensure(done)
         } catch { done(.failure(error)) }
     }

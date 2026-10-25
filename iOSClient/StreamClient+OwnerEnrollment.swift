@@ -143,12 +143,13 @@ extension StreamClient {
         return enrollment.credential
     }
 
-    func ownerEnrollmentUnauthorized(_ refused: IPadEnrollmentProtocol.Credential, status: Int, body: Data,
+    func ownerEnrollmentUnauthorized(_ refused: IPadEnrollmentProtocol.Credential, status: Int, body: Data, allowRenewal: Bool = true,
                                      done: @escaping IPadDeviceEnrollment.Completion) {
         guard let (binding, _, _, peer) = ownerEnrollmentContext(), let enrollment = ownerEnrollment,
               enrollment.binding == binding, refused.binding == binding, ownerEnrollmentPeer == peer,
               ownerEnrollmentScopeIsCurrent else { done(.failure(IPadEnrollmentFailure.stale)); return }
-        enrollment.unauthorized(refused, status: status, body: body, done: ownerEnrollmentCompletion(enrollment, done: done))
+        enrollment.unauthorized(refused, status: status, body: body, allowRenewal: allowRenewal,
+                                done: allowRenewal ? ownerEnrollmentCompletion(enrollment, done: done) : done)
     }
 
     func renewOwnerEnrollmentAfterConfirmedExpiry(_ done: @escaping IPadDeviceEnrollment.Completion) {

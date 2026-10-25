@@ -129,7 +129,7 @@ func visionChecks() throws {
         var completed = false
         var replacement: ControlEventsGateway?
         Task { @MainActor in
-            replacement = await gateways[0].recoverAuthentication?(refusal)
+            replacement = await gateways[0].recoverAuthentication?(refusal, true)
             completed = true
         }
         settle { completed }
@@ -140,7 +140,7 @@ func visionChecks() throws {
                       "새 gateway는 확정 새 자격만 사용")
             var staleCompleted = false
             Task { @MainActor in
-                let old = await gateways[0].recoverAuthentication?(refusal)
+                let old = await gateways[0].recoverAuthentication?(refusal, true)
                 precondition(old == nil); staleCompleted = true
             }
             settle { staleCompleted }
@@ -154,6 +154,70 @@ func visionChecks() throws {
         } else {
             try check(replacement == nil && memory.requests.count == initialRequests,
                       "실제 gateway 현재성·정확 요청 자격 변경시 unauthorized 부작용 0 \(mode)")
+        }
+        _ = control
+        events.release(); stream.cancelOwnerEnrollment()
+    }
+    for mode in ["401", "403-revoked", "403-owner-denied", "401-cas-failure", "401-read-failure", "stale-refusal"] {
+        let memory = try Memory(readbackGolden), stream = client(memory)
+        var gateways: [ControlEventsGateway] = []
+        var continuations: [AsyncThrowingStream<ControlEventsStreamItem, Error>.Continuation] = []
+        let events = ControlEventsController(stream: { gateway in
+            gateways.append(gateway)
+            return AsyncThrowingStream { continuations.append($0) }
+        })
+        let control = VisionControlEnrollmentController(events: events, client: stream,
+            now: { Double(memory.now) / 1000 }, schedule: { _, _ in })
+        events.setForeground(true); events.setVisible(true)
+        stream.connected = true; stream.resumeOwnerEnrollment()
+        settle { gateways.count == 1 }
+        let initial = memory.requests.count
+        let original = stream.ownerEnrollmentCredential!
+        memory.postHandler = { route, _ in
+            switch route {
+            case .readbackChallenge: return memory.response(401, .object(["error": .string("CREDENTIAL_EXPIRED")]))
+            case .challenge: return memory.response(memory.fixture["challengeResponse"]!)
+            case .enroll: return memory.response(memory.credential)
+            case .readback: fatalError("확정 만료 뒤 readback POST 없음")
+            }
+        }
+        memory.token = String(repeating: "d", count: 64)
+        let first = try gateways[0].request()
+        continuations[0].finish(throwing: ControlEventsAuthenticationFailure(status: 401,
+            body: data(.object(["error": .string("CREDENTIAL_EXPIRED")])),
+            authorization: first.value(forHTTPHeaderField: "Authorization")!))
+        settle { gateways.count == 2 }
+        try check(memory.requests.count == initial + 3 && memory.requests.suffix(3).map(\.0) == [.readbackChallenge, .challenge, .enroll], "첫 이벤트 401만 readback 만료·challenge·enroll 한 번")
+        let renewed = stream.ownerEnrollmentCredential!
+        let beforeSecond = memory.requests.count
+        memory.token = String(repeating: "e", count: 64)
+        let second = try gateways[1].request()
+        memory.casFails = mode == "401-cas-failure"
+        memory.loadFails = mode == "401-read-failure"
+        let status = mode.hasPrefix("403") ? 403 : 401
+        let reason = mode == "403-revoked" ? "DEVICE_REVOKED" : mode == "403-owner-denied" ? "OWNER_TRUST_DENIED" : "CREDENTIAL_EXPIRED"
+        continuations[1].finish(throwing: ControlEventsAuthenticationFailure(status: status,
+            body: data(.object(["error": .string(reason)])),
+            authorization: mode == "stale-refusal" ? original.authorizationValue : second.value(forHTTPHeaderField: "Authorization")!))
+        settle { !events.configured }
+        let extra = memory.requests.count - beforeSecond
+        FileHandle.standardOutput.write(Data("실제 두 번 거절 chain \(mode): 최초 HTTP \(initial), 첫 갱신 HTTP \(beforeSecond - initial), 두번째 거절 추가 HTTP \(extra), 구독 \(gateways.count)\n".utf8))
+        try check(extra == 0 && gateways.count == 2, "같은 subscription epoch 두번째 401은 새 등록 HTTP·grant 0")
+        if mode == "stale-refusal" {
+            try check(stream.ownerEnrollmentCredential == renewed, "늦은 옛 401을 현재 credential로 바꿔치기하거나 격리하지 않음")
+        } else {
+            try check(stream.ownerEnrollmentCredential == nil, "두번째 정확 refused credential 즉시 격리")
+            let journal = object(try J.parse(memory.raw!, limit: 1_048_576))
+            if mode == "401" {
+                try check(journal["rejectedTokenHash"] == .string(renewed.tokenHash), "두번째 거절 hash를 CAS journal에 보존")
+            } else if status == 403 {
+                try check(journal["terminal"] == .string(reason), "예산 없는 403도 terminal 신뢰 거절 보존")
+            }
+            memory.casFails = false; memory.loadFails = false
+            memory.postHandler = { _, _ in memory.response(503, .object(["error": .string("ENROLLMENT_PROVIDER_UNAVAILABLE")])) }
+            stream.cancelOwnerEnrollment(); stream.resumeOwnerEnrollment()
+            settle { stream.ownerEnrollment?.phase != .requesting }
+            try check(stream.ownerEnrollmentCredential == nil, "소비자 교체·저장소 복구 후 거절 token cache 재수용 0")
         }
         _ = control
         events.release(); stream.cancelOwnerEnrollment()

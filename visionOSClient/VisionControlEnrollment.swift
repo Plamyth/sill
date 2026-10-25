@@ -68,16 +68,21 @@ final class VisionControlEnrollmentController: ObservableObject {
                     return try client.ownerEnrollmentAuthorizedRequest(path: "/v1/events", method: "GET")
                 }
             })
-        gateway.recoverAuthentication = { [weak self] refusal in
+        gateway.recoverAuthentication = { [weak self] refusal, allowRenewal in
             guard let self, self.generation == generation, self.credential == grant,
                   refusal.authorization == grant.authorizationValue, let client = self.client else { return nil }
             self.expiry?.cancel(); self.expiry = nil
             let result: Result<IPadEnrollmentProtocol.Credential, Error> = await withCheckedContinuation { continuation in
-                client.ownerEnrollmentUnauthorized(grant, status: refusal.status, body: refusal.body) {
+                client.ownerEnrollmentUnauthorized(grant, status: refusal.status, body: refusal.body, allowRenewal: allowRenewal) {
                     continuation.resume(returning: $0)
                 }
             }
             guard self.generation == generation, self.credential == grant else { return nil }
+            if !allowRenewal {
+                if case .failure = result { self.receive(result) }
+                else { self.invalidate() }
+                return nil
+            }
             guard case .success(let renewed) = result, renewed != grant,
                   client.ownerEnrollmentCredential == renewed else {
                 self.receive(result)

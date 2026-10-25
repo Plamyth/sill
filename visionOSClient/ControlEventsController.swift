@@ -117,7 +117,7 @@ final class ControlEventsController: ObservableObject {
                     selection.workID = nil
                 }
                 if let refusal = error as? ControlEventsAuthenticationFailure, let recover = gateway.recoverAuthentication {
-                    let replacement = await recover(refusal)
+                    let replacement = await recover(refusal, !authenticationRecovered)
                     guard self.operation == operation, foreground, visible, !released, !Task.isCancelled else { return }
                     if !authenticationRecovered, let replacement {
                         authenticationRecovered = true

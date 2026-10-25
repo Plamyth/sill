@@ -13,7 +13,7 @@ struct ControlEventsGateway: @unchecked Sendable {
     var contract = ControlEventsContract.mobileV1
     static let maximumPayloadBytes = 8_388_608 - 8192
     var maximumFrameBytes = 8_388_608
-    var recoverAuthentication: (@MainActor (ControlEventsAuthenticationFailure) async -> ControlEventsGateway?)?
+    var recoverAuthentication: (@MainActor (ControlEventsAuthenticationFailure, Bool) async -> ControlEventsGateway?)?
 
     func request() throws -> URLRequest {
         let request = try authenticatedRequest()

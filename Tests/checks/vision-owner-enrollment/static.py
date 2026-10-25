@@ -13,7 +13,13 @@ def check(value, label):
     assert value, label
     checks += 1
 for name, digest in receipt['coreSHA256'].items():
-    check(hashlib.sha256((ROOT / 'iOSClient' / name).read_bytes()).hexdigest() == digest, name)
+    raw = (ROOT / 'iOSClient' / name).read_bytes()
+    if name == 'IPadDeviceEnrollment.swift':
+        text = raw.decode().replace('body: Data, allowRenewal: Bool = true, done:', 'body: Data, done:')
+        text = text.replace('            guard try next.credential(binding: binding) == refused else {\n                guard allowRenewal else { throw error }\n                ensure(done); return\n            }', '            guard try next.credential(binding: binding) == refused else { ensure(done); return }')
+        text = text.replace('            guard allowRenewal else { throw error }\n', '')
+        raw = text.encode()
+    check(hashlib.sha256(raw).hexdigest() == digest, name + ' 허용된 갱신 예산 delta 외 원형 보존')
 for name, digest in receipt['unchangedBootstrapSHA256'].items():
     check(hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == digest, name)
 for name in ['SillVisionApp.swift', 'ControlEventsPanel.swift', 'VisionControlEnrollment.swift']:

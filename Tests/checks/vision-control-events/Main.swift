@@ -675,9 +675,12 @@ private final class Streams {
             let controller = ControlEventsController(stream: streams.open)
             var gate: CheckedContinuation<ControlEventsGateway?, Never>?
             var refusals: [String] = []
+            var budgets: [Bool] = []
             var candidate = try gateway()
-            candidate.recoverAuthentication = { failure in
+            candidate.recoverAuthentication = { failure, allowRenewal in
                 refusals.append(failure.authorization)
+                budgets.append(allowRenewal)
+                if !allowRenewal { return nil }
                 if mode == "no-renewal" { return nil }
                 return await withCheckedContinuation { gate = $0 }
             }
@@ -701,10 +704,9 @@ private final class Streams {
             if mode == "success" {
                 await eventually("확정 결과 뒤 한 번 재접속") { streams.opened == 2 }
                 streams.continuations[1].finish(throwing: refusal("second-request"))
-                await eventually("두번째 거절도 소비자에 전달") { gate != nil }
-                gate?.resume(returning: candidate); gate = nil
+                await eventually("두번째 거절도 소비자에 전달") { refusals.count == 2 }
                 await eventually("동일 구독 epoch에서 두번째 자동 재접속 금지") { controller.reducer.subscription == nil }
-                expect(streams.opened == 2 && refusals == ["exact-old-request", "second-request"], "인증 갱신 반복 0")
+                expect(streams.opened == 2 && refusals == ["exact-old-request", "second-request"] && budgets == [true, false], "모든 거절 전달과 갱신 예산 한 번")
             } else {
                 try await Task.sleep(nanoseconds: 5_000_000)
                 expect(streams.opened == 1, "갱신 대기 중 epoch·foreground·반납 변경은 재접속 0")
