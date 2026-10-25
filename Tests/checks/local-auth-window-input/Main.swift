@@ -284,6 +284,10 @@ private final class EventSource {
         func key() -> Event { event(target: Int64(getpid())) }
         rows = [row(root)]; refreshInputObservation()
         Checks.check(transit(key()), "현재 요청의 정확한 소유 인증 창만 키 입력 수용")
+        NSApp.isActive = false
+        refreshInputObservation()
+        Checks.check(localAuthenticationInputPolicy.observation?.target.window == 91 && transit(key()),
+            "앱이 비활성이어도 정확한 key 인증 패널은 두 필터의 입력을 수용")
         let queued = key(); _ = filter(.keyDown, event: queued)
         NSApp.keyWindow = Panel()
         Checks.check(filterAnnotated(.keyDown, event: queued) == nil,
