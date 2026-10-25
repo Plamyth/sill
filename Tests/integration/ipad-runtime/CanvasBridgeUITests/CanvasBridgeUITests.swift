@@ -156,23 +156,23 @@ final class CanvasBridgeUITests: XCTestCase {
         app.buttons["도구"].firstMatch.tap()
         let ruler = app.descendants(matching:.any).matching(identifier:"canvasRuler").firstMatch
         XCTAssertTrue(ruler.waitForExistence(timeout:5))
-        XCTAssertEqual(ruler.value as? String,"0")
+        XCTAssertFalse(ruler.isSelected)
         ruler.tap()
         XCTAssertTrue(ruler.waitForNonExistence(timeout:5))
         for mode in ["요소 이동","그리기"] {
             app.buttons[mode].firstMatch.tap()
             app.buttons["도구"].firstMatch.tap()
             XCTAssertTrue(ruler.waitForExistence(timeout:5))
-            XCTAssertEqual(ruler.value as? String,"1")
+            XCTAssertTrue(ruler.isSelected)
             app.buttons["구조 데이터"].tap()
             app.buttons["닫기"].firstMatch.tap()
         }
         app.buttons["도구"].firstMatch.tap()
-        XCTAssertEqual(ruler.value as? String,"1")
+        XCTAssertTrue(ruler.isSelected)
         ruler.tap()
         XCTAssertTrue(ruler.waitForNonExistence(timeout:5))
         app.buttons["도구"].firstMatch.tap()
-        XCTAssertEqual(ruler.value as? String,"0")
+        XCTAssertFalse(ruler.isSelected)
     }
 
     func testRulerAccessibilityObservation() throws {
