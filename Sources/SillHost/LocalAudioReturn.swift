@@ -292,7 +292,10 @@ final class LocalAudioAuthentication {
                       let window = await self.presentation.begin(invalidated: { [weak self] in
                           guard self?.attempt === candidate else { return }
                           self?.cancel()
-                      }) else { self.finish(false); return }
+                      }) else {
+                    if self.remainsCurrent(candidate) { self.finish(false) }
+                    return
+                }
                 guard self.remainsCurrent(candidate) else { return }
                 candidate.callbackPending = true
                 candidate.right.authorize(localizedReason: "Touch ID 또는 macOS 로그인 암호로 로컬 입출력 복귀",
