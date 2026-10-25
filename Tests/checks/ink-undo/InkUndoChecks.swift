@@ -25,6 +25,7 @@ private final class InkUndoFixture {
 #if canImport(UIKit)
         coordinator.canvas = canvas
         canvas.delegate = coordinator
+        canvas.nativeUndoManager.groupsByEvent = false
 #endif
         manager.groupsByEvent = false
         store.inkHistory.attach(manager)
@@ -49,17 +50,24 @@ private final class InkUndoFixture {
     func restore(_ next: PKDrawing) {
 #if canImport(UIKit)
         let previous = canvas.drawing
+        let nativeManager = canvas.nativeUndoManager
 #else
         let previous = store.drawing
+        let nativeManager = manager
 #endif
-        manager.registerUndo(withTarget: self) { $0.restore(previous) }
+        nativeManager.registerUndo(withTarget: self) { $0.restore(previous) }
         apply(next)
     }
 
     func edit(_ next: PKDrawing) {
-        manager.beginUndoGrouping()
+#if canImport(UIKit)
+        let nativeManager = canvas.nativeUndoManager
+#else
+        let nativeManager = manager
+#endif
+        nativeManager.beginUndoGrouping()
         restore(next)
-        manager.endUndoGrouping()
+        nativeManager.endUndoGrouping()
     }
 }
 
@@ -94,8 +102,9 @@ enum InkUndoChecks {
         let ink = PKInk(.pen, color: .white)
         let textEditor = UITextView()
         let editorManager = textEditor.undoManager!
-        check(fixture.canvas.undoManager === manager && editorManager !== manager,
-              "actual PKCanvasView override owns a manager separate from UITextView")
+        check(fixture.canvas.undoManager === fixture.canvas.nativeUndoManager &&
+              fixture.canvas.undoManager !== manager && editorManager !== manager,
+              "actual PKCanvasView native history is separate from accepted ink and UITextView history")
 #else
         let mask = NSBezierPath(rect: CGRect(x: 0, y: 0, width: 45, height: 100))
         mask.appendRect(CGRect(x: 75, y: 0, width: 53, height: 100))

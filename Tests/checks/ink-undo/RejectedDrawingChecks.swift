@@ -52,7 +52,8 @@ import PencilKit
         let first = drawing(1)
         let second = PKDrawing(strokes: first.strokes + drawing(1).strokes)
         let rejected = PKDrawing(strokes: second.strokes + drawing(12).strokes)
-        for tool in [true, false] {
+        for boundary in ["tool-end", "callback", "background"] {
+            let tool = boundary != "callback"
             let store = CanvasStore()
             store.scene = CanvasScene()
             store.drawing = PKDrawing()
@@ -71,6 +72,10 @@ import PencilKit
             edits.edit(second, tool: tool)
             await settle()
             check(store.drawing == second && manager.canUndo, "accepted edits have history tool=\(tool)")
+            var falseStyle = store.scene
+            falseStyle.strokes[0].style!.transform.tx += 100
+            check(await SceneRenderer.png(scene: falseStyle) == nil,
+                  "production renderer refuses a false native projection tool=\(tool)")
             let generation = store.inkHistory.generation
             store.scene.annotations.append(.init(id: UUID(), nodeId: nil, text: "", author: "fixture"))
             let size = try JSONEncoder().encode(store.scene).count
@@ -79,13 +84,19 @@ import PencilKit
             let accepted = store.scene
             check(try JSONEncoder().encode(accepted).count < CanvasScene.localByteLimit,
                   "last accepted scene fits 4 MiB tool=\(tool)")
-            edits.edit(rejected, tool: tool)
+            if boundary == "background" {
+                coordinator.canvasViewDidBeginUsingTool(canvas)
+                edits.edit(rejected, tool: false)
+                coordinator.flushPendingDrawing(save: true)
+                coordinator.canvasViewDidEndUsingTool(canvas)
+            } else {
+                edits.edit(rejected, tool: tool)
+            }
             await settle()
             check(store.status.hasPrefix("scene_too_large") && store.scene == accepted && canvas.drawing == second,
                   "oversized edit is refused and actual PKCanvasView restored tool=\(tool)")
             check(manager.canUndo && !store.inkHistory.usingTool && store.inkHistory.generation == generation,
                   "rejection preserves prior history and ends tool busy tool=\(tool)")
-            store.scene.annotations = []
             store.inkHistory.undo()
             await settle()
             check(store.drawing == first && canvas.drawing == first && manager.canRedo,
@@ -105,11 +116,22 @@ import PencilKit
             store.inkHistory.redo()
             await settle()
             check(store.drawing == second && canvas.drawing == second, "both accepted edits redo tool=\(tool)")
+            store.inkHistory.undo()
+            await settle()
+            edits.edit(rejected, tool: tool)
+            await settle()
+            check(store.drawing == first && manager.canRedo,
+                  "a rejected edit after undo preserves the accepted redo branch tool=\(tool)")
+            store.inkHistory.redo()
+            await settle()
+            check(store.drawing == second && canvas.drawing == second,
+                  "redo after a rejected edit restores the accepted branch tool=\(tool)")
             try store.importScene(store.scene)
             coordinator.replaceDrawingFromStore()
             check(!manager.canUndo && !manager.canRedo, "external import still resets history tool=\(tool)")
             canvas.delegate = nil
             store.inkHistory.detach(manager)
+            print("BOUNDARY_PASS \(boundary)")
         }
         print("REJECTED_DRAWING_CHECKS total=\(count) failed=\(failures.count) actualPKCanvasView=true productionCoordinator=true windows=0 controlledNativeRegistrations=true")
         if !failures.isEmpty { throw NSError(domain: "RejectedDrawingChecks", code: failures.count,

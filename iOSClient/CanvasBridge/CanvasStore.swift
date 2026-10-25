@@ -1828,6 +1828,7 @@ final class CanvasStore: ObservableObject {
         let drawing: PKDrawing
         if drawingData.isEmpty { drawing = PKDrawing() }
         else { drawing = try PKDrawing(data:drawingData) }
+        try scene.validateNativeInkProjection()
         return (scene,drawing)
     }
 
@@ -1849,29 +1850,15 @@ final class CanvasStore: ObservableObject {
     private func persistScene(_ candidate: CanvasScene? = nil) throws {
         guard sceneReadable else { throw ScenePersistenceError.unreadable }
         guard let url = Self.sceneURL() else { throw ScenePersistenceError.unreadable }
-        let data = try JSONEncoder().encode(candidate ?? scene)
+        let candidate = candidate ?? scene
+        try candidate.validateNativeInkProjection()
+        let data = try JSONEncoder().encode(candidate)
         guard data.count <= Self.sceneByteLimit else { throw ScenePersistenceError.tooLarge }
         try CanvasLocalFile.write(data,to:url)
     }
 
     private static let sceneByteLimit = CanvasScene.localByteLimit
 
-    private static func inkStyle(_ stroke: PKStroke) -> InkStroke.Style {
-        let transform = stroke.transform
-        let srgb = CGColorSpace(name: CGColorSpace.sRGB)
-        let converted = srgb.flatMap { stroke.ink.color.cgColor.converted(to: $0, intent: .relativeColorimetric, options: nil) }
-        let components = converted?.components
-        let color: InkStroke.Style.SRGB?
-        if let components, components.count == 4 {
-            let rgba = InkStroke.Style.SRGB(red: Double(components[0]), green: Double(components[1]),
-                blue: Double(components[2]), alpha: Double(components[3]))
-            color = rgba.isValid ? rgba : nil
-        } else { color = nil }
-        return InkStroke.Style(inkType: stroke.ink.inkType.rawValue, color: color,
-            transform: .init(a: Double(transform.a), b: Double(transform.b), c: Double(transform.c),
-                d: Double(transform.d), tx: Double(transform.tx), ty: Double(transform.ty)),
-            samples: stroke.path.map { .init(width: Double($0.size.width), height: Double($0.size.height), opacity: Double($0.opacity)) })
-    }
 
     @discardableResult
     func updateDrawing(_ next: PKDrawing) -> Bool {
@@ -1884,32 +1871,7 @@ final class CanvasStore: ObservableObject {
         var changed = scene
         changed.schemaVersion = 2
         changed.drawingBase64 = nativeBytes.base64EncodedString()
-        changed.strokes = authoritative.strokes.map { stroke in
-            func worldPoint(_ point: PKStrokePoint) -> InkPoint {
-                let location = point.location.applying(stroke.transform)
-                return InkPoint(x: Double(location.x), y: Double(location.y),
-                                pressure: Double(point.force))
-            }
-            let ranges = stroke.maskedPathRanges
-            let full = stroke.mask == nil || (ranges.count == 1 &&
-                ranges[0].lowerBound == 0 && ranges[0].upperBound == CGFloat(stroke.path.count - 1))
-            let visibility = InkStroke.Visibility(kind: full ? .full : .masked,
-                visibleSegments: full ? [] : ranges.map { range in
-                    var points = [worldPoint(stroke.path.interpolatedPoint(at: range.lowerBound))]
-                    let firstInterior = Int(floor(range.lowerBound)) + 1
-                    let endInterior = Int(ceil(range.upperBound))
-                    if firstInterior < endInterior {
-                        points += (firstInterior..<endInterior).map { worldPoint(stroke.path[$0]) }
-                    }
-                    if range.upperBound > range.lowerBound {
-                        points.append(worldPoint(stroke.path.interpolatedPoint(at: range.upperBound)))
-                    }
-                    return InkStroke.Visibility.Segment(lowerBound: Double(range.lowerBound),
-                        upperBound: Double(range.upperBound), worldPoints: points)
-                })
-            return InkStroke(id: stroke.id, points: stroke.path.map(worldPoint),
-                createdAt: stroke.path.creationDate, visibility: visibility, style: Self.inkStyle(stroke))
-        }
+        changed.strokes = CanvasScene.nativeInkStrokes(authoritative)
         changed.revision += 1
         guard sceneReadable, changed.hasSupportedInkProjection,
               changed.strokes.allSatisfy({ $0.points.allSatisfy { [$0.x, $0.y, $0.pressure].allSatisfy(\.isFinite) } }) else {
@@ -2121,6 +2083,7 @@ final class CanvasStore: ObservableObject {
             throw CocoaError(.fileReadCorruptFile)
         }
         let next = try drawingData.isEmpty ? PKDrawing() : PKDrawing(data: drawingData)
+        try imported.validateNativeInkProjection()
         invalidateNoteScene()
         scene = imported
         drawing = next

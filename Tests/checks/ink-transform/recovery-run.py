@@ -22,8 +22,11 @@ if mode == 'projection':
 elif mode == 'undo':
     sources += [root / 'iOSClient/CanvasBridge/PencilCanvas.swift', root / 'iOSClient/CanvasBridge/SceneRenderer.swift',
                 root / 'Tests/checks/ink-undo/RejectedDrawingChecks.swift']
+elif mode == 'undo-full':
+    sources += [root / 'iOSClient/CanvasBridge/PencilCanvas.swift', root / 'iOSClient/CanvasBridge/SceneRenderer.swift',
+                root / 'Tests/checks/ink-undo/InkUndoChecks.swift', root / 'Tests/checks/ink-undo/main.swift']
 else:
-    raise SystemExit('projection 또는 undo를 지정하세요.')
+    raise SystemExit('projection, undo, undo-full 중 하나를 지정하세요.')
 plist = root / 'Tests/checks/ink-undo/Info.plist'
 inputs = sources + [plist, Path(__file__)]
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
@@ -32,7 +35,7 @@ sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], e
 target = 'arm64e-apple-macos27.0' if mode == 'projection' else 'arm64-apple-ios27.0-macabi'
 command = ['xcrun', 'swiftc', '-sdk', sdk, '-target', target, '-swift-version', '5', '-parse-as-library',
            '-module-cache-path', str(output.parent / (mode + '-modules'))]
-if mode == 'undo':
+if mode != 'projection':
     command += ['-F', sdk + '/System/iOSSupport/System/Library/Frameworks',
                 '-I', sdk + '/System/iOSSupport/usr/include', '-L', sdk + '/System/iOSSupport/usr/lib']
 command += [*map(str, sources), '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT',
@@ -61,7 +64,8 @@ unchanged = all(hashlib.sha256(p.read_bytes()).hexdigest() == hashes[str(p.relat
 result = 0 if compile_code == 0 and runtime_code == 0 and unchanged else 1
 (output / 'result.json').write_text(json.dumps(dict(sourceHashes=hashes, sourceUnchanged=unchanged,
     compileExit=compile_code, runtimeExit=runtime_code, command=command, exitCode=result,
-    actualPKCanvasView=mode == 'undo', productionCoordinator=mode == 'undo',
-    controlledNativeRegistrations=mode == 'undo', hardwarePencil=False, UIUsed=False,
+    actualPKCanvasView=mode != 'projection' and compile_code == 0 and runtime_code is not None,
+    productionCoordinator=mode != 'projection' and compile_code == 0 and runtime_code is not None,
+    controlledNativeRegistrations=mode != 'projection', hardwarePencil=False, UIUsed=False,
     signed=False, installed=False, externalNetworkRequests=0), indent=2) + '\n')
 sys.exit(result)

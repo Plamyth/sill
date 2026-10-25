@@ -5,7 +5,8 @@ import UIKit.UIGestureRecognizerSubclass
 
 final class CanvasInkView: PKCanvasView {
     let inkUndoManager = UndoManager()
-    override var undoManager: UndoManager? { inkUndoManager }
+    let nativeUndoManager = UndoManager()
+    override var undoManager: UndoManager? { nativeUndoManager }
 }
 
 struct PencilCanvas: UIViewRepresentable {
@@ -176,10 +177,15 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         func replaceDrawingFromStore() {
+            canvas?.inkUndoManager.removeAllActions()
+            restoreDrawingFromStore()
+        }
+
+        private func restoreDrawingFromStore() {
             guard let canvas else { return }
             replacingDrawing = true
             drawingChangeSerial += 1
-            let manager = canvas.inkUndoManager
+            let manager = canvas.nativeUndoManager
             manager.disableUndoRegistration()
             let enabled = canvas.drawingGestureRecognizer.isEnabled
             canvas.drawingGestureRecognizer.isEnabled = false
@@ -192,11 +198,37 @@ struct PencilCanvas: UIViewRepresentable {
             renderedGeneration = store.inkHistory.generation
             isDrawing = false
             usingTool = false
+            store.inkHistory.setUsingTool(false)
             store.setPencilTraceActive(false, owner: traceOwner)
             previewSession += 1
             previewLayer.path = nil
             replacingDrawing = false
             store.inkHistory.scheduleRefresh()
+        }
+
+        private func registerDrawingUndo(_ previous: PKDrawing) {
+            guard let canvas else { return }
+            let manager = canvas.inkUndoManager
+            let generation = renderedGeneration
+            let needsGroup = manager.groupingLevel == 0 && !manager.isUndoing && !manager.isRedoing
+            if needsGroup { manager.beginUndoGrouping() }
+            manager.registerUndo(withTarget: self) { coordinator in
+                guard coordinator.renderedGeneration == generation,
+                      coordinator.store.inkHistory.generation == generation else { return }
+                coordinator.commitDrawing(previous)
+                coordinator.restoreDrawingFromStore()
+            }
+            if needsGroup { manager.endUndoGrouping() }
+        }
+
+        private func commitDrawing(_ drawing: PKDrawing) {
+            let previous = store.drawing
+            guard store.updateDrawing(drawing) else {
+                restoreDrawingFromStore()
+                return
+            }
+            if previous != drawing { registerDrawingUndo(previous) }
+            renderedModelDrawing = store.drawing
         }
 
         fileprivate func sample(_ point: CGPoint, phase: PencilTraceRecognizer.Phase) {
@@ -313,8 +345,7 @@ struct PencilCanvas: UIViewRepresentable {
             Task { @MainActor [weak self] in
                 guard let self, self.drawingChangeSerial == serial,
                       self.store.inkHistory.generation == generation else { return }
-                self.renderedModelDrawing = drawing
-                if !self.store.updateDrawing(drawing) { self.replaceDrawingFromStore() }
+                self.commitDrawing(drawing)
                 self.store.inkHistory.scheduleRefresh()
             }
         }
@@ -337,8 +368,7 @@ struct PencilCanvas: UIViewRepresentable {
             guard let canvas, !replacingDrawing,
                   renderedGeneration == store.inkHistory.generation else { return }
             drawingChangeSerial += 1
-            renderedModelDrawing = canvas.drawing
-            if !store.updateDrawing(canvas.drawing) { replaceDrawingFromStore() }
+            commitDrawing(canvas.drawing)
             store.inkHistory.scheduleRefresh()
             if save { store.saveNow() }
         }

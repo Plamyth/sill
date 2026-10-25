@@ -36,8 +36,12 @@ UI는 `CanvasStore.choosePenSettings`에서 `setPenSettings`를 호출한다. �
 
 `InkStroke.style`은 조회용 투영이다. `version=1`, `inkType`, sRGB `color`의 red/green/blue/alpha, `transform`의 a/b/c/d/tx/ty, `samples`의 width/height/opacity를 제공한다. samples는 원본 path 점 인덱스에 대응하고 size는 path-local 단위다. 기존 points는 world 좌표와 pressure다. transform은 원래 path에서 world로 가는 변환이다. 마스크 가시 구간과 보간 경계점은 기존 visibility를 유지한다. 색이 nil이면 sRGB 해석 불가이며 style 자체가 nil이면 legacy unknown이다.
 
-투영은 저장할 원본 PKDrawing 바이트를 Apple decoder로 읽은 뒤 만든다. in-memory native drawing, ID, metadata, mask와 UndoManager는 그대로 유지한다. 스타일 필드로 PKDrawing을 재구성하지 않는다. 스타일이 있는데 native 원본이 없는 구조-only 장면은 가져오기와 PNG에서 거부한다. legacy 구조-only fallback은 기존 최선 표시를 유지한다.
+투영은 저장할 원본 PKDrawing 바이트를 Apple decoder로 읽은 뒤 만든다. `CanvasScene.nativeInkStrokes`와 기존 `inkStyle`이 writer와 검증기의 공통 원본이다. 가져오기, 로컬 복원·저장, 패킷 생성·읽기와 PNG 진입점은 알려진 style의 native ID·날짜·world points·pressure·mask visibility·스타일을 raw 원본과 대조한다. 불일치하면 원본을 보존하고 거부한다. in-memory native drawing, ID, metadata와 mask는 그대로 유지한다. 스타일 필드로 PKDrawing을 재구성하지 않는다. style이 nil인 legacy unknown과 legacy 구조-only fallback은 유지한다. native ID API가 없는 구형 PencilKit SDK에서는 알려진 style 검증을 지원하지 않는다고 거부하며, shape 검사 성공을 native 검증 성공으로 바꾸지 않는다.
+
+PencilKit 내부 편집용 `nativeUndoManager`와 Store가 수용한 편집용 `inkUndoManager`를 분리한다. Coordinator는 수용한 PKDrawing 전이에만 undo를 등록한다. 거부된 편집의 복원과 수용 이력의 undo·redo는 실제 canvas drawing을 바꾸며 native 임시 이력만 초기화한다. 실패 편집은 기존 수용 이력과 redo 분기를 바꾸지 않는다. 외부 import·장면 교체·generation 변경은 기존 의도대로 전체 수용 이력을 초기화한다. 센서가 만든 native 동작과 시스템 키보드의 responder 경로 수용은 실기기 검증 항목이다.
 
 로컬 장면 한도는 4 MiB이며 기존 대화 패킷은 1 MiB다. SceneFile·CanvasRelay와 ObsidianVault의 기존 generic JSON 경로를 사용한다. 자동 동기화의 prefix 안전 비교에도 다음 펜 설정 동일성이 필요하다. 테스트는 실제 ObsidianVault 모듈의 격리 파일 왕복이며 live HTTP·Obsidian 화면·실제 Pencil 입력 수용을 뜻하지 않는다.
 
 순수 명령 회귀는 `python3 Tests/checks/ink-transform/settings-run.py <storage-route 외장 출력 경로>`로 Mini에서 실행한다. native 및 SDK 검사는 기존 `ink-transform/run.py`, `ink-visibility/run.py`, `ink-undo/run.py`, `linked-obsidian-notes/run.py`를 사용한다. 설치와 최종 실물 입력은 부모 담당의 검증 묶음에서 별도로 수용한다.
+
+P2 회귀는 `python3 Tests/checks/ink-transform/recovery-run.py <외장 출력 경로> projection`, `undo`, `undo-full`로 실행한다. `projection`은 실제 Store의 거짓 스타일 거부와 원본 바이트·픽셀 보존을 확인한다. 나머지는 Mac Catalyst에서 창 없는 실제 CanvasInkView와 제품 Coordinator를 사용한다. native undo 등록을 fixture가 제어하며 실제 Pencil 제스처 검사를 대신하지 않는다. 릴레이의 schema 2 수신 호환은 별도 담당의 계약이며 이 검사로 수용됐다고 표시하지 않는다.

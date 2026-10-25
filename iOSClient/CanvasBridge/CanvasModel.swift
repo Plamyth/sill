@@ -2,6 +2,9 @@ import Foundation
 import CryptoKit
 import Darwin
 import CoreGraphics
+#if canImport(PencilKit, _version: 616)
+import PencilKit
+#endif
 
 enum CanvasRuntime {
     enum StateFile: String, CaseIterable {
@@ -1629,6 +1632,77 @@ extension CanvasScene {
     }
 }
 
+#if canImport(PencilKit, _version: 616)
+@available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
+extension CanvasScene {
+    private static func inkStyle(_ stroke: PKStroke) -> InkStroke.Style {
+        let transform = stroke.transform
+        let srgb = CGColorSpace(name: CGColorSpace.sRGB)
+        let converted = srgb.flatMap { stroke.ink.color.cgColor.converted(to: $0, intent: .relativeColorimetric, options: nil) }
+        let components = converted?.components
+        let color: InkStroke.Style.SRGB?
+        if let components, components.count == 4 {
+            let rgba = InkStroke.Style.SRGB(red: Double(components[0]), green: Double(components[1]),
+                blue: Double(components[2]), alpha: Double(components[3]))
+            color = rgba.isValid ? rgba : nil
+        } else { color = nil }
+        return InkStroke.Style(inkType: stroke.ink.inkType.rawValue, color: color,
+            transform: .init(a: Double(transform.a), b: Double(transform.b), c: Double(transform.c),
+                d: Double(transform.d), tx: Double(transform.tx), ty: Double(transform.ty)),
+            samples: stroke.path.map { .init(width: Double($0.size.width), height: Double($0.size.height), opacity: Double($0.opacity)) })
+    }
+
+    static func nativeInkStrokes(_ drawing: PKDrawing) -> [InkStroke] {
+        drawing.strokes.map { stroke in
+            func worldPoint(_ point: PKStrokePoint) -> InkPoint {
+                let location = point.location.applying(stroke.transform)
+                return InkPoint(x: Double(location.x), y: Double(location.y),
+                                pressure: Double(point.force))
+            }
+            let ranges = stroke.maskedPathRanges
+            let full = stroke.mask == nil || (ranges.count == 1 &&
+                ranges[0].lowerBound == 0 && ranges[0].upperBound == CGFloat(stroke.path.count - 1))
+            let visibility = InkStroke.Visibility(kind: full ? .full : .masked,
+                visibleSegments: full ? [] : ranges.map { range in
+                    var points = [worldPoint(stroke.path.interpolatedPoint(at: range.lowerBound))]
+                    let firstInterior = Int(floor(range.lowerBound)) + 1
+                    let endInterior = Int(ceil(range.upperBound))
+                    if firstInterior < endInterior {
+                        points += (firstInterior..<endInterior).map { worldPoint(stroke.path[$0]) }
+                    }
+                    if range.upperBound > range.lowerBound {
+                        points.append(worldPoint(stroke.path.interpolatedPoint(at: range.upperBound)))
+                    }
+                    return InkStroke.Visibility.Segment(lowerBound: Double(range.lowerBound),
+                        upperBound: Double(range.upperBound), worldPoints: points)
+                })
+            return InkStroke(id: stroke.id, points: stroke.path.map(worldPoint),
+                createdAt: stroke.path.creationDate, visibility: visibility, style: Self.inkStyle(stroke))
+        }
+    }
+}
+#endif
+
+extension CanvasScene {
+    func validateNativeInkProjection() throws {
+        guard hasSupportedInkProjection else { throw CanvasPenSettingsError.unsupportedInkProjection }
+        guard strokes.contains(where: { $0.style != nil }) else { return }
+        #if canImport(PencilKit, _version: 616)
+        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
+            guard let bytes = Data(base64Encoded: drawingBase64),
+                  let native = try? PKDrawing(data: bytes) else { throw CanvasPenSettingsError.unreadableDrawing }
+            let projected = Self.nativeInkStrokes(native)
+            guard strokes.count == projected.count,
+                  zip(strokes, projected).allSatisfy({ stored, actual in
+                      stored.style == nil || stored == actual
+                  }) else { throw CanvasPenSettingsError.unsupportedInkProjection }
+            return
+        }
+        #endif
+        throw CanvasPenSettingsError.unsupportedInkProjection
+    }
+}
+
 struct AgentRevision: Codable {
     var sceneId: UUID
     var baseRevision: Int
@@ -1781,6 +1855,7 @@ struct CanvasPacket: Codable, Equatable {
     let sceneJSONBase64: String
 
     init(scene: CanvasScene, imagePNG: Data, session: VoiceSession, targetMode: String? = nil) throws {
+        try scene.validateNativeInkProjection()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let sceneBytes = try encoder.encode(scene)
@@ -1808,7 +1883,9 @@ struct CanvasPacket: Codable, Equatable {
               Self.sha(image) == imageSha256, Self.sha(bytes) == sceneSha256 else {
             throw CanvasSendError.invalidPacket
         }
-        return try JSONDecoder().decode(CanvasScene.self,from:bytes)
+        let scene = try JSONDecoder().decode(CanvasScene.self,from:bytes)
+        try scene.validateNativeInkProjection()
+        return scene
     }
 }
 

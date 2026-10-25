@@ -12,6 +12,7 @@ enum CanvasPalette {
 enum SceneRenderer {
     @MainActor
     static func png(scene: CanvasScene) async -> Data? {
+        guard (try? scene.validateNativeInkProjection()) != nil else { return nil }
         guard scene.nodes.allSatisfy(\.hasValidRotation) else { return nil }
         let visible = scene.visibility
         let drawing: PKDrawing?
