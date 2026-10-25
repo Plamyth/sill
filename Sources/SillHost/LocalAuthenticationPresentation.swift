@@ -13,19 +13,19 @@ final class LocalAuthenticationPresentation {
         return candidates.count == 1 ? candidates.first : nil
     }
 
-    func begin(invalidated: @escaping @MainActor () -> Void) -> Bool {
+    func begin(invalidated: @escaping @MainActor () -> Void) -> NSWindow? {
         guard window == nil, let screen = Self.builtinScreen(in: NSScreen.screens) else {
             print("[로컬 복귀 인증] 활성 내장 화면을 확정하지 못했습니다. 인증을 요청하지 않습니다.")
-            return false
+            return nil
         }
         let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 360, height: 100),
                               styleMask: [.titled], backing: .buffered, defer: false, screen: screen)
         window.title = "로컬 복귀 인증 대기"
         window.isReleasedWhenClosed = false
         window.sharingType = .none
-        window.ignoresMouseEvents = true
+        window.ignoresMouseEvents = false
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        // LAContext has no public window anchor. Keep this activation window below the unchanged sentry curtains.
+        // Native sheet visibility and ownership need runtime evidence before any sentry integration changes.
         window.level = .normal
         let label = NSTextField(wrappingLabelWithString: "macOS의 Touch ID 또는 로그인 암호 인증이 완료되어야 로컬로 복귀합니다.")
         label.frame = .init(x: 20, y: 20, width: 320, height: 60)
@@ -48,8 +48,15 @@ final class LocalAuthenticationPresentation {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
-        print("[로컬 복귀 인증] 내장 화면 활성화 요청 display=\(id) appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow). 운영체제 인증창의 표시·위치는 미확인입니다.")
-        return true
+        let actualID = (window.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+        guard actualID == id, CGDisplayIsBuiltin(id) != 0, CGDisplayIsActive(id) != 0,
+              CGDisplayIsAsleep(id) == 0, screen.frame.contains(window.frame) else {
+            print("[로컬 복귀 인증] 소유 anchor의 실제 내장 화면 배치를 확인하지 못했습니다.")
+            end()
+            return nil
+        }
+        print("[로컬 복귀 인증] 내장 anchor display=\(id) window=\(window.windowNumber) level=\(window.level.rawValue) appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow). 운영체제 인증창의 표시·위치는 미확인입니다.")
+        return window
     }
 
     func end() {
