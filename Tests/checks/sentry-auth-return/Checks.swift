@@ -27,6 +27,7 @@ import Foundation
     var nativeStops = 0
     var relayStops = 0
     var inspectHook: (() -> Void)?
+    var inspectionReceipt: ((LocalAudioParticipantRequest) -> LocalAudioParticipantReceipt)?
 
     init() {
         startup.construct { () }
@@ -55,6 +56,7 @@ import Foundation
             let hook = self.inspectHook; self.inspectHook = nil; hook?()
             guard let request = self.relayRequest, request.operationId == id else { return nil }
             if self.unknownInspection { return .init(request, state: .unknown, facts: .unknown) }
+            if let inspectionReceipt = self.inspectionReceipt { return inspectionReceipt(request) }
             let identity = self.corruptInspection ? LocalAudioParticipantRequest(schemaVersion: 1,
                 operationId: UUID(), privacyGeneration: request.privacyGeneration,
                 registryRevision: request.registryRevision, participantId: request.participantId,
@@ -175,6 +177,68 @@ import Foundation
     privacy.stop()
 
 #if RECOVERY
+    let expired = ReturnFixture()
+    let expiredOperation = UUID(), expiredMembership = expired.registry.snapshot
+    let expiredTicket = expired.registry.beginLocalReturn(operationId: expiredOperation,
+        privacyGeneration: expired.generation, membership: expiredMembership)!
+    check(await expired.registry.fenceAndQuiesce(operationId: expiredOperation, privacyGeneration: expired.generation,
+        membership: expiredMembership, budgetMilliseconds: 2000), "relay stops before its receipt expires")
+    expired.inspectionReceipt = { .init($0, state: .blocked, facts: expired.facts(true), reason: "budget_exhausted") }
+    check(!(await expired.registry.inspectAll(operationId: expiredOperation, privacyGeneration: expired.generation,
+        membership: expiredMembership)), "expired relay receipt is never ordinary inspection proof")
+    expired.registry.endLocalReturn(expiredTicket)
+    check(await expired.registry.recoverClosedLocalReturn(until: .now.advanced(by: .seconds(2))),
+          "expired terminal relay receipt closes only the previous uncertain return")
+    check(expired.registry.isFenced && !expired.registry.proofCurrent(operationId: expiredOperation,
+        privacyGeneration: expired.generation, membership: expiredMembership), "closure neither opens media nor revives the old proof")
+    check(expired.nativeStops == 1 && expired.relayStops == 1, "expired closure does not repeat participant stops")
+    let ordinaryExpired = LocalAudioParticipantReceipt(expired.relayRequest!, state: .blocked,
+        facts: expired.facts(true), reason: "budget_exhausted")
+    check(!ordinaryExpired.proves(expired.relayRequest!), "ordinary proves still rejects expired terminal relay receipts")
+    check(expired.registry.beginLocalReturn(operationId: UUID(), privacyGeneration: expired.generation,
+        membership: expiredMembership) != nil, "closure permits only a fresh local return ticket")
+
+    let invalidExpired = ["schema", "operation", "generation", "revision", "participant", "boot", "state", "reason"] +
+        LocalAudioParticipantFacts.CodingKeys.allCases.flatMap { [$0.rawValue + ".false", $0.rawValue + ".nil"] }
+    for failure in invalidExpired {
+        let f = ReturnFixture()
+        await f.poisonInspection()
+        f.inspectionReceipt = { request in
+            let identity = LocalAudioParticipantRequest(schemaVersion: failure == "schema" ? 2 : request.schemaVersion,
+                operationId: failure == "operation" ? UUID() : request.operationId,
+                privacyGeneration: failure == "generation" ? UUID() : request.privacyGeneration,
+                registryRevision: failure == "revision" ? "999" : request.registryRevision,
+                participantId: failure == "participant" ? .native : request.participantId,
+                bootId: failure == "boot" ? UUID() : request.bootId, budgetMilliseconds: request.budgetMilliseconds)
+            func fact(_ name: String) -> Bool? { failure == name + ".nil" ? nil : failure != name + ".false" }
+            let facts = LocalAudioParticipantFacts(admissionFenced: fact("admissionFenced"), startsSettled: fact("startsSettled"),
+                mediaDetached: fact("mediaDetached"), callbacksDrained: fact("callbacksDrained"),
+                buffersEmpty: fact("buffersEmpty"), workersExited: fact("workersExited"))
+            return .init(identity, state: failure == "state" ? .unknown : .blocked, facts: facts,
+                reason: failure == "reason" ? "private-reason-must-not-be-logged" : "budget_exhausted")
+        }
+        check(!(await f.registry.recoverClosedLocalReturn(until: .now.advanced(by: .seconds(2)))),
+              "invalid expired \(failure) retains uncertainty")
+        check(f.registry.isFenced && f.registry.authenticatedLocalReturnUnavailableReason != nil,
+              "invalid expired \(failure) never admits another return")
+    }
+
+    let nativeExpired = ReturnFixture()
+    var nativeRequest: LocalAudioParticipantRequest?, nativeReceiptExpired = false
+    nativeExpired.registry.register(.native, bootId: UUID(), control: .init(fenceAndQuiesce: { request in
+        nativeRequest = request
+        return .init(request, state: .quiescent, facts: nativeExpired.facts(true))
+    }, inspect: { _ in
+        nativeRequest.map { .init($0, state: nativeReceiptExpired ? .blocked : .quiescent,
+            facts: nativeExpired.facts(true), reason: nativeReceiptExpired ? "budget_exhausted" : nil) }
+    }, supportsForwarding: true, forwardingPrepare: { _ in nil }))
+    await nativeExpired.poisonInspection()
+    nativeReceiptExpired = true
+    check(!(await nativeExpired.registry.recoverClosedLocalReturn(until: .now.advanced(by: .seconds(2)))),
+          "native participant cannot use the relay-only expired closure")
+    check(nativeExpired.registry.isFenced && nativeExpired.registry.authenticatedLocalReturnUnavailableReason != nil,
+          "native expiry retains uncertainty and the media fence")
+
     let f = ReturnFixture()
     await f.poisonInspection()
     let membership = f.registry.snapshot
