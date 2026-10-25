@@ -349,9 +349,10 @@ def accept_rotation(config, work, server, vault, test_id):
     start = fixture(test_id)
     start['revision'] = prior['revision'] + 1
     start['nodes'][0]['text'] = '회전 검사'
+    start['nodes'][0]['frame']['y'] = 300
     second = '42478F2C-F81D-4AC9-B714-ECBD9DDAC411'
     start['nodes'].append(dict(start['nodes'][0], id=second, text='연결 대상',
-                              frame={'x':1050,'y':1000,'width':260,'height':120}))
+                              frame={'x':1050,'y':700,'width':260,'height':120}))
     start['links'] = [{'id':'8FBAA143-E660-4E64-8EC1-3B20CE1E2DF9','from':NODE,'to':second,
                       'label':'회전 추종','fromAnchor':{'side':'right','offset':0.5},
                       'toAnchor':{'side':'left','offset':0.5}}]

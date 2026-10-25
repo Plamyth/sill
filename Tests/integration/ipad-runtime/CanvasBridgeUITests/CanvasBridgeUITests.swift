@@ -173,15 +173,18 @@ final class CanvasBridgeUITests: XCTestCase {
         let a = CGPoint(x:node.frame.midX + cos(angle)*130*unit,
                         y:node.frame.midY + sin(angle)*130*unit)
         let b = CGPoint(x:other.frame.minX,y:other.frame.midY)
-        let screenshot = app.screenshot()
+        let screenshot = XCUIScreen.main.screenshot()
+        let screenSize = screenshot.image.size
+        XCTAssertTrue(CGRect(origin:.zero,size:screenSize).contains(node.frame))
+        XCTAssertTrue(CGRect(origin:.zero,size:screenSize).contains(other.frame))
         let attachment = XCTAttachment(screenshot:screenshot)
         attachment.name = "rotation-link-pixel-check-\(degrees)"
         attachment.lifetime = .keepAlways
         add(attachment)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
-        let normalized = UIGraphicsImageRenderer(size:app.frame.size,format:format).image { _ in
-            screenshot.image.draw(in:CGRect(origin:.zero,size:app.frame.size))
+        let normalized = UIGraphicsImageRenderer(size:screenSize,format:format).image { _ in
+            screenshot.image.draw(in:CGRect(origin:.zero,size:screenSize))
         }
         let image = try XCTUnwrap(normalized.cgImage)
         let width=image.width, height=image.height
@@ -194,11 +197,11 @@ final class CanvasBridgeUITests: XCTestCase {
             return true
         }
         XCTAssertTrue(decoded)
-        let sx=Double(width)/app.frame.width, sy=Double(height)/app.frame.height
+        let sx=Double(width)/screenSize.width, sy=Double(height)/screenSize.height
         let radius=max(2,Int(ceil(2*max(sx,sy))))
         for t in [0.03,0.15,0.35,0.6,0.8,0.97] {
-            let x=Int(((a.x+(b.x-a.x)*t)-app.frame.minX)*sx)
-            let y=Int(((a.y+(b.y-a.y)*t)-app.frame.minY)*sy)
+            let x=Int((a.x+(b.x-a.x)*t)*sx)
+            let y=Int((a.y+(b.y-a.y)*t)*sy)
             guard x-radius >= 0 && y-radius >= 0 && x+radius < width && y+radius < height else {
                 XCTFail("연결선 검사 좌표가 화면 밖입니다")
                 continue
