@@ -146,7 +146,7 @@ func localReturnChecks() async {
 
     let coupled = ReturnFixture()
     expect(coupled.privacy.armAndVerify(), "Sentry 결합 실패 fixture 차단")
-    coupled.privacy.localReturnDidComplete = { _ in false }
+    coupled.privacy.localReturnDidComplete = { _, _, _ in false }
     let coupledResult = await coupled.privacy.requestLocalReturn()
     expect(!coupledResult && coupled.privacy.latched && coupled.commits == 0,
            "Sentry commit 거부는 오디오 영속 복귀를 완료하지 않음")

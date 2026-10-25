@@ -4,7 +4,7 @@ import AppKit
 final class NativePanelChecks: NSObject {
     __PRODUCTION_CURTAIN_TYPE__
     __PRODUCTION_CURTAIN_LEVEL__
-    private enum State { case idle, protected, invalid(String) }
+    private enum State { case idle, protected, releasing, invalid(String) }
     private var state = State.idle
     private var curtains: [Int: Curtain] = [:]
     private var localReturnDown: UInt32?

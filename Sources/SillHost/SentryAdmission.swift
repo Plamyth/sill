@@ -275,7 +275,7 @@ final class SentryAdmission: @unchecked Sendable {
             SentryControlCapability(authorizationGeneration: $0.generation, manualIntent: manualIntent)
         }
         return SentryState(hostBootID: bootID, sessionID: session.id, revision: revision,
-                           requested: requested, phase: phase, reason: localReturnRequestActive ? "로컬 복귀 인증과 정리 중에는 원격 명령을 차단합니다." : reason, limitations: Self.limitations, control: control)
+                           requested: requested || pendingControl != nil, phase: phase, reason: localReturnRequestActive ? "로컬 복귀 인증과 정리 중에는 원격 명령을 차단합니다." : reason, limitations: Self.limitations, control: control)
     }
 
     func accept(_ activation: SentryActivation, from peer: ObjectIdentifier) -> Bool {

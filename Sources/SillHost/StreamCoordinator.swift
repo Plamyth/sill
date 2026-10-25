@@ -480,8 +480,8 @@ package final class StreamCoordinator {
                 return privacy.localReturnUnavailableReason
             }
             sentryRequestLocalReturn = { [weak privacy] in await privacy?.requestLocalReturn() ?? false }
-            privacy.localReturnDidComplete = { [weak self] commitAudio in
-                guard let self, self.completeSentryLocalReturn(commitAudio: commitAudio) else { return false }
+            privacy.localReturnDidComplete = { [weak self] deadline, current, commitAudio in
+                guard let self, await self.completeSentryLocalReturn(until: deadline, current: current, commitAudio: commitAudio) else { return false }
                 self.server.closeSessions("인증된 로컬 복귀로 원격 세션이 종료되었습니다.", matching: { _ in true })
                 return true
             }
@@ -1167,7 +1167,7 @@ package final class StreamCoordinator {
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
         if message.kind == .activateSentry {
-            activateSentry(message, from: connection)
+            await activateSentry(message, from: connection)
             return
         }
         let peer = ObjectIdentifier(connection)
@@ -3890,7 +3890,7 @@ extension StreamCoordinator {
                 defaults.set(value.rawValue, forKey: key)
                 return defaults.synchronize() && defaults.string(forKey: key) == value.rawValue
             }, surfaces: .init(engage: { platform.engage() }, verify: { platform.verify() },
-                release: { platform.release() }, reason: { platform.reason },
+                release: { deadline, current in await platform.release(until: deadline, current: current) }, reason: { platform.reason },
                 restoreCurtains: { platform.restoreCurtains() }, released: { platform.releaseVerified }),
             prepareRelease: { [weak self] in
                 guard let self else { return false }
@@ -3936,23 +3936,25 @@ extension StreamCoordinator {
         }
     }
 
-    package func completeSentryLocalReturn(commitAudio: () -> Bool) -> Bool {
-        guard let sentry else { return commitAudio() }
-        return sentry.completeAuthenticatedLocalReturn(commitAudio: commitAudio)
+    package func completeSentryLocalReturn(until deadline: ContinuousClock.Instant,
+                                          current: @escaping @MainActor () -> Bool,
+                                          commitAudio: () -> Bool) async -> Bool {
+        guard let sentry else { return current() && commitAudio() }
+        return await sentry.completeAuthenticatedLocalReturn(until: deadline, current: current, commitAudio: commitAudio)
     }
 
     package func sentryAudioProtectionChanged() {
         if server.sentryAdmission.isRequested { sentry?.surfacesChanged() }
     }
 
-    private func activateSentry(_ message: StreamMessage, from connection: NWConnection) {
+    private func activateSentry(_ message: StreamMessage, from connection: NWConnection) async {
         let peer = ObjectIdentifier(connection)
         guard let sentry, !shuttingDown, connections[peer] === connection,
               let route = routes[peer], route.encrypted,
               let fingerprint = route.fingerprint, remote?.isPaired(fingerprint) == true,
               message.payload.count <= StreamMessage.clientPayloadLimit(for: .activateSentry) else { return }
         if let request = try? SentryControlRequest(rawRequest: message.payload) {
-            handleSentryControl(request, from: connection)
+            await handleSentryControl(request, from: connection)
             return
         }
         guard let activation = Wire.decode(SentryActivation.self, from: message.payload) else { return }
@@ -3986,7 +3988,8 @@ extension StreamCoordinator {
             encryptedTLS: true, currentPairedOwner: true)
     }
 
-    private func handleSentryControl(_ request: SentryControlRequest, from connection: NWConnection) {
+    private func handleSentryControl(_ request: SentryControlRequest, from connection: NWConnection) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         let peer = ObjectIdentifier(connection)
         guard let sentry, let owner = currentSentryOwner(connection) else { return }
         let response: SentryControlResponse?
@@ -3998,7 +4001,7 @@ extension StreamCoordinator {
                 self.currentSentryOwner(connection)?.deviceID == owner.deviceID &&
                 self.server.sentryAdmission.controlTicketIsCurrent(ticket)
             }
-            let applied = sentry.setRemoteProtection(request.desired, current: current)
+            let applied = await sentry.setRemoteProtection(request.desired, until: deadline, current: current)
             guard currentSentryOwner(connection)?.deviceID == owner.deviceID else {
                 server.sentryAdmission.revokeControl(forDeviceID: owner.deviceID)
                 sentry.surfacesChanged()

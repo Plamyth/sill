@@ -17,7 +17,7 @@ enum SentryJournalState: String {
 struct SentrySurfaceOperations {
     var engage: () -> Bool
     var verify: () -> Bool
-    var release: () -> Bool
+    var release: @MainActor (ContinuousClock.Instant, @escaping @MainActor () -> Bool) async -> Bool
     var reason: () -> String?
     var restoreCurtains: () -> Bool = { false }
     var released: () -> Bool = { false }
@@ -169,9 +169,18 @@ final class HostSentry {
         return reconcile()
     }
 
-    func setRemoteProtection(_ desired: Bool, current: () -> Bool) -> Bool {
-        guard current(), operation == .idle else { return false }
-        if desired { return reconcile() && current() }
+    func setRemoteProtection(_ desired: Bool,
+                             until deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(2)),
+                             current authority: @escaping @MainActor () -> Bool) async -> Bool {
+        let generation = membershipGeneration
+        let authorityCurrent: @MainActor () -> Bool = {
+            !Task.isCancelled && authority() &&
+                self.membershipGeneration == generation
+        }
+        guard authorityCurrent(), operation == .idle else { return false }
+        if desired { return reconcile() && authorityCurrent() }
+        let current: @MainActor () -> Bool = { ContinuousClock.now < deadline && authorityCurrent() }
+        guard current() else { return false }
         operation = .returningLocal
         defer { operation = .idle }
         forwardingRevision = UUID()
@@ -181,7 +190,7 @@ final class HostSentry {
             persistenceHealthy = false
             return false
         }
-        guard current(), surfaces.release(), surfaces.released(), current() else {
+        guard current(), await surfaces.release(deadline, current), surfaces.released(), current() else {
             return restoreFailedReturn("원격 기기에서 요청한 현장 보호 해제를 확인하지 못했습니다.")
         }
         guard persist(.inactive), current() else {
@@ -193,14 +202,21 @@ final class HostSentry {
 
     func controlDidComplete() { changed?() }
 
-    func completeAuthenticatedLocalReturn(commitAudio: () -> Bool = { true }) -> Bool {
-        guard operation == .idle else { return false }
+    func completeAuthenticatedLocalReturn(until deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(2)),
+                                          current authority: @escaping @MainActor () -> Bool = { true },
+                                          commitAudio: () -> Bool = { true }) async -> Bool {
+        let generation = membershipGeneration
+        let current: @MainActor () -> Bool = {
+            !Task.isCancelled && ContinuousClock.now < deadline && authority() &&
+                self.membershipGeneration == generation
+        }
+        guard operation == .idle, current() else { return false }
         forwardingRevision = UUID()
         operation = .returningLocal
         defer { operation = .idle }
         admission.fenceForLocalReturn()
         if !admission.isRequested {
-            guard commitAudio() else { changed?(); return false }
+            guard current(), commitAudio(), current() else { changed?(); return false }
             admission.completeLocalReturn()
             changed?()
             return true
@@ -221,9 +237,11 @@ final class HostSentry {
             changed?()
             return false
         }
-        guard surfaces.release() else { return restoreFailedReturn("현장 보호 해제를 확인하지 못했습니다.") }
-        guard commitAudio() else { return restoreFailedReturn("오디오 복귀 완료 상태를 저장하지 못했습니다.") }
-        guard persist(.inactive) else { return restoreFailedReturn("로컬 복귀 완료 상태를 저장하지 못했습니다.") }
+        guard current(), await surfaces.release(deadline, current), current() else {
+            return restoreFailedReturn("현장 보호 해제를 확인하지 못했습니다.")
+        }
+        guard current(), commitAudio(), current() else { return restoreFailedReturn("오디오 복귀 완료 상태를 저장하지 못했습니다.") }
+        guard current(), persist(.inactive), current() else { return restoreFailedReturn("로컬 복귀 완료 상태를 저장하지 못했습니다.") }
         persistenceHealthy = true
         admission.completeLocalReturn()
         changed?()

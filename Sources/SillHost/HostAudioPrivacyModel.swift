@@ -253,7 +253,7 @@ package final class HostAudioPrivacy {
     var participants: LocalAudioParticipantRegistry { nativeStartup.participants }
     var membershipChanged: ((LocalAudioParticipantRegistry.MembershipChange) -> Void)?
     var inspectForLocalReturn: (() -> LocalAudioParticipantFacts)?
-    var localReturnDidComplete: ((_ commitAudio: () -> Bool) -> Bool)?
+    var localReturnDidComplete: ((ContinuousClock.Instant, @escaping @MainActor () -> Bool, @escaping @MainActor () -> Bool) async -> Bool)?
     package var authenticatedLocalReturnWillCommit: ((_ admission: @escaping @MainActor () -> Bool) async -> Bool)?
     private var localReturnFailureReason: String?
     package var localReturnUnavailableReason: String? { participants.authenticatedLocalReturnUnavailableReason }
@@ -612,14 +612,14 @@ package final class HostAudioPrivacy {
         let commitAudio = {
             guard !audioAttempted else { return false }
             audioAttempted = true
-            guard !Task.isCancelled, ContinuousClock.now < deadline,
+            guard admission(), !Task.isCancelled, ContinuousClock.now < deadline,
                   self.localReturnID == request, self.privacyGeneration == generation,
                   self.latched, self.persistenceHealthy,
                   self.participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
             audioCommitted = self.clearLatch()
             return audioCommitted
         }
-        let completed = localReturnDidComplete?(commitAudio) ?? commitAudio()
+        let completed = await localReturnDidComplete?(deadline, admission, commitAudio) ?? commitAudio()
         guard completed && audioCommitted else {
             let originalSaved = !audioCommitted || saveLocal(original)
             persistenceHealthy = persist() && originalSaved

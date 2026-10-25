@@ -30,7 +30,7 @@ final class CurtainPlatformFixture {
     func environmentIsUsable() -> Bool { true }
     func installTap() -> Bool { if !tap { installs += 1; tap = true }; return true }
     func verify() -> Bool { isProtected && tap && readable && layout == displayLayout }
-    func release() -> Bool { false }
+    func release(until: ContinuousClock.Instant, current: @escaping @MainActor () -> Bool) async -> Bool { false }
     var releaseVerified: Bool { false }
     func updateCurtainText() {}
     func loseVerification() { invalidate("입력 필터 확인 실패") }
@@ -84,7 +84,7 @@ extension Checks {
         let owner = HostSentry(admission: gate, initiallyLatched: true, persistenceHealthy: true,
             persist: { _ in persistOK }, surfaces: .init(engage: {
                 fullEngagements += 1; return platform.engage()
-            }, verify: { platform.verify() }, release: { false }, reason: { platform.reason }, restoreCurtains: {
+            }, verify: { platform.verify() }, release: { _, _ in false }, reason: { platform.reason }, restoreCurtains: {
                 restores += 1; return platform.restoreCurtains()
             }), prepareRelease: { false }, localReturnUnavailableReason: { recoveryReason })
         platform.changed = { [weak owner] in owner?.surfacesChanged() }

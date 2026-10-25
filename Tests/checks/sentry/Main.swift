@@ -3,13 +3,13 @@ import StreamProtocol
 
 @main struct Checks {
     static var count = 0
-    static func expect(_ condition: @autoclosure () -> Bool, _ name: String) {
-        guard condition() else { print("FAIL \(name)"); exit(1) }
+    static func expect(_ condition: Bool, _ name: String) {
+        guard condition else { print("FAIL \(name)"); exit(1) }
         count += 1
         print("PASS \(name)")
     }
     final class Peer {}
-    @MainActor static func main() {
+    @MainActor static func main() async {
         let emptyInputReleaseBarrier: () -> Bool = { true }
         let lanObject = Peer(), externalObject = Peer(), replacement = Peer()
         let lan = ObjectIdentifier(lanObject), external = ObjectIdentifier(externalObject)
@@ -106,8 +106,8 @@ import StreamProtocol
                 guard value != .latched else { return false }
                 durableJournal = value
                 return true
-            }, surfaces: .init(engage: { true }, verify: { true }, release: { false }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
-        expect(!failedRelease.completeAuthenticatedLocalReturn() && SentryJournalState.requiresProtection(durableJournal.rawValue),
+            }, surfaces: .init(engage: { true }, verify: { true }, release: { _, _ in false }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
+        expect(!(await failedRelease.completeAuthenticatedLocalReturn()) && SentryJournalState.requiresProtection(durableJournal.rawValue),
                "failed native release cannot erase durable protection when relatching storage is unavailable")
         expect(durableJournal == .releasing, "durable in-progress return survives failed release and failed rollback write")
         expect(SentryJournalState.requiresProtection("corrupt") && !SentryJournalState.isValid("corrupt"),
@@ -122,7 +122,7 @@ import StreamProtocol
             persist: { value in effects.append(value.rawValue); if persistOK { stored = value != .inactive }; return persistOK },
             surfaces: .init(engage: { effects.append("engage"); return surfaceOK },
                             verify: { effects.append("verify"); return surfaceOK },
-                            release: { effects.append("release"); return releaseOK }, reason: { "가림막 확인 실패" }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
+                            release: { _, _ in effects.append("release"); return releaseOK }, reason: { "가림막 확인 실패" }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
         controllerGate.register(lan, externalRoute: false)
         controller.joined(lan)
         expect(effects.isEmpty && controllerGate.allows(lan, epoch: epoch), "ordinary LAN join makes no native protection effects")
@@ -136,12 +136,12 @@ import StreamProtocol
         surfaceOK = true; persistOK = false
         expect(!controller.reconcile() && !controllerGate.allows(lan, epoch: epoch), "persistence failure cannot be hidden by successful surfaces")
         let releasesBefore = effects.filter { $0 == "release" }.count
-        expect(!controller.completeAuthenticatedLocalReturn() && stored, "failed clear keeps protection latched")
+        expect(!(await controller.completeAuthenticatedLocalReturn()) && stored, "failed clear keeps protection latched")
         expect(effects.filter { $0 == "release" }.count == releasesBefore, "failed clear never releases curtain or input filter")
         persistOK = true; releaseOK = false
-        expect(!controller.completeAuthenticatedLocalReturn() && stored, "failed surface release reasserts durable latch")
+        expect(!(await controller.completeAuthenticatedLocalReturn()) && stored, "failed surface release reasserts durable latch")
         releaseOK = true
-        expect(controller.completeAuthenticatedLocalReturn() && !stored, "successful authenticated return clears native and persisted protection")
+        expect(await controller.completeAuthenticatedLocalReturn() && !stored, "successful authenticated return clears native and persisted protection")
         expect(controllerGate.status(for: lan) == nil, "native return invalidates old remote capability")
         expect(!controllerGate.allowsWire(Data([0, 1]), for: lan, currentEpoch: epoch), "malformed queued wire cannot bypass gate")
         let callbackGate = SentryAdmission()
@@ -151,11 +151,11 @@ import StreamProtocol
             persist: { callbackEffects.append($0.rawValue); return true },
             surfaces: .init(engage: { callbackEffects.append("engage"); callback?(); return true },
                             verify: { true },
-                            release: { callbackEffects.append("release"); callback?(); return true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
+                            release: { _, _ in callbackEffects.append("release"); callback?(); return true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
         callback = { [weak callbackController] in callbackController?.surfacesChanged() }
         callbackController.start()
         callbackEffects.removeAll()
-        expect(callbackController.completeAuthenticatedLocalReturn(), "native release callbacks allow authenticated local return")
+        expect(await callbackController.completeAuthenticatedLocalReturn(), "native release callbacks allow authenticated local return")
         expect(callbackEffects == ["releasing", "release", "inactive"], "release callback cannot reengage native protection or relatch storage")
         expect(!callbackGate.isRequested, "release callbacks leave the completed return inactive")
         let independent = SentryAdmission()
@@ -182,7 +182,7 @@ import StreamProtocol
         let stableGate = SentryAdmission()
         let stable = HostSentry(admission: stableGate, initiallyLatched: true, persistenceHealthy: true,
             persist: { _ in true }, surfaces: .init(engage: { true }, verify: { true },
-                release: { true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
+                release: { _, _ in true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, localReturnUnavailableReason: { nil })
         stable.start()
         let surfaceProof = stable.forwardingProof()!
         stableGate.register(lan, externalRoute: false); stable.joined(lan)
@@ -199,7 +199,7 @@ import StreamProtocol
         var surfacesVerified = true
         let videoOnly = HostSentry(admission: videoOnlyGate, initiallyLatched: true, persistenceHealthy: true,
             persist: { _ in true }, surfaces: .init(engage: { surfacesVerified }, verify: { surfacesVerified },
-                release: { true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, audioReady: { audioVerified }, localReturnUnavailableReason: { nil })
+                release: { _, _ in true }, reason: { nil }), prepareRelease: emptyInputReleaseBarrier, audioReady: { audioVerified }, localReturnUnavailableReason: { nil })
         videoOnlyGate.register(lan, externalRoute: false)
         videoOnly.start(); videoOnly.joined(lan)
         expect(videoOnlyGate.allowsActions(lan), "verified physical protection permits source selection despite unavailable audio")
@@ -215,11 +215,18 @@ import StreamProtocol
         surfacesVerified = false
         videoOnly.surfacesChanged()
         expect(!videoOnlyGate.allowsActions(lan) && !videoOnlyGate.allows(lan, epoch: epoch), "physical protection failure still fences remote input and video")
-        remoteProtectionChecks()
+        await remoteProtectionChecks()
         print("SENTRY_CHECKS_COMPLETE \(count)")
     }
 
-    @MainActor static func remoteProtectionChecks() {
+    @MainActor static func remoteProtectionChecks() async {
+        let onGate = SentryAdmission()
+        let on = HostSentry(admission: onGate, initiallyLatched: true, persistenceHealthy: true,
+            persist: { _ in true }, surfaces: .init(engage: { true }, verify: { true }, release: { _, _ in false },
+                reason: { nil }), prepareRelease: { false }, localReturnUnavailableReason: { nil })
+        let onAccepted = await on.setRemoteProtection(true, until: .now.advanced(by: .seconds(-1)), current: { true })
+        expect(onAccepted, "OFF 대기용 만료 deadline은 기존 ON 복구·authority 검증에 새 시간상한을 만들지 않음")
+
         for failure in ["none", "debt", "releasing", "release", "readback", "inactive", "revoked"] {
             let gate = SentryAdmission()
             var effects: [String] = []
@@ -228,7 +235,7 @@ import StreamProtocol
                 persist: { state in
                     effects.append(state.rawValue)
                     return !(failure == "releasing" && state == .releasing) && !(failure == "inactive" && state == .inactive)
-                }, surfaces: .init(engage: { false }, verify: { false }, release: {
+                }, surfaces: .init(engage: { false }, verify: { false }, release: { _, _ in
                     effects.append("surface")
                     released = failure != "release"
                     if failure == "revoked" { current = false }
@@ -238,7 +245,7 @@ import StreamProtocol
                 prepareRemoteRelease: { effects.append("remote-debt"); return failure != "debt" },
                 localReturnUnavailableReason: { "로컬 오디오 복귀는 별도 인증이 필요합니다." })
             gate.update(verified: false, persistenceHealthy: true, reason: "권한창이 가림 화면 위에 있습니다.")
-            let result = host.setRemoteProtection(false, current: { current })
+            let result = await host.setRemoteProtection(false, current: { current })
             expect(result == (failure == "none"), "remote off requires independent physical readback and current trust: \(failure)")
             expect(!effects.contains("local-authenticated-path"), "remote off never invokes authenticated audio return: \(failure)")
             expect(gate.isRequested, "physical result alone cannot commit control authority or clear session state: \(failure)")
@@ -253,9 +260,9 @@ import StreamProtocol
         var effects = 0
         let host = HostSentry(admission: gate, initiallyLatched: true, persistenceHealthy: true,
             persist: { _ in effects += 1; return true }, surfaces: .init(engage: { true }, verify: { true },
-                release: { effects += 1; return true }, reason: { nil }), prepareRelease: { true },
+                release: { _, _ in effects += 1; return true }, reason: { nil }), prepareRelease: { true },
             localReturnUnavailableReason: { nil })
-        expect(!host.setRemoteProtection(false, current: { false }) && effects == 0,
+        expect(!(await host.setRemoteProtection(false, current: { false })) && effects == 0,
                "revoked remote authority cannot touch journal or native surfaces")
     }
 }

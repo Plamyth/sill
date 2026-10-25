@@ -72,7 +72,7 @@ cursor = cursor.replace('__PRODUCTION_CURSOR_BOUNDARY__', '\n\n'.join(cursor_par
 }, indent=2) + '\n')
 
 main = (root / 'Tests/checks/sentry/Main.swift').read_text()
-anchor = '    @MainActor static func main() {'
+anchor = '    @MainActor static func main() async {'
 assert main.count(anchor) == 1
 main = main.replace(anchor, anchor + '\n        if CommandLine.arguments.contains("--curtains") { curtainRecoveryChecks(); return }\n        if CommandLine.arguments.contains("--refresh") { curtainRefreshChecks(); return }\n        if CommandLine.arguments.contains("--cursor") { cursorWindowChecks(); return }')
 (output / 'Main.swift').write_text(main)
