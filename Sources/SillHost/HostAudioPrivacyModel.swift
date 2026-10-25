@@ -91,6 +91,15 @@ struct PrivacyAudioSnapshot: Equatable {
         switch kind { case .input: return input; case .output: return output; case .systemOutput: return systemOutput }
     }
 
+    var hasResolvedLocalDefaults: Bool {
+        identitiesAreUnique && devices.allSatisfy { $0.inputChannels >= 0 && $0.outputChannels >= 0 } &&
+        PrivacyAudioDefault.allCases.allSatisfy { kind in
+            devices.contains { device in
+                device.id == target(kind) && (kind == .input ? device.inputChannels : device.outputChannels) > 0
+            }
+        }
+    }
+
     func virtual(channels: Int) -> PrivacyAudioDevice? {
         let uid = "BlackHole\(channels)ch_UID"
         let plugin = "audio.existential.BlackHole\(channels)ch"
@@ -222,6 +231,11 @@ protocol HostAudioPrivacyHAL: AnyObject {
 
 @MainActor
 package final class HostAudioPrivacy {
+    private enum LocalAudioDisposition: String { case unmodified, restorationRequired }
+    private enum LocalReturnAudioPlan {
+        case restoreOriginal(LocalAudioState)
+        case preserveLocal(PrivacyAudioSnapshot)
+    }
     private let hal: any HostAudioPrivacyHAL
     private let persist: () -> Bool
     package private(set) var latched: Bool
@@ -232,6 +246,7 @@ package final class HostAudioPrivacy {
     private var pending: Task<Void, Never>?
     private var watching = false
     private var localState: LocalAudioState?
+    private var localAudioDisposition: LocalAudioDisposition
     private let saveLocal: (LocalAudioState?) -> Bool
     private let clearLatch: () -> Bool
     private let authenticateLocal: (UUID) async -> Bool
@@ -279,6 +294,7 @@ package final class HostAudioPrivacy {
          nativeStartup: NativeAudioStartup? = nil) {
         self.hal = hal; self.latched = latched; self.persist = persist
         self.localState = localState; self.saveLocal = saveLocal; self.clearLatch = clearLatch
+        localAudioDisposition = latched || localState != nil ? .restorationRequired : .unmodified
         self.authenticateLocal = authenticateLocal; self.cancelAuthentication = cancelAuthentication
         self.authenticationChallengeID = authenticationChallengeID
         let startup = nativeStartup ?? NativeAudioStartup()
@@ -341,6 +357,7 @@ package final class HostAudioPrivacy {
             guard let snapshot = try? readSnapshot(), let original = try? LocalAudioState(snapshot), original.isValid else {
                 fail(.readback); return false
             }
+            localAudioDisposition = .restorationRequired
             persistenceHealthy = saveLocal(original)
             guard persistenceHealthy else { fail(.persistence); return false }
             localState = original
@@ -463,6 +480,32 @@ package final class HostAudioPrivacy {
         forwardingInvalidated?()
     }
 
+    private var canPreserveLocalAudio: Bool {
+        localAudioDisposition == .unmodified && !latched && localState == nil &&
+        persistenceHealthy && !watching && !reconciling && pending == nil
+    }
+
+    private func localReturnAudioPlan() -> LocalReturnAudioPlan? {
+        guard persistenceHealthy else { return nil }
+        if latched {
+            guard localAudioDisposition == .restorationRequired, let original = localState, original.isValid else { return nil }
+            return .restoreOriginal(original)
+        }
+        guard canPreserveLocalAudio, let snapshot = try? readSnapshot(), snapshot.hasResolvedLocalDefaults,
+              canPreserveLocalAudio else { return nil }
+        return .preserveLocal(snapshot)
+    }
+
+    private func localReturnAudioPlanCurrent(_ plan: LocalReturnAudioPlan) -> Bool {
+        guard persistenceHealthy else { return false }
+        switch plan {
+        case .restoreOriginal(let original):
+            return localAudioDisposition == .restorationRequired && latched && localState == original && original.isValid
+        case .preserveLocal(let snapshot):
+            return canPreserveLocalAudio && (try? readSnapshot()) == snapshot && canPreserveLocalAudio
+        }
+    }
+
     /// This request owns authentication. Callers cannot supply an authentication result.
     package func requestLocalReturn(budgetMilliseconds: Int = 30_000,
                                     authenticationBudgetMilliseconds: Int = 120_000) async -> Bool {
@@ -527,7 +570,7 @@ package final class HostAudioPrivacy {
         }
         func failedReturn(_ phase: String) -> Bool {
             localReturnFailureReason = "인증은 완료됐지만 \(phase)을 확인하지 못했습니다. 보호를 유지합니다."
-            print("[로컬 복귀 단계] 실패 phase=\(phase) requestCurrent=\(localReturnID == request) generationCurrent=\(privacyGeneration == generation) membershipCurrent=\(participants.matches(membership)) latched=\(latched) persistenceHealthy=\(persistenceHealthy) originalValid=\(localState?.isValid == true) cancelled=\(cancellation.isCancelled || Task.isCancelled)")
+            print("[로컬 복귀 단계] 실패 phase=\(phase) requestCurrent=\(localReturnID == request) generationCurrent=\(privacyGeneration == generation) membershipCurrent=\(participants.matches(membership)) latched=\(latched) persistenceHealthy=\(persistenceHealthy) originalValid=\(localState?.isValid == true) cancelled=\(cancellation.isCancelled || Task.isCancelled) audioDisposition=\(localAudioDisposition.rawValue) watching=\(watching) reconciling=\(reconciling) pending=\(pending != nil)")
             return false
         }
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
@@ -545,7 +588,7 @@ package final class HostAudioPrivacy {
         }) == true, !cancellation.isCancelled, !Task.isCancelled, ContinuousClock.now < deadline,
               localReturnID == request, privacyGeneration == generation,
               participants.authenticatedLocalReturnUnavailableReason == nil, participants.matches(membership),
-              latched, persistenceHealthy, let original = localState, original.isValid,
+              let audioPlan = localReturnAudioPlan(),
               let ticket = participants.beginLocalReturn(operationId: request, privacyGeneration: generation,
                                                         membership: membership) else { return failedReturn("오디오 서비스·원본 복원 준비") }
         defer { participants.endLocalReturn(ticket) }
@@ -556,8 +599,10 @@ package final class HostAudioPrivacy {
             return !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < deadline &&
                 self.authenticatingLocal && self.returningLocal &&
                 self.localReturnID == request && self.privacyGeneration == generation &&
-                self.latched && self.persistenceHealthy && self.participants.isFenced &&
-                self.participants.matches(membership)
+                self.localReturnAudioPlanCurrent(audioPlan) && self.participants.isFenced &&
+                self.participants.matches(membership) && self.localReturnID == request &&
+                self.privacyGeneration == generation && !cancellation.isCancelled &&
+                !Task.isCancelled && ContinuousClock.now < deadline
         }
         guard await participants.fenceAndQuiesce(operationId: request, privacyGeneration: generation,
                     membership: membership, budgetMilliseconds: budgetMilliseconds, deadline: deadline),
@@ -566,7 +611,7 @@ package final class HostAudioPrivacy {
                   return await self.nativeStartup.quiesce(using: self.revokeForLocalReturn, while: current)
               }) == true, current(),
               await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
-              localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
+              localReturnID == request, privacyGeneration == generation, localReturnAudioPlanCurrent(audioPlan),
               participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return failedReturn("오디오 참여자 중지·상태 증거") }
         let admission: @MainActor () -> Bool = { [weak self] in
             guard let self else { return false }
@@ -584,28 +629,35 @@ package final class HostAudioPrivacy {
               }) == true, admission(),
               await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
               admission() else { return failedReturn("공통 오디오 intent 해제") }
-        // A failed removal invalidates the HAL generation even when listeners remain registered.
-        watching = false
-        guard hal.observe(nil, changed: nil) else {
-            fail(.listeners)
-            schedule()
-            return failedReturn("HAL 감시 종료")
-        }
-        guard localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
-              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
-              let beforeRestore = try? readSnapshot(), original.matches(beforeRestore) || (try? beforeRestore.plan(allowPartial: true).isEmpty) == true,
-              localReturnID == request, privacyGeneration == generation,
-              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return failedReturn("원본 HAL·요청 재검증") }
-        let restorationApplied = hal.restoreLocal(original)
-        guard restorationApplied, let restored = try? readSnapshot(), original.matches(restored),
-              !Task.isCancelled, ContinuousClock.now < deadline,
-              localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
-              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else {
-            fail(.readback)
-            returningLocal = false
-            _ = reconcile()
-            print("[로컬 복귀 단계] HAL 복원 반환 applied=\(restorationApplied)")
-            return failedReturn("원본 HAL 복원·재조회")
+        switch audioPlan {
+        case .restoreOriginal(let original):
+            print("[로컬 복귀 단계] 오디오 계획 mode=restoreOriginal")
+            // A failed removal invalidates the HAL generation even when listeners remain registered.
+            watching = false
+            guard hal.observe(nil, changed: nil) else {
+                fail(.listeners)
+                schedule()
+                return failedReturn("HAL 감시 종료")
+            }
+            guard localReturnID == request, privacyGeneration == generation, localReturnAudioPlanCurrent(audioPlan),
+                  participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
+                  let beforeRestore = try? readSnapshot(), original.matches(beforeRestore) || (try? beforeRestore.plan(allowPartial: true).isEmpty) == true,
+                  localReturnID == request, privacyGeneration == generation,
+                  participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return failedReturn("원본 HAL·요청 재검증") }
+            let restorationApplied = hal.restoreLocal(original)
+            guard restorationApplied, let restored = try? readSnapshot(), original.matches(restored),
+                  !Task.isCancelled, ContinuousClock.now < deadline,
+                  localReturnID == request, privacyGeneration == generation, localReturnAudioPlanCurrent(audioPlan),
+                  participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else {
+                fail(.readback)
+                returningLocal = false
+                _ = reconcile()
+                print("[로컬 복귀 단계] HAL 복원 반환 applied=\(restorationApplied)")
+                return failedReturn("원본 HAL 복원·재조회")
+            }
+        case .preserveLocal:
+            guard admission() else { return failedReturn("현재 로컬 HAL·요청 재검증") }
+            print("[로컬 복귀 단계] 오디오 계획 mode=preserveLocal")
         }
         var audioAttempted = false
         var audioCommitted = false
@@ -614,23 +666,31 @@ package final class HostAudioPrivacy {
             audioAttempted = true
             guard admission(), !Task.isCancelled, ContinuousClock.now < deadline,
                   self.localReturnID == request, self.privacyGeneration == generation,
-                  self.latched, self.persistenceHealthy,
+                  self.localReturnAudioPlanCurrent(audioPlan),
                   self.participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
-            audioCommitted = self.clearLatch()
+            switch audioPlan {
+            case .restoreOriginal: audioCommitted = self.clearLatch()
+            case .preserveLocal: audioCommitted = admission()
+            }
             return audioCommitted
         }
         let completed = await localReturnDidComplete?(deadline, admission, commitAudio) ?? commitAudio()
-        guard completed && audioCommitted else {
-            let originalSaved = !audioCommitted || saveLocal(original)
-            persistenceHealthy = persist() && originalSaved
+        guard completed && audioCommitted && admission() else {
+            if case .restoreOriginal(let original) = audioPlan {
+                let originalSaved = !audioCommitted || saveLocal(original)
+                persistenceHealthy = persist() && originalSaved
+            }
             fail(.persistence)
             returningLocal = false
             if persistenceHealthy { _ = reconcile() }
             print("[로컬 복귀 단계] 최종 commit 반환 surfacesCompleted=\(completed) audioAttempted=\(audioAttempted) audioCommitted=\(audioCommitted)")
             return failedReturn("화면·입력 보호 해제와 완료 저장")
         }
-        latched = false
-        localState = nil
+        if case .restoreOriginal = audioPlan {
+            latched = false
+            localState = nil
+            localAudioDisposition = .unmodified
+        }
         localReturnFailureReason = nil
         publish(AudioPrivacyState(version: 2, protected: false, reason: "인증 후 로컬 입출력으로 복귀했습니다."))
         return true

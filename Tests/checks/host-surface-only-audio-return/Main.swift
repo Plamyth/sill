@@ -50,6 +50,7 @@ import Darwin
 }
 
 @MainActor private final class Fixture {
+    static var retained: [Fixture] = []
     let hal = HAL()
     let startup = NativeAudioStartup()
     let admission = SentryAdmission()
@@ -72,6 +73,7 @@ import Darwin
     var events: [String] = []
     var finishedIntent = false
     var releasedWithoutProof = false
+    var lateCommit: (@MainActor () -> Bool)?
 
     init(latched: Bool = false, original: LocalAudioState? = nil, initialize: Bool = true) {
         saved = original; durable = latched
@@ -130,9 +132,11 @@ import Darwin
             localReturnUnavailableReason: { [unowned self] in privacy.localReturnUnavailableReason })
         privacy.localReturnActivityChanged = { [unowned self] in sentry.localReturnActivityChanged(privacy.localReturnInProgress) }
         privacy.localReturnDidComplete = { [unowned self] deadline, current, commitAudio in
-            await sentry.completeAuthenticatedLocalReturn(until: deadline, current: current, commitAudio: commitAudio)
+            lateCommit = commitAudio
+            return await sentry.completeAuthenticatedLocalReturn(until: deadline, current: current, commitAudio: commitAudio)
         }
         sentry.start()
+        Self.retained.append(self)
     }
     func facts(native: Bool) -> LocalAudioParticipantFacts {
         if native ? unknownNative : unknownRelay { return .unknown }
@@ -202,6 +206,10 @@ import Darwin
         await settle { gate.entered || secondFinished }
         check(gate.entered && f.auths == 2 && f.curtain && f.tap && f.counts == before,
             "표면만 재보호 후 새 인증은 HAL·원본·latch 쓰기 없이 실제 async 표면 ACK를 기다림")
+        if gate.entered {
+            check(!f.privacy.armAndVerify() && f.counts == before && !f.privacy.latched,
+                "preserve 표면 대기 중 새 arm 시도는 disposition이나 원본을 바꾸지 못함")
+        }
         gate.released = true
         let secondResult = await second.value
         print("REPRO firstRestore=1 secondAccepted=\(secondResult) auths=\(f.auths) latched=\(f.privacy.latched) HALdelta=\(zip(before,f.counts).map { $1-$0 })")
@@ -210,6 +218,7 @@ import Darwin
             "실제 Model 첫 audio 복원→표면 재보호→새 auth 로컬 복귀 성공, preserve HAL·원본·latch 쓰기0")
         check(f.nativeStops == 6 && f.relayStops == 2 && f.intents == 2 && f.inspections >= 4,
             "preserve도 새 native·relay fence/inspect·intent·post-intent 재drain 전체 수행")
+        check(f.lateCommit?() == false && f.counts == before, "완료 뒤 늦거나 중복인 preserve commit은 재수용하지 않음")
         trace("restore-then-surface-only", f); f.privacy.stop()
 
         let fresh = Fixture(), freshCounts = [0,0,0,0,0]
@@ -219,16 +228,16 @@ import Darwin
             "초기 미적용 상태도 idle 위조 없이 전체 참여자 proof 후 현재 HAL 보존")
         trace("fresh-surface-only", fresh); fresh.privacy.stop()
 
-        for mode in ["latched-missing", "latched-invalid", "residual-original", "arm-read", "arm-invalid", "arm-save", "persistence"] {
+        for mode in ["latched-missing", "latched-invalid", "residual-original", "arm-read-persistent", "unresolved-current", "arm-save", "persistence"] {
             let original = try LocalAudioState(HAL.local)
             var invalidObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as! [String: Any]
             invalidObject["version"] = 99
             let invalid = try JSONDecoder().decode(LocalAudioState.self, from: JSONSerialization.data(withJSONObject: invalidObject))
             let bad = Fixture(latched: mode.hasPrefix("latched") || mode == "persistence",
                 original: mode == "latched-invalid" ? invalid : mode == "residual-original" || mode == "persistence" ? original : nil)
-            if mode == "arm-read" { bad.hal.readFails = true; check(!bad.privacy.armAndVerify(), "arm read 실패 재현"); bad.hal.readFails = false }
-            if mode == "arm-invalid" {
-                bad.hal.snapshot.input = 0; check(!bad.privacy.armAndVerify(), "arm 원본 검증 실패 재현"); bad.hal.snapshot = HAL.local
+            if mode == "arm-read-persistent" { bad.hal.readFails = true; check(!bad.privacy.armAndVerify(), "arm read 실패 재현") }
+            if mode == "unresolved-current" {
+                bad.hal.snapshot.input = 0; check(!bad.privacy.armAndVerify(), "arm 원본 검증 실패 재현")
             }
             if mode == "arm-save" { bad.saveOK = false; check(!bad.privacy.armAndVerify(), "arm 저장 실패 재현"); bad.saveOK = true }
             if mode == "persistence" { bad.persistOK = false; check(!bad.privacy.armAndVerify(), "persist 실패 재현") }
@@ -238,8 +247,39 @@ import Darwin
             trace(mode, bad); bad.privacy.stop()
         }
 
+        for mode in ["arm-read-recovered", "arm-original-unsupported"] {
+            let recovered = Fixture()
+            if mode == "arm-read-recovered" {
+                recovered.hal.readFails = true
+                check(!recovered.privacy.armAndVerify(), "일시적인 arm 초기 read 실패 재현")
+                recovered.hal.readFails = false
+            } else {
+                let format = PrivacyAudioStream.Format(sampleRate: 48000, formatID: 0x61616320,
+                    flags: 0, bytesPerPacket: 1, framesPerPacket: 1024, bytesPerFrame: 1,
+                    channels: 2, bitsPerChannel: 16, reserved: 0)
+                recovered.hal.snapshot.devices.append(.init(id: 40, uid: "fixture-unsupported-original", transport: .other,
+                    plugin: nil, inputChannels: 0, outputChannels: 2, inputMuted: nil, outputMuted: nil,
+                    streams: [.init(id: 41, ownerID: 40, direction: .output, startingChannel: 1,
+                        virtualFormat: format, physicalFormat: format, active: true, activeSettable: false)]))
+                check(recovered.hal.snapshot.hasResolvedLocalDefaults && !(try! LocalAudioState(recovered.hal.snapshot)).isValid,
+                    "현재 HAL 기본 경로는 식별되지만 원본 복원 스키마는 지원하지 않는 fixture")
+                check(!recovered.privacy.armAndVerify(), "지원하지 않는 원본 캡처는 HAL·저장 전에 거부")
+            }
+            check(recovered.counts == [0,0,0,0,0] && !recovered.privacy.latched && recovered.saved == nil,
+                "\(mode)는 실제 미적용이며 저장·HAL·감시 복원 잔여0")
+            recovered.reProtectSurface()
+            let snapshot = recovered.hal.snapshot
+            check(await recovered.privacy.requestLocalReturn() && recovered.hal.snapshot == snapshot &&
+                recovered.counts == [0,0,0,0,0] && recovered.auths == 1 && recovered.nativeStops == 3 && !recovered.curtain,
+                "\(mode)는 현재 readback 회복과 fresh auth·전체 proof로만 preserve, 원본 재직렬화0")
+            trace(mode, recovered); recovered.privacy.stop()
+        }
+
         for mode in ["unknown-native", "unknown-relay", "missing-participant", "active-media", "auth-denied",
-                     "generation", "membership", "cancel", "timeout", "readback-failure", "readback-change", "surface-failure", "surface-journal-failure"] {
+                     "generation", "membership", "cancel", "timeout", "readback-failure", "readback-change",
+                     "surface-readback-failure", "surface-readback-change", "post-intent-active-media",
+                     "post-intent-generation", "post-intent-membership", "post-intent-cancel", "post-intent-timeout",
+                     "surface-failure", "surface-journal-failure"] {
             let bad = Fixture(), gate = Gate()
             if mode == "unknown-native" { bad.unknownNative = true }
             if mode == "unknown-relay" { bad.unknownRelay = true }
@@ -248,21 +288,27 @@ import Darwin
             if mode == "auth-denied" { bad.accepted = false }
             if mode == "readback-failure" { bad.intentHook = { bad.hal.readFails = true } }
             if mode == "readback-change" { bad.intentHook = { bad.hal.snapshot.devices[0].outputMuted = true } }
+            if mode == "surface-readback-failure" { bad.surfaceHook = { bad.hal.readFails = true } }
+            if mode == "surface-readback-change" { bad.surfaceHook = { bad.hal.snapshot.devices[0].outputMuted = true } }
+            if mode == "post-intent-active-media" { bad.intentHook = { bad.nativeMediaActive = true; bad.cannotStop = true } }
             if mode == "surface-failure" { bad.surfaceOK = false }
             if mode == "surface-journal-failure" { bad.journalOK = false }
             if ["generation", "membership", "cancel", "timeout"].contains(mode) { bad.surfaceGate = gate }
+            if ["post-intent-generation", "post-intent-membership", "post-intent-cancel", "post-intent-timeout"].contains(mode) {
+                bad.postIntentGate = gate
+            }
             let before = bad.counts
             var finished = false
             let task = Task {
-                let result = await bad.privacy.requestLocalReturn(budgetMilliseconds: mode == "timeout" ? 60 : 2000)
+                let result = await bad.privacy.requestLocalReturn(budgetMilliseconds: mode.hasSuffix("timeout") ? 60 : 2000)
                 finished = true; return result
             }
-            if bad.surfaceGate != nil {
+            if bad.surfaceGate != nil || bad.postIntentGate != nil {
                 await settle { gate.entered || finished }
-                if mode == "generation" { bad.privacy.stop() }
-                if mode == "membership" { bad.registerRelay() }
-                if mode == "cancel" { task.cancel() }
-                if mode != "timeout" { gate.released = true }
+                if mode.hasSuffix("generation") { bad.privacy.stop() }
+                if mode.hasSuffix("membership") { bad.registerRelay() }
+                if mode.hasSuffix("cancel") { task.cancel() }
+                if !mode.hasSuffix("timeout") { gate.released = true }
             }
             let accepted = await task.value
             gate.released = true
@@ -282,6 +328,17 @@ import Darwin
         check(await draining.value && !drain.curtain && drain.counts == [0,0,0,0,0],
             "preserve post-intent native 실제 종료 후에만 표면 해제")
         trace("post-intent-drain", drain); drain.privacy.stop()
+
+        let startup = Fixture(initialize: false)
+        var startupFinished = false
+        let starting = Task { let result = await startup.privacy.requestLocalReturn(); startupFinished = true; return result }
+        await settle { startup.auths == 1 }
+        check(!startupFinished && startup.hal.reads == 0 && startup.releases == 0,
+            "초기 native startup 미확인 상태를 idle로 바꾸지 않고 실제 초기화 경계를 기다림")
+        startup.startup.construct { () }
+        check(await starting.value && startup.counts == [0,0,0,0,0] && startup.nativeStops == 3,
+            "실제 startup 초기화와 전체 참여자 증거를 받은 뒤에만 초기 preserve 허용")
+        trace("native-startup", startup); startup.privacy.stop()
 
         let report: [String: Any] = ["assertions": assertions, "failures": failures, "passed": failures.isEmpty,
             "cases": traces, "actualHALAuthHostUIAudioDeviceEffects": 0,

@@ -33,7 +33,7 @@ privacy_fixture = privacy_fixture.replace('__SENTRY_PRIVACY_CHANGED__',
     block(coordinator, 'package func sentryAudioProtectionChanged(').replace('package func', 'func'))
 (output / 'PrivacySentryFixture.swift').write_text(privacy_fixture)
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in [
-    'HostAudioPrivacy', 'HostAudioPrivacyModel', 'HostSentry', 'SentryAdmission', 'HostExclusiveAudioSilence', 'LocalAudioReturn', 'LocalAudioParticipants',
+    'HostAudioPrivacy', 'HostAudioPrivacyModel', 'HostSentry', 'SentryAdmission', 'HostExclusiveAudioSilence', 'LocalAudioReturn', 'LocalAuthenticationPresentation', 'LocalAudioParticipants',
     'SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'AudioHardwareRoutes']]
 sources += [here / 'Main.swift', here / 'JournalRollback.swift', here / 'LegacyAudioJournal.swift', here / 'FakeHAL.swift', here / 'LocalReturn.swift', here / 'Exclusive.swift', output / 'CoordinatorFixture.swift']
 sources += [output / 'PrivacySentryFixture.swift']
