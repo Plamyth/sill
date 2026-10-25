@@ -64,6 +64,10 @@ final class HostSentryPlatform {
     }
 
     private struct Curtain {
+        final class Panel: NSPanel {
+            override var canBecomeKey: Bool { true }
+            override var canBecomeMain: Bool { false }
+        }
         let panel: NSPanel
         let returnButton: NSButton
         let title: NSTextField
@@ -899,7 +903,8 @@ final class HostSentryPlatform {
     }
 
     private func makeCurtain(frame: CGRect) -> Curtain {
-        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = Curtain.Panel(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.identifier = NSUserInterfaceItemIdentifier("CCR.SentryCurtain")
         panel.title = curtainMessage.title
         panel.isFloatingPanel = true
         panel.level = Self.curtainLevel

@@ -49,6 +49,10 @@ final class NativePanelChecks: NSObject {
         guard check(!curtain.panel.isVisible && !curtain.panel.isKeyWindow && !curtain.panel.isMainWindow,
                     "실제 생성한 가림 패널은 비표시·비포커스 유지"),
               check(curtain.panel.level == Self.curtainLevel, "실제 makeCurtain은 화면 보호 레벨 유지"),
+              check(curtain.panel.canBecomeKey && !curtain.panel.canBecomeMain &&
+                    !curtain.panel.styleMask.contains(.nonactivatingPanel) &&
+                    curtain.panel.identifier?.rawValue == "CCR.SentryCurtain",
+                    "보호 커튼은 기본 비표시를 유지하며 공식 인증 anchor로만 포커스 가능"),
               check(curtain.panel.isFloatingPanel && curtain.panel.isOpaque && curtain.panel.alphaValue == 1 &&
                     curtain.panel.sharingType == .none, "실제 패널의 floating·불투명도·공유 차단 속성 유지"),
               check(NSApp.activationPolicy() == .prohibited && NSApp.keyWindow == nil && NSApp.mainWindow == nil &&
