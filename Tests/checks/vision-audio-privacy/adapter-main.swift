@@ -187,6 +187,13 @@ neverArmed.context.nativeBindingReady = true
 store.refresh()
 check(neverArmed.visionAudio.starts == 0 && neverArmed.queue.work.count == 1,
       "native binding 준비 뒤에도 상관된 fresh catalog를 기다림")
+neverArmed.queue.drain()
+let catalogQuery = Wire.decode(FetchCatalog.self, from: Data(neverArmed.connection!.sent.last!
+    .dropFirst(StreamMessage.headerLength)))!
+var wrongPeer = privacyList
+wrongPeer.responseRequestID = catalogQuery.requestID
+neverArmed.receiveCatalog(wrongPeer, from: NWConnection())
+check(neverArmed.visionAudio.starts == 0, "정확한 nonce라도 다른 peer 응답은 실제 재생을 시작하지 않음")
 var unrelated = privacyList
 unrelated.responseRequestID = UUID()
 neverArmed.receiveCatalog(unrelated, from: neverArmed.connection!)
@@ -238,8 +245,17 @@ for privacy in [nil, AudioPrivacyState(version: 1, protected: false),
     list.audioPrivacy = privacy
     unsupported.observeVisionAudioPrivacy(list)
     _ = store.setDesired(true, client: unsupported, direction: .playback, expectedScope: nil)
-    check(!unsupported.visionAudioIntentContext.admitted && unsupported.nativeSelections == 0 &&
+    check(unsupported.visionAudioIntentContext.privacyVersion == privacy?.version &&
+          !unsupported.visionAudioIntentContext.admitted && unsupported.nativeSelections == 0 &&
           unsupported.visionAudio.starts == 0, "최초 미지원 또는 알 수 없는 privacy 버전은 안전 거절")
+    list.audioPrivacy = AudioPrivacyState(protected: false)
+    unsupported.observeVisionAudioPrivacy(list)
+    store.refresh()
+    check(unsupported.visionAudioIntentContext.admitted && !unsupported.visionAudioIntentContext.eligible &&
+          unsupported.nativeSelections == 0, "초기 unknown 뒤 유효한 v2 false는 새 수동 선택을 기다림")
+    _ = store.setDesired(true, client: unsupported, direction: .playback, expectedScope: nil)
+    check(unsupported.nativeSelections == 1 && unsupported.visionAudio.starts == 0,
+          "초기 unknown에서 유효한 v2 false가 된 뒤 새 수동 native 요청 한 번 허용")
     list.audioPrivacy = AudioPrivacyState(protected: true)
     unsupported.observeVisionAudioPrivacy(list)
     let beforeLoss = unsupported.visionAudio.stops
@@ -249,4 +265,62 @@ for privacy in [nil, AudioPrivacyState(version: 1, protected: false),
           unsupported.visionAudio.starts == 0, "기존 true에서 privacy 지원 상실은 동기 철회")
     store.retire(unsupported)
 }
+
+for change in ["peer", "video", "missing", "version"] {
+    let pending = StreamClient("never-armed-pending-" + change)
+    pending.context.nativeBindingReady = false
+    store.register(pending)
+    var list = pending.visionAudioIntentCatalog!
+    list.audioPrivacy = AudioPrivacyState(protected: false)
+    pending.observeVisionAudioPrivacy(list)
+    check(store.beginPermission(legacy.visionAudioOwnerID), "미제출 native 선택의 세대 변경을 대기")
+    _ = store.setDesired(true, client: pending, direction: .playback, expectedScope: nil)
+    let oldScope = pending.context.scope!
+    if change == "peer" || change == "video" {
+        if change == "peer" { pending.connection = NWConnection() }
+        pending.context.scope = .init(connection: change == "peer" ? UUID() : oldScope.connection,
+            window: oldScope.window, admission: oldScope.admission,
+            video: change == "video" ? UUID() : oldScope.video,
+            foreground: oldScope.foreground, privacy: oldScope.privacy)
+    } else {
+        list.audioPrivacy = change == "missing" ? nil : AudioPrivacyState(version: 3, protected: false)
+        pending.observeVisionAudioPrivacy(list)
+    }
+    store.endPermission(legacy.visionAudioOwnerID)
+    check(pending.nativeSelections == 0 && pending.visionAudio.starts == 0,
+          "미제출 선택 뒤 " + change + " 변경은 pending과 실제 오디오를 열지 않음")
+    check(store.model.intent.desired(.playback, hostKey: "never-armed-pending-" + change),
+          "안전 거절 후에도 사용자 희망은 보존")
+    store.retire(pending)
+}
+
+let protectedUnknown = StreamClient("protected-to-unknown")
+store.register(protectedUnknown)
+var unknownList = protectedUnknown.visionAudioIntentCatalog!
+unknownList.audioPrivacy = AudioPrivacyState(protected: true)
+protectedUnknown.observeVisionAudioPrivacy(unknownList)
+protectedUnknown.visionAudioIntentCatalog = unknownList
+_ = store.setDesired(true, client: protectedUnknown, direction: .playback, expectedScope: nil)
+protectedUnknown.respondToQuery()
+var protectedAuthority = store.model
+let beforeUnknownTicket = protectedAuthority.request(protectedUnknown.visionAudioOwnerID,
+    direction: .playback, manual: true)!
+check(protectedUnknown.visionAudio.starts == 1 && store.model.isCurrent(beforeUnknownTicket),
+      "unknown 전환 전 실제 권한과 재생이 유효함")
+let beforeUnknownStops = protectedUnknown.visionAudio.stops
+let beforeUnknownCatalog = protectedUnknown.visionAudioIntentCatalog!
+unknownList.audioPrivacy = nil
+protectedUnknown.observeVisionAudioPrivacy(unknownList)
+check(!protectedUnknown.visionAudioIntentContext.admitted && protectedUnknown.visionAudioPrivacyBlocked &&
+      protectedUnknown.visionAudio.stops > beforeUnknownStops && store.model.owner == nil &&
+      !store.model.isCurrent(beforeUnknownTicket), "기존 true에서 unknown 전환은 admitted false로 owner와 늦은 권한 철회")
+protectedUnknown.receiveCatalog(beforeUnknownCatalog, from: protectedUnknown.connection!)
+check(protectedUnknown.visionAudio.starts == 1 && !store.permits(protectedUnknown, direction: .playback),
+      "unknown 뒤 이전 peer catalog의 늦은 응답으로 다시 열리지 않음")
+unknownList.audioPrivacy = AudioPrivacyState(protected: false)
+protectedUnknown.observeVisionAudioPrivacy(unknownList)
+_ = store.setDesired(true, client: protectedUnknown, direction: .playback, expectedScope: nil)
+check(protectedUnknown.visionAudioPrivacyBlocked && protectedUnknown.nativeSelections == 1 &&
+      protectedUnknown.visionAudio.starts == 1, "진짜 보호 상실 뒤 false는 최초 정상 OFF로 정규화하지 않음")
+store.retire(protectedUnknown)
 print("RESULT_ASSERTIONS \(checks)")
