@@ -150,6 +150,51 @@ final class CanvasStore: ObservableObject {
         }
     }
     @Published var rulerEnabled = false
+    @Published private var pencilTraceOwner: UUID?
+    var pencilTraceActive: Bool { pencilTraceOwner != nil }
+    var inkBusy: Bool { pencilTraceActive || inkHistory.usingTool }
+    func setPencilTraceActive(_ active: Bool, owner: UUID) {
+        if active {
+            if pencilTraceOwner == nil || pencilTraceOwner == owner { pencilTraceOwner = owner }
+        } else if pencilTraceOwner == owner { pencilTraceOwner = nil }
+    }
+
+    var penTool: PKInkingTool {
+        let settings = scene.effectivePenSettings
+        let width = CGFloat(settings.width)
+        switch settings.color {
+        case .white: return PKInkingTool(.pen, color: .white, width: width)
+        case .yellow: return PKInkingTool(.pen, color: .yellow, width: width)
+        case .cyan: return PKInkingTool(.pen, color: .cyan, width: width)
+        }
+    }
+
+    @discardableResult
+    func setPenSettings(_ change: CanvasPenSettingsChange, sceneID: UUID,
+                        baseRevision: Int) throws -> CanvasPenSettingsResult {
+        var next = scene
+        let result = try next.setPenSettings(change, sceneID: sceneID, baseRevision: baseRevision, inkBusy: inkBusy)
+        guard sceneReadable, let data = Data(base64Encoded: scene.drawingBase64),
+              data.isEmpty || (try? PKDrawing(data: data)) != nil else {
+            throw CanvasPenSettingsError.unreadableDrawing
+        }
+        guard result.disposition == .applied else { return result }
+        do { try persistScene(next) }
+        catch ScenePersistenceError.tooLarge { throw CanvasPenSettingsError.sceneTooLarge }
+        catch ScenePersistenceError.unreadable { throw CanvasPenSettingsError.unreadableDrawing }
+        catch { throw CanvasPenSettingsError.persistenceFailed }
+        scene = next
+        status = "다음 획에 \(result.settings.color.label) · \(Int(result.settings.width))포인트를 적용합니다."
+        return result
+    }
+
+    func choosePenSettings(_ settings: CanvasPenSettings, expectedScene: CanvasScene) {
+        do {
+            let result = try setPenSettings(.init(expected: expectedScene.effectivePenSettings, settings: settings),
+                sceneID: expectedScene.id, baseRevision: expectedScene.revision)
+            if result.disposition == .noop { status = "이미 같은 펜 설정입니다. 기존 획은 그대로 유지됩니다." }
+        } catch { status = "\((error as? CanvasPenSettingsError)?.rawValue ?? "pen_settings_not_saved") · \(error.localizedDescription)" }
+    }
     func rulerIsActive(isVisible: Bool) -> Bool {
         rulerEnabled && mode == .pen && isVisible
     }
@@ -1778,7 +1823,7 @@ final class CanvasStore: ObservableObject {
         let data = try CanvasLocalFile.read(url)
         guard data.count <= sceneByteLimit else { throw ScenePersistenceError.unreadable }
         let scene = try JSONDecoder().decode(CanvasScene.self,from:data)
-        guard scene.schemaVersion == 1,
+        guard scene.hasSupportedInkProjection,
               let drawingData = Data(base64Encoded:scene.drawingBase64) else { throw ScenePersistenceError.unreadable }
         let drawing: PKDrawing
         if drawingData.isEmpty { drawing = PKDrawing() }
@@ -1801,24 +1846,45 @@ final class CanvasStore: ObservableObject {
         catch { status = "칠판 자동 저장 실패: \(error.localizedDescription)" }
     }
 
-    private func persistScene() throws {
+    private func persistScene(_ candidate: CanvasScene? = nil) throws {
         guard sceneReadable else { throw ScenePersistenceError.unreadable }
         guard let url = Self.sceneURL() else { throw ScenePersistenceError.unreadable }
-        let data = try JSONEncoder().encode(scene)
+        let data = try JSONEncoder().encode(candidate ?? scene)
         guard data.count <= Self.sceneByteLimit else { throw ScenePersistenceError.tooLarge }
         try CanvasLocalFile.write(data,to:url)
     }
 
-    private static let sceneByteLimit = 4*1024*1024
+    private static let sceneByteLimit = CanvasScene.localByteLimit
 
-    func updateDrawing(_ next: PKDrawing) {
-        guard drawing != next else { return }
-        storedDrawing = next
-        setInkSelection(inkSelection)
-        handwritingRequest = nil
+    private static func inkStyle(_ stroke: PKStroke) -> InkStroke.Style {
+        let transform = stroke.transform
+        let srgb = CGColorSpace(name: CGColorSpace.sRGB)
+        let converted = srgb.flatMap { stroke.ink.color.cgColor.converted(to: $0, intent: .relativeColorimetric, options: nil) }
+        let components = converted?.components
+        let color: InkStroke.Style.SRGB?
+        if let components, components.count == 4 {
+            let rgba = InkStroke.Style.SRGB(red: Double(components[0]), green: Double(components[1]),
+                blue: Double(components[2]), alpha: Double(components[3]))
+            color = rgba.isValid ? rgba : nil
+        } else { color = nil }
+        return InkStroke.Style(inkType: stroke.ink.inkType.rawValue, color: color,
+            transform: .init(a: Double(transform.a), b: Double(transform.b), c: Double(transform.c),
+                d: Double(transform.d), tx: Double(transform.tx), ty: Double(transform.ty)),
+            samples: stroke.path.map { .init(width: Double($0.size.width), height: Double($0.size.height), opacity: Double($0.opacity)) })
+    }
+
+    @discardableResult
+    func updateDrawing(_ next: PKDrawing) -> Bool {
+        guard drawing != next else { return true }
+        let nativeBytes = next.dataRepresentation()
+        guard let authoritative = try? PKDrawing(data: nativeBytes) else {
+            status = "unreadable_drawing · 원본 그림을 읽을 수 없어 기존 원본을 유지합니다."
+            return false
+        }
         var changed = scene
-        changed.drawingBase64 = next.dataRepresentation().base64EncodedString()
-        changed.strokes = next.strokes.map { stroke in
+        changed.schemaVersion = 2
+        changed.drawingBase64 = nativeBytes.base64EncodedString()
+        changed.strokes = authoritative.strokes.map { stroke in
             func worldPoint(_ point: PKStrokePoint) -> InkPoint {
                 let location = point.location.applying(stroke.transform)
                 return InkPoint(x: Double(location.x), y: Double(location.y),
@@ -1842,11 +1908,24 @@ final class CanvasStore: ObservableObject {
                         upperBound: Double(range.upperBound), worldPoints: points)
                 })
             return InkStroke(id: stroke.id, points: stroke.path.map(worldPoint),
-                createdAt: stroke.path.creationDate, visibility: visibility)
+                createdAt: stroke.path.creationDate, visibility: visibility, style: Self.inkStyle(stroke))
         }
         changed.revision += 1
+        guard sceneReadable, changed.hasSupportedInkProjection,
+              changed.strokes.allSatisfy({ $0.points.allSatisfy { [$0.x, $0.y, $0.pressure].allSatisfy(\.isFinite) } }) else {
+            status = "unsupported_ink_projection · 잉크 투영을 확인할 수 없어 기존 원본을 유지합니다."
+            return false
+        }
+        guard let bytes = try? JSONEncoder().encode(changed), bytes.count <= Self.sceneByteLimit else {
+            status = "scene_too_large · 칠판 저장 한도를 넘어서 마지막 정상 원본을 유지합니다."
+            return false
+        }
+        storedDrawing = next
+        setInkSelection(inkSelection)
+        handwritingRequest = nil
         scene = changed
         status = "Pencil 입력 확인 · 획 \(scene.strokes.count)개 · \(mode.rawValue)"
+        return true
     }
 
     func addNode(_ kind: CanvasNode.Kind) {
@@ -2031,11 +2110,13 @@ final class CanvasStore: ObservableObject {
 
     func importScene(_ imported: CanvasScene) throws {
         guard !vaultDirty, !vaultSaving else { throw CocoaError(.userCancelled) }
-        guard imported.schemaVersion == 1, imported.width > 0, imported.height > 0,
+        guard !inkBusy else { throw CanvasPenSettingsError.inkBusy }
+        guard imported.hasSupportedInkProjection, imported.width > 0, imported.height > 0,
               imported.nodes.count < 1000, imported.strokes.count < 10000,
               imported.nodes.allSatisfy(\.hasValidRotation) else {
             throw CocoaError(.fileReadCorruptFile)
         }
+        guard try JSONEncoder().encode(imported).count <= Self.sceneByteLimit else { throw CanvasPenSettingsError.sceneTooLarge }
         guard let drawingData = Data(base64Encoded: imported.drawingBase64) else {
             throw CocoaError(.fileReadCorruptFile)
         }
@@ -2050,6 +2131,17 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func applyAgentRevision(_ revision: AgentRevision) -> Bool {
+        if let settings = revision.setPenSettings {
+            do {
+                guard revision.isPenSettingsOnly else { throw CanvasPenSettingsError.unsupportedInkEdit }
+                let result = try setPenSettings(settings, sceneID: revision.sceneId, baseRevision: revision.baseRevision)
+                if result.disposition == .noop { status = "이미 같은 펜 설정입니다. 기존 획은 그대로 유지됩니다." }
+                return true
+            } catch {
+                status = "\((error as? CanvasPenSettingsError)?.rawValue ?? "pen_settings_not_saved") · \(error.localizedDescription)"
+                return false
+            }
+        }
         let sent = outbox.entries.first(where: { $0.id == packet?.packetId })
             .flatMap { try? $0.packet.frozenScene() }
         var next = scene

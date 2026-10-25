@@ -26,6 +26,7 @@ enum SceneRenderer {
         let bounds = CGRect(origin: .zero, size: size)
         let scale = UIScreen.main.scale
         let inkImage: UIImage?
+        guard drawing != nil || scene.strokes.allSatisfy({ $0.style == nil }) else { return nil }
         if let drawing {
             guard let bitmap = CGContext(data: nil, width: Int(ceil(size.width * scale)),
                 height: Int(ceil(size.height * scale)), bitsPerComponent: 8, bytesPerRow: 0,

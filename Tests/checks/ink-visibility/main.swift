@@ -96,7 +96,8 @@ import AppKit
                       }, "\(label) SDK raw readback retains identity and transform within serialization precision")
                 let encoded = try encoder.encode(scene)
                 let decoded = try JSONDecoder().decode(CanvasScene.self, from: encoded)
-                check(decoded == scene && decoded.schemaVersion == 1, "\(label) schema 1 JSON round trip")
+                check(decoded == scene && decoded.schemaVersion == 2 && decoded.strokes[0].style != nil,
+                      "\(label) schema 2 preserves the native style projection")
                 let segments = exported.visibility?.visibleSegments ?? []
                 if isFull {
                     check(segments.isEmpty && exported.visiblePointSegments == [exported.points],
@@ -135,6 +136,9 @@ import AppKit
         var legacyJSON = try JSONSerialization.jsonObject(with: encoder.encode(lastScene)) as! [String: Any]
         var legacyStrokes = legacyJSON["strokes"] as! [[String: Any]]
         legacyStrokes[0].removeValue(forKey: "visibility")
+        legacyStrokes[0].removeValue(forKey: "style")
+        legacyJSON["schemaVersion"] = 1
+        legacyJSON.removeValue(forKey: "penSettings")
         legacyJSON["strokes"] = legacyStrokes
         let legacy = try JSONDecoder().decode(CanvasScene.self, from: JSONSerialization.data(withJSONObject: legacyJSON))
         check(legacy.schemaVersion == 1 && legacy.strokes[0].visibility == nil &&

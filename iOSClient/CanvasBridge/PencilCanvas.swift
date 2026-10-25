@@ -28,7 +28,7 @@ struct PencilCanvas: UIViewRepresentable {
         canvas.isScrollEnabled = false
         canvas.minimumZoomScale = 1
         canvas.maximumZoomScale = 1
-        canvas.tool = PKInkingTool(.pen, color: CanvasPalette.ink, width: 4)
+        canvas.tool = store.penTool
         canvas.addInteraction(UIPencilInteraction(delegate: context.coordinator))
         host.addSubview(canvas)
 
@@ -40,16 +40,16 @@ struct PencilCanvas: UIViewRepresentable {
 
         let layer = context.coordinator.previewLayer
         layer.fillColor = nil
-        layer.strokeColor = CanvasPalette.ink.cgColor
-        layer.lineWidth = 4
+        layer.strokeColor = store.penTool.color.cgColor
+        layer.lineWidth = store.penTool.width
         layer.lineCap = .round
         layer.lineJoin = .round
         overlay.previewLayer = layer
         overlay.layer.addSublayer(layer)
 
         let hoverLayer = context.coordinator.hoverLayer
-        hoverLayer.fillColor = CanvasPalette.ink.withAlphaComponent(0.4).cgColor
-        hoverLayer.strokeColor = CanvasPalette.ink.cgColor
+        hoverLayer.fillColor = store.penTool.color.withAlphaComponent(0.4).cgColor
+        hoverLayer.strokeColor = store.penTool.color.cgColor
         hoverLayer.lineWidth = 2
         hoverLayer.isHidden = true
         overlay.layer.addSublayer(hoverLayer)
@@ -110,16 +110,18 @@ struct PencilCanvas: UIViewRepresentable {
         }
         canvas.isUserInteractionEnabled = store.mode != .select
         canvas.isRulerActive = store.rulerIsActive(isVisible: isVisible)
-        switch store.mode {
-        case .pen: canvas.tool = PKInkingTool(.pen, color: CanvasPalette.ink, width: 4)
-        case .eraser: canvas.tool = store.eraserTool
-        case .lasso: canvas.tool = PKLassoTool()
-        case .select: break
+        if !store.inkBusy {
+            switch store.mode {
+            case .pen: canvas.tool = store.penTool
+            case .eraser: canvas.tool = store.eraserTool
+            case .lasso: canvas.tool = PKLassoTool()
+            case .select: break
+            }
         }
         if canvas.selection != store.inkSelection { canvas.selection = store.inkSelection }
         context.coordinator.previewLayer.isHidden = canvas.isRulerActive ||
             (store.mode == .eraser && store.eraserPreviewWidth == nil)
-        context.coordinator.previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : 4
+        context.coordinator.previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : store.penTool.width
         context.coordinator.updateHover()
     }
 
@@ -133,12 +135,14 @@ struct PencilCanvas: UIViewRepresentable {
             coordinator.store.saveNow()
         }
         coordinator.store.inkHistory.detach(canvas.inkUndoManager)
+        coordinator.store.setPencilTraceActive(false, owner: coordinator.traceOwner)
         coordinator.canvas = nil
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate,
                              UIGestureRecognizerDelegate {
         let store: CanvasStore
+        let traceOwner = UUID()
         weak var canvas: CanvasInkView?
         var renderedModelDrawing = PKDrawing()
         var renderedGeneration = UUID()
@@ -188,6 +192,7 @@ struct PencilCanvas: UIViewRepresentable {
             renderedGeneration = store.inkHistory.generation
             isDrawing = false
             usingTool = false
+            store.setPencilTraceActive(false, owner: traceOwner)
             previewSession += 1
             previewLayer.path = nil
             replacingDrawing = false
@@ -198,20 +203,22 @@ struct PencilCanvas: UIViewRepresentable {
             switch phase {
             case .began:
                 isDrawing = true
+                store.setPencilTraceActive(true, owner: traceOwner)
                 hoverLayer.isHidden = true
                 previewSession += 1
                 previewPath = UIBezierPath()
                 previewPath.move(to: point)
                 previewLayer.strokeColor = store.mode == .eraser ?
-                    UIColor.systemRed.withAlphaComponent(0.7).cgColor : CanvasPalette.ink.cgColor
+                    UIColor.systemRed.withAlphaComponent(0.7).cgColor : store.penTool.color.cgColor
                 previewLayer.isHidden = canvas?.isRulerActive == true ||
                     (store.mode == .eraser && store.eraserPreviewWidth == nil)
-                previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : 4
+                previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : store.penTool.width
             case .moved:
                 previewPath.addLine(to: point)
                 previewLayer.path = previewPath.cgPath
             case .ended:
                 isDrawing = false
+                store.setPencilTraceActive(false, owner: traceOwner)
                 hoverPoint = point
                 updateHover()
                 let session = previewSession
@@ -244,13 +251,13 @@ struct PencilCanvas: UIViewRepresentable {
                 return
             }
             let erasing = store.mode == .eraser
-            let diameter: CGFloat = erasing ? (store.eraserPreviewWidth ?? 8) : 8
+            let diameter: CGFloat = erasing ? (store.eraserPreviewWidth ?? 8) : max(8, store.penTool.width * 2)
             hoverLayer.path = UIBezierPath(ovalIn:CGRect(x:-diameter / 2,y:-diameter / 2,
                                                           width:diameter,height:diameter)).cgPath
             hoverLayer.position = hoverPoint
             hoverLayer.fillColor = erasing ? UIColor.clear.cgColor :
-                CanvasPalette.ink.withAlphaComponent(0.4).cgColor
-            hoverLayer.strokeColor = erasing ? UIColor.systemRed.cgColor : CanvasPalette.ink.cgColor
+                store.penTool.color.withAlphaComponent(0.4).cgColor
+            hoverLayer.strokeColor = erasing ? UIColor.systemRed.cgColor : store.penTool.color.cgColor
             hoverLayer.isHidden = false
         }
 
@@ -307,7 +314,7 @@ struct PencilCanvas: UIViewRepresentable {
                 guard let self, self.drawingChangeSerial == serial,
                       self.store.inkHistory.generation == generation else { return }
                 self.renderedModelDrawing = drawing
-                self.store.updateDrawing(drawing)
+                if !self.store.updateDrawing(drawing) { self.replaceDrawingFromStore() }
                 self.store.inkHistory.scheduleRefresh()
             }
         }
@@ -331,7 +338,7 @@ struct PencilCanvas: UIViewRepresentable {
                   renderedGeneration == store.inkHistory.generation else { return }
             drawingChangeSerial += 1
             renderedModelDrawing = canvas.drawing
-            store.updateDrawing(canvas.drawing)
+            if !store.updateDrawing(canvas.drawing) { replaceDrawingFromStore() }
             store.inkHistory.scheduleRefresh()
             if save { store.saveNow() }
         }

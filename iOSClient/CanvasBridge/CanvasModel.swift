@@ -314,7 +314,136 @@ struct InkPoint: Codable, Equatable {
     var pressure: Double
 }
 
+enum CanvasPenSettingsError: String, LocalizedError {
+    case staleRevision = "stale_revision"
+    case invalidPenSettings = "invalid_pen_settings"
+    case inkBusy = "ink_busy"
+    case unreadableDrawing = "unreadable_drawing"
+    case unsupportedInkEdit = "unsupported_ink_edit"
+    case unsupportedInkProjection = "unsupported_ink_projection"
+    case sceneTooLarge = "scene_too_large"
+    case persistenceFailed = "pen_settings_not_saved"
+
+    var errorDescription: String? {
+        switch self {
+        case .staleRevision: return "장면이나 펜 설정이 바뀌었습니다. 최신 설정을 다시 확인하세요."
+        case .invalidPenSettings: return "지원하는 펜 색과 굵기를 선택하세요."
+        case .inkBusy: return "펜 동작을 마친 뒤 다음 획의 설정을 바꾸세요."
+        case .unreadableDrawing: return "원본 그림을 읽을 수 없어 설정과 기존 저장본을 유지합니다."
+        case .unsupportedInkEdit: return "다음 획의 펜 설정만 바꿀 수 있습니다. 기존 획과 원본 그림은 교체할 수 없습니다."
+        case .unsupportedInkProjection: return "잉크 스타일을 안전하게 해석할 수 없어 원본을 유지합니다."
+        case .sceneTooLarge: return "칠판 저장 크기 한도를 넘었습니다. 기존 설정과 저장본을 유지합니다."
+        case .persistenceFailed: return "펜 설정을 저장하지 못했습니다. 기존 설정을 유지합니다."
+        }
+    }
+}
+
+private func requireInkFields(_ decoder: Decoder, allowed: Set<String>) throws {
+    struct Field: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+    let fields = try decoder.container(keyedBy: Field.self)
+    guard fields.allKeys.allSatisfy({ allowed.contains($0.stringValue) }) else {
+        throw CanvasPenSettingsError.unsupportedInkEdit
+    }
+}
+
+struct CanvasPenSettings: Codable, Equatable {
+    enum Color: String, Codable, CaseIterable {
+        case white, yellow, cyan
+        var label: String {
+            switch self {
+            case .white: return "흰색"
+            case .yellow: return "노랑"
+            case .cyan: return "시안"
+            }
+        }
+    }
+    var version = 1
+    var color: Color = .white
+    var width: Double = 4
+    static let widths: [Double] = [2, 4, 8]
+    static let `default` = Self()
+    var isValid: Bool { version == 1 && Self.widths.contains(width) }
+
+    private enum CodingKeys: String, CodingKey { case version, color, width }
+    init(version: Int = 1, color: Color = .white, width: Double = 4) {
+        self.version = version
+        self.color = color
+        self.width = width
+    }
+    init(from decoder: Decoder) throws {
+        try requireInkFields(decoder, allowed: ["version", "color", "width"])
+        do {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decode(Int.self, forKey: .version)
+            color = try values.decode(Color.self, forKey: .color)
+            width = try values.decode(Double.self, forKey: .width)
+            guard isValid else { throw CanvasPenSettingsError.invalidPenSettings }
+        } catch { throw CanvasPenSettingsError.invalidPenSettings }
+    }
+}
+
+struct CanvasPenSettingsChange: Codable {
+    let expected: CanvasPenSettings
+    let settings: CanvasPenSettings
+    private enum CodingKeys: String, CodingKey { case expected, settings }
+    init(expected: CanvasPenSettings, settings: CanvasPenSettings) {
+        self.expected = expected
+        self.settings = settings
+    }
+    init(from decoder: Decoder) throws {
+        try requireInkFields(decoder, allowed: ["expected", "settings"])
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        expected = try values.decode(CanvasPenSettings.self, forKey: .expected)
+        settings = try values.decode(CanvasPenSettings.self, forKey: .settings)
+    }
+}
+
+struct CanvasPenSettingsResult: Equatable {
+    enum Disposition { case applied, noop }
+    let disposition: Disposition
+    let settings: CanvasPenSettings
+    let revision: Int
+}
+
 struct InkStroke: Codable, Identifiable, Equatable {
+    struct Style: Codable, Equatable {
+        struct SRGB: Codable, Equatable {
+            var red: Double
+            var green: Double
+            var blue: Double
+            var alpha: Double
+            var isValid: Bool { [red, green, blue, alpha].allSatisfy { $0.isFinite && (0...1).contains($0) } }
+        }
+        struct Transform: Codable, Equatable {
+            var a: Double, b: Double, c: Double, d: Double, tx: Double, ty: Double
+            var isValid: Bool { [a, b, c, d, tx, ty].allSatisfy(\.isFinite) }
+        }
+        struct Sample: Codable, Equatable {
+            var width: Double
+            var height: Double
+            var opacity: Double
+            var isValid: Bool {
+                [width, height, opacity].allSatisfy(\.isFinite) && width >= 0 && height >= 0 && (0...1).contains(opacity)
+            }
+        }
+        var version = 1
+        var inkType: String
+        // nil 색은 sRGB 변환 불가이며, 명목 펜 설정으로 추정하지 않는다.
+        var color: SRGB?
+        var transform: Transform
+        // points는 world 좌표이고 samples의 size는 같은 인덱스의 path-local 값이다.
+        var samples: [Sample]
+
+        func isValid(pointCount: Int) -> Bool {
+            version == 1 && !inkType.isEmpty && (color?.isValid ?? true) && transform.isValid &&
+                samples.count == pointCount && samples.allSatisfy(\.isValid)
+        }
+    }
     struct Visibility: Codable, Equatable {
         enum Kind: String, Codable { case full, masked }
         struct Segment: Codable, Equatable {
@@ -330,6 +459,7 @@ struct InkStroke: Codable, Identifiable, Equatable {
     var points: [InkPoint]
     var createdAt: Date
     var visibility: Visibility? = nil
+    var style: Style? = nil
 
     // Legacy points are a best-effort fallback; nil visibility still means unknown.
     var visiblePointSegments: [[InkPoint]] {
@@ -1133,6 +1263,7 @@ struct CanvasLinkEdit: Codable {
 }
 
 struct CanvasScene: Codable, Equatable {
+    static let localByteLimit = 4 * 1024 * 1024
     var schemaVersion = 1
     var id = UUID()
     var revision = 0
@@ -1143,6 +1274,36 @@ struct CanvasScene: Codable, Equatable {
     var nodes: [CanvasNode] = []
     var links: [CanvasLink] = []
     var annotations: [CanvasAnnotation] = []
+    var penSettings: CanvasPenSettings? = nil
+    var effectivePenSettings: CanvasPenSettings { penSettings ?? .default }
+    var hasSupportedInkProjection: Bool {
+        (schemaVersion == 1 || schemaVersion == 2) && effectivePenSettings.isValid &&
+            (schemaVersion == 2 || (penSettings == nil && strokes.allSatisfy { $0.style == nil })) &&
+            strokes.allSatisfy { stroke in
+                stroke.style.map { !$0.inkType.isEmpty && !drawingBase64.isEmpty && $0.isValid(pointCount: stroke.points.count) } ?? true
+            }
+    }
+
+    @discardableResult
+    mutating func setPenSettings(_ change: CanvasPenSettingsChange, sceneID: UUID, baseRevision: Int,
+                                 inkBusy: Bool = false) throws -> CanvasPenSettingsResult {
+        guard sceneID == id, baseRevision == revision, change.expected == effectivePenSettings else {
+            throw CanvasPenSettingsError.staleRevision
+        }
+        guard change.expected.isValid, change.settings.isValid else { throw CanvasPenSettingsError.invalidPenSettings }
+        guard !inkBusy else { throw CanvasPenSettingsError.inkBusy }
+        guard hasSupportedInkProjection else { throw CanvasPenSettingsError.unsupportedInkProjection }
+        if change.settings == effectivePenSettings {
+            return .init(disposition: .noop, settings: effectivePenSettings, revision: revision)
+        }
+        var next = self
+        next.schemaVersion = 2
+        next.penSettings = change.settings
+        next.revision += 1
+        guard try JSONEncoder().encode(next).count <= Self.localByteLimit else { throw CanvasPenSettingsError.sceneTooLarge }
+        self = next
+        return .init(disposition: .applied, settings: effectivePenSettings, revision: revision)
+    }
 
     var annotationFrames: [UUID: CanvasRect] {
         let visible = visibility
@@ -1360,6 +1521,10 @@ struct CanvasScene: Codable, Equatable {
     }
 
     mutating func apply(_ change: AgentRevision, basedOn sent: CanvasScene? = nil) -> Bool {
+        if let settings = change.setPenSettings {
+            guard change.isPenSettingsOnly else { return false }
+            return (try? setPenSettings(settings, sceneID: change.sceneId, baseRevision: change.baseRevision)) != nil
+        }
         guard change.sceneId == id, nodes.allSatisfy(\.hasValidRotation),
               change.proposedNodes.allSatisfy(\.hasValidRotation),
               (change.nodeEdits ?? []).allSatisfy({ $0.expected.hasValidRotation }) else { return false }
@@ -1401,6 +1566,7 @@ struct CanvasScene: Codable, Equatable {
             guard let sent, sent.id == id, sent.revision == change.baseRevision,
                   sent.schemaVersion == schemaVersion,
                   sent.width == width, sent.height == height,
+                  sent.effectivePenSettings == effectivePenSettings,
                   sent.hasSameGraph(as:self),
                   strokes.count > sent.strokes.count,
                   Array(strokes.prefix(sent.strokes.count)) == sent.strokes else {
@@ -1442,6 +1608,27 @@ struct CanvasScene: Codable, Equatable {
     }
 }
 
+extension CanvasScene {
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, id, revision, width, height, drawingBase64, strokes, nodes, links, annotations, penSettings
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        id = try values.decode(UUID.self, forKey: .id)
+        revision = try values.decode(Int.self, forKey: .revision)
+        width = try values.decode(Double.self, forKey: .width)
+        height = try values.decode(Double.self, forKey: .height)
+        drawingBase64 = try values.decode(String.self, forKey: .drawingBase64)
+        strokes = try values.decode([InkStroke].self, forKey: .strokes)
+        nodes = try values.decode([CanvasNode].self, forKey: .nodes)
+        links = try values.decode([CanvasLink].self, forKey: .links)
+        annotations = try values.decode([CanvasAnnotation].self, forKey: .annotations)
+        penSettings = try values.decodeIfPresent(CanvasPenSettings.self, forKey: .penSettings)
+        guard hasSupportedInkProjection else { throw CanvasPenSettingsError.unsupportedInkProjection }
+    }
+}
+
 struct AgentRevision: Codable {
     var sceneId: UUID
     var baseRevision: Int
@@ -1450,6 +1637,30 @@ struct AgentRevision: Codable {
     var proposedLinks: [CanvasLink]? = nil
     var nodeEdits: [CanvasNodeTextEdit]? = nil
     var linkEdits: [CanvasLinkEdit]? = nil
+    var setPenSettings: CanvasPenSettingsChange? = nil
+    var isPenSettingsOnly: Bool {
+        setPenSettings != nil && annotations.isEmpty && proposedNodes.isEmpty &&
+            (proposedLinks?.isEmpty ?? true) && (nodeEdits?.isEmpty ?? true) && (linkEdits?.isEmpty ?? true)
+    }
+}
+
+extension AgentRevision {
+    private enum CodingKeys: String, CodingKey {
+        case sceneId, baseRevision, annotations, proposedNodes, proposedLinks, nodeEdits, linkEdits, setPenSettings
+    }
+    init(from decoder: Decoder) throws {
+        try requireInkFields(decoder, allowed: ["sceneId", "baseRevision", "annotations", "proposedNodes",
+            "proposedLinks", "nodeEdits", "linkEdits", "setPenSettings"])
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        sceneId = try values.decode(UUID.self, forKey: .sceneId)
+        baseRevision = try values.decode(Int.self, forKey: .baseRevision)
+        annotations = try values.decode([CanvasAnnotation].self, forKey: .annotations)
+        proposedNodes = try values.decode([CanvasNode].self, forKey: .proposedNodes)
+        proposedLinks = try values.decodeIfPresent([CanvasLink].self, forKey: .proposedLinks)
+        nodeEdits = try values.decodeIfPresent([CanvasNodeTextEdit].self, forKey: .nodeEdits)
+        linkEdits = try values.decodeIfPresent([CanvasLinkEdit].self, forKey: .linkEdits)
+        setPenSettings = try values.decodeIfPresent(CanvasPenSettingsChange.self, forKey: .setPenSettings)
+    }
 }
 
 struct CanvasDiagramSnapshot: Codable, Equatable {
