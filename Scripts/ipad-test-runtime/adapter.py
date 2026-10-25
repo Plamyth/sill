@@ -443,7 +443,6 @@ def accept_rotation(config, work, server, vault, test_id):
     write(work / 'rotation-functional-readback.json', proof)
     return proof
 
-<<<<<<< HEAD
 def comment_fixture(test_id):
     scene = fixture(test_id)
     scene['nodes'][0]['frame']['y'] = 300
@@ -516,7 +515,8 @@ def accept_comments(config, work, server, test_id):
              'rulerScope':'native menu toggle and drawing/selection mode; physical ruler geometry unverified',
              'nativeLifetimeProbe':'separate opt-in testNativeModeLifetimeProbe; not executed by this flow'}
     write(work / 'comment-functional-readback.json',proof)
-=======
+    return proof
+
 def review_fixture(test_id):
     # Same canonical header and four markers as VaultReviewCard; all other bytes are sentinels.
     metadata = {'cardID':'11111111-1111-4111-8111-111111111111',
@@ -697,7 +697,6 @@ def accept_review(config, work, server, vault, test_id):
              'gradeRequests':grade_writes,'wireEvidence':str(work / 'review-note-writes.jsonl'),
              'inputSource':'UIKit keyboard automation; not Apple Pencil'}
     write(work / 'review-functional-readback.json',proof)
->>>>>>> ad15e357b48bff1be0d9cc18ee61d5e6ccf99d3d
     return proof
 
 def relay_runtime(config, work, source):
@@ -840,20 +839,13 @@ def accept(config, work, source):
         command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
         reverse = harness(config, work, 'testReopenRemoteRevision')
         rotation = accept_rotation(config, work, server, vault, test_id)
-<<<<<<< HEAD
         comments = accept_comments(config, work, server, test_id)
-=======
         review = accept_review(config, work, server, vault, test_id)
->>>>>>> ad15e357b48bff1be0d9cc18ee61d5e6ccf99d3d
         require(snapshots(config, work, 'user-after-accept') == before, 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
         require(all(observed.get(k) == source[k] for k in source) and observed.get('executableSHA256') == deployed['executableSHA256'], 'accepted_runtime_mismatch')
         proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed,
-<<<<<<< HEAD
-                 'rotation':rotation, 'comments':comments, 'originalPreserved': True}
-=======
-                 'rotation':rotation, 'review':review, 'originalPreserved': True}
->>>>>>> ad15e357b48bff1be0d9cc18ee61d5e6ccf99d3d
+                 'rotation':rotation, 'comments':comments, 'review':review, 'originalPreserved': True}
         write(work / 'functional-readback.json', proof)
         accepted = True
     finally:
