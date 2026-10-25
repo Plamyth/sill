@@ -6,7 +6,10 @@ struct Checks {
     @MainActor static var assertions = 0
     @MainActor static func expect(_ value: @autoclosure () -> Bool, _ description: String) {
         assertions += 1
-        if !value() { fatalError("FAIL \(description)") }
+        if !value() {
+            FileHandle.standardError.write(Data("FAIL \(description)\n".utf8))
+            exit(1)
+        }
     }
     @MainActor static func settle() async { for _ in 0..<30 { await Task.yield() } }
     @MainActor static func online(_ display: FakeDisplay, success: Bool = true) async {
