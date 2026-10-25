@@ -9,6 +9,15 @@ import StreamProtocol
         if !value { failures += 1 }
         print("\(value ? "PASS" : "FAIL") \(name)")
     }
+    @MainActor final class ReleaseGate {
+        var continuation: CheckedContinuation<Void, Never>?
+        var entered = false
+        func wait() async {
+            entered = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+        func resume() { continuation?.resume(); continuation = nil }
+    }
     final class Fixture {
         let gate = SentryAdmission(), object = NSObject()
         let device = String(repeating: "ab", count: 32)
@@ -68,6 +77,9 @@ import StreamProtocol
         expect(g.accept(originalOn, from: f.peer), "현재 legacy 명시 ON 허용")
         expect(host.activate(), "명시 ON은 실제 표면 readback 수행")
         let ticket = f.prepare(false)
+        let effectsBeforeBusy = effects
+        expect(!host.activate() && g.controlTicketIsCurrent(ticket) && effects == effectsBeforeBusy,
+            "진행 중인 현재 OFF ticket을 로컬 activate가 덮지 않음")
         let released = await host.setRemoteProtection(false, current: { g.controlTicketIsCurrent(ticket) })
         let off = g.completeControl(ticket, result: released ? .offVerified(curtainsReleased: true,
             tapReleased: true, heldInputCleared: true) : .failed)
@@ -77,6 +89,11 @@ import StreamProtocol
             "remote OFF 실제 표면 해제와 저널 순서 유지")
         let inactive = g.inactiveSnapshot()
         expect(inactive != nil, "인가 owner의 정당한 OFF 증명 보존")
+        let beforeUnauthorised = g.status(for: f.peer)
+        let unauthorizedOn = await host.setRemoteProtection(true, current: { false })
+        let unauthorizedOff = await host.setRemoteProtection(false, current: { false })
+        expect(!unauthorizedOn && !unauthorizedOff && beforeUnauthorised == g.status(for: f.peer),
+            "현재 인가 없는 ON·OFF는 admission과 표면을 변경하지 않음")
         expect(!g.accept(originalOn, from: f.peer) && !g.isRequested,
             "OFF 이전 legacy ON 재전송은 새 ON 선택으로 재활성화하지 않음")
         g.requireProtection()
@@ -127,6 +144,29 @@ import StreamProtocol
             tapReleased: true, heldInputCleared: true) : .failed)
         expect(!coldResult && !cold.gate.isRequested && !restoreEffects.contains("engage") && !restoreEffects.contains("latched"),
             "기존 ON이 없는 해제 실패는 보호 engage·latched를 새로 만들지 않음")
+        expect(!restoreEffects.contains("releasing"), "기존 ON 없는 실패가 startup ON 복원용 releasing 저널도 만들지 않음")
+
+        let late = Fixture(), releaseGate = ReleaseGate()
+        var lateEffects: [String] = []
+        let lateHost = HostSentry(admission: late.gate, initiallyLatched: true, persistenceHealthy: true,
+            persist: { lateEffects.append($0.rawValue); return true },
+            surfaces: .init(engage: { lateEffects.append("engage"); return true }, verify: { true },
+                release: { _, current in await releaseGate.wait(); return current() },
+                reason: { nil }, released: { true }), prepareRelease: { true },
+            localReturnUnavailableReason: { nil })
+        let oldTicket = late.prepare(false)
+        let oldRelease = Task { await lateHost.setRemoteProtection(false, current: { late.gate.controlTicketIsCurrent(oldTicket) }) }
+        while !releaseGate.entered { await Task.yield() }
+        late.gate.remove(late.peer)
+        late.gate.register(late.peer, externalRoute: true); late.gate.admit(late.peer); late.grant()
+        late.off()
+        let newestOff = late.gate.status(for: late.peer), effectsAfterOff = lateEffects
+        releaseGate.resume()
+        let lateResult = await oldRelease.value
+        _ = late.gate.completeControl(oldTicket, result: lateResult ? .offVerified(curtainsReleased: true,
+            tapReleased: true, heldInputCleared: true) : .failed)
+        expect(!lateResult && !late.gate.isRequested && late.gate.status(for: late.peer) == newestOff && lateEffects == effectsAfterOff,
+            "새 session의 OFF 뒤 이전 해제 callback은 정책·표면·저널을 덮지 않음")
 
         let restored = SentryAdmission()
         restored.configure(latched: true, persistenceHealthy: true)

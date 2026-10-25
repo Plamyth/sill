@@ -6,7 +6,6 @@ final class SentryAdmission: @unchecked Sendable {
         let id = UUID()
         var admitted = false
         var requests: [UUID] = []
-        var externalRoute = false
         var controlDeviceID: String?
         var selectionReady = false
         var selectionGeneration: UInt64?
@@ -124,17 +123,10 @@ final class SentryAdmission: @unchecked Sendable {
         refreshSelectionAdmissionLocked()
     }
 
-    func register(_ peer: ObjectIdentifier, externalRoute: Bool) {
+    func register(_ peer: ObjectIdentifier, externalRoute _: Bool) {
         lock.lock(); defer { lock.unlock() }
         cancelPendingLocked(for: peer)
-        sessions[peer] = Session(externalRoute: externalRoute)
-        if enabled && externalRoute && !requested && manualIntent != .off {
-            requested = true
-            surfacesVerified = false
-            protectionRevision = UUID()
-            inactiveRevision = UUID()
-            revision = UUID()
-        }
+        sessions[peer] = Session()
         refreshSelectionAdmissionLocked()
     }
 
@@ -152,15 +144,24 @@ final class SentryAdmission: @unchecked Sendable {
         independentCapturePeers.remove(peer)
     }
 
-    func requireProtection() {
+    @discardableResult
+    func requireProtection(explicit: Bool = false) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard !requested, manualIntent != .off else { return }
-        requested = true
-        surfacesVerified = false
-        protectionRevision = UUID()
-        inactiveRevision = UUID()
+        // 연결·포커스의 기존 호출은 선택을 만들지 않고 명시 활성화만 ON으로 바꾼다.
+        guard explicit, enabled, !returningLocal && !localReturnRequestActive, pendingControl == nil else { return false }
+        guard !requested || manualIntent != .on else { return true }
+        manualIntent = .on
+        manualOwner = nil
+        policyRevision = UUID()
+        if !requested {
+            requested = true
+            surfacesVerified = false
+            protectionRevision = UUID()
+            inactiveRevision = UUID()
+        }
         revision = UUID()
         refreshSelectionAdmissionLocked()
+        return true
     }
 
     var isRequested: Bool {
@@ -283,7 +284,7 @@ final class SentryAdmission: @unchecked Sendable {
         guard enabled, !returningLocal && !localReturnRequestActive, pendingControl == nil, activation.version == 1, activation.hostBootID == bootID,
               var session = sessions[peer], session.admitted,
               activation.sessionID == session.id else { return false }
-        if session.requests.contains(activation.requestID) { return true }
+        if session.requests.contains(activation.requestID) { return manualIntent == .on }
         guard activation.revision == revision else { return false }
         session.requests.append(activation.requestID)
         if session.requests.count > 64 { session.requests.removeFirst() }
@@ -329,9 +330,7 @@ final class SentryAdmission: @unchecked Sendable {
         operationOrder.removeAll { operations[$0] == nil }
         if manualOwner == deviceID {
             manualOwner = nil
-            manualIntent = .automatic
             policyRevision = UUID()
-            requested = sessions.values.contains { $0.externalRoute }
             surfacesVerified = false
             reason = nil
         }
@@ -423,7 +422,6 @@ final class SentryAdmission: @unchecked Sendable {
         if let failure {
             record.operationState = .rejected
             record.code = failure
-            requested = true
             surfacesVerified = false
             reason = "Sentry 전환의 실제 결과를 확인하지 못했습니다."
         } else {
@@ -473,7 +471,6 @@ final class SentryAdmission: @unchecked Sendable {
             operations[ticket.request.requestID] = record
         }
         pendingControl = nil
-        requested = true
         surfacesVerified = false
         reason = "Sentry 전환의 실제 결과를 확인하지 못했습니다."
         revision = UUID()

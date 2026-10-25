@@ -165,7 +165,7 @@ final class HostSentry {
     }
 
     func activate() -> Bool {
-        admission.requireProtection()
+        guard admission.requireProtection(explicit: true) else { return false }
         return reconcile()
     }
 
@@ -186,7 +186,7 @@ final class HostSentry {
         forwardingRevision = UUID()
         protectionInvalidated?()
         guard prepareRemoteRelease(), current() else { return false }
-        guard persist(.releasing) else {
+        guard persist(admission.isRequested ? .releasing : .inactive) else {
             persistenceHealthy = false
             return false
         }
@@ -250,6 +250,7 @@ final class HostSentry {
 
     private func restoreFailedReturn(_ reason: String) -> Bool {
         print("[로컬 화면·입력 복귀] 해제 거부 reason=\(reason)")
+        guard admission.isRequested else { return false }
         persistenceHealthy = persist(.latched)
         let recoveryAvailable = persistenceHealthy && localReturnUnavailableReason() == nil
         let restored = recoveryAvailable ? surfaces.engage() && surfaces.verify() : surfaces.restoreCurtains()

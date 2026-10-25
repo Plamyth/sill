@@ -24,7 +24,7 @@ import StreamProtocol
                    "세대 소진은 신호만 닫고 실제 권한 조건은 유지함")
             gate.register(b, externalRoute: false); gate.admit(b)
             expect(gate.sourceSelectionAdmission(for: b) == nil, "소진 뒤 새 세션에 세대를 재사용하지 않음")
-            gate.requireProtection(); gate.update(verified: true, persistenceHealthy: true, reason: nil)
+            gate.requireProtection(explicit: true); gate.update(verified: true, persistenceHealthy: true, reason: nil)
             expect(gate.sourceSelectionAdmission(for: a) == nil, "소진 뒤 복구해도 래핑하지 않음")
             print("EXHAUSTION_CHECKS_COMPLETE \(count)")
             return
@@ -60,7 +60,7 @@ import StreamProtocol
                "다른 peer의 등록과 권한 전이는 기존 peer 세대를 바꾸지 않음")
         gate.capture(UUID()); gate.capture(nil, for: a); gate.capture(UUID(), for: b)
         expect(signal(gate, a) == admitted && signal(gate, b) == bAdmitted, "공유 및 peer 캡처 변경은 선택 세대에 영향 없음")
-        gate.requireProtection()
+        gate.requireProtection(explicit: true)
         let blocked = signal(gate, a)
         expect(!blocked.ready && blocked.generation > admitted.generation, "보호 요청이 기존 세션을 즉시 닫음")
         gate.update(verified: true, persistenceHealthy: true, reason: nil)
@@ -120,8 +120,8 @@ import StreamProtocol
         let beforeExternal = signal(externalGate, a)
         externalGate.register(b, externalRoute: true)
         let afterExternal = signal(externalGate, a)
-        expect(!afterExternal.ready && afterExternal.generation > beforeExternal.generation,
-               "외부 peer 등록에 따른 보호 전이가 기존 peer에도 즉시 반영됨")
+        expect(afterExternal == beforeExternal && afterExternal.ready && !externalGate.isRequested,
+               "외부 peer 등록은 기존 선택 권한·세대와 Sentry OFF를 보존함")
         externalGate.update(verified: true, persistenceHealthy: true, reason: nil)
         let beforeBAdmission = signal(externalGate, a)
         externalGate.admit(b)

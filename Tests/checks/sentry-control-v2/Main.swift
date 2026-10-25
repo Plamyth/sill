@@ -165,7 +165,7 @@ import StreamProtocol
         let f = Fixture(external: true), gate = f.gate, peer = f.peer
         let gen = f.grant(), beforeGrant = gate.status(for: peer)!
         expect(f.grant() == gen && gate.status(for: peer) == beforeGrant, "동일 grant 재호출은 revision과 세대 불변")
-        expect(!gate.allowsActions(peer), "blocked 일반 action gate는 계속 닫힘")
+        expect(gate.allowsActions(peer) && !gate.isRequested, "외부 연결만으로 보호를 요청하거나 일반 action을 차단하지 않음")
         let off = f.request(false), ticket = f.prepare(off)
         expect(gate.controlTicketIsCurrent(ticket), "준비 ticket 현재성 확인")
         expect(!gate.allowsActions(peer) && !gate.allows(peer, epoch: nil), "off 전환 전 action/frame fence")
@@ -283,10 +283,10 @@ import StreamProtocol
         gate.revokeControl(forDeviceID: f.device)
         expect(!gate.isRequested, "active external 없는 신뢰 회수는 자동 inactive")
         gate.register(peer, externalRoute: true); gate.admit(peer); _ = f.grant()
-        expect(gate.isRequested, "회수 후 다음 external 연결에서 자동 보호 복원")
+        expect(!gate.isRequested, "권한 회수 후 다음 external 연결도 OFF 유지")
         _ = f.apply(false)
         gate.revokeControl(forDeviceID: f.device)
-        expect(gate.isRequested, "active external 있는 manual owner 회수는 자동 보호 복원")
+        expect(!gate.isRequested, "active external 있는 manual owner 회수도 OFF 유지")
         _ = f.grant(); _ = f.apply(false)
         gate.requireProtection()
         gate.update(verified: false, persistenceHealthy: true, reason: nil)
