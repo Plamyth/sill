@@ -52,11 +52,7 @@ struct ContentView: View {
                 StreamScreen(client: client)
             } else {
                 #if os(iOS)
-                if manualConnectionEnabled {
-                    ConnectScreen(client: client)
-                } else {
-                    automaticConnectionStatus
-                }
+                AutomaticConnectionStatus(client: client)
                 #else
                 ConnectScreen(client: client)
                 #endif
@@ -104,35 +100,11 @@ struct ContentView: View {
         })) { IPadAudioRouteChooser(client: client) }
         #endif
         .onOpenURL { url in
-            if manualConnectionEnabled { client.handleOpenURL(url) }
+            #if !os(iOS)
+            client.handleOpenURL(url)
+            #endif
         }
     }
-
-    private var manualConnectionEnabled: Bool {
-        #if !os(iOS)
-        true
-        #elseif DEBUG
-        CommandLine.arguments.contains { $0.hasPrefix("-Sill") }
-        #else
-        false
-        #endif
-    }
-
-    #if os(iOS)
-    private var automaticConnectionStatus: some View {
-        VStack(spacing: 16) {
-            ProgressView("Mac 자동 연결")
-            Text(client.status)
-                .foregroundStyle(Palette.muted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(24)
-        .onChange(of: client.status, initial: true) { _, line in
-            if !line.isEmpty { AccessibilityNotification.Announcement(line).post() }
-        }
-    }
-    #endif
 
     #if DEBUG
     /// `-SillOrientation landscape|portrait`: the normal app asks its window scene for that
@@ -149,6 +121,28 @@ struct ContentView: View {
     }
     #endif
 }
+
+#if os(iOS)
+struct AutomaticConnectionStatus: View {
+    @ObservedObject var client: StreamClient
+
+    var body: some View {
+        let presentation = client.automaticConnectionPresentation
+        VStack(spacing: 16) {
+            if presentation.busy { ProgressView() }
+            Text(presentation.title).font(.headline)
+            Text(presentation.detail)
+                .foregroundStyle(Palette.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(24)
+        .onChange(of: presentation.title + presentation.detail, initial: true) { _, line in
+            AccessibilityNotification.Announcement(line).post()
+        }
+    }
+}
+#endif
 
 #if DEBUG
 
@@ -630,7 +624,11 @@ struct LayoutHarness: View {
                                  settingsOpen: spec.settingsOpen,
                                  pairingOverlay: spec.scanOverlay, scannerOverride: spec.scanOverlay ? .placeholder : nil)
                 } else {
+                    #if os(iOS)
+                    AutomaticConnectionStatus(client: live)
+                    #else
                     ConnectScreen(client: live)
+                    #endif
                 }
             }
         } else if let c = spec.connectCase {
@@ -873,6 +871,7 @@ enum SettingsScript {
 /// free Mac app and where to get it, and links support and the privacy policy (App Review
 /// guidelines 1.5, 2.1 and 5.1.1(i)). None of it shows while connected: the stream screen takes
 /// this one's place (`ContentView`).
+#if DEBUG || !os(iOS)
 struct ConnectScreen: View {
     @ObservedObject var client: StreamClient
     @State private var adding: Bool
@@ -920,7 +919,16 @@ struct ConnectScreen: View {
     /// Settings panel's Done does the same).
     private static let linkReach: CGFloat = 14
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        #if os(iOS)
+        if client.manualPairingUIEnabled { manualContent }
+        else { AutomaticConnectionStatus(client: client) }
+        #else
+        manualContent
+        #endif
+    }
+
+    private var manualContent: some View {
         GeometryReader { geo in
             let posture = DuoPosture.read(geo, duoEnvironment)
             let layout = ConnectLayout(size: geo.size, fold: posture.info(in: geo.size))
@@ -1339,3 +1347,5 @@ private struct ColumnOverFooter: Layout {
         return (subviews[0].sizeThatFits(proposal), subviews[1].sizeThatFits(proposal))
     }
 }
+
+#endif

@@ -104,9 +104,17 @@ enum RemoteCopy {
         let at = candidate?.display ?? "해당 주소"
         switch failure {
         case .wrongMac:
+            #if os(iOS)
+            return "\(mac)의 신원이 저장된 Mac과 일치하지 않아 연결을 중단했습니다. 저장된 Mac과 기기 키는 유지됩니다."
+            #else
             return "이 \(device)와 페어링했던 \(mac)이 아닙니다. Mac에서 Sill을 다시 설정했다면 저장된 Mac을 삭제한 뒤 다시 페어링하세요."
+            #endif
         case .revoked:
+            #if os(iOS)
+            return "\(mac)에서 이 \(device)의 연결 권한을 폐기했습니다. 자동 등록으로 다시 연결하지 않습니다."
+            #else
             return "\(mac)에서 더 이상 이 \(device)의 연결을 허용하지 않습니다. Mac의 Sill 설정에서 다시 페어링하세요."
+            #endif
         case .remoteOff:
             return "\(mac)에서 원격 접근을 껐습니다."
         case .busy:
@@ -788,6 +796,7 @@ extension StreamClient {
     /// the overlay then says (StreamClient+Home's `askOverStream`); over a plain one, kind 21, for
     /// which a plain door always opens a window. `mac`: what the overlay calls the Mac.
     func requestPairingCode(mac: String? = nil) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -815,6 +824,7 @@ extension StreamClient {
     /// A sill://pair link from outside the app: shown for confirmation, never acted on by itself (a
     /// poster or a message could otherwise add a look-alike "Mac" that collects keystrokes).
     func handleOpenURL(_ url: URL) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -833,6 +843,7 @@ extension StreamClient {
     /// Confirmed: to the row the ask reached when it names that key, else the home rows pinned to
     /// its key, then its addresses, as before (StreamClient+Home's `pairLinkAtHome`).
     func confirmPendingLink() {
+        guard Self.manualPairingEnabled else { return }
         guard let link = pendingLink else { return }
         pendingLink = nil
         pairLinkAtHome(link, overlay: connected, scanned: false)
@@ -843,6 +854,7 @@ extension StreamClient {
     /// The typed path: the address and the code as typed, checked here first (a typo never uses up
     /// one of the Mac's five tries, and nothing is sent).
     func pairTyped(code codeText: String, address addressText: String, overlay: Bool) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -866,6 +878,7 @@ extension StreamClient {
     /// when RemoteDialPolicy.scanStartsPairing says so (never over one that runs; after a failure,
     /// the same code only from a tap).
     func scanned(_ link: PairLink, tapped: Bool, overlay: Bool) {
+        guard Self.manualPairingEnabled else { return }
         var busy = false, failed = false
         switch pairing {
         case .working, .paired: busy = true
@@ -892,6 +905,7 @@ extension StreamClient {
 
     /// The QR path: the link's addresses one at a time, pinned to its key.
     func pair(link: PairLink, overlay: Bool, scanned: Bool = false) {
+        guard Self.manualPairingEnabled else { return }
         let addresses = link.addresses.map(RemoteDialPolicy.address(for:))
         let candidates = RemoteDialPolicy.order(addresses, remotePort: link.port, lastWorked: nil, localIPv4: Self.localIPv4Networks())
         startPairing(candidates: candidates, pin: link.fingerprint, key: { _ in PairingProof.qrKey(secret: link.secret) },
@@ -901,6 +915,7 @@ extension StreamClient {
 
     /// The typed path: one address, any P-256 key, bound into the proof with K from the code.
     func pair(code: String, address: ParsedAddress, overlay: Bool) {
+        guard Self.manualPairingEnabled else { return }
         let a = RemoteDialPolicy.address(for: address)
         let port = address.port ?? HostConfigDefaults.remotePort
         let candidates = [RemoteDialPolicy.Candidate(host: a.host, port: port, kind: a.kind, via: a.via)]
@@ -914,6 +929,7 @@ extension StreamClient {
     private func startPairing(candidates: [RemoteDialPolicy.Candidate], pin: Data?, key: @escaping (Data) -> SymmetricKey?,
                               method: String, macName: String?, port: Int, addresses: [MacAddress], typed: MacAddress?,
                               overlay: Bool, scannedSecret: Data?, busyRetried: Bool) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif

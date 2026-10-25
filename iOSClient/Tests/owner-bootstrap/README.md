@@ -52,3 +52,11 @@ python3 iOSClient/Tests/remote-default/compare.py
 일반 CI의 simulator 빌드와 unsigned TestFlight 검사는 `Scripts/owner-bootstrap-fixture.py`가 checkout 밖의 작업 디렉터리에 합성 profile을 만들고 경로·SHA를 build setting으로 전달한다. iPad 격리 테스트 adapter도 같은 생성기를 사용하며 서명 후 번들의 resource SHA를 다시 확인한다. 실제 Mac profile을 격리 빌드에 자동 주입하지 않는다.
 
 `Scripts/release-ios.sh`와 TestFlight export/upload에는 승인된 실제 공개 리소스의 외부 경로·SHA가 필요하다. 이 경로의 과거 release script는 다른 제품의 team/bundle 검증도 포함하므로 이 작업에서 실행·수정하지 않았다. 해당 배포 담당이 정확한 앱·팀·외부 리소스 공급을 연결하기 전에는 필수 phase에서 중단된다. 합성 프로필로 운영 배포 관문을 통과시키지 않는다. CI 원격 실행과 기기 adapter 배포는 이 작업에서 실행하지 않았다.
+
+## owner 전용 제품 UI 회귀
+
+`python3 iOSClient/Tests/owner-bootstrap/ui.py`는 실제 iOS 정책·상태 표현·`dial`의 `.ask` 분기·`handleOpenURL` 본문을 추출해 Release/DEBUG로 컴파일한다. 11개 수동 등록 진입의 첫 guard도 실행하며, SwiftUI 연결 지점과 iPhone 공통 소스 참조는 구조 검사로 보조한다. iOS target parse는 문법 검사이며 SDK typecheck나 실제 GUI 수용이 아니다.
+
+제품 iOS의 수동 등록 통신은 DEBUG에서도 금지한다. 기존 `mockDiscovery` 합성 화면은 레이아웃 검사를 위해 수동 UI를 표시할 수 있지만 이 정책을 바꾸지 못한다. `run.py`의 대역 `manualPairingEnabled=true`는 기존 허용 경로의 취소 계약을 검사하기 위한 주입값이다. 추가한 false 시나리오는 코드 입력과 Home/Remote 진입이 진행 중 자동 등록 교환을 취소하지 않고 정상 저장·재접속을 유지하는지 검사한다. 실제 Release 정책은 `ui.py`가 생산 소스 그대로 컴파일한다.
+
+키·소켓·시계는 대역이다. 공유 Host·기기·키체인·등록·설치·음성·화면 조작은 실행하지 않는다. 최종 Sill/SillPhone SDK, 독립검수와 소유 커밋은 부모가 수행한다.

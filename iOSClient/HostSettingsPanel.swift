@@ -517,18 +517,22 @@ struct HostSettingsPanel: View {
                     Footnote(text: Self.turnOnRemoteAccess(mac))
                 }
             case .pairThisDevice(let atHome):
-                Rows {
-                    Button(action: pairThisDevice) {
-                        Text("이 \(device) 페어링…")
-                            .foregroundStyle(Palette.accent)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                if client.manualPairingUIEnabled {
+                    Rows {
+                        Button(action: pairThisDevice) {
+                            Text("이 \(device) 페어링…")
+                                .foregroundStyle(Palette.accent)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .rowFrame()
                     }
-                    .buttonStyle(.plain)
-                    .rowFrame()
+                    Footnote(text: atHome ? DiscoveryPolicy.HomeCopy.pairThisDeviceAtHome(mac: mac, device: device)
+                                          : "한 번 페어링하면 VPN이나 인터넷으로 \(mac)에 연결할 수 있습니다. \(mac)에 표시된 코드를 이 \(device)로 스캔하세요.")
+                } else {
+                    Footnote(text: "이 기기의 소유 Mac 자동 등록을 확인하지 못했습니다. 저장된 Mac과 기기 키를 유지한 채 연결 상태를 확인하세요.")
                 }
-                Footnote(text: atHome ? DiscoveryPolicy.HomeCopy.pairThisDeviceAtHome(mac: mac, device: device)
-                                      : "한 번 페어링하면 VPN이나 인터넷으로 \(mac)에 연결할 수 있습니다. \(mac)에 표시된 코드를 이 \(device)로 스캔하세요.")
             case .turnOnRemoteAccess:
                 Footnote(text: Self.turnOnRemoteAccess(mac))
             }

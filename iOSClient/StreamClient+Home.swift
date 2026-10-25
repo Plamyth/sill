@@ -474,6 +474,7 @@ extension StreamClient {
     }
 
     func startAsk(_ start: HomeAsk, busyRetried: Bool = false) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -733,6 +734,7 @@ extension StreamClient {
     /// through the same ask rule, but its answer never came back, and the overlay said a code was
     /// showing when none was (the security review, 2026-09-27). A "busy" is retried once, silently.
     func askOverStream(_ t: (target: HomeDialer.Target, key: Data), mac: String, busyRetried: Bool = false) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -843,6 +845,7 @@ extension StreamClient {
     /// none answering, the link's own addresses, as before (a window a device opened lists none:
     /// "Nothing answered…").
     func pairLinkAtHome(_ link: PairLink, overlay: Bool, scanned: Bool) {
+        guard Self.manualPairingEnabled else { return }
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif

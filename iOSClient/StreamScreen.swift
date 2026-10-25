@@ -698,13 +698,14 @@ struct StreamScreen: View {
     private func closeWindowMenu() { windowMenu = nil }
 
     /// Pair This iPad…, or an outside link waiting for its confirmation.
-    private var overlayShown: Bool { pairingOverlay || client.pendingLink != nil }
+    private var overlayShown: Bool { client.manualPairingUIEnabled && (pairingOverlay || client.pendingLink != nil) }
 
     /// Pair This iPad…: the panel and the keyboard are put away first, so no key reaches the Mac
     /// while the code is typed, then the overlay covers the stream. What an earlier pairing left
     /// (a "Paired with…" whose fade never ran, an error) goes first: the overlay would show it,
     /// and a stale "Paired" closed it after a second.
     private func openPairingOverlay() {
+        guard client.manualPairingUIEnabled else { return }
         putAwayForOverlay()
         client.cancelPairing()
         withAnimation(.easeOut(duration: 0.2)) { pairingOverlay = true }
@@ -715,6 +716,7 @@ struct StreamScreen: View {
     /// any error or "Paired with…" could show. A pairing still running is left alone; one that
     /// ended earlier leaves nothing behind.
     private func openLinkOverlay() {
+        guard client.manualPairingUIEnabled else { return }
         putAwayForOverlay()
         if !pairingOverlay {
             switch client.pairing {

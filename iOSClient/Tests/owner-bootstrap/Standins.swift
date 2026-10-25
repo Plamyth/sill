@@ -138,6 +138,7 @@ enum DiscoveryPolicy {
 }
 struct FoundMac { let route = DiscoveryPolicy.Method.network; let macID = ""; let carriesTag = false; let endpoint: Int? = nil }
 final class StreamClient {
+    static var manualPairingEnabled = true
     private var startupAutoConnection: StartupAutoConnection = .unarmed
     static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
     var ownerBootstrap = OwnerBootstrapState()
@@ -150,6 +151,7 @@ final class StreamClient {
     var ownerEnrollmentResumes = 0, ownerEnrollmentCancels = 0
     func resumeOwnerEnrollment() { ownerEnrollmentResumes += 1 }
     func cancelOwnerEnrollment() { ownerEnrollmentCancels += 1 }
+    func invalidateIPadSentryReturn() {}
     var connection: NWConnection?
     struct Reconnect {
         var macID: String?

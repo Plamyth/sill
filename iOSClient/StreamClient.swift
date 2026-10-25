@@ -262,6 +262,60 @@ final class StreamClient: ObservableObject {
     /// its first window list, with `connected`.
     @Published var remoteRoute: RemoteRoute?
 
+    static var manualPairingEnabled: Bool {
+        #if os(iOS)
+        return false
+        #else
+        return true
+        #endif
+    }
+
+    var manualPairingUIEnabled: Bool {
+        #if DEBUG
+        return Self.manualPairingEnabled || mockDiscovery
+        #else
+        return Self.manualPairingEnabled
+        #endif
+    }
+
+    #if os(iOS)
+    var automaticConnectionPresentation: (title: String, detail: String, busy: Bool) {
+        if savedMacs.contains(where: { $0.revoked == true || $0.newKey == true }),
+           SavedMacs.automaticTarget(savedMacs, preferredID: UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey)) == nil {
+            return ("저장된 Mac의 신뢰 확인이 필요합니다", "연결 권한이 폐기되었거나 Mac의 키가 변경되었습니다. 저장된 신뢰를 보존하며 자동 등록으로 대체하지 않습니다.", false)
+        }
+        if connection != nil || remoteDial != nil || reconnect?.remoteAllowed == true {
+            return ("저장된 Mac에 다시 연결하는 중", status, true)
+        }
+        if let reconnect, !reconnect.remoteAllowed {
+            return ("저장된 Mac 원격 연결이 중단되었습니다", status, false)
+        }
+        switch ownerBootstrap.phase {
+        case .dialing:
+            return ("소유 Mac에 연결하는 중", "Mac의 신원을 안전하게 확인하고 있습니다.", true)
+        case .exchanging:
+            return ("소유 기기를 자동 등록하는 중", "Mac의 자동 등록 응답을 기다리고 있습니다.", true)
+        case .stopped:
+            return ("Mac 자동 연결이 중지되었습니다", "이번 실행에서는 자동 등록을 다시 시작하지 않습니다. 저장된 Mac과 기기 키는 유지됩니다.", false)
+        case .ready:
+            return ("소유 Mac 자동 연결 대기 중", "앱이 활성화되면 안전한 자동 연결을 진행합니다.", false)
+        case .finished:
+            if ownerBootstrap.wasInitiallyEmpty {
+                return ("소유 Mac 자동 연결을 완료하지 못했습니다", status, false)
+            }
+            switch startupAutoConnection {
+            case .waiting, .waitingRemote, .wired:
+                return ("저장된 Mac 연결 대기 중", "저장된 Mac의 안전한 연결 경로를 확인하고 있습니다.", true)
+            default:
+                return ("저장된 Mac에 연결할 수 없습니다",
+                        status == Self.lookingOnNetwork ? "기존 저장소와 기기 키를 확인해야 합니다. 저장된 신뢰를 보존하며 최초 자동 등록을 다시 열지 않습니다." : status, false)
+            }
+        case .unarmed:
+            return ("Mac 자동 연결 준비 중", "저장된 Mac과 기기 신원을 확인하고 있습니다.", false)
+        }
+    }
+    #endif
+
     // Remote access (StreamClient+Remote.swift). Published on main; the DEBUG harness seeds them.
     /// The Macs this device paired with (SavedMacs), persisted in `SavedMacs.defaultsKey`.
     #if os(iOS)
@@ -282,8 +336,8 @@ final class StreamClient: ObservableObject {
         case attempted
         case stopped
     }
-    private var startupAutoConnection: StartupAutoConnection = .unarmed
-    var ownerBootstrap = OwnerBootstrapState()
+    @Published private var startupAutoConnection: StartupAutoConnection = .unarmed
+    @Published var ownerBootstrap = OwnerBootstrapState()
     var ownerBootstrapDial: RemoteConnector?
     var ownerBootstrapExchange: OwnerBootstrapExchange?
     var ownerEnrollment: IPadDeviceEnrollment?
@@ -2595,6 +2649,10 @@ final class StreamClient: ObservableObject {
         case .waitForTap:
             return false
         case .ask(let pinned):
+            guard Self.manualPairingEnabled else {
+                status = "Mac의 연결 승인을 확인할 수 없습니다. 자동 연결은 저장된 신뢰를 유지하며 중지됩니다."
+                return false
+            }
             ask(mac, savedID: pinned ? saved?.macID : nil, tagNamed: mac.macID != nil,
                 replaces: saved?.newKey == true ? saved?.macID : nil)
             return true

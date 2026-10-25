@@ -170,6 +170,26 @@ do {
     c.dialSaved("수동 연결", why: .tap); answer(socket); Clock.flush()
     check("수동 연결이 진행 교환 소켓을 취소", socket.cancelled && c.persists == 0 && c.dials == ["수동 연결"])
 }
+for boundary in [4, 5, 6] {
+    reset(); let c = client(); let socket = c.ownerBootstrapDial!.win(); Clock.flush()
+    StreamClient.manualPairingEnabled = false
+    c.runBoundary(boundary)
+    check("차단된 수동 진입은 등록 교환을 취소하지 않음 \(boundary)", !socket.cancelled && c.ownerBootstrap.phase != .stopped)
+    answer(socket); Clock.flush()
+    check("수동 진입 차단 후 자동 등록은 정상 저장 \(boundary)", c.persists == 1)
+    StreamClient.manualPairingEnabled = true
+}
+reset()
+do {
+    let c = client(); let socket = c.ownerBootstrapDial!.win(); Clock.flush()
+    let status = c.status
+    StreamClient.manualPairingEnabled = false
+    c.pairTyped(code: "잘못된 코드", address: "bad host", overlay: false)
+    check("차단된 코드 입력은 오류·상태·교환을 바꾸지 않음", c.status == status && c.pairing == .idle && !socket.cancelled)
+    answer(socket); Clock.flush()
+    check("코드 입력 차단 뒤 자동 저장과 pin 재접속 유지", c.persists == 1 && c.dials == [fixtureProfile.macID])
+    StreamClient.manualPairingEnabled = true
+}
 for boundary in 0..<7 {
     reset(); let c = client(); let socket = c.ownerBootstrapDial!.win(); Clock.flush()
     c.runBoundary(boundary); answer(socket); Clock.flush()
