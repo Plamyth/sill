@@ -84,6 +84,7 @@ class AdapterContract(unittest.TestCase):
             comment_id = str(uuid.uuid4())
             copies = []
             methods = []
+            save_revisions = None
             def request(server, method, path):
                 return 200, {'revision':scene['revision'],'noteSha256':'test-sha',
                              'sceneJSONBase64':base64.b64encode(json.dumps(scene).encode()).decode()}
@@ -97,7 +98,7 @@ class AdapterContract(unittest.TestCase):
             def harness(config, work, method, variables=None):
                 methods.append(method)
                 if method == 'testCommentSave':
-                    scene['revision'] += 1
+                    scene['revision'] = next(save_revisions) if save_revisions is not None else scene['revision'] + 1
                     comments = [r for r in scene['annotations'] if r['author'] == '사용자']
                     if comments: comments[0]['text'] = variables['CCR_COMMENT_TEXT']
                     else: scene['annotations'].append({'id':comment_id,'nodeId':adapter.NODE,
@@ -122,6 +123,23 @@ class AdapterContract(unittest.TestCase):
                     with self.assertRaisesRegex(adapter.Held,'comment_text_or_target_mismatch'):
                         adapter.accept_comments({},work,{},scene['id'])
                 self.assertEqual(methods,['testCommentSave'])
+                for revisions in [(3,3),(4,3),(3,4)]:
+                    with self.subTest(saveRevisions=revisions):
+                        scene = adapter.fixture(scene['id'])
+                        save_revisions = iter(revisions)
+                        methods.clear()
+                        case_work = work / ('revisions-' + '-'.join(map(str,revisions)))
+                        adapter.write(case_work/'context.json',{'test':'isolated'})
+                        if revisions in [(3,3),(4,3)]:
+                            with self.assertRaisesRegex(adapter.Held,'comment_revision_not_increased'):
+                                adapter.accept_comments({},case_work,{},scene['id'])
+                            self.assertEqual(methods,['testCommentSave','testCommentReopen','testCommentSave'])
+                            self.assertFalse((case_work/'comment-functional-readback.json').exists())
+                        else:
+                            proof = adapter.accept_comments({},case_work,{},scene['id'])
+                            self.assertEqual([row['vault']['revision'] for row in proof['edits']],[3,4])
+                            self.assertEqual(proof['baseline']['revision'],2)
+                            self.assertEqual(proof['commentID'],comment_id)
 
     def test_rotation_png_requires_decoded_canvas_and_following_link(self):
         import base64, math, subprocess, zlib
