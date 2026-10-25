@@ -674,7 +674,7 @@ final class HostSentryPlatform {
         guard !changingLifecycle, inputEnvironmentVerified,
               let proof = localAuthenticationInputPolicy.current(challengeID: challenge, now: .now) else { return false }
         if proof.target.process.pid == getpid() {
-            guard NSApp.isActive, let key = NSApp.keyWindow,
+            guard let key = NSApp.keyWindow,
                   key.isKeyWindow, key.windowNumber == Int(proof.target.window),
                   ownedAuthenticationWindows().contains(where: { $0 === key }) else { return false }
         }
@@ -788,7 +788,7 @@ final class HostSentryPlatform {
                       let identity = Self.verifiedAuthenticationOwner(pid) else { continue }
                 candidates.append((index, .init(process: identity, window: id, bounds: rect)))
             }
-            if candidates.isEmpty, let identity = Self.processIdentity(getpid()), NSApp.isActive {
+            if candidates.isEmpty, let identity = Self.processIdentity(getpid()) {
                 let owned = ownedAuthenticationWindows().filter(\.isKeyWindow)
                 if owned.count == 1, let window = owned.first,
                    let index = rows.firstIndex(where: { ownedAuthenticationWindow($0) === window }),
