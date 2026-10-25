@@ -129,6 +129,19 @@ final class LocalAuthenticationPresentation {
             end(); return nil
         }
         print("[로컬 복귀 인증] 내장 전용 인증 창 display=\(id) window=\(window.windowNumber) level=\(window.level.rawValue) curtainsPreserved=\(!curtains.isEmpty) appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow). 공식 인증 UI의 실물 표시는 별도 확인합니다.")
+        Task { @MainActor [weak self, weak window] in
+            for delay in [250, 750] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard let self, let window, Self.registeredOwner === self,
+                      Self.registeredWindow(for: operationID) === window else { return }
+                let sheet = window.attachedSheet
+                let children = window.childWindows ?? []
+                print("[로컬 복귀 인증] 소유 표시 연결 window=\(window.windowNumber) key=\(window.isKeyWindow) visible=\(window.isVisible) sheet=\(sheet != nil) sheetParent=\(sheet?.sheetParent === window) sheetLevel=\(sheet?.level.rawValue ?? -1) sheetVisible=\(sheet?.isVisible ?? false) sheetKey=\(sheet?.isKeyWindow ?? false) children=\(children.count) rootSubviews=\(window.contentView?.subviews.count ?? -1)")
+                for child in children {
+                    print("[로컬 복귀 인증] 소유 자식 연결 window=\(child.windowNumber) parentMatches=\(child.parentWindow === window) level=\(child.level.rawValue) visible=\(child.isVisible) key=\(child.isKeyWindow)")
+                }
+            }
+        }
         return window
     }
 
