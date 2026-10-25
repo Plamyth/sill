@@ -93,17 +93,32 @@ import StreamProtocol
         func check(_ value: Bool) { precondition(value); assertions += 1 }
         if CommandLine.arguments.contains("--observe-only") {
             let f = try Fixture("observe-only")
+            var failures: [String] = []
+            var observations: [[String: Any]] = []
+            func verify(_ value: Bool, _ label: String) {
+                assertions += 1
+                if !value { failures.append(label) }
+            }
             f.privacy.latched = false
-            check(await f.runtime.start())
+            verify(await f.runtime.start(), "runtime_start")
+            let startArms = f.privacy.arms
+            verify(startArms == 0 && !f.privacy.latched, "start_audio_isolation_arms")
             for byte in ["ab", "cd", "ab"] {
                 let peer = Peer(byte)
                 let value = await f.observe(peer)
-                check(value != nil && value?.snapshot.intent == nil && value?.snapshot.binding == nil)
-                check(f.privacy.arms == 0 && !f.privacy.latched)
+                verify(value != nil && value?.snapshot.intent == nil && value?.snapshot.binding == nil,
+                       "observe_empty_intent_binding")
+                verify(f.privacy.arms == 0 && !f.privacy.latched, "observe_audio_isolation_arms")
+                observations.append(["bootstrapPresent": value != nil, "intentNil": value?.snapshot.intent == nil,
+                    "bindingNil": value?.snapshot.binding == nil, "arms": f.privacy.arms, "latched": f.privacy.latched])
             }
             await f.finish()
-            print("PASS screen-only observe has zero audio isolation arms: \(assertions) assertions")
-            return
+            let report: [String: Any] = ["assertions": assertions, "startArms": startArms,
+                "observations": observations, "failures": failures]
+            let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+            print("OBSERVE_RESULT=" + String(decoding: data, as: UTF8.self))
+            print("\(failures.isEmpty ? "PASS" : "FAIL") 화면 전용 관측의 오디오 격리 호출 0 검사: \(assertions)개")
+            exit(failures.isEmpty ? 0 : 1)
         }
         func wait(_ label: String, _ condition: () -> Bool) async {
             let until = ContinuousClock.now.advanced(by: .seconds(6))
