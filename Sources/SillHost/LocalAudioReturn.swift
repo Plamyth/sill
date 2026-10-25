@@ -1,5 +1,6 @@
 import Foundation
 import LocalAuthentication
+import LocalAuthenticationEmbeddedUI
 
 /// Owns the interval before StreamCoordinator installs its real revocation barrier.
 @MainActor
@@ -210,51 +211,146 @@ struct LocalAudioState: Codable, Equatable {
 @MainActor
 final class LocalAudioAuthentication {
     static let maximumWaitMilliseconds = 120_000
-    private var context: LAContext?
-    private var attemptID: UUID?
-    private(set) var activeChallengeID: UUID?
+    @MainActor private final class Attempt {
+        enum Phase { case checking, resetting, authorizing, retired }
+        let operationID: UUID
+        let right = LARight(requirement: .biometry(fallback: .devicePasscode))
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(LocalAudioAuthentication.maximumWaitMilliseconds))
+        var phase = Phase.checking
+        var callbackPending = false
+        var revocationPending = false
+        var revocationAcknowledged = false
+        var needsFinalRevocation = false
+        init(_ operationID: UUID) { self.operationID = operationID }
+    }
+    private var attempt: Attempt?
+    private var retiring: Attempt?
     private var completion: CheckedContinuation<Bool, Never>?
     private var expiry: Task<Void, Never>?
+    private let presentation = LocalAuthenticationPresentation()
+
+    var activeChallengeID: UUID? {
+        guard let attempt, attempt.phase == .authorizing, ContinuousClock.now < attempt.deadline else { return nil }
+        return attempt.operationID
+    }
 
     func cancel() { finish(false) }
 
     func evaluate(operationId: UUID) async -> Bool {
-        guard completion == nil else { return false }
-        let context = LAContext()
-        context.touchIDAuthenticationAllowableReuseDuration = 0
-        context.localizedFallbackTitle = "macOS 로그인 암호 사용"
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else { return false }
-        self.context = context
-        let attempt = operationId
-        attemptID = attempt
-        return await withCheckedContinuation { continuation in
-            completion = continuation
-            expiry = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))
-                if !Task.isCancelled { self?.finish(false) }
-            }
-            context.evaluatePolicy(.deviceOwnerAuthentication,
-                localizedReason: "Touch ID 또는 macOS 로그인 암호로 로컬 입출력 복귀") { [weak self] accepted, _ in
-                Task { @MainActor in
-                    guard let self, self.attemptID == attempt else { return }
-                    self.finish(accepted)
+        guard attempt == nil, !Task.isCancelled else { return false }
+        guard retiring == nil else {
+            print("[로컬 복귀 인증] 이전 권한 폐기와 운영체제 콜백 종료가 미확인입니다. 새 인증을 겹치지 않습니다.")
+            return false
+        }
+        let attempt = Attempt(operationId)
+        self.attempt = attempt
+        let accepted = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                completion = continuation
+                expiry = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))
+                    if !Task.isCancelled { self?.finish(false) }
+                }
+                guard attempt.right.state == .unknown else { finish(false); return }
+                attempt.callbackPending = true
+                attempt.right.checkCanAuthorize { [weak self] error in
+                    let errorCode = (error as NSError?)?.code
+                    Task { @MainActor in
+                        attempt.callbackPending = false
+                        guard let self, self.remainsCurrent(attempt) else { return }
+                        guard errorCode == nil else {
+                            print("[로컬 복귀 인증] 정책 사용 불가 code=\(errorCode!)")
+                            self.finish(false); return
+                        }
+                        self.resetAndAuthorize(attempt)
+                    }
                 }
             }
-            activeChallengeID = attempt
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard self?.attempt === attempt else { return }
+                self?.finish(false)
+            }
+        }
+        return accepted && !Task.isCancelled
+    }
+
+    private func remainsCurrent(_ candidate: Attempt) -> Bool {
+        guard attempt === candidate else { settleRetired(candidate); return false }
+        guard ContinuousClock.now < candidate.deadline else { finish(false); return false }
+        return true
+    }
+
+    private func resetAndAuthorize(_ candidate: Attempt) {
+        candidate.phase = .resetting
+        candidate.callbackPending = true
+        candidate.right.deauthorize { [weak self] in
+            Task { @MainActor in
+                candidate.callbackPending = false
+                guard let self, self.remainsCurrent(candidate) else { return }
+                guard candidate.right.state == .notAuthorized || candidate.right.state == .unknown,
+                      let window = self.presentation.begin(invalidated: { [weak self] in
+                          guard self?.attempt === candidate else { return }
+                          self?.cancel()
+                      }) else { self.finish(false); return }
+                guard self.remainsCurrent(candidate) else { return }
+                candidate.callbackPending = true
+                candidate.right.authorize(localizedReason: "Touch ID 또는 macOS 로그인 암호로 로컬 입출력 복귀",
+                                          in: window) { [weak self] error in
+                    let errorCode = (error as NSError?)?.code
+                    Task { @MainActor in
+                        candidate.callbackPending = false
+                        guard let self, self.remainsCurrent(candidate) else { return }
+                        let accepted = errorCode == nil && candidate.right.state == .authorized
+                        print("[로컬 복귀 인증] anchored 권한 응답 operation=\(candidate.operationID) accepted=\(accepted) state=\(candidate.right.state.rawValue) errorCode=\(errorCode.map(String.init) ?? "none")")
+                        self.finish(accepted)
+                    }
+                }
+                candidate.phase = .authorizing
+            }
         }
     }
 
     private func finish(_ accepted: Bool) {
+        guard let candidate = attempt else { return }
         let continuation = completion
         completion = nil
-        let old = context
-        context = nil
-        attemptID = nil
-        activeChallengeID = nil
+        attempt = nil
+        candidate.phase = .retired
+        retiring = candidate
         expiry?.cancel(); expiry = nil
-        old?.invalidate()
+        presentation.end()
+        candidate.needsFinalRevocation = candidate.callbackPending
+        revoke(candidate)
         continuation?.resume(returning: accepted)
+    }
+
+    private func revoke(_ candidate: Attempt) {
+        candidate.revocationPending = true
+        candidate.revocationAcknowledged = false
+        candidate.right.deauthorize { [weak self] in
+            Task { @MainActor in
+                candidate.revocationPending = false
+                candidate.revocationAcknowledged = true
+                self?.settleRetired(candidate)
+            }
+        }
+    }
+
+    private func settleRetired(_ candidate: Attempt) {
+        guard retiring === candidate, !candidate.callbackPending, !candidate.revocationPending,
+              candidate.revocationAcknowledged else { return }
+        if candidate.right.state == .authorized, candidate.needsFinalRevocation {
+            candidate.needsFinalRevocation = false
+            revoke(candidate)
+            return
+        }
+        guard candidate.right.state == .notAuthorized || candidate.right.state == .unknown else {
+            print("[로컬 복귀 인증] 권한 폐기 상태 미확인. 재요청을 보류합니다.")
+            return
+        }
+        retiring = nil
+        print("[로컬 복귀 인증] 권한 폐기와 콜백 종료 확인. 운영체제 인증창 종료는 별도 확인이 필요합니다.")
     }
 }
 

@@ -1,5 +1,20 @@
 import Foundation
 
+@MainActor final class LocalAuthenticationPresentation {
+    static var available = true
+    static var instances: [LocalAuthenticationPresentation] = []
+    var active = false
+    var invalidated: (() -> Void)?
+    init() { Self.instances.append(self) }
+    func begin(invalidated: @escaping @MainActor () -> Void) -> Bool {
+        guard Self.available else { return false }
+        self.invalidated = invalidated
+        active = true
+        return true
+    }
+    func end() { active = false }
+}
+
 enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBiometrics }
 @MainActor final class LAContext {
     static var capable = true
@@ -64,7 +79,10 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
           "failed capability never exposes a challenge or issues authentication")
     LAContext.capable = true
     LAContext.capabilityHook = { check(authentication.activeChallengeID == nil, "capability check cannot expose a challenge") }
-    LAContext.issueHook = { check(authentication.activeChallengeID == nil, "challenge appears only after evaluatePolicy is called") }
+    LAContext.issueHook = {
+        check(authentication.activeChallengeID == nil, "challenge appears only after evaluatePolicy is called")
+        check(LocalAuthenticationPresentation.instances.last?.active == true, "own builtin activation precedes OS request")
+    }
     let first = UUID()
     let request = Task { await authentication.evaluate(operationId: first) }
     await settle { authentication.activeChallengeID != nil }
@@ -79,6 +97,7 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
     authentication.cancel()
     check(authentication.activeChallengeID == nil && context.invalidations == 1, "cancel clears challenge before context invalidation")
     check(!(await request.value), "cancel never supplies authentication approval")
+    check(LocalAuthenticationPresentation.instances.last?.active == false, "cancel closes only the owned presentation")
     let second = UUID()
     let next = Task { await authentication.evaluate(operationId: second) }
     await settle { authentication.activeChallengeID == second }
@@ -103,6 +122,35 @@ enum LAPolicy { case deviceOwnerAuthentication, deviceOwnerAuthenticationWithBio
           "replacement still requires its own actual owner authentication")
     LAContext.capabilityHook = nil
     LAContext.issueHook = nil
+
+    LocalAuthenticationPresentation.available = false
+    check(!(await authentication.evaluate(operationId: UUID())), "missing builtin presentation rejects authentication")
+    check(LAContext.instances.last?.issuedPolicy == nil && authentication.activeChallengeID == nil,
+          "missing builtin never issues OS authentication or exposes a challenge")
+    LocalAuthenticationPresentation.available = true
+    let sameID = UUID()
+    let beforeTopology = Task { await authentication.evaluate(operationId: sameID) }
+    await settle { authentication.activeChallengeID == sameID }
+    let oldCallback = LAContext.instances.last!.callback
+    let oldInvalidation = LocalAuthenticationPresentation.instances.last!.invalidated
+    oldInvalidation?()
+    check(!(await beforeTopology.value) && LocalAuthenticationPresentation.instances.last?.active == false,
+          "screen/session invalidation cancels authentication and closes presentation")
+    let afterTopology = Task { await authentication.evaluate(operationId: sameID) }
+    await settle { authentication.activeChallengeID == sameID }
+    oldCallback?(true, nil)
+    oldInvalidation?()
+    for _ in 0..<20 { await Task.yield() }
+    check(authentication.activeChallengeID == sameID && LocalAuthenticationPresentation.instances.last?.active == true,
+          "same operation retry rejects prior callback and queued presentation invalidation")
+    afterTopology.cancel()
+    check(!(await afterTopology.value) && authentication.activeChallengeID == nil &&
+          LocalAuthenticationPresentation.instances.last?.active == false, "task cancellation ends owned challenge and presentation")
+
+    let inconsistent = Task { await authentication.evaluate(operationId: UUID()) }
+    await settle { authentication.activeChallengeID != nil }
+    LAContext.instances.last!.callback?(true, NSError(domain: "inert-test", code: -1))
+    check(!(await inconsistent.value), "OS callback carrying an error cannot authorize return")
 
     for ending in ["decline", "cancel", "generation", "deadline", "mismatch"] {
         let startup = NativeAudioStartup()
