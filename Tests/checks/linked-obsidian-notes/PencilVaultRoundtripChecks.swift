@@ -62,7 +62,8 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     let base = try bridge.saveNote(path, nil, original)
     func store() -> CanvasStore {
         let journal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let value = CanvasStore(noteRecoveryURL:journal.appendingPathComponent("note.json"))
+        let defaults = UserDefaults(suiteName:journal.appendingPathComponent("preferences").path)!
+        let value = CanvasStore(noteRecoveryURL:journal.appendingPathComponent("note.json"),defaults:defaults)
         value.setNoteConnection(address:"http://fixture.invalid",token:"fixture-only")
         return value
     }
