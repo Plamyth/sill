@@ -520,6 +520,11 @@ package final class HostAudioPrivacy {
             localReturnFailureReason = "로컬 복귀 인증이 취소되었거나 완료되지 않았습니다. 보호를 유지합니다."
             return false
         }
+        func failedReturn(_ phase: String) -> Bool {
+            localReturnFailureReason = "인증은 완료됐지만 \(phase)을 확인하지 못했습니다. 보호를 유지합니다."
+            print("[로컬 복귀 단계] 실패 phase=\(phase) requestCurrent=\(localReturnID == request) generationCurrent=\(privacyGeneration == generation) membershipCurrent=\(participants.matches(membership)) latched=\(latched) persistenceHealthy=\(persistenceHealthy) originalValid=\(localState?.isValid == true) cancelled=\(cancellation.isCancelled || Task.isCancelled)")
+            return false
+        }
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(budgetMilliseconds))
         localReturnDeadline = deadline
         returningLocal = true
@@ -537,7 +542,7 @@ package final class HostAudioPrivacy {
               participants.authenticatedLocalReturnUnavailableReason == nil, participants.matches(membership),
               latched, persistenceHealthy, let original = localState, original.isValid,
               let ticket = participants.beginLocalReturn(operationId: request, privacyGeneration: generation,
-                                                        membership: membership) else { return false }
+                                                        membership: membership) else { return failedReturn("오디오 서비스·원본 복원 준비") }
         defer { participants.endLocalReturn(ticket) }
         pending?.cancel(); pending = nil
         publish(AudioPrivacyState(version: 2, protected: false, reason: "인증된 로컬 입출력으로 복귀 중입니다."))
@@ -545,7 +550,7 @@ package final class HostAudioPrivacy {
                     membership: membership, budgetMilliseconds: budgetMilliseconds, deadline: deadline),
               await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
               localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
-              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
+              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return failedReturn("오디오 참여자 중지·상태 증거") }
         let admission: @MainActor () -> Bool = { [weak self] in
             guard let self else { return false }
             return !cancellation.isCancelled && !Task.isCancelled && ContinuousClock.now < deadline &&
@@ -560,7 +565,7 @@ package final class HostAudioPrivacy {
                   return await commitIntent(admission)
               }) == true, admission(),
               await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
-              admission() else { return false }
+              admission() else { return failedReturn("공통 오디오 intent 해제") }
         // A failed removal invalidates the HAL generation even when listeners remain registered.
         watching = false
         guard hal.observe(nil, changed: nil) else {

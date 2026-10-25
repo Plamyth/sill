@@ -8,14 +8,15 @@ import sys
 
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
-challenge = '--challenge' in sys.argv
+system_context = '--system-context' in sys.argv
+challenge = '--challenge' in sys.argv or system_context
 legacy = '--legacy-context' in sys.argv
 paths = [root / name for name in [
     'Sources/StreamProtocol/AudioPrivacy.swift',
     'Sources/SillHost/LocalAudioReturn.swift',
     'Sources/SillHost/LocalAudioParticipants.swift',
     'Sources/SillHost/HostAudioPrivacyModel.swift',
-]] + [here / ('ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
+]] + [here / ('SystemContextChecks.swift' if system_context else 'ChallengeChecks.swift' if legacy else 'RightChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 local = paths[1].read_text()
 if '--baseline' in sys.argv:
@@ -57,6 +58,6 @@ print(json.dumps({'sourceSHA256': before, 'sourceUnchanged': before == after,
     'evaluatedAuthenticationSHA256': authentication_hash,
     'evaluatedRevision': '8c6e1d90dbc3c75dfcb682a12b9fa9d9f1e7d6e7' if legacy else 'working-tree',
     'unanchoredMutant': '--unanchored-mutant' in sys.argv,
-    'authenticationBoundary': ('inert LAContext' if legacy else 'inert LARight and NSWindow') + '; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
+    'authenticationBoundary': ('inert LAContext' if legacy or system_context else 'inert LARight and NSWindow') + '; expiry shortened to 200 ms' if challenge else 'authentication class excluded',
     'actualAuthenticationHALUIJournalDeviceActions': 0, 'exitCode': result.returncode}), flush=True)
 sys.exit(result.returncode if before == after else 2)
