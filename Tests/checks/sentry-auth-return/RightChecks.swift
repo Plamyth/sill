@@ -5,6 +5,8 @@ import Foundation
     static var available = true
     static var instances: [LocalAuthenticationPresentation] = []
     private(set) var window: NSWindow?
+    private var operationID: UUID?
+    var intact = true
     var invalidated: (() -> Void)?
     var active: Bool { window != nil }
     init() { Self.instances.append(self) }
@@ -15,7 +17,12 @@ import Foundation
         self.window = window
         return window
     }
-    func end() { window = nil }
+    func begin(operationID: UUID, invalidated: @escaping @MainActor () -> Void) -> NSWindow? {
+        self.operationID = operationID
+        return begin(invalidated: invalidated)
+    }
+    func matches(operationID: UUID) -> Bool { intact && self.operationID == operationID && window != nil }
+    func end() { window = nil; operationID = nil }
 }
 enum LABiometryFallbackRequirement: Equatable { case devicePasscode }
 enum LAAuthenticationRequirement: Equatable { case biometry(fallback: LABiometryFallbackRequirement) }
@@ -232,6 +239,14 @@ enum LAAuthenticationRequirement: Equatable { case biometry(fallback: LABiometry
         await drain()
         check(LARight.instances.last?.state == .notAuthorized, "terminal native right is deauthorized")
     }
+
+    let detachedAuth = LocalAudioAuthentication()
+    let detached = Task { await detachedAuth.evaluate(operationId: UUID()) }
+    await settle { detachedAuth.activeChallengeID != nil }
+    LocalAuthenticationPresentation.instances.last!.intact = false
+    LARight.instances.last!.complete(.authorized)
+    check(!(await detached.value), "detached authentication container cannot accept a late authorized result")
+    await drain()
 
     for stage in ["capability", "reset", "retirement"] {
         let auth = LocalAudioAuthentication()

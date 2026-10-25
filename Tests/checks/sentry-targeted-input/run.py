@@ -93,7 +93,7 @@ authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
 authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
     platform[platform.index('    private static let authenticationExecutables ='):platform.index('    private static func processIdentity(')] + '\n' +
     '\n'.join(block(platform, m) for m in ['private static func verifiedAuthenticationOwner(',
-        'private func refreshInputObservation(', 'private func isObservedAuthenticationWindow(', 'private func refreshRemoteTarget(', 'private func nextAuthenticationEventTag(']))
+        'private func refreshInputObservation(', 'private func isObservedAuthenticationWindow(', 'private func ownedAuthenticationWindows(', 'private func ownedAuthenticationWindow(', 'private func refreshRemoteTarget(', 'private func nextAuthenticationEventTag(']))
 authentication_window = re.sub(r'\bCGEvent\b', 'Event', authentication_window)
 authentication_window = re.sub(r'\bCGEventSource\b', 'EventSource', authentication_window)
 sdk_authentication_window = authentication_window
@@ -150,7 +150,7 @@ control = read('Tests/checks/sentry-targeted-input/ControlChecks.swift').replace
     '\n'.join(block(coordinator, marker) for marker in ['private func activateSentry(', 'private func grantSentryControl(',
         'private func currentSentryOwner(', 'private func handleSentryControl(']))
 control = read('Sources/SillHost/SentryAdmission.swift') + '\n' + read('Sources/SillHost/HostSentry.swift') + '\n' + control
-payload = {'protocol': protocol, 'control': control, 'local-auth-window': authentication_window, 'local-auth-sdk': sdk_authentication_window, 'platformSDK': authentication_input_policy + '\n' + platform + '\n' + actual + '''
+payload = {'protocol': protocol, 'control': control, 'local-auth-window': authentication_window, 'local-auth-sdk': sdk_authentication_window, 'platformSDK': authentication_input_policy + '\n' + read('Sources/SillHost/LocalAuthenticationPresentation.swift') + '\n' + platform + '\n' + actual + '''
 enum StreamCoordinator { static func isSillVirtualDisplay(_ id: CGDirectDisplayID) -> Bool { false } }
 ''', 'input': input_program, 'native': native, 'panel': authentication_input_policy + '\n' + fixture['NativePanelChecks.swift'], 'sentry': sentry, 'targeted': targeted, 'suites': (['input','panel','sentry','targeted'] if args.suite=='affected' else ['panel','sentry'] if args.suite=='sentry' else [args.suite] if args.suite!='all' else ['input','native','panel','sentry','targeted','local-auth-window','local-auth-sdk'])}
 blob = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()

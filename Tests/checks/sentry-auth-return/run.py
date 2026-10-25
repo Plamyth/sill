@@ -22,6 +22,9 @@ local = paths[1].read_text()
 if '--baseline' in sys.argv:
     local = subprocess.check_output(['git', 'show',
         '438569be69099b2d369d12ebc494be81cf3ae7da:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
+elif '--right-layer-baseline' in sys.argv:
+    local = subprocess.check_output(['git', 'show',
+        '229c02613b341139981edbe280df0243553bc144:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
 elif legacy:
     local = subprocess.check_output(['git', 'show',
         '8c6e1d90dbc3c75dfcb682a12b9fa9d9f1e7d6e7:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)

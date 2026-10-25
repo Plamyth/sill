@@ -14,7 +14,7 @@ paths = [presenter, authentication, checks, Path(__file__).resolve()]
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 source = presenter.read_text()
 begin = source.index('    static func builtinScreen(')
-end = source.index('\n    func begin(', begin)
+end = source.index('\n    static func registeredWindow(', begin)
 selection = '@MainActor final class LocalAuthenticationPresentation {\n' + source[begin:end] + '\n}\n'
 program = selection + checks.read_text()
 print('screen_selection_sha256=' + hashlib.sha256(program.encode()).hexdigest(), flush=True)
