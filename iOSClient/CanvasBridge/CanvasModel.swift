@@ -580,6 +580,159 @@ struct VaultBlockEditResult: Decodable {
     }
 }
 
+enum VaultReviewError: LocalizedError {
+    case malformed, empty, changed, time
+
+    var errorDescription: String? {
+        switch self {
+        case .malformed: return "복습 카드 표식·버전·ID·평가 정보를 확인할 수 없습니다. 원문을 유지합니다."
+        case .empty: return "원문 편집기에서 질문과 답을 작성하고 저장한 뒤 복습하세요."
+        case .changed: return "노트·선택·입력 또는 연결이 바뀌었습니다. 최신 원문에서 복습을 다시 여세요."
+        case .time: return "평가 시각과 24시간 뒤 기한을 확인할 수 없습니다. 원문을 유지합니다."
+        }
+    }
+}
+
+struct VaultReviewCard {
+    struct Metadata: Codable, Equatable {
+        let cardID: String
+        let eventID: String?
+        let ratedAt: Int64?
+        let dueAt: Int64?
+
+        private enum CodingKeys: String, CodingKey { case cardID, eventID, ratedAt, dueAt }
+
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy:CodingKeys.self)
+            try values.encode(cardID,forKey:.cardID)
+            try values.encode(eventID,forKey:.eventID)
+            try values.encode(ratedAt,forKey:.ratedAt)
+            try values.encode(dueAt,forKey:.dueAt)
+        }
+    }
+
+    let metadata: Metadata
+    let front: String
+    let back: String
+    private let metadataRange: Range<Int>
+    private let source: String
+
+    var ready: Bool {
+        !front.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty &&
+        !back.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty
+    }
+
+    private static let prefix = "<!-- ccr-review-card:v1 "
+    private static let frontMarker = "<!-- ccr-review-front -->"
+    private static let backMarker = "<!-- ccr-review-back -->"
+    private static let endMarker = "<!-- /ccr-review-card -->"
+    private static let lastSecond: Int64 = 253_402_300_799
+
+    private static func validID(_ id: String) -> Bool {
+        UUID(uuidString:id)?.uuidString.lowercased() == id &&
+        id != "00000000-0000-0000-0000-000000000000"
+    }
+
+    static func parse(_ text: String) throws -> Self? {
+        let bytes = Array(text.utf8)
+        guard bytes.count <= 1024 * 1024 else { throw VaultReviewError.malformed }
+        let reserved = text.components(separatedBy:"ccr-review").count - 1
+        if reserved == 0 { return nil }
+        guard reserved == 4 else { throw VaultReviewError.malformed }
+        var lines: [(text:String,start:Int,end:Int)] = []
+        var start = 0
+        while start < bytes.count {
+            let end = bytes[start...].firstIndex(of:10) ?? bytes.count
+            let contentEnd = end > start && bytes[end - 1] == 13 ? end - 1 : end
+            lines.append((String(decoding:bytes[start..<contentEnd],as:UTF8.self),start,
+                          end < bytes.count ? end + 1 : end))
+            start = end + 1
+        }
+        let marked = lines.indices.filter { lines[$0].text.contains("ccr-review") }
+        guard marked.count == 4 else { throw VaultReviewError.malformed }
+        var fence: (Character,Int)?
+        var frontmatter = false
+        var comment = false
+        for index in lines.indices {
+            let line = lines[index].text.trimmingCharacters(in:.whitespaces)
+            if marked.contains(index) {
+                guard !frontmatter, fence == nil, !comment else { throw VaultReviewError.malformed }
+                continue
+            }
+            if index == 0 && (line == "---" || line == "\u{feff}---") { frontmatter = true; continue }
+            if frontmatter {
+                if line == "---" || line == "..." { frontmatter = false }
+                continue
+            }
+            if let first = line.first, first == "`" || first == "~" {
+                let count = line.prefix(while:{ $0 == first }).count
+                if let active = fence {
+                    if active.0 == first && count >= active.1 && line.dropFirst(count).isEmpty { fence = nil }
+                } else if count >= 3 { fence = (first,count) }
+            }
+            if fence == nil {
+                if line.contains("<!--") { comment = true }
+                if line.contains("-->") { comment = false }
+            }
+        }
+        let header = lines[marked[0]], question = lines[marked[1]], answer = lines[marked[2]], end = lines[marked[3]]
+        guard header.text.hasPrefix(prefix), header.text.hasSuffix(" -->"),
+              question.text == frontMarker, answer.text == backMarker, end.text == endMarker,
+              marked[1] == marked[0] + 1 else { throw VaultReviewError.malformed }
+        let raw = String(header.text.dropFirst(prefix.count).dropLast(4))
+        let data = Data(raw.utf8)
+        // A fixed canonical JSON header rejects duplicate keys as well as unknown fields.
+        let metadata = try? JSONDecoder().decode(Metadata.self,from:data)
+        guard let metadata, validID(metadata.cardID),
+              try headerJSON(metadata).utf8.elementsEqual(raw.utf8) else { throw VaultReviewError.malformed }
+        switch (metadata.eventID, metadata.ratedAt, metadata.dueAt) {
+        case (nil,nil,nil): break
+        case let (event?,rated?,due?):
+            guard validID(event), event != metadata.cardID, rated >= 0,
+                  rated <= lastSecond - 86_400, due == rated + 86_400 else { throw VaultReviewError.malformed }
+        default: throw VaultReviewError.malformed
+        }
+        return Self(metadata:metadata,
+            front:String(decoding:bytes[question.end..<answer.start],as:UTF8.self),
+            back:String(decoding:bytes[answer.end..<end.start],as:UTF8.self),
+            metadataRange:(header.start + prefix.utf8.count)..<(header.start + header.text.utf8.count - 4),source:text)
+    }
+
+    private static func headerJSON(_ metadata: Metadata) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return String(decoding:try encoder.encode(metadata),as:UTF8.self)
+    }
+
+    static func insertingTemplate(in text: String, cardID: UUID = UUID()) throws -> String {
+        guard try parse(text) == nil, validID(cardID.uuidString.lowercased()) else { throw VaultReviewError.malformed }
+        let newline = text.contains("\r\n") ? "\r\n" : "\n"
+        let metadata = Metadata(cardID:cardID.uuidString.lowercased(),eventID:nil,ratedAt:nil,dueAt:nil)
+        let template = [prefix + (try headerJSON(metadata)) + " -->",frontMarker,"",backMarker,"",endMarker,""]
+            .joined(separator:newline)
+        let result = text + (text.isEmpty ? "" : newline + newline) + template
+        _ = try parse(result)
+        return result
+    }
+
+    func ratingGood(eventID: UUID, injectedDate: Date) throws -> String {
+        guard ready else { throw VaultReviewError.empty }
+        let event = eventID.uuidString.lowercased()
+        guard Self.validID(event), event != metadata.cardID else { throw VaultReviewError.malformed }
+        if metadata.eventID == event { return source }
+        let seconds = injectedDate.timeIntervalSince1970.rounded(.down)
+        guard seconds.isFinite, seconds >= 0, seconds <= Double(Self.lastSecond - 86_400),
+              metadata.ratedAt.map({ seconds >= Double($0) }) ?? true else { throw VaultReviewError.time }
+        let rated = Int64(seconds)
+        let updated = Metadata(cardID:metadata.cardID,eventID:event,ratedAt:rated,dueAt:rated + 86_400)
+        let bytes = Array(source.utf8)
+        let result = String(decoding:bytes[..<metadataRange.lowerBound],as:UTF8.self) +
+            (try Self.headerJSON(updated)) + String(decoding:bytes[metadataRange.upperBound...],as:UTF8.self)
+        _ = try Self.parse(result)
+        return result
+    }
+}
+
 struct VaultNoteSnapshot: Codable, Equatable {
     let path: String
     let text: String

@@ -32,6 +32,7 @@ struct CanvasWorkspace: View {
     @State private var vaultDiscardOpen = false
     @State private var recoveryDiscardOpen = false
     @State private var noteRecoveryDiscardOpen = false
+    @State private var vaultReview: CanvasStore.VaultReviewSession?
     @State private var syncedSceneSha: String?
     @State private var canvasNoteSha: String?
     @State private var pendingSceneSha: String?
@@ -382,6 +383,8 @@ struct CanvasWorkspace: View {
                         .disabled(store.vaultDirty || store.vaultSaving || store.vaultLoading)
                 }
                 if let note = store.vaultNote {
+                    ScrollView {
+                    VStack(spacing:6) {
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
                     if store.vaultBlockEditing {
@@ -400,6 +403,13 @@ struct CanvasWorkspace: View {
                             .frame(minHeight:150)
                             .disabled(store.vaultLoading || store.vaultInputSessionID == nil)
                             .accessibilityIdentifier("obsidianMarkdownEditor")
+                        VStack(alignment:.leading,spacing:6) {
+                            Text(store.vaultReviewMessage).font(.footnote)
+                            ViewThatFits(in:.horizontal) {
+                                HStack { vaultReviewButtons }
+                                VStack(alignment:.leading) { vaultReviewButtons }
+                            }
+                        }.padding(.horizontal)
                     }
                     VStack(alignment:.leading,spacing:6) {
                         if let id = store.vaultLinkedBlockID {
@@ -442,6 +452,8 @@ struct CanvasWorkspace: View {
                             }.disabled(store.vaultSaving)
                         }
                     }.padding(.horizontal)
+                    }
+                    }
                 } else if store.vaultLoading {
                     ProgressView("원본 노트를 읽는 중입니다.")
                 } else {
@@ -488,6 +500,15 @@ struct CanvasWorkspace: View {
                 }
             }
             .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
+            .sheet(item:$vaultReview) { session in
+                VaultReviewSheet(store:store,session:session) {
+                    store.setNoteConnection(address:relayAddress,token:relayToken)
+                    let connection = relay
+                    return await store.rateVaultReviewGood(session,injectedDate:Date(),save:{ path,sha,text in
+                        try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
+                    },load:connection.vaultNote)
+                }
+            }
             .alert("보존된 노트 입력을 버릴까요?",isPresented:$noteRecoveryDiscardOpen) {
                 Button("입력 버리기",role:.destructive) { _ = store.discardNoteRecovery() }
                 Button("취소",role:.cancel) {}
@@ -509,6 +530,16 @@ struct CanvasWorkspace: View {
                 Text("현재 입력만 버립니다. Obsidian 원본은 변경하지 않습니다.")
             }
         }
+    }
+
+    @ViewBuilder
+    private var vaultReviewButtons: some View {
+        Button("복습 카드 틀 넣기") { _ = store.insertVaultReviewTemplate() }
+            .frame(minHeight:44).disabled(!store.vaultReviewCanInsert)
+            .accessibilityIdentifier("obsidianInsertReviewCard")
+        Button("복습 보기") { vaultReview = store.beginVaultReview() }
+            .frame(minHeight:44).disabled(!store.vaultReviewCanBegin)
+            .accessibilityIdentifier("obsidianReviewCard")
     }
 
     private func loadVaultEntries() async {
@@ -1298,6 +1329,69 @@ private struct CanvasEndpointHandle: View {
             .accessibilityLabel(endpoint == .from ? "연결선 시작점" : "연결선 끝점")
             .accessibilityHint("끌어서 이 요소 경계의 연결 위치를 바꿉니다.")
             .accessibilityIdentifier("canvasLinkEndpoint-\(endpoint.rawValue)-\(linkID.uuidString)")
+    }
+}
+
+private struct VaultReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: CanvasStore
+    let session: CanvasStore.VaultReviewSession
+    let rate: () async -> Bool
+    @State private var showingBack = false
+    @State private var attempted = false
+    @State private var confirmed = false
+
+    private var displayedDue: Int64? {
+        if confirmed, let text = store.vaultNote?.text,
+           let card = try? VaultReviewCard.parse(text), card.metadata.eventID == session.id.uuidString.lowercased() {
+            return card.metadata.dueAt
+        }
+        return session.card.metadata.dueAt
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment:.leading,spacing:20) {
+                    Text(session.path).font(.caption).textSelection(.enabled)
+                    Text(showingBack ? "뒷면 · 답" : "앞면 · 질문").font(.headline)
+                    Text(showingBack ? session.card.back : session.card.front)
+                        .font(.body).textSelection(.enabled)
+                        .frame(maxWidth:.infinity,alignment:.leading)
+                        .accessibilityIdentifier("obsidianReviewContent")
+                    if let due = displayedDue {
+                        Text("다음 복습: \(Date(timeIntervalSince1970:Double(due)).formatted(date:.abbreviated,time:.shortened))")
+                            .font(.footnote)
+                    }
+                    Button(showingBack ? "앞면 보기" : "뒤집어 답 보기") { showingBack.toggle() }
+                        .frame(maxWidth:.infinity,minHeight:44).buttonStyle(.bordered)
+                        .accessibilityIdentifier("obsidianReviewFlip")
+                    Text("자체 규칙: 좋음을 누른 평가 시각부터 정확히 24시간 뒤로 저장합니다.")
+                        .font(.footnote)
+                    Button("좋음 · 24시간 후") {
+                        attempted = true
+                        Task { confirmed = await rate() }
+                    }.frame(maxWidth:.infinity,minHeight:44).buttonStyle(.borderedProminent)
+                        .disabled(!showingBack || attempted || !store.vaultReviewIsCurrent(session))
+                        .accessibilityIdentifier("obsidianReviewGood")
+                    if confirmed {
+                        Text("평가 저장 확인 · 24시간 뒤 복습").accessibilityIdentifier("obsidianReviewSaved")
+                    } else if store.vaultSaving {
+                        ProgressView("원본 저장과 재조회를 확인하고 있습니다.")
+                    } else if attempted || !store.vaultReviewIsCurrent(session) {
+                        Text(store.vaultStatus.isEmpty ? VaultReviewError.changed.localizedDescription : store.vaultStatus)
+                        Text("닫은 뒤 원문과 보존된 입력을 확인하세요. 같은 평가는 다시 보내지 않습니다.").font(.footnote)
+                    }
+                }.padding()
+            }
+            .navigationTitle("복습 카드")
+            .toolbar {
+                ToolbarItem(placement:.confirmationAction) {
+                    Button("닫기") { dismiss() }.frame(minWidth:44,minHeight:44).disabled(store.vaultSaving)
+                }
+            }
+            .interactiveDismissDisabled(store.vaultSaving)
+        }
     }
 }
 

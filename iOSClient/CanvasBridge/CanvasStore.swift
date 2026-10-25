@@ -670,6 +670,95 @@ final class CanvasStore: ObservableObject {
         !vaultBlockEditing && vaultNote != nil && !vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
+    struct VaultReviewSession: Identifiable {
+        let id: UUID
+        let card: VaultReviewCard
+        var path: String { base.path }
+        fileprivate let base: VaultNoteSnapshot
+        fileprivate let inputSessionID: UUID
+        fileprivate let editGeneration: UInt64
+        fileprivate let selection: NSRange
+        fileprivate let selectedNode: UUID?
+    }
+
+    var vaultReviewCanInsert: Bool {
+        vaultCanAttach && noteRecoveryReadable && !noteRecoveryWriteFailed &&
+        ((try? VaultReviewCard.parse(vaultDraft)) == nil) && !vaultDraft.contains("ccr-review")
+    }
+
+    var vaultReviewCanBegin: Bool {
+        vaultCanAttach && noteRecoveryReadable && !noteRecoveryWriteFailed &&
+        (try? VaultReviewCard.parse(vaultDraft))?.ready == true
+    }
+
+    var vaultReviewMessage: String {
+        do {
+            guard let card = try VaultReviewCard.parse(vaultDraft) else {
+                return "노트 하나에 복습 카드 틀 하나를 넣고 질문과 답을 원문으로 작성하세요."
+            }
+            return card.ready ? "저장된 원문으로 앞면과 뒷면을 복습합니다. 평가는 자체 24시간 규칙입니다." :
+                VaultReviewError.empty.localizedDescription
+        } catch { return error.localizedDescription }
+    }
+
+    @discardableResult
+    func insertVaultReviewTemplate() -> Bool {
+        guard vaultReviewCanInsert else { return false }
+        do {
+            vaultDraft = try VaultReviewCard.insertingTemplate(in:vaultDraft)
+            vaultStatus = "복습 카드 틀을 초안에 넣었습니다. 앞면과 뒷면 표식 사이에 질문과 답을 작성하고 저장하세요."
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
+    func beginVaultReview() -> VaultReviewSession? {
+        guard vaultCanAttach, noteRecoveryReadable, !noteRecoveryWriteFailed,
+              let base = vaultNote, let inputSessionID = vaultInputSessionID else { return nil }
+        do {
+            guard let card = try VaultReviewCard.parse(base.text) else { return nil }
+            guard card.ready else { throw VaultReviewError.empty }
+            return VaultReviewSession(id:UUID(),card:card,base:base,inputSessionID:inputSessionID,
+                editGeneration:noteEditGeneration,selection:vaultSelection,selectedNode:selectedNode)
+        } catch { vaultStatus = error.localizedDescription; return nil }
+    }
+
+    func vaultReviewIsCurrent(_ session: VaultReviewSession) -> Bool {
+        vaultCanAttach && noteRecoveryReadable && !noteRecoveryWriteFailed &&
+        vaultInputSessionID == session.inputSessionID && noteEditGeneration == session.editGeneration &&
+        vaultSelection == session.selection && selectedNode == session.selectedNode &&
+        vaultNote?.path == session.base.path && vaultNote?.sha256 == session.base.sha256 &&
+        vaultDraft.utf8.elementsEqual(session.base.text.utf8)
+    }
+
+    @discardableResult
+    func rateVaultReviewGood(_ session: VaultReviewSession, injectedDate: Date,
+                            save: (String,String,String) async throws -> VaultNoteSnapshot,
+                            load: (String) async throws -> VaultNoteSnapshot) async -> Bool {
+        guard vaultReviewIsCurrent(session) else {
+            vaultStatus = VaultReviewError.changed.localizedDescription
+            return false
+        }
+        do {
+            let submitted = try session.card.ratingGood(eventID:session.id,injectedDate:injectedDate)
+            vaultDraft = submitted
+            await saveVaultNote { path,sha,text in
+                let saved = try await save(path,sha,text).validated(at:path)
+                guard saved.text.utf8.elementsEqual(text.utf8) else { throw URLError(.badServerResponse) }
+                let readback = try await load(path).validated(at:path)
+                guard readback.sha256 == saved.sha256,
+                      readback.text.utf8.elementsEqual(text.utf8) else { throw VaultBlockRecoveryError.changed }
+                return readback
+            }
+            guard !Task.isCancelled, vaultInputSessionID == session.inputSessionID,
+                  vaultSelection == session.selection, selectedNode == session.selectedNode,
+                  vaultNote?.text.utf8.elementsEqual(submitted.utf8) == true,
+                  vaultDraft.utf8.elementsEqual(submitted.utf8), vaultCanAttach,
+                  !noteRecoveryWriteFailed, noteRecovery == nil else { return false }
+            vaultStatus = "평가와 24시간 뒤 기한을 원본에 저장하고 다시 읽어 확인했습니다."
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
     var vaultLinkedBlockID: String? { noteContext?.blockID }
     var vaultSelectedBlock: VaultExcerptBlock? {
         guard vaultCanAttach, let note = vaultNote else { return nil }
