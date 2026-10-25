@@ -61,8 +61,9 @@ final class LocalAuthenticationPresentation {
                 return nil
             }
         }
-        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 480, height: 240),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false, screen: screen)
+        let window = NSPanel(contentRect: .init(x: 0, y: 0, width: 480, height: 240),
+                             styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false, screen: screen)
+        window.hidesOnDeactivate = false
         window.identifier = NSUserInterfaceItemIdentifier("CCR.LocalAuthentication")
         window.title = "Touch ID 또는 Mac 로그인 암호"
         window.isReleasedWhenClosed = false
@@ -103,16 +104,14 @@ final class LocalAuthenticationPresentation {
         NSApp.activate(ignoringOtherApps: true)
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while self.window === window, !Task.isCancelled, ContinuousClock.now < deadline {
-            if NSApp.isActive {
-                window.makeKeyAndOrderFront(nil)
-                window.orderFrontRegardless()
-                if window.isKeyWindow { break }
-            }
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            if window.isKeyWindow { break }
             do { try await Task.sleep(for: .milliseconds(25)) }
             catch { break }
         }
         guard self.window === window else { return nil }
-        guard !Task.isCancelled, NSApp.isActive, window.isKeyWindow, window.isVisible else {
+        guard !Task.isCancelled, window.isKeyWindow, window.isVisible else {
             print("[로컬 복귀 인증] 활성 앱과 내장 anchor의 키보드 포커스를 확인하지 못했습니다. appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow) visible=\(window.isVisible). 인증을 요청하지 않습니다.")
             end()
             return nil
