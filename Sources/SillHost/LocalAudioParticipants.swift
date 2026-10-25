@@ -479,7 +479,14 @@ final class LocalAudioParticipantRegistry {
                 guard !Task.isCancelled, self.matches(membership), let control = controls[request.participantId],
                       let receipt = await self.serialized(until: deadline, allowed: { self.requestIsCurrent(request) }, operation: {
                           await control.fenceAndQuiesce(request)
-                      }), receipt.proves(request), self.requestIsCurrent(request) else { return false }
+                      }) else {
+                    print("[로컬 복귀 참여자] 중지 응답 없음 participant=\(request.participantId.rawValue) current=\(self.requestIsCurrent(request)) cancelled=\(Task.isCancelled)")
+                    return false
+                }
+                guard receipt.proves(request), self.requestIsCurrent(request) else {
+                    self.reportReturnFailure("중지", request: request, receipt: receipt)
+                    return false
+                }
             }
             return self.matches(membership) && ContinuousClock.now < deadline && !Task.isCancelled
         }
@@ -500,7 +507,13 @@ final class LocalAudioParticipantRegistry {
             guard let member = members[request.participantId],
                   let response = await serialized(until: old.deadline, allowed: { self.requestIsCurrent(request) }, operation: {
                       await member.control.inspect(operationId)
-                  }), let receipt = response, receipt.proves(request), requestIsCurrent(request), matches(membership), !Task.isCancelled else {
+                  }), let receipt = response else {
+                print("[로컬 복귀 참여자] 재조회 응답 없음 participant=\(request.participantId.rawValue) current=\(requestIsCurrent(request)) cancelled=\(Task.isCancelled)")
+                if operation?.id == operationId, operation?.closed == false { operation?.uncertain = true }
+                return false
+            }
+            guard receipt.proves(request), requestIsCurrent(request), matches(membership), !Task.isCancelled else {
+                reportReturnFailure("재조회", request: request, receipt: receipt)
                 if operation?.id == operationId, operation?.closed == false { operation?.uncertain = true }
                 return false
             }
@@ -511,6 +524,11 @@ final class LocalAudioParticipantRegistry {
             if !valid { operation?.uncertain = true }
         }
         return valid
+    }
+    private func reportReturnFailure(_ phase: String, request: LocalAudioParticipantRequest, receipt: LocalAudioParticipantReceipt) {
+        func flag(_ value: Bool?) -> String { value.map(String.init) ?? "unknown" }
+        let facts = receipt.facts
+        print("[로컬 복귀 참여자] 실패 phase=\(phase) participant=\(request.participantId.rawValue) state=\(receipt.state.rawValue) identityMatched=\(receipt.matches(request)) current=\(requestIsCurrent(request)) admissionFenced=\(flag(facts.admissionFenced)) startsSettled=\(flag(facts.startsSettled)) mediaDetached=\(flag(facts.mediaDetached)) callbacksDrained=\(flag(facts.callbacksDrained)) buffersEmpty=\(flag(facts.buffersEmpty)) workersExited=\(flag(facts.workersExited))")
     }
     func proofCurrent(operationId: UUID, privacyGeneration: UUID, membership: Snapshot) -> Bool {
         guard let old = operation else { return false }
