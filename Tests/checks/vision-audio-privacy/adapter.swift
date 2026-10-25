@@ -72,11 +72,25 @@ final class StreamClient {
         receiveCatalog(Wire.decode(WindowList.self, from: Wire.encode(list))!, from: peer)
     }
     var microphoneAuthorization: UUID?
+    private var privacyObserved = false
+    var visionAudioPrivacy: AudioPrivacyState? { didSet { privacyObserved = true } }
+    var visionAudioPrivacyRevision: UInt64 = 0
+    var visionAudioIntentWithdrawing = false
+    var visionAudioIntentAwaitingSource: StreamSource?
     var visionAudioPrivacyBlocked = false
     var microphoneStarts = 0, microphoneStops = 0
     var visionAudioTrustedHostKey: String? { context.hostKey }
     var visionAudioIntentContext: VisionRemoteAudioIntent.Context {
         var result = context
+        if privacyObserved {
+            result.privacyVersion = visionAudioPrivacy?.version
+            result.protected = visionAudioPrivacy?.protected == true
+            if let scope = result.scope {
+                result.scope = .init(connection: scope.connection, window: scope.window, admission: scope.admission,
+                    video: scope.video, foreground: scope.foreground, privacy: visionAudioPrivacyRevision)
+            }
+        }
+        result.inputBlocked = result.inputBlocked || visionAudioIntentWithdrawing
         if visionAudioPrivacyBlocked { result.protected = false }
         return result
     }

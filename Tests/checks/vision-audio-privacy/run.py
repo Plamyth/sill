@@ -25,11 +25,18 @@ transport = client[start:end]
 # Bind the production singleton call to this fixture's isolated store; method bodies are otherwise unchanged.
 transport = transport.replace('VisionRemoteAudioStore.shared', 'store')
 (output / 'CatalogTransport.swift').write_text('import Foundation\nextension StreamClient {\n' + transport + '}\n')
+intent = (root / 'visionOSClient/VisionRemoteAudioIntent.swift').read_text()
+start = intent.index('    func observeVisionAudioPrivacy(')
+end = intent.index('    func reconcileVisionAudioIntent(', start)
+privacy_observation = intent[start:end]
+observation = privacy_observation.replace('VisionRemoteAudioStore.shared', 'store')
+(output / 'PrivacyObservation.swift').write_text('import Foundation\nextension StreamClient {\n' + observation + '}\n')
 (output / 'main.swift').write_bytes((root / 'Tests/checks/vision-audio-privacy/adapter-main.swift').read_bytes())
 adapter = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-path', str(output / 'cache'),
            str(root / 'visionOSClient/VisionRemoteAudioIntent.swift'),
            str(root / 'visionOSClient/VisionRemoteAudioAuthority.swift'), str(output / 'Store.swift'),
            str(root / 'Tests/checks/vision-audio-privacy/adapter.swift'), str(output / 'CatalogTransport.swift'),
+           str(output / 'PrivacyObservation.swift'),
            *[str(root / 'Sources/StreamProtocol' / name) for name in
              ['StreamMessage.swift', 'Switcher.swift', 'Sentry.swift', 'SentryControl.swift', 'TestDestinations.swift', 'AudioPrivacy.swift', 'AudioRouting.swift']], str(output / 'main.swift'),
            '-o', str(output / 'adapter')]
@@ -64,6 +71,9 @@ result = {'scope': __doc__, 'commands': [], 'exitCode': 1,
           'catalogFallbackSHA256': hashlib.sha256(fallback_body.encode()).hexdigest(),
           'catalogTransportSHA256': hashlib.sha256(transport.encode()).hexdigest(),
           'storeSHA256': hashlib.sha256(store.encode()).hexdigest(),
+          'privacyObservationSourceSHA256': hashlib.sha256(intent.encode()).hexdigest(),
+          'privacyObservationRawSHA256': hashlib.sha256(privacy_observation.encode()).hexdigest(),
+          'privacyObservationSHA256': hashlib.sha256(observation.encode()).hexdigest(),
           'adapterBoundary': 'Actual shared store copied verbatim. Inert StreamClient, player, microphone and hardware cleanup readback; no native graph, transport, OS permission or UI acceptance.'}
 for label, args in [('compile', command), ('policy', [str(exe)]),
                     ('adapter-compile', adapter), ('adapter', [str(output / 'adapter')]),
