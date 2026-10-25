@@ -88,8 +88,14 @@ struct Main {
             if !condition { failures += 1 }
         }
         let f = Fixture()
-        check(f.grant() != nil, "정상 local 보호에서는 grant 발급")
+        let local = f.grant()
+        check(local != nil, "정상 local 보호에서는 grant 발급")
         await f.forward()
+        if let local {
+            let staleLocal = await f.owner.prepareMicrophone(grant: local, render: MicrophoneRenderBuffer(grant: local))
+            check(staleLocal.resource == nil && !local.valid(at: DispatchTime.now().uptimeNanoseconds),
+                  "fence 이전 local grant를 forwarding 권한으로 재해석하지 않음")
+        }
         let proof = f.privacy.forwardingProof()!
         check(f.privacy.forwardingProofCurrent(proof), "실제 모델의 forwarding proof가 현재 세대·멤버와 일치")
         let forwarded = f.grant()
@@ -125,6 +131,9 @@ struct Main {
             let frame = MicrophoneFrame(scope: grant.scope, grantID: UUID(), sequence: 1, frameCount: 2, pcm: Data([7, 0, 8, 0]))!
             let now = DispatchTime.now().uptimeNanoseconds
             check(render.sendEnabled(Data(), to: NWConnection()) && render.offer(frame, arrived: now, now: now), change + " 전 inert PCM 적재")
+            check(callback(render) == [7, 0, 8, 0], change + " 전 현재 proof의 생산 HAL callback에서 실제 fixture PCM 렌더")
+            let queued = DispatchTime.now().uptimeNanoseconds
+            check(render.offer(frame, arrived: queued, now: queued), change + " 전 late callback용 fixture PCM 재적재")
             var authTask: Task<Bool, Never>?
             var authContinuation: CheckedContinuation<Bool, Never>?
             switch change {
