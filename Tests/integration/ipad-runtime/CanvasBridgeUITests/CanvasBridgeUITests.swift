@@ -174,6 +174,11 @@ final class CanvasBridgeUITests: XCTestCase {
                         y:node.frame.midY + sin(angle)*130*unit)
         let b = CGPoint(x:other.frame.minX,y:other.frame.midY)
         let screenshot = app.screenshot()
+        print("CCR_ROTATION_GEOMETRY app=\(app.frame) node=\(node.frame) other=\(other.frame) a=\(a) b=\(b) screen=\(XCUIScreen.main.screenshot().image.size) image=\(screenshot.image.size) orientation=\(screenshot.image.imageOrientation.rawValue) cg=\(screenshot.image.cgImage?.width ?? 0)x\(screenshot.image.cgImage?.height ?? 0)")
+        let fullScreen = XCTAttachment(screenshot:XCUIScreen.main.screenshot())
+        fullScreen.name = "rotation-full-screen-coordinate-observation"
+        fullScreen.lifetime = .keepAlways
+        add(fullScreen)
         let attachment = XCTAttachment(screenshot:screenshot)
         attachment.name = "rotation-link-pixel-check-\(degrees)"
         attachment.lifetime = .keepAlways
@@ -184,6 +189,10 @@ final class CanvasBridgeUITests: XCTestCase {
             screenshot.image.draw(in:CGRect(origin:.zero,size:app.frame.size))
         }
         let image = try XCTUnwrap(normalized.cgImage)
+        let normalizedAttachment = XCTAttachment(image:normalized)
+        normalizedAttachment.name = "rotation-normalized-coordinate-observation"
+        normalizedAttachment.lifetime = .keepAlways
+        add(normalizedAttachment)
         let width=image.width, height=image.height
         var bytes=[UInt8](repeating:0,count:width*height*4)
         let decoded = bytes.withUnsafeMutableBytes { buffer -> Bool in
