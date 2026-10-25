@@ -326,5 +326,68 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     _ = try bridge.saveNote(fieldsPath,emptyRead.sha256,reviewSource)
     check(try bridge.note(fieldsPath).text == reviewSource,
           "owned field editing fixture returns to its original note source")
+    let commentStore = store()
+    try commentStore.importScene(firstScene)
+    let nodeID = firstScene.nodes[0].id
+    commentStore.scene.nodes[0].sourceStrokeIds = firstScene.strokes.map(\.id)
+    commentStore.scene.annotations = [.init(id:UUID(),nodeId:nodeID,text:"보존할 에이전트 주석",author:"에이전트")]
+    commentStore.selectedNode = nodeID
+    let commentBase = commentStore.scene
+    let commentStart = try bridge.saveCanvas(commentBase,png:png,sha:resetCanvas.noteSha256)
+    let commentSession = commentStore.beginCommentEdit()!
+    let commentText = " \tPencil로 보완할 댓글 e\u{301} 👩🏽‍💻\r\n둘째 줄\n "
+    commentStore.commentText = commentText
+    check(commentStore.confirmComment(sessionID:commentSession),
+          "selected node accepts one user comment through the production Store")
+    let withComment = commentStore.scene
+    let userComment = withComment.annotations.last!
+    let commentSave = try bridge.saveCanvas(withComment,png:png,sha:commentStart.noteSha256)
+    let commentRead = try PencilVaultBridge().canvas(firstScene.id)
+    let commentDecoded = try JSONDecoder().decode(CanvasScene.self,from:Data(base64Encoded:commentRead.sceneJSONBase64)!)
+    let commentReopened = store()
+    try commentReopened.importScene(commentDecoded)
+    check(commentReopened.scene.annotations == withComment.annotations &&
+          commentReopened.scene.annotations.last!.text.utf8.elementsEqual(commentText.utf8) &&
+          commentRead.noteSha256 == commentSave.noteSha256,
+          "a new Store and vault process reopen the same comment ID, author and complete Unicode source")
+    check(commentDecoded.nodes == commentBase.nodes && commentDecoded.strokes == commentBase.strokes &&
+          commentDecoded.drawingBase64 == commentBase.drawingBase64 && commentDecoded.annotations[0] == commentBase.annotations[0],
+          "Obsidian comment persistence preserves the node, source stroke identities, native ink and AI annotation")
+    check(commentDecoded.annotationFrames == withComment.annotationFrames &&
+          commentDecoded.annotationFrames[userComment.id]!.y > commentDecoded.annotationFrames[commentBase.annotations[0].id]!.y,
+          "reopened annotation geometry preserves distinct rows for the existing and new comments")
+    commentStore.undoGraphEdit()
+    let commentUndo = try bridge.saveCanvas(commentStore.scene,png:png,sha:commentSave.noteSha256)
+    let undoRead = try bridge.canvas(firstScene.id)
+    let undoDecoded = try JSONDecoder().decode(CanvasScene.self,from:Data(base64Encoded:undoRead.sceneJSONBase64)!)
+    check(undoDecoded.hasSameGraph(as:commentBase) && undoDecoded.annotations.count == 1,
+          "undo persists removal of only the new user comment through actual Obsidian files")
+    commentStore.redoGraphEdit()
+    let commentRedo = try bridge.saveCanvas(commentStore.scene,png:png,sha:commentUndo.noteSha256)
+    let redoRead = try bridge.canvas(firstScene.id)
+    let redoDecoded = try JSONDecoder().decode(CanvasScene.self,from:Data(base64Encoded:redoRead.sceneJSONBase64)!)
+    check(redoDecoded.annotations.last?.id == userComment.id && redoDecoded.hasSameGraph(as:withComment),
+          "redo persists the same comment identity without duplicating the AI annotation")
+    commentReopened.selectedNode = nodeID
+    let staleCommentSession = commentReopened.beginCommentEdit()!
+    commentReopened.commentText = "보존할 미완성 댓글"
+    var externalComment = redoDecoded
+    externalComment.revision += 1
+    externalComment.annotations[1].text = "Obsidian에서 보완한 사용자 댓글"
+    let externalCommentSave = try bridge.saveCanvas(externalComment,png:png,sha:commentRedo.noteSha256)
+    let externalCommentRead = try bridge.canvas(firstScene.id)
+    let externalCommentDecoded = try JSONDecoder().decode(CanvasScene.self,from:Data(base64Encoded:externalCommentRead.sceneJSONBase64)!)
+    try commentReopened.importScene(externalCommentDecoded)
+    check(commentReopened.scene.annotations[1].text == externalComment.annotations[1].text &&
+          commentReopened.scene.annotations[1].id == userComment.id,
+          "external Obsidian comment edit returns to the open Store with its original identity")
+    check(!commentReopened.confirmComment(sessionID:staleCommentSession) &&
+          commentReopened.commentText == "보존할 미완성 댓글" && commentReopened.scene == externalCommentDecoded,
+          "remote comment arrival rejects the stale editor and preserves both the draft and external scene")
+    _ = try bridge.saveCanvas(commentBase,png:png,sha:externalCommentSave.noteSha256)
+    let commentReset = try bridge.canvas(firstScene.id)
+    let commentResetScene = try JSONDecoder().decode(CanvasScene.self,from:Data(base64Encoded:commentReset.sceneJSONBase64)!)
+    check(commentResetScene == commentBase,
+          "owned comment fixture returns to the exact original scene without touching other vault data")
     print("SCOPE actual Store + PencilKit + ObsidianVault file roundtrip; no HTTP, UI, device or physical Pencil input")
 }
