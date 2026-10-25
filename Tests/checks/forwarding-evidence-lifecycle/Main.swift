@@ -91,22 +91,24 @@ import StreamProtocol
     @MainActor static func main() async throws {
         var assertions = 0
         func check(_ value: Bool) { precondition(value); assertions += 1 }
-        if CommandLine.arguments.contains("--http-first") {
-            let f = try Fixture("http-first"), peer = Peer("cd")
-            f.privacy.latched = false
+        if let test = CommandLine.arguments.first(where: { ["--http-first", "--off-fresh", "--off-latched"].contains($0) }) {
+            let off = test != "--http-first", initiallyLatched = test == "--off-latched"
+            let f = try Fixture(String(test.dropFirst(2))), peer = Peer("cd")
+            f.privacy.latched = initiallyLatched
             check(await f.runtime.start())
             let bootstrap = await f.observe(peer)!
             check(f.privacy.arms == 0)
             let request = try AudioForwardingIntentRequest(pairedDeviceId: peer.id, intentId: UUID(),
                 intentRevision: .init(bootstrap.ownCursor.intentRevision.value + 1), action: .request,
-                inputDesired: true, outputDesired: true, expectedRevision: bootstrap.snapshot.revision,
+                inputDesired: !off, outputDesired: !off, expectedRevision: bootstrap.snapshot.revision,
                 transportId: UUID(), transportKind: .native,
                 bindingRevision: .init(bootstrap.ownCursor.bindingRevision.value + 1))
             let body = String(data: try JSONEncoder().encode(request), encoding: .utf8)!
             let encoded = body.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
             check((await f.http("/request?id=" + peer.id.hex + "&intent=" + encoded)).0 == 200)
             let deadline = ContinuousClock.now.advanced(by: .seconds(6))
-            while !f.runtime.allows(Data(repeating: 0xcd, count: 32), direction: .input), ContinuousClock.now < deadline {
+            let expectedPhase: AudioForwardingBinding.Phase = off ? .off : .active
+            while f.runtime.snapshot?.binding?.phase != expectedPhase, ContinuousClock.now < deadline {
                 await f.runtime.checkRefresh()
                 try? await Task.sleep(for: .milliseconds(500))
                 check((await f.http("/request?id=" + peer.id.hex + "&intent=" + encoded)).0 == 200)
@@ -114,9 +116,12 @@ import StreamProtocol
             let allowed = f.runtime.allows(Data(repeating: 0xcd, count: 32), direction: .input)
             let arms = f.privacy.arms
             let sameGeneration = f.runtime.snapshot?.binding?.configuration.privacyGeneration == f.privacy.forwardingPrivacyGeneration
+            let phase = f.runtime.snapshot?.binding?.phase
             await f.finish()
-            FileHandle.standardOutput.write(Data("FIRST_HTTP active=\(allowed) arms=\(arms) sameGeneration=\(sameGeneration) (expected active=true arms=1)\n".utf8))
-            if !allowed || arms != 1 { throw NSError(domain: "FirstHTTPBinding", code: 1) }
+            FileHandle.standardOutput.write(Data("HTTP_RESULT test=\(test) active=\(allowed) arms=\(arms) sameGeneration=\(sameGeneration)\n".utf8))
+            if allowed != !off || arms != (off ? 0 : 1) || !sameGeneration || phase != expectedPhase {
+                throw NSError(domain: "FirstHTTPBinding", code: 1)
+            }
             return
         }
         if CommandLine.arguments.contains("--observe-only") {

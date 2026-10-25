@@ -13,7 +13,7 @@ root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:3]]
 flags = sys.argv[3:]
-assert flags in [[], ['--observe-only'], ['--http-first']]
+assert flags in [[], ['--observe-only'], ['--http-first'], ['--off-fresh'], ['--off-latched']]
 commit = '4916c2b64ec9e0ce6f34c913ef0f1d2d2f3b6b57'
 names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
          'AudioForwardingParticipants', 'AudioForwardingProtection', 'HostAudioForwardingRuntime']
@@ -92,6 +92,18 @@ extension HostAudioForwardingRuntime {
     try:
         output, _ = worker.communicate(timeout=45)
         print(output)
+        commits = [json.loads(line.split('] ', 1)[1]) for line in output.splitlines() if line.startswith('[원격 오디오 커밋] ')]
+        states = [json.loads(line.split('] ', 1)[1]) for line in output.splitlines() if line.startswith('[원격 오디오 상태] ')]
+        if worker.returncode == 0 and flags in [['--http-first'], ['--off-fresh'], ['--off-latched']]:
+            assert len(commits) == 1 and set(commits[0]) == {'intentGeneration', 'bindingEpoch', 'operationId', 'configuration', 'receipts', 'localProtection'}
+            commit = commits[0]
+            assert commit['localProtection'] == {'sentryVerified': False, 'localMutedVerified': flags != ['--off-fresh']}
+            assert all(receipt['state'] == 'quiescent' and all(receipt['facts'].values()) for receipt in commit['receipts'])
+            assert [state['event'] for state in states] == ['committed', 'invalidated']
+            assert all(state['bindingEpoch'] == commit['bindingEpoch'] and state['operationId'] == commit['operationId'] and state['controllerBootId'] == commit['configuration']['controllerBootId'] for state in states)
+            assert states[0]['localMutedDesired'] is True and states[0]['inputDesired'] is (flags == ['--http-first'])
+            assert states[0]['runtimeGeneration'] != states[1]['runtimeGeneration']
+            assert not any(secret in json.dumps(commits + states) for secret in ['credential', 'token', 'PCM'])
         if worker.returncode != 0:
             for log in checks.rglob('*.jsonl'):
                 print(str(log.relative_to(checks)), log.read_text())

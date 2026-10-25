@@ -382,7 +382,8 @@ final class HostAudioForwardingRuntime {
                 self.active = committed
                 self.snapshot = result
                 self.commitMedia(committed)
-                if let intent = result.intent {
+                if self.running, generation == self.revision, self.active == committed,
+                   self.coordinator.isCurrent(committed), let intent = result.intent {
                     self.logState("committed", binding: committed.binding,
                         intent: intent, generation: generation)
                 }
