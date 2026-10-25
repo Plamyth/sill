@@ -245,6 +245,96 @@ class AdapterContract(unittest.TestCase):
                     adapter.deploy({'outputRoot':str(root),'buildCache':str(root)},root/'work',{'commit':'a'*40,'tree':'b'*40})
                 command.assert_not_called()
 
+class HarnessResultAcceptance(unittest.TestCase):
+    def details(self, method):
+        identity = 'CanvasBridgeUITests/' + method + '()'
+        url = 'test://com.apple.xcode/CanvasBridge/CanvasBridgeUITests/' + identity[:-2]
+        return {'testIdentifier':identity, 'testIdentifierURL':url, 'testResult':'Passed',
+                'testRuns':[{'nodeType':'Device', 'result':'Passed', 'children':[
+                    {'nodeType':'Test Plan Configuration', 'nodeIdentifierURL':url, 'result':'Passed'}]}]}
+
+    def exercise(self, root, details, live=False, exists=True):
+        import plistlib
+        run = root / 'HarnessDerivedData/Build/Products/test.xctestrun'
+        run.parent.mkdir(parents=True)
+        run.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'EnvironmentVariables':{}}}))
+        adapter.write(root/'deployment.json',{'testId':'isolated'})
+        def command(args, *unused):
+            if args[0] == 'xcodebuild':
+                if exists: Path(args[args.index('-resultBundlePath')+1]).mkdir()
+                return 'Executed 0 tests, with 0 failures; TEST SUCCEEDED'
+            self.assertEqual(args[:5],['xcrun','xcresulttool','get','test-results','test-details'])
+            self.assertEqual(args[-2:],['--test-id','CanvasBridgeUITests/testReviewReopen()'])
+            return json.dumps(details)
+        def run_live(args, log, on_ready, **kwargs):
+            command(args); on_ready()
+        calls = []
+        with patch.object(adapter,'lease'), patch.object(adapter,'command',side_effect=command) as cmd, \
+             patch.object(adapter,'run_live_harness',side_effect=run_live):
+            result = adapter.harness({'deviceUDID':'unexecuted'},root,'testReviewReopen',
+                                     on_ready=(lambda:calls.append(True)) if live else None)
+            self.assertEqual(sum(call.args[0][0] == 'xcrun' for call in cmd.call_args_list),1)
+        self.assertEqual(calls,[True] if live else [])
+        return result
+
+    def test_harness_requires_existing_bundle_for_both_command_paths(self):
+        for live in [False,True]:
+            with self.subTest(live=live), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(adapter.Held,'xcresult_missing'):
+                    self.exercise(Path(directory),self.details('testReviewReopen'),live,exists=False)
+
+    def test_harness_requires_requested_method_and_one_passed_execution(self):
+        for failure in ['no_tests','wrong_method','wrong_bundle','skipped','failed','duplicate_device',
+                        'duplicate_configuration','no_configuration','failed_execution','repetition','malformed']:
+            for live in [False,True]:
+                with self.subTest(failure=failure,live=live), tempfile.TemporaryDirectory() as directory:
+                    details = self.details('other' if failure == 'wrong_method' else 'testReviewReopen')
+                    run = details['testRuns'][0]; configuration = run['children'][0]
+                    if failure == 'wrong_bundle': details['testIdentifierURL'] = 'test://other/CanvasBridgeUITests/testReviewReopen'
+                    if failure in ['skipped','failed']: details['testResult'] = failure.title()
+                    if failure == 'no_tests': details['testRuns'] = []
+                    if failure == 'duplicate_device': details['testRuns'].append(run.copy())
+                    if failure == 'duplicate_configuration': run['children'].append(configuration.copy())
+                    if failure == 'no_configuration': run['children'] = []
+                    if failure == 'failed_execution': configuration['result'] = 'Failed'
+                    if failure == 'repetition': configuration['children'] = [{'result':'Passed'},{'result':'Passed'}]
+                    if failure == 'malformed': details = []
+                    with self.assertRaises(adapter.Held): self.exercise(Path(directory),details,live)
+
+    def test_harness_accepts_single_matching_execution_once(self):
+        for live in [False,True]:
+            with self.subTest(live=live), tempfile.TemporaryDirectory() as directory:
+                self.assertTrue(self.exercise(Path(directory),self.details('testReviewReopen'),live).is_dir())
+
+class ReviewJournalAcceptance(unittest.TestCase):
+    def test_only_absent_payload_can_be_cleared(self):
+        import base64
+        envelopes = [{'schemaVersion':1,'sha256':adapter.sha(b'')}]
+        for raw in [b'',b'null',b'[]',b'1',b'"text"']:
+            envelopes.append({'schemaVersion':1,'sha256':adapter.sha(raw),
+                              'payload':base64.b64encode(raw).decode()})
+        for payload in [None,False,1,[],{},'%%%']:
+            envelopes.append({'schemaVersion':1,'sha256':adapter.sha(b''),'payload':payload})
+        for index,envelope in enumerate(envelopes):
+            with self.subTest(envelope=envelope), tempfile.TemporaryDirectory() as directory:
+                with patch.object(adapter,'copy_file'), patch.object(adapter,'read',return_value=envelope):
+                    if index == 0: adapter.review_journal({},Path(directory),'id','cleared')
+                    else:
+                        with self.assertRaises((adapter.Held,ValueError)):
+                            adapter.review_journal({},Path(directory),'id','cleared')
+
+    def test_draft_object_schema_and_field_types_are_strict(self):
+        import base64
+        expected = {'relayAddress':'http://127.0.0.1:8793','base':{'text':'base'},'draft':'draft'}
+        valid = dict(expected,schemaVersion=1,sceneID='12345678-1234-4234-8234-123456789abc')
+        for field,value in [('schemaVersion',True),('draft',None),('base',[]),('submittedText',3),('nodeID',3)]:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                raw = json.dumps(dict(valid,**{field:value})).encode()
+                envelope = {'schemaVersion':1,'sha256':adapter.sha(raw),'payload':base64.b64encode(raw).decode()}
+                with patch.object(adapter,'copy_file'), patch.object(adapter,'read',return_value=envelope):
+                    with self.assertRaises(adapter.Held):
+                        adapter.review_journal({},Path(directory),valid['sceneID'],'draft',expected)
+
 class ReviewAcceptance(unittest.TestCase):
     def exercise(self, directory, failure=None):
         work = Path(directory); vault = work / 'isolated-vault'; vault.mkdir()
@@ -323,7 +413,12 @@ class ReviewAcceptance(unittest.TestCase):
             if failure == 'other_note':
                 for other in vault.glob('*.md'):
                     if other != file: other.write_bytes(b'damaged')
-            return work / (method + '.xcresult')
+            result = work / (method + '-' + str(len(methods)) + '.xcresult')
+            if failure != 'ui_result_absent': result.mkdir()
+            if failure == 'ui_result_removed' and method == 'testReviewReopen' and saved.get('rated'):
+                for previous in work.glob('*.xcresult'):
+                    if previous != result: previous.rmdir()
+            return result
         with patch.object(adapter,'request',side_effect=request), patch.object(adapter,'copy_file',side_effect=copy), \
              patch.object(adapter,'harness',side_effect=harness), patch.object(adapter.time,'time',return_value=1800000000):
             result = adapter.accept_review({},work,{'address':'http://127.0.0.1:8793'},vault,test_id)
@@ -346,7 +441,7 @@ class ReviewAcceptance(unittest.TestCase):
         for failure in ['ui_did_not_save','ui_did_not_rate','wrong_due','card_id','event_id',
                         'outside','other_note','journal_hash','duplicate_rating','duplicate_grade_request',
                         'server_readback_absent','stale_not_rejected','unauth_not_rejected','missing_not_rejected',
-                        'journal_not_cleared','scene','event_id_reused']:
+                        'journal_not_cleared','scene','event_id_reused','ui_result_absent','ui_result_removed']:
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 with self.assertRaises((adapter.Held,ValueError)):
                     self.exercise(directory,failure)
