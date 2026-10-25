@@ -45,6 +45,102 @@ class AdapterContract(unittest.TestCase):
         self.assertEqual(value['nodes'][0]['id'],adapter.NODE)
         self.assertEqual(adapter.pixel()[:8],b'\x89PNG\r\n\x1a\n')
 
+    def test_comment_readback_requires_one_stable_user_comment_and_preserves_original(self):
+        baseline = adapter.comment_fixture(str(uuid.uuid4()))
+        comment_id = str(uuid.uuid4())
+        def saved():
+            scene = json.loads(json.dumps(baseline))
+            scene['revision'] += 1
+            scene['annotations'].append({'id':comment_id,'nodeId':adapter.NODE,'text':'댓글 👩🏽‍💻','author':'사용자'})
+            return scene
+        self.assertEqual(adapter.verify_comment_scene(saved(),baseline,'댓글 👩🏽‍💻'),comment_id)
+        self.assertEqual(adapter.verify_comment_scene(saved(),baseline,'댓글 👩🏽‍💻',comment_id),comment_id)
+        mutations = [
+            lambda s:s['nodes'][0].update(text='원문 손실'),
+            lambda s:s['nodes'][0].update(id=str(uuid.uuid4())),
+            lambda s:s['annotations'][0].update(text='AI 주석 손실'),
+            lambda s:s['annotations'][-1].update(text='다른 댓글'),
+            lambda s:s['annotations'][-1].update(nodeId=s['nodes'][1]['id']),
+            lambda s:s['annotations'][-1].update(id='not-a-uuid'),
+            lambda s:s['annotations'][-1].update(id=baseline['annotations'][0]['id']),
+            lambda s:s['annotations'].append(dict(s['annotations'][-1])),
+            lambda s:s.update(revision=baseline['revision']),
+            lambda s:s.update(drawingBase64='원본 획 손실'),
+        ]
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                scene = saved(); mutate(scene)
+                with self.assertRaises(adapter.Held):
+                    adapter.verify_comment_scene(scene,baseline,'댓글 👩🏽‍💻')
+        with self.assertRaisesRegex(adapter.Held,'comment_id_changed'):
+            adapter.verify_comment_scene(saved(),baseline,'댓글 👩🏽‍💻',str(uuid.uuid4()))
+
+    def test_comment_flow_restores_context_and_checks_each_ui_save_before_reopen(self):
+        import base64
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            adapter.write(work/'context.json',{'test':'isolated'})
+            scene = adapter.fixture(str(uuid.uuid4()))
+            comment_id = str(uuid.uuid4())
+            copies = []
+            methods = []
+            save_revisions = None
+            def request(server, method, path):
+                return 200, {'revision':scene['revision'],'noteSha256':'test-sha',
+                             'sceneJSONBase64':base64.b64encode(json.dumps(scene).encode()).decode()}
+            def seed(server, value, image, base):
+                nonlocal scene
+                scene = json.loads(json.dumps(value))
+                return 200, {}
+            def copy(config, work, source, destination, direction='from', **kwargs):
+                copies.append((str(source),str(destination),direction,kwargs))
+                if direction == 'from': adapter.write(destination,scene)
+            def harness(config, work, method, variables=None):
+                methods.append(method)
+                if method == 'testCommentSave':
+                    scene['revision'] = next(save_revisions) if save_revisions is not None else scene['revision'] + 1
+                    comments = [r for r in scene['annotations'] if r['author'] == '사용자']
+                    if comments: comments[0]['text'] = variables['CCR_COMMENT_TEXT']
+                    else: scene['annotations'].append({'id':comment_id,'nodeId':adapter.NODE,
+                        'text':variables['CCR_COMMENT_TEXT'],'author':'사용자'})
+                return work/(method+'.xcresult')
+            with patch.object(adapter,'request',side_effect=request), patch.object(adapter,'save_scene',side_effect=seed), \
+                 patch.object(adapter,'encode_scene',side_effect=lambda _,s:json.dumps(s).encode()), \
+                 patch.object(adapter,'stop_owned'), patch.object(adapter,'copy_file',side_effect=copy), \
+                 patch.object(adapter,'harness',side_effect=harness):
+                proof = adapter.accept_comments({},work,{},scene['id'])
+                self.assertEqual(proof['commentID'],comment_id)
+                self.assertEqual(len(proof['edits']),2)
+                self.assertEqual(methods,['testCommentSave','testCommentReopen','testCommentSave','testCommentReopen',
+                    'testStaleCommentDraftRequiresExplicitDiscard','testCommentReopen','testRulerToggleAcrossDrawingAndSelection'])
+                self.assertEqual(copies[0][2:],('to',{'replace':True}))
+                self.assertTrue(copies[1][0].endswith('/context.json'))
+                self.assertTrue(copies[1][1].endswith('/context.json'))
+                self.assertEqual(copies[1][2],'to')
+                self.assertTrue(adapter.read(work/'comment-functional-readback.json'))
+                methods.clear()
+                with patch.object(adapter,'harness',side_effect=lambda c,w,m,v=None:methods.append(m) or w/'unsaved.xcresult'):
+                    with self.assertRaisesRegex(adapter.Held,'comment_text_or_target_mismatch'):
+                        adapter.accept_comments({},work,{},scene['id'])
+                self.assertEqual(methods,['testCommentSave'])
+                for revisions in [(3,3),(4,3),(3,4)]:
+                    with self.subTest(saveRevisions=revisions):
+                        scene = adapter.fixture(scene['id'])
+                        save_revisions = iter(revisions)
+                        methods.clear()
+                        case_work = work / ('revisions-' + '-'.join(map(str,revisions)))
+                        adapter.write(case_work/'context.json',{'test':'isolated'})
+                        if revisions in [(3,3),(4,3)]:
+                            with self.assertRaisesRegex(adapter.Held,'comment_revision_not_increased'):
+                                adapter.accept_comments({},case_work,{},scene['id'])
+                            self.assertEqual(methods,['testCommentSave','testCommentReopen','testCommentSave'])
+                            self.assertFalse((case_work/'comment-functional-readback.json').exists())
+                        else:
+                            proof = adapter.accept_comments({},case_work,{},scene['id'])
+                            self.assertEqual([row['vault']['revision'] for row in proof['edits']],[3,4])
+                            self.assertEqual(proof['baseline']['revision'],2)
+                            self.assertEqual(proof['commentID'],comment_id)
+
     def test_rotation_png_requires_decoded_canvas_and_following_link(self):
         import base64, math, subprocess, zlib
         with tempfile.TemporaryDirectory() as directory:

@@ -67,6 +67,113 @@ final class CanvasBridgeUITests: XCTestCase {
         XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
     }
 
+    private func commentEditor(_ app: XCUIApplication, nodeID: String) -> XCUIElement {
+        app.buttons["요소 이동"].firstMatch.tap()
+        let node = app.descendants(matching:.any).matching(identifier:"canvasNode-\(nodeID)").firstMatch
+        XCTAssertTrue(node.waitForExistence(timeout:8))
+        node.tap()
+        app.buttons["도구"].firstMatch.tap()
+        app.buttons["구조 데이터"].tap()
+        let open = app.buttons["canvasEditComment"]
+        XCTAssertTrue(open.waitForExistence(timeout:5))
+        open.tap()
+        let editor = app.textViews["canvasCommentTextEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout:5))
+        return editor
+    }
+
+    func testCommentSave() throws {
+        let app = try app()
+        let expected = try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_COMMENT_TEXT"])
+        let previous = try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_COMMENT_PREVIOUS"])
+        let editor = commentEditor(app,nodeID:nodeID)
+        XCTAssertEqual(editor.value as? String,previous)
+        editor.tap()
+        if !previous.isEmpty {
+            editor.press(forDuration:1.2)
+            let selectAll = app.descendants(matching:.any).matching(
+                NSPredicate(format:"label IN %@",["Select All","전체 선택","모두 선택"])).firstMatch
+            XCTAssertTrue(selectAll.waitForExistence(timeout:5),"접근성 메뉴에서 전체 선택을 찾을 수 없습니다.")
+            selectAll.tap()
+        }
+        editor.typeText(expected)
+        XCTAssertEqual(editor.value as? String,expected)
+        let save = app.buttons["저장"].firstMatch
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout:5))
+        XCTAssertTrue(app.staticTexts["Pencil 그림과 구조 데이터가 Obsidian에 저장됐습니다."].waitForExistence(timeout:20))
+    }
+
+    func testCommentReopen() throws {
+        let app = try app()
+        let expected = try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_COMMENT_TEXT"])
+        let editor = commentEditor(app,nodeID:nodeID)
+        XCTAssertEqual(editor.value as? String,expected)
+        let image = XCTAttachment(screenshot:app.screenshot())
+        image.name = "native-comment-reopened"
+        image.lifetime = .keepAlways
+        add(image)
+        app.buttons["나중에"].firstMatch.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout:5))
+    }
+
+    func testStaleCommentDraftRequiresExplicitDiscard() throws {
+        let app = try app()
+        let expected = try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_COMMENT_TEXT"])
+        let editor = commentEditor(app,nodeID:nodeID)
+        XCTAssertEqual(editor.value as? String,expected)
+        editor.tap()
+        editor.typeText(" 저장하지 않을 초안")
+        let draft = try XCTUnwrap(editor.value as? String)
+        XCTAssertNotEqual(draft,expected)
+        app.buttons["나중에"].firstMatch.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout:5))
+        let stale = commentEditor(app,nodeID:"42478F2C-F81D-4AC9-B714-ECBD9DDAC411")
+        XCTAssertEqual(stale.value as? String,draft)
+        XCTAssertFalse(app.buttons["저장"].firstMatch.isEnabled)
+        let discard = app.buttons["canvasDiscardCommentDraft"]
+        discard.tap()
+        let alert = app.alerts["댓글 초안을 버릴까요?"]
+        XCTAssertTrue(alert.waitForExistence(timeout:5))
+        alert.buttons["계속 편집"].tap()
+        XCTAssertEqual(stale.value as? String,draft)
+        XCTAssertFalse(app.buttons["저장"].firstMatch.isEnabled)
+        discard.tap()
+        XCTAssertTrue(alert.waitForExistence(timeout:5))
+        alert.buttons["초안 버리기"].tap()
+        XCTAssertTrue(stale.waitForNonExistence(timeout:5))
+        let fresh = commentEditor(app,nodeID:"42478F2C-F81D-4AC9-B714-ECBD9DDAC411")
+        XCTAssertEqual(fresh.value as? String,"")
+        app.buttons["나중에"].firstMatch.tap()
+        XCTAssertTrue(fresh.waitForNonExistence(timeout:5))
+    }
+
+    func testRulerToggleAcrossDrawingAndSelection() throws {
+        let app = try app()
+        app.buttons["그리기"].firstMatch.tap()
+        app.buttons["도구"].firstMatch.tap()
+        let ruler = app.descendants(matching:.any).matching(identifier:"canvasRuler").firstMatch
+        XCTAssertTrue(ruler.waitForExistence(timeout:5))
+        XCTAssertEqual(ruler.value as? String,"0")
+        ruler.tap()
+        XCTAssertTrue(ruler.waitForNonExistence(timeout:5))
+        for mode in ["요소 이동","그리기"] {
+            app.buttons[mode].firstMatch.tap()
+            app.buttons["도구"].firstMatch.tap()
+            XCTAssertTrue(ruler.waitForExistence(timeout:5))
+            XCTAssertEqual(ruler.value as? String,"1")
+            app.buttons["구조 데이터"].tap()
+            app.buttons["닫기"].firstMatch.tap()
+        }
+        app.buttons["도구"].firstMatch.tap()
+        XCTAssertEqual(ruler.value as? String,"1")
+        ruler.tap()
+        XCTAssertTrue(ruler.waitForNonExistence(timeout:5))
+        app.buttons["도구"].firstMatch.tap()
+        XCTAssertEqual(ruler.value as? String,"0")
+    }
+
     func testPeleNodeEditAndSave() throws {
         let app = try app()
         app.buttons["다이어그램"].firstMatch.tap()
