@@ -96,11 +96,11 @@ extension HostAudioForwardingRuntime {
         states = [json.loads(line.split('] ', 1)[1]) for line in output.splitlines() if line.startswith('[원격 오디오 상태] ')]
         if worker.returncode == 0 and flags in [['--http-first'], ['--off-fresh'], ['--off-latched']]:
             assert len(commits) == 1 and set(commits[0]) == {'intentGeneration', 'bindingEpoch', 'operationId', 'configuration', 'receipts', 'localProtection'}
-            commit = commits[0]
-            assert commit['localProtection'] == {'sentryVerified': False, 'localMutedVerified': flags != ['--off-fresh']}
-            assert all(receipt['state'] == 'quiescent' and all(receipt['facts'].values()) for receipt in commit['receipts'])
+            command = commits[0]
+            assert command['localProtection'] == {'sentryVerified': False, 'localMutedVerified': flags != ['--off-fresh']}
+            assert all(receipt['state'] == 'quiescent' and all(receipt['facts'].values()) for receipt in command['receipts'])
             assert [state['event'] for state in states] == ['committed', 'invalidated']
-            assert all(state['bindingEpoch'] == commit['bindingEpoch'] and state['operationId'] == commit['operationId'] and state['controllerBootId'] == commit['configuration']['controllerBootId'] for state in states)
+            assert all(state['bindingEpoch'] == command['bindingEpoch'] and state['operationId'] == command['operationId'] and state['controllerBootId'] == command['configuration']['controllerBootId'] for state in states)
             assert states[0]['localMutedDesired'] is True and states[0]['inputDesired'] is (flags == ['--http-first'])
             assert states[0]['runtimeGeneration'] != states[1]['runtimeGeneration']
             assert not any(secret in json.dumps(commits + states) for secret in ['credential', 'token', 'PCM'])
@@ -129,6 +129,7 @@ extension HostAudioForwardingRuntime {
         except ProcessLookupError:
             pass
 assert before == {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+assert isinstance(commit, str) and re.fullmatch(r'[a-f0-9]{40}', commit)
 assert node_hashes == {name: hashlib.sha256(node_source(name)).hexdigest() for name in sorted(node_files)}
 print(json.dumps({'passed': exit_code == 0, 'exitCode': exit_code,
                   'sourceUnchanged': True, 'sourceHashes': before, 'selectedSource': selections,
