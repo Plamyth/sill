@@ -289,7 +289,7 @@ final class LocalAudioAuthentication {
                 candidate.callbackPending = false
                 guard let self, self.remainsCurrent(candidate) else { return }
                 guard candidate.right.state == .notAuthorized || candidate.right.state == .unknown,
-                      let window = self.presentation.begin(invalidated: { [weak self] in
+                      let window = await self.presentation.begin(invalidated: { [weak self] in
                           guard self?.attempt === candidate else { return }
                           self?.cancel()
                       }) else { self.finish(false); return }

@@ -4,6 +4,7 @@ import AppKit
 final class LocalAuthenticationPresentation {
     private var window: NSWindow?
     private var ownsWindow = false
+    private var previousActivationPolicy: NSApplication.ActivationPolicy?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
     static func builtinScreen(in screens: [NSScreen]) -> NSScreen? {
@@ -14,7 +15,7 @@ final class LocalAuthenticationPresentation {
         return candidates.count == 1 ? candidates.first : nil
     }
 
-    func begin(invalidated: @escaping @MainActor () -> Void) -> NSWindow? {
+    func begin(invalidated: @escaping @MainActor () -> Void) async -> NSWindow? {
         guard window == nil, let screen = Self.builtinScreen(in: NSScreen.screens) else {
             print("[로컬 복귀 인증] 활성 내장 화면을 확정하지 못했습니다. 인증을 요청하지 않습니다.")
             return nil
@@ -62,9 +63,28 @@ final class LocalAuthenticationPresentation {
             }
             observers.append((center, observer))
         }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        if borrowed { window.orderFrontRegardless() }
+        let previousPolicy = NSApp.activationPolicy()
+        if previousPolicy != .regular {
+            guard NSApp.setActivationPolicy(.regular) else { end(); return nil }
+            previousActivationPolicy = previousPolicy
+        }
+        NSApp.activate()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while self.window === window, !Task.isCancelled, ContinuousClock.now < deadline {
+            if NSApp.isActive {
+                window.makeKeyAndOrderFront(nil)
+                if borrowed { window.orderFrontRegardless() }
+                if window.isKeyWindow { break }
+            }
+            do { try await Task.sleep(for: .milliseconds(25)) }
+            catch { break }
+        }
+        guard self.window === window else { return nil }
+        guard !Task.isCancelled, NSApp.isActive, window.isKeyWindow, window.isVisible else {
+            print("[로컬 복귀 인증] 활성 앱과 내장 anchor의 키보드 포커스를 확인하지 못했습니다. 인증을 요청하지 않습니다.")
+            end()
+            return nil
+        }
         let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
         let actualID = (window.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
         guard actualID == id, CGDisplayIsBuiltin(id) != 0, CGDisplayIsActive(id) != 0,
@@ -85,5 +105,9 @@ final class LocalAuthenticationPresentation {
         window = nil
         ownsWindow = false
         if closeOwnedWindow { old?.close() }
+        if let previousActivationPolicy {
+            self.previousActivationPolicy = nil
+            _ = NSApp.setActivationPolicy(previousActivationPolicy)
+        }
     }
 }
