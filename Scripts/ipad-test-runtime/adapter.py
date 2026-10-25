@@ -456,6 +456,7 @@ def accept_comments(config, work, server, test_id):
     copy_file(config,work,work / 'context.json',root + '/context.json','to')
     results = []
     previous = ''
+    previous_revision = baseline['revision']
     comment_id = None
     for text in ['첫 댓글 👩🏽‍💻 원문 보존','수정 댓글 · 같은 카드']:
         ui = harness(config,work,'testCommentSave',{'CCR_COMMENT_TEXT':text,'CCR_COMMENT_PREVIOUS':previous})
@@ -463,6 +464,8 @@ def accept_comments(config, work, server, test_id):
         require(code == 200, 'comment_vault_readback_failed')
         scene = json.loads(base64.b64decode(saved['sceneJSONBase64']))
         comment_id = verify_comment_scene(scene,baseline,text,comment_id)
+        require(scene['revision'] > previous_revision, 'comment_revision_not_increased')
+        previous_revision = scene['revision']
         local = work / ('comment-device-' + str(len(results)) + '.json')
         copy_file(config,work,root + '/state/CanvasScene.json',local)
         require(read(local) == scene, 'comment_device_vault_mismatch')
