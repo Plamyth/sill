@@ -347,13 +347,33 @@ final class HostAudioForwardingRuntime {
         }
         guard preparing != scope.binding.bindingEpoch else { return }
         invalidate()
-        if (scope.inputDesired || scope.outputDesired), !privacy.latched { _ = privacy.armAndVerify() }
+        if scope.requiresAudioIsolation, !privacy.latched, !privacy.armAndVerify() {
+            print("[원격 오디오 준비] phase=privacy_configuration code=isolation_unverified")
+            return
+        }
         let generation = revision
+        let owner = relay, evidence = evidenceRevision
         preparing = scope.binding.bindingEpoch
         preparingBinding = scope.binding
         preparation = Task { @MainActor [weak self] in
-            guard let self, self.running, generation == self.revision,
-                  let latest = await self.readSnapshot(), scope.matches(latest) else { return }
+            guard let self else { return }
+            let admitted = { [weak self] in
+                guard let self else { return false }
+                return self.running && !Task.isCancelled && generation == self.revision &&
+                    evidence == self.evidenceRevision && self.relay === owner && self.privacy.forwardingIntentAllowed
+            }
+            guard admitted(), let latest = await self.readSnapshot(), admitted(), scope.matches(latest) else { return }
+            if scope.binding.configuration != self.configuration {
+                guard let expected = self.configuration,
+                      let configured = self.accepted(await owner.forwardingConfigure(
+                        privacyGeneration: expected.privacyGeneration, admission: admitted), phase: "privacy_configuration"),
+                      admitted(), self.configuration == expected else { return }
+                self.preparation = nil
+                self.preparing = nil
+                self.preparingBinding = nil
+                self.observe(configured)
+                return
+            }
             let outcome = await self.coordinator.reconcile(latest)
             guard self.running, generation == self.revision, !Task.isCancelled else { return }
             self.preparation = nil
