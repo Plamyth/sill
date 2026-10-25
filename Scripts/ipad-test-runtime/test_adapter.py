@@ -14,6 +14,14 @@ adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
 
 class AdapterContract(unittest.TestCase):
+    def test_deploy_never_requests_provisioning_updates(self):
+        import ast
+        import inspect
+        tree = ast.parse(inspect.getsource(adapter.deploy))
+        literals = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)]
+        self.assertNotIn('-allowProvisioningUpdates', literals)
+        self.assertNotIn('-allowProvisioningDeviceRegistration', literals)
+
     def test_lease_denials_never_call_device(self):
         with tempfile.TemporaryDirectory() as directory:
             lease_path = Path(directory) / 'lease.json'

@@ -192,7 +192,7 @@ def deploy(config, work, source):
     fixture_writer = runpy.run_path(str(Path(config['repo']) / 'Scripts/owner-bootstrap-fixture.py'))['write_fixture']
     owner_profile = fixture_writer(derived.parent / 'OwnerBootstrapFixture')
     command(['xcodebuild', '-project', Path(config['repo']) / 'iOSClient/Sill.xcodeproj', '-scheme', 'Sill',
-             '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived, '-allowProvisioningUpdates',
+             '-configuration', 'Debug', '-destination', 'generic/platform=iOS', '-derivedDataPath', derived,
              'DEVELOPMENT_TEAM=' + config['developmentTeam'], 'CURRENT_PROJECT_VERSION=' + version,
              'PRODUCT_BUNDLE_IDENTIFIER=' + BUNDLE, 'INFOPLIST_FILE=' + str(metadata_path),
              'CCR_SOURCE_EXTERNAL_INFO_FILE=' + str(metadata_path),
