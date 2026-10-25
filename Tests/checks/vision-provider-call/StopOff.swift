@@ -1,8 +1,8 @@
 import Foundation
 import StreamProtocol
 
-func check(_ condition: @autoclosure () -> Bool, _ label: String) {
-    if !condition() { fputs("FAIL: \(label)\n", stderr); exit(1) }
+func check(_ condition: Bool, _ label: String) {
+    if !condition { fputs("FAIL: \(label)\n", stderr); exit(1) }
 }
 final class NWConnection {}
 final class StreamClient {
