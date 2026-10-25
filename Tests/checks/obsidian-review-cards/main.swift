@@ -176,6 +176,42 @@ import PencilKit
         check(try VaultReviewCard.parse(lf.replacing(.front,with:"e\u{301}\n"))?.text(for:.front).utf8.elementsEqual("e\u{301}\n".utf8) == true,
               "LF 문서도 사용자 끝 개행을 별도로 유지")
 
+        let boundaryInputs = [
+            ("끝CR","질문\r","답\r"), ("끝CRLF","질문\r\n","답\r\n"),
+            ("끝LF","질문\n","답\n"),
+            ("혼합","질문 e\u{301}\r\n다음\n중간\r끝\r","답 👩🏽‍💻\n다음\r\n중간\r끝\r"),
+            ("빈 입력","",""), ("CR만","\r","\r"),
+            ("연속CR","질문\r\r","답\r\r"), ("일반 입력","질문","답")]
+        let boundaryDocuments = [("LF",rated.replacingOccurrences(of:"\r\n",with:"\n")),("CRLF",rated)]
+        for (style,document) in boundaryDocuments {
+            for field in VaultReviewCard.Field.allCases {
+                var current = document
+                for cycle in 1...2 {
+                    for (label,front,back) in boundaryInputs {
+                        let input = field == .front ? front : back
+                        let before = try VaultReviewCard.parse(current)!
+                        let marker = field == .front ? "<!-- ccr-review-front -->" : "<!-- ccr-review-back -->"
+                        let nextMarker = field == .front ? "<!-- ccr-review-back -->" : "<!-- /ccr-review-card -->"
+                        let start = current.range(of:marker)!.upperBound
+                        let offset = current[..<start].utf8.count
+                        let lower = Array(current.utf8)[offset...].firstIndex(of:10)! + 1
+                        let upper = current[..<current.range(of:nextMarker)!.lowerBound].utf8.count
+                        let edited = try before.replacing(field,with:input)
+                        let after = try VaultReviewCard.parse(edited)!
+                        let tag = "P2 \(style) \(field.rawValue) \(label) 왕복 \(cycle)"
+                        check(after.text(for:field).utf8.elementsEqual(input.utf8),tag + " 사용자 UTF-8 보존")
+                        check(after.metadata == before.metadata,tag + " 카드 ID·평가 보존")
+                        check(edited.utf8.starts(with:current.utf8.prefix(lower)) &&
+                              edited.utf8.suffix(current.utf8.count - upper).elementsEqual(current.utf8.dropFirst(upper)),
+                              tag + " 편집 범위 밖 모든 바이트 보존")
+                        check(try after.replacing(field,with:after.text(for:field)).utf8.elementsEqual(edited.utf8),
+                              tag + " 다시 열기·동일 입력은 바이트 변경 0")
+                        current = edited
+                    }
+                }
+            }
+        }
+
         #if !REVIEW_MODEL_ONLY
         func makeStore(journal: URL? = nil, scene: CanvasScene? = nil) -> CanvasStore {
             let value = CanvasStore(blockRecoveryURL:root.appendingPathComponent(UUID().uuidString + ".block"),
@@ -185,6 +221,35 @@ import PencilKit
             return value
         }
         let path = "Notes/review.md"
+        for (style,document) in boundaryDocuments {
+            let source = try ReviewFile(root:root,text:document)
+            var value = makeStore()
+            await value.openVaultNote(path,load:source.load)
+            for cycle in 1...2 {
+                for (label,front,back) in boundaryInputs {
+                    let session = value.vaultReviewEditSession!
+                    let metadata = try VaultReviewCard.parse(value.vaultDraft)!.metadata
+                    let tag = "P2 Store \(style) \(label) 왕복 \(cycle)"
+                    let writes = source.writes
+                    check(value.editVaultReview(.front,text:front,session:session) &&
+                          value.editVaultReview(.back,text:back,session:session),tag + " 질문·답 편집")
+                    let draft = value.vaultDraft
+                    check(value.noteRecovery?.draft.utf8.elementsEqual(draft.utf8) == true && source.writes == writes,
+                          tag + " 기존 저널에 초안 보존")
+                    await value.saveVaultNote(save:source.save,load:source.load)
+                    let snapshot = try source.load(path)
+                    check(!value.vaultDirty && value.noteRecovery == nil && source.writes == writes + 1 &&
+                          snapshot.text.utf8.elementsEqual(draft.utf8),tag + " 파일 저장·재조회")
+                    let reopened = makeStore()
+                    await reopened.openVaultNote(path,load:source.load)
+                    let saved = try VaultReviewCard.parse(reopened.vaultDraft)!
+                    check(saved.text(for:.front).utf8.elementsEqual(front.utf8) &&
+                          saved.text(for:.back).utf8.elementsEqual(back.utf8) && saved.metadata == metadata,
+                          tag + " 새 Store 재열기 UTF-8·평가 보존")
+                    value = reopened
+                }
+            }
+        }
         let hiddenFile = try ReviewFile(root:root,text:"<!-- 닫힘 --> <!--\n" + cardText), hiddenStore = makeStore()
         await hiddenStore.openVaultNote(path,load:hiddenFile.load)
         var hiddenRated = false
