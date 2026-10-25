@@ -127,8 +127,27 @@ struct VisionPointer {
             if live.isEmpty { stroke = .idle }
             return releases
         }
-        let fresh = samples.filter { !retired.contains($0.id) && $0.timestamp.isFinite && $0.timestamp >= (live[$0.id] ?? -.infinity) }
-        let competing = Set(fresh.map(\.id)).union(live.keys).count > 1
+        var newest = live
+        var finished = retired
+        let fresh = samples.filter { sample in
+            guard !finished.contains(sample.id), sample.timestamp >= (newest[sample.id] ?? -.infinity) else { return false }
+            if sample.phase == .active { newest[sample.id] = sample.timestamp }
+            else { newest.removeValue(forKey: sample.id); finished.insert(sample.id) }
+            return true
+        }.enumerated().sorted { left, right in
+            left.element.timestamp == right.element.timestamp ? left.offset < right.offset
+                : left.element.timestamp < right.element.timestamp
+        }.map(\.element)
+        var spans = Dictionary(uniqueKeysWithValues: live.keys.map { ($0, (start: -TimeInterval.infinity, end: TimeInterval.infinity)) })
+        for sample in fresh {
+            if sample.phase == .active, spans[sample.id] == nil {
+                spans[sample.id] = (sample.timestamp, .infinity)
+            } else if sample.phase != .active { spans[sample.id]?.end = sample.timestamp }
+        }
+        let intervals = Array(spans.values)
+        let competing = intervals.enumerated().contains { index, span in
+            intervals.dropFirst(index + 1).contains { max(span.start, $0.start) <= min(span.end, $0.end) }
+        }
         var events = competing ? cancel() : []
         if competing { stroke = .suppressed }
         for sample in fresh {
@@ -136,7 +155,10 @@ struct VisionPointer {
             let known = live[sample.id] != nil
             if sample.phase == .active { live[sample.id] = sample.timestamp }
             else { live.removeValue(forKey: sample.id); retired.insert(sample.id) }
-            if case .suppressed = stroke { continue }
+            if case .suppressed = stroke {
+                if !competing && live.isEmpty { stroke = .idle }
+                continue
+            }
             if sample.phase == .cancelled { events += cancel(); continue }
             if case .idle = stroke {
                 guard sample.phase == .active, !known,

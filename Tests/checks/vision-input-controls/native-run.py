@@ -9,6 +9,7 @@ import tempfile
 import time
 from extract import fixture
 from run import callback_mutants, execute
+import run as runner
 
 ROOT = Path(__file__).resolve().parents[3]
 received = json.loads((ROOT / 'received-source-sha256.json').read_text())
@@ -24,12 +25,14 @@ with tempfile.TemporaryDirectory(prefix='native-checks-', dir=ROOT) as folder:
         p = generated / name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(contents)
     env = dict(os.environ)
     xcode = Path('/Applications/Xcode.app/Contents/Developer')
-    if xcode.is_dir(): env['DEVELOPER_DIR'] = str(xcode)
+    developer = str(xcode) if xcode.is_dir() else subprocess.check_output(['/usr/bin/xcode-select', '-p'], text=True).strip()
+    runner.DEVELOPER_DIR = developer
+    print('PURE_TEST_DEVELOPER_DIR ' + developer, flush=True)
     base = ['xcrun', 'swiftc', '-swift-version', '5', '-package-name', 'sill', '-module-cache-path', str(out / 'cache')]
     def run(command, label, witness=None):
         log, result = execute(command, timeout=150, output=out, deadline=deadline)
         commands.append({'label': label, 'exitCode': result['exitCode'], 'cleanupVerified': result['processGroup']['verified'], 'reaped': result['reaped']})
-        assert result['processGroup']['verified'] and result['reaped'], label + ' child cleanup unverified' 
+        assert result['processGroup']['verified'] and result['reaped'], label + ' child cleanup unverified'
         if witness:
             assert result['exitCode'] != 0 and 'Precondition failed: ' + witness in log, label + '\n' + log[-5000:]
         elif result['exitCode']:
@@ -58,4 +61,4 @@ with tempfile.TemporaryDirectory(prefix='native-checks-', dir=ROOT) as folder:
         run([str(executable)], 'runtime-mutant-' + name, witness)
         mutants.append(name)
     assert all((generated / name).read_text() == source for name, source in files.items())
-    print('NATIVE_RESULT ' + json.dumps({'assertions': int(re.search(r'RESULT_ASSERTIONS (\d+)', log)[1]), 'pointerAssertions': int(re.search(r'Vision input: (\d+) behavioral checks', pointer_log)[1]), 'mutantsCaught': mutants, 'extractionSHA256': extraction, 'generatedHashesMatched': True, 'receivedHashesMatched': True, 'commands': commands, 'externalEffects': 0}), flush=True)
+    print('NATIVE_RESULT ' + json.dumps({'assertions': int(re.search(r'RESULT_ASSERTIONS (\d+)', log)[1]), 'pointerAssertions': int(re.search(r'Vision input: (\d+) behavioral checks', pointer_log)[1]), 'mutantsCaught': mutants, 'extractionSHA256': extraction, 'generatedHashesMatched': True, 'receivedHashesMatched': True, 'pureTestDeveloperDir': developer, 'commands': commands, 'externalEffects': 0}), flush=True)
