@@ -6,7 +6,7 @@ import StreamProtocol
     var source = StreamSource.desktop
     var epoch: VideoEpoch?
     var isClosed = false
-    func inputRect(generation: String, epoch id: UUID?) -> CGRect? {
+    func inputRect(generation: String?, epoch id: UUID?) -> CGRect? {
         guard !isClosed, let epoch, epoch.generation == generation, epoch.id == id, epoch.source == source else { return nil }
         return CGRect(x: 0, y: 0, width: 400, height: 300)
     }
@@ -38,6 +38,12 @@ private struct Window { let id: CGWindowID; let owningApplication: App? }
     var peerStreams: [ObjectIdentifier: PeerStreamSession] = [:]
     var connections: [ObjectIdentifier: Connection] = [:]
     let server = Server(), catalog = Catalog(), sizer = Sizer(), injector = InputInjector()
+    let peerInputQueue = PeerInputQueue()
+    var peerGestureChords: [ObjectIdentifier: GestureChords] = [:]
+    var gestureArrivals: [ObjectIdentifier: [CFAbsoluteTime]] = [:]
+    static let gesturesPerSecond = 4
+    func hotKeyTable() -> [Int: HotKey] { GestureChords.defaults }
+    func logClick(_ event: InputEvent, in rect: CGRect) {}
     var synthetic = false, appKitLoop = true, shuttingDown = false, switching = false
     var active = StreamSource.desktop
     var videoEpoch: VideoEpoch?
@@ -45,7 +51,9 @@ private struct Window { let id: CGWindowID; let owningApplication: App? }
     var onRaise: (() -> Void)?
     func activateAndRaise(window: Window) { raised.append(window.id); Self.foreground = window.owningApplication?.processID; onRaise?() }
     __PRODUCTION_COORDINATOR__
+    __PRODUCTION_INPUT__
     func run() async {
+        if CommandLine.arguments.contains("--peer-gesture-state") { await commonGestureChecks(); return }
         injector.isolatesPhysicalInput = true
         let connection = Connection(), lane = PeerStreamSession()
         let peer = ObjectIdentifier(connection)
@@ -87,6 +95,7 @@ private struct Window { let id: CGWindowID; let owningApplication: App? }
         queue.cancel(peer: peer)
         await queue.drain()
         Checks.check(effects == 0, "exact PeerInputQueue 취소는 egress 작업을 실행하지 않음")
+        await commonInputChecks()
     }
 }
 
