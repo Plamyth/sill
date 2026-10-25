@@ -70,6 +70,8 @@ import Darwin
     var relayRequest: LocalAudioParticipantRequest?
     var authGate: Gate?, surfaceGate: Gate?, postIntentGate: Gate?
     var authHook: (() -> Void)?, intentHook: (() -> Void)?, surfaceHook: (() -> Void)?
+    var postCompletionHook: (() -> Void)?
+    var sentryCompleted = false
     var events: [String] = []
     var finishedIntent = false
     var releasedWithoutProof = false
@@ -133,7 +135,10 @@ import Darwin
         privacy.localReturnActivityChanged = { [unowned self] in sentry.localReturnActivityChanged(privacy.localReturnInProgress) }
         privacy.localReturnDidComplete = { [unowned self] deadline, current, commitAudio in
             lateCommit = commitAudio
-            return await sentry.completeAuthenticatedLocalReturn(until: deadline, current: current, commitAudio: commitAudio)
+            let result = await sentry.completeAuthenticatedLocalReturn(until: deadline, current: current, commitAudio: commitAudio)
+            sentryCompleted = result
+            if result { postCompletionHook?() }
+            return result
         }
         sentry.start()
         Self.retained.append(self)
@@ -197,6 +202,20 @@ import Darwin
     }
     @MainActor static func main() async throws {
         let output = URL(fileURLWithPath: CommandLine.arguments[1])
+        if CommandLine.arguments.contains("--postcommit") {
+            let f = Fixture()
+            f.postCompletionHook = { f.hal.readFails = true }
+            let result = await f.privacy.requestLocalReturn()
+            let split = f.sentryCompleted && !result && !f.curtain && !f.tap && f.sentryStates.last == "inactive"
+            print("POSTCOMMIT_REPRO sentryCompleted=\(f.sentryCompleted) modelResult=\(result) curtain=\(f.curtain) tap=\(f.tap) durableSurface=\(f.sentryStates.last ?? "none")")
+            check(!split, "Sentry 완료 뒤 HAL 재조회 실패가 Model 실패·보호 유지 문구와 이미 해제된 표면 상태로 분열하지 않음")
+            trace("postcommit-readback-failure", f)
+            try JSONSerialization.data(withJSONObject: ["passed": failures.isEmpty, "failures": failures,
+                "assertions": assertions, "cases": traces, "actualEffects": 0] as [String: Any],
+                options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("postcommit-return.json"))
+            if !failures.isEmpty { exit(1) }
+            return
+        }
         let f = await restored()
         f.reProtectSurface()
         let before = f.counts, snapshot = f.hal.snapshot, gate = Gate()

@@ -8,6 +8,7 @@ import tempfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', required=True, type=Path)
+parser.add_argument('--postcommit', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
@@ -34,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='surface-return-build-', dir=args.output
     subprocess.run(swift + ['-parse-as-library', '-I', str(build), *map(str, host),
         str(build / 'LocalAudioReturn.swift'), str(here / 'Main.swift'), str(build / 'StreamProtocol.o'),
         '-o', str(build / 'checks')], check=True)
-    result = subprocess.run([str(build / 'checks'), str(args.output)], timeout=90)
+    result = subprocess.run([str(build / 'checks'), str(args.output)] + (['--postcommit'] if args.postcommit else []), timeout=90)
 after = digest()
 assert before == after
 (args.output / 'source-evidence.json').write_text(json.dumps(dict(
