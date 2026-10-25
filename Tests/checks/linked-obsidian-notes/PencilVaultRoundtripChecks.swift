@@ -136,6 +136,9 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     let png = NSBitmapImageRep(data:image.tiffRepresentation!)!.representation(using:.png,properties:[:])!
     check(png.count > 100 && firstScene.strokes[0].visibility?.kind == .masked,
           "native PencilKit fixture contains rendered ink and partial-mask geometry")
+    canvas.rulerEnabled = true
+    check(canvas.rulerIsActive(isVisible:true) && canvas.scene == firstScene,
+          "enabling the native ruler leaves the scene, source ink and Obsidian payload unchanged")
     let firstSave = try bridge.saveCanvas(firstScene,png:png,sha:nil)
     let firstRead = try PencilVaultBridge().canvas(firstScene.id)
     let firstBytes = Data(base64Encoded:firstRead.sceneJSONBase64)!
@@ -144,6 +147,8 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     try restored.importScene(firstDecoded)
     check(restored.scene == firstScene && firstRead.noteSha256 == firstSave.noteSha256,
           "actual Obsidian scene JSON is reimported with the same scene and source identities")
+    check(!restored.rulerEnabled && !restored.rulerIsActive(isVisible:true) && restored.scene == firstScene,
+          "a new Store reopens the exact vault scene with the session-only ruler initially off")
     let nativeStroke = restored.drawing.strokes[0]
     check(restored.scene.drawingBase64 == firstScene.drawingBase64 && restored.scene.strokes == firstScene.strokes,
           "the frozen native source bytes and complete structured erased visibility survive unchanged")
