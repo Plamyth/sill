@@ -13,7 +13,7 @@
 
 관측기는 bundle ID, 정규 설치 실행 경로, 실제 프로세스 실행 경로, `anchor apple and identifier` live-code 서명, 조회 전후의 동일한 프로세스 생성시각을 확인한다. `UserNotificationCenter`, 다른 Apple 앱, 경로 위조, 서명 실패, 프로세스 종료, 여러 후보 창, 가려진 창은 거절한다. 프로세스 종료 알림도 해당 proof를 폐기한다.
 
-공식 `LARight.authorize(..., in: window)`는 현재 요청 UUID와 함께 비공개로 등록한 내장 화면 전용 창에서 연다. 이 창은 검은 커튼보다 높은 1002 레벨이며, 같은 창 객체와 정확한 부모 관계의 공식 인증 시트만 추가로 수용한다. 중앙 검증 함수는 입력 관측과 인증 완료 양쪽에서 같은 불투명도·화면·공유·부모 관계를 다시 확인한다. 같은 Sill 프로세스의 다른 창은 허용하지 않는다.
+공식 `LAAuthenticationView`를 현재 요청 UUID와 함께 비공개로 등록한 내장 화면 전용 창에 붙이고, 같은 새 `LAContext`로 Touch ID를 평가한다. 이 창은 검은 커튼보다 높은 1002 레벨이며, 같은 창 객체와 정확한 부모 관계의 공식 인증 시트만 추가로 수용한다. 중앙 검증 함수는 입력 관측과 인증 완료 양쪽에서 같은 불투명도·화면·공유·부모 관계를 다시 확인한다. 같은 Sill 프로세스의 다른 창은 허용하지 않는다. 로그인 암호 UI는 이 embedded 생체 인증 경로의 지원 범위가 아니며 별도 미완료 항목이다.
 
 session tap은 현재 challenge, 검증한 OS owner의 관측 proof, 기한과 두 tap 상태를 확인한 뒤 원래 PID0·HID1·tag0인 제한된 물리 입력만 수용한다. `refreshInputObservation`은 callback 밖에서 현재 요청·proof 태그에 묶인 HID source 두 개를 준비한다. 하나는 proof 태그, 하나는 clear0이며 공개 후 태그를 바꾸지 않는다. `HostSentryPlatform.stampEventSource`는 준비된 source의 태그와 state를 확인한 뒤 `event.setSource`를 호출한다. 태그, 원래 source state, 원래 PID 또는 현재 Host PID의 readback이 맞아야 반환한다.
 

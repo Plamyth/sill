@@ -1,4 +1,6 @@
 import AppKit
+import LocalAuthentication
+import LocalAuthenticationEmbeddedUI
 
 @MainActor
 final class LocalAuthenticationPresentation {
@@ -42,7 +44,7 @@ final class LocalAuthenticationPresentation {
         return Self.validatedWindows(for: operationID).first === window
     }
 
-    func begin(operationID: UUID, invalidated: @escaping @MainActor () -> Void) async -> NSWindow? {
+    func begin(operationID: UUID, context: LAContext, invalidated: @escaping @MainActor () -> Void) async -> NSWindow? {
         print("[로컬 복귀 인증] 표시 준비 시작 ownWindow=\(window != nil) registeredOwner=\(Self.registeredOwner != nil)")
         guard window == nil, Self.registeredOwner == nil,
               let screen = Self.builtinScreen(in: NSScreen.screens) else {
@@ -65,7 +67,7 @@ final class LocalAuthenticationPresentation {
                              styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false, screen: screen)
         window.hidesOnDeactivate = false
         window.identifier = NSUserInterfaceItemIdentifier("CCR.LocalAuthentication")
-        window.title = "Touch ID 또는 Mac 로그인 암호"
+        window.title = "Touch ID · Mac 로컬 복귀"
         window.isReleasedWhenClosed = false
         window.isOpaque = true
         window.backgroundColor = .windowBackgroundColor
@@ -74,6 +76,22 @@ final class LocalAuthenticationPresentation {
         window.ignoresMouseEvents = false
         window.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary]
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)) + 2)
+        let authenticationView = LAAuthenticationView(context: context, controlSize: .large)
+        let reason = NSTextField(wrappingLabelWithString: "Touch ID에 손가락을 대면 Mac 화면과 키보드·마우스를 로컬로 돌려받습니다.")
+        reason.alignment = .center
+        let content = NSStackView(views: [reason, authenticationView])
+        content.orientation = .vertical
+        content.spacing = 16
+        content.translatesAutoresizingMaskIntoConstraints = false
+        guard let parent = window.contentView else { window.close(); return nil }
+        parent.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.centerXAnchor.constraint(equalTo: parent.centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: parent.centerYAnchor),
+            content.widthAnchor.constraint(equalTo: parent.widthAnchor, constant: -48),
+            authenticationView.widthAnchor.constraint(equalToConstant: 80),
+            authenticationView.heightAnchor.constraint(equalToConstant: 80)
+        ])
         window.setFrameOrigin(.init(x: screen.frame.midX - window.frame.width / 2,
                                     y: screen.frame.midY - window.frame.height / 2))
         self.window = window
