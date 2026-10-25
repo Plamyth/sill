@@ -12,7 +12,7 @@ import StreamProtocol
         self.privacy = privacy
         sentry = HostSentry(admission: server.sentryAdmission, initiallyLatched: protected,
             persistenceHealthy: true, persist: { _ in true },
-            surfaces: .init(engage: { true }, verify: { true }, release: { true },
+            surfaces: .init(engage: { true }, verify: { true }, release: { _, _ in true },
                 reason: { nil }, restoreCurtains: { true }), prepareRelease: { true },
             localReturnUnavailableReason: { privacy.localReturnUnavailableReason })
         __PRIVACY_CHANGED__
@@ -74,11 +74,12 @@ import StreamProtocol
     let inactive = SentryAdmission(), peer = NSObject()
     let local = HostSentry(admission: inactive, initiallyLatched: false, persistenceHealthy: true,
         persist: { _ in true }, surfaces: .init(engage: { false }, verify: { false },
-            release: { false }, reason: { nil }), prepareRelease: { false })
+            release: { _, _ in false }, reason: { nil }), prepareRelease: { false })
     inactive.register(ObjectIdentifier(peer), externalRoute: false)
     inactive.admit(ObjectIdentifier(peer))
     local.localReturnActivityChanged(true)
-    expect(local.completeAuthenticatedLocalReturn { true }, "Sentry 비활성 분기의 인증된 오디오 커밋")
+    let localCompleted = await local.completeAuthenticatedLocalReturn(commitAudio: { true })
+    expect(localCompleted, "Sentry 비활성 분기의 인증된 오디오 커밋")
     local.localReturnActivityChanged(false)
     expect(!inactive.allowsActions(ObjectIdentifier(peer)) &&
            !inactive.allows(ObjectIdentifier(peer), epoch: nil) &&

@@ -93,6 +93,40 @@ import Foundation
 }
 
 @MainActor func runChecks() async {
+    for outcome in ["ack", "timeout", "cancel", "membership", "generation"] {
+        let fixture = ReturnFixture(), hal = ReturnHAL(), surface = ReturnGate()
+        hal.restoreSucceeds = true
+        var clears = 0
+        var observedDeadline: ContinuousClock.Instant?
+        var lateCommit: (() -> Bool)?
+        let privacy = HostAudioPrivacy(hal: hal, latched: true,
+            localState: try! LocalAudioState(hal.snapshot), clearLatch: { clears += 1; return true },
+            authenticateLocal: { _ in true }, nativeStartup: fixture.startup)
+        privacy.revokeForLocalReturn = { fixture.nativeStopped = true; return true }
+        privacy.inspectForLocalReturn = { fixture.facts(fixture.nativeStopped) }
+        privacy.authenticatedLocalReturnWillCommit = { $0() }
+        privacy.localReturnDidComplete = { deadline, _, commitAudio in
+            observedDeadline = deadline
+            lateCommit = commitAudio
+            await surface.wait()
+            return commitAudio()
+        }
+        let task = Task { await privacy.requestLocalReturn(budgetMilliseconds: outcome == "timeout" ? 60 : 2_000) }
+        await settle { surface.entered }
+        check(clears == 0 && hal.restores == 1 && privacy.latched,
+              "\(outcome): HAL 복원 뒤 surface ACK 전에는 audio latch 완료 저장0")
+        if outcome == "cancel" { task.cancel() }
+        if outcome == "membership" { fixture.registry.unregister(.relay) }
+        if outcome == "generation" { privacy.stop() }
+        if outcome == "timeout" { try? await ContinuousClock().sleep(until: observedDeadline!) }
+        surface.release()
+        let accepted = await task.value
+        check(accepted == (outcome == "ack") && clears == (outcome == "ack" ? 1 : 0),
+              "\(outcome): 전달한 원 deadline/current를 넘은 surface callback은 commitAudio를 직접 불러도 거절")
+        check(lateCommit?() == false && clears == (outcome == "ack" ? 1 : 0),
+              "\(outcome): 늦거나 중복인 surface 완료는 latch를 다시 해제하지 않음")
+        privacy.stop()
+    }
     for outcome in ["settle", "deadline", "cancel", "membership"] {
         let fixture = ReturnFixture(), hal = ReturnHAL(), queuedStop = ReturnGate()
         let lifecycle = RemoteAudioCaptureLifecycle()

@@ -86,7 +86,7 @@ authentication_window = authentication_input_policy + '\n' + read('Sources/SillH
         'private struct AuthenticationEventSources {', 'private func prepareAuthenticationEventSources(',
         'private func stampAuthenticationEvent(', 'private func environmentIsUsable(', 'private func refreshReturnButtons(',
         'func verify()', 'func engage()', 'func restoreCurtains()', 'func prepareRelease(cleanup:', 'func prepareRemoteRelease(',
-        'private func refreshActiveAuthenticationInput(', 'func release()', 'var releaseVerified:', 'private func recoverFailedRelease(',
+        'private func refreshActiveAuthenticationInput(', 'func release(', 'var releaseVerified:', 'private func recoverFailedRelease(',
         'func prepareAuthenticatedLocalRelease('])))
 authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
     'private var authenticationEventSources: AuthenticationEventSources?\n__PRODUCTION_OBSERVER__')
@@ -95,6 +95,7 @@ authentication_window = authentication_window.replace('__PRODUCTION_OBSERVER__',
     '\n'.join(block(platform, m) for m in ['private static func verifiedAuthenticationOwner(',
         'private func refreshInputObservation(', 'private func isObservedAuthenticationWindow(', 'private func ownedAuthenticationWindows(', 'private func ownedAuthenticationWindow(', 'private func refreshRemoteTarget(', 'private func nextAuthenticationEventTag(']))
 authentication_window = authentication_window.replace('__PRODUCTION_WINDOW_VALIDATION__', block(read('Sources/SillHost/LocalAuthenticationPresentation.swift'), 'static func validatedWindows('))
+authentication_window = authentication_window.replace('__PRODUCTION_RELEASE_TIMER__', block(platform, 'let timer = Timer(timeInterval: 0.1'))
 authentication_window = re.sub(r'\bCGEvent\b', 'Event', authentication_window)
 authentication_window = re.sub(r'\bCGEventSource\b', 'EventSource', authentication_window)
 sdk_authentication_window = authentication_window
@@ -130,7 +131,7 @@ inert = inert.replace(block(injector, 'private func pointerNow()'),
 inert = inert.replace(block(injector, 'private func remindAboutAccessibilityIfNeeded()'),
                       'private func remindAboutAccessibilityIfNeeded() {}')
 egress_markers = ['private struct PointerTarget {', 'private var isProtected:',
-    'func prepareRelease(cleanup:', 'func prepareAuthenticatedLocalRelease(', 'func prepareRemoteRelease(', 'var releaseVerified:', 'func release()', 'func protectedPointerEgress(', 'private func postProtectedPointer(', 'private func pointerTarget(']
+    'func prepareRelease(cleanup:', 'func prepareAuthenticatedLocalRelease(', 'func prepareRemoteRelease(', 'var releaseVerified:', 'func release(', 'func protectedPointerEgress(', 'private func postProtectedPointer(', 'private func pointerTarget(']
 egress = '\n'.join(block(platform, m) for m in egress_markers) + '\nprivate var pointerTargets: [Int: PointerTarget] = [:]\nprivate var scrollHandoff: PointerTarget?\n'
 egress = egress.replace('event.postToPid(target.pid)', 'posted.append((target.pid, event.copy()!))')
 egress = egress.replace('NSRunningApplication(processIdentifier: pid)', 'apps[pid]')

@@ -91,6 +91,11 @@ private final class EventSource {
     private func curtainsAreEffective() -> Bool { surfacesSafe }
     private var rows: [[String: Any]] = []
     private var observationCalls = 0
+    private var closedWindowObservations = 0
+    private func protectionSampleTimer() -> Timer {
+        __PRODUCTION_RELEASE_TIMER__
+        return timer
+    }
     private func updateCurtainText() {}
     private final class Button {
         var isHiddenOrHasHiddenAncestor = false, isEnabled = true, ancestorsHaveFullOpacity = true
@@ -135,6 +140,7 @@ private final class EventSource {
         observationCalls += 1
         guard windowReadbackAvailable else { return nil }
         let closed = Set(curtains.values.filter { !$0.panel.isVisible }.map { CGWindowID($0.panel.windowNumber) })
+        if !closed.isEmpty { closedWindowObservations += 1 }
         return rows.filter { row in
             windowRemains || !closed.contains((row[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0)
         } as CFArray
@@ -327,11 +333,13 @@ private final class EventSource {
     }
 
     func run() async {
+        await delayedSurfaceReleaseChecks()
+        await boundedReleaseChecks()
         ownedContainerChecks()
         await additionalReviewChecks()
         await selfReturnChecks()
         authenticationInterleavingChecks()
-        authenticatedReleaseChecks()
+        await authenticatedReleaseChecks()
         fresh()
         Checks.check(CGEventField.eventTargetUnixProcessID.rawValue == 40 && CGEventTapLocation.cgAnnotatedSessionEventTap.rawValue == 2,
                      "공개 Mac SDK targetPID 필드와 annotated tap 확인")
@@ -556,7 +564,7 @@ private final class EventSource {
         var unavailable: String?
         let owner = HostSentry(admission: admission, initiallyLatched: true, persistenceHealthy: true,
             persist: { _ in true }, surfaces: .init(engage: { self.engage() }, verify: { self.verify() },
-                release: { false }, reason: { nil }, restoreCurtains: { self.restoreCurtains() }),
+                release: { _, _ in false }, reason: { nil }, restoreCurtains: { self.restoreCurtains() }),
             prepareRelease: { self.prepareRelease { true } }, localReturnUnavailableReason: { unavailable })
         let connection = ObjectIdentifier(peer)
         admission.register(connection, externalRoute: true); admission.admit(connection); admission.capture(UUID())
@@ -591,7 +599,7 @@ private final class EventSource {
                      "challenge 종료 뒤 남은 secure input은 일반 보호를 승인하지 않음")
     }
 
-    private func authenticatedReleaseChecks() {
+    private func authenticatedReleaseChecks() async {
         func recovery() {
             fresh(); challengeID = nil; state = .invalid("전체 보호 미검증")
             tap = nil; annotatedTap = nil; tapID = nil; annotatedTapID = nil; Self.tapOwner = nil
@@ -603,23 +611,23 @@ private final class EventSource {
         var effects: [String] = []
         let owner = HostSentry(admission: admission, initiallyLatched: true, persistenceHealthy: true,
             persist: { effects.append($0.rawValue); return true },
-            surfaces: .init(engage: { false }, verify: { false }, release: { self.release() },
+            surfaces: .init(engage: { false }, verify: { false }, release: { deadline, current in await self.release(until: deadline, current: current) },
                 reason: { nil }, released: { self.releaseVerified }),
             prepareRelease: { self.prepareAuthenticatedLocalRelease { effects.append("cleanup"); return true } },
             localReturnUnavailableReason: { "HAL 복원은 원담당 소유" })
         let priorInstalls = installations
-        Checks.check(owner.completeAuthenticatedLocalReturn { effects.append("audio"); return true } &&
+        Checks.check(await owner.completeAuthenticatedLocalReturn { effects.append("audio"); return true } &&
                      releaseVerified && !admission.isRequested && installations == priorInstalls &&
                      effects == ["cleanup", "releasing", "audio", "inactive"],
                      "인증 완료 뒤 tap0·복구 상태도 cleanup→실제 소유 커튼 정리→오디오 commit 완료")
         recovery(); tapReadbackAvailable = false
-        Checks.check(!release() && curtains[1]?.panel.isVisible == true && installations == priorInstalls,
+        Checks.check(!(await release()) && curtains[1]?.panel.isVisible == true && installations == priorInstalls,
                      "tap0이어도 OS tap 목록 readback 실패면 커튼 유지·신규 tap 설치0")
         recovery(); remainingTapPID = getpid()
-        Checks.check(!release() && curtains[1]?.panel.isVisible == true && installations == priorInstalls,
+        Checks.check(!(await release()) && curtains[1]?.panel.isVisible == true && installations == priorInstalls,
                      "기록 ID 없는 자기 활성 tap이 남아 있으면 커튼 제거·복귀 수용 거절")
         recovery(); remainingTapPID = getpid() + 1
-        Checks.check(release() && releaseVerified,
+        Checks.check(await release() && releaseVerified,
                      "다른 소유자의 tap은 조작하지 않고 자기 tap 부재·커튼 제거만 확인")
         recovery(); challengeID = UUID()
         var cleanupCalls = 0
@@ -637,11 +645,100 @@ private final class EventSource {
         Checks.check(!prepareAuthenticatedLocalRelease { cleanupCalls += 1; return true } && cleanupCalls == 0,
                      "다른 보호 소유자가 있으면 인증 완료 cleanup도 호출하지 않음")
         recovery(); windowRemains = true
-        Checks.check(!release() && !releaseVerified && installations == priorInstalls,
+        Checks.check(!(await release()) && !releaseVerified && installations == priorInstalls,
                      "커튼 제거 readback 실패도 복귀 성공·신규 tap 설치로 처리하지 않음")
         recovery(); secureInput = true
-        Checks.check(prepareAuthenticatedLocalRelease { true } && release() && releaseVerified,
+        let prepared = prepareAuthenticatedLocalRelease { true }
+        Checks.check(await release() && prepared && releaseVerified,
                      "인증 종료 뒤 남은 secure input은 OS 상태 변경 없이 소유 자원 제거만 검증")
+    }
+
+    private func delayedSurfaceReleaseChecks() async {
+        fresh(); challengeID = nil
+        curtains = [1: Curtain()]
+        rows = [window(90, pid: getpid(), rect: CGRect(x: 0, y: 0, width: 1000, height: 1000))]
+        windowRemains = true
+        let initialReads = closedWindowObservations
+        var finished = false
+        let task = Task { @MainActor in
+            let result = await self.release()
+            finished = true
+            return result
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while closedWindowObservations == initialReads && !finished && ContinuousClock.now < deadline { await Task.yield() }
+        Checks.check(closedWindowObservations > initialReads && !finished && !releaseVerified,
+                     "WindowServer가 닫힌 자기 창을 아직 보고하면 해제 결과를 확정하지 않고 대기")
+        windowRemains = false
+        Checks.check(await task.value && releaseVerified,
+                     "실제 창 부재 ACK 뒤에만 동일 surface 해제 완료")
+    }
+
+    private func boundedReleaseChecks() async {
+        for remote in [false, true] {
+            for outcome in ["ack", "timeout", "cancel", "authority", "membership", "display", "readback", "tap"] {
+                fresh(); challengeID = nil
+                curtains = [1: Curtain()]
+                rows = [window(90, pid: getpid(), rect: CGRect(x: 0, y: 0, width: 1000, height: 1000))]
+                windowRemains = true
+                if outcome == "tap" { remainingTapPID = getpid() }
+                let admission = SentryAdmission()
+                var effects: [String] = [], authority = true, invalidations = 0
+                let owner = HostSentry(admission: admission, initiallyLatched: true, persistenceHealthy: true,
+                    persist: { effects.append($0.rawValue); return true },
+                    surfaces: .init(engage: { false }, verify: { false },
+                        release: { deadline, current in await self.release(until: deadline, current: current) },
+                        reason: { nil }, restoreCurtains: {
+                            for curtain in self.curtains.values { curtain.panel.isVisible = true }
+                            effects.append("restore"); return true
+                        }, released: { self.releaseVerified }),
+                    prepareRelease: { true }, prepareRemoteRelease: { true }, localReturnUnavailableReason: { "복구 커튼 유지" })
+                owner.protectionInvalidated = { invalidations += 1 }
+                changed = { owner.surfacesChanged() }
+                let baselineInvalidations = remote ? 1 : 0
+                let deadline = ContinuousClock.now.advanced(by: .milliseconds(outcome == "timeout" ? 60 : 1_000))
+                let beforeReads = observationCalls
+                let task = Task { @MainActor in
+                    if remote { return await owner.setRemoteProtection(false, until: deadline, current: { authority }) }
+                    return await owner.completeAuthenticatedLocalReturn(until: deadline, current: { authority }, commitAudio: {
+                        effects.append("audio"); return true
+                    })
+                }
+                while observationCalls == beforeReads && outcome != "tap" { await Task.yield() }
+                if outcome == "tap" { while tap != nil { await Task.yield() } }
+                let sample = protectionSampleTimer()
+                let priorObservations = observationCalls
+                sample.fire(); sample.invalidate()
+                Checks.check(effects == ["releasing"] && !releaseVerified &&
+                             observationCalls == priorObservations && invalidations == baselineInvalidations,
+                             "\(remote ? "원격" : "로컬") \(outcome): 해제 대기 timer는 자체 native Stop·보호 샘플을 재발행하지 않음")
+                Checks.check(!owner.reconcile(), "진행 중 해제의 재진입 reconcile은 거절")
+                switch outcome {
+                case "cancel": task.cancel()
+                case "authority": authority = false
+                case "membership": owner.membershipWillChange()
+                case "display": invalidate("화면 변경")
+                case "readback": windowReadbackAvailable = false
+                case "tap": remainingTapPID = nil
+                default: break
+                }
+                if outcome != "timeout" { windowRemains = false }
+                let accepted = await task.value
+                if outcome == "ack" || outcome == "tap" {
+                    let expected = remote ? ["releasing", "inactive"] : ["releasing", "audio", "inactive"]
+                    Checks.check(accepted && effects == expected && releaseVerified && invalidations == baselineInvalidations,
+                                 "\(remote ? "원격" : "로컬") 실제 부재 뒤에만 단일 commit·inactive; 마지막 changed의 자체 무효화 없음")
+                } else {
+                    windowRemains = false
+                    await Task.yield()
+                    Checks.check(!accepted && !effects.contains("audio") && !effects.contains("inactive") &&
+                                 effects.contains("latched") && effects.contains("restore") && !releaseVerified,
+                                 "\(remote ? "원격" : "로컬") \(outcome): 늦은 ACK는 완료 저장0·보호 복구")
+                    Checks.check(curtains.values.allSatisfy { $0.panel.isVisible }, "실패 후 자기 커튼 복구 유지")
+                }
+                changed = nil
+            }
+        }
     }
 }
 

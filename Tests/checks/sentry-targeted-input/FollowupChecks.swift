@@ -24,6 +24,7 @@ import StreamProtocol
             duringRelease?()
             input.injector.releaseAll()
         }
+        input.platform.onDestroyTap = { [unowned self] in duringRelease?() }
         owner = ReleaseOwner(input.injector)
         let barrier = owner.barrier(input.platform)
         sentry = HostSentry(admission: admission, initiallyLatched: true, persistenceHealthy: true,
@@ -32,9 +33,10 @@ import StreamProtocol
                 if value == .releasing && !releasingWriteOK { return false }
                 journal = value
                 return true
-            }, surfaces: .init(engage: { false }, verify: { true }, release: { [unowned self] in
+            }, surfaces: .init(engage: { false }, verify: { true }, release: { [unowned self] deadline, current in
                 effects.append("surface-release")
-                return input.platform.release()
+                await Task.yield()
+                return await input.platform.release(until: deadline, current: current)
             }, reason: { nil }), prepareRelease: barrier, localReturnUnavailableReason: { nil })
         admission.register(input.owner, externalRoute: false)
         admission.admit(input.owner)
@@ -42,13 +44,13 @@ import StreamProtocol
         admission.capture(input.epochID)
         input.admissionCurrent = { [unowned self] in admission.allowsActions(input.owner) }
     }
-    func complete() -> Bool {
-        sentry.completeAuthenticatedLocalReturn { [unowned self] in effects.append("audio"); return true }
+    func complete() async -> Bool {
+        await sentry.completeAuthenticatedLocalReturn { [unowned self] in effects.append("audio"); return true }
     }
 }
 
 extension Checks {
-    @MainActor static func followupChecks() {
+    @MainActor static func followupChecks() async {
         let uncovered = Fixture()
         uncovered.platform.state = .invalid("권한창이 가림 화면 위에 있습니다.")
         uncovered.platform.tap = nil
@@ -69,7 +71,7 @@ extension Checks {
                   cleanup: { remoteDebt.injector.prepareRelease() }) && remoteDebt.debt(),
               "권한창 상태에서 원격 버튼 부채를 임의 폐기하거나 OS 창에 종료 입력을 전달하지 않음")
         let returned = ReturnFixture(); returned.input.send(.leftDown)
-        check(returned.complete() && !returned.input.debt() && returned.journal == .inactive,
+        check((await returned.complete()) && !returned.input.debt() && returned.journal == .inactive,
               "F1 복귀 성공 전에 still-protected tap에서 원 버튼 terminal 부채 정리")
         check(returned.effects == ["releasing", "surface-release", "audio", "inactive"] &&
               returned.input.platform.posted.map { $0.1.type } == [.leftMouseDown, .leftMouseUp],
@@ -84,10 +86,10 @@ extension Checks {
             fenced = !reentrant.admission.allowsActions(reentrant.input.owner)
             reentrant.sentry.surfacesChanged()
             reentrant.input.send(.rightDown)
-            nestedReturn = reentrant.complete()
+            Task { @MainActor in nestedReturn = await reentrant.complete() }
         }
         reentrant.duringRelease = { reentrant.sentry.surfacesChanged() }
-        check(reentrant.complete() && fenced && !nestedReturn && !reentrant.input.debt() &&
+        check((await reentrant.complete()) && fenced && !nestedReturn && !reentrant.input.debt() &&
               reentrant.input.platform.posted.count == 2,
               "prepare/release의 동기 changed 재진입은 새 down·중첩 복귀를 막고 원 cleanup만 허용")
 
@@ -100,14 +102,14 @@ extension Checks {
         ]
         for (label, mutate) in failureMutations {
             let blocked = ReturnFixture(); blocked.input.send(.leftDown); mutate(blocked)
-            check(!blocked.complete() && blocked.input.debt() && blocked.journal == .latched &&
+            check(!(await blocked.complete()) && blocked.input.debt() && blocked.journal == .latched &&
                   blocked.effects == ["latched"] && blocked.admission.isRequested,
                   "\(label) 시 releasing·tap제거·audio commit 없이 원 버튼 부채와 latch 유지")
         }
         let noTap = ReturnFixture(); noTap.input.platform.tap = nil
         check(!noTap.input.platform.prepareRelease { true },
               "일반 보호 해제 준비는 기존 live tap 검증을 계속 요구")
-        check(noTap.complete() && noTap.effects == ["releasing", "surface-release", "audio", "inactive"] &&
+        check((await noTap.complete()) && noTap.effects == ["releasing", "surface-release", "audio", "inactive"] &&
               noTap.journal == .inactive && noTap.input.platform.releaseVerified,
               "인증 완료 뒤 입력 부채 없는 tap0 복구 상태는 소유 tap 부재·커튼 제거 확인 후 복귀")
         let afterCleanup = ReturnFixture(); afterCleanup.input.send(.leftDown)
@@ -118,25 +120,25 @@ extension Checks {
                 afterCleanup.input.platform.tap = nil
             }
         }
-        check(afterCleanup.complete() && lostAfterCleanup && !afterCleanup.input.debt() &&
+        check((await afterCleanup.complete()) && lostAfterCleanup && !afterCleanup.input.debt() &&
               afterCleanup.effects == ["releasing", "surface-release", "audio", "inactive"] &&
               afterCleanup.input.platform.releaseVerified,
               "인증 후 terminal이 끝난 tap 소실은 OS 소유 필터 부재와 커튼 제거를 확인한 뒤 복귀")
         let storage = ReturnFixture(); storage.input.send(.leftDown); storage.releasingWriteOK = false
-        check(!storage.complete() && !storage.input.debt() && storage.journal == .latched &&
+        check(!(await storage.complete()) && !storage.input.debt() && storage.journal == .latched &&
               storage.effects == ["releasing"] && storage.input.platform.tap != nil,
               "terminal 뒤 releasing 저장 실패도 live tap을 제거하거나 audio를 commit하지 않음")
 
         let split = ReturnFixture(); split.input.send(.leftDown); split.input.send(.rightDown, peer: split.input.other)
         split.input.injector.apply(.key(hidUsage: 0x04, down: true, modifiers: 0), in: split.input.rect, from: split.input.owner)
         split.input.injector.rejectedGlobalTypes = [.keyUp]
-        check(!split.complete() && !split.input.debt() &&
+        check(!(await split.complete()) && !split.input.debt() &&
               !split.input.injector.isUpOfSomethingDown(.pointer(.rightUp, x: 0, y: 0), from: split.input.other) &&
               split.input.injector.isUpOfSomethingDown(.key(hidUsage: 0x04, down: false, modifiers: 0), from: split.input.owner) &&
               split.effects == ["latched"],
               "서로 다른 peer 좌우 cleanup 성공과 key-up 실패 부채를 구분하여 복귀 차단")
         split.input.injector.rejectedGlobalTypes = []
-        check(split.complete() && !split.input.injector.isUpOfSomethingDown(.key(hidUsage: 0x04, down: false, modifiers: 0), from: split.input.owner),
+        check((await split.complete()) && !split.input.injector.isUpOfSomethingDown(.key(hidUsage: 0x04, down: false, modifiers: 0), from: split.input.owner),
               "동일 key-up 부채 재시도 성공 뒤에만 복귀 허용")
 
         let failedUp = ReturnFixture()
@@ -148,12 +150,13 @@ extension Checks {
         let postsBeforeOther = failedUp.input.injector.globalPosts.count
         failedUp.input.injector.releaseInput(of: failedUp.input.other)
         failedUp.input.injector.apply(keyUp, in: failedUp.input.rect, from: failedUp.input.other)
+        let failedUpCompleted = await failedUp.complete()
         check(failedUp.input.injector.globalPosts.count == postsBeforeOther &&
               failedUp.input.injector.isUpOfSomethingDown(keyUp, from: failedUp.input.owner) &&
-              !failedUp.input.injector.isUpOfSomethingDown(keyUp, from: failedUp.input.other) && !failedUp.complete(),
+              !failedUp.input.injector.isUpOfSomethingDown(keyUp, from: failedUp.input.other) && !failedUpCompleted,
               "복귀 전 일반 key-up post 실패도 원 peer 부채로 보존하고 다른 peer cleanup으로 지우지 않음")
         failedUp.input.injector.rejectedGlobalTypes = []
-        check(failedUp.complete() && !failedUp.input.injector.isUpOfSomethingDown(keyUp, from: failedUp.input.owner),
+        check((await failedUp.complete()) && !failedUp.input.injector.isUpOfSomethingDown(keyUp, from: failedUp.input.owner),
               "실패한 일반 key-up도 prepareRelease에서 원 terminal 재시도 뒤에만 복귀")
 
         let flags = ReturnFixture()
@@ -164,15 +167,16 @@ extension Checks {
         flags.input.injector.apply(.key(hidUsage: 0x04, down: false, modifiers: command), in: flags.input.rect, from: flags.input.owner)
         flags.input.injector.rejectedGlobalTypes = []
         flags.input.injector.apply(.key(hidUsage: 0xE3, down: false, modifiers: 0), in: flags.input.rect, from: flags.input.owner)
-        check(flags.complete() && flags.input.injector.globalPosts.last?.flags.rawValue == 0,
+        check((await flags.complete()) && flags.input.injector.globalPosts.last?.flags.rawValue == 0,
               "key-up 재시도는 이미 해제된 modifier의 예전 flags를 복원하지 않음")
 
         let scrollDebt = ReturnFixture(); scrollDebt.input.scroll(.began); scrollDebt.input.scroll()
         scrollDebt.input.injector.protectedPointerEgress = { _, _ in false }
-        check(!scrollDebt.complete() && scrollDebt.input.injector.protectedScrollPending && scrollDebt.effects == ["latched"],
+        check(!(await scrollDebt.complete()) && scrollDebt.input.injector.protectedScrollPending && scrollDebt.effects == ["latched"],
               "실제 미종료 scroll terminal 실패 부채는 복귀를 차단")
         let endedScroll = ReturnFixture(); endedScroll.input.scroll(.began); endedScroll.input.scroll(); endedScroll.input.scroll(.ended)
-        check(!endedScroll.input.injector.protectedScrollPending && endedScroll.complete(),
+        let endedScrollCompleted = await endedScroll.complete()
+        check(!endedScroll.input.injector.protectedScrollPending && endedScrollCompleted,
               "이미 terminal인 gesture handoff는 미해제 부채로 세지 않아 로컬 복귀 허용")
 
         let momentum = Fixture(); momentum.source = .desktop

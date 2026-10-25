@@ -26,7 +26,8 @@ private extension CGEvent { static func tapIsEnabled(tap: InertTap) -> Bool { ta
     var observers: [(NotificationCenter, NSObjectProtocol)] = []
     var lockObservers: [NSObjectProtocol] = []
     func updateCurtainText() {}
-    func destroyTap() { tap = nil }
+    var onDestroyTap: (() -> Void)?
+    func destroyTap() { onDestroyTap?(); tap = nil }
     func eventTapList() -> [CGEventTapInformation]? { [] }
     func recoverFailedRelease(_ reason: String) -> Bool { false }
     var changed: (() -> Void)?
@@ -101,7 +102,7 @@ final class Peer {}
     }
     static func main() async {
         await coordinatorChecks()
-        followupChecks()
+        await followupChecks()
         let f = Fixture()
         f.send(.leftDown)
         check(f.platform.posted.count == 1 && f.platform.posted[0].0 == 100 && f.debt(), "admitted down은 현재 창 PID에 한 번 전송 시도하고 원 peer 부채 보유")

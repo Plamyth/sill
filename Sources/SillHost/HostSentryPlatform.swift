@@ -322,36 +322,75 @@ final class HostSentryPlatform {
             curtains.isEmpty && pointerTargets.isEmpty
     }
 
-    func release() -> Bool {
-        guard !changingLifecycle, currentLocalAuthenticationChallenge() == nil else { return false }
+    func release(until deadline: ContinuousClock.Instant = .now.advanced(by: .seconds(2)),
+                 current: @escaping @MainActor () -> Bool = { true }) async -> Bool {
+        guard !changingLifecycle, currentLocalAuthenticationChallenge() == nil,
+              !Task.isCancelled, ContinuousClock.now < deadline, current() else {
+            print("[현장 보호 해제] 실패 subphase=진입 current=\(current()) cancelled=\(Task.isCancelled)")
+            return false
+        }
         changingLifecycle = true
         defer { changingLifecycle = false }
         state = .releasing
         localReturnDown = nil
         updateCurtainText()
-        changed?()
+        var tapReadback = false, enabledTapPresent = true
+        var windowReadback = false, visibleCurtain = true, windowPresent = true
+        func live() -> Bool {
+            guard !Task.isCancelled, ContinuousClock.now < deadline, current(),
+                  currentLocalAuthenticationChallenge() == nil else { return false }
+            if case .releasing = state { return true }
+            return false
+        }
+        func failed(_ phase: String) -> Bool {
+            let releasing: Bool
+            if case .releasing = state { releasing = true } else { releasing = false }
+            print("[현장 보호 해제] 실패 subphase=\(phase) deadlineCurrent=\(ContinuousClock.now < deadline) releasing=\(releasing) challengeAbsent=\(currentLocalAuthenticationChallenge() == nil) current=\(current()) cancelled=\(Task.isCancelled) tapReadback=\(tapReadback) enabledTapPresent=\(enabledTapPresent) windowReadback=\(windowReadback) visibleCurtain=\(visibleCurtain) windowPresent=\(windowPresent)")
+            return recoverFailedRelease("현장 보호 해제 \(phase) 확인에 실패했습니다.")
+        }
+        var retryMilliseconds = 1
+        func nextObservation() async -> Bool {
+            guard live() else { return false }
+            let next = min(deadline, ContinuousClock.now.advanced(by: .milliseconds(retryMilliseconds)))
+            retryMilliseconds = min(retryMilliseconds * 2, 32)
+            do { try await Task.sleep(until: next, clock: .continuous) }
+            catch { return false }
+            return live()
+        }
         destroyTap()
         destroyAnnotatedTap()
-        guard let rows = eventTapList() else {
-            return recoverFailedRelease("운영체제에서 입력 필터 해제 상태를 읽지 못했습니다.")
-        }
-        guard !rows.contains(where: {
-            $0.enabled && ($0.eventTapID == tapID || $0.eventTapID == annotatedTapID ||
-                ($0.tappingProcess == getpid() &&
-                    ($0.tapPoint == .cgSessionEventTap || $0.tapPoint == .cgAnnotatedSessionEventTap)))
-        }) else {
-            return recoverFailedRelease("운영체제에서 입력 필터 해제를 확인하지 못했습니다.")
+        while true {
+            guard live() else { return failed("입력 필터 요청·기한") }
+            guard let rows = eventTapList() else { return failed("입력 필터 읽기") }
+            tapReadback = true
+            enabledTapPresent = rows.contains(where: {
+                $0.enabled && ($0.eventTapID == tapID || $0.eventTapID == annotatedTapID ||
+                    ($0.tappingProcess == getpid() &&
+                        ($0.tapPoint == .cgSessionEventTap || $0.tapPoint == .cgAnnotatedSessionEventTap)))
+            })
+            guard live() else { return failed("입력 필터 관측 중 변경") }
+            if !enabledTapPresent { break }
+            guard await nextObservation() else { return failed("입력 필터 종료 대기") }
         }
         let closingWindowIDs = Set(curtainWindowIDs)
         for curtain in curtains.values { curtain.panel.close() }
-        guard let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]],
-              curtains.values.allSatisfy({ !$0.panel.isVisible }),
-              !rows.contains(where: { row in
-                  guard let id = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { return false }
-                  return closingWindowIDs.contains(id)
-              }) else {
-            return recoverFailedRelease("가림 화면 해제를 운영체제에서 확인하지 못했습니다.")
+        retryMilliseconds = 1
+        while true {
+            guard live() else { return failed("가림 화면 요청·기한") }
+            guard let rows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else {
+                return failed("가림 화면 읽기")
+            }
+            windowReadback = true
+            visibleCurtain = curtains.values.contains { $0.panel.isVisible }
+            windowPresent = rows.contains { row in
+                guard let id = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { return false }
+                return closingWindowIDs.contains(id)
+            }
+            guard live() else { return failed("가림 화면 관측 중 변경") }
+            if !visibleCurtain && !windowPresent { break }
+            guard await nextObservation() else { return failed("가림 화면 종료 대기") }
         }
+        guard live() else { return failed("완료 전 변경") }
         tapID = nil
         annotatedTapID = nil
         localAuthenticationInputPolicy.revoke()
@@ -366,9 +405,9 @@ final class HostSentryPlatform {
         if Self.tapOwner === self { Self.tapOwner = nil }
         state = .idle
         changingLifecycle = false
-        changed?()
-        if case .idle = state { return true }
-        return false
+        let accepted = !Task.isCancelled && ContinuousClock.now < deadline && current() && releaseVerified
+        print("[현장 보호 해제] 완료 subphase=실제부재 accepted=\(accepted) tapReadback=\(tapReadback) enabledTapPresent=\(enabledTapPresent) windowReadback=\(windowReadback) visibleCurtain=\(visibleCurtain) windowPresent=\(windowPresent)")
+        return accepted
     }
 
     private func recoverFailedRelease(_ message: String) -> Bool {
@@ -1148,9 +1187,11 @@ final class HostSentryPlatform {
         observers.append((workspace, exitToken))
         let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.refreshInputObservation()
-                self?.updateCurtainText()
-                if self?.currentLocalAuthenticationChallenge() == nil { self?.changed?() }
+                guard let self else { return }
+                if case .releasing = self.state { return }
+                self.refreshInputObservation()
+                self.updateCurtainText()
+                if self.currentLocalAuthenticationChallenge() == nil { self.changed?() }
             }
         }
         self.timer = timer
