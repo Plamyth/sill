@@ -12,11 +12,19 @@ enum CanvasMode: String, CaseIterable {
 enum CanvasEraserStyle: String, CaseIterable {
     case partial = "부분 지우기"
     case stroke = "획 전체 지우기"
+}
 
-    var tool: PKEraserTool {
+enum CanvasEraserSize: Double, CaseIterable {
+    case fine = 18, standard = 20, medium = 30, large = 40, extraLarge = 60, broad = 80
+
+    var label: String {
         switch self {
-        case .partial: return PKEraserTool(.fixedWidthBitmap, width: 20)
-        case .stroke: return PKEraserTool(.vector)
+        case .fine: return "작게 · 18포인트"
+        case .standard: return "기본 · 20포인트"
+        case .medium: return "보통 · 30포인트"
+        case .large: return "크게 · 40포인트"
+        case .extraLarge: return "아주 크게 · 60포인트"
+        case .broad: return "넓게 · 80포인트"
         }
     }
 }
@@ -142,7 +150,22 @@ final class CanvasStore: ObservableObject {
         }
     }
     @Published private(set) var inkSelection: Set<UUID> = []
-    @Published var eraserStyle: CanvasEraserStyle = .partial
+    static let eraserStyleKey = "canvasEraserStyle"
+    static let eraserSizeKey = "canvasPartialEraserWidth"
+    private let eraserDefaults: UserDefaults
+    @Published var eraserStyle: CanvasEraserStyle = .partial {
+        didSet { eraserDefaults.set(eraserStyle.rawValue, forKey: Self.eraserStyleKey) }
+    }
+    @Published var eraserSize: CanvasEraserSize = .standard {
+        didSet { eraserDefaults.set(eraserSize.rawValue, forKey: Self.eraserSizeKey) }
+    }
+    var eraserTool: PKEraserTool {
+        eraserStyle == .partial ?
+            PKEraserTool(.fixedWidthBitmap, width: CGFloat(eraserSize.rawValue)) : PKEraserTool(.vector)
+    }
+    var eraserPreviewWidth: CGFloat? {
+        eraserStyle == .partial ? eraserTool.width : nil
+    }
     @Published var selectedNode: UUID? {
         didSet {
             if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
@@ -1398,7 +1421,13 @@ final class CanvasStore: ObservableObject {
     }
 
     init(blockRecoveryURL: URL? = nil, noteRecoveryURL: URL? = nil,
+         defaults: UserDefaults = .standard,
          noteRecoveryWrite: @escaping (Data,URL) throws -> Void = CanvasLocalFile.write) {
+        self.eraserDefaults = defaults
+        _eraserStyle = Published(initialValue: defaults.string(forKey: Self.eraserStyleKey)
+            .flatMap(CanvasEraserStyle.init(rawValue:)) ?? .partial)
+        _eraserSize = Published(initialValue: (defaults.object(forKey: Self.eraserSizeKey) as? NSNumber)
+            .flatMap { CanvasEraserSize(rawValue: $0.doubleValue) } ?? .standard)
         self.noteRecoveryWrite = noteRecoveryWrite
         self.blockRecoveryOverride = blockRecoveryURL
         self.noteRecoveryOverride = noteRecoveryURL ?? blockRecoveryURL.map {

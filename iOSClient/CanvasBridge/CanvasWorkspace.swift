@@ -291,6 +291,15 @@ struct CanvasWorkspace: View {
             Picker("지우기 방식", selection: $store.eraserStyle) {
                 ForEach(CanvasEraserStyle.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
+            Picker("부분 지우개 크기 · CCR 포인트", selection: $store.eraserSize) {
+                ForEach(CanvasEraserSize.allCases, id: \.self) { size in
+                    Text(size.label).frame(minWidth:44,minHeight:44).tag(size)
+                }
+            }
+            .disabled(store.eraserStyle != .partial)
+            .accessibilityValue(store.eraserStyle == .partial ? store.eraserSize.label : "획 전체 지우기에서는 적용되지 않음")
+            .accessibilityHint("CCR에서 정한 캔버스 포인트 단위이며 확대 비율에 따라 표시 크기가 달라집니다.")
+            .accessibilityIdentifier("canvasPartialEraserSize")
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
             Button("손글씨 찾기",systemImage:"magnifyingglass") { handwritingSearchOpen = true }
@@ -311,6 +320,7 @@ struct CanvasWorkspace: View {
             Button("가져오기") { importOpen = true }
             Button("내보내기") { exportOpen = true }
         }
+        .frame(minWidth:44,minHeight:44)
     }
 
     private var foldButton: some View {

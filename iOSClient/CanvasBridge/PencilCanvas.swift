@@ -110,11 +110,13 @@ struct PencilCanvas: UIViewRepresentable {
         canvas.isUserInteractionEnabled = store.mode != .select
         switch store.mode {
         case .pen: canvas.tool = PKInkingTool(.pen, color: CanvasPalette.ink, width: 4)
-        case .eraser: canvas.tool = store.eraserStyle.tool
+        case .eraser: canvas.tool = store.eraserTool
         case .lasso: canvas.tool = PKLassoTool()
         case .select: break
         }
         if canvas.selection != store.inkSelection { canvas.selection = store.inkSelection }
+        context.coordinator.previewLayer.isHidden = store.mode == .eraser && store.eraserPreviewWidth == nil
+        context.coordinator.previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : 4
         context.coordinator.updateHover()
     }
 
@@ -198,7 +200,8 @@ struct PencilCanvas: UIViewRepresentable {
                 previewPath.move(to: point)
                 previewLayer.strokeColor = store.mode == .eraser ?
                     UIColor.systemRed.withAlphaComponent(0.7).cgColor : CanvasPalette.ink.cgColor
-                previewLayer.lineWidth = store.mode == .eraser ? 20 : 4
+                previewLayer.isHidden = store.mode == .eraser && store.eraserPreviewWidth == nil
+                previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : 4
             case .moved:
                 previewPath.addLine(to: point)
                 previewLayer.path = previewPath.cgPath
@@ -230,12 +233,13 @@ struct PencilCanvas: UIViewRepresentable {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             defer { CATransaction.commit() }
-            guard !isDrawing, let hoverPoint, store.mode == .pen || store.mode == .eraser else {
+            guard !isDrawing, let hoverPoint, store.mode == .pen || store.mode == .eraser,
+                  store.mode != .eraser || store.eraserPreviewWidth != nil else {
                 hoverLayer.isHidden = true
                 return
             }
             let erasing = store.mode == .eraser
-            let diameter: CGFloat = erasing ? 20 : 8
+            let diameter: CGFloat = erasing ? (store.eraserPreviewWidth ?? 8) : 8
             hoverLayer.path = UIBezierPath(ovalIn:CGRect(x:-diameter / 2,y:-diameter / 2,
                                                           width:diameter,height:diameter)).cgPath
             hoverLayer.position = hoverPoint
