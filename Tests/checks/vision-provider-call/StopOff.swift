@@ -80,6 +80,20 @@ check(client.sent.count == 1 && client.sent[0].request.callSessionId == "same-ca
 check(!client.sent[0].request.desiredInput && !client.sent[0].request.desiredOutput &&
     !client.visionForwarding!.permits(.microphone) && !client.visionForwarding!.permits(.playback), "종료는 음성 입출력을 다시 켜지 않음")
 let expired = StreamClient(call, forwarding)
+let blocked = StreamClient(call, forwarding)
+blocked.visionAudioIntentContext.inputBlocked = true
+check(!blocked.visionProviderCanStop, "차단된 화면은 OFF 상태에서도 종료 권한을 얻지 않음")
+blocked.performVisionProviderCall(.stop)
+check(blocked.sent.isEmpty, "차단된 화면은 종료를 송신하지 않음")
+var changing = forwarding
+changing.select(.init(playback: true, microphone: true))
+let switching = StreamClient(call, changing)
+check(!switching.visionProviderCanStop, "새 음성 선택 중 이전 OFF 원장을 사용하지 않음")
+switching.performVisionProviderCall(.stop)
+check(switching.sent.isEmpty, "대상 전환 중 종료를 송신하지 않음")
+var suspended = forwarding
+suspended.suspend()
+check(StreamClient(call, suspended).visionProviderCanStop == false, "중단된 연결은 OFF 원장을 재사용하지 않음")
 now += VisionAudioForwarding.freshness
 check(!expired.visionProviderCanStop, "오래된 OFF 원장은 종료를 허용하지 않음")
 expired.performVisionProviderCall(.stop)
