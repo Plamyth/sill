@@ -6,7 +6,7 @@ final class ControlEventsController: ObservableObject {
     @Published private(set) var reducer = ControlEventsReducer()
     @Published private(set) var projection: ControlEventsProjection?
     @Published var selection = ControlEventsSelection()
-    @Published private(set) var message = "연결 정보 미제공 · 이 Vision 앱의 기기 등록이 필요합니다. Sill 연결 인증과는 별도입니다."
+    @Published private(set) var message = "현재 신뢰 Mac의 자동 등록 자격을 기다립니다."
     private var gateway: ControlEventsGateway?
     private var task: Task<Void, Never>?
     private var operation: UUID?
@@ -53,7 +53,7 @@ final class ControlEventsController: ObservableObject {
     private func reconcile() {
         guard !released, foreground, visible, task == nil else { return }
         guard let gateway else {
-            message = "연결 정보 미제공 · 이 Vision 앱의 기기 등록이 필요합니다. Sill 연결 인증과는 별도입니다."
+            message = "현재 신뢰 Mac의 자동 등록 자격을 기다립니다."
             return
         }
         let operation = UUID()
@@ -61,7 +61,9 @@ final class ControlEventsController: ObservableObject {
         task = Task { [weak self] in await self?.subscribe(gateway, operation: operation) }
     }
 
-    private func subscribe(_ gateway: ControlEventsGateway, operation: UUID) async {
+    private func subscribe(_ initialGateway: ControlEventsGateway, operation: UUID) async {
+        var gateway = initialGateway
+        var authenticationRecovered = false
         var retry = ControlEventsRetryPolicy()
         var resyncAttempts = 0
         while self.operation == operation, !Task.isCancelled {
@@ -110,9 +112,23 @@ final class ControlEventsController: ObservableObject {
             } catch {
                 guard self.operation == operation, !Task.isCancelled else { return }
                 reducer.stop(id, failed: true)
-                if (error as? ControlEventsTransportFailure) == .authentication {
+                if (error as? ControlEventsTransportFailure) == .authentication || error is ControlEventsAuthenticationFailure {
                     projection = nil
                     selection.workID = nil
+                }
+                if let refusal = error as? ControlEventsAuthenticationFailure, let recover = gateway.recoverAuthentication {
+                    let replacement = await recover(refusal, !authenticationRecovered)
+                    guard self.operation == operation, foreground, visible, !released, !Task.isCancelled else { return }
+                    if !authenticationRecovered, let replacement {
+                        authenticationRecovered = true
+                        gateway = replacement
+                        self.gateway = replacement
+                        continue
+                    }
+                    message = "기기 등록 인증을 확인하지 못해 작업 상태 연결을 중지했습니다."
+                    self.gateway = nil
+                    self.operation = nil; task = nil
+                    return
                 }
                 guard let delay = retry.delay(for: error) else {
                     message = (error as? ControlEventsTransportFailure)?.message ?? "이벤트 연결 또는 보안 검증에 실패했습니다. 마지막 관측만 표시합니다."

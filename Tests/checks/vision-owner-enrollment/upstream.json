@@ -1,0 +1,12 @@
+{
+  "commit": "a7bc49211b3fa975d5261e07b1dd14aeea154ff9",
+  "coreSHA256": {
+    "IPadDeviceEnrollment.swift": "a4d3d79b55cc3f903994df621f5c5ca9af00fb3c57e4bbebb1d820ba77522ac8",
+    "IPadEnrollmentJSON.swift": "3c8235ec6075046733bb1759f95df1c44a91835f2af73f6bc17b954c94226a5b",
+    "IPadEnrollmentProtocol.swift": "88d7d1bc7103ad1097ff136b693bffdf329b99e33be7a518cd27e6819b911fdc"
+  },
+  "unchangedBootstrapSHA256": {
+    "iOSClient/OwnerBootstrapState.swift": "5ba7ab840aa42e64a72658a96c365e51de1bcbe04661c1a753f50345da561a66",
+    "visionOSClient/StreamClient+VisionOwnerBootstrap.swift": "e1eaa222c38b382e15149dfa07b394bb4f1f4af43538929086078085bbf26b09"
+  }
+}

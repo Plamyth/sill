@@ -4,9 +4,6 @@ import SwiftUI
 struct ControlEventsPanel: View {
     @ObservedObject var controller: ControlEventsController
     @ObservedObject var enrollment: VisionControlEnrollmentController
-    @State private var origin = VisionControlOrigin.publicDefault
-    @State private var enrollmentCode = ""
-    @State private var registeringAgain = false
     let close: () -> Void
 
     var body: some View {
@@ -16,11 +13,12 @@ struct ControlEventsPanel: View {
                     Text("작업 상태").font(.title2)
                     Spacer()
                     Button("다시 연결") {
-                        if !enrollment.restore() { controller.reconnect() }
-                    }.disabled(!controller.configured || enrollment.submitting)
+                        enrollment.reconnect()
+                        controller.reconnect()
+                    }
                     Button("닫기", action: close)
                 }
-                enrollmentForm
+                enrollmentStatus
                 Text(controller.message).accessibilityIdentifier("control-events.connection-message")
                 Text("원본 작업 이벤트가 도착하면 이 화면을 갱신합니다.").font(.caption)
                 Text(controller.reducer.isCurrent ? "연결 서버 상태 수신 중 · 원본 관측은 아래에서 확인" : "마지막 관측 · 현재 실행 상태와 연결은 미확인")
@@ -55,37 +53,14 @@ struct ControlEventsPanel: View {
             }.padding(24)
         }
         .frame(width: 820, height: 650)
-        .onAppear { enrollment.restore(); controller.setVisible(true) }
-        .onDisappear { enrollmentCode = ""; controller.setVisible(false) }
+        .onAppear { controller.setVisible(true) }
+        .onDisappear { controller.setVisible(false) }
     }
 
-    @ViewBuilder private var enrollmentForm: some View {
+    @ViewBuilder private var enrollmentStatus: some View {
         Text(enrollment.message)
-        if let registered = enrollment.registeredOrigin {
-            field("등록된 서버", registered)
-            if !registeringAgain {
-                Button("다시 등록") { origin = registered; registeringAgain = true }
-                    .accessibilityHint("기존 연결 정보를 유지하며 새 일회용 코드로 등록을 갱신합니다.")
-            }
-        }
-        if enrollment.registeredOrigin == nil || registeringAgain {
-            TextField("HTTPS 연결 서버 주소", text: $origin).textInputAutocapitalization(.never).autocorrectionDisabled()
-            SecureField("Mac의 1회용 등록 코드", text: $enrollmentCode)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                .accessibilityHint("5분 동안 한 번 쓸 수 있는 24자리 코드를 입력한 뒤 등록 버튼을 누르세요.")
-            Button(enrollment.submitting ? "등록 확인 중" : "이 Vision 앱 등록") {
-                let code = enrollmentCode
-                enrollmentCode = ""
-                Task {
-                    if await enrollment.submit(origin: origin, code: code) { registeringAgain = false }
-                }
-            }.disabled(enrollment.submitting || !VisionControlEnrollment.hex(enrollmentCode, count: 24))
-            if registeringAgain {
-                Button("등록 갱신 취소") { enrollmentCode = ""; registeringAgain = false }
-                    .disabled(enrollment.submitting)
-            }
-            Text("코드는 저장하지 않으며 직접 제출할 때만 등록 요청을 한 번 보냅니다. 연결·등록 결과가 미확인이면 자동 재제출하지 않습니다.").font(.caption)
-        }
+        if let registered = enrollment.registeredOrigin { field("등록된 서버", registered) }
+        Text("현재 신뢰 Mac과 이 Vision Pro의 기존 기기 키를 확인한 뒤 자동으로 등록·갱신합니다. 코드나 서버 주소를 입력하지 않습니다.").font(.caption)
     }
 
     private var rows: [ControlEventsWork] {

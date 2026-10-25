@@ -18,7 +18,7 @@ BUILD = HERE / '.build'
 BUILD.mkdir(exist_ok=True)
 files = [ROOT / 'visionOSClient' / (name + '.swift') for name in [
     'ControlEventsModel', 'ControlEventsReducer', 'ControlEventsSSEParser', 'ControlEventsCodec',
-    'ControlEventsProjection', 'ControlEventsTransport', 'ControlEventsController', 'VisionControlEnrollment']]
+    'ControlEventsProjection', 'ControlEventsTransport', 'ControlEventsController']]
 env = dict(os.environ)
 xcode = Path('/Applications/Xcode.app/Contents/Developer')
 if xcode.is_dir() and not env.get('DEVELOPER_DIR'):

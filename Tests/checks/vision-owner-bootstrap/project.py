@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='vision-project-') as folder:
     objects=plistlib.loads(generated.read_bytes())['objects']
     targets={v['name']:v for v in objects.values() if v.get('isa')=='PBXNativeTarget'}
     needed={'iOSClient/OwnerBootstrapState.swift','iOSClient/OwnerBootstrapExchange.swift','visionOSClient/StreamClient+VisionOwnerBootstrap.swift'}
+    needed.update('iOSClient/'+name+'.swift' for name in ['IPadDeviceEnrollment','IPadEnrollmentJSON','IPadEnrollmentProtocol','IPadEnrollmentStore','IPadEnrollmentTransport','StreamClient+OwnerEnrollment'])
     for name in ['SillVision','SillVisionReleaseTest']:
         target=targets[name]
         phases=[objects[key] for key in target['buildPhases']]
