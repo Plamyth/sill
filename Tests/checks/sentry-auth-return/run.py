@@ -17,6 +17,9 @@ paths = [root / name for name in [
 ]] + [here / ('ChallengeChecks.swift' if challenge else 'Checks.swift'), Path(__file__).resolve()]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 local = paths[1].read_text()
+if '--baseline' in sys.argv:
+    local = subprocess.check_output(['git', 'show',
+        '438569be69099b2d369d12ebc494be81cf3ae7da:Sources/SillHost/LocalAudioReturn.swift'], cwd=root, text=True)
 start, end = local.index('@MainActor\nfinal class LocalAudioAuthentication'), local.index('@MainActor\nfinal class LocalAudioJournal')
 local = (local if challenge else local[:start] + local[end:]).replace('import LocalAuthentication\n', '')
 if challenge:
