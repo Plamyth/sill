@@ -47,6 +47,18 @@ struct VisionAudioForwarding {
               binding.phase == .active else { return nil }
         return binding
     }
+    var providerCallSnapshot: AudioForwardingSnapshot? {
+        if binding != nil { return snapshot }
+        let now = clock()
+        guard let freshSince, let freshUntil, now.isFinite, now >= freshSince, now < freshUntil,
+              !failed, selection == nil, pending?.control.operation != .submit,
+              let snapshot, let intent = snapshot.intent, let binding = snapshot.binding,
+              intent.pairedDeviceId == device, binding.pairedDeviceId == device,
+              binding.intentGeneration == intent.intentGeneration,
+              !intent.inputDesired, !intent.outputDesired,
+              binding.transportKind == .native, binding.phase == .off else { return nil }
+        return snapshot
+    }
     func permits(_ direction: VisionRemoteAudioIntent.Direction) -> Bool {
         binding != nil && (direction == .microphone ? submitted?.inputDesired : submitted?.outputDesired) == true
     }

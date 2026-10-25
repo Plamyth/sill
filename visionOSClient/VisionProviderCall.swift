@@ -155,13 +155,13 @@ extension StreamClient {
     var visionProviderCanStop: Bool {
         visionProviderCall.target == .chatgptDots &&
             visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status == .started &&
-            visionProviderCall.result?.callSessionId != nil && visionForwarding?.binding != nil && visionAudioIntentContext.admitted
+            visionProviderCall.result?.callSessionId != nil && visionForwarding?.providerCallSnapshot != nil && visionAudioIntentContext.admitted
     }
     func performVisionProviderCall(_ action: ProviderCallRequest.Action) {
         guard visionProviderCall.target == .chatgptDots,
               action == .start ? visionProviderCanStart : visionProviderCanStop,
               let peer = connection, authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
-              let model = visionForwarding, let snapshot = model.snapshot, model.binding != nil,
+              let model = visionForwarding, let snapshot = model.providerCallSnapshot,
               let request = try? ProviderCallRequest(requestId: UUID(), action: action,
                 expectedLeaseRevision: snapshot.revision, pairedDeviceId: model.device,
                 desiredInput: visionForwardingDesire.microphone, desiredOutput: visionForwardingDesire.playback,
