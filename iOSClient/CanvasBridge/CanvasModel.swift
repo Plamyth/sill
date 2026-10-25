@@ -717,7 +717,8 @@ struct VaultReviewCard {
         if text.utf8.elementsEqual(self.text(for:field).utf8) { return source }
         let raw = field == .front ? front : back
         let range = field == .front ? frontRange : backRange
-        let newline = raw.hasSuffix("\r\n") || (raw.isEmpty && source.contains("\r\n")) ? "\r\n" : "\n"
+        let newline = text.utf8.last == 13 || raw.hasSuffix("\r\n") ||
+            (raw.isEmpty && source.contains("\r\n")) ? "\r\n" : "\n"
         let bytes = Array(source.utf8)
         let result = String(decoding:bytes[..<range.lowerBound],as:UTF8.self) + text + newline +
             String(decoding:bytes[range.upperBound...],as:UTF8.self)
