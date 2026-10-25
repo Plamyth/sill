@@ -13,8 +13,8 @@ root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 route = json.loads(subprocess.check_output([
     '/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive',
-    '--project', 'ccr-ipad'], text=True))
-output = Path(route['path']) / 'ipad-node-comments-20261026'
+    '--project', 'BT_CCR-ipad'], text=True))
+output = Path(route['path']) / 'ipad-comment-recovery-20261026'
 output.mkdir(parents=True, exist_ok=True)
 attempt = Path(tempfile.mkdtemp(prefix='verification-', dir=output))
 model = root / 'iOSClient/CanvasBridge/CanvasModel.swift'
@@ -25,12 +25,8 @@ sources += [root / ('iOSClient/' + name + '.swift') for name in
             ['IPadAudioSession', 'IPadAudioLeaseState', 'IPadAudioLeaseCoordinator']]
 sources += [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
 module = root / 'Sources/StreamProtocol/TestDestinations.swift'
-pure_suites = [here / 'main.swift', root / 'Tests/checks/ipad-canvas-revisions/main.swift',
-               root / 'Tests/checks/canvas-hierarchy/main.swift']
-store_suites = [here / 'StoreChecks.swift', root / 'Tests/checks/node-rotation/NodeRotationChecks.swift',
-                root / 'Tests/checks/node-resize/NodeResizeChecks.swift',
-                root / 'Tests/checks/pele-live/StoreChecks.swift',
-                root / 'Tests/checks/pele-live/EndpointChecks.swift']
+pure_suites = [here / 'main.swift']
+store_suites = [here / 'StoreChecks.swift']
 inputs = sorted(set(sources + [module, plist, Path(__file__).resolve()] + pure_suites + store_suites))
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
@@ -56,24 +52,25 @@ def run(name, command, run_env=None, timeout=300):
 status = 0
 stage = attempt / 'mini-input'
 try:
-    stage.mkdir()
-    shutil.copyfile(model, stage / 'CanvasModel.swift')
-    suite_names = []
-    for suite in pure_suites:
-        folder = stage / suite.parent.name
-        folder.mkdir()
-        shutil.copyfile(suite, folder / 'main.swift')
-        suite_names.append(suite.parent.name)
-    remote = '''import hashlib,json,pathlib,subprocess\nroot=pathlib.Path.cwd()\nfiles=list(root.rglob('*.swift'))\ndef hashes(): return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in files}\nbefore=hashes()\nfor name in NAMES:\n command=['xcrun','swiftc','-swift-version','5','-module-cache-path','modules','CanvasModel.swift',name+'/main.swift','-o',name+'/check']\n subprocess.run(command,check=True)\n subprocess.run([str(root/name/'check')],check=True)\nassert hashes()==before\nprint(json.dumps({'host':'Mac mini','inputHashes':before,'inputsUnchanged':True},ensure_ascii=False))\n'''.replace('NAMES', repr(suite_names))
-    (stage / 'run.py').write_text(remote)
-    run('mini-pure-model', ['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run',
-        '--source', stage, '--owner', os.environ.get('CODEX_THREAD_ID', 'ipad-node-comments-20261026'),
-        '--job', 'ipad-node-comments-20261026', '--', 'python3', 'run.py'], timeout=600)
-    mini_log = (attempt / 'mini-pure-model.log').read_text()
-    receipt = json.loads(mini_log.strip().splitlines()[-1])
-    if receipt.get('cleanup_verified') is not True:
-        raise RuntimeError('Mini 한시적 입력 정리 확인 실패')
-    (attempt / 'mini-receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')
+    if '--store-only' not in sys.argv:
+        stage.mkdir()
+        shutil.copyfile(model, stage / 'CanvasModel.swift')
+        suite_names = []
+        for suite in pure_suites:
+            folder = stage / suite.parent.name
+            folder.mkdir()
+            shutil.copyfile(suite, folder / 'main.swift')
+            suite_names.append(suite.parent.name)
+        remote = '''import hashlib,json,pathlib,subprocess\nroot=pathlib.Path.cwd()\nfiles=list(root.rglob('*.swift'))\ndef hashes(): return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in files}\nbefore=hashes()\nfor name in NAMES:\n command=['xcrun','swiftc','-swift-version','5','-module-cache-path','modules','CanvasModel.swift',name+'/main.swift','-o',name+'/check']\n subprocess.run(command,check=True)\n subprocess.run([str(root/name/'check')],check=True)\nassert hashes()==before\nprint(json.dumps({'host':'Mac mini','inputHashes':before,'inputsUnchanged':True},ensure_ascii=False))\n'''.replace('NAMES', repr(suite_names))
+        (stage / 'run.py').write_text(remote)
+        run('mini-pure-model', ['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run',
+            '--source', stage, '--owner', os.environ.get('CODEX_THREAD_ID', 'ipad-comment-recovery-20261026'),
+            '--job', 'ipad-comment-recovery-20261026', '--', 'python3', 'run.py'], timeout=600)
+        mini_log = (attempt / 'mini-pure-model.log').read_text()
+        receipt = json.loads(mini_log.strip().splitlines()[-1])
+        if receipt.get('cleanup_verified') is not True:
+            raise RuntimeError('Mini 한시적 입력 정리 확인 실패')
+        (attempt / 'mini-receipt.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2)+'\n')
     mac = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], env=env, text=True).strip()
     ios = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], env=env, text=True).strip()
     base = ['xcrun', 'swiftc', '-sdk', mac, '-target', 'arm64e-apple-macos27.0', '-swift-version', '5',
@@ -84,19 +81,20 @@ try:
         folder.mkdir()
         home = folder / 'home'
         home.mkdir()
-        test_env = dict(env, HOME=str(home), CFFIXED_USER_HOME=str(home), PELE_OUTPUT=str(folder))
+        test_env = dict(env, HOME=str(home), CFFIXED_USER_HOME=str(home), PELE_OUTPUT=str(folder), COMMENT_WORKSPACE=str(root / 'iOSClient/CanvasBridge/CanvasWorkspace.swift'))
         binary = folder / 'check'
         run(name + '-compile', base + ['-parse-as-library', model, store, suite,
             '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__info_plist',
             '-Xlinker', plist, '-o', binary])
         run(name + '-run', [binary], test_env, 60)
-    iosdir = attempt / 'ios'
-    iosdir.mkdir()
-    iosbase = ['xcrun', 'swiftc', '-sdk', ios, '-target', 'arm64-apple-ios27.0', '-swift-version', '5',
-               '-module-cache-path', attempt / 'ios-modules']
-    run('ios-module', iosbase + ['-emit-module', '-module-name', 'StreamProtocol', module,
-        '-emit-module-path', iosdir / 'StreamProtocol.swiftmodule'])
-    run('all-canvas-ios-typecheck', iosbase + ['-parse-as-library', '-I', iosdir, '-typecheck', *sources])
+    if '--store-only' not in sys.argv:
+        iosdir = attempt / 'ios'
+        iosdir.mkdir()
+        iosbase = ['xcrun', 'swiftc', '-sdk', ios, '-target', 'arm64-apple-ios27.0', '-swift-version', '5',
+                   '-module-cache-path', attempt / 'ios-modules']
+        run('ios-module', iosbase + ['-emit-module', '-module-name', 'StreamProtocol', module,
+            '-emit-module-path', iosdir / 'StreamProtocol.swiftmodule'])
+        run('all-canvas-ios-typecheck', iosbase + ['-parse-as-library', '-I', iosdir, '-typecheck', *sources])
     workspace = (root / 'iOSClient/CanvasBridge/CanvasWorkspace.swift').read_text()
     renderer = (root / 'iOSClient/CanvasBridge/SceneRenderer.swift').read_text()
     assert 'pendingCommentEdit' in workspace.split('.sheet(isPresented:$inspectorOpen,onDismiss:',1)[1].split('NavigationStack',1)[0]

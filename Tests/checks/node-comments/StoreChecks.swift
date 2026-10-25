@@ -18,7 +18,7 @@ import AppKit
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         func bytes(_ scene: CanvasScene) -> Data { try! encoder.encode(scene) }
-        let defaults = UserDefaults(suiteName:"node-comments-" + UUID().uuidString)!
+        let defaults = UserDefaults(suiteName:output.appendingPathComponent("node-comments-defaults").path)!
         let store = CanvasStore(blockRecoveryURL:output.appendingPathComponent("recovery.json"),defaults:defaults)
         store.scene = CanvasScene()
         let stroke = PKStroke(ink:PKInk(.pen,color:.white),path:PKStrokePath(controlPoints:[
@@ -74,6 +74,17 @@ import AppKit
         store.redoGraphEdit()
         check(store.scene.annotations.last!.text == "수정한 댓글","댓글 수정 다시 실행")
         let editable = store.scene
+        let recovery = store.beginCommentEdit()!
+        store.commentText = "선택 변경 뒤 보존할 초안 e\u{301}"
+        let draft = store.commentText
+        store.selectedNode = b
+        let recoveryScene = bytes(store.scene)
+        check(store.beginCommentEdit() == recovery && store.commentText == draft,
+              "나중에·선택 변경·재진입은 원래 초안 유지")
+        check(!store.confirmComment(sessionID:recovery) && bytes(store.scene) == recoveryScene,
+              "재현: 선택이 바뀐 초안은 저장할 수 없음")
+        let workspace = try String(contentsOfFile:env["COMMENT_WORKSPACE"]!,encoding:.utf8)
+        check(workspace.contains("canvasDiscardCommentDraft"),"재현: stale 초안을 명시적으로 해제할 UI가 있어야 함")
         for invalid in ["", " \r\n\t"] {
             let token = store.beginCommentEdit()!
             store.commentText = invalid
