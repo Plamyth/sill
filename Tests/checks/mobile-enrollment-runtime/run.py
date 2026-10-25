@@ -14,7 +14,7 @@ here = Path(__file__).resolve().parent
 args.output.mkdir(parents=True, exist_ok=True)
 protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
 host = [root / 'Sources/SillHost' / (n + '.swift') for n in
-        ['MobileEnrollmentSigner', 'ProviderPeerAnchor', 'MobileEnrollmentSocket', 'MobileEnrollmentHostRuntime']]
+        ['HostLog', 'MobileEnrollmentSigner', 'ProviderPeerAnchor', 'MobileEnrollmentSocket', 'MobileEnrollmentHostRuntime']]
 inputs = protocol + host + [root / 'Sources/SillHost/HostIdentity.swift'] + sorted(here.glob('*'))
 sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 before = {str(p.relative_to(root)): sha(p) for p in inputs if p.is_file()}

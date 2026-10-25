@@ -201,6 +201,7 @@ private final class MemoryTransport: MobileEnrollmentTransport {
 
         reset()
         let normal = Trace()
+        HostLog.shared.configure(keepLines: 256, fileURL: output)
         let hc = try MobileEnrollment.HostChallenge(coreGeneration: "10000000-0000-0000-0000-000000000001",
             nonce: Base64URL.encode(Data(repeating: 7, count: 32)), origin: MobileEnrollment.origin)
         let socket = MemoryTransport(normal, chunks: [try frame(hc)])
@@ -236,6 +237,9 @@ private final class MemoryTransport: MobileEnrollmentTransport {
         live.stop(); await settle { has("terminal", "cancelled") || has("terminal", "stopped") }
         check(normal.value.invalidations >= 2 && normal.value.connects.count == 1, "취소 정리와 추가 connect 0")
         record("normal-cancellation", normal)
+        check(!logs().isEmpty && HostLog.shared.fileURL == output,
+              "기존 HostLog 파일 sink가 디렉터리 열기에 실패해도 ring·runtime 유지")
+        HostLog.shared.configure(keepLines: 256, fileURL: nil)
 
         let allowedStages: Set<String> = ["start", "profilePreparation", "connect", "handshake", "terminal"]
         let allowedCodes = Set(errors.map { $0.1 } + ["none", "unavailable", "cancelled"])

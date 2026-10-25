@@ -2,6 +2,55 @@ import Foundation
 import StreamProtocol
 import os
 
+struct MobileEnrollmentDiagnostic: Sendable {
+    enum Stage: String, Sendable { case start, profilePreparation, connect, handshake, terminal }
+    enum Code: String, Sendable {
+        case none, unknown, cancelled
+        case unavailable, unsafeEndpoint, invalidFrame, expired, clockRollback, replay, capacity, stopped
+        case invalidFields, invalidKey, identityMismatch, invalidTime, invalidSignature
+        case peerInvalidSocket, peerUnavailable, peerSignatureMismatch, peerPathMismatch, peerInstalledCodeMismatch, peerChanged
+
+        init(_ error: Error) {
+            switch error {
+            case let failure as MobileEnrollmentRuntimeFailure:
+                switch failure {
+                case .unavailable: self = .unavailable
+                case .unsafeEndpoint: self = .unsafeEndpoint
+                case .invalidFrame: self = .invalidFrame
+                case .expired: self = .expired
+                case .clockRollback: self = .clockRollback
+                case .replay: self = .replay
+                case .capacity: self = .capacity
+                case .stopped: self = .stopped
+                }
+            case let failure as MobileEnrollment.Failure:
+                switch failure {
+                case .invalidFields: self = .invalidFields
+                case .invalidKey: self = .invalidKey
+                case .identityMismatch: self = .identityMismatch
+                case .invalidTime: self = .invalidTime
+                case .invalidSignature: self = .invalidSignature
+                }
+            case let failure as ProviderPeerAnchor.Failure:
+                switch failure {
+                case .invalidSocket: self = .peerInvalidSocket
+                case .peerUnavailable: self = .peerUnavailable
+                case .signatureMismatch: self = .peerSignatureMismatch
+                case .pathMismatch: self = .peerPathMismatch
+                case .installedCodeMismatch: self = .peerInstalledCodeMismatch
+                case .peerChanged: self = .peerChanged
+                }
+            case is CancellationError: self = .cancelled
+            default: self = .unknown
+            }
+        }
+    }
+    let stage: Stage
+    var code: Code = .none
+    var retrying = false
+    var line: String { "[MobileEnrollment] stage=\(stage.rawValue) code=\(code.rawValue) retrying=\(retrying)" }
+}
+
 struct MobileEnrollmentTime: Sendable {
     let milliseconds: Int64
     let uptime: TimeInterval
@@ -13,6 +62,7 @@ struct MobileEnrollmentTime: Sendable {
 }
 
 struct MobileEnrollmentDependencies: Sendable {
+    var diagnostic: @Sendable (MobileEnrollmentDiagnostic) -> Void = { print($0.line) }
     var connect: @Sendable (String, TimeInterval) async throws -> any MobileEnrollmentTransport = {
         try await MobileEnrollmentSocket.open(path: $0, until: $1)
     }
@@ -54,24 +104,34 @@ final class MobileEnrollmentHostRuntime {
 
     func start() {
         guard task == nil, currentRemoteAccess() else { return }
+        dependencies.diagnostic(.init(stage: .start))
         let lease = MobileEnrollmentLifetime()
         lifetime = lease
         let identity = identity, host = host, observe = observeActive, remote = currentRemoteAccess
         let dependencies = dependencies, path = commandPath, history = history
         task = Task.detached { [weak self] in
             var delay: TimeInterval = 0.25
+            var terminalCode = MobileEnrollmentDiagnostic.Code.stopped
             while !Task.isCancelled && !lease.isStopped {
+                var enteredChannel = false
                 do {
                     try lease.check()
                     guard await remote() else { break }
                     let now = try history.time(dependencies.clock)
+                    dependencies.diagnostic(.init(stage: .connect))
                     let transport = try await dependencies.connect(path, now.uptime + 5)
                     try lease.install(transport)
                     let channel = MobileEnrollmentChannel(identity: identity, host: host, observe: observe,
                         remote: remote, transport: transport, dependencies: dependencies, history: history, lifetime: lease)
                     defer { transport.invalidate(); lease.clear() }
+                    enteredChannel = true
                     try await channel.run()
                 } catch {
+                    terminalCode = .init(error)
+                    if !enteredChannel {
+                        dependencies.diagnostic(.init(stage: .connect, code: terminalCode,
+                            retrying: terminalCode == .unavailable && !Task.isCancelled && !lease.isStopped))
+                    }
                     if Task.isCancelled || lease.isStopped { break }
                     if let failure = error as? MobileEnrollmentRuntimeFailure {
                         switch failure {
@@ -85,9 +145,10 @@ final class MobileEnrollmentHostRuntime {
                     try await dependencies.sleep(delay)
                     delay = min(30, delay * 2)
                 }
-                catch { break }
+                catch { terminalCode = .init(error); break }
             }
             lease.stop()
+            dependencies.diagnostic(.init(stage: .terminal, code: terminalCode))
             await self?.finished(lease)
         }
     }
@@ -257,6 +318,12 @@ private actor MobileEnrollmentChannel {
         } catch {
             let result = failure ?? error
             close(result)
+            let code = MobileEnrollmentDiagnostic.Code(result)
+            let retrying = code == .unavailable && !Task.isCancelled && !lifetime.isStopped
+            if generation == nil || retrying {
+                dependencies.diagnostic(.init(stage: generation == nil ? .handshake : .terminal,
+                    code: code, retrying: retrying))
+            }
             throw result
         }
     }
@@ -275,6 +342,7 @@ private actor MobileEnrollmentChannel {
             generation = challenge.coreGeneration
             hostNonce = challenge.nonce
             armTimer()
+            dependencies.diagnostic(.init(stage: .handshake))
             return
         }
         let challenge = try MobileEnrollment.decodeActiveChallenge(frame, receivedAtMilliseconds: received.milliseconds)
