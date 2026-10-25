@@ -586,7 +586,7 @@ enum VaultReviewError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .malformed: return "복습 카드 표식·버전·ID·평가 정보를 확인할 수 없습니다. 원문을 유지합니다."
-        case .empty: return "원문 편집기에서 질문과 답을 작성하고 저장한 뒤 복습하세요."
+        case .empty: return "질문과 답을 작성하고 저장한 뒤 복습하세요. 빈 내용은 초안으로 보존됩니다."
         case .changed: return "노트·선택·입력 또는 연결이 바뀌었습니다. 최신 원문에서 복습을 다시 여세요."
         case .time: return "평가 시각과 24시간 뒤 기한을 확인할 수 없습니다. 원문을 유지합니다."
         }
@@ -594,6 +594,7 @@ enum VaultReviewError: LocalizedError {
 }
 
 struct VaultReviewCard {
+    enum Field: String, CaseIterable { case front, back }
     struct Metadata: Codable, Equatable {
         let cardID: String
         let eventID: String?
@@ -615,6 +616,8 @@ struct VaultReviewCard {
     let front: String
     let back: String
     private let metadataRange: Range<Int>
+    private let frontRange: Range<Int>
+    private let backRange: Range<Int>
     private let source: String
 
     var ready: Bool {
@@ -671,8 +674,12 @@ struct VaultReviewCard {
                 } else if count >= 3 { fence = (first,count) }
             }
             if fence == nil {
-                if line.contains("<!--") { comment = true }
-                if line.contains("-->") { comment = false }
+                var cursor = line.startIndex
+                while cursor < line.endIndex,
+                      let token = line.range(of:comment ? "-->" : "<!--",range:cursor..<line.endIndex) {
+                    comment.toggle()
+                    cursor = token.upperBound
+                }
             }
         }
         let header = lines[marked[0]], question = lines[marked[1]], answer = lines[marked[2]], end = lines[marked[3]]
@@ -695,7 +702,27 @@ struct VaultReviewCard {
         return Self(metadata:metadata,
             front:String(decoding:bytes[question.end..<answer.start],as:UTF8.self),
             back:String(decoding:bytes[answer.end..<end.start],as:UTF8.self),
-            metadataRange:(header.start + prefix.utf8.count)..<(header.start + header.text.utf8.count - 4),source:text)
+            metadataRange:(header.start + prefix.utf8.count)..<(header.start + header.text.utf8.count - 4),
+            frontRange:question.end..<answer.start,backRange:answer.end..<end.start,source:text)
+    }
+
+    func text(for field: Field) -> String {
+        let raw = field == .front ? front : back
+        if raw.hasSuffix("\r\n") { return String(decoding:raw.utf8.dropLast(2),as:UTF8.self) }
+        if raw.hasSuffix("\n") { return String(raw.dropLast()) }
+        return raw
+    }
+
+    func replacing(_ field: Field, with text: String) throws -> String {
+        if text.utf8.elementsEqual(self.text(for:field).utf8) { return source }
+        let raw = field == .front ? front : back
+        let range = field == .front ? frontRange : backRange
+        let newline = raw.hasSuffix("\r\n") || (raw.isEmpty && source.contains("\r\n")) ? "\r\n" : "\n"
+        let bytes = Array(source.utf8)
+        let result = String(decoding:bytes[..<range.lowerBound],as:UTF8.self) + text + newline +
+            String(decoding:bytes[range.upperBound...],as:UTF8.self)
+        guard result.utf8.count <= 1024 * 1024 else { throw VaultReviewError.malformed }
+        return result
     }
 
     private static func headerJSON(_ metadata: Metadata) throws -> String {

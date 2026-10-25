@@ -71,6 +71,7 @@ if args.worker or args.native_worker:
         'inputsUnchanged': before == after, 'sdk': sdk, 'compiler': compiler,
         'command': command, 'mode': 'Mini pure model' if args.worker else 'MacBook narrow native Store SDK',
         'workspaceSyntaxExitCode': syntax.returncode, 'exitCode': code, 'deviceExecuted': False,
+        'uiExecuted': False,
         'installedOrLiveVaultTouched': False,
         'defaults': 'absolute preferences path beneath isolated root; physical plist and separate-process restore; added scope key removed using official API'}), flush=True)
     sys.exit(0 if code == 0 else 1)
@@ -88,11 +89,10 @@ for name in inputs:
     destination = staged / name
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(root / name, destination)
-for name in inputs[:2]:
-    if 'UserDefaults.standard' in (root / name).read_text():
-        raise SystemExit('Production defaults require explicit suite isolation before running')
+if 'defaults:defaults' not in (root / inputs[-2]).read_text():
+    raise SystemExit('Every native Store fixture must inject the absolute isolated defaults suite')
 command = ['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run', '--source', str(staged),
-    '--owner', '01a13ace-e372-7ed1-9946-149df37ee1c3', '--job', 'ipad-obsidian-review-cards',
+    '--owner', os.environ.get('CODEX_THREAD_ID', 'ipad-review-cards-integration-20261026'), '--job', 'ipad-review-card-editing',
     '--', 'python3', '-B', 'Tests/checks/obsidian-review-cards/run.py', 'output', '--worker']
 result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=420)
 (output / 'mini.log').write_text(result.stdout)
@@ -115,8 +115,12 @@ accepted = (result.returncode == 0 and before == after and remote is not None an
             and remote['inputHashes'] == {name: before[name] for name in inputs}
             and cleanup and cleanup[-1]['cleanup_verified'] and native.returncode == 0
             and native_receipt and native_receipt['inputHashes'] == before and native_receipt['exitCode'] == 0)
+staged_matches = all(hashlib.sha256((staged / name).read_bytes()).hexdigest() == before[name] for name in inputs)
+if staged_matches:
+    shutil.rmtree(staged)
+local_cleanup = staged_matches and not staged.exists()
 (output / 'result.json').write_text(json.dumps({'inputHashes': before, 'afterHashes': after,
     'sourceUnchanged': before == after, 'mini': remote, 'native': native_receipt,
-    'cleanup': cleanup, 'accepted': bool(accepted),
+    'cleanup': cleanup, 'localStagedInputCleanupVerified': local_cleanup, 'accepted': bool(accepted and local_cleanup),
     'independentReview': 'parent-owned pending', 'iOSSDKAndUI': 'parent-owned pending'}, indent=2) + '\n')
-sys.exit(0 if accepted else 1)
+sys.exit(0 if accepted and local_cleanup else 1)

@@ -33,6 +33,7 @@ struct CanvasWorkspace: View {
     @State private var recoveryDiscardOpen = false
     @State private var noteRecoveryDiscardOpen = false
     @State private var vaultReview: CanvasStore.VaultReviewSession?
+    @State private var vaultRawMarkdown = false
     @State private var syncedSceneSha: String?
     @State private var canvasNoteSha: String?
     @State private var pendingSceneSha: String?
@@ -397,12 +398,24 @@ struct CanvasWorkspace: View {
                         Text("연결 문단 편집 · 블록 표식과 다른 문단은 그대로 보존됩니다.")
                             .font(.footnote).padding(.horizontal)
                     } else {
-                        VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection,
-                            inputBusy:$store.vaultInputBusy,editSession:{ store.vaultInputSessionID })
-                            .id(store.vaultInputSessionID)
-                            .frame(minHeight:150)
-                            .disabled(store.vaultLoading || store.vaultInputSessionID == nil)
-                            .accessibilityIdentifier("obsidianMarkdownEditor")
+                        if !vaultRawMarkdown, let session = store.vaultReviewEditSession {
+                            VaultReviewFields(store:store,session:session,showRawMarkdown:{ vaultRawMarkdown = true })
+                                .id(session)
+                        } else {
+                            VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection,
+                                inputBusy:$store.vaultInputBusy,editSession:{ store.vaultInputSessionID })
+                                .id(store.vaultInputSessionID)
+                                .frame(minHeight:150)
+                                .disabled(store.vaultSaving || store.vaultLoading || store.vaultInputSessionID == nil)
+                                .accessibilityIdentifier("obsidianMarkdownEditor")
+                        }
+                        if store.vaultReviewEditSession != nil {
+                            Button(vaultRawMarkdown ? "질문과 답 편집" : "Markdown 원문 편집") {
+                                vaultRawMarkdown.toggle()
+                            }.frame(minHeight:44)
+                                .disabled(store.vaultInputBusy || store.vaultSaving || store.vaultLoading)
+                                .accessibilityIdentifier("obsidianReviewEditorMode")
+                        }
                         VStack(alignment:.leading,spacing:6) {
                             Text(store.vaultReviewMessage).font(.footnote)
                             ViewThatFits(in:.horizontal) {
@@ -494,12 +507,17 @@ struct CanvasWorkspace: View {
                     }
                 }
                 ToolbarItem(placement:.confirmationAction) {
-                    Button("닫기") {
-                        if store.closeVaultEditor() { vaultOpen = false }
+                    Button(store.vaultDirty && !store.vaultBlockEditing ? "취소 · 초안 보존" : "닫기") {
+                        if store.vaultDirty && !store.vaultBlockEditing {
+                            if store.pauseVaultNoteEditing() { vaultOpen = false }
+                        } else if store.closeVaultEditor() { vaultOpen = false }
                     }.frame(minWidth:44,minHeight:44)
+                        .disabled(store.vaultInputBusy || store.vaultSaving || store.vaultLoading || store.noteRecoveryWriteFailed)
+                        .accessibilityIdentifier("obsidianClosePreservingDraft")
                 }
             }
             .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
+            .onChange(of:store.vaultInputSessionID) { _,_ in vaultRawMarkdown = false }
             .sheet(item:$vaultReview) { session in
                 VaultReviewSheet(store:store,session:session) {
                     store.setNoteConnection(address:relayAddress,token:relayToken)
@@ -534,7 +552,9 @@ struct CanvasWorkspace: View {
 
     @ViewBuilder
     private var vaultReviewButtons: some View {
-        Button("복습 카드 틀 넣기") { _ = store.insertVaultReviewTemplate() }
+        Button("복습 카드 추가") {
+            if store.insertVaultReviewTemplate() { vaultRawMarkdown = false }
+        }
             .frame(minHeight:44).disabled(!store.vaultReviewCanInsert)
             .accessibilityIdentifier("obsidianInsertReviewCard")
         Button("복습 보기") { vaultReview = store.beginVaultReview() }
@@ -568,9 +588,9 @@ struct CanvasWorkspace: View {
             },load:connection.vaultNote)
             return
         }
-        await store.saveVaultNote { path, sha, text in
+        await store.saveVaultNote(save:{ path, sha, text in
             try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
-        }
+        },load:connection.vaultNote)
     }
 
     private func excerptVaultBlock() async {
@@ -1329,6 +1349,51 @@ private struct CanvasEndpointHandle: View {
             .accessibilityLabel(endpoint == .from ? "연결선 시작점" : "연결선 끝점")
             .accessibilityHint("끌어서 이 요소 경계의 연결 위치를 바꿉니다.")
             .accessibilityIdentifier("canvasLinkEndpoint-\(endpoint.rawValue)-\(linkID.uuidString)")
+    }
+}
+
+private struct VaultReviewFields: View {
+    @ObservedObject var store: CanvasStore
+    let session: CanvasStore.VaultReviewEditSession
+    let showRawMarkdown: () -> Void
+    @State private var frontSelection = NSRange(location:0,length:0)
+    @State private var backSelection = NSRange(location:0,length:0)
+    @State private var frontBusy = false
+    @State private var backBusy = false
+
+    private func inputBusy(_ field: VaultReviewCard.Field) -> Binding<Bool> {
+        Binding(get:{ field == .front ? frontBusy : backBusy },set:{ busy in
+            guard store.vaultReviewEditIsCurrent(session) else { return }
+            if field == .front { frontBusy = busy } else { backBusy = busy }
+            store.vaultInputBusy = frontBusy || backBusy
+        })
+    }
+
+    private func text(_ field: VaultReviewCard.Field) -> Binding<String> {
+        Binding(get:{ (try? VaultReviewCard.parse(store.vaultDraft))?.text(for:field) ?? "" },set:{ value in
+            if store.editVaultReview(field,text:value,session:session), store.vaultReviewEditSession == nil {
+                showRawMarkdown()
+            }
+        })
+    }
+
+    var body: some View {
+        VStack(alignment:.leading,spacing:8) {
+            Text("질문").font(.headline)
+            VaultMarkdownEditor(text:text(.front),selection:$frontSelection,
+                identifier:"obsidianReviewQuestion",label:"복습 카드 질문",
+                inputBusy:inputBusy(.front),editSession:{ store.vaultReviewEditIsCurrent(session) ? session.inputSessionID : nil })
+                .frame(minHeight:150)
+            Text("답").font(.headline)
+            VaultMarkdownEditor(text:text(.back),selection:$backSelection,
+                identifier:"obsidianReviewAnswer",label:"복습 카드 답",
+                inputBusy:inputBusy(.back),editSession:{ store.vaultReviewEditIsCurrent(session) ? session.inputSessionID : nil })
+                .frame(minHeight:150)
+        }.padding(.horizontal)
+            .disabled(store.vaultSaving || store.vaultLoading || store.vaultBlocked)
+            .onAppear {
+                if store.vaultReviewEditIsCurrent(session), !frontBusy, !backBusy { store.vaultInputBusy = false }
+            }
     }
 }
 

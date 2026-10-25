@@ -170,6 +170,7 @@ final class CanvasStore: ObservableObject {
         didSet {
             if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
             if oldValue != selectedNode {
+                noteSelectionGeneration &+= 1
                 nodeResizeDrag = nil
                 nodeRotationDrag = nil
                 clearPendingLink()
@@ -598,7 +599,9 @@ final class CanvasStore: ObservableObject {
     private var noteRecoveryAttemptedBytes: Data?
     private var noteRecoveryReadable = true
     private var changingNoteState = false
-    @Published var vaultSelection = NSRange(location:0,length:0)
+    @Published var vaultSelection = NSRange(location:0,length:0) {
+        didSet { if oldValue != vaultSelection { noteSelectionGeneration &+= 1 } }
+    }
     @Published var vaultInputBusy = false {
         didSet { if oldValue != vaultInputBusy { noteEditGeneration &+= 1 } }
     }
@@ -633,6 +636,7 @@ final class CanvasStore: ObservableObject {
     private var noteSceneGeneration: UInt64 = 0
     private var noteEditorGeneration: UInt64 = 0
     private var noteEditGeneration: UInt64 = 0
+    private var noteSelectionGeneration: UInt64 = 0
     private var noteRequest: UUID?
     private var noteReadSequence: UInt64 = 0
     private var acceptedNoteReads: [String:UInt64] = [:]
@@ -679,6 +683,55 @@ final class CanvasStore: ObservableObject {
         fileprivate let editGeneration: UInt64
         fileprivate let selection: NSRange
         fileprivate let selectedNode: UUID?
+        fileprivate let selectionGeneration: UInt64
+    }
+
+    struct VaultReviewEditSession: Hashable {
+        let inputSessionID: UUID
+        let path: String
+        let baseSha256: String
+        let cardID: String
+        let selection: NSRange
+        let selectedNode: UUID?
+        let selectionGeneration: UInt64
+    }
+
+    var vaultReviewEditSession: VaultReviewEditSession? {
+        guard !vaultBlockEditing, let note = vaultNote, let input = vaultInputSessionID,
+              let card = try? VaultReviewCard.parse(vaultDraft) else { return nil }
+        return VaultReviewEditSession(inputSessionID:input,path:note.path,baseSha256:note.sha256,
+            cardID:card.metadata.cardID,selection:vaultSelection,selectedNode:selectedNode,
+            selectionGeneration:noteSelectionGeneration)
+    }
+
+    func vaultReviewEditIsCurrent(_ session: VaultReviewEditSession) -> Bool {
+        !vaultBlockEditing && vaultInputSessionID == session.inputSessionID &&
+        vaultNote?.path == session.path && vaultNote?.sha256 == session.baseSha256 &&
+        vaultSelection == session.selection && selectedNode == session.selectedNode &&
+        noteSelectionGeneration == session.selectionGeneration
+    }
+
+    @discardableResult
+    func editVaultReview(_ field: VaultReviewCard.Field, text: String,
+                        session: VaultReviewEditSession) -> Bool {
+        guard vaultReviewEditIsCurrent(session), !vaultSaving, !vaultLoading, !vaultBlocked else { return false }
+        do {
+            guard let card = try VaultReviewCard.parse(vaultDraft), card.metadata.cardID == session.cardID else { return false }
+            let next = try card.replacing(field,with:text)
+            if !next.utf8.elementsEqual(vaultDraft.utf8) { vaultDraft = next }
+            if (try? VaultReviewCard.parse(next)) == nil {
+                vaultStatus = "입력은 원문 초안에 보존했습니다. 카드 표식을 확인할 때까지 원문 편집으로 이어갑니다."
+            }
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
+    @discardableResult
+    func pauseVaultNoteEditing() -> Bool {
+        guard !vaultBlockEditing, !vaultSaving, !vaultLoading, !vaultInputBusy,
+              vaultInputSessionID != nil, persistNoteDraft() else { return false }
+        noteInputSession = UUID()
+        return true
     }
 
     var vaultReviewCanInsert: Bool {
@@ -694,7 +747,7 @@ final class CanvasStore: ObservableObject {
     var vaultReviewMessage: String {
         do {
             guard let card = try VaultReviewCard.parse(vaultDraft) else {
-                return "노트 하나에 복습 카드 틀 하나를 넣고 질문과 답을 원문으로 작성하세요."
+                return "복습 카드를 추가하면 질문과 답을 나누어 작성할 수 있습니다."
             }
             return card.ready ? "저장된 원문으로 앞면과 뒷면을 복습합니다. 평가는 자체 24시간 규칙입니다." :
                 VaultReviewError.empty.localizedDescription
@@ -706,7 +759,7 @@ final class CanvasStore: ObservableObject {
         guard vaultReviewCanInsert else { return false }
         do {
             vaultDraft = try VaultReviewCard.insertingTemplate(in:vaultDraft)
-            vaultStatus = "복습 카드 틀을 초안에 넣었습니다. 앞면과 뒷면 표식 사이에 질문과 답을 작성하고 저장하세요."
+            vaultStatus = "복습 카드를 초안에 넣었습니다. 질문과 답을 작성하고 저장하세요."
             return true
         } catch { vaultStatus = error.localizedDescription; return false }
     }
@@ -718,7 +771,8 @@ final class CanvasStore: ObservableObject {
             guard let card = try VaultReviewCard.parse(base.text) else { return nil }
             guard card.ready else { throw VaultReviewError.empty }
             return VaultReviewSession(id:UUID(),card:card,base:base,inputSessionID:inputSessionID,
-                editGeneration:noteEditGeneration,selection:vaultSelection,selectedNode:selectedNode)
+                editGeneration:noteEditGeneration,selection:vaultSelection,selectedNode:selectedNode,
+                selectionGeneration:noteSelectionGeneration)
         } catch { vaultStatus = error.localizedDescription; return nil }
     }
 
@@ -726,6 +780,7 @@ final class CanvasStore: ObservableObject {
         vaultCanAttach && noteRecoveryReadable && !noteRecoveryWriteFailed &&
         vaultInputSessionID == session.inputSessionID && noteEditGeneration == session.editGeneration &&
         vaultSelection == session.selection && selectedNode == session.selectedNode &&
+        noteSelectionGeneration == session.selectionGeneration &&
         vaultNote?.path == session.base.path && vaultNote?.sha256 == session.base.sha256 &&
         vaultDraft.utf8.elementsEqual(session.base.text.utf8)
     }
@@ -741,16 +796,10 @@ final class CanvasStore: ObservableObject {
         do {
             let submitted = try session.card.ratingGood(eventID:session.id,injectedDate:injectedDate)
             vaultDraft = submitted
-            await saveVaultNote { path,sha,text in
-                let saved = try await save(path,sha,text).validated(at:path)
-                guard saved.text.utf8.elementsEqual(text.utf8) else { throw URLError(.badServerResponse) }
-                let readback = try await load(path).validated(at:path)
-                guard readback.sha256 == saved.sha256,
-                      readback.text.utf8.elementsEqual(text.utf8) else { throw VaultBlockRecoveryError.changed }
-                return readback
-            }
+            await saveVaultNote(save:save,load:load)
             guard !Task.isCancelled, vaultInputSessionID == session.inputSessionID,
                   vaultSelection == session.selection, selectedNode == session.selectedNode,
+                  noteSelectionGeneration == session.selectionGeneration,
                   vaultNote?.text.utf8.elementsEqual(submitted.utf8) == true,
                   vaultDraft.utf8.elementsEqual(submitted.utf8), vaultCanAttach,
                   !noteRecoveryWriteFailed, noteRecovery == nil else { return false }
@@ -1343,6 +1392,18 @@ final class CanvasStore: ObservableObject {
         mode = .select
         vaultStatus = "선택 블록을 원본 표식과 연결했습니다."
         return id
+    }
+
+    func saveVaultNote(save: (String,String,String) async throws -> VaultNoteSnapshot,
+                       load: (String) async throws -> VaultNoteSnapshot) async {
+        await saveVaultNote { path,sha,text in
+            let saved = try await save(path,sha,text).validated(at:path)
+            guard saved.text.utf8.elementsEqual(text.utf8) else { throw URLError(.badServerResponse) }
+            let readback = try await load(path).validated(at:path)
+            guard readback.sha256 == saved.sha256,
+                  readback.text.utf8.elementsEqual(text.utf8) else { throw VaultBlockRecoveryError.changed }
+            return readback
+        }
     }
 
     func saveVaultNote(save: (String, String, String) async throws -> VaultNoteSnapshot) async {
