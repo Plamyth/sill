@@ -61,7 +61,7 @@ def main():
         if code: raise RuntimeError('baseline runtime\n'+log)
         record['assertions'] = int(re.search(r'^RESULT_ASSERTIONS (\d+)$',log,re.M)[1])
         original = sources[1].read_text()
-        for name, edits, witness in MUTANTS:
+        for name, edits, witness in ([] if '--skip-mutants' in sys.argv[3:] else MUTANTS):
             variant = output/('mutant-'+name)
             variant.mkdir()
             mutated = original
@@ -92,6 +92,24 @@ def main():
             require(base+list(map(str,paths))+['-o',str(exe)], name+'-compile')
             log = require([str(exe)],name+'-runtime')
             record['regression'][name] = log.strip().splitlines()[-1]
+        native = (root/'visionOSClient/VisionAudioNativeGraph.swift').read_text()
+        fields = native[native.index('    private struct Previous {'):native.index('    private var engine:')]
+        methods = [native[native.index('    func configure('):native.index('    func start(')],
+                   native[native.index('    func deactivate('):native.index('\n}\n\nenum VisionAudioSharedHardware')]]
+        profile = re.search(r'^enum VisionAudioProfile:.*$', original, re.M)[0]
+        emitted = output/'NativeProfileProduction.swift'
+        emitted.write_text(profile+'\nfinal class VisionAudioNativeGraph {\n'+fields+''.join(methods)+'\n}\n')
+        record['nativeFixture'] = {'sourceSHA256': hashlib.sha256(native.encode()).hexdigest(),
+            'emittedSHA256': hashlib.sha256(emitted.read_bytes()).hexdigest(),
+            'methodSHA256': {name: hashlib.sha256(body.encode()).hexdigest()
+                for name, body in zip(['configure', 'deactivateAndCategoryStillMatches'], methods)},
+            'substitution': 'unchanged production methods and stored state; inert AVAudioSession, no AVFoundation import'}
+        exe = output/'native-profile'
+        require(base+[str(emitted),str(root/'Tests/checks/vision-audio-session/NativeProfile.swift'),'-o',str(exe)], 'native-profile-compile')
+        code, log = run([str(exe)], 'native-profile-runtime')
+        record['nativeAssertions'] = int(re.search(r'^RESULT_ASSERTIONS (\d+)$',log,re.M)[1])
+        record['nativeFailures'] = re.findall(r'^FAIL (.*)$',log,re.M)
+        if code: raise RuntimeError('native profile runtime\n'+log)
         record['exitCode'] = 0 if all(e['caught'] for e in record['mutants']) else 1
     except Exception as error:
         record['error'] = str(error)
