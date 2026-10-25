@@ -277,11 +277,27 @@ final class LocalAudioParticipantRegistry {
     }
 
     func recoverClosedLocalReturn(until deadline: ContinuousClock.Instant) async -> Bool {
+        func failed(_ phase: String, request: LocalAudioParticipantRequest? = nil,
+                    receipt: LocalAudioParticipantReceipt? = nil) -> Bool {
+            let reason: String
+            switch receipt?.reason {
+            case nil: reason = "none"
+            case "budget_exhausted": reason = "budget_exhausted"
+            case "audio_preparation_conflict": reason = "audio_preparation_conflict"
+            default: reason = "other"
+            }
+            func flag(_ value: Bool?) -> String { value.map { String($0) } ?? "unknown" }
+            let facts = receipt?.facts ?? .unknown
+            let identityMatched = request.map { receipt?.matches($0) == true } ?? false
+            let membershipMatched = operation.map { matches($0.snapshot) } ?? false
+            print("[로컬 복귀 종료 확인] 실패 phase=\(phase) participant=\(request?.participantId.rawValue ?? "none") state=\(receipt?.state.rawValue ?? "none") reason=\(reason) identityMatched=\(identityMatched) admissionFenced=\(flag(facts.admissionFenced)) startsSettled=\(flag(facts.startsSettled)) mediaDetached=\(flag(facts.mediaDetached)) callbacksDrained=\(flag(facts.callbacksDrained)) buffersEmpty=\(flag(facts.buffersEmpty)) workersExited=\(flag(facts.workersExited)) pendingCalls=\(pendingCalls) closed=\(operation?.closed == true) uncertain=\(operation?.uncertain == true) membershipMatched=\(membershipMatched) cancelled=\(Task.isCancelled)")
+            return false
+        }
         guard let old = operation, old.closed, old.uncertain else {
-            return authenticatedLocalReturnUnavailableReason == nil
+            return authenticatedLocalReturnUnavailableReason == nil || failed("unavailable")
         }
         guard localReturnRecovery == nil, localReturn == nil, pendingCalls == 0,
-              matches(old.snapshot), !Task.isCancelled, ContinuousClock.now < deadline else { return false }
+              matches(old.snapshot), !Task.isCancelled, ContinuousClock.now < deadline else { return failed("admission") }
         let recovery = UUID()
         localReturnRecovery = recovery
         defer { localReturnRecovery = nil }
@@ -291,14 +307,19 @@ final class LocalAudioParticipantRegistry {
             self.operation?.uncertain == true && self.matches(old.snapshot) && !Task.isCancelled
         }
         for request in old.requests {
-            guard let member = members[request.participantId],
-                  let response = await serialized(until: deadline, allowed: current, operation: {
+            guard let member = members[request.participantId] else { return failed("member", request: request) }
+            guard let response = await serialized(until: deadline, allowed: current, operation: {
                       await member.control.inspect(old.id)
-                  }), let receipt = response, receipt.proves(request), current() else { return false }
+                  }), let receipt = response else { return failed("inspect", request: request) }
+            let expiredRelayClosed = request.participantId == .relay && receipt.matches(request) &&
+                receipt.state == .blocked && receipt.reason == "budget_exhausted" && receipt.facts.quiescent
+            guard receipt.proves(request) || expiredRelayClosed, current() else {
+                return failed("terminal", request: request, receipt: receipt)
+            }
         }
-        guard current(), pendingCalls == 0, ContinuousClock.now < deadline else { return false }
+        guard current(), pendingCalls == 0, ContinuousClock.now < deadline else { return failed("commit") }
         operation = nil
-        return authenticatedLocalReturnUnavailableReason == nil
+        return authenticatedLocalReturnUnavailableReason == nil || failed("unavailable")
     }
 
     func beginForwarding(epoch: UUID, intentGeneration: UUID, operationId: UUID, privacyGeneration: UUID,
