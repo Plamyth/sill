@@ -389,5 +389,22 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     let commentResetScene = try JSONDecoder().decode(CanvasScene.self,from:Data(base64Encoded:commentReset.sceneJSONBase64)!)
     check(commentResetScene == commentBase,
           "owned comment fixture returns to the exact original scene without touching other vault data")
+    let crPath = "LF 문서 필드 끝 CR 보존.md"
+    let lfSource = reviewSource.replacingOccurrences(of:"\r\n",with:"\n")
+    _ = try bridge.saveNote(crPath,nil,lfSource)
+    let crStore = store()
+    await crStore.openVaultNote(crPath) { try bridge.note($0) }
+    let crSession = crStore.vaultReviewEditSession!
+    _ = crStore.editVaultReview(.front,text:"질문\r",session:crSession)
+    _ = crStore.editVaultReview(.back,text:"답\r",session:crSession)
+    await crStore.saveVaultNote { try bridge.saveNote($0,$1,$2) }
+    let crRead = try bridge.note(crPath)
+    let crReopened = store()
+    await crReopened.openVaultNote(crPath) { try bridge.note($0) }
+    let crCard = try VaultReviewCard.parse(crReopened.vaultDraft)!
+    check(crCard.text(for:.front).utf8.elementsEqual("질문\r".utf8) &&
+          crCard.text(for:.back).utf8.elementsEqual("답\r".utf8),
+          "LF document preserves a user's trailing CR in both fields through actual save and new Store reopen")
+    _ = try bridge.saveNote(crPath,crRead.sha256,lfSource)
     print("SCOPE actual Store + PencilKit + ObsidianVault file roundtrip; no HTTP, UI, device or physical Pencil input")
 }
