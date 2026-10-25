@@ -33,6 +33,10 @@ extension StreamClient {
     func admitVisionDisplays(lease: VisionWindowLease?, foreground: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         visionDisplaySelection.admit(lease: lease, foreground: foreground && visionDisplayApplicationIsActive())
+        #if os(visionOS)
+        if foreground && lease != nil { ownerEnrollmentTrustChanged() }
+        else { cancelOwnerEnrollment() }
+        #endif
         reconcileVisionDisplaySubmission()
         reconcileVisionAutomaticDisplay()
     }

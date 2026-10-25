@@ -83,7 +83,13 @@ private func responseFailure(_ status: Int) -> Error {
     catch { return error }
 }
 private func gateway() throws -> ControlEventsGateway {
-    try VisionControlCredential(origin: VisionControlOrigin("https://unit.invalid:10443"), token: String(repeating: "a", count: 64)).gateway()
+    let url = URL(string: "https://unit.invalid:10443/v1/events")!
+    return ControlEventsGateway(eventsURL: url, credentialHeader: "Authorization", authenticatedRequest: {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer " + String(repeating: "a", count: 64), forHTTPHeaderField: "Authorization")
+        return request
+    })
 }
 private final class Streams {
     var opened = 0
@@ -205,11 +211,7 @@ private final class Streams {
         let gateway = try gateway()
         let recoveryRequest = try gateway.request()
         expect(recoveryRequest.value(forHTTPHeaderField: "Last-Event-ID") == nil, "전체 snapshot 재접속 정책")
-        rejects("HTTPS 제한") { _ = try VisionControlOrigin("http://unit.invalid") }
-        for url in ["https://name:password@unit.invalid", "https://unit.invalid?token=secret", "https://unit.invalid#fragment", "https://unit.invalid/path"] {
-            rejects("origin 경계") { _ = try VisionControlOrigin(url) }
-        }
-        try await enrollmentChecks()
+        try await authenticationChecks()
         try await lifecycleChecks(first: first)
         try await readinessChecks(first: first)
         let result: ControlEventsValue = .object(["checks": .number(Double(checks)), "externalEffects": .number(0),
@@ -640,123 +642,75 @@ private final class Streams {
         expect(selection.workID == nil, "실행 교체는 이전 선택을 새 실행으로 자동 이동하지 않음")
     }
 
-    @MainActor static func enrollmentChecks() async throws {
-        let origin = try VisionControlOrigin("https://unit.invalid:10443/")
-        let token = String(repeating: "a", count: 64)
-        let code = String(repeating: "b", count: 24)
-        let calls = Box(0)
-        StubURLProtocol.handler = { request in
-            calls.value += 1
-            expect(request.url == origin.enrollURL && request.httpMethod == "POST", "등록 endpoint와 POST 결박")
-            expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json", "charset 없는 exact Content-Type")
-            // URLProtocol may expose the outgoing body as a stream.
-            if let body = request.httpBody {
-                expect(try! JSONSerialization.jsonObject(with: body) as! [String: String] == ["code": code], "exact 코드 body")
+    @MainActor static func authenticationChecks() async throws {
+        for (status, size, type) in [(401, 40, "application/json"), (403, 40, "application/json"),
+                                     (401, 4096, "application/json"), (401, 4097, "application/json"),
+                                     (403, 20, "text/plain")] {
+            let body = Data(repeating: 32, count: size)
+            let requests = Box<[URLRequest]>([])
+            StubURLProtocol.handler = { request in
+                requests.value.append(request)
+                return (response(request.url!, status, type), body)
             }
-            return (response(origin.enrollURL), try JSONEncoder().encode(["token": token]))
+            do {
+                for try await _ in ControlEventsTransport.stream(try gateway(), configuration: stubConfiguration()) {}
+                expect(false, "인증 거절 스트림 성공 금지")
+            } catch let failure as ControlEventsAuthenticationFailure {
+                expect(size <= 4096 && type == "application/json" && failure.status == status && failure.body == body,
+                       "HTTP status와 4096 이하 오류 원문 보존")
+                expect(failure.authorization == requests.value[0].value(forHTTPHeaderField: "Authorization"),
+                       "응답 시 현재 자격 대신 해당 요청의 exact bearer 보존")
+            } catch {
+                expect((size > 4096 || type != "application/json") && error as? ControlEventsTransportFailure == .authentication,
+                       "과대·비JSON 인증 오류는 갱신 입력으로 사용하지 않음")
+            }
+            expect(requests.value.count == 1, "전송부 자동 인증 재시도 없음")
         }
-        let exchange: VisionControlEnrollment.Exchange = { request in
-            try await VisionControlEnrollment.exchange(request, configuration: stubConfiguration())
+        let errorBody = Data("{\"error\":\"CREDENTIAL_EXPIRED\"}".utf8)
+        func refusal(_ token: String) -> ControlEventsAuthenticationFailure {
+            .init(status: 401, body: errorBody, authorization: token)
         }
-        let request = try VisionControlEnrollment.request(origin: origin, code: code)
-        expect(request.httpBody?.count == 35 && request.value(forHTTPHeaderField: "Authorization") == nil, "등록 body 크기와 자격 분리")
-        let uppercase = try VisionControlEnrollment.request(origin: origin, code: code.uppercased())
-        expect(uppercase.httpBody == request.httpBody, "대문자 16진수 코드도 서버의 소문자 계약으로 제출")
-        let credential = try await VisionControlEnrollment.register(origin: origin, code: code, exchange: exchange)
-        expect(calls.value == 1 && credential.token == token && credential.origin == origin, "등록 POST 한 번")
-        let authenticated = try credential.gateway().request()
-        expect(authenticated.url == origin.eventsURL && authenticated.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)", "등록 origin에만 이벤트 자격 공급")
-        var wrong = try credential.gateway()
-        wrong = ControlEventsGateway(eventsURL: URL(string: "https://other.invalid/v1/events")!, credentialHeader: "Authorization", authenticatedRequest: wrong.authenticatedRequest)
-        rejects("다른 origin 자격 결박 거절") { _ = try wrong.request() }
-        rejects("공백 코드 거절") { _ = try VisionControlEnrollment.request(origin: origin, code: " " + code) }
-        for status in [400, 403, 413, 429, 307] {
-            calls.value = 0
-            StubURLProtocol.handler = { _ in calls.value += 1; return (response(origin.enrollURL, status), Data("{}".utf8)) }
-            do { _ = try await VisionControlEnrollment.register(origin: origin, code: code, exchange: exchange); expect(false, "등록 오류 거절") }
-            catch { expect(calls.value == 1, "등록 오류 자동 POST 재시도 없음") }
+        for mode in ["success", "no-renewal", "late", "background", "release", "replace"] {
+            let streams = Streams()
+            let controller = ControlEventsController(stream: streams.open)
+            var gate: CheckedContinuation<ControlEventsGateway?, Never>?
+            var refusals: [String] = []
+            var candidate = try gateway()
+            candidate.recoverAuthentication = { failure in
+                refusals.append(failure.authorization)
+                if mode == "no-renewal" { return nil }
+                return await withCheckedContinuation { gate = $0 }
+            }
+            controller.configure(candidate); controller.setVisible(true); controller.setForeground(true)
+            await eventually("갱신 전 구독") { streams.opened == 1 }
+            streams.continuations[0].finish(throwing: refusal("exact-old-request"))
+            if mode == "no-renewal" {
+                await eventually("확정 갱신 없으면 중지") { controller.reducer.subscription == nil }
+                expect(streams.opened == 1 && refusals == ["exact-old-request"], "거절 뒤 무조건 재접속 없음")
+                controller.release(); continue
+            }
+            await eventually("원 요청 오류 전달") { gate != nil }
+            switch mode {
+            case "background": controller.setForeground(false)
+            case "release": controller.release()
+            case "replace": controller.configure(nil)
+            default: break
+            }
+            let held = gate; gate = nil
+            held?.resume(returning: mode == "late" ? nil : candidate)
+            if mode == "success" {
+                await eventually("확정 결과 뒤 한 번 재접속") { streams.opened == 2 }
+                streams.continuations[1].finish(throwing: refusal("second-request"))
+                await eventually("두번째 거절도 소비자에 전달") { gate != nil }
+                gate?.resume(returning: candidate); gate = nil
+                await eventually("동일 구독 epoch에서 두번째 자동 재접속 금지") { controller.reducer.subscription == nil }
+                expect(streams.opened == 2 && refusals == ["exact-old-request", "second-request"], "인증 갱신 반복 0")
+            } else {
+                try await Task.sleep(nanoseconds: 5_000_000)
+                expect(streams.opened == 1, "갱신 대기 중 epoch·foreground·반납 변경은 재접속 0")
+            }
+            controller.release()
         }
-        for data in [Data("{\"token\":\"bad\"}".utf8), Data(repeating: 65, count: 4097)] {
-            StubURLProtocol.handler = { _ in (response(origin.enrollURL), data) }
-            do { _ = try await VisionControlEnrollment.register(origin: origin, code: code, exchange: exchange); expect(false, "잘못된 등록 응답") }
-            catch { expect(true, "응답 상한과 토큰 형식") }
-        }
-        calls.value = 0
-        do {
-            _ = try await VisionControlEnrollment.register(origin: origin, code: code, exchange: { _ in calls.value += 1; throw URLError(.timedOut) })
-            expect(false, "timeout 미확인")
-        } catch { expect(error as? VisionControlEnrollmentFailure == .unknown && calls.value == 1, "timeout 결과 미확인 및 중복 없음") }
-        let memory = Box<VisionControlCredential?>(nil)
-        let events = ControlEventsController(stream: { _ in fatalError("실제 네트워크 사용 금지") })
-        let registration = VisionControlEnrollmentController(events: events,
-            store: VisionControlCredentialStore(load: { memory.value }, save: { memory.value = $0 }),
-            exchange: { request in (try JSONEncoder().encode(["token": token]), response(request.url!)) })
-        registration.restore()
-        expect(!events.configured, "등록 정보 없으면 미설정")
-        await registration.submit(origin: origin.url.absoluteString, code: code)
-        expect(memory.value == credential && events.configured, "등록·저장·구독 설정 생산 연결")
-        let restored = VisionControlEnrollmentController(events: events,
-            store: VisionControlCredentialStore(load: { memory.value }, save: { _ in fatalError() }),
-            exchange: { _ in fatalError("복원 중 등록 POST 금지") })
-        restored.restore()
-        expect(restored.registeredOrigin == origin.url.absoluteString, "자기 저장소 기존 자격 재사용")
-        let renewalCalls = Box(0)
-        let renewal = VisionControlEnrollmentController(events: events,
-            store: VisionControlCredentialStore(load: { memory.value }, save: { memory.value = $0 }),
-            exchange: { request in
-                renewalCalls.value += 1
-                return (try JSONEncoder().encode(["token": String(repeating: "c", count: 64)]), response(request.url!))
-            })
-        renewal.restore()
-        let renewed = await renewal.submit(origin: origin.url.absoluteString, code: code)
-        expect(renewed && renewalCalls.value == 1 && memory.value?.token == String(repeating: "c", count: 64), "기존 등록도 삭제 없이 한 번 갱신")
-        let failing = VisionControlEnrollmentController(events: events,
-            store: VisionControlCredentialStore(load: { memory.value }, save: { _ in throw VisionControlEnrollmentFailure.storage }),
-            exchange: { request in (Data("{\"token\":\"\(token)\"}".utf8), response(request.url!)) })
-        failing.restore()
-        let failed = await failing.submit(origin: origin.url.absoluteString, code: code)
-        expect(!failed && memory.value?.token == String(repeating: "c", count: 64) && events.configured, "등록 갱신 저장 실패는 기존 자격과 연결 보존")
-        let restoreEvents = ControlEventsController(stream: { _ in fatalError("실제 네트워크 사용 금지") })
-        let loads = Box(0)
-        let recoverable = VisionControlEnrollmentController(events: restoreEvents,
-            store: VisionControlCredentialStore(load: {
-                loads.value += 1
-                if loads.value == 1 { throw VisionControlEnrollmentFailure.storage }
-                return memory.value
-            }, save: { _ in fatalError("복원 중 저장 금지") }),
-            exchange: { _ in fatalError("복원 중 등록 POST 금지") })
-        recoverable.restore()
-        expect(!restoreEvents.configured, "잠긴 보안 저장소는 연결을 시작하지 않음")
-        recoverable.restore()
-        expect(restoreEvents.configured && loads.value == 2, "다음 표시에서 보안 저장소 복원 재시도")
-        recoverable.restore()
-        expect(loads.value == 3, "다음 표시에서 다른 창의 자격 갱신 확인")
-        memory.value = credential
-        let secondStreams = Streams()
-        let secondEvents = ControlEventsController(stream: secondStreams.open)
-        let secondWindow = VisionControlEnrollmentController(events: secondEvents,
-            store: VisionControlCredentialStore(load: { memory.value }, save: { _ in fatalError("복원 중 저장 금지") }),
-            exchange: { _ in fatalError("다른 창 복원 중 등록 POST 금지") })
-        secondWindow.restore()
-        secondEvents.setVisible(true); secondEvents.setForeground(true)
-        await eventually("다른 창 기존 자격 연결") { secondStreams.opened == 1 }
-        secondStreams.continuations[0].finish(throwing: ControlEventsTransportFailure.authentication)
-        await eventually("회전 이전 자격 인증 거부") { secondEvents.reducer.subscription == nil }
-        let changed = await renewal.submit(origin: origin.url.absoluteString, code: code)
-        expect(changed && secondWindow.restore(), "다른 창의 갱신 자격 수용")
-        await eventually("새 자격으로 구독 복원") { secondStreams.opened == 2 }
-        expect(secondStreams.authorizations == ["Bearer \(token)", "Bearer \(String(repeating: "c", count: 64))"],
-               "다른 창은 기존 토큰 대신 갱신 토큰 사용")
-        expect(!secondWindow.restore() && secondStreams.opened == 2, "같은 자격 재조회는 구독을 초기화하지 않음")
-        secondEvents.release()
-        let redirect = ControlEventsRedirectGuard()
-        let session = URLSession(configuration: stubConfiguration())
-        let task = session.dataTask(with: origin.eventsURL)
-        var allowed = true
-        redirect.urlSession(session, task: task, willPerformHTTPRedirection: response(origin.eventsURL, 302),
-            newRequest: URLRequest(url: URL(string: "https://other.invalid")!)) { allowed = $0 != nil }
-        expect(!allowed, "공유 HTTPS redirect 거절")
-        session.invalidateAndCancel()
     }
 
     @MainActor static func lifecycleChecks(first: ControlEventsEnvelope) async throws {

@@ -13,6 +13,7 @@ struct ControlEventsGateway: @unchecked Sendable {
     var contract = ControlEventsContract.mobileV1
     static let maximumPayloadBytes = 8_388_608 - 8192
     var maximumFrameBytes = 8_388_608
+    var recoverAuthentication: (@MainActor (ControlEventsAuthenticationFailure) async -> ControlEventsGateway?)?
 
     func request() throws -> URLRequest {
         let request = try authenticatedRequest()
@@ -35,6 +36,13 @@ struct ControlEventsGateway: @unchecked Sendable {
         accepted.httpShouldHandleCookies = false
         return accepted
     }
+}
+
+struct ControlEventsAuthenticationFailure: Error, CustomStringConvertible {
+    let status: Int
+    let body: Data
+    let authorization: String
+    var description: String { "기기 등록 인증이 거부되었습니다." }
 }
 
 enum ControlEventsTransportFailure: Error, Equatable {
@@ -112,7 +120,21 @@ enum ControlEventsTransport {
                 let session = URLSession(configuration: configuration)
                 defer { session.invalidateAndCancel() }
                 do {
-                    let (bytes, response) = try await session.bytes(for: gateway.request(), delegate: ControlEventsRedirectGuard())
+                    let request = try await MainActor.run { try gateway.request() }
+                    let (bytes, response) = try await session.bytes(for: request, delegate: ControlEventsRedirectGuard())
+                    if let http = response as? HTTPURLResponse, http.statusCode == 401 || http.statusCode == 403 {
+                        guard http.url == request.url, http.mimeType?.lowercased() == "application/json",
+                              let authorization = request.value(forHTTPHeaderField: "Authorization") else {
+                            throw ControlEventsTransportFailure.authentication
+                        }
+                        var body = Data()
+                        for try await byte in bytes {
+                            try Task.checkCancellation()
+                            guard body.count < 4096 else { throw ControlEventsTransportFailure.authentication }
+                            body.append(byte)
+                        }
+                        throw ControlEventsAuthenticationFailure(status: http.statusCode, body: body, authorization: authorization)
+                    }
                     try ControlEventsTransportFailure.validate(response)
                     continuation.yield(.opened(Date()))
                     var parser = ControlEventsSSEParser(maximumFrameBytes: gateway.maximumFrameBytes)

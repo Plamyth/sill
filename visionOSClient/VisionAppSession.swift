@@ -8,7 +8,7 @@ final class VisionAppSession: ObservableObject {
     let input = VisionInputSession()
     let stats = ClientStatsReporter()
     let controlEvents = ControlEventsController()
-    lazy var controlEnrollment = VisionControlEnrollmentController(events: controlEvents)
+    lazy var controlEnrollment = VisionControlEnrollmentController(events: controlEvents, client: client)
     @Published private(set) var windowLease: VisionWindowLease?
     var windowOwner: UUID? { windowLease?.window }
     @Published private(set) var message = "Mac 연결을 준비하고 있습니다."
@@ -141,7 +141,7 @@ final class VisionAppSession: ObservableObject {
             }
         }
         #endif
-        controlEnrollment.restore()
+        _ = controlEnrollment
         started = true
         self.foreground = foreground
         client.visionStartupForeground = foreground

@@ -176,6 +176,7 @@ final class StreamClient: ObservableObject {
     @Published var savedMacs: [SavedMac] = [] {
         didSet {
             #if os(visionOS)
+            ownerEnrollmentTrustChanged()
             reconcileVisionTestDestinationAuthentication()
             reconcileVisionAutomaticDisplay()
             #endif
@@ -196,6 +197,11 @@ final class StreamClient: ObservableObject {
     @Published var ownerBootstrap = OwnerBootstrapState()
     var ownerBootstrapDial: RemoteConnector?
     var ownerBootstrapExchange: OwnerBootstrapExchange?
+    var ownerEnrollment: IPadDeviceEnrollment?
+    var ownerEnrollmentPeer: ObjectIdentifier?
+    var ownerEnrollmentLease: VisionWindowLease?
+    var ownerEnrollmentRefusals: [IPadEnrollmentProtocol.Binding: IPadDeviceEnrollment.Refusals] = [:]
+    var ownerEnrollmentChanged: ((Result<IPadEnrollmentProtocol.Credential, Error>?) -> Void)?
     #endif
     private enum StartupAutoConnection {
         case unarmed
@@ -879,6 +885,7 @@ final class StreamClient: ObservableObject {
             #if os(visionOS)
             if newValue != nil { stopSavedMacAutoConnect() }
             if link.connection !== newValue {
+                cancelOwnerEnrollment()
                 resetVisionPeerStreams()
                 bindVisionSentry(to: newValue)
                 bindVisionDisplays(to: newValue)
@@ -932,6 +939,8 @@ final class StreamClient: ObservableObject {
         didSet {
             if visionStartupForeground && appInForeground { resumeOwnerBootstrapAfterForeground() }
             else if visionStartupStarted { cancelOwnerBootstrap(resumable: true) }
+            if visionStartupForeground { resumeOwnerEnrollment() }
+            else { cancelOwnerEnrollment() }
             tryVisionSavedMacAutoConnect()
         }
     }
@@ -1665,6 +1674,7 @@ final class StreamClient: ObservableObject {
         guard wasInBackground else { return }
         #if os(visionOS)
         resumeOwnerBootstrapAfterForeground()
+        resumeOwnerEnrollment()
         #endif
         if browsing {
             rebuildIfDue(.network, cameForward: true)
@@ -1680,6 +1690,7 @@ final class StreamClient: ObservableObject {
 
     private func wentToBackground(preservingMicrophoneAuthorization: Bool = false) {
         #if os(visionOS)
+        cancelOwnerEnrollment()
         cancelOwnerBootstrap(resumable: true)
         defer { VisionRemoteAudioStore.shared.refresh() }
         admitVisionDisplays(lease: visionDisplaySelection.lease, foreground: false)
@@ -2376,6 +2387,9 @@ final class StreamClient: ObservableObject {
         // home card never comes back for it with the connect screen.
         cancelHomeAsk(idleStatus: false)
         connected = true
+        #if os(visionOS)
+        resumeOwnerEnrollment()
+        #endif
         askedNearby = false
         connectedAt = Date()
         pinRefusedRows = []
@@ -3790,6 +3804,7 @@ final class StreamClient: ObservableObject {
     func retireVisionWindow() {
         guard !visionWindowRetired else { return }
         visionWindowRetired = true
+        cancelOwnerEnrollment()
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
         lifecycleObservers.removeAll()
         VisionRemoteAudioStore.shared.retire(self)
@@ -3839,6 +3854,7 @@ final class StreamClient: ObservableObject {
         }
         #endif
         #if os(visionOS)
+        cancelOwnerEnrollment()
         stopVisionCableBootstrap(.cancelled)
         #endif
         #if os(iOS) || os(visionOS)

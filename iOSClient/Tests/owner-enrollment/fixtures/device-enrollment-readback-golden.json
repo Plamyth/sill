@@ -1,0 +1,50 @@
+{
+  "schema": "ccr.device-readback-golden/v1",
+  "synthetic": true,
+  "origin": "https://macbookpro-1.tail88d92e.ts.net:10443",
+  "nowMs": 1800000000000,
+  "challengeRequest": {
+    "devicePublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESvnsy7IXXBN2qBxwfg-orJFuuxpSqNGr7OgPfwij3pSV_n-icoYT5LFACu7K3hiCPxnpQyg5jGfsGbROeXvr5Q"
+  },
+  "challengeResponse": {
+    "schema": "ccr.device-challenge/v1",
+    "challengeId": "9DXJrp7LWo5-rbvrecfK4yB6XsESAPDTFFLI7PU2F9I",
+    "nonce": "d7m72j0Badx2rYbHbkuO4KDl8rGTiRqru9afroiF8Vk",
+    "deviceId": "ee0d301a3c20b57939bc6b3c080289c048339c5d0dec8e09f1f715f56bb20b68",
+    "origin": "https://macbookpro-1.tail88d92e.ts.net:10443",
+    "expiresAt": 1800000030000
+  },
+  "enrollRequest": {
+    "schema": "ccr.device-enroll/v1",
+    "challengeId": "9DXJrp7LWo5-rbvrecfK4yB6XsESAPDTFFLI7PU2F9I",
+    "devicePublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESvnsy7IXXBN2qBxwfg-orJFuuxpSqNGr7OgPfwij3pSV_n-icoYT5LFACu7K3hiCPxnpQyg5jGfsGbROeXvr5Q",
+    "signature": "MEYCIQCWR6gman-waAMls5r0OEksGkcWN6Su6pkq4hIZDDjl5AIhAN5WArvTqlQKEJdpWLeycncbYoxKBHWWFuIkONO95HX3",
+    "ownerReceipt": {
+      "payload": "eyJzY2hlbWFWZXJzaW9uIjoxLCJwdXJwb3NlIjoiY2NyLW1vYmlsZS1lbnJvbGxtZW50LXYxIiwibWFjSUQiOiI1S04xWkRYTTE5QktXWDlUIiwibWFjRmluZ2VycHJpbnQiOiJMT29mdDdRS1Z6NTFPdjVCNHV4WTJCaHNYYUpsbTZuZ0U3MXVlbXU4U0U0IiwiZGV2aWNlRmluZ2VycHJpbnQiOiI3ZzB3R2p3Z3RYazV2R3M4Q0FLSndFZ3puRjBON0k0SjhmY1Y5V3V5QzJnIiwib3duZXJQcmluY2lwYWwiOiJjNzAxOTViYzVjMmI5ZGZhYjZjMmY3Mzc3ZTA3N2JjMTExZTM5ZDI3YjgxY2Y5OWMzNDhjZWJkZDgwM2EwZTFmIiwiY2hhbGxlbmdlSWQiOiI5RFhKcnA3TFdvNS1yYnZyZWNmSzR5QjZYc0VTQVBEVEZGTEk3UFUyRjlJIiwibm9uY2UiOiJkN203MmowQmFkeDJyWWJIYmt1TzRLRGw4ckdUaVJxcnU5YWZyb2lGOFZrIiwib3JpZ2luIjoiaHR0cHM6Ly9tYWNib29rcHJvLTEudGFpbDg4ZDkyZS50cy5uZXQ6MTA0NDMiLCJpc3N1ZWRBdCI6MTgwMDAwMDAwMCwiZXhwaXJlc0F0IjoxODAwMDAwMDEwfQ",
+      "signature": "MEUCIBejpjVBOAlx9teOHfltXKnLTaQXka8wZsCdluDnQRbFAiEAnmwUS6xvBAcr7H30gSBVWyxKkFa_25jHmlUfDQ_9JTI",
+      "publicSPKI": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOEt7fuZV0aSyppb3VLUIeJ0twiPdg5SObQMIu5K99-yxMoI1LXH2hSpVRlgl8lzpLfVRcQez7memHbDOpyDn0Q"
+    }
+  },
+  "canonicalRequest": "{\"challengeId\":\"9DXJrp7LWo5-rbvrecfK4yB6XsESAPDTFFLI7PU2F9I\",\"devicePublicKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESvnsy7IXXBN2qBxwfg-orJFuuxpSqNGr7OgPfwij3pSV_n-icoYT5LFACu7K3hiCPxnpQyg5jGfsGbROeXvr5Q\",\"ownerReceipt\":{\"payload\":\"eyJzY2hlbWFWZXJzaW9uIjoxLCJwdXJwb3NlIjoiY2NyLW1vYmlsZS1lbnJvbGxtZW50LXYxIiwibWFjSUQiOiI1S04xWkRYTTE5QktXWDlUIiwibWFjRmluZ2VycHJpbnQiOiJMT29mdDdRS1Z6NTFPdjVCNHV4WTJCaHNYYUpsbTZuZ0U3MXVlbXU4U0U0IiwiZGV2aWNlRmluZ2VycHJpbnQiOiI3ZzB3R2p3Z3RYazV2R3M4Q0FLSndFZ3puRjBON0k0SjhmY1Y5V3V5QzJnIiwib3duZXJQcmluY2lwYWwiOiJjNzAxOTViYzVjMmI5ZGZhYjZjMmY3Mzc3ZTA3N2JjMTExZTM5ZDI3YjgxY2Y5OWMzNDhjZWJkZDgwM2EwZTFmIiwiY2hhbGxlbmdlSWQiOiI5RFhKcnA3TFdvNS1yYnZyZWNmSzR5QjZYc0VTQVBEVEZGTEk3UFUyRjlJIiwibm9uY2UiOiJkN203MmowQmFkeDJyWWJIYmt1TzRLRGw4ckdUaVJxcnU5YWZyb2lGOFZrIiwib3JpZ2luIjoiaHR0cHM6Ly9tYWNib29rcHJvLTEudGFpbDg4ZDkyZS50cy5uZXQ6MTA0NDMiLCJpc3N1ZWRBdCI6MTgwMDAwMDAwMCwiZXhwaXJlc0F0IjoxODAwMDAwMDEwfQ\",\"publicSPKI\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOEt7fuZV0aSyppb3VLUIeJ0twiPdg5SObQMIu5K99-yxMoI1LXH2hSpVRlgl8lzpLfVRcQez7memHbDOpyDn0Q\",\"signature\":\"MEUCIBejpjVBOAlx9teOHfltXKnLTaQXka8wZsCdluDnQRbFAiEAnmwUS6xvBAcr7H30gSBVWyxKkFa_25jHmlUfDQ_9JTI\"},\"schema\":\"ccr.device-enroll/v1\",\"signature\":\"MEYCIQCWR6gman-waAMls5r0OEksGkcWN6Su6pkq4hIZDDjl5AIhAN5WArvTqlQKEJdpWLeycncbYoxKBHWWFuIkONO95HX3\"}",
+  "requestDigest": "27dc24fd08d264847e1c5efa8a2d71ed9b81057953417b162aa61e745010b776",
+  "readbackChallenge": {
+    "schema": "ccr.device-readback-challenge/v1",
+    "challengeId": "9DXJrp7LWo5-rbvrecfK4yB6XsESAPDTFFLI7PU2F9I",
+    "readbackId": "PU7dTBadiS5vzVyRE4I2CddL9-dumwCJqXVmA53CYhA",
+    "nonce": "I_YHU7HFnnMU47zWnA-8EdfhIz_Da7g6s0psKlf3eTI",
+    "deviceId": "ee0d301a3c20b57939bc6b3c080289c048339c5d0dec8e09f1f715f56bb20b68",
+    "requestDigest": "27dc24fd08d264847e1c5efa8a2d71ed9b81057953417b162aa61e745010b776",
+    "origin": "https://macbookpro-1.tail88d92e.ts.net:10443",
+    "expiresAt": 1800000060000
+  },
+  "readbackSigningMessageBase64url": "Y2NyLW1vYmlsZS1jcmVkZW50aWFsLXJlYWRiYWNrLXYxAFsiaHR0cHM6Ly9tYWNib29rcHJvLTEudGFpbDg4ZDkyZS50cy5uZXQ6MTA0NDMiLCI5RFhKcnA3TFdvNS1yYnZyZWNmSzR5QjZYc0VTQVBEVEZGTEk3UFUyRjlJIiwiUFU3ZFRCYWRpUzV2elZ5UkU0STJDZGRMOS1kdW13Q0pxWFZtQTUzQ1loQSIsIklfWUhVN0hGbm5NVTQ3elduQS04RWRmaEl6X0RhN2c2czBwc0tsZjNlVEkiLCJlZTBkMzAxYTNjMjBiNTc5MzliYzZiM2MwODAyODljMDQ4MzM5YzVkMGRlYzhlMDlmMWY3MTVmNTZiYjIwYjY4IiwiMjdkYzI0ZmQwOGQyNjQ4NDdlMWM1ZWZhOGEyZDcxZWQ5YjgxMDU3OTUzNDE3YjE2MmFhNjFlNzQ1MDEwYjc3NiIsMTgwMDAwMDA2MDAwMF0",
+  "readbackSigningMessageSha256": "fe7da5009ed523327e20ee0ac4ceebfea7ae1fee806bc7983f5209c5536ae528",
+  "readbackRequest": {
+    "schema": "ccr.device-readback/v1",
+    "challengeId": "9DXJrp7LWo5-rbvrecfK4yB6XsESAPDTFFLI7PU2F9I",
+    "readbackId": "PU7dTBadiS5vzVyRE4I2CddL9-dumwCJqXVmA53CYhA",
+    "devicePublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESvnsy7IXXBN2qBxwfg-orJFuuxpSqNGr7OgPfwij3pSV_n-icoYT5LFACu7K3hiCPxnpQyg5jGfsGbROeXvr5Q",
+    "signature": "MEYCIQDQylL1oT8TeI5SkYnJ4_lp6A9RBQb323J91URZaNqzNAIhAP5ZaHK49eor_BuAlxXPweRzknzbd3vd5MYrpzmw4Ur_"
+  },
+  "hostPublicSPKI": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOEt7fuZV0aSyppb3VLUIeJ0twiPdg5SObQMIu5K99-yxMoI1LXH2hSpVRlgl8lzpLfVRcQez7memHbDOpyDn0Q"
+}
