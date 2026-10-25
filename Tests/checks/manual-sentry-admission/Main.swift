@@ -76,6 +76,8 @@ import StreamProtocol
         let originalOn = f.legacy()
         expect(g.accept(originalOn, from: f.peer), "현재 legacy 명시 ON 허용")
         expect(host.activate(), "명시 ON은 실제 표면 readback 수행")
+        host.start(recoverAudio: { effects.append("audio-arm") })
+        expect(!effects.contains("audio-arm"), "명시 Sentry ON과 후속 시작은 오디오 arm·복구를 호출하지 않음")
         let ticket = f.prepare(false)
         let effectsBeforeBusy = effects
         expect(!host.activate() && g.controlTicketIsCurrent(ticket) && effects == effectsBeforeBusy,
@@ -172,6 +174,18 @@ import StreamProtocol
         restored.configure(latched: true, persistenceHealthy: true)
         restored.register(peer, externalRoute: true); restored.admit(peer)
         expect(restored.isRequested && !restored.allowsActions(peer), "startup journal 기존 ON은 검증 전 차단하며 보존")
+        var audioEffects = 0, preservedLocal = 0
+        let restoredHost = HostSentry(admission: restored, initiallyLatched: true, persistenceHealthy: true,
+            persist: { _ in true }, surfaces: .init(engage: { true }, verify: { true },
+                release: { _, current in current() }, reason: { nil }, released: { true }),
+            prepareRelease: { true }, audioReady: { audioEffects += 1; return false },
+            localReturnUnavailableReason: { nil })
+        restoredHost.start(recoverAudio: { audioEffects += 1 })
+        expect(restored.isRequested && audioEffects == 0,
+            "정당한 startup Sentry ON 복원도 오디오 arm·proof를 요구하지 않음")
+        let returned = await restoredHost.completeAuthenticatedLocalReturn(commitAudio: { preservedLocal += 1; return true })
+        expect(returned && !restored.isRequested && preservedLocal == 1 && audioEffects == 0,
+            "never-armed 인증 복귀는 기존 preserveLocal 커밋을 사용하며 origin·HAL 효과를 새로 만들지 않음")
         print("MANUAL_SENTRY_CHECKS_COMPLETE \(count) failures=\(failures)")
         if failures > 0 { exit(1) }
     }
