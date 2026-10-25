@@ -138,7 +138,7 @@ final class LocalAuthenticationPresentation {
                 let children = window.childWindows ?? []
                 print("[로컬 복귀 인증] 소유 표시 연결 window=\(window.windowNumber) key=\(window.isKeyWindow) visible=\(window.isVisible) sheet=\(sheet != nil) sheetParent=\(sheet?.sheetParent === window) sheetLevel=\(sheet?.level.rawValue ?? -1) sheetVisible=\(sheet?.isVisible ?? false) sheetKey=\(sheet?.isKeyWindow ?? false) children=\(children.count) rootSubviews=\(window.contentView?.subviews.count ?? -1)")
                 for child in children {
-                    print("[로컬 복귀 인증] 소유 자식 연결 window=\(child.windowNumber) parentMatches=\(child.parentWindow === window) level=\(child.level.rawValue) visible=\(child.isVisible) key=\(child.isKeyWindow)")
+                    print("[로컬 복귀 인증] 소유 자식 연결 window=\(child.windowNumber) parentMatches=\(child.parent === window) level=\(child.level.rawValue) visible=\(child.isVisible) key=\(child.isKeyWindow)")
                 }
             }
         }
