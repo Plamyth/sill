@@ -99,6 +99,17 @@ private final class EventSource {
         func convert(_ rect: CGRect, to: Any?) -> CGRect { rect }
     }
     private final class Panel {
+        struct Identifier { var rawValue: String }
+        struct Level { var rawValue: Int }
+        enum Sharing { case none, readWrite }
+        var identifier: Identifier? = Identifier(rawValue: "CCR.LocalAuthentication")
+        var level = Level(rawValue: 1002)
+        var isKeyWindow = false, isOpaque = true, ignoresMouseEvents = false
+        var sharingType = Sharing.none
+        var frame = CGRect(x: 40, y: 300, width: 480, height: 240)
+        var screen: Screen? = NSScreen.screens.first
+        weak var sheetParent: Panel?
+        var attachedSheet: Panel?
         var isVisible = true, isOnActiveSpace = true, alphaValue = 1.0
         var windowNumber = 90
         func convertToScreen(_ rect: CGRect) -> CGRect { rect.offsetBy(dx: 20, dy: 800) }
@@ -107,8 +118,19 @@ private final class EventSource {
     private struct Curtain { let panel = Panel(); let returnButton = Button() }
     private var curtains: [Int: Curtain] = [:]
     private var curtainWindowIDs: [CGWindowID] { curtains.values.map { CGWindowID($0.panel.windowNumber) } }
-    private struct Screen { let frame = CGRect(x: 0, y: 0, width: 1000, height: 1000) }
+    private final class Screen { let frame = CGRect(x: 0, y: 0, width: 1000, height: 1000) }
     private enum NSScreen { static let screens = [Screen()] }
+    private typealias NSWindow = Panel
+    private static let curtainLevel = Panel.Level(rawValue: 1001)
+    private enum NSApp { static var isActive = true; static var keyWindow: Panel? }
+    private enum LocalAuthenticationPresentation {
+        static weak var root: Panel?
+        static var requestID: UUID?
+        static func registeredWindow(for id: UUID) -> Panel? { requestID == id ? root : nil }
+        static func builtinScreen(in screens: [Screen]) -> Screen? { screens.first }
+        __PRODUCTION_WINDOW_VALIDATION__
+    }
+
     private func CGWindowListCopyWindowInfo(_ options: CGWindowListOption, _ id: CGWindowID) -> CFArray? {
         observationCalls += 1
         guard windowReadbackAvailable else { return nil }
@@ -169,6 +191,8 @@ private final class EventSource {
          kCGWindowBounds as String: rect.dictionaryRepresentation]
     }
     private func fresh() {
+        LocalAuthenticationPresentation.root = nil; LocalAuthenticationPresentation.requestID = nil
+        NSApp.isActive = true; NSApp.keyWindow = nil
         state = .protected; usable = true; surfacesSafe = true; inputEnvironmentVerified = true
         secureInput = false; notifiedLocked = false; sessionActive = true; sleeping = false; curtains = [:]
         tapReadbackAvailable = true; windowReadbackAvailable = true; windowRemains = false; remainingTapPID = nil
@@ -243,7 +267,63 @@ private final class EventSource {
         Checks.check(localAuthenticationInputPolicy.observation!.handoffTag != oldTag && transit(event()), "독립 관측 복구 전달 세대 갱신")
     }
 
+    private func ownedContainerChecks() {
+        fresh()
+        let root = Panel(); root.windowNumber = 91; root.isKeyWindow = true
+        let requestID = challengeID!
+        LocalAuthenticationPresentation.root = root; LocalAuthenticationPresentation.requestID = requestID
+        NSApp.keyWindow = root
+        Self.identities[getpid()] = .init(pid: getpid(), startSeconds: 300, startMicroseconds: 30)
+        func row(_ window: Panel) -> [String: Any] {
+            let f = window.frame
+            var value = self.window(UInt32(window.windowNumber), pid: getpid(),
+                rect: .init(x: f.minX, y: 1000 - f.maxY, width: f.width, height: f.height))
+            value[kCGWindowLayer as String] = window.level.rawValue
+            return value
+        }
+        func key() -> Event { event(target: Int64(getpid())) }
+        rows = [row(root)]; refreshInputObservation()
+        Checks.check(transit(key()), "현재 요청의 정확한 소유 인증 창만 키 입력 수용")
+        let queued = key(); _ = filter(.keyDown, event: queued)
+        NSApp.keyWindow = Panel()
+        Checks.check(filterAnnotated(.keyDown, event: queued) == nil,
+            "같은 PID의 다른 창으로 포커스가 바뀌면 250ms 이내에도 키 입력 거절")
+        NSApp.keyWindow = root
+        LocalAuthenticationPresentation.requestID = UUID(); refreshInputObservation()
+        Checks.check(!transit(key()), "이전 요청의 소유 인증 창은 허용하지 않음")
+        LocalAuthenticationPresentation.requestID = requestID
+        for failure in ["level", "opacity", "sharing", "display", "frame", "visible", "key"] {
+            root.level.rawValue = failure == "level" ? 1001 : 1002
+            root.isOpaque = failure != "opacity"; root.sharingType = failure == "sharing" ? .readWrite : .none
+            root.screen = failure == "display" ? Screen() : NSScreen.screens.first
+            root.frame = failure == "frame" ? .init(x: 2000,y: 0,width: 480,height: 240) : .init(x: 40,y: 300,width: 480,height: 240)
+            root.isVisible = failure != "visible"; root.isKeyWindow = failure != "key"
+            rows = [row(root)]; refreshInputObservation()
+            Checks.check(!transit(key()), "소유 인증 창의 잘못된 \(failure)은 거절")
+        }
+        root.isKeyWindow = true; rows = [row(root)]; refreshInputObservation()
+        state = .invalid("secure input during owner authentication")
+        refreshInputObservation()
+        Checks.check(transit(key()), "일반 보호 상태 오류가 있어도 검증된 인증 창 입력만 수용")
+        state = .protected
+        let sheet = Panel(); sheet.windowNumber = 92; sheet.level.rawValue = 1003
+        sheet.sheetParent = root; root.attachedSheet = sheet; root.isKeyWindow = false
+        sheet.isKeyWindow = true; NSApp.keyWindow = sheet
+        rows = [row(sheet),row(root)]; refreshInputObservation()
+        Checks.check(transit(key()) && localAuthenticationInputPolicy.observation?.target.window == 92,
+            "현재 소유 창의 실제 key sheet에만 인증 입력 결속")
+        sheet.sheetParent = Panel(); refreshInputObservation()
+        Checks.check(!transit(key()), "공식 부모 관계가 없는 같은 PID sheet는 거절")
+        sheet.sheetParent = root; refreshInputObservation()
+        let closing = key(); _ = filter(.keyDown, event: closing)
+        LocalAuthenticationPresentation.root = nil; refreshInputObservation()
+        Checks.check(filterAnnotated(.keyDown,event:closing) == nil,
+            "소유 인증 창 등록 해제는 대기 중인 입력도 즉시 철회")
+        fresh()
+    }
+
     func run() async {
+        ownedContainerChecks()
         await additionalReviewChecks()
         await selfReturnChecks()
         authenticationInterleavingChecks()

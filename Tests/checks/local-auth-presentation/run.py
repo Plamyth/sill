@@ -15,7 +15,14 @@ hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() f
 source = presenter.read_text()
 begin = source.index('    static func builtinScreen(')
 end = source.index('\n    func begin(', begin)
-selection = '@MainActor final class LocalAuthenticationPresentation {\n' + source[begin:end] + '\n}\n'
+selection = '@MainActor final class LocalAuthenticationPresentation {\n' + """
+    private var window: NSWindow?
+    private var operationID: UUID?
+    private static weak var registeredOwner: LocalAuthenticationPresentation?
+    init(window: NSWindow, operationID: UUID) {
+        self.window = window; self.operationID = operationID; Self.registeredOwner = self
+    }
+""" + source[begin:end] + '\n}\n'
 program = selection + checks.read_text()
 print('screen_selection_sha256=' + hashlib.sha256(program.encode()).hexdigest(), flush=True)
 result = subprocess.run(['/usr/bin/swift', '-swift-version', '5', '-'], input=program, text=True, timeout=60)

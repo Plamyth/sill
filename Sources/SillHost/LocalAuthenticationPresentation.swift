@@ -3,7 +3,8 @@ import AppKit
 @MainActor
 final class LocalAuthenticationPresentation {
     private var window: NSWindow?
-    private var ownsWindow = false
+    private var operationID: UUID?
+    private static weak var registeredOwner: LocalAuthenticationPresentation?
     private var previousActivationPolicy: NSApplication.ActivationPolicy?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
@@ -15,16 +16,41 @@ final class LocalAuthenticationPresentation {
         return candidates.count == 1 ? candidates.first : nil
     }
 
-    func begin(invalidated: @escaping @MainActor () -> Void) async -> NSWindow? {
-        guard window == nil, let screen = Self.builtinScreen(in: NSScreen.screens) else {
+    static func registeredWindow(for operationID: UUID) -> NSWindow? {
+        guard let owner = registeredOwner, owner.operationID == operationID else { return nil }
+        return owner.window
+    }
+
+    static func validatedWindows(for operationID: UUID) -> [NSWindow] {
+        guard let root = registeredWindow(for: operationID),
+              root.identifier?.rawValue == "CCR.LocalAuthentication", root.isVisible, root.isOnActiveSpace,
+              root.windowNumber > 0, root.isOpaque, root.alphaValue == 1,
+              !root.ignoresMouseEvents, root.sharingType == .none,
+              root.level.rawValue == Int(CGWindowLevelForKey(.screenSaverWindow)) + 2,
+              let screen = builtinScreen(in: NSScreen.screens), root.screen === screen,
+              screen.frame.contains(root.frame) else { return [] }
+        guard let sheet = root.attachedSheet else { return [root] }
+        guard sheet.sheetParent === root, sheet.isVisible, sheet.isOnActiveSpace,
+              sheet.windowNumber > 0, sheet.alphaValue == 1,
+              sheet.level.rawValue >= root.level.rawValue,
+              sheet.screen === screen, screen.frame.contains(sheet.frame) else { return [] }
+        return [root, sheet]
+    }
+
+    func matches(operationID: UUID) -> Bool {
+        guard Self.registeredOwner === self, self.operationID == operationID, let window else { return false }
+        return Self.validatedWindows(for: operationID).first === window
+    }
+
+    func begin(operationID: UUID, invalidated: @escaping @MainActor () -> Void) async -> NSWindow? {
+        guard window == nil, Self.registeredOwner == nil,
+              let screen = Self.builtinScreen(in: NSScreen.screens) else {
             print("[로컬 복귀 인증] 활성 내장 화면을 확정하지 못했습니다. 인증을 요청하지 않습니다.")
             return nil
         }
         let curtains = NSApp.windows.filter { $0.identifier?.rawValue == "CCR.SentryCurtain" }
         let candidates = curtains.filter { $0.screen === screen && $0.frame == screen.frame }
-        let borrowed = !curtains.isEmpty
-        let window: NSWindow
-        if borrowed {
+        if !curtains.isEmpty {
             guard candidates.count == 1, let curtain = candidates.first,
                   curtain.isVisible, curtain.isOnActiveSpace, curtain.canBecomeKey,
                   curtain.isOpaque, curtain.alphaValue == 1, !curtain.ignoresMouseEvents,
@@ -33,24 +59,24 @@ final class LocalAuthenticationPresentation {
                 print("[로컬 복귀 인증] 내장 화면의 보호 커튼을 인증 anchor로 확정하지 못했습니다.")
                 return nil
             }
-            window = curtain
-        } else {
-            window = NSWindow(contentRect: .init(x: 0, y: 0, width: 360, height: 100),
-                              styleMask: [.titled], backing: .buffered, defer: false, screen: screen)
-            window.title = "로컬 복귀 인증 대기"
-            window.isReleasedWhenClosed = false
-            window.sharingType = .none
-            window.ignoresMouseEvents = false
-            window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-            window.level = .normal
-            let label = NSTextField(wrappingLabelWithString: "macOS의 Touch ID 또는 로그인 암호 인증이 완료되어야 로컬로 복귀합니다.")
-            label.frame = .init(x: 20, y: 20, width: 320, height: 60)
-            window.contentView?.addSubview(label)
-            window.setFrameOrigin(.init(x: screen.frame.midX - window.frame.width / 2,
-                                        y: screen.frame.midY - window.frame.height / 2))
         }
+        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 480, height: 240),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false, screen: screen)
+        window.identifier = NSUserInterfaceItemIdentifier("CCR.LocalAuthentication")
+        window.title = "Touch ID 또는 Mac 로그인 암호"
+        window.isReleasedWhenClosed = false
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
+        window.alphaValue = 1
+        window.sharingType = .none
+        window.ignoresMouseEvents = false
+        window.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary]
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)) + 2)
+        window.setFrameOrigin(.init(x: screen.frame.midX - window.frame.width / 2,
+                                    y: screen.frame.midY - window.frame.height / 2))
         self.window = window
-        ownsWindow = !borrowed
+        self.operationID = operationID
+        Self.registeredOwner = self
         let workspace = NSWorkspace.shared.notificationCenter
         for (center, name) in [
             (NotificationCenter.default, NSApplication.didChangeScreenParametersNotification),
@@ -63,17 +89,22 @@ final class LocalAuthenticationPresentation {
             }
             observers.append((center, observer))
         }
+        let closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+            object: window, queue: .main) { _ in MainActor.assumeIsolated { invalidated() } }
+        observers.append((NotificationCenter.default, closeObserver))
         let previousPolicy = NSApp.activationPolicy()
         if previousPolicy != .regular {
             guard NSApp.setActivationPolicy(.regular) else { end(); return nil }
             previousActivationPolicy = previousPolicy
         }
-        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while self.window === window, !Task.isCancelled, ContinuousClock.now < deadline {
             if NSApp.isActive {
                 window.makeKeyAndOrderFront(nil)
-                if borrowed { window.orderFrontRegardless() }
+                window.orderFrontRegardless()
                 if window.isKeyWindow { break }
             }
             do { try await Task.sleep(for: .milliseconds(25)) }
@@ -81,7 +112,7 @@ final class LocalAuthenticationPresentation {
         }
         guard self.window === window else { return nil }
         guard !Task.isCancelled, NSApp.isActive, window.isKeyWindow, window.isVisible else {
-            print("[로컬 복귀 인증] 활성 앱과 내장 anchor의 키보드 포커스를 확인하지 못했습니다. 인증을 요청하지 않습니다.")
+            print("[로컬 복귀 인증] 활성 앱과 내장 anchor의 키보드 포커스를 확인하지 못했습니다. appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow) visible=\(window.isVisible). 인증을 요청하지 않습니다.")
             end()
             return nil
         }
@@ -93,7 +124,8 @@ final class LocalAuthenticationPresentation {
             end()
             return nil
         }
-        print("[로컬 복귀 인증] 내장 anchor display=\(id) window=\(window.windowNumber) level=\(window.level.rawValue) protectedCurtain=\(borrowed) appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow). 운영체제 인증창의 표시·위치는 미확인입니다.")
+        guard matches(operationID: operationID) else { end(); return nil }
+        print("[로컬 복귀 인증] 내장 전용 인증 창 display=\(id) window=\(window.windowNumber) level=\(window.level.rawValue) curtainsPreserved=\(!curtains.isEmpty) appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow). 공식 인증 UI의 실물 표시는 별도 확인합니다.")
         return window
     }
 
@@ -101,10 +133,10 @@ final class LocalAuthenticationPresentation {
         for (center, observer) in observers { center.removeObserver(observer) }
         observers.removeAll()
         let old = window
-        let closeOwnedWindow = ownsWindow
+        if Self.registeredOwner === self { Self.registeredOwner = nil }
         window = nil
-        ownsWindow = false
-        if closeOwnedWindow { old?.close() }
+        operationID = nil
+        old?.close()
         if let previousActivationPolicy {
             self.previousActivationPolicy = nil
             _ = NSApp.setActivationPolicy(previousActivationPolicy)

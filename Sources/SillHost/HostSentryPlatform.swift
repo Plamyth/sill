@@ -671,8 +671,13 @@ final class HostSentryPlatform {
     private func authenticationInputAllowed(_ type: CGEventType, event: CGEvent,
                                             stage: LocalAuthenticationInputPolicy.Stage) -> Bool {
         let challenge = currentLocalAuthenticationChallenge()
-        guard isProtected, !changingLifecycle, inputEnvironmentVerified,
+        guard !changingLifecycle, inputEnvironmentVerified,
               let proof = localAuthenticationInputPolicy.current(challengeID: challenge, now: .now) else { return false }
+        if proof.target.process.pid == getpid() {
+            guard NSApp.isActive, let key = NSApp.keyWindow,
+                  key.isKeyWindow, key.windowNumber == Int(proof.target.window),
+                  ownedAuthenticationWindows().contains(where: { $0 === key }) else { return false }
+        }
         let input = LocalAuthenticationInputPolicy.Input(type: type, flags: event.flags,
             keyCode: event.getIntegerValueField(.keyboardEventKeycode), point: event.location,
             sourcePID: event.getIntegerValueField(.eventSourceUnixProcessID),
@@ -783,6 +788,15 @@ final class HostSentryPlatform {
                       let identity = Self.verifiedAuthenticationOwner(pid) else { continue }
                 candidates.append((index, .init(process: identity, window: id, bounds: rect)))
             }
+            if candidates.isEmpty, let identity = Self.processIdentity(getpid()), NSApp.isActive {
+                let owned = ownedAuthenticationWindows().filter(\.isKeyWindow)
+                if owned.count == 1, let window = owned.first,
+                   let index = rows.firstIndex(where: { ownedAuthenticationWindow($0) === window }),
+                   let bounds = rows[index][kCGWindowBounds as String] as? NSDictionary,
+                   let rect = CGRect(dictionaryRepresentation: bounds) {
+                    candidates.append((index, .init(process: identity, window: CGWindowID(window.windowNumber), bounds: rect)))
+                }
+            }
             var target: LocalAuthenticationInputPolicy.Target?
             if candidates.count == 1, let (index, candidate) = candidates.first {
                 var cursorOwners: [pid_t: Bool] = [:]
@@ -859,7 +873,27 @@ final class HostSentryPlatform {
         }
     }
 
+    private func ownedAuthenticationWindows() -> [NSWindow] {
+        guard let requestID = localAuthenticationInputPolicy.preparedRequestID else { return [] }
+        return LocalAuthenticationPresentation.validatedWindows(for: requestID)
+    }
+
+    private func ownedAuthenticationWindow(_ row: [String: Any]) -> NSWindow? {
+        guard (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == getpid(),
+              let number = (row[kCGWindowNumber as String] as? NSNumber)?.intValue,
+              (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue == 1,
+              let bounds = row[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds), let main = NSScreen.screens.first else { return nil }
+        return ownedAuthenticationWindows().first { window in
+            let frame = window.frame
+            let expected = CGRect(x: frame.minX, y: main.frame.maxY - frame.maxY, width: frame.width, height: frame.height)
+            return window.windowNumber == number && expected == rect &&
+                (row[kCGWindowLayer as String] as? NSNumber)?.intValue == window.level.rawValue
+        }
+    }
+
     private func isObservedAuthenticationWindow(_ row: [String: Any]) -> Bool {
+        if ownedAuthenticationWindow(row) != nil { return true }
         guard let proof = localAuthenticationInputPolicy.current(challengeID: currentLocalAuthenticationChallenge(), now: .now),
               Self.processIdentity(proof.target.process.pid) == proof.target.process,
               (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == proof.target.process.pid,
