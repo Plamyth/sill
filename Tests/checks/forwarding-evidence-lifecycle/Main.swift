@@ -108,7 +108,8 @@ import StreamProtocol
             let deadline = ContinuousClock.now.advanced(by: .seconds(6))
             while !f.runtime.allows(Data(repeating: 0xcd, count: 32), direction: .input), ContinuousClock.now < deadline {
                 await f.runtime.checkRefresh()
-                try? await Task.sleep(for: .milliseconds(10))
+                try? await Task.sleep(for: .milliseconds(500))
+                check((await f.http("/request?id=" + peer.id.hex + "&intent=" + encoded)).0 == 200)
             }
             let allowed = f.runtime.allows(Data(repeating: 0xcd, count: 32), direction: .input)
             let arms = f.privacy.arms
