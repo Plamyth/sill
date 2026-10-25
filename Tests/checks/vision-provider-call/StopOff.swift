@@ -54,8 +54,8 @@ let original = try AudioForwardingIntentRequest(pairedDeviceId: device, intentId
     action: .request, inputDesired: true, outputDesired: true, expectedRevision: .init(1),
     transportId: UUID(), transportKind: .native, bindingRevision: .init(1))
 var forwarding = VisionAudioForwarding(connection: connection, device: device, clock: { now })
-try observe(&forwarding, snapshot(original, revision: 2, phase: .active))
 forwarding.select(.init())
+try observe(&forwarding, snapshot(original, revision: 2, phase: .active))
 let control = forwarding.next(desire: .init())!
 let off = try snapshot(control.intent!, revision: 3, phase: .off)
 forwarding.receive(try .init(requestID: control.requestID, operation: .submit, catalog: nil, result: .accepted(off)), from: connection)
