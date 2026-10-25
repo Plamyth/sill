@@ -6,8 +6,8 @@ import CoreGraphics
 // Pure: Foundation and CoreGraphics only, so Tests/checks/duo compiles it with swiftc on its own. Its
 // inputs come from DuoPostureReader.swift, which reads iOS 27.1's hinge (`onHingeChange`) and the
 // fold's reserved region (`GeometryProxy.reservedRegions(kind: .division)`). Before iOS 27.1, and on
-// any device without a hinge (every iPhone and iPad until the Duo), nothing is known and every rule
-// here answers exactly as the size alone did before (`FoldInfo.inferred`).
+// any device without a hinge (every iPhone and iPad until the Duo), layout uses the available size
+// without a reported fold (`FoldInfo.inferred`).
 //
 // What the device reports, measured on the iOS 27.1 simulator (the plan's Facts): one window scene
 // that moves between the displays as the hinge closes and opens; on the inner display (951×669 pt
@@ -172,7 +172,7 @@ extension DuoPosture {
     /// 16:10, the shape of most Macs' displays and windows.
     static let defaultAspect: CGFloat = 1.6
 
-    /// - Inferred (before iOS 27.1, an iPad): at the middle, as before.
+    /// - Inferred (before iOS 27.1, an iPad): at the middle while the controls fit below it.
     /// - The laptop pose (approved (b1)): the picture above the fold, the controls below it, at the
     ///   fold's real band (whole points, never into it).
     /// - Open flat upright (approved (b2)): nothing pins the split. The pane takes the picture's
@@ -183,7 +183,8 @@ extension DuoPosture {
         switch fold {
         case .inferred:
             let half = (size.height / 2).rounded()
-            return PortraitSplit(picture: half, controls: half)
+            let pane = min(half, max(0, size.height - controls))
+            return PortraitSplit(picture: pane, controls: pane)
         case .known:
             if let band = fold.horizontalBand {
                 let top = max(0, band.minY.rounded(.down))

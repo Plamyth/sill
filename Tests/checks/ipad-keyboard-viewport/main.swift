@@ -9,6 +9,7 @@ struct UIDevice {
 }
 
 // PRODUCTION_TYPES
+// PRODUCTION_PORTRAIT
 
 struct KeyboardGeometry {
     struct Insets { let bottom: CGFloat }
@@ -64,6 +65,34 @@ for (width, fullHeight, visibleHeight, keyboardHeight) in [
 }
 expect(classifiedLayout(width: 1366, height: 500, bottom: 0) == .outerLandscape,
        "actual window resize still changes compact layout")
+for (width, height) in [(500.0, 400.0), (320.0, 350.0), (600.0, 350.0)] {
+    let metrics = width < DuoLayout.outerMaxWidth ? PortraitMetrics.compact : .regular
+    let split = DuoPosture.portraitSplit(CGSize(width: width, height: height), .inferred,
+                                       aspect: 1.6, controls: metrics.controlsHeight)
+    for toolbarShown in [true, false] {
+        let reclaimed = toolbarShown ? 0 : metrics.barHeight + metrics.rowGap
+        let available = height - split.controls - reclaimed
+        let required = metrics.controlsHeight - reclaimed
+        expect(available >= required,
+               "portrait controls fit above keyboard at \(width)x\(height), toolbar=\(toolbarShown), available=\(available), required=\(required)")
+    }
+}
+for metrics in [PortraitMetrics.compact, .regular] {
+    let required = metrics.controlsHeight
+    for height in [required - 1, required, required + 1, 2 * required - 1, 2 * required, 2 * required + 1, 1000] {
+        let size = CGSize(width: 500, height: height)
+        let split = DuoPosture.portraitSplit(size, .inferred, aspect: 1.6, controls: required)
+        expect(split.picture == split.controls && split.picture >= 0,
+               "small portrait panes stay adjacent with a nonnegative picture")
+        if height < required {
+            expect(split.picture == 0, "an impossibly short window gives all available room to controls")
+        } else if height - (height / 2).rounded() >= required {
+            expect(split.picture == (height / 2).rounded(), "normal portrait retains its midpoint after keyboard dismissal")
+        } else {
+            expect(height - split.controls == required, "small portrait gives controls only their missing room")
+        }
+    }
+}
 let docked = CGRect(x: 0, y: 482, width: 1194, height: 352)
 let baseline = Proposal(window: window, keyboard: nil).proposed
 expect(baseline == window, "no keyboard preserves container-bottom extent")

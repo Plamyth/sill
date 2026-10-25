@@ -21,14 +21,22 @@ def block(source, marker):
         end += 1
     return source[start:end]
 paths = [root / 'iOSClient' / name for name in ['StreamScreen.swift', 'InputOverlay.swift',
-    'HEVCDisplayView.swift', 'PortraitStreamScreen.swift']]
+    'HEVCDisplayView.swift', 'PortraitStreamScreen.swift', 'DuoPosture.swift', 'DuoPostureReader.swift',
+    'PhonePortraitLayout.swift']]
 paths += [here / name for name in ['main.swift', 'run.py', 'remote.py']]
 original = {str(path.relative_to(root)): sha(path.read_bytes()) for path in paths}
 screen, overlay, display, portrait = [path.read_text() for path in paths[:4]]
-region = [line.strip() for line in screen[screen.index('struct StreamScreen: View'):screen.index('    private func landscape(')].splitlines()
+screen_body = block(screen[screen.index('struct StreamScreen: View'):], 'var body: some View {')
+geometry = block(screen_body, 'GeometryReader { geo in')
+outer = screen_body.replace(geometry, '')
+background = block(outer, '.background {')
+region = [line.strip() for line in outer.replace(background, '').splitlines()
           if line.strip().startswith('.ignoresSafeArea(')]
 assert len(region) == 1
 fixture = (here / 'main.swift').read_text().replace('// PRODUCTION_TYPES', block(screen, 'enum DuoLayout {') + '\n' + block(screen, 'struct BarMetrics {'))
+fixture = fixture.replace('// PRODUCTION_PORTRAIT', paths[4].read_text() + '\n' + paths[6].read_text()
+    + '\n' + block(portrait, 'struct PortraitMetrics {')
+    + '\n' + block(paths[5].read_text(), 'extension PortraitMetrics {'))
 layout = screen[screen.index('        GeometryReader { geo in'):screen.index('            let layout: TourLayout')]
 fixture = fixture.replace('// PRODUCTION_LAYOUT', '\n'.join(line.strip() for line in layout.splitlines()
     if line.strip().startswith(('let layoutSize = ', 'let duo = '))))

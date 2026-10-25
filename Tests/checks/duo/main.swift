@@ -99,7 +99,14 @@ for w in stride(from: CGFloat(300), through: 1400, by: 7) {
         check((c != nil) == topHalf(s), "inferred crease at \(s)")
         if let c { check(c.top == h / 2 && c.bottom == h / 2, "the inferred crease is the middle at \(s)") }
         let split = DuoPosture.portraitSplit(s, .inferred, aspect: 1.6, controls: 180)
-        check(split == DuoPosture.PortraitSplit(picture: (h / 2).rounded(), controls: (h / 2).rounded()), "inferred: the halves at the middle, \(s)")
+        let middle = (h / 2).rounded()
+        check(split.picture == split.controls && split.picture >= 0 && split.picture <= middle,
+              "inferred: adjacent panes, picture no larger than half, \(s)")
+        if h - middle >= 180 {
+            check(split.picture == middle, "inferred: the halves stay at the middle when the controls fit, \(s)")
+        } else {
+            check(h - split.controls == 180, "inferred: only the controls' missing room comes from the picture, \(s)")
+        }
         check(DuoPosture.columnX(columnWidth: 380, screenWidth: w, fold: .inferred) == max(16, (w - 380) / 2), "inferred: the column centred, \(w)")
     }
 }
