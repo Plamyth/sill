@@ -23,9 +23,27 @@ final class NoteProtocol: URLProtocol {
     static var conflict = false
     static var writes = 0
     static var authenticated = true
+    static var captureCanvasBodies = false
+    static var canvasBodies: [Data] = []
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if Self.captureCanvasBodies {
+            var body = request.httpBody ?? Data()
+            if let stream = request.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    body.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            Self.canvasBodies.append(body)
+            client!.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
         let method = request.httpMethod ?? "GET"
         Self.calls.append(method)
         Self.authenticated = Self.authenticated && request.value(forHTTPHeaderField:"X-Canvas-Token") == "test-token"
@@ -79,6 +97,57 @@ final class NoteProtocol: URLProtocol {
             checks += 1
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
+        }
+        if CommandLine.arguments.contains("--transport-body") {
+            var scene = CanvasScene()
+            _ = scene.addNode(kind: .note, at: .init(x: 0, y: 0), text: "")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let overhead = try encoder.encode(scene).count
+            scene.nodes[0].text = String(repeating: "x", count: CanvasScene.localByteLimit - overhead)
+            let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 4, bitsPerPixel: 32)!
+            let base = bitmap.representation(using: .png, properties: [:])!
+            let paddingCount = 5 * 1024 * 1024 - base.count - 12
+            var length = UInt32(paddingCount).bigEndian
+            var chunk = withUnsafeBytes(of: &length) { Data($0) }
+            let payload = Data("raNd".utf8) + Data(repeating: 255, count: paddingCount)
+            chunk.append(payload)
+            var crc = UInt32.max
+            for byte in payload {
+                crc ^= UInt32(byte)
+                for _ in 0..<8 { crc = crc & 1 == 1 ? (crc >> 1) ^ 0xedb88320 : crc >> 1 }
+            }
+            var checksum = (~crc).bigEndian
+            chunk.append(withUnsafeBytes(of: &checksum) { Data($0) })
+            let image = Data(base.dropLast(12)) + chunk + Data(base.suffix(12))
+            let session = VoiceSession(threadId: UUID(), sessionId: "canvas-body-fixture", observedAt: "fixture")
+            let packet = try CanvasPacket(scene: scene, imagePNG: image, session: session)
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [NoteProtocol.self]
+            let network = URLSession(configuration: config)
+            defer { network.invalidateAndCancel(); NoteProtocol.captureCanvasBodies = false }
+            let relay = CanvasRelay(address: "http://canvas-transport-fixture", token: "test-token", session: network)
+            NoteProtocol.captureCanvasBodies = true
+            NoteProtocol.canvasBodies = []
+            do { _ = try await relay.send(packet) } catch { }
+            do { _ = try await relay.saveVaultCanvas(scene: scene, imagePNG: image, baseSha256: nil) } catch { }
+            check(NoteProtocol.canvasBodies.count == 2, "actual send and saveVaultCanvas requests are intercepted without network")
+            check(try encoder.encode(scene).count == 4 * 1024 * 1024 && image.count == 5 * 1024 * 1024,
+                  "transport fixture uses exact decoded scene and PNG limits")
+            for body in NoteProtocol.canvasBodies {
+                check(body.count <= 13 * 1024 * 1024, "actual Canvas HTTP body fits the 13 MiB bound despite slash-heavy PNG")
+                let value = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+                let rawScene = Data(base64Encoded: value["sceneJSONBase64"] as! String)!
+                check(try JSONDecoder().decode(CanvasScene.self, from: rawScene) == scene,
+                      "transport serialization preserves the entire scene")
+                check(Data(base64Encoded: value["imagePNGBase64"] as! String) == image,
+                      "transport serialization preserves every PNG byte")
+                print("CANVAS_HTTP_BODY bytes=\(body.count)")
+            }
+            print("RESULT \(checks) assertions, \(failures) failures; intercepted URLProtocol only, no live HTTP")
+            exit(failures == 0 ? 0 : 1)
         }
         if CommandLine.arguments.contains("--vault-roundtrip") {
             try await checkPencilVaultRoundtrip(check)

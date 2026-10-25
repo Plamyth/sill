@@ -221,7 +221,7 @@ struct CanvasRelay {
             "baseSha256":(baseSha256 as Any?) ?? NSNull(),
             "sceneJSONBase64":sceneBytes.base64EncodedString(),
             "imagePNGBase64":imagePNG.base64EncodedString()
-        ])
+        ],options:[.withoutEscapingSlashes])
         return try await response(request("/vault/canvas?id=\(scene.id.uuidString.lowercased())",
                                           method:"PUT",body:body),as:VaultCanvasSaved.self)
     }
@@ -237,7 +237,9 @@ struct CanvasRelay {
     }
 
     func send(_ packet: CanvasPacket) async throws -> PacketReceipt {
-        try await response(request("/packets",method:"POST",body:JSONEncoder().encode(packet)),as:PacketReceipt.self)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return try await response(request("/packets",method:"POST",body:encoder.encode(packet)),as:PacketReceipt.self)
     }
 
     func receipt(for packet: UUID) async throws -> PacketReceipt {
