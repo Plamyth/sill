@@ -265,6 +265,28 @@ def run_live_harness(args, log, on_ready, timeout=180, ready_marker='CCR_ROTATIO
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
 
+def actual_xcresult(result, method):
+    require(Path(result).is_dir(), 'xcresult_missing')
+    identity = 'CanvasBridgeUITests/' + method + '()'
+    url = 'test://com.apple.xcode/CanvasBridge/CanvasBridgeUITests/' + identity[:-2]
+    details = json.loads(command(['xcrun','xcresulttool','get','test-results','test-details',
+                                  '--path',str(result),'--test-id',identity]))
+    require(isinstance(details,dict) and details.get('testIdentifier') == identity and
+            details.get('testIdentifierURL') == url and details.get('testResult') == 'Passed',
+            'xcresult_method_not_passed')
+    runs = details.get('testRuns')
+    require(isinstance(runs,list) and len(runs) == 1 and isinstance(runs[0],dict) and
+            runs[0].get('nodeType') == 'Device' and runs[0].get('result') == 'Passed',
+            'xcresult_execution_count_or_status')
+    configurations = runs[0].get('children')
+    require(isinstance(configurations,list) and len(configurations) == 1 and
+            isinstance(configurations[0],dict) and
+            configurations[0].get('nodeType') == 'Test Plan Configuration' and
+            configurations[0].get('nodeIdentifierURL') == url and
+            configurations[0].get('result') == 'Passed' and not configurations[0].get('children'),
+            'xcresult_execution_count_or_status')
+    return details
+
 def harness(config, work, method, variables=None, on_ready=None, ready_marker='CCR_ROTATION_LIVE_READY'):
     lease(config)
     derived = work / 'HarnessDerivedData'
@@ -296,6 +318,7 @@ def harness(config, work, method, variables=None, on_ready=None, ready_marker='C
         command(args, log, 180)
     else:
         run_live_harness(args, log, on_ready, ready_marker=ready_marker)
+    actual_xcresult(result, method)
     return result
 
 def strict_canvas_png(data):
@@ -447,13 +470,21 @@ def review_journal(config, work, test_id, label, expected=None):
     copy_file(config,work,'Library/Application Support/CCRIntegrationTests/' + test_id +
               '/state/CanvasNoteEdit/recovery.json',destination)
     envelope = read(destination)
-    raw = base64.b64decode(envelope.get('payload') or '',validate=True)
-    require(envelope.get('schemaVersion') == 1 and envelope.get('sha256') == sha(raw), 'review_journal_hash_mismatch')
-    record = json.loads(raw) if raw else None
+    require(isinstance(envelope,dict) and type(envelope.get('schemaVersion')) is int and
+            envelope['schemaVersion'] == 1, 'review_journal_schema_mismatch')
+    record = None
+    raw = b''
+    if 'payload' in envelope:
+        require(isinstance(envelope['payload'],str) and envelope['payload'], 'review_journal_payload_invalid')
+        raw = base64.b64decode(envelope['payload'],validate=True)
+        record = json.loads(raw)
+        require(isinstance(record,dict) and type(record.get('schemaVersion')) is int and
+                record['schemaVersion'] == 1, 'review_journal_record_invalid')
+    require(envelope.get('sha256') == sha(raw), 'review_journal_hash_mismatch')
     if expected is None:
         require(record is None, 'review_journal_not_cleared')
     else:
-        require(record is not None and record.get('schemaVersion') == 1 and
+        require(record is not None and isinstance(record.get('sceneID'),str) and
                 record.get('sceneID','').lower() == test_id.lower() and
                 all(record.get(k) == v for k,v in expected.items()) and
                 record.get('submittedText') is None and record.get('nodeID') is None and record.get('blockID') is None,
@@ -584,6 +615,7 @@ def accept_review(config, work, server, vault, test_id):
     after = work / 'review-scene-after.json'
     copy_file(config,work,state,after)
     require(read(after) == read(baseline), 'review_changed_unrelated_scene')
+    require(all(Path(result).is_dir() for result in results.values()), 'review_ui_xcresult_missing')
     proof = {'ui':results,'edited':edited,'rated':rated,'final':final,'metadata':grade,
              'draftJournal':pending,'clearedJournals':cleared,'sceneBefore':str(baseline),'sceneAfter':str(after),
              'otherNotePreserved':True,'scenePreserved':True,'singleRatingEffect':True,

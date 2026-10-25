@@ -325,15 +325,20 @@ class ReviewJournalAcceptance(unittest.TestCase):
 
     def test_draft_object_schema_and_field_types_are_strict(self):
         import base64
-        expected = {'relayAddress':'http://127.0.0.1:8793','base':{'text':'base'},'draft':'draft'}
+        expected = {'relayAddress':'http://127.0.0.1:8793','base':{
+            'path':'note.md','text':'base','sha256':adapter.sha(b'base'),'modifiedAt':'fixture'},'draft':'draft'}
         valid = dict(expected,schemaVersion=1,sceneID='12345678-1234-4234-8234-123456789abc')
-        for field,value in [('schemaVersion',True),('draft',None),('base',[]),('submittedText',3),('nodeID',3)]:
+        for field,value in [(None,None),('schemaVersion',True),('sceneID',3),('draft',None),
+                            ('base',[]),('submittedText',3),('nodeID',3)]:
             with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
-                raw = json.dumps(dict(valid,**{field:value})).encode()
+                raw = json.dumps(dict(valid,**({field:value} if field else {}))).encode()
                 envelope = {'schemaVersion':1,'sha256':adapter.sha(raw),'payload':base64.b64encode(raw).decode()}
                 with patch.object(adapter,'copy_file'), patch.object(adapter,'read',return_value=envelope):
-                    with self.assertRaises(adapter.Held):
+                    if field is None:
                         adapter.review_journal({},Path(directory),valid['sceneID'],'draft',expected)
+                    else:
+                        with self.assertRaises(adapter.Held):
+                            adapter.review_journal({},Path(directory),valid['sceneID'],'draft',expected)
 
 class ReviewAcceptance(unittest.TestCase):
     def exercise(self, directory, failure=None):
