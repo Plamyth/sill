@@ -3744,6 +3744,7 @@ extension StreamCoordinator {
                 self.contractPeerInputs.append(lane.source)
                 #endif
                 self.logClick(scoped.event, in: rect)
+                self.peerGestureChords[id]?.input(Self.gestureInput(scoped.event))
                 self.injector.apply(scoped.event, in: rect, from: id,
                     protectedScope: self.protectedPointerScope(device: id, epoch: epoch, isCurrent: { !turn.cancelled }))
             }) else {
