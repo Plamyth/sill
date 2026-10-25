@@ -258,21 +258,27 @@ final class AudioForwardingCoordinator {
         guard await current(scope, token: token, deadline: deadline), dependencies.protectionCurrent(readback) else {
             return .blocked(.stale)
         }
+        let command = Commit(scope: scope, receipts: receipts, localMutedVerified: readback.localMutedVerified,
+            admission: { [weak self] in
+                guard let self else { return false }
+                return self.dependencies.protectionCurrent(readback) && self.owns(scope, token: token, deadline: deadline)
+            })
         guard let response = await call(until: deadline, operation: { [self] in
             guard self.dependencies.protectionCurrent(readback), self.owns(scope, token: token, deadline: deadline) else {
                 return nil as AudioForwardingResult<AudioForwardingSnapshot>?
             }
-            return await self.dependencies.commit(Commit(scope: scope, receipts: receipts,
-                localMutedVerified: readback.localMutedVerified, admission: { [weak self] in
-                guard let self else { return false }
-                return self.dependencies.protectionCurrent(readback) && self.owns(scope, token: token, deadline: deadline)
-            }))
+            return await self.dependencies.commit(command)
         }), let response, case .accepted(let committed) = response,
               owns(scope, token: token, deadline: deadline), scope.matches(committed, committed: true),
               dependencies.protectionCurrent(readback) else { return .blocked(.commit) }
         guard await current(scope, token: token, deadline: deadline, committed: true),
               dependencies.protectionCurrent(readback) else { return .blocked(.stale) }
         protection = readback
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        if let data = try? encoder.encode(command), let json = String(data: data, encoding: .utf8) {
+            print("[원격 오디오 커밋] \(json)")
+        }
         return .committed(scope, committed)
     }
 }

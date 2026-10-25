@@ -382,6 +382,10 @@ final class HostAudioForwardingRuntime {
                 self.active = committed
                 self.snapshot = result
                 self.commitMedia(committed)
+                if let intent = result.intent {
+                    self.logState("committed", binding: committed.binding,
+                        intent: intent, generation: generation)
+                }
             case .blocked(let failure):
                 print("[원격 오디오 준비] phase=media_preparation code=\(failure)")
                 self.active = nil
@@ -396,6 +400,7 @@ final class HostAudioForwardingRuntime {
     func invalidate() {
         let binding = active?.binding ?? preparingBinding
         revision = UUID()
+        if let binding { logState("invalidated", binding: binding, intent: nil, generation: revision) }
         preparation?.cancel()
         preparation = nil
         preparing = nil
@@ -409,6 +414,23 @@ final class HostAudioForwardingRuntime {
         if let binding {
             Task { @MainActor [relay] in _ = await relay.forwardingDisconnect(binding) }
         }
+    }
+
+    private func logState(_ event: String, binding: AudioForwardingBinding,
+                          intent: AudioForwardingSnapshot.Intent?, generation: UUID) {
+        var fields: [String: Any] = ["schemaVersion": 1, "event": event,
+            "processId": ProcessInfo.processInfo.processIdentifier, "runtimeGeneration": generation.uuidString,
+            "controllerBootId": binding.configuration.controllerBootId.uuidString,
+            "privacyGeneration": binding.configuration.privacyGeneration.uuidString,
+            "bindingEpoch": binding.bindingEpoch.uuidString, "operationId": binding.operationId.uuidString]
+        if let intent {
+            fields["inputDesired"] = intent.inputDesired
+            fields["outputDesired"] = intent.outputDesired
+            fields["sentryDesired"] = intent.sentryDesired
+            fields["localMutedDesired"] = intent.localMutedDesired
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) { print("[원격 오디오 상태] \(json)") }
     }
 
     func returnToLocal(admission: @escaping @MainActor () -> Bool) async -> Bool {
