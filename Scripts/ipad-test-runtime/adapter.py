@@ -362,6 +362,7 @@ def accept_rotation(config, work, server, vault, test_id):
     seed = work / 'rotation-state'; seed.mkdir(exist_ok=True)
     write(seed / 'CanvasScene.json', start)
     copy_file(config, work, seed, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', 'to', replace=True)
+    copy_file(config, work, work / 'context.json', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/context.json', 'to')
     rotated_ui = harness(config, work, 'testRotateAndSave')
     def rotated(expected):
         deadline = time.monotonic() + 20
