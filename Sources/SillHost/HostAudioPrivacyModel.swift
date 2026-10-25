@@ -498,6 +498,7 @@ package final class HostAudioPrivacy {
         let generation = privacyGeneration
         let membership = participants.snapshot
         localReturnID = request
+        print("[로컬 복귀 단계] 인증 준비 시작 request=\(request)")
         localReturnActivityChanged?()
         forwardingRevision = UUID()
         forwardingInvalidated?()
@@ -508,7 +509,10 @@ package final class HostAudioPrivacy {
                 self.localReturnID == request && self.privacyGeneration == generation &&
                 self.participants.snapshot == membership
             }
-            guard current() else { return false }
+            guard current() else {
+                print("[로컬 복귀 단계] 인증 호출 전 요청 변경 request=\(self.localReturnID == request) generation=\(self.privacyGeneration == generation) membership=\(self.participants.snapshot == membership) cancelled=\(cancellation.isCancelled || Task.isCancelled)")
+                return false
+            }
             self.localAuthenticationWillBegin?(request)
             guard current() else { return false }
             return await self.authenticateLocal(request)
@@ -516,6 +520,7 @@ package final class HostAudioPrivacy {
         guard authenticated == true, !cancellation.isCancelled, !Task.isCancelled,
               ContinuousClock.now < authenticationDeadline, localReturnID == request,
               privacyGeneration == generation, participants.snapshot == membership else {
+            print("[로컬 복귀 단계] 인증 수용 실패 result=\(String(describing: authenticated)) request=\(localReturnID == request) generation=\(privacyGeneration == generation) membership=\(participants.snapshot == membership) cancelled=\(cancellation.isCancelled || Task.isCancelled)")
             cancelAuthentication()
             localReturnFailureReason = "로컬 복귀 인증이 취소되었거나 완료되지 않았습니다. 보호를 유지합니다."
             return false

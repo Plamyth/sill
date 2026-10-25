@@ -43,6 +43,7 @@ final class LocalAuthenticationPresentation {
     }
 
     func begin(operationID: UUID, invalidated: @escaping @MainActor () -> Void) async -> NSWindow? {
+        print("[로컬 복귀 인증] 표시 준비 시작 ownWindow=\(window != nil) registeredOwner=\(Self.registeredOwner != nil)")
         guard window == nil, Self.registeredOwner == nil,
               let screen = Self.builtinScreen(in: NSScreen.screens) else {
             print("[로컬 복귀 인증] 활성 내장 화면을 확정하지 못했습니다. 인증을 요청하지 않습니다.")
@@ -124,7 +125,10 @@ final class LocalAuthenticationPresentation {
             end()
             return nil
         }
-        guard matches(operationID: operationID) else { end(); return nil }
+        guard matches(operationID: operationID) else {
+            print("[로컬 복귀 인증] 표시 검증 거부 visible=\(window.isVisible) activeSpace=\(window.isOnActiveSpace) opaque=\(window.isOpaque) alpha=\(window.alphaValue) mouseIgnored=\(window.ignoresMouseEvents) sharing=\(window.sharingType.rawValue) level=\(window.level.rawValue) window=\(window.windowNumber) sheet=\(window.attachedSheet != nil)")
+            end(); return nil
+        }
         print("[로컬 복귀 인증] 내장 전용 인증 창 display=\(id) window=\(window.windowNumber) level=\(window.level.rawValue) curtainsPreserved=\(!curtains.isEmpty) appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow). 공식 인증 UI의 실물 표시는 별도 확인합니다.")
         return window
     }

@@ -237,6 +237,7 @@ final class LocalAudioAuthentication {
     func cancel() { finish(false) }
 
     func evaluate(operationId: UUID) async -> Bool {
+        print("[로컬 복귀 인증] 요청 진입 current=\(attempt != nil) retiring=\(retiring != nil) cancelled=\(Task.isCancelled)")
         guard attempt == nil, !Task.isCancelled else { return false }
         guard retiring == nil else {
             print("[로컬 복귀 인증] 이전 권한 폐기와 운영체제 콜백 종료가 미확인입니다. 새 인증을 겹치지 않습니다.")
@@ -251,7 +252,10 @@ final class LocalAudioAuthentication {
                     try? await Task.sleep(for: .milliseconds(Self.maximumWaitMilliseconds))
                     if !Task.isCancelled { self?.finish(false) }
                 }
-                guard attempt.right.state == .unknown else { finish(false); return }
+                guard attempt.right.state == .unknown else {
+                    print("[로컬 복귀 인증] 새 권한 초기 상태 거부 state=\(attempt.right.state.rawValue)")
+                    finish(false); return
+                }
                 attempt.callbackPending = true
                 attempt.right.checkCanAuthorize { [weak self] error in
                     let errorCode = (error as NSError?)?.code
@@ -282,12 +286,14 @@ final class LocalAudioAuthentication {
     }
 
     private func resetAndAuthorize(_ candidate: Attempt) {
+        print("[로컬 복귀 인증] 새 권한 초기화 시작 state=\(candidate.right.state.rawValue)")
         candidate.phase = .resetting
         candidate.callbackPending = true
         candidate.right.deauthorize { [weak self] in
             Task { @MainActor in
                 candidate.callbackPending = false
                 guard let self, self.remainsCurrent(candidate) else { return }
+                print("[로컬 복귀 인증] 새 권한 초기화 응답 state=\(candidate.right.state.rawValue)")
                 guard candidate.right.state == .notAuthorized || candidate.right.state == .unknown,
                       let window = await self.presentation.begin(operationID: candidate.operationID, invalidated: { [weak self] in
                           guard self?.attempt === candidate else { return }
