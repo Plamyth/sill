@@ -91,6 +91,32 @@ import StreamProtocol
     @MainActor static func main() async throws {
         var assertions = 0
         func check(_ value: Bool) { precondition(value); assertions += 1 }
+        if CommandLine.arguments.contains("--http-first") {
+            let f = try Fixture("http-first"), peer = Peer("cd")
+            f.privacy.latched = false
+            check(await f.runtime.start())
+            let bootstrap = await f.observe(peer)!
+            check(f.privacy.arms == 0)
+            let request = try AudioForwardingIntentRequest(pairedDeviceId: peer.id, intentId: UUID(),
+                intentRevision: .init(bootstrap.ownCursor.intentRevision.value + 1), action: .request,
+                inputDesired: true, outputDesired: true, expectedRevision: bootstrap.snapshot.revision,
+                transportId: UUID(), transportKind: .native,
+                bindingRevision: .init(bootstrap.ownCursor.bindingRevision.value + 1))
+            let body = String(data: try JSONEncoder().encode(request), encoding: .utf8)!
+            let encoded = body.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+            check((await f.http("/request?id=" + peer.id.hex + "&intent=" + encoded)).0 == 200)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(6))
+            while !f.runtime.allows(Data(repeating: 0xcd, count: 32), direction: .input), ContinuousClock.now < deadline {
+                await f.runtime.checkRefresh()
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            let allowed = f.runtime.allows(Data(repeating: 0xcd, count: 32), direction: .input)
+            let arms = f.privacy.arms
+            await f.finish()
+            print("FIRST_HTTP active=\(allowed) arms=\(arms) (expected active=true arms=1)")
+            precondition(allowed && arms == 1, "첫 HTTP 요청은 보호 세대 동기화 후 한 번에 활성화되어야 합니다")
+            return
+        }
         if CommandLine.arguments.contains("--observe-only") {
             let f = try Fixture("observe-only")
             var failures: [String] = []

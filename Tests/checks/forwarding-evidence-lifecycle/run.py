@@ -13,7 +13,7 @@ root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:3]]
 flags = sys.argv[3:]
-assert flags in [[], ['--observe-only']]
+assert flags in [[], ['--observe-only'], ['--http-first']]
 commit = '0bec7a9970b0bd4e15390012b8ade02ed54605c2'
 names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
          'AudioForwardingParticipants', 'AudioForwardingProtection', 'HostAudioForwardingRuntime']
