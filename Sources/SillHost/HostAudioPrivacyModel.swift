@@ -569,6 +569,10 @@ package final class HostAudioPrivacy {
                   guard admission() else { return false }
                   return await commitIntent(admission)
               }) == true, admission(),
+              await LocalAudioCompletion<Bool>.wait(until: deadline, operation: {
+                  guard admission() else { return false }
+                  return await self.nativeStartup.quiesce(using: self.revokeForLocalReturn, while: admission)
+              }) == true, admission(),
               await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
               admission() else { return failedReturn("공통 오디오 intent 해제") }
         // A failed removal invalidates the HAL generation even when listeners remain registered.
