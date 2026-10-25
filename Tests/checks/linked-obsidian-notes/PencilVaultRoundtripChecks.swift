@@ -255,5 +255,25 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     _ = try bridge.saveNote(reviewPath,committedReview.sha256,reviewSource)
     check(try bridge.note(reviewPath).text == reviewSource,
           "owned review fixture returns to the exact unrated source")
+    let hiddenPath = "주석 안 복습 카드 거부.md"
+    let hiddenSource = "<!-- 닫힘 --> <!--\r\n" + reviewSource
+    let hiddenBase = try bridge.saveNote(hiddenPath,nil,hiddenSource)
+    let hiddenStore = store()
+    await hiddenStore.openVaultNote(hiddenPath) { try bridge.note($0) }
+    let hiddenSession = hiddenStore.beginVaultReview()
+    var hiddenWrites = 0
+    if let hiddenSession {
+        _ = await hiddenStore.rateVaultReviewGood(hiddenSession,
+            injectedDate:Date(timeIntervalSince1970:1_800_000_000),save:{ path,sha,text in
+                hiddenWrites += 1
+                return try bridge.saveNote(path,sha,text)
+            },load:{ try bridge.note($0) })
+    }
+    let hiddenReadback = try bridge.note(hiddenPath)
+    check(hiddenSession == nil && hiddenWrites == 0 && hiddenReadback.sha256 == hiddenBase.sha256,
+          "a card inside a reopened HTML comment cannot become a review or write a grade")
+    if hiddenReadback.sha256 != hiddenBase.sha256 {
+        _ = try bridge.saveNote(hiddenPath,hiddenReadback.sha256,hiddenSource)
+    }
     print("SCOPE actual Store + PencilKit + ObsidianVault file roundtrip; no HTTP, UI, device or physical Pencil input")
 }
