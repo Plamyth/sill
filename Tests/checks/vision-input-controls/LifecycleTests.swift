@@ -151,6 +151,21 @@ func runLifecycleTests() {
                                .pointer(.leftUp, x: 0.3, y: 0.4)]
     check(doubleTap.sent == clickEvents + clickEvents, "two quick native pinches send exactly two balanced clicks")
 
+    for reversed in [false, true] {
+        let coalesced = LifecycleRig()
+        coalesced.view.changed(contact(0, id: 71))
+        let terminal = contact(0.10, 300, 400, .ended, id: 71).first![0]
+        let next = contact(0.12, id: 72).first![0]
+        let batch = reversed ? [next, terminal] : [terminal, next]
+        coalesced.view.changed(GestureValue(first: batch))
+        coalesced.view.ended(contact(0.22, 300, 400, .ended, id: 72))
+        let count = coalesced.sent.filter { if case .pointer(.leftDown, _, _) = $0 { return true }; return false }.count
+        FileHandle.standardOutput.write(Data("native temporal pinch handoff reversed=\(reversed) clicks=\(count) expected=2\n".utf8))
+        check(coalesced.sent == clickEvents + clickEvents,
+              "nonoverlapping native pinch batch retains two clicks in either collection order")
+        coalesced.balanced("coalesced native pinches balance both click pairs")
+    }
+
     let lateScroll = LifecycleRig()
     lateScroll.view.changed(contact(0))
     lateScroll.view.changed(contact(0.8, 500, 600))
