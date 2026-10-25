@@ -271,6 +271,201 @@ final class CanvasBridgeUITests: XCTestCase {
         add(shot)
     }
 
+    private func reviewValue(_ key: String) throws -> String {
+        try XCTUnwrap(ProcessInfo.processInfo.environment["CCR_REVIEW_" + key])
+    }
+
+    private func reviewElement(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+        app.descendants(matching:.any).matching(identifier:identifier).firstMatch
+    }
+
+    private func revealReviewElement(_ app: XCUIApplication, _ element: XCUIElement) {
+        XCTAssertTrue(element.waitForExistence(timeout:10))
+        for _ in 0..<5 {
+            if element.isHittable { break }
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(element.isHittable)
+    }
+
+    private func assertReviewText(_ element: XCUIElement, _ text: String, value: Bool = true) {
+        let predicate = NSPredicate { _,_ in
+            let observed = value ? element.value as? String : element.label
+            return observed.map { Array($0.utf8) == Array(text.utf8) } == true
+        }
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:predicate,object:element)],timeout:25),.completed)
+    }
+
+    private func openReviewNote(_ app: XCUIApplication, restore: Bool = false) throws {
+        app.buttons["도구"].firstMatch.tap()
+        app.buttons["Obsidian 노트"].tap()
+        if restore {
+            let button = app.buttons["obsidianRestoreNoteDraft"]
+            XCTAssertTrue(button.waitForExistence(timeout:10))
+            button.tap()
+        } else {
+            let note = app.buttons[try reviewValue("NOTE")].firstMatch
+            XCTAssertTrue(note.waitForExistence(timeout:15))
+            note.tap()
+        }
+        XCTAssertTrue(app.textViews["obsidianReviewQuestion"].waitForExistence(timeout:15))
+        XCTAssertTrue(app.textViews["obsidianReviewAnswer"].exists)
+    }
+
+    private func assertReviewFields(_ app: XCUIApplication, question: String, answer: String) {
+        assertReviewText(app.textViews["obsidianReviewQuestion"],question)
+        assertReviewText(app.textViews["obsidianReviewAnswer"],answer)
+    }
+
+    private func replaceReviewField(_ app: XCUIApplication, _ identifier: String, text: String) {
+        let editor = app.textViews[identifier]
+        revealReviewElement(app,editor)
+        editor.tap()
+        editor.press(forDuration:1.2)
+        let selectAll = app.descendants(matching:.any)
+            .matching(NSPredicate(format:"label IN %@",["Select All","전체 선택","모두 선택"])).firstMatch
+        XCTAssertTrue(selectAll.waitForExistence(timeout:5),"UIKit 전체 선택 경로가 필요합니다.")
+        selectAll.tap()
+        editor.typeText(text)
+        assertReviewText(editor,text)
+    }
+
+    private func assertReviewRawAndFields(_ app: XCUIApplication) throws {
+        assertReviewFields(app,question:try reviewValue("QUESTION"),answer:try reviewValue("ANSWER"))
+        let mode = app.buttons["obsidianReviewEditorMode"]
+        revealReviewElement(app,mode)
+        mode.tap()
+        let raw = app.textViews["obsidianMarkdownEditor"]
+        XCTAssertTrue(raw.waitForExistence(timeout:5))
+        assertReviewText(raw,try reviewValue("DRAFT"))
+        revealReviewElement(app,mode)
+        mode.tap()
+        assertReviewFields(app,question:try reviewValue("QUESTION"),answer:try reviewValue("ANSWER"))
+    }
+
+    private func reviewScreenshot(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot:app.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    func testReviewEditDraftPreserved() throws {
+        let app = try app()
+        try openReviewNote(app)
+        assertReviewFields(app,question:try reviewValue("INITIAL_QUESTION"),answer:try reviewValue("INITIAL_ANSWER"))
+        // typeText exercises the shipped UIKit editor; it does not claim Pencil sensor input.
+        replaceReviewField(app,"obsidianReviewQuestion",text:try reviewValue("QUESTION"))
+        replaceReviewField(app,"obsidianReviewAnswer",text:try reviewValue("ANSWER"))
+        XCTAssertFalse(app.buttons["obsidianReviewCard"].isEnabled)
+        try assertReviewRawAndFields(app)
+        app.buttons["obsidianClosePreservingDraft"].tap()
+        XCTAssertTrue(app.textViews["obsidianReviewQuestion"].waitForNonExistence(timeout:5))
+        app.terminate()
+        app.launch()
+        try openReviewNote(app,restore:true)
+        try assertReviewRawAndFields(app)
+        XCTAssertTrue(app.navigationBars["노트 편집"].buttons["저장"].isEnabled)
+        reviewScreenshot(app,"review-keyboard-draft-restored")
+    }
+
+    func testReviewSaveDraft() throws {
+        let app = try app()
+        try openReviewNote(app,restore:true)
+        try assertReviewRawAndFields(app)
+        let save = app.navigationBars["노트 편집"].buttons["저장"]
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Mac Obsidian 원본에 저장했습니다."].waitForExistence(timeout:25))
+        XCTAssertFalse(save.isEnabled)
+        app.buttons["obsidianClosePreservingDraft"].tap()
+        try openReviewNote(app)
+        try assertReviewRawAndFields(app)
+        reviewScreenshot(app,"review-fields-saved-and-reopened")
+    }
+
+    func testReviewReopen() throws {
+        let app = try app()
+        try openReviewNote(app)
+        try assertReviewRawAndFields(app)
+        XCTAssertFalse(app.navigationBars["노트 편집"].buttons["저장"].isEnabled)
+        reviewScreenshot(app,"review-new-process-readback")
+    }
+
+    func testReviewLiveRemoteRevision() throws {
+        let app = try app()
+        try openReviewNote(app)
+        assertReviewFields(app,question:try reviewValue("QUESTION"),answer:try reviewValue("ANSWER"))
+        print("CCR_REVIEW_LIVE_READY")
+        fflush(stdout)
+        assertReviewFields(app,question:try reviewValue("REMOTE_QUESTION"),answer:try reviewValue("REMOTE_ANSWER"))
+        XCTAssertTrue(app.staticTexts["Mac의 최신 수정 내용을 받았습니다."].waitForExistence(timeout:10))
+        let mode = app.buttons["obsidianReviewEditorMode"]
+        revealReviewElement(app,mode)
+        mode.tap()
+        assertReviewText(app.textViews["obsidianMarkdownEditor"],try reviewValue("REMOTE_TEXT"))
+        reviewScreenshot(app,"review-live-remote-UTF8")
+    }
+
+    private func openReviewBack(_ app: XCUIApplication) throws {
+        let card = app.buttons["obsidianReviewCard"]
+        revealReviewElement(app,card)
+        XCTAssertTrue(card.isEnabled)
+        card.tap()
+        let content = reviewElement(app,"obsidianReviewContent")
+        XCTAssertTrue(content.waitForExistence(timeout:10))
+        assertReviewText(content,try reviewValue("QUESTION") + "\n",value:false)
+        XCTAssertFalse(app.buttons["obsidianReviewGood"].isEnabled)
+        app.buttons["obsidianReviewFlip"].tap()
+        assertReviewText(content,try reviewValue("ANSWER") + "\n",value:false)
+        let good = app.buttons["obsidianReviewGood"]
+        revealReviewElement(app,good)
+        XCTAssertTrue(good.isEnabled)
+    }
+
+    func testReviewGood() throws {
+        let app = try app()
+        try openReviewNote(app)
+        try openReviewBack(app)
+        app.buttons["obsidianReviewGood"].doubleTap()
+        XCTAssertTrue(reviewElement(app,"obsidianReviewSaved").waitForExistence(timeout:25))
+        XCTAssertFalse(app.buttons["obsidianReviewGood"].isEnabled)
+        app.buttons["obsidianReviewFlip"].tap()
+        app.buttons["obsidianReviewFlip"].tap()
+        XCTAssertFalse(app.buttons["obsidianReviewGood"].isEnabled)
+        XCTAssertTrue(reviewElement(app,"obsidianReviewSaved").exists)
+        reviewScreenshot(app,"review-single-Good-confirmed")
+        app.navigationBars["복습 카드"].buttons["닫기"].tap()
+    }
+
+    private func rejectedReview(_ marker: String, missing: Bool) throws {
+        let app = try app()
+        try openReviewNote(app)
+        try openReviewBack(app)
+        print(marker)
+        fflush(stdout)
+        let good = app.buttons["obsidianReviewGood"]
+        let disabled = XCTNSPredicateExpectation(predicate:NSPredicate(format:"enabled == false"),object:good)
+        XCTAssertEqual(XCTWaiter.wait(for:[disabled],timeout:30),.completed)
+        XCTAssertFalse(reviewElement(app,"obsidianReviewSaved").exists)
+        let refusal = app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@",
+            "같은 평가는 다시 보내지 않습니다.")).firstMatch
+        XCTAssertTrue(refusal.waitForExistence(timeout:5))
+        reviewScreenshot(app,missing ? "review-source-missing-no-success" : "review-stale-session-no-success")
+        app.navigationBars["복습 카드"].buttons["닫기"].tap()
+        if !missing {
+            assertReviewFields(app,question:try reviewValue("REMOTE_QUESTION"),answer:try reviewValue("REMOTE_ANSWER"))
+        }
+    }
+
+    func testReviewStaleSessionRejected() throws {
+        try rejectedReview("CCR_REVIEW_STALE_READY",missing:false)
+    }
+
+    func testReviewMissingSourceRejected() throws {
+        try rejectedReview("CCR_REVIEW_MISSING_READY",missing:true)
+    }
+
     private func assertRotatedLinkPixels(_ app: XCUIApplication, degrees: Double) throws {
         let node = app.descendants(matching:.any).matching(identifier:"canvasNode-\(nodeID)").firstMatch
         let other = app.descendants(matching:.any).matching(identifier:"canvasNode-42478F2C-F81D-4AC9-B714-ECBD9DDAC411").firstMatch
