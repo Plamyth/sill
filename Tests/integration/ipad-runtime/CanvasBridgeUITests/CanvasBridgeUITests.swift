@@ -175,24 +175,6 @@ final class CanvasBridgeUITests: XCTestCase {
         XCTAssertFalse(ruler.isSelected)
     }
 
-    func testRulerAccessibilityObservation() throws {
-        let app = try app()
-        app.buttons["그리기"].firstMatch.tap()
-        app.buttons["도구"].firstMatch.tap()
-        let ruler = app.descendants(matching:.any).matching(identifier:"canvasRuler").firstMatch
-        XCTAssertTrue(ruler.waitForExistence(timeout:5))
-        for phase in ["before", "enabled", "restored"] {
-            if !ruler.exists { app.buttons["도구"].firstMatch.tap() }
-            XCTAssertTrue(ruler.waitForExistence(timeout:5))
-            print("CCR_RULER_AX \(phase) type=\(ruler.elementType.rawValue) selected=\(ruler.isSelected) value=\(String(describing:ruler.value)) description=\(ruler.debugDescription)")
-            let shot = XCTAttachment(screenshot:XCUIScreen.main.screenshot())
-            shot.name = "ruler-state-observation-\(phase)"
-            shot.lifetime = .keepAlways
-            add(shot)
-            if phase != "restored" { ruler.tap() }
-        }
-    }
-
     func testPeleNodeEditAndSave() throws {
         let app = try app()
         app.buttons["다이어그램"].firstMatch.tap()
