@@ -20,6 +20,9 @@ struct CanvasWorkspace: View {
     @State private var importOpen = false
     @State private var inspectorOpen = false
     @State private var pendingNodeEdit: (sceneID: UUID, node: CanvasNode)?
+    @State private var pendingCommentEdit: UUID?
+    @State private var commentEditorOpen = false
+    @State private var commentSelection = NSRange(location:0,length:0)
     @State private var proposalSelection = NSRange(location:0,length:0)
     @State private var proposalInputBusy = false
     @State private var handwritingSearchOpen = false
@@ -200,6 +203,11 @@ struct CanvasWorkspace: View {
         }
         .sheet(isPresented:$connectionOpen) { connectionSheet }
         .sheet(isPresented:$inspectorOpen,onDismiss: {
+            if let pending = pendingCommentEdit {
+                pendingCommentEdit = nil
+                if store.commentSession?.id == pending { commentEditorOpen = true }
+                return
+            }
             guard let pending = pendingNodeEdit else { return }
             pendingNodeEdit = nil
             guard store.scene.id == pending.sceneID,
@@ -219,6 +227,7 @@ struct CanvasWorkspace: View {
                     }}
             }
         }
+        .sheet(isPresented:$commentEditorOpen) { commentSheet }
         .sheet(isPresented:$dictationOpen,onDismiss:{ dictation.cancel() }) {
             dictationSheet
         }
@@ -801,6 +810,7 @@ struct CanvasWorkspace: View {
     private var canvas: some View {
         let visible = store.scene.visibility
         let displayed = store.displayedScene
+        let annotationFrames = displayed.annotationFrames
         return GeometryReader { _ in
             ZStack(alignment:.topLeading) {
                 Color(uiColor:CanvasPalette.background)
@@ -813,7 +823,7 @@ struct CanvasWorkspace: View {
                     nodeView(node).accessibilityHidden(diagramMode == .diagram)
                 }
                 ForEach(store.scene.annotations.filter { visible.annotationIDs.contains($0.id) }) { note in
-                    annotationView(note,in:displayed).accessibilityHidden(diagramMode == .diagram)
+                    annotationView(note,frame:annotationFrames[note.id]).accessibilityHidden(diagramMode == .diagram)
                 }
                 if store.mode == .select, let id = store.selectedNode, visible.nodeIDs.contains(id),
                    let node = store.scene.nodes.first(where:{ $0.id == id }),
@@ -916,12 +926,14 @@ struct CanvasWorkspace: View {
             .allowsHitTesting(store.mode == .select)
     }
 
-    private func annotationView(_ note: CanvasAnnotation, in displayed: CanvasScene) -> some View {
+    private func annotationView(_ note: CanvasAnnotation, frame: CanvasRect?) -> some View {
         Group {
-            if let node = displayed.nodes.first(where:{$0.id == note.nodeId}) {
-                Text(note.text).font(.callout).foregroundStyle(.black).padding(8)
+            if let frame {
+                Text(note.text).font(.callout).foregroundStyle(.black).lineLimit(3)
+                    .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).padding(8)
+                    .frame(width:frame.width,height:frame.height).clipped()
                     .background(.yellow.opacity(0.9),in:RoundedRectangle(cornerRadius:8))
-                    .position(x:node.frame.x+150,y:node.frame.y+node.frame.height+42)
+                    .position(x:frame.center.x,y:frame.center.y)
             }
         }.allowsHitTesting(false)
     }
@@ -940,6 +952,10 @@ struct CanvasWorkspace: View {
                     .foregroundStyle(node.confidence == .proposal ? .orange : .green)
                 TextField("내용",text:Binding(get:{node.text},set:{ _ in }))
                     .disabled(true)
+                Button(store.commentSession == nil ? "카드 댓글 추가·수정" : "카드 댓글 입력 계속") {
+                    pendingCommentEdit = store.beginCommentEdit()
+                    if pendingCommentEdit != nil { inspectorOpen = false }
+                }.frame(minHeight:44).accessibilityIdentifier("canvasEditComment")
                 Text("출처 획 \(node.sourceStrokeIds.count)개")
                 let parentLink = store.scene.links.first(where:{ $0.kind == .parentChild && $0.to == id })
                 if let parent = store.scene.nodes.first(where:{ $0.id == parentLink?.from }) {
@@ -976,11 +992,11 @@ struct CanvasWorkspace: View {
                 Text("요소를 탭하면 텍스트와 출처를 볼 수 있습니다.").foregroundStyle(.secondary)
             }
             Divider()
-            Text("에이전트 주석 \(store.scene.annotations.count)개")
+            Text("주석 \(store.scene.annotations.count)개")
             ForEach(store.scene.annotations.filter {
                 $0.nodeId == nil || store.scene.visibility.annotationIDs.contains($0.id)
             }) { note in
-                Text("\(note.author): \(note.text)").font(.caption)
+                Text("\(note.author): \(note.text)").font(.body).textSelection(.enabled)
             }
             if let voice = store.displayedVoice {
                 Text("현재 음성 대화 \(voice.threadId.uuidString)").font(.caption)
@@ -1002,6 +1018,37 @@ struct CanvasWorkspace: View {
         }
         .padding(16).frame(maxWidth:.infinity,alignment:.topLeading)
         .background(Color(uiColor:.secondarySystemBackground))
+    }
+
+    private var commentSheet: some View {
+        NavigationStack {
+            Form {
+                Text("선택한 카드의 사용자 댓글입니다. 손글씨나 키보드로 입력하세요. 닫아도 저장 전 입력은 이 편집기에 남습니다.")
+                VaultMarkdownEditor(text:$store.commentText,selection:$commentSelection,
+                    identifier:"canvasCommentTextEditor",label:"카드 댓글 편집기",
+                    inputBusy:$store.commentInputBusy,editSession:{ store.commentSession?.id })
+                    .id(store.commentSession?.id).frame(minHeight:240)
+                if !store.commentIsCurrent {
+                    Text("요소나 장면이 바뀌었습니다. 입력을 복사해 보관할 수 있으며 기존 댓글은 덮어쓰지 않습니다.")
+                        .foregroundStyle(.orange)
+                }
+                Text(store.status).font(.footnote)
+            }
+            .navigationTitle("카드 댓글")
+            .toolbar {
+                ToolbarItem(placement:.confirmationAction) {
+                    Button("저장") {
+                        if let id = store.commentSession?.id, store.confirmComment(sessionID:id) {
+                            commentEditorOpen = false
+                        }
+                    }.disabled(!store.commentIsCurrent || store.commentInputBusy)
+                }
+                ToolbarItem(placement:.cancellationAction) {
+                    Button("나중에") { commentEditorOpen = false }.disabled(store.commentInputBusy)
+                }
+            }
+        }
+        .interactiveDismissDisabled(store.commentInputBusy)
     }
 
     private var proposalSheet: some View {

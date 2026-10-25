@@ -96,14 +96,17 @@ enum SceneRenderer {
                 (node.text as NSString).draw(in: frame.insetBy(dx: 16, dy: 16), withAttributes: attributes)
                 cg.restoreGState()
             }
-            for note in scene.annotations where visible.annotationIDs.contains(note.id) {
-                guard let node = scene.nodes.first(where: { $0.id == note.nodeId }) else { continue }
-                let x = node.frame.x, y = node.frame.y + node.frame.height + 8
-                let frame = CGRect(x: x, y: y, width: 300, height: 80)
+            let annotationFrames = scene.annotationFrames
+            for note in scene.annotations {
+                guard let placement = annotationFrames[note.id] else { continue }
+                let frame = CGRect(x:placement.x,y:placement.y,width:placement.width,height:placement.height)
+                cg.saveGState()
+                cg.clip(to:frame)
                 UIColor.systemYellow.withAlphaComponent(0.85).setFill()
                 UIBezierPath(roundedRect: frame, cornerRadius: 10).fill()
                 (note.text as NSString).draw(in: frame.insetBy(dx: 10, dy: 10), withAttributes:
                     [.font: UIFont.systemFont(ofSize: 20), .foregroundColor: UIColor.black])
+                cg.restoreGState()
             }
         }
         return image.pngData()

@@ -1107,6 +1107,20 @@ struct CanvasAnnotation: Codable, Identifiable, Equatable {
     var author: String
 }
 
+struct CanvasCommentSession: Identifiable {
+    let id = UUID()
+    let scene: CanvasScene
+    let node: CanvasNode
+    let annotation: CanvasAnnotation?
+
+    var text: String { annotation?.text ?? "" }
+
+    func matches(_ current: CanvasScene) -> Bool {
+        current.id == scene.id && current.revision == scene.revision &&
+            current.hasSameGraph(as:scene) && current.visibility.nodeIDs.contains(node.id)
+    }
+}
+
 struct CanvasNodeTextEdit: Codable {
     var expected: CanvasNode
     var text: String
@@ -1128,6 +1142,48 @@ struct CanvasScene: Codable, Equatable {
     var nodes: [CanvasNode] = []
     var links: [CanvasLink] = []
     var annotations: [CanvasAnnotation] = []
+
+    var annotationFrames: [UUID: CanvasRect] {
+        let visible = visibility
+        var rows: [UUID: Int] = [:]
+        var frames: [UUID: CanvasRect] = [:]
+        for note in annotations where visible.annotationIDs.contains(note.id) {
+            guard let node = nodes.first(where:{ $0.id == note.nodeId }) else { continue }
+            let row = rows[node.id,default:0]
+            frames[note.id] = CanvasRect(x:node.frame.x,y:node.frame.y + node.frame.height + 8 + Double(row) * 88,
+                width:300,height:80)
+            rows[node.id] = row + 1
+        }
+        return frames
+    }
+
+    func commentSession(for nodeID: UUID) -> CanvasCommentSession? {
+        guard visibility.nodeIDs.contains(nodeID),
+              nodes.filter({ $0.id == nodeID }).count == 1,
+              let node = nodes.first(where:{ $0.id == nodeID }) else { return nil }
+        let comments = annotations.filter { $0.nodeId == nodeID && $0.author == "사용자" }
+        guard comments.count <= 1,
+              comments.first.map({ comment in annotations.filter { $0.id == comment.id }.count == 1 }) ?? true
+        else { return nil }
+        return CanvasCommentSession(scene:self,node:node,annotation:comments.first)
+    }
+
+    @discardableResult
+    mutating func setUserComment(_ text: String, session: CanvasCommentSession) -> Bool {
+        guard session.matches(self), commentSession(for:session.node.id) != nil,
+              !text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return false }
+        var next = self
+        if let expected = session.annotation {
+            guard let index = next.annotations.firstIndex(where:{ $0.id == expected.id }) else { return false }
+            next.annotations[index].text = text
+        } else {
+            next.annotations.append(CanvasAnnotation(id:UUID(),nodeId:session.node.id,text:text,author:"사용자"))
+        }
+        next.revision += 1
+        guard let bytes = try? JSONEncoder().encode(next), bytes.count <= CanvasPacket.sceneByteLimit else { return false }
+        self = next
+        return true
+    }
 
     func linkEndpoints(_ link: CanvasLink) -> (from: CanvasPoint, to: CanvasPoint)? {
         guard link.hasValidAnchors,
@@ -1502,6 +1558,7 @@ enum CanvasSendError: LocalizedError {
 }
 
 struct CanvasPacket: Codable, Equatable {
+    static let sceneByteLimit = 1024*1024
     let packetId: UUID
     let threadId: UUID
     let sessionId: String
@@ -1515,7 +1572,7 @@ struct CanvasPacket: Codable, Equatable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let sceneBytes = try encoder.encode(scene)
-        guard imagePNG.count <= 5*1024*1024, sceneBytes.count <= 1024*1024,
+        guard imagePNG.count <= 5*1024*1024, sceneBytes.count <= Self.sceneByteLimit,
               imagePNG.starts(with:[137,80,78,71,13,10,26,10]), !session.sessionId.isEmpty else {
             throw CanvasSendError.invalidPacket
         }
@@ -1535,7 +1592,7 @@ struct CanvasPacket: Codable, Equatable {
 
     func frozenScene() throws -> CanvasScene {
         guard let image = Data(base64Encoded:imagePNGBase64), image.count <= 5*1024*1024,
-              let bytes = Data(base64Encoded:sceneJSONBase64), bytes.count <= 1024*1024,
+              let bytes = Data(base64Encoded:sceneJSONBase64), bytes.count <= Self.sceneByteLimit,
               Self.sha(image) == imageSha256, Self.sha(bytes) == sceneSha256 else {
             throw CanvasSendError.invalidPacket
         }

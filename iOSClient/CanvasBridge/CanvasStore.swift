@@ -171,6 +171,7 @@ final class CanvasStore: ObservableObject {
             if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
             if oldValue != selectedNode {
                 noteSelectionGeneration &+= 1
+                commentSelectionGeneration &+= 1
                 nodeResizeDrag = nil
                 nodeRotationDrag = nil
                 clearPendingLink()
@@ -209,6 +210,57 @@ final class CanvasStore: ObservableObject {
             }
         }
     }
+    @Published private(set) var commentSession: CanvasCommentSession?
+    @Published var commentText = ""
+    @Published var commentInputBusy = false
+    private var commentSelectionGeneration: UInt64 = 0
+    private var commentContext: (sceneGeneration: UInt64, selectionGeneration: UInt64)?
+
+    @discardableResult
+    func beginCommentEdit() -> UUID? {
+        if commentInputBusy { return commentSession?.id }
+        if let session = commentSession {
+            if !commentText.utf8.elementsEqual(session.text.utf8) { return session.id }
+        }
+        guard let id = selectedNode, let session = scene.commentSession(for:id) else {
+            status = "선택한 요소의 사용자 댓글을 구분할 수 없습니다. 기존 주석은 그대로 보존합니다."
+            return nil
+        }
+        commentSession = session
+        commentText = session.text
+        commentInputBusy = false
+        commentContext = (linkSceneGeneration,commentSelectionGeneration)
+        return session.id
+    }
+
+    var commentIsCurrent: Bool {
+        guard let session = commentSession, let context = commentContext else { return false }
+        return selectedNode == session.node.id && session.matches(scene) &&
+            context.sceneGeneration == linkSceneGeneration &&
+            context.selectionGeneration == commentSelectionGeneration
+    }
+
+    @discardableResult
+    func confirmComment(sessionID: UUID) -> Bool {
+        guard !commentInputBusy, commentSession?.id == sessionID, commentIsCurrent,
+              let session = commentSession else {
+            status = "요소나 장면이 바뀌었거나 입력 중입니다. 댓글 입력을 보존하며 덮어쓰지 않습니다."
+            return false
+        }
+        let before = scene
+        var next = scene
+        guard next.setUserComment(commentText,session:session) else {
+            status = "댓글이 비어 있거나 장면 전송 한도를 넘었습니다. 입력과 기존 주석을 보존합니다."
+            return false
+        }
+        scene = next
+        recordGraphEdit(before:before)
+        commentSession = nil
+        commentContext = nil
+        status = "카드 댓글을 저장했습니다. 원본 요소와 에이전트 주석은 보존했습니다."
+        return true
+    }
+
     @Published var displayedVoice: VoiceSession?
     @Published private(set) var outbox = CanvasOutbox()
     @Published var sendBusy = false
