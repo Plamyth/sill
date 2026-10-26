@@ -52,3 +52,7 @@ PDF loading은 별도 Boolean 없이 요청 ID의 존재로 계산한다. 목록
 이 수리는 현재 제품68에 미적용이다. push·통합·설치·Host·UI·오디오·실 vault·공유 포트 변경은 수행하지 않는다. 회전·다중 페이지 선택은 기존 제한을 유지한다. 새 고정 HEAD의 최종 독립 재검수는 부모 담당에게 맡긴다.
 
 최상위 PDF 출처 블록은 Foundation의 Markdown presentationIntent와 markdownSourcePosition으로 식별한다. HTML 주석·인용·목록·상위 코드 예제를 자체 fence 상태기로 추정하지 않는다. 실제 최상위 codeBlock에서만 원래 canonical fence와 버전·크기·JSON·좌표·NSRange 검증을 계속 적용한다. 인용문은 첫 들여쓰기 문자만 필요에 따라 entity로 표현해 공백·탭과 기호를 실제 화면에서 literal로 보존한다. JSON의 원문 quote는 변경하지 않는다. 이 경로는 iOS16 이상 API이며 현재 앱의 iOS17 이상 대상 안에 있다.
+
+## 빈 Markdown 출처 블록의 검증
+
+Foundation은 빈 코드 블록을 attributed run에서 생략한다. 파싱용 사본의 잠재 출처 시작 행 다음에 고정 본문을 넣어 빈 블록도 문맥 분류에 포함한다. 실제 최상위 canonical 블록의 두 번째 줄만 제거한 뒤 원래 JSON을 검증하며 사본은 저장·표시하지 않는다. 빈 블록, 미래 버전, 닫히지 않은 블록과 중복 출처는 거부하고 HTML 주석·바깥 코드 예제 안의 블록은 자료로 유지한다. 경계 검사 126개와 iOS SDK 검사가 통과했다. 실제 iPad·Pencil 및 사용자 보관함 검증은 별도 미완료다.

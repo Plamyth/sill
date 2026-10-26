@@ -148,7 +148,17 @@ struct VaultPDFExcerpt: Codable, Equatable {
     static func parse(_ text: String) throws -> Self? {
         guard text.utf8.count <= 1024 * 1024 else { throw VaultPDFError.invalid }
         let normalized = text.replacingOccurrences(of:"\r\n",with:"\n")
-        guard let document = try? AttributedString(markdown:normalized,
+        // Foundation omits empty code-block runs; this parsing-only body makes them observable.
+        let bodyWitness = "x"
+        var probeLines: [String] = []
+        for line in normalized.components(separatedBy:"\n") {
+            probeLines.append(line)
+            if line.range(of:"^ {0,3}(`{3,}|~{3,})[ \t]*ccr-pdf-source",options:.regularExpression) != nil {
+                probeLines.append(String(line.prefix(while:{ $0 == " " })) + bodyWitness)
+            }
+        }
+        let probe = probeLines.joined(separator:"\n")
+        guard let document = try? AttributedString(markdown:probe,
             options:.init(interpretedSyntax:.full,appliesSourcePositionAttributes:true)) else { throw VaultPDFError.invalid }
         var source: String?, blockID: Int?
         for run in document.runs {
@@ -157,16 +167,16 @@ struct VaultPDFExcerpt: Codable, Equatable {
                   let hint, hint.hasPrefix("ccr-pdf-source") else { continue }
             if blockID == components[0].identity { continue }
             guard blockID == nil, let position = run.markdownSourcePosition, position.startColumn == 1,
-                  let range = Range<String.Index>(position,in:normalized) else { throw VaultPDFError.invalid }
-            source = String(normalized[range]); blockID = components[0].identity
+                  let range = Range<String.Index>(position,in:probe) else { throw VaultPDFError.invalid }
+            source = String(probe[range]); blockID = components[0].identity
         }
         guard let source else { return nil }
         let lines = source.components(separatedBy:"\n")
-        guard lines.count >= 3,
+        guard lines.count >= 4, lines[1] == bodyWitness,
               let version = [1,2].first(where:{ lines.first == "```ccr-pdf-source-v\($0)" }),
               lines.last!.range(of:"^ {0,3}`{3,}[ \t]*$",options:.regularExpression) != nil
         else { throw VaultPDFError.invalid }
-        let bytes = Data(lines.dropFirst().dropLast().joined(separator:"\n").utf8)
+        let bytes = Data(lines.dropFirst(2).dropLast().joined(separator:"\n").utf8)
         guard bytes.count <= 96 * 1024 else { throw VaultPDFError.invalid }
         var allowed: Set<String> = ["schemaVersion","excerptID","pdfPath","pdfSha256","pageIndex","mediaBox","cropBox","rotation","selectionRects","quote"]
         if version == 2 { allowed.insert("textRanges") }
