@@ -17,7 +17,7 @@ enum LocalAudioRelayClosure {
         "server/device-enrollment.js": "38f378e0955b3cf330fd90452cf7f7b22f5937f4fa177eb1af102d685d721128",
         "server/enrollment-core-client.js": "8713e0fccbf0ea461c31b8aa50b7499c1a2ba1a9694603f97e5611639003f6b7",
         "server/enrollment-json.js": "fd1a9e2393decef0238426ec07c84f6fcdcf0dbaf6c91c632fadbca6c04b0489",
-        "server/mobile-automation.js": "5927ca162a338c74c37b89e1de7aacf545d1c59b0624dbe8ce02e388b9cdbdad",
+        "server/mobile-automation.js": "519e41b9ed6a2a614a92d1b815cf59e9bae4741917a3568feb7c1af011f37579",
         "server/mobile-control.js": "376a68815e29f8b936ae0b09f5f4c7833ad7f84c78760533bf0c66a2e38b13bc",
         "server/mobile-executions.js": "927dcebeecfccb3ab64711c46ff02861bc325790dd1360a17e6553117b2702bb",
         "server/mobile-pc-status.js": "fd1be7219f22ad8eecf1a8511330fa44332911f0efd689d37c924883c61068ec",

@@ -34,8 +34,8 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 expected = dict(re.findall(r'"(server/[^\"]+)": "([a-f0-9]{64})"', paths[1].read_text()))
 assert len(expected) == 24
-assert manifest['nodeSourceCommit'] == module.NODE_COMMIT == '4916c2b64ec9e0ce6f34c913ef0f1d2d2f3b6b57'
-assert module.NODE_TREE == '100102da5a7e99137bf113c3ff6c868ba480ca8c'
+assert manifest['nodeSourceCommit'] == module.NODE_COMMIT == 'd0df44d788574ee5393d846f03aeadffc1eee318'
+assert module.NODE_TREE == '63ceb6b15d785b31b8b05c74a61b640a706dbaa6'
 assert {e['path']: e['sha256'] for e in manifest['entries']
         if e['kind'] == 'file' and e['path'].startswith('server/')} == expected
 source = paths[0].read_text().split('\nstruct LocalAudioRelayInvocation {', 1)[0]
