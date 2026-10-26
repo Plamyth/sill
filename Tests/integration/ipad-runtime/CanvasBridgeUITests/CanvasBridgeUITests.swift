@@ -438,6 +438,61 @@ final class CanvasBridgeUITests: XCTestCase {
         app.navigationBars["복습 카드"].buttons["닫기"].tap()
     }
 
+    func testReviewSelectedGrade() throws {
+        continueAfterFailure = false
+        let intervals = ["obsidianReviewAgain":"5분", "obsidianReviewHard":"10분",
+                         "obsidianReviewGood":"24시간", "obsidianReviewEasy":"48시간"]
+        let buttonID = try reviewValue("GRADE_BUTTON_ID")
+        let interval = try XCTUnwrap(intervals[buttonID],"허용된 복습 등급 버튼이어야 합니다.")
+        guard try reviewValue("GRADE_INTERVAL") == interval else {
+            XCTFail("복습 등급과 간격의 고정 대응이 일치해야 합니다.")
+            return
+        }
+        let app = try app()
+        try openReviewNote(app)
+        try openReviewBack(app)
+        for identifier in intervals.keys {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.exists)
+            XCTAssertTrue(button.isEnabled,identifier)
+        }
+        // 자동 입력은 복습 카드의 버튼 터치와 스크롤이며 실제 Pencil 입력은 포함하지 않습니다.
+        let selected = app.buttons[buttonID]
+        for _ in 0..<5 {
+            if selected.isHittable { break }
+            app.scrollViews.firstMatch.swipeDown()
+        }
+        revealReviewElement(app,selected)
+        XCTAssertTrue(selected.isEnabled)
+        selected.doubleTap()
+        let saved = reviewElement(app,"obsidianReviewSaved")
+        XCTAssertTrue(saved.waitForExistence(timeout:25))
+        let confirmation = "평가 저장 확인 · \(interval) 뒤 복습"
+        assertReviewText(saved,confirmation,value:false)
+        for identifier in intervals.keys {
+            XCTAssertFalse(app.buttons[identifier].isEnabled,identifier)
+        }
+        for side in ["QUESTION","ANSWER"] {
+            let flip = app.buttons["obsidianReviewFlip"]
+            for _ in 0..<5 {
+                if flip.isHittable { break }
+                app.scrollViews.firstMatch.swipeDown()
+            }
+            revealReviewElement(app,flip)
+            XCTAssertTrue(flip.isEnabled)
+            flip.tap()
+            assertReviewText(reviewElement(app,"obsidianReviewContent"),try reviewValue(side) + "\n",value:false)
+            for identifier in intervals.keys {
+                XCTAssertFalse(app.buttons[identifier].isEnabled,identifier)
+            }
+            assertReviewText(saved,confirmation,value:false)
+        }
+        revealReviewElement(app,saved)
+        reviewScreenshot(app,"review-selected-\(buttonID)-confirmed")
+        app.navigationBars["복습 카드"].buttons["닫기"].tap()
+        XCTAssertTrue(app.navigationBars["복습 카드"].waitForNonExistence(timeout:5))
+    }
+
     private func rejectedReview(_ marker: String, missing: Bool) throws {
         let app = try app()
         try openReviewNote(app)
