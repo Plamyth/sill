@@ -8,6 +8,7 @@ private final class ReturnHAL: HostAudioPrivacyHAL {
     var restoreSucceeds = true
     var readFailures = 0
     var writes = 0
+    var beforeObservationStop: (() -> Void)?
     func read() throws -> PrivacyAudioSnapshot {
         if readFailures > 0 { readFailures -= 1; throw PrivacyAudioFailure.readback }
         return snapshot
@@ -27,7 +28,10 @@ private final class ReturnHAL: HostAudioPrivacyHAL {
         }
         return true
     }
-    func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool { true }
+    func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool {
+        if changed == nil { beforeObservationStop?() }
+        return true
+    }
     func restoreLocal(_ original: LocalAudioState) -> Bool {
         restoreCalls += 1
         guard restoreSucceeds else { return false }
@@ -98,6 +102,14 @@ private final class ReturnFixture {
 @MainActor
 func localReturnChecks() async {
     armRecoveryChecks()
+    let expiredRemoval = ReturnFixture()
+    expect(expiredRemoval.privacy.armAndVerify(), "감시 종료 중 기한 만료 fixture 보호")
+    expiredRemoval.hal.beforeObservationStop = { Thread.sleep(forTimeInterval: 0.15) }
+    let expiredResult = await expiredRemoval.privacy.requestLocalReturn(budgetMilliseconds: 100)
+    expect(!expiredResult && expiredRemoval.hal.restoreCalls == 0 && expiredRemoval.commits == 0 && expiredRemoval.durable,
+           "감시 종료 중 기한이 만료되면 실제 복원 시작 전 거부")
+    expiredRemoval.hal.beforeObservationStop = nil
+    expiredRemoval.privacy.stop()
     let success = ReturnFixture()
     expect(success.privacy.forwardingIntentAllowed, "인증 전 원격 intent 허용")
     success.authHook = {
