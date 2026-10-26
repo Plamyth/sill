@@ -699,6 +699,153 @@ def accept_review(config, work, server, vault, test_id):
     write(work / 'review-functional-readback.json',proof)
     return proof
 
+REVIEW_GRADES = {'again':('obsidianReviewAgain','5분',300),
+                'hard':('obsidianReviewHard','10분',600),
+                'good':('obsidianReviewGood','24시간',86400),
+                'easy':('obsidianReviewEasy','48시간',172800)}
+NORMAL68_SOURCE = {'commit':'14e941099ca5d27bb4c1df171849d601a14a1455',
+                   'tree':'4c1081a9a0e154e4ce2980d80d6d29e69edf1499'}
+
+def verify_review_grade(card, note, grade, started, finished):
+    require(grade in REVIEW_GRADES, 'review_grade_not_allowed')
+    headers = re.findall(r'^<!-- ccr-review-card:v1 (.+) -->$',note['text'],re.MULTILINE)
+    require(len(headers) == 1, 'review_metadata_missing')
+    metadata = json.loads(headers[0])
+    require(isinstance(metadata,dict) and set(metadata) == set(card['metadata']) and
+            metadata['cardID'] == card['metadata']['cardID'], 'review_card_identity_changed')
+    event = metadata['eventID']
+    require(isinstance(event,str) and str(uuid.UUID(event)) == event and
+            event not in [card['metadata']['eventID'],metadata['cardID'],str(uuid.UUID(int=0))],
+            'review_event_identity_invalid')
+    require(type(metadata['ratedAt']) is int and type(metadata['dueAt']) is int and
+            started <= metadata['ratedAt'] <= finished and
+            metadata['dueAt'] - metadata['ratedAt'] == REVIEW_GRADES[grade][2],
+            'review_selected_grade_interval_or_time_invalid:' + grade)
+    expected = review_text(card,card['question'],card['answer'],metadata)
+    require(note['text'].encode() == expected.encode() and note['sha256'] == sha(expected.encode()),
+            'review_grade_original_bytes_changed')
+    return metadata
+
+def review_grade_runtime(config, work, test_id):
+    deployed = read(work / 'deployment.json')
+    require(all(deployed.get(k) == v for k,v in NORMAL68_SOURCE.items()) and
+            deployed.get('testId') == test_id, 'review_diagnostic_source_mismatch')
+    app = Path(deployed['app'])
+    require(not app.is_symlink() and app.resolve().is_relative_to(work.resolve()),
+            'review_diagnostic_artifact_not_owned')
+    info = plistlib.loads((app / 'Info.plist').read_bytes())
+    require(info.get('CFBundleIdentifier') == BUNDLE and
+            info.get('CCRSourceCommit') == NORMAL68_SOURCE['commit'] and
+            info.get('CCRSourceTree') == NORMAL68_SOURCE['tree'], 'review_diagnostic_artifact_source_mismatch')
+    executable = app / info['CFBundleExecutable']
+    require(executable.resolve().parent == app.resolve() and
+            sha(executable.read_bytes()) == deployed.get('executableSHA256'), 'review_diagnostic_artifact_hash_mismatch')
+    observed, evidence = runtime_readback(config,work,test_id)
+    require(all(observed.get(k) == v for k,v in NORMAL68_SOURCE.items()) and
+            observed.get('bundleID') == BUNDLE and
+            observed.get('executableSHA256') == deployed['executableSHA256'],
+            'review_diagnostic_runtime_mismatch')
+    return {'source':NORMAL68_SOURCE,'executableSHA256':deployed['executableSHA256'],
+            'readback':str(evidence),'readbackSha256':sha(Path(evidence).read_bytes())}
+
+def accept_review_grades(config, work, server, vault, test_id, normal68_evidence):
+    """부모의 승인된 격리 기기 구간에서만 호출한다. 기존 accept 전체를 대체하지 않는다.
+
+    부모가 기존 relay_runtime, canonical encoder, scene/context를 준비하고 같은 work를 전달한다.
+    반환·실패 뒤 기존 cleanup(config, work, service, vault, test_id, before)을 finally에서 실행한다.
+    normal68_evidence는 부모의 normal68-observation.json이다. normal 앱을 실행하지 않는다.
+    """
+    lease(config)
+    require(not vault.is_symlink() and vault.resolve() == work.resolve() / 'isolated-vault',
+            'review_grade_vault_not_owned')
+    proof_path = work / 'review-four-grades-readback.json'
+    require(not proof_path.exists(), 'review_grade_proof_already_exists')
+    normal = read(normal68_evidence)
+    require(type(normal.get('build')) is int and normal['build'] == 68 and
+            normal.get('source') == NORMAL68_SOURCE['commit'] and normal.get('tree') == NORMAL68_SOURCE['tree'] and
+            normal.get('normalBundle') == USER_BUNDLE and normal.get('normalInstalled') is True and
+            normal.get('installedVersionReadback') is True, 'review_normal68_source_proof_missing')
+    runtime_before = review_grade_runtime(config,work,test_id)
+    state = 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/CanvasScene.json'
+    baseline = work / 'review-grades-scene-before.json'
+    copy_file(config,work,state,baseline)
+    rows = []; events = set()
+    for grade, (button_id, interval, _) in REVIEW_GRADES.items():
+        card = review_fixture(test_id + '-' + grade)
+        card['metadata'] = dict(card['metadata'],cardID=str(uuid.uuid5(uuid.UUID(test_id),grade + ':card')),
+                                eventID=str(uuid.uuid5(uuid.UUID(test_id),grade + ':seed')))
+        path = card['path']; endpoint = '/vault/note?' + urllib.parse.urlencode({'path':path})
+        original = review_text(card,card['question'],card['answer'],card['metadata'])
+        code, _ = request(server,'GET',endpoint)
+        require(code == 404, 'review_fixture_already_exists')
+        code, _ = request(server,'PUT',endpoint,{'baseSha256':None,'text':original})
+        require(code == 200, 'review_fixture_seed_failed')
+        seed = review_note(server,vault,path,original)
+        variables = {'CCR_REVIEW_NOTE':path,'CCR_REVIEW_QUESTION':card['question'],
+                     'CCR_REVIEW_ANSWER':card['answer'],'CCR_REVIEW_DRAFT':original,
+                     'CCR_REVIEW_GRADE_BUTTON_ID':button_id,'CCR_REVIEW_GRADE_INTERVAL':interval}
+        before = review_writes(work,path)
+        started = int(time.time())
+        results = {'grade':str(harness(config,work,'testReviewSelectedGrade',variables))}
+        finished = int(time.time())
+        rated = review_note(server,vault,path)
+        metadata = verify_review_grade(card,rated,grade,started,finished)
+        require(metadata['eventID'] not in events, 'review_event_reused_across_grades')
+        events.add(metadata['eventID'])
+        grade_writes = [{'path':path,'status':200,'baseSha256':seed['sha256'],'textSha256':rated['sha256']}]
+        require(review_writes(work,path) == before + grade_writes, 'review_duplicate_or_failed_grade_request')
+        variables['CCR_REVIEW_DRAFT'] = rated['text']
+        stop_owned(config,work)
+        results['reopen'] = str(harness(config,work,'testReviewReopen',variables))
+        reopened = review_note(server,vault,path,rated['text'])
+        require(reopened == rated and review_writes(work,path) == before + grade_writes,
+                'review_reopen_repeated_grade_request')
+        remote_card = dict(card,question=card['question'] + ' / Mac 외부 질문',
+                           answer=card['answer'] + ' / Mac 외부 답 👩🏽‍💻')
+        remote_text = review_text(remote_card,remote_card['question'],remote_card['answer'],metadata)
+        def remote_update():
+            code, _ = request(server,'PUT',endpoint,{'baseSha256':rated['sha256'],'text':remote_text})
+            require(code == 200, 'review_remote_update_failed')
+            review_note(server,vault,path,remote_text)
+        remote_variables = dict(variables,CCR_REVIEW_REMOTE_QUESTION=remote_card['question'],
+                                CCR_REVIEW_REMOTE_ANSWER=remote_card['answer'],CCR_REVIEW_REMOTE_TEXT=remote_text)
+        results['live'] = str(harness(config,work,'testReviewLiveRemoteRevision',remote_variables,
+            on_ready=remote_update,ready_marker='CCR_REVIEW_LIVE_READY'))
+        remote = review_note(server,vault,path,remote_text)
+        expected_writes = before + grade_writes + [{'path':path,'status':200,
+            'baseSha256':rated['sha256'],'textSha256':remote['sha256']}]
+        variables.update(CCR_REVIEW_QUESTION=remote_card['question'],CCR_REVIEW_ANSWER=remote_card['answer'],
+                         CCR_REVIEW_DRAFT=remote_text)
+        stop_owned(config,work)
+        results['remoteReopen'] = str(harness(config,work,'testReviewReopen',variables))
+        final = review_note(server,vault,path,remote_text)
+        require(verify_review_grade(remote_card,final,grade,started,finished) == metadata and final == remote,
+                'review_final_metadata_or_digest_changed')
+        require(review_writes(work,path) == expected_writes, 'review_live_or_reopen_extra_write')
+        require(all(Path(result).is_dir() for result in results.values()), 'review_ui_xcresult_missing')
+        rows.append({'grade':grade,'buttonID':button_id,'interval':interval,'path':path,'metadata':metadata,
+                     'ratedAtRange':[started,finished],'seedSha256':seed['sha256'],'ratedSha256':rated['sha256'],
+                     'finalSha256':final['sha256'],'final':final,'gradeRequests':grade_writes,'writes':expected_writes,
+                     'additionalRatingWrites':0,'ui':results})
+    for row in rows:
+        require(review_note(server,vault,row['path']) == row['final'] and
+                review_writes(work,row['path']) == row['writes'], 'review_cross_grade_effect')
+        require(all(Path(result).is_dir() for result in row['ui'].values()), 'review_ui_xcresult_missing')
+    after = work / 'review-grades-scene-after.json'
+    copy_file(config,work,state,after)
+    require(read(after) == read(baseline), 'review_changed_unrelated_scene')
+    runtime_after = review_grade_runtime(config,work,test_id)
+    require(runtime_before['executableSHA256'] == runtime_after['executableSHA256'], 'review_diagnostic_generation_changed')
+    proof = {'grades':rows,'normalSourceProof':{'path':str(normal68_evidence),
+             'sha256':sha(Path(normal68_evidence).read_bytes()),'source':NORMAL68_SOURCE,'build':68},
+             'diagnosticBefore':runtime_before,'diagnosticAfter':runtime_after,'diagnosticGradesAccepted':True,
+             'normalAppAccepted':False,
+             'fullAdapterAccepted':False,'scope':'diagnostic four-grade check; cleanup and full accept remain parent-owned',
+             'wireEvidence':str(work / 'review-note-writes.jsonl'),'scenePreserved':True,
+             'inputSource':'UIKit keyboard automation; not Apple Pencil'}
+    write(proof_path,proof)
+    return proof
+
 def relay_runtime(config, work, source):
     relay_repo = Path(config['relayRepo']).resolve()
     require(command(['git', 'rev-parse', 'HEAD'], cwd=relay_repo).strip() == config['relayCommit'], 'relay_source_mismatch')

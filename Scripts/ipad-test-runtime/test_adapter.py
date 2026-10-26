@@ -631,5 +631,173 @@ console.log('note audit: four actual response statuses, no response mutation, no
                 lambda:calls.append(True),3,ready_marker='CCR_REVIEW_LIVE_READY')
             self.assertEqual(calls,[True])
 
+class FourGradeAcceptance(unittest.TestCase):
+    def exercise(self, directory, failure=None, corrupt_button=None):
+        import re
+        import urllib.parse
+        work = Path(directory); vault = work / 'isolated-vault'; vault.mkdir()
+        test_id = '12345678-1234-4234-8234-123456789abc'
+        source = {'commit':'14e941099ca5d27bb4c1df171849d601a14a1455',
+                  'tree':'4c1081a9a0e154e4ce2980d80d6d29e69edf1499'}
+        app = work / 'Artifact/Sill.app'; app.mkdir(parents=True)
+        (app / 'Sill').write_bytes(b'offline diagnostic executable')
+        import plistlib
+        (app / 'Info.plist').write_bytes(plistlib.dumps(dict(CFBundleIdentifier=adapter.BUNDLE,
+            CFBundleExecutable='Sill',CCRSourceCommit=source['commit'],CCRSourceTree=source['tree'])))
+        deployed = dict(source,testId=test_id,executableSHA256=adapter.sha((app/'Sill').read_bytes()),app=str(app))
+        adapter.write(work/'deployment.json',deployed)
+        normal = work/'normal68.json'
+        adapter.write(normal,dict(build=68,source=source['commit'],tree=source['tree'],
+            normalBundle=adapter.USER_BUNDLE,normalInstalled=True,installedVersionReadback=True,
+            wholeProductAccepted=False))
+        if failure == 'normal_source':
+            value = adapter.read(normal); value['source']='0'*40; adapter.write(normal,value)
+        methods = []; stopped = []; runtime_calls = []; clock = 1800000000
+        selected = []; events = []
+        def record(path, body):
+            row = {'path':path,'status':200,'baseSha256':body['baseSha256'],
+                   'textSha256':adapter.sha(body['text'].encode())}
+            with (work/'review-note-writes.jsonl').open('a') as out: out.write(json.dumps(row)+'\n')
+        def request(server, method, endpoint, body=None, **kwargs):
+            path = urllib.parse.parse_qs(urllib.parse.urlsplit(endpoint).query)['path'][0]
+            file = vault/path
+            if method == 'PUT':
+                self.assertEqual(body['baseSha256'],adapter.sha(file.read_bytes()) if file.exists() else None)
+                file.write_bytes(body['text'].encode()); record(path,body)
+            if not file.exists(): return 404, {}
+            return 200,dict(path=path,text=file.read_bytes().decode(),sha256=adapter.sha(file.read_bytes()),
+                            modifiedAt=adapter.sha(file.read_bytes()))
+        def harness(config, target, method, variables, on_ready=None, **kwargs):
+            nonlocal clock
+            methods.append(method)
+            path = variables['CCR_REVIEW_NOTE']; file=vault/path
+            if method == 'testReviewSelectedGrade':
+                selected.append(dict(variables))
+                pairs = {'obsidianReviewAgain':(300,'5분'),'obsidianReviewHard':(600,'10분'),
+                         'obsidianReviewGood':(86400,'24시간'),'obsidianReviewEasy':(172800,'48시간')}
+                seconds, label = pairs[variables['CCR_REVIEW_GRADE_BUTTON_ID']]
+                self.assertEqual(variables['CCR_REVIEW_GRADE_INTERVAL'],label)
+                text=file.read_bytes().decode(); header=re.search(r'<!-- ccr-review-card:v1 (.*?) -->',text)
+                metadata=json.loads(header[1]); event=str(uuid.uuid4()); events.append(event)
+                hardcoded = failure == 'hardcoded_good' and corrupt_button in (None,variables['CCR_REVIEW_GRADE_BUTTON_ID'])
+                metadata.update(eventID=event,ratedAt=clock,dueAt=clock+(86400 if hardcoded else seconds))
+                if failure == 'metadata': metadata['foreign']='pollution'
+                if failure == 'card_id': metadata['cardID']=str(uuid.uuid4())
+                if failure == 'event_reused': metadata['eventID']=json.loads(header[1])['eventID']
+                if failure == 'event_cross_grade' and len(events)>1: metadata['eventID']=events[0]
+                if failure == 'timestamp': metadata.update(ratedAt=clock-1,dueAt=clock-1+seconds)
+                if failure == 'boolean_time': metadata.update(ratedAt=True,dueAt=1+seconds)
+                if failure == 'float_time': metadata.update(ratedAt=float(clock),dueAt=float(clock+seconds))
+                if failure == 'interval': metadata['dueAt']+=1
+                if failure != 'ui_only':
+                    encoded=json.dumps(metadata,sort_keys=True,separators=(',',':'))
+                    if failure == 'metadata_duplicate': encoded=encoded[:-1]+',"ratedAt":'+str(clock)+'}'
+                    updated=text[:header.start(1)]+encoded+text[header.end(1):]
+                    if failure == 'crlf': updated=updated.replace('\r\n','\n')
+                    if failure == 'question': updated=updated.replace(variables['CCR_REVIEW_QUESTION'],'lost')
+                    if failure == 'answer': updated=updated.replace(variables['CCR_REVIEW_ANSWER'],'lost')
+                    body={'baseSha256':adapter.sha(file.read_bytes()),'text':updated}
+                    request({},'PUT','/vault/note?path='+path,body)
+                    if failure == 'duplicate_write': record(path,body)
+                    if failure == 'audit_prefix':
+                        audit=work/'review-note-writes.jsonl'; audit.write_text(audit.read_text().splitlines()[-1]+'\n')
+            if method == 'testReviewReopen':
+                self.assertEqual(stopped[-1],len(methods)-1)
+                if failure == 'reopen_write':
+                    record(path,{'baseSha256':adapter.sha(file.read_bytes()),'text':file.read_bytes().decode()})
+            if method == 'testReviewLiveRemoteRevision':
+                self.assertEqual(kwargs['ready_marker'],'CCR_REVIEW_LIVE_READY')
+                if failure != 'missing_live': on_ready()
+                if failure == 'live_extra_write':
+                    record(path,{'baseSha256':adapter.sha(file.read_bytes()),'text':file.read_bytes().decode()})
+            if failure == 'cross_fixture' and len(selected)==4:
+                other=vault/selected[0]['CCR_REVIEW_NOTE']; other.write_bytes(b'changed later')
+            clock += 1
+            result=work/(str(len(methods))+'.xcresult')
+            if failure != 'xcresult': result.mkdir()
+            return result
+        def runtime(config, target, id):
+            runtime_calls.append(id)
+            observed=dict(source,schema='ccr.ipad-test-runtime/v1',id=id,bundleID=adapter.BUNDLE,
+                          executableSHA256=deployed['executableSHA256'])
+            if failure == 'runtime_hash' or failure == 'runtime_post_hash' and len(runtime_calls)==2:
+                observed['executableSHA256']='0'*64
+            if failure == 'runtime_source': observed['tree']='0'*40
+            evidence=work/('runtime-'+str(len(runtime_calls))+'.json'); adapter.write(evidence,observed)
+            return observed,evidence
+        def copy(config,target,source,destination,**kwargs):
+            adapter.write(destination,{'id':test_id,'nodes':[{'text':'unrelated'}]})
+        with patch.object(adapter,'lease'), patch.object(adapter,'request',side_effect=request), \
+             patch.object(adapter,'harness',side_effect=harness), patch.object(adapter,'runtime_readback',side_effect=runtime), \
+             patch.object(adapter,'copy_file',side_effect=copy), patch.object(adapter,'stop_owned',side_effect=lambda *a:stopped.append(len(methods))), \
+             patch.object(adapter.time,'time',side_effect=lambda:clock), \
+             patch.object(adapter,'command',side_effect=AssertionError('오프라인 검사에서 외부 명령 금지')), \
+             patch.object(adapter.urllib.request,'urlopen',side_effect=AssertionError('오프라인 검사에서 네트워크 금지')):
+            proof=adapter.accept_review_grades({},work,{},vault,test_id,normal)
+        return proof,selected,methods,runtime_calls
+
+    def test_four_grades_have_independent_metadata_wire_and_final_digests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proof,selected,methods,runtimes=self.exercise(directory)
+            self.assertEqual([r['grade'] for r in proof['grades']],['again','hard','good','easy'])
+            self.assertEqual([r['metadata']['dueAt']-r['metadata']['ratedAt'] for r in proof['grades']],[300,600,86400,172800])
+            self.assertEqual(len({r['path'] for r in proof['grades']}),4)
+            self.assertEqual(len({r['metadata']['cardID'] for r in proof['grades']}),4)
+            self.assertEqual(len({r['metadata']['eventID'] for r in proof['grades']}),4)
+            self.assertEqual(methods,['testReviewSelectedGrade','testReviewReopen','testReviewLiveRemoteRevision','testReviewReopen']*4)
+            self.assertEqual(len(runtimes),2)
+            self.assertEqual(len(selected),4)
+            for row in proof['grades']:
+                self.assertEqual(row['finalSha256'],adapter.sha((Path(directory)/'isolated-vault'/row['path']).read_bytes()))
+                self.assertEqual(len(row['gradeRequests']),1)
+                self.assertEqual(row['additionalRatingWrites'],0)
+            self.assertFalse(proof['normalAppAccepted'])
+            self.assertFalse(proof['fullAdapterAccepted'])
+
+    def test_good_hardcoding_is_rejected_for_each_other_grade(self):
+        for grade,button in [('again','obsidianReviewAgain'),('hard','obsidianReviewHard'),('easy','obsidianReviewEasy')]:
+            with self.subTest(grade=grade), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(adapter.Held,'review_selected_grade_interval_or_time_invalid:'+grade):
+                    self.exercise(directory,'hardcoded_good',button)
+        with tempfile.TemporaryDirectory() as directory:
+            proof,_,_,_=self.exercise(directory,'hardcoded_good','obsidianReviewGood')
+            self.assertEqual(len(proof['grades']),4)
+
+    def test_four_grades_reject_good_hardcoding_and_corrupt_effects(self):
+        failures=['hardcoded_good','duplicate_write','metadata','metadata_duplicate','timestamp','crlf','interval',
+                  'card_id','event_reused','event_cross_grade','boolean_time','float_time','ui_only',
+                  'question','answer','reopen_write','live_extra_write','missing_live','audit_prefix',
+                  'cross_fixture','xcresult','normal_source','runtime_hash','runtime_post_hash','runtime_source']
+        for failure in failures:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises((adapter.Held,ValueError)):
+                    self.exercise(directory,failure)
+                self.assertFalse((Path(directory)/'review-four-grades-readback.json').exists())
+
+    def test_grade_environment_is_exact_in_binary_xctestrun(self):
+        import plistlib
+        expected=[('obsidianReviewAgain','5분'),('obsidianReviewHard','10분'),
+                  ('obsidianReviewGood','24시간'),('obsidianReviewEasy','48시간')]
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); run=root/'HarnessDerivedData/Build/Products/test.xctestrun'
+            run.parent.mkdir(parents=True)
+            run.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'EnvironmentVariables':{
+                'CCR_REVIEW_GRADE_BUTTON_ID':'stale','CCR_REVIEW_FOREIGN':'pollution','UNRELATED':'preserved'}}},
+                fmt=plistlib.FMT_BINARY))
+            adapter.write(root/'deployment.json',{'testId':'isolated'})
+            for button,label in expected:
+                variables={'CCR_REVIEW_GRADE_BUTTON_ID':button,'CCR_REVIEW_GRADE_INTERVAL':label,
+                           'CCR_REVIEW_DRAFT':'바깥\r\ne\u0301 👩🏽‍💻\r\n'}
+                with patch.object(adapter,'lease'), patch.object(adapter,'command') as command, \
+                     patch.object(adapter,'actual_xcresult') as actual:
+                    result=adapter.harness({'deviceUDID':'offline'},root,'testReviewSelectedGrade',variables)
+                self.assertTrue(run.read_bytes().startswith(b'bplist00'))
+                loaded=plistlib.loads(run.read_bytes())['CanvasBridgeUITests']['EnvironmentVariables']
+                self.assertNotIn('CCR_REVIEW_FOREIGN',loaded)
+                self.assertEqual(loaded['UNRELATED'],'preserved')
+                for name,value in variables.items(): self.assertEqual(loaded[name].encode(),value.encode())
+                self.assertIn('-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/testReviewSelectedGrade',command.call_args.args[0])
+                actual.assert_called_once_with(result,'testReviewSelectedGrade')
+
 if __name__ == '__main__':
     unittest.main()
