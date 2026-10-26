@@ -147,6 +147,53 @@ import PencilKit
         do { _ = try empty.ratingGood(eventID:event,injectedDate:now); check(false,"빈 답 평가 거부") }
         catch { check(true,"빈 답 평가 거부") }
 
+        let gradeIntervals: [(VaultReviewCard.Grade,Int64)] = [(.again,300),(.hard,600),(.good,86_400),(.easy,172_800)]
+        check(VaultReviewCard.Grade.allCases == gradeIntervals.map(\.0),"명시적 네 등급만 제공")
+        for (grade,interval) in gradeIntervals {
+            let tag = "고정 \(grade.title)"
+            let text = try card.rating(grade,eventID:event,injectedDate:now)
+            let result = try VaultReviewCard.parse(text)!
+            check(grade.rawValue == interval && result.grade == grade && result.metadata.ratedAt == 1_800_000_000 &&
+                  result.metadata.dueAt == 1_800_000_000 + interval,tag + " 정확한 초 간격 저장·재해석")
+            let header = text.components(separatedBy:"<!-- ccr-review-card:v1 ")[1].components(separatedBy:" -->")[0]
+            let keys = try JSONSerialization.jsonObject(with:Data(header.utf8)) as! [String:Any]
+            check(Set(keys.keys) == Set(["cardID","eventID","ratedAt","dueAt"]),tag + " 기존 metadata 네 키만 유지")
+            check(result.metadata.cardID == card.metadata.cardID && result.front.utf8.elementsEqual(card.front.utf8) &&
+                  result.back.utf8.elementsEqual(card.back.utf8) && text.utf8.starts(with:original.utf8) &&
+                  text.utf8.suffix(suffix.utf8.count).elementsEqual(suffix.utf8),tag + " ID·질문·답·구역 밖 바이트 보존")
+            for other in VaultReviewCard.Grade.allCases {
+                do {
+                    let replayed = try result.rating(other,eventID:event,injectedDate:now.addingTimeInterval(100))
+                    check(other == grade && replayed.utf8.elementsEqual(text.utf8),tag + " 같은 이벤트·같은 등급만 멱등")
+                } catch { check(other != grade,tag + " 같은 이벤트·다른 등급 거부") }
+            }
+            for date in [Date(timeIntervalSince1970:-1),Date(timeIntervalSince1970:.infinity),
+                         Date(timeIntervalSince1970:Double(253_402_300_799 - interval + 1))] {
+                do { _ = try card.rating(grade,eventID:UUID(),injectedDate:date); check(false,tag + " 범위 밖 시각 거부") }
+                catch { check(true,tag + " 범위 밖 시각 거부") }
+            }
+            let maximum = Date(timeIntervalSince1970:Double(253_402_300_799 - interval))
+            check(try VaultReviewCard.parse(card.rating(grade,eventID:UUID(),injectedDate:maximum))?.metadata.dueAt == 253_402_300_799,
+                  tag + " 최대 유효 기한 수용·overflow 방지")
+            check(try VaultReviewCard.parse(card.rating(grade,eventID:UUID(),injectedDate:Date(timeIntervalSince1970:0)))?.metadata.dueAt == interval,
+                  tag + " Unix 최소 시각 수용")
+            do { _ = try result.rating(grade,eventID:UUID(),injectedDate:now.addingTimeInterval(-1)); check(false,tag + " 새 평가 역행 거부") }
+            catch { check(true,tag + " 새 평가 역행 거부") }
+            for field in VaultReviewCard.Field.allCases {
+                let blank = try VaultReviewCard.parse(card.replacing(field,with:" \t\r\n"))!
+                do { _ = try blank.rating(grade,eventID:UUID(),injectedDate:now); check(false,tag + " 빈 필드 거부") }
+                catch { check(true,tag + " 빈 필드 거부") }
+            }
+            check(try VaultReviewCard.parse(result.rating(grade,eventID:UUID(),injectedDate:now))?.metadata.ratedAt == result.metadata.ratedAt,
+                  tag + " 새 이벤트의 같은 초 평가 허용")
+        }
+        check(try card.rating(.good,eventID:event,injectedDate:now) == rated,"기존 ratingGood은 공통 좋음 경로와 동일")
+        let unsupportedIntervals: [Int64] = [-1,0,299,301,599,601,86_399,86_401,172_799,172_801,Int64.max - 1_800_000_000]
+        for delta in unsupportedIntervals {
+            check(rejects(rated.replacingOccurrences(of:"1800086400",with:String(1_800_000_000 + delta))),
+                  "명시적 네 간격 외 값·극대 기한 거부 \(delta)")
+        }
+
         let question = "수식 $x^2$ · e\u{301} 👩🏽‍💻\r\n<!-- 사용자 표식 -->\r\n\r\n"
         let answer = "$$\\frac{1}{2}$$\n**답** ^user-block\n"
         check(card.text(for:.front).utf8.elementsEqual("**가방**은 어디?".utf8),"필드는 구조 경계 CRLF 하나만 분리")
@@ -221,6 +268,24 @@ import PencilKit
             return value
         }
         let path = "Notes/review.md"
+        for (grade,interval) in gradeIntervals {
+            let source = try ReviewFile(root:root,text:cardText), value = makeStore()
+            await value.openVaultNote(path,load:source.load)
+            let captured = value.beginVaultReview()!
+            let confirmed = await value.rateVaultReview(captured,grade:grade,injectedDate:now,save:source.save,load:source.load)
+            let reopened = makeStore()
+            await reopened.openVaultNote(path,load:source.load)
+            let saved = try VaultReviewCard.parse(reopened.vaultDraft)!
+            check(confirmed && source.writes == 1 && !value.vaultDirty && value.noteRecovery == nil &&
+                  saved.grade == grade && saved.metadata.dueAt == 1_800_000_000 + interval &&
+                  saved.metadata.eventID == captured.id.uuidString.lowercased(),"\(grade.title) Store 저장·재조회·새 Store 재열기")
+            check(value.vaultStatus == "평가와 \(grade.intervalLabel) 뒤 기한을 원본에 저장하고 다시 읽어 확인했습니다.",
+                  "\(grade.title) 실제 선택한 간격의 저장 확인")
+            for other in VaultReviewCard.Grade.allCases {
+                let repeated = await value.rateVaultReview(captured,grade:other,injectedDate:now,save:source.save,load:source.load)
+                check(!repeated && source.writes == 1,"\(grade.title) 완료 세션을 \(other.title)으로 재사용해도 추가 쓰기 0")
+            }
+        }
         for (style,document) in boundaryDocuments {
             let source = try ReviewFile(root:root,text:document)
             var value = makeStore()
@@ -279,90 +344,95 @@ import PencilKit
         check(reopened.vaultDraft.utf8.elementsEqual(aiText.utf8) && reopened.beginVaultReview()?.card.front.contains("무엇?") == true,
               "외부 Markdown 수정 → refresh → 카드 앞면 수용")
 
-        for mutation in ["selection","node","draft","busy","connection","scene","reopen","sha"] {
-            let source = try ReviewFile(root:root,text:cardText), value = makeStore()
-            await value.openVaultNote(path,load:source.load)
-            let targetNode = value.scene.addNode(kind:.note,at:CanvasPoint(x:0,y:0),text:"선택 대상")
-            let captured = value.beginVaultReview()!
-            switch mutation {
-            case "selection": value.vaultSelection = NSRange(location:1,length:0)
-            case "node": value.selectedNode = targetNode
-            case "draft": value.vaultDraft += "새 입력"
-            case "busy": value.vaultInputBusy = true
-            case "connection": value.setNoteConnection(address:"http://other",token:"other")
-            case "scene": value.scene = CanvasScene()
-            case "reopen":
-                _ = value.closeVaultEditor()
-                await value.openVaultNote("Notes/other.md",load:source.load)
-            default:
-                try Data((cardText + "Mac 수정").utf8).write(to:source.url)
-                await value.refreshVaultNotes(load:source.load)
-            }
-            let before = value.vaultDraft
-            let result = await value.rateVaultReviewGood(captured,injectedDate:now,save:source.save,load:source.load)
-            check(!result && source.writes == 0 && value.vaultDraft.utf8.elementsEqual(before.utf8),"캡처 이후 \(mutation) 변경은 전송·덮어쓰기 0")
-        }
-
-        let duplicateFile = try ReviewFile(root:root,text:cardText), duplicate = makeStore(), gate = ReviewGate()
-        await duplicate.openVaultNote(path,load:duplicateFile.load)
-        let attempt = duplicate.beginVaultReview()!
-        let saving = Task { await duplicate.rateVaultReviewGood(attempt,injectedDate:now,save:{ path,sha,text in
-            let saved = try duplicateFile.save(path,sha,text)
-            _ = try await gate.load(path)
-            return saved
-        },load:duplicateFile.load) }
-        await gate.wait()
-        let again = await duplicate.rateVaultReviewGood(attempt,injectedDate:now,save:duplicateFile.save,load:duplicateFile.load)
-        check(!again && duplicateFile.writes == 1,"진행 중 중복 탭은 같은 이벤트 추가 저장 0")
-        duplicate.vaultDraft += "\n저장 중 새 입력"
-        let later = duplicate.vaultDraft
-        gate.finish(try duplicateFile.load(path))
-        check(!(await saving.value) && duplicate.vaultDraft == later && duplicate.vaultDirty,"늦은 저장 응답이 동시 입력을 덮거나 저장 완료로 표시하지 않음")
-
-        for mode in ["lost","readback","wrong-response","conflict","readback-changed"] {
-            let source = try ReviewFile(root:root,text:cardText), journal = root.appendingPathComponent(UUID().uuidString + ".note")
-            let value = makeStore(journal:journal)
-            await value.openVaultNote(path,load:source.load)
-            let captured = value.beginVaultReview()!, scene = value.scene
-            let result = await value.rateVaultReviewGood(captured,injectedDate:now,save:{ path,sha,text in
-                if mode == "conflict" { try Data((cardText + "외부 수정").utf8).write(to:source.url) }
-                let saved = try source.save(path,sha,text)
-                if mode == "lost" { throw URLError(.networkConnectionLost) }
-                if mode == "wrong-response" {
-                    return VaultNoteSnapshot(path:path,text:text,sha256:String(repeating:"0",count:64),modifiedAt:"fixture")
+        for grade in VaultReviewCard.Grade.allCases {
+            for mutation in ["selection","node","draft","busy","connection","scene","reopen","sha"] {
+                let source = try ReviewFile(root:root,text:cardText), value = makeStore()
+                await value.openVaultNote(path,load:source.load)
+                let targetNode = value.scene.addNode(kind:.note,at:CanvasPoint(x:0,y:0),text:"선택 대상")
+                let captured = value.beginVaultReview()!
+                switch mutation {
+                case "selection": value.vaultSelection = NSRange(location:1,length:0)
+                case "node": value.selectedNode = targetNode
+                case "draft": value.vaultDraft += "새 입력"
+                case "busy": value.vaultInputBusy = true
+                case "connection": value.setNoteConnection(address:"http://other",token:"other")
+                case "scene": value.scene = CanvasScene()
+                case "reopen":
+                    _ = value.closeVaultEditor()
+                    await value.openVaultNote("Notes/other.md",load:source.load)
+                default:
+                    try Data((cardText + "Mac 수정").utf8).write(to:source.url)
+                    await value.refreshVaultNotes(load:source.load)
                 }
+                let before = value.vaultDraft
+                let result = await value.rateVaultReview(captured,grade:grade,injectedDate:now,save:source.save,load:source.load)
+                check(!result && source.writes == 0 && value.vaultDraft.utf8.elementsEqual(before.utf8),"\(grade.title) 캡처 이후 \(mutation) 변경은 전송·덮어쓰기 0")
+            }
+
+            let duplicateFile = try ReviewFile(root:root,text:cardText), duplicate = makeStore(), gate = ReviewGate()
+            await duplicate.openVaultNote(path,load:duplicateFile.load)
+            let attempt = duplicate.beginVaultReview()!
+            let saving = Task { await duplicate.rateVaultReview(attempt,grade:grade,injectedDate:now,save:{ path,sha,text in
+                let saved = try duplicateFile.save(path,sha,text)
+                _ = try await gate.load(path)
                 return saved
-            },load:{ path in
-                if mode == "readback" { throw URLError(.timedOut) }
-                if mode == "readback-changed" {
-                    let saved = try source.load(path)
-                    try Data((saved.text + "저장 직후 외부 수정").utf8).write(to:source.url)
-                }
-                return try source.load(path)
-            })
-            check(!result && value.vaultBlocked && value.noteRecovery?.submittedText != nil,"\(mode) 결과 미확인은 성공 표시 없이 기존 저널 보존")
-            let record = value.noteRecovery!, pending = try VaultReviewCard.parse(record.draft)!
-            check(pending.metadata.eventID == captured.id.uuidString.lowercased(),"\(mode) 재시도용 ID를 새로 만들지 않음")
-            let recovered = makeStore(journal:journal,scene:scene)
-            await recovered.restoreNoteDraft(load:source.load)
-            if mode == "conflict" || mode == "readback-changed" {
-                check(recovered.vaultNote == nil && recovered.noteRecovery != nil && source.writes == (mode == "conflict" ? 0 : 1),
-                      "CAS·재조회 충돌 후 원문·복구 입력 보존")
-            } else {
-                check(recovered.noteRecovery == nil && !recovered.vaultDirty && recovered.vaultDraft == record.submittedText && source.writes == 1,
-                      "\(mode) 새 Store 재조회로 같은 평가 수용·중복 쓰기 0")
+            },load:duplicateFile.load) }
+            await gate.wait()
+            for other in VaultReviewCard.Grade.allCases {
+                let again = await duplicate.rateVaultReview(attempt,grade:other,injectedDate:now,save:duplicateFile.save,load:duplicateFile.load)
+                check(!again && duplicateFile.writes == 1,"\(grade.title) 저장 중 \(other.title) 중복 탭 추가 저장 0")
             }
-        }
+            duplicate.vaultDraft += "\n저장 중 새 입력"
+            let later = duplicate.vaultDraft
+            gate.finish(try duplicateFile.load(path))
+            check(!(await saving.value) && duplicate.vaultDraft == later && duplicate.vaultDirty,"늦은 저장 응답이 동시 입력을 덮거나 저장 완료로 표시하지 않음")
 
-        let lateFile = try ReviewFile(root:root,text:cardText), late = makeStore(), readGate = ReviewGate()
-        await late.openVaultNote(path,load:lateFile.load)
-        let lateSession = late.beginVaultReview()!
-        let lateTask = Task { await late.rateVaultReviewGood(lateSession,injectedDate:now,save:lateFile.save,load:readGate.load) }
-        await readGate.wait()
-        late.setNoteConnection(address:"http://new",token:"new")
-        let oldDraft = late.vaultDraft
-        readGate.finish(try lateFile.load(path))
-        check(!(await lateTask.value) && late.vaultDraft == oldDraft && late.vaultBlocked,"연결 전환 뒤 늦은 readback은 편집기 성공으로 수용하지 않음")
+            for mode in ["lost","readback","wrong-response","conflict","readback-changed"] {
+                let source = try ReviewFile(root:root,text:cardText), journal = root.appendingPathComponent(UUID().uuidString + ".note")
+                let value = makeStore(journal:journal)
+                await value.openVaultNote(path,load:source.load)
+                let captured = value.beginVaultReview()!, scene = value.scene
+                let result = await value.rateVaultReview(captured,grade:grade,injectedDate:now,save:{ path,sha,text in
+                    if mode == "conflict" { try Data((cardText + "외부 수정").utf8).write(to:source.url) }
+                    let saved = try source.save(path,sha,text)
+                    if mode == "lost" { throw URLError(.networkConnectionLost) }
+                    if mode == "wrong-response" {
+                        return VaultNoteSnapshot(path:path,text:text,sha256:String(repeating:"0",count:64),modifiedAt:"fixture")
+                    }
+                    return saved
+                },load:{ path in
+                    if mode == "readback" { throw URLError(.timedOut) }
+                    if mode == "readback-changed" {
+                        let saved = try source.load(path)
+                        try Data((saved.text + "저장 직후 외부 수정").utf8).write(to:source.url)
+                    }
+                    return try source.load(path)
+                })
+                check(!result && value.vaultBlocked && value.noteRecovery?.submittedText != nil,"\(mode) 결과 미확인은 성공 표시 없이 기존 저널 보존")
+                let record = value.noteRecovery!, pending = try VaultReviewCard.parse(record.draft)!
+                check(pending.metadata.eventID == captured.id.uuidString.lowercased() && pending.grade == grade,
+                      "\(grade.title) \(mode) 재시도용 ID·선택 등급 유지")
+                let recovered = makeStore(journal:journal,scene:scene)
+                await recovered.restoreNoteDraft(load:source.load)
+                if mode == "conflict" || mode == "readback-changed" {
+                    check(recovered.vaultNote == nil && recovered.noteRecovery != nil && source.writes == (mode == "conflict" ? 0 : 1),
+                          "CAS·재조회 충돌 후 원문·복구 입력 보존")
+                } else {
+                    check(recovered.noteRecovery == nil && !recovered.vaultDirty && recovered.vaultDraft == record.submittedText && source.writes == 1,
+                          "\(mode) 새 Store 재조회로 같은 평가 수용·중복 쓰기 0")
+                }
+            }
+
+            let lateFile = try ReviewFile(root:root,text:cardText), late = makeStore(), readGate = ReviewGate()
+            await late.openVaultNote(path,load:lateFile.load)
+            let lateSession = late.beginVaultReview()!
+            let lateTask = Task { await late.rateVaultReview(lateSession,grade:grade,injectedDate:now,save:lateFile.save,load:readGate.load) }
+            await readGate.wait()
+            late.setNoteConnection(address:"http://new",token:"new")
+            let oldDraft = late.vaultDraft
+            readGate.finish(try lateFile.load(path))
+            check(!(await lateTask.value) && late.vaultDraft == oldDraft && late.vaultBlocked,"연결 전환 뒤 늦은 readback은 편집기 성공으로 수용하지 않음")
+        }
 
         let templateJournal = root.appendingPathComponent("template.note")
         let plain = try ReviewFile(root:root,text:original), templateStore = makeStore(journal:templateJournal)

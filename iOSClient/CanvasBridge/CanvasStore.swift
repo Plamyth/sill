@@ -861,7 +861,7 @@ final class CanvasStore: ObservableObject {
             guard let card = try VaultReviewCard.parse(vaultDraft) else {
                 return "복습 카드를 추가하면 질문과 답을 나누어 작성할 수 있습니다."
             }
-            return card.ready ? "저장된 원문으로 앞면과 뒷면을 복습합니다. 평가는 자체 24시간 규칙입니다." :
+            return card.ready ? "저장된 원문으로 앞면과 뒷면을 복습합니다. 평가는 선택한 고정 간격으로 저장합니다." :
                 VaultReviewError.empty.localizedDescription
         } catch { return error.localizedDescription }
     }
@@ -901,12 +901,19 @@ final class CanvasStore: ObservableObject {
     func rateVaultReviewGood(_ session: VaultReviewSession, injectedDate: Date,
                             save: (String,String,String) async throws -> VaultNoteSnapshot,
                             load: (String) async throws -> VaultNoteSnapshot) async -> Bool {
+        await rateVaultReview(session,grade:.good,injectedDate:injectedDate,save:save,load:load)
+    }
+
+    @discardableResult
+    func rateVaultReview(_ session: VaultReviewSession, grade: VaultReviewCard.Grade, injectedDate: Date,
+                         save: (String,String,String) async throws -> VaultNoteSnapshot,
+                         load: (String) async throws -> VaultNoteSnapshot) async -> Bool {
         guard vaultReviewIsCurrent(session) else {
             vaultStatus = VaultReviewError.changed.localizedDescription
             return false
         }
         do {
-            let submitted = try session.card.ratingGood(eventID:session.id,injectedDate:injectedDate)
+            let submitted = try session.card.rating(grade,eventID:session.id,injectedDate:injectedDate)
             vaultDraft = submitted
             await saveVaultNote(save:save,load:load)
             guard !Task.isCancelled, vaultInputSessionID == session.inputSessionID,
@@ -915,7 +922,7 @@ final class CanvasStore: ObservableObject {
                   vaultNote?.text.utf8.elementsEqual(submitted.utf8) == true,
                   vaultDraft.utf8.elementsEqual(submitted.utf8), vaultCanAttach,
                   !noteRecoveryWriteFailed, noteRecovery == nil else { return false }
-            vaultStatus = "평가와 24시간 뒤 기한을 원본에 저장하고 다시 읽어 확인했습니다."
+            vaultStatus = "평가와 \(grade.intervalLabel) 뒤 기한을 원본에 저장하고 다시 읽어 확인했습니다."
             return true
         } catch { vaultStatus = error.localizedDescription; return false }
     }

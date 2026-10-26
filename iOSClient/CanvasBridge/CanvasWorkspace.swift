@@ -564,10 +564,10 @@ struct CanvasWorkspace: View {
             .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
             .onChange(of:store.vaultInputSessionID) { _,_ in vaultRawMarkdown = false }
             .sheet(item:$vaultReview) { session in
-                VaultReviewSheet(store:store,session:session) {
+                VaultReviewSheet(store:store,session:session) { grade in
                     store.setNoteConnection(address:relayAddress,token:relayToken)
                     let connection = relay
-                    return await store.rateVaultReviewGood(session,injectedDate:Date(),save:{ path,sha,text in
+                    return await store.rateVaultReview(session,grade:grade,injectedDate:Date(),save:{ path,sha,text in
                         try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
                     },load:connection.vaultNote)
                 }
@@ -1515,10 +1515,11 @@ private struct VaultReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: CanvasStore
     let session: CanvasStore.VaultReviewSession
-    let rate: () async -> Bool
+    let rate: (VaultReviewCard.Grade) async -> Bool
     @State private var showingBack = false
     @State private var attempted = false
     @State private var confirmed = false
+    @State private var selectedGrade: VaultReviewCard.Grade?
 
     private var displayedDue: Int64? {
         if confirmed, let text = store.vaultNote?.text,
@@ -1545,16 +1546,20 @@ private struct VaultReviewSheet: View {
                     Button(showingBack ? "앞면 보기" : "뒤집어 답 보기") { showingBack.toggle() }
                         .frame(maxWidth:.infinity,minHeight:44).buttonStyle(.bordered)
                         .accessibilityIdentifier("obsidianReviewFlip")
-                    Text("자체 규칙: 좋음을 누른 평가 시각부터 정확히 24시간 뒤로 저장합니다.")
+                    Text("자체 고정 간격: 다시 5분 · 하드 10분 · 좋음 24시간 · 쉬움 48시간. 선택한 평가 시각부터 계산하며 적응형 일정은 적용하지 않습니다.")
                         .font(.footnote)
-                    Button("좋음 · 24시간 후") {
-                        attempted = true
-                        Task { confirmed = await rate() }
-                    }.frame(maxWidth:.infinity,minHeight:44).buttonStyle(.borderedProminent)
-                        .disabled(!showingBack || attempted || !store.vaultReviewIsCurrent(session))
-                        .accessibilityIdentifier("obsidianReviewGood")
-                    if confirmed {
-                        Text("평가 저장 확인 · 24시간 뒤 복습").accessibilityIdentifier("obsidianReviewSaved")
+                    ForEach(VaultReviewCard.Grade.allCases,id:\.self) { grade in
+                        Button("\(grade.title) · \(grade.intervalLabel) 후") {
+                            guard !attempted else { return }
+                            selectedGrade = grade
+                            attempted = true
+                            Task { confirmed = await rate(grade) }
+                        }.frame(maxWidth:.infinity,minHeight:44).buttonStyle(.borderedProminent)
+                            .disabled(!showingBack || attempted || !store.vaultReviewIsCurrent(session))
+                            .accessibilityIdentifier(reviewIdentifier(grade))
+                    }
+                    if confirmed, let grade = selectedGrade {
+                        Text("평가 저장 확인 · \(grade.intervalLabel) 뒤 복습").accessibilityIdentifier("obsidianReviewSaved")
                     } else if store.vaultSaving {
                         ProgressView("원본 저장과 재조회를 확인하고 있습니다.")
                     } else if attempted || !store.vaultReviewIsCurrent(session) {
@@ -1570,6 +1575,15 @@ private struct VaultReviewSheet: View {
                 }
             }
             .interactiveDismissDisabled(store.vaultSaving)
+        }
+    }
+
+    private func reviewIdentifier(_ grade: VaultReviewCard.Grade) -> String {
+        switch grade {
+        case .again: return "obsidianReviewAgain"
+        case .hard: return "obsidianReviewHard"
+        case .good: return "obsidianReviewGood"
+        case .easy: return "obsidianReviewEasy"
         }
     }
 }

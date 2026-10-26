@@ -721,13 +721,34 @@ enum VaultReviewError: LocalizedError {
         case .malformed: return "복습 카드 표식·버전·ID·평가 정보를 확인할 수 없습니다. 원문을 유지합니다."
         case .empty: return "질문과 답을 작성하고 저장한 뒤 복습하세요. 빈 내용은 초안으로 보존됩니다."
         case .changed: return "노트·선택·입력 또는 연결이 바뀌었습니다. 최신 원문에서 복습을 다시 여세요."
-        case .time: return "평가 시각과 24시간 뒤 기한을 확인할 수 없습니다. 원문을 유지합니다."
+        case .time: return "평가 시각과 선택한 고정 간격의 기한을 확인할 수 없습니다. 원문을 유지합니다."
         }
     }
 }
 
 struct VaultReviewCard {
     enum Field: String, CaseIterable { case front, back }
+    enum Grade: Int64, CaseIterable {
+        case again = 300, hard = 600, good = 86_400, easy = 172_800
+
+        var title: String {
+            switch self {
+            case .again: return "다시"
+            case .hard: return "하드"
+            case .good: return "좋음"
+            case .easy: return "쉬움"
+            }
+        }
+
+        var intervalLabel: String {
+            switch self {
+            case .again: return "5분"
+            case .hard: return "10분"
+            case .good: return "24시간"
+            case .easy: return "48시간"
+            }
+        }
+    }
     struct Metadata: Codable, Equatable {
         let cardID: String
         let eventID: String?
@@ -752,6 +773,11 @@ struct VaultReviewCard {
     private let frontRange: Range<Int>
     private let backRange: Range<Int>
     private let source: String
+
+    var grade: Grade? {
+        guard let rated = metadata.ratedAt, let due = metadata.dueAt else { return nil }
+        return Grade(rawValue:due - rated)
+    }
 
     var ready: Bool {
         !front.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty &&
@@ -828,8 +854,8 @@ struct VaultReviewCard {
         switch (metadata.eventID, metadata.ratedAt, metadata.dueAt) {
         case (nil,nil,nil): break
         case let (event?,rated?,due?):
-            guard validID(event), event != metadata.cardID, rated >= 0,
-                  rated <= lastSecond - 86_400, due == rated + 86_400 else { throw VaultReviewError.malformed }
+            guard validID(event), event != metadata.cardID, rated >= 0, due >= rated,
+                  due <= lastSecond, Grade(rawValue:due - rated) != nil else { throw VaultReviewError.malformed }
         default: throw VaultReviewError.malformed
         }
         return Self(metadata:metadata,
@@ -877,15 +903,22 @@ struct VaultReviewCard {
     }
 
     func ratingGood(eventID: UUID, injectedDate: Date) throws -> String {
+        try rating(.good,eventID:eventID,injectedDate:injectedDate)
+    }
+
+    func rating(_ grade: Grade, eventID: UUID, injectedDate: Date) throws -> String {
         guard ready else { throw VaultReviewError.empty }
         let event = eventID.uuidString.lowercased()
         guard Self.validID(event), event != metadata.cardID else { throw VaultReviewError.malformed }
-        if metadata.eventID == event { return source }
+        if metadata.eventID == event {
+            guard self.grade == grade else { throw VaultReviewError.changed }
+            return source
+        }
         let seconds = injectedDate.timeIntervalSince1970.rounded(.down)
-        guard seconds.isFinite, seconds >= 0, seconds <= Double(Self.lastSecond - 86_400),
+        guard seconds.isFinite, seconds >= 0, seconds <= Double(Self.lastSecond - grade.rawValue),
               metadata.ratedAt.map({ seconds >= Double($0) }) ?? true else { throw VaultReviewError.time }
         let rated = Int64(seconds)
-        let updated = Metadata(cardID:metadata.cardID,eventID:event,ratedAt:rated,dueAt:rated + 86_400)
+        let updated = Metadata(cardID:metadata.cardID,eventID:event,ratedAt:rated,dueAt:rated + grade.rawValue)
         let bytes = Array(source.utf8)
         let result = String(decoding:bytes[..<metadataRange.lowerBound],as:UTF8.self) +
             (try Self.headerJSON(updated)) + String(decoding:bytes[metadataRange.upperBound...],as:UTF8.self)
