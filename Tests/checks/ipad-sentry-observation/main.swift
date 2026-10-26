@@ -979,7 +979,6 @@ for slot in ["active", "prior"] {
 check(retirementRegressions.allSatisfy { $0 }, "독립 검수의 퇴역 회귀 전체")
 print("최종 소비자 검사 \(checks)개와 퇴역 경계 \(retirementRegressions.count)개 통과")
 
-<<<<<<< HEAD
 do {
     let memory = MemoryStore(), client = StreamClient(store: MemoryStore().store)
     let current = NWConnection(), stale = NWConnection(), id = ObjectIdentifier(current)
@@ -1002,7 +1001,7 @@ do {
           "metadata 관측 후에도 퇴역 응답은 현재 제어 상태 변경0")
 }
 print("합본 소비자 검사 \(checks)개와 퇴역 경계 \(retirementRegressions.count)개 통과")
-=======
+
 for collision in [true, false] {
     for priorProof in [true, false] {
         let memory = MemoryStore(); var seed = ready(memory); _ = perform(&seed)
@@ -1032,4 +1031,3 @@ for collision in [true, false] {
     }
 }
 print("최종 prior scope 검사 포함 \(checks)개 통과")
->>>>>>> 05744ec (test(ipad): 퇴역 prior scope의 재송신과 정상 cross-session 대조 재현)
