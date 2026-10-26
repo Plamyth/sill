@@ -504,22 +504,26 @@ final class SentryAdmission: @unchecked Sendable {
     func completeLocalReturn() {
         lock.lock(); defer { lock.unlock() }
         pendingControl = nil
-        controlGrants.removeAll()
+        let retainedDevices = Set(sessions.values.compactMap(\.controlDeviceID))
+        controlGrants = controlGrants.filter { retainedDevices.contains($0.key) }.mapValues { _ in UUID() }
         operations.removeAll()
         operationOrder.removeAll()
-        manualIntent = .automatic
+        manualIntent = .off
         manualOwner = nil
         policyRevision = UUID()
-        sessions.removeAll()
-        peerCaptureEpochs.removeAll()
-        independentCapturePeers.removeAll()
+        sessions = sessions.mapValues { previous in
+            var session = Session()
+            session.admitted = previous.admitted
+            session.controlDeviceID = previous.controlDeviceID
+            return session
+        }
         protectionRevision = UUID()
         inactiveRevision = UUID()
         requested = false
         returningLocal = false
         surfacesVerified = false
-        captureEpoch = nil
         reason = nil
         revision = UUID()
+        refreshSelectionAdmissionLocked()
     }
 }

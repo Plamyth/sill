@@ -482,7 +482,6 @@ package final class StreamCoordinator {
             sentryRequestLocalReturn = { [weak privacy] in await privacy?.requestLocalReturn() ?? false }
             privacy.localReturnDidComplete = { [weak self] deadline, current, commitAudio in
                 guard let self, await self.completeSentryLocalReturn(until: deadline, current: current, commitAudio: commitAudio) else { return false }
-                self.server.closeSessions("인증된 로컬 복귀로 원격 세션이 종료되었습니다.", matching: { _ in true })
                 return true
             }
             privacy.localReturnActivityChanged = { [weak self, weak privacy] in
