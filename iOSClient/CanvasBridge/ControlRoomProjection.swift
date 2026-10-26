@@ -504,7 +504,7 @@ struct BrainTrinityFeed: Decodable {
               let revision, (0...9_007_199_254_740_991).contains(revision),
               let epoch, (0...9_007_199_254_740_991).contains(epoch),
               mode != nil, let observedAt, let observed = Self.date(observedAt),
-              abs(now.timeIntervalSince(observed)) <= 30,
+              observed.timeIntervalSince(now) <= 30,
               activities.count <= 50, reviewRequests.count <= 50 else { return false }
         return true
     }

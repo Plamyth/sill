@@ -109,7 +109,7 @@ struct ControlRoomGrid: View {
     @ViewBuilder
     private func brainTrinityStatus(_ projection: ControlRoomProjection, now: Date) -> some View {
         if let feed = projection.freshBrainTrinity(now:now), let mode = feed.mode {
-            Text(["브레인트리니티 \(mode.localizedTitle)",feed.reason,
+            Text(["브레인트리니티 관측 상태 \(mode.localizedTitle)","관측 시각 \(feed.observedAt ?? "미제공")",feed.reason,
                   "활동 \(feed.activities.count) · 검토 \(feed.reviewRequests.count)","읽기 전용"]
                 .compactMap { $0 }.joined(separator:" · "))
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
