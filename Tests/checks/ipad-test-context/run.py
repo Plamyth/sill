@@ -153,7 +153,8 @@ with tempfile.TemporaryDirectory(prefix='ipad-context-check-', dir=audit) as tem
                 (context / 'state').symlink_to(support, target_is_directory=True)
             # Sentinels prove the existing user files/default import remain untouched.
             for relative in ['CanvasScene.json', 'CanvasOutbox/ledger.json',
-                             'CanvasBlockEdit/recovery.json', 'CanvasVaultCheckpoint.json']:
+                             'CanvasBlockEdit/recovery.json', 'CanvasNoteEdit/recovery.json',
+                             'CanvasPDFExcerptCreate/recovery.json', 'CanvasVaultCheckpoint.json']:
                 file = support / relative
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_bytes(b'original-state')

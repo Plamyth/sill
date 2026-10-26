@@ -17,7 +17,8 @@ import CoreText
         sha256:CanvasPacket.sha(Data("저장된 원문 한글 👩🏽‍💻 e\u{301}".utf8)),modifiedAt:"fixture")
     for replaceBeforeFailure in [false,true] {
         let url = home.appendingPathComponent("failed-\(replaceBeforeFailure).json")
-        let store = CanvasStore(noteRecoveryURL:url,noteRecoveryWrite:{ data,url in
+        let store = CanvasStore(noteRecoveryURL:home.appendingPathComponent("normal-\(replaceBeforeFailure).json"),
+            pdfExcerptRecoveryURL:url,pdfExcerptRecoveryWrite:{ data,url in
             if replaceBeforeFailure { try data.write(to:url,options:.atomic) }
             throw CocoaError(.fileWriteNoPermission)
         })
@@ -35,7 +36,38 @@ import CoreText
         check(store.vaultDraft.hasSuffix("실패 뒤 이어 쓰기") && store.vaultInputSessionID == input,
               "same input session remains editable after prepare failure")
     }
-    let dirty = CanvasStore(noteRecoveryURL:home.appendingPathComponent("dirty.json"))
+    let blockText = "연결 문단 e\u{301} 👩🏽‍💻 ^keep\n"
+    let blockNote = VaultNoteSnapshot(path:"블록.md",text:blockText,sha256:CanvasPacket.sha(Data(blockText.utf8)),modifiedAt:"fixture")
+    for failClosing in [false,true] {
+        let blockURL = home.appendingPathComponent("block-\(failClosing).json")
+        let block = CanvasStore(blockRecoveryURL:blockURL,
+            noteRecoveryURL:home.appendingPathComponent("block-note-\(failClosing).json"),
+            pdfExcerptRecoveryURL:home.appendingPathComponent("block-pdf-\(failClosing).json"),
+            pdfExcerptRecoveryWrite:{ data,url in
+                if !failClosing { throw CocoaError(.fileWriteNoPermission) }
+                try CanvasLocalFile.write(data,to:url)
+            })
+        block.setNoteConnection(address:"http://fixture.invalid",token:"fixture")
+        block.scene = CanvasScene()
+        let id = block.scene.addNode(kind:.note,at:.init(x:0,y:0),text:"캐시")
+        block.scene.nodes[0].vaultNote = VaultNoteReference(path:blockNote.path,sha256:blockNote.sha256,
+            relayAddress:"http://fixture.invalid",blockID:"keep",sourceState:.current)
+        await block.openVaultNote(blockNote.path,nodeID:id,load:{_ in blockNote})
+        check(block.beginLinkedBlockEdit(),"clean linked block begins before durability failure")
+        block.vaultBlockSelection = NSRange(location:1,length:2)
+        let session = block.vaultInputSessionID, recovery = block.blockRecovery, scene = block.scene
+        let draft = block.vaultBlockDraft, selection = block.vaultBlockSelection
+        if failClosing { try Data("foreign journal".utf8).write(to:blockURL) }
+        let journal = try Data(contentsOf:blockURL)
+        check(!block.preparePDFExcerpt(excerpt),"block editor prepare refuses \(failClosing ? "close" : "journal") failure")
+        check(block.vaultNote == blockNote && block.vaultBlockEditing && block.vaultBlockDraft == draft &&
+              block.vaultInputSessionID == session && block.vaultBlockSelection == selection && block.blockRecovery == recovery,
+              "failed prepare preserves clean block editor, draft, session, selection and recovery")
+        check(try block.scene == scene && Data(contentsOf:blockURL) == journal && !block.hasPendingPDFExcerpt,
+              "failed block close rolls back owned create intent and preserves cache and block journal")
+    }
+    let dirty = CanvasStore(noteRecoveryURL:home.appendingPathComponent("dirty.json"),
+        pdfExcerptRecoveryURL:home.appendingPathComponent("dirty-pdf.json"))
     dirty.setNoteConnection(address:"http://fixture.invalid",token:"fixture")
     await dirty.openVaultNote(original.path,load:{_ in original})
     dirty.vaultDraft += "\n미저장 입력"
@@ -45,6 +77,53 @@ import CoreText
           dirty.vaultInputSessionID == dirtyInput && dirty.vaultSelection == selection,
           "dirty editor refuses before changing draft, selection or input session")
 
+    let normalURL = home.appendingPathComponent("create-normal.json"), createURL = home.appendingPathComponent("create-only.json")
+    let normalBytes = try JSONEncoder().encode(VaultNoteRecoveryFile(nil))
+    try normalBytes.write(to:normalURL)
+    let creating = CanvasStore(noteRecoveryURL:normalURL,pdfExcerptRecoveryURL:createURL)
+    creating.setNoteConnection(address:"http://fixture.invalid",token:"fixture")
+    await creating.openVaultNote(original.path,load:{_ in original})
+    check(creating.preparePDFExcerpt(excerpt) && creating.vaultNote == nil && creating.vaultInputSessionID == nil,
+          "successful durable prepare closes the old clean editor")
+    check(try Data(contentsOf:normalURL) == normalBytes && creating.noteRecovery == nil,
+          "create-only prepare leaves ordinary note journal byte-identical")
+    let createBytes = try Data(contentsOf:createURL)
+    do { _ = try JSONDecoder().decode(VaultNoteRecoveryFile.self,from:createBytes); check(false,"create envelope must not decode as ordinary recovery") }
+    catch { check(true,"create envelope cannot decode as ordinary note recovery") }
+    let recreated = CanvasStore(noteRecoveryURL:normalURL,pdfExcerptRecoveryURL:createURL)
+    recreated.scene = creating.scene
+    recreated.setNoteConnection(address:"http://fixture.invalid",token:"fixture")
+    check(recreated.pdfExcerptRecovery == creating.pdfExcerptRecovery && recreated.hasPendingPDFExcerpt,
+          "separate create-only journal survives Store restart")
+    var creates = 0
+    let empty = VaultNoteSnapshot(path:excerpt.notePath,text:"",sha256:CanvasPacket.sha(Data()),modifiedAt:"fixture")
+    let attached = await recreated.savePDFExcerpt(allowCreate:true,create:{_,_ in creates += 1; return empty },load:{_ in empty})
+    check(attached == nil && creates == 0 && recreated.hasPendingPDFExcerpt,
+          "existing empty note remains a create-only conflict with zero PUT")
+    check(try Data(contentsOf:normalURL) == normalBytes,"create conflict never changes the ordinary journal")
+    try JSONEncoder().encode(excerpt).write(to:home.appendingPathComponent("legacy-excerpt.json"))
+    try JSONEncoder().encode(creating.scene).write(to:home.appendingPathComponent("legacy-scene.json"))
+
+    let draftURL = home.appendingPathComponent("ordinary-draft.json"), brokenPDF = home.appendingPathComponent("unreadable-create.json")
+    let ordinary = VaultNoteRecovery(schemaVersion:1,sceneID:creating.scene.id,nodeID:nil,blockID:nil,
+        relayAddress:"http://fixture.invalid",base:original,draft:original.text + "\n일반 노트 초안",submittedText:nil)
+    let ordinaryBytes = try JSONEncoder().encode(VaultNoteRecoveryFile(ordinary))
+    try ordinaryBytes.write(to:draftURL)
+    try Data("unreadable PDF create journal".utf8).write(to:brokenPDF)
+    let normal = CanvasStore(noteRecoveryURL:draftURL,pdfExcerptRecoveryURL:brokenPDF)
+    normal.scene = creating.scene
+    normal.setNoteConnection(address:"http://fixture.invalid",token:"fixture")
+    await normal.restoreNoteDraft(load:{_ in original})
+    let restoredOrdinaryBytes = try Data(contentsOf:draftURL)
+    check(normal.vaultDraft == ordinary.draft && normal.vaultNote == original && normal.vaultCanSave,
+          "unreadable PDF journal does not block existing ordinary note draft recovery")
+    check(!normal.preparePDFExcerpt(excerpt) && normal.vaultDraft == ordinary.draft && normal.vaultNote == original,
+          "PDF prepare cannot replace ordinary recovery or dirty input")
+    check(try Data(contentsOf:draftURL) == restoredOrdinaryBytes &&
+          JSONDecoder().decode(VaultNoteRecoveryFile.self,from:restoredOrdinaryBytes).record() == ordinary,
+          "PDF prepare leaves restored ordinary recovery bytes and payload unchanged")
+    try JSONEncoder().encode(original).write(to:home.appendingPathComponent("ordinary-base.json"))
+
     do {
         let (_,_,returned) = try excerpt.sourcePage(in:snapshot)
         check(returned.string?.utf8.elementsEqual(selected.string!.utf8) == true,
@@ -53,6 +132,26 @@ import CoreText
     let encoded = try JSONSerialization.jsonObject(with:JSONEncoder().encode(excerpt)) as! [String:Any]
     check(encoded["schemaVersion"] as? Int == 2 && (encoded["textRanges"] as? [[String:Any]])?.isEmpty == false,
           "new native selection stores versioned text ranges")
+    for ranges in [[["location":-1,"length":1]],[["location":0,"length":0]],
+                   [["location":Int.max-1,"length":4]],[["location":0,"length":1,"nativeID":3]]] {
+        var bad = encoded; bad["textRanges"] = ranges
+        let text = "```ccr-pdf-source-v2\n" + String(decoding:try JSONSerialization.data(withJSONObject:bad),as:UTF8.self) + "\n```\n"
+        do { _ = try VaultPDFExcerpt.parse(text); check(false,"invalid native range must refuse") }
+        catch { check(true,"invalid or unknown native range field refuses at provenance boundary") }
+    }
+    for key in ["textRanges","selectionRects","quote"] {
+        var bad = encoded
+        if key == "textRanges" { bad[key] = [["location":1_000_000,"length":1]] }
+        if key == "selectionRects" {
+            var rects = encoded[key] as! [[String:Any]]
+            rects[0]["x"] = (rects[0]["x"] as! Double) + 0.5
+            bad[key] = rects
+        }
+        if key == "quote" { bad[key] = excerpt.quote.replacingOccurrences(of:"é",with:"e\u{301}") }
+        let value = try JSONDecoder().decode(VaultPDFExcerpt.self,from:JSONSerialization.data(withJSONObject:bad))
+        do { _ = try value.sourcePage(in:snapshot); check(false,"changed \(key) must refuse") }
+        catch { check(true,"changed \(key) refuses exact source confirmation") }
+    }
 
     let retained = URL(fileURLWithPath:env["PDF_RECOVERY_RETAINED"]!)
     let retainedBytes = try Data(contentsOf:retained)
@@ -85,11 +184,13 @@ import CoreText
     do { check(try VaultPDFExcerpt.parse("일반 문장의 ccr-pdf-source 리터럴") == nil,"plain source marker text is not provenance") }
     catch { check(false,"plain source marker text was rejected: \(error)") }
     let validMarkdown = try geometry.markdown()
-    for suffix in [validMarkdown,"```ccr-pdf-source-v99\n{}\n```\n","```ccr-pdf-source\n{}\n```\n"] {
+    for suffix in [validMarkdown,"```ccr-pdf-source-v99\n{}\n```\n","```ccr-pdf-source\n{}\n```\n",
+                   " ```ccr-pdf-source-v1\n{}\n ```\n","~~~ccr-pdf-source-v1\n{}\n~~~\n","````ccr-pdf-source-v1\n{}\n````\n"] {
         do { _ = try VaultPDFExcerpt.parse(validMarkdown + "\n" + suffix); check(false,"duplicate or unsupported fence must refuse") }
         catch { check(true,"duplicate or unsupported anchored fence refuses") }
     }
-    for prefix in ["```ccr-pdf-source-v99\n{}\n```\n","```ccr-pdf-source-v2-extra\n{}\n```\n"] {
+    for prefix in ["```ccr-pdf-source-v99\n{}\n```\n","```ccr-pdf-source-v2-extra\n{}\n```\n",
+                   " ```ccr-pdf-source-v1\n{}\n ```\n","~~~ccr-pdf-source-v1\n{}\n~~~\n","````ccr-pdf-source-v1\n{}\n````\n"] {
         do { _ = try VaultPDFExcerpt.parse(prefix); check(false,"unsupported fence must refuse") }
         catch { check(true,"unsupported standalone fence refuses") }
     }

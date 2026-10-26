@@ -14,7 +14,8 @@ final class PDFRemoteVault {
         let env = ProcessInfo.processInfo.environment
         process.executableURL = URL(fileURLWithPath:"/Users/ambrion/.local/bin/mini-ephemeral-source")
         process.arguments = ["run","--source",env["PENCIL_RELAY_REPO"]!,"--owner",env["CODEX_THREAD_ID"]!,
-            "--job","pdf-vault-roundtrip-20261026","--","/Users/sin-wonho/.local/bin/node","tests/pdf-excerpt-fixture.cjs"]
+            "--job","pdf-vault-roundtrip-20261026","--","/Users/sin-wonho/.local/bin/node",
+            "--require","./tests/no-network-listeners.cjs","tests/pdf-excerpt-fixture.cjs"]
         process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.standardError
         try process.run()
         let ready = try JSONSerialization.jsonObject(with:line()) as? [String:Bool]
@@ -76,7 +77,8 @@ final class PDFRemoteVault {
         let root = URL(fileURLWithPath:ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!)
             .appendingPathComponent(name)
         let defaults = UserDefaults(suiteName:"pdf-excerpt-fixture-"+name)!
-        let result = CanvasStore(noteRecoveryURL:root.appendingPathComponent("note.json"),defaults:defaults)
+        let result = CanvasStore(noteRecoveryURL:root.appendingPathComponent("note.json"),
+            pdfExcerptRecoveryURL:root.appendingPathComponent("pdf-create.json"),defaults:defaults)
         result.setNoteConnection(address:"http://fixture.invalid",token:"fixture-only")
         return result
     }
@@ -87,7 +89,7 @@ final class PDFRemoteVault {
         _ = try bridge.create(path,text)
         throw URLError(.networkConnectionLost)
     },load:bridge.note)
-    check(nodeID != nil && editor.noteRecovery == nil,"lost PUT response reconciles through exact GET and attaches once")
+    check(nodeID != nil && editor.pdfExcerptRecovery == nil,"lost PUT response reconciles through exact GET and attaches once")
     check(try bridge.run(["operation":"countNotes"],as:Int.self) == 1,"lost response creates exactly one Markdown excerpt")
     let ref = editor.scene.nodes.first(where:{$0.id == nodeID})!.vaultNote!
     check(ref.path == excerpt.notePath && ref.blockID == nil && VaultNoteReference.validPath(ref.path),
@@ -128,7 +130,7 @@ final class PDFRemoteVault {
     check(blockedID == nil && blocked.hasPendingPDFExcerpt,"CAS conflict preserves intent without attaching wrong text")
     check(try bridge.note(conflict.notePath).text == "Mac owns this path","CAS conflict never overwrites Mac data")
     let restart = store("pdf-cas")
-    check(restart.noteRecovery?.base.path == conflict.notePath,"pending creation survives fresh Store restart")
+    check(restart.pdfExcerptRecovery?.path == conflict.notePath,"pending creation survives fresh Store restart")
     var creates = 0
     _ = await restart.savePDFExcerpt(allowCreate:false,create:{path,text in creates += 1; return try bridge.create(path,text)},load:bridge.note)
     check(creates == 0,"recovery result check never retries PUT or generates another ID")
@@ -169,11 +171,11 @@ final class PDFRemoteVault {
     stale.scene = CanvasScene()
     gate.finish(response)
     let staleID = await pending.value
-    check(staleID == nil && stale.scene.nodes.isEmpty && stale.noteRecovery?.sceneID == oldScene,
+    check(staleID == nil && stale.scene.nodes.isEmpty && stale.pdfExcerptRecovery?.sceneID == oldScene,
           "late source callback cannot attach to a different scene or discard original intent")
 
-    let unavailable = CanvasStore(noteRecoveryURL:URL(fileURLWithPath:ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!)
-        .appendingPathComponent("pdf-failed-journal.json"),noteRecoveryWrite:{_,_ in throw CocoaError(.fileWriteNoPermission)})
+    let unavailable = CanvasStore(pdfExcerptRecoveryURL:URL(fileURLWithPath:ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!)
+        .appendingPathComponent("pdf-failed-journal.json"),pdfExcerptRecoveryWrite:{_,_ in throw CocoaError(.fileWriteNoPermission)})
     unavailable.setNoteConnection(address:"http://fixture.invalid",token:"fixture-only")
     check(!unavailable.preparePDFExcerpt(excerpt) && !unavailable.hasPendingPDFExcerpt,
           "failed durable journal prevents creation before any request can be sent")
@@ -190,7 +192,7 @@ final class PDFRemoteVault {
         case "selectionRects": bad[key] = [["x":-100,"y":0,"width":1,"height":2]]
         default: bad[key] = "invented-native-ID"
         }
-        let text = VaultPDFExcerpt.fence + String(decoding:try JSONSerialization.data(withJSONObject:bad),as:UTF8.self) + "\n```\n"
+        let text = "```ccr-pdf-source-v\(excerpt.schemaVersion)\n" + String(decoding:try JSONSerialization.data(withJSONObject:bad),as:UTF8.self) + "\n```\n"
         do { _ = try VaultPDFExcerpt.parse(text); check(false,"untrusted \(key) must refuse") }
         catch { check(true,"untrusted \(key) refuses at Markdown boundary") }
     }

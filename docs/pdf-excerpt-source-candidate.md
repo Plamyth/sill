@@ -23,11 +23,11 @@ Apple 공식 문서 https://developer.apple.com/documentation/pdfkit/pdfselectio
 
 `CanvasWorkspace.vaultSheet`의 기존 목록에서 PDF entry를 연다. `CanvasRelay.vaultPDF`는 기존 인증만 사용하며 PDF bytes와 JSON 응답 크기를 제한한다. `VaultPDFReader`의 PDFKit 선택에서 `VaultPDFExcerpt`를 만든다. 발췌 Markdown은 PDF가 있던 폴더의 `발췌-<excerptID>.md`다. 텍스트가 없는 스캔 PDF와 여러 페이지에 걸친 선택, 회전된 PDF는 이 후보에서 발췌하지 않는다.
 
-`CanvasStore.preparePDFExcerpt`는 기존 로컬 `VaultNoteRecoveryFile`에 create-only 의도를 보존한다. `createPDFExcerpt`는 이 기기의 복구 파일에만 있는 선택 필드다. scene, node, Host wire에는 넣지 않는다. `savePDFExcerpt`는 기존 .md CAS(null)를 사용하며 정확한 GET 이후 `attachOpenedVaultNote`로 연결한다. 결과가 불명확한 재열기는 같은 path의 GET만 수행한다. 사용자가 같은 ID의 저장 재확인을 명시적으로 누른 경우에만 GET 404 뒤 같은 path의 CAS(null)를 허용한다.
+`CanvasStore.preparePDFExcerpt`는 전용 `VaultPDFCreateRecoveryFile`과 `CanvasPDFExcerptCreate/recovery.json`에 create-only 의도를 보존한다. 일반 노트의 `VaultNoteRecovery`와 공통 v1 파일은 기존 형태를 유지한다. 구소비자는 전용 파일을 조회하지 않으며 전용 envelope는 일반 노트 복구 타입으로 decode되지 않는다. 새 StateFile은 기존 CanvasRuntime의 격리 경로·안전한 파일 쓰기·상태 루트 정리 경계를 사용한다. scene, node, Host wire에는 새 필드를 넣지 않는다. scene과 생성 journal의 저장 및 필요한 블록 닫기 검사가 성공한 뒤 기존 에디터 메모리를 초기화한다. 블록 닫기 실패 시 소유 생성 의도를 취소하고 열린 원문·입력 세대·선택을 유지한다. `savePDFExcerpt`는 기존 .md CAS(null)를 사용하며 정확한 GET 이후 `attachOpenedVaultNote`로 연결한다. 결과가 불명확한 재열기는 같은 path의 GET만 수행한다. 사용자가 같은 ID의 저장 재확인을 명시적으로 누른 경우에만 GET 404 뒤 같은 path의 CAS(null)를 허용한다.
 
 Markdown 편집·초안 보존·CAS 충돌·카드 캐시 역수신은 기존 노트 흐름을 사용한다. 발췌 JSON의 quote는 선택 당시 원문이다. 메모 편집이 quote나 출처를 자동 재작성하지 않는다. Markdown 본문을 바꾼 사람이 JSON까지 바꾸면 신뢰 경계의 형식·페이지·해시·좌표·quote 검증을 다시 거친다. 출처 JSON 뒤에 메모를 덧붙여도 출처를 읽을 수 있다.
 
-`sourcePage`는 PDF SHA와 페이지 MediaBox/CropBox/rotation 및 실제 rect 선택 텍스트를 확인한 후에만 위치를 연다. 다른 해시는 changed, 없는 파일은 missing 안내를 표시한다. .md를 가리키는 기존 참조의 의미를 PDF 참조로 바꾸지 않는다. PDFView는 외부 PDF action과 URL 링크를 실행하지 않고 로컬 페이지 이동만 허용한다. PDF 원본 저장 API나 PDF 재직렬화는 없다.
+`sourcePage`는 PDF SHA와 페이지 MediaBox/CropBox/rotation을 검증한다. 새 schema2 provenance는 PDFSelection.numberOfTextRanges(on:)와 range(at:on:)가 반환한 NSRange를 저장하고 같은 PDF의 PDFPage.selection(for:NSRange)로 복원한다. characterBounds의 glyph 인덱스로 변환하지 않는다. 복원한 실제 범위·줄별 page-space rect·quote의 UTF-8 bytes를 모두 확인한다. capture는 같은 bytes의 원문 복귀를 확인한 선택만 반환한다. 기존 schema1 geometry-only 후보와 자체 REA native rect는 기존 rect 선택 경로로 읽는다. 다른 해시는 changed, 없는 파일은 missing 안내를 표시한다. .md를 가리키는 기존 참조의 의미를 PDF 참조로 바꾸지 않는다. PDFView는 외부 PDF action과 URL 링크를 실행하지 않고 로컬 페이지 이동만 허용한다. PDF 원본 저장 API나 PDF 재직렬화는 없다.
 
 ## 검증과 검수 경계
 
@@ -38,3 +38,15 @@ Markdown 편집·초안 보존·CAS 충돌·카드 캐시 역수신은 기존 �
 이 후보에는 iPad 실물 UI, Pencil 입력, Host·오디오 조작, 서명·설치·push·통합·유료 CI·실사용 vault 쓰기 증거가 없다. 독립 검수는 부모 담당이 정확한 두 후보 commit에서 수행한다. REA 기능 근거, 소스 검사, SDK 타입 검사, 실물 수용은 별개다. 제품 동등성이나 전체 복각 완료를 주장하지 않는다.
 
 실행 결과는 외장 작업 루트의 `final-transport/result.json`, `final-roundtrip/result.json`, `relay-final-path-identity.log`, `originals-preservation.json`에 남긴다. 최종 기본 회귀와 PDF 전송 URLProtocol 검사는 385 assertions, 파일 왕복과 실제 native PDF 대조는 111 assertions로 모두 실패 0이다. 각 Swift 검사에서 macOS 컴파일과 iOS SDK 타입 검사 exit 0 및 검사 입력 SHA 불변을 확인했다. 최종 relay 검사는 포트 바인딩 차단 아래 20개가 통과했다. Mini 한시 소스 삭제는 각 실행의 `cleanup_verified=true` 영수증으로 확인한다. 기존 두 iOS SDK deprecated 경고는 이 후보 변경 밖이다.
+
+## 2026-10-26 미발행 후보 회귀 수리
+
+검수 기준은 iPad 943d3869d48d725a6b03b1aad78fd37853675270과 읽기 전용 relay 2250dfada987013e6fc09e40e8bf2a58db134245다. 공통 복구 파일의 optional create flag는 제거했다. 이전 후보는 정본·실사용 파일에 발행되지 않았으므로 해당 잘못된 공통 journal을 자동 이관하지 않는다. 일반 노트 복구 데이터와 새 생성 의도를 섞지 않는다.
+
+사람용 quote는 줄마다 blockquote를 만들고 ASCII 구두점·공백을 숫자 문자 엔티티로 인코딩한다. JSON quote는 원래 bytes를 유지한다. parser는 행 시작의 실제 provenance fence만 세며 평문 marker를 구문으로 취급하지 않는다. 중복·지원 외 버전·알 수 없는 필드는 거부한다. 메모는 기존처럼 편집할 수 있다. 실제 Obsidian renderer와 외부 효과는 실행하지 않았다.
+
+PDF loading은 별도 Boolean 없이 요청 ID의 존재로 계산한다. 목록·닫기·연결·장면 전환은 ID를 비우며 늦은 성공·실패는 같은 요청·연결·장면·열린 노트일 때만 반영한다. 제품 메서드와 목록 action의 추출 실행은 가능하나 실제 SwiftUI·Pencil·설치67/68 수용과는 구분한다.
+
+수리 검사는 `Tests/checks/linked-obsidian-notes/run.py <외장 출력> --pdf-recovery`로 실행한다. `PDF_RECOVERY_FIXTURE`에는 독립 검수의 `probe2/unicode-selection.pdf`, `PDF_RECOVERY_RETAINED`에는 기존 자체 REA PDF의 절대 경로를 준다. 기본385·왕복111 검사와 같은 runner이며 `--vault-roundtrip`에서는 기존 Mini 한시 소스와 listen 금지 guard를 사용한다. `pdf-loading-check.py <외장 출력> [기준 CanvasWorkspace.swift]`는 제품 메서드·목록 action·상태 선언을 그대로 추출해 지연 응답을 검사하고 source SHA를 남긴다. `Tests/checks/ipad-test-context/run.py`는 DEBUG/Release 격리 경로와 새 StateFile의 symlink·hardlink·override 경계를 검사한다. 모든 출력은 이 작업의 외장 전용 경로에 남긴다.
+
+이 수리는 현재 제품68에 미적용이다. push·통합·설치·Host·UI·오디오·실 vault·공유 포트 변경은 수행하지 않는다. 회전·다중 페이지 선택은 기존 제한을 유지한다. 새 고정 HEAD의 최종 독립 재검수는 부모 담당에게 맡긴다.

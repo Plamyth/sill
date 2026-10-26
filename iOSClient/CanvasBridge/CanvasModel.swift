@@ -12,6 +12,7 @@ enum CanvasRuntime {
         case outbox = "CanvasOutbox/ledger.json"
         case blockRecovery = "CanvasBlockEdit/recovery.json"
         case noteRecovery = "CanvasNoteEdit/recovery.json"
+        case pdfExcerptRecovery = "CanvasPDFExcerptCreate/recovery.json"
         case checkpoint = "CanvasVaultCheckpoint.json"
     }
 
@@ -241,7 +242,7 @@ enum CanvasRuntime {
     #endif
 
     static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil,
-                         noteRecoveryOverride: URL? = nil) throws -> URL {
+                         noteRecoveryOverride: URL? = nil, pdfExcerptRecoveryOverride: URL? = nil) throws -> URL {
         #if DEBUG
         switch launch {
         case .normal: break
@@ -251,6 +252,7 @@ enum CanvasRuntime {
         #endif
         if file == .blockRecovery, let override = blockRecoveryOverride { return override }
         if file == .noteRecovery, let override = noteRecoveryOverride { return override }
+        if file == .pdfExcerptRecovery, let override = pdfExcerptRecoveryOverride { return override }
         guard let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first
         else { throw CanvasSendError.outboxUnavailable }
         if file == .scene { try? FileManager.default.createDirectory(at:support,withIntermediateDirectories:true) }
@@ -1029,7 +1031,6 @@ struct VaultNoteRecovery: Codable, Equatable {
     var base: VaultNoteSnapshot
     var draft: String
     var submittedText: String?
-    var createPDFExcerpt: Bool? = nil
 
     func validated() throws -> Self {
         guard schemaVersion == 1, relayAddress.utf8.count <= 2048,
@@ -1040,13 +1041,6 @@ struct VaultNoteRecovery: Codable, Equatable {
               submittedText.map({ $0.utf8.count <= 1024 * 1024 }) ?? true,
               nodeID != nil || blockID == nil else { throw VaultBlockRecoveryError.corrupt }
         _ = try base.validated(at:base.path)
-        if createPDFExcerpt == true {
-            guard nodeID == nil, blockID == nil, base.text.isEmpty,
-                  let source = try VaultPDFExcerpt.parse(draft), source.notePath == base.path,
-                  submittedText == nil || submittedText?.utf8.elementsEqual(draft.utf8) == true else {
-                throw VaultBlockRecoveryError.corrupt
-            }
-        }
         return self
     }
 

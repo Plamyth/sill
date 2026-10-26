@@ -710,6 +710,16 @@ final class CanvasStore: ObservableObject {
     private var noteRecoveryBytes: Data?
     private var noteRecoveryAttemptedBytes: Data?
     private var noteRecoveryReadable = true
+    @Published private(set) var pdfExcerptRecovery: VaultPDFCreateRecovery?
+    @Published private(set) var pdfExcerptRecoveryNotice = ""
+    private let pdfExcerptRecoveryOverride: URL?
+    private let pdfExcerptRecoveryWrite: (Data,URL) throws -> Void
+    private var pdfExcerptRecoveryURL: URL? {
+        try? CanvasRuntime.stateURL(.pdfExcerptRecovery,pdfExcerptRecoveryOverride:pdfExcerptRecoveryOverride)
+    }
+    private var pdfExcerptRecoveryBytes: Data?
+    private var pdfExcerptRecoveryAttemptedBytes: Data?
+    private var pdfExcerptRecoveryReadable = true
     private var changingNoteState = false
     @Published var vaultSelection = NSRange(location:0,length:0) {
         didSet { if oldValue != vaultSelection { noteSelectionGeneration &+= 1 } }
@@ -996,6 +1006,11 @@ final class CanvasStore: ObservableObject {
             do { try writeNoteRecovery(nil) }
             catch { vaultStatus = error.localizedDescription; return false }
         }
+        finishClosingVaultEditor()
+        return true
+    }
+
+    private func finishClosingVaultEditor() {
         changingBlockState = true
         defer { changingBlockState = false }
         noteEditorGeneration &+= 1
@@ -1011,7 +1026,6 @@ final class CanvasStore: ObservableObject {
         vaultSelection = NSRange(location:0,length:0)
         vaultLoading = false
         vaultBlocked = false
-        return true
     }
 
     func openVaultNote(_ path: String, nodeID: UUID? = nil,
@@ -1030,7 +1044,7 @@ final class CanvasStore: ObservableObject {
             }
             return
         }
-        guard noteRecoveryReadable, noteRecovery == nil else {
+        guard noteRecoveryReadable, noteRecovery == nil, pdfExcerptRecovery == nil else {
             vaultStatus = "보존된 노트 입력을 먼저 열거나 명시적으로 버려 주세요."
             return
         }
@@ -1250,7 +1264,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func restoreNoteDraft(load: (String) async throws -> VaultNoteSnapshot) async {
-        guard let record = noteRecovery, record.createPDFExcerpt != true, noteRecoveryReadable, !vaultDirty, !vaultBlockEditing,
+        guard let record = noteRecovery, noteRecoveryReadable, !vaultDirty, !vaultBlockEditing,
               !vaultSaving, !vaultLoading, !vaultInputBusy, !noteToken.isEmpty else { return }
         do {
             _ = try record.validated()
@@ -1513,22 +1527,53 @@ final class CanvasStore: ObservableObject {
         return id
     }
 
-    var hasPendingPDFExcerpt: Bool { noteRecovery?.createPDFExcerpt == true }
+    var hasPendingPDFExcerpt: Bool { pdfExcerptRecovery != nil }
+
+    private func writePDFExcerptRecovery(_ record: VaultPDFCreateRecovery?) throws {
+        guard pdfExcerptRecoveryReadable, let url = pdfExcerptRecoveryURL else { throw VaultBlockRecoveryError.corrupt }
+        let current = FileManager.default.fileExists(atPath:url.path) ? try Self.readBlockRecovery(url) : nil
+        guard current == pdfExcerptRecoveryBytes || pdfExcerptRecoveryAttemptedBytes.map({ current == $0 }) == true else {
+            pdfExcerptRecoveryReadable = false
+            throw VaultBlockRecoveryError.corrupt
+        }
+        let bytes = try JSONEncoder().encode(VaultPDFCreateRecoveryFile(record))
+        guard bytes.count <= VaultBlockRecoveryFile.byteLimit else { throw VaultBlockRecoveryError.unavailable }
+        pdfExcerptRecoveryBytes = current
+        pdfExcerptRecoveryAttemptedBytes = bytes
+        try pdfExcerptRecoveryWrite(bytes,url)
+        pdfExcerptRecoveryBytes = bytes
+        pdfExcerptRecoveryAttemptedBytes = nil
+        pdfExcerptRecovery = record
+        pdfExcerptRecoveryNotice = record == nil ? "" : "보존된 PDF 발췌 생성 의도가 있습니다. 같은 ID의 저장 결과만 확인합니다."
+    }
+
+    @discardableResult
+    func discardPDFExcerptRecovery() -> Bool {
+        guard !vaultSaving, !vaultLoading, !vaultDirty, !vaultInputBusy else { return false }
+        do { try writePDFExcerptRecovery(nil); return true }
+        catch { pdfExcerptRecoveryNotice = error.localizedDescription; return false }
+    }
 
     @discardableResult
     func preparePDFExcerpt(_ excerpt: VaultPDFExcerpt) -> Bool {
         guard !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy,
-              noteRecoveryReadable, noteRecovery == nil, !noteToken.isEmpty else {
+              noteRecoveryReadable, noteRecovery == nil, pdfExcerptRecoveryReadable, pdfExcerptRecovery == nil,
+              !noteToken.isEmpty else {
             vaultStatus = "현재 노트 입력 또는 보존된 저장 결과를 먼저 확인하세요."
             return false
         }
         do {
             let text = try excerpt.markdown()
-            guard closeVaultEditor() else { return false }
-            let base = VaultNoteSnapshot(path:excerpt.notePath,text:"",sha256:CanvasPacket.sha(Data()),modifiedAt:"")
             try persistScene()
-            try writeNoteRecovery(VaultNoteRecovery(schemaVersion:1,sceneID:scene.id,nodeID:nil,blockID:nil,
-                relayAddress:noteAddress,base:base,draft:text,submittedText:nil,createPDFExcerpt:true))
+            try writePDFExcerptRecovery(VaultPDFCreateRecovery(sceneID:scene.id,relayAddress:noteAddress,
+                path:excerpt.notePath,draft:text,submittedText:nil))
+            do {
+                if vaultBlockEditing { try writeBlockRecovery(nil) }
+            } catch {
+                try? writePDFExcerptRecovery(nil)
+                throw error
+            }
+            finishClosingVaultEditor()
             return true
         } catch { vaultStatus = error.localizedDescription; return false }
     }
@@ -1537,8 +1582,9 @@ final class CanvasStore: ObservableObject {
     func savePDFExcerpt(allowCreate: Bool,
                         create: (String,String) async throws -> VaultNoteSnapshot,
                         load: (String) async throws -> VaultNoteSnapshot) async -> UUID? {
-        guard var record = noteRecovery, record.createPDFExcerpt == true,
-              noteRecoveryReadable, noteRecoveryMatches(record), !vaultDirty, !vaultInputBusy,
+        guard var record = pdfExcerptRecovery, pdfExcerptRecoveryReadable,
+              record.sceneID == scene.id, record.relayAddress == noteAddress,
+              noteRecoveryReadable, noteRecovery == nil, !vaultDirty, !vaultInputBusy,
               !vaultSaving, !vaultLoading, !noteToken.isEmpty else { return nil }
         let connection = noteConnectionGeneration, generation = noteSceneGeneration
         let request = UUID()
@@ -1546,18 +1592,19 @@ final class CanvasStore: ObservableObject {
         vaultSaving = true
         defer { if noteRequest == request { noteRequest = nil; vaultSaving = false } }
         func current() -> Bool {
-            !Task.isCancelled && noteRequest == request && noteRecovery == record &&
-                connection == noteConnectionGeneration && generation == noteSceneGeneration && noteRecoveryMatches(record)
+            !Task.isCancelled && noteRequest == request && pdfExcerptRecovery == record &&
+                connection == noteConnectionGeneration && generation == noteSceneGeneration &&
+                record.sceneID == scene.id && record.relayAddress == noteAddress
         }
         do {
             _ = try record.validated()
-            let path = record.base.path
+            let path = record.path
             let latest: VaultNoteSnapshot
             do { latest = try await load(path).validated(at:path) }
             catch let error as NSError where error.domain == "CanvasRelay" && error.code == 404 {
                 guard current(), allowCreate else { throw VaultPDFError.unconfirmed }
                 record.submittedText = record.draft
-                try writeNoteRecovery(record)
+                try writePDFExcerptRecovery(record)
                 do {
                     let saved = try await create(path,record.draft).validated(at:path)
                     guard saved.text.utf8.elementsEqual(record.draft.utf8) else { throw VaultBlockRecoveryError.changed }
@@ -1589,7 +1636,7 @@ final class CanvasStore: ObservableObject {
                 id = attached
             }
             try persistScene()
-            try writeNoteRecovery(nil)
+            try writePDFExcerptRecovery(nil)
             vaultStatus = "PDF 발췌의 저장과 원본 GET을 확인하고 편집 가능한 노트 카드를 연결했습니다."
             return id
         } catch {
@@ -1776,15 +1823,18 @@ final class CanvasStore: ObservableObject {
         }
     }
 
-    init(blockRecoveryURL: URL? = nil, noteRecoveryURL: URL? = nil,
+    init(blockRecoveryURL: URL? = nil, noteRecoveryURL: URL? = nil, pdfExcerptRecoveryURL: URL? = nil,
          defaults: UserDefaults = .standard,
-         noteRecoveryWrite: @escaping (Data,URL) throws -> Void = CanvasLocalFile.write) {
+         noteRecoveryWrite: @escaping (Data,URL) throws -> Void = CanvasLocalFile.write,
+         pdfExcerptRecoveryWrite: @escaping (Data,URL) throws -> Void = CanvasLocalFile.write) {
         self.eraserDefaults = defaults
         _eraserStyle = Published(initialValue: defaults.string(forKey: Self.eraserStyleKey)
             .flatMap(CanvasEraserStyle.init(rawValue:)) ?? .partial)
         _eraserSize = Published(initialValue: (defaults.object(forKey: Self.eraserSizeKey) as? NSNumber)
             .flatMap { CanvasEraserSize(rawValue: $0.doubleValue) } ?? .standard)
         self.noteRecoveryWrite = noteRecoveryWrite
+        self.pdfExcerptRecoveryWrite = pdfExcerptRecoveryWrite
+        self.pdfExcerptRecoveryOverride = pdfExcerptRecoveryURL
         self.blockRecoveryOverride = blockRecoveryURL
         self.noteRecoveryOverride = noteRecoveryURL ?? blockRecoveryURL.map {
             $0.deletingLastPathComponent().appendingPathComponent($0.lastPathComponent + ".note")
@@ -1794,6 +1844,7 @@ final class CanvasStore: ObservableObject {
             outboxReadable = false
             blockRecoveryReadable = false
             noteRecoveryReadable = false
+            pdfExcerptRecoveryReadable = false
             status = CanvasRuntime.TestError.invalid.localizedDescription
             return
         }
@@ -1846,6 +1897,18 @@ final class CanvasStore: ObservableObject {
         } catch {
             noteRecoveryReadable = false
             noteRecoveryNotice = VaultBlockRecoveryError.corrupt.localizedDescription
+        }
+        do {
+            guard let url = self.pdfExcerptRecoveryURL else { throw VaultBlockRecoveryError.unavailable }
+            if FileManager.default.fileExists(atPath:url.path) {
+                let bytes = try Self.readBlockRecovery(url)
+                pdfExcerptRecovery = try JSONDecoder().decode(VaultPDFCreateRecoveryFile.self,from:bytes).record()
+                pdfExcerptRecoveryBytes = bytes
+                if pdfExcerptRecovery != nil { pdfExcerptRecoveryNotice = "보존된 PDF 발췌 생성 의도가 있습니다. 자동 전송하지 않습니다." }
+            }
+        } catch {
+            pdfExcerptRecoveryReadable = false
+            pdfExcerptRecoveryNotice = VaultBlockRecoveryError.corrupt.localizedDescription
         }
     }
 
