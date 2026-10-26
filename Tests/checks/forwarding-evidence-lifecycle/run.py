@@ -10,14 +10,17 @@ import tempfile
 
 root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
-node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:]]
+node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:3]]
+flags = sys.argv[3:]
+assert flags in [[], ['--observe-only']]
 commit = '0bec7a9970b0bd4e15390012b8ade02ed54605c2'
 names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
          'AudioForwardingParticipants', 'AudioForwardingProtection', 'HostAudioForwardingRuntime']
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in names]
 protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
 closure = root / 'Sources/SillHost/LocalAudioRelayClosure.swift'
-inputs = sources + protocol + list(here.glob('*.*')) + [closure]
+bridge = root / 'Sources/SillHost/ProviderCallBridge.swift'
+inputs = sources + protocol + list(here.glob('*.*')) + [closure, bridge]
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 pins = dict(re.findall(r'"(server/[^\"]+)": "([a-f0-9]{64})"',
                      closure.read_text()))
@@ -50,17 +53,23 @@ extension HostAudioForwardingRuntime {
     func checkRefresh() async { await refresh() }
 }
 ''')
+    bridge_source = bridge.read_text()
+    scope = out / 'ProviderScope.swift'
+    scope.write_text(bridge_source[:bridge_source.index('struct ProviderCallSignedEnvelope:')] +
+        bridge_source[bridge_source.index('struct ProviderCallChallenge:'):bridge_source.index('private struct ProviderIdentityBody:')])
     base = ['xcrun', 'swiftc', '-package-name', 'Sill', '-module-cache-path', str(out / 'cache')]
+    if 'privacy: HostAudioPrivacy, sentry: HostSentry' in sources[-1].read_text():
+        base += ['-D', 'LEGACY_SENTRY_RUNTIME']
     subprocess.run(base + ['-emit-module', '-emit-library', '-module-name', 'StreamProtocol',
         *map(str, protocol), '-o', str(out / 'libStreamProtocol.dylib'),
         '-emit-module-path', str(out / 'StreamProtocol.swiftmodule')], check=True, timeout=180)
     subprocess.run(base + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
         '-Xlinker', '-rpath', '-Xlinker', str(out), *map(str, sources[:-1]), str(runtime),
-        str(here / 'Boundaries.swift'), str(here / 'Main.swift'), '-o', str(out / 'checks')], check=True, timeout=180)
+        str(scope), str(here / 'Boundaries.swift'), str(here / 'Main.swift'), '-o', str(out / 'checks')], check=True, timeout=180)
     checks = out / 'cases'
     checks.mkdir()
     import shutil
-    worker = subprocess.Popen([str(out / 'checks'), shutil.which('node'), str(here / 'child.js'), str(checks), str(node)],
+    worker = subprocess.Popen([str(out / 'checks'), shutil.which('node'), str(here / 'child.js'), str(checks), str(node), *flags],
                               start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         output, _ = worker.communicate(timeout=45)

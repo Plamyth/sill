@@ -22,6 +22,7 @@ final class Fixture {
     var submissionGate: Gate?
     var enforceSubmission = false
     var committedSentry: Bool?
+    var committedMute: Bool?
 
     init(off: Bool = false) throws {
         let device = String(repeating: "a", count: 64), generation = UUID().uuidString
@@ -76,6 +77,7 @@ final class Fixture {
             }
             self.commits += 1
             self.committedSentry = payload.localProtection.sentryVerified
+            self.committedMute = payload.localProtection.localMutedVerified
             let data = try! JSONEncoder().encode(payload)
             let object = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
             precondition(Set(object.keys) == ["intentGeneration", "bindingEpoch", "operationId", "configuration", "receipts", "localProtection"])
@@ -121,6 +123,18 @@ struct Main {
                 print("PASS manual Sentry independent audio desired=\(desired) proof=\(proof)")
                 checks += 1
             }
+        }
+        for muted in [false, true] {
+            let f = try Fixture(off: true)
+            f.muted = muted; f.sentry = false
+            let coordinator = f.coordinator()
+            guard case .committed(let scope, _) = await coordinator.reconcile(f.snapshot()) else {
+                preconditionFailure("오디오 OFF 정리가 물리 음소거를 새로 요구함")
+            }
+            precondition(f.committedMute == muted && f.committedSentry == false)
+            precondition(!coordinator.allowsInput(scope, transport: .http) && !coordinator.allowsOutput(scope, transport: .http))
+            print("PASS audio OFF preserves actual mute proof=\(muted)")
+            checks += 1
         }
         for change in ["none", "invalidate", "cancel", "configuration", "protection"] {
             let f = try Fixture(), gate = Gate(), coordinator = f.coordinator()

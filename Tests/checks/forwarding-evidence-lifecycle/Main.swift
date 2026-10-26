@@ -23,11 +23,21 @@ import StreamProtocol
     var replacementFails = false
     var nativeReceipt: LocalAudioParticipantReceipt?
     lazy var relay = makeRelay()
-    lazy var runtime = HostAudioForwardingRuntime(relay: relay, privacy: privacy, sentry: sentry,
+    lazy var runtime: HostAudioForwardingRuntime = {
+        #if LEGACY_SENTRY_RUNTIME
+        return HostAudioForwardingRuntime(relay: relay, privacy: privacy, sentry: sentry,
+            replacement: { [unowned self] in
+                if replacementFails { throw CocoaError(.fileReadUnknown) }
+                return makeRelay()
+            }, fenceMedia: { [unowned self] in fences += 1 }, commitMedia: { _ in })
+        #else
+        return HostAudioForwardingRuntime(relay: relay, privacy: privacy,
         replacement: { [unowned self] in
             if replacementFails { throw CocoaError(.fileReadUnknown) }
             return makeRelay()
         }, fenceMedia: { [unowned self] in fences += 1 }, commitMedia: { _ in })
+        #endif
+    }()
     init(_ name: String) throws {
         folder = URL(fileURLWithPath: CommandLine.arguments[3]).appendingPathComponent(name)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -81,6 +91,20 @@ import StreamProtocol
     @MainActor static func main() async throws {
         var assertions = 0
         func check(_ value: Bool) { precondition(value); assertions += 1 }
+        if CommandLine.arguments.contains("--observe-only") {
+            let f = try Fixture("observe-only")
+            f.privacy.latched = false
+            check(await f.runtime.start())
+            for byte in ["ab", "cd", "ab"] {
+                let peer = Peer(byte)
+                let value = await f.observe(peer)
+                check(value != nil && value?.snapshot.intent == nil && value?.snapshot.binding == nil)
+                check(f.privacy.arms == 0 && !f.privacy.latched)
+            }
+            await f.finish()
+            print("PASS screen-only observe has zero audio isolation arms: \(assertions) assertions")
+            return
+        }
         func wait(_ label: String, _ condition: () -> Bool) async {
             let until = ContinuousClock.now.advanced(by: .seconds(6))
             while !condition(), ContinuousClock.now < until { try? await Task.sleep(for: .milliseconds(5)) }
