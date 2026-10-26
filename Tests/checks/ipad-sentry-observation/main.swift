@@ -912,3 +912,66 @@ do {
           "frontend 이전 세대 완료가 현 제어 상태 덮어쓰기0")
 }
 print("세대 전환 회귀 포함 전체 \(checks)개 통과")
+
+var retirementRegressions: [Bool] = []
+func retirementRegression(_ label: String, _ passed: Bool) {
+    retirementRegressions.append(passed)
+    print("RETIREMENT \(label) passed=\(passed)")
+}
+for operation in ["applied", "pending", "superseded", "unknown"] {
+    let memory = MemoryStore(); var tested = ready(memory)
+    _ = perform(&tested, desired: true)
+    let firstReply = reply(tested, "applied", state(.userSessionProtected))
+    _ = tested.receive(firstReply, binding: binding, from: peerID)
+    var late = object(firstReply); late["operationState"] = operation; late["code"] = "SENTRY_" + operation.uppercased()
+    _ = perform(&tested)
+    observe(&tested, generationState(nextAuth))
+    let packet = tested.perform(desired: true, binding: binding, from: peerID, now: 150)!
+    let current = tested.originalRequest
+    _ = tested.receive(json(late), binding: binding, from: peerID)
+    retirementRegression("과거 세대의 비현행 요청 응답 \(operation)", tested.phase == .pending &&
+        tested.originalRequest == current && tested.permits(packet, binding: binding, from: peerID))
+}
+for damage in ["version", "duplicate", "epoch"] {
+    let memory = MemoryStore(); var tested = ready(memory); _ = perform(&tested)
+    observe(&tested, generationState(nextAuth)); _ = perform(&tested, desired: true)
+    var ledger = object(memory.data!)
+    if damage == "version" { ledger["version"] = 99 }
+    if damage == "duplicate" { let rows = ledger["retired"] as! [Any]; ledger["retired"] = rows + rows }
+    if damage == "epoch" {
+        var rows = ledger["retired"] as! [[String: Any]]; var epoch = rows[0]["epoch"] as! [String: Any]
+        epoch["hostBootID"] = nextSession.uuidString; rows[0]["epoch"] = epoch; ledger["retired"] = rows
+    }
+    let invalid = json(ledger); memory.data = invalid; let saves = memory.saves
+    var restored = IPadSentryControl(store: memory.store); restored.bind(peerID)
+    observe(&restored, generationState(nextAuth)); observe(&restored, generationState(UUID().uuidString.lowercased()))
+    retirementRegression("손상 이력은 세대 전환으로 해제하지 않음 \(damage)", !restored.canSet &&
+        !restored.canQuery && restored.problem != nil && memory.data == invalid && memory.saves == saves)
+}
+do {
+    let memory = MemoryStore(), client = StreamClient(store: MemoryStore().store)
+    client.sentryControl = ready(memory); client.connection = peer; client.sentryObservation.bind(peerID)
+    client.observeIPadSentry(catalog: catalog(state()), from: peer); client.setIPadSentry(desired: true)
+    client.observeIPadSentry(catalog: catalog(generationState(nextAuth)), from: peer)
+    client.setIPadSentry(desired: false)
+    client.acceptIPadSentryReply(reply(client.sentryControl, "applied", generationState(nextAuth)), from: peer, binding: binding)
+    let current = client.sentryObservation.status
+    client.observeIPadSentry(catalog: catalog(state(.userSessionProtected)), from: peer)
+    retirementRegression("퇴역 catalog가 실제 표시 observation을 되돌리지 않음", client.sentryObservation.status == current)
+}
+for slot in ["active", "prior"] {
+    let memory = MemoryStore(); var tested = ready(memory); _ = perform(&tested)
+    let retiredID = object(tested.originalRequest!)["requestID"]!
+    observe(&tested, generationState(nextAuth))
+    _ = tested.perform(desired: true, binding: binding, from: peerID, now: 150)
+    var ledger = object(memory.data!), active = ledger["active"] as! [String: Any]
+    var raw = object(tested.originalRequest!); raw["requestID"] = retiredID
+    if slot == "active" { active["rawRequest"] = json(raw).base64EncodedString() }
+    else { raw["desired"] = false; active["priorRawRequest"] = json(raw).base64EncodedString() }
+    active["ledgerAccepted"] = true; ledger["active"] = active; let invalid = json(ledger); memory.data = invalid
+    var restored = IPadSentryControl(store: memory.store); restored.bind(peerID); observe(&restored, generationState(nextAuth))
+    retirementRegression("복원 \(slot)/retired ID 충돌 거부", !restored.canSet && !restored.canQuery &&
+        restored.problem != nil && restored.query(binding: binding, from: peerID, now: 200) == nil && memory.data == invalid)
+}
+check(retirementRegressions.allSatisfy { $0 }, "독립 검수의 퇴역 회귀 전체")
+print("최종 소비자 검사 \(checks)개와 퇴역 경계 \(retirementRegressions.count)개 통과")
