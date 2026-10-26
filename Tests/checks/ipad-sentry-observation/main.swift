@@ -529,8 +529,14 @@ for change in ["host", "pin", "device", "boot", "authorization", "nil-trust", "o
         }
         observe(&tested, report, binding: changedBinding)
     }
-    check(tested.phase == .unknown && tested.originalRequest == offRaw && tested.priorRequest == onRaw &&
-          !tested.canSet, "두 원문 상태 late·권한 경계 \(change)")
+    if change == "authorization" {
+        check(tested.phase == .idle && tested.originalRequest == nil && tested.priorRequest == nil &&
+              tested.retiredRequests == [offRaw, onRaw] && tested.canSet,
+              "같은 peer 인가 세대 전환은 on/off 원문 모두 이력에 보존")
+    } else {
+        check(tested.phase == .unknown && tested.originalRequest == offRaw && tested.priorRequest == onRaw &&
+              !tested.canSet, "두 원문 상태 late·권한 경계 \(change)")
+    }
 }
 
 let strictBase = Data((hostFixture["requestOnRaw"] as! String).utf8)
@@ -733,9 +739,17 @@ for change in ["host", "pin", "device", "boot", "authorization", "nil-trust"] {
     default: current = nil
     }
     observe(&tested, report, binding: current)
-    check(savedLedger(memory) == true && !tested.canQuery &&
-          tested.query(binding: current, from: peerID, now: 200) == nil && !tested.canSet,
-          "저장된 true도 다른 binding·boot·auth의 조회 권한으로 사용하지 않음 \(change)")
+    if change == "authorization" {
+        let rows = object(memory.data!)["retired"] as! [[String: Any]]
+        let original = rows[0]["request"] as! [String: Any]
+        check(original["ledgerAccepted"] as? Bool == true && !tested.canQuery && tested.canSet &&
+              tested.query(binding: current, from: peerID, now: 200) == nil,
+              "퇴역 원장에 접수 proof 보존·과거 조회0·새 명시 요청만 허용")
+    } else {
+        check(savedLedger(memory) == true && !tested.canQuery &&
+              tested.query(binding: current, from: peerID, now: 200) == nil && !tested.canSet,
+              "저장된 true도 다른 binding·boot·auth의 조회 권한으로 사용하지 않음 \(change)")
+    }
 }
 do {
     let memory = MemoryStore(); var tested = pendingOn(memory)
@@ -769,3 +783,132 @@ for completion in ["unacknowledged", "pending", "applied"] {
     check(tested.originalRequest == nil && tested.canSet && !tested.canQuery,
           "동일 연결 인가 세대 전환은 과거 송신 슬롯만 퇴역 \(completion)")
 }
+
+for completion in ["unacknowledged", "pending", "applied", "superseded", "rejected"] {
+    let memory = MemoryStore(); var tested = ready(memory)
+    _ = perform(&tested, desired: true)
+    let oldRaw = tested.originalRequest!
+    let oldReply = reply(tested, "applied", state(.userSessionProtected))
+    if completion == "pending" { _ = tested.receive(reply(tested, "pending", state(.pending)), binding: binding, from: peerID) }
+    if completion == "applied" { _ = tested.receive(oldReply, binding: binding, from: peerID) }
+    if completion == "superseded" { _ = tested.receive(reply(tested, "superseded", state()), binding: binding, from: peerID) }
+    if completion == "rejected" { _ = tested.receive(reply(tested, "rejected", state(), accepted: false, code: "SENTRY_BUSY"), binding: binding, from: peerID) }
+    let beforeSaves = memory.saves
+    observe(&tested, generationState(nextAuth))
+    check(tested.retiredRequests == [oldRaw] && tested.phase == .idle && memory.saves == beforeSaves + 1,
+          "퇴역 원문과 저장 readback 후 idle \(completion)")
+    check(!tested.permits(IPadSentryControl.packet(oldRaw)!, binding: binding, from: peerID) &&
+          tested.query(binding: binding, from: peerID, now: 150) == nil,
+          "퇴역한 요청은 송신·조회 불가 \(completion)")
+    check(tested.receive(oldReply, binding: binding, from: peerID) == nil && tested.phase == .idle && tested.canSet,
+          "이전 완료는 새 세대 idle 변경0 \(completion)")
+    let retiredBytes = memory.data!
+    var reopened = IPadSentryControl(store: memory.store); reopened.bind(peerID)
+    observe(&reopened, generationState(nextAuth))
+    check(reopened.retiredRequests == [oldRaw] && reopened.canSet && reopened.originalRequest == nil && memory.data == retiredBytes,
+          "확정된 퇴역은 재시작 뒤 복원·자동 저장0 \(completion)")
+    let oldID = (try! SentryControlRequest(rawRequest: oldRaw)).requestID
+    check(reopened.perform(desired: false, binding: binding, from: peerID, now: 150, requestID: oldID) == nil,
+          "퇴역 requestID 재사용 거부 \(completion)")
+    let packet = reopened.perform(desired: true, binding: binding, from: peerID, now: 150)
+    let newRaw = reopened.originalRequest!
+    check(packet != nil && (try! SentryControlRequest(rawRequest: newRaw)).authorizationGeneration.uuidString.lowercased() == nextAuth,
+          "새 사용자 명시 요청만 새 세대 생성 \(completion)")
+    check(reopened.receive(oldReply, binding: binding, from: peerID) == nil && reopened.phase == .pending && reopened.originalRequest == newRaw,
+          "과거 늦은 완료가 새 pending 변경0 \(completion)")
+    observe(&reopened, state())
+    check(reopened.permits(packet!, binding: binding, from: peerID) && reopened.originalRequest == newRaw,
+          "퇴역한 세대 catalog는 capability 되살림0 \(completion)")
+    var restartedPending = IPadSentryControl(store: memory.store); restartedPending.bind(peerID)
+    observe(&restartedPending, generationState(nextAuth))
+    check(!restartedPending.canSet && !restartedPending.canQuery && restartedPending.originalRequest == newRaw,
+          "현 세대 미접수 요청 재시작 보호 유지 \(completion)")
+}
+for failure in ["throws", "readback"] {
+    let memory = MemoryStore(); var tested = ready(memory); _ = perform(&tested)
+    let old = memory.data!; let raw = tested.originalRequest!
+    memory.fail = failure == "throws"; memory.dropWrite = failure == "readback"
+    observe(&tested, generationState(nextAuth))
+    check(tested.phase == .unknown && tested.originalRequest == raw && tested.retiredRequests.isEmpty &&
+          !tested.canSet && !tested.canQuery && memory.data == old,
+          "퇴역 저장 실패는 원 요청 보존·명시송신 차단 \(failure)")
+}
+do {
+    let memory = MemoryStore(); var tested = ready(memory); _ = perform(&tested)
+    let raw = tested.originalRequest!; let old = memory.data!
+    var reopened = IPadSentryControl(store: memory.store); reopened.bind(peerID)
+    observe(&reopened, generationState(nextAuth))
+    check(!reopened.canSet && !reopened.canQuery && reopened.originalRequest == raw && reopened.retiredRequests.isEmpty && memory.data == old,
+          "전환 미관측 재시작의 첫 다른 세대 보고는 퇴역시키지 않음")
+}
+do {
+    let memory = MemoryStore(); var tested = ready(memory)
+    observe(&tested, generationState(nextAuth))
+    check(tested.canSet && tested.retiredRequests.isEmpty && tested.originalRequest == nil && memory.saves == 1,
+          "요청 없는 세대 전환도 이력만 기록하고 송신0")
+    observe(&tested, state())
+    check(tested.perform(desired: false, binding: binding, from: peerID, now: 150) != nil &&
+          (try! SentryControlRequest(rawRequest: tested.originalRequest!)).authorizationGeneration.uuidString.lowercased() == nextAuth,
+          "요청 없던 과거 세대 보고도 새 capability 회귀0")
+}
+
+
+do {
+    let memory = MemoryStore(); var tested = ready(memory); _ = perform(&tested)
+    let raw = tested.originalRequest!; observe(&tested, generationState(nextAuth))
+    var legacy = LegacySentryControl(store: .init(load: { memory.data }, save: { memory.data = $0 }))
+    legacy.bind(peerID)
+    var observed = IPadSentryObservation(); observed.bind(peerID); observed.observe(catalog: catalog(generationState(nextAuth)), from: peerID)
+    let oldBinding = LegacySentryControl.Binding(macID: binding.macID, hostPin: binding.hostPin, deviceFingerprint: binding.deviceFingerprint)
+    legacy.observe(catalog: catalog(generationState(nextAuth)), observation: observed, binding: oldBinding, from: peerID)
+    check(legacy.phase == .unknown && !legacy.canSet && !legacy.canQuery && legacy.originalRequest == nil &&
+          legacy.perform(desired: true, binding: oldBinding, from: peerID, now: 150) == nil && tested.retiredRequests == [raw],
+          "실제68 구형 decoder는 새 원장 읽기에서 닫히며 재발행0")
+    let valid = memory.data!
+    for damage in ["version", "duplicate", "binding", "raw"] {
+        var ledger = object(valid)
+        switch damage {
+        case "version": ledger["version"] = 4
+        case "duplicate": let rows = ledger["retired"] as! [Any]; ledger["retired"] = rows + rows
+        case "binding":
+            var rows = ledger["retired"] as! [[String: Any]]
+            var epoch = rows[0]["epoch"] as! [String: Any]; var b = epoch["binding"] as! [String: Any]
+            b["macID"] = "different"; epoch["binding"] = b; rows[0]["epoch"] = epoch; ledger["retired"] = rows
+        default:
+            var rows = ledger["retired"] as! [[String: Any]]; var r = rows[0]["request"] as! [String: Any]
+            r["rawRequest"] = Data("broken".utf8).base64EncodedString(); rows[0]["request"] = r; ledger["retired"] = rows
+        }
+        memory.data = json(ledger)
+        var invalid = IPadSentryControl(store: memory.store); invalid.bind(peerID); observe(&invalid, generationState(nextAuth))
+        check(!invalid.canSet && !invalid.canQuery && invalid.problem != nil, "손상 퇴역 원장 닫힘 \(damage)")
+    }
+}
+do {
+    let memory = MemoryStore(); var tested = ready(memory)
+    for _ in 0..<64 { observe(&tested, generationState(UUID().uuidString.lowercased())) }
+    check(tested.canSet && memory.saves == 64, "퇴역 이력64개 보존")
+    let before = memory.data; observe(&tested, generationState(UUID().uuidString.lowercased()))
+    check(!tested.canSet && !tested.canQuery && tested.problem != nil && memory.data == before,
+          "이력 상한에서는 과거 이력 삭제 없이 송신 닫힘")
+}
+do {
+    let memory = MemoryStore(), client = StreamClient(store: MemoryStore().store)
+    client.sentryControl = ready(memory); client.connection = peer
+    client.sentryObservation.bind(peerID)
+    client.observeIPadSentry(catalog: catalog(state()), from: peer)
+    client.setIPadSentry(desired: true)
+    let old = client.sentryControl.originalRequest!
+    let oldReply = reply(client.sentryControl, "applied", state(.userSessionProtected))
+    let sent = peer.sent.count
+    client.observeIPadSentry(catalog: catalog(generationState(nextAuth)), from: peer)
+    check(peer.sent.count == sent && client.sentryControl.canSet && client.sentryControl.retiredRequests == [old],
+          "실제 frontend 세대 관측은 자동 wire 송신0")
+    client.setIPadSentry(desired: false)
+    let current = client.sentryControl.originalRequest
+    check(peer.sent.count == sent + 1 && client.sentryControl.phase == .pending,
+          "명시 사용자 OFF만 wire1회")
+    client.acceptIPadSentryReply(oldReply, from: peer, binding: binding)
+    check(client.sentryControl.originalRequest == current && client.sentryControl.phase == .pending,
+          "frontend 이전 세대 완료가 현 제어 상태 덮어쓰기0")
+}
+print("세대 전환 회귀 포함 전체 \(checks)개 통과")

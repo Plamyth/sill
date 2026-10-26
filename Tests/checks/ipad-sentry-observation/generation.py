@@ -43,6 +43,7 @@ files['Wiring.swift'] = select_platform((ROOT / 'iOSClient/StreamClient+Sentry.s
 files['Reader.swift'] = (ROOT / 'iOSClient/MessageReader.swift').read_bytes().replace(b'import Network\n', b'')
 if '--baseline' in sys.argv:
     files['iOSClient/IPadSentryControl.swift'] = subprocess.check_output(['git','show','21235fc:iOSClient/IPadSentryControl.swift'],cwd=ROOT)
+files['Legacy.swift'] = subprocess.check_output(['git','show','21235fc:iOSClient/IPadSentryControl.swift'],cwd=ROOT).replace(b'IPadSentryControl',b'LegacySentryControl')
 files['fixture.json'] = (ROOT / 'Tests/checks/sentry-control-v2/fixtures.json').read_bytes()
 runner_tree = ast.parse((ROOT / 'Tests/checks/reconnect-glue/mini.py').read_text())
 runner = next(ast.literal_eval(n.value) for n in runner_tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'runner' for t in n.targets))
@@ -51,7 +52,7 @@ runner = runner[:a] + '''
  flags=['-swift-version','5','-module-cache-path',cache]
  protocol=sorted(str(p) for p in (package/'Sources/StreamProtocol').glob('*.swift'))
  commands=[['/usr/bin/xcrun','swiftc',*flags,'-emit-module','-emit-object','-whole-module-optimization','-module-name','StreamProtocol',*protocol,'-emit-module-path',str(output/'StreamProtocol.swiftmodule'),'-o',str(output/'StreamProtocol.o')],
- ['/usr/bin/xcrun','swiftc',*flags,'-I',str(output),str(package/'iOSClient/IPadSentryObservation.swift'),str(package/'iOSClient/IPadSentryControl.swift'),str(package/'Standins.swift'),str(package/'Wiring.swift'),str(package/'Reader.swift'),str(package/'Tests/checks/ipad-sentry-observation/main.swift'),str(output/'StreamProtocol.o'),'-o',str(output/'consumer')],
+ ['/usr/bin/xcrun','swiftc',*flags,'-I',str(output),str(package/'iOSClient/IPadSentryObservation.swift'),str(package/'iOSClient/IPadSentryControl.swift'),str(package/'Legacy.swift'),str(package/'Standins.swift'),str(package/'Wiring.swift'),str(package/'Reader.swift'),str(package/'Tests/checks/ipad-sentry-observation/main.swift'),str(output/'StreamProtocol.o'),'-o',str(output/'consumer')],
  [str(output/'consumer'),str(package/'fixture.json')]]
 ''' + runner[b:]
 runner = runner.replace('CCRReconnect', 'CCRSentry').replace('ccr-reconnect-output-', 'ccr-sentry-output-')
