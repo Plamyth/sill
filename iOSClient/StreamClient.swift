@@ -295,20 +295,23 @@ final class StreamClient: ObservableObject {
             return ("소유 Mac에 연결하는 중", "Mac의 신원을 안전하게 확인하고 있습니다.", true)
         case .exchanging:
             return ("소유 기기를 자동 등록하는 중", "Mac의 자동 등록 응답을 기다리고 있습니다.", true)
-        case .stopped:
-            return ("Mac 자동 연결이 중지되었습니다", "이번 실행에서는 자동 등록을 다시 시작하지 않습니다. 저장된 Mac과 기기 키는 유지됩니다.", false)
+        case .stopped where ownerBootstrap.wasInitiallyEmpty && savedMacs.isEmpty:
+            return ("소유 Mac 자동 등록이 중지되었습니다", "이번 실행에서는 자동 등록을 다시 시작하지 않습니다. 저장된 Mac과 기기 키는 유지됩니다.", false)
         case .ready:
             return ("소유 Mac 자동 연결 대기 중", "앱이 활성화되면 안전한 자동 연결을 진행합니다.", false)
-        case .finished:
-            if ownerBootstrap.wasInitiallyEmpty {
+        case .stopped, .finished:
+            if ownerBootstrap.wasInitiallyEmpty && savedMacs.isEmpty {
                 return ("소유 Mac 자동 연결을 완료하지 못했습니다", status, false)
+            }
+            if let notice, notice.text == status {
+                return ("저장된 Mac 연결이 종료되었습니다", notice.text, false)
             }
             switch startupAutoConnection {
             case .waiting, .waitingRemote, .wired:
                 return ("저장된 Mac 연결 대기 중", "저장된 Mac의 안전한 연결 경로를 확인하고 있습니다.", true)
             default:
                 return ("저장된 Mac에 연결할 수 없습니다",
-                        status == Self.lookingOnNetwork ? "기존 저장소와 기기 키를 확인해야 합니다. 저장된 신뢰를 보존하며 최초 자동 등록을 다시 열지 않습니다." : status, false)
+                        status == Self.lookingOnNetwork ? "연결 상태의 원인은 미확인입니다. 저장된 신뢰와 기기 키는 유지됩니다." : status, false)
             }
         case .unarmed:
             return ("Mac 자동 연결 준비 중", "저장된 Mac과 기기 신원을 확인하고 있습니다.", false)

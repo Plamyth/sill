@@ -56,6 +56,8 @@ members = '\n'.join(block(stream, name) for name in [
     'private enum StartupAutoConnection', 'var automaticConnectionPresentation:',
     'func dial(_ mac:'])
 members += '\n' + block(remote, 'func handleOpenURL(')
+members += '\n' + block(stream, 'struct Notice:')
+members += '\n' + block(remote, 'private func endWithNotice(').replace('private func', 'func', 1)
 members = members.replace('private enum StartupAutoConnection', 'enum StartupAutoConnection')
 members = members.replace('#if os(iOS)', '#if true')
 fixture = '''import Foundation
@@ -77,6 +79,7 @@ final class StreamClient {
     func ask(_ mac: FoundMac, savedID: String?, tagNamed: Bool, replaces: String?) { effects += 1 }
     func dialRow(_ mac: FoundMac, macID: String?, trust: Int, tagNamed: Bool, tap: Bool) -> Bool { effects += 1; return true }
     static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
+    static let deviceWord = "iPad"
     static let lookingOnNetwork = "network-wait-fixture"
     var ownerBootstrap = OwnerBootstrapState()
     var startupAutoConnection = StartupAutoConnection.unarmed
@@ -87,6 +90,19 @@ final class StreamClient {
     var reconnect: Reconnect?
     var status = lookingOnNetwork
     var effects = 0
+    struct Session { var why: DialWhy? }
+    enum DialWhy { case afterPairing }
+    var connected = false
+    var notice: Notice?
+    var afterPairingWatch: DispatchWorkItem?
+    func tearDown(status: String, restartSearch: Bool) {
+        self.status = status; connection = nil; connected = false; notice = nil
+    }
+    func lostReconnect(session: Session?, saved: SavedMac?, name: String, remoteAllowed: Bool) -> Reconnect {
+        Reconnect(remoteAllowed: remoteAllowed)
+    }
+    func discoveryChanged() {}
+    func scheduleReconnectRetry() { effects += 1 }
 // MEMBERS
 }
 ''' .replace('// MEMBERS', members + '\n' + '\n'.join(guards))
@@ -104,6 +120,7 @@ with tempfile.TemporaryDirectory(prefix='ui-build-', dir=HERE) as folder:
                         '-module-cache-path', str(cache), '-I', str(out), '-L', str(out),
                         '-lStreamProtocol', '-Xlinker', '-rpath', '-Xlinker', str(out),
                         str(CLIENT / 'SavedMacs.swift'), str(CLIENT / 'OwnerBootstrapState.swift'),
+                        str(CLIENT / 'GoodbyePolicy.swift'),
                         str(out / 'main.swift'), '-o', str(out / mode)], check=True, env=env, timeout=180)
         subprocess.run([str(out / mode)], check=True, timeout=30)
     sources = [CLIENT / name for name in ['ContentView.swift', 'HostSettingsPanel.swift', 'StreamScreen.swift',

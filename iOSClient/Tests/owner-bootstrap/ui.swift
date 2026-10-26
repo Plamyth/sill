@@ -80,4 +80,64 @@ for newKey in [false, true] {
 let damaged = StreamClient()
 damaged.ownerBootstrap.arm(savedKeyPresent: true, preferredKeyPresent: false, hasRecords: false, explicitLaunch: false)
 check("원시 빈 배열·손상 저장소도 spinner 없이 대기", !damaged.automaticConnectionPresentation.busy && !damaged.ownerBootstrap.wasInitiallyEmpty)
+
+let localReturn = "인증된 로컬 복귀로 원격 세션이 종료되었습니다."
+for initiallyEmpty in [false, true] {
+    for retry: Bool? in [nil, false] {
+        let ended = StreamClient()
+        ended.ownerBootstrap.arm(savedKeyPresent: !initiallyEmpty, preferredKeyPresent: false,
+                                 hasRecords: !initiallyEmpty, explicitLaunch: false)
+        ended.savedMacs = [saved]
+        ended.startupAutoConnection = .attempted
+        ended.cancelOwnerBootstrap()
+        ended.connection = 1
+        ended.connected = true
+        let before = SavedMacs.encode(ended.savedMacs)
+        let effects = ended.effects
+        let goodbye = Goodbye(reason: "", message: localReturn, reconnect: retry)
+        ended.endWithNotice(goodbye, session: .init(), saved: saved, name: saved.name)
+        let view = ended.automaticConnectionPresentation
+        check("저장 접속 종료는 최초 등록 중지로 표시하지 않음", view.title == "저장된 Mac 연결이 종료되었습니다")
+        check("Host 인증복귀 notice 원문을 보존", view.detail == localReturn && ended.notice?.text == localReturn && ended.status == localReturn)
+        check("nil/false terminal을 자동 재접속으로 바꾸지 않음", !view.busy && ended.reconnect == nil && ended.effects == effects)
+        check("표시는 저장 신뢰와 취소 상태를 바꾸지 않음", SavedMacs.encode(ended.savedMacs) == before && ended.ownerBootstrap.phase == .stopped && ended.ownerBootstrap.begin() == nil)
+        ended.notice = nil
+        check("notice 없이 status만 남아도 종료 원인을 보존", ended.automaticConnectionPresentation.detail == localReturn)
+        ended.status = StreamClient.lookingOnNetwork
+        check("원인 없는 기본 상태는 미확인으로 표시", ended.automaticConnectionPresentation.detail.contains("미확인"))
+    }
+}
+let terminal = StreamClient()
+terminal.savedMacs = [saved]
+terminal.ownerBootstrap.arm(savedKeyPresent: true, preferredKeyPresent: false, hasRecords: true, explicitLaunch: false)
+terminal.cancelOwnerBootstrap()
+terminal.startupAutoConnection = .attempted
+let unknown = Goodbye(reason: "")
+let unknownOutcome = GoodbyePolicy.outcome(unknown, mac: saved.name, device: "iPad", saved: true)
+terminal.endWithNotice(unknown, session: .init(), saved: saved, name: saved.name)
+check("메시지 없는 unknown terminal도 실제 정책 문구 유지", terminal.automaticConnectionPresentation.detail == unknownOutcome.text && !terminal.automaticConnectionPresentation.busy && terminal.reconnect == nil)
+for active in [0, 1, 2] {
+    terminal.connection = active == 0 ? 1 : nil
+    terminal.remoteDial = active == 1 ? 1 : nil
+    terminal.reconnect = active == 2 ? .init(remoteAllowed: true) : nil
+    terminal.status = "저장된 Mac에 다시 연결하는 중…"
+    check("실제 connection/remoteDial/reconnect는 오래된 notice보다 우선", terminal.automaticConnectionPresentation.busy && terminal.automaticConnectionPresentation.detail == terminal.status)
+}
+terminal.connection = nil; terminal.remoteDial = nil; terminal.notice = nil
+let loss = GoodbyePolicy.outcome(nil, mac: saved.name, device: "iPad", saved: true)
+terminal.status = loss.text
+terminal.reconnect = loss.reconnect ? .init(remoteAllowed: loss.remoteAllowed) : nil
+check("일시 network loss의 기존 재접속과 원인 표시 유지", terminal.automaticConnectionPresentation.busy && terminal.automaticConnectionPresentation.detail == loss.text && terminal.reconnect?.remoteAllowed == true)
+terminal.reconnect = .init(remoteAllowed: false)
+check("원격 재접속 불허 우선순위 유지", !terminal.automaticConnectionPresentation.busy && terminal.automaticConnectionPresentation.title.contains("원격") && terminal.automaticConnectionPresentation.detail == loss.text)
+terminal.reconnect = nil
+for newKey in [false, true] {
+    var rejected = saved
+    if newKey { rejected.newKey = true } else { rejected.revoked = true }
+    terminal.savedMacs = [rejected]
+    terminal.status = GoodbyePolicy.outcome(Goodbye(reason: Goodbye.removed), mac: saved.name, device: "iPad", saved: true).text
+    terminal.connection = 1
+    check("취소된 bootstrap에서도 removed/newKey 보호가 접속 표시보다 우선", !terminal.automaticConnectionPresentation.busy && terminal.automaticConnectionPresentation.title.contains("신뢰"))
+}
+check("처음 빈 저장소의 명시 취소는 등록 중지로 구별", c.automaticConnectionPresentation.title == "소유 Mac 자동 등록이 중지되었습니다" && !c.automaticConnectionPresentation.busy && c.ownerBootstrap.phase == .stopped)
 print("PASS \(count) owner UI presentation and ingress guard checks; actual extracted code, no SwiftUI/device/network/Keychain effects")
