@@ -1546,7 +1546,7 @@ private struct VaultReviewSheet: View {
                     Button(showingBack ? "앞면 보기" : "뒤집어 답 보기") { showingBack.toggle() }
                         .frame(maxWidth:.infinity,minHeight:44).buttonStyle(.bordered)
                         .accessibilityIdentifier("obsidianReviewFlip")
-                    Text("자체 고정 간격: 다시 5분 · 하드 10분 · 좋음 24시간 · 쉬움 48시간. 선택한 평가 시각부터 계산하며 적응형 일정은 적용하지 않습니다.")
+                    Text("다음 복습은 선택한 간격을 평가한 시각부터 계산합니다.")
                         .font(.footnote)
                     ForEach(VaultReviewCard.Grade.allCases,id:\.self) { grade in
                         Button("\(grade.title) · \(grade.intervalLabel) 후") {

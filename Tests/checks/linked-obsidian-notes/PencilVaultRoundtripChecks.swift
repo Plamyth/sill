@@ -246,6 +246,51 @@ func checkPencilVaultRoundtrip(_ check: (Bool, String) -> Void) async throws {
     let afterDuplicate = try bridge.note(reviewPath)
     check(!duplicate && ratingWrites == 1 && afterDuplicate.sha256 == answerNote.sha256,
           "late duplicate review callback does not submit a second grade or overwrite the external answer")
+    let grades: [(VaultReviewCard.Grade, Int64)] = [(.again,300),(.hard,600),(.good,86_400),(.easy,172_800)]
+    for (grade, interval) in grades {
+        let gradePath = "복습 등급 \(interval) 자동 왕복.md"
+        _ = try bridge.saveNote(gradePath,nil,reviewSource)
+        let gradeStore = store()
+        await gradeStore.openVaultNote(gradePath) { try bridge.note($0) }
+        let gradeSession = gradeStore.beginVaultReview()!
+        var gradeWrites = 0
+        let saved = await gradeStore.rateVaultReview(gradeSession,grade:grade,
+            injectedDate:Date(timeIntervalSince1970:1_800_000_000),save:{ path,sha,text in
+                gradeWrites += 1
+                return try bridge.saveNote(path,sha,text)
+            },load:{ try bridge.note($0) })
+        let gradeNote = try PencilVaultBridge().note(gradePath)
+        let gradeCard = try VaultReviewCard.parse(gradeNote.text)!
+        check(saved && gradeWrites == 1 && gradeCard.metadata.ratedAt == 1_800_000_000 &&
+              gradeCard.metadata.dueAt == 1_800_000_000 + interval &&
+              gradeCard.metadata.eventID == gradeSession.id.uuidString.lowercased(),
+              "grade \(interval) is persisted once with its exact event and interval in the real vault module")
+        check(gradeCard.front == gradeSession.card.front && gradeCard.back == gradeSession.card.back &&
+              gradeNote.text.hasPrefix("\u{feff}# 원문 👩🏽‍💻 e\u{301}\r\n그대로 둘 문단 ^keep\r\n") &&
+              gradeNote.text.hasSuffix("\r\n마지막 원문 문단"),
+              "grade \(interval) preserves surrounding CRLF, Unicode and question/answer bytes")
+        let gradeReopened = store()
+        await gradeReopened.openVaultNote(gradePath) { try bridge.note($0) }
+        check(gradeReopened.beginVaultReview()?.card.metadata == gradeCard.metadata,
+              "grade \(interval) reopens in a fresh Store with the same event and schedule")
+        let externalText = gradeNote.text.replacingOccurrences(of:"정답 A:",with:"정답 B:")
+        let external = try bridge.saveNote(gradePath,gradeNote.sha256,externalText)
+        await gradeReopened.refreshVaultNotes { try bridge.note($0) }
+        let externallyEdited = gradeReopened.beginVaultReview()!
+        check(externallyEdited.card.back.contains("정답 B:") && externallyEdited.card.metadata == gradeCard.metadata,
+              "grade \(interval) receives an external answer edit without losing the saved schedule")
+        let repeated = await gradeStore.rateVaultReview(gradeSession,grade:grade,
+            injectedDate:Date(timeIntervalSince1970:1_800_000_010),save:{ path,sha,text in
+                gradeWrites += 1
+                return try bridge.saveNote(path,sha,text)
+            },load:{ try bridge.note($0) })
+        let unchanged = try bridge.note(gradePath)
+        check(!repeated && gradeWrites == 1 && unchanged.sha256 == external.sha256,
+              "grade \(interval) refuses a stale callback without a second write or external edit loss")
+        _ = try bridge.saveNote(gradePath,unchanged.sha256,reviewSource)
+        check(try bridge.note(gradePath).text.utf8.elementsEqual(reviewSource.utf8),
+              "grade \(interval) fixture returns to its original note bytes")
+    }
 
     let lostJournal = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let lostStore = store(journal:lostJournal)
