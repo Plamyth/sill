@@ -301,7 +301,8 @@ import StreamProtocol
         expect(!gate.allowsActions(peer) && response(gate.prepareControl(f.request(false), from: peer))?.code == .busy,
             "인증 로컬 복귀 fence 중 새 원격 명령 busy")
         gate.completeLocalReturn()
-        expect(gate.status(for: peer) == nil && response(gate.prepareControl(first, from: peer)) == nil, "로컬 복귀는 세션·권한·원장을 회수")
+        expect(gate.status(for: peer) != nil && response(gate.prepareControl(first, from: peer))?.code == .notAuthorized,
+            "인증 로컬 복귀는 화면 연결을 보존하고 구 센츄리 인가를 회수")
     }
     static func reentrantReleaseFenceChecks() {
         let f = Fixture(), gate = f.gate, peer = f.peer, epoch = UUID()

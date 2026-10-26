@@ -95,8 +95,9 @@ import StreamProtocol
         gate.update(verified: true, persistenceHealthy: true, reason: nil)
         expect(signal(gate, a) == fenced, "fence 중 표면 복구만으로 선택을 허용하지 않음")
         gate.completeLocalReturn()
-        expect(gate.sourceSelectionAdmission(for: a) == nil && gate.sourceSelectionAdmission(for: b) == nil,
-               "로컬 복귀 완료는 이전 세션 신호를 제거함")
+        expect(signal(gate, a).ready && signal(gate, a).generation > fenced.generation &&
+               gate.sourceSelectionAdmission(for: b) != nil,
+               "인증 복귀 뒤 기존 연결은 새 선택 세대로 유지하며 복귀 전 신호를 재사용하지 않음")
         gate.register(a, externalRoute: false); gate.admit(a)
         let newSession = signal(gate, a)
         expect(newSession.ready && newSession.generation > fenced.generation, "복귀 뒤 새 세션은 이전 세대를 재사용하지 않음")
