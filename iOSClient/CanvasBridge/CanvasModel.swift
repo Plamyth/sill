@@ -1029,6 +1029,7 @@ struct VaultNoteRecovery: Codable, Equatable {
     var base: VaultNoteSnapshot
     var draft: String
     var submittedText: String?
+    var createPDFExcerpt: Bool? = nil
 
     func validated() throws -> Self {
         guard schemaVersion == 1, relayAddress.utf8.count <= 2048,
@@ -1039,6 +1040,13 @@ struct VaultNoteRecovery: Codable, Equatable {
               submittedText.map({ $0.utf8.count <= 1024 * 1024 }) ?? true,
               nodeID != nil || blockID == nil else { throw VaultBlockRecoveryError.corrupt }
         _ = try base.validated(at:base.path)
+        if createPDFExcerpt == true {
+            guard nodeID == nil, blockID == nil, base.text.isEmpty,
+                  let source = try VaultPDFExcerpt.parse(draft), source.notePath == base.path,
+                  submittedText == nil || submittedText?.utf8.elementsEqual(draft.utf8) == true else {
+                throw VaultBlockRecoveryError.corrupt
+            }
+        }
         return self
     }
 

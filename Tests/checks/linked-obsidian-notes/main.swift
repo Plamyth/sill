@@ -150,7 +150,16 @@ final class NoteProtocol: URLProtocol {
             exit(failures == 0 ? 0 : 1)
         }
         if CommandLine.arguments.contains("--vault-roundtrip") {
+            if ProcessInfo.processInfo.environment["PENCIL_REMOTE_FIXTURE"] == "1" {
+                PDFRemoteVault.shared = try PDFRemoteVault()
+            }
+            try checkRetainedNativePDFAnchor(check)
             try await checkPencilVaultRoundtrip(check)
+            if PDFRemoteVault.shared != nil {
+                try await checkPDFExcerptRoundtrip(check)
+                try PDFRemoteVault.shared!.finish()
+                PDFRemoteVault.shared = nil
+            }
             print("RESULT \(checks) assertions, \(failures) failures")
             exit(failures == 0 ? 0 : 1)
         }
@@ -520,6 +529,7 @@ final class NoteProtocol: URLProtocol {
         try await checkSelectedInk(check)
         try await checkHandwritingSearch(check)
         try await checkWholeNoteRecovery(check)
+        try await checkPDFReadTransport(check)
         print("RESULT \(checks) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }

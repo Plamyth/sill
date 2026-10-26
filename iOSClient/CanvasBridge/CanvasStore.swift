@@ -1250,7 +1250,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func restoreNoteDraft(load: (String) async throws -> VaultNoteSnapshot) async {
-        guard let record = noteRecovery, noteRecoveryReadable, !vaultDirty, !vaultBlockEditing,
+        guard let record = noteRecovery, record.createPDFExcerpt != true, noteRecoveryReadable, !vaultDirty, !vaultBlockEditing,
               !vaultSaving, !vaultLoading, !vaultInputBusy, !noteToken.isEmpty else { return }
         do {
             _ = try record.validated()
@@ -1511,6 +1511,93 @@ final class CanvasStore: ObservableObject {
         mode = .select
         vaultStatus = "선택 블록을 원본 표식과 연결했습니다."
         return id
+    }
+
+    var hasPendingPDFExcerpt: Bool { noteRecovery?.createPDFExcerpt == true }
+
+    @discardableResult
+    func preparePDFExcerpt(_ excerpt: VaultPDFExcerpt) -> Bool {
+        guard !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy,
+              noteRecoveryReadable, noteRecovery == nil, !noteToken.isEmpty else {
+            vaultStatus = "현재 노트 입력 또는 보존된 저장 결과를 먼저 확인하세요."
+            return false
+        }
+        do {
+            let text = try excerpt.markdown()
+            guard closeVaultEditor() else { return false }
+            let base = VaultNoteSnapshot(path:excerpt.notePath,text:"",sha256:CanvasPacket.sha(Data()),modifiedAt:"")
+            try persistScene()
+            try writeNoteRecovery(VaultNoteRecovery(schemaVersion:1,sceneID:scene.id,nodeID:nil,blockID:nil,
+                relayAddress:noteAddress,base:base,draft:text,submittedText:nil,createPDFExcerpt:true))
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
+    @discardableResult
+    func savePDFExcerpt(allowCreate: Bool,
+                        create: (String,String) async throws -> VaultNoteSnapshot,
+                        load: (String) async throws -> VaultNoteSnapshot) async -> UUID? {
+        guard var record = noteRecovery, record.createPDFExcerpt == true,
+              noteRecoveryReadable, noteRecoveryMatches(record), !vaultDirty, !vaultInputBusy,
+              !vaultSaving, !vaultLoading, !noteToken.isEmpty else { return nil }
+        let connection = noteConnectionGeneration, generation = noteSceneGeneration
+        let request = UUID()
+        noteRequest = request
+        vaultSaving = true
+        defer { if noteRequest == request { noteRequest = nil; vaultSaving = false } }
+        func current() -> Bool {
+            !Task.isCancelled && noteRequest == request && noteRecovery == record &&
+                connection == noteConnectionGeneration && generation == noteSceneGeneration && noteRecoveryMatches(record)
+        }
+        do {
+            _ = try record.validated()
+            let path = record.base.path
+            let latest: VaultNoteSnapshot
+            do { latest = try await load(path).validated(at:path) }
+            catch let error as NSError where error.domain == "CanvasRelay" && error.code == 404 {
+                guard current(), allowCreate else { throw VaultPDFError.unconfirmed }
+                record.submittedText = record.draft
+                try writeNoteRecovery(record)
+                do {
+                    let saved = try await create(path,record.draft).validated(at:path)
+                    guard saved.text.utf8.elementsEqual(record.draft.utf8) else { throw VaultBlockRecoveryError.changed }
+                } catch {
+                    guard current() else { return nil }
+                    // An uncertain PUT is followed only by GET of the same stable path.
+                }
+                guard current() else { return nil }
+                latest = try await load(path).validated(at:path)
+            }
+            guard current() else { return nil }
+            guard latest.text.utf8.elementsEqual(record.draft.utf8) else { throw VaultBlockRecoveryError.changed }
+            let id: UUID
+            if let node = scene.nodes.first(where:{ $0.vaultNote?.path == path && $0.vaultNote?.relayAddress == noteAddress }) {
+                id = node.id
+            } else {
+                changingNoteState = true
+                noteEditorGeneration &+= 1
+                noteInputSession = UUID()
+                noteContext = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
+                    connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
+                    path:path,nodeID:nil,blockID:nil)
+                vaultNote = latest
+                vaultDraft = latest.text
+                changingNoteState = false
+                vaultBlocked = false
+                vaultSaving = false
+                guard let attached = attachOpenedVaultNote() else { throw VaultBlockRecoveryError.context }
+                id = attached
+            }
+            try persistScene()
+            try writeNoteRecovery(nil)
+            vaultStatus = "PDF 발췌의 저장과 원본 GET을 확인하고 편집 가능한 노트 카드를 연결했습니다."
+            return id
+        } catch {
+            if current() {
+                vaultStatus = "발췌 저장 결과 미확인: \(error.localizedDescription). 같은 ID와 입력을 보존했습니다."
+            }
+            return nil
+        }
     }
 
     func saveVaultNote(save: (String,String,String) async throws -> VaultNoteSnapshot,

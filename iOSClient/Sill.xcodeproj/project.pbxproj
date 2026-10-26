@@ -90,6 +90,8 @@
 		A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
 		B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000F001 /* PencilTextCorrection.swift */; };
 		B2000001000000000000A001 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
+		D2600026000000000000A001 /* VaultPDFReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2600026000000000000F001 /* VaultPDFReader.swift */; };
+		D2600026000000000000A000 /* VaultPDFExcerpt.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2600026000000000000F000 /* VaultPDFExcerpt.swift */; };
 		B2000001000000000000A002 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
 		B2000001000000000000A003 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
 		B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F004 /* CanvasWorkspace.swift */; };
@@ -173,6 +175,8 @@
 		2375D34FA9899ACF736E899A /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
 		D24052ABBDDD29A6A5DE4F8B /* PencilTextCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000F001 /* PencilTextCorrection.swift */; };
 		8120D38B28D3FA07C94A2C79 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
+		D2600026000000000000A011 /* VaultPDFReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2600026000000000000F001 /* VaultPDFReader.swift */; };
+		D2600026000000000000A010 /* VaultPDFExcerpt.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2600026000000000000F000 /* VaultPDFExcerpt.swift */; };
 		7BAF96FF18E05E678BDAAD15 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
 		F171544FC7BFE8A0CB69160D /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
 		BC459CE1617471593F9E4735 /* CanvasWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F004 /* CanvasWorkspace.swift */; };
@@ -325,6 +329,8 @@
 		E8250001000000000000F004 /* IPadEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadEnrollmentStore.swift"; sourceTree = "<group>"; };
 		E8250001000000000000F005 /* IPadEnrollmentTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadEnrollmentTransport.swift"; sourceTree = "<group>"; };
 		E8250001000000000000F006 /* StreamClient+OwnerEnrollment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+OwnerEnrollment.swift"; sourceTree = "<group>"; };
+		D2600026000000000000F000 /* VaultPDFExcerpt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultPDFExcerpt.swift; sourceTree = "<group>"; };
+		D2600026000000000000F001 /* VaultPDFReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultPDFReader.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -452,6 +458,8 @@
 			isa = PBXGroup;
 			children = (
 				B2000001000000000000F001 /* CanvasModel.swift */,
+				D2600026000000000000F001 /* VaultPDFReader.swift */,
+				D2600026000000000000F000 /* VaultPDFExcerpt.swift */,
 				B2000021000000000000F001 /* PencilTextCorrection.swift */,
 				B2000001000000000000F013 /* CanvasPeleView.swift */,
 				B2000001000000000000F014 /* Pele */,
@@ -685,6 +693,8 @@
 				A1000001000000000000AB01 /* DuoPosture.swift in Sources */,
 				A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */,
 				B2000001000000000000A001 /* CanvasModel.swift in Sources */,
+				D2600026000000000000A001 /* VaultPDFReader.swift in Sources */,
+				D2600026000000000000A000 /* VaultPDFExcerpt.swift in Sources */,
 				B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */,
 				B2000001000000000000A013 /* CanvasPeleView.swift in Sources */,
 				B2000001000000000000A002 /* CanvasRelay.swift in Sources */,
@@ -792,6 +802,8 @@
 				0364640D40BCD2A5A34F4C92 /* DuoPosture.swift in Sources */,
 				2375D34FA9899ACF736E899A /* DuoPostureReader.swift in Sources */,
 				8120D38B28D3FA07C94A2C79 /* CanvasModel.swift in Sources */,
+				D2600026000000000000A011 /* VaultPDFReader.swift in Sources */,
+				D2600026000000000000A010 /* VaultPDFExcerpt.swift in Sources */,
 				D24052ABBDDD29A6A5DE4F8B /* PencilTextCorrection.swift in Sources */,
 				BC19A867F7B274D2FE4D33B8 /* CanvasPeleView.swift in Sources */,
 				7BAF96FF18E05E678BDAAD15 /* CanvasRelay.swift in Sources */,

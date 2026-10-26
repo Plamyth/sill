@@ -17,6 +17,7 @@ if not output.is_relative_to(Path(archive['path']).resolve()):
     raise SystemExit('Output must use the verified storage-route development archive')
 output.mkdir(parents=True, exist_ok=True)
 sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
+           root / 'iOSClient/CanvasBridge/VaultPDFExcerpt.swift',
            root / 'iOSClient/CanvasBridge/CanvasStore.swift',
            root / 'iOSClient/CanvasBridge/PencilTextCorrection.swift',
            root / 'iOSClient/CanvasBridge/CanvasRelay.swift',
@@ -27,6 +28,7 @@ sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            Path(__file__).with_name('HandwritingSearchChecks.swift'),
            Path(__file__).with_name('WholeNoteRecoveryChecks.swift'),
            Path(__file__).with_name('PencilVaultRoundtripChecks.swift'),
+           Path(__file__).with_name('PDFExcerptChecks.swift'),
            Path(__file__).with_name('main.swift')]
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 ios = sorted((root / 'iOSClient/CanvasBridge').glob('*.swift')) + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
@@ -35,7 +37,7 @@ ios += [root / 'iOSClient/IPadAudioSession.swift', root / 'iOSClient/IPadAudioLe
 inputs = list(dict.fromkeys(sources + ios + [protocol, Path(__file__)]))
 inputs += [Path(__file__).with_name('vault-roundtrip.cjs')]
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
-relay = Path('/Users/ambrion/Documents/ChatGPT/BT_CCR-Obsidian-relay')
+relay = Path(os.environ.get('PENCIL_RELAY_REPO', '/Users/ambrion/Documents/ChatGPT/BT_CCR-Obsidian-relay'))
 relay_inputs = [relay / 'relay/obsidian-vault.js', relay / 'relay/canvas-diagram.js'] if '--vault-roundtrip' in sys.argv[2:] else []
 relay_hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in relay_inputs}
 tool_env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
@@ -74,13 +76,13 @@ if code == 0:
     home.mkdir(exist_ok=True)
     env = dict(os.environ, HOME=str(home), CFFIXED_USER_HOME=str(home))
     if '--vault-roundtrip' in sys.argv[2:]:
-        node = shutil.which('node')
+        node = shutil.which('node') if os.environ.get('PENCIL_REMOTE_FIXTURE') != '1' else 'remote-node'
         if node is None:
             raise SystemExit('기존 Node 실행 파일을 찾지 못했습니다.')
         env.update(PENCIL_NODE=node, PENCIL_RELAY_REPO=str(relay),
                    PENCIL_TEST_VAULT=str(output / 'isolated-vault'), PENCIL_FIXTURE_ID=str(uuid.uuid4()),
                    PENCIL_VAULT_HELPER=str(Path(__file__).with_name('vault-roundtrip.cjs')))
-    result = run([str(output / 'check'), *sys.argv[2:]], env, 90)
+    result = run([str(output / 'check'), *sys.argv[2:]], env, 180)
     (output / 'runtime.log').write_text(result.stdout)
     print(result.stdout, end='')
     code = result.returncode
