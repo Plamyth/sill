@@ -264,9 +264,9 @@ import StreamProtocol
         // 세션이 삭제되는 구 구현에서도 fatalError 없이 모든 실패를 수집한다.
         let after = gate.status(for: f.peer), secondAfter = gate.status(for: second)
         expect(after != nil && secondAfter != nil, "복귀 뒤 기존 두 연결의 status 생존")
-        expect(after.map { $0.hostBootID == before.hostBootID && $0.sessionID != before.sessionID &&
-            $0.revision != before.revision } == true && secondAfter.map { $0.sessionID != secondBefore.sessionID } == true,
-            "연결 보존과 별개로 두 sessionID·구 revision 무효화")
+        expect(after.map { $0.hostBootID == before.hostBootID && $0.sessionID == before.sessionID &&
+            $0.revision != before.revision } == true && secondAfter.map { $0.sessionID == secondBefore.sessionID } == true,
+            "같은 두 연결의 sessionID는 유지하고 구 revision만 무효화")
         expect(after?.control != nil && secondAfter?.control != nil &&
             after?.control?.authorizationGeneration != before.control?.authorizationGeneration &&
             secondAfter?.control?.authorizationGeneration != secondBefore.control?.authorizationGeneration,
@@ -299,16 +299,16 @@ import StreamProtocol
         if let after, let secondAfter, after.control != nil, secondAfter.control != nil {
             expect(rejected(request(after, desired: true, authorization: before.control!.authorizationGeneration), from: f.peer) &&
                 rejected(request(secondAfter, desired: true, authorization: secondBefore.control!.authorizationGeneration), from: second),
-                "새 session·revision을 사용해도 이전 두 authorization은 거절")
-            expect(rejected(request(after, desired: true, session: before.sessionID), from: f.peer) &&
+                "같은 session·새 revision을 사용해도 이전 두 authorization은 거절")
+            expect(rejected(request(after, desired: true, session: UUID()), from: f.peer) &&
                 rejected(request(after, desired: true, revision: before.revision), from: f.peer),
-                "새 authorization을 사용해도 이전 session 또는 revision 각각 거절")
+                "새 authorization을 사용해도 다른 session 또는 이전 revision은 거절")
             expect(rejected(request(after, desired: true), from: unadmitted) &&
                 rejected(request(after, desired: true), from: ungranted), "복귀 뒤 미인가·control 없는 peer의 명시 요청도 거절")
-            expect(!gate.accept(SentryActivation(hostBootID: after.hostBootID, sessionID: before.sessionID,
+            expect(!gate.accept(SentryActivation(hostBootID: after.hostBootID, sessionID: UUID(),
                 revision: after.revision), from: f.peer) &&
                 !gate.accept(SentryActivation(hostBootID: after.hostBootID, sessionID: after.sessionID,
-                revision: before.revision), from: f.peer), "legacy 경로도 구 session·revision을 각각 거절")
+                revision: before.revision), from: f.peer), "legacy 경로도 다른 session·이전 revision은 각각 거절")
             if case .prepared(let fresh, _) = gate.prepareControl(request(after, desired: true), from: f.peer) {
                 expect(gate.completeControl(fresh, result: .onVerified(surfacesVerified: true,
                     captureEpoch: sharedEpoch))?.operationState == .applied, "새 세대의 명시 ON만 실제 적용")
