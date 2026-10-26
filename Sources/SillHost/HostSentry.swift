@@ -152,9 +152,9 @@ final class HostSentry {
         if !active { surfacesChanged() }
     }
 
-    func start(recoverAudio: () -> Void = {}) {
+    // 기존 호출 형태만 호환한다. Sentry 복원은 오디오 격리·복구를 시작하지 않는다.
+    func start(recoverAudio _: () -> Void = {}) {
         if admission.isRequested {
-            recoverAudio()
             _ = reconcile()
         }
     }
