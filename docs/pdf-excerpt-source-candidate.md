@@ -50,3 +50,5 @@ PDF loading은 별도 Boolean 없이 요청 ID의 존재로 계산한다. 목록
 수리 검사는 `Tests/checks/linked-obsidian-notes/run.py <외장 출력> --pdf-recovery`로 실행한다. `PDF_RECOVERY_FIXTURE`에는 독립 검수의 `probe2/unicode-selection.pdf`, `PDF_RECOVERY_RETAINED`에는 기존 자체 REA PDF의 절대 경로를 준다. 기본385·왕복111 검사와 같은 runner이며 `--vault-roundtrip`에서는 기존 Mini 한시 소스와 listen 금지 guard를 사용한다. `pdf-loading-check.py <외장 출력> [기준 CanvasWorkspace.swift]`는 제품 메서드·목록 action·상태 선언을 그대로 추출해 지연 응답을 검사하고 source SHA를 남긴다. `Tests/checks/ipad-test-context/run.py`는 DEBUG/Release 격리 경로와 새 StateFile의 symlink·hardlink·override 경계를 검사한다. 모든 출력은 이 작업의 외장 전용 경로에 남긴다.
 
 이 수리는 현재 제품68에 미적용이다. push·통합·설치·Host·UI·오디오·실 vault·공유 포트 변경은 수행하지 않는다. 회전·다중 페이지 선택은 기존 제한을 유지한다. 새 고정 HEAD의 최종 독립 재검수는 부모 담당에게 맡긴다.
+
+최상위 PDF 출처 블록은 Foundation의 Markdown presentationIntent와 markdownSourcePosition으로 식별한다. HTML 주석·인용·목록·상위 코드 예제를 자체 fence 상태기로 추정하지 않는다. 실제 최상위 codeBlock에서만 원래 canonical fence와 버전·크기·JSON·좌표·NSRange 검증을 계속 적용한다. 인용문은 첫 들여쓰기 문자만 필요에 따라 entity로 표현해 공백·탭과 기호를 실제 화면에서 literal로 보존한다. JSON의 원문 quote는 변경하지 않는다. 이 경로는 iOS16 이상 API이며 현재 앱의 iOS17 이상 대상 안에 있다.

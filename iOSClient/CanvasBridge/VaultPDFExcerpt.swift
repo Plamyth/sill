@@ -135,8 +135,9 @@ struct VaultPDFExcerpt: Codable, Equatable {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]
         let source = String(decoding:try encoder.encode(self),as:UTF8.self)
         let quoted = quote.components(separatedBy:.newlines).map { line in
-            "> " + line.unicodeScalars.map { scalar in
-                scalar.isASCII && scalar != " " && scalar != "\t" && !CharacterSet.alphanumerics.contains(scalar)
+            "> " + line.unicodeScalars.enumerated().map { index, scalar in
+                let leadingIndent = index == 0 && (scalar == " " || scalar == "\t")
+                return scalar.isASCII && (leadingIndent || scalar != " " && scalar != "\t" && !CharacterSet.alphanumerics.contains(scalar))
                     ? "&#\(scalar.value);" : String(scalar)
             }.joined()
         }.joined(separator:"\n")
@@ -146,38 +147,26 @@ struct VaultPDFExcerpt: Codable, Equatable {
 
     static func parse(_ text: String) throws -> Self? {
         guard text.utf8.count <= 1024 * 1024 else { throw VaultPDFError.invalid }
-        let lines = text.replacingOccurrences(of:"\r\n",with:"\n").components(separatedBy:"\n")
-        var open: (marker: Character, length: Int, version: Int?, start: Int)?
-        var payload: (version: Int, start: Int, end: Int)?
-        for index in lines.indices {
-            let line = lines[index], body = line.drop(while:{ $0 == " " })
-            guard line.count - body.count <= 3, let marker = body.first,
-                  marker == "`" || marker == "~" else { continue }
-            let length = body.prefix(while:{ $0 == marker }).count
-            guard length >= 3 else { continue }
-            let tail = body.dropFirst(length)
-            if let current = open {
-                if marker == current.marker, length >= current.length,
-                   tail.allSatisfy({ $0 == " " || $0 == "\t" }) {
-                    if let version = current.version {
-                        payload = (version,current.start,index)
-                    }
-                    open = nil
-                }
-                continue
-            }
-            if tail.hasPrefix("ccr-pdf-source") {
-                guard payload == nil,
-                      let version = [1,2].first(where:{ line == "```ccr-pdf-source-v\($0)" })
-                else { throw VaultPDFError.invalid }
-                open = (marker,length,version,index)
-            } else if marker != "`" || !tail.contains("`") {
-                open = (marker,length,nil,index)
-            }
+        let normalized = text.replacingOccurrences(of:"\r\n",with:"\n")
+        guard let document = try? AttributedString(markdown:normalized,
+            options:.init(interpretedSyntax:.full,appliesSourcePositionAttributes:true)) else { throw VaultPDFError.invalid }
+        var source: String?, blockID: Int?
+        for run in document.runs {
+            guard let components = run.presentationIntent?.components, components.count == 1,
+                  case .codeBlock(let hint) = components[0].kind,
+                  let hint, hint.hasPrefix("ccr-pdf-source") else { continue }
+            if blockID == components[0].identity { continue }
+            guard blockID == nil, let position = run.markdownSourcePosition, position.startColumn == 1,
+                  let range = Range<String.Index>(position,in:normalized) else { throw VaultPDFError.invalid }
+            source = String(normalized[range]); blockID = components[0].identity
         }
-        guard open?.version == nil else { throw VaultPDFError.invalid }
-        guard let (version,start,end) = payload else { return nil }
-        let bytes = Data(lines[(start + 1)..<end].joined(separator:"\n").utf8)
+        guard let source else { return nil }
+        let lines = source.components(separatedBy:"\n")
+        guard lines.count >= 3,
+              let version = [1,2].first(where:{ lines.first == "```ccr-pdf-source-v\($0)" }),
+              lines.last!.range(of:"^ {0,3}`{3,}[ \t]*$",options:.regularExpression) != nil
+        else { throw VaultPDFError.invalid }
+        let bytes = Data(lines.dropFirst().dropLast().joined(separator:"\n").utf8)
         guard bytes.count <= 96 * 1024 else { throw VaultPDFError.invalid }
         var allowed: Set<String> = ["schemaVersion","excerptID","pdfPath","pdfSha256","pageIndex","mediaBox","cropBox","rotation","selectionRects","quote"]
         if version == 2 { allowed.insert("textRanges") }
