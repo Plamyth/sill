@@ -85,7 +85,7 @@ import StreamProtocol
     expect(inactive.allowsActions(ObjectIdentifier(peer)) &&
            inactive.allows(ObjectIdentifier(peer), epoch: nil) &&
            inactive.sourceSelectionAdmission(for: ObjectIdentifier(peer))?.ready == true &&
-           inactive.status(for: ObjectIdentifier(peer))?.sessionID != priorSession &&
+           inactive.status(for: ObjectIdentifier(peer))?.sessionID == priorSession &&
            inactive.status(for: ObjectIdentifier(peer))?.control == nil,
-           "인증된 비활성 복귀 뒤 영상 연결은 새 세대로 보존하며 없던 센츄리 제어 권한은 만들지 않음")
+           "인증된 비활성 복귀 뒤 같은 영상 연결을 보존하며 없던 센츄리 제어 권한은 만들지 않음")
 }

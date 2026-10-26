@@ -512,9 +512,10 @@ final class SentryAdmission: @unchecked Sendable {
         manualOwner = nil
         policyRevision = UUID()
         sessions = sessions.mapValues { previous in
-            var session = Session()
-            session.admitted = previous.admitted
-            session.controlDeviceID = previous.controlDeviceID
+            var session = previous
+            session.requests.removeAll()
+            session.selectionReady = false
+            session.selectionGeneration = nil
             return session
         }
         protectionRevision = UUID()

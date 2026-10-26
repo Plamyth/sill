@@ -146,11 +146,12 @@ import StreamProtocol
         releaseOK = true
         let beforeNativeReturn = controllerGate.status(for: lan)!
         expect(await controller.completeAuthenticatedLocalReturn() && !stored, "successful authenticated return clears native and persisted protection")
-        expect(controllerGate.status(for: lan)?.sessionID != beforeNativeReturn.sessionID && controllerGate.allowsActions(lan),
-               "인증된 복귀 뒤 기존 화면 연결은 새 세대로 유지")
+        expect(controllerGate.status(for: lan)?.sessionID == beforeNativeReturn.sessionID &&
+               controllerGate.status(for: lan)?.revision != beforeNativeReturn.revision && controllerGate.allowsActions(lan),
+               "인증된 복귀 뒤 같은 화면 연결을 보존하고 상태 세대는 갱신")
         let staleNativeActivation = SentryActivation(hostBootID: beforeNativeReturn.hostBootID,
             sessionID: beforeNativeReturn.sessionID, revision: beforeNativeReturn.revision)
-        expect(!controllerGate.accept(staleNativeActivation, from: lan), "복귀 전 원격 권한은 새 영상 연결에서 재사용 불가")
+        expect(!controllerGate.accept(staleNativeActivation, from: lan), "복귀 전 원격 권한은 같은 영상 연결에서도 재사용 불가")
         expect(!controllerGate.allowsWire(Data([0, 1]), for: lan, currentEpoch: epoch), "malformed queued wire cannot bypass gate")
         let callbackGate = SentryAdmission()
         var callback: (() -> Void)?
