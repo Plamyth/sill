@@ -2,7 +2,7 @@ import Foundation
 
 enum LocalAudioRelayClosure {
     private static let serverHashes: [String: String] = [
-        "server/audio-forwarding-authority.js": "ab379aba44070cbfe7da2ccd8e7324c56f4e218fd1781b43a0f951ec23011bbf",
+        "server/audio-forwarding-authority.js": "ad9bc1a57242af3b981b9c1f46fd5adb76b9bafdd3c7a9e790158fd5b853188b",
         "server/audio-forwarding-journal.js": "4a9f59926f385019f0e83716ca9840c6cc5c3cbc5e1259322c9e9fb82fce27dc",
         "server/audio-forwarding-proxy.js": "b7cdb3504785a315a2c1ed304e0d62583c60506f70c8fad0f56231c1337ff48c",
         "server/audio-router.py": "a755159ae8c56c1bb902716ad4ffac6c7819782c62f017b14edc22bed88b59e0",
