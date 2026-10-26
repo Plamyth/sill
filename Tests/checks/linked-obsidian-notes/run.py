@@ -29,6 +29,7 @@ sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            Path(__file__).with_name('WholeNoteRecoveryChecks.swift'),
            Path(__file__).with_name('PencilVaultRoundtripChecks.swift'),
            Path(__file__).with_name('PDFExcerptChecks.swift'),
+           Path(__file__).with_name('PDFExcerptRecoveryChecks.swift'),
            Path(__file__).with_name('main.swift')]
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 ios = sorted((root / 'iOSClient/CanvasBridge').glob('*.swift')) + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']

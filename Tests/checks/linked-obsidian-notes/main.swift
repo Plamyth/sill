@@ -98,6 +98,11 @@ final class NoteProtocol: URLProtocol {
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
         }
+        if CommandLine.arguments.contains("--pdf-recovery") {
+            try await checkPDFExcerptRecovery(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--transport-body") {
             var scene = CanvasScene()
             _ = scene.addNode(kind: .note, at: .init(x: 0, y: 0), text: "")
