@@ -19,9 +19,11 @@ extension StreamClient {
     func observeIPadSentry(catalog: Data, from peer: NWConnection) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard connection === peer else { return }
+        let binding = sentryBinding(on: peer)
+        guard !sentryControl.isRetired(catalog: catalog, binding: binding, from: ObjectIdentifier(peer)) else { return }
         sentryObservation.observe(catalog: catalog, from: ObjectIdentifier(peer))
         sentryControl.observe(catalog: catalog, observation: sentryObservation,
-            binding: sentryBinding(on: peer), from: ObjectIdentifier(peer))
+            binding: binding, from: ObjectIdentifier(peer))
     }
 
     func setIPadSentry(desired: Bool) {

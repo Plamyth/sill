@@ -1,6 +1,9 @@
 import Foundation
+import Darwin
 import CryptoKit
 import StreamProtocol
+
+setbuf(stdout, nil)
 
 var checks = 0
 func check(_ passed: @autoclosure () -> Bool, _ label: String) {

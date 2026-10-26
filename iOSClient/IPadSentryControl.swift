@@ -75,6 +75,7 @@ struct IPadSentryControl {
     private var context: Context?
     private var pending: Pending?
     private var retired: [Retired] = []
+    private var restorationFailed = false
     private var inFlight = false
     private var deadline: TimeInterval?
     private(set) var phase: Phase = .idle
@@ -84,6 +85,7 @@ struct IPadSentryControl {
         self.store = store
         guard let data = store.load() else { return }
         phase = .unknown
+        restorationFailed = true
         let active: Stored?
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["version"] != nil {
             guard let ledger = try? JSONDecoder().decode(Ledger.self, from: data), ledger.version == 3,
@@ -92,6 +94,14 @@ struct IPadSentryControl {
                   ledger.retired.allSatisfy(Self.validRetired),
                   ledger.retired.enumerated().allSatisfy({ index, item in !ledger.retired.prefix(index).contains(where: { $0.epoch == item.epoch }) }) else {
                 problem = "이전 센트리 요청 이력을 확인하지 못했습니다."
+                return
+            }
+            let requests = [ledger.active].compactMap { $0 } + ledger.retired.compactMap(\.request)
+            let ids = requests.flatMap { [$0.rawRequest] + [$0.priorRawRequest].compactMap { $0 } }
+                .compactMap(Self.request).map(\.requestID)
+            guard Set(ids).count == ids.count,
+                  ledger.active.flatMap(Self.epoch).map({ epoch in !ledger.retired.contains(where: { $0.epoch == epoch }) }) ?? true else {
+                problem = "이전 센트리 요청 이력의 식별자가 충돌합니다."
                 return
             }
             active = ledger.active
@@ -108,6 +118,7 @@ struct IPadSentryControl {
         } else {
             phase = .idle
         }
+        restorationFailed = false
     }
 
     mutating func bind(_ next: ObjectIdentifier?) {
@@ -118,7 +129,7 @@ struct IPadSentryControl {
     }
 
     mutating func observe(catalog: Data, observation: IPadSentryObservation, binding: Binding?, from peer: ObjectIdentifier) {
-        guard self.peer == peer else { return }
+        guard self.peer == peer, !restorationFailed else { return }
         guard case .reported(let state) = observation.status,
               let binding, let report = IPadSentryObservation.decodeCatalog(catalog),
               report == state, let control = report.control else {
@@ -162,7 +173,7 @@ struct IPadSentryControl {
     var canSet: Bool { canSet(desired: true) || canSet(desired: false) }
 
     func canSet(desired: Bool) -> Bool {
-        guard context != nil, peer != nil, !inFlight else { return false }
+        guard !restorationFailed, context != nil, peer != nil, !inFlight else { return false }
         guard let pending else { return phase == .idle }
         guard matches(pending) else { return false }
         switch phase {
@@ -239,9 +250,7 @@ struct IPadSentryControl {
         guard self.peer == peer else { return nil }
         revalidate(binding: binding)
         if data.count <= Self.responseCap, let reply = try? SentryControlResponse.decodePayload(data),
-           retiredRequests.compactMap(Self.request).contains(where: { $0.requestID == reply.requestID }) {
-            return nil
-        }
+           isRetired(reply.state, binding: binding) { return nil }
         guard var pending, matches(pending), let context, context.binding == binding,
               data.count <= Self.responseCap,
               let reply = try? SentryControlResponse.decodePayload(data),
@@ -340,14 +349,26 @@ struct IPadSentryControl {
         stored.binding.hostPin.count == 32 && stored.binding.deviceFingerprint.count == 32 &&
         !stored.binding.macID.isEmpty && Self.request(stored.rawRequest).map { validPrior(stored.priorRawRequest, for: $0) } == true
     }
+    private static func epoch(_ stored: Stored) -> Epoch? {
+        request(stored.rawRequest).map { .init(binding: stored.binding, hostBootID: $0.hostBootID,
+            sessionID: $0.sessionID, authorizationGeneration: $0.authorizationGeneration) }
+    }
     private static func validRetired(_ retired: Retired) -> Bool {
         let epoch = retired.epoch
         guard epoch.binding.hostPin.count == 32, epoch.binding.deviceFingerprint.count == 32,
               !epoch.binding.macID.isEmpty else { return false }
         guard let stored = retired.request else { return true }
-        guard validStored(stored), let request = request(stored.rawRequest) else { return false }
-        return stored.binding == epoch.binding && request.hostBootID == epoch.hostBootID &&
-            request.sessionID == epoch.sessionID && request.authorizationGeneration == epoch.authorizationGeneration
+        return validStored(stored) && Self.epoch(stored) == epoch
+    }
+    private func isRetired(_ state: SentryState, binding: Binding?) -> Bool {
+        guard let binding, let control = state.control else { return false }
+        let epoch = Epoch(binding: binding, hostBootID: state.hostBootID, sessionID: state.sessionID,
+                          authorizationGeneration: control.authorizationGeneration)
+        return retired.contains { $0.epoch == epoch }
+    }
+    func isRetired(catalog: Data, binding: Binding?, from peer: ObjectIdentifier) -> Bool {
+        guard self.peer == peer, let state = IPadSentryObservation.decodeCatalog(catalog) else { return false }
+        return isRetired(state, binding: binding)
     }
     private static func request(_ raw: Data) -> SentryControlRequest? {
         try? SentryControlRequest(rawRequest: raw)
