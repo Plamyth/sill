@@ -115,4 +115,18 @@ func checkPDFExcerptFences(_ check: (Bool,String) -> Void) throws {
               "leading indentation preserves exact original quote JSON")
     }
 
+    for fence in ["```", "~~~"] {
+        for version in [1,2,99] {
+            for closed in [true,false] {
+                let empty = fence + "ccr-pdf-source-v\(version)\n" + (closed ? fence + "\n" : "")
+                try rejects(empty,"empty actual source block refuses, including future or unclosed")
+                try rejects(markdown + "\n" + empty,"empty additional source block cannot bypass uniqueness")
+                try accepts("````markdown\n" + empty + "\n````\n" + markdown,excerpt,
+                            "empty source example inside outer code remains inert")
+                try accepts("<!--\n" + empty + "\n-->\n" + markdown,excerpt,
+                            "empty source example inside HTML comment remains inert")
+            }
+        }
+    }
+
 }
