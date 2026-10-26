@@ -16,6 +16,32 @@ struct Checks {
     static func main() throws {
         let id = AudioForwardingDeviceID(hex: String(repeating: "a", count: 64))!
         let generation = UUID()
+        let independent = try AudioForwardingSnapshot.Intent(pairedDeviceId: id, intentId: UUID(),
+            intentRevision: .init(1), intentGeneration: generation, inputDesired: true, outputDesired: true,
+            sentryDesired: false)
+        check(!independent.sentryDesired && independent.localMutedDesired)
+        let defaultIntent = try AudioForwardingSnapshot.Intent(pairedDeviceId: id, intentId: UUID(),
+            intentRevision: .init(1), intentGeneration: generation, inputDesired: true, outputDesired: true)
+        check(!defaultIntent.sentryDesired)
+        for desired in [false, true] {
+            var value = try object(independent)
+            value["sentryDesired"] = desired
+            let round = try decoder.decode(AudioForwardingSnapshot.Intent.self,
+                from: JSONSerialization.data(withJSONObject: value))
+            check(round.sentryDesired == desired && round.localMutedDesired)
+        }
+        for invalid in ["false", 0, NSNull()] as [Any] {
+            var value = try object(independent); value["sentryDesired"] = invalid
+            try refuses(AudioForwardingSnapshot.Intent.self, value)
+        }
+        var missingSentry = try object(independent); missingSentry.removeValue(forKey: "sentryDesired")
+        try refuses(AudioForwardingSnapshot.Intent.self, missingSentry)
+        var unmuted = try object(independent); unmuted["localMutedDesired"] = false
+        try refuses(AudioForwardingSnapshot.Intent.self, unmuted)
+        check((try? AudioForwardingSnapshot.Intent(pairedDeviceId: id, intentId: UUID(), intentRevision: .init(1),
+            intentGeneration: generation, inputDesired: true, outputDesired: true,
+            sentryDesired: false, localMutedDesired: false)) == nil)
+        print("PASS optional Sentry strict boolean wire; physical mute remains mandatory")
         let credential = try AudioForwardingCredential(pairedDeviceId: id, pairingGeneration: generation,
             credential: String(repeating: "A", count: 43))
         let empty = try AudioForwardingSnapshot(revision: .init(2), intent: nil, binding: nil)
