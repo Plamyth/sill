@@ -591,11 +591,12 @@ package final class HostAudioPrivacy {
             schedule()
             return failedReturn("HAL 감시 종료")
         }
-        guard localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
+        guard admission(), localReturnID == request, privacyGeneration == generation, latched, persistenceHealthy,
               participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
               let beforeRestore = try? readSnapshot(), original.matches(beforeRestore) || (try? beforeRestore.plan(allowPartial: true).isEmpty) == true,
               localReturnID == request, privacyGeneration == generation,
-              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return failedReturn("원본 HAL·요청 재검증") }
+              participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
+              admission() else { return failedReturn("원본 HAL·요청 재검증") }
         let restorationApplied = hal.restoreLocal(original)
         guard restorationApplied, let restored = try? readSnapshot(), original.matches(restored),
               !Task.isCancelled, ContinuousClock.now < deadline,
