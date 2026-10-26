@@ -58,3 +58,11 @@ final class StreamClient {
     init(store: IPadSentryControl.Store) { sentryControl = IPadSentryControl(store: store) }
     // ACCEPT_REPLY
 }
+
+final class IPadMicrophoneDiagnostics {
+    static let shared = IPadMicrophoneDiagnostics()
+    private(set) var receivedHeaders: [(StreamMessageKind, Double)] = []
+    func received(_ kind: StreamMessageKind, hostTimestamp: Double) {
+        receivedHeaders.append((kind, hostTimestamp))
+    }
+}

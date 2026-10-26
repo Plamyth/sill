@@ -978,3 +978,26 @@ for slot in ["active", "prior"] {
 }
 check(retirementRegressions.allSatisfy { $0 }, "독립 검수의 퇴역 회귀 전체")
 print("최종 소비자 검사 \(checks)개와 퇴역 경계 \(retirementRegressions.count)개 통과")
+
+do {
+    let memory = MemoryStore(), client = StreamClient(store: MemoryStore().store)
+    let current = NWConnection(), stale = NWConnection(), id = ObjectIdentifier(current)
+    client.connection = current; client.sentryControl = IPadSentryControl(store: memory.store)
+    client.sentryControl.bind(id); client.sentryObservation.bind(id)
+    client.observeIPadSentry(catalog: catalog(state()), from: current); client.setIPadSentry(desired: true)
+    let prior = reply(client.sentryControl, "applied", state(.userSessionProtected))
+    client.observeIPadSentry(catalog: catalog(generationState(nextAuth)), from: current)
+    client.setIPadSentry(desired: false)
+    let active = client.sentryControl.originalRequest, phase = client.sentryControl.phase
+    let received = IPadMicrophoneDiagnostics.shared.receivedHeaders.count
+    client.receiveIPadSentry(prior, from: stale, hostTimestamp: 999); pump()
+    check(IPadMicrophoneDiagnostics.shared.receivedHeaders.count == received && client.sentryControl.originalRequest == active,
+          "metadata 합본에서 이전 peer envelope 기록·소비0")
+    client.receiveIPadSentry(prior, from: current, hostTimestamp: 123); pump()
+    let headers = IPadMicrophoneDiagnostics.shared.receivedHeaders
+    check(headers.count == received + 1 && headers.last!.0 == .sentryState && headers.last!.1 == 123,
+          "현재 peer 실제 envelope 관측은 원 timestamp와kind 보존")
+    check(client.sentryControl.originalRequest == active && client.sentryControl.phase == phase,
+          "metadata 관측 후에도 퇴역 응답은 현재 제어 상태 변경0")
+}
+print("합본 소비자 검사 \(checks)개와 퇴역 경계 \(retirementRegressions.count)개 통과")
