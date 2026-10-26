@@ -749,3 +749,23 @@ do {
           "Host 원장 eviction unknown은 true eligibility 유지·완료/새 실행/원문 CAS 수정 0")
 }
 print("소비자 회귀 \(checks)/\(checks) 통과")
+
+
+func generationState(_ generation: String, phase: SentryState.Phase = .inactive) -> [String: Any] {
+    var value = state(phase)
+    var capability = value["control"] as! [String: Any]
+    capability["authorizationGeneration"] = generation
+    value["control"] = capability
+    return value
+}
+for completion in ["unacknowledged", "pending", "applied"] {
+    let memory = MemoryStore(); var tested = ready(memory)
+    _ = perform(&tested, desired: true)
+    let oldRaw = tested.originalRequest!
+    let oldReply = reply(tested, "applied", state(.userSessionProtected))
+    if completion == "pending" { _ = tested.receive(reply(tested, "pending", state(.pending)), binding: binding, from: peerID) }
+    if completion == "applied" { _ = tested.receive(oldReply, binding: binding, from: peerID) }
+    observe(&tested, generationState(nextAuth))
+    check(tested.originalRequest == nil && tested.canSet && !tested.canQuery,
+          "동일 연결 인가 세대 전환은 과거 송신 슬롯만 퇴역 \(completion)")
+}
