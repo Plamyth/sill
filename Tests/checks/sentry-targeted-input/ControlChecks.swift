@@ -89,6 +89,7 @@ final class ControlServer {
     }
     @MainActor static func main() async {
         await delayedControlChecks()
+        await reconnectedControlChecks()
         let key = Data(repeating: 3, count: 32), connection = NWConnection(), coordinator = ControlCoordinator()
         coordinator.join(connection, fingerprint: key)
         let state = coordinator.server.sentryAdmission.status(for: ObjectIdentifier(connection))!
@@ -169,6 +170,45 @@ final class ControlServer {
 }
 
 extension ControlChecks {
+    @MainActor static func reconnectedControlChecks() async {
+        for initiallyOn in [false, true] {
+            for trustRevoked in [false, true] {
+                let coordinator = ControlCoordinator(), old = NWConnection(), current = NWConnection()
+                let gate = ReleaseGate(), key = Data(repeating: 12, count: 32)
+                coordinator.join(old, fingerprint: key)
+                if initiallyOn {
+                    _ = await coordinator.receive(coordinator.request(true, from: old).rawRequest, from: old)
+                }
+                coordinator.releaseGate = gate
+                let off = coordinator.request(false, from: old)
+                let task = Task { await coordinator.receive(off.rawRequest, from: old) }
+                let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+                while !gate.entered && ContinuousClock.now < deadline { await Task.yield() }
+                check(gate.entered, "구 연결의 OFF가 비동기 해제 대기에 도달")
+                coordinator.leave(old)
+                coordinator.join(current, fingerprint: key)
+                let before = coordinator.server.sentryAdmission.status(for: ObjectIdentifier(current))!
+                check(before.control != nil && before.sessionID != off.sessionID,
+                      "동일 기기의 새 연결은 별도 세션과 현재 제어 권한 보유")
+                if trustRevoked { coordinator.remote?.keys.remove(key) }
+                gate.release()
+                check(await task.value == nil, "구 연결의 늦은 완료는 응답을 보내지 않음")
+                let after = coordinator.server.sentryAdmission.status(for: ObjectIdentifier(current))!
+                if trustRevoked {
+                    let revokedResponse = await coordinator.receive(off.rawRequest, from: current)
+                    check(after.control == nil && revokedResponse == nil,
+                          "실제 paired 신뢰 철회는 새 연결까지 제어와 원문 조회 차단")
+                } else {
+                    check(after.sessionID == before.sessionID && after.control == before.control,
+                          "구 연결의 늦은 완료가 같은 기기의 새 연결 권한을 철회하지 않음")
+                    let next = coordinator.request(true, from: current)
+                    check(await coordinator.receive(next.rawRequest, from: current)?.accepted == true,
+                          "새 연결은 현재 세대의 명시 요청을 계속 처리")
+                }
+            }
+        }
+    }
+
     @MainActor static func delayedControlChecks() async {
         for (outcome, initiallyOn) in [("ack", false), ("owner", false), ("cancel", false),
                                      ("ack", true), ("owner", true), ("cancel", true)] {

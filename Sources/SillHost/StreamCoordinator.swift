@@ -3986,7 +3986,8 @@ extension StreamCoordinator {
     private func handleSentryControl(_ request: SentryControlRequest, from connection: NWConnection) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         let peer = ObjectIdentifier(connection)
-        guard let sentry, let owner = currentSentryOwner(connection) else { return }
+        guard let sentry, let owner = currentSentryOwner(connection),
+              let fingerprint = routes[peer]?.fingerprint else { return }
         let response: SentryControlResponse?
         switch server.sentryAdmission.prepareControl(request, from: peer) {
         case .unauthorized: return
@@ -3998,7 +3999,11 @@ extension StreamCoordinator {
             }
             let applied = await sentry.setRemoteProtection(request.desired, until: deadline, current: current)
             guard currentSentryOwner(connection)?.deviceID == owner.deviceID else {
-                server.sentryAdmission.revokeControl(forDeviceID: owner.deviceID)
+                if remote?.isPaired(fingerprint) != true {
+                    server.sentryAdmission.revokeControl(forDeviceID: owner.deviceID)
+                } else {
+                    _ = server.sentryAdmission.completeControl(ticket, result: .failed)
+                }
                 sentry.surfacesChanged()
                 return
             }
