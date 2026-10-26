@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import AVFoundation
+#endif
 import Network
 import QuartzCore
 import UIKit
@@ -181,6 +184,58 @@ final class StreamClient: ObservableObject {
         }
     }
     #if os(iOS)
+    func observeAudioDiagnostics() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let scope = desiredAudio.scope
+        let kind: String?
+        let sourceID: UInt32?
+        switch scope?.source {
+        case .window(let id): kind = "window"; sourceID = id
+        case .desktop: kind = "desktop"; sourceID = nil
+        case .none?: kind = "none"; sourceID = nil
+        case nil: kind = nil; sourceID = nil
+        }
+        let phase: String
+        switch remoteAudioControl.status {
+        case .unavailable: phase = "unavailable"
+        case .off: phase = "off"
+        case .requesting: phase = "requesting"
+        case .starting: phase = "starting"
+        case .listening: phase = "listening"
+        case .failed: phase = "failed"
+        }
+        let microphonePhaseName: String
+        switch microphonePolicy.phase {
+        case .unavailable: microphonePhaseName = "unavailable"
+        case .off: microphonePhaseName = "off"
+        case .authorizing: microphonePhaseName = "authorizing"
+        case .requesting: microphonePhaseName = "requesting"
+        case .capturing: microphonePhaseName = "capturing"
+        case .live: microphonePhaseName = "live"
+        case .stopping: microphonePhaseName = "stopping"
+        case .cleanupRequired: microphonePhaseName = "cleanupRequired"
+        case .failed: microphonePhaseName = "failed"
+        }
+        let sentry: SentryState?
+        if case .reported(let state) = sentryObservation.status { sentry = state } else { sentry = nil }
+        let session = AVAudioSession.sharedInstance()
+        IPadMicrophoneDiagnostics.shared.snapshot(runtime: .init(
+            connected: connected, foreground: appInForeground && UIApplication.shared.applicationState == .active,
+            sourceKind: kind, sourceID: sourceID, generation: scope?.generation, videoEpoch: scope?.videoEpoch,
+            microphoneDesired: desiredAudio.selection.microphone, playbackDesired: desiredAudio.selection.playback,
+            microphonePhase: microphonePhaseName, playbackPhase: phase,
+            capturePresent: microphoneCapture != nil, captureRunning: microphoneCapture?.diagnosticRunning,
+            cachedAudioPrivacyProtected: audioPrivacyState?.protected,
+            forwardingPhase: String(describing: audioForwarding.phase), sentryPhase: sentry?.phase.rawValue,
+            sentryRequested: sentry?.requested, hostBootID: sentry?.hostBootID, hostSessionID: sentry?.sessionID),
+            render: remoteAudio.diagnosticRender, playbackRunning: remoteAudio.diagnosticRunning,
+            session: ["microphoneAuthorizationRawValue": AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
+                "category": session.category.rawValue, "mode": session.mode.rawValue,
+                "inputPortTypes": Array(session.currentRoute.inputs.prefix(8)).map { $0.portType.rawValue },
+                "outputPortTypes": Array(session.currentRoute.outputs.prefix(8)).map { $0.portType.rawValue },
+                "outputVolume": session.outputVolume, "sampleRate": session.sampleRate,
+                "inputChannels": session.inputNumberOfChannels, "outputChannels": session.outputNumberOfChannels])
+    }
     @Published var microphonePhase: IPadMicrophonePolicy.Phase = .unavailable
     @Published var microphoneReceipt: MicrophoneReceipt?
     @Published var microphoneCleanupProblem: String?
@@ -2065,6 +2120,9 @@ final class StreamClient: ObservableObject {
         NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.wentToBackground()
         }
+        #endif
+        #if os(iOS)
+        observeAudioDiagnostics()
         #endif
     }
 
@@ -5312,6 +5370,7 @@ final class StreamClient: ObservableObject {
         switch header.kind {
         #if os(iOS)
         case .sentryState:
+            if connection === peer { IPadMicrophoneDiagnostics.shared.received(.sentryState, hostTimestamp: header.timestamp) }
             receiveIPadSentry(data, from: peer)
         case .sentryReturnState:
             receiveIPadSentryReturn(data, from: peer)
@@ -5401,6 +5460,10 @@ final class StreamClient: ObservableObject {
                 #endif
                 // A remote session, and one at home over TLS, is connected at its first window list,
                 // not at `.ready`: the Mac has admitted this device's key.
+                #if os(iOS)
+                IPadMicrophoneDiagnostics.shared.received(.catalog, hostTimestamp: header.timestamp,
+                    generation: list.inputGeneration.flatMap(UUID.init(uuidString:)), videoEpoch: list.videoEpoch?.id)
+                #endif
                 self.remoteSessionReady()
                 self.homeSessionReady()
                 #if os(iOS)
@@ -5676,6 +5739,7 @@ final class StreamClient: ObservableObject {
             #if os(iOS)
             self.sentryControl.checkTimeout(now: ProcessInfo.processInfo.systemUptime)
             self.checkIPadSentryReturnTimeout(now: ProcessInfo.processInfo.systemUptime)
+            self.observeAudioDiagnostics()
             #endif
             #if DEBUG
             self.recordStartupVideo()

@@ -41,6 +41,8 @@ final class NWConnection {
 }
 final class SessionLink { var connection: NWConnection? }
 final class StreamClient {
+ func observeAudioDiagnostics() {}
+ func refreshExtendedDesktopAdmission() {}
     private let link = SessionLink()
     var selectionRevision: String?
     var sourceCatalogEpoch: UUID?

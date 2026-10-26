@@ -54,17 +54,25 @@ private let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Da
             try? await Task.sleep(nanoseconds: 20_000_000)
             guard let engine = player.currentEngine else { fatalError("fixture engine missing") }
             expect(engine.node.render().contains { $0 != 0 }, "buffered production render is audible before revoke")
+            let rendered = player.diagnosticRender
+            expect(rendered?.callbacks == 1 && rendered?.copiedFrames == 32 && rendered?.silenceFilledFrames == 0,
+                   "render metadata counts copied frames without inspecting samples")
             DispatchQueue.global().sync {
                 client.catalog(Wire.encode(catalog(privacy)), from: peer)
                 gate.emit(frame, captureID: capture)
                 expect(sent.withLock { $0 } == 1, "network downgrade blocks actual send while main held")
                 expect(engine.node.render().allSatisfy { $0 == 0 }, "network downgrade silences buffered render while main held")
+                expect(player.diagnosticRender?.silenceFilledFrames == 32 && player.diagnosticRender?.admissionDeniedFrames == 32,
+                       "revoked callback records silence fill and admission denial separately")
                 #if ADMISSION
                 _ = client.audioAdmission.observe(catalog(yes), from: ObjectIdentifier(peer))
                 gate.open(connection: peer, scope: scope, grant: UUID(), captureID: capture, admission: ticket)
                 gate.emit(frame, captureID: capture)
                 expect(sent.withLock { $0 } == 1, "reallow cannot revive old grant or delayed open")
                 expect(engine.node.render().allSatisfy { $0 == 0 }, "reallow cannot resurrect old buffered samples")
+                expect(player.diagnosticRender?.callbacks == 3 && player.diagnosticRender?.copiedFrames == 32 &&
+                       player.diagnosticRender?.admissionDeniedFrames == 64,
+                       "old-ticket callbacks cannot appear as newly rendered audio")
                 #endif
             }
             player.stop()

@@ -6,6 +6,9 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
     struct Attempt: Sendable {
         let id: UUID
         let log: IPadMicrophoneDiagnostics
+        func count(_ metric: Metric, _ amount: UInt64 = 1, errorCode: Int? = nil) {
+            log.count(id, metric, amount, errorCode: errorCode)
+        }
         func record(_ event: String, _ fields: @autoclosure () -> [String: String] = [:]) { log.record(id, event, fields) }
     }
     private struct Event: Codable {
@@ -15,7 +18,92 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         let event: String
         let fields: [String: String]
     }
+    enum Metric: String, Codable, CaseIterable {
+        case admittedPlaybackPackets, decodedPackets, decodedFrames, emptyDecodedPackets
+        case decoderUnavailable, decodeErrors, invalidAudioPackets, stalePlaybackPackets
+        case tapBuffers, tapFrames, convertedFrames, capturePackets, capturePacketFrames, conversionErrors
+        case sendSubmittedBatches, sendSubmittedPackets, sendSubmittedFrames
+        case sendCompletedBatches, sendFailedBatches, captureDroppedBuffers, gateDroppedBatches
+        case captureStartErrors, playbackStartErrors
+    }
+    enum ReceptionKind: String { case catalog, audioPacket, remoteAudioState, sentryState, microphoneReceipt }
+    struct Reception: Codable {
+        let messages: UInt64
+        let observedAt: Double
+        let observedUptimeNanoseconds: UInt64
+        let hostTimestamp: Double?
+        let generation: UUID?
+        let videoEpoch: UUID?
+    }
+    func received(_ kind: ReceptionKind, hostTimestamp: Double, generation: UUID? = nil, videoEpoch: UUID? = nil) {
+        state.withLock { value in
+            let old = value.receptions[kind.rawValue]?.messages ?? 0
+            value.receptions[kind.rawValue] = Reception(messages: old == UInt64.max ? old : old + 1,
+                observedAt: Date().timeIntervalSince1970,
+                observedUptimeNanoseconds: DispatchTime.now().uptimeNanoseconds,
+                hostTimestamp: hostTimestamp.isFinite ? hostTimestamp : nil, generation: generation, videoEpoch: videoEpoch)
+        }
+    }
+
+    func connectionChanged() {
+        state.withLock {
+            $0.connectionObservationID = UUID()
+            $0.receptions.removeAll(keepingCapacity: true)
+            $0.runtime = nil
+        }
+    }
+    struct Runtime: Codable {
+        var connected: Bool
+        var foreground: Bool
+        var sourceKind: String?
+        var sourceID: UInt32?
+        var generation: UUID?
+        var videoEpoch: UUID?
+        var microphoneDesired: Bool
+        var playbackDesired: Bool
+        var microphonePhase: String
+        var playbackPhase: String
+        var capturePresent: Bool
+        var captureRunning: Bool?
+        var cachedAudioPrivacyProtected: Bool?
+        var forwardingPhase: String
+        var sentryPhase: String?
+        var sentryRequested: Bool?
+        var hostBootID: UUID?
+        var hostSessionID: UUID?
+    }
+    struct AttemptCounters: Codable {
+        let attempt: UUID
+        let firstObservedAt: Double
+        let firstObservedUptime: UInt64
+        let connectionObservationID: UUID
+        let scopeAtFirstObservation: Runtime?
+        var counters: [String: UInt64] = [:]
+        var lastErrorCode: Int?
+        var lastErrorMetric: Metric?
+        var lastObservedAt: Double
+    }
+    struct RenderCounters: Codable {
+        let attempt: UUID
+        let formatVersion: UInt64
+        var callbacks: UInt64 = 0
+        var requestedFrames: UInt64 = 0
+        var copiedFrames: UInt64 = 0
+        var silenceFilledFrames: UInt64 = 0
+        var underrunTransitions: UInt64 = 0
+        var admissionDeniedFrames: UInt64 = 0
+    }
+    private let observationID = UUID()
+    private let observationStartedAt = Date().timeIntervalSince1970
+    private let observationStartedUptime = DispatchTime.now().uptimeNanoseconds
     private struct Storage {
+        var connectionObservationID = UUID()
+        var receptions: [String: Reception] = [:]
+        var counters: [UUID: AttemptCounters] = [:]
+        var counterOrder: [UUID] = []
+        var runtime: Runtime?
+        var snapshotPending = false
+        var nextSnapshotUptime: UInt64 = 0
         var events: [Event] = []
         var seen: [UUID: Set<String>] = [:]
         var attempts: [UUID] = []
@@ -28,8 +116,93 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
     private let writer = DispatchQueue(label: "sill.microphone.diagnostics", qos: .utility)
 
     init(fileURL: URL) { self.fileURL = fileURL }
-    func attempt(_ id: UUID) -> Attempt { Attempt(id: id, log: self) }
+    func attempt(_ id: UUID) -> Attempt {
+        state.withLock { ensureAttempt(id, in: &$0) }
+        return Attempt(id: id, log: self)
+    }
+    private func ensureAttempt(_ id: UUID, in value: inout Storage) {
+        guard value.counters[id] == nil else { return }
+        if value.counterOrder.count == 8 { value.counters.removeValue(forKey: value.counterOrder.removeFirst()) }
+        value.counterOrder.append(id)
+        value.counters[id] = AttemptCounters(attempt: id, firstObservedAt: Date().timeIntervalSince1970,
+            firstObservedUptime: DispatchTime.now().uptimeNanoseconds, connectionObservationID: value.connectionObservationID, scopeAtFirstObservation: value.runtime,
+            lastObservedAt: Date().timeIntervalSince1970)
+    }
+    private func count(_ id: UUID, _ metric: Metric, _ amount: UInt64, errorCode: Int?) {
+        state.withLock { value in
+            // Late callbacks from evicted attempts must not displace the current eight attempts.
+            guard var counter = value.counters[id] else { return }
+            let old = counter.counters[metric.rawValue] ?? 0
+            counter.counters[metric.rawValue] = old > UInt64.max - amount ? UInt64.max : old + amount
+            counter.lastObservedAt = Date().timeIntervalSince1970
+            if let errorCode { counter.lastErrorCode = errorCode; counter.lastErrorMetric = metric }
+            value.counters[id] = counter
+        }
+    }
+    var snapshotURL: URL { fileURL.deletingLastPathComponent().appendingPathComponent("audio-metadata-snapshot.json") }
+
+    /// Called by existing main-queue lifecycle/statistics work, never by the audio callback.
+    func snapshot(runtime: Runtime, render: RenderCounters?, playbackRunning: Bool, session: @autoclosure () -> [String: Any]) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let now = DispatchTime.now().uptimeNanoseconds
+        let counters = state.withLock { value -> [AttemptCounters]? in
+            value.runtime = runtime
+            guard !value.snapshotPending, now >= value.nextSnapshotUptime else { return nil }
+            value.snapshotPending = true
+            value.nextSnapshotUptime = now + 1_000_000_000
+            return value.counterOrder.compactMap { value.counters[$0] }
+        }
+        guard let counters else { return }
+        let info = Bundle.main.infoDictionary ?? [:]
+        let null = NSNull()
+        let encode: (any Encodable) -> Any = { value in
+            guard let data = try? JSONEncoder().encode(value),
+                  let result = try? JSONSerialization.jsonObject(with: data) else { return null }
+            return result
+        }
+        let reception = state.withLock { (id: $0.connectionObservationID, latest: $0.receptions) }
+        let latest = reception.latest.values.max { $0.observedUptimeNanoseconds < $1.observedUptimeNanoseconds }
+        let verified = info["CCRSourceIdentityVerified"] as? Bool == true
+        let document: [String: Any] = [
+            "schema": "ccr.ipad.audio-metadata/v1", "generatedAt": Date().timeIntervalSince1970,
+            "appObservationSampledAt": Date().timeIntervalSince1970,
+            "connectionObservationID": reception.id.uuidString, "receivedObservations": encode(reception.latest),
+            "sentryAndAudioPrivacyScope": "cached received Host reports only; not current HAL observation or protection verification",
+            "observationScope": "current app process metadata; no live acceptance claim",
+            "sampledUptimeNanoseconds": now, "observedAt": latest?.observedAt ?? (null as Any),
+            "observedUptimeNanoseconds": latest?.observedUptimeNanoseconds ?? (null as Any),
+            "receivedObservationsScope": "current peer envelopes observed by app; not payload acceptance or current HAL state",
+            "observationID": observationID.uuidString,
+            "observationStartedAt": observationStartedAt, "observationStartedUptimeNanoseconds": observationStartedUptime,
+            "processID": ProcessInfo.processInfo.processIdentifier,
+            "build": info["CFBundleVersion"] as? String ?? (null as Any),
+            "version": info["CFBundleShortVersionString"] as? String ?? (null as Any),
+            "commit": verified ? (info["CCRSourceCommit"] as? String ?? (null as Any)) : null,
+            "tree": verified ? (info["CCRSourceTree"] as? String ?? (null as Any)) : null,
+            "sourceIdentityVerified": verified,
+            "runtime": encode(runtime), "audioSession": session(), "attempts": encode(counters),
+            "render": render.map { encode($0) } ?? null, "playbackEngineRunning": playbackRunning,
+            "counterScope": "instrumented boundaries per attempt in this process; absent counters/fields are unknown; not Host receipts",
+            "renderScope": "per attempt and formatVersion, possibly retired; frames copied or silence-filled; no sample inspection or audible-output proof",
+            "hostClockOffsetSeconds": null, "hostMediaCounters": null]
+        writer.async { [self] in
+            defer { state.withLock { $0.snapshotPending = false } }
+            do {
+                try FileManager.default.createDirectory(at: snapshotURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let data = try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys])
+                guard data.count <= 65_536 else { return }
+                try data.write(to: snapshotURL, options: .atomic)
+            } catch { NSLog("Sill audio metadata snapshot write failed (code %ld)", (error as NSError).code) }
+        }
+    }
     private func record(_ id: UUID, _ event: String, _ fields: () -> [String: String]) {
+        let metric: Metric?
+        if event.hasPrefix("tap_drop_") { metric = .captureDroppedBuffers }
+        else if event.hasPrefix("gate_drop_") { metric = .gateDroppedBatches }
+        else if event == "engine_start_error" { metric = .captureStartErrors }
+        else if event == "playback_engine_failed" || event == "playback_format_failed" { metric = .playbackStartErrors }
+        else { metric = nil }
+        if let metric { count(id, metric, 1, errorCode: nil) }
         let schedule = state.withLock { value -> Bool in
             if value.seen[id] == nil {
                 if value.attempts.count == 8 { value.seen.removeValue(forKey: value.attempts.removeFirst()) }
@@ -53,7 +226,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(events).write(to: fileURL, options: .atomic)
-        } catch { NSLog("Sill microphone diagnostic write failed: %@", String(describing: error)) }
+        } catch { NSLog("Sill microphone diagnostic write failed (code %ld)", (error as NSError).code) }
     }
     func flush() { writer.sync {} }
 
@@ -102,6 +275,7 @@ final class IPadMicrophoneCapture {
     private let audioLease: AudioLease
     private let diagnostics: IPadMicrophoneDiagnostics.Attempt?
     private var engine: AVAudioEngine?
+    var diagnosticRunning: Bool { engine?.isRunning ?? false }
     private var starting = false
     private var generation = UUID()
     private var ownsLease = false
@@ -150,7 +324,7 @@ final class IPadMicrophoneCapture {
             diagnostics?.record("engine_started", ["elapsedMilliseconds": String(Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000), "running": String(next.isRunning), "route": IPadMicrophoneDiagnostics.route()])
             guard generation == attempt else { throw CancellationError() }
         } catch {
-            diagnostics?.record("engine_start_error", ["error": error.localizedDescription])
+            diagnostics?.record("engine_start_error", ["errorCode": String((error as NSError).code)])
             ownsLease = ownsLease || audioLease.holds(leaseID)
             do { try stop() } catch { throw error }
             throw error
@@ -213,6 +387,8 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
     }
 
     func enqueue(_ input: AVAudioPCMBuffer, captureID: UUID, diagnostics: IPadMicrophoneDiagnostics.Attempt? = nil) {
+        diagnostics?.count(.tapBuffers)
+        diagnostics?.count(.tapFrames, UInt64(input.frameLength))
         diagnostics?.record("first_tap", ["frames": String(input.frameLength), "capacity": String(input.frameCapacity)])
         guard input.frameLength > 0, input.frameLength <= AVAudioFrameCount(IPadMicrophonePCM.maxInputFrames) else {
             diagnostics?.record("tap_drop_size", ["frames": String(input.frameLength)])
@@ -270,7 +446,7 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
         guard let converter, let outputFormat, let emitBatch else { return }
         let expanded = Int(ceil(Double(input.frameLength) * outputFormat.sampleRate / converter.inputFormat.sampleRate))
         guard (1...IPadMicrophonePCM.maxConvertedFrames).contains(expanded),
-              let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(expanded)) else { return }
+              let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(expanded)) else { diagnostics?.count(.conversionErrors); return }
         let began = DispatchTime.now().uptimeNanoseconds
         var requestedFrames: UInt64 = 0
         var inputCalls = 0
@@ -297,18 +473,24 @@ final class IPadMicrophoneConversionWorker: @unchecked Sendable {
         let details = ["inputFrames": String(input.frameLength), "suppliedFrames": String(cursor),
             "requestedFrames": String(requestedFrames), "inputCalls": String(inputCalls),
             "outputFrames": String(output.frameLength), "outputCapacity": String(output.frameCapacity),
-            "result": String(result.rawValue), "error": error.map { "\($0.domain):\($0.code)" } ?? "none",
+            "result": String(result.rawValue), "errorCode": error.map { String($0.code) } ?? "none",
             "inputFailed": String(inputFailed), "elapsedMilliseconds": String(Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000)]
         diagnostics?.record("first_conversion", details)
         if output.frameLength > 0 { diagnostics?.record("first_nonzero_conversion", details) }
         if cursor < input.frameLength { diagnostics?.record("conversion_partial_input", details) }
-        if inputFailed || error != nil || result == .error { diagnostics?.record("conversion_error", details) }
+        if inputFailed || error != nil || result == .error {
+            diagnostics?.count(.conversionErrors, errorCode: error?.code)
+            diagnostics?.record("conversion_error", details)
+        }
         guard !inputFailed, error == nil, result != .error,
               let channel = output.floatChannelData?.pointee else { return }
+        diagnostics?.count(.convertedFrames, UInt64(output.frameLength))
         let samples = UnsafeBufferPointer(start: channel, count: Int(output.frameLength))
         var batch: [IPadMicrophonePCMFrame] = []
         packetizer.append(samples) { batch.append($0) }
         if !batch.isEmpty {
+            diagnostics?.count(.capturePackets, UInt64(batch.count))
+            diagnostics?.count(.capturePacketFrames, UInt64(batch.reduce(0) { $0 + $1.frameCount }))
             diagnostics?.record("first_batch", ["packets": String(batch.count), "firstSequence": String(batch[0].sequence)])
             emitBatch(batch)
         }

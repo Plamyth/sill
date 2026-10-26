@@ -75,12 +75,14 @@ enum DeviceIdentity {
 final class IPadAudioSession { static let shared = IPadAudioSession(); var microphoneAvailable = true }
 final class Frames { var closes = 0; func close() { closes += 1 } }
 final class IPadMicrophoneDiagnostics {
+ func connectionChanged() {}
  final class Attempt { func record(_ s: String, _ fields: [String:String] = [:]) {} }
  static let shared = IPadMicrophoneDiagnostics()
  func attempt(_ id: UUID) -> Attempt { Attempt() }
  static func route() -> String { "controlled route" }
 }
 final class StreamClient {
+ func observeAudioDiagnostics() {}
  struct Saved { let macID: String; let fingerprintData: Data? }
  struct Session { var macID: String? = "fixture" }
  let suite = "forwarding-adapter-" + UUID().uuidString

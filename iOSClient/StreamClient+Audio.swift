@@ -29,6 +29,8 @@ extension StreamClient {
         DispatchQueue.main.async {
             guard self.connection === origin else { return }
             #if os(iOS)
+            IPadMicrophoneDiagnostics.shared.received(header.kind == .audio ? .audioPacket : .remoteAudioState,
+                hostTimestamp: header.timestamp)
             guard self.audioAdmission.isCurrent(admission) else { return }
             #endif
             let peer = ObjectIdentifier(origin)
@@ -51,6 +53,7 @@ extension StreamClient {
         guard let c = connection, ObjectIdentifier(c) == peer else { return }
         #if os(iOS)
         if request.enabled && !desiredAudioPermits(.playback) { return }
+        observeAudioDiagnostics()
         #endif
         IPadMicrophoneDiagnostics.shared.attempt(request.requestID)
             .record(request.enabled ? "playback_requested" : "playback_stopped")

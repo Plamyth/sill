@@ -37,6 +37,7 @@ struct FixtureForwarding {
  mutating func block() { phase = .blocked }
 }
 final class StreamClient {
+ func observeAudioDiagnostics() {}
  var audioForwarding = FixtureForwarding()
  var audioForwardingDevice: AudioForwardingDeviceID?
  var audioForwardingCatalogAt: TimeInterval?

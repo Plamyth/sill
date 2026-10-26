@@ -30,6 +30,7 @@ extension UIApplication {
  static let didBecomeActiveNotification = Notification.Name.didBecomeActive
 }
 final class IPadMicrophoneDiagnostics {
+ func connectionChanged() {}
  static let shared = IPadMicrophoneDiagnostics()
  func attempt(_ id: UUID) -> Self { self }
  func record(_ name: String, _ fields: [String: String] = [:]) {}

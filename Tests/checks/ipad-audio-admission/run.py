@@ -15,6 +15,7 @@ import Network
 import AVFoundation
 import StreamProtocol
 final class ClientProbe {
+    func observeAudioDiagnostics() {}
     var connection: NWConnection?
     var suspensions = 0
     let remoteAudioControl = IPadRemoteAudioController(send: { _,_ in }, stop: {}, play: { _,_ in }, changed: { _ in })

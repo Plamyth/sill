@@ -2,7 +2,7 @@ private final class RemoteAACDecoder {
     static var decoding: (() -> Void)?
     init?(rate: Double, channels: Int, cookie: Data) {}
     func matches(rate: Double, channels: Int, cookie: Data) -> Bool { true }
-    func decode(_ packet: Data) -> [Float]? {
+    func decode(_ packet: Data, diagnostics: IPadMicrophoneDiagnostics.Attempt? = nil) -> [Float]? {
         Self.decoding?()
         return Array(repeating: 0.25, count: 2400)
     }

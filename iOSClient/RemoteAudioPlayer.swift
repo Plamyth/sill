@@ -15,6 +15,11 @@ final class RemoteAudioPlayer: @unchecked Sendable {
     private var decoder: RemoteAACDecoder?
     private var samples: [Float] = []
     private var readIndex = 0
+    private var renderCounters: IPadMicrophoneDiagnostics.RenderCounters?
+
+    // Main reads aggregate metadata using the same sample lock; the callback never schedules I/O.
+    var diagnosticRender: IPadMicrophoneDiagnostics.RenderCounters? { lock.withLock { renderCounters } }
+    var diagnosticRunning: Bool { engine?.isRunning ?? false }
     private var playing = false
     private var formatVersion: UInt64 = 0
     private var rate: Double = 0
@@ -28,23 +33,30 @@ final class RemoteAudioPlayer: @unchecked Sendable {
         if let admission, !admission.withAdmission(ticket, {}) { return }
         let epoch = epochLock.withLock { $0 }
         let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(subscription)
+        diagnostics.count(.admittedPlaybackPackets)
         diagnostics.record("playback_first_packet")
         decodeQueue.async { [self] in
-            guard epochLock.withLock({ $0 == epoch }) else { return }
+            guard epochLock.withLock({ $0 == epoch }) else { diagnostics.count(.stalePlaybackPackets); return }
             if let encoded = AudioPacket.unpackEncoded(packet) {
                 if decoder?.matches(rate: encoded.sampleRate, channels: encoded.channels,
                                     cookie: encoded.cookie) != true {
                     decoder = RemoteAACDecoder(rate: encoded.sampleRate, channels: encoded.channels,
                                                cookie: encoded.cookie)
                 }
-                guard let decoded = decoder?.decode(encoded.packet) else { return }
+                guard let decoder else { diagnostics.count(.decoderUnavailable); return }
+                guard let decoded = decoder.decode(encoded.packet, diagnostics: diagnostics) else { return }
+                diagnostics.count(.decodedPackets)
+                diagnostics.count(.decodedFrames, UInt64(decoded.count / encoded.channels))
                 append(decoded, rate: encoded.sampleRate, channels: encoded.channels, epoch: epoch, admission: ticket,
                        diagnostics: diagnostics, report: report)
             } else if let plain = AudioPacket.unpack(packet) {
                 let decoded = plain.samples.map { Float($0) / 32768 }
+                diagnostics.count(.decodedPackets)
+                diagnostics.count(.decodedFrames, UInt64(decoded.count / plain.channels))
+                if decoded.isEmpty { diagnostics.count(.emptyDecodedPackets) }
                 append(decoded, rate: plain.sampleRate, channels: plain.channels, epoch: epoch, admission: ticket,
                        diagnostics: diagnostics, report: report)
-            }
+            } else { diagnostics.count(.invalidAudioPackets) }
         }
     }
 
@@ -134,6 +146,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
             try IPadAudioSession.shared.acquire(.remotePlayback,leaseId:audioLeaseId)
             ownsPlaybackLease = true
             let engine = AVAudioEngine()
+            lock.withLock { renderCounters = .init(attempt: diagnostics.id, formatVersion: version) }
             let source = AVAudioSourceNode(format: format) { [weak self] _, _, frames, list -> OSStatus in
                 let output = UnsafeMutableAudioBufferListPointer(list)
                 guard let self else {
@@ -142,6 +155,11 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                 }
                 let render = {
                     self.lock.withLock {
+                        let observes = self.renderCounters?.formatVersion == version
+                        if observes {
+                            self.renderCounters?.callbacks &+= 1
+                            self.renderCounters?.requestedFrames &+= UInt64(frames)
+                        }
                         for frame in 0..<Int(frames) {
                             let ready = self.formatVersion == version && self.playing &&
                                         self.samples.count - self.readIndex >= channels
@@ -150,13 +168,28 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                                 destination[frame] = ready && channel < channels ?
                                     self.samples[self.readIndex + channel] : 0
                             }
-                            if ready { self.readIndex += channels }
-                            else if self.playing && self.formatVersion == version { self.playing = false }
+                            if ready {
+                                self.readIndex += channels
+                                if observes { self.renderCounters?.copiedFrames &+= 1 }
+                            } else {
+                                if observes { self.renderCounters?.silenceFilledFrames &+= 1 }
+                                if self.playing && self.formatVersion == version {
+                                    self.playing = false
+                                    if observes { self.renderCounters?.underrunTransitions &+= 1 }
+                                }
+                            }
                         }
                     }
                 }
                 if let admission = self.admission {
                     if !admission.withAdmission(ticket, render) {
+                        self.lock.withLock {
+                            guard self.renderCounters?.formatVersion == version else { return }
+                            self.renderCounters?.callbacks &+= 1
+                            self.renderCounters?.requestedFrames &+= UInt64(frames)
+                            self.renderCounters?.silenceFilledFrames &+= UInt64(frames)
+                            self.renderCounters?.admissionDeniedFrames &+= UInt64(frames)
+                        }
                         for channel in output { if let data = channel.mData { memset(data, 0, Int(channel.mDataByteSize)) } }
                     }
                 } else { render() }
@@ -183,7 +216,7 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                         .error("Playback lease cleanup failed: \(String(describing: error), privacy: .public)")
                 }
             }
-            diagnostics.record("playback_engine_failed", ["error": error.localizedDescription])
+            diagnostics.record("playback_engine_failed", ["errorCode": String((error as NSError).code)])
             report(.failed("iPad 재생을 시작하지 못했습니다. \(error.localizedDescription)"))
         }
     }
@@ -218,7 +251,7 @@ private final class RemoteAACDecoder {
         self.rate == rate && self.channels == channels && self.cookie == cookie
     }
 
-    func decode(_ packet: Data) -> [Float]? {
+    func decode(_ packet: Data, diagnostics: IPadMicrophoneDiagnostics.Attempt? = nil) -> [Float]? {
         let compressed = AVAudioCompressedBuffer(format: input, packetCapacity: 1,
                                                   maximumPacketSize: max(packet.count, 1))
         packet.withUnsafeBytes { bytes in
@@ -228,7 +261,7 @@ private final class RemoteAACDecoder {
         compressed.packetCount = 1
         compressed.packetDescriptions?.pointee = AudioStreamPacketDescription(mStartOffset: 0,
             mVariableFramesInPacket: 0, mDataByteSize: UInt32(packet.count))
-        guard let pcm = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: 1024) else { return nil }
+        guard let pcm = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: 1024) else { diagnostics?.count(.decodeErrors); return nil }
         var provided = false
         var error: NSError?
         let status = converter.convert(to: pcm, error: &error) { _, outStatus in
@@ -237,7 +270,16 @@ private final class RemoteAACDecoder {
             outStatus.pointee = .haveData
             return compressed
         }
-        guard status != .error, let data = pcm.floatChannelData else { return nil }
+        if status == .error || error != nil {
+            diagnostics?.count(.decodeErrors, errorCode: error?.code)
+            diagnostics?.record("playback_decode_error", ["status": String(status.rawValue),
+                "errorCode": error.map { String($0.code) } ?? "none"])
+        }
+        guard status != .error, let data = pcm.floatChannelData else {
+            if status != .error && error == nil { diagnostics?.count(.decodeErrors) }
+            return nil
+        }
+        if pcm.frameLength == 0 { diagnostics?.count(.emptyDecodedPackets) }
         return Array(UnsafeBufferPointer(start: data[0], count: Int(pcm.frameLength) * channels))
     }
 }

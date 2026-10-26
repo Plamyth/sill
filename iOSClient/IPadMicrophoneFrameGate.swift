@@ -20,12 +20,10 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
     }
 
     private let lock = OSAllocatedUnfairLock(initialState: Optional<Binding>.none)
-    private let send: Send
+    private let send: Send?
     private let admission: IPadAudioAdmission?
 
-    init(admission: IPadAudioAdmission? = nil, send: @escaping Send = { connection, bytes, done in
-        connection.send(content: bytes, completion: .contentProcessed { _ in done() })
-    }) {
+    init(admission: IPadAudioAdmission? = nil, send: Send? = nil) {
         self.send = send
         self.admission = admission
     }
@@ -86,7 +84,18 @@ final class IPadMicrophoneFrameGate: @unchecked Sendable {
                 binding = current
                 let generation = current.generation
                 log?.record("first_gate_send", ["packets": String(blocks.count), "bytes": String(bytes.count), "sequence": String(blocks[0].sequence), "pending": String(current.pending)])
-                send(current.connection, bytes) { [weak self] in self?.complete(generation: generation) }
+                log?.count(.sendSubmittedBatches)
+                log?.count(.sendSubmittedPackets, UInt64(blocks.count))
+                log?.count(.sendSubmittedFrames, UInt64(blocks.reduce(0) { $0 + $1.frameCount }))
+                let done: @Sendable () -> Void = { [weak self] in self?.complete(generation: generation) }
+                if let send { send(current.connection, bytes, done) }
+                else {
+                    current.connection.send(content: bytes, completion: .contentProcessed { error in
+                        log?.count(error == nil ? .sendCompletedBatches : .sendFailedBatches,
+                                   errorCode: error.map { ($0 as NSError).code })
+                        done()
+                    })
+                }
             }
         }
         if let admission { admission.withAdmission(ticket, direction: .microphone, emit) }

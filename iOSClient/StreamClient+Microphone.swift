@@ -80,8 +80,8 @@ extension StreamClient {
                 guard let self, self.connection === peer else { return }
                 if state.phase == .active && !self.audioAdmission.isCurrent(admission) { return }
                 IPadMicrophoneDiagnostics.shared.attempt(self.microphonePolicy.startRequestID ?? state.requestID)
-                    .record("grant_phase_" + state.phase.rawValue, ["phaseBefore": String(describing: self.microphonePolicy.phase),
-                        "grantPresent": String(state.grantID != nil), "reason": state.reason ?? "none",
+                    .record("grant_phase_" + state.phase.rawValue, ["phaseBeforeCanStop": String(self.microphonePolicy.phase.canStop),
+                        "grantPresent": String(state.grantID != nil), "reasonPresent": String(state.reason != nil),
                         "mainQueueDelayMilliseconds": String(Double(DispatchTime.now().uptimeNanoseconds - arrived) / 1_000_000)])
                 self.applyMicrophone(self.microphonePolicy.receive(state, from: ObjectIdentifier(peer)))
                 self.reconcileDesiredAudio()
@@ -89,6 +89,7 @@ extension StreamClient {
         } else if header.kind == .microphoneReceipt, let receipt = Wire.decode(MicrophoneReceipt.self, from: data) {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.connection === peer else { return }
+                IPadMicrophoneDiagnostics.shared.received(.microphoneReceipt, hostTimestamp: header.timestamp)
                 self.microphonePolicy.receive(receipt, from: ObjectIdentifier(peer))
                 self.microphoneReceipt = self.microphonePolicy.latestReceipt
             }
@@ -98,6 +99,8 @@ extension StreamClient {
 
     func applyMicrophone(_ effects: [IPadMicrophonePolicy.Effect], allowPermissionPrompt: Bool = true) {
         dispatchPrecondition(condition: .onQueue(.main))
+        observeAudioDiagnostics()
+        defer { observeAudioDiagnostics() }
         var pendingStops: [(ObjectIdentifier, MicrophoneControl)] = []
         for effect in effects {
             switch effect {
@@ -108,7 +111,7 @@ extension StreamClient {
                 }
                 let revision = desiredAudio.revision(for: .microphone)
                 let diagnostics = IPadMicrophoneDiagnostics.shared.attempt(request)
-                diagnostics.record("permission_requested", ["phase": String(describing: microphonePolicy.phase)])
+                diagnostics.record("permission_requested", ["phaseCanStop": String(microphonePolicy.phase.canStop)])
                 guard let c = connection, ObjectIdentifier(c) == peer else { continue }
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -128,7 +131,7 @@ extension StreamClient {
                     } else if allowPermissionPrompt && IPadAudioSession.shared.microphoneAvailable {
                         allowed = await AVCaptureDevice.requestAccess(for: .audio)
                     } else { allowed = false }
-                    diagnostics.record("permission_result", ["allowed": String(allowed), "microphoneAvailable": String(IPadAudioSession.shared.microphoneAvailable), "phase": String(describing: self.microphonePolicy.phase)])
+                    diagnostics.record("permission_result", ["allowed": String(allowed), "microphoneAvailable": String(IPadAudioSession.shared.microphoneAvailable), "phaseCanStop": String(self.microphonePolicy.phase.canStop)])
                     let finish: () -> Void = { [weak self] in
                         guard let self else { return }
                         guard self.connection === c, self.desiredAudioPermits(.microphone),
@@ -152,7 +155,7 @@ extension StreamClient {
                 if microphoneCleanupProblem == nil { retryMicrophoneCleanup() }
             case .send(let peer, let control):
                 IPadMicrophoneDiagnostics.shared.attempt(microphonePolicy.startRequestID ?? control.requestID)
-                    .record("control_" + control.operation.rawValue, ["phase": String(describing: microphonePolicy.phase)])
+                    .record("control_" + control.operation.rawValue, ["phaseCanStop": String(microphonePolicy.phase.canStop)])
                 if control.operation == .stop {
                     pendingStops.append((peer, control))
                 } else {
@@ -259,7 +262,7 @@ extension StreamClient {
     private func recordMicrophoneDiagnostic(_ event: String, _ fields: [String: String] = [:]) {
         guard let request = microphonePolicy.startRequestID else { return }
         var values = fields
-        values["phase"] = String(describing: microphonePolicy.phase)
+        values["phaseCanStop"] = String(microphonePolicy.phase.canStop)
         IPadMicrophoneDiagnostics.shared.attempt(request).record(event, values)
     }
 
