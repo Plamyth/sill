@@ -18,7 +18,7 @@ text = model.read_text()
 voice = text[text.index('struct VoiceSession:'):text.index('\nstruct VoiceProjection:')]
 (stage / 'VoiceSession.swift').write_text('import Foundation\n' + voice + '\n')
 (stage / 'ControlRoomProjection.swift').write_bytes(projection.read_bytes())
-for name in ['main.swift', 'SourceSessions.swift', 'PublicResults.swift', 'fixture.json',
+for name in ['main.swift', 'SourceSessions.swift', 'PublicResults.swift', 'BrainTrinity.swift', 'fixture.json',
              'android-mobile-control-events-v1.json', 'android-fixture-provenance.json',
              'public-fixtures.json', 'public-fixture-provenance.json']:
     (stage / name).write_bytes(Path(__file__).with_name(name).read_bytes())
@@ -41,14 +41,14 @@ def public_only(value):
 assert public_provenance['rawCopied'] is False and public_only(public)
 (stage / 'run.sh').write_text('''#!/bin/sh
 set -eu
-swiftc -swift-version 5 -parse-as-library VoiceSession.swift ControlRoomProjection.swift SourceSessions.swift PublicResults.swift main.swift -o checks
+swiftc -swift-version 5 -parse-as-library VoiceSession.swift ControlRoomProjection.swift SourceSessions.swift PublicResults.swift BrainTrinity.swift main.swift -o checks
 ./checks
 ''')
 inputs = [projection, model, Path(__file__), *[p for p in Path(__file__).parent.iterdir() if p.is_file()]]
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 stage_hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in stage.iterdir() if p.is_file()}
 result = subprocess.run(['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run', '--source', str(stage),
-    '--owner', '01a13ace-e372-7ed1-9946-149df37ee1c3', '--job', 'ipad-cloud-result-freshness-20261023', '--', 'sh', 'run.sh'],
+    '--owner', '01a13ace-e372-7ed1-9946-149df37ee1c3', '--job', 'ipad-bt-observation-20261027', '--', 'sh', 'run.sh'],
     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 (output / 'foundation.log').write_text(result.stdout)
 print(result.stdout, end='')
