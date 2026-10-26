@@ -98,6 +98,11 @@ final class NoteProtocol: URLProtocol {
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
         }
+        if CommandLine.arguments.contains("--pdf-fence") {
+            try checkPDFExcerptFences(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--pdf-recovery") {
             try await checkPDFExcerptRecovery(check)
             print("RESULT \(checks) assertions, \(failures) failures")
