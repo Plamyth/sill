@@ -290,6 +290,40 @@ private final class EventSource {
         func key() -> Event { event(target: Int64(getpid())) }
         rows = [row(root)]; refreshInputObservation()
         Checks.check(transit(key()), "현재 요청의 정확한 소유 인증 창만 키 입력 수용")
+        func focusClick(_ type: CGEventType) -> Event {
+            let click = event(type, target: Int64(getpid()))
+            click.location = CGPoint(x: root.frame.midX, y: 1000 - root.frame.midY)
+            click.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(root.windowNumber))
+            click.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(root.windowNumber))
+            return click
+        }
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            Checks.check(transit(focusClick(type)), "key 인증 창의 정확한 물리 클릭 양성 \(type.rawValue)")
+        }
+        let popup = Panel(); popup.windowNumber = 93
+        popup.identifier = Panel.Identifier(rawValue: "CCR.UnrelatedPopup"); popup.level.rawValue = 1003
+        rows = [row(popup), row(root)]; refreshInputObservation()
+        Checks.check(!transit(focusClick(.leftMouseDown)) && !transit(focusClick(.leftMouseUp)) && !transit(key()),
+            "무관 팝업이 인증 창을 가리면 정확한 창 클릭과 키 입력 모두 거절")
+        root.isKeyWindow = false; popup.isKeyWindow = true; NSApp.keyWindow = popup
+        refreshInputObservation()
+        Checks.check(!transit(focusClick(.leftMouseDown)) && !transit(focusClick(.leftMouseUp)) && !transit(key()),
+            "무관 팝업으로 key가 옮겨간 동안 인증 창 클릭과 키 입력 모두 거절")
+        popup.isVisible = false; popup.isKeyWindow = false; NSApp.keyWindow = nil
+        rows = [row(root)]; refreshInputObservation()
+        Checks.check(challengeID == requestID && localAuthenticationInputPolicy.preparedRequestID == requestID &&
+            LocalAuthenticationPresentation.registeredWindow(for: requestID) === root &&
+            ownedAuthenticationWindows().contains(where: { $0 === root }) && !root.isKeyWindow,
+            "팝업 제거 뒤에도 현재 UUID의 정확한 인증 창은 유효한 non-key 상태")
+        Checks.check(!transit(key()) && !transit(event(.keyUp, target: Int64(getpid()))),
+            "팝업 제거 뒤 non-key 인증 창의 키 누름과 뗌은 계속 거절")
+        Checks.check(transit(focusClick(.leftMouseDown)),
+            "팝업 제거 뒤 현재 non-key 인증 창의 물리 leftMouseDown은 포커스 복구를 위해 수용")
+        Checks.check(transit(focusClick(.leftMouseUp)),
+            "팝업 제거 뒤 현재 non-key 인증 창의 물리 leftMouseUp은 포커스 복구를 위해 수용")
+        Checks.check(!transit(key()), "포커스 복구 클릭만으로 mock의 non-key 키 입력 권한을 만들지 않음")
+        root.isKeyWindow = true; NSApp.keyWindow = root
+        refreshInputObservation()
         NSApp.isActive = false
         refreshInputObservation()
         Checks.check(localAuthenticationInputPolicy.observation?.target.window == 91 && transit(key()),
