@@ -82,6 +82,10 @@ final class StreamServer {
     }
     private final class Client {
         let connection: NWConnection
+        let screenDemandIncarnation = UUID()
+        var screenDemandIdentity: RemoteScreenDemandObservation.Source?
+        var screenDemandExpiresAt: TimeInterval = 0
+        var screenDemandPending = false
         var videoLane = VideoLane.unassigned
         let peerVideo = PeerVideo()
         var peerPointerRect: CGRect?
@@ -209,6 +213,65 @@ final class StreamServer {
     private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
     let sentryAdmission = SentryAdmission()
     private var videoAdmission = VideoEpochAdmission.stopped
+    private let screenDemandGeneration = UUID()
+    private var screenDemandRevision: UInt64 = 0
+    private var legacyScreenDemandIdentity: RemoteScreenDemandObservation.Source?
+    var screenDemandTrust: TrustBox?
+    var onScreenDemand: ((RemoteScreenDemandObservation) -> Void)?
+
+    func screenDemandTrustChanged() {
+        queue.async { [self] in publishScreenDemand() }
+    }
+
+    func screenDemandSelection(pending: Bool, for connection: NWConnection) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                  client.videoLane == .peer else { return }
+            client.screenDemandPending = pending
+            publishScreenDemand()
+        }
+    }
+
+    private func publishScreenDemand(renewing: Client? = nil) {
+        guard let onScreenDemand, screenDemandRevision < UInt64.max else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let trust = screenDemandTrust?.snapshot
+        var complete = true
+        var consumers: [RemoteScreenDemandObservation.Consumer] = []
+        for client in clients.values where client.role.isViewer && client.connection.state == .ready {
+            guard client.route.encrypted, let fingerprint = client.route.fingerprint,
+                  trust?.isPaired(fingerprint) == true else { continue }
+            guard !client.screenDemandPending else { complete = false; continue }
+            let admission = currentVideoAdmission(for: client)
+            if case .preparing = admission { complete = false; continue }
+            guard let epoch = admission.current else { continue }
+            let identity = client.videoLane == .peer ? client.screenDemandIdentity : legacyScreenDemandIdentity
+            let publication = client.videoLane == .peer ? client.peerVideo.publication : client.catalogAdmission
+            guard let identity, let publication, client.catalogSent,
+                  let catalog = client.latestCatalog,
+                  let list = Wire.decode(WindowList.self, from: catalog.payload),
+                  list.videoEpoch == epoch, list.active == epoch.source,
+                  list.inputGeneration == epoch.generation else { complete = false; continue }
+            let sourceMatches: Bool
+            switch (epoch.source, identity) {
+            case (.window(let id), .window(let value)): sourceMatches = id == value.windowID
+            case (.desktop, .display): sourceMatches = true
+            default: sourceMatches = false
+            }
+            guard sourceMatches, RemoteScreenDemandIdentity.isCurrent(identity) else { complete = false; continue }
+            var current = false
+            publication.publish { current = true }
+            guard current else { complete = false; continue }
+            if client === renewing { client.screenDemandExpiresAt = now + 5 }
+            guard client.screenDemandExpiresAt > now else { complete = false; continue }
+            consumers.append(.init(incarnation: client.screenDemandIncarnation,
+                epoch: .init(id: epoch.id, generation: epoch.generation), source: identity,
+                expiresAt: client.screenDemandExpiresAt))
+        }
+        screenDemandRevision += 1
+        onScreenDemand(.init(hostGeneration: screenDemandGeneration, revision: screenDemandRevision,
+            complete: complete, consumers: consumers, observedAt: now))
+    }
     /// A client was admitted (home door at `.ready`, remote door once paired and checked), with
     /// its route (which door, from where) and, for a home client, its link (ClientLink.route; nil
     /// when its connection does not say, and always for a remote session). Called on the network
@@ -294,7 +357,7 @@ final class StreamServer {
 
     /// The coordinator flips this with the active source. Thread-safe.
     func setStreaming(_ on: Bool) {
-        queue.async { [self] in streaming = on; updateTicking() }
+        queue.async { [self] in streaming = on; updateTicking(); publishScreenDemand() }
     }
 
     private func hasStreamingClients() -> Bool {
@@ -1086,6 +1149,7 @@ final class StreamServer {
         sentryAdmission.register(peer, externalRoute: client.role.isViewer && client.route.encrypted && client.route.pairedName != nil &&
             (client.route.origin == .vpn || client.route.origin == .internet))
         clients[peer] = client
+        publishScreenDemand()
         if client.role.isViewer { onClientCountChanged?(viewerCount) }
         updateTicking()
         updateSweep()
@@ -1442,6 +1506,7 @@ final class StreamServer {
     /// connection that was never registered (refused, or failed before it was ready) leaves no line.
     private func unregister(_ id: ObjectIdentifier) {
         guard let client = clients.removeValue(forKey: id) else { return }
+        publishScreenDemand()
         sentryAdmission.remove(id)
         client.forwardingExchange?.invalidate()
         client.providerExchange?.invalidate()
@@ -1461,11 +1526,15 @@ final class StreamServer {
     func resetForNewStream() {
         queue.async { [self] in
             videoAdmission = .stopped
+            legacyScreenDemandIdentity = nil
             lastParameterSets = nil
             for client in clients.values where client.videoLane == .legacy {
+                client.screenDemandPending = true
+                client.screenDemandExpiresAt = 0
                 client.needsKeyframe = true
                 client.awaitingFirstKeyframe = true
             }
+            publishScreenDemand()
         }
     }
 
@@ -1474,19 +1543,25 @@ final class StreamServer {
             videoAdmission = .preparing(epoch)
             lastParameterSets = nil
             for client in clients.values where client.videoLane == .legacy {
+                client.screenDemandPending = true
                 client.needsKeyframe = true
                 client.awaitingFirstKeyframe = true
             }
+            publishScreenDemand()
         }
     }
 
     func commitVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission,
+                     screenDemandIdentity: RemoteScreenDemandObservation.Source? = nil,
                      requestKeyframe: @escaping () -> Void) {
         queue.async { [self] in
             admission.publish {
                 guard videoAdmission == .preparing(epoch) else { return }
                 videoAdmission = .committed(epoch)
+                legacyScreenDemandIdentity = screenDemandIdentity
                 for client in clients.values where client.videoLane == .legacy && client.catalogSent && client.connection.state == .ready {
+                    client.screenDemandPending = false
+                    client.screenDemandExpiresAt = ProcessInfo.processInfo.systemUptime + 5
                     client.latestCatalog = catalog
                     client.catalogAdmission = admission
                     client.microphoneCatalogGrant = nil
@@ -1494,6 +1569,7 @@ final class StreamServer {
                 }
                 requestKeyframe()
             }
+            publishScreenDemand()
         }
     }
 
@@ -1536,6 +1612,9 @@ final class StreamServer {
             }
             guard epoch.id == expectedEpoch else { return }
             client.peerVideo.admission = .stopped
+            client.screenDemandIdentity = nil
+            client.screenDemandExpiresAt = 0
+            client.screenDemandPending = true
             client.peerVideo.publication = nil
             client.peerVideo.lastParameterSets = nil
             client.peerVideo.streaming = false
@@ -1547,6 +1626,7 @@ final class StreamServer {
             client.awaitingFirstKeyframe = true
             client.keyframeWanted = false
             updateTicking()
+            publishScreenDemand()
         }
     }
 
@@ -1556,6 +1636,9 @@ final class StreamServer {
                 guard epoch.isValid, let client = clients[ObjectIdentifier(connection)],
                       client.connection === connection, connection.state == .ready, client.videoLane == .peer else { return }
                 client.peerVideo.admission = .preparing(epoch)
+                client.screenDemandIdentity = nil
+                client.screenDemandPending = true
+                client.screenDemandExpiresAt = 0
                 client.peerPointerRect = nil
                 client.peerVideo.publication = admission
                 client.peerVideo.lastParameterSets = nil
@@ -1566,10 +1649,12 @@ final class StreamServer {
                 client.awaitingFirstKeyframe = true
                 client.keyframeWanted = false
             }
+            publishScreenDemand()
         }
     }
 
     func commitPeerVideo(_ epoch: VideoEpoch, catalog: StreamMessage, admission: SourcePublicationAdmission,
+                         screenDemandIdentity: RemoteScreenDemandObservation.Source? = nil,
                          to connection: NWConnection, requestKeyframe: @escaping () -> Void) {
         queue.async { [self] in
             admission.publish {
@@ -1581,6 +1666,9 @@ final class StreamServer {
                       list.videoEpoch == epoch, list.active == epoch.source,
                       list.inputGeneration == epoch.generation else { return }
                 client.peerVideo.admission = .committed(epoch)
+                client.screenDemandIdentity = screenDemandIdentity
+                client.screenDemandPending = false
+                client.screenDemandExpiresAt = ProcessInfo.processInfo.systemUptime + 5
                 client.catalogSent = true
                 client.latestCatalog = catalog
                 client.catalogAdmission = admission
@@ -1588,6 +1676,7 @@ final class StreamServer {
                 send(catalog.serialized(), to: client)
                 requestKeyframe()
             }
+            publishScreenDemand()
         }
     }
 
@@ -1635,6 +1724,7 @@ final class StreamServer {
                 client.microphoneCatalogGrant = nil
                 send(message.serialized(), to: client)
             }
+            publishScreenDemand()
         }
     }
 
@@ -1701,12 +1791,16 @@ final class StreamServer {
                       client.connection === connection, client.connection.state == .ready,
                       client.videoLane != .peer else { return }
                 client.videoLane = .legacy
+                if let list = Wire.decode(WindowList.self, from: message.payload), list.active == .none {
+                    client.screenDemandPending = false
+                }
                 client.catalogSent = true
                 client.latestCatalog = message
                 client.catalogAdmission = admission
                 client.microphoneCatalogGrant = nil
                 send(message.serialized(), to: client)
             }
+            publishScreenDemand()
         }
     }
 
@@ -1859,6 +1953,7 @@ final class StreamServer {
                             client.worstRttSincePrint = -1
                         }
                         self.onClientStats?(c, stats)
+                        self.publishScreenDemand(renewing: client)
                     }
                 } else if header.kind == .hello {
                     // The device's hello: the first of this connection counts, a second is skipped

@@ -13,9 +13,11 @@ with tempfile.TemporaryDirectory(prefix='peer-session-') as tmp:
     server=(root/'Sources/SillHost/StreamServer.swift').read_text()
     admission=server[server.index('final class SourcePublicationAdmission:'):server.index('/// Advertises _sill._tcp')]
     (out/'Admission.swift').write_text('import Foundation\n'+admission)
-    sources=['Sources/SillHost/HostConfig.swift','Sources/SillHost/DisplayInventory.swift','Sources/SillHost/PeerStreamState.swift','Sources/SillHost/PeerStreamSession.swift','Tests/checks/peer-stream-session/main.swift']
+    bridge=(root/'Sources/SillHost/ProviderCallBridge.swift').read_text()
+    (out/'DemandSupport.swift').write_text('import Foundation\n'+bridge[bridge.index('private struct ProviderKey:'):bridge.index('func providerSameSnapshot(')]+ '\nenum ProviderCallFailure: Error { case invalidFields, invalidIdentity }\n')
+    sources=['Sources/SillHost/HostConfig.swift','Sources/SillHost/DisplayInventory.swift','Sources/SillHost/PeerStreamState.swift','Sources/SillHost/PeerStreamSession.swift','Sources/SillHost/RemoteScreenDemand.swift','Tests/checks/peer-stream-session/main.swift']
     before={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in sources}
-    run(['xcrun','swiftc','-swift-version','5','-package-name','sill','-parse-as-library','-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out),*[str(root/p) for p in sources],str(out/'Driver.swift'),str(out/'Admission.swift'),'-o',str(out/'checks')])
+    run(['xcrun','swiftc','-swift-version','5','-package-name','sill','-parse-as-library','-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out),*[str(root/p) for p in sources],str(out/'Driver.swift'),str(out/'Admission.swift'),str(out/'DemandSupport.swift'),'-o',str(out/'checks')])
     run([str(out/'checks')])
     run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out),str(root/'Tests/checks/peer-stream-session/wire.swift'),'-o',str(out/'wire-checks')])
     run([str(out/'wire-checks')])

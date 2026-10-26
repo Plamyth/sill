@@ -16,7 +16,7 @@ final class RemoteScreenDemandPublisher {
 
     init(clock: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          open: @escaping @MainActor (String, TimeInterval) async throws -> any ProviderCallTransport = {
-             try await ProviderCallSocket.open(path: $0, until: $1)
+             try await ProviderCallSocket.open(path: $0, until: $1, frameLimit: 16_384)
          }) {
         self.clock = clock
         self.open = open

@@ -111,6 +111,7 @@ package final class StreamCoordinator {
     package let status: HostStatus
     /// Set by the signal handler: a select in flight when Ctrl-C lands must not stage anything new.
     private var shuttingDown = false
+    private let screenDemandPublisher = RemoteScreenDemandPublisher()
     private var stageLosses = 0
     /// The private CGVirtualDisplay API is checked once per run, the first time the mode is on.
     private var apiChecked = false
@@ -521,6 +522,7 @@ package final class StreamCoordinator {
         }
         remote?.onMicrophoneTrustRevoked = { [weak self] fingerprint in
             guard let self else { return }
+            self.server.screenDemandTrustChanged()
             self.server.sentryAdmission.revokeControl(forDeviceID: fingerprint.map { String(format: "%02x", $0) }.joined())
             self.sentry?.membershipWillChange()
             self.sentry?.surfacesChanged()
@@ -542,6 +544,15 @@ package final class StreamCoordinator {
         // The identity's TXT record (its tag, and `p` on a TLS home door) must be in the first
         // registration: set before `server.start()`.
         remote?.attach(server: server, status: status, macName: macName, requirePairing: config.requirePairing)
+        if !synthetic {
+            server.screenDemandTrust = remote?.trust
+            server.onScreenDemand = { [weak self] observation in
+                Task { @MainActor in
+                    guard let self, !self.shuttingDown else { return }
+                    self.screenDemandPublisher.submit(observation)
+                }
+            }
+        }
         catalog.onDisplaysChanged = { [weak self] in self?.displaysChanged() }
         stage.onLost = { [weak self] in Task { @MainActor in await self?.stageLost() } }
         status.update { $0.synthetic = synthetic; $0.virtualDisplayOn = config.virtualDisplay }
@@ -1992,6 +2003,12 @@ package final class StreamCoordinator {
         guard current() else { throw PipelineEpochError.superseded }
         let publicationAdmission = sourcePublicationAdmission
         let desktopSelection = source == .desktop && !synthetic ? catalog.displayInventory.current : nil
+        let screenDemandWindowPID: pid_t?
+        if case .window(let id) = source { screenDemandWindowPID = catalog.window(id: id)?.owningApplication?.processID }
+        else { screenDemandWindowPID = nil }
+        let screenDemandIdentity = synthetic ? nil : RemoteScreenDemandIdentity.read(source: source,
+            windowPID: screenDemandWindowPID,
+            displayID: desktopSelection?.displayID)
         guard let bounds = currentSourceRect(source: source, fresh: true) else { throw PipelineEpochError.missingGeometry }
         let generation = source == active ? inputGeneration : UUID().uuidString
         let windowGeometry: VideoEpoch.Geometry?
@@ -2049,7 +2066,8 @@ package final class StreamCoordinator {
         }
         commitGestureSelection(gestureOperation)
         server.sentryAdmission.capture(epoch.id)
-        server.commitVideo(epoch, catalog: listMessage(), admission: source == .desktop ? publicationAdmission : sourcePublicationAdmission) { [weak enc] in enc?.requestKeyframe() }
+        server.commitVideo(epoch, catalog: listMessage(), admission: source == .desktop ? publicationAdmission : sourcePublicationAdmission,
+            screenDemandIdentity: screenDemandIdentity) { [weak enc] in enc?.requestKeyframe() }
         print("Streaming \(describe) at \(width)×\(height), \(fps) fps, \(streamBitrate / 1_000_000) Mbps")
         status.update {
             $0.stream = HostStatusSnapshot.Stream(kind: kind, title: title, width: width, height: height, fps: fps,
@@ -2557,6 +2575,7 @@ package final class StreamCoordinator {
     /// dies of the signal with no goodbye, as before (`releaseKeysForExit`): its devices notice by
     /// liveness.
     package func shutdownForExit() {
+        screenDemandPublisher.stop()
         remote?.stopMobileEnrollment()
         for lane in peerStreams.values { lane.invalidateForShutdown() }
         for lane in peerStreams.values { Task { @MainActor in await lane.close() } }
@@ -2576,6 +2595,7 @@ package final class StreamCoordinator {
     /// every key and button a device holds down on the Mac goes up, and nothing else happens (no
     /// goodbye, nothing printed), as before.
     package func releaseKeysForExit() {
+        screenDemandPublisher.stop()
         remote?.stopMobileEnrollment()
         forwardingRuntime?.stop()
         audioPrivacy?.stop()
@@ -3649,7 +3669,8 @@ extension StreamCoordinator {
             guard let self, let connection, let lane, self.peerStreams[id] === lane else { return }
             self.server.sentryAdmission.capture(epoch.id, for: id)
             self.server.commitPeerVideo(epoch, catalog: self.peerCatalog(to: connection, lane: lane),
-                admission: admission, to: connection, requestKeyframe: keyframe)
+                admission: admission, screenDemandIdentity: lane.description?.screenDemandIdentity,
+                to: connection, requestKeyframe: keyframe)
             self.server.setPeerStreaming(true, for: connection)
         }
         lane.onChanged = { [weak self, weak lane, weak connection] in
@@ -3658,6 +3679,7 @@ extension StreamCoordinator {
             self.peerMenus[id]?.setTarget(self.peerMenuTarget(lane))
             self.server.setPeerPointerRect(lane.epoch == nil ? nil : lane.description?.bounds, for: connection)
             self.server.setPeerStreaming(lane.epoch != nil, for: connection)
+            self.server.screenDemandSelection(pending: lane.state.pending != nil, for: connection)
             self.sendMicrophoneCatalog(to: connection)
             self.updatePeerStreamStatus()
         }

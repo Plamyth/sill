@@ -12,9 +12,10 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
     private let queue = DispatchQueue(label: "ccr.provider.command-socket")
     private var descriptor: Int32?
     private static let limit = 32_768
+    private let frameLimit: Int
 
-    static func open(path: String, until deadline: TimeInterval) async throws -> ProviderCallSocket {
-        let work = Task.detached { try ProviderCallSocket(path: path, until: deadline) }
+    static func open(path: String, until deadline: TimeInterval, frameLimit: Int = 32_769) async throws -> ProviderCallSocket {
+        let work = Task.detached { try ProviderCallSocket(path: path, until: deadline, frameLimit: frameLimit) }
         return try await withTaskCancellationHandler {
             let value = try await work.value
             guard !Task.isCancelled else { value.invalidate(); throw CancellationError() }
@@ -22,10 +23,12 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
         } onCancel: { work.cancel() }
     }
 
-    private init(path: String, until deadline: TimeInterval) throws {
+    private init(path: String, until deadline: TimeInterval, frameLimit: Int) throws {
         guard !Task.isCancelled, path.hasPrefix("/"), !path.utf8.contains(0), path.utf8.count < 104,
               URL(fileURLWithPath: path).standardizedFileURL.path == path,
+              (2...Self.limit + 1).contains(frameLimit),
               deadline.isFinite, deadline > ProcessInfo.processInfo.systemUptime else { throw ProviderCallFailure.unavailable }
+        self.frameLimit = frameLimit
         let expected = try Self.endpoint(path)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ProviderCallFailure.unavailable }
@@ -79,7 +82,7 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         var message = try encoder.encode(request)
-        guard !message.isEmpty, message.count < Self.limit, !message.contains(10),
+        guard !message.isEmpty, message.count + 1 < frameLimit, !message.contains(10),
               deadline.isFinite else { throw ProviderCallFailure.invalidFields }
         message.append(10)
         let frame = message
@@ -94,7 +97,7 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
                         defer { Darwin.close(fd) }
                         _ = try ProviderPeerAnchor.verify(fd, policy: .core)
                         try Self.write(frame, to: fd, until: deadline)
-                        let bytes = try Self.read(fd, until: deadline)
+                        let bytes = try Self.read(fd, until: deadline, frameLimit: frameLimit)
                         _ = try ProviderPeerAnchor.verify(fd, policy: .core)
                         try LocalAudioRelayJSON.validate(bytes)
                         let reply = try JSONDecoder().decode(Reply.self, from: bytes)
@@ -134,14 +137,14 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
             }
         }
     }
-    private static func read(_ fd: Int32, until deadline: TimeInterval) throws -> Data {
+    private static func read(_ fd: Int32, until deadline: TimeInterval, frameLimit: Int = 32_769) throws -> Data {
         var data = Data()
         var chunk = [UInt8](repeating: 0, count: 4096)
         while true {
             try wait(fd, events: Int16(POLLIN), until: deadline)
             let count = recv(fd, &chunk, chunk.count, 0)
             if count < 0, errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK { continue }
-            guard count > 0, data.count + count <= limit else { throw ProviderCallFailure.unavailable }
+            guard count > 0, data.count + count < frameLimit else { throw ProviderCallFailure.unavailable }
             data.append(contentsOf: chunk.prefix(count))
             if let newline = data.firstIndex(of: 10) {
                 guard newline == data.index(before: data.endIndex), newline > data.startIndex else {

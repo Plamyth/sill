@@ -348,6 +348,26 @@ private final class SocketFixture: @unchecked Sendable {
         socket.invalidate()
         try fixture.close()
 
+        for size in [16_383, 16_384, 16_385] {
+            let fixture = try SocketFixture { bytes in
+                let body = try ack(JSONSerialization.jsonObject(with: bytes) as! [String: Any])
+                return body + Data(repeating: 32, count: size - body.count - 1) + Data([10])
+            }
+            defer { try? fixture.close() }
+            let socket = try await ProviderCallSocket.open(path: fixture.path,
+                until: ProcessInfo.processInfo.systemUptime + 1, frameLimit: 16_384)
+            let request = try observation(1).request(now: 100)
+            var accepted = false
+            do {
+                let value = try await socket.exchange(request, as: RemoteScreenDemandAcknowledgement.self,
+                    until: ProcessInfo.processInfo.systemUptime + 1)
+                try value.validate(request, coreGeneration: core)
+                accepted = true
+            } catch {}
+            expect(accepted == (size < 16_384), "ACK 줄바꿈 포함 프레임 상한 \(size)")
+            socket.invalidate()
+        }
+
         let broken: [Data] = [Data("{\n".utf8), Data([10]), Data([0xff, 10]),
             Data("{}\n{}\n".utf8), Data(repeating: 32, count: 16_384) + Data("{}\n".utf8),
             Data("{\"schemaVersion\":1,\"schemaVersion\":1}\n".utf8)]
