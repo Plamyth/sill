@@ -979,6 +979,7 @@ for slot in ["active", "prior"] {
 check(retirementRegressions.allSatisfy { $0 }, "독립 검수의 퇴역 회귀 전체")
 print("최종 소비자 검사 \(checks)개와 퇴역 경계 \(retirementRegressions.count)개 통과")
 
+<<<<<<< HEAD
 do {
     let memory = MemoryStore(), client = StreamClient(store: MemoryStore().store)
     let current = NWConnection(), stale = NWConnection(), id = ObjectIdentifier(current)
@@ -1001,3 +1002,34 @@ do {
           "metadata 관측 후에도 퇴역 응답은 현재 제어 상태 변경0")
 }
 print("합본 소비자 검사 \(checks)개와 퇴역 경계 \(retirementRegressions.count)개 통과")
+=======
+for collision in [true, false] {
+    for priorProof in [true, false] {
+        let memory = MemoryStore(); var seed = ready(memory); _ = perform(&seed)
+        observe(&seed, generationState(nextAuth))
+        let current = try! SentryControlRequest(requestID: UUID(), hostBootID: boot, sessionID: nextSession,
+            revision: revision, authorizationGeneration: UUID(uuidString: auth)!, desired: false)
+        let prior = try! SentryControlRequest(requestID: UUID(), hostBootID: boot,
+            sessionID: collision ? session : UUID(uuidString: "12345678-1234-4234-8234-123456789012")!,
+            revision: revision, authorizationGeneration: UUID(uuidString: auth)!, desired: true)
+        var ledger = object(memory.data!)
+        ledger["active"] = ["binding":object(try! JSONEncoder().encode(binding)),"rawRequest":current.rawRequest.base64EncodedString(),
+            "priorRawRequest":prior.rawRequest.base64EncodedString(),"ledgerAccepted":true,"priorLedgerAccepted":priorProof] as [String:Any]
+        let rawLedger = json(ledger); memory.data = rawLedger
+        var restored = IPadSentryControl(store: memory.store); restored.bind(peerID)
+        let report = state(sessionID:nextSession); observe(&restored,report)
+        if collision {
+            check(!restored.canSet && !restored.canQuery && restored.problem != nil &&
+                  restored.query(binding:binding,from:peerID,now:200) == nil && memory.data == rawLedger,
+                  "복원 prior의 퇴역 scope 충돌은 proof와 무관하게 차단 \(priorProof)")
+        } else {
+            check(restored.query(binding:binding,from:peerID,now:200) == IPadSentryControl.packet(current.rawRequest),
+                  "퇴역하지 않은 다른 session의 현재 요청 조회 유지 \(priorProof)")
+            _ = restored.receive(reply(restored,"rejected",report,accepted:false,code:"SENTRY_BUSY"),binding:binding,from:peerID)
+            check(restored.query(binding:binding,from:peerID,now:210) == IPadSentryControl.packet(prior.rawRequest),
+                  "퇴역하지 않은 cross-session prior 복구·정확 바이트 유지 \(priorProof)")
+        }
+    }
+}
+print("최종 prior scope 검사 포함 \(checks)개 통과")
+>>>>>>> 05744ec (test(ipad): 퇴역 prior scope의 재송신과 정상 cross-session 대조 재현)
