@@ -11,6 +11,7 @@ struct PeerCaptureDescription {
     let displayID: UInt32?
     let windowPID: pid_t?
     let title: String
+    var screenDemandIdentity: RemoteScreenDemandObservation.Source? = nil
 }
 
 @MainActor
@@ -88,7 +89,8 @@ final class NativePeerCaptureDriver: PeerCaptureDriver {
         let scale = min(max(quality.captureScale, 0.5), software ? 1 : 2)
         func pixels(_ points: CGFloat) -> Int { max(2, min(16384, Int(points * scale)) & ~1) }
         let description = PeerCaptureDescription(source: source, bounds: bounds, width: pixels(bounds.width),
-            height: pixels(bounds.height), displayID: screen?.displayID, windowPID: pid, title: title)
+            height: pixels(bounds.height), displayID: screen?.displayID, windowPID: pid, title: title,
+            screenDemandIdentity: RemoteScreenDemandIdentity.read(source: source, windowPID: pid, displayID: screen?.displayID))
         plan = Plan(filter: filter, display: screen, description: description,
                     fps: min(software ? 60 : 120, min(config.maxFPS, max(24, viewport?.fps ?? 60))), bitrate: quality.bitrate, speed: config.prioritizeSpeed)
         return description
