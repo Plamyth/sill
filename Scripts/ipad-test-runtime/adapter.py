@@ -308,7 +308,7 @@ def harness(config, work, method, variables=None, on_ready=None, ready_marker='C
                 if name.startswith('CCR_REVIEW_'):
                     del value['EnvironmentVariables'][name]
             value['EnvironmentVariables'].update(variables or {})
-    runs[0].write_bytes(plistlib.dumps(run))
+    runs[0].write_bytes(plistlib.dumps(run, fmt=plistlib.FMT_BINARY))
     result = work / (method + '-' + str(time.time_ns()) + '.xcresult')
     args = ['xcodebuild', 'test-without-building', '-xctestrun', str(runs[0]), '-destination', 'id=' + config['deviceUDID'],
             '-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/' + method, '-resultBundlePath', str(result),

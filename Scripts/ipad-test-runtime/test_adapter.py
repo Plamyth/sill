@@ -357,7 +357,7 @@ class HarnessResultAcceptance(unittest.TestCase):
                 'testRuns':[{'nodeType':'Device', 'result':'Passed', 'children':[
                     {'nodeType':'Test Plan Configuration', 'nodeIdentifierURL':url, 'result':'Passed'}]}]}
 
-    def exercise(self, root, details, live=False, exists=True):
+    def exercise(self, root, details, live=False, exists=True, variables=None):
         import plistlib
         run = root / 'HarnessDerivedData/Build/Products/test.xctestrun'
         run.parent.mkdir(parents=True)
@@ -375,7 +375,7 @@ class HarnessResultAcceptance(unittest.TestCase):
         calls = []
         with patch.object(adapter,'lease'), patch.object(adapter,'command',side_effect=command) as cmd, \
              patch.object(adapter,'run_live_harness',side_effect=run_live):
-            result = adapter.harness({'deviceUDID':'unexecuted'},root,'testReviewReopen',
+            result = adapter.harness({'deviceUDID':'unexecuted'},root,'testReviewReopen',variables,
                                      on_ready=(lambda:calls.append(True)) if live else None)
             self.assertEqual(sum(call.args[0][0] == 'xcrun' for call in cmd.call_args_list),1)
         self.assertEqual(calls,[True] if live else [])
@@ -409,6 +409,32 @@ class HarnessResultAcceptance(unittest.TestCase):
         for live in [False,True]:
             with self.subTest(live=live), tempfile.TemporaryDirectory() as directory:
                 self.assertTrue(self.exercise(Path(directory),self.details('testReviewReopen'),live).is_dir())
+
+    def test_harness_preserves_environment_utf8_bytes_in_written_xctestrun(self):
+        import plistlib
+        card = adapter.review_fixture('isolated')
+        variables = {
+            'CCR_REVIEW_DRAFT':adapter.review_text(card,card['question'] + ' / UIKit question',
+                                                  card['answer'] + ' / UIKit answer',card['metadata']),
+            'CCR_REVIEW_CRLF':'첫 줄\r\n다음 줄\r\n',
+            'CCR_REVIEW_CR':'\r앞\r가운데\r끝\r',
+            'CCR_REVIEW_NFD':'e\u0301 한',
+            'CCR_REVIEW_EMOJI':'👩🏽‍💻 🧑‍🚀',
+            'CCR_REVIEW_XML':'<&>"\'\t\n',
+            'CCR_REVIEW_EMPTY':'',
+            'CCR_COMMENT_TEXT':'댓글\r\n e\u0301 👩🏽‍💻\r',
+        }
+        for live in [False,True]:
+            with self.subTest(live=live), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.exercise(root,self.details('testReviewReopen'),live,variables=variables)
+                run = root / 'HarnessDerivedData/Build/Products/test.xctestrun'
+                loaded = plistlib.loads(run.read_bytes())['CanvasBridgeUITests']['EnvironmentVariables']
+                for name, text in variables.items():
+                    with self.subTest(variable=name):
+                        self.assertEqual(loaded[name].encode('utf-8'),text.encode('utf-8'))
+                self.assertEqual(loaded['CCR_TEST_RUNTIME_ID'],'isolated')
+                self.assertEqual(loaded['CCR_TEST_BUNDLE'],adapter.BUNDLE)
 
 class ReviewJournalAcceptance(unittest.TestCase):
     def test_only_absent_payload_can_be_cleared(self):
