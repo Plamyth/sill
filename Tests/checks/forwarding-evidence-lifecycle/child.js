@@ -54,6 +54,14 @@ const server=http.createServer((req,res)=>{
   }
   if(url.pathname==='/release'){const release=held;held=null;release?.();res.end('ok');return;}
   if(url.pathname==='/state'){res.setHeader('content-type','application/json');res.end(JSON.stringify(authority.snapshot()));return;}
+  if(url.pathname==='/request'){
+    try {
+      const id=url.searchParams.get('id');
+      const value=authority.preflight(id,credentials.get(id),JSON.parse(url.searchParams.get('intent')));
+      res.setHeader('content-type','application/json');res.end(JSON.stringify(value));
+    } catch(error) {res.writeHead(409);res.end(error.code??'refused');}
+    return;
+  }
   const id=url.searchParams.get('id');
   try{authority.authenticate(id,credentials.get(id));res.end('authorized');}
   catch{res.writeHead(403);res.end('refused');}
