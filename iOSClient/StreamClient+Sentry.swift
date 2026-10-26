@@ -59,9 +59,12 @@ extension StreamClient {
         })
     }
 
-    func receiveIPadSentry(_ data: Data, from peer: NWConnection) {
+    func receiveIPadSentry(_ data: Data, from peer: NWConnection, hostTimestamp: Double? = nil) {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.connection === peer else { return }
+            if let hostTimestamp {
+                IPadMicrophoneDiagnostics.shared.received(.sentryState, hostTimestamp: hostTimestamp)
+            }
             self.acceptIPadSentryReply(data, from: peer, binding: self.sentryBinding(on: peer))
         }
     }

@@ -39,6 +39,7 @@ import Foundation
         try await Task.sleep(nanoseconds: 1_050_000_000)
         log.connectionChanged()
         log.snapshot(runtime: runtime, render: nil, playbackRunning: false, session: [:])
+        try await Task.sleep(nanoseconds: 1_050_000_000)
         log.flush()
         let bounded = try JSONSerialization.jsonObject(with: Data(contentsOf: log.snapshotURL)) as! [String: Any]
         precondition((bounded["attempts"] as! [Any]).count == 8)

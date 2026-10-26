@@ -50,6 +50,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
             $0.connectionObservationID = UUID()
             $0.receptions.removeAll(keepingCapacity: true)
             $0.runtime = nil
+            $0.latestSnapshot = nil
         }
     }
     struct Runtime: Codable {
@@ -102,6 +103,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         var counters: [UUID: AttemptCounters] = [:]
         var counterOrder: [UUID] = []
         var runtime: Runtime?
+        var latestSnapshot: [String: Any]?
         var snapshotPending = false
         var nextSnapshotUptime: UInt64 = 0
         var events: [Event] = []
@@ -145,14 +147,11 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
     func snapshot(runtime: Runtime, render: RenderCounters?, playbackRunning: Bool, session: @autoclosure () -> [String: Any]) {
         dispatchPrecondition(condition: .onQueue(.main))
         let now = DispatchTime.now().uptimeNanoseconds
-        let counters = state.withLock { value -> [AttemptCounters]? in
+        let observation = state.withLock { value in
             value.runtime = runtime
-            guard !value.snapshotPending, now >= value.nextSnapshotUptime else { return nil }
-            value.snapshotPending = true
-            value.nextSnapshotUptime = now + 1_000_000_000
-            return value.counterOrder.compactMap { value.counters[$0] }
+            return (id: value.connectionObservationID, receptions: value.receptions,
+                counters: value.counterOrder.compactMap { value.counters[$0] })
         }
-        guard let counters else { return }
         let info = Bundle.main.infoDictionary ?? [:]
         let null = NSNull()
         let encode: (any Encodable) -> Any = { value in
@@ -160,7 +159,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
                   let result = try? JSONSerialization.jsonObject(with: data) else { return null }
             return result
         }
-        let reception = state.withLock { (id: $0.connectionObservationID, latest: $0.receptions) }
+        let reception = (id: observation.id, latest: observation.receptions)
         let latest = reception.latest.values.max { $0.observedUptimeNanoseconds < $1.observedUptimeNanoseconds }
         let verified = info["CCRSourceIdentityVerified"] as? Bool == true
         let document: [String: Any] = [
@@ -180,20 +179,37 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
             "commit": verified ? (info["CCRSourceCommit"] as? String ?? (null as Any)) : null,
             "tree": verified ? (info["CCRSourceTree"] as? String ?? (null as Any)) : null,
             "sourceIdentityVerified": verified,
-            "runtime": encode(runtime), "audioSession": session(), "attempts": encode(counters),
+            "runtime": encode(runtime), "audioSession": session(), "attempts": encode(observation.counters),
             "render": render.map { encode($0) } ?? null, "playbackEngineRunning": playbackRunning,
             "counterScope": "instrumented boundaries per attempt in this process; absent counters/fields are unknown; not Host receipts",
             "renderScope": "per attempt and formatVersion, possibly retired; frames copied or silence-filled; no sample inspection or audible-output proof",
             "hostClockOffsetSeconds": null, "hostMediaCounters": null]
-        writer.async { [self] in
-            defer { state.withLock { $0.snapshotPending = false } }
-            do {
-                try FileManager.default.createDirectory(at: snapshotURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                let data = try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys])
-                guard data.count <= 65_536 else { return }
-                try data.write(to: snapshotURL, options: .atomic)
-            } catch { NSLog("Sill audio metadata snapshot write failed (code %ld)", (error as NSError).code) }
+        let deadline = state.withLock { value -> UInt64? in
+            guard value.connectionObservationID == observation.id else { return nil }
+            value.latestSnapshot = document
+            guard !value.snapshotPending else { return nil }
+            value.snapshotPending = true
+            return value.nextSnapshotUptime
         }
+        guard let deadline else { return }
+        if deadline <= now { writer.async { [self] in persistSnapshot() } }
+        else { writer.asyncAfter(deadline: DispatchTime(uptimeNanoseconds: deadline)) { [self] in persistSnapshot() } }
+    }
+    private func persistSnapshot() {
+        let document = state.withLock { value -> [String: Any]? in
+            value.snapshotPending = false
+            guard let document = value.latestSnapshot else { return nil }
+            value.latestSnapshot = nil
+            value.nextSnapshotUptime = DispatchTime.now().uptimeNanoseconds + 1_000_000_000
+            return document
+        }
+        guard let document else { return }
+        do {
+            try FileManager.default.createDirectory(at: snapshotURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: document, options: [.sortedKeys])
+            guard data.count <= 65_536 else { return }
+            try data.write(to: snapshotURL, options: .atomic)
+        } catch { NSLog("Sill audio metadata snapshot write failed (code %ld)", (error as NSError).code) }
     }
     private func record(_ id: UUID, _ event: String, _ fields: () -> [String: String]) {
         let metric: Metric?

@@ -2312,6 +2312,9 @@ final class StreamClient: ObservableObject {
     /// a listed row is dialled at once. Only after the app was seen going to the background. Main
     /// thread.
     private func cameForward() {
+        #if os(iOS)
+        defer { observeAudioDiagnostics() }
+        #endif
         let wasInBackground = !appInForeground
         appInForeground = true
         guard wasInBackground else { return }
@@ -2332,6 +2335,9 @@ final class StreamClient: ObservableObject {
     }
 
     private func wentToBackground() {
+        #if os(iOS)
+        defer { observeAudioDiagnostics() }
+        #endif
         #if os(visionOS)
         visionAudio.setForeground(false)
         #endif
@@ -4515,6 +4521,9 @@ final class StreamClient: ObservableObject {
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
         #if os(iOS)
+        defer { observeAudioDiagnostics() }
+        #endif
+        #if os(iOS)
         cancelOwnerEnrollment()
         audioRouteChooserPresented = false
         audioRoutePresentation = nil
@@ -5370,8 +5379,7 @@ final class StreamClient: ObservableObject {
         switch header.kind {
         #if os(iOS)
         case .sentryState:
-            if connection === peer { IPadMicrophoneDiagnostics.shared.received(.sentryState, hostTimestamp: header.timestamp) }
-            receiveIPadSentry(data, from: peer)
+            receiveIPadSentry(data, from: peer, hostTimestamp: header.timestamp)
         case .sentryReturnState:
             receiveIPadSentryReturn(data, from: peer)
         #endif
