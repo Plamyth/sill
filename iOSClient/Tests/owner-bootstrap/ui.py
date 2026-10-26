@@ -59,25 +59,61 @@ members += '\n' + block(remote, 'func handleOpenURL(')
 members += '\n' + block(stream, 'struct Notice:')
 members += '\n' + block(remote, 'private func endWithNotice(').replace('private func', 'func', 1)
 members = members.replace('private enum StartupAutoConnection', 'enum StartupAutoConnection')
+members += '\n' + block(home, 'private func endAtHome(').replace('private func', 'func', 1)
+members += '\n' + block(stream, 'private func trySavedMacAutoConnect()').replace('private func', 'func', 1)
+members += '\n' + block(stream, 'func fallBackFromStartupWired()')
+members += '\n' + block(remote, 'func dialSavedAtStartup(')
 members = members.replace('#if os(iOS)', '#if true')
 fixture = '''import Foundation
 import StreamProtocol
+final class MemoryDefaults {
+    static let standard = MemoryDefaults()
+    private var values: [String: String] = [:]
+    func string(forKey key: String) -> String? { values[key] }
+    func removeObject(forKey key: String) { values.removeValue(forKey: key) }
+}
+extension Int { func cancel() {}
+    static func saved(pin: Data) -> Int { 1 }
+}
+enum DeviceIdentity { static func existing() -> Int? { 1 } }
+enum RemoteDialPolicy { static func ownerTailnetScope(_ saved: SavedMac) -> Bool { false } }
 enum DiscoveryPolicy {
-    enum HomeDial { case updateSill, waitForTap, ask(pinned: Bool), pinned, anyKey, plain }
+    static let networkFirst = 2.0
+    enum HomeDial: Equatable { case updateSill, waitForTap, ask(pinned: Bool), pinned, anyKey, plain }
     static func updateSillStatus(mac: String) -> String { "update" }
     static func sessionTrust(_ decision: HomeDial, savedPin: Data?) -> Int? { 1 }
 }
-struct FoundMac { var name = "합성 Mac"; var macID: String? }
+struct FoundMac {
+    enum Route { case network }
+    var name = "합성 Mac"; var macID: String?
+    var route = Route.network; var carriesTag = true; var endpoint: Int? = 1
+}
 final class StreamClient {
     enum Pairing: Equatable { case idle, failed(Problem) }
     enum Problem { case notALink }
     var pairing = Pairing.idle
     var pendingLink: PairLink?
+    func startOwnerBootstrap() { effects += 1 }
     func cancelOwnerBootstrap() { ownerBootstrap.cancel(); effects += 1 }
     func savedMac(_ id: String) -> SavedMac? { savedMacs.first { $0.macID == id } }
-    func homeDecision(_ mac: FoundMac, macID: String?, tap: Bool) -> DiscoveryPolicy.HomeDial { .ask(pinned: true) }
+    func homeDecision(_ mac: FoundMac, macID: String?, tap: Bool) -> DiscoveryPolicy.HomeDial { mockPinned ? .pinned : .ask(pinned: true) }
     func ask(_ mac: FoundMac, savedID: String?, tagNamed: Bool, replaces: String?) { effects += 1 }
-    func dialRow(_ mac: FoundMac, macID: String?, trust: Int, tagNamed: Bool, tap: Bool) -> Bool { effects += 1; return true }
+    func dialRow(_ mac: FoundMac, macID: String?, trust: Int, tagNamed: Bool, tap: Bool) -> Bool {
+        cancelOwnerBootstrap(); connection = 1; session = .init(macID: macID)
+        status = "합성 Mac에 연결하는 중…"; effects += 1; return true
+    }
+    func wiredDial(for mac: FoundMac) -> Int? { 1 }
+    func displayName(_ id: String) -> String { savedMac(id)!.name }
+    func dialSaved(_ id: String, why: DialWhy) {
+        cancelOwnerBootstrap(); remoteDial = 1; status = "합성 Mac에 원격 연결하는 중…"; effects += 1
+    }
+    var mockPinned = false
+    var appInForeground = true
+    var localNetworkDenied = false
+    var searchingSince = ProcessInfo.processInfo.systemUptime
+    var macs: [FoundMac] = []
+    var pairingDial: Int?, homeAsk: Int?
+    var session: Session?
     static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
     static let deviceWord = "iPad"
     static let lookingOnNetwork = "network-wait-fixture"
@@ -90,23 +126,25 @@ final class StreamClient {
     var reconnect: Reconnect?
     var status = lookingOnNetwork
     var effects = 0
-    struct Session { var why: DialWhy? }
-    enum DialWhy { case afterPairing }
+    struct Session { var why: DialWhy?; var macID: String? }
+    enum DialWhy { case afterPairing, automatic }
     var connected = false
     var notice: Notice?
     var afterPairingWatch: DispatchWorkItem?
-    func tearDown(status: String, restartSearch: Bool) {
-        self.status = status; connection = nil; connected = false; notice = nil
+    func tearDown(status: String, restartSearch: Bool = true) {
+        self.status = status; session = nil; connection = nil; connected = false; notice = nil
     }
     func lostReconnect(session: Session?, saved: SavedMac?, name: String, remoteAllowed: Bool) -> Reconnect {
         Reconnect(remoteAllowed: remoteAllowed)
     }
     func discoveryChanged() {}
+    func updateDiscovery() {}
     func scheduleReconnectRetry() { effects += 1 }
 // MEMBERS
 }
 ''' .replace('// MEMBERS', members + '\n' + '\n'.join(guards))
 fixture += (HERE / 'ui.swift').read_text()
+fixture = fixture.replace('UserDefaults', 'MemoryDefaults')
 with tempfile.TemporaryDirectory(prefix='ui-build-', dir=HERE) as folder:
     out = Path(folder)
     cache = HERE / '.cache'

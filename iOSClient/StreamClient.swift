@@ -307,7 +307,7 @@ final class StreamClient: ObservableObject {
                 return ("저장된 Mac 연결이 종료되었습니다", notice.text, false)
             }
             switch startupAutoConnection {
-            case .waiting, .waitingRemote, .wired:
+            case .waiting, .waitingRemote:
                 return ("저장된 Mac 연결 대기 중", "저장된 Mac의 안전한 연결 경로를 확인하고 있습니다.", true)
             default:
                 return ("저장된 Mac에 연결할 수 없습니다",

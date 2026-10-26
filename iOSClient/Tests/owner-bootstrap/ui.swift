@@ -140,4 +140,40 @@ for newKey in [false, true] {
     check("취소된 bootstrap에서도 removed/newKey 보호가 접속 표시보다 우선", !terminal.automaticConnectionPresentation.busy && terminal.automaticConnectionPresentation.title.contains("신뢰"))
 }
 check("처음 빈 저장소의 명시 취소는 등록 중지로 구별", c.automaticConnectionPresentation.title == "소유 Mac 자동 등록이 중지되었습니다" && !c.automaticConnectionPresentation.busy && c.ownerBootstrap.phase == .stopped)
+let startup = StreamClient()
+startup.savedMacs = [saved]
+startup.ownerBootstrap.arm(savedKeyPresent: true, preferredKeyPresent: false, hasRecords: true, explicitLaunch: false)
+startup.startupAutoConnection = .waiting(saved.macID)
+startup.mockPinned = true
+startup.trySavedMacAutoConnect()
+check("최초 검색은 아직 유선 후보가 없으면 대기 유지", startup.automaticConnectionPresentation.busy && startup.connection == nil && startup.effects == 0)
+startup.macs = [FoundMac(macID: saved.macID)]
+startup.trySavedMacAutoConnect()
+check("실제 startup caller의 유선 dial은 첫 목록 전 connection으로 진행 표시", startup.automaticConnectionPresentation.busy && startup.automaticConnectionPresentation.detail == "합성 Mac에 연결하는 중…" && startup.connection != nil && !startup.connected && startup.ownerBootstrap.phase == .stopped)
+let terminalWords = "합성 Mac에 연결하려면 이제 페어링이 필요합니다. Mac을 탭해 이 iPad와 페어링하세요."
+let startupEffects = startup.effects
+let savedBefore = SavedMacs.encode(startup.savedMacs)
+startup.endAtHome(terminalWords)
+print("WIRED_PAIRING_TERMINAL busy=\(startup.automaticConnectionPresentation.busy) detailPreserved=\(startup.automaticConnectionPresentation.detail == terminalWords) connection=\(String(describing: startup.connection)) reconnect=\(String(describing: startup.reconnect))")
+check("최초 목록 전 pairingRequired 종료는 남은 wired로 대기를 표시하지 않음", !startup.automaticConnectionPresentation.busy && startup.automaticConnectionPresentation.detail == terminalWords && startup.connection == nil && startup.reconnect == nil && startup.notice == nil)
+startup.trySavedMacAutoConnect()
+check("종료된 wired는 표시 조회나 검색으로 자동 재접속하지 않음", startup.effects == startupEffects && SavedMacs.encode(startup.savedMacs) == savedBefore && startup.ownerBootstrap.phase == .stopped)
+for foreground in [false, true] {
+    let fallback = StreamClient()
+    fallback.savedMacs = [saved]
+    fallback.ownerBootstrap.arm(savedKeyPresent: true, preferredKeyPresent: false, hasRecords: true, explicitLaunch: false)
+    fallback.startupAutoConnection = .waiting(saved.macID)
+    fallback.mockPinned = true
+    fallback.macs = [FoundMac(macID: saved.macID)]
+    fallback.trySavedMacAutoConnect()
+    fallback.appInForeground = foreground
+    check("실제 유선 fallback caller는 최초 목록 전 경로를 한 번 전환", fallback.fallBackFromStartupWired())
+    if !foreground {
+        check("비활성 fallback은 waitingRemote로 대기 표시", fallback.automaticConnectionPresentation.busy && fallback.remoteDial == nil && fallback.connection == nil)
+        fallback.appInForeground = true
+        fallback.trySavedMacAutoConnect()
+    }
+    check("새 무선 fallback의 실제 reconnect와 remoteDial은 진행 표시", fallback.automaticConnectionPresentation.busy && fallback.automaticConnectionPresentation.detail == "합성 Mac에 원격 연결하는 중…" && fallback.remoteDial != nil && fallback.reconnect?.remoteAllowed == true)
+    check("유선 fallback은 같은 startup에서 반복되지 않음", !fallback.fallBackFromStartupWired())
+}
 print("PASS \(count) owner UI presentation and ingress guard checks; actual extracted code, no SwiftUI/device/network/Keychain effects")
