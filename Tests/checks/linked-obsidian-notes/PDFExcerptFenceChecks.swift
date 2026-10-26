@@ -94,4 +94,25 @@ func checkPDFExcerptFences(_ check: (Bool,String) -> Void) throws {
             check(String(rendered.characters).contains("<img src=x>"),"Foundation renders tag example literally")
         }
     }
+    for opener in ["````markdown", "~~~markdown", "```"] {
+        try accepts("<!--\n" + opener + "\n-->\n\n" + markdown,excerpt,
+                    "HTML comment fence cannot hide real native Markdown payload")
+    }
+    for indent in ["    ", "\t", "  \t"] {
+        let quote = indent + "[표본](https://example.invalid) <img src=x> ![[위키]]"
+        var object = try JSONSerialization.jsonObject(with:JSONEncoder().encode(excerpt)) as! [String:Any]
+        object["quote"] = quote
+        let value = try JSONDecoder().decode(VaultPDFExcerpt.self,from:JSONSerialization.data(withJSONObject:object))
+        let text = try value.markdown()
+        let display = text.components(separatedBy:"\n\n## 메모")[0].components(separatedBy:"\n\n").dropFirst(2).joined(separator:"\n\n")
+        let rendered = try AttributedString(markdown:display)
+        check(String(rendered.characters).utf8.elementsEqual(quote.utf8),"leading quote indentation keeps literal visible text")
+        check(rendered.runs.allSatisfy({ run in
+            run.link == nil && run.inlinePresentationIntent == nil &&
+            !(run.presentationIntent?.components.contains(where:{ if case .codeBlock = $0.kind { return true }; return false }) ?? false)
+        }),"leading quote indentation activates no code block or links")
+        check(try VaultPDFExcerpt.parse(text)?.quote.utf8.elementsEqual(quote.utf8) == true,
+              "leading indentation preserves exact original quote JSON")
+    }
+
 }
