@@ -99,8 +99,12 @@ struct IPadSentryControl {
             let requests = [ledger.active].compactMap { $0 } + ledger.retired.compactMap(\.request)
             let ids = requests.flatMap { [$0.rawRequest] + [$0.priorRawRequest].compactMap { $0 } }
                 .compactMap(Self.request).map(\.requestID)
+            let activeEpochs = ledger.active.map { stored in
+                ([stored.rawRequest] + [stored.priorRawRequest].compactMap { $0 })
+                    .compactMap { Self.epoch($0, binding: stored.binding) }
+            } ?? []
             guard Set(ids).count == ids.count,
-                  ledger.active.flatMap(Self.epoch).map({ epoch in !ledger.retired.contains(where: { $0.epoch == epoch }) }) ?? true else {
+                  activeEpochs.allSatisfy({ epoch in !ledger.retired.contains(where: { $0.epoch == epoch }) }) else {
                 problem = "이전 센트리 요청 이력의 식별자가 충돌합니다."
                 return
             }
@@ -350,7 +354,10 @@ struct IPadSentryControl {
         !stored.binding.macID.isEmpty && Self.request(stored.rawRequest).map { validPrior(stored.priorRawRequest, for: $0) } == true
     }
     private static func epoch(_ stored: Stored) -> Epoch? {
-        request(stored.rawRequest).map { .init(binding: stored.binding, hostBootID: $0.hostBootID,
+        epoch(stored.rawRequest, binding: stored.binding)
+    }
+    private static func epoch(_ raw: Data, binding: Binding) -> Epoch? {
+        request(raw).map { .init(binding: binding, hostBootID: $0.hostBootID,
             sessionID: $0.sessionID, authorizationGeneration: $0.authorizationGeneration) }
     }
     private static func validRetired(_ retired: Retired) -> Bool {
