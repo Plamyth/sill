@@ -70,4 +70,28 @@ func checkPDFExcerptFences(_ check: (Bool,String) -> Void) throws {
     try rejects(markdown + "\n" + example,"unsupported actual second payload refuses")
     check(try excerpt.sourcePage(in:snapshot).2.string?.utf8.elementsEqual(selection.string!.utf8) == true,
           "fence filtering retains exact Unicode NSRange source return")
+    for quote in ["ordinary spaces\tand  tabs 한글 é 👩💻",
+                  "공백 [링크](https://example.invalid) <img src=x> ![[노트]]\t끝",
+                  "\\`코드` *강조* & &#60; [[위키]]\t한 칸 두  칸"] {
+        var object = try JSONSerialization.jsonObject(with:JSONEncoder().encode(excerpt)) as! [String:Any]
+        object["quote"] = quote
+        let value = try JSONDecoder().decode(VaultPDFExcerpt.self,from:JSONSerialization.data(withJSONObject:object))
+        let text = try value.markdown()
+        let display = text.components(separatedBy:"\n\n## 메모")[0].components(separatedBy:"\n\n").dropFirst(2).joined(separator:"\n\n")
+        check(display.contains(" ") && display.contains("\t") && !display.contains("&#32;") && !display.contains("&#9;"),
+              "display quote keeps readable ordinary spaces and tabs")
+        check(try VaultPDFExcerpt.parse(text)?.quote.utf8.elementsEqual(quote.utf8) == true,
+              "display formatting preserves exact quote JSON bytes")
+        check(!display.contains("[") && !display.contains("<") && !display.contains("`") && !display.contains("*"),
+              "display quote keeps Markdown tag and wiki delimiters encoded")
+        let rendered = try AttributedString(markdown:display)
+        check(rendered.runs.allSatisfy({ $0.link == nil && $0.inlinePresentationIntent == nil }),
+              "Foundation display quote activates zero links tags wiki or inline code")
+        if quote.contains("[[위키]]") {
+            check(String(rendered.characters).contains("[[위키]]"),"Foundation renders wiki example literally")
+        }
+        if quote.contains("<img") {
+            check(String(rendered.characters).contains("<img src=x>"),"Foundation renders tag example literally")
+        }
+    }
 }

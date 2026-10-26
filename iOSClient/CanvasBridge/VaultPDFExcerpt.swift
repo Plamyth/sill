@@ -136,7 +136,8 @@ struct VaultPDFExcerpt: Codable, Equatable {
         let source = String(decoding:try encoder.encode(self),as:UTF8.self)
         let quoted = quote.components(separatedBy:.newlines).map { line in
             "> " + line.unicodeScalars.map { scalar in
-                scalar.isASCII && !CharacterSet.alphanumerics.contains(scalar) ? "&#\(scalar.value);" : String(scalar)
+                scalar.isASCII && scalar != " " && scalar != "\t" && !CharacterSet.alphanumerics.contains(scalar)
+                    ? "&#\(scalar.value);" : String(scalar)
             }.joined()
         }.joined(separator:"\n")
         return "# PDF 발췌\n\n원문: [[\(pdfPath)#page=\(pageIndex + 1)]]\n\n\(quoted)\n\n## 메모\n\n\n" +
@@ -145,15 +146,37 @@ struct VaultPDFExcerpt: Codable, Equatable {
 
     static func parse(_ text: String) throws -> Self? {
         guard text.utf8.count <= 1024 * 1024 else { throw VaultPDFError.invalid }
-        let lines = text.components(separatedBy:"\n")
-        let fences = lines.indices.filter {
-            lines[$0].range(of:"^ {0,3}(`{3,}|~{3,})ccr-pdf-source",options:.regularExpression) != nil
+        let lines = text.replacingOccurrences(of:"\r\n",with:"\n").components(separatedBy:"\n")
+        var open: (marker: Character, length: Int, version: Int?, start: Int)?
+        var payload: (version: Int, start: Int, end: Int)?
+        for index in lines.indices {
+            let line = lines[index], body = line.drop(while:{ $0 == " " })
+            guard line.count - body.count <= 3, let marker = body.first,
+                  marker == "`" || marker == "~" else { continue }
+            let length = body.prefix(while:{ $0 == marker }).count
+            guard length >= 3 else { continue }
+            let tail = body.dropFirst(length)
+            if let current = open {
+                if marker == current.marker, length >= current.length,
+                   tail.allSatisfy({ $0 == " " || $0 == "\t" }) {
+                    if let version = current.version {
+                        payload = (version,current.start,index)
+                    }
+                    open = nil
+                }
+                continue
+            }
+            if tail.hasPrefix("ccr-pdf-source") {
+                guard payload == nil,
+                      let version = [1,2].first(where:{ line == "```ccr-pdf-source-v\($0)" })
+                else { throw VaultPDFError.invalid }
+                open = (marker,length,version,index)
+            } else if marker != "`" || !tail.contains("`") {
+                open = (marker,length,nil,index)
+            }
         }
-        guard !fences.isEmpty else { return nil }
-        guard fences.count == 1, let start = fences.first,
-              let version = [1,2].first(where:{ lines[start] == "```ccr-pdf-source-v\($0)" }),
-              let end = lines.indices.dropFirst(start + 1).first(where:{ lines[$0] == "```" })
-        else { throw VaultPDFError.invalid }
+        guard open?.version == nil else { throw VaultPDFError.invalid }
+        guard let (version,start,end) = payload else { return nil }
         let bytes = Data(lines[(start + 1)..<end].joined(separator:"\n").utf8)
         guard bytes.count <= 96 * 1024 else { throw VaultPDFError.invalid }
         var allowed: Set<String> = ["schemaVersion","excerptID","pdfPath","pdfSha256","pageIndex","mediaBox","cropBox","rotation","selectionRects","quote"]
