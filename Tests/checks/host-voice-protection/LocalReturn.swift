@@ -104,9 +104,17 @@ func localReturnChecks() async {
     armRecoveryChecks()
     let expiredRemoval = ReturnFixture()
     expect(expiredRemoval.privacy.armAndVerify(), "감시 종료 중 기한 만료 fixture 보호")
-    expiredRemoval.hal.beforeObservationStop = { Thread.sleep(forTimeInterval: 0.15) }
-    let expiredRemovalResult = await expiredRemoval.privacy.requestLocalReturn(budgetMilliseconds: 100)
-    expect(!expiredRemovalResult && expiredRemoval.hal.restoreCalls == 0 && expiredRemoval.commits == 0 && expiredRemoval.durable,
+    var observationStopEntered = false
+    var observationStopElapsed = Duration.zero
+    expiredRemoval.hal.beforeObservationStop = {
+        observationStopEntered = true
+        let start = ContinuousClock.now
+        Thread.sleep(forTimeInterval: 0.6)
+        observationStopElapsed = start.duration(to: ContinuousClock.now)
+    }
+    let expiredRemovalResult = await expiredRemoval.privacy.requestLocalReturn(budgetMilliseconds: 500)
+    expect(observationStopEntered && observationStopElapsed >= .milliseconds(500) && !expiredRemovalResult &&
+           expiredRemoval.hal.restoreCalls == 0 && expiredRemoval.commits == 0 && expiredRemoval.durable,
            "감시 종료 중 기한이 만료되면 실제 복원 시작 전 거부")
     expiredRemoval.hal.beforeObservationStop = nil
     expiredRemoval.privacy.stop()
