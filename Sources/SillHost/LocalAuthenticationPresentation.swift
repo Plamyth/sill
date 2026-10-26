@@ -117,6 +117,7 @@ final class LocalAuthenticationPresentation {
             guard NSApp.setActivationPolicy(.regular) else { end(); return nil }
             previousActivationPolicy = previousPolicy
         }
+        print("[로컬 복귀 인증] 포커스 표시 준비 appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow) visible=\(window.isVisible) canBecomeKey=\(window.canBecomeKey) becomesKeyOnlyIfNeeded=\(window.becomesKeyOnlyIfNeeded) isMainWindow=\(window.isMainWindow) isMiniaturized=\(window.isMiniaturized) activationPolicy=\(NSApp.activationPolicy().rawValue) appKeyWindowMatches=\(NSApp.keyWindow === window) appMainWindowMatches=\(NSApp.mainWindow === window) modalWindowPresent=\(NSApp.modalWindow != nil) modalWindowMatches=\(NSApp.modalWindow === window) runLoopMode=\(RunLoop.current.currentMode?.rawValue ?? "none") needsPanelToBecomeKey=\(authenticationView.needsPanelToBecomeKey)")
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
@@ -130,7 +131,7 @@ final class LocalAuthenticationPresentation {
         }
         guard self.window === window else { return nil }
         guard !Task.isCancelled, window.isKeyWindow, window.isVisible else {
-            print("[로컬 복귀 인증] 활성 앱과 내장 anchor의 키보드 포커스를 확인하지 못했습니다. appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow) visible=\(window.isVisible). 인증을 요청하지 않습니다.")
+            print("[로컬 복귀 인증] 활성 앱과 내장 anchor의 키보드 포커스를 확인하지 못했습니다. appActive=\(NSApp.isActive) keyWindow=\(window.isKeyWindow) visible=\(window.isVisible) canBecomeKey=\(window.canBecomeKey) becomesKeyOnlyIfNeeded=\(window.becomesKeyOnlyIfNeeded) isMainWindow=\(window.isMainWindow) isMiniaturized=\(window.isMiniaturized) activationPolicy=\(NSApp.activationPolicy().rawValue) appKeyWindowMatches=\(NSApp.keyWindow === window) appMainWindowMatches=\(NSApp.mainWindow === window) modalWindowPresent=\(NSApp.modalWindow != nil) modalWindowMatches=\(NSApp.modalWindow === window) runLoopMode=\(RunLoop.current.currentMode?.rawValue ?? "none") needsPanelToBecomeKey=\(authenticationView.needsPanelToBecomeKey). 인증을 요청하지 않습니다.")
             end()
             return nil
         }
