@@ -77,13 +77,15 @@ import StreamProtocol
             release: { _, _ in false }, reason: { nil }), prepareRelease: { false })
     inactive.register(ObjectIdentifier(peer), externalRoute: false)
     inactive.admit(ObjectIdentifier(peer))
+    let priorSession = inactive.status(for: ObjectIdentifier(peer))!.sessionID
     local.localReturnActivityChanged(true)
     let localCompleted = await local.completeAuthenticatedLocalReturn(commitAudio: { true })
     expect(localCompleted, "Sentry 비활성 분기의 인증된 오디오 커밋")
     local.localReturnActivityChanged(false)
-    expect(!inactive.allowsActions(ObjectIdentifier(peer)) &&
-           !inactive.allows(ObjectIdentifier(peer), epoch: nil) &&
-           inactive.sourceSelectionAdmission(for: ObjectIdentifier(peer)) == nil &&
-           inactive.status(for: ObjectIdentifier(peer)) == nil,
-           "비활성 복귀도 비동기 closeSessions 전에 기존 명령·선택·영상·제어 세션 인가를 동기 철회")
+    expect(inactive.allowsActions(ObjectIdentifier(peer)) &&
+           inactive.allows(ObjectIdentifier(peer), epoch: nil) &&
+           inactive.sourceSelectionAdmission(for: ObjectIdentifier(peer))?.ready == true &&
+           inactive.status(for: ObjectIdentifier(peer))?.sessionID == priorSession &&
+           inactive.status(for: ObjectIdentifier(peer))?.control == nil,
+           "인증된 비활성 복귀 뒤 같은 영상 연결을 보존하며 없던 센츄리 제어 권한은 만들지 않음")
 }

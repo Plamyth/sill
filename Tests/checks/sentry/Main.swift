@@ -89,8 +89,9 @@ import StreamProtocol
         expect(!manualGate.accept(activate, from: lan), "local return fence refuses even old accepted activation")
         expect(!manualGate.allows(lan, epoch: epoch), "local return fence stops queued video")
         manualGate.completeLocalReturn()
-        expect(!manualGate.allows(lan, epoch: epoch), "local return retires old session permissions")
-        expect(!manualGate.isRequested && manualGate.status(for: lan) == nil, "successful return clears latch and old session state")
+        expect(manualGate.allows(lan, epoch: epoch), "인증 복귀 뒤 기존 원격 영상 연결을 유지")
+        expect(!manualGate.isRequested && manualGate.status(for: lan) != nil, "인증 복귀는 화면 연결을 지우지 않고 보호 선택만 해제")
+        expect(!manualGate.accept(activate, from: lan), "복귀 전 세션의 명시 활성화는 새 세대에서 거절")
         manualGate.register(external, externalRoute: true); manualGate.admit(external)
         expect(!manualGate.isRequested && manualGate.allows(external, epoch: epoch), "로컬 복귀 뒤 새 외부 연결도 OFF 유지")
         let restart = SentryAdmission()
@@ -143,8 +144,14 @@ import StreamProtocol
         persistOK = true; releaseOK = false
         expect(!(await controller.completeAuthenticatedLocalReturn()) && stored, "failed surface release reasserts durable latch")
         releaseOK = true
+        let beforeNativeReturn = controllerGate.status(for: lan)!
         expect(await controller.completeAuthenticatedLocalReturn() && !stored, "successful authenticated return clears native and persisted protection")
-        expect(controllerGate.status(for: lan) == nil, "native return invalidates old remote capability")
+        expect(controllerGate.status(for: lan)?.sessionID == beforeNativeReturn.sessionID &&
+               controllerGate.status(for: lan)?.revision != beforeNativeReturn.revision && controllerGate.allowsActions(lan),
+               "인증된 복귀 뒤 같은 화면 연결을 보존하고 상태 세대는 갱신")
+        let staleNativeActivation = SentryActivation(hostBootID: beforeNativeReturn.hostBootID,
+            sessionID: beforeNativeReturn.sessionID, revision: beforeNativeReturn.revision)
+        expect(!controllerGate.accept(staleNativeActivation, from: lan), "복귀 전 원격 권한은 같은 영상 연결에서도 재사용 불가")
         expect(!controllerGate.allowsWire(Data([0, 1]), for: lan, currentEpoch: epoch), "malformed queued wire cannot bypass gate")
         let callbackGate = SentryAdmission()
         var callback: (() -> Void)?
