@@ -82,6 +82,7 @@ final class StreamServer {
     }
     private final class Client {
         let connection: NWConnection
+        let closeTrace = PeerCloseTrace()
         var videoLane = VideoLane.unassigned
         let peerVideo = PeerVideo()
         var peerPointerRect: CGRect?
@@ -206,6 +207,7 @@ final class StreamServer {
         }
         func invalidate() { lock.lock(); defer { lock.unlock() }; valid = false }
     }
+    private var diagnosticConnectionID: UInt64 = 0
     private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
     let sentryAdmission = SentryAdmission()
     private var videoAdmission = VideoEpochAdmission.stopped
@@ -333,7 +335,11 @@ final class StreamServer {
             if client.encrypted, now - client.lastSentAt < Self.tickInterval { continue }
             // The USB cable has no radio to keep awake.
             if client.encrypted, client.onCable { continue }
-            client.connection.send(content: data, completion: .contentProcessed { _ in })   // not counted as inflight
+            let closeTrace = client.closeTrace
+            closeTrace.queued(data.count, kind: StreamMessageKind.tick.rawValue)
+            client.connection.send(content: data, completion: .contentProcessed { [closeTrace] error in
+                Self.traceCompletion(closeTrace, bytes: data.count, kind: .tick, error: error)
+            })   // not counted as inflight
         }
         Stats.shared.bump("net.tick")
     }
@@ -390,7 +396,11 @@ final class StreamServer {
                 guard report != client.lastPointer else { return }
                 client.lastPointer = report
                 let data = StreamMessage(kind: .macPointer, timestamp: now, isKeyframe: false, payload: Wire.encode(report)).serialized()
-                client.connection.send(content: data, completion: .contentProcessed { _ in })
+                let closeTrace = client.closeTrace
+                closeTrace.queued(data.count, kind: StreamMessageKind.macPointer.rawValue)
+                client.connection.send(content: data, completion: .contentProcessed { [closeTrace] error in
+                    Self.traceCompletion(closeTrace, bytes: data.count, kind: .macPointer, error: error)
+                })
                 client.lastSentAt = now
                 Stats.shared.bump("ptr.sent")
                 sent.insert(id)
@@ -1055,11 +1065,14 @@ final class StreamServer {
                     if let hello, self.droppedForDirectWireless(connection, acceptedPeerToPeer: client.acceptedPeerToPeer, hello: hello) { return }
                     admit(hello)
                 }
-            case .failed:
+            case .failed(let error):
                 // Cancelled at once: a failed connection that is only forgotten keeps its socket.
+                client.closeTrace.failed(.init(reason: .transportFailed, network: Self.traceFailure(error)))
+                client.closeTrace.closed(.failed)
                 connection.cancel()
                 self.unregister(id)
             case .cancelled:
+                client.closeTrace.closed(.cancelled)
                 self.unregister(id)
             default: break
             }
@@ -1080,6 +1093,8 @@ final class StreamServer {
 
     /// On `queue`: from now on `client` gets broadcasts, ticks and the catalog.
     private func register(_ client: Client) {
+        diagnosticConnectionID &+= 1
+        client.closeTrace.bind(diagnosticConnectionID)
         client.connectedAt = Date().timeIntervalSince1970
         client.lastHeardAt = client.connectedAt
         let peer = ObjectIdentifier(client.connection)
@@ -1110,10 +1125,13 @@ final class StreamServer {
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
-            case .failed:
+            case .failed(let error):
+                client.closeTrace.failed(.init(reason: .transportFailed, network: Self.traceFailure(error)))
+                client.closeTrace.closed(.failed)
                 connection.cancel()
                 self.unregister(id)
             case .cancelled:
+                client.closeTrace.closed(.cancelled)
                 self.unregister(id)
             default: break
             }
@@ -1167,14 +1185,20 @@ final class StreamServer {
     /// whose connection the stream and the catalog share. A connection that was never registered
     /// closes with `closeWithGoodbye`. On `queue`.
     func goodbye(_ goodbye: Goodbye, to connection: NWConnection, within: TimeInterval = 0.25) {
-        Self.sayGoodbye(payload: Wire.encode(goodbye), on: connection, queue: queue, within: within)
+        Self.sayGoodbye(payload: Wire.encode(goodbye), on: connection, queue: queue, within: within,
+                        trace: clients[ObjectIdentifier(connection)]?.closeTrace)
     }
 
     /// A kind 22 with this payload, then the close. On `queue`.
-    private static func sayGoodbye(payload: Data, on connection: NWConnection, queue: DispatchQueue, within: TimeInterval) {
+    private static func sayGoodbye(payload: Data, on connection: NWConnection, queue: DispatchQueue, within: TimeInterval,
+                                   trace: PeerCloseTrace? = nil) {
         let data = StreamMessage(kind: .goodbye, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                                  payload: payload).serialized()
-        connection.send(content: data, completion: .contentProcessed { _ in connection.cancel() })
+        trace?.queued(data.count, kind: StreamMessageKind.goodbye.rawValue)
+        connection.send(content: data, completion: .contentProcessed { [trace] error in
+            Self.traceCompletion(trace, bytes: data.count, kind: .goodbye, error: error)
+            connection.cancel()
+        })
         queue.asyncAfter(deadline: .now() + within) { connection.cancel() }
     }
 
@@ -1189,7 +1213,12 @@ final class StreamServer {
                                      payload: Wire.encode(goodbye)).serialized()
             for client in clients.values where client.connection.state == .ready {
                 group.enter()
-                client.connection.send(content: data, completion: .contentProcessed { _ in group.leave() })
+                let closeTrace = client.closeTrace
+                closeTrace.queued(data.count, kind: StreamMessageKind.goodbye.rawValue)
+                client.connection.send(content: data, completion: .contentProcessed { [closeTrace] error in
+                    Self.traceCompletion(closeTrace, bytes: data.count, kind: .goodbye, error: error)
+                    group.leave()
+                })
             }
             group.leave()
         }
@@ -1442,11 +1471,12 @@ final class StreamServer {
     /// connection that was never registered (refused, or failed before it was ready) leaves no line.
     private func unregister(_ id: ObjectIdentifier) {
         guard let client = clients.removeValue(forKey: id) else { return }
+        client.closeTrace.closed(.unregistered)
         sentryAdmission.remove(id)
         client.forwardingExchange?.invalidate()
         client.providerExchange?.invalidate()
         if client.role.isViewer { pointerWatch?.clientLeft(id) }
-        print("Client left: \(client.connection.endpoint)")
+        print("Client left: \(client.connection.endpoint) trace_id=\(client.closeTrace.connectionID ?? 0)")
         if client.role.isViewer {
             onClientDisconnected?(client.connection)
             onClientCountChanged?(viewerCount)
@@ -1783,23 +1813,54 @@ final class StreamServer {
         }
     }
 
+    private static func traceFailure(_ error: NWError?) -> PeerCloseTrace.NetworkFailure? {
+        guard let error else { return nil }
+        switch error {
+        case .posix(let value): return .init(domain: .posix, code: value.rawValue)
+        case .dns(let value): return .init(domain: .dns, code: value)
+        case .tls(let value): return .init(domain: .tls, code: value)
+        default: return .init(domain: .unknown, code: 0)
+        }
+    }
+
+    private static func traceCompletion(_ trace: PeerCloseTrace?, bytes: Int, kind: StreamMessageKind, error: NWError?) {
+        if let error {
+            trace?.failed(.init(reason: .sendError, kind: kind.rawValue, network: Self.traceFailure(error)))
+        } else { trace?.processed(bytes) }
+    }
+
     /// Client → host messages share the same framing. Small and rare, so read them one at a time.
     private func receiveLoop(_ client: Client) {
         let c = client.connection
         c.receive(minimumIncompleteLength: StreamMessage.headerLength, maximumLength: StreamMessage.headerLength) { [weak self] data, _, isComplete, error in
             guard let self else { return }
+            client.closeTrace.received(data?.count ?? 0)
+            if let error {
+                client.closeTrace.failed(.init(reason: .receiveHeaderError, received: data?.count ?? 0,
+                    expected: StreamMessage.headerLength, network: Self.traceFailure(error)))
+            }
             guard let data, let header = StreamMessage.parseHeader(data) else {
                 // EOF or a read error: the client closed (or was killed). Nothing else would notice
                 // while no frames are being sent, so cancel here; the state handler prints and forgets it.
-                if isComplete || error != nil { c.cancel() }
+                if isComplete || error != nil {
+                    client.closeTrace.failed(.init(reason: error == nil ? .headerEOF : .receiveHeaderError,
+                        received: data?.count ?? 0, expected: StreamMessage.headerLength, network: Self.traceFailure(error)))
+                    c.cancel()
+                }
                 return
             }
+            client.closeTrace.received(0, kind: header.kind.rawValue)
             client.lastHeardAt = Date().timeIntervalSince1970
             // A header can announce up to 4 GiB and the read below would wait for all of it. No
             // client message comes near a megabyte, so a bigger one is a broken or hostile peer.
-            guard client.role.accepts(header.kind) else { c.cancel(); return }
+            guard client.role.accepts(header.kind) else {
+                client.closeTrace.failed(.init(reason: .roleRejected, kind: header.kind.rawValue))
+                c.cancel(); return
+            }
             let payloadLimit = StreamMessage.clientPayloadLimit(for: header.kind)
             if header.payloadLength > payloadLimit {
+                client.closeTrace.failed(.init(reason: .payloadLimit, kind: header.kind.rawValue,
+                    received: header.payloadLength, expected: payloadLimit))
                 print("Closing \(c.endpoint): it announced a \(header.payloadLength)-byte message (limit \(payloadLimit)).")
                 c.cancel()
                 return
@@ -1866,6 +1927,7 @@ final class StreamServer {
                     if !client.helloSeen {
                         client.helloSeen = true
                         if let hello = Wire.decode(Hello.self, from: payload) { self.took(hello, from: client) }
+                        else { client.closeTrace.failed(.init(reason: .helloDecode, kind: header.kind.rawValue)) }
                     }
                 } else if header.kind == .pairingWanted && client.route.isRemote {
                     // "Show your pairing code" comes only from a device near the Mac: ignored here.
@@ -1876,11 +1938,24 @@ final class StreamServer {
             }
             if header.payloadLength == 0 { deliver(Data()); return }
             c.receive(minimumIncompleteLength: header.payloadLength, maximumLength: header.payloadLength) { data, _, isComplete, error in
+                client.closeTrace.received(data?.count ?? 0)
+                if let error {
+                    client.closeTrace.failed(.init(reason: .receivePayloadError, kind: header.kind.rawValue,
+                        received: data?.count ?? 0, expected: header.payloadLength, network: Self.traceFailure(error)))
+                }
                 guard let data else {
-                    if isComplete || error != nil { c.cancel() }
+                    if isComplete || error != nil {
+                        client.closeTrace.failed(.init(reason: error == nil ? .payloadEOF : .receivePayloadError,
+                            kind: header.kind.rawValue, received: 0, expected: header.payloadLength, network: Self.traceFailure(error)))
+                        c.cancel()
+                    }
                     return
                 }
-                guard data.count == header.payloadLength else { c.cancel(); return }
+                guard data.count == header.payloadLength else {
+                    client.closeTrace.failed(.init(reason: .payloadLength, kind: header.kind.rawValue,
+                        received: data.count, expected: header.payloadLength))
+                    c.cancel(); return
+                }
                 deliver(data)
             }
         }
@@ -2246,6 +2321,7 @@ final class StreamServer {
         if isFrame, let oldest = client.oldestUnackedFrameAt,
            now - oldest > (remote ? Self.remoteDeadAfter : Self.deadAfter),
            now - client.connectedAt > (remote ? Self.remoteGrace : Self.graceAfterConnect) {
+            client.closeTrace.failed(.init(reason: .notDraining, kind: header.kind.rawValue))
             print("Client not draining for \(Int(now - oldest)) s, dropping: \(client.connection.endpoint)")
             client.connection.cancel()   // its state handler removes it from `clients`
             return
@@ -2268,8 +2344,11 @@ final class StreamServer {
         }
         let audio = header.kind == .audio
         if audio { remoteAudioDrain.enter() }
-        client.connection.send(content: data, completion: .contentProcessed { [remoteAudioDrain, weak client] _ in
+        let closeTrace = client.closeTrace
+        closeTrace.queued(data.count, kind: header.kind.rawValue)
+        client.connection.send(content: data, completion: .contentProcessed { [remoteAudioDrain, weak client, closeTrace] error in
             if audio { remoteAudioDrain.leave() }
+            Self.traceCompletion(closeTrace, bytes: data.count, kind: header.kind, error: error)
             guard let client else { return }
             client.inflight -= 1
             client.pendingBytes -= data.count
