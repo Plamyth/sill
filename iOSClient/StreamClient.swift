@@ -339,8 +339,11 @@ final class StreamClient: ObservableObject {
            SavedMacs.automaticTarget(savedMacs, preferredID: UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey)) == nil {
             return ("저장된 Mac의 신뢰 확인이 필요합니다", "연결 권한이 폐기되었거나 Mac의 키가 변경되었습니다. 저장된 신뢰를 보존하며 자동 등록으로 대체하지 않습니다.", false)
         }
-        if connection != nil || remoteDial != nil || reconnect?.remoteAllowed == true {
+        if connection != nil || remoteDial != nil {
             return ("저장된 Mac에 다시 연결하는 중", status, true)
+        }
+        if let reconnect, reconnect.remoteAllowed {
+            return ("저장된 Mac 재접속 대기 중", status, reconnectCheck != nil && appInForeground)
         }
         if let reconnect, !reconnect.remoteAllowed {
             return ("저장된 Mac 원격 연결이 중단되었습니다", status, false)
@@ -1562,11 +1565,19 @@ final class StreamClient: ObservableObject {
         /// systemUptime of the loss, and this device's path then.
         var lostAt: Double
         var pathAtLoss: String
-        /// False after goodbye `remoteOff` or `internetOff`: the rows only.
+        /// False after policy refusal. Owner recovery never reopens it on discovery or a path event.
         var remoteAllowed: Bool
         var rememberedDirect: Bool
         var remoteFailures = 0
         var nextRemoteAt = 0.0
+        struct OwnerRecovery {
+            var startedAt: Double
+            var path: String
+            var dials = 0
+            var listing: RowListing?
+        }
+        var ownerRecovery: OwnerRecovery?
+        var remoteFailureText: String?
         /// The session ended with goodbye `quit`: a row listed since before `lostAt` is the Mac's
         /// registration that is going, left alone for DiscoveryPolicy.quitWait (`reconnectRow`).
         var afterQuit = false
@@ -2329,6 +2340,11 @@ final class StreamClient: ObservableObject {
         if var r = reconnect {
             r.rowBudgets.removeAll()
             r.rowListing = nil
+            if r.remoteAllowed, let id = r.macID, RemoteDialPolicy.ownerTailnetScope(savedMac(id)) {
+                r.ownerRecovery = Reconnect.OwnerRecovery(startedAt: ProcessInfo.processInfo.systemUptime, path: pathSignature,
+                                                          listing: r.ownerRecovery?.listing)
+                r.nextRemoteAt = 0
+            }
             reconnect = r
         }
         discoveryChanged()
@@ -4461,6 +4477,8 @@ final class StreamClient: ObservableObject {
         startupAutoConnection = .stopped
         #endif
         reconnect = nil
+        reconnectCheck?.cancel()
+        reconnectCheck = nil
         cancelRemoteDial()
         let c = connection
         connection = nil

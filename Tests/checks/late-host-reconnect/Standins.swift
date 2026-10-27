@@ -76,6 +76,7 @@ enum Pairing { case idle }
 struct Notice { let text: String; let storeLink: Bool }
 final class StreamClient {
     static let deviceWord = "iPad"
+    static let lookingOnNetwork = "Mac 검색 중"
     let targetID: String
     var saved: SavedMac
     var savedMacs: [SavedMac] { get { [saved] } set { if let first = newValue.first { saved = first } } }

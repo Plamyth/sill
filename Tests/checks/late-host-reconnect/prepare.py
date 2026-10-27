@@ -2,7 +2,6 @@
 import hashlib
 import json
 from pathlib import Path
-import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -22,7 +21,7 @@ for marker in ['func cancelRemoteDial()', 'func remoteDialFailed(', 'func sessio
                '@discardableResult\n    func reconnectIfListed()', 'private func reconnectOwnerIfDue(']:
     if marker in remote:
         pieces.append(block(remote, marker))
-for marker in ['private func cameForward()', 'private func wentToBackground()']:
+for marker in ['private func cameForward()', 'private func wentToBackground()', 'func disconnect()']:
     pieces.append(block(stream, marker))
 body = select_platform('\n'.join(pieces), vision=False, ios=False)
 failure_call = 'remoteDialFailed(macID: targetID, why: .automatic, failure: failure, candidate: candidate'
@@ -36,14 +35,22 @@ for name in ['DiscoveryPolicy', 'RemoteDialPolicy', 'SavedMacs', 'GoodbyePolicy'
     files[name + '.swift'] = (ROOT / ('iOSClient/' + name + '.swift')).read_text()
 for path in (ROOT / 'Sources/StreamProtocol').glob('*.swift'):
     files['wire/' + path.name] = path.read_text()
+connector = (ROOT / 'iOSClient/RemoteConnector.swift').read_text().replace('import Network\n', '')
+clock = state[:state.index('enum NWError:')]
+files['connector/RemoteConnector.swift'] = connector
+files['connector/main.swift'] = clock + (Path(__file__).parent / 'connector.swift').read_text()
+for name in ['main.swift', 'home.swift']:
+    files['legacy/' + name] = 'import StreamProtocol\n' + (ROOT / 'Tests/checks/remote-rules' / name).read_text()
 files['run.py'] = """import pathlib,subprocess,sys
 root=pathlib.Path(__file__).parent
 wire=sorted(str(p) for p in (root/'wire').glob('*.swift'))
 commands=[['swiftc','-module-cache-path','./cache','-parse-as-library','-whole-module-optimization','-emit-module','-emit-object','-module-name','StreamProtocol',*wire,'-emit-module-path','StreamProtocol.swiftmodule','-o','wire.o'], ['swiftc','-module-cache-path','./cache','-I','.',*sorted(str(p) for p in root.glob('*.swift')),'wire.o','-o','checks'], ['./checks']]
+commands += [['swiftc','-module-cache-path','./cache','-I','.',*sorted(str(p) for p in (root/'connector').glob('*.swift')), 'RemoteDialPolicy.swift','SavedMacs.swift','wire.o','-o','connector-checks'], ['./connector-checks']]
+commands += [['swiftc','-module-cache-path','./cache','-I','.',*sorted(str(p) for p in (root/'legacy').glob('*.swift')), 'RemoteDialPolicy.swift','SavedMacs.swift','DiscoveryPolicy.swift','wire.o','-o','legacy-checks'], ['./legacy-checks']]
 for command in commands:
  result=subprocess.run(command)
  if result.returncode: sys.exit(result.returncode)
-""".replace('\n+', '\n')
+"""
 for name, text in files.items():
     (out / name).parent.mkdir(parents=True, exist_ok=True)
     (out / name).write_text(text)

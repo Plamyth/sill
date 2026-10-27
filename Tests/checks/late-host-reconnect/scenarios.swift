@@ -6,8 +6,9 @@ func check(_ ok: @autoclosure () -> Bool, _ text: String) {
 }
 Clock.reset()
 do {
-    let c = StreamClient(); c.seed(); c.reconnectIfListed(); Clock.advance(400)
+    let c = StreamClient(); c.seed(); c.reconnectIfListed(); Clock.advance(5000)
     let attempts = c.remoteDials.count
+    check(c.remoteDials == [103, 133, 163, 193], "owner attempts have 30-second spacing and at most four starts")
     check(attempts > 0 && attempts <= 4, "owner has at most four attempts per unchanged recovery budget; got \(attempts)")
     check(Clock.pending == 0, "exhausted owner budget leaves no timer")
     check(c.reconnect?.remoteAllowed == true, "budget exhaustion does not become terminal trust refusal")
@@ -15,7 +16,7 @@ do {
     check(c.remoteDials.count > attempts, "new path resumes finite owner recovery after 120 seconds")
     let afterPath = c.remoteDials.count
     for _ in 0..<10 { c.reconnectIfListed() }
-    check(c.remoteDials.count == afterPath, "same path observations do not reset budget or duplicate timer")
+    check(c.remoteDials.count == afterPath && Clock.pending == 1, "same path observations do not reset budget or duplicate timer")
     c.background(); Clock.advance(500)
     check(Clock.pending == 0, "background cancels every owner retry")
     c.foreground(); Clock.advance(3)
@@ -45,6 +46,8 @@ for reason in [Goodbye.quit, Goodbye.busy, Goodbye.remoteOff, Goodbye.internetOf
         let c = StreamClient(); c.seed(); c.session = Session(macID: c.targetID, candidate: c.candidate)
         c.goodbye = Goodbye(reason: reason, reconnect: reconnect)
         c.sessionEnded(error: nil, end: nil)
+        if reason == Goodbye.removed { check(c.saved.revoked == true, "authenticated removal retains persistent revocation") }
+        if reason == Goodbye.quit { check(c.status.contains("자동 재접속을 중단했습니다"), "terminal quit UI does not promise automatic recovery") }
         c.pathSignature = "cellular"; c.reconnectIfListed(); c.background(); c.foreground(); Clock.advance(500)
         check(c.remoteDials.isEmpty && Clock.pending == 0, "explicit Goodbye \(reason) reconnect=\(String(describing: reconnect)) never resumes owner")
     }
@@ -64,6 +67,25 @@ for invalid in ["key", "pin", "revoked", "newKey"] {
     c.reconnectIfListed(); Clock.advance(500); c.pathSignature = "cellular"; c.reconnectIfListed(); c.background(); c.foreground()
     check(c.remoteDials.isEmpty && Clock.pending == 0, "invalid \(invalid) cannot dial or rearm")
     DeviceIdentity.available = true
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed(); c.reconnectIfListed()
+    check(Clock.pending == 1, "user-stop precondition has exactly one scheduled retry")
+    c.disconnect()
+    check(c.reconnect == nil && Clock.pending == 0, "user disconnect cancels owner intent and scheduled timer immediately")
+    c.pathSignature = "cellular"; c.background(); c.foreground(); c.reconnectIfListed(); Clock.advance(500)
+    check(c.remoteDials.isEmpty && Clock.pending == 0, "user stop cannot resume on path or foreground")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed(); c.reconnectIfListed(); Clock.advance(5000)
+    let count = c.remoteDials.count
+    c.onDial = { client in client.connected = true; client.remoteDial = nil; client.reconnect = nil }
+    Clock.advance(5000)
+    check(!c.connected && c.remoteDials.count == count && Clock.pending == 0, "same-path Host return without an existing event remains undetectable after exhaustion")
+    c.pathSignature = "cellular"; c.reconnectIfListed(); Clock.advance(3)
+    check(c.connected && c.remoteDials.count == count + 1, "external recovery event connects the returned Host with existing trust")
 }
 Clock.reset()
 do {
