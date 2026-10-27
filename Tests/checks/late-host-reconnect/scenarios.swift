@@ -31,7 +31,44 @@ do {
     check(c.connected && c.remoteDials.count == exhausted + 1, "fresh matching Host discovery restores existing owner trust after 120 seconds")
     check(Clock.pending == 0, "successful recovery leaves no retry timer")
 }
-for end: RemoteDialPolicy.End in [.tls(-9808), .tls(-9816), .tls(-9825), .tlsAfterReady(-9829), .notSill, .noWindowList,
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed(); c.onDial = { _ in }
+    c.reconnectIfListed(); Clock.advance(3)
+    c.remoteDial = nil; c.session = Session(macID: c.targetID, candidate: c.candidate)
+    let peer = NWConnection(); c.connection = peer
+    c.armProductionDeadline(peer)
+    let deadline = c.firstListDeadline!
+    Clock.advance(RemoteDialPolicy.firstListDeadline)
+    check(c.reconnect?.remoteAllowed == true && c.reconnect?.remoteFailures == 1 && Clock.pending == 1,
+          "actual first-catalog deadline through endSession/sessionEnded retains finite retry on noAnswer")
+    let retries = c.reconnect?.remoteFailures
+    deadline.body(); c.connectionLost(peer, end: .noWindowList)
+    check(c.reconnect?.remoteFailures == retries && Clock.pending <= 1,
+          "duplicate deadline and ended-peer callbacks do not add retries")
+    c.onDial = nil; Clock.advance(500)
+    let attempts = c.remoteDials.count
+    check(attempts > 1 && c.reconnect?.remoteAllowed == true && Clock.pending == 0,
+          "first-catalog timeout exhausts the existing finite budget without revoking trust or polling")
+    c.onDial = { client in client.connected = true; client.remoteDial = nil; client.reconnect = nil }
+    c.pathSignature = "cellular"; c.reconnectIfListed(); Clock.advance(3)
+    check(c.connected && c.remoteDials.count == attempts + 1 && Clock.pending == 0,
+          "new path after first-catalog timeout restores existing trust once")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed()
+    let old = NWConnection(); c.connection = old; c.armProductionDeadline(old)
+    let current = NWConnection(); c.connection = current
+    Clock.advance(RemoteDialPolicy.firstListDeadline)
+    check(c.connection === current && c.remoteDials.isEmpty,
+          "stale first-catalog deadline cannot end the replacement peer")
+    c.connected = true; c.armProductionDeadline(current)
+    Clock.advance(RemoteDialPolicy.firstListDeadline)
+    check(c.connected && c.connection === current && c.remoteDials.isEmpty,
+          "first-catalog deadline cannot end an admitted session")
+}
+for end: RemoteDialPolicy.End in [.tls(-9808), .tls(-9816), .tls(-9825), .tlsAfterReady(-9829), .notSill,
                                  .goodbye(Goodbye.internetOff), .goodbye(Goodbye.remoteOff), .goodbye(Goodbye.removed)] {
     Clock.reset()
     let c = StreamClient(); c.seed(); c.onDial = { $0.fail([end]) }; c.reconnectIfListed(); Clock.advance(10)

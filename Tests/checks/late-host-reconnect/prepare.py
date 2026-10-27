@@ -23,6 +23,17 @@ for marker in ['func cancelRemoteDial()', 'func remoteDialFailed(', 'func sessio
         pieces.append(block(remote, marker))
 for marker in ['private func cameForward()', 'private func wentToBackground()', 'func disconnect()']:
     pieces.append(block(stream, marker))
+winner = block(remote, 'private func remoteWinner(')
+deadline = winner[winner.index('let deadline = DispatchWorkItem'):winner.rindex('\n    }')]
+end_session = block(stream, 'private func endSession(')
+pieces += ['func armProductionDeadline(_ c: NWConnection) {\n' + deadline + '\n}', end_session]
+connection_lost = block(stream, 'func connectionLost(')
+assert 'guard self.connection === c else { return }' in connection_lost
+assert 'self.endSession(error: error, end: end)' in connection_lost
+pieces.append('''func connectionLost(_ c: NWConnection, error: NWError? = nil, end: RemoteDialPolicy.End? = nil) {
+    guard connection === c else { return }
+    endSession(error: error, end: end)
+}''')
 body = select_platform('\n'.join(pieces), vision=False, ios=False)
 failure_call = 'remoteDialFailed(macID: targetID, why: .automatic, failure: failure, candidate: candidate'
 if 'retry: RemoteDialPolicy.RetryDisposition' in remote:
@@ -55,4 +66,9 @@ for name, text in files.items():
     (out / name).parent.mkdir(parents=True, exist_ok=True)
     (out / name).write_text(text)
 (out / 'input-hashes.json').write_text(json.dumps({n: hashlib.sha256(t.encode()).hexdigest() for n, t in files.items()}, indent=2) + '\n')
+(out / 'extraction.json').write_text(json.dumps({
+    'deadlineSHA256': hashlib.sha256(deadline.encode()).hexdigest(),
+    'endSessionSHA256': hashlib.sha256(end_session.encode()).hexdigest(),
+    'connectionLostAdapter': '현재 peer 정체성 확인 후 실제 endSession 전달. 네트워크·rescue·media 정리는 제외.',
+}, ensure_ascii=False, indent=2) + '\n')
 print(json.dumps({'input': str(out), 'files': len(files), 'productionMethodsSHA256': hashlib.sha256(body.encode()).hexdigest()}))
