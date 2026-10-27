@@ -466,8 +466,6 @@ extension StreamClient {
         updateDiscovery()
     }
 
-    /// Every attempt failed, or the winner failed before its window list. An automatic dial tries
-    /// again under its policy; owner recovery requires typed transport provenance.
     func remoteDialFailed(macID: String, why: DialReason, failure: RemoteDialPolicy.Failure, candidate: RemoteDialPolicy.Candidate?,
                           retry: RemoteDialPolicy.RetryDisposition = .stop) {
         let name = displayName(macID)
@@ -532,7 +530,6 @@ extension StreamClient {
         let name = saved.map { displayName($0.macID) } ?? hostName
         if RemoteDialPolicy.ownerTailnetScope(saved) {
             let how = end ?? error.map { RemoteConnector.end(of: $0) } ?? .posix(ECONNRESET)
-            // A refusal cannot become a transport retry through an absent error or a later event.
             let outcome = GoodbyePolicy.outcome(goodbye, mac: name, device: Self.deviceWord, saved: saved != nil)
             if goodbye != nil, !outcome.reconnect || !outcome.remoteAllowed {
                 if goodbye?.reason == Goodbye.removed, let mac = saved,
@@ -669,7 +666,6 @@ extension StreamClient {
     /// second): it is left alone for DiscoveryPolicy.quitWait, and the words "‹Mac› quit Sill…"
     /// stay meanwhile; the row listed again (Sill is back), or still listed after that, is taken as
     /// above.
-    /// Owner-tailnet records instead use a finite budget renewed by observed external recovery events.
     @discardableResult
     func reconnectIfListed() -> Bool {
         reconnectCheck?.cancel()
@@ -784,7 +780,6 @@ extension StreamClient {
         return false
     }
 
-    /// Only observed path, foreground and renewed matching discovery events replenish this budget.
     private func reconnectOwnerIfDue(_ previous: Reconnect, macID: String, now: Double) -> Bool {
         var r = previous
         guard r.remoteAllowed else { return false }

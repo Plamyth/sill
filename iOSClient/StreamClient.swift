@@ -1565,7 +1565,6 @@ final class StreamClient: ObservableObject {
         /// systemUptime of the loss, and this device's path then.
         var lostAt: Double
         var pathAtLoss: String
-        /// False after policy refusal. Owner recovery never reopens it on discovery or a path event.
         var remoteAllowed: Bool
         var rememberedDirect: Bool
         var remoteFailures = 0

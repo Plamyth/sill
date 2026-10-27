@@ -214,14 +214,13 @@ enum RemoteDialPolicy {
         case noWindowList
     }
 
-    /// Display copy such as `refused` loses the distinction between TCP and TLS rejection.
     enum RetryDisposition { case transport, stop }
 
     static func retryDisposition(for ends: [End]) -> RetryDisposition {
         guard !ends.isEmpty else { return .stop }
         return ends.allSatisfy { end in
             switch end {
-            case .timeout, .posix(ECONNREFUSED), .posix(ECONNRESET), .posix(ECONNABORTED), .posix(EPIPE),
+            case .timeout, .noWindowList, .posix(ECONNREFUSED), .posix(ECONNRESET), .posix(ECONNABORTED), .posix(EPIPE),
                  .posix(ETIMEDOUT), .posix(ENETUNREACH), .posix(EHOSTUNREACH), .posix(ENETDOWN),
                  .posix(EHOSTDOWN), .posix(EADDRNOTAVAIL), .dns(dnsNoSuchName), .dns(dnsNoSuchRecord):
                 return true
