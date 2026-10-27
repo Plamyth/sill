@@ -353,7 +353,7 @@ func ifs(_ list: [(String, I.Kind)]) -> [I] { list.map { I(name: $0.0, type: $0.
 func net(_ list: [(String, I.Kind)]) -> P.Method? { P.method(direct: false, interfaces: ifs(list)) }
 let en0: (String, I.Kind) = ("en0", .wifi), en2: (String, I.Kind) = ("en2", .wiredEthernet)
 let awdl0: (String, I.Kind) = ("awdl0", .wifi), llw0: (String, I.Kind) = ("llw0", .wifi)
-check("method: the words are Wired, Wi\u{2011}Fi and Direct", P.Method.wired.word == "Wired" && P.Method.direct.word == "Direct"
+check("연결 경로는 유선·Wi-Fi·직접 연결로 표시한다", P.Method.wired.word == "유선" && P.Method.direct.word == "직접 연결"
       && P.Method.wifi.word == "Wi\u{2011}Fi")
 check("method: Wi-Fi's hyphen is U+2011, which never breaks a line (no U+002D, no U+2010)",
       P.Method.wifi.word.unicodeScalars.map(\.value) == [0x57, 0x69, 0x2011, 0x46, 0x69])
