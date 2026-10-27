@@ -231,10 +231,6 @@ enum RemoteDialPolicy {
         } ? .transport : .stop
     }
 
-    /// Owner recovery uses the existing 120-second window with at most four starts, 30 s apart.
-    static let ownerRecoveryAttempts = 4
-    static let ownerRecoveryDelay = 30.0
-
     /// Why a dial failed, for the status line (§7.8), most telling first in `priority`.
     enum Failure: String, CaseIterable, Equatable {
         case wrongMac, revoked, remoteOff, busy, refused, vpnOff, nameNotFound, localNetwork, notSill, noAnswer

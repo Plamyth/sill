@@ -1573,8 +1573,7 @@ final class StreamClient: ObservableObject {
         struct OwnerRecovery {
             var startedAt: Double
             var path: String
-            var dials = 0
-            var listing: RowListing?
+            var listings: [String: Double] = [:]
         }
         var ownerRecovery: OwnerRecovery?
         var remoteFailureText: String?
@@ -2342,7 +2341,8 @@ final class StreamClient: ObservableObject {
             r.rowListing = nil
             if r.remoteAllowed, let id = r.macID, RemoteDialPolicy.ownerTailnetScope(savedMac(id)) {
                 r.ownerRecovery = Reconnect.OwnerRecovery(startedAt: ProcessInfo.processInfo.systemUptime, path: pathSignature,
-                                                          listing: r.ownerRecovery?.listing)
+                                                          listings: r.ownerRecovery?.listings ?? [:])
+                r.remoteFailures = 0
                 r.nextRemoteAt = 0
             }
             reconnect = r

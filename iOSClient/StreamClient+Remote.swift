@@ -487,7 +487,8 @@ extension StreamClient {
                     r.remoteAllowed = false
                     r.ownerRecovery = nil
                 } else {
-                    r.nextRemoteAt = ProcessInfo.processInfo.systemUptime + RemoteDialPolicy.ownerRecoveryDelay
+                    r.remoteFailures += 1
+                    r.nextRemoteAt = ProcessInfo.processInfo.systemUptime + DiscoveryPolicy.remoteRetryDelay(afterFailures: r.remoteFailures)
                 }
                 status = words
                 reconnect = r
@@ -532,21 +533,18 @@ extension StreamClient {
         if RemoteDialPolicy.ownerTailnetScope(saved) {
             let how = end ?? error.map { RemoteConnector.end(of: $0) } ?? .posix(ECONNRESET)
             // A refusal cannot become a transport retry through an absent error or a later event.
-            if let goodbye, goodbye.reconnect != true ||
-                [Goodbye.removed, Goodbye.remoteOff, Goodbye.internetOff, Goodbye.pairingRequired].contains(goodbye.reason) {
-                let outcome = GoodbyePolicy.outcome(goodbye, mac: name, device: Self.deviceWord, saved: saved != nil)
-                let words = goodbye.reason == Goodbye.quit
-                    ? "\(name)에서 Sill이 종료되었습니다. 자동 재접속을 중단했습니다." : outcome.text
-                if goodbye.reason == Goodbye.removed, let mac = saved,
+            let outcome = GoodbyePolicy.outcome(goodbye, mac: name, device: Self.deviceWord, saved: saved != nil)
+            if goodbye != nil, !outcome.reconnect || !outcome.remoteAllowed {
+                if goodbye?.reason == Goodbye.removed, let mac = saved,
                    DiscoveryPolicy.removalRevokes(remote: s?.route.isRemote == true, trust: s?.home, savedKey: mac.fingerprintData),
                    let next = SavedMacs.revoking(mac.macID, in: savedMacs) {
                     savedMacs = next
                     persistSavedMacs()
                 }
-                tearDown(status: words, restartSearch: connected)
+                tearDown(status: outcome.text, restartSearch: connected)
                 reconnectCheck?.cancel(); reconnectCheck = nil
                 reconnect = nil
-                if outcome.isNotice { notice = Notice(text: words, storeLink: outcome.storeLink) }
+                if outcome.isNotice { notice = Notice(text: outcome.text, storeLink: outcome.storeLink) }
                 discoveryChanged()
                 return
             }
@@ -564,7 +562,8 @@ extension StreamClient {
             endWithNotice(goodbye, session: s, saved: saved, name: name)
             return
         }
-        if let s, s.route.isRemote, !connected, let id = s.macID {
+        if let s, s.route.isRemote, !connected, let id = s.macID,
+           goodbye == nil || !RemoteDialPolicy.ownerTailnetScope(saved) {
             let how: RemoteDialPolicy.End = end ?? goodbye.map { .goodbye($0.reason) } ?? error.map { e in
                 if case .tls(let st) = e { return .tlsAfterReady(st) }
                 return RemoteConnector.end(of: e)
@@ -799,27 +798,33 @@ extension StreamClient {
             return false
         }
         guard connection == nil, remoteDial == nil else { return false }
-        let row = macs.first {
-            !pinRefusedRows.contains($0.id) && DiscoveryPolicy.reconnectMatches(savedID: macID, bonjourName: r.bonjourName,
-                rowMacID: $0.macID, rowName: $0.name, rowCarriesTag: $0.carriesTag)
+        let rows = macs.filter {
+            !pinRefusedRows.contains($0.id) && $0.carriesTag && $0.macID == macID
         }
-        let listing = row.map { Reconnect.RowListing(id: $0.id, since: $0.direct ? directSince[$0.name] : sightings.since[$0.name]) }
         var budget = r.ownerRecovery ?? Reconnect.OwnerRecovery(startedAt: r.lostAt, path: r.pathAtLoss)
-        if budget.path != pathSignature || (listing != nil && listing != budget.listing) {
-            budget = Reconnect.OwnerRecovery(startedAt: now, path: pathSignature, listing: listing ?? budget.listing)
+        var discovered = false
+        for row in rows {
+            guard let since = row.direct ? directSince[row.name] : sightings.since[row.name],
+                  since > (budget.listings[row.id] ?? -.infinity) else { continue }
+            budget.listings[row.id] = since
+            if since > budget.startedAt { discovered = true }
+        }
+        if budget.path != pathSignature || discovered {
+            budget.startedAt = now
+            budget.path = pathSignature
+            r.remoteFailures = 0
             r.nextRemoteAt = 0
+            if discovered { r.afterQuit = false }
         }
         r.ownerRecovery = budget
         reconnect = r
-        guard now < budget.startedAt + DiscoveryPolicy.redialWindow, budget.dials < RemoteDialPolicy.ownerRecoveryAttempts else {
+        guard now < budget.startedAt + DiscoveryPolicy.redialWindow else {
             status = (r.remoteFailureText.map { $0 + " " } ?? "") + "자동 재접속 예산을 소진했습니다. 새 경로, 앱 복귀 또는 Mac 발견을 기다립니다."
             return false
         }
-        let due = max(budget.startedAt + (listing == nil ? DiscoveryPolicy.remoteWait : 0), r.nextRemoteAt)
+        let wait = r.afterQuit ? DiscoveryPolicy.quitWait : (rows.isEmpty ? DiscoveryPolicy.remoteWait : 0)
+        let due = max(budget.startedAt + wait, r.nextRemoteAt)
         if now >= due {
-            budget.dials += 1
-            r.ownerRecovery = budget
-            reconnect = r
             dialSaved(macID, why: .automatic)
             return true
         }
