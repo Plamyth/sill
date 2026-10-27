@@ -392,7 +392,7 @@ extension StreamClient {
             DispatchQueue.main.async {
                 guard let self, let connector, self.remoteDial === connector else { return }
                 self.remoteDial = nil
-                self.remoteDialFailed(macID: macID, why: why, failure: failed.failure, candidate: failed.candidate)
+                self.remoteDialFailed(macID: macID, why: why, failure: failed.failure, candidate: failed.candidate, retry: failed.retry)
             }
         }
         connector.start()
@@ -473,9 +473,8 @@ extension StreamClient {
         updateDiscovery()
     }
 
-    /// Every attempt failed, or the winner failed before its window list. An automatic dial tries
-    /// again (2, 4, 8, then every 10 s) unless the Mac answered for good; anything else says why.
-    func remoteDialFailed(macID: String, why: DialReason, failure: RemoteDialPolicy.Failure, candidate: RemoteDialPolicy.Candidate?) {
+    func remoteDialFailed(macID: String, why: DialReason, failure: RemoteDialPolicy.Failure, candidate: RemoteDialPolicy.Candidate?,
+                          retry: RemoteDialPolicy.RetryDisposition = .stop) {
         let name = displayName(macID)
         #if DEBUG
         print("remote: dial of \(name) failed: \(failure)\(candidate.map { " (\($0.key))" } ?? "")")
@@ -487,6 +486,18 @@ extension StreamClient {
         switch why {
         case .automatic:
             guard var r = reconnect, r.macID == macID else { return }
+            if RemoteDialPolicy.ownerTailnetScope(savedMac(macID)) {
+                if retry == .stop {
+                    r.remoteAllowed = false
+                } else {
+                    r.remoteFailures += 1
+                    r.nextRemoteAt = ProcessInfo.processInfo.systemUptime + DiscoveryPolicy.remoteRetryDelay(afterFailures: r.remoteFailures)
+                }
+                status = words
+                reconnect = r
+                reconnectIfListed()
+                break
+            }
             switch failure {
             case .revoked, .wrongMac, .remoteOff:
                 r.remoteAllowed = false          // the Mac answered for good; its rows still count
@@ -530,18 +541,47 @@ extension StreamClient {
         firstListDeadline = nil
         let saved = s?.macID.flatMap { savedMac($0) }
         let name = saved.map { displayName($0.macID) } ?? hostName
+        if RemoteDialPolicy.ownerTailnetScope(saved) {
+            let how = end ?? error.map { RemoteConnector.end(of: $0) } ?? .posix(ECONNRESET)
+            let outcome = GoodbyePolicy.outcome(goodbye, mac: name, device: Self.deviceWord, saved: saved != nil)
+            if goodbye != nil, !outcome.reconnect || !outcome.remoteAllowed {
+                if goodbye?.reason == Goodbye.removed, let mac = saved,
+                   DiscoveryPolicy.removalRevokes(remote: s?.route.isRemote == true, trust: s?.home, savedKey: mac.fingerprintData),
+                   let next = SavedMacs.revoking(mac.macID, in: savedMacs) {
+                    savedMacs = next
+                    persistSavedMacs()
+                }
+                tearDown(status: outcome.text, restartSearch: connected)
+                reconnectCheck?.cancel(); reconnectCheck = nil
+                reconnect = nil
+                if outcome.isNotice { notice = Notice(text: outcome.text, storeLink: outcome.storeLink) }
+                discoveryChanged()
+                return
+            }
+            if goodbye == nil, RemoteDialPolicy.retryDisposition(for: [how]) == .stop {
+                let failure = s?.candidate.flatMap { RemoteDialPolicy.classify(how, candidate: $0, usedTunnel: nil) } ?? .notSill
+                let words = RemoteCopy.dialFailure(failure, mac: name, candidate: s?.candidate, vpnName: nil, device: Self.deviceWord)
+                tearDown(status: words, restartSearch: connected)
+                reconnectCheck?.cancel(); reconnectCheck = nil
+                reconnect = nil
+                discoveryChanged()
+                return
+            }
+        }
         if let goodbye, GoodbyePolicy.isNotice(goodbye) {
             endWithNotice(goodbye, session: s, saved: saved, name: name)
             return
         }
-        if let s, s.route.isRemote, !connected, let id = s.macID {
+        if let s, s.route.isRemote, !connected, let id = s.macID,
+           goodbye == nil || !RemoteDialPolicy.ownerTailnetScope(saved) {
             let how: RemoteDialPolicy.End = end ?? goodbye.map { .goodbye($0.reason) } ?? error.map { e in
                 if case .tls(let st) = e { return .tlsAfterReady(st) }
                 return RemoteConnector.end(of: e)
             } ?? .posix(ECONNRESET)
             let failure = s.candidate.flatMap { RemoteDialPolicy.classify(how, candidate: $0, usedTunnel: nil) } ?? .noAnswer
             tearDown(status: status, restartSearch: false)
-            remoteDialFailed(macID: id, why: s.why ?? .tap, failure: failure, candidate: s.candidate)
+            remoteDialFailed(macID: id, why: s.why ?? .tap, failure: failure, candidate: s.candidate,
+                             retry: RemoteDialPolicy.retryDisposition(for: [how]))
             return
         }
         // At home over TLS: removed, pairing now required, or another key as the saved Mac
