@@ -61,6 +61,19 @@ def fixture():
     if 'static func redialRow' in policy:
         upstream = subprocess.check_output(['git', '--no-lazy-fetch', 'show', '03ca390b3ce7fcd05d81794b396e20d02ea56258:Tests/checks/policy/sleep.swift'], cwd=ROOT, text=True)
         selected = upstream[:upstream.index('    // MARK: The Desktop after a stop')]
+        receipts['upstreamSleepSelectedOriginal'] = sha(selected.encode())
+        copy = {
+            r'Mac mini isn\u{2019}t answering. It may be asleep. Sill keeps trying, or tap it to try now.':
+                'Mac mini의 응답이 없습니다. 잠자기 상태일 수 있습니다. 자동으로 계속 시도합니다. 지금 다시 시도하려면 Mac을 탭하세요.',
+            'Stopped trying to reach Mac mini. Tap it to try again.':
+                'Mac mini에 연결 시도를 중단했습니다. Mac을 탭해 다시 시도하세요.',
+            r'Reconnecting to Mac mini directly\u{2026}': 'Mac mini에 직접 다시 연결하는 중…',
+            r'Reconnecting to Mac mini\u{2026}': 'Mac mini에 다시 연결하는 중…',
+        }
+        for original, localized in copy.items():
+            if original not in selected:
+                raise ValueError('upstream reconnect copy anchor missing: ' + original)
+            selected = selected.replace(original, localized)
         files['sleep.swift'] = selected + '}\n'
         receipts['upstreamSleepSelected'] = sha(selected.encode())
         receipts['upstreamSleepFull'] = sha(upstream.encode())

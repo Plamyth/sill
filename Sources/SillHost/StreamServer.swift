@@ -565,6 +565,12 @@ final class StreamServer {
     private var swapCount = 0
     private var replacementPort: NWEndpoint.Port?    // the port the current replacement tried; nil = any port
     private var started = false
+    private var homeRecovery = HomeListenerRecovery()
+    private var homeRetryItem: DispatchWorkItem?
+    private var homePathMonitor: NWPathMonitor?
+    private var homePathSatisfied: Bool?
+    private var homeBoundPort: NWEndpoint.Port?
+    private var recoverySwap = false
     private let portLock = NSLock()                  // `port` is read on the main actor
     private var readyPort: UInt16?
     /// 6× the shortest clean pause measured, and past the ~1 s the old record's removal takes to show.
@@ -806,10 +812,14 @@ final class StreamServer {
     /// The listener's handlers. Each first checks that `l` is still the listener, so the callbacks
     /// of one that has been replaced change nothing.
     private func wire(_ l: NWListener) {
+        let generation = swapCount
         l.stateUpdateHandler = { [weak self, weak l] state in
-            guard let self, let l, l === self.listener else { return }
+            guard let self, let l, self.started, self.homeRecovery.acceptsEvents,
+                  generation == self.swapCount, l === self.listener else { return }
             switch state {
             case .ready:
+                homeBoundPort = l.port ?? homeBoundPort
+                homeRecovery.ready()
                 portLock.lock(); readyPort = l.port?.rawValue; portLock.unlock()
             case .failed(let e):
                 if case .settling(let n) = swap {
@@ -819,16 +829,16 @@ final class StreamServer {
                     replacementFailed(e, swap: n)
                     return
                 }
-                print("Listener failed: \(e)")
-                guard let handler = onListenerFailed else { exit(1) }   // the CLI, as always
-                handler(e)
+                homeListenerFailed(e)
+                return
             default:
                 break
             }
             onListenerState?(state)
         }
         l.serviceRegistrationUpdateHandler = { [weak self, weak l] change in
-            guard let self, let l, l === self.listener else { return }
+            guard let self, let l, self.started, self.homeRecovery.acceptsEvents,
+                  generation == self.swapCount, l === self.listener else { return }
             if serviceIsTest {
                 // TEST ONLY: one line a test can read, from the listener's own parameters. Never
                 // forwarded, so the app keeps its "Test Pattern Mode … port N" status.
@@ -847,7 +857,68 @@ final class StreamServer {
         // A connection no longer depends on the listener that accepted it, so it is served
         // whichever listener it came from.
         let acceptsPeerToPeer = l.parameters.includePeerToPeer
-        l.newConnectionHandler = { [weak self] c in self?.accept(c, peerToPeer: acceptsPeerToPeer) }
+        l.newConnectionHandler = { [weak self, weak l] c in
+            guard let self, let l, self.started, self.homeRecovery.acceptsEvents,
+                  generation == self.swapCount, l === self.listener else {
+                c.cancel()
+                return
+            }
+            self.accept(c, peerToPeer: acceptsPeerToPeer)
+        }
+    }
+
+    private func homeListenerFailed(_ error: NWError) {
+        guard started, let retry = homeRecovery.failed() else { return }
+        portLock.lock(); readyPort = nil; portLock.unlock()
+        listener.cancel()
+        onServiceRegistered?(nil)
+        print("Listener failed: \(error)")
+        guard let handler = onListenerFailed else { exit(1) }   // the CLI, as always
+        handler(error)
+        onListenerState?(.failed(error))
+        homeRetryItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.retryHomeListener(retry.ticket) }
+        homeRetryItem = work
+        queue.asyncAfter(deadline: .now() + retry.delay, execute: work)
+    }
+
+    private func retryHomeListener(_ ticket: UInt64) {
+        guard started, swap == .idle, homeRecovery.retry(ticket) else { return }
+        homeRetryItem?.cancel()
+        homeRetryItem = nil
+        beginSwap(recovering: true)
+    }
+
+    private func startHomePathMonitor() {
+        let monitor = NWPathMonitor()
+        homePathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self, weak monitor] path in
+            guard let self, let monitor, self.homePathMonitor === monitor, self.started else { return }
+            let before = self.homePathSatisfied
+            self.homePathSatisfied = path.status == .satisfied
+            if before == false, self.homePathSatisfied == true, case .waiting(let ticket) = self.homeRecovery.state {
+                self.retryHomeListener(ticket)
+            }
+        }
+        monitor.start(queue: queue)
+    }
+
+    /// Stops admission and recovery, leaving already accepted connections to their existing shutdown path.
+    func stopHomeListener() {
+        queue.async { [self] in stopHomeListenerOnQueue() }
+    }
+
+    private func stopHomeListenerOnQueue() {
+        started = false
+        homeRecovery.stop()
+        homeRetryItem?.cancel()
+        homeRetryItem = nil
+        homePathMonitor?.cancel()
+        homePathMonitor = nil
+        homePathSatisfied = nil
+        swap = .idle
+        listener.cancel()
+        portLock.lock(); readyPort = nil; portLock.unlock()
     }
 
     /// Direct Wireless Connection, from the coordinator. Before `start()` the listener is built with
@@ -860,26 +931,29 @@ final class StreamServer {
         }
     }
 
-    /// On `queue`. Starts replacing the listener when the wanted flag differs from the one it was
-    /// built with, unless a replacement is under way: that one looks again when it settles.
-    private func beginSwap() {
-        guard started, swap == .idle, wantedPeerToPeer != peerToPeer else { return }
+    /// On `queue`. Replaces a failed listener or applies the newest Direct Wireless setting.
+    private func beginSwap(recovering: Bool = false) {
+        guard started, swap == .idle, recovering || wantedPeerToPeer != peerToPeer else { return }
+        homeRetryItem?.cancel()
+        homeRetryItem = nil
+        homeRecovery.replace()
+        recoverySwap = recovering
         swapCount += 1
         let n = swapCount
         swap = .cancelling(n)
         let old = listener
-        let oldPort = old.port   // nil for a listener that failed or was never ready: any port then
+        let oldPort = recovering ? homeBoundPort : old.port
         // Its registration ending is not the Mac leaving: the status keeps the name through the
         // replacement, whose own registration brings it back.
         old.serviceRegistrationUpdateHandler = nil
         old.stateUpdateHandler = { [weak self] state in
-            guard let self, case .cancelled = state, swap == .cancelling(n) else { return }
+            guard let self, self.started, case .cancelled = state, swap == .cancelling(n) else { return }
             bindReplacement(on: oldPort, swap: n)
         }
         old.cancel()
         queue.asyncAfter(deadline: .now() + Self.cancelTimeout) { [weak self] in
-            guard let self, swap == .cancelling(n) else { return }
-            bindReplacement(on: nil, swap: n)   // no `.cancelled`: the old socket may still hold the port
+            guard let self, self.started, swap == .cancelling(n) else { return }
+            bindReplacement(on: recovering ? homeBoundPort : nil, swap: n)
         }
     }
 
@@ -887,6 +961,7 @@ final class StreamServer {
     /// replacement at once, on `port` when given, with the newest wanted flag and no service. It is
     /// advertised `advertiseDelay` later (`settled`).
     private func bindReplacement(on port: NWEndpoint.Port?, swap n: Int) {
+        guard started, swap == .cancelling(n) || swap == .settling(n) else { return }
         swap = .settling(n)
         replacementPort = port
         // TEST ONLY: the fallbacks without a real port conflict (SILL_TEST_SWAP_FAIL).
@@ -917,7 +992,7 @@ final class StreamServer {
     /// Settled off, it disconnects the devices still on peer-to-peer Wi-Fi; a burst that ends on,
     /// where it started, never gets here with off and disconnects nobody.
     private func settled(_ l: NWListener, swap n: Int) {
-        guard swap == .settling(n), l === listener else { return }
+        guard started, swap == .settling(n), l === listener else { return }
         swap = .idle
         if wantedPeerToPeer != peerToPeer { beginSwap(); return }
         l.service = makeService()
@@ -1010,26 +1085,18 @@ final class StreamServer {
         return ClientLink.Interface(name: interface.name, type: type)
     }
 
-    /// On `queue`: a replacement could not be bound, or failed once bound. Refused on its old port,
-    /// it takes any port. Refused there too, the listener has failed and the existing rule applies
-    /// (the app shows it and keeps running; the CLI exits). It never goes back to the old flag: the
-    /// listener runs what the setting says, or has visibly failed. `peerToPeer` takes the wanted
-    /// value, so the next change either way replaces the dead listener: a toggle is also a retry.
-    /// Failed while turning it off, the devices on peer-to-peer Wi-Fi are still disconnected (the
-    /// app keeps running): off means no AWDL, listener or not.
+    /// Configuration swaps keep their existing any-port fallback. Failure recovery keeps the
+    /// last bound port. Turning Direct Wireless off still disconnects its clients after failure.
     private func replacementFailed(_ e: NWError, swap n: Int) {
-        guard swap == .settling(n) else { return }
-        if let port = replacementPort {
+        guard started, swap == .settling(n) else { return }
+        if !recoverySwap, let port = replacementPort {
             print("Direct wireless \(wantedPeerToPeer ? "on" : "off"): port \(port.rawValue) unavailable (\(e)); trying another port.")
             bindReplacement(on: nil, swap: n)
             return
         }
         swap = .idle
         peerToPeer = wantedPeerToPeer
-        print("Listener failed: \(e)")
-        guard let handler = onListenerFailed else { exit(1) }   // the CLI, as always
-        handler(e)
-        onListenerState?(.failed(e))
+        homeListenerFailed(e)
         if !peerToPeer { disconnectPeerToPeerClients() }
     }
 
@@ -1043,6 +1110,7 @@ final class StreamServer {
                 if onListenerFailed == nil { exit(1) }   // the CLI, as when its listener fails
                 return
             }
+            guard homeRecovery.start() else { return }
             // Set before start (the setting at launch): build the listener with it, nothing to replace.
             if wantedPeerToPeer != peerToPeer {
                 do {
@@ -1056,6 +1124,7 @@ final class StreamServer {
                 }
             }
             started = true
+            startHomePathMonitor()
             // The TXT record is set by now (the coordinator sets it before start): a fresh tag.
             if txtRecord != nil { listener.service = makeService() }
             listener.start(queue: queue)
@@ -1249,6 +1318,7 @@ final class StreamServer {
         let group = DispatchGroup()
         group.enter()
         queue.async { [self] in
+            if goodbye.reason == Goodbye.quit { stopHomeListenerOnQueue() }
             let data = StreamMessage(kind: .goodbye, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                                      payload: Wire.encode(goodbye)).serialized()
             for client in clients.values where client.connection.state == .ready {

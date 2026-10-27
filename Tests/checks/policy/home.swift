@@ -147,19 +147,19 @@ func homePolicy() {
 
     // The words (§7.7).
     typealias C = DiscoveryPolicy.HomeCopy
-    check("copy: Pairing with Mac mini…, …over the cable…", C.pairing(mac: mini, cable: false) == "Pairing with Mac mini\u{2026}"
-          && C.pairing(mac: mini, cable: true) == "Pairing with Mac mini over the cable\u{2026}")
-    check("copy: Paired with Mac mini over the cable.", C.pairedOverCable(mac: mini) == "Paired with Mac mini over the cable.")
-    check("copy: Mac mini is showing a code. Point this iPad at it.", C.showing(mac: mini, device: "iPad") == "Mac mini is showing a code. Point this iPad at it.")
-    check("copy: openOnMac", C.openOnMac(mac: mini) == "Mac mini didn\u{2019}t show a code. On the Mac, choose Pair iPhone or iPad\u{2026} in the Sill menu, then tap Mac mini again.")
-    check("copy: locked", C.locked(mac: mini) == "Unlock Mac mini, then tap it again.")
-    check("copy: removed", C.removed(mac: mini, device: "iPad") == "Mac mini removed this iPad. Tap it to pair again."
-          && C.removed(mac: mini, device: "iPhone") == "Mac mini removed this iPhone. Tap it to pair again.")
-    check("copy: pairingRequired", C.pairingRequired(mac: mini, device: "iPad") == "Mac mini now asks devices to pair. Tap it to pair this iPad.")
-    check("copy: the home card's errors", C.stopped(mac: mini) == "Mac mini stopped pairing after too many wrong codes. On the Mac, choose Pair iPhone or iPad\u{2026} in the Sill menu, then tap Mac mini again."
-          && C.expired(mac: mini) == "That code expired. Tap Mac mini for a new one."
-          && C.closed(mac: mini) == "That code no longer works. On the Mac, choose Pair iPhone or iPad\u{2026} in the Sill menu, then tap Mac mini again."
-          && C.proofFailed(mac: mini) == "Pairing didn\u{2019}t finish: Mac mini couldn\u{2019}t show it knows the code. Tap it to try again.")
-    check("copy: no answer", C.noAnswer(mac: mini) == "Mac mini didn\u{2019}t answer. Check that Sill is open on it, then tap it again.")
+    check("페어링 진행 문구는 케이블 경로를 구분한다", C.pairing(mac: mini, cable: false) == "Mac mini 기기와 페어링하는 중…"
+          && C.pairing(mac: mini, cable: true) == "케이블로 Mac mini 기기와 페어링하는 중…")
+    check("케이블 페어링 완료 문구", C.pairedOverCable(mac: mini) == "케이블로 Mac mini 기기와 페어링했습니다.")
+    check("코드 표시 문구에는 기기 이름을 보존한다", C.showing(mac: mini, device: "iPad") == "Mac mini에 코드가 표시되어 있습니다. 이 iPad의 카메라로 비추세요.")
+    check("Mac에서 코드 표시를 시작하는 안내", C.openOnMac(mac: mini) == "Mac mini에 코드가 표시되지 않았습니다. Mac의 Sill 메뉴에서 ‘Pair iPhone or iPad…’를 선택한 뒤 Mac을 다시 탭하세요.")
+    check("잠긴 Mac의 안내", C.locked(mac: mini) == "Mac mini의 잠금을 해제한 뒤 다시 탭하세요.")
+    check("등록 해제 문구에는 기기 종류를 보존한다", C.removed(mac: mini, device: "iPad") == "Mac mini에서 이 iPad의 등록을 해제했습니다. Mac을 탭해 다시 페어링하세요."
+          && C.removed(mac: mini, device: "iPhone") == "Mac mini에서 이 iPhone의 등록을 해제했습니다. Mac을 탭해 다시 페어링하세요.")
+    check("페어링 필요 안내", C.pairingRequired(mac: mini, device: "iPad") == "Mac mini에 연결하려면 이제 페어링이 필요합니다. Mac을 탭해 이 iPad와 페어링하세요.")
+    check("중단·만료·폐기·코드 검증 실패를 구분한다", C.stopped(mac: mini) == "잘못된 코드를 여러 번 입력하여 Mac mini에서 페어링을 중단했습니다. Mac의 Sill 메뉴에서 ‘Pair iPhone or iPad…’를 선택한 뒤 Mac을 다시 탭하세요."
+          && C.expired(mac: mini) == "코드가 만료되었습니다. Mac mini을 탭해 새 코드를 받으세요."
+          && C.closed(mac: mini) == "더 이상 사용할 수 없는 코드입니다. Mac의 Sill 메뉴에서 ‘Pair iPhone or iPad…’를 선택한 뒤 Mac을 다시 탭하세요."
+          && C.proofFailed(mac: mini) == "페어링을 완료하지 못했습니다. Mac mini의 코드를 검증할 수 없습니다. Mac을 탭해 다시 시도하세요.")
+    check("응답 없음은 실행 상태 확인으로 안내한다", C.noAnswer(mac: mini) == "Mac mini의 응답이 없습니다. Mac에서 Sill이 실행 중인지 확인한 뒤 다시 탭하세요.")
 
 }
