@@ -194,4 +194,3 @@ final class StreamClient {
     }
     func cancelPairing() {}
     func stopMeasuring() {}
-
