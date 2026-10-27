@@ -39,6 +39,7 @@ final class RemoteConnector {
     struct Failed {
         let failure: RemoteDialPolicy.Failure
         let candidate: RemoteDialPolicy.Candidate?
+        var retry: RemoteDialPolicy.RetryDisposition = .stop
     }
 
     private final class Attempt {
@@ -62,6 +63,7 @@ final class RemoteConnector {
     private var attempts: [Attempt] = []
     private var next = 0
     private var results: [(RemoteDialPolicy.Failure, RemoteDialPolicy.Candidate)] = []
+    private var ends: [RemoteDialPolicy.End] = []
     private var finished = false
     private var staggerItem: DispatchWorkItem?
     private var wholeItem: DispatchWorkItem?
@@ -120,6 +122,7 @@ final class RemoteConnector {
         let candidate = candidates[next]
         next += 1
         guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: candidate.port)), candidate.port > 0 else {
+            ends.append(.notSill)
             results.append((.noAnswer, candidate))
             startNext()
             return
@@ -135,7 +138,12 @@ final class RemoteConnector {
         // The whole of trust: the pin, or on the typed pairing path any P-256 key (nil is no P-256).
         // The one TLS builder every connection to a Mac goes through (DeviceTLS).
         let others: [Data] = { if case .session = mode { return successors[candidate.key] ?? [] }; return [] }()
-        let tls = DeviceTLS.options(identity: identity, alpn: alpn, pin: pin, queue: queue, alsoAccept: others)
+        let tls = DeviceTLS.options(identity: identity, alpn: alpn, pin: pin, queue: queue, alsoAccept: others,
+                                    onPinRefused: { [weak self] in
+            guard let self, !self.finished,
+                  let attempt = self.attempts.first(where: { !$0.ended && $0.candidate == candidate }) else { return }
+            self.end(attempt, .tls(-9808))
+        })
         let connection = NWConnection(host: NWEndpoint.Host(candidate.host), port: port,
                                       using: RemoteTLS.parameters(tls: tls, dialing: true))
         let attempt = Attempt(candidate, connection)
@@ -192,6 +200,7 @@ final class RemoteConnector {
         attempt.ended = true
         let usedTunnel = attempt.connection.currentPath.map { $0.usesInterfaceType(.other) }
         attempt.connection.cancel()
+        ends.append(how ?? .notSill)
         if let how, let failure = RemoteDialPolicy.classify(how, candidate: attempt.candidate, usedTunnel: usedTunnel) {
             results.append((failure, attempt.candidate))
         }
@@ -207,6 +216,7 @@ final class RemoteConnector {
         for a in attempts where !a.ended {
             a.ended = true
             a.connection.cancel()
+            ends.append(.timeout)
             results.append((RemoteDialPolicy.classify(.timeout, candidate: a.candidate, usedTunnel: a.connection.currentPath.map { $0.usesInterfaceType(.other) }) ?? .noAnswer, a.candidate))
         }
         finish()
@@ -217,7 +227,8 @@ final class RemoteConnector {
         finished = true
         staggerItem?.cancel(); wholeItem?.cancel()
         let worst = RemoteDialPolicy.worst(results.map(\.0)) ?? .noAnswer
-        onFailed?(Failed(failure: worst, candidate: results.first { $0.0 == worst }?.1 ?? candidates.first))
+        onFailed?(Failed(failure: worst, candidate: results.first { $0.0 == worst }?.1 ?? candidates.first,
+                         retry: RemoteDialPolicy.retryDisposition(for: ends)))
     }
 
     /// Network.framework's error as the policy reads it.

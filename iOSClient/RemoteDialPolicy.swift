@@ -181,6 +181,22 @@ enum RemoteDialPolicy {
         case noWindowList
     }
 
+    enum RetryDisposition { case transport, stop }
+
+    static func retryDisposition(for ends: [End]) -> RetryDisposition {
+        guard !ends.isEmpty else { return .stop }
+        return ends.allSatisfy { end in
+            switch end {
+            case .timeout, .noWindowList, .posix(ECONNREFUSED), .posix(ECONNRESET), .posix(ECONNABORTED), .posix(EPIPE),
+                 .posix(ETIMEDOUT), .posix(ENETUNREACH), .posix(EHOSTUNREACH), .posix(ENETDOWN),
+                 .posix(EHOSTDOWN), .posix(EADDRNOTAVAIL), .dns(dnsNoSuchName), .dns(dnsNoSuchRecord):
+                return true
+            default:
+                return false
+            }
+        } ? .transport : .stop
+    }
+
     /// Why a dial failed, for the status line (§7.8), most telling first in `priority`.
     enum Failure: String, CaseIterable, Equatable {
         case wrongMac, revoked, remoteOff, busy, refused, vpnOff, nameNotFound, localNetwork, notSill, noAnswer
