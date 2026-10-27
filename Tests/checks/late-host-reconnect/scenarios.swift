@@ -8,8 +8,8 @@ Clock.reset()
 do {
     let c = StreamClient(); c.seed(); c.reconnectIfListed(); Clock.advance(5000)
     let attempts = c.remoteDials.count
-    check(c.remoteDials == [103, 133, 163, 193], "owner attempts have 30-second spacing and at most four starts")
-    check(attempts > 0 && attempts <= 4, "owner has at most four attempts per unchanged recovery budget; got \(attempts)")
+    check(c.remoteDials == [103, 105, 109, 117, 127, 137, 147, 157, 167, 177, 187, 197, 207, 217], "owner preserves existing 2/4/8/10-second backoff throughout the original 120-second budget")
+    check(attempts == 14, "owner retains all existing attempts within the unchanged recovery window; got \(attempts)")
     check(Clock.pending == 0, "exhausted owner budget leaves no timer")
     check(c.reconnect?.remoteAllowed == true, "budget exhaustion does not become terminal trust refusal")
     c.pathSignature = "cellular"; c.reconnectIfListed(); Clock.advance(3)
@@ -40,16 +40,32 @@ for end: RemoteDialPolicy.End in [.tls(-9808), .tls(-9816), .tls(-9825), .tlsAft
     c.macs = [FoundMac(macID: c.targetID)]; c.sightings.since["Mac"] = Clock.now; c.reconnectIfListed(); Clock.advance(500)
     check(count == 1 && c.remoteDials.count == count && Clock.pending == 0, "terminal \(end) cannot resume on path/foreground/discovery")
 }
-for reason in [Goodbye.quit, Goodbye.busy, Goodbye.remoteOff, Goodbye.internetOff, Goodbye.removed, "unknown"] {
+for reason in [Goodbye.remoteOff, Goodbye.internetOff, Goodbye.removed, Goodbye.pairingRequired, Goodbye.update, "unknown"] {
     for reconnect: Bool? in [false, nil] {
         Clock.reset()
         let c = StreamClient(); c.seed(); c.session = Session(macID: c.targetID, candidate: c.candidate)
         c.goodbye = Goodbye(reason: reason, reconnect: reconnect)
         c.sessionEnded(error: nil, end: nil)
         if reason == Goodbye.removed { check(c.saved.revoked == true, "authenticated removal retains persistent revocation") }
-        if reason == Goodbye.quit { check(c.status.contains("자동 재접속을 중단했습니다"), "terminal quit UI does not promise automatic recovery") }
         c.pathSignature = "cellular"; c.reconnectIfListed(); c.background(); c.foreground(); Clock.advance(500)
         check(c.remoteDials.isEmpty && Clock.pending == 0, "explicit Goodbye \(reason) reconnect=\(String(describing: reconnect)) never resumes owner")
+    }
+}
+for reason in [Goodbye.quit, Goodbye.busy] {
+    for wireReconnect: Bool? in [false, nil] {
+        for wasConnected in [false, true] {
+            Clock.reset()
+            let c = StreamClient(); c.seed(); c.connected = wasConnected
+            c.session = Session(macID: c.targetID, candidate: c.candidate)
+            c.goodbye = Goodbye(reason: reason, reconnect: wireReconnect)
+            c.sessionEnded(error: nil, end: nil)
+            check(c.reconnect?.remoteAllowed == true, "known \(reason) wire=\(String(describing: wireReconnect)) connected=\(wasConnected) preserves GoodbyePolicy reconnect")
+            Clock.advance(4)
+            c.macs = [FoundMac(macID: c.targetID)]; c.sightings.since["Mac"] = Clock.now
+            c.onDial = { client in client.remoteDial = nil; client.connected = true; client.reconnect = nil }
+            c.reconnectIfListed()
+            check(c.connected && Clock.pending == 0, "new Host discovery restores known \(reason) session using finite recovery")
+        }
     }
 }
 Clock.reset()
@@ -86,6 +102,36 @@ do {
     check(!c.connected && c.remoteDials.count == count && Clock.pending == 0, "same-path Host return without an existing event remains undetectable after exhaustion")
     c.pathSignature = "cellular"; c.reconnectIfListed(); Clock.advance(3)
     check(c.connected && c.remoteDials.count == count + 1, "external recovery event connects the returned Host with existing trust")
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed()
+    let a = FoundMac(name: "A", macID: c.targetID)
+    let b = FoundMac(name: "B", macID: c.targetID)
+    c.macs = [a, b]; c.sightings.since = ["A": 100, "B": 100]
+    c.reconnectIfListed(); Clock.advance(500)
+    let count = c.remoteDials.count
+    for _ in 0..<3 {
+        c.macs = [b, a]; c.reconnectIfListed()
+        c.macs = [a, b]; c.reconnectIfListed()
+    }
+    check(c.remoteDials.count == count && Clock.pending == 0, "reordering already observed Host listings cannot replenish exhausted budget")
+    c.sightings.since["A"] = Clock.now; c.reconnectIfListed()
+    check(c.remoteDials.count == count + 1, "new trust-bound discovery generation replenishes the existing budget once")
+    let resumed = c.remoteDials.count
+    for _ in 0..<3 { c.reconnectIfListed() }
+    check(c.remoteDials.count == resumed && Clock.pending == 1, "duplicate discovery generation does not replenish again")
+    c.sightings.since["A"] = 100; c.reconnectIfListed()
+    check(c.remoteDials.count == resumed && Clock.pending == 1, "stale discovery generation cannot replenish current budget")
+    c.disconnect()
+}
+Clock.reset()
+do {
+    let c = StreamClient(); c.seed(); c.reconnectIfListed(); Clock.advance(500)
+    let count = c.remoteDials.count
+    c.macs = [FoundMac(name: "Mac", macID: nil, carriesTag: false)]
+    c.sightings.since["Mac"] = Clock.now; c.reconnectIfListed()
+    check(c.remoteDials.count == count && Clock.pending == 0, "name-only discovery cannot replenish trusted owner recovery")
 }
 Clock.reset()
 do {
