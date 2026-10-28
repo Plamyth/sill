@@ -52,9 +52,44 @@ with tempfile.TemporaryDirectory(prefix="sill-owner-check-") as temporary:
             description = json.loads((output / "description.json").read_text())
             arguments = next(c["otherArguments"] for c in description["swiftCommands"].values() if c["moduleName"] == "SillHostCore")
             package_name = arguments[arguments.index("-package-name") + 1]
+            c_arguments = []
+            index = 0
+            while index < len(arguments):
+                if arguments[index] in ("-Xcc", "-I", "-F"):
+                    c_arguments.extend(arguments[index:index + 2])
+                    index += 2
+                else:
+                    index += 1
+            module_maps = [Path(value.split("=", 1)[1]) for value in c_arguments if value.startswith("-fmodule-map-file=")]
+            if not module_maps or not all(path.is_file() for path in module_maps):
+                raise RuntimeError("HostCore C module maps are missing from the SwiftPM compile command")
+            for module_map in module_maps:
+                objects.extend(sorted(module_map.parent.glob("*.o")))
+            print(json.dumps({"phase": "contract-compile-inputs", "cModuleMaps": list(map(str, module_maps)),
+                              "cArguments": c_arguments, "objectCount": len(objects)}, sort_keys=True), flush=True)
             binary = scratch / "checks"
-            code = subprocess.run(["xcrun", "swiftc", "-O", "-parse-as-library", "-package-name", package_name, "-I", str(modules), "-module-cache-path", str(scratch / "module-cache"),
-                                   str(Path(__file__).with_name("main.swift")), *map(str, objects), "-o", str(binary)], cwd=root, env=env).returncode
+            compiler = ["xcrun", "swiftc", "-O", "-parse-as-library", "-package-name", package_name, "-I", str(modules), "-module-cache-path", str(scratch / "module-cache"), *c_arguments]
+            source = str(Path(__file__).with_name("main.swift"))
+            code = subprocess.run([*compiler,
+                                   source, *map(str, objects), "-o", str(binary)], cwd=root, env=env).returncode
+            negative_contracts = {
+                "PRINCIPAL": "has no member 'principal'",
+                "BINDING": "has no member 'binding'",
+                "PROOF": "to return type 'TailnetDeviceAccess.Proof'",
+                "EVIDENCE": "to expected argument type 'TailnetDeviceAccess.Proof'",
+                "ADMIT": "to expected argument type 'OwnerBootstrapSocket.Evidence'",
+                "RECEIPT": "to expected argument type 'OwnerBootstrapSocket.Evidence'",
+            }
+            if code == 0:
+                for contract, diagnostic in negative_contracts.items():
+                    result = subprocess.run([*compiler, "-typecheck", "-D", "OWNER_PUBLIC_PROFILE_NO_" + contract, source],
+                                            cwd=root, env=env, capture_output=True, text=True)
+                    if result.returncode == 0 or diagnostic not in result.stderr:
+                        print(result.stdout + result.stderr, flush=True)
+                        print("FAIL public profile negative contract " + contract, flush=True)
+                        code = 1
+                        break
+                    print("PASS public profile negative contract " + contract + ": " + diagnostic, flush=True)
             if code == 0:
                 code = subprocess.run([str(binary)], cwd=root, env=env).returncode
                 artifact = binary
