@@ -20,6 +20,9 @@ func SecItemCopyMatching(_ query: CFDictionary, _ result: UnsafeMutablePointer<C
 final class UserDefaults {
     static let standard = UserDefaults()
     var reads = 0
+    var values: [String:Any] = [:]
+    func object(forKey key: String) -> Any? { values[key] }
+    func set(_ value: Any, forKey key: String) { values[key] = value }
     var checkpoint: Data?
     func data(forKey key: String) -> Data? { reads += 1; return checkpoint }
 }

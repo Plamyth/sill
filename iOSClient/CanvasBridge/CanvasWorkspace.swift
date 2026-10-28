@@ -35,9 +35,13 @@ struct CanvasWorkspace: View {
     @State private var vaultDirectory = ""
     @State private var vaultEntries: [CanvasRelay.VaultEntry] = []
     @State private var vaultStatus = ""
+    @State private var pdfReader: VaultPDFReader?
+    private var pdfLoading: Bool { pdfRequest != nil }
+    @State private var pdfRequest: UUID?
     @State private var vaultDiscardOpen = false
     @State private var recoveryDiscardOpen = false
     @State private var noteRecoveryDiscardOpen = false
+    @State private var pdfRecoveryDiscardOpen = false
     @State private var vaultReview: CanvasStore.VaultReviewSession?
     @State private var vaultRawMarkdown = false
     @State private var syncedSceneSha: String?
@@ -523,12 +527,28 @@ struct CanvasWorkspace: View {
                             Button("보존된 노트 입력 열기") {
                                 store.setNoteConnection(address:relayAddress,token:relayToken)
                                 let connection = relay
-                                Task { await store.restoreNoteDraft(load:connection.vaultNote) }
+                                Task {
+                                    await store.restoreNoteDraft(load:connection.vaultNote)
+                                }
                             }.frame(minHeight:44).disabled(store.vaultLoading)
                                 .accessibilityIdentifier("obsidianRestoreNoteDraft")
                             Button("보존된 노트 입력 버리기",role:.destructive) { noteRecoveryDiscardOpen = true }
                                 .frame(minHeight:44).disabled(store.vaultLoading)
                                 .accessibilityIdentifier("obsidianDiscardNoteRecovery")
+                        }
+                    }.padding(.horizontal)
+                }
+                if !store.pdfExcerptRecoveryNotice.isEmpty {
+                    VStack(alignment:.leading,spacing:6) {
+                        Text(store.pdfExcerptRecoveryNotice).font(.footnote)
+                        if let recovery = store.pdfExcerptRecovery {
+                            Text(recovery.path).font(.caption).textSelection(.enabled)
+                            Button("보존된 발췌 결과 확인") { Task { await savePDFExcerpt(allowCreate:false) } }
+                                .frame(minHeight:44).disabled(store.vaultSaving || store.vaultLoading || pdfLoading)
+                            Button("같은 발췌 ID로 저장 재확인") { Task { await savePDFExcerpt(allowCreate:true) } }
+                                .frame(minHeight:44).disabled(store.vaultSaving || store.vaultLoading || pdfLoading)
+                            Button("발췌 생성 의도 버리기",role:.destructive) { pdfRecoveryDiscardOpen = true }
+                                .frame(minHeight:44).disabled(store.vaultSaving || store.vaultLoading)
                         }
                     }.padding(.horizontal)
                 }
@@ -544,9 +564,32 @@ struct CanvasWorkspace: View {
                     }.frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
                         .disabled(store.vaultDirty || store.vaultSaving || store.vaultLoading)
                 }
-                if let note = store.vaultNote {
+                if let reader = pdfReader {
+                    VaultPDFView(reader:reader).frame(maxWidth:.infinity,maxHeight:.infinity)
+                        .accessibilityLabel("PDF 원문 · 읽기 전용")
+                    Text(reader.snapshot.path).font(.caption).textSelection(.enabled)
+                    Button("선택 텍스트를 발췌 노트로 저장하고 카드 연결") {
+                        do {
+                            let excerpt = try reader.excerpt()
+                            store.setNoteConnection(address:relayAddress,token:relayToken)
+                            if store.preparePDFExcerpt(excerpt) { Task { await savePDFExcerpt(allowCreate:true) } }
+                        } catch { store.vaultStatus = error.localizedDescription }
+                    }.frame(minHeight:44).disabled(store.vaultSaving || store.hasPendingPDFExcerpt || pdfLoading)
+                    Button("PDF 닫고 노트로 돌아가기") { pdfRequest = nil; pdfReader = nil }
+                        .frame(minHeight:44).disabled(store.vaultSaving)
+                } else if pdfLoading {
+                    ProgressView("PDF 원본을 확인하는 중입니다.")
+                } else if let note = store.vaultNote {
                     ScrollView {
                     VStack(spacing:6) {
+                    if note.text.contains("ccr-pdf-source") {
+                        Button("PDF 원문 보기 · 출처 검증") {
+                            do {
+                                guard let source = try VaultPDFExcerpt.parse(note.text) else { throw VaultPDFError.invalid }
+                                Task { await openVaultPDF(source.pdfPath,source:source) }
+                            } catch { store.vaultStatus = error.localizedDescription }
+                        }.frame(minHeight:44).disabled(store.vaultDirty || store.vaultInputBusy || store.vaultSaving)
+                    }
                     Text(note.path).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth:.infinity,alignment:.leading).padding(.horizontal)
                     if store.vaultBlockEditing {
@@ -636,20 +679,25 @@ struct CanvasWorkspace: View {
                             if entry.kind == "directory" {
                                 vaultDirectory = entry.path
                                 Task { await loadVaultEntries() }
-                            } else { Task { await openVaultNote(entry.path) } }
+                            } else if entry.kind == "pdf" {
+                                Task { await openVaultPDF(entry.path) }
+                            } else if entry.kind == "note" { Task { await openVaultNote(entry.path) } }
                         } label: {
-                            Label(entry.name,systemImage:entry.kind == "directory" ? "folder" : "doc.text")
-                        }
+                            Label(entry.name,systemImage:entry.kind == "directory" ? "folder" : entry.kind == "pdf" ? "doc.richtext" : "doc.text")
+                        }.frame(minHeight:44)
                     }
                 }
                 Text(store.vaultStatus.isEmpty ? vaultStatus : store.vaultStatus)
                     .font(.footnote).frame(maxWidth:.infinity,alignment:.leading).padding(10)
             }
-            .navigationTitle(store.vaultNote == nil ? "Obsidian 노트" : "노트 편집")
+            .navigationTitle(pdfReader == nil ? (store.vaultNote == nil ? "Obsidian 노트" : "노트 편집") : "PDF 원문 · 읽기 전용")
             .toolbar {
                 ToolbarItem(placement:.topBarLeading) {
-                    if store.vaultNote != nil {
-                        Button("목록") { _ = store.closeVaultEditor() }.frame(minWidth:44,minHeight:44)
+                    if pdfReader != nil {
+                        Button("PDF 닫기") { pdfRequest = nil; pdfReader = nil }.frame(minWidth:44,minHeight:44)
+                            .disabled(store.vaultSaving)
+                    } else if store.vaultNote != nil {
+                        Button("목록") { pdfRequest = nil; pdfReader = nil; _ = store.closeVaultEditor() }.frame(minWidth:44,minHeight:44)
                     } else if !vaultDirectory.isEmpty {
                         Button("상위 폴더") {
                             vaultDirectory = vaultDirectory.split(separator:"/").dropLast().joined(separator:"/")
@@ -671,7 +719,7 @@ struct CanvasWorkspace: View {
                     Button(store.vaultDirty && !store.vaultBlockEditing ? "취소 · 초안 보존" : "닫기") {
                         if store.vaultDirty && !store.vaultBlockEditing {
                             if store.pauseVaultNoteEditing() { vaultOpen = false }
-                        } else if store.closeVaultEditor() { vaultOpen = false }
+                        } else if store.closeVaultEditor() { pdfRequest = nil; pdfReader = nil; vaultOpen = false }
                     }.frame(minWidth:44,minHeight:44)
                         .disabled(store.vaultInputBusy || store.vaultSaving || store.vaultLoading || store.noteRecoveryWriteFailed)
                         .accessibilityIdentifier("obsidianClosePreservingDraft")
@@ -679,6 +727,10 @@ struct CanvasWorkspace: View {
             }
             .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
             .onChange(of:store.vaultInputSessionID) { _,_ in vaultRawMarkdown = false }
+            .onChange(of:relayAddress) { _,_ in pdfRequest = nil; pdfReader = nil }
+            .onChange(of:relayToken) { _,_ in pdfRequest = nil; pdfReader = nil }
+            .onChange(of:store.scene.id) { _,_ in pdfRequest = nil; pdfReader = nil }
+            .onDisappear { pdfRequest = nil; pdfReader = nil }
             .sheet(item:$vaultReview) { session in
                 VaultReviewSheet(store:store,session:session) { grade in
                     store.setNoteConnection(address:relayAddress,token:relayToken)
@@ -687,6 +739,12 @@ struct CanvasWorkspace: View {
                         try await connection.saveVaultNote(at:path,baseSha256:sha,text:text)
                     },load:connection.vaultNote)
                 }
+            }
+            .alert("발췌 생성 의도를 버릴까요?",isPresented:$pdfRecoveryDiscardOpen) {
+                Button("생성 의도 버리기",role:.destructive) { _ = store.discardPDFExcerptRecovery() }
+                Button("취소",role:.cancel) {}
+            } message: {
+                Text("이 기기의 생성 의도만 비웁니다. 저장된 Markdown이나 PDF 원본은 지우지 않습니다.")
             }
             .alert("보존된 노트 입력을 버릴까요?",isPresented:$noteRecoveryDiscardOpen) {
                 Button("입력 버리기",role:.destructive) { _ = store.discardNoteRecovery() }
@@ -732,6 +790,36 @@ struct CanvasWorkspace: View {
             vaultEntries = entries
             vaultStatus = "Mac Obsidian 보관함 · \(entries.count)개 항목"
         } catch { vaultStatus = "노트 목록을 읽지 못했습니다: \(error.localizedDescription)" }
+    }
+
+    private func openVaultPDF(_ path: String, source: VaultPDFExcerpt? = nil) async {
+        guard !store.vaultDirty, !store.vaultSaving, !store.vaultInputBusy, !pdfLoading else { return }
+        let request = UUID(), address = relayAddress, token = relayToken, sceneID = store.scene.id
+        let note = store.vaultNote
+        pdfRequest = request
+        defer { if pdfRequest == request { pdfRequest = nil } }
+        do {
+            let snapshot = try await relay.vaultPDF(at:path)
+            guard !Task.isCancelled, pdfRequest == request, relayAddress == address, relayToken == token,
+                  store.scene.id == sceneID, store.vaultNote == note, !store.vaultDirty else { return }
+            pdfReader = try VaultPDFReader(snapshot:snapshot,source:source)
+            store.vaultStatus = "PDF를 읽기 전용으로 열었습니다. PDF 원본은 수정하지 않습니다."
+        } catch {
+            guard !Task.isCancelled, pdfRequest == request, relayAddress == address, relayToken == token,
+                  store.scene.id == sceneID, store.vaultNote == note, !store.vaultDirty else { return }
+            let failure = error as NSError
+            store.vaultStatus = failure.domain == "CanvasRelay" && failure.code == 404 ?
+                VaultPDFError.missing.localizedDescription : error.localizedDescription
+        }
+    }
+
+    private func savePDFExcerpt(allowCreate: Bool) async {
+        store.setNoteConnection(address:relayAddress,token:relayToken)
+        let connection = relay
+        let id = await store.savePDFExcerpt(allowCreate:allowCreate,create:{ path,text in
+            try await connection.createVaultNote(at:path,text:text)
+        },load:connection.vaultNote)
+        if id != nil { pdfReader = nil }
     }
 
     private func openVaultNote(_ path: String, nodeID: UUID? = nil) async {

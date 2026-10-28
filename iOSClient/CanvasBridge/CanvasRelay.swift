@@ -143,8 +143,21 @@ struct CanvasRelay {
         return request
     }
 
-    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
-        let (data, raw) = try await session.data(for: request)
+    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type, maxBytes: Int? = nil) async throws -> T {
+        let data: Data, raw: URLResponse
+        if let maxBytes {
+            let (stream,response) = try await session.bytes(for:request)
+            raw = response
+            guard response.expectedContentLength <= maxBytes else { throw VaultPDFError.tooLarge }
+            var bounded = Data()
+            for try await byte in stream {
+                guard bounded.count < maxBytes else { throw VaultPDFError.tooLarge }
+                bounded.append(byte)
+            }
+            data = bounded
+        } else {
+            (data,raw) = try await session.data(for:request)
+        }
         guard let http = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         let body = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any]
         let vault = request.url?.path.contains("/vault/") ?? false
@@ -196,6 +209,33 @@ struct CanvasRelay {
     func vaultEntries(in directory: String) async throws -> [VaultEntry] {
         let path = try vaultURL("/vault/entries",path:directory)
         return try await response(request(path),as:VaultEntries.self).entries
+    }
+
+    func vaultPDF(at path: String) async throws -> VaultPDFSnapshot {
+        guard VaultPDFSnapshot.validPath(path) else { throw VaultPDFError.invalid }
+        do {
+            let value = try await response(request(vaultURL("/vault/pdf",path:path)),as:VaultPDFSnapshot.self,
+                maxBytes:(VaultPDFSnapshot.byteLimit + 2) / 3 * 4 + 8192)
+            _ = try value.bytes(at:path)
+            return value
+        } catch let error as NSError where error.domain == "CanvasRelay" {
+            switch error.code {
+            case 404: throw VaultPDFError.missing
+            case 409: throw VaultPDFError.changed
+            case 413: throw VaultPDFError.tooLarge
+            case 400: throw VaultPDFError.invalid
+            default: throw VaultPDFError.unavailable
+            }
+        }
+    }
+
+    func createVaultNote(at path: String, text: String) async throws -> VaultNote {
+        guard VaultNoteReference.validPath(path), text.utf8.count <= 1024 * 1024 else { throw URLError(.badURL) }
+        let body = try JSONSerialization.data(withJSONObject:["baseSha256":NSNull(),"text":text])
+        let saved = try await response(request(vaultURL("/vault/note",path:path),method:"PUT",body:body),
+                                       as:VaultNote.self).validated(at:path)
+        guard saved.text.utf8.elementsEqual(text.utf8) else { throw URLError(.badServerResponse) }
+        return saved
     }
 
     func vaultNote(at path: String) async throws -> VaultNote {

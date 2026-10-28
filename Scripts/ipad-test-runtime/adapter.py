@@ -39,6 +39,7 @@ SINGLE_APP_BLOCKERS = (
 NODE = 'D29DDF60-B4C6-48DD-A75A-219C8F2A52A7'
 ORIGINALS = ['CanvasScene.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/ledger.json',
              'CanvasBlockEdit/recovery.json', 'CanvasNoteEdit/recovery.json',
+             'CanvasPDFExcerptCreate/recovery.json',
              'CanvasLegacyScene.json', 'CanvasWorkspace/bookmark.json', 'CCR Sill/keyboard-diagnostics.json',
              'CCR Sill/microphone-diagnostics.json']
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',

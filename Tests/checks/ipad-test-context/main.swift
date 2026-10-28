@@ -168,6 +168,7 @@ if mode == "normal" {
         check(try CanvasRuntime.stateURL(file) == support.appendingPathComponent(file.rawValue), "normal production paths preserved")
     }
     check(try CanvasRuntime.stateURL(.blockRecovery,blockRecoveryOverride:override) == override, "normal injectable recovery preserved")
+    check(try CanvasRuntime.stateURL(.pdfExcerptRecovery,pdfExcerptRecoveryOverride:override) == override, "PDF creation has its own injectable state file")
     try files.removeItem(at:support.appendingPathComponent("CanvasVaultCheckpoint.json"))
     keychainData = try JSONSerialization.data(withJSONObject:["address":address,"token":token])
     _ = CanvasRelay.loadConnection()
@@ -181,7 +182,7 @@ if mode == "normal" {
     if mode == "invalid" {
         guard case .invalid = CanvasRuntime.launch else { preconditionFailure("shared launch must fail closed") }
         for file in CanvasRuntime.StateFile.allCases {
-            rejects("invalid state cannot fall back") { _ = try CanvasRuntime.stateURL(file,blockRecoveryOverride:override) }
+            rejects("invalid state cannot fall back") { _ = try CanvasRuntime.stateURL(file,blockRecoveryOverride:override,pdfExcerptRecoveryOverride:override) }
         }
         rejects("invalid low-level write cannot bypass gate") { try CanvasLocalFile.write(Data(),to:override) }
         rejects("invalid low-level read cannot bypass gate") { _ = try CanvasLocalFile.read(legacyFiles[0]) }
@@ -243,7 +244,7 @@ if mode == "normal" {
         rejects("receipt hardlink cannot overwrite original state") { try CanvasRuntime.writeRuntimeReceipt(bundle:receiptBundle) }
         try files.removeItem(at:receiptURL)
         for file in CanvasRuntime.StateFile.allCases {
-            let url = try CanvasRuntime.stateURL(file,blockRecoveryOverride:override)
+            let url = try CanvasRuntime.stateURL(file,blockRecoveryOverride:override,pdfExcerptRecoveryOverride:override)
             check(url == state.appendingPathComponent(file.rawValue), "all writes ignore recovery override in test mode")
             let bytes = Data(file.rawValue.utf8)
             try CanvasLocalFile.write(bytes,to:url)
@@ -285,11 +286,11 @@ if mode == "normal" {
         rejects("late hardlink cannot be restored") { _ = try CanvasLocalFile.read(linkedScene) }
         rejects("late hardlink cannot be saved") { try CanvasLocalFile.write(Data(),to:linkedScene) }
         try files.removeItem(at:linkedScene)
-        for relative in ["CanvasOutbox", "CanvasBlockEdit"] {
+        for (relative,file) in [("CanvasOutbox",CanvasRuntime.StateFile.outbox),
+                                ("CanvasBlockEdit",.blockRecovery),("CanvasPDFExcerptCreate",.pdfExcerptRecovery)] {
             let directory = state.appendingPathComponent(relative)
             try files.removeItem(at:directory)
             try files.createSymbolicLink(at:directory,withDestinationURL:support.appendingPathComponent(relative))
-            let file: CanvasRuntime.StateFile = relative == "CanvasOutbox" ? .outbox : .blockRecovery
             rejects("late parent symlink rejected") { _ = try CanvasRuntime.stateURL(file) }
             try files.removeItem(at:directory)
         }

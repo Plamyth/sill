@@ -21,6 +21,28 @@ def existing_runner_fixture(work, run):
     return {'deviceUDID':'offline','existingXctestrun':str(run),'existingXctestrunSHA256':adapter.sha(run.read_bytes()),
         'existingRunnerReceipt':str(receipt),'existingRunnerReceiptSHA256':adapter.sha(receipt.read_bytes())}
 
+class PDFRecoveryProtectionContract(unittest.TestCase):
+    def test_pdf_journal_changes_are_in_normal_snapshot(self):
+        self.assertIn('CanvasPDFExcerptCreate/recovery.json',adapter.ORIGINALS)
+        self.assertIn('CanvasLegacyScene.json',adapter.ORIGINALS)
+        self.assertIn('CanvasWorkspace/bookmark.json',adapter.ORIGINALS)
+        with tempfile.TemporaryDirectory() as temporary:
+            work=Path(temporary)
+            content=b'normal PDF create journal'
+            def copy(config,work,source,target,**kwargs):
+                if source.endswith('CanvasPDFExcerptCreate/recovery.json'):
+                    target.write_bytes(content)
+                    return True
+                return False
+            def device(config,args,name):
+                adapter.write(Path(args[-1]),{'result':{'unchanged':True}})
+            with patch.object(adapter,'device',side_effect=device),patch.object(adapter,'copy_file',side_effect=copy):
+                before=adapter.snapshots({},work,'before')
+                self.assertEqual(before['CanvasPDFExcerptCreate/recovery.json'],adapter.sha(content))
+                self.assertTrue(adapter.same_user_data(before,adapter.snapshots({},work,'after')))
+                content=b'changed PDF create journal'
+                self.assertFalse(adapter.same_user_data(before,adapter.snapshots({},work,'changed')))
+
 class PreparedInstallContract(unittest.TestCase):
     def fixture(self, directory):
         import plistlib, shutil, types

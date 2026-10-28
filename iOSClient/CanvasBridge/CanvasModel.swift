@@ -13,6 +13,7 @@ enum CanvasRuntime {
         case outbox = "CanvasOutbox/ledger.json"
         case blockRecovery = "CanvasBlockEdit/recovery.json"
         case noteRecovery = "CanvasNoteEdit/recovery.json"
+        case pdfExcerptRecovery = "CanvasPDFExcerptCreate/recovery.json"
         case checkpoint = "CanvasVaultCheckpoint.json"
         case workspace = "CanvasWorkspace/bookmark.json"
         case preferences = "CanvasPreferences.json"
@@ -294,7 +295,7 @@ enum CanvasRuntime {
     #endif
 
     static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil,
-                         noteRecoveryOverride: URL? = nil) throws -> URL {
+                         noteRecoveryOverride: URL? = nil, pdfExcerptRecoveryOverride: URL? = nil) throws -> URL {
         #if DEBUG
         switch launch {
         case .normal: break
@@ -304,6 +305,7 @@ enum CanvasRuntime {
         #endif
         if file == .blockRecovery, let override = blockRecoveryOverride { return override }
         if file == .noteRecovery, let override = noteRecoveryOverride { return override }
+        if file == .pdfExcerptRecovery, let override = pdfExcerptRecoveryOverride { return override }
         guard let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first
         else { throw CanvasSendError.outboxUnavailable }
         if file == .scene { try? FileManager.default.createDirectory(at:support,withIntermediateDirectories:true) }

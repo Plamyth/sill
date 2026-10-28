@@ -98,6 +98,23 @@ final class NoteProtocol: URLProtocol {
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
         }
+        #if DEBUG
+        if CommandLine.arguments.contains("--pdf-isolated") {
+            try await checkPDFIsolatedRecovery(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        #endif
+        if CommandLine.arguments.contains("--pdf-fence") {
+            try checkPDFExcerptFences(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--pdf-recovery") {
+            try await checkPDFExcerptRecovery(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--transport-body") {
             var scene = CanvasScene()
             _ = scene.addNode(kind: .note, at: .init(x: 0, y: 0), text: "")
@@ -150,7 +167,16 @@ final class NoteProtocol: URLProtocol {
             exit(failures == 0 ? 0 : 1)
         }
         if CommandLine.arguments.contains("--vault-roundtrip") {
+            if ProcessInfo.processInfo.environment["PENCIL_REMOTE_FIXTURE"] == "1" {
+                PDFRemoteVault.shared = try PDFRemoteVault()
+            }
+            try checkRetainedNativePDFAnchor(check)
             try await checkPencilVaultRoundtrip(check)
+            if PDFRemoteVault.shared != nil {
+                try await checkPDFExcerptRoundtrip(check)
+                try PDFRemoteVault.shared!.finish()
+                PDFRemoteVault.shared = nil
+            }
             print("RESULT \(checks) assertions, \(failures) failures")
             exit(failures == 0 ? 0 : 1)
         }
@@ -520,6 +546,7 @@ final class NoteProtocol: URLProtocol {
         try await checkSelectedInk(check)
         try await checkHandwritingSearch(check)
         try await checkWholeNoteRecovery(check)
+        try await checkPDFReadTransport(check)
         print("RESULT \(checks) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
