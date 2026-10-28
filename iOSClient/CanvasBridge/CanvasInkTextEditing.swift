@@ -146,7 +146,7 @@ final class CanvasInkTextEditing: ObservableObject {
             let afterBytes = kept.dataRepresentation()
             let authoritative = try PKDrawing(data: afterBytes)
             var after = scene
-            after.schemaVersion = 2
+            after.schemaVersion = max(2, after.schemaVersion)
             after.drawingBase64 = afterBytes.base64EncodedString()
             after.strokes = CanvasScene.nativeInkStrokes(authoritative)
             let index = after.nodes.firstIndex(where: { $0.id == nodeID })!

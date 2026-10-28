@@ -59,18 +59,29 @@ Files 연결·저장 중 또는 blocked에서는 glyph 편집을 시작하지 �
 새 native 인식 성공과 실제 iPad 화면·Pencil 수용은 여전히 미완료다. glyph 확정은 기존 PKCanvasView의 잉크만 Undo하는 기록을 무효화하고 별도 glyph 명령으로 문자와 획을 함께 되돌린다. 이전 native Undo 이력의 앱 재실행 보존은 제공하지 않는다.
 
 
-## 2026-10-29 shape 접합 후보와 호환성 보류
+## 2026-10-29 schema3 후속 후보
 
-glyph 순수 note 제품 접합은 `a8810155f5a32b019957b9f96905c0d66153930a`다. 이후 shape 원소유 e529975를 `33136572c1bbeac10f3f6bce62839c970104da28`로 cherry-pick했다. 이 WT는 부모가 배정한 Store/Workspace 단독 writer이며 저장 정본68a의 보호를 재사용한다. 두 초안의 패치를 실제 코드에 의미 단위로 합쳤고 원본 integration.patch는 각 출발점의 역사적 패치로 보존한다.
+glyph 순수 note 제품 접합 `a8810155f5a32b019957b9f96905c0d66153930a`는 부모의 독립 CLEAR를 받은 별도 단위다. 이를 보존한 자손에서 e529975와 회전62d78bf·계약문서1be077f의 의도를 소비했다. 새 shape는 공통 wire 변경이며 전체 수용은 false다. 최초3912af4 후보는 새 kind를 전면 거부했으며 그 exact source의 무서명 전체 빌드가 통과했다. 후속은 사용자 요구를 구현하기 위해 조율 담당이 고른 schema3 계약을 적용한다. 사용자가 세부 숫자/DSL을 직접 확정했다고 기록하지 않는다.
 
-**shape는 공통 wire 변경 후보이며 전체 수용은 false다.** 새 Kind ellipse/line을 같은 schemaVersion2로 저장하면 구형68에서 decode가 실패한다. 공식 relay f61f516은 새 kind를 검사하지 않고 저장하며 Mermaid는 전부 상자, 구조 설명은 새 kind를 요소로 투영한다. iPad CanvasDiagramSnapshot과 이를 호출하는 CanvasPeleView도 상자 투영이다. 새 schema 번호와 소비자 협약을 이 writer가 독단으로 정하지 않았다.
+schema1/2의 note/box와 원본 잉크를 읽고, ellipse/line은3에서만 허용한다. 새 kind 생성·원격 제안은3으로 올리며 일반 그리기·glyph 삭제/Undo·펜 설정·원격 수정은3을2로 내리지 않는다. 알 수 없는 버전/종류는 원본 보존·명시 거부다. packet/outbox/recovery의 독립 schema1은 그대로다. Files 세대 저장/blocked/CAS/취소 보호를 유지하며 cache 성공을 외부 원본 저장으로 표시하지 않는다.
 
-따라서 현재 제품은 기존 box 보정만 확정·파일 왕복 가능하다. line/ellipse는 native 비교 미리보기와 명시적 `shape_wire_contract_pending` 거부까지만 가능하다. 확정 버튼을 막고, Store persistScene·Files.save·scene decode·CanvasDiagramSnapshot/Pele·saveVaultCanvas가 새 종류를 거부한다. fileWorkspaceCanSync도 false다. 현재 relay에 신규 kind를 조용히 쓰는 경로를 열지 않는다. 단위 검사의 Proposal.confirmed가 만드는 line/ellipse JSON은 격리 fixture일 뿐 제품 저장 성공으로 세지 않는다. schema2 신규 kind의 decoder 거부·Files 외부 쓰기0도 검사했다.
+CanvasDiagramSnapshot/Pele의 타원은 고정 퍼센트 rx/ry, 선은 두 투명 표시 끝점과 실제 무화살촉 edge를 사용한다. 표시 helper는 wire node/출처로 저장하지 않는다. 실제 표시 nodes와 edges를 helper까지 합산해512/1024 상한을 검사하고 bridge의 parse/SVG 수와 대조한다. 이는 자동 배치 다이어그램이며 원본 native 좌표·rotation 재현과 별개다. NodeTile은 원본2pt 선과 최소44/zoom 선택 layout를 분리한다. iPad 실제 터치는 미검증이다.
 
-부모의 relay 소유 단위에서 버전 및 capability/명시 거부, 노드별 Mermaid/Pele 의미 투영, Obsidian 종류 설명, 신구 클라이언트 읽기·쓰기 정책을 합의·구현한 뒤 같은 exact pair를 검증해야 한다. 그때 이 거부를 호환 계약에 맞게 바꾸고 line/ellipse 왕복을 다시 검증한다. 서버 소스를 이 WT에서 수정하지 않았다. 자세한 포인터는 SHAPE-WIRE-CONTRACT.md와 shape-wire-contract.json에 있다.
+정확한 정적 생성 규칙과 네트워크 capability 계약은 DIAGRAM-PROJECTION-v1.md에 있다. schema3은 GET /vault/canvas/capabilities에서 scene 버전·종류·투영 지원을 확인한 뒤에만 PUT /vault/canvas 또는 POST /packets를 실행한다. 미지원·404·잘못된 응답·415 등은 미동기화/실패로 남기고 silent downgrade하지 않는다. 기존1/2 note 경로는 새 endpoint와 독립이다. 원본 f61f516 relay는 새 kind를 의미 지원하지 않으며 이 writer가 수정·실행하지 않았다. 부모의 Galileo 짝 relay와 exact source 왕복 대조가 남는다.
 
-`python3 Tests/checks/ink-glyph-edit/product-check.py`는 실제 결합 소스와 기존 Files 회귀49·안전23, shape70을 각각 격리된 새 경로에서 실행한다. glyph65는 대응 Evidence 주입이며 native 인식 재실행0이다. shape70은 실제 PencilKit 기하·원본 보존·상자 Store/Files 왕복·Undo/Redo·stale·불가 kind의 명시 거부다. 실제 ObsidianVault 모듈의 격리 파일 왕복은 note glyph15·기존 box17로 분리한다. line/ellipse 왕복 완료라는 뜻이 아니다. SDK27은 전체 Canvas 코드와 실제 UI hook를 타입 검사했으며 UI를 열거나 실제 터치 수용을 하지 않았다.
+WebKitShapeCheck는 앱/화면을 활성화하지 않는 실제 macOS WKWebView로 로컬 번들 bridge/SVG를 실행한다. computed rx/ry와 실제 isPointInFill(중심=true,모서리=false), 실제 선 path/숨은 끝점, 선·끝점 선택의 원 UUID, parser/SVG count 거부를 확인한다. iPad 기기나 전체 사람 시각 수용은 아니다. RelayScene3Check는 실제 CanvasRelay와 URLProtocol 격리 응답으로 구형 서버 쓰기0·지원 후 순서·version3 보존·거부 응답·원격 수정/생성의 버전 보존을 검사하며 네트워크0이다. native recognizer를 다시 호출하지 않는다.
 
-최초 결합 runner가 이전 실행의 격리 폴더를 재사용하여 기존 문서 목록과 구형 ellipse 캐시에 충돌했다. 제품 원본 실패와 구분해 로그를 보존하고 실행별 UUID 경로로 수정했다. 새 경로에서 모두 재검증했다. 실패한 실행의 결과를 완료 근거로 사용하지 않는다.
+## 공식 정본을 dirty로 만들지 않는 재현
 
-`whole-build.py`는 clean HEAD를 요구하며 정상 com.ambrion.sillcanvas.ipad의 Debug arm64 전체 앱을 무서명 빌드하고 Info.plist의 commit/tree/verified와 실제 executable SHA를 기록한다. 프로필은 이미 승인된 public bootstrap 한 개만 읽는다. 설치·push·서버 전환은 없다. 빌드 성공은 native 인식·Pencil·WKWebView 시각 수용·shape 전체 왕복 수용을 대체하지 않는다.
+소스는 내부 정본/외장 WT 모두 허용한다. 아래 OUT은 storage-route가 허용하는 외장 development-archive 아래의 이 작업 출력 폴더다. 모든 새 홈·tmp·컴파일 캐시·실행·영수증은 OUT 아래에만 둔다. 소스 폴더의 tracked verification.json/combined-verification.json 등은 과거 근거이며 실행 때 갱신하지 않는다.
+
+```sh
+python3 Tests/checks/ink-glyph-edit/run.py --actual-product --policy-only --output "$OUT"
+python3 Tests/checks/ink-glyph-edit/product-check.py --verification "$POLICY/verification.json" --output "$OUT"
+python3 Tests/checks/ink-glyph-edit/schema3-native.py --combined-verification "$COMBINED/combined-verification.json"
+python3 Tests/checks/ink-glyph-edit/whole-build.py --output "$OUT"
+```
+
+POLICY와 COMBINED는 각 실행이 출력한 정확한 폴더다. whole-build는 clean HEAD만 허용하며 정상 bundle com.ambrion.sillcanvas.ipad를 무서명 전체 빌드하고 built Info.plist의 source commit/tree/verified 및 executable SHA를 검사한다. 최종 실행은 외장 영수증의 sourceCommit/tree/sourceClean/sourceUnchanged로 판단한다. source내 .build는 앞선 실행의 역사적 산출물이며 새 실행기로 추가하지 않는다.
+
+기존 glyph65에 schema3 삭제/Undo 보존2개를 더한 정책 검사는 증거주입이다. 실제 무주입34획 인식 nil/엔진 layout 오류와 구분한다. 초기 source 경로 대소문자, 재사용 test 폴더, 테스트의 canonical PKDrawing 투영·펜 폭 fixture·URLProtocol body stream·WebKit callback overload·SP 객체 링크 오류는 각각 로그로 보존하고 원인을 고쳤다. 이 실패를 native 인식 실패나 제품 원본 손실로 혼동하지 않는다. 새 native 인식 성공·실제 iPad/Pencil·짝 relay scene3 의미 왕복·최종 독립 통합 검수는 남는다.

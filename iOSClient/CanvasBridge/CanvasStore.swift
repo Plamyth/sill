@@ -213,15 +213,10 @@ final class CanvasStore: ObservableObject {
 
     var inkShapeIsCurrent: Bool {
         guard let proposal = inkShapeProposal else { return false }
-        return sceneReadable && inkShapeCompatibilityMessage == nil && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
+        return sceneReadable && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
             !vaultLoading && !vaultInputBusy && !vaultBlockEditing && mode == .lasso && proposal.source == scene &&
             proposal.selection == inkSelection && inkShapeGeneration == linkSceneGeneration &&
             inkShapeExpectedSelectionGeneration == inkShapeSelectionGeneration
-    }
-
-    var inkShapeCompatibilityMessage: String? {
-        guard let kind = inkShapeProposal?.node.kind, kind == .line || kind == .ellipse else { return nil }
-        return CanvasSceneWireError.shapeContractPending.localizedDescription
     }
 
     func proposeInkShape() {
@@ -233,7 +228,7 @@ final class CanvasStore: ObservableObject {
             inkShapeProposal = try CanvasInkShapeProposal.make(scene:scene,drawing:drawing,selection:inkSelection)
             inkShapeGeneration = linkSceneGeneration
             inkShapeExpectedSelectionGeneration = inkShapeSelectionGeneration
-            status = inkShapeCompatibilityMessage ?? "도형 후보를 원본과 비교한 뒤 확정하세요."
+            status = "도형 후보를 원본과 비교한 뒤 확정하세요."
         } catch { status = error.localizedDescription }
     }
 
@@ -241,7 +236,6 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func confirmInkShape() -> Bool {
-        if let message = inkShapeCompatibilityMessage { status = message; return false }
         guard inkShapeIsCurrent, let proposal = inkShapeProposal else {
             status = "원본이나 선택이 바뀌어 확정하지 않았습니다."
             cancelInkShape()
@@ -303,7 +297,7 @@ final class CanvasStore: ObservableObject {
     private var workspaceToken: String?
     private var fileSaveBusy = false
     var fileWorkspaceCanSync: Bool {
-        guard scene.hasLegacyCompatibleNodeKinds, fileWorkspaceState != .blocked else { return false }
+        guard (try? scene.requireCompatibleNodeKinds()) != nil, fileWorkspaceState != .blocked else { return false }
         return (workspaceBinding == nil && fileWorkspace == nil) || fileWorkspaceState == .ready
     }
 
@@ -2177,7 +2171,7 @@ final class CanvasStore: ObservableObject {
             return false
         }
         var changed = scene
-        changed.schemaVersion = 2
+        changed.schemaVersion = max(2, changed.schemaVersion)
         changed.drawingBase64 = nativeBytes.base64EncodedString()
         changed.strokes = CanvasScene.nativeInkStrokes(authoritative)
         changed.revision += 1

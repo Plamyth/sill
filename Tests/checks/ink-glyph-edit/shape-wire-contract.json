@@ -8,14 +8,15 @@
   "relayModified": false,
   "sourceSchemaVersions": [
     1,
-    2
+    2,
+    3
   ],
   "newKinds": [
     "line",
     "ellipse"
   ],
-  "newKindSaveAllowed": false,
-  "pending": "부모의 schema/capability·의미 투영 계약 및 짝 relay 개선",
+  "newKindSaveAllowed": true,
+  "pending": "Galileo paired relay exact commit 및 의미 파일 왕복·최종 iPad UI 수용",
   "testedFilesKinds": [
     "note",
     "box"
@@ -23,5 +24,10 @@
   "sourceHashes": {
     "relay/canvas-diagram.js": "1b87a14b497677df6a55583e7af3d39a9fbce0c515167acba73533c81272fa91",
     "relay/obsidian-vault.js": "5498309965611ee8e311860bd4d71e149d790a81426667ced5f9294d8e035b73"
-  }
+  },
+  "newKindSaveCondition": "scene3만; 서버 PUT/POST 전 capability의 version/kinds/projection 확인",
+  "contractAuthority": "사용자 요구를 구현하기 위해 조율 담당이 선택한 계약",
+  "diagramProjection": "ccr.diagram-shapes/v1",
+  "geometryFollowupCommit": "62d78bf10f77cc3fafccfdfe47397186923d3bd9",
+  "shapeOwnerHead": "1be077fd722ba44a38b0572e6d0ea42d3b5a93b6"
 }

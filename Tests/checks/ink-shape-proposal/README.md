@@ -27,4 +27,9 @@ SDK 공개 PencilKit의 `PKStrokeRecognizer`는 글자 인식·검색 API를 제
 
 ## 통합 writer의 후속 호환 정책
 
-위 내용은 c03d 원소유 단위의 범위다. 2026-10-29 실제 저장 정본68a에 접합한 후보는 `../ink-glyph-edit/SHAPE-WIRE-CONTRACT.md`를 우선한다. 새 Kind는 wire 변경이며 같은 schema2의 구형68 호환을 보장하지 않는다. 현재 제품은 box 확정과 원본 보존만 허용하고 line/ellipse는 미리보기 뒤 호환 미정으로 명시 거부한다. Files·scene decode·Pele snapshot·relay 송신도 거부한다. paired relay 개선 전 line/ellipse JSON 왕복을 완료로 세지 않는다. 이 폴더의 shape70 검사는 결합 runner `../ink-glyph-edit/product-check.py`로 실제 제품 소스에서 실행했다. 초기 c03d용 integration.py/patch 실행은 역사적 단위 검사이며 최종 접합 소스의 전체 검증으로 쓰지 않는다.
+위 내용은 c03d 원소유 단위의 범위다. 2026-10-29 실제 저장 정본68a에 접합한 후보는 `../ink-glyph-edit/SHAPE-WIRE-CONTRACT.md`를 우선한다. 새 Kind는 wire 변경이며 같은 schema2의 구형68 호환을 보장하지 않는다. 초기3912af4는 새 종류를 전면 거부했다. 후속은 DIAGRAM-PROJECTION-v1.md의 schema3 전용 kind·capability·실제 SVG 투영 계약으로 대체한다. paired relay 개선 전 전체 의미 왕복을 완료로 세지 않는다. 이 폴더의 shape70 검사는 결합 runner `../ink-glyph-edit/product-check.py`로 실제 제품 소스에서 실행했다. 초기 c03d용 integration.py/patch 실행은 역사적 단위 검사이며 최종 접합 소스의 전체 검증으로 쓰지 않는다.
+
+
+## 회전 후속 소비
+
+원소유 마지막 HEAD는 `1be077fd722ba44a38b0572e6d0ea42d3b5a93b6`, tree `925b1447e92a9685b1ddea45a4ee67a234ceda10`으로 읽어 확인했다. `62d78bf10f77cc3fafccfdfe47397186923d3bd9`의 geometry 파일 delta를 git apply --check 뒤 소비하고, 회전197검사 함수는 이 실제 제품 검사에 포함했다. 기존 schema3 승격 및 미리보기 접합은 보존했다. `1be077f`의 계약 한계는 DIAGRAM-PROJECTION-v1.md와 후속 schema3 정책에 반영한다. dirty 제품·검사 변경을 stash/reset하지 않았으며 원소유 커밋을 자체 검수나 최종 설치 수용으로 세지 않는다.

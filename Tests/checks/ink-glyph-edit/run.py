@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """실제 PencilKit 실행, 접합 Store 파일 왕복, iOS SDK 검사. 기기·앱·Host를 열지 않는다."""
+import argparse
 import concurrent.futures
 import hashlib
 import json
@@ -14,8 +15,13 @@ root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 route = json.loads(subprocess.check_output([
     '/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'BT_CCR-ipad'], text=True))
-assert any(os.path.samefile(parent, route['path']) for parent in root.parents)
-output = here / '.build' / str(uuid.uuid4())
+parser = argparse.ArgumentParser()
+parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--actual-product', action='store_true')
+parser.add_argument('--policy-only', action='store_true')
+args = parser.parse_args()
+assert any(parent.exists() and os.path.samefile(parent, route['path']) for parent in [args.output, *args.output.parents]), 'output must use verified storage-route archive'
+output = args.output / ('policy-' + str(uuid.uuid4()))
 output.mkdir(parents=True)
 home = output / 'home'
 home.mkdir()
@@ -29,7 +35,7 @@ product = root / 'iOSClient/CanvasBridge/CanvasInkTextEditing.swift'
 model = root / 'iOSClient/CanvasBridge/CanvasModel.swift'
 original_store = root / 'iOSClient/CanvasBridge/CanvasStore.swift'
 workspace = root / 'iOSClient/CanvasBridge/CanvasWorkspace.swift'
-actual = '--actual-product' in sys.argv
+actual = args.actual_product
 if actual:
     patched_store, patched_workspace = original_store, workspace
 else:
@@ -85,25 +91,25 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
     compiled = run('mac-native-compile', compile_command)
     results.append(compiled)
     if compiled['exitCode'] == 0:
-        fixtures = sorted((Path(route['path']) / 'rea-margin-native-backup-20261023/native-archives').glob('*.pkdrawing'))
-        assert len(fixtures) == 3
-        if '--policy-only' in sys.argv:
-            fixtures = []
+        fixtures = []
+        if not args.policy_only:
+            fixtures = sorted((Path(route['path']) / 'rea-margin-native-backup-20261023/native-archives').glob('*.pkdrawing'))
+            assert len(fixtures) == 3
         results.append(run('native-and-store', [output / 'check'] + fixtures, timeout=240))
     results += future.result()
 unchanged = before == hashes()
 record = dict(schema='ccr.ink-glyph-verification/v1', baseCommit='68a1b4aaad6faba5a5449d82b81e147479b81930' if actual else 'c03d9c2de9eb39cfd50501a73a060a0a34375c8c',
-    sourceHashes=before, sourceHashesAfter=hashes(), sourceUnchanged=unchanged,
+    sourceCommit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(), sourceTree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=root,text=True).strip(), sourceClean=not subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True).strip(), sourceHashes=before, sourceHashesAfter=hashes(), sourceUnchanged=unchanged,
     output=str(output), results=results, passed=unchanged and all(x['exitCode'] == 0 for x in results),
-    actualRecognizer='실제 native API, 증거 주입 없음',
+    actualRecognizer='미실행; 보존된 무주입 baseline을 참조' if args.policy_only else '실제 native API, 증거 주입 없음',
     mappingAndStorePolicy='증거 주입. native 인식 정확도 수용이 아님.',
     productOriginalStoreAndWorkspaceUnchanged=not actual, actualProductSources=actual, deviceHostEffects=0,
-    nativeRecognizerExecuted='--policy-only' not in sys.argv,
+    nativeRecognizerExecuted=not args.policy_only,
     executionHostReason='Mini는macOS26.6.2/SDK26.5이며PKStrokeRecognizer27이없음. 실제27PencilKit/SDK검사만맥북에서실행.')
 for name in ['summary.json', 'native-recognizer.json']:
     p = output / name
     if p.exists():
         record[name] = json.loads(p.read_text())
-(here / 'verification.json').write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
+(output / 'verification.json').write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
 print('OUTPUT', output, 'PASSED', record['passed'])
 sys.exit(0 if record['passed'] else 1)

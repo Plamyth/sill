@@ -63,8 +63,8 @@ struct CanvasPeleView: UIViewRepresentable {
                 failedRevision = nil
                 guard snapshot != rendered || selected != parent.selectedNode else { return }
                 var payload: [String:Any] = ["sceneID":snapshot.sceneID.uuidString,"revision":snapshot.revision,
-                    "source":snapshot.source,"nodes":snapshot.nodes.map {
-                        ["diagramID":$0.diagramID,"id":$0.id.uuidString,"text":$0.text]
+                    "source":snapshot.source,"displayedNodeCount":snapshot.displayedNodeCount,"displayedEdgeCount":snapshot.displayedEdgeCount,"nodes":snapshot.nodes.map {
+                        ["diagramID":$0.diagramID,"id":$0.id.uuidString,"text":$0.text,"kind":$0.kind.rawValue]
                     }]
                 payload["selectedNodeID"] = parent.selectedNode?.uuidString
                 rendered = snapshot

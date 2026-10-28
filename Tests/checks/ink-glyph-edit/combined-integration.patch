@@ -21,15 +21,15 @@ index 1d40433..7dc6b95 100644
    A0000000000000000000000D = {isa = PBXGroup; children = (A00000000000000000000010,A00000000000000000000011,A00000000000000000000012,A00000000000000000000013,A00000000000000000000014,A00000000000000000000015,A00000000000000000000016,A00000000000000000000017); path = CanvasBridge; sourceTree = "<group>"; };
 diff --git a/iOSClient/CanvasBridge/CanvasInkShapeProposal.swift b/iOSClient/CanvasBridge/CanvasInkShapeProposal.swift
 new file mode 100644
-index 0000000..e8c7bc7
+index 0000000..1f050f6
 --- /dev/null
 +++ b/iOSClient/CanvasBridge/CanvasInkShapeProposal.swift
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,213 @@
 +import Foundation
 +import PencilKit
 +import SwiftUI
 +
-+// ponytail: 한 선택 묶음의 직선·축 정렬 사각형·타원만 제안한다. 자유 도형 엔진은 별도 범위다.
++// ponytail: 한 선택 묶음의 직선·회전 사각형·축 정렬 타원만 제안한다. 자유 도형 엔진은 별도 범위다.
 +struct CanvasInkShapeProposal: Identifiable {
 +    let id = UUID()
 +    let source: CanvasScene
@@ -62,6 +62,7 @@ index 0000000..e8c7bc7
 +        var confirmed = node
 +        confirmed.confidence = .confirmed
 +        next.nodes.append(confirmed)
++        next.promoteSchemaForNodeKinds()
 +        guard next.revision < Int.max else { throw Failure.invalid }
 +        next.revision += 1
 +        guard try JSONEncoder().encode(next).count <= CanvasScene.localByteLimit else { throw Failure.invalid }
@@ -74,8 +75,8 @@ index 0000000..e8c7bc7
 +              selection.isSubset(of: Set(drawing.strokes.map(\.id))) else { throw Failure.selection }
 +        try scene.validateNativeInkProjection()
 +        guard let bytes = Data(base64Encoded: scene.drawingBase64), !bytes.isEmpty,
-+              let stored = try? PKDrawing(data: bytes), stored == drawing, scene.strokes == CanvasScene.nativeInkStrokes(drawing) else { throw Failure.stale }
-+        let strokes = drawing.strokes.filter { selection.contains($0.id) }
++              let stored = try? PKDrawing(data: bytes), stored == drawing, scene.strokes == CanvasScene.nativeInkStrokes(stored) else { throw Failure.stale }
++        let strokes = stored.strokes.filter { selection.contains($0.id) }
 +        var paths: [[CGPoint]] = []
 +        for stroke in strokes {
 +            try validate(stroke)
@@ -94,8 +95,26 @@ index 0000000..e8c7bc7
 +        let minY = all.map(\.y).min()!, maxY = all.map(\.y).max()!
 +        let w = maxX - minX, h = maxY - minY
 +        guard max(w,h) >= 24 else { throw Failure.ambiguous }
++        // 네 변의 방향은 90도 간격이므로 길이 가중 4배각으로 공통 축을 구한다.
++        var axisX: CGFloat = 0, axisY: CGFloat = 0, axisLength: CGFloat = 0
++        for path in paths {
++            for (a,b) in zip(path,path.dropFirst()) {
++                let weight = distance(a,b)
++                guard weight > 0.000001 else { continue }
++                let angle = atan2(b.y-a.y,b.x-a.x)
++                axisX += weight * cos(4*angle)
++                axisY += weight * sin(4*angle)
++                axisLength += weight
++            }
++        }
++        let boxAngle = axisLength > 0 && hypot(axisX,axisY)/axisLength >= 0.75 ? atan2(axisY,axisX)/4 : 0
++        let toBox = CGAffineTransform(rotationAngle:-boxAngle)
++        let local = all.map { $0.applying(toBox) }
++        let left = local.map(\.x).min()!, right = local.map(\.x).max()!
++        let top = local.map(\.y).min()!, bottom = local.map(\.y).max()!
++        let boxWidth = right-left, boxHeight = bottom-top
 +        var points = paths.removeFirst()
-+        let gap = max(3, min(w,h) * 0.18)
++        let gap = max(3, min(boxWidth,boxHeight) * 0.18)
 +        while !paths.isEmpty {
 +            var best: (index: Int, reverse: Bool, distance: CGFloat)?
 +            for (i, path) in paths.enumerated() {
@@ -118,12 +137,16 @@ index 0000000..e8c7bc7
 +                    width:Double(chord),height:2), Double(atan2(b.y-a.y,b.x-a.x) * 180 / .pi)))
 +            }
 +        }
-+        if w >= 24, h >= 24, chord <= gap, length >= 2*(w+h)*0.78, length <= 2*(w+h)*1.15 {
-+            let edgeError = points.map { min(abs($0.x-minX),abs($0.x-maxX),abs($0.y-minY),abs($0.y-maxY)) }.max()!
-+            let corners = [CGPoint(x:minX,y:minY),CGPoint(x:maxX,y:minY),CGPoint(x:maxX,y:maxY),CGPoint(x:minX,y:maxY)]
-+            let visits = corners.allSatisfy { corner in points.contains { distance($0,corner) <= min(w,h)*0.14 } }
-+            if edgeError <= min(w,h)*0.075, visits {
-+                candidates.append((.box,.init(x:Double(minX),y:Double(minY),width:Double(w),height:Double(h)),0))
++        if boxWidth >= 24, boxHeight >= 24, chord <= gap,
++           length >= 2*(boxWidth+boxHeight)*0.78, length <= 2*(boxWidth+boxHeight)*1.15 {
++            let boxPoints = points.map { $0.applying(toBox) }
++            let edgeError = boxPoints.map { min(abs($0.x-left),abs($0.x-right),abs($0.y-top),abs($0.y-bottom)) }.max()!
++            let corners = [CGPoint(x:left,y:top),CGPoint(x:right,y:top),CGPoint(x:right,y:bottom),CGPoint(x:left,y:bottom)]
++            let visits = corners.allSatisfy { corner in boxPoints.contains { distance($0,corner) <= min(boxWidth,boxHeight)*0.14 } }
++            if edgeError <= min(boxWidth,boxHeight)*0.075, visits {
++                let center = CGPoint(x:(left+right)/2,y:(top+bottom)/2).applying(CGAffineTransform(rotationAngle:boxAngle))
++                candidates.append((.box,.init(x:Double(center.x-boxWidth/2),y:Double(center.y-boxHeight/2),
++                    width:Double(boxWidth),height:Double(boxHeight)),Double(boxAngle * 180 / .pi)))
 +            }
 +        }
 +        if strokes.count == 1, w >= 24, h >= 24, chord <= gap, max(w/h,h/w) <= 8 {
@@ -217,7 +240,7 @@ index 0000000..e8c7bc7
 +}
 diff --git a/iOSClient/CanvasBridge/CanvasInkTextEditing.swift b/iOSClient/CanvasBridge/CanvasInkTextEditing.swift
 new file mode 100644
-index 0000000..9391ee2
+index 0000000..f2e40ca
 --- /dev/null
 +++ b/iOSClient/CanvasBridge/CanvasInkTextEditing.swift
 @@ -0,0 +1,356 @@
@@ -369,7 +392,7 @@ index 0000000..9391ee2
 +            let afterBytes = kept.dataRepresentation()
 +            let authoritative = try PKDrawing(data: afterBytes)
 +            var after = scene
-+            after.schemaVersion = 2
++            after.schemaVersion = max(2, after.schemaVersion)
 +            after.drawingBase64 = afterBytes.base64EncodedString()
 +            after.strokes = CanvasScene.nativeInkStrokes(authoritative)
 +            let index = after.nodes.firstIndex(where: { $0.id == nodeID })!
@@ -578,7 +601,7 @@ index 0000000..9391ee2
 +    }
 +}
 diff --git a/iOSClient/CanvasBridge/CanvasModel.swift b/iOSClient/CanvasBridge/CanvasModel.swift
-index 28ca010..7827dc7 100644
+index 28ca010..db59619 100644
 --- a/iOSClient/CanvasBridge/CanvasModel.swift
 +++ b/iOSClient/CanvasBridge/CanvasModel.swift
 @@ -1079,7 +1079,7 @@ struct VaultNoteRecoveryFile: Codable {
@@ -590,32 +613,88 @@ index 28ca010..7827dc7 100644
      enum Confidence: String, Codable { case confirmed, proposal }
  
      var id: UUID
-@@ -1300,6 +1300,13 @@ struct CanvasLinkEdit: Codable {
+@@ -1300,6 +1300,17 @@ struct CanvasLinkEdit: Codable {
      var replacement: CanvasLink
  }
  
 +enum CanvasSceneWireError: LocalizedError {
-+    case shapeContractPending
++    case unsupportedVersion, kindRequiresSchema3, relayCapability
 +    var errorDescription: String? {
-+        "shape_wire_contract_pending · 선·타원은 구형 68 및 현재 Obsidian/Pele 계약과 호환되지 않아 저장·동기화하지 않습니다. 원본 획을 유지합니다."
++        switch self {
++        case .unsupportedVersion: return "unsupported_scene_version · 지원하지 않는 장면 버전입니다. 원본을 유지합니다."
++        case .kindRequiresSchema3: return "shape_requires_schema3 · 선·타원은 장면 버전 3에서만 읽고 저장합니다. 원본을 유지합니다."
++        case .relayCapability: return "scene3_relay_unsupported · 서버의 장면 버전 3 및 도형 투영 지원을 확인하지 못했습니다. Obsidian 미동기화 상태로 원본을 유지합니다."
++        }
 +    }
 +}
 +
  struct CanvasScene: Codable, Equatable {
      static let localByteLimit = 4 * 1024 * 1024
      var schemaVersion = 1
-@@ -1313,6 +1320,10 @@ struct CanvasScene: Codable, Equatable {
+@@ -1313,10 +1324,18 @@ struct CanvasScene: Codable, Equatable {
      var links: [CanvasLink] = []
      var annotations: [CanvasAnnotation] = []
      var penSettings: CanvasPenSettings? = nil
 +    var hasLegacyCompatibleNodeKinds: Bool { nodes.allSatisfy { $0.kind == .note || $0.kind == .box } }
 +    func requireCompatibleNodeKinds() throws {
-+        guard hasLegacyCompatibleNodeKinds else { throw CanvasSceneWireError.shapeContractPending }
++        guard [1, 2, 3].contains(schemaVersion) else { throw CanvasSceneWireError.unsupportedVersion }
++        guard schemaVersion == 3 || hasLegacyCompatibleNodeKinds else { throw CanvasSceneWireError.kindRequiresSchema3 }
++    }
++    mutating func promoteSchemaForNodeKinds() {
++        if !hasLegacyCompatibleNodeKinds { schemaVersion = max(3, schemaVersion) }
 +    }
      var effectivePenSettings: CanvasPenSettings { penSettings ?? .default }
      var hasSupportedInkProjection: Bool {
-         (schemaVersion == 1 || schemaVersion == 2) && effectivePenSettings.isValid &&
-@@ -1663,6 +1674,7 @@ extension CanvasScene {
+-        (schemaVersion == 1 || schemaVersion == 2) && effectivePenSettings.isValid &&
+-            (schemaVersion == 2 || (penSettings == nil && strokes.allSatisfy { $0.style == nil })) &&
++        ([1, 2, 3].contains(schemaVersion)) && (schemaVersion == 3 || hasLegacyCompatibleNodeKinds) && effectivePenSettings.isValid &&
++            (schemaVersion >= 2 || (penSettings == nil && strokes.allSatisfy { $0.style == nil })) &&
+             strokes.allSatisfy { stroke in
+                 stroke.style.map { !$0.inkType.isEmpty && !drawingBase64.isEmpty && $0.isValid(pointCount: stroke.points.count) } ?? true
+             }
+@@ -1335,7 +1354,7 @@ struct CanvasScene: Codable, Equatable {
+             return .init(disposition: .noop, settings: effectivePenSettings, revision: revision)
+         }
+         var next = self
+-        next.schemaVersion = 2
++        next.schemaVersion = max(2, next.schemaVersion)
+         next.penSettings = change.settings
+         next.revision += 1
+         guard try JSONEncoder().encode(next).count <= Self.localByteLimit else { throw CanvasPenSettingsError.sceneTooLarge }
+@@ -1452,6 +1471,7 @@ struct CanvasScene: Codable, Equatable {
+         nodes.append(CanvasNode(id: id, kind: kind,
+             frame: CanvasRect(x: point.x, y: point.y, width: 260, height: 120),
+             text: text, confidence: confidence, sourceStrokeIds: sourceStrokeIds))
++        promoteSchemaForNodeKinds()
+         revision += 1
+         return id
+     }
+@@ -1563,7 +1583,7 @@ struct CanvasScene: Codable, Equatable {
+             guard change.isPenSettingsOnly else { return false }
+             return (try? setPenSettings(settings, sceneID: change.sceneId, baseRevision: change.baseRevision)) != nil
+         }
+-        guard change.sceneId == id, nodes.allSatisfy(\.hasValidRotation),
++        guard (try? requireCompatibleNodeKinds()) != nil, change.sceneId == id, nodes.allSatisfy(\.hasValidRotation),
+               change.proposedNodes.allSatisfy(\.hasValidRotation),
+               (change.nodeEdits ?? []).allSatisfy({ $0.expected.hasValidRotation }) else { return false }
+         let annotationIds = change.annotations.map(\.id)
+@@ -1632,6 +1652,7 @@ struct CanvasScene: Codable, Equatable {
+         var next = self
+         next.annotations.append(contentsOf: change.annotations)
+         next.nodes.append(contentsOf: change.proposedNodes)
++        next.promoteSchemaForNodeKinds()
+         next.links.append(contentsOf: proposedLinks)
+         if !nodeEdits.isEmpty || !linkEdits.isEmpty {
+             guard next.editGraph(nodeEdits:nodeEdits,linkEdits:linkEdits) else { return false }
+@@ -1653,6 +1674,7 @@ extension CanvasScene {
+     init(from decoder: Decoder) throws {
+         let values = try decoder.container(keyedBy: CodingKeys.self)
+         schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
++        guard [1, 2, 3].contains(schemaVersion) else { throw CanvasSceneWireError.unsupportedVersion }
+         id = try values.decode(UUID.self, forKey: .id)
+         revision = try values.decode(Int.self, forKey: .revision)
+         width = try values.decode(Double.self, forKey: .width)
+@@ -1663,6 +1685,7 @@ extension CanvasScene {
          links = try values.decode([CanvasLink].self, forKey: .links)
          annotations = try values.decode([CanvasAnnotation].self, forKey: .annotations)
          penSettings = try values.decodeIfPresent(CanvasPenSettings.self, forKey: .penSettings)
@@ -623,7 +702,22 @@ index 28ca010..7827dc7 100644
          guard hasSupportedInkProjection else { throw CanvasPenSettingsError.unsupportedInkProjection }
      }
  }
-@@ -1800,6 +1812,7 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
+@@ -1777,11 +1800,14 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
+         let diagramID: String
+         let id: UUID
+         let text: String
++        let kind: CanvasNode.Kind
+     }
+     let sceneID: UUID
+     let revision: Int
+     let source: String
+     let nodes: [Node]
++    let displayedNodeCount: Int
++    let displayedEdgeCount: Int
+ 
+     static func == (lhs: Self, rhs: Self) -> Bool {
+         lhs.sceneID == rhs.sceneID && lhs.revision == rhs.revision &&
+@@ -1800,6 +1826,7 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
      }
  
      init(scene: CanvasScene) throws {
@@ -631,7 +725,36 @@ index 28ca010..7827dc7 100644
          guard scene.nodes.count <= 512, scene.links.count <= 1024 else { throw Failure.limit }
          let ids = Set(scene.nodes.map(\.id))
          guard ids.count == scene.nodes.count, Set(scene.links.map(\.id)).count == scene.links.count,
-@@ -2182,6 +2195,7 @@ final class CanvasFileWorkspace {
+@@ -1817,10 +1844,26 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
+         }
+         let visible = scene.visibility
+         nodes = scene.nodes.filter { visible.nodeIDs.contains($0.id) }.map {
+-            Node(diagramID:diagramID($0.id),id:$0.id,text:$0.text)
++            Node(diagramID:diagramID($0.id),id:$0.id,text:$0.text,kind:$0.kind)
+         }
++        let primitiveCount = nodes.filter { $0.kind == .line }.count
++        displayedNodeCount = nodes.count + primitiveCount
++        displayedEdgeCount = scene.links.filter { visible.linkIDs.contains($0.id) }.count + primitiveCount
++        guard displayedNodeCount <= 512, displayedEdgeCount <= 1024 else { throw Failure.limit }
+         var lines = ["flowchart TD"]
+-        lines += nodes.map { "\($0.diagramID)[\"\(label($0.text.isEmpty ? "이름 없는 요소" : $0.text))\"]" }
++        for node in nodes {
++            if node.kind == .line {
++                let endpoint = "x" + node.diagramID.dropFirst()
++                lines += ["\(node.diagramID)[\" \"]", "\(endpoint)[\" \"]",
++                    "\(node.diagramID) ---|\"\(label(node.text.isEmpty ? "직선" : node.text))\"| \(endpoint)",
++                    "class \(node.diagramID),\(endpoint) ccrLineEndpoint"]
++            } else {
++                lines.append("\(node.diagramID)[\"\(label(node.text.isEmpty ? "이름 없는 요소" : node.text))\"]")
++                if node.kind == .ellipse { lines.append("class \(node.diagramID) ccrEllipse") }
++            }
++        }
++        if nodes.contains(where: { $0.kind == .ellipse }) { lines.append("classDef ccrEllipse rx:50%,ry:50%") }
++        if nodes.contains(where: { $0.kind == .line }) { lines.append("classDef ccrLineEndpoint fill:none,stroke:none") }
+         lines += scene.links.filter { visible.linkIDs.contains($0.id) }.map {
+             let relation = $0.label.isEmpty ? ($0.kind == .parentChild ? "하위 요소" : "연결") : $0.label
+             return "\(diagramID($0.from)) -->|\"\(label(relation))\"| \(diagramID($0.to))"
+@@ -2182,6 +2225,7 @@ final class CanvasFileWorkspace {
      }
      @discardableResult
      func save(_ scene: CanvasScene, preview: Data, expected: String?) throws -> Snapshot {
@@ -639,20 +762,74 @@ index 28ca010..7827dc7 100644
          let sceneBytes = try Self.bytes(scene)
          guard sceneBytes.count <= CanvasScene.localByteLimit,
                let drawing = Data(base64Encoded:scene.drawingBase64),
+diff --git a/iOSClient/CanvasBridge/CanvasPeleView.swift b/iOSClient/CanvasBridge/CanvasPeleView.swift
+index f24add4..82694ef 100644
+--- a/iOSClient/CanvasBridge/CanvasPeleView.swift
++++ b/iOSClient/CanvasBridge/CanvasPeleView.swift
+@@ -63,8 +63,8 @@ struct CanvasPeleView: UIViewRepresentable {
+                 failedRevision = nil
+                 guard snapshot != rendered || selected != parent.selectedNode else { return }
+                 var payload: [String:Any] = ["sceneID":snapshot.sceneID.uuidString,"revision":snapshot.revision,
+-                    "source":snapshot.source,"nodes":snapshot.nodes.map {
+-                        ["diagramID":$0.diagramID,"id":$0.id.uuidString,"text":$0.text]
++                    "source":snapshot.source,"displayedNodeCount":snapshot.displayedNodeCount,"displayedEdgeCount":snapshot.displayedEdgeCount,"nodes":snapshot.nodes.map {
++                        ["diagramID":$0.diagramID,"id":$0.id.uuidString,"text":$0.text,"kind":$0.kind.rawValue]
+                     }]
+                 payload["selectedNodeID"] = parent.selectedNode?.uuidString
+                 rendered = snapshot
 diff --git a/iOSClient/CanvasBridge/CanvasRelay.swift b/iOSClient/CanvasBridge/CanvasRelay.swift
-index 0f5c215..c8298db 100644
+index 0f5c215..b9fb5c4 100644
 --- a/iOSClient/CanvasBridge/CanvasRelay.swift
 +++ b/iOSClient/CanvasBridge/CanvasRelay.swift
-@@ -213,6 +213,7 @@ struct CanvasRelay {
+@@ -2,6 +2,18 @@ import Foundation
+ import Security
+ import StreamProtocol
+ 
++struct CanvasSceneCapabilities: Decodable {
++    let schema: String
++    let sceneSchemaVersions: [Int]
++    let nodeKinds: [String]
++    let diagramProjection: String
++    func require(_ scene: CanvasScene) throws {
++        guard schema == "ccr.canvas-capabilities/v1", sceneSchemaVersions.contains(scene.schemaVersion),
++              scene.nodes.allSatisfy({ nodeKinds.contains($0.kind.rawValue) }),
++              diagramProjection == "ccr.diagram-shapes/v1" else { throw CanvasSceneWireError.relayCapability }
++    }
++}
++
+ struct CanvasRelay {
+     struct VaultEntry: Decodable, Identifiable {
+         let name: String
+@@ -213,6 +225,8 @@ struct CanvasRelay {
  
      func saveVaultCanvas(scene: CanvasScene, imagePNG: Data,
                           baseSha256: String?) async throws -> VaultCanvasSaved {
 +        try scene.requireCompatibleNodeKinds()
++        try await requireSceneSupport(scene)
          let encoder = JSONEncoder()
          encoder.outputFormatting = [.sortedKeys]
          let sceneBytes = try encoder.encode(scene)
+@@ -236,7 +250,18 @@ struct CanvasRelay {
+         return try await response(request(path),as:DeliveryReadiness.self)
+     }
+ 
++    private func requireSceneSupport(_ scene: CanvasScene) async throws {
++        try scene.requireCompatibleNodeKinds()
++        if scene.schemaVersion == 3 {
++            let capability = try await response(request("/vault/canvas/capabilities"), as:CanvasSceneCapabilities.self)
++            try capability.require(scene)
++        }
++        try Task.checkCancellation()
++    }
++
+     func send(_ packet: CanvasPacket) async throws -> PacketReceipt {
++        let scene = try packet.frozenScene()
++        try await requireSceneSupport(scene)
+         let encoder = JSONEncoder()
+         encoder.outputFormatting = [.withoutEscapingSlashes]
+         return try await response(request("/packets",method:"POST",body:encoder.encode(packet)),as:PacketReceipt.self)
 diff --git a/iOSClient/CanvasBridge/CanvasStore.swift b/iOSClient/CanvasBridge/CanvasStore.swift
-index 1e0ca39..076f0d6 100644
+index 1e0ca39..90104d4 100644
 --- a/iOSClient/CanvasBridge/CanvasStore.swift
 +++ b/iOSClient/CanvasBridge/CanvasStore.swift
 @@ -119,6 +119,7 @@ final class CanvasInkHistory: ObservableObject {
@@ -685,7 +862,7 @@ index 1e0ca39..076f0d6 100644
          } else if pencilTraceOwner == owner { pencilTraceOwner = nil }
      }
  
-@@ -199,6 +206,59 @@ final class CanvasStore: ObservableObject {
+@@ -199,6 +206,53 @@ final class CanvasStore: ObservableObject {
      func rulerIsActive(isVisible: Bool) -> Bool {
          rulerEnabled && mode == .pen && isVisible
      }
@@ -696,15 +873,10 @@ index 1e0ca39..076f0d6 100644
 +
 +    var inkShapeIsCurrent: Bool {
 +        guard let proposal = inkShapeProposal else { return false }
-+        return sceneReadable && inkShapeCompatibilityMessage == nil && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
++        return sceneReadable && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
 +            !vaultLoading && !vaultInputBusy && !vaultBlockEditing && mode == .lasso && proposal.source == scene &&
 +            proposal.selection == inkSelection && inkShapeGeneration == linkSceneGeneration &&
 +            inkShapeExpectedSelectionGeneration == inkShapeSelectionGeneration
-+    }
-+
-+    var inkShapeCompatibilityMessage: String? {
-+        guard let kind = inkShapeProposal?.node.kind, kind == .line || kind == .ellipse else { return nil }
-+        return CanvasSceneWireError.shapeContractPending.localizedDescription
 +    }
 +
 +    func proposeInkShape() {
@@ -716,7 +888,7 @@ index 1e0ca39..076f0d6 100644
 +            inkShapeProposal = try CanvasInkShapeProposal.make(scene:scene,drawing:drawing,selection:inkSelection)
 +            inkShapeGeneration = linkSceneGeneration
 +            inkShapeExpectedSelectionGeneration = inkShapeSelectionGeneration
-+            status = inkShapeCompatibilityMessage ?? "도형 후보를 원본과 비교한 뒤 확정하세요."
++            status = "도형 후보를 원본과 비교한 뒤 확정하세요."
 +        } catch { status = error.localizedDescription }
 +    }
 +
@@ -724,7 +896,6 @@ index 1e0ca39..076f0d6 100644
 +
 +    @discardableResult
 +    func confirmInkShape() -> Bool {
-+        if let message = inkShapeCompatibilityMessage { status = message; return false }
 +        guard inkShapeIsCurrent, let proposal = inkShapeProposal else {
 +            status = "원본이나 선택이 바뀌어 확정하지 않았습니다."
 +            cancelInkShape()
@@ -745,16 +916,16 @@ index 1e0ca39..076f0d6 100644
      @Published private(set) var inkSelection: Set<UUID> = []
      static let eraserStyleKey = "canvasEraserStyle"
      static let eraserSizeKey = "canvasPartialEraserWidth"
-@@ -243,7 +303,7 @@ final class CanvasStore: ObservableObject {
+@@ -243,7 +297,7 @@ final class CanvasStore: ObservableObject {
      private var workspaceToken: String?
      private var fileSaveBusy = false
      var fileWorkspaceCanSync: Bool {
 -        guard fileWorkspaceState != .blocked else { return false }
-+        guard scene.hasLegacyCompatibleNodeKinds, fileWorkspaceState != .blocked else { return false }
++        guard (try? scene.requireCompatibleNodeKinds()) != nil, fileWorkspaceState != .blocked else { return false }
          return (workspaceBinding == nil && fileWorkspace == nil) || fileWorkspaceState == .ready
      }
  
-@@ -907,6 +967,7 @@ final class CanvasStore: ObservableObject {
+@@ -907,6 +961,7 @@ final class CanvasStore: ObservableObject {
      var drawing: PKDrawing {
          get { storedDrawing }
          set {
@@ -762,7 +933,7 @@ index 1e0ca39..076f0d6 100644
              objectWillChange.send()
              storedDrawing = newValue
              setInkSelection([])
-@@ -2091,6 +2152,7 @@ final class CanvasStore: ObservableObject {
+@@ -2091,6 +2146,7 @@ final class CanvasStore: ObservableObject {
          guard sceneReadable else { throw ScenePersistenceError.unreadable }
          guard let url = Self.sceneURL() else { throw ScenePersistenceError.unreadable }
          let candidate = candidate ?? scene
@@ -770,7 +941,16 @@ index 1e0ca39..076f0d6 100644
          try candidate.validateNativeInkProjection()
          let data = try JSONEncoder().encode(candidate)
          guard data.count <= Self.sceneByteLimit else { throw ScenePersistenceError.tooLarge }
-@@ -2232,6 +2294,8 @@ final class CanvasStore: ObservableObject {
+@@ -2115,7 +2171,7 @@ final class CanvasStore: ObservableObject {
+             return false
+         }
+         var changed = scene
+-        changed.schemaVersion = 2
++        changed.schemaVersion = max(2, changed.schemaVersion)
+         changed.drawingBase64 = nativeBytes.base64EncodedString()
+         changed.strokes = CanvasScene.nativeInkStrokes(authoritative)
+         changed.revision += 1
+@@ -2232,6 +2288,8 @@ final class CanvasStore: ObservableObject {
      func setInkSelection(_ ids: Set<UUID>) {
          let next = ids.intersection(drawing.strokes.map(\.id))
          guard next != inkSelection else { return }
@@ -779,7 +959,7 @@ index 1e0ca39..076f0d6 100644
          inkSelection = next
          handwritingRequest = nil
      }
-@@ -2265,6 +2329,70 @@ final class CanvasStore: ObservableObject {
+@@ -2265,6 +2323,70 @@ final class CanvasStore: ObservableObject {
          status = "글자 후보입니다. 수정한 뒤 확인하면 구조 데이터에 확정됩니다."
      }
  
@@ -851,7 +1031,7 @@ index 1e0ca39..076f0d6 100644
          let recognizer = PKStrokeRecognizer()
          await recognizer.updateDrawing(drawing)
 diff --git a/iOSClient/CanvasBridge/CanvasWorkspace.swift b/iOSClient/CanvasBridge/CanvasWorkspace.swift
-index 7264a21..df5ea3f 100644
+index 7264a21..0dc9ab4 100644
 --- a/iOSClient/CanvasBridge/CanvasWorkspace.swift
 +++ b/iOSClient/CanvasBridge/CanvasWorkspace.swift
 @@ -14,6 +14,8 @@ struct CanvasWorkspace: View {
@@ -863,21 +1043,20 @@ index 7264a21..df5ea3f 100644
      @State private var relayAddress = "http://192.168.45.4:8791"
      @State private var relayToken = ""
      @State private var connectionOpen = false
-@@ -139,7 +141,12 @@ struct CanvasWorkspace: View {
+@@ -139,7 +141,11 @@ struct CanvasWorkspace: View {
          }
          .background(Color.black)
          .preferredColorScheme(.dark)
 -        .onDisappear { dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
 +        .sheet(item:Binding(get:{ store.inkShapeProposal },set:{ if $0 == nil { store.cancelInkShape() } })) { proposal in
 +            CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
-+                blockedReason:store.inkShapeCompatibilityMessage,
 +                confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
 +        }
 +        .onDisappear { store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
          .onChange(of:scenePhase) { _,phase in
              if phase != .active {
                  store.cancelLink()
-@@ -149,6 +156,24 @@ struct CanvasWorkspace: View {
+@@ -149,6 +155,24 @@ struct CanvasWorkspace: View {
              }
              else { store.refreshFileWorkspace(); Task { await checkConnection() } }
          }
@@ -902,7 +1081,7 @@ index 7264a21..df5ea3f 100644
          .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
          .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
          .onChange(of:relayToken) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
-@@ -382,12 +407,24 @@ struct CanvasWorkspace: View {
+@@ -382,12 +406,24 @@ struct CanvasWorkspace: View {
              .accessibilityValue(store.eraserStyle == .partial ? store.eraserSize.label : "획 전체 지우기에서는 적용되지 않음")
              .accessibilityHint("CCR에서 정한 캔버스 포인트 단위이며 확대 비율에 따라 표시 크기가 달라집니다.")
              .accessibilityIdentifier("canvasPartialEraserSize")
@@ -927,7 +1106,7 @@ index 7264a21..df5ea3f 100644
              Button("음성 설명",systemImage:"mic") { dictationOpen = true }
              Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
              Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
-@@ -1048,7 +1085,7 @@ struct CanvasWorkspace: View {
+@@ -1048,7 +1084,7 @@ struct CanvasWorkspace: View {
              Divider()
              if let id = store.selectedNode,
                 let node = store.scene.nodes.first(where:{$0.id == id}) {
@@ -936,7 +1115,7 @@ index 7264a21..df5ea3f 100644
                  Text(node.confidence == .proposal ? "확인 전 제안" : "확정된 요소")
                      .foregroundStyle(node.confidence == .proposal ? .orange : .green)
                  TextField("내용",text:Binding(get:{node.text},set:{ _ in }))
-@@ -2181,7 +2218,7 @@ private struct NodeTile: View {
+@@ -2181,7 +2217,7 @@ private struct NodeTile: View {
  
      var body: some View {
          VStack(spacing:4) {
@@ -945,7 +1124,7 @@ index 7264a21..df5ea3f 100644
                  .lineLimit(node.vaultNote == nil ? nil : 3)
              if let reference = node.vaultNote {
                  Text(reference.blockID.map { "^\($0)" } ?? reference.path).font(.caption).lineLimit(1)
-@@ -2190,13 +2227,14 @@ private struct NodeTile: View {
+@@ -2190,12 +2226,15 @@ private struct NodeTile: View {
          }
              .frame(width:node.frame.width,height:node.frame.height)
              .foregroundStyle(Color(uiColor:CanvasPalette.nodeText))
@@ -957,11 +1136,92 @@ index 7264a21..df5ea3f 100644
                  .stroke(node.confidence == .proposal ? .orange :
                      store.selectedNode == node.id ? Color(uiColor:CanvasPalette.link) : .gray,
                      lineWidth:3))
++            .frame(width:max(node.frame.width, node.kind == .line ? 44 / store.zoom : node.frame.width),
++                   height:max(node.frame.height, node.kind == .line ? 44 / store.zoom : node.frame.height))
++            .contentShape(.interaction, Rectangle())
              .rotationEffect(.radians(node.rotationRadians))
-+            .contentShape(.interaction, Rectangle().inset(by:node.kind == .line ? -21 : 0))
              .onTapGesture { store.select(node.id) }
              .accessibilityElement(children:.combine)
-             .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")
+diff --git a/iOSClient/CanvasBridge/Pele/bridge.js b/iOSClient/CanvasBridge/Pele/bridge.js
+index 93d4bd1..c49eae9 100644
+--- a/iOSClient/CanvasBridge/Pele/bridge.js
++++ b/iOSClient/CanvasBridge/Pele/bridge.js
+@@ -8,7 +8,7 @@
+   const target = document.getElementById('diagram');
+   const error = document.getElementById('error');
+   function select(id) {
+-    const node = current?.nodes.find(node => node.diagramID === id);
++    const node = current?.nodes.find(node => node.diagramID === id || (node.kind === 'line' && 'x' + node.diagramID.slice(1) === id));
+     if (!node || !uuid.test(node.id)) return false;
+     post({ type:'select', sceneID:current.sceneID, revision:current.revision, nodeID:node.id });
+     return true;
+@@ -23,17 +23,23 @@
+         if (!payload || !uuid.test(payload.sceneID) || !Number.isSafeInteger(payload.revision) || payload.revision < 0 ||
+             typeof payload.source !== 'string' || bytes(payload.source) > 50000 ||
+             !Array.isArray(payload.nodes) || payload.nodes.length > 512) throw Error('invalid snapshot');
+-        const ids = new Set(), uuids = new Set();
++        const ids = new Set(), uuids = new Set(), owners = new Map();
+         for (const node of payload.nodes) {
+           if (!nodeID.test(node.diagramID) || !uuid.test(node.id) || typeof node.text !== 'string' ||
+               node.diagramID !== 'n' + node.id.toLowerCase().replaceAll('-','') ||
+               ids.has(node.diagramID) || uuids.has(node.id.toLowerCase())) throw Error('invalid node identity');
+-          ids.add(node.diagramID); uuids.add(node.id.toLowerCase());
++          if (node.kind !== undefined && !['note','box','ellipse','line'].includes(node.kind)) throw Error('unknown node kind');
++          ids.add(node.diagramID); uuids.add(node.id.toLowerCase()); owners.set(node.diagramID,node);
++          if (node.kind === 'line') {
++            const endpoint = 'x' + node.diagramID.slice(1);
++            ids.add(endpoint); owners.set(endpoint,node);
++          }
+         }
++        if (ids.size > 512 || (payload.displayedNodeCount !== undefined && payload.displayedNodeCount !== ids.size)) throw Error('node limit');
+         if (previous && previous.source === payload.source &&
+             JSON.stringify(previous.nodes) === JSON.stringify(payload.nodes) && target.querySelector('svg')) {
+           for (const element of target.querySelectorAll('.pele-node[data-id]')) {
+-            const node = payload.nodes.find(node => node.diagramID === element.dataset.id);
++            const node = owners.get(element.dataset.id);
+             element.setAttribute('aria-selected',String(node.id === payload.selectedNodeID));
+           }
+           current = payload;
+@@ -46,6 +52,7 @@
+           return { nodes:0, edges:0 };
+         }
+         const model = pele.parse(payload.source, { limit:50000, maxEdges:1024 });
++        if (model.edges.length > 1024 || (payload.displayedEdgeCount !== undefined && payload.displayedEdgeCount !== model.edges.length)) throw Error('edge limit');
+         if (model.type !== 'flowchart' || !(model.nodes instanceof Map) || model.nodes.size !== ids.size ||
+             [...model.nodes.keys()].some(id => !ids.has(id))) throw Error('unexpected graph');
+         const result = pele.render(model, { links:false, images:false, limit:50000,
+@@ -60,11 +67,12 @@
+             if (/^on/i.test(attribute.name) || /href$/i.test(attribute.name)) throw Error('unsafe SVG attribute');
+           }
+         }
++        if (svg.querySelectorAll('.pele-edge').length !== model.edges.length) throw Error('edge count mismatch');
+         const rendered = [...svg.querySelectorAll('.pele-node[data-id]')];
+         if (rendered.length !== ids.size || new Set(rendered.map(el => el.dataset.id)).size !== ids.size ||
+             rendered.some(el => !ids.has(el.dataset.id))) throw Error('node identity mismatch');
+         for (const element of rendered) {
+-          const node = payload.nodes.find(node => node.diagramID === element.dataset.id);
++          const node = owners.get(element.dataset.id);
+           element.setAttribute('tabindex','0'); element.setAttribute('role','button');
+           element.setAttribute('aria-label', node.text || '이름 없는 요소');
+           element.setAttribute('aria-selected',String(node.id === payload.selectedNodeID));
+@@ -73,6 +81,17 @@
+             if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(element.dataset.id); }
+           });
+         }
++        for (const edge of svg.querySelectorAll('.pele-edge[data-id],.pele-edge-label[data-id]')) {
++          const node = payload.nodes.find(node => node.kind === 'line' &&
++            edge.dataset.id.startsWith('L_' + node.diagramID + '_x' + node.diagramID.slice(1) + '_'));
++          if (!node) continue;
++          edge.setAttribute('tabindex','0'); edge.setAttribute('role','button');
++          edge.setAttribute('aria-label',node.text || '직선');
++          edge.addEventListener('click',() => select(node.diagramID));
++          edge.addEventListener('keydown',event => {
++            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(node.diagramID); }
++          });
++        }
+         current = payload;
+         target.append(document.adoptNode(svg));
+         return { nodes:rendered.length, edges:svg.querySelectorAll('.pele-edge').length };
 diff --git a/iOSClient/CanvasBridge/SceneRenderer.swift b/iOSClient/CanvasBridge/SceneRenderer.swift
 index 05fcb15..0d5e1fe 100644
 --- a/iOSClient/CanvasBridge/SceneRenderer.swift

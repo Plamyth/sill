@@ -2,7 +2,7 @@ import Foundation
 import PencilKit
 import SwiftUI
 
-// ponytail: 한 선택 묶음의 직선·축 정렬 사각형·타원만 제안한다. 자유 도형 엔진은 별도 범위다.
+// ponytail: 한 선택 묶음의 직선·회전 사각형·축 정렬 타원만 제안한다. 자유 도형 엔진은 별도 범위다.
 struct CanvasInkShapeProposal: Identifiable {
     let id = UUID()
     let source: CanvasScene
@@ -35,6 +35,7 @@ struct CanvasInkShapeProposal: Identifiable {
         var confirmed = node
         confirmed.confidence = .confirmed
         next.nodes.append(confirmed)
+        next.promoteSchemaForNodeKinds()
         guard next.revision < Int.max else { throw Failure.invalid }
         next.revision += 1
         guard try JSONEncoder().encode(next).count <= CanvasScene.localByteLimit else { throw Failure.invalid }
@@ -47,8 +48,8 @@ struct CanvasInkShapeProposal: Identifiable {
               selection.isSubset(of: Set(drawing.strokes.map(\.id))) else { throw Failure.selection }
         try scene.validateNativeInkProjection()
         guard let bytes = Data(base64Encoded: scene.drawingBase64), !bytes.isEmpty,
-              let stored = try? PKDrawing(data: bytes), stored == drawing, scene.strokes == CanvasScene.nativeInkStrokes(drawing) else { throw Failure.stale }
-        let strokes = drawing.strokes.filter { selection.contains($0.id) }
+              let stored = try? PKDrawing(data: bytes), stored == drawing, scene.strokes == CanvasScene.nativeInkStrokes(stored) else { throw Failure.stale }
+        let strokes = stored.strokes.filter { selection.contains($0.id) }
         var paths: [[CGPoint]] = []
         for stroke in strokes {
             try validate(stroke)
@@ -67,8 +68,26 @@ struct CanvasInkShapeProposal: Identifiable {
         let minY = all.map(\.y).min()!, maxY = all.map(\.y).max()!
         let w = maxX - minX, h = maxY - minY
         guard max(w,h) >= 24 else { throw Failure.ambiguous }
+        // 네 변의 방향은 90도 간격이므로 길이 가중 4배각으로 공통 축을 구한다.
+        var axisX: CGFloat = 0, axisY: CGFloat = 0, axisLength: CGFloat = 0
+        for path in paths {
+            for (a,b) in zip(path,path.dropFirst()) {
+                let weight = distance(a,b)
+                guard weight > 0.000001 else { continue }
+                let angle = atan2(b.y-a.y,b.x-a.x)
+                axisX += weight * cos(4*angle)
+                axisY += weight * sin(4*angle)
+                axisLength += weight
+            }
+        }
+        let boxAngle = axisLength > 0 && hypot(axisX,axisY)/axisLength >= 0.75 ? atan2(axisY,axisX)/4 : 0
+        let toBox = CGAffineTransform(rotationAngle:-boxAngle)
+        let local = all.map { $0.applying(toBox) }
+        let left = local.map(\.x).min()!, right = local.map(\.x).max()!
+        let top = local.map(\.y).min()!, bottom = local.map(\.y).max()!
+        let boxWidth = right-left, boxHeight = bottom-top
         var points = paths.removeFirst()
-        let gap = max(3, min(w,h) * 0.18)
+        let gap = max(3, min(boxWidth,boxHeight) * 0.18)
         while !paths.isEmpty {
             var best: (index: Int, reverse: Bool, distance: CGFloat)?
             for (i, path) in paths.enumerated() {
@@ -91,12 +110,16 @@ struct CanvasInkShapeProposal: Identifiable {
                     width:Double(chord),height:2), Double(atan2(b.y-a.y,b.x-a.x) * 180 / .pi)))
             }
         }
-        if w >= 24, h >= 24, chord <= gap, length >= 2*(w+h)*0.78, length <= 2*(w+h)*1.15 {
-            let edgeError = points.map { min(abs($0.x-minX),abs($0.x-maxX),abs($0.y-minY),abs($0.y-maxY)) }.max()!
-            let corners = [CGPoint(x:minX,y:minY),CGPoint(x:maxX,y:minY),CGPoint(x:maxX,y:maxY),CGPoint(x:minX,y:maxY)]
-            let visits = corners.allSatisfy { corner in points.contains { distance($0,corner) <= min(w,h)*0.14 } }
-            if edgeError <= min(w,h)*0.075, visits {
-                candidates.append((.box,.init(x:Double(minX),y:Double(minY),width:Double(w),height:Double(h)),0))
+        if boxWidth >= 24, boxHeight >= 24, chord <= gap,
+           length >= 2*(boxWidth+boxHeight)*0.78, length <= 2*(boxWidth+boxHeight)*1.15 {
+            let boxPoints = points.map { $0.applying(toBox) }
+            let edgeError = boxPoints.map { min(abs($0.x-left),abs($0.x-right),abs($0.y-top),abs($0.y-bottom)) }.max()!
+            let corners = [CGPoint(x:left,y:top),CGPoint(x:right,y:top),CGPoint(x:right,y:bottom),CGPoint(x:left,y:bottom)]
+            let visits = corners.allSatisfy { corner in boxPoints.contains { distance($0,corner) <= min(boxWidth,boxHeight)*0.14 } }
+            if edgeError <= min(boxWidth,boxHeight)*0.075, visits {
+                let center = CGPoint(x:(left+right)/2,y:(top+bottom)/2).applying(CGAffineTransform(rotationAngle:boxAngle))
+                candidates.append((.box,.init(x:Double(center.x-boxWidth/2),y:Double(center.y-boxHeight/2),
+                    width:Double(boxWidth),height:Double(boxHeight)),Double(boxAngle * 180 / .pi)))
             }
         }
         if strokes.count == 1, w >= 24, h >= 24, chord <= gap, max(w/h,h/w) <= 8 {

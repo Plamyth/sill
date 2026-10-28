@@ -1,21 +1,21 @@
 {
   "sourceHashes": {
-    "iOSClient/CanvasBridge/CanvasModel.swift": "027ea7b874270296519382998d0421c72bbf1648821cd0fe2fe3113dca6705cd",
-    "iOSClient/CanvasBridge/CanvasStore.swift": "a6af1c482449a0d0e0be03f9c2c4eac202d6345636823dd7410fe93c429646a4",
-    "iOSClient/CanvasBridge/CanvasInkTextEditing.swift": "477bc6a64c32af579c9c6ffaa725bf07c476f615a73242c8f8fbc74b2dedc600",
-    "iOSClient/CanvasBridge/CanvasInkShapeProposal.swift": "d0e2042ea4dde78be84a982134bb7267a9d6d6214c80d62d707fc3c4e4379db4",
-    "Tests/checks/ink-shape-proposal/main.swift": "bb7b2e30c90dc382ab73c460271a97cfa5f76f321117a1f0a3ee2de836ff3493",
+    "iOSClient/CanvasBridge/CanvasModel.swift": "5d60ea0cb8d9a8985cb805b1511699fdf6e808d373101c162e8ce12e8c023aaf",
+    "iOSClient/CanvasBridge/CanvasStore.swift": "c174b75c2bdfae575c81b4fe20192bd025eda5077349483245dee3982c53decb",
+    "iOSClient/CanvasBridge/CanvasInkTextEditing.swift": "76e0787724d7f0d9e4310cfc1b81eba6da3ef3a31b506bab60dbef083c95ffec",
+    "iOSClient/CanvasBridge/CanvasInkShapeProposal.swift": "3687d79bbcae2b40318adb5192724e57f97270e2b4ed8953ae94f7aefd8e6616",
+    "Tests/checks/ink-shape-proposal/main.swift": "4a6d3b6d1f1a10d485fe3af8e31802185e47f67b1af0f8552216de224325be56",
     "Tests/checks/canvas-file-workspace/main.swift": "139e69b28d5dc3a7d98358b837eabc5cb1e3ad0e16368bba3aeac6b3f8deebe4",
     "Tests/checks/canvas-file-workspace/safety.swift": "4eee94ab1c35d0c30ab90f35d8804ccfeaf1519a1784d83ef6463fb79b9f7572",
     "Tests/checks/ink-glyph-edit/Info.plist": "50a0aded2a05d31bee2c5780710d3d765c59f26d7c0f9775e092b6954d606153",
     "Tests/checks/ink-glyph-edit/product-check.py": "2dbb65dbd2b8afff751f9322e4d1f0739ff26918c2a25cd3af3e5064eca04885"
   },
   "sourceHashesAfter": {
-    "iOSClient/CanvasBridge/CanvasModel.swift": "027ea7b874270296519382998d0421c72bbf1648821cd0fe2fe3113dca6705cd",
-    "iOSClient/CanvasBridge/CanvasStore.swift": "a6af1c482449a0d0e0be03f9c2c4eac202d6345636823dd7410fe93c429646a4",
-    "iOSClient/CanvasBridge/CanvasInkTextEditing.swift": "477bc6a64c32af579c9c6ffaa725bf07c476f615a73242c8f8fbc74b2dedc600",
-    "iOSClient/CanvasBridge/CanvasInkShapeProposal.swift": "d0e2042ea4dde78be84a982134bb7267a9d6d6214c80d62d707fc3c4e4379db4",
-    "Tests/checks/ink-shape-proposal/main.swift": "bb7b2e30c90dc382ab73c460271a97cfa5f76f321117a1f0a3ee2de836ff3493",
+    "iOSClient/CanvasBridge/CanvasModel.swift": "5d60ea0cb8d9a8985cb805b1511699fdf6e808d373101c162e8ce12e8c023aaf",
+    "iOSClient/CanvasBridge/CanvasStore.swift": "c174b75c2bdfae575c81b4fe20192bd025eda5077349483245dee3982c53decb",
+    "iOSClient/CanvasBridge/CanvasInkTextEditing.swift": "76e0787724d7f0d9e4310cfc1b81eba6da3ef3a31b506bab60dbef083c95ffec",
+    "iOSClient/CanvasBridge/CanvasInkShapeProposal.swift": "3687d79bbcae2b40318adb5192724e57f97270e2b4ed8953ae94f7aefd8e6616",
+    "Tests/checks/ink-shape-proposal/main.swift": "4a6d3b6d1f1a10d485fe3af8e31802185e47f67b1af0f8552216de224325be56",
     "Tests/checks/canvas-file-workspace/main.swift": "139e69b28d5dc3a7d98358b837eabc5cb1e3ad0e16368bba3aeac6b3f8deebe4",
     "Tests/checks/canvas-file-workspace/safety.swift": "4eee94ab1c35d0c30ab90f35d8804ccfeaf1519a1784d83ef6463fb79b9f7572",
     "Tests/checks/ink-glyph-edit/Info.plist": "50a0aded2a05d31bee2c5780710d3d765c59f26d7c0f9775e092b6954d606153",
@@ -26,7 +26,7 @@
     {
       "name": "shape",
       "compile": 0,
-      "exitCode": 0,
+      "exitCode": -5,
       "command": [
         "xcrun",
         "swiftc",
@@ -38,7 +38,7 @@
         "5",
         "-parse-as-library",
         "-module-cache-path",
-        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548/modules",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-e0d54356-db31-483c-9bae-bd50918b2f3c/modules",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasModel.swift",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasStore.swift",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasInkTextEditing.swift",
@@ -53,7 +53,7 @@
         "-Xlinker",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/Info.plist",
         "-o",
-        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548/shape"
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-e0d54356-db31-483c-9bae-bd50918b2f3c/shape"
       ]
     },
     {
@@ -71,7 +71,7 @@
         "5",
         "-parse-as-library",
         "-module-cache-path",
-        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548/modules",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-e0d54356-db31-483c-9bae-bd50918b2f3c/modules",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasModel.swift",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasStore.swift",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasInkTextEditing.swift",
@@ -86,7 +86,7 @@
         "-Xlinker",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/Info.plist",
         "-o",
-        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548/files-regression"
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-e0d54356-db31-483c-9bae-bd50918b2f3c/files-regression"
       ]
     },
     {
@@ -104,7 +104,7 @@
         "5",
         "-parse-as-library",
         "-module-cache-path",
-        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548/modules",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-e0d54356-db31-483c-9bae-bd50918b2f3c/modules",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasModel.swift",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasStore.swift",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasInkTextEditing.swift",
@@ -119,24 +119,13 @@
         "-Xlinker",
         "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/Info.plist",
         "-o",
-        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548/files-safety"
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-e0d54356-db31-483c-9bae-bd50918b2f3c/files-safety"
       ]
     }
   ],
-  "obsidian": [
-    {
-      "flow": "glyph",
-      "exitCode": 0,
-      "receipt": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/obsidian-glyph-roundtrip.json"
-    },
-    {
-      "flow": "shape",
-      "exitCode": 0,
-      "receipt": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548/obsidian-shape-roundtrip.json"
-    }
-  ],
-  "passed": true,
-  "output": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/eb665c9c-79c6-4cac-9432-ad6723059fa8/combined-597affcd-4efa-4805-9766-df97748e2548",
+  "obsidian": [],
+  "passed": false,
+  "output": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-e0d54356-db31-483c-9bae-bd50918b2f3c",
   "nativeRecognitionRepeated": false,
   "deviceHost": false
 }

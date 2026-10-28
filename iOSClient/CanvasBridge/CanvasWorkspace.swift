@@ -143,7 +143,6 @@ struct CanvasWorkspace: View {
         .preferredColorScheme(.dark)
         .sheet(item:Binding(get:{ store.inkShapeProposal },set:{ if $0 == nil { store.cancelInkShape() } })) { proposal in
             CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
-                blockedReason:store.inkShapeCompatibilityMessage,
                 confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
         }
         .onDisappear { store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
@@ -2233,8 +2232,10 @@ private struct NodeTile: View {
                 .stroke(node.confidence == .proposal ? .orange :
                     store.selectedNode == node.id ? Color(uiColor:CanvasPalette.link) : .gray,
                     lineWidth:3))
+            .frame(width:max(node.frame.width, node.kind == .line ? 44 / store.zoom : node.frame.width),
+                   height:max(node.frame.height, node.kind == .line ? 44 / store.zoom : node.frame.height))
+            .contentShape(.interaction, Rectangle())
             .rotationEffect(.radians(node.rotationRadians))
-            .contentShape(.interaction, Rectangle().inset(by:node.kind == .line ? -21 : 0))
             .onTapGesture { store.select(node.id) }
             .accessibilityElement(children:.combine)
             .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")

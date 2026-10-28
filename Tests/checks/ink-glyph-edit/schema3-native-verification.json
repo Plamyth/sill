@@ -1,0 +1,97 @@
+{
+  "output": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f",
+  "results": [
+    {
+      "name": "webkit-compile",
+      "exitCode": 0,
+      "command": [
+        "xcrun",
+        "swiftc",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk",
+        "-target",
+        "arm64e-apple-macos27.0",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/schema3-modules",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/WebKitShapeCheck.swift",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/webkit-check"
+      ]
+    },
+    {
+      "name": "webkit",
+      "exitCode": 0,
+      "command": [
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/webkit-check",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/Pele",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f"
+      ]
+    },
+    {
+      "name": "mac-protocol",
+      "exitCode": 0,
+      "command": [
+        "xcrun",
+        "swiftc",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk",
+        "-target",
+        "arm64e-apple-macos27.0",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/schema3-modules",
+        "-emit-module",
+        "-emit-object",
+        "-module-name",
+        "StreamProtocol",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Sources/StreamProtocol/TestDestinations.swift",
+        "-emit-module-path",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/StreamProtocol.swiftmodule",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/StreamProtocol.o"
+      ]
+    },
+    {
+      "name": "relay-compile",
+      "exitCode": 0,
+      "command": [
+        "xcrun",
+        "swiftc",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk",
+        "-target",
+        "arm64e-apple-macos27.0",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-module-cache-path",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/schema3-modules",
+        "-I",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasModel.swift",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/CanvasRelay.swift",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/CanvasBridge/ControlRoomProjection.swift",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/iOSClient/TestDestinations/TestDestinationsPolicy.swift",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/RelayScene3Check.swift",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/StreamProtocol.o",
+        "-o",
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/relay-check"
+      ]
+    },
+    {
+      "name": "relay",
+      "exitCode": -5,
+      "command": [
+        "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/relay-check"
+      ]
+    }
+  ],
+  "passed": false,
+  "network": false,
+  "deviceHostEffects": 0
+}

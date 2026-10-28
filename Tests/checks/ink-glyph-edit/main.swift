@@ -62,6 +62,14 @@ import AppKit
             if case .ambiguous(let actual) = editor.phase { return actual == reason }; return false
         }
         let (original, node, selection, ids) = try fixture()
+        var v3 = original; v3.schemaVersion = 3
+        let v3Editor = CanvasInkTextEditing()
+        await v3Editor.propose(scene:v3,nodeID:node,selection:selection,range:NSRange(location:1,length:1),
+            isCurrent:{ $0.matches(scene:v3,selection:selection) },readEvidence:{ _,_,_,_ in supplied(v3,ids) })
+        let v3Deleted = try v3Editor.confirm(current:v3,selection:selection,persist:{ _ in })
+        check(v3Deleted.schemaVersion == 3,"glyph deletion preserves scene3")
+        let v3Undone = try v3Editor.undo(current:v3Deleted,persist:{ _ in })
+        check(v3Undone.schemaVersion == 3,"glyph Undo preserves scene3")
         let originalBytes = try CanvasInkTextEditing.encode(original)
         let reader: CanvasInkTextEditing.ReadEvidence = { _,_,_,_ in supplied(original, ids) }
         let editor = CanvasInkTextEditing()

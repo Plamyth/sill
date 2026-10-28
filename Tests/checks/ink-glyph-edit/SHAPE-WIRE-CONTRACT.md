@@ -1,24 +1,17 @@
-# Shape wire 계약 대조와 다음 접합 조건
+# Shape wire 계약의 현재 상태
 
-전체 shape 수용은 false다. glyph 순수 note 접합 a8810155는 별도 검수 가능하다. 원소유 e529975의 Kind 확장은 wire 변경 후보다. 현재 schemaVersion1/2를 유지하며 새 kind의 저장을 차단한다. schema3이나 downgrade를 임의 채택하지 않았다.
+전체 shape 수용은 false다. glyph 순수 note 접합 a8810155는 독립 CLEAR를 받은 별도 단위로 보존한다. 원소유 e529975의 Kind 확장은 공통 wire 변경이다. 최초3912af4는 새 종류를 전면 거부했으며 이력은 해당 commit에 보존했다. 현재 규칙은 DIAGRAM-PROJECTION-v1.md를 따른다. 세부 schema/DSL은 사용자 요구를 구현하기 위해 조율 담당이 선택한 계약이다.
 
-| 경계 | 실제 구현과 위험 | 현재 후보의 처리 |
+| 경계 | 현재 처리 | 남은 단계 |
 | --- | --- | --- |
-| 68a CanvasNode.Kind | note, box만 RawValue Codable로 해독. ellipse/line은 디코드 실패 | 기존 장치 수용 불가. 설치하지 않음 |
-| CanvasScene schema | 1/2만 지원. 새 종류를 schema2로 표시하면 의미 버전이 같아 보임 | requireCompatibleNodeKinds로 새 종류 해독·제품 저장 명시 거부 |
-| Proposal | line/box/ellipse의 좁은 기하 후보, sourceStrokeIds와 원본 drawing 유지 | box만 제품 확정. line/ellipse는 미리보기 및 거부 사유 |
-| Files·로컬 캐시 | current.json 세대 저장, CAS 및 별도 recovery | 새 종류 외부 쓰기 전 거부. 기존 box·note의 pending/blocked/취소 보호 유지 |
-| CanvasDiagramSnapshot | source를 flowchart TD로 만들고 모든 노드를 ["..."]로 표현 | 새 종류 snapshot을 명시 거부하여 상자 오표현 방지 |
-| CanvasPeleView | snapshot.source를 ccrDiagram.update(payload)에 전달. 별도 kind 필드 없음 | 오류 보고와 diagram 비우기. 실제 WebKit 화면은 미검증 |
-| Pele/bridge.js | payload.source를 번들 엔진에 전달하고 diagramID로 선택을 회신 | 엔진 자체에 새 노드 kind 의미 계약을 추가한 것이 아님 |
-| iPad CanvasRelay.saveVaultCanvas | JSON·PNG를 /vault/canvas PUT으로 전송 | 네트워크 요청 작성 전 새 종류 거부 |
-| relay f61f516 canvas-diagram.js | 모든 노드를 ["..."]로 투영. kind/schema 검사 없음 | 이 writer는 읽기만 함. 짝 relay 단위 필요 |
-| relay f61f516 obsidian-vault.js | 종류 설명 box→상자, note→메모, 나머지→요소. saveCanvas는 identity/revision/크기만 확인 | 새 종류의 byte roundtrip만으로 의미 왕복 수용 불가 |
+| 구형68 | Kind note/box만 엄격 해독. schema3/새 kind는 읽을 수 없음 | 새 앱 설치 전 신구 소비자 혼합 정책과 원본 보존 검수 |
+| CanvasScene | 1/2 note·box 유지,3에서 ellipse·line 허용. unknown은 명시 거부 | 최종 exact source에서 regression |
+| 생성·편집 | shape/원격 새 kind→3. glyph·그리기·펜 설정·원격 수정은3보존 | 실제 인식·Pencil 수용 |
+| Files | 원본 native/frame/rotation/출처 세대 저장. 실패·취소·CAS는 이전 원본과 미저장 복구본 유지 | iPad 실제 provider/북마크 |
+| CanvasDiagramSnapshot·Pele | 고정 퍼센트 타원, 실제 edge+숨은 endpoint의 선. 표시 helper 상한 포함 | iPad 실제 UI·최종 시각 수용 |
+| CanvasRelay | schema3 GET capability 확인 후에만 PUT/POST. 미지원/거부면 대기/실패 | Galileo 짝 relay exact commit 통합 및 실제 파일 의미 왕복 |
+| 원본 relay f61f516 | 새 kind를 의미 지원하지 않음. 모든 노드는 상자 Mermaid, 설명은 note/box 외 요소 | 부모가 별도 worker로 공식 저장소 CanvasRelay에 출처 보존 편입 중 |
 
-제품 포인터: iOSClient/CanvasBridge/CanvasModel.swift의 CanvasNode.Kind, CanvasScene.init(from:), requireCompatibleNodeKinds, CanvasDiagramSnapshot.init(scene:), CanvasFileWorkspace.save. CanvasStore.swift의 inkShapeCompatibilityMessage/confirmInkShape/persistScene/fileWorkspaceCanSync, CanvasRelay.swift의 saveVaultCanvas, CanvasWorkspace.swift의 sheet, CanvasInkShapeProposal.swift의 blockedReason. Pele 자원은 iOSClient/CanvasBridge/Pele/{bridge.js,diagram.html,pele.global.js}다.
+원본 relay HEAD는 f61f51696aa5cd5b1973277a347ffca3f534fa26이며 모듈 SHA는 shape-wire-contract.json에 있다. source commit을 공유 서버의 설치 버전으로 주장하지 않는다. 원본 서버/사용자 데이터 수정0이다. raw JSON 왕복만으로 ellipse/line 의미 왕복 완료로 세지 않는다.
 
-relay 정본은 /Users/ambrion/Documents/ChatGPT/BT_CCR-Obsidian-relay, HEAD f61f51696aa5cd5b1973277a347ffca3f534fa26. 읽은 두 모듈의 SHA는 shape-wire-contract.json에 고정했다. 실행 중인 공유 relay 버전은 조작·조회하지 않았다. 이 HEAD를 설치 런타임 버전으로 주장하지 않는다.
-
-다음 단위는 부모가 소유한 짝 relay의 schema/capability 정책 합의, 알 수 없는 kind/version의 명시 거부, ellipse와 선의 올바른 Mermaid/Pele 의미 표현 및 Obsidian 종류 설명, CAS·메모·native 원본·sourceStrokeIds·Undo/Redo 왕복, 구형68의 거부/보존 시험이다. 양쪽 exact commit/tree를 맞춘 뒤 guard를 해제한다. 선을 상자 노드의 라벨로 바꾸거나 타원을 box로 강제 변환해 왕복을 성공으로 만들지 않는다.
-
-이번 실제 파일 성공 근거는 기존 box와 note에 한정한다. 선/타원의 기하 판별·미리보기 소스·SDK 컴파일과 wire 수용은 구분한다. UI 시각 수용·실제 iPad Pencil·새 native recognizer 성공·전체 MyScript/MS18 동등성은 남는다.
+포인터: CanvasModel.swift의 CanvasScene.requireCompatibleNodeKinds/promoteSchemaForNodeKinds/CanvasDiagramSnapshot/CanvasFileWorkspace.save, CanvasInkShapeProposal.confirmed, CanvasInkTextEditing의 schema 보존, CanvasStore의 updateDrawing/persistScene/fileWorkspaceCanSync, CanvasRelay의 requireSceneSupport/saveVaultCanvas/send, CanvasPeleView 및 Pele/bridge.js, CanvasWorkspace의 NodeTile 선택 layout.

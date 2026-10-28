@@ -1301,9 +1301,13 @@ struct CanvasLinkEdit: Codable {
 }
 
 enum CanvasSceneWireError: LocalizedError {
-    case shapeContractPending
+    case unsupportedVersion, kindRequiresSchema3, relayCapability
     var errorDescription: String? {
-        "shape_wire_contract_pending · 선·타원은 구형 68 및 현재 Obsidian/Pele 계약과 호환되지 않아 저장·동기화하지 않습니다. 원본 획을 유지합니다."
+        switch self {
+        case .unsupportedVersion: return "unsupported_scene_version · 지원하지 않는 장면 버전입니다. 원본을 유지합니다."
+        case .kindRequiresSchema3: return "shape_requires_schema3 · 선·타원은 장면 버전 3에서만 읽고 저장합니다. 원본을 유지합니다."
+        case .relayCapability: return "scene3_relay_unsupported · 서버의 장면 버전 3 및 도형 투영 지원을 확인하지 못했습니다. Obsidian 미동기화 상태로 원본을 유지합니다."
+        }
     }
 }
 
@@ -1322,12 +1326,16 @@ struct CanvasScene: Codable, Equatable {
     var penSettings: CanvasPenSettings? = nil
     var hasLegacyCompatibleNodeKinds: Bool { nodes.allSatisfy { $0.kind == .note || $0.kind == .box } }
     func requireCompatibleNodeKinds() throws {
-        guard hasLegacyCompatibleNodeKinds else { throw CanvasSceneWireError.shapeContractPending }
+        guard [1, 2, 3].contains(schemaVersion) else { throw CanvasSceneWireError.unsupportedVersion }
+        guard schemaVersion == 3 || hasLegacyCompatibleNodeKinds else { throw CanvasSceneWireError.kindRequiresSchema3 }
+    }
+    mutating func promoteSchemaForNodeKinds() {
+        if !hasLegacyCompatibleNodeKinds { schemaVersion = max(3, schemaVersion) }
     }
     var effectivePenSettings: CanvasPenSettings { penSettings ?? .default }
     var hasSupportedInkProjection: Bool {
-        (schemaVersion == 1 || schemaVersion == 2) && effectivePenSettings.isValid &&
-            (schemaVersion == 2 || (penSettings == nil && strokes.allSatisfy { $0.style == nil })) &&
+        ([1, 2, 3].contains(schemaVersion)) && (schemaVersion == 3 || hasLegacyCompatibleNodeKinds) && effectivePenSettings.isValid &&
+            (schemaVersion >= 2 || (penSettings == nil && strokes.allSatisfy { $0.style == nil })) &&
             strokes.allSatisfy { stroke in
                 stroke.style.map { !$0.inkType.isEmpty && !drawingBase64.isEmpty && $0.isValid(pointCount: stroke.points.count) } ?? true
             }
@@ -1346,7 +1354,7 @@ struct CanvasScene: Codable, Equatable {
             return .init(disposition: .noop, settings: effectivePenSettings, revision: revision)
         }
         var next = self
-        next.schemaVersion = 2
+        next.schemaVersion = max(2, next.schemaVersion)
         next.penSettings = change.settings
         next.revision += 1
         guard try JSONEncoder().encode(next).count <= Self.localByteLimit else { throw CanvasPenSettingsError.sceneTooLarge }
@@ -1463,6 +1471,7 @@ struct CanvasScene: Codable, Equatable {
         nodes.append(CanvasNode(id: id, kind: kind,
             frame: CanvasRect(x: point.x, y: point.y, width: 260, height: 120),
             text: text, confidence: confidence, sourceStrokeIds: sourceStrokeIds))
+        promoteSchemaForNodeKinds()
         revision += 1
         return id
     }
@@ -1574,7 +1583,7 @@ struct CanvasScene: Codable, Equatable {
             guard change.isPenSettingsOnly else { return false }
             return (try? setPenSettings(settings, sceneID: change.sceneId, baseRevision: change.baseRevision)) != nil
         }
-        guard change.sceneId == id, nodes.allSatisfy(\.hasValidRotation),
+        guard (try? requireCompatibleNodeKinds()) != nil, change.sceneId == id, nodes.allSatisfy(\.hasValidRotation),
               change.proposedNodes.allSatisfy(\.hasValidRotation),
               (change.nodeEdits ?? []).allSatisfy({ $0.expected.hasValidRotation }) else { return false }
         let annotationIds = change.annotations.map(\.id)
@@ -1643,6 +1652,7 @@ struct CanvasScene: Codable, Equatable {
         var next = self
         next.annotations.append(contentsOf: change.annotations)
         next.nodes.append(contentsOf: change.proposedNodes)
+        next.promoteSchemaForNodeKinds()
         next.links.append(contentsOf: proposedLinks)
         if !nodeEdits.isEmpty || !linkEdits.isEmpty {
             guard next.editGraph(nodeEdits:nodeEdits,linkEdits:linkEdits) else { return false }
@@ -1664,6 +1674,7 @@ extension CanvasScene {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        guard [1, 2, 3].contains(schemaVersion) else { throw CanvasSceneWireError.unsupportedVersion }
         id = try values.decode(UUID.self, forKey: .id)
         revision = try values.decode(Int.self, forKey: .revision)
         width = try values.decode(Double.self, forKey: .width)
@@ -1789,11 +1800,14 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
         let diagramID: String
         let id: UUID
         let text: String
+        let kind: CanvasNode.Kind
     }
     let sceneID: UUID
     let revision: Int
     let source: String
     let nodes: [Node]
+    let displayedNodeCount: Int
+    let displayedEdgeCount: Int
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.sceneID == rhs.sceneID && lhs.revision == rhs.revision &&
@@ -1830,10 +1844,26 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
         }
         let visible = scene.visibility
         nodes = scene.nodes.filter { visible.nodeIDs.contains($0.id) }.map {
-            Node(diagramID:diagramID($0.id),id:$0.id,text:$0.text)
+            Node(diagramID:diagramID($0.id),id:$0.id,text:$0.text,kind:$0.kind)
         }
+        let primitiveCount = nodes.filter { $0.kind == .line }.count
+        displayedNodeCount = nodes.count + primitiveCount
+        displayedEdgeCount = scene.links.filter { visible.linkIDs.contains($0.id) }.count + primitiveCount
+        guard displayedNodeCount <= 512, displayedEdgeCount <= 1024 else { throw Failure.limit }
         var lines = ["flowchart TD"]
-        lines += nodes.map { "\($0.diagramID)[\"\(label($0.text.isEmpty ? "이름 없는 요소" : $0.text))\"]" }
+        for node in nodes {
+            if node.kind == .line {
+                let endpoint = "x" + node.diagramID.dropFirst()
+                lines += ["\(node.diagramID)[\" \"]", "\(endpoint)[\" \"]",
+                    "\(node.diagramID) ---|\"\(label(node.text.isEmpty ? "직선" : node.text))\"| \(endpoint)",
+                    "class \(node.diagramID),\(endpoint) ccrLineEndpoint"]
+            } else {
+                lines.append("\(node.diagramID)[\"\(label(node.text.isEmpty ? "이름 없는 요소" : node.text))\"]")
+                if node.kind == .ellipse { lines.append("class \(node.diagramID) ccrEllipse") }
+            }
+        }
+        if nodes.contains(where: { $0.kind == .ellipse }) { lines.append("classDef ccrEllipse rx:50%,ry:50%") }
+        if nodes.contains(where: { $0.kind == .line }) { lines.append("classDef ccrLineEndpoint fill:none,stroke:none") }
         lines += scene.links.filter { visible.linkIDs.contains($0.id) }.map {
             let relation = $0.label.isEmpty ? ($0.kind == .parentChild ? "하위 요소" : "연결") : $0.label
             return "\(diagramID($0.from)) -->|\"\(label(relation))\"| \(diagramID($0.to))"

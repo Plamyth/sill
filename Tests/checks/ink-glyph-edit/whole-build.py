@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """정확한 clean HEAD의 정상 Sill 번들을 서명·설치·네트워크 없이 빌드한다."""
 from pathlib import Path
-import os, json, subprocess, uuid, hashlib, plistlib, datetime
+import os, json, subprocess, uuid, hashlib, plistlib, datetime, argparse
 root=Path(__file__).resolve().parents[3]
 here=Path(__file__).resolve().parent
 def git(*args): return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
 assert not git('status','--porcelain=v1','--untracked-files=all'), 'clean source required'
 route=json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))
-assert any(os.path.samefile(p,route['path']) for p in root.parents)
+parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()
+assert any(p.exists() and os.path.samefile(p,route['path']) for p in [args.output,*args.output.parents])
 head,tree=git('rev-parse','HEAD'),git('rev-parse','HEAD^{tree}')
-out=here/'.build'/('whole-'+str(uuid.uuid4()));out.mkdir(parents=True)
+out=args.output/('whole-'+str(uuid.uuid4()));out.mkdir(parents=True)
 profile=Path(route['path'])/'owner-mac-bootstrap-20261022/public-profile-from-ipad-saved.json'
 profile_sha=hashlib.sha256(profile.read_bytes()).hexdigest()
 assert profile_sha=='7bcf8ce74bf4292d1a20b07d45bfa0c040957e1ade3d80dd4be37c5eb96cf8c7'
-env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
+home=out/'home';home.mkdir();tmp=out/'tmp';tmp.mkdir()
+env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',HOME=str(home),CFFIXED_USER_HOME=str(home),TMPDIR=str(tmp)+'/')
 cmd=['xcodebuild','-project','iOSClient/Sill.xcodeproj','-scheme','Sill','-configuration','Debug','-destination','generic/platform=iOS',
  '-derivedDataPath',str(out/'DerivedData'),'-disableAutomaticPackageResolution','-skipPackageUpdates',
  'CODE_SIGNING_ALLOWED=NO','CODE_SIGNING_REQUIRED=NO','DEVELOPMENT_TEAM=ZPTXHJ866D',

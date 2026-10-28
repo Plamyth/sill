@@ -2,6 +2,18 @@ import Foundation
 import Security
 import StreamProtocol
 
+struct CanvasSceneCapabilities: Decodable {
+    let schema: String
+    let sceneSchemaVersions: [Int]
+    let nodeKinds: [String]
+    let diagramProjection: String
+    func require(_ scene: CanvasScene) throws {
+        guard schema == "ccr.canvas-capabilities/v1", sceneSchemaVersions.contains(scene.schemaVersion),
+              scene.nodes.allSatisfy({ nodeKinds.contains($0.kind.rawValue) }),
+              diagramProjection == "ccr.diagram-shapes/v1" else { throw CanvasSceneWireError.relayCapability }
+    }
+}
+
 struct CanvasRelay {
     struct VaultEntry: Decodable, Identifiable {
         let name: String
@@ -214,6 +226,7 @@ struct CanvasRelay {
     func saveVaultCanvas(scene: CanvasScene, imagePNG: Data,
                          baseSha256: String?) async throws -> VaultCanvasSaved {
         try scene.requireCompatibleNodeKinds()
+        try await requireSceneSupport(scene)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let sceneBytes = try encoder.encode(scene)
@@ -237,7 +250,18 @@ struct CanvasRelay {
         return try await response(request(path),as:DeliveryReadiness.self)
     }
 
+    private func requireSceneSupport(_ scene: CanvasScene) async throws {
+        try scene.requireCompatibleNodeKinds()
+        if scene.schemaVersion == 3 {
+            let capability = try await response(request("/vault/canvas/capabilities"), as:CanvasSceneCapabilities.self)
+            try capability.require(scene)
+        }
+        try Task.checkCancellation()
+    }
+
     func send(_ packet: CanvasPacket) async throws -> PacketReceipt {
+        let scene = try packet.frozenScene()
+        try await requireSceneSupport(scene)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
         return try await response(request("/packets",method:"POST",body:encoder.encode(packet)),as:PacketReceipt.self)
