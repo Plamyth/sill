@@ -1,0 +1,98 @@
+{
+  "get": {
+    "schema": "ccr.canvas-conflict/v1",
+    "id": "0e5e23de-e64a-40df-8048-9fac4db87979",
+    "recoveryID": "0870598e-2939-49c9-8872-d836868aea64",
+    "code": "note_reconciliation_required",
+    "reconciliationRequired": true,
+    "publicationAttempted": true,
+    "expected": {
+      "activeSha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+      "baseSha256": "2a781b92bf4e6960ae3ef480d8c57cddb66099ab4877d80d73e12fba5231735e",
+      "displacedSha256": "1f9c010bd47a7fae4b03468723aafa5ea6402bef69637ae38c16bf3990fb0ad2",
+      "proposalSha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+      "historySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "materials": {
+      "active": {
+        "sha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+        "markdownBase64": "LS0tCmNjcl9zY2VuZV9pZDogMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5CmNjcl9yZXZpc2lvbjogMgpjY3Jfc2NlbmVfc2hhMjU2OiA4M2M0YzNhMTJhOTM3ZTk5ODVlYWI4OTNjMzYzY2VmZGFjZGJmMjFlNzE4ZWVlYWI2YWU5YzMyNzNlNDgzOTRmCmNjcl9pbWFnZV9zaGEyNTY6IGM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYKLS0tCgojIGlQYWQg6re466a8IDBlNWUyM2RlCgohW1tBc3NldHMvMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5LWM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYucG5nXV0KCuybkOuzuCDtmo3qs7wg6rWs7KGwOiBbW0Fzc2V0cy8wZTVlMjNkZS1lNjRhLTQwZGYtODA0OC05ZmFjNGRiODc5NzktODNjNGMzYTEyYTkzN2U5OTg1ZWFiODkzYzM2M2NlZmRhY2RiZjIxZTcxOGVlZWFiNmFlOWMzMjczZTQ4Mzk0Zi5qc29uXV0KCjwhLS0gY2NyOm1hcmtkb3duLW1lbW86djEgLS0+CgojIyDrqZTrqqgKCg==",
+        "validCanvas": true,
+        "canvas": {
+          "path": "CCR Canvas/0e5e23de-e64a-40df-8048-9fac4db87979.md",
+          "noteSha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+          "sceneSha256": "83c4c3a12a937e9985eab893c363cefdacdbf21e718eeeab6ae9c3273e48394f",
+          "imageSha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96",
+          "revision": 2,
+          "sceneJSONBase64": "eyJzY2hlbWFWZXJzaW9uIjoyLCJpZCI6IjBlNWUyM2RlLWU2NGEtNDBkZi04MDQ4LTlmYWM0ZGI4Nzk3OSIsInJldmlzaW9uIjoyLCJ3aWR0aCI6MjAwLCJoZWlnaHQiOjEwMCwiZHJhd2luZ0Jhc2U2NCI6IiIsInN0cm9rZXMiOltdLCJub2RlcyI6W10sImxpbmtzIjpbXSwiYW5ub3RhdGlvbnMiOltdfQ=="
+        },
+        "imagePNGBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC"
+      },
+      "base": {
+        "sha256": "2a781b92bf4e6960ae3ef480d8c57cddb66099ab4877d80d73e12fba5231735e",
+        "markdownBase64": "LS0tCmNjcl9zY2VuZV9pZDogMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5CmNjcl9yZXZpc2lvbjogMQpjY3Jfc2NlbmVfc2hhMjU2OiA0OGEyMjBlZjVkOGUzMzA1ZTRkZjgwY2Y5OWM3Y2RmZWIyMDIyMzBiYjc4ZDk0ZTMwM2E0YWRkZTc1OTdjM2EyCmNjcl9pbWFnZV9zaGEyNTY6IGM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYKLS0tCgojIGlQYWQg6re466a8IDBlNWUyM2RlCgohW1tBc3NldHMvMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5LWM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYucG5nXV0KCuybkOuzuCDtmo3qs7wg6rWs7KGwOiBbW0Fzc2V0cy8wZTVlMjNkZS1lNjRhLTQwZGYtODA0OC05ZmFjNGRiODc5NzktNDhhMjIwZWY1ZDhlMzMwNWU0ZGY4MGNmOTljN2NkZmViMjAyMjMwYmI3OGQ5NGUzMDNhNGFkZGU3NTk3YzNhMi5qc29uXV0KCjwhLS0gY2NyOm1hcmtkb3duLW1lbW86djEgLS0+CgojIyDrqZTrqqgKCg==",
+        "validCanvas": true,
+        "canvas": {
+          "path": "CCR Canvas/0e5e23de-e64a-40df-8048-9fac4db87979.md",
+          "noteSha256": "2a781b92bf4e6960ae3ef480d8c57cddb66099ab4877d80d73e12fba5231735e",
+          "sceneSha256": "48a220ef5d8e3305e4df80cf99c7cdfeb202230bb78d94e303a4adde7597c3a2",
+          "imageSha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96",
+          "revision": 1,
+          "sceneJSONBase64": "eyJzY2hlbWFWZXJzaW9uIjoyLCJpZCI6IjBlNWUyM2RlLWU2NGEtNDBkZi04MDQ4LTlmYWM0ZGI4Nzk3OSIsInJldmlzaW9uIjoxLCJ3aWR0aCI6MjAwLCJoZWlnaHQiOjEwMCwiZHJhd2luZ0Jhc2U2NCI6IiIsInN0cm9rZXMiOltdLCJub2RlcyI6W10sImxpbmtzIjpbXSwiYW5ub3RhdGlvbnMiOltdfQ=="
+        },
+        "imagePNGBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC"
+      },
+      "displaced": {
+        "sha256": "1f9c010bd47a7fae4b03468723aafa5ea6402bef69637ae38c16bf3990fb0ad2",
+        "markdownBase64": "LS0tCmNjcl9zY2VuZV9pZDogMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5CmNjcl9yZXZpc2lvbjogMQpjY3Jfc2NlbmVfc2hhMjU2OiA0OGEyMjBlZjVkOGUzMzA1ZTRkZjgwY2Y5OWM3Y2RmZWIyMDIyMzBiYjc4ZDk0ZTMwM2E0YWRkZTc1OTdjM2EyCmNjcl9pbWFnZV9zaGEyNTY6IGM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYKLS0tCgojIGlQYWQg6re466a8IDBlNWUyM2RlCgohW1tBc3NldHMvMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5LWM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYucG5nXV0KCuybkOuzuCDtmo3qs7wg6rWs7KGwOiBbW0Fzc2V0cy8wZTVlMjNkZS1lNjRhLTQwZGYtODA0OC05ZmFjNGRiODc5NzktNDhhMjIwZWY1ZDhlMzMwNWU0ZGY4MGNmOTljN2NkZmViMjAyMjMwYmI3OGQ5NGUzMDNhNGFkZGU3NTk3YzNhMi5qc29uXV0KCjwhLS0gY2NyOm1hcmtkb3duLW1lbW86djEgLS0+CgojIyDrqZTrqqgKCgrsmbjrtoDsnZgg7Jyg7J287ZWcIOuplOuqqAo=",
+        "validCanvas": true,
+        "canvas": {
+          "path": "CCR Canvas/0e5e23de-e64a-40df-8048-9fac4db87979.md",
+          "noteSha256": "1f9c010bd47a7fae4b03468723aafa5ea6402bef69637ae38c16bf3990fb0ad2",
+          "sceneSha256": "48a220ef5d8e3305e4df80cf99c7cdfeb202230bb78d94e303a4adde7597c3a2",
+          "imageSha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96",
+          "revision": 1,
+          "sceneJSONBase64": "eyJzY2hlbWFWZXJzaW9uIjoyLCJpZCI6IjBlNWUyM2RlLWU2NGEtNDBkZi04MDQ4LTlmYWM0ZGI4Nzk3OSIsInJldmlzaW9uIjoxLCJ3aWR0aCI6MjAwLCJoZWlnaHQiOjEwMCwiZHJhd2luZ0Jhc2U2NCI6IiIsInN0cm9rZXMiOltdLCJub2RlcyI6W10sImxpbmtzIjpbXSwiYW5ub3RhdGlvbnMiOltdfQ=="
+        },
+        "imagePNGBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC"
+      },
+      "proposal": {
+        "sha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+        "markdownBase64": "LS0tCmNjcl9zY2VuZV9pZDogMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5CmNjcl9yZXZpc2lvbjogMgpjY3Jfc2NlbmVfc2hhMjU2OiA4M2M0YzNhMTJhOTM3ZTk5ODVlYWI4OTNjMzYzY2VmZGFjZGJmMjFlNzE4ZWVlYWI2YWU5YzMyNzNlNDgzOTRmCmNjcl9pbWFnZV9zaGEyNTY6IGM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYKLS0tCgojIGlQYWQg6re466a8IDBlNWUyM2RlCgohW1tBc3NldHMvMGU1ZTIzZGUtZTY0YS00MGRmLTgwNDgtOWZhYzRkYjg3OTc5LWM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYucG5nXV0KCuybkOuzuCDtmo3qs7wg6rWs7KGwOiBbW0Fzc2V0cy8wZTVlMjNkZS1lNjRhLTQwZGYtODA0OC05ZmFjNGRiODc5NzktODNjNGMzYTEyYTkzN2U5OTg1ZWFiODkzYzM2M2NlZmRhY2RiZjIxZTcxOGVlZWFiNmFlOWMzMjczZTQ4Mzk0Zi5qc29uXV0KCjwhLS0gY2NyOm1hcmtkb3duLW1lbW86djEgLS0+CgojIyDrqZTrqqgKCg==",
+        "validCanvas": true,
+        "canvas": {
+          "path": "CCR Canvas/0e5e23de-e64a-40df-8048-9fac4db87979.md",
+          "noteSha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+          "sceneSha256": "83c4c3a12a937e9985eab893c363cefdacdbf21e718eeeab6ae9c3273e48394f",
+          "imageSha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96",
+          "revision": 2,
+          "sceneJSONBase64": "eyJzY2hlbWFWZXJzaW9uIjoyLCJpZCI6IjBlNWUyM2RlLWU2NGEtNDBkZi04MDQ4LTlmYWM0ZGI4Nzk3OSIsInJldmlzaW9uIjoyLCJ3aWR0aCI6MjAwLCJoZWlnaHQiOjEwMCwiZHJhd2luZ0Jhc2U2NCI6IiIsInN0cm9rZXMiOltdLCJub2RlcyI6W10sImxpbmtzIjpbXSwiYW5ub3RhdGlvbnMiOltdfQ=="
+        },
+        "imagePNGBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC"
+      }
+    },
+    "history": []
+  },
+  "put": {
+    "recoveryID": "0870598e-2939-49c9-8872-d836868aea64",
+    "expected": {
+      "activeSha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+      "baseSha256": "2a781b92bf4e6960ae3ef480d8c57cddb66099ab4877d80d73e12fba5231735e",
+      "displacedSha256": "1f9c010bd47a7fae4b03468723aafa5ea6402bef69637ae38c16bf3990fb0ad2",
+      "proposalSha256": "bfda7c3e21237d67f70422ce9f74374c780003b05d468e1e69ba84feca0a7c74",
+      "historySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "decision": "useDisplaced"
+  },
+  "result": {
+    "path": "CCR Canvas/0e5e23de-e64a-40df-8048-9fac4db87979.md",
+    "noteSha256": "1f9c010bd47a7fae4b03468723aafa5ea6402bef69637ae38c16bf3990fb0ad2",
+    "sceneSha256": "48a220ef5d8e3305e4df80cf99c7cdfeb202230bb78d94e303a4adde7597c3a2",
+    "imageSha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96",
+    "revision": 1,
+    "recoveryID": "0870598e-2939-49c9-8872-d836868aea64",
+    "decision": "useDisplaced",
+    "resolved": true,
+    "reconciliationRequired": false
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "producerCommit": "de1f88f9b0de69608732602b0a8acc2ae6ab3af8",
+  "producerTree": "0f03b7c72eb5cd540d1471047281f19fc5b9a014",
+  "wirePath": "CanvasRelay/relay/test-input/reconciliation-v1/wire-example.json",
+  "wireSHA256": "a8aa24226077850aa974dfd7342f1897ace9e2b74118c1ad75587ce3d00ef4d8",
+  "contractSHA256": "b9d679780ec0676cf7cf20b4ae72e7051a5a5517f0a14cee557a2a8ca36c6192",
+  "sourceAttribution": "부모 조율담당이 기존 사용자 승인 목표의 P2 해결을 위해 채택한 계약",
+  "sourceImported": false
+}

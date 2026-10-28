@@ -1028,6 +1028,7 @@ struct CanvasVaultCheckpoint: Codable {
     let noteSha: String?
     let pendingSceneSha: String?
     var saveConflict: VaultSaveConflict? = nil
+    var localSceneSha: String? = nil
     var requiresExplicitReconciliation: Bool { saveConflict?.requiresExplicitReconciliation == true || (pendingSceneSha != nil && saveConflict != .acknowledgementLost) }
     func acceptingReadMatch(remoteSceneSha: String, remoteNoteSha: String, localSceneSha: String,
                             explicitlyConfirmed: Bool, remoteReconciliationRequired: Bool?) -> Self? {

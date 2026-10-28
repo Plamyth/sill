@@ -1,0 +1,544 @@
+diff --git a/iOSClient/CanvasBridge/CanvasModel.swift b/iOSClient/CanvasBridge/CanvasModel.swift
+index 11241d5..6986865 100644
+--- a/iOSClient/CanvasBridge/CanvasModel.swift
++++ b/iOSClient/CanvasBridge/CanvasModel.swift
+@@ -1028,6 +1028,7 @@ struct CanvasVaultCheckpoint: Codable {
+     let noteSha: String?
+     let pendingSceneSha: String?
+     var saveConflict: VaultSaveConflict? = nil
++    var localSceneSha: String? = nil
+     var requiresExplicitReconciliation: Bool { saveConflict?.requiresExplicitReconciliation == true || (pendingSceneSha != nil && saveConflict != .acknowledgementLost) }
+     func acceptingReadMatch(remoteSceneSha: String, remoteNoteSha: String, localSceneSha: String,
+                             explicitlyConfirmed: Bool, remoteReconciliationRequired: Bool?) -> Self? {
+diff --git a/iOSClient/CanvasBridge/CanvasRelay.swift b/iOSClient/CanvasBridge/CanvasRelay.swift
+index a4d8664..e4c0ee6 100644
+--- a/iOSClient/CanvasBridge/CanvasRelay.swift
++++ b/iOSClient/CanvasBridge/CanvasRelay.swift
+@@ -1,5 +1,6 @@
+ import Foundation
+ import Security
++import ImageIO
+ import StreamProtocol
+ 
+ struct CanvasSceneCapabilities: Decodable {
+@@ -23,7 +24,7 @@ struct CanvasRelay {
+     }
+     struct VaultEntries: Decodable { let entries: [VaultEntry] }
+     typealias VaultNote = VaultNoteSnapshot
+-    struct VaultCanvas: Decodable {
++    struct VaultCanvas: Codable {
+         let path: String
+         let noteSha256: String
+         let sceneSha256: String
+@@ -143,8 +144,9 @@ struct CanvasRelay {
+         return request
+     }
+ 
+-    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
++    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type, maximumBytes: Int? = nil) async throws -> T {
+         let (data, raw) = try await session.data(for: request)
++        if let maximumBytes, data.count > maximumBytes { throw URLError(.dataLengthExceedsMaximum) }
+         guard let http = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+         let body = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any]
+         let vault = request.url?.path.contains("/vault/") ?? false
+@@ -157,6 +159,8 @@ struct CanvasRelay {
+                 let kind: VaultSaveConflict = preserved ? .reconciliationRequired :
+                     (required == false && body?["publicationAttempted"] as? Bool == false ? .prepublication : .unclassified)
+                 info[VaultSaveConflict.errorKey] = kind.rawValue
++                if let recoveryID = body?["recoveryID"] as? String, UUID(uuidString:recoveryID) != nil { info["CanvasRecoveryID"] = recoveryID }
++                if let code = body?["code"] as? String { info["CanvasVaultErrorCode"] = code }
+                 // No raw error/recovery path parsing or private path disclosure.
+                 info[NSLocalizedDescriptionKey] = kind == .prepublication ?
+                     "Obsidian 게시 전에 저장 요청이 거부됐습니다. 입력을 보존했습니다. 원문을 다시 확인하세요." :
+@@ -290,3 +294,125 @@ struct CanvasRelay {
+                            as:AgentRevision?.self)
+     }
+ }
++
++
++extension CanvasRelay {
++    enum ConflictDecision: String, Codable, CaseIterable, Identifiable {
++        case keepCurrent, useDisplaced
++        var id: String { rawValue }
++        var title: String { self == .keepCurrent ? "현재 서버 원문 유지" : "보존된 외부 변경본 선택" }
++    }
++    struct ConflictExpected: Codable, Equatable {
++        let activeSha256: String?, baseSha256: String?, displacedSha256: String?, proposalSha256: String?
++        let historySha256: String
++        enum CodingKeys: String, CodingKey, CaseIterable { case activeSha256, baseSha256, displacedSha256, proposalSha256, historySha256 }
++        init(from decoder: Decoder) throws {
++            let c = try decoder.container(keyedBy:CodingKeys.self)
++            guard CodingKeys.allCases.allSatisfy({ c.contains($0) }) else { throw URLError(.badServerResponse) }
++            activeSha256 = try c.decodeIfPresent(String.self,forKey:.activeSha256)
++            baseSha256 = try c.decodeIfPresent(String.self,forKey:.baseSha256)
++            displacedSha256 = try c.decodeIfPresent(String.self,forKey:.displacedSha256)
++            proposalSha256 = try c.decodeIfPresent(String.self,forKey:.proposalSha256)
++            historySha256 = try c.decode(String.self,forKey:.historySha256)
++        }
++        func encode(to encoder: Encoder) throws {
++            var c = encoder.container(keyedBy:CodingKeys.self)
++            try c.encode(activeSha256,forKey:.activeSha256); try c.encode(baseSha256,forKey:.baseSha256)
++            try c.encode(displacedSha256,forKey:.displacedSha256); try c.encode(proposalSha256,forKey:.proposalSha256)
++            try c.encode(historySha256,forKey:.historySha256)
++        }
++    }
++    struct ConflictMaterial: Codable {
++        let sha256: String, markdownBase64: String
++        let validCanvas: Bool
++        let canvas: VaultCanvas?
++        let imagePNGBase64: String?
++        let refusal: String?
++        var markdown: String { Data(base64Encoded:markdownBase64).flatMap { String(data:$0,encoding:.utf8) } ?? "UTF-8 원문으로 표시할 수 없습니다. 원본 바이트는 서버에 보존됩니다." }
++        func validated(id: UUID, expected: String?) throws {
++            guard expected == sha256, Self.hash(sha256), let raw = Data(base64Encoded:markdownBase64),
++                  raw.count <= 1024*1024, CanvasPacket.sha(raw) == sha256 else { throw URLError(.badServerResponse) }
++            if validCanvas { _ = try scene(id:id) }
++            else { guard canvas == nil, imagePNGBase64 == nil, refusal?.isEmpty == false else { throw URLError(.badServerResponse) } }
++        }
++        static func hash(_ value: String) -> Bool { value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } }
++        func scene(id: UUID) throws -> CanvasScene {
++            guard validCanvas, let c = canvas, let png = imagePNGBase64.flatMap({ Data(base64Encoded:$0) }),
++                  png.count <= 5*1024*1024, png.starts(with:[137,80,78,71,13,10,26,10]),
++                  Self.hash(c.sceneSha256), Self.hash(c.imageSha256), c.noteSha256 == sha256,
++                  c.path == "CCR Canvas/\(id.uuidString.lowercased()).md",
++                  CanvasPacket.sha(png) == c.imageSha256,
++                  let source = CGImageSourceCreateWithData(png as CFData,nil), CGImageSourceGetCount(source) == 1,
++                  let properties = CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],
++                  let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
++                  width > 0, height > 0, width <= 8192, height <= 8192,
++                  CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,
++                    kCGImageSourceThumbnailMaxPixelSize:1024,kCGImageSourceShouldCache:false] as CFDictionary) != nil,
++                  let bytes = Data(base64Encoded:c.sceneJSONBase64), bytes.count <= CanvasScene.localByteLimit,
++                  CanvasPacket.sha(bytes) == c.sceneSha256 else { throw URLError(.badServerResponse) }
++            let scene = try JSONDecoder().decode(CanvasScene.self,from:bytes)
++            guard scene.id == id, scene.revision == c.revision, scene.width > 0, scene.height > 0,
++                  scene.nodes.count < 1000, scene.strokes.count < 10000, scene.nodes.allSatisfy(\.hasValidRotation) else { throw URLError(.badServerResponse) }
++            try scene.requireCompatibleNodeKinds(); try scene.validateNativeInkProjection()
++            return scene
++        }
++    }
++    struct ConflictMaterials: Codable {
++        let active: ConflictMaterial?, base: ConflictMaterial?, displaced: ConflictMaterial?, proposal: ConflictMaterial?
++    }
++    struct ConflictHistory: Codable {
++        let recoveryID: UUID
++        let files: [String:String?]
++    }
++    struct VaultConflict: Codable {
++        let schema: String, id: UUID, recoveryID: UUID, code: String
++        let reconciliationRequired: Bool, publicationAttempted: Bool
++        let expected: ConflictExpected, materials: ConflictMaterials
++        let history: [ConflictHistory]
++        func selected(_ decision: ConflictDecision) -> ConflictMaterial? { decision == .keepCurrent ? materials.active : materials.displaced }
++        func validated(id expectedID: UUID) throws -> Self {
++            guard schema == "ccr.canvas-conflict/v1", id == expectedID, code == "note_reconciliation_required",
++                  reconciliationRequired, ConflictMaterial.hash(expected.historySha256), history.count <= 32,
++                  Set(history.map(\.recoveryID)).count == history.count,
++                  history.allSatisfy({ $0.files.count <= 7 && $0.files.values.allSatisfy { $0.map(ConflictMaterial.hash) ?? true } }) else { throw URLError(.badServerResponse) }
++            for (material,hash) in [(materials.active,expected.activeSha256),(materials.base,expected.baseSha256),
++                                    (materials.displaced,expected.displacedSha256),(materials.proposal,expected.proposalSha256)] {
++                if let material { try material.validated(id:id,expected:hash) }
++                else if hash != nil { throw URLError(.badServerResponse) }
++            }
++            return self
++        }
++    }
++    struct ConflictResolution: Decodable {
++        let path: String, noteSha256: String, sceneSha256: String, imageSha256: String
++        let revision: Int, recoveryID: UUID
++        let decision: ConflictDecision
++        let resolved: Bool, reconciliationRequired: Bool
++    }
++    private struct ConflictRequest: Encodable {
++        let recoveryID: UUID, expected: ConflictExpected, decision: ConflictDecision
++    }
++    func vaultCanvasConflict(id: UUID) async throws -> VaultConflict {
++        try await response(request("/vault/canvas/conflict?id=\(id.uuidString.lowercased())"),as:VaultConflict.self,
++                           maximumBytes:64*1024*1024).validated(id:id)
++    }
++    func resolveVaultCanvasConflict(_ conflict: VaultConflict, decision: ConflictDecision) async throws -> (ConflictResolution,VaultCanvas) {
++        _ = try conflict.validated(id:conflict.id)
++        guard let material = conflict.selected(decision), let selected = material.canvas else { throw URLError(.cannotDecodeContentData) }
++        _ = try material.scene(id:conflict.id)
++        let body = try JSONEncoder().encode(ConflictRequest(recoveryID:conflict.recoveryID,expected:conflict.expected,decision:decision))
++        let result = try await response(request("/vault/canvas/conflict?id=\(conflict.id.uuidString.lowercased())",method:"PUT",body:body),as:ConflictResolution.self,maximumBytes:64*1024)
++        guard result.resolved, !result.reconciliationRequired, result.recoveryID == conflict.recoveryID,
++              result.decision == decision, result.path == selected.path, result.noteSha256 == selected.noteSha256,
++              result.sceneSha256 == selected.sceneSha256, result.imageSha256 == selected.imageSha256,
++              result.revision == selected.revision,
++              let reopened = try await vaultCanvas(id:conflict.id), reopened.reconciliationRequired != true,
++              reopened.path == result.path, reopened.noteSha256 == result.noteSha256,
++              reopened.sceneSha256 == result.sceneSha256, reopened.imageSha256 == result.imageSha256,
++              reopened.revision == result.revision, reopened.sceneJSONBase64 == selected.sceneJSONBase64 else { throw URLError(.badServerResponse) }
++        let note = try await vaultNote(at:selected.path)
++        guard note.reconciliationRequired != true, note.sha256 == selected.noteSha256,
++              Data(note.text.utf8) == Data(base64Encoded:material.markdownBase64) else { throw URLError(.badServerResponse) }
++        return (result,reopened)
++    }
++}
+diff --git a/iOSClient/CanvasBridge/CanvasStore.swift b/iOSClient/CanvasBridge/CanvasStore.swift
+index ad5d866..05261e8 100644
+--- a/iOSClient/CanvasBridge/CanvasStore.swift
++++ b/iOSClient/CanvasBridge/CanvasStore.swift
+@@ -2597,6 +2597,31 @@ final class CanvasStore: ObservableObject {
+         status = "장면을 가져왔습니다. 그림과 구조 데이터를 함께 복원했습니다."
+     }
+ 
++    var canApplyReconciledCanvas: Bool {
++        sceneReadable && fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
++        !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
++        !inkMathInputBusy && inkMathProposal == nil && !commentInputBusy && commentSession == nil && proposedNode == nil
++    }
++    // Explicit server reconciliation only. Preserve the exact local scene before replacing its cache.
++    func applyReconciledCanvas(_ imported: CanvasScene, expectedLocalSHA: String, preservedAt: URL) throws {
++        guard canApplyReconciledCanvas else { throw CocoaError(.userCancelled) }
++        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
++        let before = try encoder.encode(scene)
++        guard CanvasPacket.sha(before) == expectedLocalSHA,
++              CanvasPacket.sha(try CanvasLocalFile.read(preservedAt)) == expectedLocalSHA,
++              imported.id == scene.id, imported.hasSupportedInkProjection,
++              imported.width > 0, imported.height > 0, imported.nodes.count < 1000, imported.strokes.count < 10000,
++              imported.nodes.allSatisfy(\.hasValidRotation), let native = Data(base64Encoded:imported.drawingBase64) else {
++            throw VaultBlockRecoveryError.changed
++        }
++        _ = try native.isEmpty ? PKDrawing() : PKDrawing(data:native)
++        try imported.requireCompatibleNodeKinds(); try imported.validateNativeInkProjection()
++        // Both operations are synchronous after identical import guards. Cache IO fails before memory replacement.
++        try persistScene(imported)
++        try importScene(imported)
++        status = "명시적으로 선택한 서버 원본을 열었습니다. 이전 iPad 입력은 복구본에 보존했으며 Files 저장은 별도 대기 상태입니다."
++    }
++
+     @discardableResult
+     func applyAgentRevision(_ revision: AgentRevision) -> Bool {
+         if let settings = revision.setPenSettings {
+diff --git a/iOSClient/CanvasBridge/CanvasWorkspace.swift b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+index 003a3fd..b8a53d1 100644
+--- a/iOSClient/CanvasBridge/CanvasWorkspace.swift
++++ b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+@@ -1,4 +1,5 @@
+ import PencilKit
++import ImageIO
+ import SwiftUI
+ import UniformTypeIdentifiers
+ 
+@@ -40,12 +41,19 @@ struct CanvasWorkspace: View {
+     @State private var noteRecoveryDiscardOpen = false
+     @State private var vaultReview: CanvasStore.VaultReviewSession?
+     @State private var vaultRawMarkdown = false
++    @State private var syncedLocalSceneSha: String?
+     @State private var syncedSceneSha: String?
+     @State private var canvasNoteSha: String?
+     @State private var pendingSceneSha: String?
+     @State private var canvasVaultBlocked = false
+     @State private var canvasSaveConflict: VaultSaveConflict?
+     @State private var canvasConflictConfirmOpen = false
++    @State private var canvasConflictOpen = false
++    @State private var canvasConflict: CanvasRelay.VaultConflict?
++    @State private var canvasConflictLocalSHA: String?
++    @State private var canvasConflictDecision: CanvasRelay.ConflictDecision?
++    @State private var canvasConflictPending: CanvasConflictChoice?
++    @State private var canvasConflictStatus = ""
+     @State private var canvasSyncBusy = false
+     @State private var canvasVaultEnabled = true
+     @State private var vaultSceneID: UUID?
+@@ -82,6 +90,7 @@ struct CanvasWorkspace: View {
+                 _vaultSceneID = State(initialValue:checkpoint.sceneID)
+                 _vaultSyncAddress = State(initialValue:checkpoint.address)
+                 _syncedSceneSha = State(initialValue:checkpoint.sceneSha)
++                _syncedLocalSceneSha = State(initialValue:checkpoint.localSceneSha)
+                 _canvasNoteSha = State(initialValue:checkpoint.noteSha)
+                 _pendingSceneSha = State(initialValue:checkpoint.pendingSceneSha)
+                 _canvasVaultBlocked = State(initialValue:checkpoint.requiresExplicitReconciliation)
+@@ -177,12 +186,7 @@ struct CanvasWorkspace: View {
+                 }.padding()
+             }
+         }
+-        .alert("원문과 보존본 대조를 마쳤나요?",isPresented:$canvasConflictConfirmOpen) {
+-            Button("같은 내용일 때만 기준 조정") { Task { await reconcileCanvasConflict() } }
+-            Button("취소",role:.cancel) {}
+-        } message: {
+-            Text("서버에 제안본이 반영됐을 수 있습니다. 원문과 보존된 자료를 확인한 뒤 선택하세요. iPad와 원격 그림이 바이트로 같을 때만 동기화 기준을 조정하며 저장·되돌리기를 보내지 않습니다.")
+-        }
++        .sheet(isPresented:$canvasConflictOpen) { canvasConflictSheet }
+         .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+         .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
+         .onChange(of:relayToken) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+@@ -379,8 +383,7 @@ struct CanvasWorkspace: View {
+     private var toolsMenu: some View {
+         Menu("도구",systemImage:"slider.horizontal.3") {
+             if canvasVaultBlocked {
+-                Button("Obsidian 충돌 원문 확인") { Task { await readCanvasConflictNote() } }
+-                Button("보존본 대조 후 동기화 기준 조정") { canvasConflictConfirmOpen = true }
++                Button("Obsidian 충돌 자료 비교·명시 조정") { Task { await readCanvasConflictNote() } }
+                     .disabled(canvasSyncBusy || store.inkBusy || store.vaultInputBusy)
+                 Divider()
+             }
+@@ -779,7 +782,7 @@ struct CanvasWorkspace: View {
+         }
+         let data = try JSONEncoder().encode(CanvasVaultCheckpoint(
+             sceneID:store.scene.id,address:relayAddress,sceneSha:syncedSceneSha,
+-            noteSha:canvasNoteSha,pendingSceneSha:pendingSceneSha,saveConflict:canvasSaveConflict))
++            noteSha:canvasNoteSha,pendingSceneSha:pendingSceneSha,saveConflict:canvasSaveConflict,localSceneSha:syncedLocalSceneSha))
+         try CanvasLocalFile.write(data,to:Self.canvasVaultCheckpointURL())
+     }
+ 
+@@ -827,6 +830,7 @@ struct CanvasWorkspace: View {
+             vaultSceneID = store.scene.id
+             vaultSyncAddress = relayAddress
+             syncedSceneSha = nil
++            syncedLocalSceneSha = nil
+             canvasNoteSha = nil
+             pendingSceneSha = nil
+             canvasVaultBlocked = false
+@@ -870,6 +874,7 @@ struct CanvasWorkspace: View {
+                         return
+                     }
+                     syncedSceneSha = remote.sceneSha256
++                    syncedLocalSceneSha = remote.sceneSha256 == localSha ? localSha : nil
+                     canvasNoteSha = remote.noteSha256
+                     pendingSceneSha = nil
+                     try saveCanvasVaultCheckpoint()
+@@ -882,6 +887,7 @@ struct CanvasWorkspace: View {
+                         return
+                     }
+                     syncedSceneSha = remote.sceneSha256
++                    syncedLocalSceneSha = remote.sceneSha256 == localSha ? localSha : nil
+                     canvasNoteSha = remote.noteSha256
+                     pendingSceneSha = nil
+                     try saveCanvasVaultCheckpoint()
+@@ -891,7 +897,7 @@ struct CanvasWorkspace: View {
+                 store.status = "Obsidian 그림 파일이 없어졌습니다. 자동 재생성을 중단했습니다."
+                 return
+             }
+-            guard localSha != syncedSceneSha else { return }
++            guard localSha != (syncedLocalSceneSha ?? syncedSceneSha) else { return }
+             let baseSha = canvasNoteSha
+             guard let image = await SceneRenderer.png(scene:scene), current(),
+                   canvasNoteSha == baseSha else { return }
+@@ -902,6 +908,7 @@ struct CanvasWorkspace: View {
+                                                              baseSha256:baseSha)
+             guard current(), canvasNoteSha == baseSha else { return }
+             syncedSceneSha = saved.sceneSha256
++            syncedLocalSceneSha = localSha
+             canvasNoteSha = saved.noteSha256
+             pendingSceneSha = nil
+             try saveCanvasVaultCheckpoint()
+@@ -923,15 +930,179 @@ struct CanvasWorkspace: View {
+         }
+     }
+ 
++    private enum CanvasConflictChoiceState: String, Codable { case pending, refreshRequired, resolved, superseded }
++    private struct CanvasConflictChoice: Codable {
++        let address: String, localSHA: String, backupFilename: String
++        let conflict: CanvasRelay.VaultConflict
++        let decision: CanvasRelay.ConflictDecision
++        var disposition = CanvasConflictChoiceState.pending
++    }
++    private func conflictChoiceURL() throws -> URL {
++        try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent("CanvasConflictChoice.json")
++    }
+     private func readCanvasConflictNote() async {
+-        guard canvasVaultBlocked, !canvasSyncBusy else { return }
++        guard canvasVaultBlocked, !canvasSyncBusy, !store.inkBusy, !store.vaultInputBusy else { return }
+         let id = store.scene.id, address = relayAddress, token = relayToken
+         do {
+-            guard let remote = try await relay.vaultCanvas(id:id), canvasVaultBlocked,
+-                  store.scene.id == id, relayAddress == address, relayToken == token else { return }
+-            await openVaultNote(remote.path)
+-            if store.vaultNote?.path == remote.path { vaultOpen = true }
+-        } catch { store.status = "원문 읽기 실패 · 충돌 상태와 iPad 입력을 유지합니다. \(error.localizedDescription)" }
++            let local = CanvasPacket.sha(try sceneBytes())
++            if let data = try? CanvasLocalFile.read(conflictChoiceURL()) {
++                guard data.count <= 65*1024*1024 else { throw URLError(.dataLengthExceedsMaximum) }
++                let prior = try JSONDecoder().decode(CanvasConflictChoice.self,from:data)
++                if prior.disposition == .pending || prior.disposition == .refreshRequired {
++                    guard prior.address == address, prior.conflict.id == id else { throw VaultBlockRecoveryError.context }
++                    _ = try prior.conflict.validated(id:id)
++                    let selected = try prior.conflict.selected(prior.decision)?.scene(id:id)
++                    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
++                    let selectedSHA = try selected.map { CanvasPacket.sha(try encoder.encode($0)) }
++                    guard local == prior.localSHA || local == selectedSHA else { throw VaultBlockRecoveryError.changed }
++                    canvasConflict = prior.conflict; canvasConflictPending = prior
++                    canvasConflictLocalSHA = local
++                    canvasConflictStatus = prior.disposition == .refreshRequired ?
++                        "서버의 보존 자료가 바뀌었습니다. 이전 선택 요청은 보존하며 새 자료를 다시 읽고 대조해야 합니다." :
++                        "이전 선택의 결과가 미확인입니다. 같은 선택만 명시적으로 확인할 수 있습니다. 다른 선택은 새 자료를 읽고 다시 대조해야 합니다."
++                    canvasConflictOpen = true
++                    return
++                }
++            }
++            canvasSyncBusy = true; defer { canvasSyncBusy = false }
++            let snapshot = try await relay.vaultCanvasConflict(id:id)
++            guard store.scene.id == id, relayAddress == address, relayToken == token,
++                  canvasVaultBlocked, CanvasPacket.sha(try sceneBytes()) == local else { throw VaultBlockRecoveryError.changed }
++            canvasConflict = snapshot; canvasConflictPending = nil; canvasConflictLocalSHA = local
++            canvasConflictStatus = "현재·기준·외부 변경·제안본을 대조한 뒤 유효한 후보를 선택하세요. 이 조회는 저장하지 않습니다."
++            canvasConflictOpen = true
++        } catch { store.status = "충돌 자료 읽기 실패 · 원본과 차단 상태 유지: \(error.localizedDescription)" }
++    }
++    private func resolveCanvasConflict(_ decision: CanvasRelay.ConflictDecision) async {
++        guard canvasVaultBlocked, !canvasSyncBusy, store.canApplyReconciledCanvas, !proposalInputBusy,
++              let snapshot = canvasConflict, let localSHA = canvasConflictLocalSHA else { return }
++        let id = store.scene.id, address = relayAddress, token = relayToken
++        canvasSyncBusy = true; defer { canvasSyncBusy = false }
++        do {
++            guard snapshot.id == id, CanvasPacket.sha(try sceneBytes()) == localSHA,
++                  let chosen = snapshot.selected(decision) else { throw VaultBlockRecoveryError.changed }
++            let selectedScene = try chosen.scene(id:id)
++            let choice: CanvasConflictChoice
++            if let pending = canvasConflictPending {
++                let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
++                let selectedSHA = CanvasPacket.sha(try encoder.encode(selectedScene))
++                guard pending.decision == decision, pending.address == address,
++                      (pending.localSHA == localSHA || selectedSHA == localSHA), pending.conflict.recoveryID == snapshot.recoveryID,
++                      pending.conflict.expected == snapshot.expected else { throw VaultBlockRecoveryError.context }
++                choice = pending
++            } else {
++                let filename = "CanvasConflictLocal-\(UUID().uuidString.lowercased()).json"
++                let backup = try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent(filename)
++                let bytes = try sceneBytes()
++                try CanvasLocalFile.write(bytes,to:backup)
++                guard CanvasPacket.sha(try CanvasLocalFile.read(backup)) == localSHA else { throw VaultBlockRecoveryError.changed }
++                choice = CanvasConflictChoice(address:address,localSHA:localSHA,backupFilename:filename,conflict:snapshot,decision:decision)
++                let journal = try JSONEncoder().encode(choice)
++                guard journal.count <= 65*1024*1024 else { throw URLError(.dataLengthExceedsMaximum) }
++                try CanvasLocalFile.write(journal,to:conflictChoiceURL())
++                canvasConflictPending = choice
++            }
++            guard choice.backupFilename.hasPrefix("CanvasConflictLocal-"), choice.backupFilename.hasSuffix(".json"),
++                  UUID(uuidString:String(choice.backupFilename.dropFirst("CanvasConflictLocal-".count).dropLast(5))) != nil else { throw VaultBlockRecoveryError.corrupt }
++            let backup = try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent(choice.backupFilename)
++            guard CanvasPacket.sha(try CanvasLocalFile.read(backup)) == choice.localSHA else { throw VaultBlockRecoveryError.corrupt }
++            let (resolved,_) = try await relay.resolveVaultCanvasConflict(snapshot,decision:decision)
++            guard canvasVaultBlocked, store.scene.id == id, relayAddress == address, relayToken == token,
++                  store.canApplyReconciledCanvas, !proposalInputBusy, CanvasPacket.sha(try sceneBytes()) == localSHA else { throw VaultBlockRecoveryError.changed }
++            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
++            if CanvasPacket.sha(try encoder.encode(selectedScene)) != localSHA {
++                try store.applyReconciledCanvas(selectedScene,expectedLocalSHA:localSHA,preservedAt:backup)
++            }
++            let canonicalSHA = CanvasPacket.sha(try sceneBytes())
++            let checkpoint = CanvasVaultCheckpoint(sceneID:id,address:address,sceneSha:resolved.sceneSha256,
++                noteSha:resolved.noteSha256,pendingSceneSha:nil,saveConflict:nil,localSceneSha:canonicalSHA)
++            try CanvasLocalFile.write(JSONEncoder().encode(checkpoint),to:Self.canvasVaultCheckpointURL())
++            var complete = choice; complete.disposition = .resolved
++            try CanvasLocalFile.write(JSONEncoder().encode(complete),to:conflictChoiceURL())
++            syncedSceneSha = resolved.sceneSha256; syncedLocalSceneSha = canonicalSHA; canvasNoteSha = resolved.noteSha256
++            pendingSceneSha = nil; canvasSaveConflict = nil; canvasVaultBlocked = false
++            canvasConflictPending = nil; canvasConflict = nil; canvasConflictOpen = false
++            store.status = "서버의 명시 조정·원문 재조회·선택본 적용을 확인했습니다. 이전 iPad 입력과 서버 보존본은 유지하며 Files 저장은 별도 상태입니다."
++        } catch {
++            // Typed409 may point to a new child journal. Preserve this request and require a fresh GET, never retry it.
++            if VaultSaveConflict.classified(error) != nil, var prior = canvasConflictPending {
++                prior.disposition = .refreshRequired; canvasConflictPending = prior
++                try? CanvasLocalFile.write(JSONEncoder().encode(prior),to:conflictChoiceURL())
++            }
++            canvasConflictStatus = "조정 미확인 · 입력·보존본과 차단 상태를 유지합니다. 같은 선택의 결과 확인 또는 새 자료 대조가 필요합니다. \(error.localizedDescription)"
++            store.status = canvasConflictStatus
++        }
++    }
++    private func readNewConflictMaterials() async {
++        guard canvasVaultBlocked, !canvasSyncBusy, !store.inkBusy, !store.vaultInputBusy else { return }
++        let id = store.scene.id, address = relayAddress, token = relayToken
++        canvasSyncBusy = true; defer { canvasSyncBusy = false }
++        do {
++            let local = CanvasPacket.sha(try sceneBytes())
++            let next = try await relay.vaultCanvasConflict(id:id)
++            guard store.scene.id == id, relayAddress == address, relayToken == token,
++                  CanvasPacket.sha(try sceneBytes()) == local else { throw VaultBlockRecoveryError.changed }
++            if let bytes = try? CanvasLocalFile.read(conflictChoiceURL()) {
++                let archive = try Self.canvasVaultCheckpointURL().deletingLastPathComponent()
++                    .appendingPathComponent("CanvasConflictAttempt-\(UUID().uuidString.lowercased()).json")
++                try CanvasLocalFile.write(bytes,to:archive)
++                var prior = try JSONDecoder().decode(CanvasConflictChoice.self,from:bytes); prior.disposition = .superseded
++                try CanvasLocalFile.write(JSONEncoder().encode(prior),to:conflictChoiceURL())
++            }
++            canvasConflictPending = nil; canvasConflict = next; canvasConflictLocalSHA = local
++            canvasConflictStatus = "이전 요청을 보존하고 현재 자료를 다시 읽었습니다. 변경 내용을 다시 대조한 뒤 선택하세요."
++        } catch { canvasConflictStatus = "새 자료 읽기 실패 · 이전 선택 요청과 차단 상태를 유지합니다. \(error.localizedDescription)" }
++    }
++    private var canvasConflictSheet: some View {
++        NavigationStack {
++            ScrollView {
++                VStack(alignment:.leading,spacing:16) {
++                    Text(canvasConflictStatus).font(.footnote).foregroundStyle(.orange)
++                    if let snapshot = canvasConflict {
++                        Text("보존 조정 시도 \(snapshot.history.count)개 · 자료는 자동 삭제하지 않습니다.").font(.caption)
++                        Text(snapshot.materials.active?.sha256 == snapshot.materials.displaced?.sha256 ?
++                            "현재 원문과 외부 변경본의 바이트가 같습니다." : "현재 원문과 외부 변경본의 바이트가 다릅니다. 아래 원문과 미리보기를 대조하세요.")
++                        conflictMaterial("현재 서버 원문",snapshot.materials.active)
++                        conflictMaterial("저장 전 기준 원문",snapshot.materials.base)
++                        conflictMaterial("보존된 외부 변경본",snapshot.materials.displaced)
++                        conflictMaterial("제안본",snapshot.materials.proposal)
++                        ForEach(CanvasRelay.ConflictDecision.allCases) { decision in
++                            Button(canvasConflictPending == nil ? decision.title : "같은 선택 결과 확인 · " + decision.title) {
++                                canvasConflictDecision = decision; canvasConflictConfirmOpen = true
++                            }.frame(minHeight:44)
++                                .disabled(canvasSyncBusy || snapshot.selected(decision)?.validCanvas != true ||
++                                    canvasConflictPending?.disposition == .refreshRequired ||
++                                    (canvasConflictPending != nil && canvasConflictPending?.decision != decision))
++                                .accessibilityIdentifier("canvasConflict-" + decision.rawValue)
++                        }
++                        Button("이전 요청을 보존하고 새 자료 다시 읽기") { Task { await readNewConflictMaterials() } }
++                            .disabled(canvasSyncBusy)
++                    }
++                }.padding()
++            }.navigationTitle("Obsidian 충돌 자료 비교")
++                .toolbar { Button("닫기") { canvasConflictOpen = false }.disabled(canvasSyncBusy) }
++        }.interactiveDismissDisabled(canvasSyncBusy)
++        .alert("선택한 서버 원본으로 조정할까요?",isPresented:$canvasConflictConfirmOpen) {
++            Button("이 선택으로 명시 조정") { if let decision = canvasConflictDecision { Task { await resolveCanvasConflict(decision) } } }
++            Button("취소",role:.cancel) {}
++        } message: {
++            Text("선택한 원문을 서버에 적용하고 다시 읽어 확인합니다. 이전 iPad 입력은 별도 복구본에 보존합니다. 원본 보존 자료는 삭제하지 않으며, 도중에 입력이나 서버 상태가 바뀌면 자동으로 다시 보내지 않습니다.")
++        }
++    }
++    @ViewBuilder private func conflictMaterial(_ title: String,_ material: CanvasRelay.ConflictMaterial?) -> some View {
++        DisclosureGroup(title) {
++            if let material {
++                Text(material.sha256).font(.caption2).textSelection(.enabled)
++                Text(material.validCanvas ? "그림·원문·원본 SHA 검증됨" : "Canvas로 열 수 없는 자료 · 원문 대조만 가능").font(.caption)
++                if let encoded = material.imagePNGBase64, let data = Data(base64Encoded:encoded),
++                   let source = CGImageSourceCreateWithData(data as CFData,nil),
++                   let image = CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,
++                    kCGImageSourceThumbnailMaxPixelSize:1024] as CFDictionary) {
++                    Image(decorative:image,scale:1).resizable().scaledToFit().frame(maxHeight:220)
++                }
++                ScrollView([.horizontal,.vertical]) { Text(material.markdown).font(.system(.caption,design:.monospaced)).textSelection(.enabled) }.frame(height:180)
++            } else { Text("보존 자료 없음").font(.caption) }
++        }
+     }
+ 
+     private func reconcileCanvasConflict() async {
+@@ -981,19 +1152,21 @@ struct CanvasWorkspace: View {
+             let localSha = CanvasPacket.sha(try sceneBytes())
+             if remote.sceneSha256 == localSha {
+                 self.syncedSceneSha = remote.sceneSha256
++                self.syncedLocalSceneSha = remote.sceneSha256 == localSha ? localSha : nil
+                 self.canvasNoteSha = remote.noteSha256
+                 pendingSceneSha = nil
+                 try saveCanvasVaultCheckpoint()
+                 return
+             }
+-            if localSha != syncedSceneSha,
++            if localSha != (syncedLocalSceneSha ?? syncedSceneSha),
+                remoteCanvasIsPrefix(remote,of:store.scene,drawing:store.drawing) {
+                 self.syncedSceneSha = remote.sceneSha256
++                self.syncedLocalSceneSha = remote.sceneSha256 == localSha ? localSha : nil
+                 self.canvasNoteSha = remote.noteSha256
+                 try saveCanvasVaultCheckpoint()
+                 return
+             }
+-            guard localSha == syncedSceneSha, remote.sceneSha256 != syncedSceneSha,
++            guard localSha == (syncedLocalSceneSha ?? syncedSceneSha), remote.sceneSha256 != syncedSceneSha,
+                   let bytes = Data(base64Encoded:remote.sceneJSONBase64) else {
+                 canvasVaultBlocked = true
+                 store.status = "Obsidian에서 그림이 바뀌었습니다. iPad 원본을 보존했습니다."
+@@ -1003,6 +1176,7 @@ struct CanvasWorkspace: View {
+             try store.importScene(imported)
+             store.saveNow()
+             self.syncedSceneSha = remote.sceneSha256
++            self.syncedLocalSceneSha = CanvasPacket.sha(try sceneBytes())
+             self.canvasNoteSha = remote.noteSha256
+             pendingSceneSha = nil
+             try saveCanvasVaultCheckpoint()
