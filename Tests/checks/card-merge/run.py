@@ -25,10 +25,10 @@ out.mkdir()
 for name in ['home', 'tmp']:
     (out / name).mkdir()
 env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
-           HOME=str(out / 'home'), CFFIXED_USER_HOME=str(out / 'home'), TMPDIR=str(out / 'tmp') + '/')
+           CFFIXED_USER_HOME=str(out / 'home'), TMPDIR=str(out / 'tmp') + '/')
 canvas = root / 'iOSClient/CanvasBridge'
 sources = [canvas / (name + '.swift') for name in [
-    'CanvasModel', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
+    'CanvasModel', 'VaultPDFExcerpt', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
     'CanvasInkMathProposal', 'CanvasInkSpacingProposal', 'CanvasCardMerge', 'CanvasRelay', 'ControlRoomProjection'
 ]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / 'main.swift']
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'

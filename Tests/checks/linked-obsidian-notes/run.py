@@ -20,6 +20,7 @@ if not any(parent.exists() and parent.samefile(archive['path']) for parent in [o
 output.mkdir(parents=True, exist_ok=True)
 sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            root / 'iOSClient/CanvasBridge/VaultPDFExcerpt.swift',
+           root / 'iOSClient/CanvasBridge/CanvasCardMerge.swift',
            root / 'iOSClient/CanvasBridge/CanvasStore.swift',
            root / 'iOSClient/CanvasBridge/PencilTextCorrection.swift',
            root / 'iOSClient/CanvasBridge/CanvasInkTextEditing.swift',
