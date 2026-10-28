@@ -1,0 +1,235 @@
+--- a/iOSClient/CanvasBridge/CanvasStore.swift
++++ b/iOSClient/CanvasBridge/CanvasStore.swift
+@@ -119,6 +119,7 @@
+ final class CanvasStore: ObservableObject {
+     @Published var scene = CanvasScene() {
+         didSet {
++            inkMathRequest = nil
+             linkSceneGeneration &+= 1
+             nodeResizeDrag = nil
+             nodeRotationDrag = nil
+@@ -141,6 +142,7 @@
+     @Published var mode: CanvasMode = .pen {
+         didSet {
+             if oldValue != mode {
++                cancelInkMath()
+                 nodeResizeDrag = nil
+                 nodeRotationDrag = nil
+                 clearPendingLink()
+@@ -199,6 +201,63 @@
+     func rulerIsActive(isVisible: Bool) -> Bool {
+         rulerEnabled && mode == .pen && isVisible
+     }
++    @Published private(set) var inkMathProposal: CanvasInkMathProposal?
++    @Published var inkMathDraft = ""
++    @Published var inkMathInputBusy = false
++    private var inkMathRequest: UUID?
++    private var inkMathGeneration: UInt64?
++    private var inkMathSelectionGeneration: UInt64 = 0
++    private var inkMathExpectedSelectionGeneration: UInt64?
++    var inkMathIsCurrent: Bool {
++        guard let proposal = inkMathProposal else { return false }
++        return !inkBusy && mode == .lasso && proposal.source == scene &&
++            proposal.selection == inkSelection && inkMathGeneration == linkSceneGeneration &&
++            inkMathExpectedSelectionGeneration == inkMathSelectionGeneration
++    }
++    func cancelInkMath() { inkMathRequest = nil; inkMathProposal = nil; inkMathInputBusy = false }
++
++    func proposeInkMath(recognize: (PKDrawing) async -> String? = { drawing in
++        let recognizer = PKStrokeRecognizer()
++        await recognizer.updateDrawing(drawing)
++        return await recognizer.recognizedText()
++    }) async {
++        cancelInkMath()
++        guard !inkBusy, mode == .lasso else { status = "영역 선택 도구로 수식을 먼저 선택하세요."; return }
++        do {
++            let snapshot = try CanvasInkMathProposal.capture(scene:scene,drawing:drawing,selection:inkSelection,recognized:nil)
++            let request = UUID(), generation = linkSceneGeneration, selectionGeneration = inkMathSelectionGeneration
++            inkMathRequest = request
++            let recognized = await recognize(snapshot.original)
++            guard inkMathRequest == request, generation == linkSceneGeneration,
++                  selectionGeneration == inkMathSelectionGeneration, snapshot.source == scene,
++                  snapshot.selection == inkSelection, mode == .lasso, !inkBusy else { return }
++            inkMathRequest = nil
++            inkMathProposal = try CanvasInkMathProposal.capture(scene:scene,drawing:drawing,selection:inkSelection,recognized:recognized)
++            inkMathDraft = recognized ?? ""
++            inkMathGeneration = generation
++            inkMathExpectedSelectionGeneration = selectionGeneration
++            status = recognized == nil ? "인식 후보가 없습니다. 원본을 보며 식을 직접 교정하세요." : "인식 후보를 원본과 비교하고 식을 교정한 뒤 확정하세요."
++        } catch { status = error.localizedDescription }
++    }
++
++    @discardableResult
++    func confirmInkMath() -> Bool {
++        guard inkMathIsCurrent, !inkMathInputBusy, let proposal = inkMathProposal else {
++            status = "원본·선택이 바뀌었거나 입력 중입니다. 현재 초안과 원본을 유지합니다."
++            return false
++        }
++        do {
++            let before = scene
++            let next = try proposal.confirmed(in:scene,selection:inkSelection,expression:inkMathDraft)
++            try persistScene(next)
++            scene = next
++            recordGraphEdit(before:before)
++            cancelInkMath()
++            status = "확인한 수식과 계산 결과를 메모로 저장했습니다. 원본 획은 보존했습니다."
++            return true
++        } catch { status = error.localizedDescription; return false }
++    }
++
+     @Published private(set) var inkSelection: Set<UUID> = []
+     static let eraserStyleKey = "canvasEraserStyle"
+     static let eraserSizeKey = "canvasPartialEraserWidth"
+@@ -2232,6 +2291,8 @@
+     func setInkSelection(_ ids: Set<UUID>) {
+         let next = ids.intersection(drawing.strokes.map(\.id))
+         guard next != inkSelection else { return }
++        inkMathRequest = nil
++        inkMathSelectionGeneration &+= 1
+         inkSelection = next
+         handwritingRequest = nil
+     }
+--- a/iOSClient/CanvasBridge/CanvasWorkspace.swift
++++ b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+@@ -32,6 +32,7 @@
+     @State private var commentSelection = NSRange(location:0,length:0)
+     @State private var proposalSelection = NSRange(location:0,length:0)
+     @State private var proposalInputBusy = false
++    @State private var mathSelection = NSRange(location:0,length:0)
+     @State private var handwritingSearchOpen = false
+     @State private var handwritingQuery = ""
+     @State private var dictationOpen = false
+@@ -139,7 +140,8 @@
+         }
+         .background(Color.black)
+         .preferredColorScheme(.dark)
+-        .onDisappear { dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
++        .sheet(item:Binding(get:{ store.inkMathProposal },set:{ if $0 == nil { store.cancelInkMath() } })) { _ in inkMathSheet }
++        .onDisappear { store.cancelInkMath(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+         .onChange(of:scenePhase) { _,phase in
+             if phase != .active {
+                 store.cancelLink()
+@@ -382,6 +384,9 @@
+             .accessibilityValue(store.eraserStyle == .partial ? store.eraserSize.label : "획 전체 지우기에서는 적용되지 않음")
+             .accessibilityHint("CCR에서 정한 캔버스 포인트 단위이며 확대 비율에 따라 표시 크기가 달라집니다.")
+             .accessibilityIdentifier("canvasPartialEraserSize")
++            Button("선택한 수식 계산",systemImage:"function") { Task { await store.proposeInkMath() } }
++                .disabled(store.inkSelection.isEmpty || store.mode != .lasso || store.inkBusy)
++                .accessibilityIdentifier("canvasProposeInkMath")
+             Button("상자") { store.addNode(.box) }
+             Button("메모") { store.addNode(.note) }
+             Button("손글씨 찾기",systemImage:"magnifyingglass") { handwritingSearchOpen = true }
+@@ -1179,6 +1184,46 @@
+         }
+     }
+ 
++    private var inkMathSheet: some View {
++        NavigationStack {
++            Form {
++                if let proposal = store.inkMathProposal {
++                    CanvasInkMathOriginalPreview(drawing:proposal.original).frame(height:180)
++                    Text("원문 인식 후보: \(proposal.recognizedText ?? "없음 · 직접 교정이 필요합니다")")
++                    Text("원본을 보며 식만 입력하세요. 예: (1+2)÷2. Apple Pencil 손글씨 입력이나 키보드로 교정할 수 있습니다.")
++                    VaultMarkdownEditor(text:$store.inkMathDraft,selection:$mathSelection,
++                        identifier:"canvasInkMathEditor",label:"수식 교정 편집기",
++                        inputBusy:$store.inkMathInputBusy,editSession:{ store.inkMathProposal?.id })
++                        .id(proposal.id).frame(minHeight:180)
++                    if let calculation = try? CanvasInkMathProposal.calculate(store.inkMathDraft) {
++                        Text("계산 미리보기: \(calculation.expression) = \(calculation.result)")
++                            .accessibilityIdentifier("canvasInkMathResult")
++                    } else {
++                        Text(inkMathFailure).foregroundStyle(.orange)
++                    }
++                    if !store.inkMathIsCurrent { Text("원본이나 선택이 바뀌었습니다. 초안은 유지하며 확정하지 않습니다.").foregroundStyle(.red) }
++                    Text(store.status)
++                }
++            }
++            .navigationTitle("수식 교정과 계산 확인")
++            .toolbar {
++                ToolbarItem(placement:.confirmationAction) {
++                    Button("원본을 보존하고 확정") { _ = store.confirmInkMath() }
++                        .disabled(!store.inkMathIsCurrent || store.inkMathInputBusy || (try? CanvasInkMathProposal.calculate(store.inkMathDraft)) == nil)
++                        .accessibilityIdentifier("canvasConfirmInkMath")
++                }
++                ToolbarItem(placement:.cancellationAction) {
++                    Button("취소") { store.cancelInkMath() }.disabled(store.inkMathInputBusy)
++                }
++            }
++        }.interactiveDismissDisabled(store.inkMathInputBusy)
++         .onAppear { mathSelection = NSRange(location:0,length:0) }
++    }
++    private var inkMathFailure: String {
++        do { _ = try CanvasInkMathProposal.calculate(store.inkMathDraft); return "" }
++        catch { return error.localizedDescription }
++    }
++
+     private var proposalSheet: some View {
+         NavigationStack {
+             Form {
+--- a/iOSClient/Sill.xcodeproj/project.pbxproj
++++ b/iOSClient/Sill.xcodeproj/project.pbxproj
+@@ -89,6 +89,7 @@
+ 		A1000001000000000000AB01 /* DuoPosture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB01 /* DuoPosture.swift */; };
+ 		A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
+ 		B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000F001 /* PencilTextCorrection.swift */; };
++		6A7A20261029000000000000 /* CanvasInkMathProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A20261029000000000001 /* CanvasInkMathProposal.swift */; };
+ 		B2000001000000000000A001 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
+ 		B2000001000000000000A002 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
+ 		B2000001000000000000A003 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
+@@ -172,6 +173,7 @@
+ 		0364640D40BCD2A5A34F4C92 /* DuoPosture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB01 /* DuoPosture.swift */; };
+ 		2375D34FA9899ACF736E899A /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
+ 		D24052ABBDDD29A6A5DE4F8B /* PencilTextCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000F001 /* PencilTextCorrection.swift */; };
++		6A7A20261029000000000002 /* CanvasInkMathProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7A20261029000000000001 /* CanvasInkMathProposal.swift */; };
+ 		8120D38B28D3FA07C94A2C79 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
+ 		7BAF96FF18E05E678BDAAD15 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
+ 		F171544FC7BFE8A0CB69160D /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
+@@ -294,6 +296,7 @@
+ 		A1000001000000000000FB01 /* DuoPosture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPosture.swift; sourceTree = "<group>"; };
+ 		A1000001000000000000FB02 /* DuoPostureReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPostureReader.swift; sourceTree = "<group>"; };
+ 		B2000021000000000000F001 /* PencilTextCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilTextCorrection.swift; sourceTree = "<group>"; };
++		6A7A20261029000000000001 /* CanvasInkMathProposal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasInkMathProposal.swift; sourceTree = "<group>"; };
+ 		B2000001000000000000F001 /* CanvasModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasModel.swift; sourceTree = "<group>"; };
+ 		B2000001000000000000F002 /* CanvasRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasRelay.swift; sourceTree = "<group>"; };
+ 		B2000001000000000000F003 /* CanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasStore.swift; sourceTree = "<group>"; };
+@@ -453,6 +456,7 @@
+ 			children = (
+ 				B2000001000000000000F001 /* CanvasModel.swift */,
+ 				B2000021000000000000F001 /* PencilTextCorrection.swift */,
++				6A7A20261029000000000001 /* CanvasInkMathProposal.swift */,
+ 				B2000001000000000000F013 /* CanvasPeleView.swift */,
+ 				B2000001000000000000F014 /* Pele */,
+ 				B2000001000000000000F002 /* CanvasRelay.swift */,
+@@ -686,6 +690,7 @@
+ 				A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */,
+ 				B2000001000000000000A001 /* CanvasModel.swift in Sources */,
+ 				B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */,
++				6A7A20261029000000000000 /* CanvasInkMathProposal.swift in Sources */,
+ 				B2000001000000000000A013 /* CanvasPeleView.swift in Sources */,
+ 				B2000001000000000000A002 /* CanvasRelay.swift in Sources */,
+ 				B2000001000000000000A003 /* CanvasStore.swift in Sources */,
+@@ -793,6 +798,7 @@
+ 				2375D34FA9899ACF736E899A /* DuoPostureReader.swift in Sources */,
+ 				8120D38B28D3FA07C94A2C79 /* CanvasModel.swift in Sources */,
+ 				D24052ABBDDD29A6A5DE4F8B /* PencilTextCorrection.swift in Sources */,
++				6A7A20261029000000000002 /* CanvasInkMathProposal.swift in Sources */,
+ 				BC19A867F7B274D2FE4D33B8 /* CanvasPeleView.swift in Sources */,
+ 				7BAF96FF18E05E678BDAAD15 /* CanvasRelay.swift in Sources */,
+ 				F171544FC7BFE8A0CB69160D /* CanvasStore.swift in Sources */,
+--- a/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj
++++ b/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj
+@@ -4,11 +4,13 @@
+  classes = {};
+  objectVersion = 56;
+  objects = {
++  6A7A20261028000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkMathProposal.swift"; sourceTree = "<group>"; };
++  6A7A20261028000000000002 = {isa = PBXBuildFile; fileRef = 6A7A20261028000000000001; };
+   A00000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600; TargetAttributes = {A00000000000000000000002 = {CreatedOnToolsVersion = 16.0; }; A00000000000000000000030 = {CreatedOnToolsVersion = 27.0; TestTargetID = A00000000000000000000002; }; }; }; buildConfigurationList = A00000000000000000000003; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,Base); mainGroup = A00000000000000000000004; productRefGroup = A00000000000000000000005; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000002,A00000000000000000000030); };
+   A00000000000000000000002 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000006; buildPhases = (A00000000000000000000007,A00000000000000000000043,); buildRules = (); dependencies = (); name = CanvasBridge; productName = CanvasBridge; productReference = A00000000000000000000008; productType = "com.apple.product-type.application"; };
+   A00000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000009,A0000000000000000000000A); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+   A00000000000000000000006 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000B,A0000000000000000000000C); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+-  A00000000000000000000004 = {isa = PBXGroup; children = (A00000000000000000000040,A00000000000000000000044,A0000000000000000000000D,A00000000000000000000033,A00000000000000000000005); sourceTree = "<group>"; };
++  A00000000000000000000004 = {isa = PBXGroup; children = (6A7A20261028000000000001,A00000000000000000000040,A00000000000000000000044,A0000000000000000000000D,A00000000000000000000033,A00000000000000000000005); sourceTree = "<group>"; };
+   A00000000000000000000005 = {isa = PBXGroup; children = (A00000000000000000000008,A00000000000000000000032); name = Products; sourceTree = "<group>"; };
+   A00000000000000000000033 = {isa = PBXGroup; children = (A00000000000000000000034); path = CanvasBridgeUITests; sourceTree = "<group>"; };
+   A0000000000000000000000D = {isa = PBXGroup; children = (A00000000000000000000010,A00000000000000000000011,A00000000000000000000012,A00000000000000000000013,A00000000000000000000014,A00000000000000000000015,A00000000000000000000016,A00000000000000000000017); path = CanvasBridge; sourceTree = "<group>"; };
