@@ -252,6 +252,25 @@ def runtime_readback(config, work, test_id, bundle=None, optional=False):
     require(data.get('schema') == 'ccr.ipad-test-runtime/v1' and isinstance(data.get('id'),str) and data['id'].lower() == test_id.lower(), 'runtime_context_mismatch')
     return data, destination
 
+def artifact_code_images(files, executable):
+    require(isinstance(executable,str) and re.fullmatch('[A-Za-z0-9_.-]+',executable) and executable in files,
+            'prepared_code_image_executable_missing')
+    names = [executable] + ([executable + '.debug.dylib'] if executable + '.debug.dylib' in files else [])
+    return {name:files[name] for name in names}
+
+def validate_runtime_code_images(runtime, expected, installation_url):
+    require(runtime.get('codeImages') == expected, 'runtime_code_images_missing_or_mismatched')
+    paths = runtime.get('loadedCodeImagePaths')
+    require(isinstance(paths,dict) and set(paths) == set(expected), 'runtime_code_images_loaded_paths_missing')
+    root = urllib.parse.unquote(urllib.parse.urlsplit(installation_url).path).rstrip('/')
+    def normalized(path):
+        require(isinstance(path,str) and path.startswith('/') and not any(p in ['.','..'] for p in path.split('/')),
+                'runtime_code_images_loaded_path_invalid')
+        return path.removeprefix('/private') if path.startswith('/private/var/') else path
+    require(all(normalized(paths[name]) == normalized(root + '/' + name) for name in expected),
+            'runtime_code_images_loaded_path_mismatch')
+
+
 def version_tuple(value):
     require(isinstance(value, str) and re.fullmatch(r'\d+(?:\.\d+){0,2}', value), 'normal_build_version_invalid')
     parts = tuple(int(part) for part in value.split('.'))
@@ -616,6 +635,9 @@ def deploy_prepared(config, work, source):
                         '--', '--ccr-test-runtime', test_id], work / 'prepared-launch.log')
         time.sleep(2)
         runtime, evidence = runtime_readback(config, work, test_id, bundle=USER_BUNDLE)
+        executable = plistlib.loads((staged / 'Info.plist').read_bytes())['CFBundleExecutable']
+        code_images = artifact_code_images(files,executable)
+        validate_runtime_code_images(runtime,code_images,installed_normal(after)['url'])
         require(all(runtime.get(key) == source[key] for key in ['commit', 'tree']) and
                 runtime.get('bundleID') == USER_BUNDLE and str(runtime.get('build')) == receipt['build'] and
                 runtime.get('executableSHA256') == files[plistlib.loads((staged / 'Info.plist').read_bytes())['CFBundleExecutable']] and
@@ -637,7 +659,8 @@ def deploy_prepared(config, work, source):
         unchanged_inputs()
         result = {'status': 'applied', **source, 'bundleIdentifier': USER_BUNDLE, 'configuration': 'Debug',
                   'sourceReadbackVerified': True, 'testId': test_id,
-                  'runtimeId': USER_BUNDLE + ':' + test_id + ':' + runtime['executableSHA256'],
+                  'runtimeId': USER_BUNDLE + ':' + test_id + ':' + digest_value(code_images),
+                  'codeImages':code_images,'codeImagesSHA256':digest_value(code_images),
                   'executableSHA256': runtime['executableSHA256'], 'sourceReadback': str(evidence),
                   'app': str(staged), 'artifactManifestSHA256': receipt['manifestSHA256'],
                   'normalReturnRequired': True, 'functionalAcceptance': False}
@@ -871,6 +894,10 @@ def prepared_runtime(config, work, source=None, allow_stopped=False):
     require(deployed['executableSHA256'] == files[executable] and
             str(runtime.get('storageRoot', '')).endswith('/Library/Application Support/CCRIntegrationTests/' + deployed['testId'] + '/state'),
             'prepared_runtime_storage_or_binary_mismatch')
+    code_images = artifact_code_images(files,executable)
+    require(deployed.get('codeImages') == code_images and deployed.get('codeImagesSHA256') == digest_value(code_images),
+            'prepared_code_images_unsupported_or_changed')
+    validate_runtime_code_images(runtime,code_images,row['url'])
     expected_path = urllib.parse.urljoin(row['url'].rstrip('/') + '/', executable)
     matching = [p for p in processes if p.get('processIdentifier') == runtime['processID']]
     require((len(matching) == 1 and matching[0].get('executable') == expected_path) or
@@ -1627,6 +1654,8 @@ def accept(config, work, source):
         review = accept_review(config, work, server, vault, test_id)
         require(same_user_data(snapshots(config, work, 'user-after-accept'), before), 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
+        validate_runtime_code_images(observed,deployed['codeImages'],
+            installed_normal(read(work / 'prepared-after-isolated.json'))['url'])
         require(all(observed.get(k) == source[k] for k in source) and observed.get('executableSHA256') == deployed['executableSHA256'], 'accepted_runtime_mismatch')
         proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed,
                  'rotation':rotation, 'comments':comments, 'review':review, 'originalPreserved': True}

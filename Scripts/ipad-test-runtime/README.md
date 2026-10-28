@@ -116,3 +116,14 @@ validator는 action의 유일한 설치 group에서 성공 result/exitCode와 Su
 부모의 다음 lease에서 공식 `devicectl device info apps --device <동일 UDID> --bundle-id com.ambrion.rea.appaudit.UITests.xctrunner --json-output <기존 증거 경로>`를 한 번 읽는다. 현재 CoreDevice identifier, 단일 runner row의 exact URL/build=1/containerAccessible=true 및 canonical SHA가 10월28일 보존 row와 같아야 한다. `verified_runner`가 이 비교를 유지한다. 증거 종류는 known-installed-artifact-lineage-from-xcode이며 현재 기기의 서명/파일 SHA 직접 추출 보장은 아니다. 다르면 held로 두고 새 설치나 자가 선언으로 보충하지 않는다.
 
 검사 범위는 실제 보존 xcresult·로컬 codesign 읽기와 그 action/session/호출/metadata 필드의 상관관계 변조, 다른 normal68 artifact, 0 tests·복수 Passed/실행의 거부다. 도구 응답 변조 fixture는 원본 증거를 수정하지 않는다. 기기 조회·설치·GUI는 수행하지 않는다.
+
+
+## Debug loader와 실제 구현 이미지 readback
+
+`ccr.ipad-test-runtime/v1`에 `codeImages`와 `loadedCodeImagePaths`를 추가했다. 각 map의 key는 main executable 이름과, 존재할 때 `<executable>.debug.dylib`다. main의 기존 executableSHA256 필드는 유지한다. receipt는 MachO의 실제 dyld 이미지 목록에서 같은 파일 identity(device/inode)가 로드됐는지 확인한 뒤 해당 파일 바이트의 SHA와 실제 로드 경로를 기록한다. dylib 파일이 존재하지만 로드되지 않았거나 읽을 수 없으면 receipt를 갱신하지 않는다.
+
+prepared 경로는 부모가 최종 서명한 app manifest에서 같은 image 집합과 SHA를 계산하고 runtime readback의 exact map·설치 URL 아래 실제 로드 경로를 대조한다. deployment에는 그 map과 canonical codeImagesSHA256을 보존하고 runtimeId에도 map digest를 쓴다. 재진입 및 최종 accept readback에서도 재검사한다. main loader가 같은 다른 구현 dylib, 빠진/추가 image, 다른 로드 위치 및 새 필드 없는 old runtime/deployment는 명시적으로 held다. 조용히 main-only 검증으로 fallback하지 않는다. dylib 자체가 없는 빌드는 명시적인 main-only map과 실제 로드 경로를 요구한다.
+
+이 새 필수 readback은 prepared 후보에 적용한다. 기존 실제 signed68의 known-installed 설치 이력 참조에 새 runtime 필드를 요구하거나 과거 source를 새 검증 통과로 바꾸지 않는다. unsigned build4의 Info/버전을 수정하거나 설치 후보로 삼지 않는다. 부모가 최종 통합 후 실제 설치68보다 높은 CURRENT_PROJECT_VERSION으로 정식 Xcodebuild·서명을 수행하고 그 최종 signed manifest를 사용해야 한다.
+
+NativeCodeImagesContract는 별도 Mac 명령행 fixture(정상 Sill 설치 후보가 아님)에서 실제 main/dlopen dylib의 파일 SHA·로드 경로와 실패 시 receipt 원바이트 보존을 확인하고 같은 Model을 iOS27 SDK로 typecheck한다. CanvasRuntime receipt 함수의 launchState 인자는 그 격리 fixture 주입용이며 기본은 기존 launch다. 실제 iPad 이미지/기기 readback·부모 제품 수용을 완료했다고 표시하지 않는다.

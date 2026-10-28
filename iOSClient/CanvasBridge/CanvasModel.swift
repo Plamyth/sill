@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import Darwin
+import MachO
 import CoreGraphics
 #if canImport(PencilKit, _version: 616)
 import PencilKit
@@ -188,15 +189,43 @@ enum CanvasRuntime {
         return url
     }
 
-    static func writeRuntimeReceipt(bundle: Bundle = .main) throws {
+    static func writeRuntimeReceipt(bundle: Bundle = .main, launchState: LaunchState = launch) throws {
         do {
-            guard case .isolated(let context) = launch,
+            guard case .isolated(let context) = launchState,
                   bundle.object(forInfoDictionaryKey:"CCRSourceCommit") as? String == context.commit,
                   bundle.object(forInfoDictionaryKey:"CCRSourceTree") as? String == context.tree,
                   let bundleID = bundle.bundleIdentifier, !bundleID.isEmpty,
                   let build = bundle.object(forInfoDictionaryKey:"CFBundleVersion") as? String, !build.isEmpty,
                   let executable = bundle.executableURL else { throw TestError.invalid }
-            let executableBytes = try Data(contentsOf:executable)
+            let manager = FileManager.default
+            let loadedImages = (0..<_dyld_image_count()).compactMap { index -> URL? in
+                guard let name = _dyld_get_image_name(index) else { return nil }
+                return URL(fileURLWithPath:String(cString:name)).resolvingSymlinksInPath().standardizedFileURL
+            }
+            var images = [executable]
+            let debugImage = executable.deletingLastPathComponent()
+                .appendingPathComponent(executable.lastPathComponent + ".debug.dylib")
+            do {
+                _ = try manager.attributesOfItem(atPath:debugImage.path)
+                images.append(debugImage)
+            } catch CocoaError.fileReadNoSuchFile { /* Release images can contain only the main executable. */ }
+            var codeImages: [String:String] = [:]
+            var loadedCodeImagePaths: [String:String] = [:]
+            for image in images {
+                let attributes = try manager.attributesOfItem(atPath:image.path)
+                guard attributes[.type] as? FileAttributeType == .typeRegular,
+                      let device = attributes[.systemNumber] as? NSNumber,
+                      let inode = attributes[.systemFileNumber] as? NSNumber,
+                      let loaded = loadedImages.first(where: { url in
+                          guard let observed = try? manager.attributesOfItem(atPath:url.path) else { return false }
+                          return observed[.systemNumber] as? NSNumber == device &&
+                              observed[.systemFileNumber] as? NSNumber == inode
+                      }) else { throw TestError.invalid }
+                codeImages[image.lastPathComponent] = SHA256.hash(data:try Data(contentsOf:image))
+                    .map { String(format:"%02x",$0) }.joined()
+                loadedCodeImagePaths[image.lastPathComponent] = loaded.path
+            }
+            guard let executableSHA256 = codeImages[executable.lastPathComponent] else { throw TestError.invalid }
             struct Receipt: Encodable {
                 let schema = "ccr.ipad-test-runtime/v1"
                 let id: String
@@ -207,12 +236,14 @@ enum CanvasRuntime {
                 let storageRoot: String
                 let relayAddress: String
                 let executableSHA256: String
+                let codeImages: [String:String]
+                let loadedCodeImagePaths: [String:String]
                 let processID: Int32
             }
             let state = context.root.appendingPathComponent("state",isDirectory:true)
             let receipt = Receipt(id:context.id.uuidString.lowercased(),commit:context.commit,tree:context.tree,
                 bundleID:bundleID,build:build,storageRoot:state.path,relayAddress:context.relayAddress,
-                executableSHA256:SHA256.hash(data:executableBytes).map { String(format:"%02x",$0) }.joined(),
+                executableSHA256:executableSHA256,codeImages:codeImages,loadedCodeImagePaths:loadedCodeImagePaths,
                 processID:getpid())
             let url = state.appendingPathComponent("runtime.json")
             try checkPath(url,beneath:context.support)

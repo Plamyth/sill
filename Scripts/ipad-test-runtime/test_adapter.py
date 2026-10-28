@@ -123,6 +123,9 @@ class PreparedInstallContract(unittest.TestCase):
                     'build':'71','relayAddress':context['relayAddress'],'processID':123,
                     'storageRoot':'/private/normal-data/Library/Application Support/CCRIntegrationTests/'+context['id']+'/state',
                     'executableSHA256':adapter.sha((app/'Sill').read_bytes())}
+                runtime['codeImages']={'Sill':adapter.sha((app/'Sill').read_bytes())}
+                if (app/'Sill.debug.dylib').exists():runtime['codeImages']['Sill.debug.dylib']=adapter.sha((app/'Sill.debug.dylib').read_bytes())
+                runtime['loadedCodeImagePaths']={name:'/installed/Sill.app/'+name for name in runtime['codeImages']}
                 if state.mode=='runtime-source':runtime['commit']='f'*40
                 adapter.write(data/('Library/Application Support/CCRIntegrationTests/'+context['id']+'/state/runtime.json'),runtime)
             else:self.fail('unexpected command boundary')
@@ -266,6 +269,48 @@ class PreparedInstallContract(unittest.TestCase):
                         with self.assertRaises(adapter.Held):adapter.prepared_runtime(state.config,state.work)
                     else:self.assertTrue(adapter.prepared_runtime(state.config,state.work)['_running'])
                 self.assertFalse(any(row[0]=='xcodebuild' for row in state.commands))
+
+    def test_same_loader_cannot_attest_a_different_debug_implementation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=self.fixture(directory)
+            (state.app/'Sill.debug.dylib').write_bytes(b'expected actual implementation image')
+            state.seal();original=state.command
+            def command(args,*rest,**kwargs):
+                value=original(args,*rest,**kwargs)
+                if list(map(str,args))[:5]==['xcrun','devicectl','device','process','launch']:
+                    path=state.data/('Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state/runtime.json')
+                    runtime=adapter.read(path)
+                    runtime['codeImages']={'Sill':adapter.sha((state.app/'Sill').read_bytes()),'Sill.debug.dylib':adapter.sha(b'wrong running implementation')}
+                    runtime['loadedCodeImagePaths']={'Sill':'/installed/Sill.app/Sill','Sill.debug.dylib':'/installed/Sill.app/Sill.debug.dylib'}
+                    adapter.write(path,runtime)
+                return value
+            state.command=command
+            with self.assertRaisesRegex(adapter.Held,'runtime_code_images'):self.invoke(state)
+
+
+    def test_prepared_code_image_set_and_loaded_paths_are_mandatory(self):
+        for failure in [None,'old-runtime','missing-debug','different-debug','different-loader','extra','wrong-loaded','missing-loaded','old-deployment']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=self.fixture(directory);(state.app/'Sill.debug.dylib').write_bytes(b'actual Debug implementation');state.seal()
+                deployed=self.invoke(state)
+                expected={'Sill':adapter.sha((state.app/'Sill').read_bytes()),'Sill.debug.dylib':adapter.sha((state.app/'Sill.debug.dylib').read_bytes())}
+                self.assertEqual(deployed['codeImages'],expected)
+                path=state.data/('Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state/runtime.json');runtime=adapter.read(path)
+                if failure=='old-runtime':runtime.pop('codeImages');runtime.pop('loadedCodeImagePaths')
+                elif failure=='missing-debug':runtime['codeImages'].pop('Sill.debug.dylib')
+                elif failure=='different-debug':runtime['codeImages']['Sill.debug.dylib']=adapter.sha(b'other implementation')
+                elif failure=='different-loader':runtime['codeImages']['Sill']=adapter.sha(b'other loader')
+                elif failure=='extra':runtime['codeImages']['other.dylib']='0'*64
+                elif failure=='wrong-loaded':runtime['loadedCodeImagePaths']['Sill.debug.dylib']='/different/Sill.debug.dylib'
+                elif failure=='missing-loaded':runtime['loadedCodeImagePaths'].pop('Sill.debug.dylib')
+                elif failure=='old-deployment':
+                    deployed.pop('codeImages');deployed.pop('codeImagesSHA256');adapter.write(state.work/'deployment.json',deployed)
+                adapter.write(path,runtime)
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter.subprocess,'run',side_effect=state.copy):
+                    if failure:
+                        with self.assertRaisesRegex(adapter.Held,'code_images'):adapter.prepared_runtime(state.config,state.work)
+                    else:self.assertTrue(adapter.prepared_runtime(state.config,state.work)['_running'])
+
 
 class KnownRunnerContract(unittest.TestCase):
     def fixture(self, state):
@@ -663,6 +708,80 @@ class SingleAppHoldContract(unittest.TestCase):
             with self.assertRaisesRegex(adapter.Held,'single_app_runtime_held'):
                 adapter.single_app_installation_gate()
             self.assertEqual(data,profile.read_bytes())
+
+class NativeCodeImagesContract(unittest.TestCase):
+    @unittest.skipUnless(__import__('os').environ.get('CCR_CODE_IMAGES_TEST_DIR'),'Set a routed output directory for native/SDK checks')
+    def test_actual_receipt_hashes_only_loaded_main_and_debug_images(self):
+        import os,subprocess,plistlib
+        output=Path(os.environ['CCR_CODE_IMAGES_TEST_DIR']).resolve();output.mkdir(parents=True,exist_ok=True)
+        route=json.loads(adapter.command(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad']))
+        self.assertTrue(output.is_relative_to(Path(route['path']).resolve()))
+        repo=Path(adapter.__file__).resolve().parents[2];source=output/'CodeImageCheck.swift'
+        source.write_text(r"""import Foundation
+import CryptoKit
+import Darwin
+@main struct CodeImageCheck {
+    static func main() throws {
+        let root = URL(fileURLWithPath:CommandLine.arguments[1],isDirectory:true)
+        let support = root.appendingPathComponent("support",isDirectory:true)
+        let id = UUID().uuidString.lowercased()
+        let testRoot = support.appendingPathComponent("CCRIntegrationTests/" + id,isDirectory:true)
+        let state = testRoot.appendingPathComponent("state",isDirectory:true)
+        try FileManager.default.createDirectory(at:state,withIntermediateDirectories:true)
+        let context: [String:String] = ["schema":"ccr.ipad-test-context/v1","id":id,
+            "commit":String(repeating:"a",count:40),"tree":String(repeating:"b",count:40),
+            "relayAddress":"http://192.168.1.2:8793","token":"native-isolated-fixture-reference"]
+        try JSONSerialization.data(withJSONObject:context).write(to:testRoot.appendingPathComponent("context.json"))
+        let launch = CanvasRuntime.resolve(arguments:["fixture","--ccr-test-runtime",id],applicationSupport:support,
+            sourceCommit:context["commit"],sourceTree:context["tree"])
+        let receiptURL = state.appendingPathComponent("runtime.json")
+        let executable = Bundle.main.executableURL!
+        let image = executable.deletingLastPathComponent().appendingPathComponent(executable.lastPathComponent + ".debug.dylib")
+        let preparedImage = root.appendingPathComponent("prepared-implementation.dylib")
+        try CanvasRuntime.writeRuntimeReceipt(launchState:launch)
+        func read() throws -> [String:Any] { try JSONSerialization.jsonObject(with:Data(contentsOf:receiptURL)) as! [String:Any] }
+        let first = try read()
+        precondition((first["codeImages"] as! [String:String]).count == 1)
+        let firstBytes = try Data(contentsOf:receiptURL)
+        try FileManager.default.copyItem(at:preparedImage,to:image)
+        var rejected = false
+        do { try CanvasRuntime.writeRuntimeReceipt(launchState:launch) } catch { rejected = true }
+        precondition(rejected,"present but unloaded implementation must be rejected")
+        let preservedBytes = try Data(contentsOf:receiptURL)
+        precondition(preservedBytes == firstBytes,"failed receipt must preserve prior bytes")
+        guard let handle = dlopen(image.path,RTLD_NOW | RTLD_LOCAL) else { preconditionFailure("fixture dylib failed to load") }
+        defer { dlclose(handle) }
+        try CanvasRuntime.writeRuntimeReceipt(launchState:launch)
+        let second = try read()
+        let expected = try Dictionary(uniqueKeysWithValues:[executable,image].map { url in
+            (url.lastPathComponent,SHA256.hash(data:try Data(contentsOf:url)).map { String(format:"%02x",$0) }.joined())
+        })
+        precondition(second["codeImages"] as! [String:String] == expected)
+        precondition(second["executableSHA256"] as! String == first["executableSHA256"] as! String,"same loader fixture")
+        let paths = second["loadedCodeImagePaths"] as! [String:String]
+        precondition(paths.count == 2 && paths[image.lastPathComponent] == image.resolvingSymlinksInPath().path)
+        try Data(contentsOf:receiptURL).write(to:root.appendingPathComponent("verified-native-receipt.json"))
+        print("PASS real loader and dlopen implementation SHA/path; unloaded image rejected and prior receipt preserved")
+    }
+}
+""")
+        c=output/'implementation.c';c.write_text('int ccr_receipt_fixture(void) { return 42; }\n')
+        adapter.command(['xcrun','clang','-dynamiclib',c,'-o',output/'prepared-implementation.dylib'],output/'dylib-build.log')
+        info=output/'FixtureInfo.plist';info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'org.ccr.receipt.native-fixture',
+            'CFBundleExecutable':'ReceiptCheck','CFBundleVersion':'1','CCRSourceCommit':'a'*40,'CCRSourceTree':'b'*40}))
+        executable=output/'ReceiptCheck'
+        adapter.command(['xcrun','swiftc','-D','DEBUG','-swift-version','5','-module-cache-path',output/'modules','-parse-as-library',
+            repo/'iOSClient/CanvasBridge/CanvasModel.swift',source,'-Xlinker','-sectcreate','-Xlinker','__TEXT',
+            '-Xlinker','__info_plist','-Xlinker',info,'-o',executable],output/'native-build.log')
+        adapter.command([executable,output],output/'native-run.log')
+        actual=adapter.read(output/'verified-native-receipt.json')
+        self.assertEqual(actual['codeImages'],{'ReceiptCheck':adapter.sha(executable.read_bytes()),
+            'ReceiptCheck.debug.dylib':adapter.sha((output/'ReceiptCheck.debug.dylib').read_bytes())})
+        sdk=adapter.command(['xcrun','--sdk','iphoneos','--show-sdk-path']).strip()
+        adapter.command(['xcrun','swiftc','-typecheck','-D','DEBUG','-swift-version','5','-parse-as-library',
+            '-sdk',sdk,'-target','arm64-apple-ios17.0','-module-cache-path',output/'ios-modules',
+            repo/'iOSClient/CanvasBridge/CanvasModel.swift'],output/'ios27-typecheck.log')
+
 
 class PreservationSnapshotContract(unittest.TestCase):
     def test_full_documents_preferences_and_metadata_are_checked_separately(self):
