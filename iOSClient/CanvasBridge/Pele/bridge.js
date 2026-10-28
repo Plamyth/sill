@@ -36,12 +36,25 @@
           }
         }
         if (ids.size > 512 || (payload.displayedNodeCount !== undefined && payload.displayedNodeCount !== ids.size)) throw Error('node limit');
-        if (previous && previous.source === payload.source &&
-            JSON.stringify(previous.nodes) === JSON.stringify(payload.nodes) && target.querySelector('svg')) {
-          for (const element of target.querySelectorAll('.pele-node[data-id]')) {
+        if (payload.displayedEdgeCount !== undefined && (!Number.isSafeInteger(payload.displayedEdgeCount) ||
+            payload.displayedEdgeCount < 0 || payload.displayedEdgeCount > 1024)) throw Error('edge limit');
+        const lineOwner = element => payload.nodes.find(node => node.kind === 'line' &&
+          element.dataset.id.startsWith('L_' + node.diagramID + '_x' + node.diagramID.slice(1) + '_'));
+        const applySelection = svg => {
+          for (const element of svg.querySelectorAll('.pele-node[data-id]')) {
             const node = owners.get(element.dataset.id);
             element.setAttribute('aria-selected',String(node.id === payload.selectedNodeID));
           }
+          for (const element of svg.querySelectorAll('.pele-edge[data-id],.pele-edge-label[data-id]')) {
+            const node = lineOwner(element);
+            if (node) element.setAttribute('aria-selected',String(node.id === payload.selectedNodeID));
+          }
+        };
+        if (previous && previous.source === payload.source &&
+            JSON.stringify(previous.nodes) === JSON.stringify(payload.nodes) && target.querySelector('svg')) {
+          const actualEdges = target.querySelectorAll('.pele-edge').length;
+          if (actualEdges > 1024 || (payload.displayedEdgeCount !== undefined && payload.displayedEdgeCount !== actualEdges)) throw Error('edge count mismatch');
+          applySelection(target);
           current = payload;
           return { nodes:ids.size, edges:target.querySelectorAll('.pele-edge').length, reused:true };
         }
@@ -82,8 +95,7 @@
           });
         }
         for (const edge of svg.querySelectorAll('.pele-edge[data-id],.pele-edge-label[data-id]')) {
-          const node = payload.nodes.find(node => node.kind === 'line' &&
-            edge.dataset.id.startsWith('L_' + node.diagramID + '_x' + node.diagramID.slice(1) + '_'));
+          const node = lineOwner(edge);
           if (!node) continue;
           edge.setAttribute('tabindex','0'); edge.setAttribute('role','button');
           edge.setAttribute('aria-label',node.text || '직선');
@@ -92,6 +104,7 @@
             if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(node.diagramID); }
           });
         }
+        applySelection(svg);
         current = payload;
         target.append(document.adoptNode(svg));
         return { nodes:rendered.length, edges:svg.querySelectorAll('.pele-edge').length };

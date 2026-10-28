@@ -13,7 +13,8 @@ import WebKit
 }
 @main struct WebKitShapeCheck {
     @MainActor static func main() async throws {
-        _ = NSApplication.shared
+        let application = NSApplication.shared
+        precondition(application.setActivationPolicy(.prohibited),"test process cannot activate or open user UI")
         let directory = URL(fileURLWithPath:CommandLine.arguments[1])
         let output = URL(fileURLWithPath:CommandLine.arguments[2])
         let payload = try JSONSerialization.jsonObject(with:Data(contentsOf:output.appendingPathComponent("projection-snapshot.json"))) as! [String:Any]
@@ -27,7 +28,9 @@ import WebKit
             view.loadFileURL(directory.appendingPathComponent("diagram.html"),allowingReadAccessTo:directory)
         }
         let script = """
-        const result = window.ccrDiagram.update(payload);
+        const line = payload.nodes.find(n => n.kind === 'line');
+        const selected = {...payload,selectedNodeID:line.id};
+        const result = window.ccrDiagram.update(selected);
         if (result.error) throw Error('bridge render failure');
         const root = document.querySelector('#diagram svg');
         const ellipse = root.querySelector('.ccrEllipse rect');
@@ -36,9 +39,17 @@ import WebKit
         const edge = root.querySelector('.pele-edge path');
         const lineNode = payload.nodes.find(n => n.kind === 'line');
         const group = root.querySelector('.pele-edge');
+        const initialLineSelected = group.getAttribute('aria-selected') === 'true' &&
+          getComputedStyle(edge).stroke === 'rgb(112, 180, 255)' && getComputedStyle(edge).strokeWidth === '3px';
+        const cleared = window.ccrDiagram.update({...payload,selectedNodeID:null});
+        const cacheClear = cleared.reused === true && group.getAttribute('aria-selected') === 'false' &&
+          getComputedStyle(edge).stroke !== 'rgb(112, 180, 255)';
         group.dispatchEvent(new MouseEvent('click',{bubbles:true}));
         const endpointSelected = window.ccrDiagram.select('x' + lineNode.diagramID.slice(1));
-        const measured = {result,rx:getComputedStyle(ellipse).rx,ry:getComputedStyle(ellipse).ry,
+        const reselected = window.ccrDiagram.update(selected);
+        const cachedLineSelected = reselected.reused === true && group.getAttribute('aria-selected') === 'true' &&
+          getComputedStyle(edge).stroke === 'rgb(112, 180, 255)' && getComputedStyle(edge).strokeWidth === '3px';
+        const measured = {result,initialLineSelected,cacheClear,cachedLineSelected,selectedLineStroke:getComputedStyle(edge).stroke,rx:getComputedStyle(ellipse).rx,ry:getComputedStyle(ellipse).ry,
           ellipseCenter:ellipse.isPointInFill(new DOMPoint(x+box.width/2,y+box.height/2)),
           ellipseCorner:ellipse.isPointInFill(new DOMPoint(x+1,y+1)),
           ellipseSize:[box.width,box.height], endpointCount:endpoints.length,
@@ -47,6 +58,8 @@ import WebKit
           lineHasArrow:!!root.querySelector('marker'),endpointSelected,
           expectedLineID:lineNode.id,
           actualSVG:root.outerHTML};
+        measured.cachedEdgeMismatchRejected = window.ccrDiagram.update({...selected,displayedEdgeCount:payload.displayedEdgeCount+1}).error === true;
+        window.ccrDiagram.update(selected);
         measured.countMismatchRejected = window.ccrDiagram.update({...payload,displayedNodeCount:payload.displayedNodeCount+1}).error === true;
         measured.edgeMismatchRejected = window.ccrDiagram.update({...payload,displayedEdgeCount:payload.displayedEdgeCount+1}).error === true;
         measured.restored = !window.ccrDiagram.update(payload).error;
@@ -57,6 +70,8 @@ import WebKit
                 continuation.resume(with:result.map { $0 as! [String:Any] })
             }
         }
+        precondition(value["initialLineSelected"] as? Bool == true && value["cachedLineSelected"] as? Bool == true && value["cacheClear"] as? Bool == true,"actual visible primitive selected color/width on initial render and cached deselect/reselect")
+        precondition(value["cachedEdgeMismatchRejected"] as? Bool == true,"same-source same-nodes cached edge count mismatch rejected")
         precondition(value["ellipseCenter"] as? Bool == true && value["ellipseCorner"] as? Bool == false,"WebKit ellipse fill geometry")
         precondition(value["endpointsHidden"] as? Bool == true && value["endpointCount"] as? Int == 2,"line transparent endpoint geometry")
         precondition((value["lineLength"] as? Double ?? 0) > 10 && value["lineHasArrow"] as? Bool == false,"actual primitive path without arrow")
@@ -70,7 +85,7 @@ import WebKit
         result["scope"] = "실제 macOS WKWebView·번들 bridge/SVG DOM 기하·선 선택. 자동 배치이며 원본 좌표 재현 또는 iPad 터치/시각 수용이 아님. 화면·앱 활성화·네트워크·설치 없음."
         result["passed"] = true
         try JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]).write(to:output.appendingPathComponent("webkit-shapes.json"))
-        print("WEBKIT_SHAPES_OK center=true corner=false linePath=true selectionUUID=true")
+        print("WEBKIT_SHAPES_OK center=true corner=false linePath=true selectionUUID=true initialAndCachedHighlight=true cachedEdgeMismatchRejected=true")
         view.stopLoading(); config.userContentController.removeScriptMessageHandler(forName:"canvasDiagram")
     }
 }

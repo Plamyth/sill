@@ -42,6 +42,7 @@ if r.returncode==0:
  record['identityMatches']=info.get('CCRSourceCommit')==head and info.get('CCRSourceTree')==tree and info.get('CCRSourceIdentityVerified') is True
  record['executableSHA256']=hashlib.sha256((app/info['CFBundleExecutable']).read_bytes()).hexdigest()
  record['signatureDirectoryExists']=(app/'_CodeSignature').exists()
+ record['runtimeCodeImages']={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in app.glob('Sill*') if p.is_file()}
 record['passed']=r.returncode==0 and record['sourceUnchanged'] and record.get('identityMatches',False)
 record['finishedAt']=datetime.datetime.now(datetime.timezone.utc).isoformat()
 (out/'build.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')

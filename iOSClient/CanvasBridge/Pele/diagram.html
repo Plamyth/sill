@@ -12,6 +12,8 @@ svg { --pele-bg:#17191e; --pele-fg:#f1f3f6; --pele-line:#a6bbeb; --pele-border:#
 .pele-node { cursor:pointer }
 .pele-node:focus { outline:3px solid #7bb5ff }
 [aria-selected="true"] > rect { stroke:#70b4ff; stroke-width:3 }
+.pele-edge[aria-selected="true"] path { stroke:#70b4ff; stroke-width:3px }
+.pele-edge-label[aria-selected="true"] text { fill:#70b4ff }
 #error { color:#ffbbad; white-space:pre-wrap }
 </style>
 <script src="pele.global.js" defer></script>
