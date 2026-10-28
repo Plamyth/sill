@@ -457,6 +457,148 @@ class KnownRunnerContract(unittest.TestCase):
 
 
 
+class XcodeRunnerLineageContract(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import shlex
+        cls.base=Path('/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad')
+        cls.history=cls.base/'rea-completion-20261028/adapter-evidence/runner-history'
+        cls.approved=adapter.read(cls.history/'result.json')
+        cls.action=adapter.read(cls.history/'action.json')
+        cls.session=next((cls.history/'diagnostics').rglob('Session-CanvasBridgeUITests-*.log')).read_bytes()
+        cls.details=adapter.read(cls.history/'test-details.json')
+        cls.result=Path(cls.approved['xcresult']['path'])
+        cls.summary=json.loads(adapter.command(['xcrun','xcresulttool','get','test-results','summary','--path',cls.result,'--compact']))
+        log=cls.base/'review-only-device-20261026/testReviewReopen.log'
+        args=next(shlex.split(line.strip()) for line in log.read_text().splitlines() if line.strip().startswith('/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild '))
+        cls.reference={'schema':'ccr.known-installed-artifact/v1','installEvidenceKind':'xcode-xcresult',
+            'artifact':cls.approved['localArtifact']['artifact'],'artifactManifestSHA256':cls.approved['localArtifact']['manifestSHA256'],
+            'metadataPath':cls.approved['preservedMetadata']['path'],'metadataSHA256':cls.approved['inputHashes'][cls.approved['preservedMetadata']['path']],
+            'xcode':{'xcresultPath':str(cls.result),'xcresultManifestSHA256':cls.approved['xcresult']['manifestSHA256'],
+                'invocationLogPath':str(log),'invocationLogSHA256':cls.approved['inputHashes'][str(log)],
+                'invocationSHA256':adapter.digest_value(args),'method':'testReviewReopen',
+                'actionSHA256':adapter.digest_value(cls.action),'sessionSHA256':adapter.sha(cls.session),
+                'compiledTestsSHA256':cls.approved['localArtifact']['compiledTestsSHA256']}}
+        cls.config={'deviceUDID':args[args.index('-destination')+1].removeprefix('id=')}
+
+    def fixture(self,work):
+        import copy
+        from types import SimpleNamespace
+        state=SimpleNamespace(reference=copy.deepcopy(self.reference),action=copy.deepcopy(self.action),
+            session=self.session,summary=copy.deepcopy(self.summary),details=copy.deepcopy(self.details),calls=[])
+        real=adapter.command
+        def command(args,*rest,**kwargs):
+            args=list(map(str,args));state.calls.append(args)
+            if args[:4]==['xcrun','xcresulttool','get','log']:return json.dumps(state.action)
+            if args[:4]==['xcrun','xcresulttool','export','diagnostics']:
+                target=Path(args[args.index('--output-path')+1])/'Session-CanvasBridgeUITests-fixture.log';target.write_bytes(state.session);return ''
+            if args[:5]==['xcrun','xcresulttool','get','test-results','summary']:return json.dumps(state.summary)
+            if args[:5]==['xcrun','xcresulttool','get','test-results','test-details']:return json.dumps(state.details)
+            self.assertNotIn('devicectl',args)
+            self.assertFalse(args[0]=='xcodebuild' and args[1:]!=['-version'])
+            return real(args,*rest,**kwargs)
+        state.command=command
+        return state
+
+    def test_actual_official_xcode_history_and_signed_runner_are_accepted_without_device(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(adapter,'device') as device:
+            work=Path(directory)
+            result=adapter.verify_known_lineage(self.config,work,self.reference,adapter.RUNNER_BUNDLE)
+            self.assertEqual(result['evidenceKind'],'known-installed-artifact-lineage-from-xcode')
+            self.assertFalse(result['remoteSignatureReadback'])
+            self.assertEqual(result['metadataSHA256'],self.approved['preservedMetadata']['runnerRowCanonicalSHA256'])
+            self.assertEqual(len(result['provenance']['methods']),21)
+            self.assertTrue(set(adapter.RUNNER_CORE_METHODS)<=set(result['provenance']['methods']))
+            self.assertEqual(result['provenance']['testBundleBuild']['DTXcodeBuild'],'27A266a')
+            device.assert_not_called()
+
+    def test_rejects_real_history_with_broken_correlations_even_after_repinning_fields(self):
+        failures=['install-failed','install-exit','bundle','url','local-artifact','session-url','zero-tests','multiple-pass',
+            'multiple-runs','details-device','invocation-device','invocation-result','invocation-method','metadata-url','metadata-device','invocation-source',
+            'artifact22','source-pin','call-pin','session-pin','action-pin','compiled-pin','duplicate-record']
+        for failure in failures:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                work=Path(directory);state=self.fixture(work);ref=state.reference;e=ref['xcode']
+                group=state.action['subsections'][0]['subsections'][0]
+                record=group['subsections'][1]['messages'][2]['annotations'][2]
+                if failure=='install-failed':group['subsections'][0]['result']='failed'
+                elif failure=='install-exit':group['subsections'][0]['commandInvocationDetails']['exitCode']=1
+                elif failure=='bundle':record['title']=record['title'].replace(adapter.RUNNER_BUNDLE,'another.bundle')
+                elif failure=='url':record['title']=record['title'].replace('E42A765D-D4C8-4768-8866-F9CD1B30D47D','00000000-0000-0000-0000-000000000000')
+                elif failure=='duplicate-record':group['subsections'][1]['messages'][2]['annotations'].append(dict(record))
+                elif failure=='local-artifact':state.action['subsections'][1]['subsections'][0]['testDetails']['runnablePath']=str(work)
+                elif failure=='session-url':state.session=state.session.replace(b'E42A765D-D4C8-4768-8866-F9CD1B30D47D',b'00000000-0000-0000-0000-000000000000')
+                elif failure=='zero-tests':state.summary.update(totalTestCount=0,passedTests=0)
+                elif failure=='multiple-pass':state.summary.update(totalTestCount=2,passedTests=2)
+                elif failure=='multiple-runs':state.details['testRuns'].append(dict(state.details['testRuns'][0]))
+                elif failure=='details-device':state.details['testRuns'][0]['nodeIdentifier']='another-device'
+                elif failure=='invocation-source':
+                    path=work/'changed.log';path.write_bytes(Path(e['invocationLogPath']).read_bytes()+b'changed')
+                    e['invocationLogPath']=str(path)
+                elif failure.startswith('invocation-'):
+                    import shlex
+                    lines=Path(e['invocationLogPath']).read_text().splitlines()
+                    line=next(line for line in lines if line.strip().startswith('/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild '))
+                    args=shlex.split(line)
+                    if failure=='invocation-device':args[args.index('-destination')+1]='id=other'
+                    elif failure=='invocation-result':args[args.index('-resultBundlePath')+1]=str(work)
+                    else:args[args.index('-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/testReviewReopen')]='-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/testReviewGood'
+                    changed=work/'invocation.log';changed.write_text('Command line invocation:\n'+shlex.join(args)+'\n')
+                    e.update(invocationLogPath=str(changed),invocationLogSHA256=adapter.sha(changed.read_bytes()),invocationSHA256=adapter.digest_value(args))
+                elif failure in ['metadata-url','metadata-device']:
+                    metadata=adapter.read(ref['metadataPath'])
+                    if failure=='metadata-device':
+                        metadata['info']['arguments'][metadata['info']['arguments'].index('--device')+1]='other-device'
+                    else:
+                        for row in metadata['result']['apps']:
+                            if row.get('bundleIdentifier')==adapter.RUNNER_BUNDLE:row['url']='file:///other/Runner.app/'
+                    path=work/'metadata.json';adapter.write(path,metadata);ref.update(metadataPath=str(path),metadataSHA256=adapter.sha(path.read_bytes()))
+                elif failure=='artifact22':
+                    other=self.base/'normal68-device-20261026/HarnessDerivedData/Build/Products/Debug-iphoneos/CanvasBridgeUITests-Runner.app'
+                    ref.update(artifact=str(other),artifactManifestSHA256=adapter.digest_value(adapter.artifact_files(other)))
+                    e['compiledTestsSHA256']=adapter.sha((other/'PlugIns/CanvasBridgeUITests.xctest/CanvasBridgeUITests').read_bytes())
+                if failure=='source-pin':e['xcresultManifestSHA256']='0'*64
+                if failure=='call-pin':e['invocationSHA256']='0'*64
+                e['actionSHA256']='0'*64 if failure=='action-pin' else adapter.digest_value(state.action)
+                e['sessionSHA256']='0'*64 if failure=='session-pin' else adapter.sha(state.session)
+                if failure=='compiled-pin':e['compiledTestsSHA256']='0'*64
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter,'device') as device:
+                    reasons={'install-failed':'xcode_install_not_succeeded','install-exit':'xcode_install_not_succeeded',
+                        'bundle':'xcode_install_identity_mismatch','url':'xcode_remote_path_mismatch','local-artifact':'xcode_local_artifact_mismatch',
+                        'session-url':'xcode_session_bundle_correlation_missing','zero-tests':'xcode_single_pass_required',
+                        'multiple-pass':'xcode_single_pass_required','multiple-runs':'xcresult_execution_count_or_status',
+                        'details-device':'xcode_result_device_mismatch','invocation-device':'xcode_invocation_target_mismatch',
+                        'invocation-result':'xcode_invocation_target_mismatch','invocation-method':'xcode_invocation_target_mismatch',
+                        'metadata-url':'xcode_metadata_mismatch','metadata-device':'xcode_metadata_device_mismatch',
+                        'invocation-source':'xcode_invocation_source_changed','artifact22':'xcode_local_artifact_mismatch','source-pin':'xcode_result_source_changed',
+                        'call-pin':'xcode_invocation_hash_mismatch','session-pin':'xcode_session_source_changed',
+                        'action-pin':'xcode_action_source_changed','compiled-pin':'xcode_compiled_tests_changed','duplicate-record':'xcode_install_record_ambiguous'}
+                    with self.assertRaisesRegex(adapter.Held,reasons[failure]):adapter.verify_known_lineage(self.config,work,ref,adapter.RUNNER_BUNDLE)
+                    device.assert_not_called()
+
+    def test_existing_core_and_absent_grade_method_use_the_actual_21_method_runner(self):
+        for mode in ['core','missing-grade','current-url']:
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
+                work=Path(directory);state=self.fixture(work);path=work/'runner.json'
+                adapter.write(path,{'schema':'ccr.known-installed-runner/v1','lineage':state.reference})
+                config=dict(self.config,existingRunnerReceipt=str(path),existingRunnerReceiptSHA256=adapter.sha(path.read_bytes()))
+                def device(config,args,log):
+                    self.assertEqual(args[:3],['info','apps','--bundle-id'])
+                    row=dict(self.approved['preservedMetadata']['runnerRow'])
+                    if mode=='current-url':row['url']='file:///different/Runner.app/'
+                    adapter.write(args[-1],{'result':{'apps':[row],'deviceIdentifier':self.approved['preservedMetadata']['deviceIdentifier']}})
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter,'device',side_effect=device) as effect:
+                    if mode=='missing-grade':
+                        with self.assertRaisesRegex(adapter.Held,'testReviewSelectedGrade'):adapter.verified_runner(config,work,'testReviewSelectedGrade')
+                        effect.assert_not_called()
+                    elif mode=='current-url':
+                        with self.assertRaisesRegex(adapter.Held,'existing_runner_metadata_changed'):adapter.verified_runner(config,work,adapter.RUNNER_CORE_METHODS)
+                        self.assertEqual(effect.call_count,1)
+                    else:
+                        self.assertTrue(adapter.verified_runner(config,work,adapter.RUNNER_CORE_METHODS)['installed'])
+                        self.assertEqual(effect.call_count,1)
+
+
 class SingleAppHoldContract(unittest.TestCase):
     def test_public_entrypoints_hold_before_every_subprocess_and_device_effect(self):
         import contextlib

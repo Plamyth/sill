@@ -50,7 +50,7 @@ legacy CLI의 사전 차단과 준비 증거가 없는 accept/harness의 무부�
 
 `existingXctestrun`/`existingXctestrunSHA256`, `existingRunnerReceipt`/`existingRunnerReceiptSHA256`가 필요하다. runner 영수증은 `ccr.known-installed-runner/v1`이며 `lineage`에 아래 `ccr.known-installed-artifact/v1` 참조를 넣는다. 로컬 runner의 서명·executable hash·설치 명령·설치 후 metadata와 최신 `devicectl device info apps --bundle-id …` metadata를 대조한다. `installed=true` 자가 선언을 입력으로 사용하지 않는다. 실제 보존 test binary를 nm/swift-demangle로 읽고 요청 method가 있는지도 검사한다.
 
-가장 가까운 보존 입력은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/normal68-device-20261026/HarnessDerivedData/Build/Products/CanvasBridge_iphoneos27.0-arm64.xctestrun`이다. runner는 `com.ambrion.rea.appaudit.UITests.xctrunner`, 상대 test bundle은 `__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest`다. 원 project의 `com.ambrion.rea.appaudit` 대상 경로는 파생 run에서 제거하고 정상 Sill bundle을 지정한다. 로컬 보존 binary의 서명과 22개 method를 실제 확인했다. `harness-build-result.json`은 `installed=false`인 빌드 근거이므로 runner 설치 이력으로 쓰지 않는다. 이 단위에서는 대응하는 과거 runner 설치 명령·설치 후 metadata가 확정되지 않았다. 현재 기기 설치내용이 같다고 가정하지 않는다. 지원하는 이력 형식은 성공한 공식 devicectl install JSON과 동일 app 경로·설치 URL이다. Xcode 자동 설치의 build/test 로그만 이 형식으로 꾸미지 않으며, 그 이력만 있다면 실제 설치 provenance 연결이 추가로 필요하다.
+가장 가까운 보존 입력은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/normal68-device-20261026/HarnessDerivedData/Build/Products/CanvasBridge_iphoneos27.0-arm64.xctestrun`이다. runner는 `com.ambrion.rea.appaudit.UITests.xctrunner`, 상대 test bundle은 `__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest`다. 원 project의 `com.ambrion.rea.appaudit` 대상 경로는 파생 run에서 제거하고 정상 Sill bundle을 지정한다. 로컬 보존 binary의 서명과 22개 method를 실제 확인했다. `harness-build-result.json`은 `installed=false`인 빌드 근거이므로 runner 설치 이력으로 쓰지 않는다. 이후 보존 xcresult에서 공식 Xcode 설치·실행 이력과 10월28일 inventory의 동일 URL을 연결했다. 아래 Xcode 전용 분기를 사용하며 devicectl install JSON으로 꾸미지 않는다. 현재 기기 설치내용은 별도로 대조한다.
 
 `deployment.json`은 정상 Debug 배포의 artifact manifest, 보호 baseline, 설치 후 metadata hash, source와 UUID를 묶는다. accept/harness는 원 signed artifact와 staged 사본 및 준비 context의 고정 SHA를 재검사하고 최신 앱 metadata·실행 PID/경로·runtime hash를 읽는다. 원본 xctestrun을 수정하지 않고 `ExistingRunner.xctestrun`만 만든다. 실제 검증은 정확한 요청 method가 한 번 실행·통과했는지 xcresult까지 확인한다. 기존 runner에 없는 새 method를 생성하지 않는다. fixture 교체 전에는 확인한 격리 PID만 중지한다. 정상 앱의 다른 PID가 보이면 중지·교체하지 않는다. 시험 state가 비워져 runtime.json이 없어진 경우에는 직전 중지 영수증과 최신 PID 부재를 함께 확인한 뒤 기존 runner로 다시 연다.
 
@@ -93,3 +93,26 @@ buildSettings는 CONFIGURATION=Debug, SWIFT_ACTIVE_COMPILATION_CONDITIONS 배열
 `prepared-install-attempt.json`이 있으면 같은 의도를 자동 재설치하지 않는다. 결과 불명확·설치 후 데이터 변화·runtime 불일치는 held로 보존하며 자동 rollback, 버전 내림, 앱 삭제, 일반 Sill launch를 하지 않는다. 결과는 `normalReturnRequired=true`, `functionalAcceptance=false`다. 부모가 미디어·포커스 구간을 확보해 정상 복귀를 명시적으로 수행해야 한다.
 
 PreparedInstallContract는 완전한 fixture가 실제 install/격리 launch 명령을 생성하는 경로와 사전조건 실패·중간 입력 변조·설치 결과 미확인·설치/격리 후 데이터 변화·잘못된 runtime/PID 경로의 차단을 검사한다. commands와 devicectl copy는 mock이며 실기기 성공을 뜻하지 않는다.
+
+
+## 공식 Xcode runner 설치 이력 분기
+
+`ccr.known-installed-artifact/v1`에 `installEvidenceKind=xcode-xcresult`를 넣으면 runner 전용 분기로 검증한다. 정상 Sill 설치 참조와 기존 devicectl 분기는 그대로다. 이 분기에는 fake installRecord/signingReadbackVerified 입력이 없다. 로컬 서명은 매번 직접 검증하며 `remoteSignatureReadback=false`를 유지한다.
+
+최상위 입력은 artifact/artifactManifestSHA256, metadataPath/metadataSHA256이며 `xcode`에는 다음 필드를 넣는다.
+
+- xcresultPath/xcresultManifestSHA256: 원본 보존 xcresult의 모든 regular file map을 canonical digest로 고정한다.
+- invocationLogPath/invocationLogSHA256/invocationSHA256: 원본 Xcode stdout 파일 SHA와 유일한 xcodebuild argv를 shlex로 읽은 문자열 배열의 canonical digest다. exact test-without-building·UDID·method·결과 bundle 경로를 대조한다. 원본 xctestrun의 과거 실행 당시 SHA를 새로 추정하지 않는다.
+- actionSHA256/sessionSHA256: 원본 xcresult에서 공식 xcresulttool로 다시 읽은 action JSON의 canonical digest와 export diagnostics의 유일한 Session-CanvasBridgeUITests 로그의 raw SHA다. 별도의 임의 JSON을 action 입력으로 받지 않는다.
+- method: 이력을 연결하는 실제 단일 Passed method. 보존 사례는 testReviewReopen이다.
+- compiledTestsSHA256: 설치 이력에 연결된 local signed runner 안의 실제 test binary SHA다.
+
+validator는 action의 유일한 설치 group에서 성공 result/exitCode와 Successfully installed, 같은 group의 runner launch·AppInstallationResult·remote URL을 검증한다. 실제 testDetails.runnablePath와 local artifact는 samefile로 대조한다. Session 로그의 local bundle mapping과 기기 testBundleURL도 같은 경로여야 한다. summary는 전체 실행 1개·Passed 1개·실패/skip/expected failure 0개여야 하고, 기존 actual_xcresult의 exact method/단일 configuration/device 및 UDID 검사도 통과해야 한다. 보존 metadata의 공식 apps 명령/UDID/성공·bundle/build/URL도 연결한다.
+
+현재 지원 대상은 formal-runtime/3e2bfd…의 실제 설치 이력과 연결된 21-method runner다. normal68의 별도 22-method artifact와 SHA가 다르다. 현재 accept core의 필수 16개를 모두 확인하며, testReviewSelectedGrade는 이 runner에 없다. 요청하면 최신 기기 metadata 조회 전에 `existing_runner_method_unavailable:testReviewSelectedGrade`로 거부한다. 새 method·runner 업데이트로 보충하지 않는다.
+
+`xcode-runner-lineage.json`에는 artifact/xcresult/호출/action/session/compiled binary의 pinned SHA, 사용 가능한 method, wrapper/test bundle의 Xcode·SDK 값과 실제 로컬 도구 버전을 기록한다. 제품 기능의 source identity는 기존 정상 Sill 실행 executableSHA256·commit/tree/runtime readback이 정본이며 runner 증거로 대체하지 않는다.
+
+부모의 다음 lease에서 공식 `devicectl device info apps --device <동일 UDID> --bundle-id com.ambrion.rea.appaudit.UITests.xctrunner --json-output <기존 증거 경로>`를 한 번 읽는다. 현재 CoreDevice identifier, 단일 runner row의 exact URL/build=1/containerAccessible=true 및 canonical SHA가 10월28일 보존 row와 같아야 한다. `verified_runner`가 이 비교를 유지한다. 증거 종류는 known-installed-artifact-lineage-from-xcode이며 현재 기기의 서명/파일 SHA 직접 추출 보장은 아니다. 다르면 held로 두고 새 설치나 자가 선언으로 보충하지 않는다.
+
+검사 범위는 실제 보존 xcresult·로컬 codesign 읽기와 그 action/session/호출/metadata 필드의 상관관계 변조, 다른 normal68 artifact, 0 tests·복수 Passed/실행의 거부다. 도구 응답 변조 fixture는 원본 증거를 수정하지 않는다. 기기 조회·설치·GUI는 수행하지 않는다.
