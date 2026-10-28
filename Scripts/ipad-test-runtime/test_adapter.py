@@ -21,6 +21,194 @@ def existing_runner_fixture(work, run):
     return {'deviceUDID':'offline','existingXctestrun':str(run),'existingXctestrunSHA256':adapter.sha(run.read_bytes()),
         'existingRunnerReceipt':str(receipt),'existingRunnerReceiptSHA256':adapter.sha(receipt.read_bytes())}
 
+class PreparedInstallContract(unittest.TestCase):
+    def fixture(self, directory):
+        import plistlib, shutil, types
+        root=Path(directory).resolve();work=root/'work';work.mkdir()
+        app=root/'Sill.app';app.mkdir();(app/'_CodeSignature').mkdir()
+        source={'commit':'a'*40,'tree':'b'*40}
+        profile=Path('/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/owner-mac-bootstrap-20261022/public-profile-from-ipad-saved.json').read_bytes()
+        (root/'public.json').write_bytes(profile)
+        info={'CFBundleIdentifier':adapter.USER_BUNDLE,'CFBundleVersion':'71','CFBundleExecutable':'Sill',
+              'CCRSourceCommit':source['commit'],'CCRSourceTree':source['tree'],'CCRSourceIdentityVerified':True}
+        (app/'Info.plist').write_bytes(plistlib.dumps(info));(app/'Sill').write_bytes(b'parent signed Debug binary fixture')
+        (app/'CCR-OwnerMacBootstrap.json').write_bytes(profile);(app/'_CodeSignature/CodeResources').write_bytes(b'signed fixture')
+        (app/'embedded.mobileprovision').write_bytes(b'parent signed provisioning fixture')
+        ent={'application-identifier':adapter.NORMAL_TEAM+'.'+adapter.USER_BUNDLE,
+             'com.apple.developer.team-identifier':adapter.NORMAL_TEAM,'get-task-allow':True,
+             'keychain-access-groups':[adapter.NORMAL_TEAM+'.'+adapter.USER_BUNDLE]}
+        metadata={'bundleIdentifier':adapter.USER_BUNDLE,'bundleVersion':'70','containerAccessible':True,'url':'file:///installed/Sill.app'}
+        prior={'schema':'ccr.ipad-installed-identity/v1','signingReadbackVerified':True,'deviceUDID':'leased-ipad',
+               'bundleIdentifier':adapter.USER_BUNDLE,'team':adapter.NORMAL_TEAM,'build':'70','deviceIdentifier':'leased-ipad',
+               'metadataSHA256':adapter.digest_value(metadata),'ownerBootstrapSHA256':adapter.APPROVED_OWNER_PROFILE_SHA256,
+               'securityEntitlements':{k:v for k,v in ent.items() if k!='get-task-allow'}}
+        adapter.write(root/'installed.json',prior)
+        context={'schema':'ccr.ipad-test-context/v1','id':str(uuid.uuid4()),**source,
+                 'relayAddress':'http://192.168.1.2:8793','token':'parent-test-context-reference-123456789'}
+        adapter.write(root/'context.json',context)
+        adapter.write(root/'lease.json',{'schema':'ccr.device-lease/v1','owner':adapter.OWNER,'deviceUDID':'leased-ipad',
+            'expiresAt':(dt.datetime.now(dt.timezone.utc)+dt.timedelta(minutes=10)).isoformat(),
+            'actions':['install','launch','copy','test'],'handoffEvidence':'parent-shared-stage'})
+        config={'repo':str(root),'deviceUDID':'leased-ipad','developmentTeam':adapter.NORMAL_TEAM,'leaseFile':str(root/'lease.json'),
+            'preparedArtifact':str(app),'preparedArtifactReceipt':str(root/'artifact.json'),
+            'installedIdentityReceipt':str(root/'installed.json'),'installedIdentityReceiptSHA256':adapter.sha((root/'installed.json').read_bytes()),
+            'preparedContext':str(root/'context.json'),'preparedContextSHA256':adapter.sha((root/'context.json').read_bytes()),
+            'ownerBootstrapProfile':str(root/'public.json'),'ownerBootstrapSHA256':adapter.APPROVED_OWNER_PROFILE_SHA256}
+        receipt={'schema':'ccr.signed-ipad-artifact/v1',**source,'bundleIdentifier':adapter.USER_BUNDLE,'team':adapter.NORMAL_TEAM,
+            'build':'71','configuration':'Debug','ownerBootstrapSHA256':adapter.APPROVED_OWNER_PROFILE_SHA256,
+            'buildSettings':{'CONFIGURATION':'Debug','SWIFT_ACTIVE_COMPILATION_CONDITIONS':['DEBUG'],
+                'PRODUCT_BUNDLE_IDENTIFIER':adapter.USER_BUNDLE,'DEVELOPMENT_TEAM':adapter.NORMAL_TEAM,'CURRENT_PROJECT_VERSION':'71'}}
+        data=root/'device-data';data.mkdir()
+        for relative in ['Library/Application Support/'+name for name in adapter.ORIGINALS]+['Documents/nested/drawing','Library/Preferences/normal.plist']:
+            path=data/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'unchanged normal user bytes')
+        state=types.SimpleNamespace(root=root,work=work,app=app,source=source,config=config,info=info,receipt=receipt,
+            ent=ent,metadata=metadata,context=context,data=data,commands=[],installCount=0,launchCount=0,mode=None,infoCount=0)
+        def seal():
+            state.receipt.update(files=adapter.artifact_files(app),entitlementsSHA256=adapter.sha(plistlib.dumps(state.ent,sort_keys=True)))
+            state.receipt['manifestSHA256']=adapter.digest_value(state.receipt['files'])
+            adapter.write(root/'artifact.json',state.receipt)
+            config['preparedArtifactReceiptSHA256']=adapter.sha((root/'artifact.json').read_bytes())
+        state.seal=seal;seal()
+        def command(args,log=None,*unused,**kwargs):
+            args=list(map(str,args));state.commands.append(args)
+            if args[0]=='codesign':
+                if state.mode=='bad-signature': raise adapter.Held('command_failed:codesign')
+                if '--verbose=4' in args:
+                    Path(log).write_text('Identifier='+adapter.USER_BUNDLE+'\nTeamIdentifier='+adapter.NORMAL_TEAM+'\n')
+                if '--entitlements' in args:return plistlib.dumps(state.ent).decode()
+                return ''
+            if args[0]=='security':
+                expiry=dt.datetime.now()+dt.timedelta(days=1)
+                if state.mode=='expired-provision':expiry=dt.datetime(2020,1,1)
+                return plistlib.dumps({'TeamIdentifier':[adapter.NORMAL_TEAM],'ExpirationDate':expiry,
+                    'ProvisionedDevices':['leased-ipad'],'Entitlements':dict(state.ent)}).decode()
+            if args[0]=='git':
+                if args[1]=='status':return ''
+                if args[1]=='branch':return 'integration/ccr-ipad'
+                if state.mode=='repo-source':return 'f'*40
+                return source['tree'] if args[-1]=='HEAD^{tree}' else source['commit']
+            self.assertEqual(args[:3],['xcrun','devicectl','device'])
+            if args[3:5]==['info','apps']:
+                state.infoCount+=1
+                if state.infoCount==2 and state.mode=='input-mutation':(app/'Sill').write_bytes(b'changed during verification')
+                if state.infoCount==2 and state.mode=='before-data-change':(data/'Library/Preferences/normal.plist').write_bytes(b'external normal input changed')
+                if state.infoCount==4 and state.mode=='isolated-metadata-change':state.metadata['bundleVersion']='99'
+                if state.infoCount==4 and state.mode=='isolated-data-change':(data/'Library/Preferences/normal.plist').write_bytes(b'normal state changed after launch')
+                adapter.write(args[args.index('--json-output')+1],{'result':{'apps':[dict(state.metadata)],'deviceIdentifier':'leased-ipad'}})
+            elif args[3:5]==['info','processes']:
+                adapter.write(args[args.index('--json-output')+1],{'result':{'runningProcesses':[
+                    {'processIdentifier':123,'executable':'file:///installed/Sill.app/Sill' if state.mode!='wrong-process' else 'file:///different/app/Sill'}]}})
+            elif args[3:5]==['install','app']:
+                self.assertIn('--device',args);self.assertNotIn('-allowProvisioningUpdates',args)
+                state.installCount+=1
+                if state.mode=='install-unknown':raise adapter.Held('command_failed:devicectl')
+                state.metadata['bundleVersion']='71'
+                if state.mode=='data-mutation':(data/'Library/Preferences/normal.plist').write_bytes(b'user data changed')
+                if state.mode=='receipt-mutation':(root/'context.json').write_bytes(b'changed parent context')
+            elif args[3:5]==['process','launch']:
+                state.launchCount+=1
+                adapter.write(args[args.index('--json-output')+1],{'result':{'processIdentifier':123}})
+                self.assertIn(adapter.USER_BUNDLE,args);self.assertEqual(args[-3:],['--','--ccr-test-runtime',context['id']])
+                runtime={'schema':'ccr.ipad-test-runtime/v1','id':context['id'],**source,'bundleID':adapter.USER_BUNDLE,
+                    'build':'71','relayAddress':context['relayAddress'],'processID':123,
+                    'storageRoot':'/private/normal-data/Library/Application Support/CCRIntegrationTests/'+context['id']+'/state',
+                    'executableSHA256':adapter.sha((app/'Sill').read_bytes())}
+                if state.mode=='runtime-source':runtime['commit']='f'*40
+                adapter.write(data/('Library/Application Support/CCRIntegrationTests/'+context['id']+'/state/runtime.json'),runtime)
+            else:self.fail('unexpected command boundary')
+            return ''
+        def copy(args,**kwargs):
+            args=list(map(str,args));self.assertIn(adapter.USER_BUNDLE,args)
+            direction=args[4];source_path=args[args.index('--source')+1];target=Path(args[args.index('--destination')+1])
+            if direction=='from':source_path=data/source_path
+            else:
+                self.assertTrue(str(target).startswith('Library/Application Support/CCRIntegrationTests/'+context['id']+'/'))
+                target=data/target;source_path=Path(source_path)
+            source_path=Path(source_path)
+            if not source_path.exists():return types.SimpleNamespace(returncode=1,stdout=b'No such file',stderr=b'')
+            target.parent.mkdir(parents=True,exist_ok=True)
+            if source_path.is_dir():shutil.copytree(source_path,target)
+            else:shutil.copyfile(source_path,target)
+            return types.SimpleNamespace(returncode=0,stdout=b'',stderr=b'')
+        state.command=command;state.copy=copy
+        return state
+
+    def invoke(self, state):
+        with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter.subprocess,'run',side_effect=state.copy),patch.object(adapter.time,'sleep'):
+            return adapter.deploy_prepared(state.config,state.work,state.source)
+
+    def test_complete_prepared_fixture_reaches_same_bundle_install_and_only_isolated_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=self.fixture(directory);result=self.invoke(state)
+            self.assertEqual((state.installCount,state.launchCount),(1,1))
+            self.assertTrue(result['sourceReadbackVerified']);self.assertTrue(result['normalReturnRequired'])
+            self.assertFalse(result['functionalAcceptance']);self.assertEqual(result['bundleIdentifier'],adapter.USER_BUNDLE)
+            self.assertNotIn('xcodebuild',[row[0] for row in state.commands])
+            self.assertEqual(adapter.read(state.work/'prepared-install-attempt.json')['status'],'isolated-runtime-verified')
+            with self.assertRaisesRegex(adapter.Held,'already_attempted'):self.invoke(state)
+            self.assertEqual(state.installCount,1)
+
+    def test_cli_dispatch_reaches_prepared_install_with_all_parent_inputs(self):
+        import io, contextlib
+        with tempfile.TemporaryDirectory() as directory:
+            state=self.fixture(directory)
+            state.config.update(outputRoot=str(state.root/'output'),relayHost='192.168.1.2',relayPort=8793)
+            config_path=state.root/'config.json';adapter.write(config_path,state.config)
+            original=state.command
+            def command(args,*rest,**kwargs):
+                if str(args[0]).endswith('/storage-route'):return json.dumps({'path':str(state.root)})
+                if str(args[0]).endswith('/codex-source-guard'):return json.dumps({'repository':'github.com/plamyth/sill',**state.source})
+                return original(args,*rest,**kwargs)
+            output=io.StringIO()
+            with patch.object(sys,'argv',['adapter.py','deploy-prepared','--config',str(config_path)]), \
+                 patch.object(adapter,'command',side_effect=command),patch.object(adapter.subprocess,'run',side_effect=state.copy), \
+                 patch.object(adapter.time,'sleep'),contextlib.redirect_stdout(output):
+                code=adapter.main()
+            self.assertEqual(code,0,output.getvalue())
+            self.assertEqual(json.loads(output.getvalue())['status'],'applied')
+            self.assertEqual((state.installCount,state.launchCount),(1,1))
+
+    def test_missing_or_invalid_preconditions_never_install(self):
+        for failure in ['missing','expired','old-build','wrong-team','source','not-debug','profile','signature','keychain','receipt','input-mutation','expired-provision','repo-source','before-data-change','synthetic-profile']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=self.fixture(directory)
+                if failure=='missing':state.config.pop('preparedArtifactReceiptSHA256')
+                elif failure=='expired':
+                    value=adapter.read(state.root/'lease.json');value['expiresAt']='2020-01-01T00:00:00+00:00';adapter.write(state.root/'lease.json',value)
+                elif failure=='old-build':
+                    state.metadata['bundleVersion']='71'
+                    prior=adapter.read(state.root/'installed.json');prior.update(build='71',metadataSHA256=adapter.digest_value(state.metadata))
+                    adapter.write(state.root/'installed.json',prior);state.config['installedIdentityReceiptSHA256']=adapter.sha((state.root/'installed.json').read_bytes())
+                elif failure=='wrong-team':state.config['developmentTeam']='another'
+                elif failure=='source':state.receipt['commit']='f'*40;state.seal()
+                elif failure=='not-debug':state.receipt['buildSettings']['SWIFT_ACTIVE_COMPILATION_CONDITIONS']=[];state.seal()
+                elif failure=='profile':state.config['ownerBootstrapSHA256']='0'*64
+                elif failure=='synthetic-profile':
+                    fake=json.dumps({'schema':'ccr.owner-mac-bootstrap/v1','macID':'0'*16,
+                        'fingerprint':adapter.base64.urlsafe_b64encode(bytes(32)).decode().rstrip('='),
+                        'addresses':['100.64.1.2'],'remotePort':7455}).encode()
+                    (state.root/'public.json').write_bytes(fake);(state.app/'CCR-OwnerMacBootstrap.json').write_bytes(fake)
+                    state.config['ownerBootstrapSHA256']=adapter.sha(fake);state.receipt['ownerBootstrapSHA256']=adapter.sha(fake);state.seal()
+                elif failure=='signature':state.mode='bad-signature'
+                elif failure=='expired-provision':state.mode=failure
+                elif failure=='keychain':state.ent['keychain-access-groups']=['new group'];state.seal()
+                elif failure=='receipt':state.config['preparedArtifactReceiptSHA256']='0'*64
+                elif failure in ['input-mutation','repo-source','before-data-change']:state.mode=failure
+                with self.assertRaises(adapter.Held):self.invoke(state)
+                self.assertEqual((state.installCount,state.launchCount),(0,0))
+
+    def test_after_install_failure_is_held_without_normal_launch_or_automatic_retry(self):
+        for failure in ['install-unknown','data-mutation','receipt-mutation','runtime-source','wrong-process','isolated-metadata-change','isolated-data-change']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=self.fixture(directory);state.mode=failure
+                with self.assertRaises(adapter.Held):self.invoke(state)
+                self.assertEqual(state.installCount,1)
+                self.assertEqual(state.launchCount,1 if failure in ['runtime-source','wrong-process','isolated-metadata-change','isolated-data-change'] else 0)
+                self.assertEqual(adapter.read(state.work/'prepared-install-attempt.json')['status'],'held-after-install-attempt')
+                with self.assertRaisesRegex(adapter.Held,'already_attempted'):self.invoke(state)
+                self.assertEqual(state.installCount,1)
+
+
 class SingleAppHoldContract(unittest.TestCase):
     def test_public_entrypoints_hold_before_every_subprocess_and_device_effect(self):
         import contextlib
