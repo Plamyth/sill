@@ -25,6 +25,14 @@ import Foundation
         ReconciliationProtocol.mode="lost";ReconciliationProtocol.resolved=false
         await resolveCanvasConflict(.useDisplaced)
         check(canvasConflictPending?.disposition == .pending && canvasVaultBlocked && store.scene==original,"lost response leaves actual local choice journal and original scene held")
+        store.scene.nodes[0].text="결과 미확인 뒤 새 입력"
+        let changed=WorkspaceReconciliationHarness(store:store,relay:relay)
+        await changed.readCanvasConflictNote()
+        check(changed.canvasConflictOpen && changed.canvasConflictPending?.disposition == .refreshRequired,"reopened unresolved request remains readable after newer local input")
+        let changedWrites=ReconciliationProtocol.requests.count
+        await changed.resolveCanvasConflict(.useDisplaced)
+        check(ReconciliationProtocol.requests.count==changedWrites,"newer local input requires fresh review and cannot re-submit old choice")
+        store.scene=original
         let reopened=WorkspaceReconciliationHarness(store:store,relay:relay)
         await reopened.readCanvasConflictNote()
         check(reopened.canvasConflictPending?.decision == .useDisplaced,"reopened comparison restores same unresolved original decision")
@@ -51,6 +59,9 @@ import Foundation
         await readCanvasConflictNote();ReconciliationProtocol.mode="stale"
         await resolveCanvasConflict(.keepCurrent)
         check(canvasConflictPending?.disposition == .refreshRequired && canvasVaultBlocked,"typed409 makes previous choice require new material read")
+        let heldWrites=ReconciliationProtocol.requests.count
+        await resolveCanvasConflict(.keepCurrent)
+        check(ReconciliationProtocol.requests.count==heldWrites,"refreshRequired action guard sends zero stale PUT even without SwiftUI button guard")
         var next=ReconciliationProtocol.snapshot
         let newID=UUID().uuidString;next["recoveryID"]=newID
         next["history"]=[["recoveryID":ReconciliationProtocol.snapshot["recoveryID"]!,"files":["base.md":String(repeating:"a",count:64)]]]

@@ -954,10 +954,11 @@ struct CanvasWorkspace: View {
                     let selected = try prior.conflict.selected(prior.decision)?.scene(id:id)
                     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
                     let selectedSHA = try selected.map { CanvasPacket.sha(try encoder.encode($0)) }
-                    guard local == prior.localSHA || local == selectedSHA else { throw VaultBlockRecoveryError.changed }
-                    canvasConflict = prior.conflict; canvasConflictPending = prior
+                    var retained = prior
+                    if local != prior.localSHA && local != selectedSHA { retained.disposition = .refreshRequired }
+                    canvasConflict = prior.conflict; canvasConflictPending = retained
                     canvasConflictLocalSHA = local
-                    canvasConflictStatus = prior.disposition == .refreshRequired ?
+                    canvasConflictStatus = retained.disposition == .refreshRequired ?
                         "서버의 보존 자료가 바뀌었습니다. 이전 선택 요청은 보존하며 새 자료를 다시 읽고 대조해야 합니다." :
                         "이전 선택의 결과가 미확인입니다. 같은 선택만 명시적으로 확인할 수 있습니다. 다른 선택은 새 자료를 읽고 다시 대조해야 합니다."
                     canvasConflictOpen = true
@@ -986,7 +987,7 @@ struct CanvasWorkspace: View {
             if let pending = canvasConflictPending {
                 let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
                 let selectedSHA = CanvasPacket.sha(try encoder.encode(selectedScene))
-                guard pending.decision == decision, pending.address == address,
+                guard pending.disposition == .pending, pending.decision == decision, pending.address == address,
                       (pending.localSHA == localSHA || selectedSHA == localSHA), pending.conflict.recoveryID == snapshot.recoveryID,
                       pending.conflict.expected == snapshot.expected else { throw VaultBlockRecoveryError.context }
                 choice = pending
@@ -1058,6 +1059,9 @@ struct CanvasWorkspace: View {
             ScrollView {
                 VStack(alignment:.leading,spacing:16) {
                     Text(canvasConflictStatus).font(.footnote).foregroundStyle(.orange)
+                    if !store.canApplyReconciledCanvas || proposalInputBusy {
+                        Text("입력·미확정 초안·Files 저장을 마친 뒤 후보를 선택하세요. 원문 대조는 계속할 수 있습니다.").font(.footnote)
+                    }
                     if let snapshot = canvasConflict {
                         Text("보존 조정 시도 \(snapshot.history.count)개 · 자료는 자동 삭제하지 않습니다.").font(.caption)
                         Text(snapshot.materials.active?.sha256 == snapshot.materials.displaced?.sha256 ?
@@ -1070,7 +1074,7 @@ struct CanvasWorkspace: View {
                             Button(canvasConflictPending == nil ? decision.title : "같은 선택 결과 확인 · " + decision.title) {
                                 canvasConflictDecision = decision; canvasConflictConfirmOpen = true
                             }.frame(minHeight:44)
-                                .disabled(canvasSyncBusy || snapshot.selected(decision)?.validCanvas != true ||
+                                .disabled(canvasSyncBusy || !store.canApplyReconciledCanvas || proposalInputBusy || snapshot.selected(decision)?.validCanvas != true ||
                                     canvasConflictPending?.disposition == .refreshRequired ||
                                     (canvasConflictPending != nil && canvasConflictPending?.decision != decision))
                                 .accessibilityIdentifier("canvasConflict-" + decision.rawValue)
