@@ -93,7 +93,7 @@ test('legacy unknown style remains unknown and schema 2 settings need no native 
 
 test('schema, pen settings and native style shape errors fail before persistence or delivery', async t => {
   const f = fixture(t), changes = [
-    s => { s.schemaVersion = 3; }, s => { s.schemaVersion = '2'; },
+    s => { s.schemaVersion = 4; }, s => { s.schemaVersion = '2'; },
     s => { s.schemaVersion = 1; },
     ...[0,2,'1',null].map(v => s => { s.penSettings.version = v; }),
     ...['red','',null,{}].map(v => s => { s.penSettings.color = v; }),
@@ -158,7 +158,7 @@ test('schema 2 retains packet byte, PNG, ID and 4 MiB scene limits', () => {
 
 test('oversize AI projection explicitly omits structure while keeping the exact schema 2 file', async t => {
   const f = fixture(t), value = scene();
-  value.nodes = [{text:'한'.repeat(30000)}];
+  value.nodes = [{kind:'note',text:'한'.repeat(30000)}];
   const body = packet(value);
   assert.equal((await f.call('/packets','POST',body)).body.state,'started');
   const text = f.calls.find(c => c.method === 'turn/start').params.input[0].text;

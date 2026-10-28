@@ -1,11 +1,15 @@
 'use strict';
 
+const {SCENE_CAPABILITIES} = require('./canvas-scene');
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const key = value => typeof value === 'string' && UUID.test(value) ? value.toLowerCase() : null;
 
 function canvasMermaid(scene) {
   const nodes = scene.nodes, links = scene.links;
   if (!Array.isArray(nodes) || !Array.isArray(links) || nodes.length > 512 || links.length > 1024) return null;
+  if (scene.schemaVersion != null && !SCENE_CAPABILITIES.sceneSchemaVersions.includes(scene.schemaVersion) ||
+      nodes.some(node => node?.kind != null && !SCENE_CAPABILITIES.nodeKinds.includes(node.kind)) ||
+      scene.schemaVersion !== 3 && nodes.some(node => ['ellipse','line'].includes(node?.kind))) return null;
   const ids = new Set(nodes.map(node => key(node?.id))), edgeIds = new Set(links.map(link => key(link?.id)));
   if (ids.has(null) || ids.size !== nodes.length || edgeIds.has(null) || edgeIds.size !== links.length ||
       nodes.some(node => typeof node.text !== 'string') ||
@@ -55,9 +59,25 @@ function canvasMermaid(scene) {
     return code < 128 && !/[a-zA-Z0-9 ]/.test(char) ? `#${code};` : char;
   }).join('');
   const lines = ['flowchart TD'];
-  for (const node of nodes) if (!hidden.has(key(node.id)))
-    lines.push(`${diagramID(node.id)}["${label(node.text || '이름 없는 요소')}"]`);
-  for (const link of links) if (!hidden.has(key(link.from)) && !hidden.has(key(link.to))) {
+  const visible = nodes.filter(node => !hidden.has(key(node.id)));
+  const visibleLinks = links.filter(link => !hidden.has(key(link.from)) && !hidden.has(key(link.to)));
+  const primitiveCount = visible.filter(node => node.kind === 'line').length;
+  if (visible.length + primitiveCount > 512 || visibleLinks.length + primitiveCount > 1024) return null;
+  for (const node of visible) {
+    const id = diagramID(node.id);
+    if (node.kind === 'line') {
+      const endpoint = 'x' + id.slice(1);
+      lines.push(`${id}[" "]`,`${endpoint}[" "]`,
+        `${id} ---|"${label(node.text || '직선')}"| ${endpoint}`,
+        `class ${id},${endpoint} ccrLineEndpoint`);
+    } else {
+      lines.push(`${id}["${label(node.text || '이름 없는 요소')}"]`);
+      if (node.kind === 'ellipse') lines.push(`class ${id} ccrEllipse`);
+    }
+  }
+  if (visible.some(node => node.kind === 'ellipse')) lines.push('classDef ccrEllipse rx:50%,ry:50%');
+  if (visible.some(node => node.kind === 'line')) lines.push('classDef ccrLineEndpoint fill:none,stroke:none');
+  for (const link of visibleLinks) {
     const relation = link.label || (link.kind === 'parentChild' ? '하위 요소' : '연결');
     lines.push(`${diagramID(link.from)} -->|"${label(relation)}"| ${diagramID(link.to)}`);
   }
@@ -69,7 +89,9 @@ function canvasDiagramMarkdown(scene) {
   if (!Array.isArray(scene.nodes) || !scene.nodes.length) return '';
   const source = canvasMermaid(scene);
   if (source === null) return '\n## 다이어그램\n\n표시 한도나 구조를 확인하세요. 원본 그림과 구조 데이터는 보존됩니다.\n';
-  return '\n## 다이어그램\n\n<!-- ccr:mermaid:v1 -->\n```mermaid\n' + source + '\n```\n';
+  const mode = scene.nodes.some(node => ['ellipse','line'].includes(node?.kind)) ?
+    '<!-- ccr.diagram-shapes/v1 -->\n자동 배치 모드입니다. 원본의 위치·크기·회전은 위 기하 정보와 JSON을 확인하세요.\n\n' : '';
+  return '\n## 다이어그램\n\n' + mode + '<!-- ccr:mermaid:v1 -->\n```mermaid\n' + source + '\n```\n';
 }
 
 module.exports = {canvasMermaid,canvasDiagramMarkdown};

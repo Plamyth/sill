@@ -1,0 +1,61 @@
+{
+  "schema": "ccr.scene3-projection-fixture/v1",
+  "authority": "부모가 선택한 구현 계약. 사용자 직접 확정 세부값으로 표시하지 않는다.",
+  "files": [
+    {
+      "originalPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/projection-scene.json",
+      "file": "projection-scene.json",
+      "sha256": "d1e9846eaf89b44c43c0155fb67bb25a96b7cdd1a4d0e634c2f579a211f15f69",
+      "bytes": 67560
+    },
+    {
+      "originalPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/projection-snapshot.json",
+      "file": "projection-snapshot.json",
+      "sha256": "9adaf0580ee2acdfa1d832519d817bfd168fc59cbb64fa94bab3d84cabca568c",
+      "bytes": 970
+    }
+  ],
+  "contractPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/DIAGRAM-PROJECTION-v1.md",
+  "contractSha256": "b4950b6a8a773a64b67fef038ccdfd562643bfafb77a39b353a4537397effd60",
+  "writerWebKitEvidence": {
+    "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f/webkit-shapes.json",
+    "sha256": "d4470c8e1e21d836d0fc90f94560e772fb90ed7a58a36ec84b9808c880d45a35",
+    "passed": true,
+    "ellipseCenter": true,
+    "ellipseCorner": false,
+    "endpointsHidden": true,
+    "lineHasArrow": false,
+    "endpointSelected": true,
+    "scope": "실제 macOS WKWebView·번들 bridge/SVG DOM 기하·선 선택. 자동 배치이며 원본 좌표 재현 또는 iPad 터치/시각 수용이 아님. 화면·앱 활성화·네트워크·설치 없음.",
+    "executedByThisWorker": false
+  },
+  "writerVerificationIndex": {
+    "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/schema3-native-verification.json",
+    "sha256": "c572b0956c98bfcef7fe1474de7a1de12e62741beff93ac2bc350dc3f5e7cf47",
+    "output": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/glyph-integration-source/Tests/checks/ink-glyph-edit/.build/9d596f23-9275-4010-bef2-65db02763c2a/combined-633156f5-a742-4200-9a4d-f4d28567412f",
+    "results": [
+      {
+        "name": "webkit-compile",
+        "exitCode": 0
+      },
+      {
+        "name": "webkit",
+        "exitCode": 0
+      },
+      {
+        "name": "mac-protocol",
+        "exitCode": 0
+      },
+      {
+        "name": "relay-compile",
+        "exitCode": 0
+      },
+      {
+        "name": "relay",
+        "exitCode": -5
+      }
+    ],
+    "scope": "기존 writer 실행 결과 참조. 현재 source commit/tree와의 동일성은 추가 확정하지 않음."
+  },
+  "initialContractSha256": "b4950b6a8a773a64b67fef038ccdfd562643bfafb77a39b353a4537397effd60"
+}

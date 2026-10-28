@@ -25,7 +25,7 @@ const MEMO = '\n## 메모\n\n한글 e\u0301 👩🏽‍💻 🧑‍🚀\r\n' +
 
 function canvasFixture(t) {
   const root = fixture(t), vault = new ObsidianVault(root), id = crypto.randomUUID();
-  const scene = Buffer.from(JSON.stringify({id,revision:1,drawingBase64:'',nodes:[],links:[],strokes:[],
+  const scene = Buffer.from(JSON.stringify({schemaVersion:1,id,revision:1,drawingBase64:'',nodes:[],links:[],strokes:[],
     futureField:{language:'한국어',values:[null,1,'🖊️']}}));
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC','base64');
   const first = vault.saveCanvas(id,1,scene,image,null);
@@ -248,7 +248,7 @@ test('authenticated HTTP read and compare-and-swap write expose Mac changes', as
 test('canvas export preserves a visible Markdown preview and immutable source assets', async t => {
   const root = fixture(t), vault = new ObsidianVault(root);
   const id = crypto.randomUUID();
-  const scene = Buffer.from(JSON.stringify({id,revision:1,drawingBase64:'',nodes:[],links:[],strokes:[]}));
+  const scene = Buffer.from(JSON.stringify({schemaVersion:1,id,revision:1,drawingBase64:'',nodes:[],links:[],strokes:[]}));
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC','base64');
   const first = vault.saveCanvas(id,1,scene,image,null);
   const loaded = vault.canvas(id);
@@ -274,7 +274,7 @@ test('authenticated canvas HTTP round trip rejects stale note versions', async t
   const endpoint = `http://127.0.0.1:${server.address().port}/vault/canvas?id=${id}`;
   const headers = {'x-canvas-token':token,'content-type':'application/json'};
   assert.equal((await fetch(endpoint,{headers})).status,404);
-  const scene = Buffer.from(JSON.stringify({id,revision:1,drawingBase64:'',nodes:[],links:[],strokes:[]}));
+  const scene = Buffer.from(JSON.stringify({schemaVersion:1,id,revision:1,drawingBase64:'',nodes:[],links:[],strokes:[]}));
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC','base64');
   const body = {revision:1,baseSha256:null,sceneJSONBase64:scene.toString('base64'),
     imagePNGBase64:image.toString('base64')};
@@ -297,7 +297,7 @@ test('authenticated canvas HTTP round trip rejects stale note versions', async t
   assert.equal(canvasResponse.status,200);
   assert.equal((await canvasResponse.json()).noteSha256,edited.sha256);
   assert.equal((await (await fetch(noteEndpoint,{headers})).json()).text,editedText);
-  const nextScene = Buffer.from(JSON.stringify({id,revision:2,drawingBase64:'aW5r',nodes:[],links:[],strokes:[]}));
+  const nextScene = Buffer.from(JSON.stringify({schemaVersion:1,id,revision:2,drawingBase64:'aW5r',nodes:[],links:[],strokes:[]}));
   const nextBody = {...body,revision:2,sceneJSONBase64:nextScene.toString('base64')};
   const staleInk = await fetch(endpoint,{method:'PUT',headers,
     body:JSON.stringify({...nextBody,baseSha256:saved.noteSha256})});
@@ -335,23 +335,16 @@ test('confirmed ink text and typed relations are readable in Markdown while JSON
   assert.deepEqual(Buffer.from(vault.canvas(id).sceneJSONBase64,'base64'),next);
 });
 
-test('structure text stays literal and future elements do not acquire invented semantics', t => {
+test('지원하지 않는 종류는 마지막 정상 노트와 원본 바이트를 보존하며 거부한다', t => {
   const {vault,id,scene,image,first} = canvasFixture(t);
-  const a=crypto.randomUUID(), b=crypto.randomUUID(), stroke=crypto.randomUUID();
   const next=Buffer.from(JSON.stringify({...JSON.parse(scene),revision:2,nodes:[
-    {id:a,kind:'future',confidence:'future',text:'<script>& </pre>\n<!-- ccr:markdown-memo:v1 -->\n[[노트]]',
-      sourceStrokeIds:[stroke,stroke,'invalid']},
-    {id:[b],kind:'note',text:'INVALID COERCED ID'}
-  ],links:[{kind:'future',from:a,to:b},{from:[a],to:b}]}));
-  const saved=vault.saveCanvas(id,2,next,image,first.noteSha256), note=vault.note(saved.path);
-  assert.ok(note.text.includes(`### 요소 · ${a}`));
-  assert.ok(note.text.includes('&lt;script&gt;&amp; &lt;/pre&gt;'));
-  assert.ok(note.text.includes('&lt;!-- ccr:markdown-memo:v1 --&gt;'));
-  assert.ok(note.text.includes('확인 전 제안 · 출처 획 1개'));
-  assert.ok(note.text.includes(`${a} → ${b} · 연결`));
-  assert.ok(!note.text.includes('INVALID COERCED ID'));
-  assert.equal(note.text.split(MEMO_BOUNDARY).length,2);
-  assert.deepEqual(Buffer.from(vault.canvas(id).sceneJSONBase64,'base64'),next);
+    {id:crypto.randomUUID(),kind:'future',text:'원본 보존',sourceStrokeIds:[]}
+  ]}));
+  const original=Buffer.from(next),note=vault.note(first.path);
+  assert.throws(() => vault.saveCanvas(id,2,next,image,first.noteSha256),/요소 종류/);
+  assert.equal(vault.note(first.path).sha256,note.sha256);
+  assert.deepEqual(Buffer.from(vault.canvas(id).sceneJSONBase64,'base64'),scene);
+  assert.deepEqual(next,original);
 });
 
 test('old structure notes migrate only on save and preserve the Markdown owned memo byte exactly', t => {

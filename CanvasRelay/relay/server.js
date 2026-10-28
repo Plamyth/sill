@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
-const {assertInkScene,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
+const {assertInkScene,assertSceneNodes,SCENE_CAPABILITIES,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 const {appServerDeliveryReady,withAppServer,deliverPacket} = require('./codex-delivery');
 const {controlRoomProjection,hiddenThreadIds} = require('./control-room-projection');
 const {ObsidianVault,VaultError} = require('./obsidian-vault');
@@ -312,6 +312,8 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
     if (request.headers['x-canvas-token'] !== token) return json(response,401,{error:'Unauthorized'});
     const url = new URL(request.url,'http://localhost');
     try {
+      if (request.method === 'GET' && url.pathname === '/vault/canvas/capabilities')
+        return json(response,200,SCENE_CAPABILITIES);
       if (url.pathname.startsWith('/vault/')) {
         if (!vault) return json(response,503,{error:'Obsidian vault is not configured'});
         const relative = url.searchParams.get('path') ?? '';
@@ -465,6 +467,12 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
           if (body?.sceneId !== scene.id || body.baseRevision !== scene.revision ||
               !Array.isArray(body.annotations) || !Array.isArray(body.proposedNodes))
             throw new Error('Agent revision does not match canvas');
+          assertInkScene(scene);
+          assertSceneNodes({schemaVersion:scene.schemaVersion,nodes:body.proposedNodes});
+          if (body.nodeEdits != null) {
+            if (!Array.isArray(body.nodeEdits)) throw new Error('그림 요소 수정 목록이 올바르지 않습니다.');
+            assertSceneNodes({schemaVersion:scene.schemaVersion,nodes:body.nodeEdits.map(edit => edit?.expected)});
+          }
           const temporary = `${file}.${crypto.randomUUID()}.tmp`;
           writeBytes(temporary,JSON.stringify(body));
           fs.renameSync(temporary,file);

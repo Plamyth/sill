@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {canvasDiagramMarkdown} = require('./canvas-diagram');
-const {MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
+const {assertInkScene,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 
 const MAX_NOTE_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 500;
@@ -41,11 +41,14 @@ function canvasStructure(scene) {
     text += part; bytes += size; return true;
   };
   for (const node of nodes) {
-    const kind = node.kind === 'box' ? '상자' : node.kind === 'note' ? '메모' : '요소';
+    const kind = node.kind === 'box' ? '상자' : node.kind === 'note' ? '메모' :
+      node.kind === 'ellipse' ? '타원' : node.kind === 'line' ? '선' : '요소';
     const state = node.confidence === 'confirmed' ? '확정' : '확인 전 제안';
     const strokes = new Set((Array.isArray(node.sourceStrokeIds) ? node.sourceStrokeIds : [])
       .filter(id => typeof id === 'string' && UUID.test(id))).size;
-    if (!append(`\n### ${kind} · ${node.id}\n\n<pre>${escaped(node.text)}</pre>\n\n${state} · 출처 획 ${strokes}개\n`)) break;
+    const geometry = scene.schemaVersion === 3 ? `\n기하 정보: <code>${escaped(JSON.stringify({kind:node.kind,frame:node.frame,
+      ...(node.rotationDegrees != null ? {rotationDegrees:node.rotationDegrees} : {})}))}</code>\n` : '';
+    if (!append(`\n### ${kind} · ${node.id}\n\n<pre>${escaped(node.text)}</pre>\n\n${state} · 출처 획 ${strokes}개\n${geometry}`)) break;
   }
   if (!remaining && links.length) {
     append('\n### 연결\n');
@@ -192,13 +195,14 @@ class ObsidianVault {
       if (extension === 'json') bytes = content;
     }
     const scene = JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+    try { assertInkScene(scene); } catch (error) { throw new VaultError(error.message,409); }
     if (scene.id?.toLowerCase() !== id || scene.revision !== revision)
       throw new VaultError('Canvas scene identity differs from its note',409);
     const legacy = canvasMarkdown(id,revision,sceneSha256,imageSha256);
     const structured = legacy + canvasStructure(scene);
     if (managed !== legacy && managed !== structured && managed !== structured + canvasDiagramMarkdown(scene))
       throw new VaultError('Canvas note metadata was changed; manual reconciliation required',409);
-    return {memo,snapshot:{path:note.path,noteSha256:note.sha256,sceneSha256,imageSha256,
+    return {memo,schemaVersion:scene.schemaVersion,snapshot:{path:note.path,noteSha256:note.sha256,sceneSha256,imageSha256,
       revision:scene.revision,sceneJSONBase64:bytes.toString('base64')}};
   }
 
@@ -207,6 +211,7 @@ class ObsidianVault {
         sceneBytes.length > MAX_CANVAS_SCENE_BYTES || imageBytes.length > 5*1024*1024)
       throw new VaultError('Invalid canvas scene');
     const scene = JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(sceneBytes));
+    try { assertInkScene(scene); } catch (error) { throw new VaultError(error.message); }
     if (scene.id?.toLowerCase() !== id.toLowerCase() || scene.revision !== revision)
       throw new VaultError('Canvas scene identity differs from request');
     const normalized = id.toLowerCase();
@@ -220,7 +225,10 @@ class ObsidianVault {
     if ((current?.sha256 ?? null) !== baseSha256)
       throw new VaultError('Note changed on Mac; reload before saving',409);
     // Only Markdown owns the suffix. A scene autosave never reconstructs its contents.
-    const memo = current ? this.#canvasSnapshot(normalized,current).memo : null;
+    const prior = current ? this.#canvasSnapshot(normalized,current) : null;
+    if (prior?.schemaVersion === 3 && scene.schemaVersion !== 3)
+      throw new VaultError('그림 형식을 이전 버전으로 낮출 수 없습니다. 원본을 보존합니다.',409);
+    const memo = prior?.memo ?? null;
     const text = canvasMarkdown(normalized,revision,sceneSha256,imageSha256) + canvasStructure(scene) + canvasDiagramMarkdown(scene) +
       MEMO_BOUNDARY + (memo ?? '\n## 메모\n\n');
     if (Buffer.byteLength(text) > MAX_NOTE_BYTES)
