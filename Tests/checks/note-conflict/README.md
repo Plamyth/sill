@@ -25,3 +25,7 @@
 실제 DEBUG CanvasRuntime.launch/CanvasLocalFile/Store/Relay를 native SDK27로 컴파일하고 실제 process --ccr-test-runtime/context/embedded source identity로 실행한다. UI async 함수는 원본을 수정 없이 추출하며 UI 상태 저장과 URLProtocol transport만 fixture다. 일반 두 선택·정확 query/body·unsafe/Canvas 거부·SHA/readback/stale 거부·ACK 유실·재시작·초안 보존/수동 재개·PDF Markdown block ID 보존·늦은 callback·네이티브 directory IO 거부 및 서버 실제 예제 호환을 검사한다. 전체 iOS27 제품 타입 검사와 정상 앱 support의 synthetic scene/outbox/Canvas·Note 복구 파일 전후 해시도 같은 실행에 기록한다.
 
 실제 HTTP/화면/설치/Pencil/전체 MyScript·MarginNote 완료는 false다. 이전 Canvas paired HTTP CLEAR를 이 새 일반 노트 단위에 재사용해 완료로 표시하지 않는다. 사용자 승인 범위의 source 구현과 필수 검사·커밋까지만 수행하고 공식 통합·새 paired HTTP 및 독립 검수는 부모 경로로 반환한다. Pstack의 exact contract/caller·실패 경계 검증과 Ponytail의 기존 sheet/복구/파일 primitive/Markdown block 재사용을 적용한다. 새 provider·모델·의존성·ARENA·순정 Goal은 없다.
+
+## BOM 원문 보존 후속
+
+실제 HTTP fdeeee5b9d4f가 e0c2910의 BOM 제거 반례를 발견했다. Foundation의 `String(data:encoding:.utf8)`는 엄격 유효성 확인에만 쓰고, `String(decoding:as:UTF8.self)`로 BOM을 포함한 원문을 유지한다. 최종 재열기 대조는 선택한 material의 원본 Data와 직접 비교한다. 기존 UI의 material 표시와 Store 적용도 같은 원문을 유지한다. 잘못된 UTF-8은 replacement 문자열로 수용하지 않는다. `--case bom --isolated --output <검증 외장>`은 두 decision의 BOM/CRLF/NFD 재열기·실제 추출 Workspace/Store 적용·초안 보존과 invalid UTF-8 거부만 검사하며 기존 전체 검사나 whole build를 반복하지 않는다. HTTP는 URLProtocol 주입이며 Galileo의 실제 URLSession/서버 후속 검사와 구분한다.

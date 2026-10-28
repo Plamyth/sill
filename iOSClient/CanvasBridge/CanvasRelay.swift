@@ -424,7 +424,11 @@ extension CanvasRelay {
         let validNote: Bool
         let refusal: String?
         var bytes: Data? { Data(base64Encoded:markdownBase64) }
-        var markdown: String? { bytes.flatMap { String(data:$0,encoding:.utf8) } }
+        var markdown: String? {
+            guard let bytes, String(data:bytes,encoding:.utf8) != nil else { return nil }
+            // Validate strictly first; decoding preserves the original UTF-8 BOM as U+FEFF.
+            return String(decoding:bytes,as:UTF8.self)
+        }
         func validated(expected: String?) throws {
             guard sha256 == expected, ConflictMaterial.hash(sha256), let bytes,
                   bytes.count <= 1024*1024, CanvasPacket.sha(bytes) == sha256 else { throw URLError(.badServerResponse) }
@@ -494,14 +498,14 @@ extension CanvasRelay {
     }
     func resolveVaultNoteConflict(_ conflict: NoteConflict,decision: ConflictDecision) async throws -> VaultNoteSnapshot {
         _ = try conflict.validated(path:conflict.path)
-        guard let chosen = conflict.selected(decision), chosen.validNote, let text = chosen.markdown else { throw URLError(.cannotDecodeContentData) }
+        guard let chosen = conflict.selected(decision), chosen.validNote, chosen.markdown != nil, let selectedBytes = chosen.bytes else { throw URLError(.cannotDecodeContentData) }
         let body = try JSONEncoder().encode(ConflictRequest(recoveryID:conflict.recoveryID.uuidString.lowercased(),expected:conflict.expected,decision:decision))
         let result = try await response(request(vaultURL("/vault/note/conflict",path:conflict.path),method:"PUT",body:body),as:NoteConflictResolved.self,maximumBytes:64*1024)
         guard result.path.utf8.elementsEqual(conflict.path.utf8), result.recoveryID == conflict.recoveryID, result.decision == decision,
               result.resolved, !result.reconciliationRequired, result.sha256 == chosen.sha256 else { throw URLError(.badServerResponse) }
         let reopened = try await vaultNote(at:conflict.path)
         guard reopened.path.utf8.elementsEqual(conflict.path.utf8), reopened.reconciliationRequired != true, reopened.sha256 == result.sha256,
-              Data(reopened.text.utf8) == Data(text.utf8) else { throw URLError(.badServerResponse) }
+              Data(reopened.text.utf8) == selectedBytes else { throw URLError(.badServerResponse) }
         return reopened
     }
 }

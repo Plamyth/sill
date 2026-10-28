@@ -66,6 +66,33 @@ final class NoteConflictProtocol: URLProtocol {
         let path=NoteConflictProtocol.path
         let support=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!
         let state=try CanvasRuntime.stateURL(.checkpoint).deletingLastPathComponent()
+        if CommandLine.arguments.contains("--bom-only") {
+            NoteConflictProtocol.active="\u{feff}현재 e\u{301}\r\n"
+            NoteConflictProtocol.displaced="\u{feff}외부 e\u{301}\r\n"
+            for decision in CanvasRelay.ConflictDecision.allCases {
+                let expected=Data((decision == .keepCurrent ? NoteConflictProtocol.active:NoteConflictProtocol.displaced).utf8)
+                let conflict=try await relay.vaultNoteConflict(path:path)
+                check(conflict.selected(decision)?.markdown.map { Data($0.utf8) } == expected,"BOM CRLF NFD material preserves exact bytes for "+decision.rawValue)
+                let reopened=try await relay.resolveVaultNoteConflict(conflict,decision:decision)
+                check(Data(reopened.text.utf8)==expected,"BOM CRLF NFD PUT and GET readback succeeds for "+decision.rawValue)
+                let store=CanvasStore();store.saveNow();store.setNoteConnection(address:relay.address,token:relay.token)
+                await store.openVaultNote(path) {_ in note(NoteConflictProtocol.base)}
+                store.vaultDraft="\u{feff}보존 초안 e\u{301}\r\n"
+                let original=Data(store.vaultDraft.utf8)
+                await store.saveVaultNote {_,_,_ in throw NSError(domain:"CanvasRelay",code:409,userInfo:[VaultSaveConflict.errorKey:VaultSaveConflict.reconciliationRequired.rawValue])}
+                let harness=NoteWorkspaceHarness(store,relay);await harness.read();await harness.resolve(decision)
+                check(!store.noteReconciliationHeld && !store.vaultBlocked && Data(store.vaultDraft.utf8)==expected,"actual Workspace and Store apply retains BOM source for "+decision.rawValue)
+                check(harness.noteConflictArchive.map { Data($0.draft.utf8) }==original,"archived local input retains original BOM bytes for "+decision.rawValue)
+            }
+            for bytes in [Data([0xff]),Data([0xef,0xbb,0xbf,0xc3,0x28])] {
+                let bad=CanvasRelay.NoteConflictMaterial(sha256:CanvasPacket.sha(bytes),markdownBase64:bytes.base64EncodedString(),validNote:true,refusal:nil)
+                check(bad.markdown==nil,"invalid UTF8 never replacement-decodes into valid note")
+                do {try bad.validated(expected:bad.sha256);preconditionFailure("invalid UTF8 accepted")}
+                catch {check(true,"invalid UTF8 is explicitly refused by material validation")}
+            }
+            print("NOTE_BOM_OK",count,"actual isolated Relay/Store/Workspace actions; URLProtocol fixture; no live HTTP")
+            session.invalidateAndCancel();return
+        }
         for name in ["NoteConflictChoice.json","NoteConflictLocal-33333333-3333-4333-8333-333333333333.json","NoteConflictAttempt-44444444-4444-4444-8444-444444444444.json"] {
             for base in [support,support.appendingPathComponent("CCRIntegrationTests/55555555-5555-4555-8555-555555555555/state/CanvasConflictRecovery"),state] {
                 do {try CanvasLocalFile.write(Data([1]),to:base.appendingPathComponent(name));preconditionFailure("root escape")}
