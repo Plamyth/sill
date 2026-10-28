@@ -26,6 +26,14 @@ if status == 0:
     runtime_home = output/('test-home-' + __import__('uuid').uuid4().hex)
     runtime_home.mkdir(exist_ok=True)
     status |= run('files-runtime',[output/'files-check',output/('fixtures-store-' + __import__('uuid').uuid4().hex)],dict(env,HOME=str(runtime_home),CFFIXED_USER_HOME=str(runtime_home)))
+code = run('safety-compile',flags+['-sdk',mac,'-target','arm64e-apple-macos27.0','-parse-as-library',model,
+    root/'iOSClient/CanvasBridge/CanvasStore.swift',Path(__file__).with_name('safety.swift'),
+    '-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',root/'Tests/checks/handwriting-race/Info.plist','-o',output/'safety-check'])
+status |= code
+if code == 0:
+    safety_home = output/('safety-home-' + __import__('uuid').uuid4().hex)
+    safety_home.mkdir(exist_ok=True)
+    status |= run('safety-runtime',[output/'safety-check',output/('safety-fixtures-' + __import__('uuid').uuid4().hex)],dict(env,HOME=str(safety_home),CFFIXED_USER_HOME=str(safety_home)))
 code = run('png-catalyst-compile',flags+['-sdk',mac,'-target','arm64e-apple-ios27.0-macabi',
     '-F',Path(mac)/'System/iOSSupport/System/Library/Frameworks','-parse-as-library',model,
     root/'iOSClient/CanvasBridge/CanvasStore.swift',root/'iOSClient/CanvasBridge/SceneRenderer.swift',Path(__file__).with_name('main.swift'),

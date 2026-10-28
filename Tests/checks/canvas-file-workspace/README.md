@@ -15,3 +15,7 @@ python3 Tests/checks/canvas-file-workspace/run.py /Volumes/BT-Workspace/Developm
 자기 앱 Documents/ApplicationSupport는 외부 원본으로 수용하지 않는다. 기존 CanvasScene.json의 Legacy 원문은 첫 전환 전 CanvasLegacyScene.json에 복사하고 바이트 해시를 대조한다. 문서를 열기 전 현재 장면은 CanvasPending-UUID.json으로 복사·해시 확인한다. 기존 CanvasScene.json은 이후 캐시·미저장 복구본으로만 쓰며 실패를 Files 저장 성공으로 표시하지 않는다.
 
 실제 iPad에서 폴더 picker, security scope의 재시작 지속성/권한 회수/stale bookmark, iCloud·Obsidian FileProvider, 화면 배치와 Pencil 입력은 별도 검증이 필요하다. 복구본의 독립 서재 UI와 세대 정리는 이번 최소 기능에 포함하지 않는다. 네이티브 검사는 비sandbox macOS이므로 iPad provider 권한 수용을 대신하지 않는다.
+
+`safety.swift`는 재시작 시 로컬 C/binding A/외부 B 충돌과 binding B/cache A 기록 중단을 실제 파일로 구성한다. 충돌 후 재시도는 신뢰한 토큰과 저장 기준 장면의 해시가 현재 원본과 둘 다 같을 때만 허용한다. 알 수 없는 저장 세대는 원본 다시 열기 또는 다른 폴더 안전 내보내기로 처리한다. 미리보기 대기 중 취소한 Task는 원본 세대와 binding을 갱신하지 않는다.
+
+손상된 내부 캐시가 정상 외부 문서 열기를 막지 않도록 원문을 `CanvasUnreadable-UUID.json`에 복사·해시 확인하고, 현재 메모리 장면도 별도 `CanvasPending-UUID.json`에 보존한 뒤 검증된 외부 장면으로 전환한다. 대상 열기 실패 시 기존 손상 바이트와 메모리 장면을 유지한다. 이 경로의 저장·재시작·취소 검사는 실제 격리 파일에 대해 수행한다.
