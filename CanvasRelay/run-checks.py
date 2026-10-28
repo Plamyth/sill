@@ -11,6 +11,7 @@ import sys
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', required=True, type=Path)
 parser.add_argument('--focused', action='store_true')
+parser.add_argument('--notes', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent
 output = args.output.resolve()
@@ -24,11 +25,11 @@ before = hashes()
 node = str(Path.home() / '.local/bin/node')
 if not Path(node).is_file():
     node = shutil.which('node')
-tests = ['vault-reconciliation.test.js'] if args.focused else [
+tests = ['note-reconciliation.test.js'] if args.notes else ['vault-reconciliation.test.js'] if args.focused else [
     'canvas-diagram.test.js', 'braintrinity-projection.test.js', 'canvas-schema.test.js',
     'canvas-scene3.test.js', 'obsidian-vault.test.js', 'canvas-limits.test.js',
     'codex-delivery.test.js', 'control-room-public-relay.test.js', 'vault-save-boundary.test.js',
-    'agent-scene-promotion.test.js', 'vault-reconciliation.test.js']
+    'agent-scene-promotion.test.js', 'vault-reconciliation.test.js','note-reconciliation.test.js']
 command = [node, '--experimental-test-isolation=none', '--require', str(root / 'test-guard.cjs'),
            '--test', '--test-reporter=tap',
            '--test-skip-pattern=authenticated HTTP|authenticated canvas HTTP|isolated loopback HTTP',
@@ -37,7 +38,7 @@ child_log = output / 'children.jsonl'
 child_log.write_text('')
 env = dict(os.environ, HOME=str(output / 'home'), TMPDIR=str(output / 'tmp'),
            CCR_FIX_MODULE_ROOT=str(root / 'relay'), CCR_CHILD_RECEIPTS=str(child_log),
-           CCR_RECONCILIATION_EXAMPLE=str(output / 'wire-example.json'))
+           CCR_RECONCILIATION_EXAMPLE=str(output / 'wire-example.json'),CCR_NOTE_EXAMPLE=str(output / 'note-wire-example.json'))
 with (output / 'tests.tap').open('w') as log:
     result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT)
 after = hashes()

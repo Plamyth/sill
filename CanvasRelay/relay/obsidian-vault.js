@@ -26,11 +26,14 @@ function syncDirectory(directory) {
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
-function readAsset(file, limit, expectedHash) {
+function readAsset(file, limit, expectedHash, requireOwner = false, identity) {
   let fd;
   try {
     fd = fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     const stat = fs.fstatSync(fd);
+    if (identity && (stat.dev !== identity.dev || stat.ino !== identity.ino))
+      throw new VaultError('메모 파일이 열리는 동안 바뀌었습니다.',409);
+    if (requireOwner && stat.uid !== process.getuid()) throw new VaultError('메모 파일의 소유자가 다릅니다.',409);
     if (!stat.isFile() || stat.size > limit) throw new VaultError('그림 원본 파일이 크기 한도 안의 일반 파일이 아닙니다.',409);
     const buffer = Buffer.alloc(limit + 1);
     let length = 0, count;
@@ -194,8 +197,8 @@ class ObsidianVault {
       if (receipt && receipt.schema !== 'ccr.note-save-preservation/v1')
         throw new VaultError('지원하지 않는 보존 원장입니다.',409);
       const recoveryID = name.slice(10),resolution = this.#record(path.join(folder,'resolution.json'));
-      if (resolution && (resolution.schema !== 'ccr.canvas-resolution/v1' || resolution.recoveryID !== recoveryID ||
-          typeof resolution.path !== 'string' || key(resolution.path) !== key(relative) || !/^[0-9a-f]{64}$/.test(resolution.result?.noteSha256 || '')))
+      if (resolution && (!['ccr.canvas-resolution/v1','ccr.note-resolution/v1'].includes(resolution.schema) || resolution.recoveryID !== recoveryID ||
+          typeof resolution.path !== 'string' || key(resolution.path) !== key(relative) || !/^[0-9a-f]{64}$/.test((resolution.schema === 'ccr.note-resolution/v1' ? resolution.result?.sha256 : resolution.result?.noteSha256) || '')))
         throw new VaultError('지원하지 않는 조정 기록입니다.',409);
       records.push({folder,recoveryID,intent,receipt,resolution});
     }
@@ -231,14 +234,85 @@ class ObsidianVault {
     if (pending) throw this.#required(pending);
   }
 
-  #conflictState(id, journal) {
-    const relative = `CCR Canvas/${id}.md`;
+  #generalNotePath(relative) {
+    const file = this.resolve(relative,{allowMissing:true});
+    if (relative.split('/')[0].normalize('NFC').toLowerCase() === 'ccr canvas')
+      throw new VaultError('관리되는 Canvas 노트는 Canvas 복구 경로를 사용해야 합니다.',409);
+    const root = fs.lstatSync(this.root);
+    if (!root.isDirectory() || root.isSymbolicLink() || root.uid !== process.getuid())
+      throw new VaultError('Vault 소유자와 경로를 확인하지 못했습니다.',409);
+    let stat;
+    try { stat = fs.lstatSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid()))
+      throw new VaultError('복구 대상은 소유자의 일반 Markdown 파일이어야 합니다.',409);
+    if (!stat || !fs.existsSync(path.join(this.root,'CCR Canvas'))) return relative;
+    const folder = this.resolve('CCR Canvas',{directory:true}),entries = fs.readdirSync(folder);
+    if (entries.length > 16384) throw new VaultError('Canvas 별칭 검사 한도를 초과했습니다.',409);
+    for (const name of entries) {
+      if (!/\.md$/i.test(name) || !UUID.test(name.slice(0,-3))) continue;
+      const managed = fs.lstatSync(path.join(folder,name));
+      if (managed.isFile() && managed.dev === stat.dev && managed.ino === stat.ino)
+        throw new VaultError('관리되는 Canvas 파일의 별칭은 일반 메모로 복구할 수 없습니다.',409);
+    }
+    return relative;
+  }
+
+  #noteSnapshot(relative, note) {
+    this.#generalNotePath(relative);
+    const bytes = Buffer.from(note.text,'utf8');
+    if (bytes.length > MAX_NOTE_BYTES || digest(bytes) !== note.sha256)
+      throw new VaultError('메모 원문 바이트와 SHA가 일치하지 않습니다.',409);
+    const frontmatter = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(note.text)?.[1];
+    if (frontmatter && /^ccr_scene_id:/m.test(frontmatter))
+      throw new VaultError('Canvas 원본 메타데이터는 Canvas 복구 검증을 거쳐야 합니다.',409);
+    return {path:relative,sha256:note.sha256};
+  }
+
+  #ownedNoteBytes(file, limit = MAX_NOTE_BYTES) {
+    const relative = path.relative(this.root,file);
+    if (relative.startsWith('../') || path.isAbsolute(relative)) throw new VaultError('메모가 Vault 밖에 있습니다.',409);
+    const components = [this.root];
+    for (const part of relative.split(path.sep)) components.push(path.join(components.at(-1),part));
+    const identities = components.map((component,index) => {
+      const stat = fs.lstatSync(component);
+      if (stat.isSymbolicLink() || stat.uid !== process.getuid() ||
+          !(index === components.length-1 ? stat.isFile() : stat.isDirectory()))
+        throw new VaultError('메모 경로의 종류와 소유자를 확인하지 못했습니다.',409);
+      return stat;
+    });
+    const bytes = readAsset(file,limit,undefined,true,identities.at(-1));
+    if (!components.every((component,index) => {
+      const stat = fs.lstatSync(component),before = identities[index];
+      return !stat.isSymbolicLink() && stat.uid === before.uid && stat.dev === before.dev && stat.ino === before.ino;
+    })) throw new VaultError('메모를 읽는 동안 경로가 바뀌었습니다.',409);
+    return bytes;
+  }
+
+  noteConflict(relative) {
+    this.#generalNotePath(relative);
+    const journal = this.#journals(relative).find(record => record.pending);
+    if (!journal) throw new VaultError('조정이 필요한 메모가 없습니다.',404);
+    return this.#conflictState(null,journal,relative);
+  }
+
+  resolveNoteConflict(relative, request) {
+    this.#generalNotePath(relative);
+    return this.#resolveConflict(relative,request);
+  }
+
+  #conflictState(id, journal, notePath = null) {
+    const relative = notePath ?? `CCR Canvas/${id}.md`;
+    const valid = notePath ? 'validNote' : 'validCanvas';
     const material = file => {
       try { fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-      const bytes = readAsset(file,MAX_NOTE_BYTES);
-      const result = {sha256:digest(bytes),markdownBase64:bytes.toString('base64'),validCanvas:false};
+      const bytes = notePath ? this.#ownedNoteBytes(file) : readAsset(file,MAX_NOTE_BYTES);
+      const result = {sha256:digest(bytes),markdownBase64:bytes.toString('base64'),[valid]:false};
       try {
         const text = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
+        if (notePath) {
+          this.#noteSnapshot(relative,{path:relative,text,sha256:result.sha256});
+          result.validNote = true;return result;
+        }
         const snapshot = this.#canvasSnapshot(id,{path:relative,text,sha256:result.sha256}).snapshot;
         const image = readAsset(path.join(this.root,'CCR Canvas/Assets',`${id}-${snapshot.imageSha256}.png`),5*1024*1024,snapshot.imageSha256);
         if (!validPNG(image)) throw new VaultError('Canvas preview is not a valid PNG',409);
@@ -266,7 +340,8 @@ class ObsidianVault {
       for (const name of ['intent.json','base.md','displaced.md','proposal.md','receipt.json','receipt-unconfirmed.json','resolution-unconfirmed.json']) {
         const file = path.join(record.folder,name);
         try { fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') { files[name] = null; continue; } throw error; }
-        files[name] = digest(readAsset(file,name.endsWith('.md') ? MAX_NOTE_BYTES : 64*1024));
+        const limit = name.endsWith('.md') ? MAX_NOTE_BYTES : 64*1024;
+        files[name] = digest(notePath ? this.#ownedNoteBytes(file,limit) : readAsset(file,limit));
       }
       history.push({recoveryID:record.recoveryID,files});
       if (history.length > 32) throw this.#required(journal,'조정 시도 보존 자료의 검사 한도를 초과했습니다. 자료를 유지합니다.');
@@ -274,10 +349,11 @@ class ObsidianVault {
     const expected = {activeSha256:materials.active?.sha256 ?? null,baseSha256:materials.base?.sha256 ?? null,
       displacedSha256:materials.displaced?.sha256 ?? null,proposalSha256:materials.proposal?.sha256 ?? null,
       historySha256:digest(Buffer.from(JSON.stringify(history)))};
-    const result = {schema:'ccr.canvas-conflict/v1',id,recoveryID:journal.recoveryID,
+    const result = {schema:notePath ? 'ccr.note-conflict/v1' : 'ccr.canvas-conflict/v1',
+      ...(notePath ? {path:relative} : {id}),recoveryID:journal.recoveryID,
       code:'note_reconciliation_required',reconciliationRequired:true,
       publicationAttempted:journal.receipt?.publicationAttempted ?? true,expected,materials,history};
-    if (Buffer.byteLength(JSON.stringify(result)) > 64*1024*1024)
+    if (Buffer.byteLength(JSON.stringify(result)) > (notePath ? 8 : 64)*1024*1024)
       throw this.#required(journal,'충돌 자료 응답의 크기 한도를 초과했습니다. 원본은 유지합니다.');
     return result;
   }
@@ -293,24 +369,31 @@ class ObsidianVault {
   resolveCanvasConflict(id, request) {
     if (!UUID.test(id || '')) throw new VaultError('Invalid canvas ID');
     id = id.toLowerCase();
-    const relative = `CCR Canvas/${id}.md`;
+    return this.#resolveConflict(`CCR Canvas/${id}.md`,request,id);
+  }
+
+  #resolveConflict(relative, request, id = null) {
+    const stateFor = (vault,journal) => vault.#conflictState(id,journal,id ? null : relative);
+    const snapshotFor = (vault,note) => id ? vault.#canvasSnapshot(id,note).snapshot : vault.#noteSnapshot(relative,note);
+    const valid = id ? 'validCanvas' : 'validNote';
+    const hashField = id ? 'noteSha256' : 'sha256';
     const keys = value => value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).sort().join(',') : '';
-    if (keys(request) !== 'decision,expected,recoveryID' || !UUID.test(request.recoveryID || '') ||
+    if (keys(request) !== 'decision,expected,recoveryID' || !UUID.test(request.recoveryID || '') || (!id && (typeof request.recoveryID !== 'string' || request.recoveryID !== request.recoveryID.toLowerCase())) ||
         !['keepCurrent','useDisplaced'].includes(request.decision) ||
         keys(request.expected) !== 'activeSha256,baseSha256,displacedSha256,historySha256,proposalSha256' ||
         !Object.entries(request.expected).every(([key,value]) => /^[0-9a-f]{64}$/.test(value || '') || key !== 'historySha256' && value === null))
       throw new VaultError('Invalid explicit reconciliation request');
     const journals = this.#journals(relative),journal = journals.find(record => record.recoveryID === request.recoveryID);
-    if (!journal) throw new VaultError('복구 ID가 이 Canvas에 속하지 않습니다.',409);
+    if (!journal) throw new VaultError(id ? '복구 ID가 이 Canvas에 속하지 않습니다.' : '복구 ID가 이 메모에 속하지 않습니다.',409);
     const fingerprint = digest(Buffer.from(JSON.stringify({decision:request.decision,expected:
       Object.fromEntries(Object.entries(request.expected).sort(([a],[b]) => a.localeCompare(b)))})));
     const pending = journals.find(record => record.pending);
     if (journal.resolution) {
       if (pending) throw this.#required(pending);
-      if (journal.resolution.fingerprint !== fingerprint || this.#rawNote(relative).sha256 !== journal.resolution.result.noteSha256)
+      if (journal.resolution.fingerprint !== fingerprint || this.#rawNote(relative,!id).sha256 !== journal.resolution.result[hashField])
         throw new VaultError('이미 조정한 복구 ID의 결정 또는 현재 상태가 다릅니다.',409);
-      const state = this.#conflictState(id,journal);
-      if (!state.materials.active?.validCanvas || Object.keys(state.expected).some(key => state.expected[key] !== journal.resolution.finalExpected?.[key]))
+      const state = stateFor(this,journal);
+      if (!state.materials.active?.[valid] || Object.keys(state.expected).some(key => state.expected[key] !== journal.resolution.finalExpected?.[key]))
         throw new VaultError('조정 결과 또는 보존 자료가 달라졌습니다.',409);
       return journal.resolution.result;
     }
@@ -318,11 +401,11 @@ class ObsidianVault {
       if (pending) throw this.#required(pending);
       throw new VaultError('이 복구 ID는 뒤이은 명시 조정으로 종료됐습니다.',409);
     }
-    const state = this.#conflictState(id,journal);
+    const state = stateFor(this,journal);
     if (Object.keys(state.expected).some(key => state.expected[key] !== request.expected[key]))
       throw this.#required(journal,'현재 또는 보존 자료가 달라졌습니다. 새 자료를 확인해야 합니다.');
     const chosen = state.materials[request.decision === 'keepCurrent' ? 'active' : 'displaced'];
-    if (!chosen?.validCanvas) throw new VaultError('선택한 자료를 Canvas 원본·Markdown·PNG로 재열 수 없습니다.',409,
+    if (!chosen?.[valid]) throw new VaultError(id ? '선택한 자료를 Canvas 원본·Markdown·PNG로 재열 수 없습니다.' : '선택한 자료를 일반 Markdown 원문으로 재열 수 없습니다.',409,
       {code:'reconciliation_candidate_invalid',reconciliationRequired:true,recoveryID:journal.recoveryID,
         publicationAttempted:journal.receipt?.publicationAttempted ?? true});
     if (state.history.length >= 32) throw this.#required(journal,'조정 시도 한도에 도달했습니다. 모든 자료를 유지합니다.');
@@ -330,19 +413,23 @@ class ObsidianVault {
     let resolutionStarted = false;
     try {
       const validate = saved => {
-        const fresh = new ObsidianVault(this.root),note = fresh.#rawNote(relative);
-        const reopened = fresh.#canvasSnapshot(id,note).snapshot;
+        const fresh = new ObsidianVault(this.root),note = fresh.#rawNote(relative,!id);
+        const reopened = snapshotFor(fresh,note);
+        if (!id && !Buffer.from(note.text,'utf8').equals(Buffer.from(chosen.markdownBase64,'base64')))
+          throw new VaultError('선택한 메모 원문 바이트가 다릅니다.',409);
         if (note.sha256 !== saved.sha256 || saved.sha256 !== chosen.sha256 ||
-            reopened.sceneSha256 !== chosen.canvas.sceneSha256 || reopened.imageSha256 !== chosen.canvas.imageSha256)
+            (id && (reopened.sceneSha256 !== chosen.canvas.sceneSha256 || reopened.imageSha256 !== chosen.canvas.imageSha256)))
           throw new VaultError('선택한 Canvas의 재열기 결과가 다릅니다.',409);
-        const image = readAsset(path.join(this.root,'CCR Canvas/Assets',`${id}-${reopened.imageSha256}.png`),5*1024*1024,reopened.imageSha256);
-        if (!validPNG(image)) throw new VaultError('선택한 PNG 원본을 검증하지 못했습니다.',409);
-        const after = fresh.#conflictState(id,journal);
+        if (id) {
+          const image = readAsset(path.join(this.root,'CCR Canvas/Assets',`${id}-${reopened.imageSha256}.png`),5*1024*1024,reopened.imageSha256);
+          if (!validPNG(image)) throw new VaultError('선택한 PNG 원본을 검증하지 못했습니다.',409);
+        }
+        const after = stateFor(fresh,journal);
         for (const key of ['baseSha256','displacedSha256','proposalSha256'])
           if (after.expected[key] !== state.expected[key]) throw new VaultError('조정 중 보존 원본이 바뀌었습니다.',409);
         const previousHistory = after.history.filter(item => item.recoveryID !== attemptID);
         if (JSON.stringify(previousHistory) !== JSON.stringify(state.history)) throw new VaultError('조정 중 이전 시도가 바뀌었습니다.',409);
-        if (fresh.#rawNote(relative).sha256 !== chosen.sha256) throw new VaultError('조정 중 새 외부 편집이 생겼습니다.',409);
+        if (fresh.#rawNote(relative,!id).sha256 !== chosen.sha256) throw new VaultError('조정 중 새 외부 편집이 생겼습니다.',409);
         if (fresh.#journals(relative).some(record => record.pending && record.recoveryID !== attemptID))
           throw new VaultError('다른 미조정 게시 원장이 있습니다.',409);
         return reopened;
@@ -352,8 +439,8 @@ class ObsidianVault {
       const reopened = validate(saved);
       const {sceneJSONBase64,...metadata} = reopened;
       const result = {...metadata,recoveryID:journal.recoveryID,decision:request.decision,resolved:true,reconciliationRequired:false};
-      durableFile(path.join(journal.folder,'resolution.json'),Buffer.from(JSON.stringify({schema:'ccr.canvas-resolution/v1',
-        recoveryID:journal.recoveryID,savedJournalID:attemptID,path:relative,fingerprint,result,finalExpected:this.#conflictState(id,journal).expected})+'\n'),
+      durableFile(path.join(journal.folder,'resolution.json'),Buffer.from(JSON.stringify({schema:id ? 'ccr.canvas-resolution/v1' : 'ccr.note-resolution/v1',
+        recoveryID:journal.recoveryID,savedJournalID:attemptID,path:relative,fingerprint,result,finalExpected:stateFor(this,journal).expected})+'\n'),
         () => { resolutionStarted = true; });
       syncDirectory(journal.folder);
       validate(saved);
@@ -373,13 +460,14 @@ class ObsidianVault {
     return this.#rawNote(relative);
   }
 
-  #rawNote(relative) {
+  #rawNote(relative, requireOwner = false) {
     const file = this.resolve(relative);
-    const fd = fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const fd = fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     try {
       const stat = fs.fstatSync(fd);
       if (!stat.isFile() || stat.size > MAX_NOTE_BYTES) throw new VaultError('Note exceeds 1 MiB',413);
-      const bytes = readAsset(file,MAX_NOTE_BYTES);
+      if (requireOwner && stat.uid !== process.getuid()) throw new VaultError('메모 파일의 소유자가 다릅니다.',409);
+      const bytes = requireOwner ? this.#ownedNoteBytes(file) : readAsset(file,MAX_NOTE_BYTES);
       const text = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
       return {path:relative,text,sha256:digest(bytes),modifiedAt:stat.mtime.toISOString()};
     } finally { fs.closeSync(fd); }

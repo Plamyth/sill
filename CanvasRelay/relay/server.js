@@ -291,6 +291,14 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
             return json(response,200,blockEdits.edit(relative,blockID,body));
           }
         }
+        if (url.pathname === '/vault/note/conflict') {
+          if ([...url.searchParams.keys()].join(',') !== 'path') throw new VaultError('Only the note path is accepted');
+          if (request.method === 'GET') return json(response,200,vault.noteConflict(relative));
+          if (request.method === 'PUT') {
+            const body = await receive(request,16*1024);
+            return json(response,200,vault.resolveNoteConflict(relative,body));
+          }
+        }
         if (url.pathname === '/vault/canvas/conflict') {
           if ([...url.searchParams.keys()].join(',') !== 'id') throw new VaultError('Only the canvas ID is accepted');
           const id = url.searchParams.get('id') || '';

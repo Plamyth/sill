@@ -29,3 +29,7 @@ Pstack Refactoring의 원본 동작 고정·대조·실행 검증을 적용했�
 ## 명시 충돌 조정 검사
 
 부모 조율담당이 채택한 DTO와 상태 계약은 `RECONCILIATION-CONTRACT.md`, 완전한 실행 예제는 `relay/test-input/reconciliation-v1/wire-example.json`이다. `python3 CanvasRelay/run-checks.py --output <승인된_검사_출력_절대경로>`는 기존 132개 통과 검사와 새 조정 반례를 같은 synthetic HOME/TMPDIR에서 실행하며 listener·connect·fetch·datagram을 거부한다. `--focused`는 새 조정 경계만 실행한다. 실제 파일 교환 helper와 fixture writer만 허용하고 각 실제 PID·종료·부재와 파일/인자 해시를 기록한다. socket 없는 server.emit 검사는 실제 HTTP 또는 URLSession 통과가 아니다. HTTP 후속은 보존된 checkpoint에서 조율한 뒤 이어간다.
+
+## 일반 Markdown의 명시 복구
+
+`NOTE-RECONCILIATION-CONTRACT.md`와 실행 예제 `relay/test-input/note-reconciliation-v1/wire-example.json`을 사용한다. `run-checks.py --notes --output <승인된_절대경로>`는 일반 노트의 새16경계만 실행한다. 옵션 없는 실행은 기존 Canvas·scene 회귀도 포함한다. 기존 network 차단과 정확 helper/fixture writer 허용·PID 종료 영수증을 재사용하며 실제 서비스나 사용자 vault는 사용하지 않는다.
