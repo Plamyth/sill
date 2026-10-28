@@ -126,8 +126,9 @@ final class CanvasStore: ObservableObject {
             linkSceneGeneration &+= 1
             nodeResizeDrag = nil
             nodeRotationDrag = nil
-            let visible = scene.visibility.nodeIDs
-            if oldValue.id != scene.id || selectedLink.map({ !scene.visibility.linkIDs.contains($0) }) == true {
+            if oldValue.id != scene.id { cardTagFilter = nil }
+            let visible = cardTagVisibility.nodeIDs
+            if oldValue.id != scene.id || selectedLink.map({ !cardTagVisibility.linkIDs.contains($0) }) == true {
                 clearLinkSelection()
             }
             if oldValue.id != scene.id || linkStart.map({ !visible.contains($0) }) == true {
@@ -145,6 +146,7 @@ final class CanvasStore: ObservableObject {
     @Published var mode: CanvasMode = .pen {
         didSet {
             if oldValue != mode {
+                if let editor = cardTagEditor { cancelCardTagInput(sessionID:editor.id) }
                 cancelCardMerge()
                 cancelInkMath()
                 cancelInkShape()
@@ -166,6 +168,7 @@ final class CanvasStore: ObservableObject {
     func setPencilTraceActive(_ active: Bool, owner: UUID) {
         if active {
             if pencilTraceOwner == nil || pencilTraceOwner == owner {
+                if let editor = cardTagEditor { cancelCardTagInput(sessionID:editor.id) }
                 cancelCardMerge()
                 pendingInkTextEditing?.invalidatePending()
                 pendingInkSpacing?.invalidatePending()
@@ -357,7 +360,7 @@ final class CanvasStore: ObservableObject {
     }
     @Published var selectedNode: UUID? {
         didSet {
-            if selectedNode.map({ !scene.visibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
+            if selectedNode.map({ !cardTagVisibility.nodeIDs.contains($0) }) == true { selectedNode = nil }
             if oldValue != selectedNode {
                 noteSelectionGeneration &+= 1
                 commentSelectionGeneration &+= 1
@@ -796,6 +799,83 @@ final class CanvasStore: ObservableObject {
         } catch { status = "병합을 해제하지 않았습니다. \(error.localizedDescription)"; return false }
     }
 
+    @Published private(set) var cardTagFilter: String?
+    @Published private(set) var cardTagInputBusy = false
+    private var cardTagEditor: (id:UUID, nodeID:UUID, sceneSHA:String, epoch:UInt64, selection:UInt64)?
+
+    var availableCardTags: [String] { CanvasCardTags.available(in:scene) }
+    var cardTagVisibility: CanvasScene.Visibility { CanvasCardTags.visibility(in:scene,filter:cardTagFilter) }
+    var cardTagDisplayScene: CanvasScene {
+        var displayed = displayedScene
+        guard cardTagFilter != nil else { return displayed }
+        let visible = cardTagVisibility
+        displayed.nodes.removeAll { !visible.nodeIDs.contains($0.id) }
+        displayed.links.removeAll { !visible.linkIDs.contains($0.id) }
+        displayed.annotations.removeAll { !visible.annotationIDs.contains($0.id) }
+        return displayed
+    }
+
+    func setCardTagFilter(_ input: String?) {
+        if let input {
+            guard cardMergeInputAllowed, cardMergeDraft == nil,
+                  availableCardTags.contains(where:{ CanvasCardTags.key($0) == CanvasCardTags.key(input) }) else { return }
+        }
+        cardTagFilter = input
+        let visible = cardTagVisibility
+        if selectedNode.map({ !visible.nodeIDs.contains($0) }) == true { selectedNode = nil }
+        if selectedLink.map({ !visible.linkIDs.contains($0) }) == true { clearLinkSelection() }
+        status = input.map { "\($0) 카드 필터 · 원본 획과 도형은 표시합니다." } ?? "태그 필터를 해제했습니다. 저장된 카드와 태그는 그대로입니다."
+    }
+
+    var canBeginCardTagInput: Bool {
+        guard cardMergeInputAllowed, cardMergeDraft == nil, let id = selectedNode,
+              let node = scene.nodes.first(where:{ $0.id == id }), node.kind == .note,
+              node.confidence == .confirmed else { return false }
+        return (try? CanvasCardTags.tags(for:id,in:scene)) != nil
+    }
+
+    @discardableResult
+    func beginCardTagInput() -> UUID? {
+        guard canBeginCardTagInput, let id = selectedNode,
+              let sha = try? CanvasFileWorkspace.sceneSHA(scene) else { return nil }
+        let owner = UUID()
+        cardTagEditor = (owner,id,sha,linkSceneGeneration,noteSelectionGeneration)
+        cardTagInputBusy = true
+        return owner
+    }
+
+    func cancelCardTagInput(sessionID:UUID) {
+        guard cardTagEditor?.id == sessionID else { return }
+        cardTagEditor = nil
+        cardTagInputBusy = false
+    }
+
+    @discardableResult
+    func finishCardTagInput(_ input: String, sessionID:UUID) -> Bool {
+        guard let editor = cardTagEditor, editor.id == sessionID else { return false }
+        cancelCardTagInput(sessionID:sessionID)
+        guard cardMergeInputAllowed, cardMergeDraft == nil,
+              selectedNode == editor.nodeID, linkSceneGeneration == editor.epoch,
+              noteSelectionGeneration == editor.selection,
+              (try? CanvasFileWorkspace.sceneSHA(scene)) == editor.sceneSHA else {
+            status = CanvasCardTags.Failure.changed.localizedDescription
+            return false
+        }
+        do {
+            let before = scene
+            let next = try CanvasCardTags.adding(input,to:editor.nodeID,in:before)
+            guard next.revision != before.revision else {
+                status = "이미 같은 태그가 있습니다. 기존 표기와 저장본을 유지했습니다."
+                return true
+            }
+            try persistScene(next)
+            scene = next
+            recordGraphEdit(before:before,persistHistory:true)
+            status = "카드 태그를 복구본에 보관했습니다. 원본 저장 상태를 확인하세요."
+            return true
+        } catch { status = "태그를 추가하지 않았습니다. \(error.localizedDescription)"; return false }
+    }
+
     struct NodeResizeDrag {
         let owner: UUID
         let generation: UInt64
@@ -1103,7 +1183,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func selectLink(_ id: UUID) {
-        guard mode == .select, scene.visibility.linkIDs.contains(id),
+        guard mode == .select, cardTagVisibility.linkIDs.contains(id),
               let link = scene.links.first(where:{ $0.id == id }), scene.linkEndpoints(link) != nil else { return }
         selectedNode = nil
         clearPendingLink()
@@ -2766,7 +2846,7 @@ final class CanvasStore: ObservableObject {
         let from = linkStart
         let kind = linkKind
         clearPendingLink()
-        let visible = scene.visibility.nodeIDs
+        let visible = cardTagVisibility.nodeIDs
         guard visible.contains(id), from.map(visible.contains) ?? true else {
             status = "표시 중인 요소가 아니어서 선택하거나 연결하지 않았습니다."
             return
@@ -3045,7 +3125,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func importScene(_ imported: CanvasScene) throws {
-        guard !vaultDirty, !vaultSaving else { throw CocoaError(.userCancelled) }
+        guard !vaultDirty, !vaultSaving, !cardTagInputBusy else { throw CocoaError(.userCancelled) }
         guard !inkBusy else { throw CanvasPenSettingsError.inkBusy }
         guard imported.hasSupportedInkProjection, imported.width > 0, imported.height > 0,
               imported.nodes.count < 1000, imported.strokes.count < 10000,
@@ -3071,7 +3151,7 @@ final class CanvasStore: ObservableObject {
         inkShapeProposal != nil || inkMathRequest != nil || inkMathProposal != nil || handwritingRequest != nil
     }
     var canApplyReconciledCanvas: Bool {
-        sceneReadable && !noteReconciliationHeld && !hasPendingInkProposal && pdfExcerptRecoveryReadable && !hasPendingPDFExcerpt &&
+        sceneReadable && !cardTagInputBusy && !noteReconciliationHeld && !hasPendingInkProposal && pdfExcerptRecoveryReadable && !hasPendingPDFExcerpt &&
         fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
         !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
         !inkMathInputBusy && inkMathProposal == nil && !commentInputBusy && commentSession == nil && proposedNode == nil

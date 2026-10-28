@@ -472,6 +472,7 @@ struct CanvasWorkspace: View {
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
             foldButton
             CanvasCardMergeMenu(store:store)
+            CanvasCardTagsMenu(store:store)
             if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("구조 수정 되돌리기",systemImage:"arrow.uturn.backward") { store.undoGraphEdit() }
@@ -1693,7 +1694,7 @@ struct CanvasWorkspace: View {
     }
 
     private var canvas: some View {
-        let visible = store.scene.visibility
+        let visible = store.cardTagVisibility
         let displayed = store.displayedScene
         let annotationFrames = displayed.annotationFrames
         return GeometryReader { _ in
@@ -1725,6 +1726,7 @@ struct CanvasWorkspace: View {
                         .accessibilityHidden(diagramMode == .diagram)
                 }
                 if store.mode == .select, let id = store.selectedLink,
+                   visible.linkIDs.contains(id),
                    let link = store.scene.links.first(where:{ $0.id == id }),
                    let endpoints = store.scene.linkEndpoints(store.displayedLink(link)) {
                     ForEach(CanvasLink.Endpoint.allCases,id:\.self) { endpoint in
@@ -1749,7 +1751,7 @@ struct CanvasWorkspace: View {
             Text("같은 구조 데이터의 자동 배치 · 원본 획 위치는 유지됩니다.").font(.caption)
             Text("자유그림의 자동 의미 해석은 미지원입니다. 요소를 누르면 기존 편집기로 연결됩니다.")
                 .font(.caption).foregroundStyle(.secondary)
-            CanvasPeleView(scene:store.scene,selectedNode:store.selectedNode,onSelect:{ id in
+            CanvasPeleView(scene:store.cardTagDisplayScene,selectedNode:store.selectedNode,onSelect:{ id in
                 store.selectedNode = id
                 inspectorOpen = true
             },onError:{ store.status = $0 })
