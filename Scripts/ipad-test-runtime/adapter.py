@@ -3,6 +3,7 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
+import fnmatch
 import hashlib
 import ipaddress
 import json
@@ -28,6 +29,7 @@ OWNER = '01a13ace-e372-7ed1-9946-149df37ee1c3'
 BUNDLE = 'com.ambrion.rea.ipad-runtime'
 USER_BUNDLE = 'com.ambrion.sillcanvas.ipad'
 NORMAL_TEAM = 'ZPTXHJ866D'
+APPROVED_OWNER_PROFILE_SHA256 = '7bcf8ce74bf4292d1a20b07d45bfa0c040957e1ade3d80dd4be37c5eb96cf8c7'
 SINGLE_APP_BLOCKERS = (
     'latest_normal_candidate_preservation_readback_required',
     'installed_build_version_and_keychain_entitlements_not_read_back',
@@ -232,12 +234,231 @@ def save_scene(server, scene, image, base):
         'revision': scene['revision'], 'sceneJSONBase64': base64.b64encode(encode_scene(server,scene)).decode(),
         'imagePNGBase64': base64.b64encode(image).decode(), 'baseSha256': base})
 
-def runtime_readback(config, work, test_id):
+def runtime_readback(config, work, test_id, bundle=BUNDLE):
     destination = work / ('runtime-readback-' + str(time.time_ns()) + '.json')
-    copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/runtime.json', destination)
+    copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/runtime.json', destination, bundle=bundle)
     data = read(destination)
     require(data.get('schema') == 'ccr.ipad-test-runtime/v1' and data.get('id').lower() == test_id.lower(), 'runtime_context_mismatch')
     return data, destination
+
+def version_tuple(value):
+    require(isinstance(value, str) and re.fullmatch(r'\d+(?:\.\d+){0,2}', value), 'normal_build_version_invalid')
+    parts = tuple(int(part) for part in value.split('.'))
+    return parts + (0,) * (3 - len(parts))
+
+def artifact_files(app):
+    require(app.is_dir() and not app.is_symlink(), 'prepared_artifact_not_directory')
+    files = {}
+    for item in sorted(app.rglob('*')):
+        require(not item.is_symlink(), 'prepared_artifact_symlink')
+        if item.is_file():
+            files[str(item.relative_to(app))] = sha(item.read_bytes())
+        else:
+            require(item.is_dir(), 'prepared_artifact_non_regular')
+    require(files, 'prepared_artifact_empty')
+    return files
+
+def digest_value(value):
+    return sha(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
+
+def pinned_json(config, path_key, hash_key):
+    path = Path(config[path_key]).resolve()
+    data = path.read_bytes()
+    require(sha(data) == config[hash_key], path_key + '_changed')
+    value = json.loads(data)
+    require(isinstance(value, dict), path_key + '_invalid')
+    return value
+
+def install_attempt(work, value):
+    path = work / 'prepared-install-attempt.json'
+    write(path, value)
+    with path.open('rb') as stream:
+        os.fsync(stream.fileno())
+    fd = os.open(work, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+def installed_normal(snapshot):
+    result = snapshot.get('installedUserApp') or {}
+    rows = result.get('apps', [])
+    matches = [row for row in rows if row.get('bundleIdentifier') == USER_BUNDLE]
+    require(len(rows) == 1 and len(matches) == 1 and matches[0].get('containerAccessible') is True,
+            'installed_normal_identity_missing')
+    version_tuple(matches[0].get('bundleVersion'))
+    return matches[0]
+
+def verify_prepared_artifact(config, work, source):
+    require(not Path(config['preparedArtifact']).is_symlink(), 'prepared_artifact_symlink')
+    app = Path(config['preparedArtifact']).resolve()
+    receipt = pinned_json(config, 'preparedArtifactReceipt', 'preparedArtifactReceiptSHA256')
+    require(receipt.get('schema') == 'ccr.signed-ipad-artifact/v1' and
+            all(isinstance(source.get(key), str) and re.fullmatch('[0-9a-f]{40}', source[key]) and receipt.get(key) == source[key]
+                for key in ['commit', 'tree']), 'prepared_artifact_source_mismatch')
+    files = artifact_files(app)
+    require(files == receipt.get('files') and digest_value(files) == receipt.get('manifestSHA256'),
+            'prepared_artifact_manifest_mismatch')
+    info = plistlib.loads((app / 'Info.plist').read_bytes())
+    require(info.get('CFBundleIdentifier') == USER_BUNDLE and receipt.get('bundleIdentifier') == USER_BUNDLE and
+            receipt.get('team') == NORMAL_TEAM and config['developmentTeam'] == NORMAL_TEAM,
+            'prepared_normal_bundle_or_team_mismatch')
+    require(all(info.get('CCRSource' + key.title()) == source[key] for key in ['commit', 'tree']) and
+            info.get('CCRSourceIdentityVerified') is True, 'prepared_info_source_mismatch')
+    settings = receipt.get('buildSettings', {})
+    conditions = settings.get('SWIFT_ACTIVE_COMPILATION_CONDITIONS', [])
+    require(receipt.get('configuration') == 'Debug' and settings.get('CONFIGURATION') == 'Debug' and
+            isinstance(conditions, list) and 'DEBUG' in conditions and
+            settings.get('PRODUCT_BUNDLE_IDENTIFIER') == USER_BUNDLE and
+            settings.get('DEVELOPMENT_TEAM') == NORMAL_TEAM, 'prepared_debug_build_proof_required')
+    build = info.get('CFBundleVersion')
+    version_tuple(build)
+    require(build == receipt.get('build') == settings.get('CURRENT_PROJECT_VERSION'), 'prepared_build_mismatch')
+    executable = info.get('CFBundleExecutable')
+    require(isinstance(executable, str) and re.fullmatch('[A-Za-z0-9_.-]+', executable) and
+            executable in files, 'prepared_executable_missing')
+    profile = owner_bootstrap_identity(config)
+    require(files.get('CCR-OwnerMacBootstrap.json') == profile['sha256'] == receipt.get('ownerBootstrapSHA256') ==
+            APPROVED_OWNER_PROFILE_SHA256,
+            'prepared_actual_owner_profile_mismatch')
+    requirement = 'anchor apple generic and identifier "' + USER_BUNDLE + '" and certificate leaf[subject.OU] = "' + NORMAL_TEAM + '"'
+    command(['codesign', '--verify', '--strict', '--test-requirement', requirement, app], work / 'prepared-codesign-verify.log')
+    signing_log = work / 'prepared-signature.log'
+    command(['codesign', '--display', '--verbose=4', app], signing_log)
+    signing = signing_log.read_text()
+    require(re.search(r'^TeamIdentifier=' + NORMAL_TEAM + r'$', signing, re.M) and
+            re.search(r'^Identifier=' + re.escape(USER_BUNDLE) + r'$', signing, re.M) and
+            'Signature=adhoc' not in signing, 'prepared_codesign_identity_mismatch')
+    raw = command(['codesign', '--display', '--entitlements', ':-', app])
+    entitlements = plistlib.loads(raw.encode())
+    require(entitlements.get('get-task-allow') is True and
+            entitlements.get('com.apple.developer.team-identifier') == NORMAL_TEAM and
+            entitlements.get('application-identifier') == NORMAL_TEAM + '.' + USER_BUNDLE and
+            sha(plistlib.dumps(entitlements, sort_keys=True)) == receipt.get('entitlementsSHA256'),
+            'prepared_entitlements_mismatch')
+    require('embedded.mobileprovision' in files, 'prepared_mobileprovision_missing')
+    provision = plistlib.loads(command(['security', 'cms', '-D', '-i', app / 'embedded.mobileprovision']).encode())
+    expiry = provision.get('ExpirationDate')
+    if isinstance(expiry, dt.datetime) and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=dt.timezone.utc)
+    allowed = provision.get('Entitlements', {})
+    require(provision.get('TeamIdentifier') == [NORMAL_TEAM] and isinstance(expiry, dt.datetime) and
+            expiry > dt.datetime.now(dt.timezone.utc) and config['deviceUDID'] in provision.get('ProvisionedDevices', []) and
+            allowed.get('get-task-allow') is True and
+            fnmatch.fnmatchcase(entitlements['application-identifier'], allowed.get('application-identifier', '')) and
+            all(any(fnmatch.fnmatchcase(group, pattern) for pattern in allowed.get('keychain-access-groups', []))
+                for group in entitlements.get('keychain-access-groups', [])), 'prepared_provisioning_not_authorized')
+    return app, receipt, files, entitlements, profile
+
+def deploy_prepared(config, work, source):
+    required = ['preparedArtifact', 'preparedArtifactReceipt', 'preparedArtifactReceiptSHA256',
+                'installedIdentityReceipt', 'installedIdentityReceiptSHA256', 'preparedContext',
+                'preparedContextSHA256', 'ownerBootstrapProfile', 'ownerBootstrapSHA256',
+                'developmentTeam', 'leaseFile', 'deviceUDID']
+    require(all(key in config for key in required), 'prepared_inputs_missing')
+    lease(config)
+    work.chmod(0o700)
+    require(not (work / 'prepared-install-attempt.json').exists(), 'prepared_install_already_attempted_readback_required')
+    app, receipt, files, entitlements, profile = verify_prepared_artifact(config, work, source)
+    prior = pinned_json(config, 'installedIdentityReceipt', 'installedIdentityReceiptSHA256')
+    require(prior.get('schema') == 'ccr.ipad-installed-identity/v1' and prior.get('signingReadbackVerified') is True and
+            prior.get('deviceUDID') == config['deviceUDID'] and prior.get('bundleIdentifier') == USER_BUNDLE and
+            prior.get('team') == NORMAL_TEAM, 'installed_signing_reference_required')
+    security = {key: value for key, value in entitlements.items() if key != 'get-task-allow'}
+    require(prior.get('securityEntitlements') == security and
+            prior.get('ownerBootstrapSHA256') == profile['sha256'], 'existing_security_entitlements_changed')
+    context = pinned_json(config, 'preparedContext', 'preparedContextSHA256')
+    test_id = context.get('id', '')
+    require(context.get('schema') == 'ccr.ipad-test-context/v1' and isinstance(test_id, str) and str(uuid.UUID(test_id)) == test_id and
+            all(context.get(key) == source[key] for key in ['commit', 'tree']), 'prepared_context_source_mismatch')
+    endpoint = urllib.parse.urlsplit(context.get('relayAddress', ''))
+    require(endpoint.scheme == 'http' and not endpoint.username and not endpoint.password and
+            not endpoint.path and not endpoint.query and not endpoint.fragment and endpoint.port == 8793 and
+            ipaddress.ip_address(endpoint.hostname).version == 4 and ipaddress.ip_address(endpoint.hostname).is_private and
+            isinstance(context.get('token'), str) and len(context['token']) >= 24, 'prepared_context_relay_invalid')
+    baseline = snapshots(config, work, 'prepared-before')
+    installed = installed_normal(baseline)
+    require(prior.get('build') == installed['bundleVersion'] and
+            prior.get('metadataSHA256') == digest_value(installed) and
+            prior.get('deviceIdentifier') == baseline['installedUserApp'].get('deviceIdentifier'),
+            'installed_reference_not_current')
+    require(version_tuple(receipt['build']) > version_tuple(installed['bundleVersion']), 'prepared_build_not_newer')
+    staged = work / 'PreparedArtifact/Sill.app'
+    require(not staged.exists() and not staged.parent.is_symlink(), 'prepared_staging_already_exists')
+    staged.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    shutil.copytree(app, staged)
+    require(artifact_files(staged) == files, 'prepared_staging_mismatch')
+    rechecked = snapshots(config, work, 'prepared-preinstall')
+    require(same_user_data(baseline, rechecked) and installed_normal(rechecked) == installed,
+            'normal_state_changed_before_install')
+    def unchanged_inputs():
+        lease(config)
+        require(identity(config) == source, 'prepared_source_changed_before_effect')
+        for path_key, hash_key in [('preparedArtifactReceipt', 'preparedArtifactReceiptSHA256'),
+                                   ('installedIdentityReceipt', 'installedIdentityReceiptSHA256'),
+                                   ('preparedContext', 'preparedContextSHA256')]:
+            pinned_json(config, path_key, hash_key)
+        require(artifact_files(app) == files and artifact_files(staged) == files and
+                sha(Path(profile['path']).read_bytes()) == profile['sha256'], 'prepared_input_changed_before_effect')
+    unchanged_inputs()
+    attempt = {'schema': 'ccr.prepared-install-attempt/v1', **source, 'testId': test_id,
+               'artifactManifestSHA256': receipt['manifestSHA256'],
+               'artifactReceiptSHA256': config['preparedArtifactReceiptSHA256'],
+               'installedIdentityReceiptSHA256': config['installedIdentityReceiptSHA256'],
+               'contextSHA256': config['preparedContextSHA256'], 'baselineSHA256': digest_value(baseline),
+               'securityEntitlementsSHA256': digest_value(security),
+               'status': 'install-requested', 'normalReturnRequired': True}
+    install_attempt(work, attempt)
+    try:
+        command(['xcrun', 'devicectl', 'device', 'install', 'app', '--device', config['deviceUDID'],
+                 staged, '--json-output', work / 'prepared-install.json'], work / 'prepared-install.log', 120)
+        after = snapshots(config, work, 'prepared-after-install')
+        require(installed_normal(after)['bundleVersion'] == receipt['build'] and same_user_data(baseline, after),
+                'prepared_install_data_or_metadata_mismatch')
+        unchanged_inputs()
+        root = 'Library/Application Support/CCRIntegrationTests/' + test_id
+        context_path = work / 'prepared-context.json'
+        write(context_path, context)
+        state = work / 'prepared-state'; state.mkdir(mode=0o700)
+        write(state / 'CanvasScene.json', fixture(test_id))
+        copy_file(config, work, state, root + '/state', 'to', bundle=USER_BUNDLE)
+        copy_file(config, work, context_path, root + '/context.json', 'to', bundle=USER_BUNDLE)
+        unchanged_inputs()
+        device(config, ['process', 'launch', USER_BUNDLE, '--json-output', str(work / 'prepared-launch.json'),
+                        '--', '--ccr-test-runtime', test_id], work / 'prepared-launch.log')
+        time.sleep(2)
+        runtime, evidence = runtime_readback(config, work, test_id, bundle=USER_BUNDLE)
+        require(all(runtime.get(key) == source[key] for key in ['commit', 'tree']) and
+                runtime.get('bundleID') == USER_BUNDLE and str(runtime.get('build')) == receipt['build'] and
+                runtime.get('executableSHA256') == files[plistlib.loads((staged / 'Info.plist').read_bytes())['CFBundleExecutable']] and
+                runtime.get('relayAddress') == context['relayAddress'] and
+                str(runtime.get('storageRoot', '')).endswith('/' + root + '/state'), 'prepared_runtime_source_mismatch')
+        launched = read(work / 'prepared-launch.json').get('result', {}).get('processIdentifier')
+        require(type(launched) is int and launched > 0 and runtime.get('processID') == launched,
+                'prepared_runtime_launch_pid_mismatch')
+        processes_path = work / 'prepared-processes.json'
+        device(config, ['info', 'processes', '--json-output', str(processes_path)], work / 'prepared-processes.log')
+        matches = [row for row in read(processes_path).get('result', {}).get('runningProcesses', [])
+                   if row.get('processIdentifier') == launched]
+        executable = plistlib.loads((staged / 'Info.plist').read_bytes())['CFBundleExecutable']
+        expected = urllib.parse.urljoin(installed_normal(after)['url'].rstrip('/') + '/', executable)
+        require(len(matches) == 1 and matches[0].get('executable') == expected, 'prepared_running_executable_mismatch')
+        final = snapshots(config, work, 'prepared-after-isolated')
+        require(installed_normal(final) == installed_normal(after) and same_user_data(baseline, final),
+                'normal_data_or_metadata_changed_by_isolated_runtime')
+        unchanged_inputs()
+        result = {'status': 'applied', **source, 'bundleIdentifier': USER_BUNDLE, 'configuration': 'Debug',
+                  'sourceReadbackVerified': True, 'testId': test_id,
+                  'runtimeId': USER_BUNDLE + ':' + test_id + ':' + runtime['executableSHA256'],
+                  'executableSHA256': runtime['executableSHA256'], 'sourceReadback': str(evidence),
+                  'app': str(staged), 'artifactManifestSHA256': receipt['manifestSHA256'],
+                  'normalReturnRequired': True, 'functionalAcceptance': False}
+        write(work / 'deployment.json', result)
+        install_attempt(work, dict(attempt, status='isolated-runtime-verified'))
+        return result
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        install_attempt(work, dict(attempt, status='held-after-install-attempt'))
+        raise
 
 def stop_owned(config, work):
     test_id = read(work / 'deployment.json')['testId']
@@ -1101,10 +1322,11 @@ def acceptance_contract(config):
     return runpy.run_path('/Users/ambrion/.local/bin/bt-release-convergence')['acceptance_contract'](rows[0])
 
 def main():
-    parser = argparse.ArgumentParser(); parser.add_argument('phase', choices=['deploy', 'accept']); parser.add_argument('--config', required=True)
+    parser = argparse.ArgumentParser(); parser.add_argument('phase', choices=['deploy', 'accept', 'deploy-prepared']); parser.add_argument('--config', required=True)
     args = parser.parse_args()
     try:
-        single_app_installation_gate()
+        if args.phase != 'deploy-prepared':
+            single_app_installation_gate()
         config = read(args.config)
         output = Path(config['outputRoot']).resolve()
         approved = Path(json.loads(command(['/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'BT_CCR-ipad']))['path']).resolve()
@@ -1114,7 +1336,7 @@ def main():
         require(int(config['relayPort']) == 8793, 'relay_port_not_registered_integration_port')
         source = identity(config); work = output / source['commit']
         require(not work.is_symlink() and work.resolve().parent == output, 'work_path_escapes_routed_root')
-        work.mkdir(parents=True, exist_ok=True)
+        work.mkdir(mode=0o700, parents=True, exist_ok=True)
         output.mkdir(parents=True, exist_ok=True)
         with (output / 'device-and-build.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1124,7 +1346,8 @@ def main():
             require(guard_data.get('repository') == 'github.com/plamyth/sill' and
                     all(guard_data.get(k) == source[k] for k in source), 'source_guard_identity_mismatch')
             write(work / 'source-guard.json', guard_data)
-            result = deploy(config, work, source) if args.phase == 'deploy' else accept(config, work, source)
+            result = deploy_prepared(config, work, source) if args.phase == 'deploy-prepared' else (
+                deploy(config, work, source) if args.phase == 'deploy' else accept(config, work, source))
             require(identity(config) == source, 'source_changed_during_run')
             print(json.dumps(result, ensure_ascii=False))
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
