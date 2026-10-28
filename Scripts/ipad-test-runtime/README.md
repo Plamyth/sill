@@ -1,6 +1,6 @@
 # iPad 단일 정상 앱 테스트 경로 준비
 
-기존 **deploy·accept·harness와 저수준 install은 held**다. 부모가 준비한 정상 서명 Debug artifact에 한정한 `deploy-prepared`는 아래 사전조건을 실제로 검사하고 통과하면 같은 정상 bundle 설치와 격리 실행까지 진행한다. 기존 두 CLI phase는 설정을 읽거나 source/device 조회·빌드·설치·relay 시작을 하기 전에 종료 코드 2와 `single_app_runtime_held` 사유를 반환한다. 새 phase는 누락·불일치를 상수 목록으로 대체하지 않고 구체 검사 실패로 held를 반환한다. 이 중단을 해제하는 설정 스위치는 없다. 기존 진단 앱이나 XCTest runner를 삭제하지 않는다.
+legacy **deploy와 저수준 install은 계속 held**다. 부모가 준비한 정상 서명 Debug artifact에 한정한 `deploy-prepared`는 실제 사전조건을 검사하고 통과하면 같은 정상 bundle 설치와 격리 실행까지 진행한다. `accept`와 harness는 이 배포의 exact artifact·source·시도 영수증·최신 runtime/PID/metadata 및 기존 runner 이력이 확인될 때 기존 수용 core에 진입한다. 누락·불일치는 구체 사유와 종료 코드 2로 반환한다. 임의 override나 새 runner/app을 설치하는 fallback은 없다. 기존 진단 앱이나 XCTest runner를 삭제하지 않는다.
 
 이번 구현·검사는 소스와 mock 경계에 한정한다. 실제 기기 조회·설치·실행은 수행하지 않았다. 정상 앱 설치나 실제 제품 기능 수용을 완료했다고 표시하지 않는다.
 
@@ -38,7 +38,7 @@ CCR_NATIVE_ADAPTER_TEST_DIR=/Volumes/BT-Workspace/Development-Archives/BT_CCR-ip
 python3 -B Scripts/ipad-test-runtime/test_adapter.py
 ```
 
-실제 CLI subprocess가 held로 끝나는지와 deploy/accept/harness/install 경계에서 devicectl·xcodebuild·relay·파일 덮어쓰기가 시작되지 않는지 검사한다. 기존 parser·PNG·review 기능의 단위 검사에서는 held 함수를 mock하여 순수 로직만 계속 검사하며 운영 우회 옵션은 만들지 않는다. native Debug 검사는 실제 flagged context와 잘못된 context에서 일반 defaults 읽기/쓰기를 실패시키는 객체를 전달하고, 격리 설정 저장→새 Store 재열기와 비어 있지 않은 전체 Preferences fixture의 바이트 불변을 확인한다.
+legacy CLI의 사전 차단과 준비 증거가 없는 accept/harness의 무부작용 종료를 검사한다. 정상 준비 fixture는 실제 production 사전검사 함수를 거쳐 install/격리 launch/test-without-building 명령과 xcresult 확인에 도달한다. source/metadata/서명/입력 변조, runner 미설치 이력·없는 method는 거부한다. core 검사는 실제 임시 파일의 CAS·scene/asset/note SHA·사용자 바이트·UUID 정리까지 확인하고, 이미 개별 검증하는 rotation/comment/review 하위 흐름만 별도 fixture로 격리한다. 명령·기기 copy/HTTP 경계는 mock이다. 순수 xctestrun 변환·xcresult parser 시험에서만 사전검사 의존성을 mock하며 운영 우회 옵션은 없다. native Debug 검사는 실제 flagged context와 잘못된 context에서 일반 defaults 읽기/쓰기를 실패시키는 객체를 전달하고, 격리 설정 저장→새 Store 재열기와 비어 있지 않은 전체 Preferences fixture의 바이트 불변을 확인한다.
 
 기존 descriptor·release 등록은 그대로이며 이 후보를 testAccepted로 승격하지 않는다. 기존 진단 앱 강제 제거, 새 앱·runner 설치, 실기기 조회·Host·오디오·키·권한·계정 변경은 하지 않는다.
 
@@ -48,9 +48,15 @@ python3 -B Scripts/ipad-test-runtime/test_adapter.py
 
 ## 기존 runner만 사용하는 준비 입력
 
-`existingXctestrun`/`existingXctestrunSHA256`, `existingRunnerReceipt`/`existingRunnerReceiptSHA256`가 필요하다. runner 영수증 schema는 `ccr.existing-xctest-runner/v1`, `installed=true`, `team=ZPTXHJ866D`, `bundleIdentifier=com.ambrion.rea.appaudit.UITests.xctrunner`, `testBundleRelativePath=__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest`다. 이는 새 runner 생성 권한이나 실제 identity 관측을 대신하는 자가 선언이 아니다. 부모가 기존 설치의 정확한 readback으로 준비해야 한다.
+`existingXctestrun`/`existingXctestrunSHA256`, `existingRunnerReceipt`/`existingRunnerReceiptSHA256`가 필요하다. runner 영수증은 `ccr.known-installed-runner/v1`이며 `lineage`에 아래 `ccr.known-installed-artifact/v1` 참조를 넣는다. 로컬 runner의 서명·executable hash·설치 명령·설치 후 metadata와 최신 `devicectl device info apps --bundle-id …` metadata를 대조한다. `installed=true` 자가 선언을 입력으로 사용하지 않는다. 실제 보존 test binary를 nm/swift-demangle로 읽고 요청 method가 있는지도 검사한다.
 
-`deployment.json`도 정상 `bundleIdentifier=com.ambrion.sillcanvas.ipad`, `configuration=Debug`, `sourceReadbackVerified=true`와 실제 시험 UUID를 요구한다. 원본 xctestrun을 수정하지 않고 `ExistingRunner.xctestrun`만 만든다. 실제 검증은 정확한 요청 method가 한 번 실행·통과했는지 xcresult까지 확인한다. 기존 runner에 없는 새 test method를 빌드·설치해서 보충하지 않는다. 기존 UI accept/harness gate는 유지한다. deploy-prepared는 정상 설치와 격리 source readback만 담당하며 이 UI 검사를 자동 실행하지 않는다. 일반 정상 실행 복귀도 부모의 명시 단계로 남긴다.
+가장 가까운 보존 입력은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/normal68-device-20261026/HarnessDerivedData/Build/Products/CanvasBridge_iphoneos27.0-arm64.xctestrun`이다. runner는 `com.ambrion.rea.appaudit.UITests.xctrunner`, 상대 test bundle은 `__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest`다. 원 project의 `com.ambrion.rea.appaudit` 대상 경로는 파생 run에서 제거하고 정상 Sill bundle을 지정한다. 로컬 보존 binary의 서명과 22개 method를 실제 확인했다. `harness-build-result.json`은 `installed=false`인 빌드 근거이므로 runner 설치 이력으로 쓰지 않는다. 이 단위에서는 대응하는 과거 runner 설치 명령·설치 후 metadata가 확정되지 않았다. 현재 기기 설치내용이 같다고 가정하지 않는다. 지원하는 이력 형식은 성공한 공식 devicectl install JSON과 동일 app 경로·설치 URL이다. Xcode 자동 설치의 build/test 로그만 이 형식으로 꾸미지 않으며, 그 이력만 있다면 실제 설치 provenance 연결이 추가로 필요하다.
+
+`deployment.json`은 정상 Debug 배포의 artifact manifest, 보호 baseline, 설치 후 metadata hash, source와 UUID를 묶는다. accept/harness는 원 signed artifact와 staged 사본 및 준비 context의 고정 SHA를 재검사하고 최신 앱 metadata·실행 PID/경로·runtime hash를 읽는다. 원본 xctestrun을 수정하지 않고 `ExistingRunner.xctestrun`만 만든다. 실제 검증은 정확한 요청 method가 한 번 실행·통과했는지 xcresult까지 확인한다. 기존 runner에 없는 새 method를 생성하지 않는다. fixture 교체 전에는 확인한 격리 PID만 중지한다. 정상 앱의 다른 PID가 보이면 중지·교체하지 않는다. 시험 state가 비워져 runtime.json이 없어진 경우에는 직전 중지 영수증과 최신 PID 부재를 함께 확인한 뒤 기존 runner로 다시 연다.
+
+`accept`는 기존 source guard·release contract·native/vault/CAS/역방향/rotation/comments/review/xcresult/readback/보호 snapshot/fixture cleanup 검사를 유지한다. `deploy-prepared`는 설치와 격리 source readback만 담당하며 이 UI 검사를 자동 실행하지 않는다. 일반 정상 실행 복귀는 부모의 명시 단계다.
+
+준비된 8793 relay를 빌리려면 `existingRelayReceipt`/`existingRelayReceiptSHA256`를 지정한다. schema `ccr.existing-ipad-test-relay/v1`의 필드는 testId/address, 기존 lifecycle의 leaseId/owner/serviceId/generation/pid/birth, vault, encoder/encoderSHA256/encoderSourceCommit, configurationPath/configurationSHA256다. 이것은 기존 lease와 설정 파일의 pinned 참조이며 별도 서비스 원장이 아니다. authoritative lease의 현재 process/birth/만료·8793 listener, source generation과 argv의 기존 relay.js/설정 경로, private config의 vault/token/host/port/relayRepo 및 시험 소유 store/snapshot/hidden/audit 경로를 대조한다. vault는 `work/isolated-vault/UUID`여야 하고 외부 symlink는 거부한다. 기존 encoder의 exact source/hash와 ready 응답도 요구한다. 서버 start/renew/release는 하지 않으며 cleanup은 기존 relay를 보존하고 이 UUID vault와 기기 state만 비운다. 준비된 서버가 이 namespace를 사용하지 않으면 부모가 기존 공유 구간에서 준비해야 하며 worker가 새 서버로 대체하지 않는다.
 
 공식 로컬 근거는 `/Applications/Xcode.app/Contents/Developer/usr/share/man/man5/xcodebuild.xctestrun.5`의 destination artifacts 절이다. legacy 빌드는 정상 후보 경로로 전환하지 않는다. 새 경로는 부모가 이미 준비한 signed artifact를 읽고, 현재 설치 build보다 높은 버전과 실제 owner bootstrap identity를 검사하며 metadata를 바꾸거나 재서명하지 않는다.
 
@@ -64,7 +70,7 @@ python3 -B Scripts/ipad-test-runtime/adapter.py deploy-prepared --config PRIVATE
 
 - `preparedArtifact`: 부모가 이미 서명한 정상 Sill.app. 이 함수는 빌드·재서명·Info.plist 갱신을 하지 않는다.
 - `preparedArtifactReceipt`와 `preparedArtifactReceiptSHA256`: 부모 빌드/검사 원본 영수증과 정확한 파일 SHA.
-- `installedIdentityReceipt`와 `installedIdentityReceiptSHA256`: 현재 설치와 기존 서명·entitlement의 부모 readback 영수증과 SHA.
+- `installedIdentityReceipt`와 `installedIdentityReceiptSHA256`: 기존 설치 artifact 이력 참조와 정확한 파일 SHA. 아래 schema를 따른다.
 - `preparedContext`와 `preparedContextSHA256`: 기존 격리 relay의 준비된 시험 context 파일과 SHA. 함수가 인증 token이나 relay 서버를 새로 만들지 않는다.
 - `ownerBootstrapProfile`와 `ownerBootstrapSHA256`: 위 승인된 실제 공개 리소스와 SHA.
 
@@ -74,7 +80,11 @@ buildSettings는 CONFIGURATION=Debug, SWIFT_ACTIVE_COMPILATION_CONDITIONS 배열
 
 코드 서명은 strict 검증과 Apple anchor/정상 identifier/Team requirement를 확인한다. 실제 entitlements의 application identifier·team·get-task-allow를 대조하며 embedded provisioning의 서명 해석·Team·만료·기기 등록·app/keychain 허용 범위도 검사한다. keychain을 읽거나 복사하지 않고, 기존 보안 entitlement map과 비교해 get-task-allow 이외 변경을 거부한다. 새 인증서·프로파일·페어링·권한을 만들지 않는다.
 
-현재 설치 영수증 schema는 `ccr.ipad-installed-identity/v1`이다. signingReadbackVerified=true, deviceUDID, deviceIdentifier, bundleIdentifier, team, build, ownerBootstrapSHA256, securityEntitlements와 metadataSHA256을 요구한다. securityEntitlements는 기존 서명 entitlement 전체에서 get-task-allow만 제외한 map이다. 값의 본문을 출력하지 않는다. metadataSHA256은 현재 devicectl info apps의 정상 앱 row를 위 canonical JSON 형식으로 직렬화한 SHA다. 실제 현재 metadata와 영수증이 맞아야 하며 후보 build는 현재 build보다 엄격하게 커야 한다. 과거 normal68 영수증을 최신 설치 참조로 대신 넣으면 거부된다.
+설치 참조 schema는 `ccr.known-installed-artifact/v1`이다. `artifact`(보존 app 경로), `artifactManifestSHA256`, `signingReadbackPath`/`signingReadbackSHA256`, `installRecordPath`/`installRecordSHA256`, `metadataPath`/`metadataSHA256`를 요구한다. manifest는 위 files map의 canonical digest다. signing readback의 CFBundleIdentifier/CFBundleVersion, executableSHA256, entitlements, signatureValid를 실제 app의 codesign·Info·binary와 대조한다. 정상 앱은 기존 CCRSourceCommit/Tree/IdentityVerified와 bootstrapSHA256도 일치해야 한다. install JSON의 성공 outcome·정확한 UDID·동일 보존 app 경로, 설치 결과 URL과 당시 metadata의 단일 bundle/build를 연결한다. 최신 metadata의 row canonical hash와 deviceIdentifier도 같아야 한다. 후보 build는 현재 build보다 엄격하게 커야 한다.
+
+서명 entitlement는 **로컬 artifact에서 직접 계산**하고 get-task-allow만 제외해 후보와 비교한다. 실제 normal68에는 명시적 keychain-access-groups가 없으며 누락을 새 group 생성으로 보충하지 않는다. `signingReadbackVerified=true`나 부모가 작성한 securityEntitlements map을 설치 참조 입력으로 받지 않는다. 증거 종류는 `known-installed-artifact-lineage`, `remoteSignatureReadback=false`다. 최신 기기 서명 바이트를 직접 추출했다는 주장이 아니다. devicectl apps metadata에는 전체 entitlements가 없으므로 해당 명령으로 서명 검증을 대체하지 않는다.
+
+로컬 실제 검사는 보존된 `build68-20261026/.../Sill.app`, `signed-source-readback.json`, `normal68-install.json`, `normal68-after-install-before-launch-installed-user-app.json`의 pinned SHA를 production validator에 전달해 수행했다. Apple requirement는 파일명 해석을 피하도록 `=anchor …` 리터럴로 전달하며 실제 codesign 통과와 mock 명령 검사를 구분한다. 공개 profile/서명/metadata의 과거 연결 확인은 최신 기기 설치/원본 보존 수용을 대신하지 않는다.
 
 시험 context는 기존 `ccr.ipad-test-context/v1` schema, exact source, UUID, private IPv4의 8793 relay와 준비된 test token을 가진다. 사용자 실사용 relay 8791은 허용하지 않는다. 원본 context 내용이나 token을 stdout·일반 로그에 남기지 않는다.
 

@@ -35,13 +35,22 @@ class PreparedInstallContract(unittest.TestCase):
         (app/'CCR-OwnerMacBootstrap.json').write_bytes(profile);(app/'_CodeSignature/CodeResources').write_bytes(b'signed fixture')
         (app/'embedded.mobileprovision').write_bytes(b'parent signed provisioning fixture')
         ent={'application-identifier':adapter.NORMAL_TEAM+'.'+adapter.USER_BUNDLE,
-             'com.apple.developer.team-identifier':adapter.NORMAL_TEAM,'get-task-allow':True,
-             'keychain-access-groups':[adapter.NORMAL_TEAM+'.'+adapter.USER_BUNDLE]}
+             'com.apple.developer.team-identifier':adapter.NORMAL_TEAM,'get-task-allow':True}
         metadata={'bundleIdentifier':adapter.USER_BUNDLE,'bundleVersion':'70','containerAccessible':True,'url':'file:///installed/Sill.app'}
-        prior={'schema':'ccr.ipad-installed-identity/v1','signingReadbackVerified':True,'deviceUDID':'leased-ipad',
-               'bundleIdentifier':adapter.USER_BUNDLE,'team':adapter.NORMAL_TEAM,'build':'70','deviceIdentifier':'leased-ipad',
-               'metadataSHA256':adapter.digest_value(metadata),'ownerBootstrapSHA256':adapter.APPROVED_OWNER_PROFILE_SHA256,
-               'securityEntitlements':{k:v for k,v in ent.items() if k!='get-task-allow'}}
+        prior_app=root/'Prior/Sill.app';prior_app.parent.mkdir();shutil.copytree(app,prior_app)
+        prior_info=dict(info,CFBundleVersion='70')
+        (prior_app/'Info.plist').write_bytes(plistlib.dumps(prior_info))
+        prior_ent=dict(ent)
+        adapter.write(root/'signing.json',dict(prior_info,executableSHA256=adapter.sha((prior_app/'Sill').read_bytes()),
+            bootstrapSHA256=adapter.APPROVED_OWNER_PROFILE_SHA256,entitlements=prior_ent,signatureValid=True))
+        adapter.write(root/'install.json',{'info':{'outcome':'success','arguments':['devicectl','device','install','app',
+            '--device','leased-ipad',str(prior_app),'--json-output','historical.json']},
+            'result':{'installedApplications':[{'bundleID':adapter.USER_BUNDLE,'installationURL':metadata['url']}]}})
+        adapter.write(root/'metadata.json',{'result':{'apps':[dict(metadata)],'deviceIdentifier':'leased-ipad'}})
+        prior={'schema':'ccr.known-installed-artifact/v1','artifact':str(prior_app),
+            'artifactManifestSHA256':adapter.digest_value(adapter.artifact_files(prior_app))}
+        for label,key in [('signing','signingReadback'),('install','installRecord'),('metadata','metadata')]:
+            prior[key+'Path']=str(root/(label+'.json'));prior[key+'SHA256']=adapter.sha((root/(label+'.json')).read_bytes())
         adapter.write(root/'installed.json',prior)
         context={'schema':'ccr.ipad-test-context/v1','id':str(uuid.uuid4()),**source,
                  'relayAddress':'http://192.168.1.2:8793','token':'parent-test-context-reference-123456789'}
@@ -62,7 +71,7 @@ class PreparedInstallContract(unittest.TestCase):
         for relative in ['Library/Application Support/'+name for name in adapter.ORIGINALS]+['Documents/nested/drawing','Library/Preferences/normal.plist']:
             path=data/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'unchanged normal user bytes')
         state=types.SimpleNamespace(root=root,work=work,app=app,source=source,config=config,info=info,receipt=receipt,
-            ent=ent,metadata=metadata,context=context,data=data,commands=[],installCount=0,launchCount=0,mode=None,infoCount=0)
+            ent=ent,priorEnt=prior_ent,priorApp=prior_app,metadata=metadata,context=context,data=data,commands=[],installCount=0,launchCount=0,mode=None,infoCount=0)
         def seal():
             state.receipt.update(files=adapter.artifact_files(app),entitlementsSHA256=adapter.sha(plistlib.dumps(state.ent,sort_keys=True)))
             state.receipt['manifestSHA256']=adapter.digest_value(state.receipt['files'])
@@ -75,7 +84,8 @@ class PreparedInstallContract(unittest.TestCase):
                 if state.mode=='bad-signature': raise adapter.Held('command_failed:codesign')
                 if '--verbose=4' in args:
                     Path(log).write_text('Identifier='+adapter.USER_BUNDLE+'\nTeamIdentifier='+adapter.NORMAL_TEAM+'\n')
-                if '--entitlements' in args:return plistlib.dumps(state.ent).decode()
+                if '--test-requirement' in args:self.assertTrue(args[args.index('--test-requirement')+1].startswith('=anchor'))
+                if '--entitlements' in args:return plistlib.dumps(state.priorEnt if Path(args[-1])==prior_app else state.ent).decode()
                 return ''
             if args[0]=='security':
                 expiry=dt.datetime.now()+dt.timedelta(days=1)
@@ -176,9 +186,8 @@ class PreparedInstallContract(unittest.TestCase):
                 elif failure=='expired':
                     value=adapter.read(state.root/'lease.json');value['expiresAt']='2020-01-01T00:00:00+00:00';adapter.write(state.root/'lease.json',value)
                 elif failure=='old-build':
-                    state.metadata['bundleVersion']='71'
-                    prior=adapter.read(state.root/'installed.json');prior.update(build='71',metadataSHA256=adapter.digest_value(state.metadata))
-                    adapter.write(state.root/'installed.json',prior);state.config['installedIdentityReceiptSHA256']=adapter.sha((state.root/'installed.json').read_bytes())
+                    state.info['CFBundleVersion']='70';(state.app/'Info.plist').write_bytes(adapter.plistlib.dumps(state.info))
+                    state.receipt['build']='70';state.receipt['buildSettings']['CURRENT_PROJECT_VERSION']='70';state.seal()
                 elif failure=='wrong-team':state.config['developmentTeam']='another'
                 elif failure=='source':state.receipt['commit']='f'*40;state.seal()
                 elif failure=='not-debug':state.receipt['buildSettings']['SWIFT_ACTIVE_COMPILATION_CONDITIONS']=[];state.seal()
@@ -208,6 +217,245 @@ class PreparedInstallContract(unittest.TestCase):
                 with self.assertRaisesRegex(adapter.Held,'already_attempted'):self.invoke(state)
                 self.assertEqual(state.installCount,1)
 
+    def test_lineage_is_derived_from_pinned_artifact_install_and_metadata(self):
+        for failure in [None,'signing','artifact','install','historical-metadata','current-metadata','boolean-only','keychain']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=self.fixture(directory)
+                if failure=='signing':(state.root/'signing.json').write_bytes(b'changed')
+                if failure=='artifact':(state.priorApp/'Sill').write_bytes(b'changed')
+                if failure in ['install','historical-metadata']:
+                    label='install' if failure=='install' else 'metadata';path=state.root/(label+'.json')
+                    value=adapter.read(path)
+                    if failure=='install':value['info']['arguments'][6]=str(state.app)
+                    else:value['result']['apps'][0]['url']='file:///other/Sill.app'
+                    adapter.write(path,value)
+                    reference=adapter.read(state.root/'installed.json')
+                    key='installRecordSHA256' if failure=='install' else 'metadataSHA256'
+                    reference[key]=adapter.sha(path.read_bytes());adapter.write(state.root/'installed.json',reference)
+                    state.config['installedIdentityReceiptSHA256']=adapter.sha((state.root/'installed.json').read_bytes())
+                if failure=='current-metadata':state.metadata['url']='file:///other/Sill.app'
+                if failure=='keychain':state.ent['keychain-access-groups']=['new-group'];state.seal()
+                if failure=='boolean-only':
+                    adapter.write(state.root/'installed.json',{'signingReadbackVerified':True,'securityEntitlements':state.ent})
+                    state.config['installedIdentityReceiptSHA256']=adapter.sha((state.root/'installed.json').read_bytes())
+                if failure:
+                    with self.assertRaises(adapter.Held):self.invoke(state)
+                    self.assertEqual(state.installCount,0)
+                else:
+                    with patch.object(adapter,'command',side_effect=state.command):
+                        result=adapter.known_installed_lineage(state.config,state.work)
+                    self.assertEqual(result['evidenceKind'],'known-installed-artifact-lineage')
+                    self.assertFalse(result['remoteSignatureReadback'])
+                    self.assertNotIn('keychain-access-groups',result['securityEntitlements'])
+
+    def test_prepared_runtime_and_harness_operational_preflight_reject_drift(self):
+        for failure in [None,'staged','context','runtime','process','metadata','runner-missing']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=self.fixture(directory);self.invoke(state)
+                if failure=='staged':(state.work/'PreparedArtifact/Sill.app/Sill').write_bytes(b'changed')
+                if failure=='context':(state.root/'context.json').write_bytes(b'changed')
+                if failure=='runtime':
+                    path=state.data/('Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state/runtime.json')
+                    value=adapter.read(path);value['executableSHA256']='0'*64;adapter.write(path,value)
+                if failure=='process':state.mode='wrong-process'
+                if failure=='metadata':state.metadata['bundleVersion']='99'
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter.subprocess,'run',side_effect=state.copy):
+                    if failure=='runner-missing':
+                        with self.assertRaises(KeyError):adapter.harness(state.config,state.work,'testEditAndSave')
+                    elif failure:
+                        with self.assertRaises(adapter.Held):adapter.prepared_runtime(state.config,state.work)
+                    else:self.assertTrue(adapter.prepared_runtime(state.config,state.work)['_running'])
+                self.assertFalse(any(row[0]=='xcodebuild' for row in state.commands))
+
+class KnownRunnerContract(unittest.TestCase):
+    def fixture(self, state):
+        import plistlib,shutil
+        bundle='com.ambrion.rea.appaudit.UITests.xctrunner'
+        runner=state.root/'Runner.app';runner.mkdir()
+        info={'CFBundleIdentifier':bundle,'CFBundleVersion':'1','CFBundleExecutable':'Runner'}
+        (runner/'Info.plist').write_bytes(plistlib.dumps(info));(runner/'Runner').write_bytes(b'signed compiled runner fixture')
+        binary=runner/'PlugIns/CanvasBridgeUITests.xctest/CanvasBridgeUITests';binary.parent.mkdir(parents=True);binary.write_bytes(b'compiled methods fixture')
+        ent={'application-identifier':adapter.NORMAL_TEAM+'.'+bundle,'com.apple.developer.team-identifier':adapter.NORMAL_TEAM,'get-task-allow':True}
+        metadata={'bundleIdentifier':bundle,'bundleVersion':'1','containerAccessible':True,'url':'file:///installed/Runner.app'}
+        adapter.write(state.root/'runner-signing.json',dict(info,executableSHA256=adapter.sha((runner/'Runner').read_bytes()),entitlements=ent,signatureValid=True))
+        adapter.write(state.root/'runner-install.json',{'info':{'outcome':'success','arguments':['devicectl','device','install','app','--device','leased-ipad',str(runner)]},
+            'result':{'installedApplications':[{'bundleID':bundle,'installationURL':metadata['url']}]}})
+        adapter.write(state.root/'runner-metadata.json',{'result':{'apps':[metadata],'deviceIdentifier':'leased-ipad'}})
+        lineage={'schema':'ccr.known-installed-artifact/v1','artifact':str(runner),'artifactManifestSHA256':adapter.digest_value(adapter.artifact_files(runner))}
+        for name,key in [('signing','signingReadback'),('install','installRecord'),('metadata','metadata')]:
+            path=state.root/('runner-'+name+'.json');lineage[key+'Path']=str(path);lineage[key+'SHA256']=adapter.sha(path.read_bytes())
+        adapter.write(state.root/'runner.json',{'schema':'ccr.known-installed-runner/v1','lineage':lineage})
+        run=state.root/'preserved.xctestrun';run.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'IsUITestBundle':True,
+            'TestHostPath':'__TESTROOT__/Debug-iphoneos/CanvasBridgeUITests-Runner.app','TestBundlePath':'__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest',
+            'UITargetAppPath':'__TESTROOT__/Debug-iphoneos/CanvasBridge.app'}}))
+        state.config.update(existingRunnerReceipt=str(state.root/'runner.json'),existingRunnerReceiptSHA256=adapter.sha((state.root/'runner.json').read_bytes()),
+            existingXctestrun=str(run),existingXctestrunSHA256=adapter.sha(run.read_bytes()))
+        original=state.command;state.running=True;state.runnerMetadata=metadata;state.runnerMethods={'testEditAndSave','testReopenRemoteRevision'}
+        def command(args,log=None,*rest,**kwargs):
+            args=list(map(str,args))
+            if args[0]=='codesign' and Path(args[-1])==runner:
+                state.commands.append(args)
+                if '--verbose=4' in args:Path(log).write_text('Identifier='+bundle+'\nTeamIdentifier='+adapter.NORMAL_TEAM+'\n')
+                return plistlib.dumps(ent).decode() if '--entitlements' in args else ''
+            if args[0]=='nm':return '_$fixture_CanvasBridgeUITests_test'
+            if args[:2]==['xcrun','swift-demangle']:return '\n'.join('CanvasBridgeUITests.CanvasBridgeUITests.'+m+'()' for m in state.runnerMethods)
+            if args[:5]==['xcrun','devicectl','device','info','apps'] and '--bundle-id' in args:
+                adapter.write(args[-1],{'result':{'apps':[state.runnerMetadata],'deviceIdentifier':'leased-ipad'}});return ''
+            if args[:5]==['xcrun','devicectl','device','info','processes'] and not state.running:
+                adapter.write(args[-1],{'result':{'runningProcesses':[]}});return ''
+            if args[:5]==['xcrun','devicectl','device','process','terminate']:
+                state.running=False;state.commands.append(args);return ''
+            if args[0]=='xcodebuild':
+                state.commands.append(args);Path(args[args.index('-resultBundlePath')+1]).mkdir()
+                state.running=True
+                original(['xcrun','devicectl','device','process','launch','--device','leased-ipad',adapter.USER_BUNDLE,
+                    '--json-output',str(state.work/'ui-launch.json'),'--','--ccr-test-runtime',state.context['id']])
+                return ''
+            if args[:5]==['xcrun','xcresulttool','get','test-results','test-details']:
+                method=args[-1].split('/')[-1][:-2];return json.dumps(HarnessResultAcceptance().details(method))
+            return original(args,log,*rest,**kwargs)
+        state.command=command
+        return state
+
+    def test_real_prepared_and_runner_preconditions_reach_only_destination_test_command(self):
+        for failure in [None,'method','metadata','lineage','xctestrun','prototype']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=PreparedInstallContract().fixture(directory);PreparedInstallContract().invoke(state);self.fixture(state)
+                before=Path(state.config['existingXctestrun']).read_bytes()
+                if failure=='method':state.runnerMethods.clear()
+                if failure=='metadata':state.runnerMetadata=dict(state.runnerMetadata,url='file:///different/Runner.app')
+                if failure=='lineage':(state.root/'runner-install.json').write_bytes(b'changed')
+                if failure=='xctestrun':state.config['existingXctestrunSHA256']='0'*64
+                if failure=='prototype':adapter.write(state.work/'deployment.json',{'bundleIdentifier':adapter.BUNDLE})
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter.subprocess,'run',side_effect=state.copy):
+                    if failure:
+                        with self.assertRaises((adapter.Held,KeyError)):adapter.harness(state.config,state.work,'testEditAndSave')
+                    else:
+                        result=adapter.harness(state.config,state.work,'testEditAndSave');self.assertTrue(result.is_dir())
+                commands=[c for c in state.commands if c[0]=='xcodebuild']
+                self.assertEqual(len(commands),0 if failure else 1)
+                if commands:
+                    self.assertEqual(commands[0][1],'test-without-building')
+                    prepared=adapter.plistlib.loads((state.work/'ExistingRunner.xctestrun').read_bytes())['CanvasBridgeUITests']
+                    self.assertTrue(prepared['UseDestinationArtifacts']);self.assertNotIn('UITargetAppPath',prepared)
+                self.assertEqual(Path(state.config['existingXctestrun']).read_bytes(),before)
+                self.assertEqual(state.installCount,1)
+
+
+    def test_accept_reuses_core_cas_assets_actual_xcresult_and_uuid_cleanup(self):
+        import base64,shutil,contextlib
+        with tempfile.TemporaryDirectory() as directory:
+            state=PreparedInstallContract().fixture(directory);PreparedInstallContract().invoke(state);self.fixture(state)
+            state.runnerMethods.update(['testRotateAndSave','testReopenRotatedScene','testLiveRotatedRemoteRevision',
+                'testCommentSave','testCommentReopen','testStaleCommentDraftRequiresExplicitDiscard','testRulerToggleAcrossDrawingAndSelection',
+                'testReviewEditDraftPreserved','testReviewSaveDraft','testReviewReopen','testReviewLiveRemoteRevision',
+                'testReviewGood','testReviewStaleSessionRejected','testReviewMissingSourceRejected'])
+            descriptor=state.root/'Scripts/ipad-test-runtime/descriptor.json';adapter.write(descriptor,{'requiredChecks':['native-roundtrip']})
+            vault=state.work/'isolated-vault'/state.context['id'];vault.mkdir(parents=True)
+            assets=vault/'CCR Canvas/Assets';assets.mkdir(parents=True)
+            server={'address':state.context['relayAddress'],'token':'fixture','encoder':'fixture'}
+            saved=None
+            def request(server,method,path,body=None,authenticated=True):
+                nonlocal saved
+                if not authenticated:return 401,{}
+                if method=='GET':return (200,dict(saved)) if saved else (404,{})
+                if saved and body['baseSha256']!=saved['noteSha256']:return 409,{}
+                scene=base64.b64decode(body['sceneJSONBase64']);image=base64.b64decode(body['imagePNGBase64'])
+                note=b'# fixture note\n'+scene
+                (vault/'test.md').write_bytes(note);(assets/adapter.sha(scene)).write_bytes(scene);(assets/adapter.sha(image)).write_bytes(image)
+                saved={'sceneJSONBase64':body['sceneJSONBase64'],'revision':body['revision'],'path':'test.md',
+                    'noteSha256':adapter.sha(note),'sceneSha256':adapter.sha(scene),'imageSha256':adapter.sha(image)}
+                return 200,dict(saved)
+            original=state.command
+            def command(args,*rest,**kwargs):
+                args=list(map(str,args))
+                if args[0]=='xcodebuild':
+                    method=next(arg.rsplit('/',1)[-1] for arg in args if arg.startswith('-only-testing:'))
+                    if method=='testEditAndSave':
+                        scene=json.loads(base64.b64decode(saved['sceneJSONBase64']));scene['revision']+=1;scene['nodes'][0]['text']='👩🏽‍💻 앞 '
+                        request(server,'PUT','/vault/canvas',{'baseSha256':saved['noteSha256'],'revision':scene['revision'],
+                            'sceneJSONBase64':base64.b64encode(json.dumps(scene).encode()).decode(),'imagePNGBase64':base64.b64encode(adapter.pixel()).decode()})
+                        adapter.write(state.data/('Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state/CanvasScene.json'),scene)
+                if args[:5]==['xcrun','devicectl','device','copy','to']:
+                    self.assertEqual(args[args.index('--domain-identifier')+1],adapter.USER_BUNDLE)
+                    destination=args[args.index('--destination')+1]
+                    self.assertEqual(destination,'Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state')
+                    target=state.data/destination;shutil.rmtree(target);target.mkdir();return ''
+                if args[:5]==['xcrun','devicectl','device','info','files']:
+                    adapter.write(args[-1],{'result':{'domainIdentifier':adapter.USER_BUNDLE,'files':[]}});return ''
+                return original(args,*rest,**kwargs)
+            state.command=command
+            original_copy=state.copy
+            def copy(args,**kwargs):
+                args=list(map(str,args))
+                if args[4]=='to' and '--remove-existing-content' in args:
+                    target=state.data/args[args.index('--destination')+1]
+                    if target.exists():shutil.rmtree(target)
+                return original_copy(args,**kwargs)
+            def relay(config,work,source):
+                self.assertEqual(config['_runtimeBundle'],adapter.USER_BUNDLE)
+                return server,vault,{'borrowed':True,'leaseId':'prepared-existing'}
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(patch.object(adapter,'command',side_effect=command))
+                stack.enter_context(patch.object(adapter.subprocess,'run',side_effect=copy))
+                stack.enter_context(patch.object(adapter.time,'sleep'))
+                stack.enter_context(patch.object(adapter,'relay_runtime',side_effect=relay))
+                stack.enter_context(patch.object(adapter,'acceptance_contract',return_value='existing-contract'))
+                stack.enter_context(patch.object(adapter,'encode_scene',side_effect=lambda server,scene:json.dumps(scene).encode()))
+                stack.enter_context(patch.object(adapter,'request',side_effect=request))
+                for name in ['accept_rotation','accept_comments','accept_review']:
+                    stack.enter_context(patch.object(adapter,name,return_value={'independentlyTested':True}))
+                result=adapter.accept(state.config,state.work,state.source)
+            self.assertEqual(result['status'],'accepted')
+            self.assertEqual(adapter.read(state.work/'acceptance.json')['fixtureReset']['status'],'pass')
+            reset=adapter.read(state.work/'reset-readback.json');self.assertTrue(all(reset.values()));self.assertTrue(reset['relayPreserved'])
+            self.assertEqual(state.installCount,1)
+            self.assertTrue(all(c[1]=='test-without-building' for c in state.commands if c[0]=='xcodebuild'))
+            self.assertFalse(list(vault.iterdir()))
+            self.assertFalse(list((state.data/('Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state')).iterdir()))
+
+
+    def test_existing_relay_is_borrowed_without_start_renew_release_or_foreign_vault(self):
+        for failure in [None,'lease','configuration','vault','encoder','port','source']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=PreparedInstallContract().fixture(directory);work=state.work
+                state.config.update(_runtimeBundle=adapter.USER_BUNDLE,relayRepo=str(state.root),relayCommit='c'*40)
+                vault=work/'isolated-vault'/state.context['id'];vault.mkdir(parents=True)
+                encoder=work/'NativeSceneEncoder';encoder.write_bytes(b'parent-built encoder fixture')
+                private={'vault':str(vault),'store':str(work/'relay-store'),'snapshot':str(work/'snapshot.json'),
+                    'hidden':str(work/'hidden.json'),'noteAudit':str(work/'review-note-writes.jsonl'),
+                    'token':state.context['token'],'host':'192.168.1.2','port':8793,'relayRepo':str(state.root)}
+                config_path=work/'relay-private.json';adapter.write(config_path,private)
+                current={'leaseId':'existing','owner':adapter.OWNER,'serviceId':'ccr-ipad-integration-relay-8793',
+                    'generation':state.source['commit'],'pid':456,'birth':'known-process-birth',
+                    'argv':['node',str(state.root/'Scripts/ipad-test-runtime/relay.js'),str(config_path)]}
+                receipt=dict(current,schema='ccr.existing-ipad-test-relay/v1',testId=state.context['id'],
+                    address=state.context['relayAddress'],vault=str(vault),encoder=str(encoder),encoderSHA256=adapter.sha(encoder.read_bytes()),
+                    encoderSourceCommit=state.source['commit'],configurationPath=str(config_path),configurationSHA256=adapter.sha(config_path.read_bytes()))
+                adapter.write(work/'existing.json',current)
+                if failure=='lease':current['birth']='different'
+                if failure=='configuration':private['token']='different';adapter.write(config_path,private)
+                if failure=='vault':receipt['vault']=str(state.root/'foreign')
+                if failure=='encoder':encoder.write_bytes(b'changed')
+                if failure=='source':receipt['encoderSourceCommit']='f'*40
+                adapter.write(work/'existing.json',current)
+                adapter.write(work/'relay-reference.json',receipt)
+                state.config.update(existingRelayReceipt=str(work/'relay-reference.json'),existingRelayReceiptSHA256=adapter.sha((work/'relay-reference.json').read_bytes()))
+                policy={'LEASES':work,'is_live':lambda row:True,'expiry':lambda row:dt.datetime.now(dt.timezone.utc)+dt.timedelta(minutes=5),
+                    'now':lambda:dt.datetime.now(dt.timezone.utc),'listener_pids':lambda port:[] if failure=='port' else [456]}
+                def command(args,**kwargs):
+                    self.assertEqual(args[0],'git')
+                    return '' if args[1]=='status' else state.config['relayCommit']
+                with patch.object(adapter.runpy,'run_path',return_value=policy),patch.object(adapter,'command',side_effect=command) as commands, \
+                     patch.object(adapter,'request',return_value=(200,{})):
+                    if failure:
+                        with self.assertRaises(adapter.Held):adapter.relay_runtime(state.config,work,state.source)
+                    else:
+                        _,actual,service=adapter.relay_runtime(state.config,work,state.source)
+                        self.assertEqual(actual,vault);self.assertTrue(service['borrowed'])
+                self.assertTrue(all(call.args[0][0]=='git' for call in commands.call_args_list))
+
+
 
 class SingleAppHoldContract(unittest.TestCase):
     def test_public_entrypoints_hold_before_every_subprocess_and_device_effect(self):
@@ -219,7 +467,7 @@ class SingleAppHoldContract(unittest.TestCase):
             work = Path(directory)
             for invoke in [lambda:adapter.deploy({},work,{}), lambda:adapter.accept({},work,{}),
                            lambda:adapter.harness({},work,'testEditAndSave')]:
-                with self.assertRaisesRegex(adapter.Held,'single_app_runtime_held'):
+                with self.assertRaises(adapter.Held):
                     invoke()
             for effect in effects: effect.assert_not_called()
             self.assertEqual(list(work.iterdir()),[])
@@ -232,8 +480,7 @@ class SingleAppHoldContract(unittest.TestCase):
             self.assertEqual(result.returncode,2)
             payload = json.loads(result.stdout)
             self.assertEqual(payload['status'],'held')
-            self.assertIn('synthetic_owner_bootstrap',payload['reason'])
-            self.assertNotIn('FileNotFoundError',payload['reason'])
+            self.assertIn('synthetic_owner_bootstrap' if phase=='deploy' else 'FileNotFoundError',payload['reason'])
 
     def test_existing_prototype_xctestrun_cannot_install_or_be_rewritten(self):
         import plistlib
@@ -246,7 +493,7 @@ class SingleAppHoldContract(unittest.TestCase):
                  'DependentProductPaths':['__TESTROOT__/CanvasBridge.app']}})
             run.write_bytes(data)
             with patch.object(adapter,'command') as command, patch.object(adapter.subprocess,'Popen') as popen:
-                with self.assertRaisesRegex(adapter.Held,'latest_normal_candidate_preservation'):
+                with self.assertRaisesRegex(adapter.Held,'prepared_deployment_required'):
                     adapter.harness({},work,'testEditAndSave')
                 command.assert_not_called(); popen.assert_not_called()
             self.assertEqual(run.read_bytes(),data)
@@ -339,7 +586,8 @@ class DestinationArtifactContract(unittest.TestCase):
             config = existing_runner_fixture(work,original)
             adapter.write(work/'deployment.json',{'testId':str(uuid.uuid4()),'bundleIdentifier':adapter.USER_BUNDLE,
                 'configuration':'Debug','sourceReadbackVerified':True})
-            with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), \
+            with patch.object(adapter,'prepared_runtime',return_value=adapter.read(work/'deployment.json')), \
+                 patch.object(adapter,'verified_runner',return_value=adapter.read(work/'existing-runner.json')), patch.object(adapter,'lease'), \
                  patch.object(adapter,'actual_xcresult'), patch.object(adapter,'command') as command:
                 adapter.harness(config,work,'testEditAndSave')
                 command.assert_called_once()
@@ -349,7 +597,8 @@ class DestinationArtifactContract(unittest.TestCase):
             self.assertEqual(original.read_bytes(),before)
             prepared = plistlib.loads((work/'ExistingRunner.xctestrun').read_bytes())['CanvasBridgeUITests']
             self.assertTrue(prepared['UseDestinationArtifacts'])
-            with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), \
+            with patch.object(adapter,'prepared_runtime',return_value=adapter.read(work/'deployment.json')), \
+                 patch.object(adapter,'verified_runner',return_value=adapter.read(work/'existing-runner.json')), patch.object(adapter,'lease'), \
                  patch.object(adapter,'command') as command:
                 with self.assertRaisesRegex(adapter.Held,'existing_xctestrun_changed'):
                     adapter.harness(dict(config,existingXctestrunSHA256='0'*64),work,'testEditAndSave')
@@ -813,7 +1062,10 @@ class HarnessResultAcceptance(unittest.TestCase):
         def run_live(args, log, on_ready, **kwargs):
             command(args); on_ready()
         calls = []
-        with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), patch.object(adapter,'command',side_effect=command) as cmd, \
+        with patch.object(adapter,'prepared_runtime',return_value=adapter.read(root/'deployment.json')), \
+             patch.object(adapter,'verified_runner',return_value={'schema':'ccr.existing-xctest-runner/v1','installed':True,'team':adapter.NORMAL_TEAM,
+                 'bundleIdentifier':'com.ambrion.rea.appaudit.UITests.xctrunner','testBundleRelativePath':'__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest'}), \
+             patch.object(adapter,'lease'), patch.object(adapter,'command',side_effect=command) as cmd, \
              patch.object(adapter,'run_live_harness',side_effect=run_live):
             result = adapter.harness(existing_runner_fixture(root,run),root,'testReviewReopen',variables,
                                      on_ready=(lambda:calls.append(True)) if live else None)
@@ -1225,10 +1477,12 @@ class FourGradeAcceptance(unittest.TestCase):
                 'CCR_REVIEW_GRADE_BUTTON_ID':'stale','CCR_REVIEW_FOREIGN':'pollution','UNRELATED':'preserved'}}},
                 fmt=plistlib.FMT_BINARY))
             adapter.write(root/'deployment.json',{'testId':str(uuid.uuid4()),'bundleIdentifier':adapter.USER_BUNDLE,'configuration':'Debug','sourceReadbackVerified':True})
+            existing_runner_fixture(root,run)
             for button,label in expected:
                 variables={'CCR_REVIEW_GRADE_BUTTON_ID':button,'CCR_REVIEW_GRADE_INTERVAL':label,
                            'CCR_REVIEW_DRAFT':'바깥\r\ne\u0301 👩🏽‍💻\r\n'}
-                with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), patch.object(adapter,'command') as command, \
+                with patch.object(adapter,'prepared_runtime',return_value=adapter.read(root/'deployment.json')), \
+                     patch.object(adapter,'verified_runner',return_value=adapter.read(root/'existing-runner.json')), patch.object(adapter,'lease'), patch.object(adapter,'command') as command, \
                      patch.object(adapter,'actual_xcresult') as actual:
                     result=adapter.harness(existing_runner_fixture(root,run),root,'testReviewSelectedGrade',variables)
                 self.assertTrue((root/'ExistingRunner.xctestrun').read_bytes().startswith(b'bplist00'))
