@@ -14,9 +14,9 @@
 ## 정상 설치를 계속 막는 이유
 
 1. 기존 deploy는 `com.ambrion.rea.ipad-runtime`을 만들고 버전을 1로 고정하며 합성 OwnerBootstrapFixture를 넣는다. bundle 이름만 `com.ambrion.sillcanvas.ipad`로 바꾸면 안 된다. 현재 정상 설치 버전·서명·Team `ZPTXHJ866D`·keychain entitlements를 대조하지 않은 낮은 버전 재설치는 금지한다.
-2. snapshots는 일부 Application Support 파일과 설치 앱 metadata를 한 dict로 비교한다. Documents·전체 Preferences·마지막 Mac/오디오 의도 등의 전체 바이트 보호가 아니며, 정상 버전 갱신에 따른 metadata 변화와 사용자 데이터 불변을 분리하지 않는다. 새 정상 설치 후보를 수용할 근거가 아니다.
-3. 정상 앱의 `SillAppDelegate.buildMenu`는 isolated 분기 밖에서도 실행될 수 있다. `MacMenuBar.build`가 먼저 `UserDefaults.standard`의 Debug 설정을 읽는다. 이 파일은 이번 쓰기 범위 밖이므로 수정하지 않았다. Store 설정 분리만으로 앱 전체의 일반 Preferences 접근 차단을 완료했다고 하지 않는다.
-4. 기존 harness는 `CanvasBridge.xcodeproj`를 build-for-testing한다. UI target의 `TEST_TARGET_NAME=CanvasBridge`, PBXTargetDependency와 `UITargetAppPath`/DependentProductPaths가 prototype `CanvasBridge.app`에 연결될 수 있다. XCUIApplication의 bundle 환경값만 정상 앱으로 바꿔도 test-without-building이 prototype을 추가 설치하거나 덮을 위험은 없어지지 않는다. 기존 설치된 runner 한 개의 identity·xctestrun 전체 target/dependency·실제 설치 효과를 확인하기 전에는 실행하지 않는다.
+2. normal68의 기존 보존 절차를 재사용해 snapshots에 note recovery·Legacy·workspace와 Documents/전체 Preferences의 파일 트리 SHA를 추가했다. `same_user_data`는 설치 metadata를 사용자 바이트와 분리해 비교하므로 정상 버전 갱신 자체를 데이터 손상으로 판정하지 않는다. metadata의 bundle/team/버전은 별도 exact 검사가 필요하다. 추가된 디렉터리 copy/readback은 이번 단위에서 mock과 실제 로컬 파일로 검증했으며 최신 기기의 최신 후보 수용을 대신하지 않는다.
+3. 정상 앱의 `SillAppDelegate.buildMenu`는 isolated 분기 밖에서도 실행될 수 있고 Debug 메뉴 표시 설정을 standard defaults에서 읽는다. 관측된 이 경로는 읽기이며, 이번에 수정한 Store 쓰기 누수와 구분한다. 이 파일은 쓰기 범위 밖이므로 그대로 두었다. 앱 전체의 일반 Preferences 읽기 차단까지 완료했다고 하지 않으며, 이 읽기 관측만을 영구 설치 차단 사유로 삼지 않는다.
+4. harness의 build-for-testing fallback을 제거했다. 공식 `xcodebuild.xctestrun(5)`의 `UseDestinationArtifacts=true`는 목적지의 기존 artifacts를 사용하고 테스트 artifacts를 설치하지 않는다. `destination_artifacts_run`은 v1/v2에서 단일 UI target만 허용하고 TestHostPath/TestBundlePath/UITargetAppPath/DependentProductPaths를 제거한 뒤 기존 runner와 정상 앱 bundle identifier로 연결한다. 새로운 runner/app 설치를 요구하는 local product 경로를 넘기지 않는다. 정상 Debug runtime readback과 기존 runner identity 영수증·입력 xctestrun의 고정 SHA가 없으면 진행하지 않는다. 이 전환의 실제 기기 실행은 부모의 공유 구간에 남긴다.
 5. Debug 격리 테스트 종료 후 플래그 없는 정상 실행으로 돌아갈 때 기존 keychain 참조·마지막 Mac·원래 연결/오디오 의도와 전체 사용자 데이터가 그대로임을 아직 검증하지 않았다. 실제 설치·정상 복귀의 공유 구간은 부모가 소유한다.
 
 ## 기존 공개 bootstrap 참조
@@ -41,3 +41,15 @@ python3 -B Scripts/ipad-test-runtime/test_adapter.py
 실제 CLI subprocess가 held로 끝나는지와 deploy/accept/harness/install 경계에서 devicectl·xcodebuild·relay·파일 덮어쓰기가 시작되지 않는지 검사한다. 기존 parser·PNG·review 기능의 단위 검사에서는 held 함수를 mock하여 순수 로직만 계속 검사하며 운영 우회 옵션은 만들지 않는다. native Debug 검사는 실제 flagged context와 잘못된 context에서 일반 defaults 읽기/쓰기를 실패시키는 객체를 전달하고, 격리 설정 저장→새 Store 재열기와 비어 있지 않은 전체 Preferences fixture의 바이트 불변을 확인한다.
 
 기존 descriptor·release 등록은 그대로이며 이 후보를 testAccepted로 승격하지 않는다. 기존 진단 앱 강제 제거, 새 앱·runner 설치, 실기기 조회·Host·오디오·키·권한·계정 변경은 하지 않는다.
+
+## 기존 normal68 보존 절차의 재사용
+
+`normal68-device-20261026/normal68-install-preservation.json`, `normal68-observation.json`, `normal68-post-reconnect-preservation.json`, `normal68-preferences-delta.json`을 읽기 전용으로 확인했다. 당시 정상 설치의 보호 파일·note recovery·Preferences 바이트 보존과 재연결 뒤 `Sill.savedMacs.infoIssuedAt` 변경 관측은 과거 세대의 구체 근거다. snapshots의 원본별 byte hash와 metadata 분리를 이번 소스에 재사용했다. 이 timestamp 변화를 일반적인 Preferences 변경 허용으로 확장하지 않으며 최신 후보는 최신 before/after와 정확한 설치 버전·원본 bundle/team을 다시 확인해야 한다.
+
+## 기존 runner만 사용하는 준비 입력
+
+`existingXctestrun`/`existingXctestrunSHA256`, `existingRunnerReceipt`/`existingRunnerReceiptSHA256`가 필요하다. runner 영수증 schema는 `ccr.existing-xctest-runner/v1`, `installed=true`, `team=ZPTXHJ866D`, `bundleIdentifier=com.ambrion.rea.appaudit.UITests.xctrunner`, `testBundleRelativePath=__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest`다. 이는 새 runner 생성 권한이나 실제 identity 관측을 대신하는 자가 선언이 아니다. 부모가 기존 설치의 정확한 readback으로 준비해야 한다.
+
+`deployment.json`도 정상 `bundleIdentifier=com.ambrion.sillcanvas.ipad`, `configuration=Debug`, `sourceReadbackVerified=true`와 실제 시험 UUID를 요구한다. 원본 xctestrun을 수정하지 않고 `ExistingRunner.xctestrun`만 만든다. 실제 검증은 정확한 요청 method가 한 번 실행·통과했는지 xcresult까지 확인한다. 기존 runner에 없는 새 test method를 빌드·설치해서 보충하지 않는다. 공개 CLI의 전체 gate는 최신 정상 후보의 실제 profile·버전·설치 보존·normal 복귀 경로가 연결될 때까지 계속 held다.
+
+공식 로컬 근거는 `/Applications/Xcode.app/Contents/Developer/usr/share/man/man5/xcodebuild.xctestrun.5`의 destination artifacts 절이다. 정상 앱의 실제 owner bootstrap을 쓰는 빌드 경로와 단조 증가 버전 설정은 아직 legacy deploy에 연결하지 않았으며, 버전 1/합성 profile 설치를 허용하지 않는다.
