@@ -1,5 +1,6 @@
 import PencilKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private struct CanvasVaultCheckpoint: Codable {
     let sceneID: UUID
@@ -18,6 +19,11 @@ struct CanvasWorkspace: View {
     @State private var connectionOpen = false
     @State private var exportOpen = false
     @State private var importOpen = false
+    @State private var workspacePickerOpen = false
+    @State private var workspaceOpening = false
+    @State private var workspaceFolder: URL?
+    @State private var workspaceDocumentIDs: [UUID] = []
+    @State private var workspaceDocumentsOpen = false
     @State private var inspectorOpen = false
     @State private var pendingNodeEdit: (sceneID: UUID, node: CanvasNode)?
     @State private var pendingCommentEdit: UUID?
@@ -89,6 +95,10 @@ struct CanvasWorkspace: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar.zIndex(1)
+            Text(store.fileWorkspaceStatus)
+                .font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
+                .padding(.horizontal,10).padding(.vertical,6)
+                .accessibilityIdentifier("canvasFilesStatus")
             Picker("그림판 보기",selection:$diagramMode) {
                 Text("원본 그림").tag(DiagramMode.original)
                 Text("다이어그램").tag(DiagramMode.diagram)
@@ -137,12 +147,14 @@ struct CanvasWorkspace: View {
                 store.saveNow()
                 dictation.cancel()
             }
-            else { Task { await checkConnection() } }
+            else { store.refreshFileWorkspace(); Task { await checkConnection() } }
         }
         .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
         .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
         .onChange(of:relayToken) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
         .task {
+            store.filePreview = { await SceneRenderer.png(scene:$0) }
+            store.refreshFileWorkspace()
             store.setNoteConnection(address:relayAddress,token:relayToken)
             await checkConnection()
         }
@@ -201,6 +213,41 @@ struct CanvasWorkspace: View {
             Button("취소", role:.cancel) { }
         } message: {
             Text("원본 획에서 일치하는 손글씨를 찾아 영역으로 선택합니다.")
+        }
+        .fileImporter(isPresented:$workspacePickerOpen,allowedContentTypes:[.folder]) { result in
+            switch result {
+            case .success(let folder):
+                if workspaceOpening {
+                    do {
+                        workspaceDocumentIDs = try store.workspaceDocuments(in:folder)
+                        workspaceFolder = folder
+                        workspaceDocumentsOpen = true
+                    } catch { store.status = "원본 폴더 열기 실패: \(error.localizedDescription)" }
+                } else { Task { await store.connectFileWorkspace(folder) } }
+            case .failure(let error):
+                store.status = (error as? CocoaError)?.code == .userCancelled ?
+                    "폴더 선택을 취소했습니다. 기존 연결과 그림은 유지됩니다." :
+                    "폴더 선택 실패: \(error.localizedDescription)"
+            }
+        }
+        .sheet(isPresented:$workspaceDocumentsOpen) {
+            NavigationStack {
+                List {
+                    Text("열기 전 현재 그림은 미저장 복구본으로 보존합니다. 원본의 current.json이 가리키는 세대를 엽니다.")
+                    if workspaceDocumentIDs.isEmpty { Text("이 폴더에 CCR Sill 원본이 없습니다. 현재 그림 안전 내보내기로 먼저 저장하세요.") }
+                    ForEach(workspaceDocumentIDs,id:\.self) { id in
+                        Button(id.uuidString.lowercased() + ".sill") {
+                            guard let folder = workspaceFolder else { return }
+                            workspaceDocumentsOpen = false
+                            Task { await store.connectFileWorkspace(folder,opening:id) }
+                        }
+                    }
+                }
+                .navigationTitle("Files 원본 열기")
+                .toolbar { ToolbarItem(placement:.cancellationAction) {
+                    Button("취소") { workspaceDocumentsOpen = false }
+                } }
+            }
         }
         .sheet(isPresented:$connectionOpen) { connectionSheet }
         .sheet(isPresented:$inspectorOpen,onDismiss: {
@@ -297,6 +344,20 @@ struct CanvasWorkspace: View {
 
     private var toolsMenu: some View {
         Menu("도구",systemImage:"slider.horizontal.3") {
+            Menu("저장 위치 · Files 원본") {
+                Button("현재 그림 안전 내보내기·폴더 연결",systemImage:"folder.badge.plus") {
+                    workspaceOpening = false
+                    workspacePickerOpen = true
+                }
+                Button("폴더에서 원본 열기",systemImage:"folder") {
+                    workspaceOpening = true
+                    workspacePickerOpen = true
+                }
+                Button("외부 변경 확인") { store.refreshFileWorkspace() }
+                Button("원본 저장 다시 시도") { store.retryFileWorkspaceSave() }
+                Text("앱 내부 보관은 캐시·미저장 복구본입니다. 기존 문서는 덮어쓰지 않습니다.")
+            }
+            Divider()
             Button("Obsidian 노트",systemImage:"doc.text") {
                 vaultOpen = true
                 Task { await loadVaultEntries() }
@@ -705,7 +766,8 @@ struct CanvasWorkspace: View {
     }
 
     private func synchronizeCanvasToVault() async {
-        guard !canvasSyncBusy, !Task.isCancelled, !store.inkHistory.usingTool else { return }
+        store.refreshFileWorkspace()
+        guard store.fileWorkspaceCanSync, !canvasSyncBusy, !Task.isCancelled, !store.inkHistory.usingTool else { return }
         if vaultSceneID != store.scene.id || vaultSyncAddress != relayAddress {
             vaultSceneID = store.scene.id
             vaultSyncAddress = relayAddress
@@ -722,7 +784,7 @@ struct CanvasWorkspace: View {
         let address = relayAddress
         let token = relayToken
         func current() -> Bool {
-            !Task.isCancelled && canvasVaultEnabled && !canvasVaultBlocked &&
+            !Task.isCancelled && store.fileWorkspaceCanSync && canvasVaultEnabled && !canvasVaultBlocked &&
                 !store.inkHistory.usingTool &&
                 store.scene.id == scene.id && relayAddress == address && relayToken == token &&
                 vaultSceneID == scene.id && vaultSyncAddress == address
@@ -784,7 +846,8 @@ struct CanvasWorkspace: View {
     }
 
     private func refreshCanvasFromVault() async {
-        guard !store.inkHistory.usingTool, !canvasVaultBlocked, !canvasSyncBusy, let syncedSceneSha, let canvasNoteSha,
+        store.refreshFileWorkspace()
+        guard store.fileWorkspaceCanSync, !store.inkHistory.usingTool, !canvasVaultBlocked, !canvasSyncBusy, let syncedSceneSha, let canvasNoteSha,
               vaultSceneID == store.scene.id, vaultSyncAddress == relayAddress else { return }
         do {
             guard let remote = try await relay.vaultCanvas(id:store.scene.id),

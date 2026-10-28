@@ -134,6 +134,7 @@ final class CanvasStore: ObservableObject {
             if oldValue.id != scene.id { setInkSelection([]); invalidateNoteScene(); inkHistory.invalidate() }
             else if let context = noteContext, !noteContextIsCurrent(context) { invalidateNoteRequests() }
             handwritingRequest = nil
+            if fileWorkspaceState != .blocked { fileWorkspaceState = .pending }
             scheduleSave()
         }
     }
@@ -232,6 +233,204 @@ final class CanvasStore: ObservableObject {
     @Published var status = "Pencil로 그린 뒤 구조를 확인하세요."
     @Published private(set) var sceneRecoveryNotice = ""
     private var sceneReadable = true
+
+    enum FileWorkspaceState { case pending, ready, blocked }
+    @Published private(set) var fileWorkspaceState: FileWorkspaceState = .pending
+    @Published private(set) var fileWorkspaceStatus = "저장 위치 미연결 · 앱 내부에는 미저장 복구본만 보관합니다."
+    var filePreview: ((CanvasScene) async -> Data?)?
+    private var fileWorkspace: CanvasFileWorkspace?
+    private var workspaceBinding: CanvasFileWorkspace.Binding?
+    private var workspaceToken: String?
+    private var fileSaveBusy = false
+    var fileWorkspaceCanSync: Bool { fileWorkspaceState == .ready }
+
+    private func writeWorkspaceBinding(_ binding: CanvasFileWorkspace.Binding) throws {
+        try CanvasLocalFile.write(JSONEncoder().encode(binding),to:CanvasRuntime.stateURL(.workspace))
+        workspaceBinding = binding
+    }
+
+    private static func preserveLegacyScene() throws {
+        let workspaceURL = try CanvasRuntime.stateURL(.workspace)
+        let sourceURL = try CanvasRuntime.stateURL(.scene)
+        let copyURL = try CanvasRuntime.stateURL(.legacyScene)
+        guard !FileManager.default.fileExists(atPath:workspaceURL.path),
+              FileManager.default.fileExists(atPath:sourceURL.path),
+              !FileManager.default.fileExists(atPath:copyURL.path) else { return }
+        let bytes = try CanvasLocalFile.read(sourceURL)
+        guard bytes.count <= sceneByteLimit else { throw ScenePersistenceError.tooLarge }
+        let legacy = try JSONDecoder().decode(CanvasScene.self,from:bytes)
+        try legacy.validateNativeInkProjection()
+        try CanvasLocalFile.write(bytes,to:copyURL)
+        guard CanvasPacket.sha(try CanvasLocalFile.read(copyURL)) == CanvasPacket.sha(bytes) else {
+            throw ScenePersistenceError.unreadable
+        }
+    }
+
+    private func restoreFileWorkspace() {
+        do {
+            let url = try CanvasRuntime.stateURL(.workspace)
+            guard FileManager.default.fileExists(atPath:url.path) else { return }
+            let binding = try JSONDecoder().decode(CanvasFileWorkspace.Binding.self,from:CanvasLocalFile.read(url))
+            workspaceBinding = binding
+            var stale = false
+            let folder = try URL(resolvingBookmarkData:binding.bookmark,options:.withoutUI,
+                relativeTo:nil,bookmarkDataIsStale:&stale)
+            guard !stale else { throw CanvasFileWorkspace.Failure.staleBookmark }
+            let workspace = CanvasFileWorkspace(folder:folder)
+            fileWorkspace = workspace
+            let restored = try workspace.load(binding.sceneID)
+            workspaceToken = restored.token
+            guard try CanvasFileWorkspace.sceneSHA(scene) == binding.savedSceneSHA else {
+                throw CanvasFileWorkspace.Failure.conflict
+            }
+            try importScene(restored.scene)
+            try writeWorkspaceBinding(.init(bookmark:binding.bookmark,sceneID:restored.scene.id,
+                savedSceneSHA:CanvasFileWorkspace.sceneSHA(restored.scene)))
+            try CanvasLocalFile.write(CanvasFileWorkspace.bytes(restored.scene),to:CanvasRuntime.stateURL(.scene))
+            fileWorkspaceState = .ready
+            fileWorkspaceStatus = "Files 원본 연결 · \(folder.lastPathComponent) · 복원 완료"
+        } catch { blockFileWorkspace(error) }
+    }
+
+    private func blockFileWorkspace(_ error: Error) {
+        fileWorkspaceState = .blocked
+        fileWorkspaceStatus = "Files 원본 저장 중단 · \(error.localizedDescription) · 미저장 복구본 보존"
+    }
+
+    func workspaceDocuments(in folder: URL) throws -> [UUID] {
+        try CanvasFileWorkspace(folder:folder).documents()
+    }
+
+    func connectFileWorkspace(_ folder: URL, opening id: UUID? = nil) async {
+        guard !inkBusy, !vaultDirty, !vaultSaving, !fileSaveBusy else {
+            status = "입력 또는 저장이 끝난 뒤 저장 위치를 연결하세요."
+            return
+        }
+        let startingScene = scene
+        let priorState = fileWorkspaceState
+        let priorStatus = fileWorkspaceStatus
+        var switched = false
+        fileSaveBusy = true
+        defer { fileSaveBusy = false }
+        do {
+            let ownRoot = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first?.deletingLastPathComponent()
+            if let ownRoot {
+                let ownPath = ownRoot.resolvingSymlinksInPath().standardizedFileURL.path
+                let selectedPath = folder.resolvingSymlinksInPath().standardizedFileURL.path
+                guard selectedPath != ownPath, !selectedPath.hasPrefix(ownPath + "/") else {
+                    throw CanvasFileWorkspace.Failure.sandboxFolder
+                }
+            }
+            let access = folder.startAccessingSecurityScopedResource()
+            guard access else { throw CanvasFileWorkspace.Failure.permission }
+            defer { folder.stopAccessingSecurityScopedResource() }
+            let bookmark = try folder.bookmarkData(options:.minimalBookmark,includingResourceValuesForKeys:nil,relativeTo:nil)
+            let workspace = CanvasFileWorkspace(folder:folder)
+            // Preserve current work before replacing the in-memory scene or its pending cache.
+            try persistScene()
+            let source = scene
+            let pendingURL = try CanvasRuntime.stateURL(.scene).deletingLastPathComponent()
+                .appendingPathComponent("CanvasPending-\(UUID().uuidString.lowercased()).json")
+            #if DEBUG
+            if case .isolated = CanvasRuntime.launch { throw CanvasFileWorkspace.Failure.permission }
+            #endif
+            let preserved = try CanvasFileWorkspace.bytes(source)
+            try CanvasLocalFile.write(preserved,to:pendingURL)
+            guard CanvasPacket.sha(try CanvasLocalFile.read(pendingURL)) == CanvasPacket.sha(preserved) else {
+                throw ScenePersistenceError.unreadable
+            }
+            let snapshot: CanvasFileWorkspace.Snapshot
+            if let id {
+                snapshot = try workspace.load(id)
+            } else {
+                guard let preview = await filePreview?(source),
+                      try CanvasFileWorkspace.sceneSHA(scene) == CanvasFileWorkspace.sceneSHA(source), !inkBusy else {
+                    throw CanvasFileWorkspace.Failure.conflict
+                }
+                snapshot = try workspace.save(source,preview:preview,expected:nil)
+            }
+            guard try CanvasFileWorkspace.sceneSHA(scene) == CanvasFileWorkspace.sceneSHA(source),
+                  !inkBusy, !vaultDirty, !vaultSaving else { throw CanvasFileWorkspace.Failure.conflict }
+            let binding = CanvasFileWorkspace.Binding(bookmark:bookmark,sceneID:snapshot.scene.id,
+                savedSceneSHA:try CanvasFileWorkspace.sceneSHA(snapshot.scene))
+            try writeWorkspaceBinding(binding)
+            switched = true
+            fileWorkspace = workspace
+            workspaceToken = snapshot.token
+            if id != nil { try importScene(snapshot.scene) }
+            try CanvasLocalFile.write(CanvasFileWorkspace.bytes(snapshot.scene),to:CanvasRuntime.stateURL(.scene))
+            fileWorkspaceState = .ready
+            fileWorkspaceStatus = "Files 원본 · \(folder.lastPathComponent)/\(snapshot.scene.id.uuidString.lowercased()).sill · 저장 완료"
+        } catch {
+            if switched { blockFileWorkspace(error) }
+            else if (try? CanvasFileWorkspace.sceneSHA(scene)) != (try? CanvasFileWorkspace.sceneSHA(startingScene)) {
+                fileWorkspaceState = .pending
+                fileWorkspaceStatus = "폴더 연결 중 입력이 바뀌었습니다. 기존 위치에 미저장 복구본을 보존합니다."
+                scheduleSave()
+            } else {
+                fileWorkspaceState = priorState
+                fileWorkspaceStatus = priorStatus
+            }
+            status = "저장 위치 연결 실패: \(error.localizedDescription)"
+        }
+    }
+
+    func refreshFileWorkspace() {
+        guard let workspace = fileWorkspace, let binding = workspaceBinding,
+              fileWorkspaceState != .blocked, !fileSaveBusy, !inkBusy, !vaultDirty, !vaultSaving else { return }
+        do {
+            let latest = try workspace.load(binding.sceneID)
+            guard latest.token != workspaceToken else { return }
+            guard try CanvasFileWorkspace.sceneSHA(scene) == binding.savedSceneSHA else {
+                throw CanvasFileWorkspace.Failure.conflict
+            }
+            try importScene(latest.scene)
+            try writeWorkspaceBinding(.init(bookmark:binding.bookmark,sceneID:latest.scene.id,
+                savedSceneSHA:CanvasFileWorkspace.sceneSHA(latest.scene)))
+            workspaceToken = latest.token
+            try CanvasLocalFile.write(CanvasFileWorkspace.bytes(latest.scene),to:CanvasRuntime.stateURL(.scene))
+            fileWorkspaceState = .ready
+            fileWorkspaceStatus = "Files 원본의 외부 변경을 열었습니다."
+        } catch { blockFileWorkspace(error) }
+    }
+
+    func saveFileWorkspace() async {
+        guard let workspace = fileWorkspace, let binding = workspaceBinding,
+              fileWorkspaceState != .blocked, !fileSaveBusy, !inkBusy else { return }
+        let source = scene
+        fileSaveBusy = true
+        defer {
+            fileSaveBusy = false
+            if fileWorkspaceState == .pending &&
+                (try? CanvasFileWorkspace.sceneSHA(scene)) != (try? CanvasFileWorkspace.sceneSHA(source)) { scheduleSave() }
+        }
+        do {
+            guard source.id == binding.sceneID else { throw CanvasFileWorkspace.Failure.conflict }
+            if try CanvasFileWorkspace.sceneSHA(source) == binding.savedSceneSHA {
+                guard try workspace.load(source.id).token == workspaceToken else { throw CanvasFileWorkspace.Failure.conflict }
+                fileWorkspaceState = .ready
+                fileWorkspaceStatus = "Files 원본 · \(workspace.folder.lastPathComponent) · 저장 확인 완료"
+                return
+            }
+            guard let preview = await filePreview?(source) else { throw CanvasFileWorkspace.Failure.invalidDocument }
+            guard try CanvasFileWorkspace.sceneSHA(source) == CanvasFileWorkspace.sceneSHA(scene), !inkBusy else { return }
+            let snapshot = try workspace.save(source,preview:preview,expected:workspaceToken)
+            try writeWorkspaceBinding(.init(bookmark:binding.bookmark,sceneID:source.id,
+                savedSceneSHA:CanvasFileWorkspace.sceneSHA(source)))
+            workspaceToken = snapshot.token
+            fileWorkspaceState = .ready
+            fileWorkspaceStatus = "Files 원본 · \(workspace.folder.lastPathComponent) · 자동 저장 완료"
+        } catch { blockFileWorkspace(error) }
+    }
+
+    func retryFileWorkspaceSave() {
+        guard fileWorkspace != nil else {
+            status = "파일 앱에서 원본 폴더를 다시 선택하세요."
+            return
+        }
+        fileWorkspaceState = .pending
+        saveNow()
+    }
 
     private enum ScenePersistenceError: LocalizedError {
         case unreadable, tooLarge
@@ -1712,6 +1911,7 @@ final class CanvasStore: ObservableObject {
         }
         #endif
         do {
+            try Self.preserveLegacyScene()
             if let restored = try Self.restoreScene() {
                 scene = restored.scene
                 drawing = restored.drawing
@@ -1722,6 +1922,7 @@ final class CanvasStore: ObservableObject {
             sceneRecoveryNotice = ScenePersistenceError.unreadable.localizedDescription
             status = sceneRecoveryNotice
         }
+        restoreFileWorkspace()
         do {
             let url = try Self.outboxURL()
             if FileManager.default.fileExists(atPath:url.path) {
@@ -1850,8 +2051,11 @@ final class CanvasStore: ObservableObject {
 
     func saveNow() {
         saveTask?.cancel()
-        do { try persistScene() }
-        catch { status = "칠판 자동 저장 실패: \(error.localizedDescription)" }
+        do {
+            try persistScene()
+            Task { [weak self] in await self?.saveFileWorkspace() }
+        } catch { status = "미저장 복구본 보관 실패: \(error.localizedDescription)" }
+
     }
 
     private func persistScene(_ candidate: CanvasScene? = nil) throws {
@@ -1862,6 +2066,12 @@ final class CanvasStore: ObservableObject {
         let data = try JSONEncoder().encode(candidate)
         guard data.count <= Self.sceneByteLimit else { throw ScenePersistenceError.tooLarge }
         try CanvasLocalFile.write(data,to:url)
+        if fileWorkspaceState != .blocked {
+            fileWorkspaceState = .pending
+            fileWorkspaceStatus = fileWorkspace == nil ?
+                "저장 위치 미연결 · 미저장 복구본 보관 중. Files 폴더를 선택하세요." :
+                "Files 원본 저장 대기 · 미저장 복구본 보관 중"
+        }
     }
 
     private static let sceneByteLimit = CanvasScene.localByteLimit

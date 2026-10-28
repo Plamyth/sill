@@ -9,10 +9,12 @@ import PencilKit
 enum CanvasRuntime {
     enum StateFile: String, CaseIterable {
         case scene = "CanvasScene.json"
+        case legacyScene = "CanvasLegacyScene.json"
         case outbox = "CanvasOutbox/ledger.json"
         case blockRecovery = "CanvasBlockEdit/recovery.json"
         case noteRecovery = "CanvasNoteEdit/recovery.json"
         case checkpoint = "CanvasVaultCheckpoint.json"
+        case workspace = "CanvasWorkspace/bookmark.json"
     }
 
     #if DEBUG
@@ -2058,5 +2060,159 @@ enum CanvasLocalFile {
         try handle.synchronize()
         guard rename(temporary.path,url.path) == 0 else { throw CanvasSendError.outboxUnavailable }
         try syncDirectory(directory)
+    }
+}
+
+// current.json commits a complete generation; interrupted writes leave the previous generation readable.
+final class CanvasFileWorkspace {
+    enum Failure: LocalizedError {
+        case permission, staleBookmark, conflict, invalidDocument, missingDocument, sandboxFolder
+        var errorDescription: String? {
+            switch self {
+            case .permission: return "작업 폴더 접근 권한을 확인할 수 없습니다. 파일 앱에서 폴더를 다시 선택하세요."
+            case .staleBookmark: return "저장 위치 연결이 오래됐습니다. 폴더를 다시 선택하세요. 원본과 미저장 입력은 보존했습니다."
+            case .conflict: return "외부 파일이 변경됐습니다. 자동 저장을 멈췄습니다. 현재 그림을 다른 폴더에 안전 내보내거나 원본을 다시 여세요."
+            case .invalidDocument: return "그림·구조·미리보기의 정합성을 확인할 수 없습니다. 기존 파일을 보존했습니다."
+            case .missingDocument: return "연결한 원본 문서가 없습니다. 자동으로 새로 만들지 않습니다."
+            case .sandboxFolder: return "앱 전용 폴더는 공용 원본으로 선택할 수 없습니다. 나의 iPad 또는 Obsidian 작업 폴더를 선택하세요."
+            }
+        }
+    }
+    struct Binding: Codable {
+        let bookmark: Data
+        let sceneID: UUID
+        let savedSceneSHA: String
+    }
+    struct Head: Codable {
+        let schema: String
+        let sceneID: UUID
+        let generation: UUID
+        let sceneSHA: String
+        let drawingSHA: String
+        let previewSHA: String
+    }
+    struct Snapshot {
+        let scene: CanvasScene
+        let token: String
+        let preview: Data
+    }
+    let folder: URL
+    private let requiresScope: Bool
+    init(folder: URL, requiresScope: Bool = true) {
+        self.folder = folder
+        self.requiresScope = requiresScope
+    }
+    static func bytes(_ scene: CanvasScene) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+        return try encoder.encode(scene)
+    }
+    static func sceneSHA(_ scene: CanvasScene) throws -> String { CanvasPacket.sha(try bytes(scene)) }
+    func documentURL(_ id: UUID) -> URL {
+        folder.appendingPathComponent(id.uuidString.lowercased() + ".sill",isDirectory:true)
+    }
+    private func scoped<T>(_ operation: () throws -> T) throws -> T {
+        let access = folder.startAccessingSecurityScopedResource()
+        guard access || !requiresScope else { throw Failure.permission }
+        defer { if access { folder.stopAccessingSecurityScopedResource() } }
+        guard try folder.resourceValues(forKeys:[.isDirectoryKey,.isSymbolicLinkKey]).isDirectory == true,
+              folder.resolvingSymlinksInPath().standardizedFileURL == folder.standardizedFileURL
+        else { throw Failure.permission }
+        return try operation()
+    }
+    private func coordinated<T>(writing: Bool, _ operation: (URL) throws -> T) throws -> T {
+        try scoped {
+            var coordinationError: NSError?
+            var result: Result<T,Error>?
+            let accessor: (URL) -> Void = { url in result = Result { try operation(url) } }
+            let coordinator = NSFileCoordinator()
+            if writing {
+                coordinator.coordinate(writingItemAt:folder,options:.forMerging,error:&coordinationError,byAccessor:accessor)
+            } else {
+                coordinator.coordinate(readingItemAt:folder,options:[],error:&coordinationError,byAccessor:accessor)
+            }
+            if let coordinationError { throw coordinationError }
+            guard let result else { throw Failure.permission }
+            return try result.get()
+        }
+    }
+    private func read(_ url: URL, limit: Int) throws -> Data {
+        guard url.resolvingSymlinksInPath().standardizedFileURL == url.standardizedFileURL else { throw Failure.invalidDocument }
+        let values = try url.resourceValues(forKeys:[.isRegularFileKey,.fileSizeKey])
+        guard values.isRegularFile == true, let size = values.fileSize, size <= limit else { throw Failure.invalidDocument }
+        let bytes = try Data(contentsOf:url)
+        guard bytes.count <= limit else { throw Failure.invalidDocument }
+        return bytes
+    }
+    private func load(_ id: UUID, root: URL) throws -> Snapshot {
+        let document = root.appendingPathComponent(id.uuidString.lowercased() + ".sill",isDirectory:true)
+        let headBytes = try read(document.appendingPathComponent("current.json"),limit:4096)
+        let head = try JSONDecoder().decode(Head.self,from:headBytes)
+        guard head.schema == "ccr.sill-files/v1", head.sceneID == id else { throw Failure.invalidDocument }
+        let generation = document.appendingPathComponent("revisions",isDirectory:true)
+            .appendingPathComponent(head.generation.uuidString.lowercased(),isDirectory:true)
+        let sceneBytes = try read(generation.appendingPathComponent("scene.json"),limit:CanvasScene.localByteLimit)
+        let drawing = try read(generation.appendingPathComponent("drawing.pkdrawing"),limit:CanvasScene.localByteLimit)
+        let preview = try read(generation.appendingPathComponent("preview.png"),limit:32 * 1024 * 1024)
+        guard CanvasPacket.sha(sceneBytes) == head.sceneSHA, CanvasPacket.sha(drawing) == head.drawingSHA,
+              CanvasPacket.sha(preview) == head.previewSHA else { throw Failure.invalidDocument }
+        let scene = try JSONDecoder().decode(CanvasScene.self,from:sceneBytes)
+        guard scene.id == id, scene.hasSupportedInkProjection,
+              Data(base64Encoded:scene.drawingBase64) == drawing,
+              scene.width.isFinite, scene.height.isFinite, scene.width > 0, scene.height > 0,
+              scene.width <= 16384, scene.height <= 16384,
+              scene.nodes.count < 1000, scene.strokes.count < 10000,
+              scene.nodes.allSatisfy(\.hasValidRotation) else { throw Failure.invalidDocument }
+        #if canImport(PencilKit, _version: 616)
+        try scene.validateNativeInkProjection()
+        if !drawing.isEmpty { _ = try PKDrawing(data:drawing) }
+        #endif
+        return Snapshot(scene:scene,token:CanvasPacket.sha(headBytes),preview:preview)
+    }
+    func load(_ id: UUID) throws -> Snapshot {
+        try coordinated(writing:false) { try self.load(id,root:$0) }
+    }
+    func documents() throws -> [UUID] {
+        try coordinated(writing:false) { root in
+            try FileManager.default.contentsOfDirectory(at:root,includingPropertiesForKeys:nil)
+                .filter { $0.pathExtension == "sill" }
+                .compactMap { UUID(uuidString:$0.deletingPathExtension().lastPathComponent) }
+                .sorted { $0.uuidString < $1.uuidString }
+        }
+    }
+    @discardableResult
+    func save(_ scene: CanvasScene, preview: Data, expected: String?) throws -> Snapshot {
+        let sceneBytes = try Self.bytes(scene)
+        guard sceneBytes.count <= CanvasScene.localByteLimit,
+              let drawing = Data(base64Encoded:scene.drawingBase64),
+              preview.count <= 32 * 1024 * 1024,
+              preview.starts(with:[137,80,78,71,13,10,26,10]),
+              scene.hasSupportedInkProjection,
+              scene.width.isFinite, scene.height.isFinite, scene.width > 0, scene.height > 0,
+              scene.width <= 16384, scene.height <= 16384,
+              scene.nodes.count < 1000, scene.strokes.count < 10000,
+              scene.nodes.allSatisfy(\.hasValidRotation) else { throw Failure.invalidDocument }
+        #if canImport(PencilKit, _version: 616)
+        try scene.validateNativeInkProjection()
+        if !drawing.isEmpty { _ = try PKDrawing(data:drawing) }
+        #endif
+        return try coordinated(writing:true) { root in
+            let document = root.appendingPathComponent(scene.id.uuidString.lowercased() + ".sill",isDirectory:true)
+            if FileManager.default.fileExists(atPath:document.path) {
+                guard let expected, let current = try? self.load(scene.id,root:root), current.token == expected else { throw Failure.conflict }
+            } else if expected != nil { throw Failure.missingDocument }
+            let generation = UUID()
+            let directory = document.appendingPathComponent("revisions",isDirectory:true)
+                .appendingPathComponent(generation.uuidString.lowercased(),isDirectory:true)
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            try sceneBytes.write(to:directory.appendingPathComponent("scene.json"),options:.atomic)
+            try drawing.write(to:directory.appendingPathComponent("drawing.pkdrawing"),options:.atomic)
+            try preview.write(to:directory.appendingPathComponent("preview.png"),options:.atomic)
+            let head = Head(schema:"ccr.sill-files/v1",sceneID:scene.id,generation:generation,
+                sceneSHA:CanvasPacket.sha(sceneBytes),drawingSHA:CanvasPacket.sha(drawing),previewSHA:CanvasPacket.sha(preview))
+            let headBytes = try JSONEncoder().encode(head)
+            try headBytes.write(to:document.appendingPathComponent("current.json"),options:.atomic)
+            return try self.load(scene.id,root:root)
+        }
     }
 }
