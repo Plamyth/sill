@@ -7,8 +7,10 @@ here=Path(__file__).resolve().parent
 def git(*args): return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
 assert not git('status','--porcelain=v1','--untracked-files=all'), 'clean source required'
 route=json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))
-parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--derived-data',type=Path);args=parser.parse_args()
 assert any(p.exists() and os.path.samefile(p,route['path']) for p in [args.output,*args.output.parents])
+args.output.mkdir(parents=True,exist_ok=True)
+args.output=Path(subprocess.check_output(['/bin/pwd','-P'],cwd=args.output,text=True).strip())
 head,tree=git('rev-parse','HEAD'),git('rev-parse','HEAD^{tree}')
 out=args.output/('whole-'+str(uuid.uuid4()));out.mkdir(parents=True)
 profile=Path(route['path'])/'owner-mac-bootstrap-20261022/public-profile-from-ipad-saved.json'
@@ -16,8 +18,10 @@ profile_sha=hashlib.sha256(profile.read_bytes()).hexdigest()
 assert profile_sha=='7bcf8ce74bf4292d1a20b07d45bfa0c040957e1ade3d80dd4be37c5eb96cf8c7'
 home=out/'home';home.mkdir();tmp=out/'tmp';tmp.mkdir()
 env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',HOME=str(home),CFFIXED_USER_HOME=str(home),TMPDIR=str(tmp)+'/')
+derived=args.derived_data or out/'DerivedData'
+assert any(p.exists() and os.path.samefile(p,route['path']) for p in derived.parents)
 cmd=['xcodebuild','-project','iOSClient/Sill.xcodeproj','-scheme','Sill','-configuration','Debug','-destination','generic/platform=iOS',
- '-derivedDataPath',str(out/'DerivedData'),'-disableAutomaticPackageResolution','-skipPackageUpdates',
+ '-derivedDataPath',str(derived),'-disableAutomaticPackageResolution','-skipPackageUpdates',
  'CODE_SIGNING_ALLOWED=NO','CODE_SIGNING_REQUIRED=NO','DEVELOPMENT_TEAM=ZPTXHJ866D',
  'PRODUCT_BUNDLE_IDENTIFIER=com.ambrion.sillcanvas.ipad','ARCHS=arm64',
  'CCR_OWNER_MAC_BOOTSTRAP_PROFILE='+str(profile),'CCR_OWNER_MAC_BOOTSTRAP_SHA256='+profile_sha,
@@ -31,7 +35,7 @@ with (out/'xcodebuild.log').open('w') as log:
  r=subprocess.run(cmd,cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT)
 record['exitCode']=r.returncode
 record['sourceUnchanged']=not git('status','--porcelain=v1','--untracked-files=all') and git('rev-parse','HEAD')==head and git('rev-parse','HEAD^{tree}')==tree
-app=out/'DerivedData/Build/Products/Debug-iphoneos/Sill.app'
+app=derived/'Build/Products/Debug-iphoneos/Sill.app'
 if r.returncode==0:
  info=plistlib.loads((app/'Info.plist').read_bytes())
  record['app']=str(app);record['info']={k:info.get(k) for k in ['CFBundleIdentifier','CFBundleVersion','CCRSourceCommit','CCRSourceTree','CCRSourceIdentityVerified']}

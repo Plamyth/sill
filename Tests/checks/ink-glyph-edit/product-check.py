@@ -7,6 +7,8 @@ here=Path(__file__).resolve().parent
 parser=argparse.ArgumentParser();parser.add_argument('--verification',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()
 route=json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))
 assert any(p.exists() and os.path.samefile(p,route['path']) for p in [args.output,*args.output.parents])
+args.output.mkdir(parents=True,exist_ok=True)
+args.output=Path(subprocess.check_output(['/bin/pwd','-P'],cwd=args.output,text=True).strip())
 current=json.loads(args.verification.read_text())
 output=args.output/('combined-'+str(uuid.uuid4()))
 output.mkdir(parents=True,exist_ok=True)

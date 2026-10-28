@@ -21,6 +21,8 @@ parser.add_argument('--actual-product', action='store_true')
 parser.add_argument('--policy-only', action='store_true')
 args = parser.parse_args()
 assert any(parent.exists() and os.path.samefile(parent, route['path']) for parent in [args.output, *args.output.parents]), 'output must use verified storage-route archive'
+args.output.mkdir(parents=True, exist_ok=True)
+args.output = Path(subprocess.check_output(['/bin/pwd','-P'],cwd=args.output,text=True).strip())
 output = args.output / ('policy-' + str(uuid.uuid4()))
 output.mkdir(parents=True)
 home = output / 'home'
