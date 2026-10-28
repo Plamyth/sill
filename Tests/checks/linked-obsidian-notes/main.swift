@@ -98,6 +98,16 @@ final class NoteProtocol: URLProtocol {
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
         }
+        if CommandLine.arguments.contains("--anchor-reentry") {
+            try await checkExcerptAnchorReentry(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--block-excerpts") {
+            try await checkBlockExcerpts(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         #if DEBUG
         if CommandLine.arguments.contains("--pdf-isolated") {
             try await checkPDFIsolatedRecovery(check)

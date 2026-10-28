@@ -639,3 +639,80 @@ private func checkBlockDraftRecovery(_ check: (Bool,String) -> Void) async throw
     check(discarded && discardedRecord == nil &&
           discardRestart.vaultNote == nil,"unopened recovery can be explicitly discarded without opening or modifying Obsidian")
 }
+
+@MainActor func checkExcerptAnchorReentry(_ check: (Bool,String) -> Void) async throws {
+    let root = URL(fileURLWithPath:ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!)
+    let path = "Notes/anchor-reentry.md"
+    let source = "첫째 문단은 그대로 둡니다.\n\n둘째 문단 e\u{301} 👩🏽‍💻\n\n셋째 문단"
+    let quote = "둘째 문단 e\u{301} 👩🏽‍💻"
+    func note(_ text: String, held: Bool? = nil) -> VaultNoteSnapshot {
+        VaultNoteSnapshot(path:path,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"fixture",reconciliationRequired:held)
+    }
+    func setup(_ label: String) async -> (CanvasStore,URL) {
+        let url = root.appendingPathComponent(label + ".json")
+        let store = CanvasStore(noteRecoveryURL:url)
+        store.scene = CanvasScene()
+        store.setNoteConnection(address:"http://fixture.invalid",token:"fixture-only")
+        await store.openVaultNote(path,load:{_ in note(source)})
+        store.vaultSelection = (source as NSString).range(of:quote)
+        return (store,url)
+    }
+    for acknowledged in [false,true] {
+        let (store,url) = await setup("ack-\(acknowledged)")
+        let sceneID = store.scene.id
+        var written: VaultNoteSnapshot?, puts = 0, gets = 0
+        let result = await store.excerptSelectedVaultBlock(save:{p,_,text in
+            puts += 1; check(p == path,"anchor submission preserves note path")
+            written = note(text)
+            if !acknowledged { throw URLError(.networkConnectionLost) }
+            return written!
+        },load:{_ in throw URLError(.timedOut)})
+        let record = store.noteRecovery!
+        let anchored = try VaultMarkdownBlocks(record.submittedText!).selected((record.submittedText! as NSString).range(of:quote))
+        let id = anchored.blockID!
+        print("TRACE ack=\(acknowledged) conflict=\(record.saveConflict?.rawValue ?? "nil") block=\(id)")
+        check(result == nil && puts == 1 && store.vaultBlocked && store.scene.nodes.isEmpty,
+              "failed initial GET preserves one attempted anchor and never guesses a card")
+        check(record.saveConflict == .acknowledgementLost,
+              "ordinary missing acknowledgement is distinct from an explicit publication conflict")
+        await store.openVaultNote(path,load:{p in gets += 1; check(p == path,"readback uses the original note path"); return written!})
+        check(gets == 1 && puts == 1 && store.vaultSelectedBlock?.blockID == id && store.vaultSelectedBlock?.quote == quote,
+              "original reentry focuses the attempted second paragraph with one GET and zero new PUT")
+        let card = await store.excerptSelectedVaultBlock(save:{_,_,_ in puts += 1; return written!},load:{_ in gets += 1; return written!})
+        check(card != nil && puts == 1 && gets == 1 && store.scene.nodes.last?.vaultNote?.blockID == id &&
+              store.scene.nodes.last?.vaultNote?.path == path && store.scene.id == sceneID,
+              "confirmed anchor attaches the same paragraph ID and note path without another write")
+        check(try JSONDecoder().decode(VaultNoteRecoveryFile.self,from:Data(contentsOf:url)).record() == nil,
+              "exact submitted bytes clear only the confirmed recovery journal")
+    }
+    let (missing,url) = await setup("missing-anchor")
+    var puts = 0, gets = 0
+    _ = await missing.excerptSelectedVaultBlock(save:{_,_,_ in puts += 1; throw URLError(.networkConnectionLost)},
+        load:{_ in throw URLError(.timedOut)})
+    let before = missing.noteRecovery!
+    await missing.openVaultNote(path,load:{_ in gets += 1; return note(source)})
+    check(puts == 1 && gets == 1 && missing.vaultSelection.location == NSNotFound && missing.vaultSelectedBlock == nil,
+          "missing attempted anchor cannot fall back to the first paragraph")
+    check(missing.noteRecovery?.draft == before.draft && missing.noteRecovery?.sceneID == before.sceneID &&
+          missing.noteRecovery?.base.path == path && missing.vaultDraft == before.draft,
+          "missing anchor preserves the exact anchored draft and original recovery identity")
+    _ = await missing.excerptSelectedVaultBlock(save:{_,_,text in puts += 1; return note(text)},load:{_ in gets += 1; return note(source)})
+    check(puts == 1 && gets == 1 && missing.scene.nodes.isEmpty,"missing source reentry cannot create another anchor or card")
+    check(try JSONDecoder().decode(VaultNoteRecoveryFile.self,from:Data(contentsOf:url)).record()?.draft == before.draft,
+          "missing source keeps the attempted anchor in the durable journal")
+
+    for conflict in [VaultSaveConflict.reconciliationRequired,.unclassified] {
+        let (held,journal) = await setup("held-\(conflict.rawValue)")
+        var writes = 0, reads = 0
+        _ = await held.excerptSelectedVaultBlock(save:{_,_,_ in
+            writes += 1
+            throw NSError(domain:"CanvasRelay",code:409,userInfo:[VaultSaveConflict.errorKey:conflict.rawValue])
+        },load:{_ in reads += 1; return note(source)})
+        let bytes = try Data(contentsOf:journal), draft = held.vaultDraft, selection = held.vaultSelection
+        await held.openVaultNote(path,load:{_ in reads += 1; return note(held.noteRecovery!.submittedText!)})
+        check(writes == 1 && reads == 0 && held.vaultBlocked && held.scene.nodes.isEmpty && held.noteRecovery?.saveConflict == conflict,
+              "typed or unclassified 409 cannot use same-text GET to release the held anchor")
+        check(try Data(contentsOf:journal) == bytes && held.vaultDraft == draft && held.vaultSelection == selection,
+              "held conflict preserves journal bytes, input and selection")
+    }
+}
