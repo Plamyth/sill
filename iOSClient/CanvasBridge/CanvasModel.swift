@@ -15,6 +15,57 @@ enum CanvasRuntime {
         case noteRecovery = "CanvasNoteEdit/recovery.json"
         case checkpoint = "CanvasVaultCheckpoint.json"
         case workspace = "CanvasWorkspace/bookmark.json"
+        case preferences = "CanvasPreferences.json"
+    }
+
+    enum Defaults {
+        case normal(UserDefaults)
+        case isolated(URL)
+        case unavailable
+
+        func object(forKey key: String) -> Any? {
+            switch self {
+            case .normal(let defaults): return defaults.object(forKey:key)
+            case .isolated(let url):
+                guard let data = try? CanvasLocalFile.read(url),
+                      let values = try? JSONSerialization.jsonObject(with:data) as? [String:Any] else { return nil }
+                return values[key]
+            case .unavailable: return nil
+            }
+        }
+
+        func string(forKey key: String) -> String? { object(forKey:key) as? String }
+
+        func set(_ value: Any, forKey key: String) throws {
+            switch self {
+            case .normal(let defaults): defaults.set(value,forKey:key)
+            case .isolated(let url):
+                var values: [String:Any] = [:]
+                if FileManager.default.fileExists(atPath:url.path) {
+                    let data = try CanvasLocalFile.read(url)
+                    guard let existing = try JSONSerialization.jsonObject(with:data) as? [String:Any] else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    values = existing
+                }
+                values[key] = value
+                try CanvasLocalFile.write(JSONSerialization.data(withJSONObject:values,options:.sortedKeys),to:url)
+            case .unavailable: throw CocoaError(.fileWriteNoPermission)
+            }
+        }
+    }
+
+    static func defaults(overriding normal: UserDefaults? = nil) -> Defaults {
+        #if DEBUG
+        switch launch {
+        case .normal: break
+        case .isolated:
+            guard let url = try? stateURL(.preferences) else { return .unavailable }
+            return .isolated(url)
+        case .invalid: return .unavailable
+        }
+        #endif
+        return .normal(normal ?? .standard)
     }
 
     #if DEBUG

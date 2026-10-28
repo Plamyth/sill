@@ -327,12 +327,18 @@ final class CanvasStore: ObservableObject {
     @Published private(set) var inkSelection: Set<UUID> = []
     static let eraserStyleKey = "canvasEraserStyle"
     static let eraserSizeKey = "canvasPartialEraserWidth"
-    private let eraserDefaults: UserDefaults
+    private let eraserDefaults: CanvasRuntime.Defaults
     @Published var eraserStyle: CanvasEraserStyle = .partial {
-        didSet { eraserDefaults.set(eraserStyle.rawValue, forKey: Self.eraserStyleKey) }
+        didSet {
+            do { try eraserDefaults.set(eraserStyle.rawValue, forKey: Self.eraserStyleKey) }
+            catch { status = "지우개 설정 저장 실패: \(error.localizedDescription)" }
+        }
     }
     @Published var eraserSize: CanvasEraserSize = .standard {
-        didSet { eraserDefaults.set(eraserSize.rawValue, forKey: Self.eraserSizeKey) }
+        didSet {
+            do { try eraserDefaults.set(eraserSize.rawValue, forKey: Self.eraserSizeKey) }
+            catch { status = "지우개 설정 저장 실패: \(error.localizedDescription)" }
+        }
     }
     var eraserTool: PKEraserTool {
         eraserStyle == .partial ?
@@ -2046,8 +2052,9 @@ final class CanvasStore: ObservableObject {
     }
 
     init(blockRecoveryURL: URL? = nil, noteRecoveryURL: URL? = nil,
-         defaults: UserDefaults = .standard,
+         defaults: UserDefaults? = nil,
          noteRecoveryWrite: @escaping (Data,URL) throws -> Void = CanvasLocalFile.write) {
+        let defaults = CanvasRuntime.defaults(overriding:defaults)
         self.eraserDefaults = defaults
         _eraserStyle = Published(initialValue: defaults.string(forKey: Self.eraserStyleKey)
             .flatMap(CanvasEraserStyle.init(rawValue:)) ?? .partial)

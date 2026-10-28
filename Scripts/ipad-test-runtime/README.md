@@ -1,17 +1,43 @@
-# iPad 통합 테스트 연결
+# iPad 단일 정상 앱 테스트 경로 준비
 
-`descriptor.json`은 전역 release convergence 등록 담당이 사용할 명령과 수용 항목이다. 경로 자리표시는 배포된 clean integration worktree와 비공개 설정 파일의 절대 경로로 바꾼다. 이 파일 자체는 managed 등록이나 운영 배포 허가가 아니다.
+현재 adapter의 **deploy·accept·harness와 저수준 install은 held**다. CLI는 설정을 읽거나 source/device 조회·빌드·설치·relay 시작을 하기 전에 종료 코드 2와 `single_app_runtime_held` 사유를 반환한다. 이 중단을 해제하는 설정 스위치는 없다. 기존 진단 앱이나 XCTest runner를 삭제하지 않는다.
 
-`adapter.py deploy --config PRIVATE_JSON`은 clean `integration/ccr-ipad`의 원격 source guard를 확인하고 실사용 Sill과 다른 REA 전용 진단 bundle을 Debug로 빌드·설치한다. 기존 Sill 설치는 덮어쓰지 않는다. Info.plist에 정확한 commit/tree를 넣으며, 기기에서 실행 중인 앱이 만든 runtime.json의 실행파일 SHA와 대조한다. 시험 UUID의 저장 경로와 relay 연결을 사용한다. 원래 keychain 연결과 그림을 옮기지 않는다. 테스트 시작 전후 사용자 상태의 바이트를 비교한다.
+이번 단위는 소스 준비와 격리 경계 검사다. 정상 앱 설치나 실제 제품 기능 수용을 완료했다고 표시하지 않는다.
 
-`adapter.py accept --config PRIVATE_JSON`은 별도의 쓰기 가능한 Obsidian 시험 보관함과 릴레이에서 실제 글자 선택 삭제·Undo·Redo·저장·Mac 수정·재열기를 실행한다. UI runner는 이 저장소의 XCTest 소스이며 기존 REA 진단 bundle을 재사용한다. 실제 보관함 JSON/PNG/Markdown과 기기 파일을 대조하고 인증 거부·오래된 버전 거부·시험 데이터 초기화를 확인한다. 외부 대화 전송 provider는 연결하지 않는다. 실패는 JSON held와 비정상 종료로 반환한다. 실제 Pencil 종류·압력·호버·MyScript 제스처 동등성은 이 검사의 수용 항목이 아니다.
+## 확인한 현재 경로
 
-회전 검사는 두 노드·명시 연결점이 있는 자체 장면에서 실제 손가락 드래그로 45도와 90도 회전, 저장·재열기를 확인한다. PNG는 실제 iPad의 production SceneRenderer가 만든 전체 크기 이미지여야 한다. Python 표준 zlib로 청크 CRC·IDAT 스트림 종료·Adler-32·행 크기를 엄격하게 검증한 뒤, macOS 기본 ImageIO와 기존 NativeSceneEncoder로 실제 PNG를 디코딩하고 회전된 노드 내부와 경계 밖, 명시 연결점 사이 여섯 위치의 픽셀을 확인한다. 빈 이미지·손상 이미지·회전 전 연결선·1픽셀 준비용 이미지는 수용하지 않는다. iPad 화면도 노드의 실제 화면 좌표와 회전각으로 같은 여섯 연결선 위치를 검사한다. 별도 Python 이미지 라이브러리 설치 없이 등록된 `/usr/bin/python3`에서 실행한다. Mac 수정은 같은 장면 JSON·PNG를 SHA 조건 PUT으로 반영하고, 열린 앱의 준비 마커를 받은 뒤 한 번만 실행한다. 앱의 최신 내용 수신 표시·90도 표시와 재열기, 기기 파일·보관함 JSON 일치를 확인한다. 회전값을 확인한 것만으로 실제 Pencil 입력이나 연결선의 시각 수용을 주장하지 않으며 xcresult 화면을 별도로 검수한다. 회전 화면 증거 PNG는 시험 보관함 초기화 전에 작업 증거로 보존한다.
+- 정상 앱 `SillApp`의 Debug `--ccr-test-runtime UUID` 분기는 `CanvasWorkspace`를 직접 열며 `ContentView`와 그 `StreamClient`를 만들지 않는다. 잘못된 context는 오류 화면으로 끝난다.
+- `CanvasRuntime.resolve`는 앱의 exact commit/tree와 시험 context를 대조하고 UUID 아래 state만 허용한다. scene/recovery/checkpoint/workspace와 새 `CanvasPreferences.json`이 그 경로를 사용한다.
+- `CanvasRelay.loadConnection`은 isolated에서 context 주소·token을 반환하고 invalid에서는 nil을 반환한다. 정상 Documents의 이전 연결과 keychain 읽기·이관은 그 뒤 normal 분기에 있다. 요청 역시 context의 주소·token·origin을 강제한다. 이 소스 추적을 실기기의 keychain·relay 왕복 수용으로 확대하지 않는다.
+- Store의 기본 지우개 설정은 isolated에서 시험 JSON으로 읽고 쓴다. 명시적으로 넘긴 UserDefaults도 isolated/invalid에서는 사용하지 않는다. invalid는 일반 defaults로 복귀하지 않으며 손상된 시험 설정 파일도 덮지 않는다. normal에서는 기존 UserDefaults 주입과 기본 standard 경로를 유지한다.
 
-비공개 설정은 `repo`, `outputRoot`, `leaseFile`, `deviceUDID`, `developmentTeam`, `relayRepo`, `relayCommit`, `nodeExecutable`, `relayHost`, `relayPort`를 가진다. 출력은 storage-route가 확인한 BT_CCR-ipad development archive의 하위 경로다. 릴레이는 등록된 integration 포트 8793과 private IPv4를 쓰며, 기존 승인된 relay 소스의 commit을 고정한다. 인증 token은 출력의 0600 비공개 파일에만 생성된다. 설정·lease·token·사용자 그림은 Git에 넣지 않는다.
+## 정상 설치를 계속 막는 이유
 
-lease는 `ccr.device-lease/v1` schema, 원래 owner, 정확한 deviceUDID, 시간대가 있는 expiresAt, install/launch/copy/test actions, 실제 사용권 근거인 handoffEvidence를 가진다. lease 파일을 만든다는 사실로 사용권이 생기지 않는다. 현재 담당의 실제 반납 또는 이미 확인된 독립 기기 사용권을 근거로 등록해야 한다. 다른 기기의 시험은 병렬 가능하며 공유 Mac 화면·입출력·호스트 변경은 별도 조율한다.
+1. 기존 deploy는 `com.ambrion.rea.ipad-runtime`을 만들고 버전을 1로 고정하며 합성 OwnerBootstrapFixture를 넣는다. bundle 이름만 `com.ambrion.sillcanvas.ipad`로 바꾸면 안 된다. 현재 정상 설치 버전·서명·Team `ZPTXHJ866D`·keychain entitlements를 대조하지 않은 낮은 버전 재설치는 금지한다.
+2. snapshots는 일부 Application Support 파일과 설치 앱 metadata를 한 dict로 비교한다. Documents·전체 Preferences·마지막 Mac/오디오 의도 등의 전체 바이트 보호가 아니며, 정상 버전 갱신에 따른 metadata 변화와 사용자 데이터 불변을 분리하지 않는다. 새 정상 설치 후보를 수용할 근거가 아니다.
+3. 정상 앱의 `SillAppDelegate.buildMenu`는 isolated 분기 밖에서도 실행될 수 있다. `MacMenuBar.build`가 먼저 `UserDefaults.standard`의 Debug 설정을 읽는다. 이 파일은 이번 쓰기 범위 밖이므로 수정하지 않았다. Store 설정 분리만으로 앱 전체의 일반 Preferences 접근 차단을 완료했다고 하지 않는다.
+4. 기존 harness는 `CanvasBridge.xcodeproj`를 build-for-testing한다. UI target의 `TEST_TARGET_NAME=CanvasBridge`, PBXTargetDependency와 `UITargetAppPath`/DependentProductPaths가 prototype `CanvasBridge.app`에 연결될 수 있다. XCUIApplication의 bundle 환경값만 정상 앱으로 바꿔도 test-without-building이 prototype을 추가 설치하거나 덮을 위험은 없어지지 않는다. 기존 설치된 runner 한 개의 identity·xctestrun 전체 target/dependency·실제 설치 효과를 확인하기 전에는 실행하지 않는다.
+5. Debug 격리 테스트 종료 후 플래그 없는 정상 실행으로 돌아갈 때 기존 keychain 참조·마지막 Mac·원래 연결/오디오 의도와 전체 사용자 데이터가 그대로임을 아직 검증하지 않았다. 실제 설치·정상 복귀의 공유 구간은 부모가 소유한다.
 
-기술 검사 명령은 `python3 -B Scripts/ipad-test-runtime/test_adapter.py`다. 스크립트 통과만으로 실제 기기나 전역 testAccepted를 기록하지 않는다. acceptance 영수증이 모든 검사를 증명하고 전역 원장이 같은 commit/tree/runtime를 확인해야 한다.
+## 기존 공개 bootstrap 참조
 
-임시 릴레이는 전역 서비스 원장에 등록된 `ccr-ipad-integration-relay-8793` 하나만 사용한다. `bt-service-lifecycle start`로 원래 owner와 900초 TTL을 등록하고 시험 중 renew, 종료 시 release 결과를 기록한다. 등록이 없거나 같은 포트·세대가 사용 중이면 새 listener를 만들지 않는다. 다른 담당 서버나 실제 사용자 relay 8791을 정리 대상으로 삼지 않는다.
+부모가 제공한 공개 리소스는 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/owner-mac-bootstrap-20261022/public-profile-from-ipad-saved.json`이며, SHA-256은 `7bcf8ce74bf4292d1a20b07d45bfa0c040957e1ade3d80dd4be37c5eb96cf8c7`이다. 원본을 변경하거나 키를 복사하지 않는다.
+
+`owner_bootstrap_identity`는 후보 설정의 `ownerBootstrapProfile`과 `ownerBootstrapSHA256`를 읽기 전용으로 대조하고 기존 provisioner의 공개 schema 검사를 재사용한다. 값의 본문·인증정보는 반환하지 않는다. 이 검사는 설치나 현재 Host 일치의 승인·수용이 아니다. 정상 bundle 설치 후보는 반드시 이 승인된 실제 공개 리소스 identity와 기존 keychain 참조를 보존해야 한다. synthetic bootstrap은 미설치 단위/SDK 검사에만 허용한다. 현재 legacy deploy는 이 실제 리소스 경로에 연결되지 않아 계속 held다.
+
+## 자동 검사
+
+```sh
+python3 -B Scripts/ipad-test-runtime/test_adapter.py
+```
+
+Apple SDK 검사는 storage-route가 확인한 외장 증거 디렉터리를 지정한다.
+
+```sh
+CCR_NATIVE_ADAPTER_TEST_DIR=/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/adapter-evidence/native \
+python3 -B Scripts/ipad-test-runtime/test_adapter.py
+```
+
+실제 CLI subprocess가 held로 끝나는지와 deploy/accept/harness/install 경계에서 devicectl·xcodebuild·relay·파일 덮어쓰기가 시작되지 않는지 검사한다. 기존 parser·PNG·review 기능의 단위 검사에서는 held 함수를 mock하여 순수 로직만 계속 검사하며 운영 우회 옵션은 만들지 않는다. native Debug 검사는 실제 flagged context와 잘못된 context에서 일반 defaults 읽기/쓰기를 실패시키는 객체를 전달하고, 격리 설정 저장→새 Store 재열기와 비어 있지 않은 전체 Preferences fixture의 바이트 불변을 확인한다.
+
+기존 descriptor·release 등록은 그대로이며 이 후보를 testAccepted로 승격하지 않는다. 기존 진단 앱 강제 제거, 새 앱·runner 설치, 실기기 조회·Host·오디오·키·권한·계정 변경은 하지 않는다.

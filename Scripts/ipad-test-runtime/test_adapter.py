@@ -13,6 +13,169 @@ spec = importlib.util.spec_from_file_location('adapter', Path(__file__).with_nam
 adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
 
+class SingleAppHoldContract(unittest.TestCase):
+    def test_public_entrypoints_hold_before_every_subprocess_and_device_effect(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            effects = [stack.enter_context(patch.object(adapter,name)) for name in
+                       ['command','device','snapshots','lease','relay_runtime','run_live_harness']]
+            effects += [stack.enter_context(patch.object(adapter.subprocess,name)) for name in ['run','Popen']]
+            work = Path(directory)
+            for invoke in [lambda:adapter.deploy({},work,{}), lambda:adapter.accept({},work,{}),
+                           lambda:adapter.harness({},work,'testEditAndSave')]:
+                with self.assertRaisesRegex(adapter.Held,'single_app_runtime_held'):
+                    invoke()
+            for effect in effects: effect.assert_not_called()
+            self.assertEqual(list(work.iterdir()),[])
+
+    def test_cli_held_without_reading_config_or_invoking_xcode(self):
+        import subprocess
+        for phase in ['deploy','accept']:
+            result = subprocess.run([sys.executable,'-B',str(Path(adapter.__file__)),phase,
+                                     '--config','/does-not-exist/source-only.json'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload['status'],'held')
+            self.assertIn('synthetic_owner_bootstrap',payload['reason'])
+            self.assertNotIn('FileNotFoundError',payload['reason'])
+
+    def test_existing_prototype_xctestrun_cannot_install_or_be_rewritten(self):
+        import plistlib
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            run = work/'HarnessDerivedData/Build/Products/prototype.xctestrun'
+            run.parent.mkdir(parents=True)
+            data = plistlib.dumps({'CanvasBridgeUITests':{'UITargetAppPath':'__TESTROOT__/CanvasBridge.app',
+                 'UITargetAppBundleIdentifier':'com.ambrion.rea.appaudit',
+                 'DependentProductPaths':['__TESTROOT__/CanvasBridge.app']}})
+            run.write_bytes(data)
+            with patch.object(adapter,'command') as command, patch.object(adapter.subprocess,'Popen') as popen:
+                with self.assertRaisesRegex(adapter.Held,'xctestrun_still_depends_on_canvasbridge'):
+                    adapter.harness({},work,'testEditAndSave')
+                command.assert_not_called(); popen.assert_not_called()
+            self.assertEqual(run.read_bytes(),data)
+
+    def test_low_level_install_is_held_even_with_a_valid_lease(self):
+        with patch.object(adapter,'lease') as lease, patch.object(adapter,'command') as command:
+            with self.assertRaisesRegex(adapter.Held,'single_app_runtime_held'):
+                adapter.device({},['install','app','/candidate/Sill.app'],Path('unused'))
+            lease.assert_not_called(); command.assert_not_called()
+
+    def test_public_profile_validation_is_not_install_acceptance(self):
+        import hashlib, base64
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory).resolve()/'unit-public-profile.json'
+            data = json.dumps({'schema':'ccr.owner-mac-bootstrap/v1','macID':'0'*16,
+                'fingerprint':base64.urlsafe_b64encode(bytes(32)).decode().rstrip('='),
+                'addresses':['100.64.1.2'],'remotePort':7455}).encode()
+            profile.write_bytes(data)
+            config = {'ownerBootstrapProfile':str(profile),'ownerBootstrapSHA256':hashlib.sha256(data).hexdigest()}
+            observed = adapter.owner_bootstrap_identity(config)
+            self.assertTrue(observed['schemaValidated'])
+            self.assertFalse(observed['installed']); self.assertFalse(observed['hostIdentityAccepted'])
+            with self.assertRaisesRegex(adapter.Held,'owner_profile_hash_mismatch'):
+                adapter.owner_bootstrap_identity(dict(config,ownerBootstrapSHA256='0'*64))
+            with self.assertRaisesRegex(adapter.Held,'single_app_runtime_held'):
+                adapter.single_app_installation_gate()
+            self.assertEqual(data,profile.read_bytes())
+
+class NativeDefaultsContract(unittest.TestCase):
+    @unittest.skipUnless(__import__('os').environ.get('CCR_NATIVE_ADAPTER_TEST_DIR'),
+                         'Set the routed evidence directory to run Apple SDK checks')
+    def test_actual_debug_store_uses_only_context_preferences(self):
+        import os, subprocess, plistlib, hashlib
+        output = Path(os.environ['CCR_NATIVE_ADAPTER_TEST_DIR']).resolve()
+        route = json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path',
+            'development-archive','--project','BT_CCR-ipad'],text=True))
+        self.assertTrue(output.is_relative_to(Path(route['path']).resolve()))
+        output.mkdir(parents=True,exist_ok=True)
+        repo = Path(adapter.__file__).resolve().parents[2]
+        source = output/'DefaultsCheck.swift'
+        source.write_text(r"""import Foundation
+import PencilKit
+final class ForbiddenDefaults: UserDefaults {
+    override func object(forKey key: String) -> Any? { preconditionFailure("normal defaults read") }
+    override func string(forKey key: String) -> String? { preconditionFailure("normal defaults read") }
+    override func set(_ value: Any?, forKey key: String) { preconditionFailure("normal defaults write") }
+}
+@main struct DefaultsCheck {
+    @MainActor static func main() throws {
+        let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!
+        let home = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!
+        precondition(support.path.hasPrefix(home + "/"))
+        let normal = ForbiddenDefaults(suiteName:"ccr-test-unused-" + UUID().uuidString)!
+        let preferences = URL(fileURLWithPath:home).appendingPathComponent("Library/Preferences")
+        func hashes() throws -> [String:String] {
+            let items = FileManager.default.enumerator(at:preferences,includingPropertiesForKeys:[.isRegularFileKey])!
+            var values: [String:String] = [:]
+            for case let url as URL in items where try url.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile == true {
+                values[url.path] = CanvasPacket.sha(try Data(contentsOf:url))
+            }
+            return values
+        }
+        let before = try hashes()
+        precondition(before.count >= 2,"nonempty normal Preferences fixture required")
+        let normalScene = support.appendingPathComponent("CanvasScene.json")
+        let sceneBefore = try Data(contentsOf:normalScene)
+        let store = CanvasStore(defaults:normal)
+        precondition(store.sceneRecoveryNotice.isEmpty,"isolated Store must not parse corrupt normal scene")
+        precondition(store.eraserStyle == .partial && store.eraserSize == .standard)
+        store.eraserStyle = .stroke; store.eraserSize = .broad
+        if ProcessInfo.processInfo.environment["EXPECT_INVALID"] == "1" {
+            guard case .invalid = CanvasRuntime.launch else { preconditionFailure("invalid context required") }
+            precondition(CanvasRuntime.defaults(overriding:normal).object(forKey:CanvasStore.eraserStyleKey) == nil)
+            print("PASS invalid context never falls back to standard defaults")
+        } else {
+            guard case .isolated = CanvasRuntime.launch else { preconditionFailure("isolated context required") }
+            let file = try CanvasRuntime.stateURL(.preferences)
+            let values = try JSONSerialization.jsonObject(with:CanvasLocalFile.read(file)) as! [String:Any]
+            precondition(values[CanvasStore.eraserStyleKey] as? String == CanvasEraserStyle.stroke.rawValue)
+            let reopened = CanvasStore(defaults:normal)
+            precondition(reopened.eraserStyle == .stroke && reopened.eraserSize == .broad)
+            let corrupt = Data("broken isolated preferences".utf8)
+            try CanvasLocalFile.write(corrupt,to:file)
+            reopened.eraserStyle = .partial
+            let preserved = try CanvasLocalFile.read(file)
+            precondition(preserved == corrupt)
+            print("PASS isolated settings save and reopen in context JSON; corrupt bytes remain intact")
+        }
+        let after = try hashes()
+        precondition(after == before)
+        let sceneAfter = try Data(contentsOf:normalScene)
+        precondition(sceneBefore == sceneAfter)
+        print("PASS entire normal Preferences and protected normal scene remain byte-identical")
+    }
+}
+""")
+        info = output/'DefaultsCheck.plist'
+        info.write_bytes(plistlib.dumps({'CFBundleIdentifier':adapter.USER_BUNDLE,'CFBundleName':'DefaultsCheck',
+            'CFBundleExecutable':'defaults-check','CFBundleVersion':'70','CCRSourceCommit':'a'*40,'CCRSourceTree':'b'*40}))
+        command = ['xcrun','swiftc','-D','DEBUG','-swift-version','5','-module-cache-path',str(output/'modules'),
+            '-target','arm64e-apple-macos27.0','-parse-as-library',str(repo/'iOSClient/CanvasBridge/CanvasModel.swift'),
+            str(repo/'iOSClient/CanvasBridge/CanvasStore.swift'),str(source),'-Xlinker','-sectcreate','-Xlinker','__TEXT',
+            '-Xlinker','__info_plist','-Xlinker',str(info),'-o',str(output/'defaults-check')]
+        with (output/'defaults-compile.log').open('w') as log:
+            result = subprocess.run(command,env=adapter.ENV,stdout=log,stderr=subprocess.STDOUT)
+        self.assertEqual(result.returncode,0,(output/'defaults-compile.log').read_text()[-4000:])
+        for invalid in [False,True]:
+            home = output/('home-'+uuid.uuid4().hex);home.mkdir()
+            test_id = str(uuid.uuid4())
+            state = home/'Library/Application Support/CCRIntegrationTests'/test_id/'state'
+            state.mkdir(parents=True)
+            (home/'Library/Application Support/CanvasScene.json').write_bytes(b'protected corrupt normal scene: do not parse or replace')
+            preferences = home/'Library/Preferences';preferences.mkdir(parents=True)
+            (preferences/(adapter.USER_BUNDLE + '.plist')).write_bytes(plistlib.dumps({
+                'Sill.savedMacs':'기존 Mac 참조', 'iPadDesiredAudio.v1':{'microphone':True,'speaker':False},
+                'canvasEraserStyle':'획 전체 지우기','canvasPartialEraserWidth':80}))
+            (preferences/'other-domain.plist').write_bytes(plistlib.dumps({'untouched':b'original bytes'}))
+            adapter.write(state.parent/'context.json',{'schema':'ccr.ipad-test-context/v1','id':test_id,
+                'commit':'a'*40,'tree':'b'*40,'relayAddress':'http://192.168.1.2:8793','token':'test-only-context-token-1234567890'})
+            args = [str(output/'defaults-check'),'--ccr-test-runtime',str(uuid.uuid4()) if invalid else test_id]
+            env = dict(adapter.ENV,HOME=str(home),CFFIXED_USER_HOME=str(home),EXPECT_INVALID='1' if invalid else '0')
+            result = subprocess.run(args,env=env,capture_output=True,text=True,timeout=60)
+            (output/('defaults-invalid.log' if invalid else 'defaults-isolated.log')).write_text(result.stdout+result.stderr)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
 class AdapterContract(unittest.TestCase):
     def test_deploy_never_requests_provisioning_updates(self):
         import ast
@@ -336,7 +499,7 @@ class AdapterContract(unittest.TestCase):
                 self.assertEqual(value['macID'], '0' * 16)
                 self.assertEqual(value['remotePort'], 1)
                 raise adapter.Held('stop_after_build_input_check')
-            with patch.object(adapter,'lease'), patch.object(adapter,'snapshots',return_value={}), patch.object(adapter,'command',side_effect=stop_after_build), patch.object(adapter,'device') as device:
+            with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), patch.object(adapter,'snapshots',return_value={}), patch.object(adapter,'command',side_effect=stop_after_build), patch.object(adapter,'device') as device:
                 with self.assertRaisesRegex(adapter.Held,'stop_after_build_input_check'):
                     adapter.deploy(config,work,{'commit':'a'*40,'tree':'b'*40})
                 device.assert_not_called()
@@ -344,7 +507,7 @@ class AdapterContract(unittest.TestCase):
     def test_build_cache_cannot_equal_root(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            with patch.object(adapter,'lease'),patch.object(adapter,'snapshots',return_value={}),patch.object(adapter,'command') as command:
+            with patch.object(adapter,'single_app_installation_gate'),patch.object(adapter,'lease'),patch.object(adapter,'snapshots',return_value={}),patch.object(adapter,'command') as command:
                 with self.assertRaisesRegex(adapter.Held,'build_cache_not_owned'):
                     adapter.deploy({'outputRoot':str(root),'buildCache':str(root)},root/'work',{'commit':'a'*40,'tree':'b'*40})
                 command.assert_not_called()
@@ -373,7 +536,7 @@ class HarnessResultAcceptance(unittest.TestCase):
         def run_live(args, log, on_ready, **kwargs):
             command(args); on_ready()
         calls = []
-        with patch.object(adapter,'lease'), patch.object(adapter,'command',side_effect=command) as cmd, \
+        with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), patch.object(adapter,'command',side_effect=command) as cmd, \
              patch.object(adapter,'run_live_harness',side_effect=run_live):
             result = adapter.harness({'deviceUDID':'unexecuted'},root,'testReviewReopen',variables,
                                      on_ready=(lambda:calls.append(True)) if live else None)
@@ -788,7 +951,7 @@ class FourGradeAcceptance(unittest.TestCase):
             for button,label in expected:
                 variables={'CCR_REVIEW_GRADE_BUTTON_ID':button,'CCR_REVIEW_GRADE_INTERVAL':label,
                            'CCR_REVIEW_DRAFT':'바깥\r\ne\u0301 👩🏽‍💻\r\n'}
-                with patch.object(adapter,'lease'), patch.object(adapter,'command') as command, \
+                with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), patch.object(adapter,'command') as command, \
                      patch.object(adapter,'actual_xcresult') as actual:
                     result=adapter.harness({'deviceUDID':'offline'},root,'testReviewSelectedGrade',variables)
                 self.assertTrue(run.read_bytes().startswith(b'bplist00'))

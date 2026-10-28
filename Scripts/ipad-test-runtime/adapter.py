@@ -27,6 +27,15 @@ import struct
 OWNER = '01a13ace-e372-7ed1-9946-149df37ee1c3'
 BUNDLE = 'com.ambrion.rea.ipad-runtime'
 USER_BUNDLE = 'com.ambrion.sillcanvas.ipad'
+NORMAL_TEAM = 'ZPTXHJ866D'
+SINGLE_APP_BLOCKERS = (
+    'normal_install_full_preferences_and_documents_preservation_unverified',
+    'installed_build_version_and_keychain_entitlements_not_read_back',
+    'install_candidate_still_uses_synthetic_owner_bootstrap',
+    'isolated_app_delegate_still_reads_standard_defaults',
+    'xctestrun_still_depends_on_canvasbridge_prototype_app',
+    'existing_runner_reuse_and_return_to_normal_launch_unverified',
+)
 NODE = 'D29DDF60-B4C6-48DD-A75A-219C8F2A52A7'
 ORIGINALS = ['CanvasScene.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/ledger.json',
              'CanvasBlockEdit/recovery.json', 'CCR Sill/keyboard-diagnostics.json',
@@ -40,6 +49,22 @@ class Held(ValueError):
 def require(ok, reason):
     if not ok:
         raise Held(reason)
+
+def single_app_installation_gate():
+    raise Held('single_app_runtime_held:' + ','.join(SINGLE_APP_BLOCKERS))
+
+def owner_bootstrap_identity(config):
+    supplied = Path(config['ownerBootstrapProfile']).absolute()
+    require(not supplied.is_symlink() and supplied.is_file(), 'owner_profile_path_invalid')
+    profile = supplied.resolve()
+    expected = config['ownerBootstrapSHA256']
+    require(isinstance(expected, str) and re.fullmatch('[0-9a-f]{64}', expected), 'owner_profile_hash_required')
+    data = profile.read_bytes()
+    require(sha(data) == expected, 'owner_profile_hash_mismatch')
+    validate = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'provision-owner-bootstrap.py'))['validate']
+    validate(data)
+    return {'path': str(profile), 'sha256': expected, 'schemaValidated': True,
+            'installed': False, 'hostIdentityAccepted': False}
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -81,6 +106,8 @@ def identity(config):
     return {'commit': commit, 'tree': tree}
 
 def device(config, args, name):
+    if args[:2] == ['install', 'app']:
+        single_app_installation_gate()
     lease(config)
     return command(['xcrun', 'devicectl', 'device', *args[:2], '--device', config['deviceUDID'], *args[2:]], name, 120)
 
@@ -172,6 +199,7 @@ def stop_owned(config, work):
     device(config, ['process', 'terminate', '--pid', str(pid)], work / 'stop.log')
 
 def deploy(config, work, source):
+    single_app_installation_gate()
     lease(config)
     previous = snapshots(config, work, 'user-before-current')
     if (work / 'user-before.json').exists():
@@ -288,6 +316,7 @@ def actual_xcresult(result, method):
     return details
 
 def harness(config, work, method, variables=None, on_ready=None, ready_marker='CCR_ROTATION_LIVE_READY'):
+    single_app_installation_gate()
     lease(config)
     derived = work / 'HarnessDerivedData'
     if not list((derived / 'Build/Products').glob('*.xctestrun')):
@@ -948,6 +977,7 @@ def cleanup(config, work, service, vault, test_id, before):
     return all(results.values())
 
 def accept(config, work, source):
+    single_app_installation_gate()
     lease(config)
     contract = acceptance_contract(config)
     deployed = read(work / 'deployment.json')
@@ -1025,6 +1055,7 @@ def main():
     parser = argparse.ArgumentParser(); parser.add_argument('phase', choices=['deploy', 'accept']); parser.add_argument('--config', required=True)
     args = parser.parse_args()
     try:
+        single_app_installation_gate()
         config = read(args.config)
         output = Path(config['outputRoot']).resolve()
         approved = Path(json.loads(command(['/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'BT_CCR-ipad']))['path']).resolve()
