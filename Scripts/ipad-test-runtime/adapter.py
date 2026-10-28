@@ -47,7 +47,7 @@ NODE = 'D29DDF60-B4C6-48DD-A75A-219C8F2A52A7'
 ORIGINALS = ['CanvasScene.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/ledger.json',
              'CanvasBlockEdit/recovery.json', 'CanvasNoteEdit/recovery.json',
              'CanvasLegacyScene.json', 'CanvasWorkspace/bookmark.json', 'CCR Sill/keyboard-diagnostics.json',
-             'CCR Sill/microphone-diagnostics.json']
+             'CCR Sill/microphone-diagnostics.json', 'CanvasConflictRecovery']
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
            PATH='/Applications/Xcode.app/Contents/Developer/usr/bin:' + os.environ.get('PATH', '/usr/bin:/bin'))
 
@@ -172,6 +172,21 @@ def copy_file(config, work, source, destination, direction='from', optional=Fals
     require(result.returncode == 0, 'device_copy_failed')
     return True
 
+def protected_directory_hashes(target):
+    require(target.is_dir() and not target.is_symlink(), 'protected_snapshot_not_directory')
+    result = {}
+    target.chmod(0o700)
+    for item in sorted(target.rglob('*')):
+        require(not item.is_symlink(), 'protected_snapshot_symlink')
+        key = str(item.relative_to(target))
+        if item.is_file():
+            item.chmod(0o600)
+            result[key] = sha(item.read_bytes())
+        else:
+            require(item.is_dir(), 'protected_snapshot_non_regular')
+            result[key + '/'] = None
+    return result
+
 def snapshots(config, work, label):
     result = {}
     installed = work / (label + '-installed-user-app.json')
@@ -181,8 +196,10 @@ def snapshots(config, work, label):
     for relative in ORIGINALS:
         target = work / label / relative
         target.parent.mkdir(parents=True, exist_ok=True)
+        if relative == 'CanvasConflictRecovery':
+            require(not target.exists() and not target.is_symlink(), 'protected_snapshot_destination_exists')
         found = copy_file(config, work, 'Library/Application Support/' + relative, target, optional=True, bundle=USER_BUNDLE)
-        result[relative] = sha(target.read_bytes()) if found else None
+        result[relative] = (protected_directory_hashes(target) if relative == 'CanvasConflictRecovery' else sha(target.read_bytes())) if found else None
     for relative in ['Documents', 'Library/Preferences']:
         target = work / label / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -190,18 +207,7 @@ def snapshots(config, work, label):
         if not found:
             result[relative] = None
             continue
-        require(target.is_dir() and not target.is_symlink(), 'protected_snapshot_not_directory')
-        result[relative] = {}
-        target.chmod(0o700)
-        for item in sorted(target.rglob('*')):
-            require(not item.is_symlink(), 'protected_snapshot_symlink')
-            key = str(item.relative_to(target))
-            if item.is_file():
-                item.chmod(0o600)
-                result[relative][key] = sha(item.read_bytes())
-            else:
-                require(item.is_dir(), 'protected_snapshot_non_regular')
-                result[relative][key + '/'] = None
+        result[relative] = protected_directory_hashes(target)
     write(work / (label + '.json'), result)
     return result
 

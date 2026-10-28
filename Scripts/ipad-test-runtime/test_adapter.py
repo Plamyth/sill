@@ -68,8 +68,11 @@ class PreparedInstallContract(unittest.TestCase):
             'buildSettings':{'CONFIGURATION':'Debug','SWIFT_ACTIVE_COMPILATION_CONDITIONS':['DEBUG'],
                 'PRODUCT_BUNDLE_IDENTIFIER':adapter.USER_BUNDLE,'DEVELOPMENT_TEAM':adapter.NORMAL_TEAM,'CURRENT_PROJECT_VERSION':'71'}}
         data=root/'device-data';data.mkdir()
-        for relative in ['Library/Application Support/'+name for name in adapter.ORIGINALS]+['Documents/nested/drawing','Library/Preferences/normal.plist']:
+        for relative in ['Library/Application Support/'+name for name in adapter.ORIGINALS if name != 'CanvasConflictRecovery']+['Documents/nested/drawing','Library/Preferences/normal.plist']:
             path=data/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'unchanged normal user bytes')
+        recovery=data/'Library/Application Support/CanvasConflictRecovery';recovery.mkdir()
+        (recovery/'CanvasConflictChoice.json').write_bytes(b'unchanged unique conflict choice')
+        (recovery/('CanvasConflictLocal-'+str(uuid.uuid4())+'.json')).write_bytes(b'unique local recovery')
         state=types.SimpleNamespace(root=root,work=work,app=app,source=source,config=config,info=info,receipt=receipt,
             ent=ent,priorEnt=prior_ent,priorApp=prior_app,metadata=metadata,context=context,data=data,commands=[],installCount=0,launchCount=0,mode=None,infoCount=0)
         def seal():
@@ -873,7 +876,7 @@ class PreservationSnapshotContract(unittest.TestCase):
             def copy(config,work,source,target,**kwargs):
                 self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE)
                 copied.append(str(source));target=Path(target)
-                if source in ['Documents','Library/Preferences']:
+                if source in ['Documents','Library/Preferences','Library/Application Support/CanvasConflictRecovery']:
                     target.mkdir(parents=True)
                     (target/'one').write_bytes(b'normal preserved bytes')
                     (target/'two').write_bytes(b'other bytes')
@@ -889,6 +892,83 @@ class PreservationSnapshotContract(unittest.TestCase):
             self.assertFalse(adapter.same_user_data(before,after))
             after=json.loads(json.dumps(before));after['Documents']['one']='changed hash'
             self.assertFalse(adapter.same_user_data(before,after))
+
+class ConflictRecoverySnapshotContract(unittest.TestCase):
+    def test_new_conflict_recovery_directory_changes_the_preservation_proof(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);work=root/'evidence';work.mkdir()
+            source=root/'source';source.mkdir();recovery=source/'Library/Application Support/CanvasConflictRecovery'
+            for relative in ['Documents','Library/Preferences']:
+                target=source/relative;target.mkdir(parents=True);(target/'stable').write_bytes(b'unchanged normal bytes')
+            def device(config,args,log):adapter.write(args[-1],{'result':{'apps':[]}})
+            def copy(config,work,relative,target,**kwargs):
+                self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE)
+                src=source/relative
+                if not src.exists():return False
+                if src.is_dir():shutil.copytree(src,target)
+                else:shutil.copyfile(src,target)
+                return True
+            with patch.object(adapter,'device',side_effect=device),patch.object(adapter,'copy_file',side_effect=copy):
+                before=adapter.snapshots({},work,'absent')
+                recovery.mkdir(parents=True);(recovery/'CanvasConflictChoice.json').write_bytes(b'unique current conflict choice')
+                after=adapter.snapshots({},work,'created')
+            self.assertFalse(adapter.same_user_data(before,after),'new conflict recovery source must change preservation proof')
+
+
+    def test_complete_directory_absence_addition_edit_removal_and_boundaries(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);work=root/'evidence';work.mkdir()
+            local='CanvasConflictLocal-'+str(uuid.uuid4())+'.json';attempt='CanvasConflictAttempt-'+str(uuid.uuid4())+'.json'
+            baseline={'CanvasConflictChoice.json':b'choice original bytes',local:b'only local scene',attempt:b'only in-flight attempt',
+                'nested/unfiltered.bin':b'also protected; no filename prefix filter'}
+            versions={'absent':None,'empty':{},'really-empty':{},'full':baseline,'same':dict(baseline),'added':dict(baseline,**{'another-file':b'unique new source'}),
+                'changed':dict(baseline,**{'CanvasConflictChoice.json':b'changed choice'}),'removed':{k:v for k,v in baseline.items() if k!=local},'gone':None}
+            for name,files in versions.items():
+                source=root/name;source.mkdir()
+                for relative in ['Documents','Library/Preferences']:
+                    target=source/relative;target.mkdir(parents=True);(target/'stable').write_bytes(b'unchanged base data')
+                if files is not None:
+                    folder=source/'Library/Application Support/CanvasConflictRecovery';folder.mkdir(parents=True)
+                    if name != 'really-empty':(folder/'empty-child').mkdir()
+                    for key,value in files.items():
+                        target=folder/key;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(value)
+            selected=root/'absent';copied=[]
+            def device(config,args,log):adapter.write(args[-1],{'result':{'apps':[]}})
+            def copy(config,work,relative,target,**kwargs):
+                self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE);copied.append(relative)
+                source=selected/relative
+                if not source.exists():return False
+                if source.is_dir():shutil.copytree(source,target,symlinks=True)
+                else:shutil.copyfile(source,target)
+                return True
+            records={}
+            with patch.object(adapter,'device',side_effect=device),patch.object(adapter,'copy_file',side_effect=copy):
+                for name in versions:
+                    selected=root/name;records[name]=adapter.snapshots({},work,name)
+                self.assertIsNone(records['absent']['CanvasConflictRecovery'])
+                self.assertEqual(records['empty']['CanvasConflictRecovery'],{'empty-child/':None})
+                self.assertEqual(records['really-empty']['CanvasConflictRecovery'],{})
+                self.assertFalse(adapter.same_user_data(records['absent'],records['really-empty']))
+                expected={k:adapter.sha(v) for k,v in baseline.items()};expected.update({'empty-child/':None,'nested/':None})
+                self.assertEqual(records['full']['CanvasConflictRecovery'],expected)
+                self.assertTrue(adapter.same_user_data(records['full'],records['same']))
+                for name in ['absent','empty','really-empty','added','changed','removed','gone']:
+                    self.assertFalse(adapter.same_user_data(records['full'],records[name]),name)
+                self.assertFalse(adapter.same_user_data(records['absent'],records['empty']))
+                legacy=dict(records['absent']);legacy.pop('CanvasConflictRecovery')
+                self.assertFalse(adapter.same_user_data(legacy,records['absent']),'uncaptured old baseline is not verified absence')
+                selected=root/'full';before=(work/'full.json').read_bytes()
+                with self.assertRaisesRegex(adapter.Held,'destination_exists'):adapter.snapshots({},work,'full')
+                self.assertEqual(before,(work/'full.json').read_bytes())
+                folder=selected/'Library/Application Support/CanvasConflictRecovery'
+                (folder/'unexpected-link').symlink_to(selected/'Documents/stable')
+                with self.assertRaisesRegex(adapter.Held,'snapshot_symlink'):adapter.snapshots({},work,'symlink-refused')
+            self.assertIn('Library/Application Support/CanvasConflictRecovery',copied)
+            self.assertNotIn('Library/Application Support',copied)
+            self.assertFalse(any('CCRIntegrationTests' in path for path in copied))
+
 
 class DestinationArtifactContract(unittest.TestCase):
     def test_normal_bundle_and_existing_runner_only_for_v1_and_v2(self):

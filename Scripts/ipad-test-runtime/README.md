@@ -139,3 +139,10 @@ NativeCodeImagesContract는 별도 Mac 명령행 fixture(정상 Sill 설치 후�
 ### R2: 단일 Xcode 실행 문맥
 
 session 전체에서 세 문자열이 발견되는 것만으로 결속하지 않는다. 단일 Beginning test session의 ID/host PID, 같은 host의 RemotePath, 단일 runner의 Loading test bundle/active configuration PID와 순서를 확인한다. active configuration 안의 sessionIdentifier·testBundleURL·testApplicationDependencies의 runner mapping을 함께 검증하고 같은 session 파일의 중복·모순 URL/mapping은 거부한다. 과거 정상 문구를 붙인 현재 다른 container, 서로 떨어진 진단 문구, 중복 session, 다른 host/runner PID 및 다른 session ID는 거부한다. 이는 xcode_install_identity 파서의 반례 수정이며 전체 pinned xcresult/서명/device 검증이 우회됐다는 주장이 아니다.
+
+
+## CanvasConflictRecovery 보존 범위
+
+사용자가 확정한 새 복구 원본 위치는 정확히 `Library/Application Support/CanvasConflictRecovery/`다. ORIGINALS에 이 디렉터리를 추가했고, 기존 Documents/전체 Preferences와 같은 전체 tree SHA 계산을 재사용한다. choice/local-UUID/attempt-UUID뿐 아니라 내부 모든 regular file과 빈 디렉터리를 기록한다. filename prefix 필터는 없다. 디렉터리 부재는 null, 존재하는 빈 tree는 빈 map, 파일·하위 디렉터리 추가/삭제/변경은 다른 map으로 구분한다. symlink·비정규 파일·기존 recovery snapshot 목적지 재사용은 거부하고 원본·이전 증거를 삭제하지 않는다.
+
+이 key를 캡처하지 않은 과거 snapshot을 null/부재로 추정하지 않는다. 부모 설치 전 새 adapter로 전체 보호 baseline을 얻어야 한다. 이 변경은 명명된 디렉터리의 읽기/해시 보존뿐이며, runtime.json이나 일반 Application Support 바깥 쓰기 허용을 넓히지 않는다. Helm의 별도 WT가 새 conflict 파일 URL과 격리 whitelist를 정확한 디렉터리·UUID로 제한하고 부모가 의미 통합한다. 기존 scene/outbox/recovery 위치는 그대로다. 실제 기기 copy 및 최신 후보 보존 수용은 부모 lease의 후속 단계다.
