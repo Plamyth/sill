@@ -17,6 +17,7 @@ struct CanvasWorkspace: View {
     @State private var relayToken = ""
     @State private var connectionOpen = false
     @State private var exportOpen = false
+    @State private var renderedExport: RenderedExportState = .idle
     @State private var importOpen = false
     @State private var workspacePickerOpen = false
     @State private var workspaceOpening = false
@@ -174,9 +175,10 @@ struct CanvasWorkspace: View {
         .sheet(item:canvasEditorBinding,onDismiss:{ synchronizeCanvasEditorSheet() }) { canvasEditorContent($0) }
         .onChange(of:requestedCanvasEditors,initial:true) { _,_ in synchronizeCanvasEditorSheet() }
         .onChange(of:canPresentCanvasConflict) { _,allowed in if !allowed { advanceCanvasConflictEpoch() } }
-        .onDisappear { cancelCanvasConflictRead(); dismissCanvasEditorSheet(); inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+        .onDisappear { cancelRenderedExportPreparation(); cancelCanvasConflictRead(); dismissCanvasEditorSheet(); inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
+                cancelRenderedExportPreparation()
                 cancelCanvasConflictRead()
                 inkSpacingTask?.cancel()
                 inkSpacing.invalidatePending()
@@ -330,6 +332,15 @@ struct CanvasWorkspace: View {
                       defaultFilename:"canvas-\(store.scene.id.uuidString)") { result in
             if case .failure(let error) = result { store.status = error.localizedDescription }
         }
+        .fileExporter(isPresented:Binding(get:{ renderedExport.document != nil },set:{ if !$0 { renderedExport = .idle } }),
+                      document:renderedExport.document,contentType:renderedExport.document?.format.contentType ?? .pdf,
+                      defaultFilename:renderedExport.document?.filename) { result in
+            renderedExport = .idle
+            switch result {
+            case .success: store.status = "공유용 파일을 저장했습니다. 편집 원본과 Obsidian 동기화 상태는 그대로입니다."
+            case .failure(let error): store.status = error.localizedDescription
+            }
+        }
         .fileImporter(isPresented:$importOpen,allowedContentTypes:[.json]) { result in
             do {
                 let url = try result.get()
@@ -463,9 +474,57 @@ struct CanvasWorkspace: View {
                 .disabled(!store.canRedoGraph)
             Button("연결",systemImage:"network") { connectionOpen = true }
             Button("가져오기") { importOpen = true }
-            Button("내보내기") { exportOpen = true }
+            Menu("내보내기") {
+                Button("편집 원본 JSON") { exportOpen = true }
+                Button("PNG 이미지") { prepareRenderedExport(.png) }
+                Button("PDF · 한 장 이미지로 저장") { prepareRenderedExport(.pdf) }
+            }.disabled(renderedExport.isBusy || exportOpen || importOpen)
         }
         .frame(minWidth:44,minHeight:44)
+    }
+
+    private enum RenderedExportState {
+        case idle, rendering(UUID), ready(RenderedSceneFile)
+        var document: RenderedSceneFile? { if case .ready(let file) = self { return file }; return nil }
+        var isBusy: Bool { if case .idle = self { return false }; return true }
+    }
+
+    private func prepareRenderedExport(_ format: RenderedSceneFile.Format) {
+        guard !renderedExport.isBusy, !exportOpen, !importOpen else { return }
+        let scene = store.scene, token = UUID(), scale = UIScreen.main.scale
+        guard scene.width.isFinite, scene.height.isFinite, scene.width > 0, scene.height > 0,
+              scene.width <= 16384, scene.height <= 16384,
+              scene.width * scene.height * scale * scale <= 32 * 1024 * 1024 else {
+            store.status = "현재 그림은 이미지 내보내기 크기 한도를 넘습니다. 편집 원본 JSON은 그대로 내보낼 수 있습니다."
+            return
+        }
+        guard let originalSHA = try? CanvasFileWorkspace.sceneSHA(scene) else {
+            store.status = "편집 원본을 확인하지 못했습니다. 내보내기와 원본 변경은 하지 않았습니다."
+            return
+        }
+        renderedExport = .rendering(token)
+        Task { @MainActor in
+            do {
+                guard let png = await SceneRenderer.png(scene:scene) else { throw CocoaError(.fileReadCorruptFile) }
+                guard case .rendering(let current) = renderedExport, current == token else { return }
+                guard try CanvasFileWorkspace.sceneSHA(store.scene) == originalSHA else {
+                    renderedExport = .idle
+                    store.status = "그림이 바뀌어 이전 이미지 내보내기를 취소했습니다. 현재 그림과 원본은 그대로 유지합니다."
+                    return
+                }
+                let file = try RenderedSceneFile(png:png,size:CGSize(width:scene.width,height:scene.height),format:format,
+                    filename:"canvas-\(scene.id.uuidString.lowercased())-r\(scene.revision)")
+                renderedExport = .ready(file)
+            } catch {
+                guard case .rendering(let current) = renderedExport, current == token else { return }
+                renderedExport = .idle
+                store.status = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelRenderedExportPreparation() {
+        if case .rendering = renderedExport { renderedExport = .idle }
     }
 
     private var penSettingsMenu: some View {
@@ -1186,7 +1245,7 @@ struct CanvasWorkspace: View {
     private var canPresentCanvasConflict: Bool {
         !store.hasPendingInkProposal && !inkSpacingOpen && !inkTextDeleteOpen && !proposalInputBusy &&
         !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen && !connectionOpen &&
-        !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen && expandedCard == nil &&
+        !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen && !renderedExport.isBusy && expandedCard == nil &&
         (canvasEditorSheet == nil || canvasEditorSheet == .conflict)
     }
     private func advanceCanvasConflictEpoch() {
