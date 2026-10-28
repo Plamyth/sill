@@ -137,8 +137,10 @@ test('교환 연산 미지원·실패 때 일반 rename으로 우회하지 않�
   child.execFileSync = () => { throw new Error('fixture exchange unavailable'); };
   try { assert.throws(() => f.vault.saveCanvas(f.id,2,f.proposed,png,f.first.noteSha256),{status:409}); }
   finally { child.execFileSync = exec; }
-  assert.equal(f.vault.note(f.first.path).sha256,f.note.sha256);
-  assert.equal(new ObsidianVault(f.root).canvas(f.id).sceneSha256,sha(f.bytes));
+  assert.equal(sha(fs.readFileSync(f.file)),f.note.sha256);
+  const held = new ObsidianVault(f.root).canvasConflict(f.id);
+  assert.equal(held.materials.active.canvas.sceneSha256,sha(f.bytes));
+  assert.throws(() => f.vault.note(f.first.path),{code:'note_reconciliation_required'});
   assert.ok(preservedBytes(f.root).some(bytes => bytes.includes(Buffer.from('ccr_scene_sha256: '+sha(f.proposed)))));
 });
 

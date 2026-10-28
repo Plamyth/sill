@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const zlib = require('node:zlib');
+const {validPNG} = require('./canvas-png');
 const {assertInkScene,assertAgentRevision,SCENE_CAPABILITIES,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 const {appServerDeliveryReady,withAppServer,deliverPacket} = require('./codex-delivery');
 const {controlRoomProjection,hiddenThreadIds} = require('./control-room-projection');
@@ -25,40 +25,6 @@ const HASH = /^[0-9a-f]{64}$/;
 const MAX_CANVAS_REQUEST_BYTES = 13 * 1024 * 1024;
 
 function sha(data) { return crypto.createHash('sha256').update(data).digest('hex'); }
-function crc32(data) {
-  let crc = -1;
-  for (const byte of data) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
-  return (crc ^ -1) >>> 0;
-}
-function validPNG(image) {
-  if (!image.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex'))) return false;
-  let offset = 8, ihdr = false, ended = false;
-  const idat = [];
-  while (offset + 12 <= image.length) {
-    const length = image.readUInt32BE(offset);
-    if (length > image.length - offset - 12) return false;
-    const kind = image.toString('ascii',offset+4,offset+8);
-    const data = image.subarray(offset+8,offset+8+length);
-    const crc = image.readUInt32BE(offset+8+length);
-    if (crc32(image.subarray(offset+4,offset+8+length)) !== crc) return false;
-    if (kind === 'IHDR') {
-      if (ihdr || offset !== 8 || length !== 13 ||
-          data.readUInt32BE(0) === 0 || data.readUInt32BE(4) === 0 ||
-          data.readUInt32BE(0) > 8192 || data.readUInt32BE(4) > 8192) return false;
-      ihdr = true;
-    }
-    if (kind === 'IDAT') idat.push(data);
-    offset += length+12;
-    if (kind === 'IEND') { ended = true; break; }
-  }
-  if (!ihdr || !ended || !idat.length || offset !== image.length) return false;
-  try { zlib.inflateSync(Buffer.concat(idat),{maxOutputLength:64*1024*1024}); }
-  catch { return false; }
-  return true;
-}
 function freshDate(value) {
   const at = Date.parse(value || '');
   return Number.isFinite(at) && Date.now() - at <= 30000 && at <= Date.now() + 5000;
@@ -325,6 +291,15 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
             return json(response,200,blockEdits.edit(relative,blockID,body));
           }
         }
+        if (url.pathname === '/vault/canvas/conflict') {
+          if ([...url.searchParams.keys()].join(',') !== 'id') throw new VaultError('Only the canvas ID is accepted');
+          const id = url.searchParams.get('id') || '';
+          if (request.method === 'GET') return json(response,200,vault.canvasConflict(id));
+          if (request.method === 'PUT') {
+            const body = await receive(request,16*1024);
+            return json(response,200,vault.resolveCanvasConflict(id,body));
+          }
+        }
         if (url.pathname === '/vault/canvas') {
           const id = url.searchParams.get('id') || '';
           if (request.method === 'GET') return json(response,200,vault.canvas(id));
@@ -477,7 +452,9 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
       }
       return json(response,404,{error:'Not found'});
     } catch (error) { return json(response,error instanceof VaultError ? error.status : 409,
-      {error:error.message}); }
+      {error:error.message,...(error.code ? {code:error.code} : {}),
+        ...(error.reconciliationRequired ? {reconciliationRequired:true,recoveryID:error.recoveryID,
+          publicationAttempted:error.publicationAttempted} : {})}); }
   });
   const close = server.close;
   server.close = function (...args) {

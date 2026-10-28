@@ -33,3 +33,7 @@ preflight의 알려진 stale SHA나 asset 검증 실패는 노트 게시 전에 
 검수 반례와 같은 맥북 연결 SSD에서 실제 별도 프로세스의 in-place·atomic replace와 열린 fd 쓰기를 시험했다. Node 네트워크를 거부하고 정확한 파일 교환 Python helper와 fixture-only writer만 자식 프로세스로 허용했다. Python 표준 ctypes와 기존 `/usr/bin/python3`를 사용하며 새 패키지·계정·권한은 설치하지 않는다. 설치 대상에는 이 tracked helper가 함께 있어야 한다.
 
 고정된 실패 반례 커밋은 `02801079`와 `edab5482`다. 실제 URLSession HTTP harness는 `d95c4f73` 미실행 checkpoint에 그대로 둔다. 이 수정은 HTTP·설치·Pencil·사용자 vault 수용이 아니다. 독립 검수자는 정확한 수정 commit/tree에서 원래 반례와 보존 결과, canonical 승격 조건을 다시 확인해야 한다.
+
+## 명시 조정 후 동기화 복귀
+
+후속 부모 채택 계약과 실제 GET/PUT DTO는 `RECONCILIATION-CONTRACT.md`에 있다. 게시를 시도한 뒤 미조정 원장이 남으면 기존 note/canvas 읽기와 일반 저장은 typed 409로 차단한다. active/pending SHA 일치로 해제하지 않는다. 게시 전에 stale을 확인한 경우에는 기존 재조회 경로를 유지한다. 명시 선택은 원래 validator와 원자적 보존 primitive를 재사용하고 새 인스턴스 원본 재열기·최종 SHA·durable resolution을 확인한 뒤에만 해제한다. 조정 중 실패는 새 원장 ID를 이전 원장에 연결하므로 새 외부 displaced도 다음 명시 선택으로 복구할 수 있다. 원래 세 자료는 유지한다.

@@ -25,3 +25,7 @@ node --test --test-skip-pattern='authenticated HTTP|authenticated canvas HTTP|is
 Pstack Refactoring의 원본 동작 고정·대조·실행 검증을 적용했다. Ponytail은 기존 validator와 vault CAS를 재사용하고 의존성을 추가하지 않는 선택에 적용했다. ARENA와 순정 Goal은 사용하지 않았다. 현재 런타임에는 `spawn_agent`가 없어 독립 검수는 부모의 정확한 후보 커밋 검수로 남긴다. push·PR·공식 병합·설치·런타임 전환은 수행하지 않았다.
 
 저장 검수 수정의 실제 회귀 영수증은 `relay-vault-fix-20261029/evidence/run-final.json`이다. 이 실행은 Node 네트워크를 거부하면서 정확한 파일 교환 helper와 fixture-only 외부 writer만 허용했다. 이전에 모든 자식 프로세스를 거부한 실행과 구분한다.
+
+## 명시 충돌 조정 검사
+
+부모 조율담당이 채택한 DTO와 상태 계약은 `RECONCILIATION-CONTRACT.md`, 완전한 실행 예제는 `relay/test-input/reconciliation-v1/wire-example.json`이다. `python3 CanvasRelay/run-checks.py --output <승인된_검사_출력_절대경로>`는 기존 132개 통과 검사와 새 조정 반례를 같은 synthetic HOME/TMPDIR에서 실행하며 listener·connect·fetch·datagram을 거부한다. `--focused`는 새 조정 경계만 실행한다. 실제 파일 교환 helper와 fixture writer만 허용하고 각 실제 PID·종료·부재와 파일/인자 해시를 기록한다. socket 없는 server.emit 검사는 실제 HTTP 또는 URLSession 통과가 아니다. HTTP 후속은 보존된 checkpoint에서 조율한 뒤 이어간다.
