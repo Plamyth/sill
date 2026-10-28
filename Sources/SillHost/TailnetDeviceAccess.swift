@@ -39,9 +39,10 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         let validUntil: Date
         fileprivate let issuer: UUID
         fileprivate let deadline: UInt64
+        fileprivate let now: @Sendable () -> UInt64
 
         var isUnexpired: Bool {
-            DispatchTime.now().uptimeNanoseconds < deadline && Date() < validUntil
+            now() < deadline && Date() < validUntil
         }
     }
 
@@ -67,6 +68,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
 
     typealias Check = @Sendable () throws -> Void
     typealias Read = @Sendable (Command, Check) throws -> Data
+    typealias VerifiedRead = @Sendable (Command, Check, Check?) throws -> Data
     private enum Observation: Sendable {
         case proof(Proof)
         case publicProfile(PublicProfile)
@@ -75,37 +77,53 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "sill.tailnet-device-access", qos: .utility)
     private let issuer = UUID()
-    private let read: Read
+    private let read: VerifiedRead
+    private let now: @Sendable () -> UInt64
     private let diagnosticSink: @Sendable (String) -> Void
     private var stopped = false
     private var active: Attempt?
     static let outputLimit = 512 * 1024
 
     convenience init() {
-        self.init(read: { command, check in
-            try Self.signedRead(command, check, read: Self.readCLI, validate: {
+        self.init(read: { command, check, firstVerified in
+            try Self.signedRead(command, check, firstVerified: firstVerified,
+                                read: { try Self.readCLI($0, $1) }, validate: {
                 try SignedHostExecutable.validate(path: Self.cliExecutable, identifier: "io.tailscale.ipn.macsys", team: "W5364U7YZB")
             })
         })
     }
 
-    private init(read: @escaping Read, diagnosticSink: @escaping @Sendable (String) -> Void = { print($0) }) {
+    private init(read: @escaping VerifiedRead, now: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+                 diagnosticSink: @escaping @Sendable (String) -> Void = { print($0) }) {
         self.read = read
+        self.now = now
         self.diagnosticSink = diagnosticSink
     }
 
-    func independent() -> TailnetDeviceAccess { Self(read: read, diagnosticSink: diagnosticSink) }
+    func independent() -> TailnetDeviceAccess { Self(read: read, now: now, diagnosticSink: diagnosticSink) }
 
     #if OWNER_BOOTSTRAP_CONTRACT
     /// 계약 검사만 가짜 센서 결과를 주입한다. 생산 초기화는 고정 CLI를 사용한다.
     convenience init(testingRead: @escaping Read, testingSignatureCheck: Check? = nil,
+                     testingClock: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+                     testingObservationStarted: Check? = nil,
                      testingDiagnosticSink: (@Sendable (String) -> Void)? = nil) {
-        self.init(read: { command, check in
-            if let validate = testingSignatureCheck {
-                return try Self.signedRead(command, check, read: testingRead, validate: validate)
-            }
-            return try testingRead(command, check)
-        }, diagnosticSink: testingDiagnosticSink ?? { print($0) })
+        self.init(read: { command, check, firstVerified in
+            let started: Check?
+            if let arm = firstVerified { started = { try arm(); try testingObservationStarted?() } }
+            else { started = nil }
+            return try Self.signedRead(command, check, firstVerified: started, read: testingRead,
+                                       validate: testingSignatureCheck ?? {})
+        }, now: testingClock, diagnosticSink: testingDiagnosticSink ?? { print($0) })
+    }
+
+    convenience init(testingVerifiedRead: @escaping VerifiedRead, testingClock: @escaping @Sendable () -> UInt64) {
+        self.init(read: testingVerifiedRead, now: testingClock)
+    }
+
+    func expireForTesting() {
+        lock.lock(); let attempt = active; lock.unlock()
+        attempt?.expire()
     }
 
     static var testingCLIEnvironment: [String] { cliEnvironment }
@@ -136,7 +154,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         switch await query(ip: nil, binding: nil) {
         case .success(.publicProfile(let profile)):
             guard !Task.isCancelled else { return .failure(.cancelled) }
-            guard DispatchTime.now().uptimeNanoseconds < profile.deadline else { return .failure(.deadlineExceeded) }
+            guard now() < profile.deadline else { return .failure(.deadlineExceeded) }
             return .success(profile)
         case .failure(let failure): return .failure(failure)
         case .success(.proof): return .failure(.malformedEvidence)
@@ -144,7 +162,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     }
 
     private func query(ip: String?, binding: OwnerBootstrapSocket.Binding?) async -> Outcome {
-        let attempt = Attempt(publicProfile: binding == nil, diagnosticSink: diagnosticSink)
+        let attempt = Attempt(publicProfile: binding == nil, now: now, diagnosticSink: diagnosticSink)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 attempt.attach(continuation)
@@ -169,7 +187,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     func isCurrent(_ profile: PublicProfile) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return !stopped && profile.issuer == issuer && DispatchTime.now().uptimeNanoseconds < profile.deadline
+        return !stopped && profile.issuer == issuer && now() < profile.deadline
     }
 
     func withCurrent(_ proof: Proof, _ action: () -> Bool) -> Bool {
@@ -193,9 +211,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         }
         active = attempt
         lock.unlock()
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .init(uptimeNanoseconds: attempt.deadline)) {
-            attempt.finish(.failure(.deadlineExceeded))
-        }
+        attempt.scheduleExpiry()
         queue.async { [self] in
             defer {
                 lock.lock()
@@ -205,7 +221,12 @@ final class TailnetDeviceAccess: @unchecked Sendable {
             do {
                 let check: Check = { try attempt.check() }
                 try check()
-                let before = try Self.decode(Status.self, read(.status, check))
+                let firstVerified: Check?
+                if binding == nil { firstVerified = nil }
+                else { firstVerified = { try attempt.observe() } }
+                let beforeData = try read(.status, check, firstVerified)
+                try attempt.checkObserving()
+                let before = try Self.decode(Status.self, beforeData)
                 try before.validate()
                 try check()
                 if binding == nil {
@@ -220,20 +241,22 @@ final class TailnetDeviceAccess: @unchecked Sendable {
                 }
                 guard let source = ip else { throw Failure.invalidSource }
                 attempt.setStage(.whois)
-                let who = try Self.decode(WhoIs.self, read(.whois(source), check))
+                let who = try Self.decode(WhoIs.self, read(.whois(source), check, nil))
                 try check()
                 attempt.setStage(.statusAfter)
-                let after = try Self.decode(Status.self, read(.status, check))
+                let after = try Self.decode(Status.self, read(.status, check, nil))
                 try after.validate()
                 attempt.setStage(.validation)
                 guard before == after else { throw Failure.snapshotChanged }
                 let expiry = try who.validate(source: source, user: before.selfNode.UserID)
                 try check()
-                let until = min(Date().addingTimeInterval(2), expiry)
+                let deadline = attempt.deadline, current = now()
+                guard current < deadline else { throw Failure.deadlineExceeded }
+                let until = min(Date().addingTimeInterval(Double(deadline - current) / 1_000_000_000), expiry)
                 let proof = Proof(principal: OwnerBootstrapRegistry.principal(user: who.Node.User, node: who.Node.StableID),
                                   binding: binding, sourceIP: source, localIPs: before.selfNode.TailscaleIPs.compactMap(Self.numericSource),
                                   nodeExpiry: expiry, validUntil: until, issuer: issuer,
-                                  deadline: min(attempt.deadline, DispatchTime.now().uptimeNanoseconds + 2_000_000_000))
+                                  deadline: deadline, now: now)
                 lock.lock()
                 let wasStopped = stopped
                 lock.unlock()
@@ -367,16 +390,66 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     }
 
     private final class Attempt: @unchecked Sendable {
-        let deadline: UInt64
+        private enum State { case preparing, observing, finished(Outcome) }
         private let lock = NSLock()
-        private var result: Outcome?
+        private var state: State
+        private var deadlineValue: UInt64
+        private let requestDeadline: UInt64
+        private let now: @Sendable () -> UInt64
         private var continuation: CheckedContinuation<Outcome, Never>?
         private var stage: Stage = .statusBefore
         private let diagnosticSink: @Sendable (String) -> Void
 
-        init(publicProfile: Bool, diagnosticSink: @escaping @Sendable (String) -> Void) {
-            deadline = DispatchTime.now().uptimeNanoseconds + (publicProfile ? 10_000_000_000 : 2_000_000_000)
+        // 별도 미통합 정책 후보: 기존 request 전체 2초 정책과 동등하지 않다.
+        init(publicProfile: Bool, now: @escaping @Sendable () -> UInt64,
+             diagnosticSink: @escaping @Sendable (String) -> Void) {
+            let started = now()
+            requestDeadline = started + 10_000_000_000
+            deadlineValue = publicProfile ? requestDeadline : started + 8_000_000_000
+            state = publicProfile ? .observing : .preparing
+            self.now = now
             self.diagnosticSink = diagnosticSink
+        }
+
+        var deadline: UInt64 { lock.lock(); defer { lock.unlock() }; return deadlineValue }
+
+        func scheduleExpiry() {
+            let end = deadline, current = now()
+            let remaining = end > current ? end - current : 0
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + .nanoseconds(Int(remaining))) {
+                self.expire()
+            }
+        }
+
+        func expire() {
+            lock.lock()
+            let expired = now() >= deadlineValue
+            lock.unlock()
+            if expired { finish(.failure(.deadlineExceeded)) }
+        }
+
+        func observe() throws {
+            lock.lock()
+            do {
+                try checkLocked()
+                guard case .preparing = state else { throw Failure.malformedEvidence }
+                let current = now()
+                guard current < deadlineValue else { throw Failure.deadlineExceeded }
+                deadlineValue = min(requestDeadline, current + 2_000_000_000)
+                state = .observing
+                lock.unlock()
+                scheduleExpiry()
+            } catch {
+                lock.unlock()
+                finish(.failure(error as? Failure ?? .sensorFailure))
+                throw error
+            }
+        }
+
+        func checkObserving() throws {
+            lock.lock(); defer { lock.unlock() }
+            try checkLocked()
+            guard case .observing = state else { throw Failure.malformedEvidence }
         }
 
         func setStage(_ stage: Stage) {
@@ -387,16 +460,16 @@ final class TailnetDeviceAccess: @unchecked Sendable {
 
         func attach(_ continuation: CheckedContinuation<Outcome, Never>) {
             lock.lock()
-            if let result { lock.unlock(); continuation.resume(returning: result) }
+            if case .finished(let result) = state { lock.unlock(); continuation.resume(returning: result) }
             else { self.continuation = continuation; lock.unlock() }
         }
 
         func finish(_ outcome: Outcome) {
             lock.lock()
-            guard result == nil else { lock.unlock(); return }
-            let accepted: Outcome = DispatchTime.now().uptimeNanoseconds >= deadline
+            if case .finished = state { lock.unlock(); return }
+            let accepted: Outcome = now() >= deadlineValue
                 ? .failure(.deadlineExceeded) : outcome
-            result = accepted
+            state = .finished(accepted)
             let waiting = continuation
             continuation = nil
             let finishedStage = stage
@@ -408,17 +481,24 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         }
 
         func check() throws {
-            lock.lock()
-            let current = result
-            lock.unlock()
-            if case .failure(let failure) = current { throw failure }
-            guard DispatchTime.now().uptimeNanoseconds < deadline else { throw Failure.deadlineExceeded }
+            lock.lock(); defer { lock.unlock() }
+            try checkLocked()
+        }
+
+        private func checkLocked() throws {
+            if case .finished(let result) = state {
+                if case .failure(let failure) = result { throw failure }
+                throw Failure.cancelled
+            }
+            guard now() < deadlineValue else { throw Failure.deadlineExceeded }
         }
     }
 
-    private static func signedRead(_ command: Command, _ check: Check, read: @escaping Read, validate: Check) throws -> Data {
+    private static func signedRead(_ command: Command, _ check: Check, firstVerified: Check?,
+                                   read: @escaping Read, validate: Check) throws -> Data {
         try check()
         try validate()
+        try firstVerified?()
         try check()
         let data = try read(command, check)
         try validate()
@@ -453,6 +533,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         let envp = cliEnvironment.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
         var pid: pid_t = 0
+        try check()
         let spawned = argv.withUnsafeBufferPointer { args in
             envp.withUnsafeBufferPointer { env in
                 posix_spawn(&pid, executable, &actions, &attributes,

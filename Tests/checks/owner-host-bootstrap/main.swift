@@ -39,6 +39,8 @@ private final class SensorFixture: @unchecked Sendable {
     var beforeRead: ((TailnetDeviceAccess.Command) throws -> Void)?
 
     func sensor(signatureCheck: TailnetDeviceAccess.Check? = nil,
+                clock: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+                observationStarted: TailnetDeviceAccess.Check? = nil,
                 diagnosticSink: (@Sendable (String) -> Void)? = nil) -> TailnetDeviceAccess {
         TailnetDeviceAccess(testingRead: { [self] command, check in
             lock.lock(); defer { lock.unlock() }
@@ -49,7 +51,47 @@ private final class SensorFixture: @unchecked Sendable {
             case .status: return try JSONSerialization.data(withJSONObject: status)
             case .whois: return try JSONSerialization.data(withJSONObject: ["Node": node, "UserProfile": ["ID": user]])
             }
-        }, testingSignatureCheck: signatureCheck, testingDiagnosticSink: diagnosticSink)
+        }, testingSignatureCheck: signatureCheck, testingClock: clock,
+           testingObservationStarted: observationStarted, testingDiagnosticSink: diagnosticSink)
+    }
+}
+
+private final class PolicyClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 1_000_000_000
+    func now() -> UInt64 { lock.lock(); defer { lock.unlock() }; return value }
+    func advance(_ nanoseconds: UInt64) { lock.lock(); value += nanoseconds; lock.unlock() }
+}
+
+/// 모든 signature/spawn은 가짜 이벤트다. 실제 센서나 CLI를 호출하지 않는다.
+private final class PolicyFixture: @unchecked Sendable {
+    let clock = PolicyClock()
+    let data = SensorFixture()
+    let lines = DiagnosticLines()
+    private let lock = NSLock()
+    private var events: [String] = []
+    private var signatures = 0
+    private var spawns = 0
+    var onSignature: ((Int) throws -> Void)?
+    var onSpawn: ((Int) throws -> Void)?
+
+    var trace: [String] { lock.lock(); defer { lock.unlock() }; return events }
+    var signatureCount: Int { lock.lock(); defer { lock.unlock() }; return signatures }
+    var spawnCount: Int { lock.lock(); defer { lock.unlock() }; return spawns }
+
+    func sensor() -> TailnetDeviceAccess {
+        data.beforeRead = { [weak self] _ in
+            guard let self else { throw TailnetDeviceAccess.Failure.sensorFailure }
+            lock.lock(); spawns += 1; let number = spawns; events.append("spawn-\(number)"); lock.unlock()
+            try onSpawn?(number)
+        }
+        let clock = clock, lines = lines
+        return data.sensor(signatureCheck: { [self] in
+            lock.lock(); signatures += 1; let number = signatures; events.append("signature-\(number)"); lock.unlock()
+            try onSignature?(number)
+        }, clock: { clock.now() }, observationStarted: { [self] in
+            lock.lock(); events.append("observe"); lock.unlock()
+        }, diagnosticSink: { lines.append($0) })
     }
 }
 
@@ -663,6 +705,170 @@ final class OwnerBootstrapChecks {
                 let trace = commands.flatMap { _ in ["signature", "read", "signature"] }
                 expectEqual(signatures.trace, Array(trace.prefix(failAt.map { $0 + $0 / 2 } ?? trace.count)))
             }
+        }
+    }
+
+    func testCandidatePreparationAndObservationDeadline() async {
+        // 별도 정책 후보의 양성 대조이며 기존 request 전체 2초와의 동등성 증거가 아니다.
+        for preparation: UInt64 in [5_072_580_000, 7_999_000_000] {
+            let fixture = PolicyFixture(), started = fixture.clock.now()
+            fixture.onSignature = { [clock = fixture.clock] number in
+                clock.advance(number == 1 ? preparation : 100_000_000)
+            }
+            fixture.onSpawn = { [clock = fixture.clock] _ in clock.advance(400_000_000) }
+            let sensor = fixture.sensor()
+            guard case .success(let proof) = await sensor.principal(for: binding()) else {
+                fail("준비 후 짧은 관측을 거부했습니다."); continue
+            }
+            expectEqual(fixture.trace, ["signature-1", "observe", "spawn-1", "signature-2",
+                "signature-3", "spawn-2", "signature-4", "signature-5", "spawn-3", "signature-6"])
+            expectEqual(fixture.signatureCount, 6)
+            expectEqual(fixture.spawnCount, 3)
+            expectEqual(fixture.clock.now() - started, preparation + 1_700_000_000)
+            expectTrue(proof.isUnexpired)
+            // 발급 당시 남은 0.3초만 유지한다. 발급으로 2초를 다시 주지 않는다.
+            fixture.clock.advance(299_999_999)
+            expectTrue(sensor.withCurrent(proof) { true })
+            fixture.clock.advance(1)
+            expectFalse(proof.isUnexpired)
+            var used = false
+            expectFalse(sensor.withCurrent(proof) { used = true; return true })
+            expectFalse(used)
+            expectFalse(sensor.independent().isCurrent(proof))
+        }
+    }
+
+    func testCandidateSignatureFailuresAndCumulativeBudget() async {
+        for failAt in 1...6 {
+            let fixture = PolicyFixture()
+            fixture.onSignature = { number in
+                if number == failAt { throw TailnetDeviceAccess.Failure.sensorFailure }
+            }
+            let sensor = fixture.sensor()
+            if case .failure(let failure) = await sensor.principal(for: binding()) { expectEqual(failure, .sensorFailure) }
+            else { fail("서명 실패 후 proof를 발급했습니다.") }
+            expectEqual(fixture.signatureCount, failAt)
+            expectEqual(fixture.spawnCount, failAt / 2)
+        }
+        for delayed in 1...6 {
+            let fixture = PolicyFixture()
+            fixture.onSignature = { [clock = fixture.clock] number in
+                if number == delayed { clock.advance(number == 1 ? 8_000_000_000 : 2_000_000_000) }
+            }
+            let sensor = fixture.sensor()
+            if case .failure(let failure) = await sensor.principal(for: binding()) { expectEqual(failure, .deadlineExceeded) }
+            else { fail("서명 지연으로 만료된 proof를 발급했습니다.") }
+            expectEqual(fixture.signatureCount, delayed)
+            expectEqual(fixture.spawnCount, delayed / 2)
+        }
+        for perRead: UInt64 in [666_666_667, 800_000_000] {
+            let fixture = PolicyFixture()
+            fixture.onSpawn = { [clock = fixture.clock] _ in clock.advance(perRead) }
+            let sensor = fixture.sensor()
+            if case .failure(let failure) = await sensor.principal(for: binding()) { expectEqual(failure, .deadlineExceeded) }
+            else { fail("개별 read가 짧아도 누적 2초 만료를 거부해야 합니다.") }
+            expectEqual(fixture.spawnCount, 3)
+        }
+    }
+
+    func testCandidateRequiresSingleStartMarker() async {
+        for markers in 0...2 {
+            let fixture = SensorFixture(), clock = PolicyClock()
+            let sensor = TailnetDeviceAccess(testingVerifiedRead: { command, check, started in
+                for _ in 0..<markers { try? started?() } // 오류를 삼켜도 이중 arm은 종결되어야 한다.
+                try check()
+                switch command {
+                case .status: return try JSONSerialization.data(withJSONObject: fixture.status)
+                case .whois: return try JSONSerialization.data(withJSONObject: ["Node": fixture.node, "UserProfile": ["ID": 7]])
+                }
+            }, testingClock: { clock.now() })
+            switch await sensor.principal(for: binding()) {
+            case .success: expectEqual(markers, 1)
+            case .failure(let failure): expectTrue(markers != 1); expectEqual(failure, .malformedEvidence)
+            }
+        }
+    }
+
+    func testCandidateLateSignaturesCannotReviveFinishedAttempt() async {
+        for signature in [1, 2, 6] {
+            for terminal in [TailnetDeviceAccess.Failure.cancelled, .stopped, .deadlineExceeded] {
+                let fixture = PolicyFixture(), entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+                fixture.onSignature = { number in
+                    if number == signature {
+                        entered.signal()
+                        _ = release.wait(timeout: .now() + 5)
+                    }
+                }
+                let sensor = fixture.sensor(), source = binding()
+                let query = Task.detached { await sensor.principal(for: source) }
+                let didEnter = await waitForSignal(entered)
+                expectTrue(didEnter)
+                // 서명이 막혀 있는 동안 busy/cancel/stop/만료가 즉시 종결되어야 한다.
+                if case .failure(let failure) = await sensor.principal(for: source) { expectEqual(failure, .busy) }
+                else { fail("대기 서명 중 두 번째 관측을 허용했습니다.") }
+                let before = fixture.spawnCount
+                if terminal == .cancelled { query.cancel() }
+                if terminal == .stopped { sensor.stop() }
+                if terminal == .deadlineExceeded {
+                    fixture.clock.advance(signature == 1 ? 8_000_000_000 : 2_000_000_000)
+                    sensor.expireForTesting()
+                }
+                if case .failure(let failure) = await query.value { expectEqual(failure, terminal) }
+                else { fail("늦은 서명 전에 proof를 발급했습니다.") }
+                release.signal()
+                await sensor.drainDiagnosticsForTesting()
+                expectEqual(fixture.spawnCount, before)
+                expectEqual(fixture.signatureCount, signature)
+                expectEqual(fixture.lines.snapshot.count, 2) // busy와 원래 요청의 종결, 각각 한 번.
+                expectEqual(fixture.lines.snapshot.filter { $0.hasSuffix("code=\(terminal.rawValue)") }.count, 1)
+            }
+        }
+    }
+
+    func testCandidatePublicProfileRetainsTenSecondSingleStatus() async {
+        for duration: UInt64 in [9_999_999_999, 10_000_000_000] {
+            let fixture = PolicyFixture()
+            fixture.onSignature = { [clock = fixture.clock] number in if number == 1 { clock.advance(duration) } }
+            let sensor = fixture.sensor()
+            switch await sensor.publicProfile() {
+            case .success(let profile):
+                expectTrue(duration < 10_000_000_000)
+                expectEqual(fixture.trace, ["signature-1", "spawn-1", "signature-2"])
+                expectEqual(fixture.data.commands, [.status])
+                expectTrue(sensor.isCurrent(profile))
+                fixture.clock.advance(1)
+                expectFalse(sensor.isCurrent(profile))
+            case .failure(let failure):
+                expectEqual(duration, 10_000_000_000)
+                expectEqual(failure, .deadlineExceeded)
+                expectEqual(fixture.spawnCount, 0)
+            }
+        }
+    }
+
+    @MainActor func testCandidateDeadlineAtFinalSocketAdmission() async throws {
+        for mode in 0...4 {
+            let (_, host) = try await sessionHost(), fixture = PolicyFixture(), live = LiveFlag()
+            let b = binding()
+            let socket = OwnerBootstrapSocket.fixture(binding: b, trust: host.trust, purpose: .session) { live.get() }
+            fixture.onSignature = { [clock = fixture.clock] number in
+                if number == 1 { clock.advance(5_072_580_000) }
+            }
+            fixture.onSpawn = { [clock = fixture.clock] _ in clock.advance(500_000_000) }
+            let sensor = fixture.sensor()
+            guard case .success(let proof) = await sensor.principal(for: b) else { return fail("최종 사용 검사 proof 발급 실패") }
+            let evidence = OwnerBootstrapSocket.Evidence(sensor: sensor, proof: proof)
+            if mode == 1 { fixture.clock.advance(500_000_000) }
+            if mode == 3 { host.trust.update { $0.ownerBootstrapEpoch = UUID(); $0.ownerAuthorized = [:] } }
+            if mode == 4 { live.set(false) }
+            var served = 0
+            let accepted = socket.admit(in: host.trust, evidence: evidence, allowed: { _ in
+                if mode == 2 { fixture.clock.advance(500_000_000) }
+                return true
+            }) { _ in served += 1 }
+            expectEqual(accepted, mode == 0)
+            expectEqual(served, mode == 0 ? 1 : 0)
+            expectEqual(host.trust.snapshot.isPaired(b.fingerprint), mode == 0)
         }
     }
 
@@ -1604,6 +1810,15 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testMissingRegistryAndForeignSignatureDenyOnlyAutomaticTrust() } catch { fail("testMissingRegistryAndForeignSignatureDenyOnlyAutomaticTrust 예외") }
         await checks.testPublicProfileUsesSingleStatusWithoutApprovalOrKeys()
         await checks.testPublicAndProofSignedReadContracts()
+        let candidateBefore = CheckCounts.shared.result
+        await checks.testCandidatePreparationAndObservationDeadline()
+        await checks.testCandidateSignatureFailuresAndCumulativeBudget()
+        await checks.testCandidateRequiresSingleStartMarker()
+        await checks.testCandidateLateSignaturesCannotReviveFinishedAttempt()
+        await checks.testCandidatePublicProfileRetainsTenSecondSingleStatus()
+        do { try await checks.testCandidateDeadlineAtFinalSocketAdmission() } catch { fail("후보 정책의 최종 소켓 사용 검사 예외") }
+        let candidateAfter = CheckCounts.shared.result
+        print("별도 미통합 정책 후보 검사 \(candidateAfter.0 - candidateBefore.0)개 통과, \(candidateAfter.1 - candidateBefore.1)개 실패. 기존 request 전체 2초 정책과 동등하지 않음.")
         await checks.testPublicObservationCanTakeMoreThanProofDeadline()
         await checks.testPublicProfileRejectsInvalidSelfAndOutput()
         await checks.testPublicProfileStopCancellationBusyAndDeadline()
@@ -1639,7 +1854,11 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testSessionRefreshRejectsDamagedRevokedOrForeignRecord() } catch { fail("저장 기록의 재조회 거부 검사 예외") }
         do { try await checks.testAdmissionExpiryAfterBlockingValidation() } catch { fail("최종 검사 중 만료 거부 검사 예외") }
         do { try await checks.testLegacyNormalAdmissionWithoutOwnerProof() } catch { fail("명시적 신뢰의 정상 연결 검사 예외") }
-        checks.testCanonicalSignedSensorRejectsUnexpectedExecutable()
+        if CommandLine.arguments.contains("--policy-candidate") {
+            print("후보 격리 검사: 실제 실행파일 서명 센서 호출 대신 고정 서명 요건의 소스 검사와 가짜 서명 이벤트 사용.")
+        } else {
+            checks.testCanonicalSignedSensorRejectsUnexpectedExecutable()
+        }
         let (passed, failed) = CheckCounts.shared.result
         print("생산 함수 기반 호스트 검사 \(passed)개 통과, \(failed)개 실패. 네트워크·실제 키체인·설치·오디오 호출 0.")
         exit(failed == 0 ? 0 : 1)

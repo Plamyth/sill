@@ -25,6 +25,23 @@ env = dict(os.environ)
 env["SDKROOT"] = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
 env["PYTHONDONTWRITEBYTECODE"] = "1"
 mode = sys.argv[1] if len(sys.argv) > 1 else "tests"
+if mode == "candidate":
+    sensor = (root / "Sources/SillHost/TailnetDeviceAccess.swift").read_text()
+    signed_read = sensor.split("private static func signedRead", 1)[1].split("private static func readCLI", 1)[0]
+    positions = [signed_read.index(token) for token in ["try validate()", "try firstVerified?()", "let data = try read(command, check)"]]
+    assert positions == sorted(positions), "first signature -> observation callback -> reader order changed"
+    cli = sensor.split("private static func readCLI", 1)[1]
+    assert cli.index("try check()") < cli.index("posix_spawn(&pid"), "spawn lacks the final deadline/cancellation check"
+    for token in ['"/Applications/Tailscale.app/Contents/MacOS/Tailscale"', 'identifier: "io.tailscale.ipn.macsys", team: "W5364U7YZB"',
+                  'static let outputLimit = 512 * 1024', 'kill(-pid, SIGKILL)', 'waitpid(pid, &status, 0)']:
+        assert token in sensor, "fixed executable/output/child cleanup contract changed: " + token
+    signature = (root / "Sources/SillHost/OwnerBootstrapRegistry.swift").read_text()
+    assert "SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSStrictValidate), requirement)" in signature
+    socket = (root / "Sources/SillHost/OwnerBootstrapSocket.swift").read_text()
+    assert "deadline: UInt64 = DispatchTime.now().uptimeNanoseconds + 10_000_000_000" in socket
+    print(json.dumps({"phase": "candidate-source-boundaries", "signedReadCallbackBeforeSpawn": True,
+                      "fixedSignatureAndCleanup": True, "socketBudgetSeconds": 10,
+                      "samePolicyEquivalence": False, "actualCLISensorCalls": 0}), flush=True)
 code = 0
 with tempfile.TemporaryDirectory(prefix="sill-owner-check-") as temporary:
     scratch = Path(temporary)
@@ -91,7 +108,7 @@ with tempfile.TemporaryDirectory(prefix="sill-owner-check-") as temporary:
                         break
                     print("PASS public profile negative contract " + contract + ": " + diagnostic, flush=True)
             if code == 0:
-                code = subprocess.run([str(binary)], cwd=root, env=env).returncode
+                code = subprocess.run([str(binary), *(["--policy-candidate"] if mode == "candidate" else [])], cwd=root, env=env).returncode
                 artifact = binary
     if code == 0 and artifact is not None and os.environ.get("SILL_CHECK_ARTIFACT_DIR"):
         target = Path(os.environ["SILL_CHECK_ARTIFACT_DIR"])
