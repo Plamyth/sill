@@ -54,7 +54,7 @@ keepCurrent는 현 활성 원문, useDisplaced는 원래 전환 순간에 보존
 
 선택한 바이트는 기존 원자적 교환 또는 독점 생성 primitive로 게시하고 새 ObsidianVault 인스턴스로 Markdown·scene·PNG와 최종 SHA를 확인한다. 각 조정 시도는 같은 노트 폴더의 새 독점 생성 .ccr-save-UUID에 base/proposal/displaced/intent/receipt로 보존하고 intent의 parentRecoveryID로 이전 원장에 연결한다. 조정 실패는 최신 원장의 recoveryID를 typed 409로 돌려주며, 클라이언트는 같은 scene ID로 다시 GET한다. 새 GET의 displaced는 바로 그 실패한 전환에서 보존된 최신 자료이므로 새 외부 편집도 다음 useDisplaced에서 명시 선택할 수 있다. 원래 ID는 부모 원장으로 남으며 이전 expected 재시도는 409다. body DTO는 바뀌지 않는다. 원래 세 자료는 삭제하지 않는다. 선택·재열기·최종 SHA 뒤 resolution.json을 fsync하고 디렉터리를 동기화하며, 반환 전 재검증한다. 기록 fsync/검사 실패 때 자신이 생성한 기록은 자신이 생성한 새 게시 원장 안의 resolution-unconfirmed.json으로 보존하고 held를 유지한다.
 
-성공 200은 다음 구조다. 같은 ID·동일 decision·동일 원래 expected 재시도는 현재 및 모든 보존 자료가 성공 시점과 같으면 정확히 같은 응답을 반환한다. 다른 decision/expected/현재·보존 상태는 409이며 다시 게시하지 않는다. 조정 뒤 일반 저장은 정상 재개하며 이후 정상 저장으로 상태가 바뀌었으면 과거 ID 재시도는 409다.
+성공 200은 다음 구조다. 같은 ID·동일 decision·동일 원래 expected 재시도는 같은 노트의 새 미조정 원장이 없고 현재 및 모든 보존 자료가 성공 시점과 같으면 정확히 같은 응답을 반환한다. 과거 성공 R 뒤 새 독립 충돌 J가 있으면 active SHA가 과거 결과와 같아도 J의 typed 409를 먼저 반환한다. 다른 decision/expected/현재·보존 상태는 409이며 다시 게시하지 않는다. 조정 뒤 일반 저장은 정상 재개하며 이후 정상 저장으로 상태가 바뀌었으면 과거 ID 재시도는 409다.
 
 ```json
 {

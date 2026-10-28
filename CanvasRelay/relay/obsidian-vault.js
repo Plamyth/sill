@@ -304,7 +304,9 @@ class ObsidianVault {
     if (!journal) throw new VaultError('복구 ID가 이 Canvas에 속하지 않습니다.',409);
     const fingerprint = digest(Buffer.from(JSON.stringify({decision:request.decision,expected:
       Object.fromEntries(Object.entries(request.expected).sort(([a],[b]) => a.localeCompare(b)))})));
+    const pending = journals.find(record => record.pending);
     if (journal.resolution) {
+      if (pending) throw this.#required(pending);
       if (journal.resolution.fingerprint !== fingerprint || this.#rawNote(relative).sha256 !== journal.resolution.result.noteSha256)
         throw new VaultError('이미 조정한 복구 ID의 결정 또는 현재 상태가 다릅니다.',409);
       const state = this.#conflictState(id,journal);
@@ -312,7 +314,6 @@ class ObsidianVault {
         throw new VaultError('조정 결과 또는 보존 자료가 달라졌습니다.',409);
       return journal.resolution.result;
     }
-    const pending = journals.find(record => record.pending);
     if (pending?.recoveryID !== journal.recoveryID) {
       if (pending) throw this.#required(pending);
       throw new VaultError('이 복구 ID는 뒤이은 명시 조정으로 종료됐습니다.',409);

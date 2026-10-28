@@ -228,3 +228,17 @@ test('같은 실제 노트의 대소문자 별칭 경로도 미조정 상태를 
   assert.equal(fresh(f).note(alias).sha256,result.noteSha256);
   assert.equal(fresh(f).save(alias,result.noteSha256,fresh(f).note(alias).text+'\n별칭 경로의 명시 조정 후 메모\n').path,alias);
 });
+
+test('과거 성공 R의 동일 요청도 같은 SHA의 새 독립 충돌 J가 있으면 J typed409를 반환한다',t => {
+  const f = fixture(t),r = makeConflict(f),body = request(r),result = fresh(f).resolveCanvasConflict(f.id,body);
+  const b = fresh(f).canvas(f.id),bScene = Buffer.from(b.sceneJSONBase64,'base64'),bText = fresh(f).note(f.first.path).text;
+  exchangeAt(f.file,() => child.execFileSync(process.execPath,[path.join(__dirname,'test-input/vault-external-writer.cjs'),
+    f.file,Buffer.from(bText+'\n새 독립 충돌 J의 외부 메모\n').toString('base64'),'atomic-replace']),
+    () => assert.throws(() => fresh(f).saveCanvas(f.id,b.revision,bScene,png,b.noteSha256),{code:'note_reconciliation_required'}));
+  const j = fresh(f).canvasConflict(f.id);
+  assert.notEqual(j.recoveryID,r.recoveryID);assert.equal(j.expected.activeSha256,result.noteSha256);
+  assert.throws(() => fresh(f).canvas(f.id),{code:'note_reconciliation_required',recoveryID:j.recoveryID});
+  assert.throws(() => fresh(f).resolveCanvasConflict(f.id,body),{status:409,code:'note_reconciliation_required',recoveryID:j.recoveryID});
+  assert.equal(fresh(f).resolveCanvasConflict(f.id,request(j,'useDisplaced')).resolved,true);
+  assert.match(fresh(f).note(f.first.path).text,/새 독립 충돌 J의 외부 메모/);
+});
