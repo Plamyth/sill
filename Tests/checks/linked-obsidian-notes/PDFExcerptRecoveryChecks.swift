@@ -298,6 +298,19 @@ import CoreText
     let journal = try CanvasLocalFile.read(url)
     check(try JSONDecoder().decode(VaultPDFCreateRecoveryFile.self,from:journal).record() == store.pdfExcerptRecovery,
           "actual isolated file decodes the same PDF create intent")
+    check(!store.canApplyReconciledCanvas,"pending PDF intent blocks Canvas reconciliation before scene replacement")
+    let sceneEncoder = JSONEncoder(); sceneEncoder.outputFormatting = [.sortedKeys]
+    let sceneBefore = try sceneEncoder.encode(store.scene)
+    let conflictURL = try CanvasRuntime.conflictRecoveryURL("CanvasConflictChoice.json")
+    let conflictBytes = Data("별도 Canvas 충돌 선택 원문 e\u{301}\r\n".utf8)
+    try CanvasLocalFile.write(conflictBytes,to:conflictURL)
+    do {
+        try store.applyReconciledCanvas(store.scene,expectedLocalSHA:CanvasPacket.sha(sceneBefore),preservedAt:conflictURL)
+        check(false,"pending PDF reconciliation must refuse")
+    } catch {
+        check(try sceneEncoder.encode(store.scene) == sceneBefore && CanvasLocalFile.read(url) == journal,
+              "actual apply refuses while preserving PDF journal and original scene")
+    }
     let reopened = CanvasStore(pdfExcerptRecoveryURL:normal)
     reopened.setNoteConnection(address:context.relayAddress,token:context.token)
     check(reopened.pdfExcerptRecovery == store.pdfExcerptRecovery && reopened.scene.id == store.scene.id,
@@ -320,6 +333,11 @@ import CoreText
     let final = CanvasStore(pdfExcerptRecoveryURL:normal)
     check(final.pdfExcerptRecovery == nil && final.scene.nodes.filter({$0.vaultNote?.path == excerpt.notePath}).count == 1,
           "isolated scene and cleared journal reopen without a duplicate card")
+    check(try CanvasLocalFile.read(conflictURL) == conflictBytes,"PDF prepare/reopen/ACK recovery leaves separate Canvas conflict choice byte-identical")
+    check(final.canApplyReconciledCanvas,"confirmed PDF journal clearing restores Canvas reconciliation eligibility")
+    try CanvasLocalFile.write(Data("damaged PDF recovery".utf8),to:url)
+    let damaged = CanvasStore(pdfExcerptRecoveryURL:normal)
+    check(!damaged.canApplyReconciledCanvas,"unreadable PDF journal also protects original Canvas until explicit recovery")
     check(try Data(contentsOf:normal) == normalBytes,"normal PDF recovery bytes remain unchanged by actual Store execution")
 }
 #endif

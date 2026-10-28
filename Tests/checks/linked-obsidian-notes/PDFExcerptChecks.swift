@@ -274,6 +274,15 @@ private final class PDFSnapshotProtocol: URLProtocol {
     do { _ = try await relay.vaultPDF(at:"원본.pdf"); check(false,"oversized envelope must refuse") }
     catch VaultPDFError.tooLarge { check(true,"declared oversized PDF response refuses before body accumulation") }
     PDFSnapshotProtocol.declaredLength = nil
+    PDFSnapshotProtocol.body = Data(repeating:0x20,count:64 * 1024 * 1024 + 1)
+    do { _ = try await relay.vaultCanvasConflict(id:UUID()); check(false,"official conflict response limit must refuse") }
+    catch let error as URLError { check(error.code == .dataLengthExceedsMaximum,
+          "official conflict response retains its distinct size limit and error after PDF streaming merge") }
+    PDFSnapshotProtocol.body = Data("{\"error\":\"/private/hidden\",\"code\":\"note_reconciliation_required\",\"reconciliationRequired\":true}".utf8)
+    PDFSnapshotProtocol.status = 409
+    do { _ = try await relay.vaultNote(at:"Notes/source.md"); check(false,"preserved note GET must remain held") }
+    catch { check(VaultSaveConflict.classified(error) == .reconciliationRequired && !error.localizedDescription.contains("/private/hidden"),
+          "PDF response extension retains typed409 GET protection and hides private recovery paths") }
     let count = PDFSnapshotProtocol.requests.count
     do { _ = try await relay.vaultPDF(at:"../escape.pdf"); check(false,"invalid PDF path must refuse") }
     catch VaultPDFError.invalid { check(PDFSnapshotProtocol.requests.count == count,"invalid path is rejected before any request") }

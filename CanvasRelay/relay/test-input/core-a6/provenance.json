@@ -1,0 +1,12 @@
+{
+  "commit": "a6e3047135e296223b88471344720ba5bfdb829e",
+  "tree": "975534c73b332ad13b80f974e12d922d708a0927",
+  "files": {
+    "plugin/unified-control.js": "beccbb466eb787d3feee90688227795787f97f4d28fe79be29a2d7998e0d101f",
+    "plugin/cursor-history-pages.js": "bf6faf42ae7a9f3e749859a559cecc1163b00689a047c7b72d9f264112e39996",
+    "bridge/cursor-desktop-catalog.js": "003e8a46557f984f4cae4e0bd684e12597c81b4768785636d729f0e0a5f5a66d",
+    "bridge/cursor-desktop-client.js": "1b6d4645aed9f6ca1fdf352d8c5afe94ee06a683727bece5b251351c521400bb"
+  },
+  "testOnly": true,
+  "bindings": null
+}

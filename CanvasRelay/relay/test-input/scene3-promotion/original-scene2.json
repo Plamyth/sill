@@ -1,0 +1,34 @@
+{
+  "annotations" : [
+
+  ],
+  "drawingBase64" : "",
+  "height" : 1536,
+  "id" : "D2AA02E4-EDE0-419C-9FA3-D00398B3DC1D",
+  "links" : [
+
+  ],
+  "nodes" : [
+    {
+      "confidence" : "confirmed",
+      "frame" : {
+        "height" : 120,
+        "width" : 260,
+        "x" : 10,
+        "y" : 20
+      },
+      "id" : "D1487C2E-3E0E-4C97-BAFD-6FBB272F8B09",
+      "kind" : "note",
+      "sourceStrokeIds" : [
+
+      ],
+      "text" : "기존 schema2 메모"
+    }
+  ],
+  "revision" : 1,
+  "schemaVersion" : 2,
+  "strokes" : [
+
+  ],
+  "width" : 2048
+}

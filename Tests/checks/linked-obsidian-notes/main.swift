@@ -109,6 +109,11 @@ final class NoteProtocol: URLProtocol {
             print("RESULT \(checks) assertions, \(failures) failures")
             exit(failures == 0 ? 0 : 1)
         }
+        if CommandLine.arguments.contains("--pdf-transport") {
+            try await checkPDFReadTransport(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--anchor-reentry") {
             try await checkExcerptAnchorReentry(check)
             print("RESULT \(checks) assertions, \(failures) failures")

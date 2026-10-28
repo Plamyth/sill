@@ -14,6 +14,8 @@ import plistlib
 import re
 import runpy
 import secrets
+import shlex
+import tempfile
 import shutil
 import subprocess
 import sys
@@ -29,6 +31,11 @@ OWNER = '01a13ace-e372-7ed1-9946-149df37ee1c3'
 BUNDLE = 'com.ambrion.rea.ipad-runtime'
 USER_BUNDLE = 'com.ambrion.sillcanvas.ipad'
 NORMAL_TEAM = 'ZPTXHJ866D'
+RUNNER_BUNDLE = 'com.ambrion.rea.appaudit.UITests.xctrunner'
+RUNNER_CORE_METHODS = ['testEditAndSave','testReopenRemoteRevision','testRotateAndSave','testReopenRotatedScene',
+        'testLiveRotatedRemoteRevision','testCommentSave','testCommentReopen','testStaleCommentDraftRequiresExplicitDiscard',
+        'testRulerToggleAcrossDrawingAndSelection','testReviewEditDraftPreserved','testReviewSaveDraft','testReviewReopen',
+        'testReviewLiveRemoteRevision','testReviewGood','testReviewStaleSessionRejected','testReviewMissingSourceRejected']
 APPROVED_OWNER_PROFILE_SHA256 = '7bcf8ce74bf4292d1a20b07d45bfa0c040957e1ade3d80dd4be37c5eb96cf8c7'
 SINGLE_APP_BLOCKERS = (
     'latest_normal_candidate_preservation_readback_required',
@@ -41,7 +48,7 @@ ORIGINALS = ['CanvasScene.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/led
              'CanvasBlockEdit/recovery.json', 'CanvasNoteEdit/recovery.json',
              'CanvasPDFExcerptCreate/recovery.json',
              'CanvasLegacyScene.json', 'CanvasWorkspace/bookmark.json', 'CCR Sill/keyboard-diagnostics.json',
-             'CCR Sill/microphone-diagnostics.json']
+             'CCR Sill/microphone-diagnostics.json', 'CanvasConflictRecovery']
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
            PATH='/Applications/Xcode.app/Contents/Developer/usr/bin:' + os.environ.get('PATH', '/usr/bin:/bin'))
 
@@ -166,6 +173,21 @@ def copy_file(config, work, source, destination, direction='from', optional=Fals
     require(result.returncode == 0, 'device_copy_failed')
     return True
 
+def protected_directory_hashes(target):
+    require(target.is_dir() and not target.is_symlink(), 'protected_snapshot_not_directory')
+    result = {}
+    target.chmod(0o700)
+    for item in sorted(target.rglob('*')):
+        require(not item.is_symlink(), 'protected_snapshot_symlink')
+        key = str(item.relative_to(target))
+        if item.is_file():
+            item.chmod(0o600)
+            result[key] = sha(item.read_bytes())
+        else:
+            require(item.is_dir(), 'protected_snapshot_non_regular')
+            result[key + '/'] = None
+    return result
+
 def snapshots(config, work, label):
     result = {}
     installed = work / (label + '-installed-user-app.json')
@@ -175,8 +197,10 @@ def snapshots(config, work, label):
     for relative in ORIGINALS:
         target = work / label / relative
         target.parent.mkdir(parents=True, exist_ok=True)
+        if relative == 'CanvasConflictRecovery':
+            require(not target.exists() and not target.is_symlink(), 'protected_snapshot_destination_exists')
         found = copy_file(config, work, 'Library/Application Support/' + relative, target, optional=True, bundle=USER_BUNDLE)
-        result[relative] = sha(target.read_bytes()) if found else None
+        result[relative] = (protected_directory_hashes(target) if relative == 'CanvasConflictRecovery' else sha(target.read_bytes())) if found else None
     for relative in ['Documents', 'Library/Preferences']:
         target = work / label / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -184,18 +208,7 @@ def snapshots(config, work, label):
         if not found:
             result[relative] = None
             continue
-        require(target.is_dir() and not target.is_symlink(), 'protected_snapshot_not_directory')
-        result[relative] = {}
-        target.chmod(0o700)
-        for item in sorted(target.rglob('*')):
-            require(not item.is_symlink(), 'protected_snapshot_symlink')
-            key = str(item.relative_to(target))
-            if item.is_file():
-                item.chmod(0o600)
-                result[relative][key] = sha(item.read_bytes())
-            else:
-                require(item.is_dir(), 'protected_snapshot_non_regular')
-                result[relative][key + '/'] = None
+        result[relative] = protected_directory_hashes(target)
     write(work / (label + '.json'), result)
     return result
 
@@ -245,6 +258,29 @@ def runtime_readback(config, work, test_id, bundle=None, optional=False):
     data = read(destination)
     require(data.get('schema') == 'ccr.ipad-test-runtime/v1' and isinstance(data.get('id'),str) and data['id'].lower() == test_id.lower(), 'runtime_context_mismatch')
     return data, destination
+
+def artifact_code_images(files, executable):
+    require(isinstance(executable,str) and re.fullmatch('[A-Za-z0-9_.-]+',executable) and executable in files,
+            'prepared_code_image_executable_missing')
+    names = [executable] + ([executable + '.debug.dylib'] if executable + '.debug.dylib' in files else [])
+    return {name:files[name] for name in names}
+
+def validate_runtime_code_images(runtime, expected, installation_url):
+    require(runtime.get('codeImages') == expected, 'runtime_code_images_missing_or_mismatched')
+    uuids = runtime.get('codeImageUUIDs')
+    require(isinstance(uuids,dict) and set(uuids) == set(expected) and
+            all(isinstance(value,str) and re.fullmatch('[0-9a-f]{32}',value) for value in uuids.values()),
+            'runtime_code_images_uuid_binding_required')
+    paths = runtime.get('loadedCodeImagePaths')
+    require(isinstance(paths,dict) and set(paths) == set(expected), 'runtime_code_images_loaded_paths_missing')
+    root = urllib.parse.unquote(urllib.parse.urlsplit(installation_url).path).rstrip('/')
+    def normalized(path):
+        require(isinstance(path,str) and path.startswith('/') and not any(p in ['.','..'] for p in path.split('/')),
+                'runtime_code_images_loaded_path_invalid')
+        return path.removeprefix('/private') if path.startswith('/private/var/') else path
+    require(all(normalized(paths[name]) == normalized(root + '/' + name) for name in expected),
+            'runtime_code_images_loaded_path_mismatch')
+
 
 def version_tuple(value):
     require(isinstance(value, str) and re.fullmatch(r'\d+(?:\.\d+){0,2}', value), 'normal_build_version_invalid')
@@ -325,6 +361,10 @@ def known_installed_lineage(config, work):
     return verify_known_lineage(config, work, reference, USER_BUNDLE)
 
 def verify_known_lineage(config, work, reference, bundle):
+    kind = reference.get('installEvidenceKind', 'devicectl')
+    if kind == 'xcode-xcresult':
+        return verify_xcode_runner_lineage(config, work, reference, bundle)
+    require(kind == 'devicectl', 'known_installed_evidence_kind_unknown')
     artifact, (record, install, metadata) = lineage_inputs(reference)
     info = plistlib.loads((artifact / 'Info.plist').read_bytes())
     keys = ['CFBundleIdentifier','CFBundleVersion'] + (['CCRSourceCommit','CCRSourceTree','CCRSourceIdentityVerified'] if bundle == USER_BUNDLE else [])
@@ -358,6 +398,155 @@ def verify_known_lineage(config, work, reference, bundle):
             'deviceIdentifier':metadata['result'].get('deviceIdentifier'), 'metadataSHA256':digest_value(row),
             'securityEntitlements':{key:value for key,value in entitlements.items() if key != 'get-task-allow'},
             'ownerBootstrapSHA256':record.get('bootstrapSHA256')}
+
+def log_nodes(value):
+    if isinstance(value,dict):
+        yield value
+        for child in value.values():
+            yield from log_nodes(child)
+    elif isinstance(value,list):
+        for child in value:
+            yield from log_nodes(child)
+
+def xcode_install_identity(action, session, artifact, bundle):
+    require(action.get('result') == 'succeeded', 'xcode_action_failed')
+    groups = [n for n in log_nodes(action) if any(c.get('title') == 'Installing built products'
+              for c in n.get('subsections',[]))]
+    require(len(groups) == 1, 'xcode_install_group_ambiguous')
+    installs = [c for c in groups[0]['subsections'] if c.get('title') == 'Installing built products']
+    require(len(installs) == 1 and installs[0].get('result') == 'succeeded' and
+            installs[0].get('commandInvocationDetails',{}).get('exitCode') == 0 and
+            any(m.get('title') == 'Successfully installed' for m in installs[0].get('messages',[])),
+            'xcode_install_not_succeeded')
+    launches = [c for c in groups[0]['subsections'] if c.get('title') == 'Launching CanvasBridgeUITests']
+    require(len(launches) == 1 and launches[0].get('result') == 'succeeded', 'xcode_runner_launch_missing')
+    titles = [n['title'] for n in log_nodes(launches[0]) if isinstance(n.get('title'),str)]
+    require(titles.count('Launching ' + bundle) == 1, 'xcode_runner_launch_identity_mismatch')
+    records = [t for t in titles if t.startswith('AppInstallationResult(')]
+    require(len(records) == 1, 'xcode_install_record_ambiguous')
+    match = re.fullmatch(r'AppInstallationResult\(applicationBundleId: "([^"]+)", installationURL: (file://[^,]+), '
+        r'databaseUUID: ([A-Fa-f0-9-]{36}), databaseSequenceNumber: (\d+), _persistentIdentifier: \d+ bytes\)',records[0])
+    require(match is not None and match[1] == bundle, 'xcode_install_identity_mismatch')
+    url = match[2]
+    endpoint = urllib.parse.urlsplit(url)
+    require(endpoint.scheme == 'file' and not endpoint.netloc and not endpoint.query and not endpoint.fragment and
+            re.fullmatch(r'/private/var/containers/Bundle/Application/[A-Fa-f0-9-]{36}/CanvasBridgeUITests-Runner.app/',endpoint.path) and
+            titles.count('RemotePath: ' + endpoint.path.rstrip('/')) == 1, 'xcode_remote_path_mismatch')
+    runnables = [n['testDetails'] for n in log_nodes(action) if isinstance(n.get('testDetails'),dict) and 'runnablePath' in n['testDetails']]
+    require(len(runnables) == 1 and Path(runnables[0].get('runnablePath','')).is_dir() and
+            Path(runnables[0]['runnablePath']).samefile(artifact), 'xcode_local_artifact_mismatch')
+    # 한 실행의 host session -> install path -> runner load -> active configuration을 결속한다.
+    event_pattern = re.compile(r'(?m)^\d{2}:\d{2}:\d{2}\.\d{3} (xcodebuild|CanvasBridgeUITests-Runner)\[(\d+):\d+\] (.*)$')
+    matches = list(event_pattern.finditer(session))
+    events = [{'process':m[1],'pid':m[2],'message':m[3],
+        'body':session[m.end():matches[i+1].start() if i+1 < len(matches) else len(session)]}
+        for i,m in enumerate(matches)]
+    begins = [(i,e,re.match(r'Beginning test session CanvasBridgeUITests-([A-Fa-f0-9-]{36}) at ',e['message']))
+              for i,e in enumerate(events) if e['process'] == 'xcodebuild' and e['message'].startswith('Beginning test session ')]
+    active = [(i,e) for i,e in enumerate(events) if e['process'] == 'CanvasBridgeUITests-Runner' and
+              e['message'].startswith('Running tests with active test configuration: <XCTestConfiguration: ')]
+    remote = [(i,e,re.search(r"RemotePath '([^']+)' for bundleIdentifier: " + re.escape(bundle) + r'$',e['message']))
+              for i,e in enumerate(events) if e['process'] == 'xcodebuild' and "RemotePath '" in e['message'] and
+              e['message'].endswith('for bundleIdentifier: ' + bundle)]
+    loads = [(i,e) for i,e in enumerate(events) if e['process'] == 'CanvasBridgeUITests-Runner' and
+             e['message'].startswith('Loading test bundle at: ')]
+    reason = 'xcode_session_context_mismatch'
+    require(len(begins) == len(active) == len(remote) == len(loads) == 1 and begins[0][2] and remote[0][2],reason)
+    start,host,begin = begins[0]; config_index,runner = active[0]; remote_index,installer,path = remote[0]; load_index,loader = loads[0]
+    require(start < remote_index < load_index < config_index and host['pid'] == installer['pid'] and
+            runner['pid'] == loader['pid'],reason)
+    body = runner['body']
+    session_ids = re.findall(r'(?m)^[ \t]*sessionIdentifier:([A-Fa-f0-9-]{36})[ \t]*$',body)
+    require(len(session_ids) == 1 and session_ids[0].lower() == begin[1].lower(),reason)
+    test_url = url + 'PlugIns/CanvasBridgeUITests.xctest/'
+    config_urls = re.findall(r'(?m)^[ \t]*testBundleURL:([^\r\n]+)$',body)
+    all_urls = re.findall(r'(?m)^[ \t]*testBundleURL:([^\r\n]+)$',session)
+    dependencies = re.findall(r'(?ms)^[ \t]*testApplicationDependencies:[ \t]*\n\{(.*?)^\}',body)
+    mapping_pattern = r'(?m)^[ \t]*"' + re.escape(bundle) + r'"[ \t]*=[ \t]*"(/[^"\r\n]+)";[ \t]*$'
+    mappings = re.findall(mapping_pattern,dependencies[0]) if len(dependencies) == 1 else []
+    all_mappings = re.findall(mapping_pattern,session)
+    require(path[1] == endpoint.path.rstrip('/') and loader['message'] == 'Loading test bundle at: ' + test_url and
+            config_urls == all_urls == [test_url] and len(mappings) == len(all_mappings) == 1 and
+            mappings == all_mappings and Path(mappings[0]).is_dir() and Path(mappings[0]).samefile(artifact),
+            'xcode_session_bundle_correlation_missing')
+    return url
+
+def verify_xcode_runner_lineage(config, work, reference, bundle):
+    require(reference.get('schema') == 'ccr.known-installed-artifact/v1' and bundle == RUNNER_BUNDLE,
+            'xcode_runner_lineage_only')
+    artifact = Path(reference['artifact']).resolve()
+    require(digest_value(artifact_files(artifact)) == reference['artifactManifestSHA256'], 'known_installed_artifact_changed')
+    evidence = reference['xcode']
+    result = Path(evidence['xcresultPath']).resolve()
+    require(digest_value(artifact_files(result)) == evidence['xcresultManifestSHA256'], 'xcode_result_source_changed')
+    invocation = Path(evidence['invocationLogPath']).read_bytes()
+    require(sha(invocation) == evidence['invocationLogSHA256'], 'xcode_invocation_source_changed')
+    lines = invocation.decode().splitlines()
+    calls = [shlex.split(line.strip()) for line in lines if line.strip().startswith('/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild ')]
+    require(len(calls) == 1 and digest_value(calls[0]) == evidence['invocationSHA256'], 'xcode_invocation_hash_mismatch')
+    args = calls[0]
+    require(args[1:2] == ['test-without-building'], 'xcode_invocation_action_mismatch')
+    def option(name):
+        require(args.count(name) == 1 and args.index(name)+1 < len(args), 'xcode_invocation_option_invalid')
+        return args[args.index(name)+1]
+    method = evidence['method']
+    require(isinstance(method,str) and re.fullmatch('test[A-Za-z0-9_]+',method) and
+            [a for a in args if a.startswith('-only-testing:')] == ['-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/' + method] and
+            option('-destination') == 'id=' + config['deviceUDID'] and
+            Path(option('-resultBundlePath')).samefile(result), 'xcode_invocation_target_mismatch')
+    run = Path(option('-xctestrun'))
+    require(run.is_file(), 'xcode_invocation_run_missing')
+    action = json.loads(command(['xcrun','xcresulttool','get','log','--path',result,'--type','action','--compact']))
+    require(digest_value(action) == evidence['actionSHA256'], 'xcode_action_source_changed')
+    with tempfile.TemporaryDirectory(prefix='runner-diagnostics-',dir=work) as temporary:
+        command(['xcrun','xcresulttool','export','diagnostics','--path',result,'--output-path',temporary])
+        sessions = list(Path(temporary).rglob('Session-CanvasBridgeUITests-*.log'))
+        require(len(sessions) == 1 and sha(sessions[0].read_bytes()) == evidence['sessionSHA256'], 'xcode_session_source_changed')
+        url = xcode_install_identity(action,sessions[0].read_text(),artifact,bundle)
+    summary = json.loads(command(['xcrun','xcresulttool','get','test-results','summary','--path',result,'--compact']))
+    require(summary.get('result') == 'Passed' and
+            all(type(summary.get(k)) is int for k in ['totalTestCount','passedTests','failedTests','skippedTests','expectedFailures']) and
+            summary.get('totalTestCount') == summary.get('passedTests') == 1 and
+            all(summary.get(k) == 0 for k in ['failedTests','skippedTests','expectedFailures']), 'xcode_single_pass_required')
+    details = actual_xcresult(result,method)
+    require(details['testRuns'][0].get('nodeIdentifier') == config['deviceUDID'], 'xcode_result_device_mismatch')
+    metadata = pinned_json(reference,'metadataPath','metadataSHA256')
+    metadata_args = metadata.get('info',{}).get('arguments',[])
+    require(metadata.get('info',{}).get('outcome') == 'success' and
+            metadata.get('info',{}).get('commandType') == 'devicectl.device.info.apps' and
+            isinstance(metadata_args,list) and metadata_args.count('--device') == 1 and
+            metadata_args.index('--device')+1 < len(metadata_args) and
+            metadata_args[metadata_args.index('--device')+1] == config['deviceUDID'], 'xcode_metadata_device_mismatch')
+    rows = [r for r in metadata.get('result',{}).get('apps',[]) if r.get('bundleIdentifier') == bundle]
+    row = installed_app({'installedUserApp':{'apps':rows}},bundle)
+    info = plistlib.loads((artifact / 'Info.plist').read_bytes())
+    require(info.get('CFBundleIdentifier') == bundle and info.get('CFBundleVersion') == row['bundleVersion'] and
+            row.get('url') == url and isinstance(metadata['result'].get('deviceIdentifier'),str), 'xcode_metadata_mismatch')
+    entitlements = signed_entitlements(artifact,work,'xcode-known-runner',bundle)
+    binary = artifact / 'PlugIns/CanvasBridgeUITests.xctest/CanvasBridgeUITests'
+    require(sha(binary.read_bytes()) == evidence['compiledTestsSHA256'], 'xcode_compiled_tests_changed')
+    methods = runner_methods(binary)
+    require(len(methods) == 21 and set(RUNNER_CORE_METHODS) <= methods and method in methods and
+            'testReviewSelectedGrade' not in methods, 'xcode_installed_runner_capability_mismatch')
+    require(digest_value(artifact_files(result)) == evidence['xcresultManifestSHA256'] and
+            digest_value(artifact_files(artifact)) == reference['artifactManifestSHA256'] and
+            sha(Path(evidence['invocationLogPath']).read_bytes()) == evidence['invocationLogSHA256'], 'xcode_inputs_changed')
+    proof = {'artifactManifestSHA256':reference['artifactManifestSHA256'], **evidence,
+             'sourceBindingSHA256':digest_value(reference), 'metadataSourceSHA256':reference['metadataSHA256'],
+             'metadataRowSHA256':digest_value(row),'deviceIdentifier':metadata['result']['deviceIdentifier'],
+             'installationURL':url,
+             'methods':sorted(methods),'remoteSignatureReadback':False,
+             'wrapperBuild':{k:info.get(k) for k in ['DTXcode','DTXcodeBuild','DTSDKName','DTSDKBuild']},
+             'testBundleBuild':{k:plistlib.loads((binary.parent / 'Info.plist').read_bytes()).get(k) for k in ['DTXcode','DTXcodeBuild','DTSDKName','DTSDKBuild']},
+             'tools':{'xcodebuild':command(['xcodebuild','-version']).strip(),
+                      'xcresulttool':command(['xcrun','xcresulttool','version']).strip()}}
+    write(work / 'xcode-runner-lineage.json',proof)
+    return {'evidenceKind':'known-installed-artifact-lineage-from-xcode','reference':reference,'artifact':artifact,
+            'remoteSignatureReadback':False,'build':row['bundleVersion'],
+            'deviceIdentifier':metadata['result']['deviceIdentifier'],'metadataSHA256':digest_value(row),
+            'securityEntitlements':{k:v for k,v in entitlements.items() if k != 'get-task-allow'},
+            'provenance':proof}
+
 
 def verify_prepared_artifact(config, work, source):
     require(not Path(config['preparedArtifact']).is_symlink(), 'prepared_artifact_symlink')
@@ -487,6 +676,9 @@ def deploy_prepared(config, work, source):
                         '--', '--ccr-test-runtime', test_id], work / 'prepared-launch.log')
         time.sleep(2)
         runtime, evidence = runtime_readback(config, work, test_id, bundle=USER_BUNDLE)
+        executable = plistlib.loads((staged / 'Info.plist').read_bytes())['CFBundleExecutable']
+        code_images = artifact_code_images(files,executable)
+        validate_runtime_code_images(runtime,code_images,installed_normal(after)['url'])
         require(all(runtime.get(key) == source[key] for key in ['commit', 'tree']) and
                 runtime.get('bundleID') == USER_BUNDLE and str(runtime.get('build')) == receipt['build'] and
                 runtime.get('executableSHA256') == files[plistlib.loads((staged / 'Info.plist').read_bytes())['CFBundleExecutable']] and
@@ -508,7 +700,8 @@ def deploy_prepared(config, work, source):
         unchanged_inputs()
         result = {'status': 'applied', **source, 'bundleIdentifier': USER_BUNDLE, 'configuration': 'Debug',
                   'sourceReadbackVerified': True, 'testId': test_id,
-                  'runtimeId': USER_BUNDLE + ':' + test_id + ':' + runtime['executableSHA256'],
+                  'runtimeId': USER_BUNDLE + ':' + test_id + ':' + digest_value(code_images),
+                  'codeImages':code_images,'codeImagesSHA256':digest_value(code_images),
                   'executableSHA256': runtime['executableSHA256'], 'sourceReadback': str(evidence),
                   'app': str(staged), 'artifactManifestSHA256': receipt['manifestSHA256'],
                   'normalReturnRequired': True, 'functionalAcceptance': False}
@@ -742,6 +935,10 @@ def prepared_runtime(config, work, source=None, allow_stopped=False):
     require(deployed['executableSHA256'] == files[executable] and
             str(runtime.get('storageRoot', '')).endswith('/Library/Application Support/CCRIntegrationTests/' + deployed['testId'] + '/state'),
             'prepared_runtime_storage_or_binary_mismatch')
+    code_images = artifact_code_images(files,executable)
+    require(deployed.get('codeImages') == code_images and deployed.get('codeImagesSHA256') == digest_value(code_images),
+            'prepared_code_images_unsupported_or_changed')
+    validate_runtime_code_images(runtime,code_images,row['url'])
     expected_path = urllib.parse.urljoin(row['url'].rstrip('/') + '/', executable)
     matching = [p for p in processes if p.get('processIdentifier') == runtime['processID']]
     require((len(matching) == 1 and matching[0].get('executable') == expected_path) or
@@ -757,15 +954,16 @@ def verified_runner(config, work, method):
     require(receipt.get('schema') == 'ccr.known-installed-runner/v1', 'known_installed_runner_lineage_required')
     bundle = 'com.ambrion.rea.appaudit.UITests.xctrunner'
     lineage = verify_known_lineage(config, work, receipt['lineage'], bundle)
+    binary = lineage['artifact'] / 'PlugIns/CanvasBridgeUITests.xctest/CanvasBridgeUITests'
+    requested = {method} if isinstance(method,str) else set(method)
+    missing = requested - runner_methods(binary)
+    require(requested and not missing, 'existing_runner_method_unavailable:' + ','.join(sorted(missing)))
     path = work / 'existing-runner-current-apps.json'
     device(config, ['info','apps','--bundle-id',bundle,'--json-output',str(path)], work / 'existing-runner-current-apps.log')
     current = read(path).get('result', {})
     row = installed_app({'installedUserApp':current}, bundle)
     require(digest_value(row) == lineage['metadataSHA256'] and current.get('deviceIdentifier') == lineage['deviceIdentifier'],
             'existing_runner_metadata_changed')
-    binary = lineage['artifact'] / 'PlugIns/CanvasBridgeUITests.xctest/CanvasBridgeUITests'
-    requested = {method} if isinstance(method,str) else set(method)
-    require(requested and requested <= runner_methods(binary), 'existing_runner_method_unavailable')
     return {'schema':'ccr.existing-xctest-runner/v1','installed':True,'team':NORMAL_TEAM,
             'bundleIdentifier':bundle,'testBundleRelativePath':'__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest'}
 
@@ -1453,11 +1651,7 @@ def accept(config, work, source):
     test_id = deployed['testId']; before = read(work / 'prepared-before.json')
     require(digest_value(before) == deployed.get('protectionBaselineSHA256'), 'prepared_baseline_changed')
     # 모든 요구 method와 원본 xctestrun을 fixture 쓰기 전에 검증한다.
-    methods = ['testEditAndSave','testReopenRemoteRevision','testRotateAndSave','testReopenRotatedScene',
-        'testLiveRotatedRemoteRevision','testCommentSave','testCommentReopen','testStaleCommentDraftRequiresExplicitDiscard',
-        'testRulerToggleAcrossDrawingAndSelection','testReviewEditDraftPreserved','testReviewSaveDraft','testReviewReopen',
-        'testReviewLiveRemoteRevision','testReviewGood','testReviewStaleSessionRejected','testReviewMissingSourceRejected']
-    runner = verified_runner(config, work, methods)
+    runner = verified_runner(config, work, RUNNER_CORE_METHODS)
     run_bytes = Path(config['existingXctestrun']).read_bytes()
     require(sha(run_bytes) == config['existingXctestrunSHA256'], 'existing_xctestrun_changed')
     destination_artifacts_run(plistlib.loads(run_bytes),runner,test_id)
@@ -1501,6 +1695,8 @@ def accept(config, work, source):
         review = accept_review(config, work, server, vault, test_id)
         require(same_user_data(snapshots(config, work, 'user-after-accept'), before), 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
+        validate_runtime_code_images(observed,deployed['codeImages'],
+            installed_normal(read(work / 'prepared-after-isolated.json'))['url'])
         require(all(observed.get(k) == source[k] for k in source) and observed.get('executableSHA256') == deployed['executableSHA256'], 'accepted_runtime_mismatch')
         proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed,
                  'rotation':rotation, 'comments':comments, 'review':review, 'originalPreserved': True}

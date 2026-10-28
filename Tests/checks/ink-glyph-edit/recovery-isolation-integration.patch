@@ -1,0 +1,86 @@
+diff --git a/iOSClient/CanvasBridge/CanvasModel.swift b/iOSClient/CanvasBridge/CanvasModel.swift
+index 6986865..a2c8f93 100644
+--- a/iOSClient/CanvasBridge/CanvasModel.swift
++++ b/iOSClient/CanvasBridge/CanvasModel.swift
+@@ -230,6 +230,13 @@ enum CanvasRuntime {
+                 try checkPath(url,beneath:context.support)
+                 return
+             }
++            let recovery = context.root.appendingPathComponent("state",isDirectory:true)
++                .appendingPathComponent("CanvasConflictRecovery",isDirectory:true)
++            if validConflictRecoveryName(url.lastPathComponent), !url.hasDirectoryPath,
++               recovery.appendingPathComponent(url.lastPathComponent) == url {
++                try checkPath(url,beneath:context.support)
++                return
++            }
+             guard let file = StateFile.allCases.first(where: {
+                 context.root.appendingPathComponent("state").appendingPathComponent($0.rawValue).path == url.path
+             }), try isolatedURL(file,in:context) == url else { throw TestError.invalid }
+@@ -293,6 +300,26 @@ enum CanvasRuntime {
+     }
+     #endif
+ 
++    private static func validConflictRecoveryName(_ name: String) -> Bool {
++        if name == "CanvasConflictChoice.json" { return true }
++        guard name.hasSuffix(".json") else { return false }
++        for prefix in ["CanvasConflictLocal-", "CanvasConflictAttempt-"] where name.hasPrefix(prefix) {
++            let identifier = String(name.dropFirst(prefix.count).dropLast(5))
++            return UUID(uuidString:identifier).map { identifier == $0.uuidString.lowercased() } ?? false
++        }
++        return false
++    }
++
++    static func conflictRecoveryURL(_ filename: String) throws -> URL {
++        guard validConflictRecoveryName(filename) else { throw CocoaError(.fileWriteInvalidFileName) }
++        let url = try stateURL(.checkpoint).deletingLastPathComponent()
++            .appendingPathComponent("CanvasConflictRecovery",isDirectory:true).appendingPathComponent(filename)
++        #if DEBUG
++        try validateStateURL(url)
++        #endif
++        return url
++    }
++
+     static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil,
+                          noteRecoveryOverride: URL? = nil) throws -> URL {
+         #if DEBUG
+diff --git a/iOSClient/CanvasBridge/CanvasWorkspace.swift b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+index 415494d..5898995 100644
+--- a/iOSClient/CanvasBridge/CanvasWorkspace.swift
++++ b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+@@ -938,7 +938,7 @@ struct CanvasWorkspace: View {
+         var disposition = CanvasConflictChoiceState.pending
+     }
+     private func conflictChoiceURL() throws -> URL {
+-        try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent("CanvasConflictChoice.json")
++        try CanvasRuntime.conflictRecoveryURL("CanvasConflictChoice.json")
+     }
+     private func readCanvasConflictNote() async {
+         guard canvasVaultBlocked, !canvasSyncBusy, !store.inkBusy, !store.vaultInputBusy else { return }
+@@ -993,7 +993,7 @@ struct CanvasWorkspace: View {
+                 choice = pending
+             } else {
+                 let filename = "CanvasConflictLocal-\(UUID().uuidString.lowercased()).json"
+-                let backup = try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent(filename)
++                let backup = try CanvasRuntime.conflictRecoveryURL(filename)
+                 let bytes = try sceneBytes()
+                 try CanvasLocalFile.write(bytes,to:backup)
+                 guard CanvasPacket.sha(try CanvasLocalFile.read(backup)) == localSHA else { throw VaultBlockRecoveryError.changed }
+@@ -1005,7 +1005,7 @@ struct CanvasWorkspace: View {
+             }
+             guard choice.backupFilename.hasPrefix("CanvasConflictLocal-"), choice.backupFilename.hasSuffix(".json"),
+                   UUID(uuidString:String(choice.backupFilename.dropFirst("CanvasConflictLocal-".count).dropLast(5))) != nil else { throw VaultBlockRecoveryError.corrupt }
+-            let backup = try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent(choice.backupFilename)
++            let backup = try CanvasRuntime.conflictRecoveryURL(choice.backupFilename)
+             guard CanvasPacket.sha(try CanvasLocalFile.read(backup)) == choice.localSHA else { throw VaultBlockRecoveryError.corrupt }
+             let (resolved,_) = try await relay.resolveVaultCanvasConflict(snapshot,decision:decision)
+             guard canvasVaultBlocked, store.scene.id == id, relayAddress == address, relayToken == token,
+@@ -1044,8 +1044,7 @@ struct CanvasWorkspace: View {
+             guard store.scene.id == id, relayAddress == address, relayToken == token,
+                   CanvasPacket.sha(try sceneBytes()) == local else { throw VaultBlockRecoveryError.changed }
+             if let bytes = try? CanvasLocalFile.read(conflictChoiceURL()) {
+-                let archive = try Self.canvasVaultCheckpointURL().deletingLastPathComponent()
+-                    .appendingPathComponent("CanvasConflictAttempt-\(UUID().uuidString.lowercased()).json")
++                let archive = try CanvasRuntime.conflictRecoveryURL("CanvasConflictAttempt-\(UUID().uuidString.lowercased()).json")
+                 try CanvasLocalFile.write(bytes,to:archive)
+                 var prior = try JSONDecoder().decode(CanvasConflictChoice.self,from:bytes); prior.disposition = .superseded
+                 try CanvasLocalFile.write(JSONEncoder().encode(prior),to:conflictChoiceURL())

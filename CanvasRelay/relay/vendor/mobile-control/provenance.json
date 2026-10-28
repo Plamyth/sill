@@ -1,0 +1,32 @@
+{
+  "commit": "9a91483f5e054ad8f30e9a1d43d8e7fd91740c6a",
+  "tree": "4f7581661680f466a363ad7199ae1db54874163e",
+  "files": [
+    {
+      "source": "server/mobile-control.js",
+      "file": "mobile-control.js",
+      "sha256": "376a68815e29f8b936ae0b09f5f4c7833ad7f84c78760533bf0c66a2e38b13bc"
+    },
+    {
+      "source": "tests/fixtures/mobile-control-events-v1.json",
+      "file": "mobile-control-events-v1.json",
+      "sha256": "9fb6288d6ac3d68f4d743d8703b091f263664d239248b53e6ba82d8cb554b319"
+    },
+    {
+      "source": "server/control-privacy-policy.js",
+      "file": "control-privacy-policy.js",
+      "sha256": "6c7ab01210c7e1dbaddf0b85e9b23555626019b750e03b0436cb4ebef4f22700"
+    }
+  ],
+  "commandsExposed": false,
+  "sourceRepository": "/Users/ambrion/.codex/worktrees/s23-fork-lineage-privacy-20261023",
+  "entriesUsed": [
+    "root",
+    "projectControl",
+    "controlHiddenIds",
+    "controlIdentity",
+    "controlPrivacy",
+    "codexSourceState",
+    "watchPrivacyPolicy"
+  ]
+}

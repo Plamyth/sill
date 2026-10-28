@@ -25,6 +25,7 @@ sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            root / 'iOSClient/CanvasBridge/CanvasInkTextEditing.swift',
            root / 'iOSClient/CanvasBridge/CanvasInkShapeProposal.swift',
            root / 'iOSClient/CanvasBridge/CanvasInkMathProposal.swift',
+           root / 'iOSClient/CanvasBridge/CanvasInkSpacingProposal.swift',
            root / 'iOSClient/CanvasBridge/CanvasRelay.swift',
            root / 'iOSClient/CanvasBridge/ControlRoomProjection.swift',
            root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift',
@@ -137,7 +138,11 @@ if code == 0:
     if isolated:
         support = home / 'Library/Application Support'
         model = (root / 'iOSClient/CanvasBridge/CanvasModel.swift').read_text()
-        for name in re.findall(r'case \w+ = "([^"]+)"', model.split('enum Defaults')[0]):
+        protected_names = re.findall(r'case \w+ = "([^"]+)"', model.split('enum Defaults')[0])
+        protected_names += ['CanvasConflictRecovery/CanvasConflictChoice.json',
+            'CanvasConflictRecovery/CanvasConflictLocal-11111111-1111-4111-8111-111111111111.json',
+            'CanvasConflictRecovery/CanvasConflictAttempt-22222222-2222-4222-8222-222222222222.json']
+        for name in protected_names:
             file = support / name
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_bytes(b'normal user state sentinel')

@@ -38,6 +38,7 @@ enum SceneRenderer { static func png(scene:CanvasScene)async->Data? { Data([1]) 
     var canvasSyncBusy=false,canvasVaultEnabled=true,canvasVaultBlocked=false
     var canvasSaveConflict:VaultSaveConflict?
     var vaultSceneID:UUID; var vaultSyncAddress="fixture"; var relayAddress="fixture"; var relayToken="fixture-only"
+    var syncedLocalSceneSha:String?
     var syncedSceneSha:String?; var canvasNoteSha:String?; var pendingSceneSha:String?
     init(_ s:Scenario,relay:FixtureRelay?=nil,restore:Bool=false)throws {
         scenario=s;store=FixtureStore(try JSONDecoder().decode(CanvasScene.self,from:Data(s.scenes["2"]!.utf8)))

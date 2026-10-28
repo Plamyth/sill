@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import Darwin
+import MachO
 import CoreGraphics
 #if canImport(PencilKit, _version: 616)
 import PencilKit
@@ -189,15 +190,105 @@ enum CanvasRuntime {
         return url
     }
 
-    static func writeRuntimeReceipt(bundle: Bundle = .main) throws {
+    static func writeRuntimeReceipt(bundle: Bundle = .main, launchState: LaunchState = launch) throws {
         do {
-            guard case .isolated(let context) = launch,
+            guard case .isolated(let context) = launchState,
                   bundle.object(forInfoDictionaryKey:"CCRSourceCommit") as? String == context.commit,
                   bundle.object(forInfoDictionaryKey:"CCRSourceTree") as? String == context.tree,
                   let bundleID = bundle.bundleIdentifier, !bundleID.isEmpty,
                   let build = bundle.object(forInfoDictionaryKey:"CFBundleVersion") as? String, !build.isEmpty,
                   let executable = bundle.executableURL else { throw TestError.invalid }
-            let executableBytes = try Data(contentsOf:executable)
+            let manager = FileManager.default
+            func word(_ data: Data,_ offset: Int,_ big: Bool = false) throws -> UInt32 {
+                guard offset >= 0, offset <= data.count - 4 else { throw TestError.invalid }
+                let bytes = Array(data[offset..<offset+4])
+                return (big ? bytes : Array(bytes.reversed())).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            }
+            func thinIdentity(_ data: Data) throws -> (UInt32,UInt32,Data) {
+                guard data.count >= 32 else { throw TestError.invalid }
+                let magic = try word(data,0)
+                guard magic == MH_MAGIC_64 || magic == MH_CIGAM_64 else { throw TestError.invalid }
+                let big = magic == MH_CIGAM_64
+                let count = Int(try word(data,16,big)), size = Int(try word(data,20,big))
+                guard size <= 1_048_576, size <= data.count - 32, count <= size / 8 else { throw TestError.invalid }
+                var cursor = 32, uuid: Data?
+                for _ in 0..<count {
+                    let command = try word(data,cursor,big), length = Int(try word(data,cursor+4,big))
+                    guard length >= 8, length <= 32 + size - cursor else { throw TestError.invalid }
+                    if command == LC_UUID {
+                        guard uuid == nil, length == 24 else { throw TestError.invalid }
+                        uuid = data.subdata(in:cursor+8..<cursor+24)
+                    }
+                    cursor += length
+                }
+                guard cursor == 32 + size, let uuid else { throw TestError.invalid }
+                return (try word(data,4,big),try word(data,8,big),uuid)
+            }
+            func diskUUID(_ data: Data, cpu: UInt32, subtype: UInt32) throws -> Data {
+                let magic = try word(data,0,true)
+                if [FAT_MAGIC,FAT_CIGAM,FAT_MAGIC_64,FAT_CIGAM_64].contains(magic) {
+                    let big = magic == FAT_MAGIC || magic == FAT_MAGIC_64
+                    let wide = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64
+                    let count = Int(try word(data,4,big)), stride = wide ? 32 : 20
+                    guard data.count >= 8, count <= (data.count - 8) / stride else { throw TestError.invalid }
+                    var match: Data?
+                    for index in 0..<count {
+                        let position = 8 + index * stride
+                        guard try word(data,position,big) == cpu, try word(data,position+4,big) == subtype else { continue }
+                        let offset: UInt64, length: UInt64
+                        if wide {
+                            offset = (UInt64(try word(data,position+8,big)) << 32) | UInt64(try word(data,position+12,big))
+                            length = (UInt64(try word(data,position+16,big)) << 32) | UInt64(try word(data,position+20,big))
+                        } else {
+                            offset = UInt64(try word(data,position+8,big)); length = UInt64(try word(data,position+12,big))
+                        }
+                        guard match == nil, offset <= UInt64(data.count), length <= UInt64(data.count) - offset else { throw TestError.invalid }
+                        let identity = try thinIdentity(data.subdata(in:Int(offset)..<Int(offset+length)))
+                        guard identity.0 == cpu, identity.1 == subtype else { throw TestError.invalid }
+                        match = identity.2
+                    }
+                    guard let match else { throw TestError.invalid }; return match
+                }
+                let identity = try thinIdentity(data)
+                guard identity.0 == cpu, identity.1 == subtype else { throw TestError.invalid }
+                return identity.2
+            }
+            let loadedImages = (0..<_dyld_image_count()).compactMap { index -> (URL,UInt32)? in
+                guard let name = _dyld_get_image_name(index) else { return nil }
+                return (URL(fileURLWithPath:String(cString:name)).resolvingSymlinksInPath().standardizedFileURL,index)
+            }
+            var images = [executable]
+            let debugImage = executable.deletingLastPathComponent()
+                .appendingPathComponent(executable.lastPathComponent + ".debug.dylib")
+            do {
+                _ = try manager.attributesOfItem(atPath:debugImage.path)
+                images.append(debugImage)
+            } catch CocoaError.fileReadNoSuchFile {
+                guard !loadedImages.contains(where:{ $0.0.lastPathComponent == debugImage.lastPathComponent }) else { throw TestError.invalid }
+            }
+            var codeImages: [String:String] = [:]
+            var loadedCodeImagePaths: [String:String] = [:]
+            var codeImageUUIDs: [String:String] = [:]
+            for image in images {
+                let attributes = try manager.attributesOfItem(atPath:image.path)
+                guard attributes[.type] as? FileAttributeType == .typeRegular,
+                      let device = attributes[.systemNumber] as? NSNumber,
+                      let inode = attributes[.systemFileNumber] as? NSNumber,
+                      let loaded = loadedImages.first(where: { image in
+                          guard let observed = try? manager.attributesOfItem(atPath:image.0.path) else { return false }
+                          return observed[.systemNumber] as? NSNumber == device &&
+                              observed[.systemFileNumber] as? NSNumber == inode
+                      }) else { throw TestError.invalid }
+                guard let header = _dyld_get_image_header(loaded.1), header.pointee.magic == MH_MAGIC_64,
+                      header.pointee.sizeofcmds <= 1_048_576 else { throw TestError.invalid }
+                let identity = try thinIdentity(Data(bytes:header,count:32 + Int(header.pointee.sizeofcmds)))
+                let bytes = try Data(contentsOf:image)
+                guard try diskUUID(bytes,cpu:identity.0,subtype:identity.1) == identity.2 else { throw TestError.invalid }
+                codeImages[image.lastPathComponent] = SHA256.hash(data:bytes).map { String(format:"%02x",$0) }.joined()
+                loadedCodeImagePaths[image.lastPathComponent] = loaded.0.path
+                codeImageUUIDs[image.lastPathComponent] = identity.2.map { String(format:"%02x",$0) }.joined()
+            }
+            guard let executableSHA256 = codeImages[executable.lastPathComponent] else { throw TestError.invalid }
             struct Receipt: Encodable {
                 let schema = "ccr.ipad-test-runtime/v1"
                 let id: String
@@ -208,12 +299,15 @@ enum CanvasRuntime {
                 let storageRoot: String
                 let relayAddress: String
                 let executableSHA256: String
+                let codeImages: [String:String]
+                let loadedCodeImagePaths: [String:String]
+                let codeImageUUIDs: [String:String]
                 let processID: Int32
             }
             let state = context.root.appendingPathComponent("state",isDirectory:true)
             let receipt = Receipt(id:context.id.uuidString.lowercased(),commit:context.commit,tree:context.tree,
                 bundleID:bundleID,build:build,storageRoot:state.path,relayAddress:context.relayAddress,
-                executableSHA256:SHA256.hash(data:executableBytes).map { String(format:"%02x",$0) }.joined(),
+                executableSHA256:executableSHA256,codeImages:codeImages,loadedCodeImagePaths:loadedCodeImagePaths,codeImageUUIDs:codeImageUUIDs,
                 processID:getpid())
             let url = state.appendingPathComponent("runtime.json")
             try checkPath(url,beneath:context.support)
@@ -228,6 +322,13 @@ enum CanvasRuntime {
         case .isolated(let context):
             let receipt = context.root.appendingPathComponent("state",isDirectory:true).appendingPathComponent("runtime.json")
             if url == receipt {
+                try checkPath(url,beneath:context.support)
+                return
+            }
+            let recovery = context.root.appendingPathComponent("state",isDirectory:true)
+                .appendingPathComponent("CanvasConflictRecovery",isDirectory:true)
+            if validConflictRecoveryName(url.lastPathComponent), !url.hasDirectoryPath,
+               recovery.appendingPathComponent(url.lastPathComponent) == url {
                 try checkPath(url,beneath:context.support)
                 return
             }
@@ -293,6 +394,35 @@ enum CanvasRuntime {
         }
     }
     #endif
+
+    private static func validConflictRecoveryName(_ name: String) -> Bool {
+        if name == "CanvasConflictChoice.json" { return true }
+        guard name.hasSuffix(".json") else { return false }
+        for prefix in ["CanvasConflictLocal-", "CanvasConflictAttempt-"] where name.hasPrefix(prefix) {
+            let identifier = String(name.dropFirst(prefix.count).dropLast(5))
+            return UUID(uuidString:identifier).map { identifier == $0.uuidString.lowercased() } ?? false
+        }
+        return false
+    }
+
+    static func conflictRecoveryURL(_ filename: String) throws -> URL {
+        guard validConflictRecoveryName(filename) else { throw CocoaError(.fileWriteInvalidFileName) }
+        var root: URL?
+        #if DEBUG
+        switch launch {
+        case .isolated(let context): root = context.root.appendingPathComponent("state",isDirectory:true)
+        case .invalid: throw TestError.invalid
+        case .normal: break
+        }
+        #endif
+        root = root ?? FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first
+        guard let root else { throw CanvasSendError.outboxUnavailable }
+        let url = root.appendingPathComponent("CanvasConflictRecovery",isDirectory:true).appendingPathComponent(filename)
+        #if DEBUG
+        try validateStateURL(url)
+        #endif
+        return url
+    }
 
     static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil,
                          noteRecoveryOverride: URL? = nil, pdfExcerptRecoveryOverride: URL? = nil) throws -> URL {
@@ -1030,6 +1160,7 @@ struct CanvasVaultCheckpoint: Codable {
     let noteSha: String?
     let pendingSceneSha: String?
     var saveConflict: VaultSaveConflict? = nil
+    var localSceneSha: String? = nil
     var requiresExplicitReconciliation: Bool { saveConflict?.requiresExplicitReconciliation == true || (pendingSceneSha != nil && saveConflict != .acknowledgementLost) }
     func acceptingReadMatch(remoteSceneSha: String, remoteNoteSha: String, localSceneSha: String,
                             explicitlyConfirmed: Bool, remoteReconciliationRequired: Bool?) -> Self? {

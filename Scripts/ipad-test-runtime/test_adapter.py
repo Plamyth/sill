@@ -24,6 +24,7 @@ def existing_runner_fixture(work, run):
 class PDFRecoveryProtectionContract(unittest.TestCase):
     def test_pdf_journal_changes_are_in_normal_snapshot(self):
         self.assertIn('CanvasPDFExcerptCreate/recovery.json',adapter.ORIGINALS)
+        self.assertIn('CanvasConflictRecovery',adapter.ORIGINALS)
         self.assertIn('CanvasLegacyScene.json',adapter.ORIGINALS)
         self.assertIn('CanvasWorkspace/bookmark.json',adapter.ORIGINALS)
         with tempfile.TemporaryDirectory() as temporary:
@@ -90,8 +91,11 @@ class PreparedInstallContract(unittest.TestCase):
             'buildSettings':{'CONFIGURATION':'Debug','SWIFT_ACTIVE_COMPILATION_CONDITIONS':['DEBUG'],
                 'PRODUCT_BUNDLE_IDENTIFIER':adapter.USER_BUNDLE,'DEVELOPMENT_TEAM':adapter.NORMAL_TEAM,'CURRENT_PROJECT_VERSION':'71'}}
         data=root/'device-data';data.mkdir()
-        for relative in ['Library/Application Support/'+name for name in adapter.ORIGINALS]+['Documents/nested/drawing','Library/Preferences/normal.plist']:
+        for relative in ['Library/Application Support/'+name for name in adapter.ORIGINALS if name != 'CanvasConflictRecovery']+['Documents/nested/drawing','Library/Preferences/normal.plist']:
             path=data/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'unchanged normal user bytes')
+        recovery=data/'Library/Application Support/CanvasConflictRecovery';recovery.mkdir()
+        (recovery/'CanvasConflictChoice.json').write_bytes(b'unchanged unique conflict choice')
+        (recovery/('CanvasConflictLocal-'+str(uuid.uuid4())+'.json')).write_bytes(b'unique local recovery')
         state=types.SimpleNamespace(root=root,work=work,app=app,source=source,config=config,info=info,receipt=receipt,
             ent=ent,priorEnt=prior_ent,priorApp=prior_app,metadata=metadata,context=context,data=data,commands=[],installCount=0,launchCount=0,mode=None,infoCount=0)
         def seal():
@@ -145,6 +149,10 @@ class PreparedInstallContract(unittest.TestCase):
                     'build':'71','relayAddress':context['relayAddress'],'processID':123,
                     'storageRoot':'/private/normal-data/Library/Application Support/CCRIntegrationTests/'+context['id']+'/state',
                     'executableSHA256':adapter.sha((app/'Sill').read_bytes())}
+                runtime['codeImages']={'Sill':adapter.sha((app/'Sill').read_bytes())}
+                if (app/'Sill.debug.dylib').exists():runtime['codeImages']['Sill.debug.dylib']=adapter.sha((app/'Sill.debug.dylib').read_bytes())
+                runtime['loadedCodeImagePaths']={name:'/installed/Sill.app/'+name for name in runtime['codeImages']}
+                runtime['codeImageUUIDs']={name:'0'*32 for name in runtime['codeImages']}
                 if state.mode=='runtime-source':runtime['commit']='f'*40
                 adapter.write(data/('Library/Application Support/CCRIntegrationTests/'+context['id']+'/state/runtime.json'),runtime)
             else:self.fail('unexpected command boundary')
@@ -288,6 +296,50 @@ class PreparedInstallContract(unittest.TestCase):
                         with self.assertRaises(adapter.Held):adapter.prepared_runtime(state.config,state.work)
                     else:self.assertTrue(adapter.prepared_runtime(state.config,state.work)['_running'])
                 self.assertFalse(any(row[0]=='xcodebuild' for row in state.commands))
+
+    def test_same_loader_cannot_attest_a_different_debug_implementation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=self.fixture(directory)
+            (state.app/'Sill.debug.dylib').write_bytes(b'expected actual implementation image')
+            state.seal();original=state.command
+            def command(args,*rest,**kwargs):
+                value=original(args,*rest,**kwargs)
+                if list(map(str,args))[:5]==['xcrun','devicectl','device','process','launch']:
+                    path=state.data/('Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state/runtime.json')
+                    runtime=adapter.read(path)
+                    runtime['codeImages']={'Sill':adapter.sha((state.app/'Sill').read_bytes()),'Sill.debug.dylib':adapter.sha(b'wrong running implementation')}
+                    runtime['loadedCodeImagePaths']={'Sill':'/installed/Sill.app/Sill','Sill.debug.dylib':'/installed/Sill.app/Sill.debug.dylib'}
+                    adapter.write(path,runtime)
+                return value
+            state.command=command
+            with self.assertRaisesRegex(adapter.Held,'runtime_code_images'):self.invoke(state)
+
+
+    def test_prepared_code_image_set_and_loaded_paths_are_mandatory(self):
+        for failure in [None,'old-runtime','missing-debug','different-debug','different-loader','extra','wrong-loaded','missing-loaded','missing-uuid','wrong-uuid-shape','old-deployment']:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                state=self.fixture(directory);(state.app/'Sill.debug.dylib').write_bytes(b'actual Debug implementation');state.seal()
+                deployed=self.invoke(state)
+                expected={'Sill':adapter.sha((state.app/'Sill').read_bytes()),'Sill.debug.dylib':adapter.sha((state.app/'Sill.debug.dylib').read_bytes())}
+                self.assertEqual(deployed['codeImages'],expected)
+                path=state.data/('Library/Application Support/CCRIntegrationTests/'+state.context['id']+'/state/runtime.json');runtime=adapter.read(path)
+                if failure=='old-runtime':runtime.pop('codeImages');runtime.pop('loadedCodeImagePaths')
+                elif failure=='missing-debug':runtime['codeImages'].pop('Sill.debug.dylib')
+                elif failure=='different-debug':runtime['codeImages']['Sill.debug.dylib']=adapter.sha(b'other implementation')
+                elif failure=='different-loader':runtime['codeImages']['Sill']=adapter.sha(b'other loader')
+                elif failure=='extra':runtime['codeImages']['other.dylib']='0'*64
+                elif failure=='wrong-loaded':runtime['loadedCodeImagePaths']['Sill.debug.dylib']='/different/Sill.debug.dylib'
+                elif failure=='missing-loaded':runtime['loadedCodeImagePaths'].pop('Sill.debug.dylib')
+                elif failure=='missing-uuid':runtime.pop('codeImageUUIDs')
+                elif failure=='wrong-uuid-shape':runtime['codeImageUUIDs']['Sill.debug.dylib']='not-a-uuid'
+                elif failure=='old-deployment':
+                    deployed.pop('codeImages');deployed.pop('codeImagesSHA256');adapter.write(state.work/'deployment.json',deployed)
+                adapter.write(path,runtime)
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter.subprocess,'run',side_effect=state.copy):
+                    if failure:
+                        with self.assertRaisesRegex(adapter.Held,'code_images'):adapter.prepared_runtime(state.config,state.work)
+                    else:self.assertTrue(adapter.prepared_runtime(state.config,state.work)['_running'])
+
 
 class KnownRunnerContract(unittest.TestCase):
     def fixture(self, state):
@@ -479,6 +531,165 @@ class KnownRunnerContract(unittest.TestCase):
 
 
 
+class XcodeRunnerLineageContract(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import shlex
+        cls.base=Path('/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad')
+        cls.history=cls.base/'rea-completion-20261028/adapter-evidence/runner-history'
+        cls.approved=adapter.read(cls.history/'result.json')
+        cls.action=adapter.read(cls.history/'action.json')
+        cls.session=next((cls.history/'diagnostics').rglob('Session-CanvasBridgeUITests-*.log')).read_bytes()
+        cls.details=adapter.read(cls.history/'test-details.json')
+        cls.result=Path(cls.approved['xcresult']['path'])
+        cls.summary=json.loads(adapter.command(['xcrun','xcresulttool','get','test-results','summary','--path',cls.result,'--compact']))
+        log=cls.base/'review-only-device-20261026/testReviewReopen.log'
+        args=next(shlex.split(line.strip()) for line in log.read_text().splitlines() if line.strip().startswith('/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild '))
+        cls.reference={'schema':'ccr.known-installed-artifact/v1','installEvidenceKind':'xcode-xcresult',
+            'artifact':cls.approved['localArtifact']['artifact'],'artifactManifestSHA256':cls.approved['localArtifact']['manifestSHA256'],
+            'metadataPath':cls.approved['preservedMetadata']['path'],'metadataSHA256':cls.approved['inputHashes'][cls.approved['preservedMetadata']['path']],
+            'xcode':{'xcresultPath':str(cls.result),'xcresultManifestSHA256':cls.approved['xcresult']['manifestSHA256'],
+                'invocationLogPath':str(log),'invocationLogSHA256':cls.approved['inputHashes'][str(log)],
+                'invocationSHA256':adapter.digest_value(args),'method':'testReviewReopen',
+                'actionSHA256':adapter.digest_value(cls.action),'sessionSHA256':adapter.sha(cls.session),
+                'compiledTestsSHA256':cls.approved['localArtifact']['compiledTestsSHA256']}}
+        cls.config={'deviceUDID':args[args.index('-destination')+1].removeprefix('id=')}
+
+    def fixture(self,work):
+        import copy
+        from types import SimpleNamespace
+        state=SimpleNamespace(reference=copy.deepcopy(self.reference),action=copy.deepcopy(self.action),
+            session=self.session,summary=copy.deepcopy(self.summary),details=copy.deepcopy(self.details),calls=[])
+        real=adapter.command
+        def command(args,*rest,**kwargs):
+            args=list(map(str,args));state.calls.append(args)
+            if args[:4]==['xcrun','xcresulttool','get','log']:return json.dumps(state.action)
+            if args[:4]==['xcrun','xcresulttool','export','diagnostics']:
+                target=Path(args[args.index('--output-path')+1])/'Session-CanvasBridgeUITests-fixture.log';target.write_bytes(state.session);return ''
+            if args[:5]==['xcrun','xcresulttool','get','test-results','summary']:return json.dumps(state.summary)
+            if args[:5]==['xcrun','xcresulttool','get','test-results','test-details']:return json.dumps(state.details)
+            self.assertNotIn('devicectl',args)
+            self.assertFalse(args[0]=='xcodebuild' and args[1:]!=['-version'])
+            return real(args,*rest,**kwargs)
+        state.command=command
+        return state
+
+
+    def test_session_records_reject_prior_echo_and_disconnected_paths(self):
+        session=self.session.decode();bundle=adapter.RUNNER_BUNDLE;artifact=Path(self.reference['artifact'])
+        echo='\n'.join(line for line in session.splitlines() if 'testBundleURL:' in line or "RemotePath '" in line or
+            ('"'+bundle+'" = "') in line and line.rstrip().endswith('Runner.app";'))
+        foreign=session.replace('E42A765D-D4C8-4768-8866-F9CD1B30D47D','AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE')
+        fragments='\n'.join('[unrelated note '+str(i)+'] '+line for i,line in enumerate(echo.splitlines()))
+        cases={'foreign-current':foreign,'old-echo-foreign-current':'[prior diagnostic echo]\n'+echo+'\n[current session]\n'+foreign,
+            'disconnected':fragments,'duplicate-session':session+'\n'+session,
+            'different-runner-pid':session.replace('CanvasBridgeUITests-Runner[10600:8227188] Loading test bundle','CanvasBridgeUITests-Runner[99999:8227188] Loading test bundle'),
+            'different-session-id':session.replace('sessionIdentifier:E6CBDE32-C16C-469E-ACA2-F8B67ED4096E','sessionIdentifier:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'),
+            'different-host-pid':session.replace("xcodebuild[20304:133134218] Ambrion의 iPad RemotePath", "xcodebuild[99999:133134218] Ambrion의 iPad RemotePath")}
+        self.assertEqual(adapter.xcode_install_identity(self.action,session,artifact,bundle),self.approved['xcodeInstall']['installationURL'])
+        for name,text in cases.items():
+            with self.subTest(name=name),self.assertRaisesRegex(adapter.Held,'xcode_session'):
+                adapter.xcode_install_identity(self.action,text,artifact,bundle)
+
+    def test_actual_official_xcode_history_and_signed_runner_are_accepted_without_device(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(adapter,'device') as device:
+            work=Path(directory)
+            result=adapter.verify_known_lineage(self.config,work,self.reference,adapter.RUNNER_BUNDLE)
+            self.assertEqual(result['evidenceKind'],'known-installed-artifact-lineage-from-xcode')
+            self.assertFalse(result['remoteSignatureReadback'])
+            self.assertEqual(result['metadataSHA256'],self.approved['preservedMetadata']['runnerRowCanonicalSHA256'])
+            self.assertEqual(len(result['provenance']['methods']),21)
+            self.assertTrue(set(adapter.RUNNER_CORE_METHODS)<=set(result['provenance']['methods']))
+            self.assertEqual(result['provenance']['testBundleBuild']['DTXcodeBuild'],'27A266a')
+            device.assert_not_called()
+
+    def test_rejects_real_history_with_broken_correlations_even_after_repinning_fields(self):
+        failures=['install-failed','install-exit','bundle','url','local-artifact','session-url','zero-tests','multiple-pass',
+            'multiple-runs','details-device','invocation-device','invocation-result','invocation-method','metadata-url','metadata-device','invocation-source',
+            'artifact22','source-pin','call-pin','session-pin','action-pin','compiled-pin','duplicate-record']
+        for failure in failures:
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
+                work=Path(directory);state=self.fixture(work);ref=state.reference;e=ref['xcode']
+                group=state.action['subsections'][0]['subsections'][0]
+                record=group['subsections'][1]['messages'][2]['annotations'][2]
+                if failure=='install-failed':group['subsections'][0]['result']='failed'
+                elif failure=='install-exit':group['subsections'][0]['commandInvocationDetails']['exitCode']=1
+                elif failure=='bundle':record['title']=record['title'].replace(adapter.RUNNER_BUNDLE,'another.bundle')
+                elif failure=='url':record['title']=record['title'].replace('E42A765D-D4C8-4768-8866-F9CD1B30D47D','00000000-0000-0000-0000-000000000000')
+                elif failure=='duplicate-record':group['subsections'][1]['messages'][2]['annotations'].append(dict(record))
+                elif failure=='local-artifact':state.action['subsections'][1]['subsections'][0]['testDetails']['runnablePath']=str(work)
+                elif failure=='session-url':state.session=state.session.replace(b'E42A765D-D4C8-4768-8866-F9CD1B30D47D',b'00000000-0000-0000-0000-000000000000')
+                elif failure=='zero-tests':state.summary.update(totalTestCount=0,passedTests=0)
+                elif failure=='multiple-pass':state.summary.update(totalTestCount=2,passedTests=2)
+                elif failure=='multiple-runs':state.details['testRuns'].append(dict(state.details['testRuns'][0]))
+                elif failure=='details-device':state.details['testRuns'][0]['nodeIdentifier']='another-device'
+                elif failure=='invocation-source':
+                    path=work/'changed.log';path.write_bytes(Path(e['invocationLogPath']).read_bytes()+b'changed')
+                    e['invocationLogPath']=str(path)
+                elif failure.startswith('invocation-'):
+                    import shlex
+                    lines=Path(e['invocationLogPath']).read_text().splitlines()
+                    line=next(line for line in lines if line.strip().startswith('/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild '))
+                    args=shlex.split(line)
+                    if failure=='invocation-device':args[args.index('-destination')+1]='id=other'
+                    elif failure=='invocation-result':args[args.index('-resultBundlePath')+1]=str(work)
+                    else:args[args.index('-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/testReviewReopen')]='-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/testReviewGood'
+                    changed=work/'invocation.log';changed.write_text('Command line invocation:\n'+shlex.join(args)+'\n')
+                    e.update(invocationLogPath=str(changed),invocationLogSHA256=adapter.sha(changed.read_bytes()),invocationSHA256=adapter.digest_value(args))
+                elif failure in ['metadata-url','metadata-device']:
+                    metadata=adapter.read(ref['metadataPath'])
+                    if failure=='metadata-device':
+                        metadata['info']['arguments'][metadata['info']['arguments'].index('--device')+1]='other-device'
+                    else:
+                        for row in metadata['result']['apps']:
+                            if row.get('bundleIdentifier')==adapter.RUNNER_BUNDLE:row['url']='file:///other/Runner.app/'
+                    path=work/'metadata.json';adapter.write(path,metadata);ref.update(metadataPath=str(path),metadataSHA256=adapter.sha(path.read_bytes()))
+                elif failure=='artifact22':
+                    other=self.base/'normal68-device-20261026/HarnessDerivedData/Build/Products/Debug-iphoneos/CanvasBridgeUITests-Runner.app'
+                    ref.update(artifact=str(other),artifactManifestSHA256=adapter.digest_value(adapter.artifact_files(other)))
+                    e['compiledTestsSHA256']=adapter.sha((other/'PlugIns/CanvasBridgeUITests.xctest/CanvasBridgeUITests').read_bytes())
+                if failure=='source-pin':e['xcresultManifestSHA256']='0'*64
+                if failure=='call-pin':e['invocationSHA256']='0'*64
+                e['actionSHA256']='0'*64 if failure=='action-pin' else adapter.digest_value(state.action)
+                e['sessionSHA256']='0'*64 if failure=='session-pin' else adapter.sha(state.session)
+                if failure=='compiled-pin':e['compiledTestsSHA256']='0'*64
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter,'device') as device:
+                    reasons={'install-failed':'xcode_install_not_succeeded','install-exit':'xcode_install_not_succeeded',
+                        'bundle':'xcode_install_identity_mismatch','url':'xcode_remote_path_mismatch','local-artifact':'xcode_local_artifact_mismatch',
+                        'session-url':'xcode_session_bundle_correlation_missing','zero-tests':'xcode_single_pass_required',
+                        'multiple-pass':'xcode_single_pass_required','multiple-runs':'xcresult_execution_count_or_status',
+                        'details-device':'xcode_result_device_mismatch','invocation-device':'xcode_invocation_target_mismatch',
+                        'invocation-result':'xcode_invocation_target_mismatch','invocation-method':'xcode_invocation_target_mismatch',
+                        'metadata-url':'xcode_metadata_mismatch','metadata-device':'xcode_metadata_device_mismatch',
+                        'invocation-source':'xcode_invocation_source_changed','artifact22':'xcode_local_artifact_mismatch','source-pin':'xcode_result_source_changed',
+                        'call-pin':'xcode_invocation_hash_mismatch','session-pin':'xcode_session_source_changed',
+                        'action-pin':'xcode_action_source_changed','compiled-pin':'xcode_compiled_tests_changed','duplicate-record':'xcode_install_record_ambiguous'}
+                    with self.assertRaisesRegex(adapter.Held,reasons[failure]):adapter.verify_known_lineage(self.config,work,ref,adapter.RUNNER_BUNDLE)
+                    device.assert_not_called()
+
+    def test_existing_core_and_absent_grade_method_use_the_actual_21_method_runner(self):
+        for mode in ['core','missing-grade','current-url']:
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
+                work=Path(directory);state=self.fixture(work);path=work/'runner.json'
+                adapter.write(path,{'schema':'ccr.known-installed-runner/v1','lineage':state.reference})
+                config=dict(self.config,existingRunnerReceipt=str(path),existingRunnerReceiptSHA256=adapter.sha(path.read_bytes()))
+                def device(config,args,log):
+                    self.assertEqual(args[:3],['info','apps','--bundle-id'])
+                    row=dict(self.approved['preservedMetadata']['runnerRow'])
+                    if mode=='current-url':row['url']='file:///different/Runner.app/'
+                    adapter.write(args[-1],{'result':{'apps':[row],'deviceIdentifier':self.approved['preservedMetadata']['deviceIdentifier']}})
+                with patch.object(adapter,'command',side_effect=state.command),patch.object(adapter,'device',side_effect=device) as effect:
+                    if mode=='missing-grade':
+                        with self.assertRaisesRegex(adapter.Held,'testReviewSelectedGrade'):adapter.verified_runner(config,work,'testReviewSelectedGrade')
+                        effect.assert_not_called()
+                    elif mode=='current-url':
+                        with self.assertRaisesRegex(adapter.Held,'existing_runner_metadata_changed'):adapter.verified_runner(config,work,adapter.RUNNER_CORE_METHODS)
+                        self.assertEqual(effect.call_count,1)
+                    else:
+                        self.assertTrue(adapter.verified_runner(config,work,adapter.RUNNER_CORE_METHODS)['installed'])
+                        self.assertEqual(effect.call_count,1)
+
+
 class SingleAppHoldContract(unittest.TestCase):
     def test_public_entrypoints_hold_before_every_subprocess_and_device_effect(self):
         import contextlib
@@ -544,6 +755,140 @@ class SingleAppHoldContract(unittest.TestCase):
                 adapter.single_app_installation_gate()
             self.assertEqual(data,profile.read_bytes())
 
+class NativeLoadedUUIDContract(unittest.TestCase):
+    @unittest.skipUnless(__import__('os').environ.get('CCR_CODE_UUID_TEST_DIR'),'Set routed output for loaded UUID regression')
+    def test_loaded_main_and_debug_uuid_reject_path_replacement(self):
+        import os,shutil,plistlib,subprocess,concurrent.futures
+        output=Path(os.environ['CCR_CODE_UUID_TEST_DIR']).resolve();output.mkdir(parents=True,exist_ok=True)
+        route=json.loads(adapter.command(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad']))
+        self.assertTrue(output.is_relative_to(Path(route['path']).resolve()))
+        repo=Path(adapter.__file__).resolve().parents[2]
+        review=repo.parent/'adapter-runtime-independent-review'
+        implementation=(review/'DebugImplementation.swift').read_text()
+        implementation=implementation.replace('        try CanvasRuntime.writeRuntimeReceipt(launchState:launch)',r'''        if mode == "replace-main" {
+            try FileManager.default.moveItem(at:executable,to:root.appendingPathComponent("still-mapped-main"))
+            try FileManager.default.copyItem(at:URL(fileURLWithPath:env["REVIEW_REPLACEMENT_MAIN"]!),to:executable)
+        }
+        let sentinel = Data("prior pending runtime receipt".utf8)
+        let receiptPath = state.appendingPathComponent("runtime.json")
+        try sentinel.write(to:receiptPath)
+        do { try CanvasRuntime.writeRuntimeReceipt(launchState:launch) }
+        catch {
+            let preserved = try Data(contentsOf:receiptPath) == sentinel
+            let observation: [String:Any] = ["executingValue":reviewValue(),"priorPreserved":preserved]
+            try JSONSerialization.data(withJSONObject:observation).write(to:root.appendingPathComponent("rejected.json"))
+            return 11
+        }''')
+        swift=output/'Implementation.swift';swift.write_text(implementation)
+        loader=output/'Loader.c';loader.write_text('#ifdef MAIN_B\n__attribute__((used)) volatile int loader_version=2;\n#else\n__attribute__((used)) volatile int loader_version=1;\n#endif\n'+(review/'DebugLoader.c').read_text())
+        info=output/'Info.plist';info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'org.ccr.loaded-uuid.fixture','CFBundleExecutable':'Sill','CFBundleVersion':'1','CCRSourceCommit':'a'*40,'CCRSourceTree':'b'*40}))
+        for name,flags in [('main-A',[]),('main-B',['-DMAIN_B'])]:
+            adapter.command(['xcrun','clang',*flags,loader,'-Wl,-sectcreate,__TEXT,__info_plist,'+str(info),'-o',output/name],output/(name+'.log'))
+        def build(name):
+            adapter.command(['xcrun','swiftc','-D','DEBUG',*(['-D','REVIEW_VARIANT_B'] if name=='B' else []),
+                '-swift-version','5','-parse-as-library','-emit-library','-module-cache-path',output/'modules',
+                repo/'iOSClient/CanvasBridge/CanvasModel.swift',swift,'-o',output/(name+'.dylib')],output/(name+'.log'))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(build,['A','B']))
+        cases=[]
+        for name,variant,mode,expected in [('healthy-A','A','healthy',0),('healthy-B','B','healthy',0),
+                ('replaced-debug','A','replace-loaded',11),('replaced-main','A','replace-main',11),('removed-debug','A','remove-loaded',11)]:
+            case=output/name;app=case/'Sill.app';app.mkdir(parents=True)
+            shutil.copyfile(output/'main-A',app/'Sill');(app/'Sill').chmod(0o700)
+            shutil.copyfile(output/(variant+'.dylib'),app/'Sill.debug.dylib');shutil.copyfile(info,app/'Info.plist')
+            env=dict(adapter.ENV,REVIEW_CASE_ROOT=str(case),REVIEW_MODE=mode,REVIEW_REPLACEMENT=str(output/'B.dylib'),REVIEW_REPLACEMENT_MAIN=str(output/'main-B'))
+            run=subprocess.run([app/'Sill'],env=env,capture_output=True,text=True,timeout=30)
+            (case/'run.log').write_text(run.stdout+run.stderr)
+            self.assertEqual(run.returncode,expected,name+': '+run.stdout+run.stderr)
+            if expected:
+                observed=adapter.read(case/'rejected.json');self.assertEqual(observed['executingValue'],1);self.assertTrue(observed['priorPreserved'])
+                self.assertFalse((case/'native-receipt.json').exists())
+            else:
+                receipt=adapter.read(case/'native-receipt.json');self.assertEqual(set(receipt['codeImageUUIDs']),{'Sill','Sill.debug.dylib'})
+                for image in receipt['codeImages']:
+                    identity=adapter.command(['dwarfdump','--uuid',app/image]).split()[1].replace('-','').lower()
+                    self.assertEqual(receipt['codeImageUUIDs'][image],identity)
+                    self.assertEqual(receipt['codeImages'][image],adapter.sha((app/image).read_bytes()))
+            cases.append({'name':name,'exitCode':run.returncode,'passed':True})
+        adapter.write(output/'native-cases.json',{'cases':cases})
+        sdk=adapter.command(['xcrun','--sdk','iphoneos','--show-sdk-path']).strip()
+        adapter.command(['xcrun','swiftc','-typecheck','-D','DEBUG','-swift-version','5','-parse-as-library','-sdk',sdk,
+            '-target','arm64-apple-ios17.0','-module-cache-path',output/'ios-modules',repo/'iOSClient/CanvasBridge/CanvasModel.swift'],output/'ios27-typecheck.log')
+
+
+class NativeCodeImagesContract(unittest.TestCase):
+    @unittest.skipUnless(__import__('os').environ.get('CCR_CODE_IMAGES_TEST_DIR'),'Set a routed output directory for native/SDK checks')
+    def test_actual_receipt_hashes_only_loaded_main_and_debug_images(self):
+        import os,subprocess,plistlib
+        output=Path(os.environ['CCR_CODE_IMAGES_TEST_DIR']).resolve();output.mkdir(parents=True,exist_ok=True)
+        route=json.loads(adapter.command(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad']))
+        self.assertTrue(output.is_relative_to(Path(route['path']).resolve()))
+        repo=Path(adapter.__file__).resolve().parents[2];source=output/'CodeImageCheck.swift'
+        source.write_text(r"""import Foundation
+import CryptoKit
+import Darwin
+@main struct CodeImageCheck {
+    static func main() throws {
+        let root = URL(fileURLWithPath:CommandLine.arguments[1],isDirectory:true)
+        let support = root.appendingPathComponent("support",isDirectory:true)
+        let id = UUID().uuidString.lowercased()
+        let testRoot = support.appendingPathComponent("CCRIntegrationTests/" + id,isDirectory:true)
+        let state = testRoot.appendingPathComponent("state",isDirectory:true)
+        try FileManager.default.createDirectory(at:state,withIntermediateDirectories:true)
+        let context: [String:String] = ["schema":"ccr.ipad-test-context/v1","id":id,
+            "commit":String(repeating:"a",count:40),"tree":String(repeating:"b",count:40),
+            "relayAddress":"http://192.168.1.2:8793","token":"native-isolated-fixture-reference"]
+        try JSONSerialization.data(withJSONObject:context).write(to:testRoot.appendingPathComponent("context.json"))
+        let launch = CanvasRuntime.resolve(arguments:["fixture","--ccr-test-runtime",id],applicationSupport:support,
+            sourceCommit:context["commit"],sourceTree:context["tree"])
+        let receiptURL = state.appendingPathComponent("runtime.json")
+        let executable = Bundle.main.executableURL!
+        let image = executable.deletingLastPathComponent().appendingPathComponent(executable.lastPathComponent + ".debug.dylib")
+        let preparedImage = root.appendingPathComponent("prepared-implementation.dylib")
+        try CanvasRuntime.writeRuntimeReceipt(launchState:launch)
+        func read() throws -> [String:Any] { try JSONSerialization.jsonObject(with:Data(contentsOf:receiptURL)) as! [String:Any] }
+        let first = try read()
+        precondition((first["codeImages"] as! [String:String]).count == 1)
+        let firstBytes = try Data(contentsOf:receiptURL)
+        try FileManager.default.copyItem(at:preparedImage,to:image)
+        var rejected = false
+        do { try CanvasRuntime.writeRuntimeReceipt(launchState:launch) } catch { rejected = true }
+        precondition(rejected,"present but unloaded implementation must be rejected")
+        let preservedBytes = try Data(contentsOf:receiptURL)
+        precondition(preservedBytes == firstBytes,"failed receipt must preserve prior bytes")
+        guard let handle = dlopen(image.path,RTLD_NOW | RTLD_LOCAL) else { preconditionFailure("fixture dylib failed to load") }
+        defer { dlclose(handle) }
+        try CanvasRuntime.writeRuntimeReceipt(launchState:launch)
+        let second = try read()
+        let expected = try Dictionary(uniqueKeysWithValues:[executable,image].map { url in
+            (url.lastPathComponent,SHA256.hash(data:try Data(contentsOf:url)).map { String(format:"%02x",$0) }.joined())
+        })
+        precondition(second["codeImages"] as! [String:String] == expected)
+        precondition(second["executableSHA256"] as! String == first["executableSHA256"] as! String,"same loader fixture")
+        let paths = second["loadedCodeImagePaths"] as! [String:String]
+        precondition(paths.count == 2 && paths[image.lastPathComponent] == image.resolvingSymlinksInPath().path)
+        try Data(contentsOf:receiptURL).write(to:root.appendingPathComponent("verified-native-receipt.json"))
+        print("PASS real loader and dlopen implementation SHA/path; unloaded image rejected and prior receipt preserved")
+    }
+}
+""")
+        c=output/'implementation.c';c.write_text('int ccr_receipt_fixture(void) { return 42; }\n')
+        adapter.command(['xcrun','clang','-dynamiclib',c,'-o',output/'prepared-implementation.dylib'],output/'dylib-build.log')
+        info=output/'FixtureInfo.plist';info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'org.ccr.receipt.native-fixture',
+            'CFBundleExecutable':'ReceiptCheck','CFBundleVersion':'1','CCRSourceCommit':'a'*40,'CCRSourceTree':'b'*40}))
+        executable=output/'ReceiptCheck'
+        adapter.command(['xcrun','swiftc','-D','DEBUG','-swift-version','5','-module-cache-path',output/'modules','-parse-as-library',
+            repo/'iOSClient/CanvasBridge/CanvasModel.swift',source,'-Xlinker','-sectcreate','-Xlinker','__TEXT',
+            '-Xlinker','__info_plist','-Xlinker',info,'-o',executable],output/'native-build.log')
+        adapter.command([executable,output],output/'native-run.log')
+        actual=adapter.read(output/'verified-native-receipt.json')
+        self.assertEqual(actual['codeImages'],{'ReceiptCheck':adapter.sha(executable.read_bytes()),
+            'ReceiptCheck.debug.dylib':adapter.sha((output/'ReceiptCheck.debug.dylib').read_bytes())})
+        sdk=adapter.command(['xcrun','--sdk','iphoneos','--show-sdk-path']).strip()
+        adapter.command(['xcrun','swiftc','-typecheck','-D','DEBUG','-swift-version','5','-parse-as-library',
+            '-sdk',sdk,'-target','arm64-apple-ios17.0','-module-cache-path',output/'ios-modules',
+            repo/'iOSClient/CanvasBridge/CanvasModel.swift'],output/'ios27-typecheck.log')
+
+
 class PreservationSnapshotContract(unittest.TestCase):
     def test_full_documents_preferences_and_metadata_are_checked_separately(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -554,7 +899,7 @@ class PreservationSnapshotContract(unittest.TestCase):
             def copy(config,work,source,target,**kwargs):
                 self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE)
                 copied.append(str(source));target=Path(target)
-                if source in ['Documents','Library/Preferences']:
+                if source in ['Documents','Library/Preferences','Library/Application Support/CanvasConflictRecovery']:
                     target.mkdir(parents=True)
                     (target/'one').write_bytes(b'normal preserved bytes')
                     (target/'two').write_bytes(b'other bytes')
@@ -570,6 +915,83 @@ class PreservationSnapshotContract(unittest.TestCase):
             self.assertFalse(adapter.same_user_data(before,after))
             after=json.loads(json.dumps(before));after['Documents']['one']='changed hash'
             self.assertFalse(adapter.same_user_data(before,after))
+
+class ConflictRecoverySnapshotContract(unittest.TestCase):
+    def test_new_conflict_recovery_directory_changes_the_preservation_proof(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);work=root/'evidence';work.mkdir()
+            source=root/'source';source.mkdir();recovery=source/'Library/Application Support/CanvasConflictRecovery'
+            for relative in ['Documents','Library/Preferences']:
+                target=source/relative;target.mkdir(parents=True);(target/'stable').write_bytes(b'unchanged normal bytes')
+            def device(config,args,log):adapter.write(args[-1],{'result':{'apps':[]}})
+            def copy(config,work,relative,target,**kwargs):
+                self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE)
+                src=source/relative
+                if not src.exists():return False
+                if src.is_dir():shutil.copytree(src,target)
+                else:shutil.copyfile(src,target)
+                return True
+            with patch.object(adapter,'device',side_effect=device),patch.object(adapter,'copy_file',side_effect=copy):
+                before=adapter.snapshots({},work,'absent')
+                recovery.mkdir(parents=True);(recovery/'CanvasConflictChoice.json').write_bytes(b'unique current conflict choice')
+                after=adapter.snapshots({},work,'created')
+            self.assertFalse(adapter.same_user_data(before,after),'new conflict recovery source must change preservation proof')
+
+
+    def test_complete_directory_absence_addition_edit_removal_and_boundaries(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);work=root/'evidence';work.mkdir()
+            local='CanvasConflictLocal-'+str(uuid.uuid4())+'.json';attempt='CanvasConflictAttempt-'+str(uuid.uuid4())+'.json'
+            baseline={'CanvasConflictChoice.json':b'choice original bytes',local:b'only local scene',attempt:b'only in-flight attempt',
+                'nested/unfiltered.bin':b'also protected; no filename prefix filter'}
+            versions={'absent':None,'empty':{},'really-empty':{},'full':baseline,'same':dict(baseline),'added':dict(baseline,**{'another-file':b'unique new source'}),
+                'changed':dict(baseline,**{'CanvasConflictChoice.json':b'changed choice'}),'removed':{k:v for k,v in baseline.items() if k!=local},'gone':None}
+            for name,files in versions.items():
+                source=root/name;source.mkdir()
+                for relative in ['Documents','Library/Preferences']:
+                    target=source/relative;target.mkdir(parents=True);(target/'stable').write_bytes(b'unchanged base data')
+                if files is not None:
+                    folder=source/'Library/Application Support/CanvasConflictRecovery';folder.mkdir(parents=True)
+                    if name != 'really-empty':(folder/'empty-child').mkdir()
+                    for key,value in files.items():
+                        target=folder/key;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(value)
+            selected=root/'absent';copied=[]
+            def device(config,args,log):adapter.write(args[-1],{'result':{'apps':[]}})
+            def copy(config,work,relative,target,**kwargs):
+                self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE);copied.append(relative)
+                source=selected/relative
+                if not source.exists():return False
+                if source.is_dir():shutil.copytree(source,target,symlinks=True)
+                else:shutil.copyfile(source,target)
+                return True
+            records={}
+            with patch.object(adapter,'device',side_effect=device),patch.object(adapter,'copy_file',side_effect=copy):
+                for name in versions:
+                    selected=root/name;records[name]=adapter.snapshots({},work,name)
+                self.assertIsNone(records['absent']['CanvasConflictRecovery'])
+                self.assertEqual(records['empty']['CanvasConflictRecovery'],{'empty-child/':None})
+                self.assertEqual(records['really-empty']['CanvasConflictRecovery'],{})
+                self.assertFalse(adapter.same_user_data(records['absent'],records['really-empty']))
+                expected={k:adapter.sha(v) for k,v in baseline.items()};expected.update({'empty-child/':None,'nested/':None})
+                self.assertEqual(records['full']['CanvasConflictRecovery'],expected)
+                self.assertTrue(adapter.same_user_data(records['full'],records['same']))
+                for name in ['absent','empty','really-empty','added','changed','removed','gone']:
+                    self.assertFalse(adapter.same_user_data(records['full'],records[name]),name)
+                self.assertFalse(adapter.same_user_data(records['absent'],records['empty']))
+                legacy=dict(records['absent']);legacy.pop('CanvasConflictRecovery')
+                self.assertFalse(adapter.same_user_data(legacy,records['absent']),'uncaptured old baseline is not verified absence')
+                selected=root/'full';before=(work/'full.json').read_bytes()
+                with self.assertRaisesRegex(adapter.Held,'destination_exists'):adapter.snapshots({},work,'full')
+                self.assertEqual(before,(work/'full.json').read_bytes())
+                folder=selected/'Library/Application Support/CanvasConflictRecovery'
+                (folder/'unexpected-link').symlink_to(selected/'Documents/stable')
+                with self.assertRaisesRegex(adapter.Held,'snapshot_symlink'):adapter.snapshots({},work,'symlink-refused')
+            self.assertIn('Library/Application Support/CanvasConflictRecovery',copied)
+            self.assertNotIn('Library/Application Support',copied)
+            self.assertFalse(any('CCRIntegrationTests' in path for path in copied))
+
 
 class DestinationArtifactContract(unittest.TestCase):
     def test_normal_bundle_and_existing_runner_only_for_v1_and_v2(self):
