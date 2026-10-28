@@ -132,6 +132,7 @@ struct CanvasCardTagsMenu: View {
             Text("영문·한글·숫자·밑줄·붙임표를 사용할 수 있습니다. 저장 실패 시 입력은 다시 열어 확인할 수 있습니다.")
         }
         .onChange(of:editing) { _, open in if !open, let session { store.cancelCardTagInput(sessionID:session) } }
+        .onChange(of:store.cardTagInputBusy) { _, busy in if !busy { editing = false } }
         .onDisappear { if let session { store.cancelCardTagInput(sessionID:session) } }
         .accessibilityIdentifier("canvasCardTagsMenu")
     }

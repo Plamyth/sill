@@ -26,6 +26,8 @@ python3 Tests/checks/card-tags/run.py --output /Volumes/BT-Workspace/Development
 
 실제 Model/Store/PKDrawing/Files에서 추가·취소/ABA·입력보호·노드/원문/댓글/계층/획바이트 보존·새Store재열기·공통UndoRedo·캐시쓰기실패·외부파일태그수신·Files경쟁/CAS·재시작pending·필터해제를 검사한다. 기존 카드/PDF 전수 검사는 재실행하지 않는다. macOS scoped bookmark는 테스트가 소유한 격리폴더에만 생성하며 실제 iPad picker/provider 지속성 수용이 아니다.
 
+`--export-only --sdk-check`는 태그 입력과 PNG 내보내기 표시 소유권의 좁은 회귀 검사다. 실제 Store와 Workspace에서 추출한 시작·완료·표시 binding·취소 함수를 컴파일해, 태그 입력 중 시작 거부·늦은 완료 폐기·입력 취소 후 이전 파일창 재등장 방지·원본 바이트 보존을 실행한다. SwiftUI의 onChange 전달과 PNG 렌더러·문서 타입은 통제 fixture이며 실제 화면이나 픽셀 수용으로 세지 않는다. 기본 전수 검사와 별도로 실행한다.
+
 같은 `tag-cases.json`을 Swift와 실제 Node 모듈이 검사한다. 실제 기존 ObsidianVault와 Git 기준 원본 generator를 오프라인 자체디렉터리에서 실행해5종표현·태그없는바이트동일·새instance·원문/MEMO·변조·409·형식/예산을 검증한다. iOS27전체CanvasBridge 타입과project등록도 검사한다. preview PNG는 주입fixture이고 UI·렌더·HTTP·실제Obsidian인덱스·키·Host·서비스·사용자vault·앱설치·기기효과는0이다.
 
 Pstack how→실제 경계 추적→제품/파일 검사→독립검수를 사용하고 Ponytail로 기존모델/주석/graph history/Files/CAS/관리Markdown을 재사용했다. ARENA/순정Goal은 사용하지 않는다. source수용은 exactcheckpoint 독립검수 전 pending이며 전체 원앱/실물 수용을 의미하지 않는다. 부모만 공식integration에 반영한다.

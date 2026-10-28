@@ -498,7 +498,7 @@ struct CanvasWorkspace: View {
 
     private var canPresentRenderedExport: Bool {
         !store.hasPendingInkProposal && store.proposedNode == nil && !inkSpacingOpen && !inkTextDeleteOpen &&
-        !proposalInputBusy && !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen &&
+        !proposalInputBusy && !store.cardTagInputBusy && !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen &&
         !connectionOpen && !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen &&
         !handwritingSearchOpen && expandedCard == nil && canvasEditorSheet == nil
     }
@@ -543,7 +543,7 @@ struct CanvasWorkspace: View {
     }
 
     private func cancelRenderedExportPreparation() {
-        if case .rendering = renderedExport { renderedExport = .idle }
+        renderedExport = .idle
     }
 
     private var penSettingsMenu: some View {

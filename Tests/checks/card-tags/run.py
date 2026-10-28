@@ -14,6 +14,7 @@ here = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--sdk-check', action='store_true')
+parser.add_argument('--export-only', action='store_true', help='Run only the rendered-export/tag ownership regression')
 args = parser.parse_args()
 archive = Path(json.loads(subprocess.check_output([
     '/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'BT_CCR-ipad'
@@ -30,7 +31,7 @@ canvas = root / 'iOSClient/CanvasBridge'
 sources = [canvas / (name + '.swift') for name in [
     'CanvasModel', 'VaultPDFExcerpt', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
     'CanvasInkMathProposal', 'CanvasInkSpacingProposal', 'CanvasCardMerge', 'CanvasCardTags', 'CanvasRelay', 'ControlRoomProjection'
-]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / 'main.swift']
+]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / ('export-main.swift' if args.export_only else 'main.swift')]
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 ios_sources = sorted(canvas.glob('*.swift')) + [root / 'iOSClient' / (n + '.swift') for n in [
     'IPadAudioSession', 'IPadAudioLeaseState', 'IPadAudioLeaseCoordinator'
@@ -41,6 +42,16 @@ inputs = list(dict.fromkeys(sources + [protocol, project, canvas / 'CanvasWorksp
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 before = hashes()
+if args.export_only:
+    workspace = (canvas / 'CanvasWorkspace.swift').read_text()
+    members = workspace.split('    private enum RenderedExportState {', 1)[1].split('    private var penSettingsMenu:', 1)[0]
+    binding = workspace.split('.fileExporter(isPresented:Binding(get:{', 1)[1].split('},set:', 1)[0]
+    change = workspace.split('.onChange(of:canPresentRenderedExport) { _,allowed in ', 1)[1].split(' }\n', 1)[0]
+    template = sources[-1].read_text()
+    generated = out / 'ExportBoundary.swift'
+    generated.write_text(template.replace('/* WORKSPACE_MEMBERS */', 'private enum RenderedExportState {' + members)
+                         .replace('/* EXPORTER_GETTER */', binding).replace('/* GATE_CHANGE */', change))
+    sources[-1] = generated
 commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
 tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
 info = plistlib.loads((root / 'Tests/checks/ink-glyph-edit/Info.plist').read_bytes())
@@ -69,9 +80,9 @@ commands = [
     ('compile', base + ['-I', out, *sources, out / 'StreamProtocol.o', '-Xlinker', '-sectcreate', '-Xlinker',
                        '__TEXT', '-Xlinker', '__info_plist', '-Xlinker', out / 'Info.plist', '-o', out / 'check']),
     ('product-runtime', [out / 'check', out, here / 'tag-cases.json', '--ccr-test-runtime', identity]),
-    ('offline-relay', ['node', here / 'relay.cjs', out]),
-    ('project-plist', ['plutil', '-lint', project]),
 ]
+if not args.export_only:
+    commands += [('offline-relay', ['node', here / 'relay.cjs', out]), ('project-plist', ['plutil', '-lint', project])]
 if args.sdk_check:
     sdk_ios = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], env=env, text=True).strip()
     (out / 'ios').mkdir()
@@ -97,6 +108,7 @@ record = dict(commit=commit, tree=tree, sourceHashes=before, sourceHashesAfter=h
               passed=len(results) == len(commands) and all(r['exitCode'] == 0 for r in results) and
               unchanged and before == hashes(), normalFixtureHashes=protected, normalFixturesUnchanged=unchanged,
               testRuntimeIsolated=True, actualProductSources=True, previewFixture=True,
+              exportOnly=args.export_only,
               device=False, GUI=False, HTTP=False, service=False, liveVault=False,
               sourceFeatureAccepted=False, independentReview='pending')
 (out / 'result.json').write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
