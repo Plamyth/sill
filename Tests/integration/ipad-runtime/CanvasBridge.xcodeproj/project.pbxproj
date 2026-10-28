@@ -4,6 +4,8 @@
  classes = {};
  objectVersion = 56;
  objects = {
+  6A7A20261028000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkMathProposal.swift"; sourceTree = "<group>"; };
+  6A7A20261028000000000002 = {isa = PBXBuildFile; fileRef = 6A7A20261028000000000001; };
   8C932E21227A4CE7F8136731 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkTextEditing.swift"; sourceTree = "<group>"; };
   8C932E21227A4CE7F8136732 = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136731; };
   5A9E20261028000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkShapeProposal.swift"; sourceTree = "<group>"; };
@@ -12,7 +14,7 @@
   A00000000000000000000002 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000006; buildPhases = (A00000000000000000000007,A00000000000000000000043,); buildRules = (); dependencies = (); name = CanvasBridge; productName = CanvasBridge; productReference = A00000000000000000000008; productType = "com.apple.product-type.application"; };
   A00000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000009,A0000000000000000000000A); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
   A00000000000000000000006 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000B,A0000000000000000000000C); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-  A00000000000000000000004 = {isa = PBXGroup; children = (8C932E21227A4CE7F8136731,5A9E20261028000000000001,A00000000000000000000040,A00000000000000000000044,A0000000000000000000000D,A00000000000000000000033,A00000000000000000000005); sourceTree = "<group>"; };
+  A00000000000000000000004 = {isa = PBXGroup; children = (6A7A20261028000000000001,8C932E21227A4CE7F8136731,5A9E20261028000000000001,A00000000000000000000040,A00000000000000000000044,A0000000000000000000000D,A00000000000000000000033,A00000000000000000000005); sourceTree = "<group>"; };
   A00000000000000000000005 = {isa = PBXGroup; children = (A00000000000000000000008,A00000000000000000000032); name = Products; sourceTree = "<group>"; };
   A00000000000000000000033 = {isa = PBXGroup; children = (A00000000000000000000034); path = CanvasBridgeUITests; sourceTree = "<group>"; };
   A0000000000000000000000D = {isa = PBXGroup; children = (A00000000000000000000010,A00000000000000000000011,A00000000000000000000012,A00000000000000000000013,A00000000000000000000014,A00000000000000000000015,A00000000000000000000016,A00000000000000000000017); path = CanvasBridge; sourceTree = "<group>"; };

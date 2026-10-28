@@ -38,6 +38,7 @@ import AppKit
         let home = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!
         let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!
         check(support.path.hasPrefix(home+"/"),"isolated fixture files only")
+        if !CommandLine.arguments.contains("--integration-only") {
         let positive = ["1+1=":"2","1+2":"3","2+3*4":"14","(2+3)*4":"20","0.1+0.2":"0.3", "1÷4":"0.25",
             "(1+2)/2":"1.5","-2*-3":"6","2−5":"-3","6×7":"42",".5+.25":"0.75","1.20+2.30":"3.5",
             "8/4/2":"1","10-3-2":"5","(-1+2)*(3+4)":"7","0*999":"0","1 + 1 =":"2"]
@@ -51,13 +52,14 @@ import AppKit
             Array(repeating:String(repeating:"9",count:28),count:6).joined(separator:"*")] {
             rejects("reject unsupported/unsafe expression \(expression.prefix(32))") { _ = try CanvasInkMathProposal.calculate(expression) }
         }
+        }
         let selected = stroke(10), other = stroke(200), masked = stroke(300,masked:true)
         let ink = PKDrawing(strokes:[selected,other,masked])
         @MainActor func store() -> CanvasStore {
             let s = CanvasStore(); s.scene = CanvasScene(); s.drawing = PKDrawing()
             precondition(s.updateDrawing(ink))
             s.scene.nodes = [.init(id:UUID(),kind:.note,frame:.init(x:600,y:400,width:100,height:100),text:"다른 메모",confidence:.confirmed,sourceStrokeIds:[])]
-            s.mode = .lasso; s.setInkSelection([selected.id]); return s
+            s.mode = .lasso; s.setInkSelection([selected.id]); s.saveNow(); return s
         }
         let s = store(), before = s.scene
         await s.proposeInkMath { drawing in
@@ -120,22 +122,88 @@ import AppKit
             check(v3.schemaVersion == 3,"baseline unsupported schema3 refused without downgrade")
             print("SCHEMA3_BASELINE_UNSUPPORTED")
         }
+        if CommandLine.arguments.contains("--native") {
         let native = store()
         await native.proposeInkMath()
         print("NATIVE_RECOGNITION_RESULT \(native.inkMathProposal?.recognizedText.map { String(reflecting:$0) } ?? "nil")")
         check(native.scene.nodes.count == 1,"real recognizer does not silently confirm")
         native.cancelInkMath()
-        let file = support.appendingPathComponent("CanvasScene.json")
-        let corrupt = Data("own invalid fixture".utf8)
-        try FileManager.default.createDirectory(at:support,withIntermediateDirectories:true)
-        try corrupt.write(to:file,options:.atomic)
-        let failed = CanvasStore()
-        failed.scene = before; failed.drawing = ink; failed.mode = .lasso; failed.setInkSelection([selected.id])
-        await failed.proposeInkMath { _ in "1+1" }
-        let old = failed.scene
-        check(!failed.confirmInkMath() && failed.scene == old && failed.inkMathProposal != nil,"save failure keeps original scene and editable candidate")
-        let disk = try Data(contentsOf:file)
-        check(disk == corrupt,"save failure preserves original file bytes")
+        } else { print("NATIVE_RECOGNITION_SKIPPED preserved producer nil; not a success") }
+        let failed = store(); await failed.proposeInkMath { _ in "1+1" }
+        let old = failed.scene, oldProposal = failed.inkMathProposal?.id
+        try FileManager.default.setAttributes([.posixPermissions:0o500],ofItemAtPath:support.path)
+        check(!failed.confirmInkMath() && failed.scene == old && failed.inkMathProposal?.id == oldProposal,
+              "cache write failure preserves scene and editable candidate")
+        try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:support.path)
+        check(failed.confirmInkMath(),"same explicit candidate retry after cache IO failure")
+        for action in ["trace","drawingABA"] {
+            let current = store(), gate = MathGate()
+            let task = Task { await current.proposeInkMath(recognize:gate.recognize) }; await gate.wait()
+            if action == "trace" {
+                let owner = UUID(); current.setPencilTraceActive(true,owner:owner); current.setPencilTraceActive(false,owner:owner)
+            } else { let drawing = current.drawing; current.drawing = drawing; current.setInkSelection([selected.id]) }
+            gate.finish("1+1"); await task.value
+            check(current.inkMathProposal == nil,"late math callback rejects trace/drawing ABA \(action)")
+        }
+        let cross = store(); await cross.proposeInkMath { _ in nil }; cross.inkMathDraft = "1+2"
+        let mathID = cross.inkMathProposal?.id; cross.inkMathInputBusy = true
+        cross.proposeInkShape()
+        let editing = CanvasInkTextEditing()
+        await cross.proposeInkTextDeletion(range:NSRange(location:0,length:1),editing:editing)
+        check(cross.inkMathProposal?.id == mathID && cross.inkMathDraft == "1+2" && cross.inkShapeProposal == nil,
+              "glyph/shape actions cannot discard active math input")
+        cross.inkMathInputBusy = false; cross.proposeInkShape()
+        check(cross.inkMathProposal == nil,"new shape action cancels stale math request")
+        failed.saveNow(); nilCase.saveNow(); stale.saveNow()
+        if let outputPath = ProcessInfo.processInfo.environment["INK_MATH_OUTPUT"] {
+            let output = URL(fileURLWithPath:outputPath,isDirectory:true)
+            let folder = output.appendingPathComponent("selected-files",isDirectory:true)
+            try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+            let png = Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")!
+            var original = before; original.schemaVersion = 3
+            let files = CanvasFileWorkspace(folder:folder,requiresScope:false)
+            _ = try files.save(original,preview:png,expected:nil)
+            let binding = CanvasFileWorkspace.Binding(bookmark:try folder.bookmarkData(options:.minimalBookmark,includingResourceValuesForKeys:nil,relativeTo:nil),sceneID:original.id,savedSceneSHA:try CanvasFileWorkspace.sceneSHA(original))
+            try CanvasLocalFile.write(CanvasFileWorkspace.bytes(original),to:CanvasRuntime.stateURL(.scene))
+            try CanvasLocalFile.write(JSONEncoder().encode(binding),to:CanvasRuntime.stateURL(.workspace))
+            let actual = CanvasStore(); actual.filePreview = { _ in png }; actual.mode = .lasso; actual.setInkSelection([selected.id])
+            await actual.proposeInkMath { _ in nil }
+            check(actual.inkMathProposal != nil && actual.inkMathProposal?.recognizedText == nil && actual.inkMathDraft.isEmpty,"nil stays absent and requires manual correction")
+            actual.inkMathDraft = "(1+2)/2"
+            check(actual.confirmInkMath() && actual.scene.schemaVersion == 3 && !actual.fileWorkspaceCanSync && actual.status.contains("미저장"),"actual math note cache confirmation keeps scene3 and Files pending")
+            let confirmed = actual.scene
+            check(confirmed.drawingBase64 == original.drawingBase64 && confirmed.strokes == original.strokes && confirmed.nodes.dropLast() == original.nodes[...],"actual math raw ink mask pressure transform and neighbors preserved")
+            await actual.saveFileWorkspace()
+            let loaded = try files.load(original.id)
+            check(loaded.scene == confirmed && actual.fileWorkspaceCanSync,"actual Files source save and complete readback")
+            let fresh = CanvasStore(); check(fresh.scene == confirmed && fresh.drawing == actual.drawing,"fresh Store reopens scene3 math and native ink")
+            actual.undoGraphEdit(); actual.saveNow(); await actual.saveFileWorkspace()
+            let undone = try files.load(original.id)
+            check(undone.scene.nodes == original.nodes && undone.scene.schemaVersion == 3 && undone.scene.drawingBase64 == original.drawingBase64,"math Undo actual Files roundtrip preserves schema and raw ink")
+            let revisions = files.documentURL(original.id).appendingPathComponent("revisions")
+            let current = files.documentURL(original.id).appendingPathComponent("current.json")
+            let oldHead = try Data(contentsOf:current)
+            try FileManager.default.setAttributes([.posixPermissions:0o500],ofItemAtPath:revisions.path)
+            actual.redoGraphEdit(); actual.saveNow(); await actual.saveFileWorkspace()
+            let failedHead = try Data(contentsOf:current)
+            check(actual.fileWorkspaceState == .blocked && !actual.fileWorkspaceCanSync && actual.fileWorkspaceStatus.contains("미저장") && failedHead == oldHead,"Files failure never claims saved and preserves original pointer")
+            try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:revisions.path)
+            actual.retryFileWorkspaceSave(); await actual.saveFileWorkspace()
+            let redone = try files.load(original.id)
+            check(actual.fileWorkspaceCanSync && redone.scene.nodes == confirmed.nodes && redone.scene.schemaVersion == 3,"same original retry and Redo source readback")
+            actual.undoGraphEdit()
+            var external = redone.scene; external.revision += 1; external.nodes[0].text = "별도 외부 변경"
+            _ = try files.save(external,preview:png,expected:redone.token)
+            await actual.saveFileWorkspace()
+            let untouched = try files.load(original.id)
+            check(actual.fileWorkspaceState == .blocked && !actual.fileWorkspaceCanSync && untouched.scene == external,"Files CAS rejects pending math Undo without overwriting external original")
+            let draft = actual.inkMathDraft
+            await actual.proposeInkMath { _ in preconditionFailure("blocked original must not recognize") }
+            check(actual.inkMathProposal == nil && actual.inkMathDraft == draft,"blocked Files preserves math draft and refuses a new request")
+            try CanvasFileWorkspace.bytes(original).write(to:output.appendingPathComponent("math-before.json"))
+            try CanvasFileWorkspace.bytes(confirmed).write(to:output.appendingPathComponent("math-after.json"))
+            try CanvasFileWorkspace.bytes(undone.scene).write(to:output.appendingPathComponent("math-undo.json"))
+        }
         print("MATH_CHECKS_OK \(count)")
     }
 }

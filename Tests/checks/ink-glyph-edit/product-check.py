@@ -16,7 +16,7 @@ tmp=output/'tmp';tmp.mkdir()
 env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',TMPDIR=str(tmp)+'/')
 mac=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],env=env,text=True).strip()
 base=['xcrun','swiftc','-sdk',mac,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-module-cache-path',str(output/'modules')]
-files=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift']]
+files=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift','CanvasInkMathProposal.swift']]
 suites={
  'shape':root/'Tests/checks/ink-shape-proposal/main.swift',
  'files-regression':root/'Tests/checks/canvas-file-workspace/main.swift',

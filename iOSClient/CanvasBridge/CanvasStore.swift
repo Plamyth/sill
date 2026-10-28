@@ -120,6 +120,7 @@ final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
             pendingInkTextEditing?.invalidatePending()
+            inkMathRequest = nil
             linkSceneGeneration &+= 1
             nodeResizeDrag = nil
             nodeRotationDrag = nil
@@ -142,6 +143,7 @@ final class CanvasStore: ObservableObject {
     @Published var mode: CanvasMode = .pen {
         didSet {
             if oldValue != mode {
+                cancelInkMath()
                 cancelInkShape()
                 pendingInkTextEditing?.invalidatePending()
                 nodeResizeDrag = nil
@@ -162,6 +164,7 @@ final class CanvasStore: ObservableObject {
             if pencilTraceOwner == nil || pencilTraceOwner == owner {
                 pendingInkTextEditing?.invalidatePending()
                 cancelInkShape()
+                cancelInkMath()
                 pencilTraceOwner = owner
             }
         } else if pencilTraceOwner == owner { pencilTraceOwner = nil }
@@ -213,13 +216,15 @@ final class CanvasStore: ObservableObject {
 
     var inkShapeIsCurrent: Bool {
         guard let proposal = inkShapeProposal else { return false }
-        return sceneReadable && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
+        return sceneReadable && !inkMathInputBusy && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
             !vaultLoading && !vaultInputBusy && !vaultBlockEditing && mode == .lasso && proposal.source == scene &&
             proposal.selection == inkSelection && inkShapeGeneration == linkSceneGeneration &&
             inkShapeExpectedSelectionGeneration == inkShapeSelectionGeneration
     }
 
     func proposeInkShape() {
+        guard !inkMathInputBusy else { status = "수식 교정 입력을 먼저 마쳐 주세요."; return }
+        cancelInkMath()
         cancelInkShape()
         pendingInkTextEditing?.invalidatePending()
         guard sceneReadable, !fileSaveBusy, fileWorkspaceState != .blocked, !vaultDirty, !vaultSaving,
@@ -249,6 +254,72 @@ final class CanvasStore: ObservableObject {
             recordGraphEdit(before:before)
             cancelInkShape()
             status = "도형을 복구본에 확정하고 원본 획을 보존했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
+            return true
+        } catch { status = error.localizedDescription; return false }
+    }
+
+    @Published private(set) var inkMathProposal: CanvasInkMathProposal?
+    @Published var inkMathDraft = ""
+    @Published var inkMathInputBusy = false
+    private var inkMathRequest: UUID?
+    private var inkMathGeneration: UInt64?
+    private var inkMathSelectionGeneration: UInt64 = 0
+    private var inkMathExpectedSelectionGeneration: UInt64?
+    var inkMathIsCurrent: Bool {
+        guard let proposal = inkMathProposal else { return false }
+        return inkMathEditAllowed && mode == .lasso && proposal.source == scene &&
+            proposal.selection == inkSelection && inkMathGeneration == linkSceneGeneration &&
+            inkMathExpectedSelectionGeneration == inkMathSelectionGeneration
+    }
+    private var inkMathEditAllowed: Bool {
+        sceneReadable && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked &&
+            !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing
+    }
+    func cancelInkMath() { inkMathRequest = nil; inkMathProposal = nil; inkMathInputBusy = false }
+
+    func proposeInkMath(recognize: (PKDrawing) async -> String? = { drawing in
+        let recognizer = PKStrokeRecognizer()
+        await recognizer.updateDrawing(drawing)
+        return await recognizer.recognizedText()
+    }) async {
+        guard inkMathEditAllowed, !inkMathInputBusy, mode == .lasso else {
+            status = "영역 선택과 저장·입력 상태를 확인하세요. 현재 수식 초안과 원본을 유지합니다."
+            return
+        }
+        cancelInkMath()
+        pendingInkTextEditing?.invalidatePending()
+        cancelInkShape()
+        do {
+            let snapshot = try CanvasInkMathProposal.capture(scene:scene,drawing:drawing,selection:inkSelection,recognized:nil)
+            let request = UUID(), generation = linkSceneGeneration, selectionGeneration = inkMathSelectionGeneration
+            inkMathRequest = request
+            let recognized = await recognize(snapshot.original)
+            guard inkMathRequest == request, generation == linkSceneGeneration,
+                  selectionGeneration == inkMathSelectionGeneration, snapshot.source == scene,
+                  snapshot.selection == inkSelection, mode == .lasso, inkMathEditAllowed else { return }
+            inkMathRequest = nil
+            inkMathProposal = try CanvasInkMathProposal.capture(scene:scene,drawing:drawing,selection:inkSelection,recognized:recognized)
+            inkMathDraft = recognized ?? ""
+            inkMathGeneration = generation
+            inkMathExpectedSelectionGeneration = selectionGeneration
+            status = recognized == nil ? "인식 후보가 없습니다. 원본을 보며 식을 직접 교정하세요." : "인식 후보를 원본과 비교하고 식을 교정한 뒤 확정하세요."
+        } catch { status = error.localizedDescription }
+    }
+
+    @discardableResult
+    func confirmInkMath() -> Bool {
+        guard inkMathIsCurrent, !inkMathInputBusy, let proposal = inkMathProposal else {
+            status = "원본·선택이 바뀌었거나 입력 중입니다. 현재 초안과 원본을 유지합니다."
+            return false
+        }
+        do {
+            let before = scene
+            let next = try proposal.confirmed(in:scene,selection:inkSelection,expression:inkMathDraft)
+            try persistScene(next)
+            scene = next
+            recordGraphEdit(before:before)
+            cancelInkMath()
+            status = "확인한 수식과 계산 결과를 복구본에 반영했습니다. 원본 획은 보존하며 Files 원본 미저장·Obsidian 동기화 대기입니다."
             return true
         } catch { status = error.localizedDescription; return false }
     }
@@ -961,6 +1032,8 @@ final class CanvasStore: ObservableObject {
     var drawing: PKDrawing {
         get { storedDrawing }
         set {
+            inkMathRequest = nil
+            inkMathSelectionGeneration &+= 1
             pendingInkTextEditing?.invalidatePending()
             objectWillChange.send()
             storedDrawing = newValue
@@ -2290,6 +2363,8 @@ final class CanvasStore: ObservableObject {
         guard next != inkSelection else { return }
         pendingInkTextEditing?.invalidatePending()
         inkShapeSelectionGeneration &+= 1
+        inkMathRequest = nil
+        inkMathSelectionGeneration &+= 1
         inkSelection = next
         handwritingRequest = nil
     }
@@ -2335,12 +2410,14 @@ final class CanvasStore: ObservableObject {
     }
 
     private var inkTextEditAllowed: Bool {
-        sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
+        !inkMathInputBusy && sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
             !fileSaveBusy && fileWorkspaceState != .blocked
     }
 
     func proposeInkTextDeletion(range: NSRange, editing: CanvasInkTextEditing,
                                readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
+        guard !inkMathInputBusy else { status = "수식 교정 입력을 먼저 마쳐 주세요."; return }
+        cancelInkMath()
         pendingInkTextEditing?.invalidatePending()
         pendingInkTextEditing = editing
         cancelInkShape()

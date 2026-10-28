@@ -34,6 +34,7 @@ struct CanvasWorkspace: View {
     @State private var commentSelection = NSRange(location:0,length:0)
     @State private var proposalSelection = NSRange(location:0,length:0)
     @State private var proposalInputBusy = false
+    @State private var mathSelection = NSRange(location:0,length:0)
     @State private var handwritingSearchOpen = false
     @State private var handwritingQuery = ""
     @State private var dictationOpen = false
@@ -145,7 +146,8 @@ struct CanvasWorkspace: View {
             CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
                 confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
         }
-        .onDisappear { store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+        .sheet(item:Binding(get:{ store.inkMathProposal },set:{ if $0 == nil { store.cancelInkMath() } })) { _ in inkMathSheet }
+        .onDisappear { store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
                 store.cancelLink()
@@ -409,6 +411,9 @@ struct CanvasWorkspace: View {
             Button("선택한 획 도형 보정",systemImage:"wand.and.stars") { store.proposeInkShape() }
                 .disabled(store.inkSelection.isEmpty || store.inkBusy || store.mode != .lasso)
                 .accessibilityIdentifier("canvasProposeInkShape")
+            Button("선택한 수식 계산",systemImage:"function") { Task { await store.proposeInkMath() } }
+                .disabled(store.inkSelection.isEmpty || store.mode != .lasso || store.inkBusy)
+                .accessibilityIdentifier("canvasProposeInkMath")
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
             Button("손글씨 찾기",systemImage:"magnifyingglass") { handwritingSearchOpen = true }
@@ -1213,6 +1218,46 @@ struct CanvasWorkspace: View {
         } message: { _ in
             Text("저장 전 입력은 복구할 수 없습니다. 필요하면 취소하고 초안을 먼저 복사하세요. 저장된 댓글은 바뀌지 않습니다.")
         }
+    }
+
+    private var inkMathSheet: some View {
+        NavigationStack {
+            Form {
+                if let proposal = store.inkMathProposal {
+                    CanvasInkMathOriginalPreview(drawing:proposal.original).frame(height:180)
+                    Text("원문 인식 후보: \(proposal.recognizedText ?? "없음 · 직접 교정이 필요합니다")")
+                    Text("원본을 보며 식만 입력하세요. 예: (1+2)÷2. Apple Pencil 손글씨 입력이나 키보드로 교정할 수 있습니다.")
+                    VaultMarkdownEditor(text:$store.inkMathDraft,selection:$mathSelection,
+                        identifier:"canvasInkMathEditor",label:"수식 교정 편집기",
+                        inputBusy:$store.inkMathInputBusy,editSession:{ store.inkMathProposal?.id })
+                        .id(proposal.id).frame(minHeight:180)
+                    if let calculation = try? CanvasInkMathProposal.calculate(store.inkMathDraft) {
+                        Text("계산 미리보기: \(calculation.expression) = \(calculation.result)")
+                            .accessibilityIdentifier("canvasInkMathResult")
+                    } else {
+                        Text(inkMathFailure).foregroundStyle(.orange)
+                    }
+                    if !store.inkMathIsCurrent { Text("원본이나 선택이 바뀌었습니다. 초안은 유지하며 확정하지 않습니다.").foregroundStyle(.red) }
+                    Text(store.status)
+                }
+            }
+            .navigationTitle("수식 교정과 계산 확인")
+            .toolbar {
+                ToolbarItem(placement:.confirmationAction) {
+                    Button("원본을 보존하고 확정") { _ = store.confirmInkMath() }
+                        .disabled(!store.inkMathIsCurrent || store.inkMathInputBusy || (try? CanvasInkMathProposal.calculate(store.inkMathDraft)) == nil)
+                        .accessibilityIdentifier("canvasConfirmInkMath")
+                }
+                ToolbarItem(placement:.cancellationAction) {
+                    Button("취소") { store.cancelInkMath() }.disabled(store.inkMathInputBusy)
+                }
+            }
+        }.interactiveDismissDisabled(store.inkMathInputBusy)
+         .onAppear { mathSelection = NSRange(location:0,length:0) }
+    }
+    private var inkMathFailure: String {
+        do { _ = try CanvasInkMathProposal.calculate(store.inkMathDraft); return "" }
+        catch { return error.localizedDescription }
     }
 
     private var proposalSheet: some View {
