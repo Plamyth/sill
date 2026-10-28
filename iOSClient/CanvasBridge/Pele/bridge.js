@@ -60,6 +60,7 @@
         }
         target.replaceChildren();
         if (!payload.nodes.length) {
+          if (payload.displayedEdgeCount !== undefined && payload.displayedEdgeCount !== 0) throw Error('empty edge count mismatch');
           target.textContent = '구조 요소를 추가하면 관계가 표시됩니다. 자유그림의 자동 의미 해석은 지원하지 않습니다.';
           current = payload;
           return { nodes:0, edges:0 };

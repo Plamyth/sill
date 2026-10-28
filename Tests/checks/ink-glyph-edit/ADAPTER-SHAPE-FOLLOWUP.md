@@ -21,3 +21,5 @@ Laplace의 schema3-cross-review-8509e3c P2는 기존 scene2 + 원격 line/ellips
 검사 프로세스의 setActivationPolicy 반환값은 이미 prohibited인 CLI에서도 false였다. 자기 프로세스 읽기 probe는 실제 정책2/prohibited·active=false·windows=0을 확인했다. 따라서 명령 반환값을 성공으로 추정하지 않고, WebKit 실행 전후의 실제 정책·비활성·창0을 검사하도록 고쳤다. Host 설정이나 활성화 정책은 바꾸지 않는다. 이 후속은 검사 파일만 바꾸므로 직전 후보의 동일 제품 입력 SHA를 가진 math/glyph/shape/Files/adapter·SDK 결과는 재사용하며, 변경된 WebKit 회귀와 최종 source identity의 전체 target build를 따로 확인한다.
 
 WebKit 수명주기는 CLI의 초기 정책 또는 내부 숨은 창 수를 바꿀 수 있다. 종료 때 정책2/전체 창0을 가정한 검사는 도형·선 CSS 단정을 통과한 뒤 안전 가드에서 중단됐다. 마지막 검사는 실제 정책·활성·전체/표시/key 창 수를 먼저 영수증에 기록하고, 비활성 및 표시/key 창0을 요구한다. 숨은 framework 창을 사용자에게 보이는 UI와 혼동하지 않으며 활성화·창 표시 명령은 추가하지 않는다.
+
+Laplace의 shape-protocol-review-b111e0b 추가 P3는 nodes=[]인 조기 반환이 displayedEdgeCount1을 수용한 문제다. 빈 snapshot 반환 전에 count0을 대조하는 한 줄을 추가하고, 같은 WebKit 실행에 빈 nodes/count1 반례 하나를 포함했다. 정상 native payload의 실제 발생이나 상한 우회를 입증한 것으로 확대하지 않는다. 이 마지막 변경은 JS/그 회귀만 검증하며 수식·glyph·shape 기하·adapter·Files의 동일 입력 SHA 결과는 다시 실행하지 않는다. 최종 전체 target build는 source identity와 번들에 복사된 bridge.js SHA를 확인한다.

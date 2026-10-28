@@ -63,6 +63,7 @@ import WebKit
         window.ccrDiagram.update(selected);
         measured.countMismatchRejected = window.ccrDiagram.update({...payload,displayedNodeCount:payload.displayedNodeCount+1}).error === true;
         measured.edgeMismatchRejected = window.ccrDiagram.update({...payload,displayedEdgeCount:payload.displayedEdgeCount+1}).error === true;
+        measured.emptyEdgeMismatchRejected = window.ccrDiagram.update({...payload,source:'flowchart TD',nodes:[],displayedNodeCount:0,displayedEdgeCount:1}).error === true;
         measured.restored = !window.ccrDiagram.update(payload).error;
         return measured;
         """
@@ -72,6 +73,7 @@ import WebKit
             }
         }
         precondition(value["initialLineSelected"] as? Bool == true && value["cachedLineSelected"] as? Bool == true && value["cacheClear"] as? Bool == true,"actual visible primitive selected color/width on initial render and cached deselect/reselect")
+        precondition(value["emptyEdgeMismatchRejected"] as? Bool == true,"empty snapshot with displayed edge count1 rejected before early return")
         precondition(value["cachedEdgeMismatchRejected"] as? Bool == true,"same-source same-nodes cached edge count mismatch rejected")
         precondition(value["ellipseCenter"] as? Bool == true && value["ellipseCorner"] as? Bool == false,"WebKit ellipse fill geometry")
         precondition(value["endpointsHidden"] as? Bool == true && value["endpointCount"] as? Int == 2,"line transparent endpoint geometry")
@@ -93,7 +95,7 @@ import WebKit
         try JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]).write(to:output.appendingPathComponent("webkit-shapes.json"))
         print("WEBKIT_PROCESS",application.activationPolicy().rawValue,"active",application.isActive,"windows",application.windows.count,"visible",application.windows.filter(\.isVisible).count)
         precondition(result["passed"] as? Bool == true,"test process remains inactive without visible or key windows")
-        print("WEBKIT_SHAPES_OK center=true corner=false linePath=true selectionUUID=true initialAndCachedHighlight=true cachedEdgeMismatchRejected=true")
+        print("WEBKIT_SHAPES_OK center=true corner=false linePath=true selectionUUID=true initialAndCachedHighlight=true cachedEdgeMismatchRejected=true emptyEdgeMismatchRejected=true")
         view.stopLoading(); config.userContentController.removeScriptMessageHandler(forName:"canvasDiagram")
     }
 }
