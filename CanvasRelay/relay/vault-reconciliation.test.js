@@ -217,3 +217,14 @@ test('socket 없는 서버 경로 검사는 기존 인증·typed GET 거부·명
     sceneJSONBase64:Buffer.from(JSON.stringify({...f.scene,revision:3})).toString('base64'),imagePNGBase64:png.toString('base64')});
   assert.equal(saved.status,200);assert.equal((await call('/vault/canvas?id='+f.id)).body.noteSha256,saved.body.noteSha256);
 });
+
+test('같은 실제 노트의 대소문자 별칭 경로도 미조정 상태를 우회하지 않는다',t => {
+  const f = fixture(t),state = makeConflict(f),alias = f.first.path.toUpperCase().replace(/\.MD$/,'.md');
+  if (!fs.existsSync(path.join(f.root,alias))) { t.skip('대소문자를 구분하는 파일시스템');return; }
+  assert.equal(fs.statSync(path.join(f.root,alias)).ino,fs.statSync(f.file).ino);
+  assert.throws(() => fresh(f).note(alias),{code:'note_reconciliation_required',recoveryID:state.recoveryID});
+  assert.throws(() => fresh(f).save(alias,state.expected.activeSha256,'같은 경로의 우회 저장'),{code:'note_reconciliation_required'});
+  const result = fresh(f).resolveCanvasConflict(f.id,request(state));
+  assert.equal(fresh(f).note(alias).sha256,result.noteSha256);
+  assert.equal(fresh(f).save(alias,result.noteSha256,fresh(f).note(alias).text+'\n별칭 경로의 명시 조정 후 메모\n').path,alias);
+});

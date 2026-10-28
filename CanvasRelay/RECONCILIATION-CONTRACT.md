@@ -16,7 +16,7 @@
 }
 ```
 
-recoveryID는 해당 노트의 서버 소유 `.ccr-save-UUID` 지속 원장에서 파생하는 불투명 식별자다. 클라이언트 경로를 조합하지 않는다. active/pending SHA가 같아도 이 상태를 해제하지 않는다. 독점 생성 전 intent를 fsync하므로 최종 receipt 전 중단도 보수적으로 held로 취급한다. 원래 43f의 conflict-preserved receipt도 읽는다. 정상 published-verified 영수증과 게시 시도를 하지 않았음을 확인한 not-published-verified 영수증은 일반 저장을 차단하지 않는다. 마지막 SHA 대조에서 발견한 미게시 stale은 기존 409/재조회 경로를 유지하며, 교환 시도 뒤 held를 SHA 일치로 해제하는 것과 구분한다.
+recoveryID는 해당 노트의 서버 소유 `.ccr-save-UUID` 지속 원장에서 파생하는 불투명 식별자다. 클라이언트 경로를 조합하지 않는다. active/pending SHA가 같아도 이 상태를 해제하지 않는다. vault와 같은 파일시스템 안의 기존 경로 별칭을 읽기 전용 stat으로 대조해 대소문자 처리 방식을 확인하고, 대소문자를 구분하지 않는 파일시스템에서는 원장 노트 경로도 NFC·소문자 키로 결속한다. 실제 처리 방식을 확인할 ASCII 경로가 없으면 Darwin에서는 보수적으로 별칭을 함께 차단한다. 독점 생성 전 intent를 fsync하므로 최종 receipt 전 중단도 보수적으로 held로 취급한다. 원래 43f의 conflict-preserved receipt도 읽는다. 정상 published-verified 영수증과 게시 시도를 하지 않았음을 확인한 not-published-verified 영수증은 일반 저장을 차단하지 않는다. 마지막 SHA 대조에서 발견한 미게시 stale은 기존 409/재조회 경로를 유지하며, 교환 시도 뒤 held를 SHA 일치로 해제하는 것과 구분한다.
 
 ## 읽기: GET /vault/canvas/conflict?id=sceneUUID
 

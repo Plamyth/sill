@@ -108,7 +108,21 @@ class ObsidianVault {
   constructor(root) {
     if (!path.isAbsolute(root || '')) throw new VaultError('Vault root must be absolute');
     this.root = fs.realpathSync(root);
-    if (!fs.statSync(this.root).isDirectory()) throw new VaultError('Vault root is not a directory');
+    const rootStat = fs.statSync(this.root);
+    if (!rootStat.isDirectory()) throw new VaultError('Vault root is not a directory');
+    this.caseInsensitive = process.platform === 'darwin';
+    for (let directory = this.root; path.dirname(directory) !== directory; directory = path.dirname(directory)) {
+      const parent = path.dirname(directory);
+      if (fs.statSync(parent).dev !== rootStat.dev) break;
+      const name = path.basename(directory),alternate = name.replace(/[A-Za-z]/,letter =>
+        letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase());
+      if (alternate === name) continue;
+      try {
+        const actual = fs.statSync(directory),alias = fs.statSync(path.join(parent,alternate));
+        this.caseInsensitive = actual.dev === alias.dev && actual.ino === alias.ino;
+      } catch (error) { if (error.code !== 'ENOENT') throw error; this.caseInsensitive = false; }
+      break;
+    }
   }
 
   resolve(relative, {directory = false, allowMissing = false} = {}) {
@@ -171,14 +185,17 @@ class ObsidianVault {
       const intent = this.#record(path.join(folder,'intent.json'));
       const receipt = this.#record(path.join(folder,'receipt.json'));
       const record = intent ?? receipt;
-      if (!record || record.path !== relative) continue;
+      if (!record) continue;
+      const key = value => this.caseInsensitive ? value.normalize('NFC').toLowerCase() : value;
+      if (typeof record.path !== 'string') throw new VaultError('보존 원장의 노트 식별자가 없습니다.',409);
+      if (key(record.path) !== key(relative)) continue;
       if (intent && (intent.schema !== 'ccr.note-save-intent/v1' || intent.vaultKey !== digest(Buffer.from(this.root))))
         throw new VaultError('보존 원장의 vault 식별자가 일치하지 않습니다.',409);
       if (receipt && receipt.schema !== 'ccr.note-save-preservation/v1')
         throw new VaultError('지원하지 않는 보존 원장입니다.',409);
       const recoveryID = name.slice(10),resolution = this.#record(path.join(folder,'resolution.json'));
       if (resolution && (resolution.schema !== 'ccr.canvas-resolution/v1' || resolution.recoveryID !== recoveryID ||
-          resolution.path !== relative || !/^[0-9a-f]{64}$/.test(resolution.result?.noteSha256 || '')))
+          typeof resolution.path !== 'string' || key(resolution.path) !== key(relative) || !/^[0-9a-f]{64}$/.test(resolution.result?.noteSha256 || '')))
         throw new VaultError('지원하지 않는 조정 기록입니다.',409);
       records.push({folder,recoveryID,intent,receipt,resolution});
     }
