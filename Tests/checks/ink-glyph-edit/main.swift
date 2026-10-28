@@ -249,6 +249,93 @@ import AppKit
               "실제 Store Undo의 원본 바이트·본문 파일 readback")
         check(store.undoInkTextDeletion(linked, redo: true) && CanvasStore().scene.nodes[0].text == "가다",
               "실제 Store Redo·새 Store readback")
+        for change in ["selection", "scene", "mode", "trace"] {
+            let value = CanvasStore(defaults: UserDefaults(suiteName: "glyph-aba-" + UUID().uuidString)!)
+            try value.importScene(original)
+            value.setInkSelection(selection)
+            let delayed = CanvasInkTextEditing(), delay = EvidenceGate()
+            let task = Task { await value.proposeInkTextDeletion(range: NSRange(location: 1, length: 1),
+                editing: delayed, readEvidence: delay.read) }
+            await delay.wait()
+            switch change {
+            case "selection": value.setInkSelection([ids[0]]); value.setInkSelection(selection)
+            case "scene": value.scene.id = UUID(); value.scene = original; value.setInkSelection(selection)
+            case "mode": value.mode = .select; value.mode = .lasso; value.setInkSelection(selection)
+            default:
+                let owner = UUID(); value.setPencilTraceActive(true, owner: owner); value.setPencilTraceActive(false, owner: owner)
+            }
+            delay.finish(supplied(original, ids)); await task.value
+            check(delayed.proposal == nil && value.scene == original, "실제 Store \(change) ABA는 옛 콜백을 무효화")
+            value.saveNow()
+        }
+        // 아래 Files 원본·복구본 경계도 실제 Store와 실제 파일을 사용한다.
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")!
+        let filesFolder = output.appendingPathComponent("selected-files", isDirectory: true)
+        try FileManager.default.createDirectory(at: filesFolder, withIntermediateDirectories: true)
+        let files = CanvasFileWorkspace(folder: filesFolder, requiresScope: false)
+        _ = try files.save(original, preview: png, expected: nil)
+        let binding = CanvasFileWorkspace.Binding(bookmark: try filesFolder.bookmarkData(options: .minimalBookmark,
+            includingResourceValuesForKeys: nil, relativeTo: nil), sceneID: original.id,
+            savedSceneSHA: try CanvasFileWorkspace.sceneSHA(original))
+        try CanvasLocalFile.write(CanvasFileWorkspace.bytes(original), to: CanvasRuntime.stateURL(.scene))
+        try CanvasLocalFile.write(JSONEncoder().encode(binding), to: CanvasRuntime.stateURL(.workspace))
+        let fileStore = CanvasStore()
+        fileStore.filePreview = { _ in png }
+        check(fileStore.scene == original && fileStore.fileWorkspaceCanSync, "Files 원본 binding과 합성 fixture 정상 복원")
+        fileStore.setInkSelection(selection)
+        let fileEditor = CanvasInkTextEditing()
+        await fileStore.proposeInkTextDeletion(range: NSRange(location: 1, length: 1), editing: fileEditor, readEvidence: reader)
+        let beforeFileToken = try files.load(original.id).token
+        check(fileStore.confirmInkTextDeletion(fileEditor) && !fileStore.fileWorkspaceCanSync &&
+              fileStore.fileWorkspaceState == .pending && fileStore.status.contains("미저장") && fileStore.status.contains("동기화 대기"),
+              "글자 삭제 cache 확정은 Files 저장 성공으로 표시하지 않고 relay 전송 차단")
+        try CanvasInkTextEditing.encode(original).write(to: output.appendingPathComponent("glyph-before.json"))
+        try CanvasInkTextEditing.encode(fileStore.scene).write(to: output.appendingPathComponent("glyph-after.json"))
+        await fileStore.saveFileWorkspace()
+        let saved = try files.load(original.id)
+        check(fileStore.fileWorkspaceState == .ready && fileStore.fileWorkspaceCanSync && saved.scene == fileStore.scene &&
+              saved.scene.id == original.id && saved.scene.revision == original.revision + 1 && saved.token != beforeFileToken,
+              "Files 원본 세대 저장·ID/revision·본문/획 readback 이후 relay 허용")
+        let head = try JSONDecoder().decode(CanvasFileWorkspace.Head.self,
+            from: Data(contentsOf: files.documentURL(original.id).appendingPathComponent("current.json")))
+        let drawingURL = files.documentURL(original.id).appendingPathComponent("revisions/" + head.generation.uuidString.lowercased() + "/drawing.pkdrawing")
+        check(try Data(contentsOf: drawingURL) == Data(base64Encoded: fileStore.scene.drawingBase64)!, "Files drawing.pkdrawing이 실제 확정 native 원본과 동일")
+        let fileRestart = CanvasStore()
+        fileRestart.filePreview = { _ in png }
+        check(fileRestart.scene == saved.scene && fileRestart.fileWorkspaceCanSync, "새 실제 Store가 선택 Files 원본의 한 글자 삭제 결과 재열기")
+        check(fileRestart.undoInkTextDeletion(fileEditor), "Files 원본에서도 문자/획 단위 Undo")
+        await fileRestart.saveFileWorkspace()
+        check(try files.load(original.id).scene.nodes == original.nodes, "Undo Files 재저장·원문 readback")
+        try CanvasInkTextEditing.encode(fileRestart.scene).write(to: output.appendingPathComponent("glyph-undo.json"))
+        let revisions = files.documentURL(original.id).appendingPathComponent("revisions")
+        let lastHead = try Data(contentsOf: files.documentURL(original.id).appendingPathComponent("current.json"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: revisions.path)
+        check(fileRestart.undoInkTextDeletion(fileEditor, redo: true), "권한 실패 전 변경은 미저장 복구본에만 반영")
+        await fileRestart.saveFileWorkspace()
+        check(fileRestart.fileWorkspaceState == .blocked && !fileRestart.fileWorkspaceCanSync &&
+              fileRestart.fileWorkspaceStatus.contains("미저장") && !fileRestart.status.contains("저장 완료"),
+              "실제 외부폴더 실패는 blocked·미저장·동기화 차단")
+        check(try Data(contentsOf: files.documentURL(original.id).appendingPathComponent("current.json")) == lastHead,
+              "폴더 실패는 기존 원본의 current.json을 바꾸지 않음")
+        check(try JSONDecoder().decode(CanvasScene.self, from: CanvasLocalFile.read(CanvasRuntime.stateURL(.scene))) == fileRestart.scene,
+              "폴더 실패에도 한 글자 삭제 미저장 캐시가 보존됨")
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: revisions.path)
+        fileRestart.retryFileWorkspaceSave(); await fileRestart.saveFileWorkspace()
+        check(fileRestart.fileWorkspaceCanSync, "명시 재시도로 같은 Files 원본 저장·차단 해제")
+        let stable = try files.load(original.id)
+        var remoteScene = stable.scene
+        remoteScene.nodes[1].text = "외부 원본 수정"; remoteScene.revision += 1
+        _ = try files.save(remoteScene, preview: png, expected: stable.token)
+        check(fileRestart.undoInkTextDeletion(fileEditor), "다른 원본 변경은 local Undo 이후 Files CAS에서 대조")
+        let pendingScene = fileRestart.scene
+        await fileRestart.saveFileWorkspace()
+        check(fileRestart.fileWorkspaceState == .blocked && !fileRestart.fileWorkspaceCanSync && fileRestart.scene == pendingScene,
+              "외부 Files CAS 충돌은 pending 입력을 유지하고 relay 차단")
+        check(try files.load(original.id).scene == remoteScene, "glyph CAS 실패가 외부 원본을 덮지 않음")
+        fileRestart.setInkSelection(selection)
+        let deniedEdit = CanvasInkTextEditing()
+        await fileRestart.proposeInkTextDeletion(range: NSRange(location: 1, length: 1), editing: deniedEdit, readEvidence: reader)
+        check(deniedEdit.proposal == nil && fileRestart.scene == pendingScene, "blocked 원본에서는 새 glyph 삭제 제안도 차단")
         #endif
         let summary: [String: Any] = ["checks": count, "failed": failed, "nativeRecognizerInjected": false,
             "policyAndStoreEvidenceInjected": true, "physicalPencilAccepted": false,

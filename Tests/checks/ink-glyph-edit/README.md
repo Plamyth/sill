@@ -45,3 +45,15 @@ ownfixture의 원본34획은 PDF 계열 transform을 포함한다. native 렌더
 - [ ] 제품 통합·whole unsigned build. 부모가 배정한 storage 통합 기준의 별도 WT에서 이어간다.
 
 초기 검사 실행기의 경로 문자열 비교는 BT_CCR-iPad/ipad 대소문자 별칭 때문에 거절됐다. 실제 같은 디스크/디렉터리 inode를 검증하는 samefile로 고쳤다. 타입 검사 초안의 MainActor encode와 테스트 CGFloat/PKInk 비교 오류도 수정했다. 초기 실패 로그는 자기 `.build`에 보존했으며 native 인식 실패와 구분한다.
+
+## 68a1b4aa 실제 제품 접합
+
+새 제품 WT는 공식 로컬 integration `68a1b4aaad6faba5a5449d82b81e147479b81930`에서 만들고 glyph 소유 commit98d9fe4를 cherry-pick했다. 실제 Store/Workspace와 정상 iPad/iPhone project source phase에 연결했다. 도구 안에서 원본 획을 선택하고, 기존 인식 요소 한 개에 정확히 대응할 때만 한 글자 선택·native 미리보기·명시 확정·glyph Undo/Redo를 제공한다. 새 노트 서재·공통 wire를 만들지 않았다.
+
+통합 검사 명령은 `python3 Tests/checks/ink-glyph-edit/run.py --actual-product --policy-only`다. 사본 대신 실제 제품 Store/Workspace를 컴파일한다. 65개 native 파일·Store 검사가 통과했고 전체 Canvas iOS27 SDK 타입 검사가 통과했다. 실제 Store의 선택/장면/모드/Pencil trace ABA 뒤 옛 callback 거부도 포함한다. 무주입 인식을 다시 실행하지 않았다.
+
+Files 연결·저장 중 또는 blocked에서는 glyph 편집을 시작하지 않는다. local persistScene 성공은 기기 복구본 반영이며 Files 원본 성공이 아니다. UI는 Files 미저장·Obsidian 동기화 대기로 표시하고, Files 세대 저장/재독출 후에만 기존 fileWorkspaceCanSync가 relay를 허용한다. 실제 폴더권한 실패·외부 CAS 충돌·같은 원본 재시도·새 Store 재열기로 이를 확인했다. 이전 원본 current.json과 native bytes, 미저장 복구본을 각각 대조했다.
+
+별도 `obsidian-roundtrip.cjs`는 실제 기존 ObsidianVault 모듈과 격리 보관함 파일에서 glyph 변경·native JSON·Markdown·메모 CRLF·새 인스턴스 재열기·Undo·CAS409 보존을 검사한다. 공유 relay 프로세스·사용자 vault·네트워크에는 영향0이다. PNG는1픽셀 전송 fixture이므로 실제 preview 시각 수용으로 세지 않는다. 최초 CAS 검사는 payload revision과 인자를 잘못 짝지어400을 받았고, 일치한 payload와 오래된 SHA로409를 재검증했다. 제품 보호를 완화하지 않았다.
+
+새 native 인식 성공과 실제 iPad 화면·Pencil 수용은 여전히 미완료다. glyph 확정은 기존 PKCanvasView의 잉크만 Undo하는 기록을 무효화하고 별도 glyph 명령으로 문자와 획을 함께 되돌린다. 이전 native Undo 이력의 앱 재실행 보존은 제공하지 않는다.

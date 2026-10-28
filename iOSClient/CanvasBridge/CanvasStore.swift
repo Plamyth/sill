@@ -119,6 +119,7 @@ final class CanvasInkHistory: ObservableObject {
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
+            pendingInkTextEditing?.invalidatePending()
             linkSceneGeneration &+= 1
             nodeResizeDrag = nil
             nodeRotationDrag = nil
@@ -141,6 +142,7 @@ final class CanvasStore: ObservableObject {
     @Published var mode: CanvasMode = .pen {
         didSet {
             if oldValue != mode {
+                pendingInkTextEditing?.invalidatePending()
                 nodeResizeDrag = nil
                 nodeRotationDrag = nil
                 clearPendingLink()
@@ -156,7 +158,10 @@ final class CanvasStore: ObservableObject {
     var inkBusy: Bool { pencilTraceActive || inkHistory.usingTool }
     func setPencilTraceActive(_ active: Bool, owner: UUID) {
         if active {
-            if pencilTraceOwner == nil || pencilTraceOwner == owner { pencilTraceOwner = owner }
+            if pencilTraceOwner == nil || pencilTraceOwner == owner {
+                pendingInkTextEditing?.invalidatePending()
+                pencilTraceOwner = owner
+            }
         } else if pencilTraceOwner == owner { pencilTraceOwner = nil }
     }
 
@@ -907,6 +912,7 @@ final class CanvasStore: ObservableObject {
     var drawing: PKDrawing {
         get { storedDrawing }
         set {
+            pendingInkTextEditing?.invalidatePending()
             objectWillChange.send()
             storedDrawing = newValue
             setInkSelection([])
@@ -2232,6 +2238,7 @@ final class CanvasStore: ObservableObject {
     func setInkSelection(_ ids: Set<UUID>) {
         let next = ids.intersection(drawing.strokes.map(\.id))
         guard next != inkSelection else { return }
+        pendingInkTextEditing?.invalidatePending()
         inkSelection = next
         handwritingRequest = nil
     }
@@ -2263,6 +2270,69 @@ final class CanvasStore: ObservableObject {
         proposalText = text
         mode = .select
         status = "글자 후보입니다. 수정한 뒤 확인하면 구조 데이터에 확정됩니다."
+    }
+
+
+    private weak var pendingInkTextEditing: CanvasInkTextEditing?
+
+    var inkTextDeletionTarget: CanvasNode? {
+        guard !inkSelection.isEmpty else { return nil }
+        let candidates = scene.nodes.filter {
+            $0.kind == .note && $0.vaultNote == nil && Set($0.sourceStrokeIds) == inkSelection
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
+    private var inkTextEditAllowed: Bool {
+        sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
+            !fileSaveBusy && fileWorkspaceState != .blocked
+    }
+
+    func proposeInkTextDeletion(range: NSRange, editing: CanvasInkTextEditing,
+                               readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
+        pendingInkTextEditing?.invalidatePending()
+        pendingInkTextEditing = editing
+        guard inkTextEditAllowed, let node = inkTextDeletionTarget else {
+            editing.cancel()
+            status = "인식된 문장에 대응하는 원본 획만 선택하세요. 편집 중인 입력은 먼저 마쳐 주세요."
+            return
+        }
+        await editing.propose(scene: scene, nodeID: node.id, selection: inkSelection, range: range,
+            isCurrent: { [weak self] snapshot in
+                guard let self else { return false }
+                return self.inkTextEditAllowed && snapshot.matches(scene: self.scene, selection: self.inkSelection)
+            }, readEvidence: readEvidence)
+    }
+
+    @discardableResult
+    func confirmInkTextDeletion(_ editing: CanvasInkTextEditing) -> Bool {
+        guard inkTextEditAllowed else { status = "다른 입력이 진행 중이어서 원본을 유지했습니다."; return false }
+        do {
+            let next = try editing.confirm(current: scene, selection: inkSelection, persist: { try self.persistScene($0) })
+            installInkTextScene(next)
+            status = "한 글자와 대응 획을 기기 복구본에 반영했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
+            return true
+        } catch { status = "글자 삭제를 저장하지 않았습니다. \(error.localizedDescription)"; return false }
+    }
+
+    @discardableResult
+    func undoInkTextDeletion(_ editing: CanvasInkTextEditing, redo: Bool = false) -> Bool {
+        guard inkTextEditAllowed else { status = "다른 입력이 진행 중이어서 원본을 유지했습니다."; return false }
+        do {
+            let next = try redo ? editing.redo(current: scene, persist: { try self.persistScene($0) }) :
+                editing.undo(current: scene, persist: { try self.persistScene($0) })
+            installInkTextScene(next)
+            status = redo ? "한 글자 삭제를 복구본에 다시 반영했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다." : "원래 글자와 원본 획을 복구본에 복원했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
+            return true
+        } catch { status = "장면을 덮어쓰지 않았습니다. \(error.localizedDescription)"; return false }
+    }
+
+    private func installInkTextScene(_ next: CanvasScene) {
+        // 확정 전에 네이티브 원본과 투영을 검증하고 저장했으므로 같은 바이트만 설치한다.
+        guard let bytes = Data(base64Encoded: next.drawingBase64), let restored = try? PKDrawing(data: bytes) else { return }
+        scene = next
+        drawing = restored
+        packet = nil
     }
 
     func searchHandwriting(_ query: String, search: (PKDrawing, String) async -> [Set<UUID>] = { drawing, query in

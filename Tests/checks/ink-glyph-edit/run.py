@@ -29,14 +29,18 @@ product = root / 'iOSClient/CanvasBridge/CanvasInkTextEditing.swift'
 model = root / 'iOSClient/CanvasBridge/CanvasModel.swift'
 original_store = root / 'iOSClient/CanvasBridge/CanvasStore.swift'
 workspace = root / 'iOSClient/CanvasBridge/CanvasWorkspace.swift'
-for source in [original_store, workspace]:
-    dest = output / source.relative_to(root)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(source.read_bytes())
-subprocess.run(['git', 'apply', '--check', str(here / 'integration.patch')], cwd=root, check=True)
-subprocess.run(['/usr/bin/patch', '--batch', '-p1', '-i', str(here / 'integration.patch')], cwd=output, check=True, capture_output=True)
-patched_store = output / original_store.relative_to(root)
-patched_workspace = output / workspace.relative_to(root)
+actual = '--actual-product' in sys.argv
+if actual:
+    patched_store, patched_workspace = original_store, workspace
+else:
+    for source in [original_store, workspace]:
+        dest = output / source.relative_to(root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(source.read_bytes())
+    subprocess.run(['git', 'apply', '--check', str(here / 'integration.patch')], cwd=root, check=True)
+    subprocess.run(['/usr/bin/patch', '--batch', '-p1', '-i', str(here / 'integration.patch')], cwd=output, check=True, capture_output=True)
+    patched_store = output / original_store.relative_to(root)
+    patched_workspace = output / workspace.relative_to(root)
 all_canvas = sorted((root / 'iOSClient/CanvasBridge').glob('*.swift'))
 extras = [root / ('iOSClient/' + name + '.swift') for name in ['IPadAudioSession', 'IPadAudioLeaseState', 'IPadAudioLeaseCoordinator']]
 extras += [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
@@ -87,12 +91,12 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         results.append(run('native-and-store', [output / 'check'] + fixtures, timeout=240))
     results += future.result()
 unchanged = before == hashes()
-record = dict(schema='ccr.ink-glyph-verification/v1', baseCommit='c03d9c2de9eb39cfd50501a73a060a0a34375c8c',
+record = dict(schema='ccr.ink-glyph-verification/v1', baseCommit='68a1b4aaad6faba5a5449d82b81e147479b81930' if actual else 'c03d9c2de9eb39cfd50501a73a060a0a34375c8c',
     sourceHashes=before, sourceHashesAfter=hashes(), sourceUnchanged=unchanged,
     output=str(output), results=results, passed=unchanged and all(x['exitCode'] == 0 for x in results),
     actualRecognizer='실제 native API, 증거 주입 없음',
     mappingAndStorePolicy='증거 주입. native 인식 정확도 수용이 아님.',
-    productOriginalStoreAndWorkspaceUnchanged=True, deviceHostEffects=0,
+    productOriginalStoreAndWorkspaceUnchanged=not actual, actualProductSources=actual, deviceHostEffects=0,
     nativeRecognizerExecuted='--policy-only' not in sys.argv,
     executionHostReason='Mini는macOS26.6.2/SDK26.5이며PKStrokeRecognizer27이없음. 실제27PencilKit/SDK검사만맥북에서실행.')
 for name in ['summary.json', 'native-recognizer.json']:

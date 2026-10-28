@@ -14,6 +14,8 @@ struct CanvasWorkspace: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store = CanvasStore()
     @StateObject private var dictation = CanvasDictation()
+    @StateObject private var inkTextEditing = CanvasInkTextEditing()
+    @State private var inkTextDeleteOpen = false
     @State private var relayAddress = "http://192.168.45.4:8791"
     @State private var relayToken = ""
     @State private var connectionOpen = false
@@ -139,7 +141,7 @@ struct CanvasWorkspace: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
-        .onDisappear { dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+        .onDisappear { inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
                 store.cancelLink()
@@ -148,6 +150,24 @@ struct CanvasWorkspace: View {
                 dictation.cancel()
             }
             else { store.refreshFileWorkspace(); Task { await checkConnection() } }
+        }
+        .onChange(of:store.scene) { _,_ in inkTextEditing.invalidatePending() }
+        .onChange(of:store.inkSelection) { _,_ in inkTextEditing.invalidatePending() }
+        .sheet(isPresented:$inkTextDeleteOpen, onDismiss: { inkTextEditing.invalidatePending() }) {
+            if let target = store.inkTextDeletionTarget {
+                VStack {
+                    CanvasInkTextDeleteSheet(editing: inkTextEditing, text: target.text,
+                        propose: { range in Task { await store.proposeInkTextDeletion(range: range, editing: inkTextEditing) } },
+                        confirm: { if store.confirmInkTextDeletion(inkTextEditing) { inkTextDeleteOpen = false } },
+                        cancel: { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false })
+                    Text(store.status).font(.footnote).padding()
+                }
+            } else {
+                VStack {
+                    Text("원본 획 선택이 바뀌었습니다. 인식된 문장의 획만 다시 선택하세요.")
+                    Button("닫기") { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false }
+                }.padding()
+            }
         }
         .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
         .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
@@ -388,6 +408,15 @@ struct CanvasWorkspace: View {
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
                 .disabled(store.inkSelection.isEmpty)
+            Button("선택한 원본 획의 한 글자 삭제") { inkTextDeleteOpen = true }
+                .disabled(store.inkTextDeletionTarget == nil)
+                .accessibilityIdentifier("canvasInkTextDeleteOpen")
+            Button("글자 삭제 되돌리기") { store.undoInkTextDeletion(inkTextEditing) }
+                .disabled(!inkTextEditing.canUndo)
+                .accessibilityIdentifier("canvasInkTextDeleteUndo")
+            Button("글자 삭제 다시 실행") { store.undoInkTextDeletion(inkTextEditing, redo: true) }
+                .disabled(!inkTextEditing.canRedo)
+                .accessibilityIdentifier("canvasInkTextDeleteRedo")
             Button("음성 설명",systemImage:"mic") { dictationOpen = true }
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
