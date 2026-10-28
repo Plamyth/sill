@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import ImageIO
 import StreamProtocol
 
 struct CanvasSceneCapabilities: Decodable {
@@ -23,7 +24,7 @@ struct CanvasRelay {
     }
     struct VaultEntries: Decodable { let entries: [VaultEntry] }
     typealias VaultNote = VaultNoteSnapshot
-    struct VaultCanvas: Decodable {
+    struct VaultCanvas: Codable {
         let path: String
         let noteSha256: String
         let sceneSha256: String
@@ -143,8 +144,9 @@ struct CanvasRelay {
         return request
     }
 
-    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
+    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type, maximumBytes: Int? = nil) async throws -> T {
         let (data, raw) = try await session.data(for: request)
+        if let maximumBytes, data.count > maximumBytes { throw URLError(.dataLengthExceedsMaximum) }
         guard let http = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         let body = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any]
         let vault = request.url?.path.contains("/vault/") ?? false
@@ -157,6 +159,8 @@ struct CanvasRelay {
                 let kind: VaultSaveConflict = preserved ? .reconciliationRequired :
                     (required == false && body?["publicationAttempted"] as? Bool == false ? .prepublication : .unclassified)
                 info[VaultSaveConflict.errorKey] = kind.rawValue
+                if let recoveryID = body?["recoveryID"] as? String, UUID(uuidString:recoveryID) != nil { info["CanvasRecoveryID"] = recoveryID }
+                if let code = body?["code"] as? String { info["CanvasVaultErrorCode"] = code }
                 // No raw error/recovery path parsing or private path disclosure.
                 info[NSLocalizedDescriptionKey] = kind == .prepublication ?
                     "Obsidian 게시 전에 저장 요청이 거부됐습니다. 입력을 보존했습니다. 원문을 다시 확인하세요." :
@@ -288,5 +292,127 @@ struct CanvasRelay {
     func revision(for packet: UUID) async throws -> AgentRevision? {
         try await response(request("/packets/\(packet.uuidString.lowercased())/revision"),
                            as:AgentRevision?.self)
+    }
+}
+
+
+extension CanvasRelay {
+    enum ConflictDecision: String, Codable, CaseIterable, Identifiable {
+        case keepCurrent, useDisplaced
+        var id: String { rawValue }
+        var title: String { self == .keepCurrent ? "현재 서버 원문 유지" : "보존된 외부 변경본 선택" }
+    }
+    struct ConflictExpected: Codable, Equatable {
+        let activeSha256: String?, baseSha256: String?, displacedSha256: String?, proposalSha256: String?
+        let historySha256: String
+        enum CodingKeys: String, CodingKey, CaseIterable { case activeSha256, baseSha256, displacedSha256, proposalSha256, historySha256 }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy:CodingKeys.self)
+            guard CodingKeys.allCases.allSatisfy({ c.contains($0) }) else { throw URLError(.badServerResponse) }
+            activeSha256 = try c.decodeIfPresent(String.self,forKey:.activeSha256)
+            baseSha256 = try c.decodeIfPresent(String.self,forKey:.baseSha256)
+            displacedSha256 = try c.decodeIfPresent(String.self,forKey:.displacedSha256)
+            proposalSha256 = try c.decodeIfPresent(String.self,forKey:.proposalSha256)
+            historySha256 = try c.decode(String.self,forKey:.historySha256)
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy:CodingKeys.self)
+            try c.encode(activeSha256,forKey:.activeSha256); try c.encode(baseSha256,forKey:.baseSha256)
+            try c.encode(displacedSha256,forKey:.displacedSha256); try c.encode(proposalSha256,forKey:.proposalSha256)
+            try c.encode(historySha256,forKey:.historySha256)
+        }
+    }
+    struct ConflictMaterial: Codable {
+        let sha256: String, markdownBase64: String
+        let validCanvas: Bool
+        let canvas: VaultCanvas?
+        let imagePNGBase64: String?
+        let refusal: String?
+        var markdown: String { Data(base64Encoded:markdownBase64).flatMap { String(data:$0,encoding:.utf8) } ?? "UTF-8 원문으로 표시할 수 없습니다. 원본 바이트는 서버에 보존됩니다." }
+        func validated(id: UUID, expected: String?) throws {
+            guard expected == sha256, Self.hash(sha256), let raw = Data(base64Encoded:markdownBase64),
+                  raw.count <= 1024*1024, CanvasPacket.sha(raw) == sha256 else { throw URLError(.badServerResponse) }
+            if validCanvas { _ = try scene(id:id) }
+            else { guard canvas == nil, imagePNGBase64 == nil, refusal?.isEmpty == false else { throw URLError(.badServerResponse) } }
+        }
+        static func hash(_ value: String) -> Bool { value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } }
+        func scene(id: UUID) throws -> CanvasScene {
+            guard validCanvas, let c = canvas, let png = imagePNGBase64.flatMap({ Data(base64Encoded:$0) }),
+                  png.count <= 5*1024*1024, png.starts(with:[137,80,78,71,13,10,26,10]),
+                  Self.hash(c.sceneSha256), Self.hash(c.imageSha256), c.noteSha256 == sha256,
+                  c.path == "CCR Canvas/\(id.uuidString.lowercased()).md",
+                  CanvasPacket.sha(png) == c.imageSha256,
+                  let source = CGImageSourceCreateWithData(png as CFData,nil), CGImageSourceGetCount(source) == 1,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                  width > 0, height > 0, width <= 8192, height <= 8192,
+                  CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,
+                    kCGImageSourceThumbnailMaxPixelSize:1024,kCGImageSourceShouldCache:false] as CFDictionary) != nil,
+                  let bytes = Data(base64Encoded:c.sceneJSONBase64), bytes.count <= CanvasScene.localByteLimit,
+                  CanvasPacket.sha(bytes) == c.sceneSha256 else { throw URLError(.badServerResponse) }
+            let scene = try JSONDecoder().decode(CanvasScene.self,from:bytes)
+            guard scene.id == id, scene.revision == c.revision, scene.width > 0, scene.height > 0,
+                  scene.nodes.count < 1000, scene.strokes.count < 10000, scene.nodes.allSatisfy(\.hasValidRotation) else { throw URLError(.badServerResponse) }
+            try scene.requireCompatibleNodeKinds(); try scene.validateNativeInkProjection()
+            return scene
+        }
+    }
+    struct ConflictMaterials: Codable {
+        let active: ConflictMaterial?, base: ConflictMaterial?, displaced: ConflictMaterial?, proposal: ConflictMaterial?
+    }
+    struct ConflictHistory: Codable {
+        let recoveryID: UUID
+        let files: [String:String?]
+    }
+    struct VaultConflict: Codable {
+        let schema: String, id: UUID, recoveryID: UUID, code: String
+        let reconciliationRequired: Bool, publicationAttempted: Bool
+        let expected: ConflictExpected, materials: ConflictMaterials
+        let history: [ConflictHistory]
+        func selected(_ decision: ConflictDecision) -> ConflictMaterial? { decision == .keepCurrent ? materials.active : materials.displaced }
+        func validated(id expectedID: UUID) throws -> Self {
+            guard schema == "ccr.canvas-conflict/v1", id == expectedID, code == "note_reconciliation_required",
+                  reconciliationRequired, ConflictMaterial.hash(expected.historySha256), history.count <= 32,
+                  Set(history.map(\.recoveryID)).count == history.count,
+                  history.allSatisfy({ $0.files.count <= 7 && $0.files.values.allSatisfy { $0.map(ConflictMaterial.hash) ?? true } }) else { throw URLError(.badServerResponse) }
+            for (material,hash) in [(materials.active,expected.activeSha256),(materials.base,expected.baseSha256),
+                                    (materials.displaced,expected.displacedSha256),(materials.proposal,expected.proposalSha256)] {
+                if let material { try material.validated(id:id,expected:hash) }
+                else if hash != nil { throw URLError(.badServerResponse) }
+            }
+            return self
+        }
+    }
+    struct ConflictResolution: Decodable {
+        let path: String, noteSha256: String, sceneSha256: String, imageSha256: String
+        let revision: Int, recoveryID: UUID
+        let decision: ConflictDecision
+        let resolved: Bool, reconciliationRequired: Bool
+    }
+    private struct ConflictRequest: Encodable {
+        let recoveryID: String, expected: ConflictExpected, decision: ConflictDecision
+    }
+    func vaultCanvasConflict(id: UUID) async throws -> VaultConflict {
+        try await response(request("/vault/canvas/conflict?id=\(id.uuidString.lowercased())"),as:VaultConflict.self,
+                           maximumBytes:64*1024*1024).validated(id:id)
+    }
+    func resolveVaultCanvasConflict(_ conflict: VaultConflict, decision: ConflictDecision) async throws -> (ConflictResolution,VaultCanvas) {
+        _ = try conflict.validated(id:conflict.id)
+        guard let material = conflict.selected(decision), let selected = material.canvas else { throw URLError(.cannotDecodeContentData) }
+        _ = try material.scene(id:conflict.id)
+        let body = try JSONEncoder().encode(ConflictRequest(recoveryID:conflict.recoveryID.uuidString.lowercased(),expected:conflict.expected,decision:decision))
+        let result = try await response(request("/vault/canvas/conflict?id=\(conflict.id.uuidString.lowercased())",method:"PUT",body:body),as:ConflictResolution.self,maximumBytes:64*1024)
+        guard result.resolved, !result.reconciliationRequired, result.recoveryID == conflict.recoveryID,
+              result.decision == decision, result.path == selected.path, result.noteSha256 == selected.noteSha256,
+              result.sceneSha256 == selected.sceneSha256, result.imageSha256 == selected.imageSha256,
+              result.revision == selected.revision,
+              let reopened = try await vaultCanvas(id:conflict.id), reopened.reconciliationRequired != true,
+              reopened.path == result.path, reopened.noteSha256 == result.noteSha256,
+              reopened.sceneSha256 == result.sceneSha256, reopened.imageSha256 == result.imageSha256,
+              reopened.revision == result.revision, reopened.sceneJSONBase64 == selected.sceneJSONBase64 else { throw URLError(.badServerResponse) }
+        let note = try await vaultNote(at:selected.path)
+        guard note.reconciliationRequired != true, note.sha256 == selected.noteSha256,
+              Data(note.text.utf8) == Data(base64Encoded:material.markdownBase64) else { throw URLError(.badServerResponse) }
+        return (result,reopened)
     }
 }

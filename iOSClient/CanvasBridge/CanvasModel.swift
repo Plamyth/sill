@@ -324,6 +324,13 @@ enum CanvasRuntime {
                 try checkPath(url,beneath:context.support)
                 return
             }
+            let recovery = context.root.appendingPathComponent("state",isDirectory:true)
+                .appendingPathComponent("CanvasConflictRecovery",isDirectory:true)
+            if validConflictRecoveryName(url.lastPathComponent), !url.hasDirectoryPath,
+               recovery.appendingPathComponent(url.lastPathComponent) == url {
+                try checkPath(url,beneath:context.support)
+                return
+            }
             guard let file = StateFile.allCases.first(where: {
                 context.root.appendingPathComponent("state").appendingPathComponent($0.rawValue).path == url.path
             }), try isolatedURL(file,in:context) == url else { throw TestError.invalid }
@@ -386,6 +393,35 @@ enum CanvasRuntime {
         }
     }
     #endif
+
+    private static func validConflictRecoveryName(_ name: String) -> Bool {
+        if name == "CanvasConflictChoice.json" { return true }
+        guard name.hasSuffix(".json") else { return false }
+        for prefix in ["CanvasConflictLocal-", "CanvasConflictAttempt-"] where name.hasPrefix(prefix) {
+            let identifier = String(name.dropFirst(prefix.count).dropLast(5))
+            return UUID(uuidString:identifier).map { identifier == $0.uuidString.lowercased() } ?? false
+        }
+        return false
+    }
+
+    static func conflictRecoveryURL(_ filename: String) throws -> URL {
+        guard validConflictRecoveryName(filename) else { throw CocoaError(.fileWriteInvalidFileName) }
+        var root: URL?
+        #if DEBUG
+        switch launch {
+        case .isolated(let context): root = context.root.appendingPathComponent("state",isDirectory:true)
+        case .invalid: throw TestError.invalid
+        case .normal: break
+        }
+        #endif
+        root = root ?? FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first
+        guard let root else { throw CanvasSendError.outboxUnavailable }
+        let url = root.appendingPathComponent("CanvasConflictRecovery",isDirectory:true).appendingPathComponent(filename)
+        #if DEBUG
+        try validateStateURL(url)
+        #endif
+        return url
+    }
 
     static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil,
                          noteRecoveryOverride: URL? = nil) throws -> URL {
@@ -1122,6 +1158,7 @@ struct CanvasVaultCheckpoint: Codable {
     let noteSha: String?
     let pendingSceneSha: String?
     var saveConflict: VaultSaveConflict? = nil
+    var localSceneSha: String? = nil
     var requiresExplicitReconciliation: Bool { saveConflict?.requiresExplicitReconciliation == true || (pendingSceneSha != nil && saveConflict != .acknowledgementLost) }
     func acceptingReadMatch(remoteSceneSha: String, remoteNoteSha: String, localSceneSha: String,
                             explicitlyConfirmed: Bool, remoteReconciliationRequired: Bool?) -> Self? {

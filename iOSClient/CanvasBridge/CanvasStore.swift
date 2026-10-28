@@ -2675,6 +2675,35 @@ final class CanvasStore: ObservableObject {
         status = "장면을 가져왔습니다. 그림과 구조 데이터를 함께 복원했습니다."
     }
 
+    var hasPendingInkProposal: Bool {
+        pendingInkSpacing?.hasPendingWork == true || pendingInkTextEditing?.hasPendingWork == true ||
+        inkShapeProposal != nil || inkMathRequest != nil || inkMathProposal != nil || handwritingRequest != nil
+    }
+    var canApplyReconciledCanvas: Bool {
+        sceneReadable && !hasPendingInkProposal && fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
+        !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
+        !inkMathInputBusy && inkMathProposal == nil && !commentInputBusy && commentSession == nil && proposedNode == nil
+    }
+    // Explicit server reconciliation only. Preserve the exact local scene before replacing its cache.
+    func applyReconciledCanvas(_ imported: CanvasScene, expectedLocalSHA: String, preservedAt: URL) throws {
+        guard canApplyReconciledCanvas else { throw CocoaError(.userCancelled) }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let before = try encoder.encode(scene)
+        guard CanvasPacket.sha(before) == expectedLocalSHA,
+              CanvasPacket.sha(try CanvasLocalFile.read(preservedAt)) == expectedLocalSHA,
+              imported.id == scene.id, imported.hasSupportedInkProjection,
+              imported.width > 0, imported.height > 0, imported.nodes.count < 1000, imported.strokes.count < 10000,
+              imported.nodes.allSatisfy(\.hasValidRotation), let native = Data(base64Encoded:imported.drawingBase64) else {
+            throw VaultBlockRecoveryError.changed
+        }
+        _ = try native.isEmpty ? PKDrawing() : PKDrawing(data:native)
+        try imported.requireCompatibleNodeKinds(); try imported.validateNativeInkProjection()
+        // Both operations are synchronous after identical import guards. Cache IO fails before memory replacement.
+        try persistScene(imported)
+        try importScene(imported)
+        status = "명시적으로 선택한 서버 원본을 열었습니다. 이전 iPad 입력은 복구본에 보존했으며 Files 저장은 별도 대기 상태입니다."
+    }
+
     @discardableResult
     func applyAgentRevision(_ revision: AgentRevision) -> Bool {
         if let settings = revision.setPenSettings {
