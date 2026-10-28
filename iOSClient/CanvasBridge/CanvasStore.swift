@@ -1172,7 +1172,8 @@ final class CanvasStore: ObservableObject {
             noteConflictChoice.flatMap { $0.sceneID == scene.id && $0.address == noteAddress ? $0.path : nil }
     }
     var canCompareNoteConflict: Bool {
-        noteRecoveryReadable && blockRecoveryReadable && noteConflictPath != nil && !vaultSaving && !vaultLoading && !vaultInputBusy && !inkBusy && !fileSaveBusy &&
+        noteRecoveryReadable && blockRecoveryReadable && !noteRecoveryWriteFailed &&
+        vaultDraft.utf8.count <= 1024*1024 && vaultBlockDraft.utf8.count <= 1024*1024 && noteConflictPath != nil && !vaultSaving && !vaultLoading && !vaultInputBusy && !inkBusy && !fileSaveBusy &&
         !hasPendingInkProposal && !inkMathInputBusy && !commentInputBusy && !noteToken.isEmpty
     }
     func captureNoteConflictLocal(path: String) throws -> NoteConflictLocalState {
@@ -2749,7 +2750,7 @@ final class CanvasStore: ObservableObject {
         inkShapeProposal != nil || inkMathRequest != nil || inkMathProposal != nil || handwritingRequest != nil
     }
     var canApplyReconciledCanvas: Bool {
-        sceneReadable && !hasPendingInkProposal && fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
+        sceneReadable && !noteReconciliationHeld && !hasPendingInkProposal && fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
         !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
         !inkMathInputBusy && inkMathProposal == nil && !commentInputBusy && commentSession == nil && proposedNode == nil
     }

@@ -525,7 +525,9 @@ struct CanvasWorkspace: View {
             VStack(spacing:0) {
                 if let snapshot = noteConflict { noteConflictPanel(snapshot) }
                 else {
-                    if store.canCompareNoteConflict {
+                    if store.canCompareNoteConflict && (store.vaultBlocked || store.noteReconciliationHeld ||
+                        store.noteRecovery?.saveConflict?.requiresExplicitReconciliation == true ||
+                        store.blockRecovery?.saveConflict?.requiresExplicitReconciliation == true || store.noteConflictChoice != nil) {
                         Button("일반 노트 충돌 자료 비교·명시 복구") { Task { await readNoteConflict() } }
                             .frame(minHeight:44).disabled(noteConflictBusy)
                             .accessibilityIdentifier("noteConflictCompare")
@@ -879,7 +881,7 @@ struct CanvasWorkspace: View {
         DisclosureGroup(title) {
             if let material {
                 Text(material.sha256).font(.caption2).textSelection(.enabled)
-                Text(material.validNote ? "원문 bytes/SHA 확인" : "선택할 수 없는 보존 자료").font(.caption)
+                Text(material.validNote ? "원문 바이트·SHA 확인" : "선택할 수 없는 보존 자료").font(.caption)
                 ScrollView([.horizontal,.vertical]) { Text(material.markdown ?? "원문을 UTF-8로 표시할 수 없습니다.").font(.system(.caption,design:.monospaced)).textSelection(.enabled) }.frame(height:180)
             } else { Text("자료 없음") }
         }

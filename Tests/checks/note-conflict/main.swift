@@ -112,6 +112,13 @@ final class NoteConflictProtocol: URLProtocol {
         check(restart.noteReconciliationHeld && restart.noteRecovery==originalRecovery,"new native Store retains unresolved note reconciliation")
         await harness.resolve(.useDisplaced)
         check(!store.noteReconciliationHeld && !store.vaultBlocked && store.vaultDraft==NoteConflictProtocol.displaced,"explicit same request finishes only after server note readback and local completion")
+        let completion=store.noteConflictChoice!
+        var localPending=completion;localPending.phase = .serverResolved
+        let completionURL=try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+        try CanvasLocalFile.write(JSONEncoder().encode(localPending),to:completionURL)
+        check(store.noteReconciliationHeld && !store.vaultDirty && !store.canApplyReconciledCanvas,"unfinished note recovery blocks unrelated Canvas reconciliation even after local draft records are cleared")
+        try CanvasLocalFile.write(JSONEncoder().encode(completion),to:completionURL)
+        check(store.canApplyReconciledCanvas,"completed note recovery does not permanently block Canvas reconciliation")
         check(harness.noteConflictArchive?.noteRecovery==originalRecovery,"archived original draft and submitted bytes remain readable")
         let archive=try CanvasRuntime.conflictRecoveryURL(store.noteConflictChoice!.backupFilename)
         let savedArchive=try CanvasLocalFile.read(archive)
@@ -183,6 +190,11 @@ final class NoteConflictProtocol: URLProtocol {
         check(pdfUI.noteConflictArchive?.blockRecovery?.pending?.operationId==pending.operationId,"original PDF block operation ID retained in native archive")
         try pdf.resumeArchivedNoteDraft(pdfUI.noteConflictArchive!)
         check(pdf.vaultDirty && pdf.vaultDraft.contains("Pencil 교정 미저장") && pdf.vaultBlockHasPendingSave==false,"PDF excerpt draft explicitly rebases on current anchor without replaying old block operation")
+        let validDraft=pdf.vaultDraft
+        pdf.vaultDraft=String(repeating:"a",count:1024*1024+1)
+        check(!pdf.canCompareNoteConflict,"oversized or unpreserved local input cannot create an unbounded recovery archive")
+        pdf.vaultDraft=validDraft
+        check(pdf.canCompareNoteConflict,"returning to bounded input restores recovery comparison eligibility")
         let canvasText="---\nccr_scene_id: 123\n---\nmanaged"
         NoteConflictProtocol.active=canvasText
         do {_=try await relay.vaultNoteConflict(path:NoteConflictProtocol.path);preconditionFailure("managed bypass")}
