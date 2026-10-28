@@ -30,6 +30,7 @@ struct CanvasRelay {
         let imageSha256: String
         let revision: Int
         let sceneJSONBase64: String
+        var reconciliationRequired: Bool? = nil
     }
     struct VaultCanvasSaved: Decodable {
         let path: String
@@ -145,10 +146,23 @@ struct CanvasRelay {
     private func response<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> T {
         let (data, raw) = try await session.data(for: request)
         guard let http = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        guard (200...299).contains(http.statusCode) else {
-            let message = (try? JSONSerialization.jsonObject(with: data) as? [String:String])?["error"]
-            throw NSError(domain:"CanvasRelay",code:http.statusCode,
-                          userInfo:[NSLocalizedDescriptionKey:message ?? "Mac 수신 오류"])
+        let body = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any]
+        let vault = request.url?.path.contains("/vault/") ?? false
+        let required = body?["reconciliationRequired"] as? Bool
+        let preserved = vault && (body?["code"] as? String == "note_reconciliation_required" || required == true)
+        if !(200...299).contains(http.statusCode) || (preserved && request.httpMethod != "GET") {
+            var info: [String:Any] = [NSLocalizedDescriptionKey:body?["error"] as? String ?? "Mac 수신 오류"]
+            let status = preserved ? 409 : http.statusCode
+            if vault && status == 409 {
+                let kind: VaultSaveConflict = preserved ? .reconciliationRequired :
+                    (required == false && body?["publicationAttempted"] as? Bool == false ? .prepublication : .unclassified)
+                info[VaultSaveConflict.errorKey] = kind.rawValue
+                // No raw error/recovery path parsing or private path disclosure.
+                info[NSLocalizedDescriptionKey] = kind == .prepublication ?
+                    "Obsidian 게시 전에 저장 요청이 거부됐습니다. 입력을 보존했습니다. 원문을 다시 확인하세요." :
+                    VaultBlockRecoveryError.publicationConflict.localizedDescription
+            }
+            throw NSError(domain:"CanvasRelay",code:status,userInfo:info)
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

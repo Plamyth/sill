@@ -985,6 +985,7 @@ struct VaultNoteSnapshot: Codable, Equatable {
     let text: String
     let sha256: String
     let modifiedAt: String
+    var reconciliationRequired: Bool? = nil
 
     var preview: String {
         Self.preview(text)
@@ -1009,8 +1010,36 @@ struct VaultNoteSnapshot: Codable, Equatable {
     }
 }
 
+enum VaultSaveConflict: String, Codable {
+    case reconciliationRequired, unclassified, prepublication, acknowledgementLost
+    static let errorKey = "CanvasVaultSaveConflict"
+    static func classified(_ error: Error) -> Self? {
+        let value = error as NSError
+        guard value.domain == "CanvasRelay", value.code == 409 else { return nil }
+        return (value.userInfo[errorKey] as? String).flatMap(Self.init(rawValue:)) ?? .unclassified
+    }
+    var requiresExplicitReconciliation: Bool { self == .reconciliationRequired || self == .unclassified }
+}
+
+struct CanvasVaultCheckpoint: Codable {
+    let sceneID: UUID
+    let address: String
+    let sceneSha: String?
+    let noteSha: String?
+    let pendingSceneSha: String?
+    var saveConflict: VaultSaveConflict? = nil
+    var requiresExplicitReconciliation: Bool { saveConflict?.requiresExplicitReconciliation == true || (pendingSceneSha != nil && saveConflict != .acknowledgementLost) }
+    func acceptingReadMatch(remoteSceneSha: String, remoteNoteSha: String, localSceneSha: String,
+                            explicitlyConfirmed: Bool, remoteReconciliationRequired: Bool?) -> Self? {
+        guard explicitlyConfirmed, remoteReconciliationRequired == false, remoteSceneSha == localSceneSha else { return nil }
+        return Self(sceneID:sceneID,address:address,sceneSha:remoteSceneSha,noteSha:remoteNoteSha,
+                    pendingSceneSha:nil,saveConflict:nil)
+    }
+}
+
+
 enum VaultBlockRecoveryError: LocalizedError {
-    case unavailable, corrupt, context, changed
+    case unavailable, corrupt, context, changed, publicationConflict
 
     var errorDescription: String? {
         switch self {
@@ -1018,6 +1047,7 @@ enum VaultBlockRecoveryError: LocalizedError {
         case .corrupt: return "문단 복구 파일을 확인하지 못했습니다. 기존 파일을 보존하며 문단 저장을 중단합니다."
         case .context: return "보존된 입력의 장면·카드·원문·서버가 현재 연결과 다릅니다. 자동 연결하지 않습니다."
         case .changed: return "원문이 기준 또는 예상 결과와 다릅니다. 입력과 작업 ID를 보존하며 다시 쓰지 않습니다."
+        case .publicationConflict: return "Obsidian 저장 충돌 또는 결과 미확인입니다. 원격에는 제안본이 반영됐을 수 있습니다. 입력과 보존 자료를 유지하며 자동 재시도·되돌리기를 중단했습니다. 원문을 읽고 대조한 뒤 명시적으로 조정하세요."
         }
     }
 }
@@ -1031,6 +1061,7 @@ struct VaultBlockRecovery: Codable, Equatable {
     var base: VaultNoteSnapshot
     var draft: String
     var pending: VaultBlockEdit?
+    var saveConflict: VaultSaveConflict? = nil
 
     func validated() throws -> Self {
         guard schemaVersion == 1, relayAddress.utf8.count <= 2048,
@@ -1082,6 +1113,7 @@ struct VaultNoteRecovery: Codable, Equatable {
     var base: VaultNoteSnapshot
     var draft: String
     var submittedText: String?
+    var saveConflict: VaultSaveConflict? = nil
 
     func validated() throws -> Self {
         guard schemaVersion == 1, relayAddress.utf8.count <= 2048,
@@ -1096,6 +1128,7 @@ struct VaultNoteRecovery: Codable, Equatable {
     }
 
     func reconciled(with latest: VaultNoteSnapshot) throws -> Self? {
+        guard saveConflict?.requiresExplicitReconciliation != true else { throw VaultBlockRecoveryError.publicationConflict }
         _ = try validated()
         _ = try latest.validated(at:base.path)
         var next = self
