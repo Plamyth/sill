@@ -5,10 +5,27 @@ import Security
 /// 네트워크/로그 큐에서 await한다. CLI 대기는 전용 utility 큐에서만 수행한다.
 /// 인스턴스당 진행 중인 조회와 자식 프로세스는 각각 최대 하나다.
 final class TailnetDeviceAccess: @unchecked Sendable {
-    enum Failure: Error, Equatable, Sendable {
+    enum Failure: String, Error, Equatable, Sendable {
         case invalidSource, busy, stopped, cancelled, deadlineExceeded
         case sensorFailure, outputLimit, malformedEvidence, backendNotRunning
+        case machineAuthorizationUnavailable
         case snapshotChanged, differentUser, unauthorizedNode, expiredNode, addressMismatch
+    }
+
+    private enum Stage: String, Sendable {
+        case statusBefore = "status-before", whois, statusAfter = "status-after", validation
+    }
+
+    private static let diagnosticQueue = DispatchQueue(label: "sill.tailnet-device-access.diagnostics", qos: .utility)
+
+    private static func log(_ failure: Failure, at stage: Stage, sink: @escaping @Sendable (String) -> Void) {
+        diagnosticQueue.async {
+            sink("[TailnetDeviceAccess] stage=\(stage.rawValue) code=\(failure.rawValue)")
+        }
+    }
+
+    private static var cliEnvironment: [String] {
+        ["PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + NSHomeDirectory(), "TERM=dumb"]
     }
 
     struct Proof: Sendable {
@@ -45,30 +62,50 @@ final class TailnetDeviceAccess: @unchecked Sendable {
     private let queue = DispatchQueue(label: "sill.tailnet-device-access", qos: .utility)
     private let issuer = UUID()
     private let read: Read
+    private let diagnosticSink: @Sendable (String) -> Void
     private var stopped = false
     private var active: Attempt?
     static let outputLimit = 512 * 1024
 
-    init() { read = { command, check in try Self.readCLI(command, check) } }
+    convenience init() { self.init(read: { command, check in try Self.readCLI(command, check) }) }
 
-    private init(read: @escaping Read) { self.read = read }
+    private init(read: @escaping Read, diagnosticSink: @escaping @Sendable (String) -> Void = { print($0) }) {
+        self.read = read
+        self.diagnosticSink = diagnosticSink
+    }
 
-    func independent() -> TailnetDeviceAccess { Self(read: read) }
+    func independent() -> TailnetDeviceAccess { Self(read: read, diagnosticSink: diagnosticSink) }
 
     #if OWNER_BOOTSTRAP_CONTRACT
     /// 계약 검사만 가짜 센서 결과를 주입한다. 생산 초기화는 고정 CLI를 사용한다.
-    init(testingRead: @escaping Read) { read = testingRead }
+    convenience init(testingRead: @escaping Read, testingDiagnosticSink: (@Sendable (String) -> Void)? = nil) {
+        self.init(read: testingRead, diagnosticSink: testingDiagnosticSink ?? { print($0) })
+    }
+
+    static var testingCLIEnvironment: [String] { cliEnvironment }
+
+    /// 외부 stop/cancel 호출이 반환한 뒤 사용한다. 센서 작업 다음에 진단 큐를 비운다.
+    func drainDiagnosticsForTesting() async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                Self.diagnosticQueue.async { continuation.resume() }
+            }
+        }
+    }
     #endif
 
     func principal(for binding: OwnerBootstrapSocket.Binding) async -> Result<Proof, Failure> {
-        guard let ip = Self.numericSource(binding.sourceIP) else { return .failure(.invalidSource) }
+        guard let ip = Self.numericSource(binding.sourceIP) else {
+            Self.log(.invalidSource, at: .validation, sink: diagnosticSink)
+            return .failure(.invalidSource)
+        }
         return await query(ip: ip, binding: binding)
     }
 
     func localProfile() async -> Result<Proof, Failure> { await query(ip: nil, binding: nil) }
 
     private func query(ip: String?, binding: OwnerBootstrapSocket.Binding?) async -> Result<Proof, Failure> {
-        let attempt = Attempt()
+        let attempt = Attempt(diagnosticSink: diagnosticSink)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 attempt.attach(continuation)
@@ -127,10 +164,13 @@ final class TailnetDeviceAccess: @unchecked Sendable {
                 try before.validate()
                 try check()
                 guard let source = ip ?? before.selfNode.TailscaleIPs.first.flatMap(Self.numericSource) else { throw Failure.invalidSource }
+                attempt.setStage(.whois)
                 let who = try Self.decode(WhoIs.self, read(.whois(source), check))
                 try check()
+                attempt.setStage(.statusAfter)
                 let after = try Self.decode(Status.self, read(.status, check))
                 try after.validate()
+                attempt.setStage(.validation)
                 guard before == after else { throw Failure.snapshotChanged }
                 let expiry = try who.validate(source: source, user: before.selfNode.UserID)
                 try check()
@@ -174,6 +214,11 @@ final class TailnetDeviceAccess: @unchecked Sendable {
                 throw Failure.malformedEvidence
             }
             return try JSONDecoder().decode(type, from: data)
+        }
+        catch DecodingError.keyNotFound(let key, let context)
+            where type == WhoIs.self && key.stringValue == "MachineAuthorized"
+                && context.codingPath.count == 1 && context.codingPath.first?.stringValue == "Node" {
+            throw Failure.machineAuthorizationUnavailable
         }
         catch { throw Failure.malformedEvidence }
     }
@@ -272,6 +317,16 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         private let lock = NSLock()
         private var result: Outcome?
         private var continuation: CheckedContinuation<Outcome, Never>?
+        private var stage: Stage = .statusBefore
+        private let diagnosticSink: @Sendable (String) -> Void
+
+        init(diagnosticSink: @escaping @Sendable (String) -> Void) { self.diagnosticSink = diagnosticSink }
+
+        func setStage(_ stage: Stage) {
+            lock.lock()
+            self.stage = stage
+            lock.unlock()
+        }
 
         func attach(_ continuation: CheckedContinuation<Outcome, Never>) {
             lock.lock()
@@ -287,8 +342,12 @@ final class TailnetDeviceAccess: @unchecked Sendable {
             result = accepted
             let waiting = continuation
             continuation = nil
+            let finishedStage = stage
             lock.unlock()
             waiting?.resume(returning: accepted)
+            if case .failure(let failure) = accepted {
+                TailnetDeviceAccess.log(failure, at: finishedStage, sink: diagnosticSink)
+            }
         }
 
         func check() throws {
@@ -327,8 +386,7 @@ final class TailnetDeviceAccess: @unchecked Sendable {
         guard posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)) == 0,
               posix_spawnattr_setpgroup(&attributes, 0) == 0 else { throw Failure.sensorFailure }
         let argv = ([executable] + command.arguments).map { strdup($0) } + [nil]
-        let environment = ["PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + NSHomeDirectory()]
-        let envp = environment.map { strdup($0) } + [nil]
+        let envp = cliEnvironment.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
         var pid: pid_t = 0
         let spawned = argv.withUnsafeBufferPointer { args in

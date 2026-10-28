@@ -13,7 +13,7 @@ private final class SensorFixture: @unchecked Sendable {
     var commands: [TailnetDeviceAccess.Command] = []
     var beforeRead: ((TailnetDeviceAccess.Command) throws -> Void)?
 
-    func sensor() -> TailnetDeviceAccess {
+    func sensor(diagnosticSink: (@Sendable (String) -> Void)? = nil) -> TailnetDeviceAccess {
         TailnetDeviceAccess(testingRead: { [self] command, check in
             lock.lock(); defer { lock.unlock() }
             try check()
@@ -23,7 +23,22 @@ private final class SensorFixture: @unchecked Sendable {
             case .status: return try JSONSerialization.data(withJSONObject: status)
             case .whois: return try JSONSerialization.data(withJSONObject: ["Node": node, "UserProfile": ["ID": user]])
             }
-        })
+        }, testingDiagnosticSink: diagnosticSink)
+    }
+}
+
+private final class DiagnosticLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    func append(_ line: String) { lock.lock(); lines.append(line); lock.unlock() }
+    var snapshot: [String] { lock.lock(); defer { lock.unlock() }; return lines }
+}
+
+private func waitForSignal(_ signal: DispatchSemaphore, seconds: Double = 1) async -> Bool {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: .utility).async {
+            continuation.resume(returning: signal.wait(timeout: .now() + seconds) == .success)
+        }
     }
 }
 
@@ -167,6 +182,178 @@ final class OwnerBootstrapChecks {
             await assertDenied(fixture)
         }
         let fixture = SensorFixture(); fixture.user = 9; await assertDenied(fixture)
+    }
+
+    func testMachineAuthorizationEvidenceAndDiagnostics() async {
+        let cases: [(Any?, TailnetDeviceAccess.Failure?, String?)] = [
+            (nil, .machineAuthorizationUnavailable, "[TailnetDeviceAccess] stage=whois code=machineAuthorizationUnavailable"),
+            (false, .unauthorizedNode, "[TailnetDeviceAccess] stage=validation code=unauthorizedNode"),
+            (NSNull(), .malformedEvidence, "[TailnetDeviceAccess] stage=whois code=malformedEvidence"),
+            ("true", .malformedEvidence, "[TailnetDeviceAccess] stage=whois code=malformedEvidence"),
+            (1, .malformedEvidence, "[TailnetDeviceAccess] stage=whois code=malformedEvidence"),
+            (0, .malformedEvidence, "[TailnetDeviceAccess] stage=whois code=malformedEvidence"),
+            ([Any](), .malformedEvidence, "[TailnetDeviceAccess] stage=whois code=malformedEvidence"),
+            ([String: Any](), .malformedEvidence, "[TailnetDeviceAccess] stage=whois code=malformedEvidence"),
+            (true, nil, nil)
+        ]
+        for local in [false, true] {
+            for (value, failure, log) in cases {
+                let fixture = SensorFixture()
+                fixture.node["MachineAuthorized"] = value
+                if local {
+                    fixture.node["StableID"] = "host-node"
+                    fixture.node["Addresses"] = ["100.64.0.1/32"]
+                }
+                let lines = DiagnosticLines()
+                let sensor = fixture.sensor(diagnosticSink: { lines.append($0) })
+                let result = local ? await sensor.localProfile() : await sensor.principal(for: binding())
+                switch result {
+                case .failure(let actual): expectEqual(Optional(actual), failure)
+                case .success(let proof):
+                    expectNil(failure)
+                    expectTrue(sensor.isCurrent(proof))
+                    expectEqual(proof.binding == nil, local)
+                }
+                let source = local ? "100.64.0.1" : "100.64.0.2"
+                let decoded = failure == nil || failure == .unauthorizedNode
+                expectEqual(fixture.commands, decoded ? [.status, .whois(source), .status] : [.status, .whois(source)])
+                await sensor.drainDiagnosticsForTesting()
+                expectEqual(lines.snapshot, log.map { [$0] } ?? [])
+            }
+        }
+    }
+
+    func testSensorFailureStagesAndConstantLogs() async throws {
+        for (index, stage) in [(0, "status-before"), (1, "whois"), (2, "status-after")] {
+            for malformed in [false, true] {
+                let fixture = SensorFixture()
+                var reads = 0
+                fixture.beforeRead = { command in
+                    defer { reads += 1 }
+                    guard reads == index else { return }
+                    if malformed {
+                        switch command {
+                        case .status: fixture.status["BackendState"] = NSNull()
+                        case .whois: fixture.node["StableID"] = NSNull()
+                        }
+                    } else {
+                        throw NSError(domain: "private-peer-user-node-pin-key-token-rawJSON", code: 7,
+                                      userInfo: [NSLocalizedDescriptionKey: "private-error-description"])
+                    }
+                }
+                let lines = DiagnosticLines()
+                let sensor = fixture.sensor(diagnosticSink: { lines.append($0) })
+                let result = await sensor.principal(for: binding())
+                if case .failure(let failure) = result {
+                    expectEqual(failure, malformed ? .malformedEvidence : .sensorFailure)
+                } else { fail("실패한 센서에서 proof를 발급했습니다.") }
+                expectEqual(reads, index + 1)
+                let code = malformed ? "malformedEvidence" : "sensorFailure"
+                await sensor.drainDiagnosticsForTesting()
+                expectEqual(lines.snapshot,
+                            ["[TailnetDeviceAccess] stage=\(stage) code=\(code)"])
+            }
+        }
+        let changed = SensorFixture()
+        changed.beforeRead = { command in
+            if case .whois = command { changed.status["BackendState"] = "Stopped" }
+        }
+        let changedLines = DiagnosticLines()
+        let changedSensor = changed.sensor(diagnosticSink: { changedLines.append($0) })
+        if case .failure(let failure) = await changedSensor.principal(for: binding()) {
+            expectEqual(failure, .backendNotRunning)
+        } else { fail("중지 상태를 허용했습니다.") }
+        await changedSensor.drainDiagnosticsForTesting()
+        expectEqual(changedLines.snapshot,
+                    ["[TailnetDeviceAccess] stage=status-after code=backendNotRunning"])
+
+        let invalid = SensorFixture()
+        let invalidLines = DiagnosticLines()
+        let invalidSensor = invalid.sensor(diagnosticSink: { invalidLines.append($0) })
+        if case .failure(let failure) = await invalidSensor.principal(for: binding(source: "192.168.1.2")) {
+            expectEqual(failure, .invalidSource)
+        } else { fail("Tailnet 외 주소에서 proof를 발급했습니다.") }
+        expectTrue(invalid.commands.isEmpty)
+        await invalidSensor.drainDiagnosticsForTesting()
+        expectEqual(invalidLines.snapshot,
+                    ["[TailnetDeviceAccess] stage=validation code=invalidSource"])
+
+        let stopped = SensorFixture(), stoppedLines = DiagnosticLines()
+        let sensor = stopped.sensor(diagnosticSink: { stoppedLines.append($0) })
+        stopped.beforeRead = { _ in
+            sensor.stop()
+            throw NSError(domain: "private-late-error", code: 1)
+        }
+        if case .failure(let failure) = await sensor.principal(for: binding()) {
+            expectEqual(failure, .stopped)
+        } else { fail("중지된 센서에서 proof를 발급했습니다.") }
+        await sensor.drainDiagnosticsForTesting()
+        expectEqual(stoppedLines.snapshot,
+                    ["[TailnetDeviceAccess] stage=status-before code=stopped"])
+        let lines = stoppedLines.snapshot
+        try await Task.sleep(nanoseconds: 2_050_000_000)
+        await sensor.drainDiagnosticsForTesting()
+        expectEqual(stoppedLines.snapshot, lines)
+    }
+
+    func testBlockedDiagnosticsDoNotDelayCompletionOrCleanup() async {
+        for expected in [TailnetDeviceAccess.Failure.sensorFailure, .cancelled, .stopped, .deadlineExceeded] {
+            let readStarted = DispatchSemaphore(value: 0), cleaned = DispatchSemaphore(value: 0)
+            let sinkStarted = DispatchSemaphore(value: 0), releaseSink = DispatchSemaphore(value: 0)
+            let sinkFinished = DispatchSemaphore(value: 0), completed = DispatchSemaphore(value: 0)
+            let controlReturned = DispatchSemaphore(value: 0), lockAvailable = DispatchSemaphore(value: 0)
+            let lines = DiagnosticLines()
+            let sensor = TailnetDeviceAccess(testingRead: { _, check in
+                defer { cleaned.signal() }
+                readStarted.signal()
+                if expected == .sensorFailure { throw TailnetDeviceAccess.Failure.sensorFailure }
+                while true { try check(); Thread.sleep(forTimeInterval: 0.001) }
+            }, testingDiagnosticSink: { line in
+                lines.append(line)
+                sinkStarted.signal()
+                _ = releaseSink.wait(timeout: .now() + 10)
+                sinkFinished.signal()
+            })
+            let source = binding()
+            let query = Task.detached {
+                let result = await sensor.principal(for: source)
+                completed.signal()
+                return result
+            }
+            let didStart = await waitForSignal(readStarted)
+            expectTrue(didStart)
+            DispatchQueue.global(qos: .utility).async {
+                if expected == .cancelled { query.cancel() }
+                else if expected == .stopped { sensor.stop() }
+                controlReturned.signal()
+            }
+            let didBlock = await waitForSignal(sinkStarted, seconds: 3)
+            DispatchQueue.global(qos: .utility).async {
+                sensor.stop()
+                lockAvailable.signal()
+            }
+            let didComplete = await waitForSignal(completed)
+            let didClean = await waitForSignal(cleaned)
+            let didReturn = await waitForSignal(controlReturned)
+            let didUnlock = await waitForSignal(lockAvailable)
+            expectTrue(didBlock)
+            expectTrue(didComplete)
+            expectTrue(didClean)
+            expectTrue(didReturn)
+            expectTrue(didUnlock)
+            expectEqual(sinkFinished.wait(timeout: .now()), .timedOut)
+            releaseSink.signal()
+            let result = await query.value
+            if case .failure(let actual) = result { expectEqual(actual, expected) }
+            else { fail("진단 정체 중 실패한 조회가 proof를 발급했습니다.") }
+            await sensor.drainDiagnosticsForTesting()
+            expectEqual(lines.snapshot, ["[TailnetDeviceAccess] stage=status-before code=\(expected.rawValue)"])
+        }
+    }
+
+    func testCanonicalCLIEnvironmentIsFixed() {
+        expectEqual(TailnetDeviceAccess.testingCLIEnvironment,
+                    ["PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + NSHomeDirectory(), "TERM=dumb"])
     }
 
     func testBackendAndStatusChangesDenied() async {
@@ -1220,6 +1407,10 @@ private struct OwnerHostBootstrapCheck {
         await checks.testMissingAndZeroExpiryFollowApprovedSchema()
         await checks.testNullMalformedExpiredEvidenceDenied()
         await checks.testOwnershipAndApprovalDenied()
+        await checks.testMachineAuthorizationEvidenceAndDiagnostics()
+        do { try await checks.testSensorFailureStagesAndConstantLogs() } catch { fail("센서 단계와 고정 로그 검사 예외") }
+        await checks.testBlockedDiagnosticsDoNotDelayCompletionOrCleanup()
+        checks.testCanonicalCLIEnvironmentIsFixed()
         await checks.testBackendAndStatusChangesDenied()
         await checks.testLANAndOutputLimitDenied()
         do { try await checks.testProductionRegistrationAndPairedReconnect() } catch { fail("testProductionRegistrationAndPairedReconnect 예외") }
