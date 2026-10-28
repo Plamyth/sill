@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CA4D20261029000000000001 /* CanvasCardMerge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4D20261029000000000000 /* CanvasCardMerge.swift */; };
+		CA4D20261029000000000002 /* CanvasCardMerge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4D20261029000000000000 /* CanvasCardMerge.swift */; };
+
 		8C932E21227A4CE7F8136712 /* CanvasInkTextEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */; };
 		6C9C20261029000000000001 /* CanvasInkSpacingProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C9C20261029000000000000 /* CanvasInkSpacingProposal.swift */; };
 		8C932E21227A4CE7F8136713 /* CanvasInkTextEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */; };
@@ -230,6 +233,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		CA4D20261029000000000000 /* CanvasCardMerge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasCardMerge.swift; sourceTree = "<group>"; };
 		8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasInkTextEditing.swift; sourceTree = "<group>"; };
 		6C9C20261029000000000000 /* CanvasInkSpacingProposal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasInkSpacingProposal.swift; sourceTree = "<group>"; };
 		D7250001000000000000F006 /* StreamClient+SentryReturn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+SentryReturn.swift"; sourceTree = "<group>"; };
@@ -481,6 +485,7 @@
 				B2000001000000000000F003 /* CanvasStore.swift */,
 				8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */,
 				6C9C20261029000000000000 /* CanvasInkSpacingProposal.swift */,
+				CA4D20261029000000000000 /* CanvasCardMerge.swift */,
 				B2000001000000000000F004 /* CanvasWorkspace.swift */,
 				B2000001000000000000F00A /* CanvasDictation.swift */,
 				B2000001000000000000F005 /* ControlRoomProjection.swift */,
@@ -719,6 +724,7 @@
 				B2000001000000000000A003 /* CanvasStore.swift in Sources */,
 				8C932E21227A4CE7F8136712 /* CanvasInkTextEditing.swift in Sources */,
 				6C9C20261029000000000001 /* CanvasInkSpacingProposal.swift in Sources */,
+				CA4D20261029000000000001 /* CanvasCardMerge.swift in Sources */,
 				B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */,
 				B2000001000000000000A00A /* CanvasDictation.swift in Sources */,
 				B2000001000000000000A005 /* ControlRoomProjection.swift in Sources */,
@@ -832,6 +838,7 @@
 				F171544FC7BFE8A0CB69160D /* CanvasStore.swift in Sources */,
 				8C932E21227A4CE7F8136713 /* CanvasInkTextEditing.swift in Sources */,
 				6C9C20261029000000000002 /* CanvasInkSpacingProposal.swift in Sources */,
+				CA4D20261029000000000002 /* CanvasCardMerge.swift in Sources */,
 				BC459CE1617471593F9E4735 /* CanvasWorkspace.swift in Sources */,
 				E3753868372CBB71F5A7A409 /* CanvasDictation.swift in Sources */,
 				3C938CEDA7C004CB4E2143F5 /* ControlRoomProjection.swift in Sources */,
