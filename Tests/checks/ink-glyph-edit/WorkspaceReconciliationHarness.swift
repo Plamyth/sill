@@ -2,7 +2,7 @@
 import Foundation
 @MainActor final class WorkspaceReconciliationHarness {
     let store: CanvasStore, relay: CanvasRelay
-    var relayAddress="http://fixture.invalid",relayToken="fixture-token"
+    var relayAddress="http://192.168.88.88:4242",relayToken="own-fixture-token-012345678901"
     var proposalInputBusy=false
     var canvasVaultBlocked=true,canvasSyncBusy=false,canvasConflictOpen=false,canvasVaultEnabled=true
     var syncedSceneSha:String?,syncedLocalSceneSha:String?,canvasNoteSha:String?,pendingSceneSha:String?

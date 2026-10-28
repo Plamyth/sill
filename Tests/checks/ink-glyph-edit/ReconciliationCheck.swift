@@ -8,7 +8,7 @@ final class ReconciliationProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        precondition(request.value(forHTTPHeaderField:"X-Canvas-Token") == "fixture-token")
+        precondition(request.value(forHTTPHeaderField:"X-Canvas-Token") == "own-fixture-token-012345678901")
         let conflict = request.url!.path == "/vault/canvas/conflict"
         var result: [String:Any], status = 200
         if conflict && request.httpMethod == "PUT" {
@@ -49,7 +49,7 @@ final class ReconciliationProtocol: URLProtocol {
 }
 @main struct ReconciliationCheck {
     @MainActor static func main() async throws {
-        let id=UUID(),recovery=UUID(),output=URL(fileURLWithPath:CommandLine.arguments[1],isDirectory:true)
+        let id=UUID(),recovery=UUID()
         let png=Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jAt8AAAAASUVORK5CYII=")!
         var scene=CanvasScene();scene.id=id;scene.schemaVersion=3
         scene.drawingBase64=PKDrawing().dataRepresentation().base64EncodedString()
@@ -72,7 +72,7 @@ final class ReconciliationProtocol: URLProtocol {
             "code":"note_reconciliation_required","reconciliationRequired":true,"publicationAttempted":true,
             "expected":expected,"materials":["active":ReconciliationProtocol.active,"base":NSNull(),"displaced":ReconciliationProtocol.displaced,"proposal":ReconciliationProtocol.active],"history":[]]
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[ReconciliationProtocol.self]
-        let session=URLSession(configuration:config),relay=CanvasRelay(address:"http://fixture.invalid",token:"fixture-token",session:session)
+        let session=URLSession(configuration:config),relay=CanvasRelay(address:"http://192.168.88.88:4242",token:"own-fixture-token-012345678901",session:session)
         var count=0
         func check(_ v:Bool,_ message:String) { precondition(v,message);count += 1;print("PASS",message) }
         let snapshot=try await relay.vaultCanvasConflict(id:id)
@@ -112,7 +112,7 @@ final class ReconciliationProtocol: URLProtocol {
         }
         let cacheStore=CanvasStore();cacheStore.scene=scene;cacheStore.saveNow()
         let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
-        let local=try encoder.encode(scene),sha=CanvasPacket.sha(local),backup=output.appendingPathComponent("local-preserved.json")
+        let local=try encoder.encode(scene),sha=CanvasPacket.sha(local),backup=try CanvasRuntime.conflictRecoveryURL("CanvasConflictLocal-\(UUID().uuidString.lowercased()).json")
         try CanvasLocalFile.write(local,to:backup)
         cacheStore.scene.nodes[0].text="새 입력"
         do {try cacheStore.applyReconciledCanvas(external,expectedLocalSHA:sha,preservedAt:backup);preconditionFailure("stale local accepted")}

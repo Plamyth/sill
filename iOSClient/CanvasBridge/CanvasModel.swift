@@ -230,6 +230,13 @@ enum CanvasRuntime {
                 try checkPath(url,beneath:context.support)
                 return
             }
+            let recovery = context.root.appendingPathComponent("state",isDirectory:true)
+                .appendingPathComponent("CanvasConflictRecovery",isDirectory:true)
+            if validConflictRecoveryName(url.lastPathComponent), !url.hasDirectoryPath,
+               recovery.appendingPathComponent(url.lastPathComponent) == url {
+                try checkPath(url,beneath:context.support)
+                return
+            }
             guard let file = StateFile.allCases.first(where: {
                 context.root.appendingPathComponent("state").appendingPathComponent($0.rawValue).path == url.path
             }), try isolatedURL(file,in:context) == url else { throw TestError.invalid }
@@ -292,6 +299,26 @@ enum CanvasRuntime {
         }
     }
     #endif
+
+    private static func validConflictRecoveryName(_ name: String) -> Bool {
+        if name == "CanvasConflictChoice.json" { return true }
+        guard name.hasSuffix(".json") else { return false }
+        for prefix in ["CanvasConflictLocal-", "CanvasConflictAttempt-"] where name.hasPrefix(prefix) {
+            let identifier = String(name.dropFirst(prefix.count).dropLast(5))
+            return UUID(uuidString:identifier).map { identifier == $0.uuidString.lowercased() } ?? false
+        }
+        return false
+    }
+
+    static func conflictRecoveryURL(_ filename: String) throws -> URL {
+        guard validConflictRecoveryName(filename) else { throw CocoaError(.fileWriteInvalidFileName) }
+        let url = try stateURL(.checkpoint).deletingLastPathComponent()
+            .appendingPathComponent("CanvasConflictRecovery",isDirectory:true).appendingPathComponent(filename)
+        #if DEBUG
+        try validateStateURL(url)
+        #endif
+        return url
+    }
 
     static func stateURL(_ file: StateFile, blockRecoveryOverride: URL? = nil,
                          noteRecoveryOverride: URL? = nil) throws -> URL {

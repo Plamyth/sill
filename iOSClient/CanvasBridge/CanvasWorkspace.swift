@@ -938,7 +938,7 @@ struct CanvasWorkspace: View {
         var disposition = CanvasConflictChoiceState.pending
     }
     private func conflictChoiceURL() throws -> URL {
-        try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent("CanvasConflictChoice.json")
+        try CanvasRuntime.conflictRecoveryURL("CanvasConflictChoice.json")
     }
     private func readCanvasConflictNote() async {
         guard canvasVaultBlocked, !canvasSyncBusy, !store.inkBusy, !store.vaultInputBusy else { return }
@@ -993,7 +993,7 @@ struct CanvasWorkspace: View {
                 choice = pending
             } else {
                 let filename = "CanvasConflictLocal-\(UUID().uuidString.lowercased()).json"
-                let backup = try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent(filename)
+                let backup = try CanvasRuntime.conflictRecoveryURL(filename)
                 let bytes = try sceneBytes()
                 try CanvasLocalFile.write(bytes,to:backup)
                 guard CanvasPacket.sha(try CanvasLocalFile.read(backup)) == localSHA else { throw VaultBlockRecoveryError.changed }
@@ -1005,7 +1005,7 @@ struct CanvasWorkspace: View {
             }
             guard choice.backupFilename.hasPrefix("CanvasConflictLocal-"), choice.backupFilename.hasSuffix(".json"),
                   UUID(uuidString:String(choice.backupFilename.dropFirst("CanvasConflictLocal-".count).dropLast(5))) != nil else { throw VaultBlockRecoveryError.corrupt }
-            let backup = try Self.canvasVaultCheckpointURL().deletingLastPathComponent().appendingPathComponent(choice.backupFilename)
+            let backup = try CanvasRuntime.conflictRecoveryURL(choice.backupFilename)
             guard CanvasPacket.sha(try CanvasLocalFile.read(backup)) == choice.localSHA else { throw VaultBlockRecoveryError.corrupt }
             let (resolved,_) = try await relay.resolveVaultCanvasConflict(snapshot,decision:decision)
             guard canvasVaultBlocked, store.scene.id == id, relayAddress == address, relayToken == token,
@@ -1044,8 +1044,7 @@ struct CanvasWorkspace: View {
             guard store.scene.id == id, relayAddress == address, relayToken == token,
                   CanvasPacket.sha(try sceneBytes()) == local else { throw VaultBlockRecoveryError.changed }
             if let bytes = try? CanvasLocalFile.read(conflictChoiceURL()) {
-                let archive = try Self.canvasVaultCheckpointURL().deletingLastPathComponent()
-                    .appendingPathComponent("CanvasConflictAttempt-\(UUID().uuidString.lowercased()).json")
+                let archive = try CanvasRuntime.conflictRecoveryURL("CanvasConflictAttempt-\(UUID().uuidString.lowercased()).json")
                 try CanvasLocalFile.write(bytes,to:archive)
                 var prior = try JSONDecoder().decode(CanvasConflictChoice.self,from:bytes); prior.disposition = .superseded
                 try CanvasLocalFile.write(JSONEncoder().encode(prior),to:conflictChoiceURL())
