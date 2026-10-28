@@ -602,7 +602,10 @@ struct CanvasWorkspace: View {
                         Text("연결 문단 편집 · 블록 표식과 다른 문단은 그대로 보존됩니다.")
                             .font(.footnote).padding(.horizontal)
                     } else {
-                        if !vaultRawMarkdown, let session = store.vaultReviewEditSession {
+                        if !vaultRawMarkdown, let session = store.vaultPDFEditSession {
+                            VaultPDFFields(store:store,session:session)
+                                .id(session)
+                        } else if !vaultRawMarkdown, let session = store.vaultReviewEditSession {
                             VaultReviewFields(store:store,session:session,showRawMarkdown:{ vaultRawMarkdown = true })
                                 .id(session)
                         } else {
@@ -613,8 +616,12 @@ struct CanvasWorkspace: View {
                                 .disabled(store.vaultSaving || store.vaultLoading || store.vaultInputSessionID == nil)
                                 .accessibilityIdentifier("obsidianMarkdownEditor")
                         }
-                        if store.vaultReviewEditSession != nil {
-                            Button(vaultRawMarkdown ? "질문과 답 편집" : "Markdown 원문 편집") {
+                        if let message = store.vaultPDFCardMessage {
+                            Text(message).font(.footnote).padding(.horizontal)
+                                .accessibilityIdentifier("obsidianPDFSourceState")
+                        }
+                        if store.vaultReviewEditSession != nil || store.vaultPDFEditSession != nil {
+                            Button(vaultRawMarkdown ? (store.vaultPDFEditSession != nil ? "제목·메모 편집" : "질문과 답 편집") : "Markdown 원문 편집") {
                                 vaultRawMarkdown.toggle()
                             }.frame(minHeight:44)
                                 .disabled(store.vaultInputBusy || store.vaultSaving || store.vaultLoading)
@@ -1787,6 +1794,60 @@ private struct CanvasEndpointHandle: View {
     }
 }
 
+private struct VaultPDFFields: View {
+    @ObservedObject var store: CanvasStore
+    let session: CanvasStore.VaultPDFEditSession
+    @State private var titleSelection = NSRange(location:0,length:0)
+    @State private var memoSelection = NSRange(location:0,length:0)
+    @State private var titleBusy = false
+    @State private var memoBusy = false
+
+    private func inputBusy(_ field: VaultPDFCard.Field) -> Binding<Bool> {
+        Binding(get:{ field == .title ? titleBusy : memoBusy },set:{ busy in
+            guard store.vaultPDFEditIsCurrent(session) else { return }
+            if field == .title { titleBusy = busy } else { memoBusy = busy }
+            store.vaultInputBusy = titleBusy || memoBusy
+        })
+    }
+
+    private func text(_ field: VaultPDFCard.Field) -> Binding<String> {
+        Binding(get:{ (try? VaultPDFCard.parse(store.vaultDraft))?.text(for:field) ?? "" },set:{ value in
+            _ = store.editVaultPDF(field,text:value,session:session)
+        })
+    }
+
+    var body: some View {
+        VStack(alignment:.leading,spacing:8) {
+            Text("제목").font(.headline)
+            VaultMarkdownEditor(text:text(.title),selection:$titleSelection,
+                identifier:"obsidianPDFTitle",label:"PDF 발췌 제목 · 한 줄",
+                inputBusy:inputBusy(.title),editSession:{ store.vaultPDFEditIsCurrent(session) ? session.inputSessionID : nil })
+                .frame(minHeight:60)
+            if let card = try? VaultPDFCard.parse(store.vaultDraft) {
+                Text("원문 인용 · 읽기 전용").font(.headline)
+                Text(card.source.quote).textSelection(.enabled)
+                    .frame(maxWidth:.infinity,alignment:.leading)
+                    .accessibilityIdentifier("obsidianPDFQuote")
+                Text("출처: \(card.source.pdfPath) · \(card.source.pageIndex + 1)쪽").font(.caption)
+                Text("PDF SHA-256: \(card.source.pdfSha256)").font(.caption2).textSelection(.enabled)
+                if !card.additionalMarkdown.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+                    Text("출처 뒤의 추가 Markdown · 원문 편집에서 수정").font(.caption)
+                    Text(card.additionalMarkdown).textSelection(.enabled)
+                }
+            }
+            Text("메모·댓글").font(.headline)
+            VaultMarkdownEditor(text:text(.memo),selection:$memoSelection,
+                identifier:"obsidianPDFMemo",label:"PDF 발췌 메모·댓글",
+                inputBusy:inputBusy(.memo),editSession:{ store.vaultPDFEditIsCurrent(session) ? session.inputSessionID : nil })
+                .frame(minHeight:150)
+        }.padding(.horizontal)
+            .disabled(store.vaultSaving || store.vaultLoading || store.vaultBlocked)
+            .onAppear {
+                if store.vaultPDFEditIsCurrent(session), !titleBusy, !memoBusy { store.vaultInputBusy = false }
+            }
+    }
+}
+
 private struct VaultReviewFields: View {
     @ObservedObject var store: CanvasStore
     let session: CanvasStore.VaultReviewEditSession
@@ -2439,8 +2500,16 @@ private struct NodeTile: View {
 
     var body: some View {
         VStack(spacing:4) {
-            Text(node.text.isEmpty ? (node.kind == .note ? "내용 입력" : "") : node.text).font(.title3)
-                .lineLimit(node.vaultNote == nil ? nil : 3)
+            if node.vaultNote != nil, let lines = VaultPDFCard.previewLines(node.text) {
+                VStack(alignment:.leading,spacing:3) {
+                    Text(lines[0]).font(.headline).lineLimit(1)
+                    Text(lines[1]).font(.caption).lineLimit(2)
+                    Text(lines[2]).font(.caption).lineLimit(2)
+                }.frame(maxWidth:.infinity,alignment:.leading)
+            } else {
+                Text(node.text.isEmpty ? (node.kind == .note ? "내용 입력" : "") : node.text).font(.title3)
+                    .lineLimit(node.vaultNote == nil ? nil : 3)
+            }
             if let reference = node.vaultNote {
                 Text(reference.blockID.map { "^\($0)" } ?? reference.path).font(.caption).lineLimit(1)
                 Text(reference.sourceStateLabel).font(.caption2).lineLimit(2)

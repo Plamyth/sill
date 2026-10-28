@@ -1158,6 +1158,46 @@ final class CanvasStore: ObservableObject {
         !vaultBlockEditing && vaultNote != nil && !vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
+    struct VaultPDFEditSession: Hashable {
+        let inputSessionID: UUID
+        let path: String
+        let baseSha256: String
+        let excerptID: UUID
+    }
+
+    var vaultPDFEditSession: VaultPDFEditSession? {
+        guard !vaultBlockEditing, let note = vaultNote, let input = vaultInputSessionID,
+              let base = try? VaultPDFCard.parse(note.text), let card = try? VaultPDFCard.parse(vaultDraft),
+              card.sourceSHA256 == base.sourceSHA256 else { return nil }
+        return VaultPDFEditSession(inputSessionID:input,path:note.path,baseSha256:note.sha256,excerptID:card.source.excerptID)
+    }
+
+    var vaultPDFCardMessage: String? {
+        do {
+            guard let source = try VaultPDFExcerpt.parse(vaultDraft) else { return nil }
+            guard let card = try VaultPDFCard.parse(vaultDraft), let note = vaultNote,
+                  let base = try VaultPDFCard.parse(note.text), card.sourceSHA256 == base.sourceSHA256 else {
+                return "PDF 출처가 열었던 원문과 다릅니다. 제목·메모 편집 전에 Markdown 원문을 확인하세요."
+            }
+            return "PDF 발췌 · \(source.pdfPath) · \(source.pageIndex + 1)쪽. 인용과 출처는 선택 당시 원문입니다."
+        } catch { return "PDF 출처 확인 필요 · \(error.localizedDescription)" }
+    }
+
+    func vaultPDFEditIsCurrent(_ session: VaultPDFEditSession) -> Bool {
+        vaultPDFEditSession == session && noteContext.map(noteContextIsCurrent) == true
+    }
+
+    @discardableResult
+    func editVaultPDF(_ field: VaultPDFCard.Field, text: String, session: VaultPDFEditSession) -> Bool {
+        guard vaultPDFEditIsCurrent(session), !vaultSaving, !vaultLoading, !vaultBlocked,
+              let card = try? VaultPDFCard.parse(vaultDraft) else { return false }
+        do {
+            let next = try card.replacing(field,with:text)
+            if !next.utf8.elementsEqual(vaultDraft.utf8) { vaultDraft = next }
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
     struct VaultReviewSession: Identifiable {
         let id: UUID
         let card: VaultReviewCard
@@ -2133,7 +2173,7 @@ final class CanvasStore: ObservableObject {
     @discardableResult
     func attachOpenedVaultNote() -> UUID? {
         guard vaultCanAttach, let note = vaultNote else { return nil }
-        let preview = note.preview
+        let preview = VaultPDFCard.preview(note.text)
         let id = scene.addNode(kind:.note,at:CanvasPoint(x:700-pan.width,y:430-pan.height),text:preview)
         scene.nodes[scene.nodes.count - 1].vaultNote = VaultNoteReference(
             path:note.path,sha256:note.sha256,relayAddress:noteAddress,cacheTruncated:preview != note.text)
@@ -2164,7 +2204,7 @@ final class CanvasStore: ObservableObject {
                     continue
                 }
             } else { source = note.text }
-            let preview = VaultNoteSnapshot.preview(source)
+            let preview = ref.blockID == nil ? VaultPDFCard.preview(source) : VaultNoteSnapshot.preview(source)
             let quoteSHA = ref.blockID == nil ? nil : CanvasPacket.sha(Data(source.utf8))
             let changed = (ref.quoteSha256 != nil ? ref.quoteSha256 != quoteSHA :
                 !preview.utf8.elementsEqual(next.nodes[index].text.utf8)) ||

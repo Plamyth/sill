@@ -36,6 +36,7 @@ sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            Path(__file__).with_name('PDFExcerptChecks.swift'),
            Path(__file__).with_name('PDFExcerptRecoveryChecks.swift'),
            Path(__file__).with_name('PDFExcerptFenceChecks.swift'),
+           Path(__file__).with_name('PDFCardFieldChecks.swift'),
            Path(__file__).with_name('main.swift')]
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 ios = sorted((root / 'iOSClient/CanvasBridge').glob('*.swift')) + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
@@ -57,10 +58,41 @@ if isolated:
     plist = output / 'fixture-source.plist'
     plist.write_bytes(plistlib.dumps(metadata))
 sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], env=tool_env, text=True).strip()
+workspace = (root / 'iOSClient/CanvasBridge/CanvasWorkspace.swift').read_text()
+fields = workspace[workspace.index('private struct VaultPDFFields:'):workspace.index('private struct VaultReviewFields:')]
+def extract_function(signature):
+    start = fields.index(signature)
+    opening = fields.index('{', start)
+    depth = 1
+    for index in range(opening + 1, len(fields)):
+        depth += (fields[index] == '{') - (fields[index] == '}')
+        if depth == 0:
+            return fields[start:index + 1].replace('private func', 'func', 1)
+    raise AssertionError(signature)
+assert 'Text(card.source.quote).textSelection(.enabled)' in fields
+assert 'identifier:"obsidianPDFTitle"' in fields and 'identifier:"obsidianPDFMemo"' in fields
+assert 'VaultPDFFields(store:store,session:session)' in workspace and 'VaultMarkdownEditor(text:$store.vaultDraft' in workspace
+assert 'VaultPDFCard.previewLines(node.text)' in workspace
+ui_bindings = output / 'PDFUIBindings.swift'
+ui_bindings.write_text("""import Foundation
+import SwiftUI
+@propertyWrapper struct PDFUIState<Value> {
+    final class Box { var value: Value; init(_ value: Value) { self.value = value } }
+    private let box: Box
+    init(wrappedValue: Value) { box = Box(wrappedValue) }
+    var wrappedValue: Value { get { box.value } nonmutating set { box.value = newValue } }
+}
+@MainActor struct PDFUIBindings {
+    let store: CanvasStore
+    let session: CanvasStore.VaultPDFEditSession
+    @PDFUIState private var titleBusy = false
+    @PDFUIState private var memoBusy = false
+    init(store: CanvasStore, session: CanvasStore.VaultPDFEditSession) { self.store = store; self.session = session }
+""" + extract_function('    private func inputBusy(') + '\n' + extract_function('    private func text(') + '\n}\n')
 command = ['xcrun', 'swiftc', '-sdk', sdk, '-target', 'arm64e-apple-macos27.0',
            '-swift-version', '5', '-parse-as-library', '-module-cache-path', str(output.parent / 'modules'),
            '-I', str(output), str(output / 'StreamProtocol.o'),
-           *map(str, sources), '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT',
+           *map(str, sources), str(ui_bindings), '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT',
            '-Xlinker', '__info_plist', '-Xlinker', str(plist),
            '-o', str(output / 'check')]
 if isolated:
@@ -151,6 +183,8 @@ if not unchanged or not relay_unchanged:
     'actualVaultModuleFileRoundtrip': '--vault-roundtrip' in sys.argv[2:],
     'PNGScope': 'native PencilKit ink fixture; full scene visual parity not asserted',
     'HTTPOrOpenScreenRoundtrip': False, 'physicalPencilInput': False,
+    'actualProductPDFUIBindingsExecuted': '--pdf-card-fields' in sys.argv[2:],
+    'PDFUIBindingsSHA256': hashlib.sha256(ui_bindings.read_bytes()).hexdigest(),
     'actualStoreIsolatedPDFRecovery': isolated, 'normalProtectedFilesUnchanged': True if isolated and code == 0 else None,
     'normalProtectedFileHashes': normal_hashes if isolated else None,
     'exitCode': code}, indent=2) + '\n')

@@ -239,3 +239,102 @@ struct VaultPDFExcerpt: Codable, Equatable {
         return (document,page,selection)
     }
 }
+
+struct VaultPDFCard {
+    enum Field { case title, memo }
+    enum LayoutError: LocalizedError {
+        case unsupported, stale, title
+        var errorDescription: String? {
+            switch self {
+            case .unsupported: return "PDF 출처는 있지만 제목·메모 구획을 확인하지 못했습니다. Markdown 원문에서 확인하세요."
+            case .stale: return "PDF 출처 또는 편집 대상이 바뀌었습니다. 현재 입력을 보존하고 다시 여세요."
+            case .title: return "제목은 한 줄로 입력하세요. 기존 제목과 메모는 보존했습니다."
+            }
+        }
+    }
+    let source: VaultPDFExcerpt
+    let sourceSHA256: String
+    let title: String
+    let memo: String
+    let additionalMarkdown: String
+    private let original: String
+    private let titleRange: NSRange
+    private let memoRange: NSRange
+
+    func text(for field: Field) -> String { field == .title ? title : memo }
+
+    static func parse(_ text: String) throws -> Self? {
+        guard let source = try VaultPDFExcerpt.parse(text) else { return nil }
+        let raw = text as NSString
+        let newline = raw.range(of:"\n")
+        let eol = newline.location != NSNotFound && newline.location > 0 && raw.character(at:newline.location - 1) == 13 ? "\r\n" : "\n"
+        let prefix = text.hasPrefix("\u{feff}") ? "\u{feff}# " : "# "
+        let firstEnd = raw.range(of:eol)
+        guard text.hasPrefix(prefix), firstEnd.location != NSNotFound, firstEnd.location >= prefix.utf16.count
+        else { throw LayoutError.unsupported }
+        let titleRange = NSRange(location:prefix.utf16.count,length:firstEnd.location - prefix.utf16.count)
+        let canonical = try source.markdown()
+        let afterTitle = canonical.range(of:"\n")!.lowerBound
+        let afterMemoHeading = canonical.range(of:"## 메모\n\n",options:.literal)!.upperBound
+        let middle = String(canonical[afterTitle..<afterMemoHeading]).replacingOccurrences(of:"\n",with:eol)
+        let middleRange = NSRange(location:firstEnd.location,length:middle.utf16.count)
+        guard NSMaxRange(middleRange) <= raw.length,
+              raw.substring(with:middleRange).utf8.elementsEqual(middle.utf8)
+        else { throw LayoutError.unsupported }
+        let document = try AttributedString(markdown:text,
+            options:.init(interpretedSyntax:.full,appliesSourcePositionAttributes:true))
+        var blockRange: NSRange?, identity: Int?
+        for run in document.runs {
+            guard let components = run.presentationIntent?.components, components.count == 1,
+                  case .codeBlock(let hint) = components[0].kind,
+                  hint?.hasPrefix("ccr-pdf-source") == true,
+                  let position = run.markdownSourcePosition,
+                  let range = Range<String.Index>(position,in:text) else { continue }
+            if identity == components[0].identity { continue }
+            guard identity == nil else { throw VaultPDFError.invalid }
+            identity = components[0].identity
+            blockRange = NSRange(range,in:text)
+        }
+        let start = NSMaxRange(middleRange)
+        guard let blockRange, blockRange.location >= start + eol.utf16.count,
+              raw.substring(with:NSRange(location:blockRange.location - eol.utf16.count,length:eol.utf16.count)) == eol
+        else { throw LayoutError.unsupported }
+        let memoRange = NSRange(location:start,length:blockRange.location - eol.utf16.count - start)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return Self(source:source,sourceSHA256:CanvasPacket.sha(try encoder.encode(source)),
+            title:raw.substring(with:titleRange),memo:raw.substring(with:memoRange),
+            additionalMarkdown:raw.substring(from:NSMaxRange(blockRange)),original:text,
+            titleRange:titleRange,memoRange:memoRange)
+    }
+
+    func replacing(_ field: Field, with text: String) throws -> String {
+        guard field != .title || !text.contains(where:\.isNewline) else { throw LayoutError.title }
+        let next = (original as NSString).replacingCharacters(in:field == .title ? titleRange : memoRange,with:text)
+        guard let parsed = try Self.parse(next), parsed.sourceSHA256 == sourceSHA256,
+              parsed.text(for:field).utf8.elementsEqual(text.utf8) else { throw LayoutError.stale }
+        return next
+    }
+
+    var preview: String {
+        func line(_ text: String) -> String {
+            VaultNoteSnapshot.preview(text.components(separatedBy:.newlines).joined(separator:" "))
+        }
+        return "PDF 발췌\n제목: \(line(title))\n인용: \(line(source.quote))\n메모: \(line(memo + additionalMarkdown))"
+    }
+
+    static func preview(_ text: String) -> String {
+        do {
+            if let card = try parse(text) { return card.preview }
+            return VaultNoteSnapshot.preview(text)
+        } catch {
+            return "PDF 출처 확인 필요\n제목·인용·메모를 확정하지 않았습니다. Markdown 원문에서 확인하세요."
+        }
+    }
+
+    static func previewLines(_ text: String) -> [String]? {
+        let lines = text.components(separatedBy:"\n")
+        guard lines.count == 4, lines[0] == "PDF 발췌", lines[1].hasPrefix("제목: "),
+              lines[2].hasPrefix("인용: "), lines[3].hasPrefix("메모: ") else { return nil }
+        return Array(lines.dropFirst())
+    }
+}

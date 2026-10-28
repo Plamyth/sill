@@ -98,6 +98,17 @@ final class NoteProtocol: URLProtocol {
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
         }
+        if CommandLine.arguments.contains("--pdf-card-fields") {
+            try await checkPDFCardFields(check)
+            if ProcessInfo.processInfo.environment["PENCIL_REMOTE_FIXTURE"] == "1" {
+                PDFRemoteVault.shared = try PDFRemoteVault()
+                try await checkPDFCardFiles(check)
+                try PDFRemoteVault.shared!.finish()
+                PDFRemoteVault.shared = nil
+            }
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--anchor-reentry") {
             try await checkExcerptAnchorReentry(check)
             print("RESULT \(checks) assertions, \(failures) failures")
