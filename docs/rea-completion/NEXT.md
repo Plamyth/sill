@@ -1,45 +1,43 @@
-# 가장 큰 미구현과 다음 구현 단위
+# 다음 사용자 가치가 높은 미구현 행동 3개
 
-전체 완료는 false다. 이미 끝난 원앱 조사나 테스트 기반 정비를 다음 기능으로 제안하지 않는다. 기존 댓글·자·Pencil 문자 삭제/join/split·가방 저장·수동 구조 회전은 성공 근거를 보존한다.
+기준은 공식 `9646469ba63b2ed6a65c61a6384f541222dd5dee` / tree `4e8b7abf92485050610da334d6ec0166094adacb`다. 아래는 후속 제안이며 이번 문서 작업에서 제품을 구현하거나 설치하지 않았다. 판단 기준은 실제 관찰된 원앱 행동, 현재 제품의 공백, Obsidian 데이터로 이어지는 가치, 기존 후보 재사용 가능성이다. 테스트 개수나 새 진단 기반을 우선순위로 세지 않는다.
 
-## 큰 실제 미구현 3개
+## 1. PDF 발췌 → Obsidian 저장 → 변형 뒤 같은 원문으로 복귀
 
-| 우선 | 실제 공백 | 원앱 근거 | 현재 CCR과의 차이 |
-|---|---|---|---|
-| 1 | 원시 필기와 글리프의 의미 대응·같은 위치 편집 | MS01/02/03/04/06/07. 실제 Pencil 삭제·join/split·후보변환 | 현재 UITextView 문자편집·선택인식·CAS는 있다. 원래 손글씨의 글자별 획 대응·재배치와 MyScript 연속 후보 엔진은 없다. 기존 키보드/Scribble 수용으로 이 공백을 닫지 않는다. |
-| 2 | 손필기 수식 인식·계산·재교정과 손그림 의미 인식 | MS20의1+1=2·z오인식/결과?, MS18 사각형/직선 보정 | 수동 Canvas 노드·Pele·연결점·회전은 있다. 수식 의미 모델/계산 결과와 잉크↔식의 편집 연결, 자동 손그림 보정은 구현 근거가 없다. 원앱 오류 저장을 성공으로 복제하지 않는다. |
-| 3 | 문서 읽기·원문 앵커·학습 카드의 완전한 연속 흐름 | MM11/12/14/15/16/22/25 및 MI14/16. PDF 순서·크롭·EPUB XPath/UTF16·카드 그룹/병합·복습 | 독립 PDF 후보는 회전없는 단일페이지 텍스트 발췌만 지원한다. 다중페이지/회전/크롭·EPUB 리플로·영역 발췌·카드 병합/하위맵·적응형SRS를 전체 제품 경로로 연결하지 못했다. 고정4평가를 원앱 SRS로 세지 않는다. |
+독서 중 발췌를 카드/노트로 모으고 근거 원문으로 돌아갈 수 있어야 한다. 현재 소스에는 PDFView/import/source-anchor 경로가 없다. `CanvasStore.workspaceDocuments`와 `connectFileWorkspace`는 기존 `.sill` scene을 여는 경로이며 PDF를 불러오는 기능이 아니다. `VaultNoteReference`는 Markdown 블록 참조이고 PDF 페이지/영역 앵커를 대신하지 않는다.
 
-공용 폴더 원본 저장은 위 모든 기능의 필수 저장 계약이다. 부모가 별도 storage writer에서 진행하므로 여기서 중복 구현을 발행하지 않는다. 앱 내부 recovery.json과 캐시를 Obsidian/사용자 선택 공용폴더 원본 완료로 세지 않는다.
+원앱의 다중페이지·표시 순서·크롭 뒤 복귀/발췌 갱신은 R049/R054/R058/R062의 보존된 MarginNote Mac 관측이다. 관련 행 `MM15.04`, `MM15.05`, `MM14.06`을 기준으로 삼되, iPad 앵커 행 `MI16.*`의 근거 불충분과 Mac의 개별 미확인은 그대로 둔다. Mac 관측을 iPad 지원이나 cold reopen 수용으로 전이하지 않는다.
 
-## 가장 중요한 다음 신규 기능
+가장 작은 다음 단위는 **이미 검수된** PDF 후보 `6e796850c518d671a59014f33ffb54cdc7519c2f` / tree `7af7eecdb1f5a8cfe439c23caca02fc8abc66764`와 paired relay `2250dfada987013e6fc09e40e8bf2a58db134245`의 의미 통합부터다. R125는 회전 없는 단일페이지 텍스트 발췌의 native→Markdown/JSON 저장·재열기 범위만 뒷받침한다. 같은 후보를 다시 구현하지 않는다. 그 다음 관찰된 표시 순서 변경/다중페이지의 동일 원문 참조를 닫는다. 회전·크롭 전체를 후보의 완료 범위로 세지 않는다.
 
-다음 신규 구현은 **선택한 손글씨 한 줄의 문자 범위와 원본 획을 연결해 한 글자 의미 삭제를 미리보기·확정·되돌리기하는 흐름**으로 좁힌다. 기존 UITextView의 scratch 삭제를 다시 만드는 작업이 아니다. `MS02.01`의 원시 잉크 글리프 대응 간극을 닫는 첫 기능 단위다.
+후속 완료 근거는 자체 PDF 원본 SHA/문서 ID·물리 페이지와 표시 순서·좌표계·발췌/노트 ID를 함께 고정하고 발췌→Obsidian/Files 저장→새 Store 재열기→원문 복귀를 실제 파일로 확인하는 것이다. 외부 수정·잘못된 앵커·취소는 원본과 미확정 자료를 보존해야 한다. 서비스/실기기 단계는 부모의 별도 조율 범위다.
 
-1. 기존 선택 획 ID와 drawing/scene revision을 고정하고, 현재 사용 중인 인식 경로가 제공하는 문자 범위·영역의 실제 가용성을 확인한다. 새 provider·모델·계정 설치는 전제하지 않는다. 문자별 대응이 제공되지 않으면 추측한 획 소유권을 자동 확정하지 않는다.
-2. 기존 `CanvasProposal`, `sourceStrokeIds`, 문자/selection snapshot에 대응 자료를 연결한다. 최소 필드는 원본 revision·선택 획 ID·UTF16 문자 범위·실제 근거 영역·확정 상태다. 기존 공개 scene에 새 필드를 넣기 전 relay와 구형 decoder의 보존/명시 거부를 검토한다.
-3. 자체 한글 `가나다` 한 줄에서 `나`의 의미 삭제를 제안한다. 확정 전 원본 drawing·인식문·대응을 보존하고 대상 glyph와 가시 획의 변화를 미리 보여준다. 모호하면 원본을 유지한 채 명시 선택을 요구한다. 자동 검증을 사람에게 넘기는 의미가 아니다.
-4. 확정은 문자·가시 획 투영·native drawing·JSON·사람이 읽는 Markdown을 같은 revision/CAS로 갱신한다. Undo/Redo는 이 전체 단위를 되돌린다. 동시 수정과 늦은 인식 콜백은 원문을 덮지 않고 초안을 유지한다.
-5. 완료 판정은 선택 외 `가/다`·다른 획·필압·mask·transform·출처 보존, 한 글자 삭제 후 저장·새 Store 재열기·역수신·stale 거부·취소 불변이다. 그 후 부모가 고정한 최종 설치본에서 실제 Pencil 한 글자 삭제를 아래 최종 묶음에 포함한다.
+근거: [다중페이지 R049](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-stage1-20261021/margin-multipage-observed-spec.md), [순서 R054](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-stage1-20261021/margin-pdf-order-observed-spec.md), [크롭 갱신 R062](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-stage1-20261021/margin-pdf-crop-edit-observed-spec.md), [기존 후보 R125](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/pdf-native-markdown-fix-20261026/source-handoff.json).
 
-인식 경로가 문자별 영역/획 대응을 제공하지 않으면 이 기능의 그 간극을 명확히 반환한다. 단순 PNG 지우기, 전체 문장 재인식, 문자만 지우고 잉크를 그대로 두는 결과를 완료로 세지 않는다. 구현·검수·공식 통합·설치·실물 수용은 부모가 각각 기록한다.
+## 2. 원본 참조·순서를 보존하는 카드 병합·해제
 
-## 부모의 즉시 통합 대상과 별도 미구현의 구분
+여러 발췌를 한 논점으로 묶되 각 원문으로 돌아가고 다시 나눌 수 있어야 한다. 현재 `CanvasNode`/`CanvasLink`의 단일 노드와 parentChild/general 링크, `VaultNoteReference`는 이 행동을 구현하지 않는다. `CanvasStore.undoGraphEdit/redoGraphEdit`와 파일 CAS를 재사용할 수 있지만, 여러 원본 카드의 순서 있는 본문·출처·해제 계약은 현재 제품에 없다.
 
-이미 검수된 PDF `6e796850c518d671a59014f33ffb54cdc7519c2f` / tree `7af7eecdb1f5a8cfe439c23caca02fc8abc66764`와 paired relay `2250dfada987013e6fc09e40e8bf2a58db134245`는 새로 조사하거나 같은 구현을 중복 발행할 대상이 아니다. 부모가 source 충돌·현재 integration 이동을 확인하고 검수된 변경만 수렴한 뒤 실제 PDFView→발췌→파일 저장→원문 복귀를 수용해야 한다. PDF 회전·EPUB은 이 후보의 완료 범위가 아니다.
+실제 원앱 근거는 `MM22.06`, `MM22.07`과 R081/R082다. 원래 두 카드 ID는 남고 병합 카드가 새로 생기며, 링크/텍스트 블록의 순서가 보존된다. 해제 뒤 빈 부모가 남을 수 있고 archive 바이트가 달라도 의미가 같았던 범위다. 원앱 Undo를 DB 바이트 완전 복원으로 해석하지 않는다. iPad의 같은 행동 수용은 별도다.
 
-BT `163aa1f0`와 relay `4cac1b8`도 별도 후보로 유지한다. 이를 공식 c03d 또는 정상68 설치로 표시하지 않는다. 동결69나 unsigned70에 검수 결과가 있다는 이유로 실제 설치됐다고 보고하지 않는다.
+최소 단위는 자체 두 발췌의 ID·원문 참조·본문 순서를 저장하는 명시 병합/해제다. 기존 원본을 삭제하지 않고 공통 Undo·Files 저장·Obsidian Markdown과 scene의 대응을 유지한다. 다른 카드·노드·링크 보존, 새 Store 재열기, 외부 충돌·부분 저장 실패·취소의 원본 불변이 후속 검사의 핵심이다. 복습 알고리즘이나 전체 서재 프레임워크를 함께 만들 필요는 없다.
 
-## 부모가 마지막에 재현할 실물 묶음 1개
+근거: [병합 정정 스펙 R081](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-stage1-20261021/margin-card-merge-corrected-spec.md), [좁은 원앱 수용 R082](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-stage1-20261021/margin-card-merge-audit-acceptance.json).
 
-지금 질문·알림·Pencil 요청은 발행하지 않는다. 부모가 독립 자동검사와 단일 integration 수렴·서명·설치 readback을 마친 **한 최종 빌드**에서만 아래 자체 fixture 묶음을 진행한다. 정상68이라는 이유만으로 최신c03d/PDF/새 글리프 기능이 들어 있다고 가정하지 않는다.
+## 3. 태그 추가·Undo/Redo·필터·해제를 Obsidian 데이터와 연결
 
-| 순서 | 사람의 최소 실제 센서 입력 | 부모가 이어서 자동/직접 확인할 결과 |
-|---|---|---|
-| 1 | 새 자체 한 줄을 쓰고 가운데 한 글자만 scratch한다 | 문자/가시 획/원본 저장 일치, 주변 보존, Undo/Redo, 파일 재열기. 새 glyph기능 준비 전에는 원시잉크 동등성 통과로 세지 않음 |
-| 2 | 같은 줄에서 한 번 나누기·합치기·선택 교정한다 | 현재 변경된 표면의 명시 적용·취소, 공백/마침표 불변, SHA CAS·저장·재열기. 과거47·58 입력의 재증명이 목적이 아님 |
-| 3 | 다른 선 한 개를 부분 지운 뒤 획 지우개로 남은 한 획을 지운다 | mask/visibleSegments·transform·필압·원본 drawing 보존, Undo·저장·cold reopen·Obsidian 역수신 |
-| 4 | 올가미로 잉크를 옮기고 축소한 뒤, 구조 노드 하나를 회전·끝점 재부착한다 | 원시잉크 변환과 구조노드 변환을 별도 ID로 확인. JSON/PNG/Mermaid 동일 revision·저장·재열기 |
-| 5 | 자로 선 한 번을 긋고 색/굵기 변경 후 다음 획을 쓴다 | 설정값만 바뀐 것과 실제 새 획 적용을 구분. PDF 후보가 설치됐으면 자체 PDF의 Core 발췌→원문복귀·재열기와 네 복습평가/기한은 부모 손가락 UI로 묶어 확인 |
+늘어난 발췌와 메모를 주제로 다시 찾는 기능이다. 현재 `searchHandwritingInk`는 필기 검색이고 SwiftUI Picker의 `.tag`는 선택값 표식이다. 둘 다 카드 분류 태그/필터가 아니다. 현재 scene 모델에 해당 태그 목록·필터 동작 근거가 없다.
 
-한 fixture 세트의 저장·앱 재실행·Mac 역수신·취소/충돌·초기화는 부모가 이어서 처리한다. 사람에게 입력마다 질문하지 않는다. 원앱 자체의 미확인 저장 경계를 보완하는 조사는 별도 승인 구간의 자체 문서에서만 수행하며 CCR 최종 묶음의 성공을 원앱 성공으로 전이하지 않는다. 원앱에 새 손글씨를 다시 요구해 기존 관측을 반복하지 않는다.
+`MM32.01`~`MM32.04`와 R093/R094는 자체 한 카드의 태그 추가·Undo/Redo·재열기 화면·필터를 뒷받침한다. 프로세스 cold restart, 다중 카드 일괄 분류, iPad 동등성은 증명하지 않는다. 태그가 Markdown/TextNote 블록에 있고 topics 파생 색인이 달라진 관측을 단순 `ZBOOKTAG` 열 복제로 바꾸지 않는다.
+
+최소 단위는 기존 노트 ID/Markdown 블록에 연결된 분류 태그를 명시 저장하고 같은 scene에서 필터·해제를 제공하는 것이다. 표현 계약은 Obsidian 기존 태그/파일 보존과 먼저 대조한다. 태그만 바뀌고 본문·잉크·원문 참조가 유지되는지, Undo/Redo·새 Store 재열기·외부 파일 충돌에서 같은 revision을 따르는지 검증한다. 별도 검색 서버나 인식 provider는 필요하지 않다.
+
+근거: [태그 정정 스펙 R093](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/margin-tag-analysis-20261021/margin-tag-corrected-spec.md), [좁은 원앱 수용 R094](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/margin-tag-analysis-20261021/margin-tag-audit-acceptance.json).
+
+## 기존 작업·남은 경계
+
+원본 한 글자 삭제, 같은 줄 두 그룹 간격 편집, 사각형/타원/직선 후보, 교정 가능한 기본 산술, 외부 Files 원본과 명시 충돌 복구는 현재 제한 구현이 있다. 예전 NEXT의 “구현 근거 없음” 설명은 이 단위들에 더 이상 맞지 않는다. 다만 실제 native recognition의 가용성, 여러 글자/문단 의미 대응, 연속 후보 치환, 기존 수식 재교정·재계산은 여전히 간극이다. 주입 인식 검사나 nil 거부를 실제 한글/Pencil 성공으로 세지 않는다.
+
+EPUB 2장 리플로의 XPath/UTF16, 그룹/하위 맵, 적응형 복습, 다중 페이지 출력 등은 기존 385행에 유지한다. 이 제안 3개가 전체 미구현 목록은 아니다. MyScript의 새 `.nebo` REA 근거는 저장 파일 분리와 도형→페이지 참조 존재만이며 bdom 의미 해독이나 노트북 열기 성공이 아니다. MarginNote의 새 선택 4행 저장 관측도 OCR 전후 동작·인식 정확도·양방향 수정 수용을 대신하지 않는다.
+
+정상 설치는 아직68이다. signed72는 공식9646469 소스의 로컬 서명/manifest/codeImages/파일 UUID 검증까지이며 설치·실행·Pencil 수용은 없다. 서명72 근거를 변경하지 않았다. 실제 폴더 선택·FileProvider 지속성·최신 기능의 UI/센서·저장/재열기·Mac 역수신은 부모가 source/보존/lease를 갖춘 뒤 하나의 최종 자체 fixture 구간으로 조율한다. 지금 새 기기 조회·사용자 입력 요청·UI 관측은 발행하지 않는다.

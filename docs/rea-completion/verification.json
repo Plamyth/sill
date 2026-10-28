@@ -1,9 +1,136 @@
 {
   "schema": "ccr.rea.coverage-verification/v1",
-  "verifiedAt": "2026-10-28T14:50:50.208812+00:00",
+  "verifiedAt": "2026-10-29T05:50:47+09:00",
+  "baseCommit": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+  "baseTree": "4e8b7abf92485050610da334d6ec0166094adacb",
+  "scope": "문서 원장·원본 상태 보존·파일 해시 검사. 제품 동작/SDK/실기기 검사가 아님.",
   "oneShotDocumentValidation": true,
-  "errors": [],
   "passed": true,
+  "errors": [],
+  "checks": [
+    {
+      "name": "exact_base_commit_tree",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "385_IDs_order_and_uniqueness_preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "114_original_groups_unchanged",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "original_catalog_and_count_policy_unchanged",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "original_support_action_target_overlap_complete_preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "all_completion_false",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "32_support_unverified_preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "status_count_matches_rows",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "original_status_count_preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "7_changes_only_missing_to_partial",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "21_partial_rows_no_current_physical_acceptance",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "historical_ccr_changes_preserved",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "legacy_131_evidence_records_unchanged",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "155_preserved_evidence_file_hashes_and_sizes",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "all_structured_evidence_refs_resolve",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "13_product_files_read_only_exact_base_hashes",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "signed72_evidence_immutable_and_uninstalled",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "new_storage_and_menu_evidence_not_behavior_acceptance",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "three_concrete_next_actions_remain_unimplemented",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "human_progress_table_385_IDs_same_order",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "goal_prompt_byte_unchanged",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "documentation_write_scope_only",
+      "passed": true,
+      "details": {
+        "changed": [
+          "docs/rea-completion/NEXT.md",
+          "docs/rea-completion/README.md",
+          "docs/rea-completion/coverage.json"
+        ],
+        "untracked": []
+      }
+    },
+    {
+      "name": "diff_check",
+      "passed": true,
+      "details": ""
+    }
+  ],
   "counts": {
     "leafTotal": 385,
     "legacyGroups": 114,
@@ -13,8 +140,8 @@
       "MN-IPAD-4.4.6": 129
     },
     "byStatus": {
-      "parity_gap": 113,
-      "implementation_evidence_missing": 234,
+      "parity_gap": 120,
+      "implementation_evidence_missing": 227,
       "support_unverified": 32,
       "integration_pending": 6
     },
@@ -31,19 +158,14 @@
     "overlapReferenceRows": 6,
     "distinctBehaviorRows": 379
   },
-  "evidenceFilesChecked": 131,
-  "legacyReferencedPathsExistenceChecked": 161,
-  "legacyMissingPaths": [],
-  "duplicateIDs": 0,
-  "missingKeys": 0,
-  "missingOrChangedSelectedReferences": 0,
-  "sourcePathsExistenceOnly": 9,
-  "goalPromptExactCopy": true,
+  "evidenceFilesChecked": 155,
+  "sourceFilesHashCompared": 13,
+  "existingProductTestsRepeated": 0,
   "productChanges": 0,
   "deviceHostOriginalAppAccess": 0,
-  "newProviderOrExternalModelCalls": 0,
   "reaTargetOperations": 0,
-  "independentReview": "새 독립 검수 미실행. 부모 검토 전이며 자동검사를 독립 검수로 세지 않음.",
+  "newProviderOrExternalModelCalls": 0,
+  "independentReview": "문서 자체 검사만 수행. 새 독립 문서 검수 미실행. 기존 제품 검수는 해당 source/범위만 재사용.",
   "historicalReferenceCorrections": [
     "원래 coverage-audit의 D 스냅샷은705행/옛SHA이며 현재 원장은739행. 옛라인을 최신 hash 증명으로 사용하지 않음.",
     "원장 가방 영수증의 오래된 rea-ipad-functional-parity 경로 대신 batch-readiness가 제시한 whole-note-recovery-20261023/gabang-mac-roundtrip-receipt.json을 따른다.",
@@ -53,27 +175,113 @@
   "files": [
     {
       "path": "docs/rea-completion/GOAL_PROMPT.md",
-      "lines": 29,
       "bytes": 4779,
+      "lines": 29,
       "sha256": "0034021abac5ded3e355a1d41a336bd527c1836f24dc98eafe98613826c1ed62"
     },
     {
       "path": "docs/rea-completion/NEXT.md",
-      "lines": 45,
-      "bytes": 7266,
-      "sha256": "0fe718774bd9048a46711a38e531f217f5fd18c943b5ccdcd4e18936e9abcc87"
+      "bytes": 7740,
+      "lines": 43,
+      "sha256": "b74f01b70dd87de6c3607de389a8ecd5ff72818eeaec36b5bb22826fdbdc752c"
     },
     {
       "path": "docs/rea-completion/README.md",
-      "lines": 1509,
-      "bytes": 431440,
-      "sha256": "41b49d0c80f61128de0040591aa05af9913d0478f1975870ab3d024840cc5109"
+      "bytes": 82705,
+      "lines": 456,
+      "sha256": "02b08974ad759cddc2cbd8fd2fdc4649a808b60fce5a4dfe3b25b695b02d133e"
     },
     {
       "path": "docs/rea-completion/coverage.json",
-      "lines": 24761,
-      "bytes": 1158744,
-      "sha256": "663e0118e51c39a64ad379d95d633e283f82f9fe0dda370a96f9038327b23d95"
+      "bytes": 1463732,
+      "lines": 30426,
+      "sha256": "6af295dbee1a2cb5c9477a2e42a80735a6f589529673526d84d1b6c5f574c662"
     }
-  ]
+  ],
+  "validationScript": {
+    "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/coverage-evidence-20261029/validate_documents.py",
+    "sha256": "d9a6d907b88bfa00cdb58bef0f3bfad7d025dc5f6e50a0d1cc7fb5a194157d33"
+  },
+  "priorVerification": {
+    "baseCommit": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+    "record": {
+      "schema": "ccr.rea.coverage-verification/v1",
+      "verifiedAt": "2026-10-28T14:50:50.208812+00:00",
+      "oneShotDocumentValidation": true,
+      "errors": [],
+      "passed": true,
+      "counts": {
+        "leafTotal": 385,
+        "legacyGroups": 114,
+        "byTarget": {
+          "MS-IPAD-7.5.2": 110,
+          "MN-MAC-4.4.6": 146,
+          "MN-IPAD-4.4.6": 129
+        },
+        "byStatus": {
+          "parity_gap": 113,
+          "implementation_evidence_missing": 234,
+          "support_unverified": 32,
+          "integration_pending": 6
+        },
+        "byOriginalStatus": {
+          "behavior_observed": 108,
+          "evidence_incomplete": 225,
+          "legacy_narrow_complete": 18,
+          "attempt_observed": 2,
+          "support_unverified": 32
+        },
+        "complete": 0,
+        "incomplete": 385,
+        "notApplicable": 0,
+        "overlapReferenceRows": 6,
+        "distinctBehaviorRows": 379
+      },
+      "evidenceFilesChecked": 131,
+      "legacyReferencedPathsExistenceChecked": 161,
+      "legacyMissingPaths": [],
+      "duplicateIDs": 0,
+      "missingKeys": 0,
+      "missingOrChangedSelectedReferences": 0,
+      "sourcePathsExistenceOnly": 9,
+      "goalPromptExactCopy": true,
+      "productChanges": 0,
+      "deviceHostOriginalAppAccess": 0,
+      "newProviderOrExternalModelCalls": 0,
+      "reaTargetOperations": 0,
+      "independentReview": "새 독립 검수 미실행. 부모 검토 전이며 자동검사를 독립 검수로 세지 않음.",
+      "historicalReferenceCorrections": [
+        "원래 coverage-audit의 D 스냅샷은705행/옛SHA이며 현재 원장은739행. 옛라인을 최신 hash 증명으로 사용하지 않음.",
+        "원장 가방 영수증의 오래된 rea-ipad-functional-parity 경로 대신 batch-readiness가 제시한 whole-note-recovery-20261023/gabang-mac-roundtrip-receipt.json을 따른다.",
+        "precision-storage-delta의 reopen=false는 후속precision-final-review의 정상/cold reopen 수용으로 보완.",
+        "새 검색 json/md는CUA 직접 관측, canonical4 import와 구분. negative 이름 이미지는 성공 근거 아님."
+      ],
+      "files": [
+        {
+          "path": "docs/rea-completion/GOAL_PROMPT.md",
+          "lines": 29,
+          "bytes": 4779,
+          "sha256": "0034021abac5ded3e355a1d41a336bd527c1836f24dc98eafe98613826c1ed62"
+        },
+        {
+          "path": "docs/rea-completion/NEXT.md",
+          "lines": 45,
+          "bytes": 7266,
+          "sha256": "0fe718774bd9048a46711a38e531f217f5fd18c943b5ccdcd4e18936e9abcc87"
+        },
+        {
+          "path": "docs/rea-completion/README.md",
+          "lines": 1509,
+          "bytes": 431440,
+          "sha256": "41b49d0c80f61128de0040591aa05af9913d0478f1975870ab3d024840cc5109"
+        },
+        {
+          "path": "docs/rea-completion/coverage.json",
+          "lines": 24761,
+          "bytes": 1158744,
+          "sha256": "663e0118e51c39a64ad379d95d633e283f82f9fe0dda370a96f9038327b23d95"
+        }
+      ]
+    }
+  }
 }
