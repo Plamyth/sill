@@ -1,0 +1,21 @@
+{
+  "schema": "ccr.scene3-promotion-fixture/v1",
+  "ipadCommit": "8509e3c8a4abe9c1ad4ceabe26aae40ca02a22e1",
+  "files": [
+    {
+      "file": "original-scene2.json",
+      "sha256": "d9fac5c7d956bf25d7287d2029aebd3c42dd7b4ba56183a6d58e888ca732ad28",
+      "originalPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/schema3-cross-review-8509e3c/original-scene2.json"
+    },
+    {
+      "file": "remote-line-revision.json",
+      "sha256": "b39e16ee49ddcf1e9d3a74248fc3b98e4439bf2aed7a005a7edad46fbdb6e8e4",
+      "originalPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/schema3-cross-review-8509e3c/remote-line-revision.json"
+    },
+    {
+      "file": "locally-applied-scene3.json",
+      "sha256": "722ce759ef0387d663c885e4c58fa087c5e2ac6b89e6f2a3efd91de866113e77",
+      "originalPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/schema3-cross-review-8509e3c/locally-applied-scene3.json"
+    }
+  ]
+}
