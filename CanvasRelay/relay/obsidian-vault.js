@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const child = require('node:child_process');
 const {canvasDiagramMarkdown} = require('./canvas-diagram');
 const {assertInkScene,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 
@@ -13,6 +14,35 @@ const MEMO_MARKER = '<!-- ccr:markdown-memo';
 const MEMO_BOUNDARY = '\n<!-- ccr:markdown-memo:v1 -->\n';
 
 function digest(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
+
+function durableFile(file, bytes) {
+  const fd = fs.openSync(file,'wx',0o600);
+  try { fs.writeFileSync(fd,bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+function syncDirectory(directory) {
+  const fd = fs.openSync(directory,'r');
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+function readAsset(file, limit, expectedHash) {
+  let fd;
+  try {
+    fd = fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > limit) throw new VaultError('그림 원본 파일이 크기 한도 안의 일반 파일이 아닙니다.',409);
+    const buffer = Buffer.alloc(limit + 1);
+    let length = 0, count;
+    while (length < buffer.length && (count = fs.readSync(fd,buffer,length,buffer.length-length,null)) > 0) length += count;
+    const bytes = buffer.subarray(0,length);
+    if (length > limit || (expectedHash !== undefined && digest(bytes) !== expectedHash)) throw new VaultError('Canvas asset does not match its note',409);
+    return bytes;
+  } catch (error) {
+    if (error instanceof VaultError) throw error;
+    throw new VaultError('그림 원본 파일이 없거나 링크이거나 읽을 수 없습니다. 원본을 보존합니다.',409);
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+
 
 function canvasMarkdown(id, revision, sceneSha256, imageSha256) {
   const sceneAsset = `Assets/${id}-${sceneSha256}.json`;
@@ -128,7 +158,7 @@ class ObsidianVault {
     } finally { fs.closeSync(fd); }
   }
 
-  save(relative, baseSha256, text) {
+  save(relative, baseSha256, text, verify = () => {}) {
     if (typeof text !== 'string' || Buffer.byteLength(text,'utf8') > MAX_NOTE_BYTES)
       throw new VaultError('Note exceeds 1 MiB',413);
     if (baseSha256 !== null && !/^[0-9a-f]{64}$/.test(baseSha256 || ''))
@@ -139,19 +169,52 @@ class ObsidianVault {
     catch (error) { if (error.status !== 404) throw error; }
     if ((current?.sha256 ?? null) !== baseSha256)
       throw new VaultError('Note changed on Mac; reload before saving',409);
-    const bytes = Buffer.from(text,'utf8');
-    const temporary = path.join(path.dirname(file),`.ccr-${crypto.randomUUID()}.tmp`);
-    const fd = fs.openSync(temporary,'wx',0o600);
-    try { fs.writeFileSync(fd,bytes); fs.fsyncSync(fd); }
-    finally { fs.closeSync(fd); }
+    const bytes = Buffer.from(text,'utf8'),proposalHash = digest(bytes);
+    const recovery = path.join(path.dirname(file),`.ccr-save-${crypto.randomUUID()}`);
+    fs.mkdirSync(recovery,0o700);
+    if (current) durableFile(path.join(recovery,'base.md'),Buffer.from(current.text,'utf8'));
+    durableFile(path.join(recovery,'proposal.md'),bytes);
+    const displaced = path.join(recovery,'displaced.md');
+    durableFile(displaced,bytes);
+    syncDirectory(recovery);
+    syncDirectory(path.dirname(file));
+    const recoveryPath = path.relative(this.root,recovery);
+    let attempted = false,outcome = 'prepared';
     try {
-      const latest = fs.existsSync(file) ? this.note(relative).sha256 : null;
+      let latest = null;
+      try { latest = this.note(relative).sha256; } catch (error) { if (error.status !== 404) throw error; }
       if (latest !== baseSha256) throw new VaultError('Note changed on Mac; reload before saving',409);
-      fs.renameSync(temporary,file);
-      const directoryFd = fs.openSync(path.dirname(file),'r');
-      try { fs.fsyncSync(directoryFd); } finally { fs.closeSync(directoryFd); }
-    } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
-    return this.note(relative);
+      attempted = true;
+      if (current) {
+        child.execFileSync(process.platform === 'darwin' ? '/usr/bin/python3' : 'python3',
+          [path.join(__dirname,'vault-note-exchange.py'),displaced,file],{stdio:'pipe',timeout:10000});
+      } else fs.linkSync(displaced,file);
+      syncDirectory(path.dirname(file));
+      syncDirectory(recovery);
+      if (current && digest(readAsset(displaced,MAX_NOTE_BYTES)) !== baseSha256)
+        throw new VaultError('저장 전환 중 외부 메모가 바뀌었습니다.',409);
+      const saved = new ObsidianVault(this.root).note(relative);
+      if (saved.sha256 !== proposalHash) throw new VaultError('저장 전환 뒤 외부 메모가 바뀌었습니다.',409);
+      verify(saved);
+      if (current && digest(readAsset(displaced,MAX_NOTE_BYTES)) !== baseSha256)
+        throw new VaultError('보존된 외부 메모가 저장 검사 중 바뀌었습니다.',409);
+      outcome = 'published-verified';
+      return saved;
+    } catch (error) {
+      outcome = 'conflict-preserved';
+      const reason = error instanceof VaultError ? error.message : '파일 교환 또는 저장 검증을 끝내지 못했습니다.';
+      throw new VaultError(`${reason} 원본·외부 변경·제안본을 ${recoveryPath}에 보존했습니다. 활성 경로를 자동 복구하지 않습니다.`,409);
+    } finally {
+      durableFile(path.join(recovery,'receipt.json'),Buffer.from(JSON.stringify({
+        schema:'ccr.note-save-preservation/v1',path:relative,baseSha256,proposalSha256:proposalHash,
+        publicationAttempted:attempted,outcome,absoluteCAS:false,
+        publicationPrimitive:current ? 'atomic-exchange-retaining-displaced-inode' : 'exclusive-hard-link',
+        automaticRollback:false,
+        files:{base:current ? 'base.md' : null,proposal:'proposal.md',displaced:'displaced.md'},
+        lateExternalWrites:'displaced inode retained; no future-writer exclusion claimed'
+      })+'\n'));
+      syncDirectory(recovery);
+    }
   }
 
   canvasDirectory() {
@@ -181,17 +244,7 @@ class ObsidianVault {
     let bytes;
     for (const [hash,extension,limit] of [[sceneSha256,'json',MAX_CANVAS_SCENE_BYTES],[imageSha256,'png',5*1024*1024]]) {
       const asset = path.join(this.root,'CCR Canvas','Assets',`${id}-${hash}.${extension}`);
-      let fd;
-      try { fd = fs.openSync(asset,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); }
-      catch (error) {
-        if (['ENOENT','ELOOP'].includes(error.code))
-          throw new VaultError('Canvas asset is missing or linked; manual reconciliation required',409);
-        throw error;
-      }
-      let content;
-      try { content = fs.readFileSync(fd); } finally { fs.closeSync(fd); }
-      if (content.length > limit || digest(content) !== hash)
-        throw new VaultError('Canvas asset does not match its note',409);
+      const content = readAsset(asset,limit,hash);
       if (extension === 'json') bytes = content;
     }
     const scene = JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
@@ -241,10 +294,16 @@ class ObsidianVault {
         try { fs.writeFileSync(fd,bytes); fs.fsyncSync(fd); }
         finally { fs.closeSync(fd); }
       } catch (error) {
-        if (error.code !== 'EEXIST' || digest(fs.readFileSync(target)) !== digest(bytes)) throw error;
+        if (error.code !== 'EEXIST') throw error;
       }
     }
-    const note = this.save(relative,baseSha256,text);
+    for (const [file,hash,limit] of [[sceneAsset,sceneSha256,MAX_CANVAS_SCENE_BYTES],[imageAsset,imageSha256,5*1024*1024]])
+      readAsset(path.join(this.root,'CCR Canvas',file),limit,hash);
+    const note = this.save(relative,baseSha256,text,saved => {
+      const reopened = new ObsidianVault(this.root).canvas(id);
+      if (reopened.noteSha256 !== saved.sha256 || reopened.sceneSha256 !== sceneSha256 || reopened.imageSha256 !== imageSha256)
+        throw new VaultError('저장한 그림을 새 인스턴스에서 확인하지 못했습니다.',409);
+    });
     return {path:relative,noteSha256:note.sha256,sceneSha256,imageSha256,revision};
   }
 }

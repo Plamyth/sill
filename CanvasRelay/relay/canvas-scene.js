@@ -57,4 +57,18 @@ function assertSceneNodes(scene) {
   }
 }
 
-module.exports = {assertInkScene,assertSceneNodes,SCENE_CAPABILITIES,MAX_CANVAS_SCENE_BYTES};
+function assertAgentRevision(scene, revision) {
+  assertInkScene(scene);
+  if (!Array.isArray(revision.proposedNodes)) throw new Error('그림 요소 제안 목록이 올바르지 않습니다.');
+  const promote = revision.proposedNodes.some(node => ['ellipse','line'].includes(node?.kind));
+  const version = promote ? 3 : scene.schemaVersion;
+  assertSceneNodes({schemaVersion:version,nodes:revision.proposedNodes});
+  if (revision.nodeEdits != null) {
+    if (!Array.isArray(revision.nodeEdits)) throw new Error('그림 요소 수정 목록이 올바르지 않습니다.');
+    assertSceneNodes({schemaVersion:scene.schemaVersion,nodes:revision.nodeEdits.map(edit => edit?.expected)});
+  }
+  assertInkScene({...scene,schemaVersion:version,nodes:[...scene.nodes,...revision.proposedNodes]});
+  return version;
+}
+
+module.exports = {assertInkScene,assertSceneNodes,assertAgentRevision,SCENE_CAPABILITIES,MAX_CANVAS_SCENE_BYTES};

@@ -10,7 +10,7 @@ node CanvasRelay/check-import.js f875454f16566c417e6549d40e508c19aadc589e
 
 ## 후속 scene3 구현
 
-지원 계약과 iPad 접합 위치는 `CONTRACT.md`에 있다. Node 내장 모듈만 사용한다. 다음 검사는 별도 synthetic HOME과 외장 TMPDIR에서 실행했다. 실제 네트워크·서비스·vault는 사용하지 않았다.
+지원 계약과 iPad 접합 위치는 `CONTRACT.md`에 있다. 기존 scene3 검사는 Node 내장 모듈을 사용했다. 후속 저장 보존 수정은 기존 Python 표준 ctypes의 원자적 파일 교환 helper도 사용한다. 상세 경계와 추가 검사는 `SAVE-CONTRACT.md`에 있다. 다음 검사는 별도 synthetic HOME과 외장 TMPDIR에서 실행했다. 실제 네트워크·서비스·vault는 사용하지 않았다.
 
 ```sh
 node --test --test-skip-pattern='authenticated HTTP|authenticated canvas HTTP|isolated loopback HTTP' CanvasRelay/relay/canvas-diagram.test.js CanvasRelay/relay/braintrinity-projection.test.js CanvasRelay/relay/canvas-schema.test.js CanvasRelay/relay/canvas-scene3.test.js CanvasRelay/relay/obsidian-vault.test.js CanvasRelay/relay/canvas-limits.test.js CanvasRelay/relay/codex-delivery.test.js CanvasRelay/relay/control-room-public-relay.test.js
@@ -23,3 +23,5 @@ node --test --test-skip-pattern='authenticated HTTP|authenticated canvas HTTP|is
 `relay/start.js`는 기존 사용자 token 파일을 읽고 8791 listener를 연다. `relay/server.js`를 직접 실행하면 환경 설정을 사용하는 서버가 시작된다. 이 작업에서는 둘 다 실행하지 않았다. 편입과 격리 파일 검증을 실행 서비스 전환·설치·실기기 수용으로 표시하지 않는다. 실제 PNG는 iPad가 제공해야 하며 이 작업은 바이트 보존만 시험했다.
 
 Pstack Refactoring의 원본 동작 고정·대조·실행 검증을 적용했다. Ponytail은 기존 validator와 vault CAS를 재사용하고 의존성을 추가하지 않는 선택에 적용했다. ARENA와 순정 Goal은 사용하지 않았다. 현재 런타임에는 `spawn_agent`가 없어 독립 검수는 부모의 정확한 후보 커밋 검수로 남긴다. push·PR·공식 병합·설치·런타임 전환은 수행하지 않았다.
+
+저장 검수 수정의 실제 회귀 영수증은 `relay-vault-fix-20261029/evidence/run-final.json`이다. 이 실행은 Node 네트워크를 거부하면서 정확한 파일 교환 helper와 fixture-only 외부 writer만 허용했다. 이전에 모든 자식 프로세스를 거부한 실행과 구분한다.

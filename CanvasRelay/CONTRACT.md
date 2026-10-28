@@ -8,9 +8,9 @@
 
 알 수 없는 버전·종류와 누락된 scene 버전은 저장 전에 거부한다. 읽을 때 미지원 원본이 있으면 원본·노트·해시를 수정하지 않고 409로 거부한다. 새 필드를 제거하거나 새 종류를 box로 바꾸지 않는다. scene3의 frame x·y·width·height와 rotationDegrees는 유한 값과 기본 계산 범위를 확인하며 값 자체를 정규화하지 않는다. 선의 끝점 방향·최소 크기·음수 치수·회전 좌표계의 최종 의미는 iPad writer 계약으로 확정해야 한다. 릴레이는 이 후보에서 새 geometry 필드를 만들지 않는다.
 
-`relay/obsidian-vault.js`의 `saveCanvas`와 `#canvasSnapshot`은 공통 scene 검증을 호출한다. JSON과 PNG는 원래 바이트와 SHA로 보관한다. scene3에서 1·2로 낮추는 덮어쓰기는 409로 거부한다. Markdown의 scene3 요소에는 종류, frame, 명시된 rotationDegrees가 들어간다. 기존 1·2 note·box Markdown은 원본 릴레이의 동일 입력 SHA와 일치했다. memo 경계·CAS·한도·출처 asset은 기존 경로를 사용한다.
+`relay/obsidian-vault.js`의 `saveCanvas`와 `#canvasSnapshot`은 공통 scene 검증을 호출한다. JSON과 PNG는 원래 바이트와 SHA로 보관한다. scene3에서 1·2로 낮추는 덮어쓰기는 409로 거부한다. Markdown의 scene3 요소에는 종류, frame, 명시된 rotationDegrees가 들어간다. 기존 1·2 note·box Markdown은 원본 릴레이의 동일 입력 SHA와 일치했다. memo 경계·한도·출처 asset을 유지한다. 외부 writer 경쟁의 보존과 성공·409 경계는 `SAVE-CONTRACT.md`가 이 문서의 이전 CAS 설명을 보완한다.
 
-`relay/server.js`의 packet parse와 `relay/codex-delivery.js`의 `sceneContext`는 같은 validator를 사용한다. AI 문맥은 원래 nodes와 schemaVersion을 그대로 담는다. agent revision 저장은 proposedNodes와 nodeEdits.expected의 종류를 원래 scene 버전에 맞춰 검증한다. 이 경로는 scene 원본을 바꾸지 않는다. iPad writer의 그리기·glyph·agent 적용 단계에서도 schema3 유지가 필요하다.
+`relay/server.js`의 packet parse와 `relay/codex-delivery.js`의 `sceneContext`는 같은 validator를 사용한다. AI 문맥은 원래 nodes와 schemaVersion을 그대로 담는다. agent revision 저장은 검증되는 proposedNodes에 새 ellipse·line이 있을 때만 목표 버전 3의 canonical 복사본을 검증한다. 나머지 제안과 nodeEdits.expected는 원래 scene 버전 계약을 유지한다. 이 경로는 scene 원본을 바꾸지 않는다. iPad writer의 그리기·glyph·agent 적용 단계에서도 schema3 유지가 필요하다.
 
 ## 지정 capability endpoint
 

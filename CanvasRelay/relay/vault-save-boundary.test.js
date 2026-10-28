@@ -81,3 +81,74 @@ test('정상 저장 성공은 새 인스턴스 JSON·PNG 재열기와 일치한�
   assert.equal(read.imageSha256,saved.imageSha256);
   assert.deepEqual(Buffer.from(read.sceneJSONBase64,'base64'),f.proposed);
 });
+
+test('새 노트의 마지막 순간 생성은 독점 publication이 거부하고 외부 파일을 유지한다', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(),'vault-save-boundary-'));
+  const vault = new ObsidianVault(root),file = path.join(root,'new.md');
+  atPublication(file,() => fs.writeFileSync(file,'외부 생성 원본'),injected => {
+    assert.throws(() => vault.save('new.md',null,'새 제안본'),{status:409});
+    assert.ok(injected());assert.equal(fs.readFileSync(file,'utf8'),'외부 생성 원본');
+    assert.ok(preservedBytes(root).some(bytes => bytes.equals(Buffer.from('새 제안본'))));
+  });
+});
+
+test('기존 열린 fd의 교환 직후 외부 쓰기도 displaced inode에 남고 충돌로 반환한다', t => {
+  const f = fixture(t),external = f.note.text+'\n기존 fd의 실제 외부 편집\n';
+  const fd = fs.openSync(f.file,'r+'),exec = child.execFileSync;
+  let edited = false;
+  child.execFileSync = function (program,args) {
+    const value = exec.apply(this,arguments);
+    if (args?.[0]?.endsWith('vault-note-exchange.py') && args[2] === f.file) {
+      fs.ftruncateSync(fd,0);fs.writeSync(fd,Buffer.from(external));fs.fsyncSync(fd);edited = true;
+    }
+    return value;
+  };
+  try { assert.throws(() => f.vault.saveCanvas(f.id,2,f.proposed,png,f.first.noteSha256),{status:409}); }
+  finally { child.execFileSync = exec;fs.closeSync(fd); }
+  assert.ok(edited);
+  assert.ok(preservedBytes(f.root).some(bytes => bytes.equals(Buffer.from(external))));
+});
+
+for (const invalid of ['directory','wrong-size','wrong-hash']) {
+  test(`동일 이름 asset의 ${invalid} 재사용은 정상 노트를 바꾸지 않는다`, t => {
+    const f = fixture(t),asset = path.join(f.root,'CCR Canvas/Assets',`${f.id}-${sha(f.proposed)}.json`);
+    if (invalid === 'directory') fs.mkdirSync(asset);
+    else if (invalid === 'wrong-size') fs.writeFileSync(asset,'x');
+    else { const changed = Buffer.from(f.proposed);changed[0] ^= 1;fs.writeFileSync(asset,changed); }
+    assert.throws(() => f.vault.saveCanvas(f.id,2,f.proposed,png,f.first.noteSha256),{status:409});
+    assert.equal(f.vault.note(f.first.path).sha256,f.note.sha256);
+    assert.equal(new ObsidianVault(f.root).canvas(f.id).sceneSha256,sha(f.bytes));
+  });
+}
+
+test('동일 hash PNG symlink도 새 JSON 작성 뒤 노트 commit 전에 거부한다', t => {
+  const f = fixture(t),image = Buffer.from(png);image[image.length-1] ^= 1;
+  const backing = path.join(f.root,'backing.png');fs.writeFileSync(backing,image);
+  const asset = path.join(f.root,'CCR Canvas/Assets',`${f.id}-${sha(image)}.png`);
+  fs.symlinkSync(backing,asset);
+  assert.throws(() => f.vault.saveCanvas(f.id,2,f.proposed,image,f.first.noteSha256),{status:409});
+  assert.equal(f.vault.note(f.first.path).sha256,f.note.sha256);
+  assert.equal(new ObsidianVault(f.root).canvas(f.id).sceneSha256,sha(f.bytes));
+  assert.ok(fs.lstatSync(asset).isSymbolicLink());
+});
+
+test('교환 연산 미지원·실패 때 일반 rename으로 우회하지 않고 정상 원본과 제안본을 보존한다', t => {
+  const f = fixture(t),exec = child.execFileSync;
+  child.execFileSync = () => { throw new Error('fixture exchange unavailable'); };
+  try { assert.throws(() => f.vault.saveCanvas(f.id,2,f.proposed,png,f.first.noteSha256),{status:409}); }
+  finally { child.execFileSync = exec; }
+  assert.equal(f.vault.note(f.first.path).sha256,f.note.sha256);
+  assert.equal(new ObsidianVault(f.root).canvas(f.id).sceneSha256,sha(f.bytes));
+  assert.ok(preservedBytes(f.root).some(bytes => bytes.includes(Buffer.from('ccr_scene_sha256: '+sha(f.proposed)))));
+});
+
+test('성공 응답 뒤 기존 fd의 뒤늦은 편집도 보존 inode에서 복구할 수 있다', t => {
+  const f = fixture(t),fd = fs.openSync(f.file,'r+');
+  const saved = f.vault.saveCanvas(f.id,2,f.proposed,png,f.first.noteSha256);
+  const external = '성공 응답 이후 기존 파일 fd에 쓴 별도 외부 메모';
+  try { fs.ftruncateSync(fd,0);fs.writeSync(fd,Buffer.from(external));fs.fsyncSync(fd); }
+  finally { fs.closeSync(fd); }
+  assert.ok(preservedBytes(f.root).some(bytes => bytes.equals(Buffer.from(external))));
+  assert.ok(preservedBytes(f.root).some(bytes => bytes.equals(Buffer.from(f.note.text))));
+  assert.equal(new ObsidianVault(f.root).canvas(f.id).noteSha256,saved.noteSha256);
+});

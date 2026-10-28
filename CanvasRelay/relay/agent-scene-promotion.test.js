@@ -7,6 +7,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const {PassThrough} = require('node:stream');
 const {createServer} = require('./server');
+const {assertAgentRevision} = require('./canvas-scene');
 const source = require('./test-input/scene3-promotion/original-scene2.json');
 const proposal = require('./test-input/scene3-promotion/remote-line-revision.json');
 const applied = require('./test-input/scene3-promotion/locally-applied-scene3.json');
@@ -56,3 +57,24 @@ for (const version of [1,2,3]) {
     }
   });
 }
+
+test('canonical 승격은 검증된 새 도형 제안에만 적용하며 기존 잉크와 입력을 바꾸지 않는다', () => {
+  for (const version of [1,2,3]) {
+    const scene = {...source,schemaVersion:version};
+    if (version >= 2) {
+      scene.drawingBase64 = 'bmF0aXZlLWZpeHR1cmU=';
+      scene.penSettings = {version:1,color:'cyan',width:4};
+      scene.strokes = [{id:crypto.randomUUID(),points:[{x:1,y:2,pressure:0.5}],style:{version:1,inkType:'pen',
+        transform:{a:1,b:0,c:0,d:1,tx:0,ty:0},samples:[{width:4,height:4,opacity:1}]}}];
+    }
+    const before = Buffer.from(JSON.stringify(scene)),body = structuredClone(proposal);
+    assert.equal(assertAgentRevision(scene,body),3);
+    assert.deepEqual(Buffer.from(JSON.stringify(scene)),before);
+    body.proposedNodes[0].kind = 'note';
+    assert.equal(assertAgentRevision(scene,body),version);
+    body.proposedNodes = [];
+    assert.equal(assertAgentRevision(scene,body),version);
+  }
+  for (const version of [0,4,'3',null])
+    assert.throws(() => assertAgentRevision({...source,schemaVersion:version},proposal));
+});
