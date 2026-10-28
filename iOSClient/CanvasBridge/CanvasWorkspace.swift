@@ -48,6 +48,15 @@ struct CanvasWorkspace: View {
     @State private var pdfRecoveryDiscardOpen = false
     @State private var vaultReview: CanvasStore.VaultReviewSession?
     @State private var vaultRawMarkdown = false
+    @State private var noteConflict: CanvasRelay.NoteConflict?
+    @State private var noteConflictLocal: NoteConflictLocalState?
+    @State private var noteConflictChoice: NoteConflictLocalChoice?
+    @State private var noteConflictArchive: NoteConflictLocalState?
+    @State private var noteConflictBusy = false
+    @State private var noteConflictMessage = ""
+    @State private var noteConflictConfirm = false
+    @State private var noteConflictDecision: CanvasRelay.ConflictDecision?
+    @State private var noteConflictGeneration: UInt64 = 0
     @State private var syncedLocalSceneSha: String?
     @State private var syncedSceneSha: String?
     @State private var canvasNoteSha: String?
@@ -184,9 +193,9 @@ struct CanvasWorkspace: View {
         }
         .onChange(of:store.scene) { _,_ in inkTextEditing.invalidatePending() }
         .onChange(of:store.inkSelection) { _,_ in inkTextEditing.invalidatePending() }
-        .onChange(of:relayAddress) { _,_ in advanceCanvasConflictEpoch(); store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:relayAddress) { _,_ in advanceCanvasConflictEpoch(); noteConflictGeneration &+= 1; store.setNoteConnection(address:relayAddress,token:relayToken) }
         .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
-        .onChange(of:relayToken) { _,_ in advanceCanvasConflictEpoch(); store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:relayToken) { _,_ in advanceCanvasConflictEpoch(); noteConflictGeneration &+= 1; store.setNoteConnection(address:relayAddress,token:relayToken) }
         .task {
             store.filePreview = { await SceneRenderer.png(scene:$0) }
             store.refreshFileWorkspace()
@@ -314,7 +323,7 @@ struct CanvasWorkspace: View {
         .sheet(isPresented:$dictationOpen,onDismiss:{ dictation.cancel() }) {
             dictationSheet
         }
-        .sheet(isPresented:$vaultOpen) { vaultSheet }
+        .sheet(isPresented:$vaultOpen,onDismiss:{ noteConflictGeneration &+= 1; noteConflict = nil }) { vaultSheet }
         .sheet(item:$expandedCard) { reference in
             ControlRoomCardDetail(reference:reference,projection:readProjection,message:projectionMessage)
         }
@@ -518,6 +527,25 @@ struct CanvasWorkspace: View {
     private var vaultSheet: some View {
         NavigationStack {
             VStack(spacing:0) {
+                if let snapshot = noteConflict { noteConflictPanel(snapshot) }
+                else {
+                    if store.canCompareNoteConflict && (store.vaultBlocked || store.noteReconciliationHeld ||
+                        store.noteRecovery?.saveConflict?.requiresExplicitReconciliation == true ||
+                        store.blockRecovery?.saveConflict?.requiresExplicitReconciliation == true || store.noteConflictChoice != nil) {
+                        Button("일반 노트 충돌 자료 비교·명시 복구") { Task { await readNoteConflict() } }
+                            .frame(minHeight:44).disabled(noteConflictBusy)
+                            .accessibilityIdentifier("noteConflictCompare")
+                    }
+                    if let archive = noteConflictArchive {
+                        DisclosureGroup("이전 미저장 입력·문단 작업 ID 보존본") {
+                            Text(archive.noteRecovery?.draft ?? archive.blockRecovery?.draft ?? archive.draft).textSelection(.enabled)
+                            if let operation = archive.blockRecovery?.pending?.operationId { Text("이전 작업 ID: \(operation.uuidString)").font(.caption) }
+                            Button("보존 입력을 새 원문 위 미저장 초안으로 열기") {
+                                do { try store.resumeArchivedNoteDraft(archive) } catch { store.vaultStatus = error.localizedDescription }
+                            }.disabled(store.vaultBlocked || store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
+                        }.padding()
+                    }
+
                 if !store.noteRecoveryNotice.isEmpty {
                     VStack(alignment:.leading,spacing:6) {
                         Text(store.noteRecoveryNotice).font(.footnote)
@@ -695,11 +723,13 @@ struct CanvasWorkspace: View {
                 }
                 Text(store.vaultStatus.isEmpty ? vaultStatus : store.vaultStatus)
                     .font(.footnote).frame(maxWidth:.infinity,alignment:.leading).padding(10)
+                }
             }
             .navigationTitle(pdfReader == nil ? (store.vaultNote == nil ? "Obsidian 노트" : "노트 편집") : "PDF 원문 · 읽기 전용")
             .toolbar {
                 ToolbarItem(placement:.topBarLeading) {
-                    if pdfReader != nil {
+                    if noteConflict != nil { EmptyView() }
+                    else if pdfReader != nil {
                         Button("PDF 닫기") { pdfRequest = nil; pdfReader = nil }.frame(minWidth:44,minHeight:44)
                             .disabled(store.vaultSaving)
                     } else if store.vaultNote != nil {
@@ -712,7 +742,8 @@ struct CanvasWorkspace: View {
                     }
                 }
                 ToolbarItemGroup(placement:.topBarTrailing) {
-                    if store.vaultNote != nil {
+                    if noteConflict != nil { EmptyView() }
+                    else if store.vaultNote != nil {
                         Button(store.vaultBlockHasPendingSave ? "저장 결과 확인" : "저장") { Task { await saveVaultNote() } }
                             .frame(minWidth:44,minHeight:44)
                             .disabled(store.vaultBlockEditing ? !store.vaultBlockCanSave : !store.vaultCanSave)
@@ -722,16 +753,17 @@ struct CanvasWorkspace: View {
                     }
                 }
                 ToolbarItem(placement:.confirmationAction) {
-                    Button(store.vaultDirty && !store.vaultBlockEditing ? "취소 · 초안 보존" : "닫기") {
-                        if store.vaultDirty && !store.vaultBlockEditing {
+                    Button(noteConflict != nil ? "비교 닫기 · 입력 보존" : (store.vaultDirty && !store.vaultBlockEditing ? "취소 · 초안 보존" : "닫기")) {
+                        if noteConflict != nil { noteConflictGeneration &+= 1; noteConflict = nil }
+                        else if store.vaultDirty && !store.vaultBlockEditing {
                             if store.pauseVaultNoteEditing() { vaultOpen = false }
                         } else if store.closeVaultEditor() { pdfRequest = nil; pdfReader = nil; vaultOpen = false }
                     }.frame(minWidth:44,minHeight:44)
-                        .disabled(store.vaultInputBusy || store.vaultSaving || store.vaultLoading || store.noteRecoveryWriteFailed)
+                        .disabled(noteConflictBusy || store.vaultInputBusy || store.vaultSaving || store.vaultLoading || store.noteRecoveryWriteFailed)
                         .accessibilityIdentifier("obsidianClosePreservingDraft")
                 }
             }
-            .interactiveDismissDisabled(store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
+            .interactiveDismissDisabled(noteConflictBusy || store.vaultDirty || store.vaultSaving || store.vaultInputBusy)
             .onChange(of:store.vaultInputSessionID) { _,_ in vaultRawMarkdown = false }
             .onChange(of:relayAddress) { _,_ in pdfRequest = nil; pdfReader = nil }
             .onChange(of:relayToken) { _,_ in pdfRequest = nil; pdfReader = nil }
@@ -751,6 +783,12 @@ struct CanvasWorkspace: View {
                 Button("취소",role:.cancel) {}
             } message: {
                 Text("이 기기의 생성 의도만 비웁니다. 저장된 Markdown이나 PDF 원본은 지우지 않습니다.")
+            }
+            .alert("선택한 일반 노트 원문으로 복구할까요?",isPresented:$noteConflictConfirm) {
+                Button("선택 원문으로 명시 복구") { if let decision = noteConflictDecision { Task { await resolveNoteConflict(decision) } } }
+                Button("취소",role:.cancel) {}
+            } message: {
+                Text("현재 또는 외부 변경 원문을 서버에서 선택하고 다시 읽습니다. 기존 원문·미저장 입력·제출문·문단 작업 ID는 별도 보존하며 자동 재전송하지 않습니다.")
             }
             .alert("보존된 노트 입력을 버릴까요?",isPresented:$noteRecoveryDiscardOpen) {
                 Button("입력 버리기",role:.destructive) { _ = store.discardNoteRecovery() }
@@ -772,6 +810,146 @@ struct CanvasWorkspace: View {
             } message: {
                 Text("현재 입력만 버립니다. Obsidian 원본은 변경하지 않습니다.")
             }
+        }
+    }
+
+    private func noteChoiceURL() throws -> URL { try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json") }
+    private func readNoteConflict(refresh: Bool = false) async {
+        guard !noteConflictBusy, !pdfLoading, pdfReader == nil, !Task.isCancelled, let path = store.noteConflictPath,
+              CanvasRelay.ordinaryNotePath(path) else { return }
+        store.setNoteConnection(address:relayAddress,token:relayToken)
+        let address = relayAddress, token = relayToken, generation = noteConflictGeneration
+        do {
+            let local = try store.captureNoteConflictLocal(path:path)
+            noteConflictBusy = true; defer { noteConflictBusy = false }
+            var previous: NoteConflictLocalChoice?
+            if let raw = try? CanvasLocalFile.read(noteChoiceURL()) {
+                guard raw.count <= 12*1024*1024 else { throw VaultBlockRecoveryError.corrupt }
+                let old = try JSONDecoder().decode(NoteConflictLocalChoice.self,from:raw).validated()
+                if old.address == address, old.path == path, old.sceneID == local.sceneID {
+                previous = old
+                let archive = try CanvasRuntime.conflictRecoveryURL(old.backupFilename)
+                let archiveBytes = try CanvasLocalFile.read(archive)
+                guard CanvasPacket.sha(archiveBytes) == old.backupSHA256 else { throw VaultBlockRecoveryError.corrupt }
+                noteConflictArchive = try JSONDecoder().decode(NoteConflictLocalState.self,from:archiveBytes)
+                if !refresh && [.pending,.refreshRequired,.serverResolved].contains(old.phase) {
+                    noteConflict = try JSONDecoder().decode(CanvasRelay.NoteConflict.self,from:old.snapshot).validated(path:path)
+                    noteConflictLocal = local; noteConflictChoice = old
+                    noteConflictMessage = "이전 복구 선택을 보존했습니다. 서버 거부 뒤에는 새 자료를 읽고, 결과 미확인이면 같은 선택만 명시 확인하세요."
+                    return
+                }
+                } else {
+                    guard [.completed,.superseded].contains(old.phase) else { throw VaultBlockRecoveryError.context }
+                }
+            }
+            let snapshot: CanvasRelay.NoteConflict
+            do { snapshot = try await relay.vaultNoteConflict(path:path) }
+            catch let error as NSError where error.domain == "CanvasRelay" && error.code == 404 && previous?.phase == .completed {
+                guard generation == noteConflictGeneration, relayAddress == address, relayToken == token else { return }
+                noteConflict = nil; store.vaultStatus = "현재 미조정 충돌은 없습니다. 이전 미저장 입력은 보존본에서 확인할 수 있습니다."
+                return
+            }
+            guard !Task.isCancelled, generation == noteConflictGeneration, relayAddress == address, relayToken == token,
+                  try store.captureNoteConflictLocal(path:path) == local else { throw VaultBlockRecoveryError.changed }
+            if refresh, var prior = previous {
+                let archive = try CanvasRuntime.conflictRecoveryURL("NoteConflictAttempt-\(UUID().uuidString.lowercased()).json")
+                try CanvasLocalFile.write(JSONEncoder().encode(prior),to:archive)
+                // A fresh GET is not authority to resolve an unfinished local choice.
+                if ![.completed,.superseded].contains(prior.phase) { prior.phase = .refreshRequired }
+                try CanvasLocalFile.write(JSONEncoder().encode(prior),to:noteChoiceURL())
+            }
+            noteConflict = snapshot; noteConflictLocal = local; noteConflictChoice = nil
+            noteConflictMessage = "현재·기준·외부 변경·제안 원문과 보존 입력을 대조한 뒤 선택하세요. 조회는 저장하지 않습니다."
+        } catch {
+            guard generation == noteConflictGeneration, relayAddress == address, relayToken == token else { return }
+            noteConflictMessage = error.localizedDescription; store.vaultStatus = "일반 노트 복구 자료 확인 실패 · 입력과 작업 ID 유지: \(error.localizedDescription)"
+        }
+    }
+    private func resolveNoteConflict(_ decision: CanvasRelay.ConflictDecision) async {
+        guard !noteConflictBusy, !Task.isCancelled, let snapshot = noteConflict, let local = noteConflictLocal else { return }
+        let address = relayAddress, token = relayToken, generation = noteConflictGeneration
+        do {
+            guard local.address == address, try store.captureNoteConflictLocal(path:snapshot.path) == local,
+                  snapshot.selected(decision)?.validNote == true else { throw VaultBlockRecoveryError.changed }
+            noteConflictBusy = true; defer { noteConflictBusy = false }
+            var choice: NoteConflictLocalChoice
+            if let prior = noteConflictChoice {
+                guard [.pending,.serverResolved].contains(prior.phase), prior.decision == decision.rawValue else { throw VaultBlockRecoveryError.changed }
+                choice = prior
+            } else {
+                let filename = "NoteConflictLocal-\(UUID().uuidString.lowercased()).json"
+                let backup = try CanvasRuntime.conflictRecoveryURL(filename)
+                let bytes = try JSONEncoder().encode(local)
+                try CanvasLocalFile.write(bytes,to:backup)
+                guard try CanvasLocalFile.read(backup) == bytes else { throw VaultBlockRecoveryError.corrupt }
+                choice = NoteConflictLocalChoice(schema:"ccr.note-conflict-choice/v1",sceneID:local.sceneID,address:address,path:snapshot.path,
+                    backupFilename:filename,backupSHA256:CanvasPacket.sha(bytes),snapshot:try JSONEncoder().encode(snapshot),decision:decision.rawValue,phase:.pending)
+                if let old = try? CanvasLocalFile.read(noteChoiceURL()) {
+                    let preservedChoice = try CanvasRuntime.conflictRecoveryURL("NoteConflictAttempt-\(UUID().uuidString.lowercased()).json")
+                    try CanvasLocalFile.write(old,to:preservedChoice)
+                }
+                try CanvasLocalFile.write(JSONEncoder().encode(choice),to:noteChoiceURL())
+                noteConflictChoice = choice
+            }
+            let backup = try CanvasRuntime.conflictRecoveryURL(choice.backupFilename)
+            let archiveBytes = try CanvasLocalFile.read(backup)
+            guard CanvasPacket.sha(archiveBytes) == choice.backupSHA256 else { throw VaultBlockRecoveryError.corrupt }
+            let archived = try JSONDecoder().decode(NoteConflictLocalState.self,from:archiveBytes)
+            let originalEncoder = JSONEncoder(); originalEncoder.outputFormatting = [.sortedKeys]
+            if local.noteRecovery != nil, try originalEncoder.encode(local.noteRecovery) != originalEncoder.encode(archived.noteRecovery) { throw VaultBlockRecoveryError.changed }
+            if local.blockRecovery != nil, try originalEncoder.encode(local.blockRecovery) != originalEncoder.encode(archived.blockRecovery) { throw VaultBlockRecoveryError.changed }
+            let selected = try await relay.resolveVaultNoteConflict(snapshot,decision:decision)
+            guard !Task.isCancelled, generation == noteConflictGeneration, relayAddress == address, relayToken == token,
+                  try store.captureNoteConflictLocal(path:snapshot.path) == local else { throw VaultBlockRecoveryError.changed }
+            choice.phase = .serverResolved; choice.resolvedSHA256 = selected.sha256
+            try CanvasLocalFile.write(JSONEncoder().encode(choice),to:noteChoiceURL())
+            noteConflictChoice = choice
+            try store.installReconciledNote(selected,expected:local,archive:backup,archiveSHA:choice.backupSHA256)
+            choice.phase = .completed
+            try CanvasLocalFile.write(JSONEncoder().encode(choice),to:noteChoiceURL())
+            try store.finishNoteReconciliation(selected)
+            noteConflictArchive = archived; noteConflict = nil; noteConflictChoice = nil; noteConflictLocal = nil
+        } catch {
+            if generation != noteConflictGeneration || relayAddress != address || relayToken != token { return }
+            if VaultSaveConflict.classified(error) != nil, var choice = noteConflictChoice {
+                choice.phase = .refreshRequired; noteConflictChoice = choice
+                try? CanvasLocalFile.write(JSONEncoder().encode(choice),to:noteChoiceURL())
+            }
+            noteConflictMessage = "복구 미확인 · 원문·입력·작업 ID를 보존합니다. 자동 재시도하지 않습니다. \(error.localizedDescription)"
+            store.vaultStatus = noteConflictMessage
+        }
+    }
+    private func noteConflictPanel(_ snapshot: CanvasRelay.NoteConflict) -> some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:14) {
+                Text(noteConflictMessage).foregroundStyle(.orange)
+                Text(snapshot.path).font(.caption).textSelection(.enabled)
+                noteConflictMaterial("현재 서버 원문",snapshot.materials.active)
+                noteConflictMaterial("저장 전 기준 원문",snapshot.materials.base)
+                noteConflictMaterial("보존된 외부 변경본",snapshot.materials.displaced)
+                noteConflictMaterial("제안본",snapshot.materials.proposal)
+                DisclosureGroup("iPad 미저장 입력과 문단 작업 ID") {
+                    Text(noteConflictLocal?.noteRecovery?.draft ?? noteConflictLocal?.blockRecovery?.draft ?? noteConflictLocal?.draft ?? "").textSelection(.enabled)
+                    if let op = noteConflictLocal?.blockRecovery?.pending?.operationId { Text(op.uuidString).font(.caption) }
+                }
+                ForEach(CanvasRelay.ConflictDecision.allCases) { decision in
+                    Button(decision.title) { noteConflictDecision = decision; noteConflictConfirm = true }
+                        .frame(minHeight:44).disabled(noteConflictBusy || snapshot.selected(decision)?.validNote != true ||
+                            noteConflictChoice?.phase == .refreshRequired ||
+                            (noteConflictChoice != nil && noteConflictChoice?.decision != decision.rawValue))
+                        .accessibilityIdentifier("noteConflict-" + decision.rawValue)
+                }
+                Button("이전 선택·입력을 보존하고 새 자료 읽기") { Task { await readNoteConflict(refresh:true) } }.disabled(noteConflictBusy)
+            }.padding()
+        }
+    }
+    @ViewBuilder private func noteConflictMaterial(_ title: String,_ material: CanvasRelay.NoteConflictMaterial?) -> some View {
+        DisclosureGroup(title) {
+            if let material {
+                Text(material.sha256).font(.caption2).textSelection(.enabled)
+                Text(material.validNote ? "원문 바이트·SHA 확인" : "선택할 수 없는 보존 자료").font(.caption)
+                ScrollView([.horizontal,.vertical]) { Text(material.markdown ?? "원문을 UTF-8로 표시할 수 없습니다.").font(.system(.caption,design:.monospaced)).textSelection(.enabled) }.frame(height:180)
+            } else { Text("자료 없음") }
         }
     }
 
@@ -799,7 +977,7 @@ struct CanvasWorkspace: View {
     }
 
     private func openVaultPDF(_ path: String, source: VaultPDFExcerpt? = nil) async {
-        guard !store.vaultDirty, !store.vaultSaving, !store.vaultInputBusy, !pdfLoading else { return }
+        guard !noteConflictBusy, noteConflict == nil, !store.vaultDirty, !store.vaultSaving, !store.vaultInputBusy, !pdfLoading else { return }
         let request = UUID(), address = relayAddress, token = relayToken, sceneID = store.scene.id
         let note = store.vaultNote
         pdfRequest = request

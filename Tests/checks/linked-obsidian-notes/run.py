@@ -139,7 +139,10 @@ if code == 0:
         support = home / 'Library/Application Support'
         model = (root / 'iOSClient/CanvasBridge/CanvasModel.swift').read_text()
         protected_names = re.findall(r'case \w+ = "([^"]+)"', model.split('enum Defaults')[0])
-        protected_names += ['CanvasConflictRecovery/CanvasConflictChoice.json',
+        protected_names += ['CanvasConflictRecovery/NoteConflictChoice.json',
+            'CanvasConflictRecovery/NoteConflictLocal-11111111-1111-4111-8111-111111111111.json',
+            'CanvasConflictRecovery/NoteConflictAttempt-22222222-2222-4222-8222-222222222222.json',
+            'CanvasConflictRecovery/CanvasConflictChoice.json',
             'CanvasConflictRecovery/CanvasConflictLocal-11111111-1111-4111-8111-111111111111.json',
             'CanvasConflictRecovery/CanvasConflictAttempt-22222222-2222-4222-8222-222222222222.json']
         for name in protected_names:

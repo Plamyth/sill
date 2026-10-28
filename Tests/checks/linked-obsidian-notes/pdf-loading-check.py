@@ -54,6 +54,7 @@ final class VaultPDFReader {
 @MainActor final class WorkspaceProbe {
     let store = Store(), relay = Gate()
     var relayAddress = "http://fixture.invalid", relayToken = "fixture"
+    var noteConflictBusy = false, noteConflict: Bool? = nil
 PROPERTIES
     func list() { LIST_ACTION }
 METHOD

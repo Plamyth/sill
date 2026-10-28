@@ -396,9 +396,9 @@ enum CanvasRuntime {
     #endif
 
     private static func validConflictRecoveryName(_ name: String) -> Bool {
-        if name == "CanvasConflictChoice.json" { return true }
+        if ["CanvasConflictChoice.json","NoteConflictChoice.json"].contains(name) { return true }
         guard name.hasSuffix(".json") else { return false }
-        for prefix in ["CanvasConflictLocal-", "CanvasConflictAttempt-"] where name.hasPrefix(prefix) {
+        for prefix in ["CanvasConflictLocal-", "CanvasConflictAttempt-", "NoteConflictLocal-", "NoteConflictAttempt-"] where name.hasPrefix(prefix) {
             let identifier = String(name.dropFirst(prefix.count).dropLast(5))
             return UUID(uuidString:identifier).map { identifier == $0.uuidString.lowercased() } ?? false
         }
@@ -1151,6 +1151,38 @@ enum VaultSaveConflict: String, Codable {
         return (value.userInfo[errorKey] as? String).flatMap(Self.init(rawValue:)) ?? .unclassified
     }
     var requiresExplicitReconciliation: Bool { self == .reconciliationRequired || self == .unclassified }
+}
+
+struct NoteConflictLocalState: Codable, Equatable {
+    let sceneID: UUID, path: String, address: String, sceneSHA256: String
+    let note: VaultNoteSnapshot?
+    let draft: String, blockDraft: String
+    let noteRecovery: VaultNoteRecovery?
+    let blockRecovery: VaultBlockRecovery?
+    let connectionGeneration: UInt64, sceneGeneration: UInt64, sceneEditGeneration: UInt64, editorGeneration: UInt64, editGeneration: UInt64
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        // Swift String equality folds canonical Unicode; recovery must compare original bytes.
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard let left = try? encoder.encode(lhs), let right = try? encoder.encode(rhs) else { return false }
+        return left == right
+    }
+}
+struct NoteConflictLocalChoice: Codable {
+    enum Phase: String, Codable { case pending, refreshRequired, serverResolved, completed, superseded }
+    let schema: String
+    let sceneID: UUID, address: String, path: String, backupFilename: String, backupSHA256: String
+    let snapshot: Data, decision: String
+    var phase: Phase
+    var resolvedSHA256: String? = nil
+    func validated() throws -> Self {
+        guard schema == "ccr.note-conflict-choice/v1", VaultNoteReference.validPath(path),
+              snapshot.count <= 8*1024*1024, backupSHA256.utf8.count == 64,
+              backupSHA256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }), ["keepCurrent","useDisplaced"].contains(decision),
+              backupFilename.hasPrefix("NoteConflictLocal-"), backupFilename.hasSuffix(".json"),
+              let id = UUID(uuidString:String(backupFilename.dropFirst("NoteConflictLocal-".count).dropLast(5))),
+              backupFilename == "NoteConflictLocal-" + id.uuidString.lowercased() + ".json" else { throw VaultBlockRecoveryError.corrupt }
+        return self
+    }
 }
 
 struct CanvasVaultCheckpoint: Codable {

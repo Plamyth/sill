@@ -294,6 +294,15 @@ import CoreText
     let store = CanvasStore(pdfExcerptRecoveryURL:normal)
     store.scene.schemaVersion = 3
     store.setNoteConnection(address:context.relayAddress,token:context.token)
+    let noteChoiceURL = try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+    var noteChoice = NoteConflictLocalChoice(schema:"ccr.note-conflict-choice/v1",sceneID:store.scene.id,address:context.relayAddress,
+        path:excerpt.notePath,backupFilename:"NoteConflictLocal-11111111-1111-4111-8111-111111111111.json",
+        backupSHA256:String(repeating:"a",count:64),snapshot:Data(),decision:"keepCurrent",phase:.pending)
+    try CanvasLocalFile.write(JSONEncoder().encode(noteChoice),to:noteChoiceURL)
+    check(store.noteReconciliationHeld && !store.preparePDFExcerpt(excerpt) && store.pdfExcerptRecovery == nil,
+          "held general-note recovery blocks PDF preparation before any PDF journal is created")
+    noteChoice.phase = .completed
+    try CanvasLocalFile.write(JSONEncoder().encode(noteChoice),to:noteChoiceURL)
     check(store.preparePDFExcerpt(excerpt),"actual isolated Store durably prepares PDF create intent")
     let journal = try CanvasLocalFile.read(url)
     check(try JSONDecoder().decode(VaultPDFCreateRecoveryFile.self,from:journal).record() == store.pdfExcerptRecovery,
@@ -311,6 +320,19 @@ import CoreText
         check(try sceneEncoder.encode(store.scene) == sceneBefore && CanvasLocalFile.read(url) == journal,
               "actual apply refuses while preserving PDF journal and original scene")
     }
+    check(!store.canCompareNoteConflict,"pending PDF journal blocks unrelated general-note reconciliation capture")
+    do { _ = try store.captureNoteConflictLocal(path:excerpt.notePath); check(false,"pending PDF capture must refuse") }
+    catch { check(true,"general-note archive cannot omit an active PDF recovery journal") }
+    noteChoice.phase = .pending
+    try CanvasLocalFile.write(JSONEncoder().encode(noteChoice),to:noteChoiceURL)
+    var crossedCalls = 0
+    let crossed = await store.savePDFExcerpt(allowCreate:true,create:{_,_ in crossedCalls += 1; throw URLError(.unknown)},
+        load:{_ in crossedCalls += 1; throw URLError(.unknown)})
+    let crossedJournal = try CanvasLocalFile.read(url)
+    check(crossed == nil && crossedCalls == 0 && crossedJournal == journal,
+          "general-note held barrier blocks PDF GET/PUT and preserves the exact pending PDF journal")
+    noteChoice.phase = .completed
+    try CanvasLocalFile.write(JSONEncoder().encode(noteChoice),to:noteChoiceURL)
     let reopened = CanvasStore(pdfExcerptRecoveryURL:normal)
     reopened.setNoteConnection(address:context.relayAddress,token:context.token)
     check(reopened.pdfExcerptRecovery == store.pdfExcerptRecovery && reopened.scene.id == store.scene.id,

@@ -21,3 +21,19 @@
 ## 서버 별도 소유
 
 Galileo의 PDF 서버 후보는 `6475df0d9948f6b40d03ee3fe56ec27b638804ed` / tree `28c05e79616d31c9fe55ba884335e2b89c1f4c62`이며 이 병합에는 없다. 일반 노트 resolver 보존 위에 의미 적용한 별도 서버 제품 2파일과 독립 검수 영수증은 부모가 별도로 소비한다. 옛2c90 패치 문서는 역사적 기준이며 현재 공식 적용 가능성을 주장하지 않는다.
+
+## 최종 공식 기준 갱신: 7fa8da53
+
+사용자가 일반 노트 client2abd98d의 SOURCE_CLEAR/actualHTTP 검수와 공식 통합을 확인해 최종 기준을 `7fa8da53eecffd3cf7c97bbe64319ebb021894ed` / tree `429a3e525a213eb50c5c5c72afb75ad786b729c4`로 갱신했다. 이 기준에는 검수 완료한 일반 노트 복구가 있으므로 중간 ea7dfc4 위에 추가 병합한다.
+
+텍스트 충돌은 Store의 canApplyReconciledCanvas와 Workspace의 보관함 toolbar/alert다. guard는 일반 노트 held와 PDF pending/unreadable을 모두 포함한다. 자료 비교 중에는 목록·PDF 닫기 동작을 숨기고, PDF 및 일반 노트 확인 alert를 각각 유지한다. 기존 단일 보관함 sheet에 비교 panel을 표시하고 새 sheet를 추가하지 않는다. 일반 노트 자료 비교 중 PDF 열기, PDF 읽기 중 일반 노트 비교를 시작하지 않는다.
+
+Store의 일반 노트 archive에는 PDF 생성 원장이 포함되지 않으므로 PDF 생성이 pending/unreadable이면 일반 노트 capture/install을 시작하지 않는다. 반대 방향으로도 일반 노트 held일 때 PDF 준비/저장·결과확인 및 stale PDF 필드 편집을 막는다. await 뒤에도 held를 다시 확인한다. 어느 복구 원장을 다른 흐름이 자동 소비하지 않는다.
+
+일반 노트의 기존 Unicode/BOM 원문 비교·source hash·복구 원장 이름 whitelist·사용자 명시 선택과 GET 확인·동일 카드 refresh를 보존한다. 전용 검사에 실제 PDFKit 선택에서 만든 source card를 사용해 일반 노트 복구→외부 BOM/CRLF 제목·메모 재조회→기존 nodeID 유지→오래된 입력 거부→현재 메모 CAS/GET을 확인한다. PDFKit fixture를 읽지만 원본은 변경하지 않는다. 기존385/43 전체 검사를 반복하지 않는다.
+
+## 최종 writer 검사 결과
+
+7fa 결합 소스에서 일반 노트/PDF 카드 복구59건, 별도 BOM12건, 실제 Store 격리 PDF 복구/교차 보호17건, PDF/공식 conflict 전송 제한10건, anchor 재진입27건, PDF 늦은 응답/취소11건, normal snapshot3개 테스트를 통과했다. iOS27 SDK 전체 CanvasBridge DEBUG·Release typecheck 모두 exit0이며 컴파일 입력 hash가 실행 전후 동일하다. PDF 격리 실행에서 normal 보호 fixture15개가 불변이다. 06d 중간 단위에서는 기존 Canvas 복구68건과 DEBUG/Release 실제 복구 URL/파일 검사를 통과했으며, 이 기록을 최종 소스에서 재실행한 것으로 바꾸지 않는다.
+
+추가 PDF 검사 작성 중 Swift try 배치 오류 한 건과, 중간 검사 입력을 편집한 시점의 컴파일 거부 기록은 evidence에 보존한다. 최종 영수증은 수정 후 sourceUnchanged=true인 결과만 통과 근거로 사용한다. 실제 UI 렌더링·HTTP는 이번 writer 검사 범위가 아니며 부모/서버 원담당의 별도 수용과 구분한다.
