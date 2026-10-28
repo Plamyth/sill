@@ -109,6 +109,21 @@ final class NoteProtocol: URLProtocol {
             print("RESULT \(checks) assertions, \(failures) failures")
             exit(failures == 0 ? 0 : 1)
         }
+        if CommandLine.arguments.contains("--pdf-pages-files") {
+            try await checkPDFPagesFiles(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--pdf-pages-reopen") {
+            try checkPDFPagesReopen(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--pdf-pages") {
+            try await checkPDFPages(check)
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--pdf-transport") {
             try await checkPDFReadTransport(check)
             print("RESULT \(checks) assertions, \(failures) failures")

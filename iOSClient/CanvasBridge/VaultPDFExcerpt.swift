@@ -72,7 +72,7 @@ enum VaultPDFError: LocalizedError {
         case .unconfirmed: return "발췌 노트의 저장 결과를 확인하지 못했습니다. 같은 ID로 저장 재확인을 선택하세요."
         case .tooLarge: return "20 MiB 이하의 PDF만 열 수 있습니다."
         case .unavailable: return "Mac PDF 연결 권한 또는 응답을 확인하지 못했습니다. 저장된 카드와 캐시는 유지됩니다."
-        case .unsupported: return "이 후보는 회전 없는 PDF 텍스트 발췌만 지원합니다."
+        case .unsupported: return "PDFKit에서 0·90·180·270도로 읽힌 페이지의 텍스트 발췌만 지원합니다."
         }
     }
 }
@@ -118,11 +118,11 @@ struct VaultPDFExcerpt: Codable, Equatable {
     }
 
     func validated() throws -> Self {
-        guard (schemaVersion == 1 && textRanges == nil || schemaVersion == 2 &&
+        guard (schemaVersion == 1 && textRanges == nil && rotation == 0 || schemaVersion == 2 &&
                textRanges.map({ !$0.isEmpty && $0.count <= 256 && $0.allSatisfy(\.valid) }) == true),
               VaultPDFSnapshot.validPath(pdfPath),
               pdfSha256.count == 64, pdfSha256.allSatisfy({ "0123456789abcdef".contains($0) }),
-              pageIndex >= 0, pageIndex < 100_000, rotation == 0,
+              pageIndex >= 0, pageIndex < 100_000, [0,90,180,270].contains(rotation),
               mediaBox.valid, cropBox.valid, mediaBox.cg.contains(cropBox.cg),
               !selectionRects.isEmpty, selectionRects.count <= 256,
               selectionRects.allSatisfy({ $0.valid && cropBox.cg.contains($0.cg) }),
@@ -201,7 +201,7 @@ struct VaultPDFExcerpt: Codable, Equatable {
         _ = try snapshot.bytes(at:snapshot.path)
         guard selection.pages.count == 1, let page = selection.pages.first,
               let quote = selection.string, document.index(for:page) != NSNotFound else { throw VaultPDFError.selection }
-        guard page.rotation == 0 else { throw VaultPDFError.unsupported }
+        guard [0,90,180,270].contains(page.rotation) else { throw VaultPDFError.unsupported }
         let rects = selection.selectionsByLine().map { Rect($0.bounds(for:page)) }
         let ranges = (0..<selection.numberOfTextRanges(on:page)).map { TextRange(selection.range(at:$0,on:page)) }
         let value = try Self(schemaVersion:2,excerptID:UUID(),pdfPath:snapshot.path,pdfSha256:snapshot.sha256,

@@ -665,6 +665,8 @@ struct CanvasWorkspace: View {
                         .disabled(store.vaultDirty || store.vaultSaving || store.vaultLoading)
                 }
                 if let reader = pdfReader {
+                    VaultPDFPageControls(reader:reader).id(ObjectIdentifier(reader))
+                        .disabled(store.vaultSaving || pdfLoading).padding(.horizontal)
                     VaultPDFView(reader:reader).frame(maxWidth:.infinity,maxHeight:.infinity)
                         .accessibilityLabel("PDF 원문 · 읽기 전용")
                     Text(reader.snapshot.path).font(.caption).textSelection(.enabled)

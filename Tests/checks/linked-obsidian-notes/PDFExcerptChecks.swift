@@ -10,12 +10,13 @@ final class PDFRemoteVault {
     private let process = Process()
     private let input = Pipe(), output = Pipe()
 
-    init() throws {
+    init(source: String? = nil, job: String = "pdf-vault-roundtrip-20261026",
+         script: String = "tests/pdf-excerpt-fixture.cjs", guardScript: String? = "./tests/no-network-listeners.cjs") throws {
         let env = ProcessInfo.processInfo.environment
         process.executableURL = URL(fileURLWithPath:"/Users/ambrion/.local/bin/mini-ephemeral-source")
-        process.arguments = ["run","--source",env["PENCIL_RELAY_REPO"]!,"--owner",env["CODEX_THREAD_ID"]!,
-            "--job","pdf-vault-roundtrip-20261026","--","/Users/sin-wonho/.local/bin/node",
-            "--require","./tests/no-network-listeners.cjs","tests/pdf-excerpt-fixture.cjs"]
+        process.arguments = ["run","--source",source ?? env["PENCIL_RELAY_REPO"]!,"--owner",env["CODEX_THREAD_ID"]!,
+            "--job",job,"--","/Users/sin-wonho/.local/bin/node"] +
+            (guardScript.map { ["--require",$0] } ?? []) + [script]
         process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.standardError
         try process.run()
         let ready = try JSONSerialization.jsonObject(with:line()) as? [String:Bool]
@@ -188,7 +189,7 @@ final class PDFRemoteVault {
         case "pdfPath": bad[key] = "../escape.pdf"
         case "schemaVersion": bad[key] = 99
         case "pageIndex": bad[key] = -1
-        case "rotation": bad[key] = 90
+        case "rotation": bad[key] = 45
         case "selectionRects": bad[key] = [["x":-100,"y":0,"width":1,"height":2]]
         default: bad[key] = "invented-native-ID"
         }

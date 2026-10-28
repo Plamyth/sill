@@ -39,6 +39,7 @@ sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            Path(__file__).with_name('PDFExcerptRecoveryChecks.swift'),
            Path(__file__).with_name('PDFExcerptFenceChecks.swift'),
            Path(__file__).with_name('PDFCardFieldChecks.swift'),
+           root / 'Tests/checks/pdf-pages-rotation/PagesChecks.swift',
            Path(__file__).with_name('main.swift')]
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 ios = sorted((root / 'iOSClient/CanvasBridge').glob('*.swift')) + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
@@ -46,6 +47,7 @@ ios += [root / 'iOSClient/IPadAudioSession.swift', root / 'iOSClient/IPadAudioLe
         root / 'iOSClient/IPadAudioLeaseCoordinator.swift']
 inputs = list(dict.fromkeys(sources + ios + [protocol, Path(__file__)]))
 inputs += [Path(__file__).with_name('vault-roundtrip.cjs')]
+inputs += [root / 'Tests/checks/pdf-pages-rotation/vault-fixture.cjs']
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 relay = Path(os.environ.get('PENCIL_RELAY_REPO', '/Users/ambrion/Documents/ChatGPT/BT_CCR-Obsidian-relay'))
 relay_inputs = [relay / 'relay/obsidian-vault.js', relay / 'relay/canvas-diagram.js'] if '--vault-roundtrip' in sys.argv[2:] else []
@@ -91,10 +93,12 @@ import SwiftUI
     @PDFUIState private var memoBusy = false
     init(store: CanvasStore, session: CanvasStore.VaultPDFEditSession) { self.store = store; self.session = session }
 """ + extract_function('    private func inputBusy(') + '\n' + extract_function('    private func text(') + '\n}\n')
+native_reader = output / 'PDFNativeReader.swift'
+native_reader.write_text((root / 'iOSClient/CanvasBridge/VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
 command = ['xcrun', 'swiftc', '-sdk', sdk, '-target', 'arm64e-apple-macos27.0',
            '-swift-version', '5', '-parse-as-library', '-module-cache-path', str(output.parent / 'modules'),
            '-I', str(output), str(output / 'StreamProtocol.o'),
-           *map(str, sources), str(ui_bindings), '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT',
+           *map(str, sources), str(ui_bindings), str(native_reader), '-Xlinker', '-sectcreate', '-Xlinker', '__TEXT',
            '-Xlinker', '__info_plist', '-Xlinker', str(plist),
            '-o', str(output / 'check')]
 if isolated:
