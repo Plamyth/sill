@@ -7,3 +7,5 @@
 PNG/PDF는 공유용 파생 파일이며 편집 원본의 별도 보관 완료를 대신하지 않는다. 기존 scene JSON·native drawing과 원본 파일 저장 계약은 그대로다. 큰 장면은 이미지를 만들기 전 최대32M 픽셀을 확인하고 초과하면 JSON 원본 경로를 안내한다. 자동 검사와 실제 iPad fileExporter/SceneRenderer·Pencil 수용은 구분한다.
 
 `Tests/checks/canvas-flatten-export/run.py <외장 증거 경로>`는 실제 CoreGraphics·ImageIO·PDFKit으로 제품 FileDocument 선언을 검사한다. PNG 바이트 보존, PDF 페이지 크기·방향·색상, 실제 파일 저장·재열기, 손상 이미지·잘못된 크기 거부를 확인한다. Mac의 이 검사는 iPad의 전체 화면 렌더링이나 최종 파일 선택을 대신하지 않는다.
+
+내보내기 준비 전·비동기 렌더 완료 후·실제 파일창 표시 binding에서 기존 편집창의 표시 상태를 검사한다. Obsidian·댓글·연결·검색·파일 선택이나 다른 Canvas 편집창이 열리면 준비 token을 취소하고 늦은 이미지를 표시하지 않는다. 이 수정은 통합 검수에서 확인한 표시 소유권 누락을 닫으며, 기존 da5 소스 판정과73번 미설치 후보는 이전 이력으로 보존한다.

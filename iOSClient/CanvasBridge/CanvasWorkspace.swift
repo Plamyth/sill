@@ -179,6 +179,7 @@ struct CanvasWorkspace: View {
         .sheet(item:canvasEditorBinding,onDismiss:{ synchronizeCanvasEditorSheet() }) { canvasEditorContent($0) }
         .onChange(of:requestedCanvasEditors,initial:true) { _,_ in synchronizeCanvasEditorSheet() }
         .onChange(of:canPresentCanvasConflict) { _,allowed in if !allowed { advanceCanvasConflictEpoch() } }
+        .onChange(of:canPresentRenderedExport) { _,allowed in if !allowed { cancelRenderedExportPreparation() } }
         .onDisappear { cancelRenderedExportPreparation(); cancelCanvasConflictRead(); dismissCanvasEditorSheet(); inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
@@ -336,7 +337,7 @@ struct CanvasWorkspace: View {
                       defaultFilename:"canvas-\(store.scene.id.uuidString)") { result in
             if case .failure(let error) = result { store.status = error.localizedDescription }
         }
-        .fileExporter(isPresented:Binding(get:{ renderedExport.document != nil },set:{ if !$0 { renderedExport = .idle } }),
+        .fileExporter(isPresented:Binding(get:{ renderedExport.document != nil && canPresentRenderedExport },set:{ if !$0 { renderedExport = .idle } }),
                       document:renderedExport.document,contentType:renderedExport.document?.format.contentType ?? .pdf,
                       defaultFilename:renderedExport.document?.filename) { result in
             renderedExport = .idle
@@ -482,7 +483,7 @@ struct CanvasWorkspace: View {
                 Button("편집 원본 JSON") { exportOpen = true }
                 Button("PNG 이미지") { prepareRenderedExport(.png) }
                 Button("PDF · 한 장 이미지로 저장") { prepareRenderedExport(.pdf) }
-            }.disabled(renderedExport.isBusy || exportOpen || importOpen)
+            }.disabled(renderedExport.isBusy || !canPresentRenderedExport)
         }
         .frame(minWidth:44,minHeight:44)
     }
@@ -493,8 +494,15 @@ struct CanvasWorkspace: View {
         var isBusy: Bool { if case .idle = self { return false }; return true }
     }
 
+    private var canPresentRenderedExport: Bool {
+        !store.hasPendingInkProposal && store.proposedNode == nil && !inkSpacingOpen && !inkTextDeleteOpen &&
+        !proposalInputBusy && !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen &&
+        !connectionOpen && !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen &&
+        !handwritingSearchOpen && expandedCard == nil && canvasEditorSheet == nil
+    }
+
     private func prepareRenderedExport(_ format: RenderedSceneFile.Format) {
-        guard !renderedExport.isBusy, !exportOpen, !importOpen else { return }
+        guard !renderedExport.isBusy, canPresentRenderedExport else { return }
         let scene = store.scene, token = UUID(), scale = UIScreen.main.scale
         guard scene.width.isFinite, scene.height.isFinite, scene.width > 0, scene.height > 0,
               scene.width <= 16384, scene.height <= 16384,
@@ -511,6 +519,11 @@ struct CanvasWorkspace: View {
             do {
                 guard let png = await SceneRenderer.png(scene:scene) else { throw CocoaError(.fileReadCorruptFile) }
                 guard case .rendering(let current) = renderedExport, current == token else { return }
+                guard canPresentRenderedExport else {
+                    renderedExport = .idle
+                    store.status = "다른 편집창이 열려 이미지 내보내기를 취소했습니다. 현재 입력과 원본은 유지합니다."
+                    return
+                }
                 guard try CanvasFileWorkspace.sceneSHA(store.scene) == originalSHA else {
                     renderedExport = .idle
                     store.status = "그림이 바뀌어 이전 이미지 내보내기를 취소했습니다. 현재 그림과 원본은 그대로 유지합니다."
