@@ -10,6 +10,7 @@ const {assertInkScene,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 
 const MAX_NOTE_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 500;
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MEMO_MARKER = '<!-- ccr:markdown-memo';
 const MEMO_BOUNDARY = '\n<!-- ccr:markdown-memo:v1 -->\n';
@@ -128,12 +129,12 @@ class ObsidianVault {
     }
   }
 
-  resolve(relative, {directory = false, allowMissing = false} = {}) {
+  resolve(relative, {directory = false, allowMissing = false, pdf = false} = {}) {
     if (typeof relative !== 'string' || relative.length > 1024 || relative.includes('\\') ||
         relative.includes('\0') || relative.startsWith('/') ||
         (relative && relative.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))))
       throw new VaultError('Invalid vault path');
-    if (!directory && (!relative.endsWith('.md') || !relative))
+    if (!directory && (!(pdf ? relative.endsWith('.pdf') : relative.endsWith('.md')) || !relative))
       throw new VaultError('Only Markdown notes can be edited');
     let current = this.root;
     const parts = relative ? relative.split('/') : [];
@@ -158,10 +159,49 @@ class ObsidianVault {
     const directory = this.resolve(relative,{directory:true});
     return fs.readdirSync(directory,{withFileTypes:true})
       .filter(item => !item.name.startsWith('.') &&
-        (item.isDirectory() || item.isFile() && item.name.endsWith('.md')))
+        (item.isDirectory() || item.isFile() && /\.(md|pdf)$/.test(item.name)))
       .slice(0,MAX_ENTRIES + 1)
       .map(item => ({name:item.name,path:relative ? `${relative}/${item.name}` : item.name,
-        kind:item.isDirectory() ? 'directory' : 'note'}));
+        kind:item.isDirectory() ? 'directory' : item.name.endsWith('.pdf') ? 'pdf' : 'note'}));
+  }
+
+  pdf(relative) {
+    const file = this.resolve(relative,{pdf:true});
+    const components = [this.root];
+    for (const part of relative.split('/')) components.push(path.join(components.at(-1),part));
+    const identities = components.map(component => {
+      const stat = fs.lstatSync(component);
+      if (stat.isSymbolicLink()) throw new VaultError('PDF path contains a link');
+      return stat;
+    });
+    const samePath = () => components.every((component,index) => {
+      const stat = fs.lstatSync(component), previous = identities[index];
+      return !stat.isSymbolicLink() && stat.dev === previous.dev && stat.ino === previous.ino;
+    });
+    const fd = fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const before = fs.fstatSync(fd), expected = identities.at(-1);
+      if (before.dev !== expected.dev || before.ino !== expected.ino || !samePath())
+        throw new VaultError('PDF path changed during open',409);
+      if (!before.isFile() || before.size > MAX_PDF_BYTES)
+        throw new VaultError('PDF exceeds 20 MiB',413);
+      const chunks = [];
+      let total = 0;
+      while (true) {
+        const buffer = Buffer.alloc(Math.min(64 * 1024,MAX_PDF_BYTES + 1 - total));
+        const count = fs.readSync(fd,buffer,0,buffer.length,null);
+        if (!count) break;
+        total += count;
+        if (total > MAX_PDF_BYTES) throw new VaultError('PDF exceeds 20 MiB',413);
+        chunks.push(buffer.subarray(0,count));
+      }
+      const bytes = Buffer.concat(chunks,total), after = fs.fstatSync(fd);
+      if (!samePath() || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
+        throw new VaultError('PDF changed during read',409);
+      if (bytes.subarray(0,5).toString('ascii') !== '%PDF-')
+        throw new VaultError('Invalid PDF signature');
+      return {path:relative,sha256:digest(bytes),dataBase64:bytes.toString('base64')};
+    } finally { fs.closeSync(fd); }
   }
 
   #privateDirectory(directory) {

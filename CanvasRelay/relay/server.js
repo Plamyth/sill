@@ -319,6 +319,8 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
             return json(response,200,vault.saveCanvas(id,body?.revision,scene,image,body?.baseSha256));
           }
         }
+        if (request.method === 'GET' && url.pathname === '/vault/pdf')
+          return json(response,200,vault.pdf(relative));
         if (request.method === 'GET' && url.pathname === '/vault/entries')
           return json(response,200,{entries:vault.entries(relative)});
         if (request.method === 'GET' && url.pathname === '/vault/note')
