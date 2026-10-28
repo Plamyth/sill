@@ -1,0 +1,24 @@
+{
+  "annotations" : [
+
+  ],
+  "baseRevision" : 1,
+  "proposedNodes" : [
+    {
+      "confidence" : "proposal",
+      "frame" : {
+        "height" : 2,
+        "width" : 100,
+        "x" : 20,
+        "y" : 30
+      },
+      "id" : "2BEB5C67-9810-43D1-B16E-5E7CEB0D2462",
+      "kind" : "line",
+      "sourceStrokeIds" : [
+
+      ],
+      "text" : "원격 직선"
+    }
+  ],
+  "sceneId" : "D2AA02E4-EDE0-419C-9FA3-D00398B3DC1D"
+}

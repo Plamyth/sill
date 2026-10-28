@@ -10,7 +10,7 @@ args.output.mkdir(parents=True,exist_ok=True)
 out=Path(subprocess.check_output(['/bin/pwd','-P'],cwd=args.output,text=True).strip())/('reconciliation-'+str(uuid.uuid4()));out.mkdir()
 for n in ['home','tmp']:(out/n).mkdir()
 env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',HOME=str(out/'home'),CFFIXED_USER_HOME=str(out/'home'),TMPDIR=str(out/'tmp')+'/')
-sources=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift','CanvasInkMathProposal.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'ReconciliationCheck.swift']
+sources=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift','CanvasInkMathProposal.swift','CanvasInkSpacingProposal.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'ReconciliationCheck.swift',here/'ReconciliationPendingChecks.swift']
 
 wire=here/'reconciliation-wire-example.json'
 wireHash=hashlib.sha256(wire.read_bytes()).hexdigest()
@@ -39,8 +39,8 @@ def extract(text, marker):
   depth += (text[end]=='{')-(text[end]=='}');end+=1
  return text[start:end]
 workspace=(root/'iOSClient/CanvasBridge/CanvasWorkspace.swift').read_text()
-markers=['private enum CanvasConflictChoiceState:', 'private struct CanvasConflictChoice:', 'private func conflictChoiceURL()',
- 'private func readCanvasConflictNote()', 'private func resolveCanvasConflict(', 'private func readNewConflictMaterials()',
+markers=['private enum CanvasEditorSheet:', 'private var requestedCanvasEditors:', 'private func synchronizeCanvasEditorSheet()', 'private func dismissCanvasEditorSheet()', 'private var canPresentCanvasConflict:', 'private func advanceCanvasConflictEpoch()', 'private func cancelCanvasConflictRead()', 'private enum CanvasConflictChoiceState:', 'private static func recoveryCheckpointWhenMissing(', 'private struct CanvasConflictChoice:', 'private func conflictChoiceURL()',
+ 'private func restoreCanvasConflictChoice(', 'private func readCanvasConflictNote()', 'private func resolveCanvasConflict(', 'private func readNewConflictMaterials()',
  'private func sceneBytes()', 'private static func canvasVaultCheckpointURL()', 'private func saveCanvasVaultCheckpoint()',
  'private func synchronizeCanvasToVault()', 'private func refreshCanvasFromVault()']
 members=[extract(workspace,k) for k in markers]

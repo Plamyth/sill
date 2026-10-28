@@ -5,6 +5,7 @@ final class ReconciliationProtocol: URLProtocol {
     static var snapshot: [String:Any] = [:], active: [String:Any] = [:], displaced: [String:Any] = [:]
     static var requests: [[String:Any]] = []
     static var mode = "normal", resolved = false, transitions = 0, selected: [String:Any] = [:]
+    static var hook: (@MainActor (String,String)->Void)?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -33,7 +34,10 @@ final class ReconciliationProtocol: URLProtocol {
                 }
                 if Self.mode == "bad-result" { result["sceneSha256"]=String(repeating:"0",count:64) }
             }
-        } else if conflict { result=Self.snapshot }
+        } else if conflict {
+            if Self.mode=="resolved-404" && Self.resolved {status=404;result=["error":"no unresolved conflict"]}
+            else {result=Self.snapshot}
+        }
         else if request.url!.path == "/vault/canvas" {
             result=Self.selected["canvas"] as! [String:Any]
             if Self.mode == "changed-readback" { result["noteSha256"]=String(repeating:"0",count:64) }
@@ -42,13 +46,22 @@ final class ReconciliationProtocol: URLProtocol {
             result=["path":(Self.selected["canvas"] as! [String:Any])["path"]!,"text":String(data:raw,encoding:.utf8)!,
                 "sha256":Self.selected["sha256"]!,"modifiedAt":"fixture"]
         }
-        client!.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:status,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,cacheStoragePolicy:.notAllowed)
-        client!.urlProtocol(self,didLoad:try! JSONSerialization.data(withJSONObject:result));client!.urlProtocolDidFinishLoading(self)
+        let data=try! JSONSerialization.data(withJSONObject:result)
+        let replyStatus=status
+        Task { @MainActor in
+            Self.hook?(request.url!.path,request.httpMethod ?? "GET")
+            client!.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:replyStatus,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,cacheStoragePolicy:.notAllowed)
+            client!.urlProtocol(self,didLoad:data);client!.urlProtocolDidFinishLoading(self)
+        }
     }
     override func stopLoading() {}
 }
 @main struct ReconciliationCheck {
     @MainActor static func main() async throws {
+        setbuf(stdout,nil)
+        let output=URL(fileURLWithPath:CommandLine.arguments[1])
+        let support=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!
+        precondition(support.path.hasPrefix(output.appendingPathComponent("home").path+"/"),"own routed fixture home required")
         let id=UUID(),recovery=UUID()
         let png=Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jAt8AAAAASUVORK5CYII=")!
         var scene=CanvasScene();scene.id=id;scene.schemaVersion=3
@@ -132,6 +145,7 @@ final class ReconciliationProtocol: URLProtocol {
         check(reopened.scene==external,"actual native Store reopens selected scene from local cache")
         let preservedSHA=CanvasPacket.sha(try CanvasLocalFile.read(backup))
         check(preservedSHA==sha,"preserved original native/scene bytes remain intact")
+        try await checkPendingReconciliationEditors(check)
         cacheStore.scene=scene
         try await WorkspaceReconciliationHarness(store:cacheStore,relay:relay).checks(check)
         let wire=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[2]))

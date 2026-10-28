@@ -312,8 +312,17 @@ enum CanvasRuntime {
 
     static func conflictRecoveryURL(_ filename: String) throws -> URL {
         guard validConflictRecoveryName(filename) else { throw CocoaError(.fileWriteInvalidFileName) }
-        let url = try stateURL(.checkpoint).deletingLastPathComponent()
-            .appendingPathComponent("CanvasConflictRecovery",isDirectory:true).appendingPathComponent(filename)
+        var root: URL?
+        #if DEBUG
+        switch launch {
+        case .isolated(let context): root = context.root.appendingPathComponent("state",isDirectory:true)
+        case .invalid: throw TestError.invalid
+        case .normal: break
+        }
+        #endif
+        root = root ?? FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first
+        guard let root else { throw CanvasSendError.outboxUnavailable }
+        let url = root.appendingPathComponent("CanvasConflictRecovery",isDirectory:true).appendingPathComponent(filename)
         #if DEBUG
         try validateStateURL(url)
         #endif

@@ -1,0 +1,1727 @@
+{
+  "schema": "ccr.ipad-relay-lineage-input/v1",
+  "fixtureOnly": true,
+  "sourceFixtureSHA256": "25acf135b9d8cdfa390bb0f1b9d46eca85fc7c8c681201ebb0d7f1de0eb3cc80",
+  "producerCommit": "9a91483f5e054ad8f30e9a1d43d8e7fd91740c6a",
+  "producerTree": "4f7581661680f466a363ad7199ae1db54874163e",
+  "cases": [
+    {
+      "name": "verified-public-fork",
+      "raw": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "threads": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "catalog": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "abcdefab-0000-4000-8000-000000000002",
+            "runId": null,
+            "owner": "fixture-runtime",
+            "sourceRevision": 1,
+            "observedAt": "2026-10-23T00:00:00Z"
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "bc-fixture-agent",
+            "runId": "fixture-run",
+            "owner": "fixture-cloud-runtime"
+          }
+        ],
+        "unifiedControl": {
+          "items": [
+            {
+              "source": "cursor-cloud",
+              "key": "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]",
+              "externalId": "bc-fixture-agent",
+              "runId": "fixture-run",
+              "ownerThreadId": "abcdefab-0000-4000-8000-000000000002",
+              "ownerVerified": true,
+              "title": "합성 Cloud 응답",
+              "result": "SYNTHETIC_DERIVED_BODY",
+              "status": "FINISHED",
+              "fresh": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              }
+            }
+          ]
+        },
+        "mobile": {
+          "threads": [
+            {
+              "id": "abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 원본",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000002",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 파생 대화",
+              "events": [
+                {
+                  "role": "assistant",
+                  "text": "SYNTHETIC_DERIVED_BODY",
+                  "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+                }
+              ],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000002",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 공개 대화",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            }
+          ],
+          "workspaces": [
+            {
+              "id": "all",
+              "slots": [
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000001"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000002"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000003"
+                }
+              ],
+              "label": "합성 전체"
+            }
+          ]
+        }
+      },
+      "hiddenIds": [],
+      "expectedKeys": [
+        "codex:abcdefab-0000-4000-8000-000000000001",
+        "codex:abcdefab-0000-4000-8000-000000000002",
+        "codex:abcdefab-0000-4000-8000-000000000003",
+        "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]"
+      ]
+    },
+    {
+      "name": "hidden-ancestor",
+      "raw": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "threads": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "catalog": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "abcdefab-0000-4000-8000-000000000002",
+            "runId": null,
+            "owner": "fixture-runtime",
+            "sourceRevision": 1,
+            "observedAt": "2026-10-23T00:00:00Z"
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "bc-fixture-agent",
+            "runId": "fixture-run",
+            "owner": "fixture-cloud-runtime"
+          }
+        ],
+        "unifiedControl": {
+          "items": [
+            {
+              "source": "cursor-cloud",
+              "key": "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]",
+              "externalId": "bc-fixture-agent",
+              "runId": "fixture-run",
+              "ownerThreadId": "abcdefab-0000-4000-8000-000000000002",
+              "ownerVerified": true,
+              "title": "합성 Cloud 응답",
+              "result": "SYNTHETIC_DERIVED_BODY",
+              "status": "FINISHED",
+              "fresh": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              }
+            }
+          ]
+        },
+        "mobile": {
+          "threads": [
+            {
+              "id": "abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 원본",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000002",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 파생 대화",
+              "events": [
+                {
+                  "role": "assistant",
+                  "text": "SYNTHETIC_DERIVED_BODY",
+                  "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+                }
+              ],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000002",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 공개 대화",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            }
+          ],
+          "workspaces": [
+            {
+              "id": "all",
+              "slots": [
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000001"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000002"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000003"
+                }
+              ],
+              "label": "합성 전체"
+            }
+          ]
+        }
+      },
+      "hiddenIds": [
+        "abcdefab-0000-4000-8000-000000000001"
+      ],
+      "expectedKeys": [
+        "codex:abcdefab-0000-4000-8000-000000000003"
+      ]
+    },
+    {
+      "name": "unverified-child",
+      "raw": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "threads": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": false,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "catalog": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": false,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "abcdefab-0000-4000-8000-000000000002",
+            "runId": null,
+            "owner": "fixture-runtime",
+            "sourceRevision": 1,
+            "observedAt": "2026-10-23T00:00:00Z"
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "bc-fixture-agent",
+            "runId": "fixture-run",
+            "owner": "fixture-cloud-runtime"
+          }
+        ],
+        "unifiedControl": {
+          "items": [
+            {
+              "source": "cursor-cloud",
+              "key": "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]",
+              "externalId": "bc-fixture-agent",
+              "runId": "fixture-run",
+              "ownerThreadId": "abcdefab-0000-4000-8000-000000000002",
+              "ownerVerified": true,
+              "title": "합성 Cloud 응답",
+              "result": "SYNTHETIC_DERIVED_BODY",
+              "status": "FINISHED",
+              "fresh": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              }
+            }
+          ]
+        },
+        "mobile": {
+          "threads": [
+            {
+              "id": "abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 원본",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000002",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+              "forkLineageVerified": false,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 파생 대화",
+              "events": [
+                {
+                  "role": "assistant",
+                  "text": "SYNTHETIC_DERIVED_BODY",
+                  "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+                }
+              ],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000002",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 공개 대화",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            }
+          ],
+          "workspaces": [
+            {
+              "id": "all",
+              "slots": [
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000001"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000002"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000003"
+                }
+              ],
+              "label": "합성 전체"
+            }
+          ]
+        }
+      },
+      "hiddenIds": [],
+      "expectedKeys": [
+        "codex:abcdefab-0000-4000-8000-000000000001",
+        "codex:abcdefab-0000-4000-8000-000000000003"
+      ]
+    },
+    {
+      "name": "missing-current-child",
+      "raw": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "threads": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "catalog": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "abcdefab-0000-4000-8000-000000000002",
+            "runId": null,
+            "owner": "fixture-runtime",
+            "sourceRevision": 1,
+            "observedAt": "2026-10-23T00:00:00Z"
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "bc-fixture-agent",
+            "runId": "fixture-run",
+            "owner": "fixture-cloud-runtime"
+          }
+        ],
+        "unifiedControl": {
+          "items": [
+            {
+              "source": "cursor-cloud",
+              "key": "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]",
+              "externalId": "bc-fixture-agent",
+              "runId": "fixture-run",
+              "ownerThreadId": "abcdefab-0000-4000-8000-000000000002",
+              "ownerVerified": true,
+              "title": "합성 Cloud 응답",
+              "result": "SYNTHETIC_DERIVED_BODY",
+              "status": "FINISHED",
+              "fresh": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              }
+            }
+          ]
+        },
+        "mobile": {
+          "threads": [
+            {
+              "id": "abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 원본",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 공개 대화",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            }
+          ],
+          "workspaces": [
+            {
+              "id": "all",
+              "slots": [
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000001"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000002"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000003"
+                }
+              ],
+              "label": "합성 전체"
+            }
+          ]
+        }
+      },
+      "hiddenIds": [],
+      "expectedKeys": [
+        "codex:abcdefab-0000-4000-8000-000000000001",
+        "codex:abcdefab-0000-4000-8000-000000000003"
+      ]
+    },
+    {
+      "name": "retained-placeholder",
+      "raw": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "threads": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "emptySlot": true,
+            "sourceMissing": true,
+            "title": "SYNTHETIC_DERIVED_BODY",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ]
+          }
+        ],
+        "catalog": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "abcdefab-0000-4000-8000-000000000002",
+            "runId": null,
+            "owner": "fixture-runtime",
+            "sourceRevision": 1,
+            "observedAt": "2026-10-23T00:00:00Z"
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "bc-fixture-agent",
+            "runId": "fixture-run",
+            "owner": "fixture-cloud-runtime"
+          }
+        ],
+        "unifiedControl": {
+          "items": [
+            {
+              "source": "cursor-cloud",
+              "key": "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]",
+              "externalId": "bc-fixture-agent",
+              "runId": "fixture-run",
+              "ownerThreadId": "abcdefab-0000-4000-8000-000000000002",
+              "ownerVerified": true,
+              "title": "합성 Cloud 응답",
+              "result": "SYNTHETIC_DERIVED_BODY",
+              "status": "FINISHED",
+              "fresh": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              }
+            }
+          ]
+        },
+        "mobile": {
+          "threads": [
+            {
+              "id": "abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 원본",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 공개 대화",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000002",
+              "emptySlot": true,
+              "sourceMissing": true,
+              "title": "SYNTHETIC_DERIVED_BODY",
+              "events": [
+                {
+                  "role": "assistant",
+                  "text": "SYNTHETIC_DERIVED_BODY",
+                  "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+                }
+              ]
+            }
+          ],
+          "workspaces": [
+            {
+              "id": "all",
+              "slots": [
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000001"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000002"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000003"
+                }
+              ],
+              "label": "합성 전체"
+            }
+          ]
+        }
+      },
+      "hiddenIds": [],
+      "expectedKeys": [
+        "codex:abcdefab-0000-4000-8000-000000000001",
+        "codex:abcdefab-0000-4000-8000-000000000003"
+      ]
+    },
+    {
+      "name": "duplicate-missing-root",
+      "raw": {
+        "schemaVersion": 1,
+        "generatedAt": "2026-10-23T00:00:00Z",
+        "threads": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "catalog": [
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000001",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 원본",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000001",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000002",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 파생 대화",
+            "events": [
+              {
+                "role": "assistant",
+                "text": "SYNTHETIC_DERIVED_BODY",
+                "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+              }
+            ],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000002",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          },
+          {
+            "id": "abcdefab-0000-4000-8000-000000000003",
+            "source": "codex",
+            "hostId": "local",
+            "forkedFromId": null,
+            "forkLineageVerified": true,
+            "available": true,
+            "titleVerified": true,
+            "projectVerified": true,
+            "title": "합성 공개 대화",
+            "events": [],
+            "activeTurnId": null,
+            "sourceConnection": {
+              "provider": "codex",
+              "connected": true,
+              "state": "connected",
+              "sessionId": "abcdefab-0000-4000-8000-000000000003",
+              "runId": null,
+              "owner": "fixture-runtime",
+              "sourceRevision": 1,
+              "observedAt": "2026-10-23T00:00:00Z"
+            }
+          }
+        ],
+        "sourceConnections": [
+          {
+            "provider": "codex",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "abcdefab-0000-4000-8000-000000000002",
+            "runId": null,
+            "owner": "fixture-runtime",
+            "sourceRevision": 1,
+            "observedAt": "2026-10-23T00:00:00Z"
+          },
+          {
+            "provider": "cursor-cloud",
+            "connected": true,
+            "state": "connected",
+            "sessionId": "bc-fixture-agent",
+            "runId": "fixture-run",
+            "owner": "fixture-cloud-runtime"
+          }
+        ],
+        "unifiedControl": {
+          "items": [
+            {
+              "source": "cursor-cloud",
+              "key": "[\"cursor-cloud\",\"bc-fixture-agent\",\"fixture-run\"]",
+              "externalId": "bc-fixture-agent",
+              "runId": "fixture-run",
+              "ownerThreadId": "abcdefab-0000-4000-8000-000000000002",
+              "ownerVerified": true,
+              "title": "합성 Cloud 응답",
+              "result": "SYNTHETIC_DERIVED_BODY",
+              "status": "FINISHED",
+              "fresh": true,
+              "capabilities": {
+                "read": true,
+                "send": false
+              }
+            }
+          ]
+        },
+        "mobile": {
+          "threads": [
+            {
+              "id": "abcdefab-0000-4000-8000-000000000001",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 원본",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000001",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000002",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": "abcdefab-0000-4000-8000-000000000001",
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 파생 대화",
+              "events": [
+                {
+                  "role": "assistant",
+                  "text": "SYNTHETIC_DERIVED_BODY",
+                  "id": "synthetic-event:abcdefab-0000-4000-8000-000000000002:0"
+                }
+              ],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000002",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            },
+            {
+              "id": "abcdefab-0000-4000-8000-000000000003",
+              "source": "codex",
+              "hostId": "local",
+              "forkedFromId": null,
+              "forkLineageVerified": true,
+              "available": true,
+              "titleVerified": true,
+              "projectVerified": true,
+              "title": "합성 공개 대화",
+              "events": [],
+              "activeTurnId": null,
+              "sourceConnection": {
+                "provider": "codex",
+                "connected": true,
+                "state": "connected",
+                "sessionId": "abcdefab-0000-4000-8000-000000000003",
+                "runId": null,
+                "owner": "fixture-runtime",
+                "sourceRevision": 1,
+                "observedAt": "2026-10-23T00:00:00Z"
+              }
+            }
+          ],
+          "workspaces": [
+            {
+              "id": "all",
+              "slots": [
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000001"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000002"
+                },
+                {
+                  "kind": "normal",
+                  "threadId": "abcdefab-0000-4000-8000-000000000003"
+                }
+              ],
+              "label": "합성 전체"
+            }
+          ]
+        }
+      },
+      "hiddenIds": [],
+      "expectedKeys": [
+        "codex:abcdefab-0000-4000-8000-000000000003"
+      ]
+    }
+  ],
+  "relayInputSupplements": [
+    {
+      "path": "cases[*].raw.mobile.workspaces[*].label",
+      "value": "합성 전체",
+      "reason": "축약 privacy fixture를 relay의 필수 공개 layout 계약에 맞춘 test 메타데이터 보완"
+    },
+    {
+      "path": "cases[*].raw.{threads,catalog,mobile.threads}[*].events[*].id",
+      "valueTemplate": "synthetic-event:<card.id>:<eventIndex>",
+      "reason": "ControlRoomEvent의 필수 id만 안정적인 합성 메타데이터로 보완. 선택 필드와 본문은 보존"
+    }
+  ]
+}

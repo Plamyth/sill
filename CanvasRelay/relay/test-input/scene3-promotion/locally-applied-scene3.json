@@ -1,0 +1,49 @@
+{
+  "annotations" : [
+
+  ],
+  "drawingBase64" : "",
+  "height" : 1536,
+  "id" : "D2AA02E4-EDE0-419C-9FA3-D00398B3DC1D",
+  "links" : [
+
+  ],
+  "nodes" : [
+    {
+      "confidence" : "confirmed",
+      "frame" : {
+        "height" : 120,
+        "width" : 260,
+        "x" : 10,
+        "y" : 20
+      },
+      "id" : "D1487C2E-3E0E-4C97-BAFD-6FBB272F8B09",
+      "kind" : "note",
+      "sourceStrokeIds" : [
+
+      ],
+      "text" : "기존 schema2 메모"
+    },
+    {
+      "confidence" : "proposal",
+      "frame" : {
+        "height" : 2,
+        "width" : 100,
+        "x" : 20,
+        "y" : 30
+      },
+      "id" : "2BEB5C67-9810-43D1-B16E-5E7CEB0D2462",
+      "kind" : "line",
+      "sourceStrokeIds" : [
+
+      ],
+      "text" : "원격 직선"
+    }
+  ],
+  "revision" : 2,
+  "schemaVersion" : 3,
+  "strokes" : [
+
+  ],
+  "width" : 2048
+}

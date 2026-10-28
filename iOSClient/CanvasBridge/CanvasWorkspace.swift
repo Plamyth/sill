@@ -9,6 +9,9 @@ struct CanvasWorkspace: View {
     @StateObject private var store = CanvasStore()
     @StateObject private var dictation = CanvasDictation()
     @StateObject private var inkTextEditing = CanvasInkTextEditing()
+    @StateObject private var inkSpacing = CanvasInkSpacingProposal()
+    @State private var inkSpacingOpen = false
+    @State private var inkSpacingTask: Task<Void,Never>?
     @State private var inkTextDeleteOpen = false
     @State private var relayAddress = "http://192.168.45.4:8791"
     @State private var relayToken = ""
@@ -54,6 +57,12 @@ struct CanvasWorkspace: View {
     @State private var canvasConflictDecision: CanvasRelay.ConflictDecision?
     @State private var canvasConflictPending: CanvasConflictChoice?
     @State private var canvasConflictStatus = ""
+    @State private var canvasEditorSheet: CanvasEditorSheet?
+    @State private var canvasConflictEpoch: UInt64 = 0
+    @State private var canvasConflictSnapshotEpoch: UInt64?
+    @State private var canvasConflictSnapshotAddress: String?
+    @State private var canvasConflictSnapshotToken: String?
+    @State private var canvasConflictReadToken: UUID?
     @State private var canvasSyncBusy = false
     @State private var canvasVaultEnabled = true
     @State private var vaultSceneID: UUID?
@@ -84,9 +93,9 @@ struct CanvasWorkspace: View {
             #else
             data = data ?? UserDefaults.standard.data(forKey:"canvasVaultCheckpoint")
             #endif
-            if let data,
-               let checkpoint = try? JSONDecoder().decode(CanvasVaultCheckpoint.self,from:data),
-               checkpoint.address == connection.address {
+            let decoded = data.flatMap { try? JSONDecoder().decode(CanvasVaultCheckpoint.self,from:$0) }
+            let matching = decoded.flatMap { $0.address == connection.address ? $0 : nil }
+            if let checkpoint = matching ?? Self.recoveryCheckpointWhenMissing(address:connection.address) {
                 _vaultSceneID = State(initialValue:checkpoint.sceneID)
                 _vaultSyncAddress = State(initialValue:checkpoint.address)
                 _syncedSceneSha = State(initialValue:checkpoint.sceneSha)
@@ -153,14 +162,15 @@ struct CanvasWorkspace: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
-        .sheet(item:Binding(get:{ store.inkShapeProposal },set:{ if $0 == nil { store.cancelInkShape() } })) { proposal in
-            CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
-                confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
-        }
-        .sheet(item:Binding(get:{ store.inkMathProposal },set:{ if $0 == nil { store.cancelInkMath() } })) { _ in inkMathSheet }
-        .onDisappear { store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+        .sheet(item:canvasEditorBinding,onDismiss:{ synchronizeCanvasEditorSheet() }) { canvasEditorContent($0) }
+        .onChange(of:requestedCanvasEditors,initial:true) { _,_ in synchronizeCanvasEditorSheet() }
+        .onChange(of:canPresentCanvasConflict) { _,allowed in if !allowed { advanceCanvasConflictEpoch() } }
+        .onDisappear { cancelCanvasConflictRead(); dismissCanvasEditorSheet(); inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
+                cancelCanvasConflictRead()
+                inkSpacingTask?.cancel()
+                inkSpacing.invalidatePending()
                 store.cancelLink()
                 store.clearLinkSelection()
                 store.saveNow()
@@ -170,26 +180,9 @@ struct CanvasWorkspace: View {
         }
         .onChange(of:store.scene) { _,_ in inkTextEditing.invalidatePending() }
         .onChange(of:store.inkSelection) { _,_ in inkTextEditing.invalidatePending() }
-        .sheet(isPresented:$inkTextDeleteOpen, onDismiss: { inkTextEditing.invalidatePending() }) {
-            if let target = store.inkTextDeletionTarget {
-                VStack {
-                    CanvasInkTextDeleteSheet(editing: inkTextEditing, text: target.text,
-                        propose: { range in Task { await store.proposeInkTextDeletion(range: range, editing: inkTextEditing) } },
-                        confirm: { if store.confirmInkTextDeletion(inkTextEditing) { inkTextDeleteOpen = false } },
-                        cancel: { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false })
-                    Text(store.status).font(.footnote).padding()
-                }
-            } else {
-                VStack {
-                    Text("원본 획 선택이 바뀌었습니다. 인식된 문장의 획만 다시 선택하세요.")
-                    Button("닫기") { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false }
-                }.padding()
-            }
-        }
-        .sheet(isPresented:$canvasConflictOpen) { canvasConflictSheet }
-        .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:relayAddress) { _,_ in advanceCanvasConflictEpoch(); store.setNoteConnection(address:relayAddress,token:relayToken) }
         .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
-        .onChange(of:relayToken) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:relayToken) { _,_ in advanceCanvasConflictEpoch(); store.setNoteConnection(address:relayAddress,token:relayToken) }
         .task {
             store.filePreview = { await SceneRenderer.png(scene:$0) }
             store.refreshFileWorkspace()
@@ -437,6 +430,9 @@ struct CanvasWorkspace: View {
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
                 .disabled(store.inkSelection.isEmpty)
+            Button("원본 획 간격 편집") { inkSpacing.cancel(); inkSpacingOpen = true }
+                .disabled(!store.canProposeInkSpacing)
+                .accessibilityIdentifier("canvasInkSpacingOpen")
             Button("선택한 원본 획의 한 글자 삭제") { inkTextDeleteOpen = true }
                 .disabled(store.inkTextDeletionTarget == nil)
                 .accessibilityIdentifier("canvasInkTextDeleteOpen")
@@ -930,6 +926,98 @@ struct CanvasWorkspace: View {
         }
     }
 
+    private enum CanvasEditorSheet: String, Identifiable {
+        case shape, math, spacing, glyph, conflict
+        var id: String { rawValue }
+    }
+    private var requestedCanvasEditors: [CanvasEditorSheet] {
+        var result: [CanvasEditorSheet] = []
+        if store.inkShapeProposal != nil { result.append(.shape) }
+        if store.inkMathProposal != nil { result.append(.math) }
+        if inkSpacingOpen { result.append(.spacing) }
+        if inkTextDeleteOpen { result.append(.glyph) }
+        if canvasConflictOpen { result.append(.conflict) }
+        return result
+    }
+    private var canvasEditorBinding: Binding<CanvasEditorSheet?> {
+        Binding(get:{ canvasEditorSheet },set:{ if $0 == nil { dismissCanvasEditorSheet() } })
+    }
+    private func synchronizeCanvasEditorSheet() {
+        if let active = canvasEditorSheet {
+            if !requestedCanvasEditors.contains(active) { dismissCanvasEditorSheet() }
+            return // A later candidate never replaces the sheet that already owns presentation.
+        }
+        canvasEditorSheet = requestedCanvasEditors.first
+    }
+    private func dismissCanvasEditorSheet() {
+        let active = canvasEditorSheet
+        canvasEditorSheet = nil
+        switch active {
+        case .spacing: inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); inkSpacingOpen = false
+        case .glyph: inkTextEditing.invalidatePending(); inkTextDeleteOpen = false
+        case .shape: store.cancelInkShape()
+        case .math: store.cancelInkMath()
+        case .conflict: cancelCanvasConflictRead()
+        case nil: break
+        }
+    }
+    @ViewBuilder private func canvasEditorContent(_ sheet: CanvasEditorSheet) -> some View {
+        switch sheet {
+        case .spacing: spacingEditorSheet
+        case .glyph: glyphEditorSheet
+        case .math: inkMathSheet
+        case .conflict: canvasConflictSheet
+        case .shape:
+            if let proposal = store.inkShapeProposal {
+                CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
+                    confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
+            }
+        }
+    }
+    private var spacingEditorSheet: some View {
+            VStack {
+                CanvasInkSpacingSheet(editing:inkSpacing,text:store.inkTextDeletionTarget?.text ?? "선택한 문구 없음",
+                    propose:{ left,right,action,amount in
+                        inkSpacingTask?.cancel()
+                        inkSpacingTask = Task {
+                            guard !Task.isCancelled, inkSpacingOpen else { return }
+                            await store.proposeInkSpacing(left:left,right:right,action:action,amount:amount,editing:inkSpacing)
+                        }
+                    },
+                    confirm:{ if store.confirmInkSpacing(inkSpacing) { inkSpacingOpen = false } },
+                    cancel:{ inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); inkSpacingOpen = false })
+                Text(store.status).font(.footnote).padding()
+            }
+    }
+    @ViewBuilder private var glyphEditorSheet: some View {
+            if let target = store.inkTextDeletionTarget {
+                VStack {
+                    CanvasInkTextDeleteSheet(editing: inkTextEditing, text: target.text,
+                        propose: { range in Task { await store.proposeInkTextDeletion(range: range, editing: inkTextEditing) } },
+                        confirm: { if store.confirmInkTextDeletion(inkTextEditing) { inkTextDeleteOpen = false } },
+                        cancel: { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false })
+                    Text(store.status).font(.footnote).padding()
+                }
+            } else {
+                VStack {
+                    Text("원본 획 선택이 바뀌었습니다. 인식된 문장의 획만 다시 선택하세요.")
+                    Button("닫기") { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false }
+                }.padding()
+            }
+    }
+    private var canPresentCanvasConflict: Bool {
+        !store.hasPendingInkProposal && !inkSpacingOpen && !inkTextDeleteOpen && !proposalInputBusy &&
+        !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen && !connectionOpen &&
+        !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen && expandedCard == nil &&
+        (canvasEditorSheet == nil || canvasEditorSheet == .conflict)
+    }
+    private func advanceCanvasConflictEpoch() {
+        canvasConflictEpoch &+= 1; canvasConflictReadToken = nil
+    }
+    private func cancelCanvasConflictRead() {
+        advanceCanvasConflictEpoch(); canvasConflictOpen = false
+    }
+
     private enum CanvasConflictChoiceState: String, Codable { case pending, refreshRequired, resolved, superseded }
     private struct CanvasConflictChoice: Codable {
         let address: String, localSHA: String, backupFilename: String
@@ -937,47 +1025,79 @@ struct CanvasWorkspace: View {
         let decision: CanvasRelay.ConflictDecision
         var disposition = CanvasConflictChoiceState.pending
     }
+    private static func recoveryCheckpointWhenMissing(address: String) -> CanvasVaultCheckpoint? {
+        guard let url = try? CanvasRuntime.conflictRecoveryURL("CanvasConflictChoice.json"),
+              let bytes = try? CanvasLocalFile.read(url), bytes.count <= 65*1024*1024,
+              let choice = try? JSONDecoder().decode(CanvasConflictChoice.self,from:bytes),
+              choice.address == address, CanvasRelay.ConflictMaterial.hash(choice.localSHA) else { return nil }
+        return CanvasVaultCheckpoint(sceneID:choice.conflict.id,address:address,sceneSha:nil,noteSha:nil,
+            pendingSceneSha:choice.localSHA,saveConflict:.unclassified)
+    }
     private func conflictChoiceURL() throws -> URL {
         try CanvasRuntime.conflictRecoveryURL("CanvasConflictChoice.json")
     }
+    private func restoreCanvasConflictChoice(_ prior: CanvasConflictChoice, local: String,
+                                            address: String, token: String, epoch: UInt64) throws {
+        guard prior.address == address, prior.conflict.id == store.scene.id else { throw VaultBlockRecoveryError.context }
+        _ = try prior.conflict.validated(id:store.scene.id)
+        let selected = try prior.conflict.selected(prior.decision)?.scene(id:store.scene.id)
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let selectedSHA = try selected.map { CanvasPacket.sha(try encoder.encode($0)) }
+        var retained = prior
+        if retained.disposition == .resolved { retained.disposition = .pending }
+        if local != prior.localSHA && local != selectedSHA { retained.disposition = .refreshRequired }
+        canvasConflictSnapshotAddress = address; canvasConflictSnapshotToken = token; canvasConflictSnapshotEpoch = epoch
+        canvasConflict = prior.conflict; canvasConflictPending = retained; canvasConflictLocalSHA = local
+        canvasConflictStatus = retained.disposition == .refreshRequired ?
+            "서버의 보존 자료 또는 iPad 입력이 바뀌었습니다. 이전 선택 요청은 보존하며 새 자료를 읽고 대조해야 합니다." :
+            "이전 선택의 로컬 완료가 미확인입니다. 같은 선택만 명시적으로 확인할 수 있습니다. 다른 선택은 새 자료를 읽고 대조해야 합니다."
+        canvasConflictOpen = true
+    }
     private func readCanvasConflictNote() async {
-        guard canvasVaultBlocked, !canvasSyncBusy, !store.inkBusy, !store.vaultInputBusy else { return }
-        let id = store.scene.id, address = relayAddress, token = relayToken
+        guard canvasVaultBlocked, !canvasSyncBusy, !Task.isCancelled, canPresentCanvasConflict,
+              !store.inkBusy, !store.vaultInputBusy else { return }
+        let id = store.scene.id, address = relayAddress, token = relayToken, epoch = canvasConflictEpoch
+        let request = UUID(); canvasConflictReadToken = request; canvasSyncBusy = true
+        defer { canvasSyncBusy = false; if canvasConflictReadToken == request { canvasConflictReadToken = nil } }
+        func current() -> Bool {
+            !Task.isCancelled && canvasConflictReadToken == request && canvasConflictEpoch == epoch &&
+            canPresentCanvasConflict && store.scene.id == id && relayAddress == address && relayToken == token && canvasVaultBlocked
+        }
         do {
             let local = CanvasPacket.sha(try sceneBytes())
+            var resolvedChoice: CanvasConflictChoice?
             if let data = try? CanvasLocalFile.read(conflictChoiceURL()) {
                 guard data.count <= 65*1024*1024 else { throw URLError(.dataLengthExceedsMaximum) }
                 let prior = try JSONDecoder().decode(CanvasConflictChoice.self,from:data)
                 if prior.disposition == .pending || prior.disposition == .refreshRequired {
-                    guard prior.address == address, prior.conflict.id == id else { throw VaultBlockRecoveryError.context }
-                    _ = try prior.conflict.validated(id:id)
-                    let selected = try prior.conflict.selected(prior.decision)?.scene(id:id)
-                    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-                    let selectedSHA = try selected.map { CanvasPacket.sha(try encoder.encode($0)) }
-                    var retained = prior
-                    if local != prior.localSHA && local != selectedSHA { retained.disposition = .refreshRequired }
-                    canvasConflict = prior.conflict; canvasConflictPending = retained
-                    canvasConflictLocalSHA = local
-                    canvasConflictStatus = retained.disposition == .refreshRequired ?
-                        "서버의 보존 자료가 바뀌었습니다. 이전 선택 요청은 보존하며 새 자료를 다시 읽고 대조해야 합니다." :
-                        "이전 선택의 결과가 미확인입니다. 같은 선택만 명시적으로 확인할 수 있습니다. 다른 선택은 새 자료를 읽고 다시 대조해야 합니다."
-                    canvasConflictOpen = true
+                    try restoreCanvasConflictChoice(prior,local:local,address:address,token:token,epoch:epoch)
                     return
                 }
+                if prior.disposition == .resolved, prior.address == address, prior.conflict.id == id { resolvedChoice = prior }
             }
-            canvasSyncBusy = true; defer { canvasSyncBusy = false }
-            let snapshot = try await relay.vaultCanvasConflict(id:id)
-            guard store.scene.id == id, relayAddress == address, relayToken == token,
-                  canvasVaultBlocked, CanvasPacket.sha(try sceneBytes()) == local else { throw VaultBlockRecoveryError.changed }
+            let snapshot: CanvasRelay.VaultConflict
+            do { snapshot = try await relay.vaultCanvasConflict(id:id) }
+            catch let error as NSError where error.domain == "CanvasRelay" && error.code == 404 && resolvedChoice != nil {
+                guard current(), CanvasPacket.sha(try sceneBytes()) == local else { return }
+                try restoreCanvasConflictChoice(resolvedChoice!,local:local,address:address,token:token,epoch:epoch)
+                return
+            }
+            guard current(), CanvasPacket.sha(try sceneBytes()) == local else { return }
+            canvasConflictSnapshotAddress = address; canvasConflictSnapshotToken = token; canvasConflictSnapshotEpoch = epoch
             canvasConflict = snapshot; canvasConflictPending = nil; canvasConflictLocalSHA = local
             canvasConflictStatus = "현재·기준·외부 변경·제안본을 대조한 뒤 유효한 후보를 선택하세요. 이 조회는 저장하지 않습니다."
             canvasConflictOpen = true
-        } catch { store.status = "충돌 자료 읽기 실패 · 원본과 차단 상태 유지: \(error.localizedDescription)" }
+        } catch {
+            guard current() else { return }
+            store.status = "충돌 자료 읽기 실패 · 원본과 차단 상태 유지: \(error.localizedDescription)"
+        }
     }
     private func resolveCanvasConflict(_ decision: CanvasRelay.ConflictDecision) async {
-        guard canvasVaultBlocked, !canvasSyncBusy, store.canApplyReconciledCanvas, !proposalInputBusy,
+        guard canvasVaultBlocked, !canvasSyncBusy, !Task.isCancelled, canPresentCanvasConflict,
+              canvasConflictSnapshotAddress == relayAddress, canvasConflictSnapshotToken == relayToken,
+              canvasConflictSnapshotEpoch == canvasConflictEpoch, store.canApplyReconciledCanvas, !proposalInputBusy,
               let snapshot = canvasConflict, let localSHA = canvasConflictLocalSHA else { return }
-        let id = store.scene.id, address = relayAddress, token = relayToken
+        let id = store.scene.id, address = relayAddress, token = relayToken, epoch = canvasConflictEpoch
         canvasSyncBusy = true; defer { canvasSyncBusy = false }
         do {
             guard snapshot.id == id, CanvasPacket.sha(try sceneBytes()) == localSHA,
@@ -1008,7 +1128,8 @@ struct CanvasWorkspace: View {
             let backup = try CanvasRuntime.conflictRecoveryURL(choice.backupFilename)
             guard CanvasPacket.sha(try CanvasLocalFile.read(backup)) == choice.localSHA else { throw VaultBlockRecoveryError.corrupt }
             let (resolved,_) = try await relay.resolveVaultCanvasConflict(snapshot,decision:decision)
-            guard canvasVaultBlocked, store.scene.id == id, relayAddress == address, relayToken == token,
+            guard !Task.isCancelled, canvasConflictEpoch == epoch, canPresentCanvasConflict,
+                  canvasVaultBlocked, store.scene.id == id, relayAddress == address, relayToken == token,
                   store.canApplyReconciledCanvas, !proposalInputBusy, CanvasPacket.sha(try sceneBytes()) == localSHA else { throw VaultBlockRecoveryError.changed }
             let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
             if CanvasPacket.sha(try encoder.encode(selectedScene)) != localSHA {
@@ -1017,14 +1138,16 @@ struct CanvasWorkspace: View {
             let canonicalSHA = CanvasPacket.sha(try sceneBytes())
             let checkpoint = CanvasVaultCheckpoint(sceneID:id,address:address,sceneSha:resolved.sceneSha256,
                 noteSha:resolved.noteSha256,pendingSceneSha:nil,saveConflict:nil,localSceneSha:canonicalSHA)
-            try CanvasLocalFile.write(JSONEncoder().encode(checkpoint),to:Self.canvasVaultCheckpointURL())
             var complete = choice; complete.disposition = .resolved
             try CanvasLocalFile.write(JSONEncoder().encode(complete),to:conflictChoiceURL())
+            try CanvasLocalFile.write(JSONEncoder().encode(checkpoint),to:Self.canvasVaultCheckpointURL())
             syncedSceneSha = resolved.sceneSha256; syncedLocalSceneSha = canonicalSHA; canvasNoteSha = resolved.noteSha256
             pendingSceneSha = nil; canvasSaveConflict = nil; canvasVaultBlocked = false
             canvasConflictPending = nil; canvasConflict = nil; canvasConflictOpen = false
             store.status = "서버의 명시 조정·원문 재조회·선택본 적용을 확인했습니다. 이전 iPad 입력과 서버 보존본은 유지하며 Files 저장은 별도 상태입니다."
         } catch {
+            guard canvasConflictEpoch == epoch, store.scene.id == id,
+                  relayAddress == address, relayToken == token else { return }
             // Typed409 may point to a new child journal. Preserve this request and require a fresh GET, never retry it.
             if VaultSaveConflict.classified(error) != nil, var prior = canvasConflictPending {
                 prior.disposition = .refreshRequired; canvasConflictPending = prior
@@ -1035,13 +1158,17 @@ struct CanvasWorkspace: View {
         }
     }
     private func readNewConflictMaterials() async {
-        guard canvasVaultBlocked, !canvasSyncBusy, !store.inkBusy, !store.vaultInputBusy else { return }
-        let id = store.scene.id, address = relayAddress, token = relayToken
-        canvasSyncBusy = true; defer { canvasSyncBusy = false }
+        guard canvasVaultBlocked, !canvasSyncBusy, !Task.isCancelled, canPresentCanvasConflict,
+              !store.inkBusy, !store.vaultInputBusy else { return }
+        let id = store.scene.id, address = relayAddress, token = relayToken, epoch = canvasConflictEpoch
+        let request = UUID(); canvasConflictReadToken = request
+        canvasSyncBusy = true
+        defer { canvasSyncBusy = false; if canvasConflictReadToken == request { canvasConflictReadToken = nil } }
         do {
             let local = CanvasPacket.sha(try sceneBytes())
             let next = try await relay.vaultCanvasConflict(id:id)
-            guard store.scene.id == id, relayAddress == address, relayToken == token,
+            guard !Task.isCancelled, canvasConflictReadToken == request, canvasConflictEpoch == epoch,
+                  canPresentCanvasConflict, store.scene.id == id, relayAddress == address, relayToken == token,
                   CanvasPacket.sha(try sceneBytes()) == local else { throw VaultBlockRecoveryError.changed }
             if let bytes = try? CanvasLocalFile.read(conflictChoiceURL()) {
                 let archive = try CanvasRuntime.conflictRecoveryURL("CanvasConflictAttempt-\(UUID().uuidString.lowercased()).json")
@@ -1049,9 +1176,14 @@ struct CanvasWorkspace: View {
                 var prior = try JSONDecoder().decode(CanvasConflictChoice.self,from:bytes); prior.disposition = .superseded
                 try CanvasLocalFile.write(JSONEncoder().encode(prior),to:conflictChoiceURL())
             }
+            canvasConflictSnapshotAddress = address; canvasConflictSnapshotToken = token; canvasConflictSnapshotEpoch = epoch
             canvasConflictPending = nil; canvasConflict = next; canvasConflictLocalSHA = local
             canvasConflictStatus = "이전 요청을 보존하고 현재 자료를 다시 읽었습니다. 변경 내용을 다시 대조한 뒤 선택하세요."
-        } catch { canvasConflictStatus = "새 자료 읽기 실패 · 이전 선택 요청과 차단 상태를 유지합니다. \(error.localizedDescription)" }
+        } catch {
+            guard canvasConflictReadToken == request, canvasConflictEpoch == epoch,
+                  store.scene.id == id, relayAddress == address, relayToken == token else { return }
+            canvasConflictStatus = "새 자료 읽기 실패 · 이전 선택 요청과 차단 상태를 유지합니다. \(error.localizedDescription)"
+        }
     }
     private var canvasConflictSheet: some View {
         NavigationStack {

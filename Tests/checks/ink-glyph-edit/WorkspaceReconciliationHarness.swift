@@ -4,6 +4,15 @@ import Foundation
     let store: CanvasStore, relay: CanvasRelay
     var relayAddress="http://192.168.88.88:4242",relayToken="own-fixture-token-012345678901"
     var proposalInputBusy=false
+    let inkSpacing=CanvasInkSpacingProposal(),inkTextEditing=CanvasInkTextEditing()
+    var inkSpacingOpen=false,inkTextDeleteOpen=false,inspectorOpen=false,commentEditorOpen=false,vaultOpen=false,dictationOpen=false,connectionOpen=false
+    var workspaceDocumentsOpen=false,workspacePickerOpen=false,importOpen=false,exportOpen=false
+    var expandedCard:UUID?
+    var inkSpacingTask:Task<Void,Never>?
+    private var canvasEditorSheet:CanvasEditorSheet?
+    var canvasConflictEpoch:UInt64=0,canvasConflictSnapshotEpoch:UInt64?
+    var canvasConflictSnapshotAddress:String?,canvasConflictSnapshotToken:String?
+    var canvasConflictReadToken:UUID?
     var canvasVaultBlocked=true,canvasSyncBusy=false,canvasConflictOpen=false,canvasVaultEnabled=true
     var syncedSceneSha:String?,syncedLocalSceneSha:String?,canvasNoteSha:String?,pendingSceneSha:String?
     var canvasSaveConflict:VaultSaveConflict? = .reconciliationRequired
@@ -15,6 +24,27 @@ import Foundation
     func remoteCanvasIsPrefix(_ remote:CanvasRelay.VaultCanvas,of local:CanvasScene,drawing:Any)->Bool {false}
     func checks(_ check:(Bool,String)->Void) async throws {
         let original=store.scene
+        inkSpacingOpen=true;inkTextDeleteOpen=true
+        synchronizeCanvasEditorSheet()
+        check(canvasEditorSheet == .spacing && !canPresentCanvasConflict,"single editor presenter keeps spacing and excludes conflict while an idle edit is open")
+        dismissCanvasEditorSheet();synchronizeCanvasEditorSheet()
+        check(canvasEditorSheet == .glyph && inkTextDeleteOpen,"dismissing spacing preserves the queued glyph editor")
+        dismissCanvasEditorSheet()
+        check(canvasEditorSheet == nil && !inkTextDeleteOpen,"single presenter closes only its owned edit")
+        for mutation in ["cancel","token","scene","other-sheet"] {
+            let probe=WorkspaceReconciliationHarness(store:store,relay:relay)
+            ReconciliationProtocol.hook={ path,method in
+                guard path=="/vault/canvas/conflict" && method=="GET" else {return}
+                ReconciliationProtocol.hook=nil
+                if mutation=="cancel" {probe.cancelCanvasConflictRead()}
+                if mutation=="token" {probe.relayToken="changed";probe.advanceCanvasConflictEpoch()}
+                if mutation=="scene" {self.store.scene.id=UUID()}
+                if mutation=="other-sheet" {probe.inkSpacingOpen=true;probe.advanceCanvasConflictEpoch()}
+            }
+            await probe.readCanvasConflictNote()
+            check(!probe.canvasConflictOpen && probe.canvasConflict==nil,"late conflict GET cannot present after "+mutation)
+            store.scene=original
+        }
         await readCanvasConflictNote()
         check(canvasConflict != nil && canvasConflictOpen,"actual Workspace read action opens validated four-material comparison state")
         let writes=ReconciliationProtocol.requests.count
@@ -54,6 +84,45 @@ import Foundation
         let renders=SceneRenderer.calls
         await reopened.synchronizeCanvasToVault()
         check(reopened.syncedLocalSceneSha==editedSHA && reopened.pendingSceneSha==nil && SceneRenderer.calls==renders,"ordinary lost ACK updates local canonical baseline without re-render or duplicate automatic PUT")
+        // Exact post-publication local IO boundaries; only files in the synthetic runtime are moved/restored.
+        for failAt in ["choice","checkpoint"] {
+            store.scene=original;store.saveNow()
+            let probe=WorkspaceReconciliationHarness(store:store,relay:relay)
+            await probe.readNewConflictMaterials()
+            let checkpointURL=try Self.canvasVaultCheckpointURL()
+            let held=CanvasVaultCheckpoint(sceneID:original.id,address:relayAddress,sceneSha:"base",noteSha:"base",pendingSceneSha:"pending",saveConflict:.reconciliationRequired)
+            try CanvasLocalFile.write(JSONEncoder().encode(held),to:checkpointURL)
+            let target=failAt=="choice" ? try probe.conflictChoiceURL():checkpointURL
+            let saved=try CanvasRuntime.conflictRecoveryURL("CanvasConflictAttempt-\(UUID().uuidString.lowercased()).json")
+            ReconciliationProtocol.mode="normal";ReconciliationProtocol.resolved=false
+            ReconciliationProtocol.hook={ path,method in
+                guard path=="/vault/canvas/conflict" && method=="PUT" else {return}
+                ReconciliationProtocol.hook=nil
+                try! FileManager.default.moveItem(at:target,to:saved)
+                try! FileManager.default.createDirectory(at:target,withIntermediateDirectories:false)
+            }
+            await probe.resolveCanvasConflict(.keepCurrent)
+            check(probe.canvasVaultBlocked,"post-success "+failAt+" IO failure keeps in-memory barrier")
+            if failAt=="choice" {
+                let heldAfter=try JSONDecoder().decode(CanvasVaultCheckpoint.self,from:CanvasLocalFile.read(checkpointURL))
+                check(heldAfter.requiresExplicitReconciliation,"choice IO failure never commits an unblocked checkpoint")
+            } else {
+                let journal=try JSONDecoder().decode(CanvasConflictChoice.self,from:CanvasLocalFile.read(probe.conflictChoiceURL()))
+                check(journal.disposition == .resolved,"checkpoint failure retains resolved decision for explicit recovery")
+                let restoredBarrier=Self.recoveryCheckpointWhenMissing(address:relayAddress)
+                check(restoredBarrier?.requiresExplicitReconciliation==true && restoredBarrier?.sceneID==store.scene.id,
+                      "unreadable checkpoint restores a context-bound barrier from preserved choice")
+            }
+            try FileManager.default.removeItem(at:target) // this test-created empty directory only
+            try FileManager.default.moveItem(at:saved,to:target)
+            ReconciliationProtocol.mode="resolved-404"
+            let restarted=WorkspaceReconciliationHarness(store:store,relay:relay)
+            await restarted.readCanvasConflictNote()
+            check(restarted.canvasConflictPending?.decision == .keepCurrent,"restart reopens original exact decision after "+failAt+" IO failure")
+            await restarted.resolveCanvasConflict(.keepCurrent)
+            check(!restarted.canvasVaultBlocked,"explicit same-decision recovery completes after "+failAt+" IO is restored")
+            ReconciliationProtocol.mode="normal"
+        }
         // Fresh fixture conflict: a typed409 requires new material/ID before another explicit choice.
         store.scene=original;canvasVaultBlocked=true;canvasConflictPending=nil
         await readCanvasConflictNote();ReconciliationProtocol.mode="stale"

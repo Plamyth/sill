@@ -1,0 +1,8 @@
+{
+  "events": [
+    {"schema":"ccr.control-events/v1","type":"snapshot","generation":"12345678-1234-1234-1234-123456789abc","revision":0,"emittedAt":"2026-10-23T00:00:00Z","snapshot":{"schemaVersion":1,"threads":[{"id":"one","status":"대기","artifacts":[{"name":"보존할 산출물"}]}],"catalog":[],"mobile":{"threads":[],"unifiedControl":{"items":[]}}}},
+    {"schema":"ccr.control-events/v1","type":"patch","generation":"12345678-1234-1234-1234-123456789abc","baseRevision":0,"revision":1,"emittedAt":"2026-10-23T00:00:01Z","set":{},"unset":[],"threads":{"upsert":[],"remove":[]},"catalog":{"upsert":[],"remove":[]},"changes":[{"op":"replace","path":["threads",0,"status"],"value":"진행 중"},{"op":"add","path":["mobile","marker"],"value":"원본 변경"}]},
+    {"schema":"ccr.control-events/v1","type":"patch","generation":"12345678-1234-1234-1234-123456789abc","baseRevision":1,"revision":2,"emittedAt":"2026-10-23T00:00:02Z","set":{},"unset":[],"threads":{"upsert":[],"remove":[]},"catalog":{"upsert":[],"remove":[]},"changes":[{"op":"remove","path":["mobile","marker"]},{"op":"replace","path":["threads",0,"status"],"value":"응답 완료"}]}
+  ],
+  "expectedSnapshot":{"schemaVersion":1,"threads":[{"id":"one","status":"응답 완료","artifacts":[{"name":"보존할 산출물"}]}],"catalog":[],"mobile":{"threads":[],"unifiedControl":{"items":[]}}}
+}
