@@ -1,0 +1,27 @@
+{
+  "schema": "ccr.shape-wire-contract/v1",
+  "overallShapeAccepted": false,
+  "glyphPureProductCommit": "a8810155f5a32b019957b9f96905c0d66153930a",
+  "base": "68a1b4aaad6faba5a5449d82b81e147479b81930",
+  "relayCommit": "f61f51696aa5cd5b1973277a347ffca3f534fa26",
+  "relayRuntimeObserved": false,
+  "relayModified": false,
+  "sourceSchemaVersions": [
+    1,
+    2
+  ],
+  "newKinds": [
+    "line",
+    "ellipse"
+  ],
+  "newKindSaveAllowed": false,
+  "pending": "부모의 schema/capability·의미 투영 계약 및 짝 relay 개선",
+  "testedFilesKinds": [
+    "note",
+    "box"
+  ],
+  "sourceHashes": {
+    "relay/canvas-diagram.js": "1b87a14b497677df6a55583e7af3d39a9fbce0c515167acba73533c81272fa91",
+    "relay/obsidian-vault.js": "5498309965611ee8e311860bd4d71e149d790a81426667ced5f9294d8e035b73"
+  }
+}

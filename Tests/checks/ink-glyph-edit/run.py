@@ -66,7 +66,8 @@ def run(name, command, timeout=300):
 mac = ['xcrun', 'swiftc', '-sdk', mac_sdk, '-target', 'arm64e-apple-macos27.0', '-swift-version', '5',
        '-parse-as-library', '-module-cache-path', str(output / 'mac-modules')]
 link = ['-Xlinker', '-sectcreate', '-Xlinker', '__TEXT', '-Xlinker', '__info_plist', '-Xlinker', str(here / 'Info.plist')]
-compile_command = mac + ['-D', 'INK_GLYPH_INTEGRATION', model, patched_store, product, here / 'main.swift'] + link + ['-o', output / 'check']
+shape = root / 'iOSClient/CanvasBridge/CanvasInkShapeProposal.swift'
+compile_command = mac + ['-D', 'INK_GLYPH_INTEGRATION', model, patched_store, product] + ([shape] if shape.exists() else []) + [here / 'main.swift'] + link + ['-o', output / 'check']
 
 def sdk():
     base = ['xcrun', 'swiftc', '-sdk', ios_sdk, '-target', 'arm64-apple-ios27.0', '-swift-version', '5',

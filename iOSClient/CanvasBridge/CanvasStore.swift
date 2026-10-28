@@ -142,6 +142,7 @@ final class CanvasStore: ObservableObject {
     @Published var mode: CanvasMode = .pen {
         didSet {
             if oldValue != mode {
+                cancelInkShape()
                 pendingInkTextEditing?.invalidatePending()
                 nodeResizeDrag = nil
                 nodeRotationDrag = nil
@@ -160,6 +161,7 @@ final class CanvasStore: ObservableObject {
         if active {
             if pencilTraceOwner == nil || pencilTraceOwner == owner {
                 pendingInkTextEditing?.invalidatePending()
+                cancelInkShape()
                 pencilTraceOwner = owner
             }
         } else if pencilTraceOwner == owner { pencilTraceOwner = nil }
@@ -204,6 +206,59 @@ final class CanvasStore: ObservableObject {
     func rulerIsActive(isVisible: Bool) -> Bool {
         rulerEnabled && mode == .pen && isVisible
     }
+    @Published private(set) var inkShapeProposal: CanvasInkShapeProposal?
+    private var inkShapeGeneration: UInt64?
+    private var inkShapeSelectionGeneration: UInt64 = 0
+    private var inkShapeExpectedSelectionGeneration: UInt64?
+
+    var inkShapeIsCurrent: Bool {
+        guard let proposal = inkShapeProposal else { return false }
+        return sceneReadable && inkShapeCompatibilityMessage == nil && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
+            !vaultLoading && !vaultInputBusy && !vaultBlockEditing && mode == .lasso && proposal.source == scene &&
+            proposal.selection == inkSelection && inkShapeGeneration == linkSceneGeneration &&
+            inkShapeExpectedSelectionGeneration == inkShapeSelectionGeneration
+    }
+
+    var inkShapeCompatibilityMessage: String? {
+        guard let kind = inkShapeProposal?.node.kind, kind == .line || kind == .ellipse else { return nil }
+        return CanvasSceneWireError.shapeContractPending.localizedDescription
+    }
+
+    func proposeInkShape() {
+        cancelInkShape()
+        pendingInkTextEditing?.invalidatePending()
+        guard sceneReadable, !fileSaveBusy, fileWorkspaceState != .blocked, !vaultDirty, !vaultSaving,
+              !vaultLoading, !vaultInputBusy, !vaultBlockEditing, !inkBusy, mode == .lasso else { status = "영역 선택 도구로 도형을 먼저 선택하세요."; return }
+        do {
+            inkShapeProposal = try CanvasInkShapeProposal.make(scene:scene,drawing:drawing,selection:inkSelection)
+            inkShapeGeneration = linkSceneGeneration
+            inkShapeExpectedSelectionGeneration = inkShapeSelectionGeneration
+            status = inkShapeCompatibilityMessage ?? "도형 후보를 원본과 비교한 뒤 확정하세요."
+        } catch { status = error.localizedDescription }
+    }
+
+    func cancelInkShape() { inkShapeProposal = nil; inkShapeGeneration = nil; inkShapeExpectedSelectionGeneration = nil }
+
+    @discardableResult
+    func confirmInkShape() -> Bool {
+        if let message = inkShapeCompatibilityMessage { status = message; return false }
+        guard inkShapeIsCurrent, let proposal = inkShapeProposal else {
+            status = "원본이나 선택이 바뀌어 확정하지 않았습니다."
+            cancelInkShape()
+            return false
+        }
+        do {
+            let before = scene
+            let next = try proposal.confirmed(in:scene,selection:inkSelection)
+            try persistScene(next)
+            scene = next
+            recordGraphEdit(before:before)
+            cancelInkShape()
+            status = "도형을 복구본에 확정하고 원본 획을 보존했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
+            return true
+        } catch { status = error.localizedDescription; return false }
+    }
+
     @Published private(set) var inkSelection: Set<UUID> = []
     static let eraserStyleKey = "canvasEraserStyle"
     static let eraserSizeKey = "canvasPartialEraserWidth"
@@ -248,7 +303,7 @@ final class CanvasStore: ObservableObject {
     private var workspaceToken: String?
     private var fileSaveBusy = false
     var fileWorkspaceCanSync: Bool {
-        guard fileWorkspaceState != .blocked else { return false }
+        guard scene.hasLegacyCompatibleNodeKinds, fileWorkspaceState != .blocked else { return false }
         return (workspaceBinding == nil && fileWorkspace == nil) || fileWorkspaceState == .ready
     }
 
@@ -2097,6 +2152,7 @@ final class CanvasStore: ObservableObject {
         guard sceneReadable else { throw ScenePersistenceError.unreadable }
         guard let url = Self.sceneURL() else { throw ScenePersistenceError.unreadable }
         let candidate = candidate ?? scene
+        try candidate.requireCompatibleNodeKinds()
         try candidate.validateNativeInkProjection()
         let data = try JSONEncoder().encode(candidate)
         guard data.count <= Self.sceneByteLimit else { throw ScenePersistenceError.tooLarge }
@@ -2239,6 +2295,7 @@ final class CanvasStore: ObservableObject {
         let next = ids.intersection(drawing.strokes.map(\.id))
         guard next != inkSelection else { return }
         pendingInkTextEditing?.invalidatePending()
+        inkShapeSelectionGeneration &+= 1
         inkSelection = next
         handwritingRequest = nil
     }
@@ -2292,6 +2349,7 @@ final class CanvasStore: ObservableObject {
                                readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
         pendingInkTextEditing?.invalidatePending()
         pendingInkTextEditing = editing
+        cancelInkShape()
         guard inkTextEditAllowed, let node = inkTextDeletionTarget else {
             editing.cancel()
             status = "인식된 문장에 대응하는 원본 획만 선택하세요. 편집 중인 입력은 먼저 마쳐 주세요."

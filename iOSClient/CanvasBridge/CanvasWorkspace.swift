@@ -141,7 +141,12 @@ struct CanvasWorkspace: View {
         }
         .background(Color.black)
         .preferredColorScheme(.dark)
-        .onDisappear { inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+        .sheet(item:Binding(get:{ store.inkShapeProposal },set:{ if $0 == nil { store.cancelInkShape() } })) { proposal in
+            CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
+                blockedReason:store.inkShapeCompatibilityMessage,
+                confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
+        }
+        .onDisappear { store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
                 store.cancelLink()
@@ -402,6 +407,9 @@ struct CanvasWorkspace: View {
             .accessibilityValue(store.eraserStyle == .partial ? store.eraserSize.label : "획 전체 지우기에서는 적용되지 않음")
             .accessibilityHint("CCR에서 정한 캔버스 포인트 단위이며 확대 비율에 따라 표시 크기가 달라집니다.")
             .accessibilityIdentifier("canvasPartialEraserSize")
+            Button("선택한 획 도형 보정",systemImage:"wand.and.stars") { store.proposeInkShape() }
+                .disabled(store.inkSelection.isEmpty || store.inkBusy || store.mode != .lasso)
+                .accessibilityIdentifier("canvasProposeInkShape")
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
             Button("손글씨 찾기",systemImage:"magnifyingglass") { handwritingSearchOpen = true }
@@ -1077,7 +1085,7 @@ struct CanvasWorkspace: View {
             Divider()
             if let id = store.selectedNode,
                let node = store.scene.nodes.first(where:{$0.id == id}) {
-                Text(node.kind == .box ? "선택한 상자" : "선택한 메모")
+                Text(node.kind == .box ? "선택한 상자" : node.kind == .ellipse ? "선택한 타원" : node.kind == .line ? "선택한 직선" : "선택한 메모")
                 Text(node.confidence == .proposal ? "확인 전 제안" : "확정된 요소")
                     .foregroundStyle(node.confidence == .proposal ? .orange : .green)
                 TextField("내용",text:Binding(get:{node.text},set:{ _ in }))
@@ -2210,7 +2218,7 @@ private struct NodeTile: View {
 
     var body: some View {
         VStack(spacing:4) {
-            Text(node.text.isEmpty ? "내용 입력" : node.text).font(.title3)
+            Text(node.text.isEmpty ? (node.kind == .note ? "내용 입력" : "") : node.text).font(.title3)
                 .lineLimit(node.vaultNote == nil ? nil : 3)
             if let reference = node.vaultNote {
                 Text(reference.blockID.map { "^\($0)" } ?? reference.path).font(.caption).lineLimit(1)
@@ -2219,13 +2227,14 @@ private struct NodeTile: View {
         }
             .frame(width:node.frame.width,height:node.frame.height)
             .foregroundStyle(Color(uiColor:CanvasPalette.nodeText))
-            .background(Color(uiColor:CanvasPalette.nodeFill),
+            .background(node.kind == .note ? Color(uiColor:CanvasPalette.nodeFill) : .clear,
                         in:RoundedRectangle(cornerRadius:14))
-            .overlay(RoundedRectangle(cornerRadius:14)
+            .overlay(CanvasInkShapeOutline(kind:node.kind)
                 .stroke(node.confidence == .proposal ? .orange :
                     store.selectedNode == node.id ? Color(uiColor:CanvasPalette.link) : .gray,
                     lineWidth:3))
             .rotationEffect(.radians(node.rotationRadians))
+            .contentShape(.interaction, Rectangle().inset(by:node.kind == .line ? -21 : 0))
             .onTapGesture { store.select(node.id) }
             .accessibilityElement(children:.combine)
             .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")

@@ -42,7 +42,7 @@ ownfixture의 원본34획은 PDF 계열 transform을 포함한다. native 렌더
 - [x] Ponytail full. 기존 PKStrokeRecognizer·CanvasScene·CanvasLocalFile·SDK를 재사용했다. 새 provider/의존성0이다.
 - [x] 유효 표면 검사. 증거주입 성공과 무주입 nil/엔진 오류를 분리했다. 테스트 수를 기능 완료율로 쓰지 않는다.
 - [ ] 새 독립 검수. spawn_agent 도구가 없고 부모의 최종 통합 검수가 남는다. 최초 초안에 대한 부모의 검토를 새 head 전체 CLEAR로 확대하지 않는다.
-- [ ] 제품 통합·whole unsigned build. 부모가 배정한 storage 통합 기준의 별도 WT에서 이어간다.
+- [x] 제품 접합은 a8810155로 별도 고정했다. 아래 shape 후보와 pure note 경로를 분리한다. whole unsigned build는 clean 최종 HEAD의 `.build/whole-*/build.json`으로 확인한다.
 
 초기 검사 실행기의 경로 문자열 비교는 BT_CCR-iPad/ipad 대소문자 별칭 때문에 거절됐다. 실제 같은 디스크/디렉터리 inode를 검증하는 samefile로 고쳤다. 타입 검사 초안의 MainActor encode와 테스트 CGFloat/PKInk 비교 오류도 수정했다. 초기 실패 로그는 자기 `.build`에 보존했으며 native 인식 실패와 구분한다.
 
@@ -57,3 +57,20 @@ Files 연결·저장 중 또는 blocked에서는 glyph 편집을 시작하지 �
 별도 `obsidian-roundtrip.cjs`는 실제 기존 ObsidianVault 모듈과 격리 보관함 파일에서 glyph 변경·native JSON·Markdown·메모 CRLF·새 인스턴스 재열기·Undo·CAS409 보존을 검사한다. 공유 relay 프로세스·사용자 vault·네트워크에는 영향0이다. PNG는1픽셀 전송 fixture이므로 실제 preview 시각 수용으로 세지 않는다. 최초 CAS 검사는 payload revision과 인자를 잘못 짝지어400을 받았고, 일치한 payload와 오래된 SHA로409를 재검증했다. 제품 보호를 완화하지 않았다.
 
 새 native 인식 성공과 실제 iPad 화면·Pencil 수용은 여전히 미완료다. glyph 확정은 기존 PKCanvasView의 잉크만 Undo하는 기록을 무효화하고 별도 glyph 명령으로 문자와 획을 함께 되돌린다. 이전 native Undo 이력의 앱 재실행 보존은 제공하지 않는다.
+
+
+## 2026-10-29 shape 접합 후보와 호환성 보류
+
+glyph 순수 note 제품 접합은 `a8810155f5a32b019957b9f96905c0d66153930a`다. 이후 shape 원소유 e529975를 `33136572c1bbeac10f3f6bce62839c970104da28`로 cherry-pick했다. 이 WT는 부모가 배정한 Store/Workspace 단독 writer이며 저장 정본68a의 보호를 재사용한다. 두 초안의 패치를 실제 코드에 의미 단위로 합쳤고 원본 integration.patch는 각 출발점의 역사적 패치로 보존한다.
+
+**shape는 공통 wire 변경 후보이며 전체 수용은 false다.** 새 Kind ellipse/line을 같은 schemaVersion2로 저장하면 구형68에서 decode가 실패한다. 공식 relay f61f516은 새 kind를 검사하지 않고 저장하며 Mermaid는 전부 상자, 구조 설명은 새 kind를 요소로 투영한다. iPad CanvasDiagramSnapshot과 이를 호출하는 CanvasPeleView도 상자 투영이다. 새 schema 번호와 소비자 협약을 이 writer가 독단으로 정하지 않았다.
+
+따라서 현재 제품은 기존 box 보정만 확정·파일 왕복 가능하다. line/ellipse는 native 비교 미리보기와 명시적 `shape_wire_contract_pending` 거부까지만 가능하다. 확정 버튼을 막고, Store persistScene·Files.save·scene decode·CanvasDiagramSnapshot/Pele·saveVaultCanvas가 새 종류를 거부한다. fileWorkspaceCanSync도 false다. 현재 relay에 신규 kind를 조용히 쓰는 경로를 열지 않는다. 단위 검사의 Proposal.confirmed가 만드는 line/ellipse JSON은 격리 fixture일 뿐 제품 저장 성공으로 세지 않는다. schema2 신규 kind의 decoder 거부·Files 외부 쓰기0도 검사했다.
+
+부모의 relay 소유 단위에서 버전 및 capability/명시 거부, 노드별 Mermaid/Pele 의미 투영, Obsidian 종류 설명, 신구 클라이언트 읽기·쓰기 정책을 합의·구현한 뒤 같은 exact pair를 검증해야 한다. 그때 이 거부를 호환 계약에 맞게 바꾸고 line/ellipse 왕복을 다시 검증한다. 서버 소스를 이 WT에서 수정하지 않았다. 자세한 포인터는 SHAPE-WIRE-CONTRACT.md와 shape-wire-contract.json에 있다.
+
+`python3 Tests/checks/ink-glyph-edit/product-check.py`는 실제 결합 소스와 기존 Files 회귀49·안전23, shape70을 각각 격리된 새 경로에서 실행한다. glyph65는 대응 Evidence 주입이며 native 인식 재실행0이다. shape70은 실제 PencilKit 기하·원본 보존·상자 Store/Files 왕복·Undo/Redo·stale·불가 kind의 명시 거부다. 실제 ObsidianVault 모듈의 격리 파일 왕복은 note glyph15·기존 box17로 분리한다. line/ellipse 왕복 완료라는 뜻이 아니다. SDK27은 전체 Canvas 코드와 실제 UI hook를 타입 검사했으며 UI를 열거나 실제 터치 수용을 하지 않았다.
+
+최초 결합 runner가 이전 실행의 격리 폴더를 재사용하여 기존 문서 목록과 구형 ellipse 캐시에 충돌했다. 제품 원본 실패와 구분해 로그를 보존하고 실행별 UUID 경로로 수정했다. 새 경로에서 모두 재검증했다. 실패한 실행의 결과를 완료 근거로 사용하지 않는다.
+
+`whole-build.py`는 clean HEAD를 요구하며 정상 com.ambrion.sillcanvas.ipad의 Debug arm64 전체 앱을 무서명 빌드하고 Info.plist의 commit/tree/verified와 실제 executable SHA를 기록한다. 프로필은 이미 승인된 public bootstrap 한 개만 읽는다. 설치·push·서버 전환은 없다. 빌드 성공은 native 인식·Pencil·WKWebView 시각 수용·shape 전체 왕복 수용을 대체하지 않는다.

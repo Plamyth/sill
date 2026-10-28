@@ -23,3 +23,8 @@ SDK 공개 PencilKit의 `PKStrokeRecognizer`는 글자 인식·검색 API를 제
 원본 필압·마스크의 표현을 재해석하거나 보정 획으로 대체하지 않는다. 마스크 획은 거부한다. PencilKit이 NaN 필압을 공개 readback 전에 유한값으로 정규화하는 동작도 별도 관측했다. 이 경우 정규화 전 값을 읽거나 복구했다고 주장하지 않는다. 손상된 저장 투영의 NaN 필압과 공개 API에서 반환된 비유한 수치·비가역 변환·너무 짧은 획·구별 불가 표본은 거부한다. 샘플·선택 수 상한은 이 좁은 판별기의 입력 계약이다.
 
 도형 종류는 JSON 노드에 저장되며 실제 파일과 새 Store 인스턴스 재열기를 검사한다. 구형 iPad 빌드는 새 종류를 읽지 못하므로 호환 후보 통합 전 배포할 수 없다. 기존 Mermaid/Pele와 relay의 텍스트 투영은 여전히 일반 요소로 표현한다. 도형별 Mermaid 투영·실제 Obsidian 공용 원본 왕복·역방향 수정·연결선 동등성은 이 단위에서 완료되지 않았다. 부모의 공용 저장 writer와 후속 소비자 계약 검수가 필요하다. 사용자 UI·Pencil·기기·Host·네트워크·설치·개인 문서 변경은 없다. 전체 MyScript/MS18 완료로 올리지 않는다.
+
+
+## 통합 writer의 후속 호환 정책
+
+위 내용은 c03d 원소유 단위의 범위다. 2026-10-29 실제 저장 정본68a에 접합한 후보는 `../ink-glyph-edit/SHAPE-WIRE-CONTRACT.md`를 우선한다. 새 Kind는 wire 변경이며 같은 schema2의 구형68 호환을 보장하지 않는다. 현재 제품은 box 확정과 원본 보존만 허용하고 line/ellipse는 미리보기 뒤 호환 미정으로 명시 거부한다. Files·scene decode·Pele snapshot·relay 송신도 거부한다. paired relay 개선 전 line/ellipse JSON 왕복을 완료로 세지 않는다. 이 폴더의 shape70 검사는 결합 runner `../ink-glyph-edit/product-check.py`로 실제 제품 소스에서 실행했다. 초기 c03d용 integration.py/patch 실행은 역사적 단위 검사이며 최종 접합 소스의 전체 검증으로 쓰지 않는다.

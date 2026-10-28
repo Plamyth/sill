@@ -1079,7 +1079,7 @@ struct VaultNoteRecoveryFile: Codable {
 }
 
 struct CanvasNode: Codable, Identifiable, Equatable {
-    enum Kind: String, Codable { case note, box }
+    enum Kind: String, Codable { case note, box, ellipse, line }
     enum Confidence: String, Codable { case confirmed, proposal }
 
     var id: UUID
@@ -1300,6 +1300,13 @@ struct CanvasLinkEdit: Codable {
     var replacement: CanvasLink
 }
 
+enum CanvasSceneWireError: LocalizedError {
+    case shapeContractPending
+    var errorDescription: String? {
+        "shape_wire_contract_pending · 선·타원은 구형 68 및 현재 Obsidian/Pele 계약과 호환되지 않아 저장·동기화하지 않습니다. 원본 획을 유지합니다."
+    }
+}
+
 struct CanvasScene: Codable, Equatable {
     static let localByteLimit = 4 * 1024 * 1024
     var schemaVersion = 1
@@ -1313,6 +1320,10 @@ struct CanvasScene: Codable, Equatable {
     var links: [CanvasLink] = []
     var annotations: [CanvasAnnotation] = []
     var penSettings: CanvasPenSettings? = nil
+    var hasLegacyCompatibleNodeKinds: Bool { nodes.allSatisfy { $0.kind == .note || $0.kind == .box } }
+    func requireCompatibleNodeKinds() throws {
+        guard hasLegacyCompatibleNodeKinds else { throw CanvasSceneWireError.shapeContractPending }
+    }
     var effectivePenSettings: CanvasPenSettings { penSettings ?? .default }
     var hasSupportedInkProjection: Bool {
         (schemaVersion == 1 || schemaVersion == 2) && effectivePenSettings.isValid &&
@@ -1663,6 +1674,7 @@ extension CanvasScene {
         links = try values.decode([CanvasLink].self, forKey: .links)
         annotations = try values.decode([CanvasAnnotation].self, forKey: .annotations)
         penSettings = try values.decodeIfPresent(CanvasPenSettings.self, forKey: .penSettings)
+        try requireCompatibleNodeKinds()
         guard hasSupportedInkProjection else { throw CanvasPenSettingsError.unsupportedInkProjection }
     }
 }
@@ -1800,6 +1812,7 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
     }
 
     init(scene: CanvasScene) throws {
+        try scene.requireCompatibleNodeKinds()
         guard scene.nodes.count <= 512, scene.links.count <= 1024 else { throw Failure.limit }
         let ids = Set(scene.nodes.map(\.id))
         guard ids.count == scene.nodes.count, Set(scene.links.map(\.id)).count == scene.links.count,
@@ -2182,6 +2195,7 @@ final class CanvasFileWorkspace {
     }
     @discardableResult
     func save(_ scene: CanvasScene, preview: Data, expected: String?) throws -> Snapshot {
+        try scene.requireCompatibleNodeKinds()
         let sceneBytes = try Self.bytes(scene)
         guard sceneBytes.count <= CanvasScene.localByteLimit,
               let drawing = Data(base64Encoded:scene.drawingBase64),

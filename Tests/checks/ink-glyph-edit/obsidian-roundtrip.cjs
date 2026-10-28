@@ -4,6 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const output = fs.realpathSync(process.argv[2]);
+const flow = process.argv[3] === 'shape' ? 'shape' : 'glyph';
 const relay = fs.realpathSync('/Users/ambrion/Documents/ChatGPT/BT_CCR-Obsidian-relay');
 const inputs = ['relay/obsidian-vault.js', 'relay/canvas-diagram.js'];
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -17,9 +18,9 @@ const vault = new ObsidianVault(root);
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=', 'base64');
 let checks = 0;
 function ok(value, label) { assert(value, label); checks++; }
-const originalBytes = fs.readFileSync(path.join(output, 'glyph-before.json'));
-const afterBytes = fs.readFileSync(path.join(output, 'glyph-after.json'));
-const undoBytes = fs.readFileSync(path.join(output, 'glyph-undo.json'));
+const originalBytes = fs.readFileSync(path.join(output, flow + '-before.json'));
+const afterBytes = fs.readFileSync(path.join(output, flow + '-after.json'));
+const undoBytes = fs.readFileSync(path.join(output, flow + '-undo.json'));
 const original = JSON.parse(originalBytes), after = JSON.parse(afterBytes), undo = JSON.parse(undoBytes);
 let saved = vault.saveCanvas(original.id, original.revision, originalBytes, png, null);
 let read = new ObsidianVault(root).canvas(original.id);
@@ -31,10 +32,18 @@ saved = vault.saveCanvas(after.id, after.revision, afterBytes, png, withMemo.sha
 read = new ObsidianVault(root).canvas(after.id);
 const loaded = JSON.parse(Buffer.from(read.sceneJSONBase64, 'base64'));
 ok(read.sceneSha256 === sha(afterBytes), 'saved SHA');
-ok(Buffer.from(read.sceneJSONBase64, 'base64').equals(afterBytes), 'glyph deleted JSON byte equality');
-ok(loaded.drawingBase64 === after.drawingBase64 && loaded.nodes[0].text === '가다', 'native bytes and edited text together');
+ok(Buffer.from(read.sceneJSONBase64, 'base64').equals(afterBytes), 'edited JSON byte equality');
+ok(loaded.drawingBase64 === after.drawingBase64, 'native saved bytes');
+if (flow === 'glyph') {
+  ok(loaded.nodes[0].text === '가다', 'edited text and ink saved together');
+} else {
+  const node = loaded.nodes.find(n => !original.nodes.some(old => old.id === n.id));
+  ok(node && node.kind === 'box' && node.confidence === 'confirmed', 'new confirmed box survives actual vault file');
+  ok(JSON.stringify(node.sourceStrokeIds) === JSON.stringify(after.nodes.find(n => n.id === node.id).sourceStrokeIds), 'shape source IDs preserved');
+  ok(loaded.drawingBase64 === original.drawingBase64 && JSON.stringify(loaded.strokes) === JSON.stringify(original.strokes), 'shape original ink remains exact');
+}
 ok(JSON.stringify(loaded.strokes) === JSON.stringify(after.strokes), 'pressure masks and transform projection');
-ok(vault.note(saved.path).text.includes('가다'), 'human readable Markdown edited text');
+ok(vault.note(saved.path).text.includes(after.nodes[0].text), 'human readable Markdown projection');
 ok(vault.note(saved.path).text.endsWith(memo), 'memo exact UTF8 CRLF preserved');
 const currentBytes = fs.readFileSync(path.join(root, saved.path));
 assert.throws(() => vault.saveCanvas(original.id, original.revision, originalBytes, png, withMemo.sha256), e => e.status === 409);
@@ -51,9 +60,9 @@ assert.throws(() => vault.saveCanvas(after.id, after.revision, afterBytes, png, 
 checks++;
 ok(vault.note(now.path).sha256 === external.sha256, 'external edit not overwritten');
 assert.deepEqual(hashes(), before);
-const result = {schema: 'ccr.glyph-obsidian-files/v1', checks, failed: 0, root, sourceHashes: before,
+const result = {schema: 'ccr.ink-obsidian-files/v1', flow, checks, failed: 0, root, sourceHashes: before,
   sourceUnchanged: true, actualVaultModule: true, sharedRuntimeChanged: false, network: false,
-  imageScope: 'one-pixel fixture; glyph native bytes/JSON/Markdown/CAS; preview rendering separately SDK/build',
-  evidenceMappingInjected: true, nativeRecognitionSuccessProven: false};
-fs.writeFileSync(path.join(output, 'obsidian-roundtrip.json'), JSON.stringify(result, null, 2) + '\n');
+  imageScope: 'one-pixel fixture; native bytes/JSON/Markdown/CAS; shape Mermaid remains generic; preview rendering separately SDK/build',
+  evidenceMappingInjected: flow === 'glyph', nativeRecognitionSuccessProven: false};
+fs.writeFileSync(path.join(output, 'obsidian-' + flow + '-roundtrip.json'), JSON.stringify(result, null, 2) + '\n');
 console.log(JSON.stringify(result));

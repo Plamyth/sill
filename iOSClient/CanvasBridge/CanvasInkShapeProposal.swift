@@ -152,6 +152,7 @@ struct CanvasInkShapeOutline: Shape {
 struct CanvasInkShapePreview: View {
     let proposal: CanvasInkShapeProposal
     let current: Bool
+    var blockedReason: String? = nil
     let confirm: () -> Void
     let cancel: () -> Void
 
@@ -178,7 +179,7 @@ struct CanvasInkShapePreview: View {
                     CGRect(x:-frame.width/2,y:-frame.height/2,width:frame.width,height:frame.height))
                 context.stroke(outline,with:.color(.orange),lineWidth:3/scale)
             }.background(Color.black).frame(minHeight:240).accessibilityLabel("원본 획과 \(proposal.label) 후보 비교")
-            if !current { Text("원본이나 선택이 바뀌어 확정할 수 없습니다.").foregroundStyle(.red) }
+            if !current { Text(blockedReason ?? "원본이나 선택이 바뀌어 확정할 수 없습니다.").foregroundStyle(.red) }
             HStack {
                 Button("취소",action:cancel).frame(minWidth:44,minHeight:44)
                 Button("원본을 보존하고 확정",action:confirm).frame(minWidth:44,minHeight:44).disabled(!current)

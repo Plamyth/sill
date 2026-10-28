@@ -1,0 +1,1070 @@
+diff --git a/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj b/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj
+index 1d40433..7dc6b95 100644
+--- a/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj
++++ b/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj
+@@ -4,11 +4,15 @@
+  classes = {};
+  objectVersion = 56;
+  objects = {
++  8C932E21227A4CE7F8136731 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkTextEditing.swift"; sourceTree = "<group>"; };
++  8C932E21227A4CE7F8136732 = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136731; };
++  5A9E20261028000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkShapeProposal.swift"; sourceTree = "<group>"; };
++  5A9E20261028000000000002 = {isa = PBXBuildFile; fileRef = 5A9E20261028000000000001; };
+   A00000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600; TargetAttributes = {A00000000000000000000002 = {CreatedOnToolsVersion = 16.0; }; A00000000000000000000030 = {CreatedOnToolsVersion = 27.0; TestTargetID = A00000000000000000000002; }; }; }; buildConfigurationList = A00000000000000000000003; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,Base); mainGroup = A00000000000000000000004; productRefGroup = A00000000000000000000005; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000002,A00000000000000000000030); };
+   A00000000000000000000002 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000006; buildPhases = (A00000000000000000000007,A00000000000000000000043,); buildRules = (); dependencies = (); name = CanvasBridge; productName = CanvasBridge; productReference = A00000000000000000000008; productType = "com.apple.product-type.application"; };
+   A00000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000009,A0000000000000000000000A); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+   A00000000000000000000006 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000B,A0000000000000000000000C); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+-  A00000000000000000000004 = {isa = PBXGroup; children = (A00000000000000000000040,A00000000000000000000044,A0000000000000000000000D,A00000000000000000000033,A00000000000000000000005); sourceTree = "<group>"; };
++  A00000000000000000000004 = {isa = PBXGroup; children = (8C932E21227A4CE7F8136731,5A9E20261028000000000001,A00000000000000000000040,A00000000000000000000044,A0000000000000000000000D,A00000000000000000000033,A00000000000000000000005); sourceTree = "<group>"; };
+   A00000000000000000000005 = {isa = PBXGroup; children = (A00000000000000000000008,A00000000000000000000032); name = Products; sourceTree = "<group>"; };
+   A00000000000000000000033 = {isa = PBXGroup; children = (A00000000000000000000034); path = CanvasBridgeUITests; sourceTree = "<group>"; };
+   A0000000000000000000000D = {isa = PBXGroup; children = (A00000000000000000000010,A00000000000000000000011,A00000000000000000000012,A00000000000000000000013,A00000000000000000000014,A00000000000000000000015,A00000000000000000000016,A00000000000000000000017); path = CanvasBridge; sourceTree = "<group>"; };
+diff --git a/iOSClient/CanvasBridge/CanvasInkShapeProposal.swift b/iOSClient/CanvasBridge/CanvasInkShapeProposal.swift
+new file mode 100644
+index 0000000..e8c7bc7
+--- /dev/null
++++ b/iOSClient/CanvasBridge/CanvasInkShapeProposal.swift
+@@ -0,0 +1,190 @@
++import Foundation
++import PencilKit
++import SwiftUI
++
++// ponytail: 한 선택 묶음의 직선·축 정렬 사각형·타원만 제안한다. 자유 도형 엔진은 별도 범위다.
++struct CanvasInkShapeProposal: Identifiable {
++    let id = UUID()
++    let source: CanvasScene
++    let selection: Set<UUID>
++    let original: PKDrawing
++    let node: CanvasNode
++
++    enum Failure: String, LocalizedError {
++        case selection, unsupported, invalid, ambiguous, stale
++        var errorDescription: String? {
++            switch self {
++            case .selection: return "영역 선택 도구로 도형 하나의 원본 획을 선택하세요."
++            case .unsupported: return "부분 지움이나 지원하지 않는 획입니다. 원본은 그대로 유지합니다."
++            case .invalid: return "획의 좌표·필압·변환을 확인할 수 없습니다. 원본은 그대로 유지합니다."
++            case .ambiguous: return "도형을 구별하기 어렵습니다. 원본을 유지하며 자동 확정하지 않습니다."
++            case .stale: return "선택이나 원본이 바뀌었습니다. 최신 획을 다시 선택하세요."
++            }
++        }
++    }
++
++    var label: String { node.kind == .box ? "사각형" : node.kind == .ellipse ? "타원" : "직선" }
++
++    func confirmed(in scene: CanvasScene, selection: Set<UUID>) throws -> CanvasScene {
++        guard scene == source, selection == self.selection,
++              !scene.nodes.contains(where: { $0.id == node.id }) else { throw Failure.stale }
++        let encoder = JSONEncoder()
++        encoder.outputFormatting = [.sortedKeys]
++        guard try encoder.encode(scene) == encoder.encode(source) else { throw Failure.stale }
++        var next = scene
++        var confirmed = node
++        confirmed.confidence = .confirmed
++        next.nodes.append(confirmed)
++        guard next.revision < Int.max else { throw Failure.invalid }
++        next.revision += 1
++        guard try JSONEncoder().encode(next).count <= CanvasScene.localByteLimit else { throw Failure.invalid }
++        return next
++    }
++
++    static func make(scene: CanvasScene, drawing: PKDrawing, selection: Set<UUID>) throws -> Self {
++        guard !selection.isEmpty, selection.count <= 4,
++              Set(drawing.strokes.map(\.id)).count == drawing.strokes.count,
++              selection.isSubset(of: Set(drawing.strokes.map(\.id))) else { throw Failure.selection }
++        try scene.validateNativeInkProjection()
++        guard let bytes = Data(base64Encoded: scene.drawingBase64), !bytes.isEmpty,
++              let stored = try? PKDrawing(data: bytes), stored == drawing, scene.strokes == CanvasScene.nativeInkStrokes(drawing) else { throw Failure.stale }
++        let strokes = drawing.strokes.filter { selection.contains($0.id) }
++        var paths: [[CGPoint]] = []
++        for stroke in strokes {
++            try validate(stroke)
++            var points: [CGPoint] = []
++            for p in stroke.path.interpolatedPoints(by: .distance(3)) {
++                let q = p.location.applying(stroke.transform)
++                guard q.x.isFinite, q.y.isFinite, abs(q.x) <= 1_000_000, abs(q.y) <= 1_000_000,
++                      points.count < 4096 else { throw Failure.invalid }
++                points.append(q)
++            }
++            guard points.count >= 2 else { throw Failure.invalid }
++            paths.append(points)
++        }
++        let all = paths.flatMap { $0 }
++        let minX = all.map(\.x).min()!, maxX = all.map(\.x).max()!
++        let minY = all.map(\.y).min()!, maxY = all.map(\.y).max()!
++        let w = maxX - minX, h = maxY - minY
++        guard max(w,h) >= 24 else { throw Failure.ambiguous }
++        var points = paths.removeFirst()
++        let gap = max(3, min(w,h) * 0.18)
++        while !paths.isEmpty {
++            var best: (index: Int, reverse: Bool, distance: CGFloat)?
++            for (i, path) in paths.enumerated() {
++                for reverse in [false,true] {
++                    let d = distance(points.last!, reverse ? path.last! : path.first!)
++                    if best == nil || d < best!.distance { best = (i,reverse,d) }
++                }
++            }
++            guard let best, best.distance <= gap else { throw Failure.ambiguous }
++            let path = paths.remove(at: best.index)
++            points.append(contentsOf: best.reverse ? Array(path.reversed()) : path)
++        }
++        let length = zip(points,points.dropFirst()).reduce(CGFloat(0)) { $0 + distance($1.0,$1.1) }
++        let a = points.first!, b = points.last!, chord = distance(a,b)
++        var candidates: [(CanvasNode.Kind,CanvasRect,Double)] = []
++        if strokes.count == 1, chord >= 24, length <= chord * 1.08 {
++            let error = points.map { abs((b.x-a.x)*($0.y-a.y) - (b.y-a.y)*($0.x-a.x)) / chord }.max()!
++            if error <= max(1.5,chord * 0.025) {
++                candidates.append((.line,.init(x:Double((a.x+b.x-chord)/2),y:Double((a.y+b.y)/2-1),
++                    width:Double(chord),height:2), Double(atan2(b.y-a.y,b.x-a.x) * 180 / .pi)))
++            }
++        }
++        if w >= 24, h >= 24, chord <= gap, length >= 2*(w+h)*0.78, length <= 2*(w+h)*1.15 {
++            let edgeError = points.map { min(abs($0.x-minX),abs($0.x-maxX),abs($0.y-minY),abs($0.y-maxY)) }.max()!
++            let corners = [CGPoint(x:minX,y:minY),CGPoint(x:maxX,y:minY),CGPoint(x:maxX,y:maxY),CGPoint(x:minX,y:maxY)]
++            let visits = corners.allSatisfy { corner in points.contains { distance($0,corner) <= min(w,h)*0.14 } }
++            if edgeError <= min(w,h)*0.075, visits {
++                candidates.append((.box,.init(x:Double(minX),y:Double(minY),width:Double(w),height:Double(h)),0))
++            }
++        }
++        if strokes.count == 1, w >= 24, h >= 24, chord <= gap, max(w/h,h/w) <= 8 {
++            let normalized = points.map { CGPoint(x:($0.x-(minX+maxX)/2)/(w/2),y:($0.y-(minY+maxY)/2)/(h/2)) }
++            let radial = normalized.map { abs(hypot($0.x,$0.y)-1) }.max()!
++            let angles = normalized.map { atan2($0.y,$0.x) }
++            let deltas = zip(angles,angles.dropFirst()).map { pair -> CGFloat in
++                var delta = pair.1-pair.0
++                if delta > .pi { delta -= 2 * .pi }
++                if delta < -.pi { delta += 2 * .pi }
++                return delta
++            }
++            let travel = deltas.reduce(0) { $0 + abs($1) }, turn = abs(deltas.reduce(0,+))
++            if radial <= 0.10, turn >= 5.7, turn <= 6.6, travel <= 6.8 {
++                candidates.append((.ellipse,.init(x:Double(minX),y:Double(minY),width:Double(w),height:Double(h)),0))
++            }
++        }
++        guard candidates.count == 1, let candidate = candidates.first else { throw Failure.ambiguous }
++        return Self(source:scene,selection:selection,original:PKDrawing(strokes:strokes),node:.init(id:UUID(),kind:candidate.0,frame:candidate.1,
++            text:"",confidence:.proposal,sourceStrokeIds:strokes.map(\.id),rotationDegrees:candidate.2))
++    }
++
++    static func validate(_ stroke: PKStroke) throws {
++        guard stroke.mask == nil else { throw Failure.unsupported }
++        let t = stroke.transform
++        guard [t.a,t.b,t.c,t.d,t.tx,t.ty].allSatisfy(\.isFinite),
++              (t.a * t.d - t.b * t.c).isFinite, abs(t.a * t.d - t.b * t.c) > 0.000001,
++              stroke.path.count >= 2, stroke.path.count <= 4096 else { throw Failure.invalid }
++        for p in stroke.path {
++            guard [p.location.x,p.location.y,p.force,p.timeOffset,p.size.width,p.size.height,
++                   p.opacity,p.azimuth,p.altitude].allSatisfy({ Double($0).isFinite }),
++                  p.force >= 0, p.size.width > 0, p.size.height > 0 else { throw Failure.invalid }
++        }
++    }
++
++    private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x-b.x,a.y-b.y) }
++}
++
++struct CanvasInkShapeOutline: Shape {
++    let kind: CanvasNode.Kind
++    func path(in rect: CGRect) -> Path {
++        var path = Path()
++        switch kind {
++        case .line: path.move(to:CGPoint(x:rect.minX,y:rect.midY)); path.addLine(to:CGPoint(x:rect.maxX,y:rect.midY))
++        case .ellipse: path.addEllipse(in:rect)
++        case .note: path.addRoundedRect(in:rect,cornerSize:CGSize(width:14,height:14))
++        default: path.addRect(rect)
++        }
++        return path
++    }
++}
++
++struct CanvasInkShapePreview: View {
++    let proposal: CanvasInkShapeProposal
++    let current: Bool
++    var blockedReason: String? = nil
++    let confirm: () -> Void
++    let cancel: () -> Void
++
++    var body: some View {
++        VStack(spacing:16) {
++            Text("\(proposal.label) 보정 후보").font(.headline)
++            Text("주황색은 보정 후보입니다. 원본 획을 보존하며 확인을 눌러야 요소가 추가됩니다.")
++            SwiftUI.Canvas { context, size in
++                let frame = proposal.node.frame
++                let bounds = proposal.original.bounds.insetBy(dx:-12,dy:-12)
++                let scale = min(max(1,size.width-32)/max(bounds.width,24),max(1,size.height-32)/max(bounds.height,24))
++                context.translateBy(x:size.width/2,y:size.height/2)
++                context.scaleBy(x:scale,y:scale)
++                context.translateBy(x:-bounds.midX,y:-bounds.midY)
++                #if os(macOS)
++                let image = Image(nsImage:proposal.original.image(from:bounds,scale:min(1,1024/max(bounds.width,bounds.height))))
++                #else
++                let image = Image(uiImage:proposal.original.image(from:bounds,scale:min(1,1024/max(bounds.width,bounds.height))))
++                #endif
++                context.draw(image,in:bounds)
++                context.translateBy(x:frame.center.x,y:frame.center.y)
++                context.rotate(by:.radians(proposal.node.rotationRadians))
++                let outline = CanvasInkShapeOutline(kind:proposal.node.kind).path(in:
++                    CGRect(x:-frame.width/2,y:-frame.height/2,width:frame.width,height:frame.height))
++                context.stroke(outline,with:.color(.orange),lineWidth:3/scale)
++            }.background(Color.black).frame(minHeight:240).accessibilityLabel("원본 획과 \(proposal.label) 후보 비교")
++            if !current { Text(blockedReason ?? "원본이나 선택이 바뀌어 확정할 수 없습니다.").foregroundStyle(.red) }
++            HStack {
++                Button("취소",action:cancel).frame(minWidth:44,minHeight:44)
++                Button("원본을 보존하고 확정",action:confirm).frame(minWidth:44,minHeight:44).disabled(!current)
++                    .accessibilityIdentifier("canvasConfirmInkShape")
++            }
++        }.padding().accessibilityIdentifier("canvasInkShapePreview")
++    }
++}
+diff --git a/iOSClient/CanvasBridge/CanvasInkTextEditing.swift b/iOSClient/CanvasBridge/CanvasInkTextEditing.swift
+new file mode 100644
+index 0000000..9391ee2
+--- /dev/null
++++ b/iOSClient/CanvasBridge/CanvasInkTextEditing.swift
+@@ -0,0 +1,356 @@
++import Foundation
++import PencilKit
++import SwiftUI
++
++@MainActor
++final class CanvasInkTextEditing: ObservableObject {
++    enum Refusal: String, LocalizedError {
++        case invalidRange, unsupported, repeatedCharacter, ambiguousStrokes, maskedTarget, sharedSource, stale, cancelled
++
++        var errorDescription: String? {
++            switch self {
++            case .invalidRange: return "삭제할 한 글자의 전체 범위를 선택하세요. 원본은 유지했습니다."
++            case .unsupported: return "문자와 원본 획의 대응을 확인하지 못했습니다. 원본을 유지하며 명시적인 획 선택이 필요합니다."
++            case .repeatedCharacter: return "같은 글자가 반복되어 검색 획의 문자 위치를 확정할 수 없습니다. 원본은 유지했습니다."
++            case .ambiguousStrokes: return "여러 글자가 획을 공유하거나 검색 결과가 모호합니다. 원본은 유지했습니다."
++            case .maskedTarget: return "부분 지워진 대상 획의 문자 대응은 지원하지 않습니다. 원본 마스크를 유지했습니다."
++            case .sharedSource: return "다른 요소도 이 획을 참조합니다. 함께 바꾸지 않고 원본을 유지했습니다."
++            case .stale: return "장면·선택·문자가 바뀌었습니다. 오래된 삭제를 적용하지 않았습니다."
++            case .cancelled: return "삭제 제안을 취소했습니다. 원본은 유지했습니다."
++            }
++        }
++    }
++
++    struct Snapshot: Codable, Equatable {
++        let sceneID: UUID
++        let revision: Int
++        let sceneSHA256: String
++        let drawingSHA256: String
++        let nodeID: UUID
++        let selectedStrokeIDs: Set<UUID>
++        let text: String
++        let utf16Location: Int
++        let utf16Length: Int
++
++        func matches(scene: CanvasScene, selection: Set<UUID>) -> Bool {
++            guard scene.id == sceneID, scene.revision == revision,
++                  selection == selectedStrokeIDs,
++                  let bytes = Data(base64Encoded: scene.drawingBase64),
++                  CanvasPacket.sha(bytes) == drawingSHA256,
++                  let node = scene.nodes.first(where: { $0.id == nodeID }),
++                  node.text.utf8.elementsEqual(text.utf8),
++                  let encoded = try? CanvasInkTextEditing.encode(scene) else { return false }
++            return CanvasPacket.sha(encoded) == sceneSHA256
++        }
++    }
++
++    struct Evidence {
++        let wholeText: String?
++        let matches: [Set<UUID>]
++        let targetText: String?
++        let remainingText: String?
++        let otherCharacterMatches: [[Set<UUID>]]
++    }
++
++    typealias ReadEvidence = (PKDrawing, Set<UUID>, String, [String]) async -> Evidence
++
++    struct Proposal: Identifiable {
++        let id: UUID
++        let snapshot: Snapshot
++        let removedStrokeIDs: Set<UUID>
++        let removedText: String
++        let remainingText: String
++        let before: CanvasScene
++        let after: CanvasScene
++    }
++
++    struct History {
++        let before: CanvasScene
++        let after: CanvasScene
++        var expected: CanvasScene
++    }
++
++    enum Phase {
++        case idle
++        case reading
++        case ambiguous(Refusal)
++        case preview(Proposal)
++        case applied(History)
++        case undone(History)
++    }
++
++    @Published private(set) var phase: Phase = .idle
++    private var request: UUID?
++
++    var proposal: Proposal? {
++        if case .preview(let proposal) = phase { return proposal }
++        return nil
++    }
++    var canUndo: Bool { if case .applied = phase { return true }; return false }
++    var canRedo: Bool { if case .undone = phase { return true }; return false }
++    var hasPendingWork: Bool {
++        switch phase { case .reading, .preview: return true; default: return false }
++    }
++
++    func invalidatePending() {
++        if hasPendingWork { cancel() }
++    }
++
++    func cancel() {
++        request = nil
++        phase = .idle
++    }
++
++    func propose(scene: CanvasScene, nodeID: UUID, selection: Set<UUID>, range: NSRange,
++                 isCurrent: (Snapshot) -> Bool,
++                 readEvidence: ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
++        let token = UUID()
++        request = token
++        phase = .reading
++        do {
++            guard scene.revision >= 0, scene.revision < Int.max,
++                  let node = scene.nodes.first(where: { $0.id == nodeID }), node.kind == .note,
++                  node.vaultNote == nil, !selection.isEmpty,
++                  Set(node.sourceStrokeIds).count == node.sourceStrokeIds.count,
++                  Set(node.sourceStrokeIds) == selection else { throw Refusal.unsupported }
++            let (glyph, remaining) = try Self.deletingCharacter(in: node.text, range: range)
++            guard node.text.filter({ String($0).utf8.elementsEqual(glyph.utf8) }).count == 1 else {
++                throw Refusal.repeatedCharacter
++            }
++            try scene.validateNativeInkProjection()
++            guard let bytes = Data(base64Encoded: scene.drawingBase64), !bytes.isEmpty else {
++                throw Refusal.unsupported
++            }
++            let drawing = try PKDrawing(data: bytes)
++            let allIDs = Set(drawing.strokes.map(\.id))
++            guard allIDs.count == drawing.strokes.count, selection.isSubset(of: allIDs),
++                  scene.strokes == CanvasScene.nativeInkStrokes(drawing) else { throw Refusal.unsupported }
++            let snapshot = Snapshot(sceneID: scene.id, revision: scene.revision,
++                sceneSHA256: CanvasPacket.sha(try Self.encode(scene)), drawingSHA256: CanvasPacket.sha(bytes),
++                nodeID: nodeID, selectedStrokeIDs: selection, text: node.text,
++                utf16Location: range.location, utf16Length: range.length)
++            let others = Array(Set(remaining.filter { !$0.isWhitespace }.map(String.init))).sorted()
++            let evidence = await readEvidence(drawing, selection, glyph, others)
++            guard request == token else { return }
++            guard !Task.isCancelled else { throw Refusal.cancelled }
++            guard isCurrent(snapshot) else { throw Refusal.stale }
++            let removed = try Self.verify(evidence, snapshot: snapshot, glyph: glyph,
++                remaining: remaining, otherCharacterCount: others.count)
++            guard !drawing.strokes.contains(where: { removed.contains($0.id) && $0.mask != nil }) else {
++                throw Refusal.maskedTarget
++            }
++            guard !scene.nodes.contains(where: {
++                $0.id != nodeID && !removed.isDisjoint(with: $0.sourceStrokeIds)
++            }) else { throw Refusal.sharedSource }
++            let kept = PKDrawing(strokes: drawing.strokes.filter { !removed.contains($0.id) })
++            let afterBytes = kept.dataRepresentation()
++            let authoritative = try PKDrawing(data: afterBytes)
++            var after = scene
++            after.schemaVersion = 2
++            after.drawingBase64 = afterBytes.base64EncodedString()
++            after.strokes = CanvasScene.nativeInkStrokes(authoritative)
++            let index = after.nodes.firstIndex(where: { $0.id == nodeID })!
++            after.nodes[index].text = remaining
++            after.nodes[index].sourceStrokeIds.removeAll(where: removed.contains)
++            after.revision += 1
++            try Self.validate(after)
++            phase = .preview(.init(id: token, snapshot: snapshot, removedStrokeIDs: removed,
++                removedText: glyph, remainingText: remaining, before: scene, after: after))
++            request = nil
++        } catch {
++            guard request == token else { return }
++            request = nil
++            phase = .ambiguous(error as? Refusal ?? .unsupported)
++        }
++    }
++
++    // SearchResult에는 문자 offset이 없다. 단일 검색 획·대상 재인식·잔여 인식을 모두 대조한다.
++    static func nativeEvidence(_ drawing: PKDrawing, _ selection: Set<UUID>, _ glyph: String,
++                               _ otherCharacters: [String]) async -> Evidence {
++        let recognizer = PKStrokeRecognizer()
++        await recognizer.updateDrawing(PKDrawing(strokes: drawing.strokes.filter { selection.contains($0.id) }))
++        let whole = await recognizer.recognizedText(strokeIDs: selection)
++        let matches = await recognizer.search(glyph, fullWordsOnly: false, caseMatchingOnly: true).map(\.strokes)
++        guard matches.count == 1, let ids = matches.first, !ids.isEmpty, ids.isSubset(of: selection) else {
++            return .init(wholeText: whole, matches: matches, targetText: nil,
++                         remainingText: nil, otherCharacterMatches: [])
++        }
++        let target = await recognizer.recognizedText(strokeIDs: ids)
++        let rest = selection.subtracting(ids)
++        let remaining = rest.isEmpty ? "" : await recognizer.recognizedText(strokeIDs: rest)
++        var otherMatches: [[Set<UUID>]] = []
++        for character in otherCharacters {
++            otherMatches.append(await recognizer.search(character, fullWordsOnly: false,
++                                                         caseMatchingOnly: true).map(\.strokes))
++        }
++        return .init(wholeText: whole, matches: matches, targetText: target,
++                     remainingText: remaining, otherCharacterMatches: otherMatches)
++    }
++
++    private static func verify(_ evidence: Evidence, snapshot: Snapshot, glyph: String,
++                               remaining: String, otherCharacterCount: Int) throws -> Set<UUID> {
++        guard evidence.wholeText?.utf8.elementsEqual(snapshot.text.utf8) == true else { throw Refusal.unsupported }
++        guard evidence.matches.count == 1, let removed = evidence.matches.first,
++              !removed.isEmpty, removed.isSubset(of: snapshot.selectedStrokeIDs) else { throw Refusal.ambiguousStrokes }
++        guard evidence.targetText?.utf8.elementsEqual(glyph.utf8) == true,
++              evidence.remainingText?.utf8.elementsEqual(remaining.utf8) == true,
++              evidence.otherCharacterMatches.count == otherCharacterCount else { throw Refusal.ambiguousStrokes }
++        for groups in evidence.otherCharacterMatches {
++            guard !groups.isEmpty, groups.allSatisfy({ !$0.isEmpty && $0.isSubset(of: snapshot.selectedStrokeIDs) &&
++                $0.isDisjoint(with: removed) }) else { throw Refusal.ambiguousStrokes }
++        }
++        return removed
++    }
++
++    private static func deletingCharacter(in text: String, range: NSRange) throws -> (String, String) {
++        guard range.location >= 0, range.length > 0,
++              range.location <= text.utf16.count, range.length <= text.utf16.count - range.location,
++              let swiftRange = Range(range, in: text),
++              text.indices.contains(swiftRange.lowerBound),
++              swiftRange.upperBound == text.endIndex || text.indices.contains(swiftRange.upperBound),
++              text[swiftRange].count == 1, !text[swiftRange].allSatisfy(\.isWhitespace) else {
++            throw Refusal.invalidRange
++        }
++        var remaining = text
++        remaining.removeSubrange(swiftRange)
++        return (String(text[swiftRange]), remaining)
++    }
++
++    @discardableResult
++    func confirm(current: CanvasScene, selection: Set<UUID>, persist: (CanvasScene) throws -> Void) throws -> CanvasScene {
++        guard case .preview(let proposal) = phase,
++              proposal.snapshot.matches(scene: current, selection: selection) else { throw Refusal.stale }
++        try persist(proposal.after)
++        phase = .applied(.init(before: proposal.before, after: proposal.after, expected: proposal.after))
++        return proposal.after
++    }
++
++    @discardableResult
++    func undo(current: CanvasScene, persist: (CanvasScene) throws -> Void) throws -> CanvasScene {
++        guard case .applied(var history) = phase else { throw Refusal.stale }
++        let restored = try Self.restore(history.before, expected: history.expected, current: current, persist: persist)
++        history.expected = restored
++        phase = .undone(history)
++        return restored
++    }
++
++    @discardableResult
++    func redo(current: CanvasScene, persist: (CanvasScene) throws -> Void) throws -> CanvasScene {
++        guard case .undone(var history) = phase else { throw Refusal.stale }
++        let restored = try Self.restore(history.after, expected: history.expected, current: current, persist: persist)
++        history.expected = restored
++        phase = .applied(history)
++        return restored
++    }
++
++    private static func restore(_ target: CanvasScene, expected: CanvasScene, current: CanvasScene,
++                                persist: (CanvasScene) throws -> Void) throws -> CanvasScene {
++        guard current.revision < Int.max, try encode(current) == encode(expected) else { throw Refusal.stale }
++        var next = target
++        next.revision = current.revision + 1
++        try validate(next)
++        try persist(next)
++        return next
++    }
++
++    nonisolated static func encode(_ scene: CanvasScene) throws -> Data {
++        let encoder = JSONEncoder()
++        encoder.outputFormatting = [.sortedKeys]
++        return try encoder.encode(scene)
++    }
++
++    private static func validate(_ scene: CanvasScene) throws {
++        try scene.validateNativeInkProjection()
++        guard try encode(scene).count <= CanvasScene.localByteLimit else { throw Refusal.unsupported }
++    }
++}
++
++struct CanvasInkTextDeletePreview: View {
++    let proposal: CanvasInkTextEditing.Proposal
++    let confirm: () -> Void
++    let cancel: () -> Void
++
++    var body: some View {
++        ScrollView {
++            VStack(alignment: .leading, spacing: 16) {
++                Text("한 글자 삭제 미리보기").font(.headline)
++                Text("삭제할 글자: \(proposal.removedText)")
++                Text("변경 전: \(proposal.snapshot.text)")
++                Text("변경 후: \(proposal.remainingText)")
++                Text("대응이 확인된 획 \(proposal.removedStrokeIDs.count)개를 삭제합니다. 나머지 획은 보존합니다.")
++                drawing(proposal.before, label: "변경 전 잉크")
++                drawing(proposal.after, label: "변경 후 잉크")
++                HStack {
++                    Button("취소", action: cancel).accessibilityIdentifier("canvasInkTextDeleteCancel")
++                    Spacer()
++                    Button("확인한 글자와 획 삭제", action: confirm).accessibilityIdentifier("canvasInkTextDeleteConfirm")
++                }.buttonStyle(.bordered).frame(minHeight: 44)
++            }.padding()
++        }
++    }
++
++    @ViewBuilder private func drawing(_ scene: CanvasScene, label: String) -> some View {
++        if let data = Data(base64Encoded: scene.drawingBase64), let drawing = try? PKDrawing(data: data) {
++            let original = (try? PKDrawing(data: Data(base64Encoded: proposal.before.drawingBase64) ?? Data()))
++            let bounds = (original?.bounds ?? drawing.bounds).insetBy(dx: -12, dy: -12)
++            if !bounds.isEmpty, !bounds.isNull, bounds.width.isFinite, bounds.height.isFinite {
++                #if os(macOS)
++                Image(nsImage: drawing.image(from: bounds, scale: min(1, 1024 / max(bounds.width, bounds.height)))).resizable().scaledToFit()
++                    .frame(maxHeight: 180).accessibilityLabel(label)
++                #else
++                Image(uiImage: drawing.image(from: bounds, scale: min(1, 1024 / max(bounds.width, bounds.height)))).resizable().scaledToFit()
++                    .frame(maxHeight: 180).accessibilityLabel(label)
++                #endif
++            }
++        }
++    }
++}
++
++struct CanvasInkTextDeleteSheet: View {
++    @ObservedObject var editing: CanvasInkTextEditing
++    let text: String
++    let propose: (NSRange) -> Void
++    let confirm: () -> Void
++    let cancel: () -> Void
++    @State private var selectedLocation: Int?
++
++    private var characters: [(order: Int, location: Int, length: Int, text: String)] {
++        text.indices.enumerated().map { order, index in
++            let end = text.index(after: index)
++            let range = NSRange(index..<end, in: text)
++            return (order, range.location, range.length, String(text[index..<end]))
++        }
++    }
++
++    var body: some View {
++        if let proposal = editing.proposal {
++            CanvasInkTextDeletePreview(proposal: proposal, confirm: confirm, cancel: cancel)
++        } else {
++            VStack(alignment: .leading, spacing: 16) {
++                Text("선택한 원본 획의 한 글자 삭제").font(.headline)
++                Text("인식된 문장에서 삭제할 글자 하나를 선택하세요. 대응이 모호하면 원본을 바꾸지 않습니다.")
++                Picker("삭제할 글자", selection: $selectedLocation) {
++                    Text("글자 선택").tag(Int?.none)
++                    ForEach(characters, id: \.location) { item in
++                        Text("\(item.order + 1)번째 글자 · \(item.text)").tag(Optional(item.location))
++                    }
++                }.accessibilityIdentifier("canvasInkTextDeleteCharacter")
++                    .disabled(editing.hasPendingWork)
++                switch editing.phase {
++                case .reading: ProgressView("원본 획과 글자를 대조하고 있습니다.")
++                case .ambiguous(let reason): Text(reason.localizedDescription).accessibilityIdentifier("canvasInkTextDeleteRefusal")
++                default: EmptyView()
++                }
++                HStack {
++                    Button("닫기", action: cancel)
++                    Spacer()
++                    Button("삭제 미리보기") {
++                        guard let item = characters.first(where: { $0.location == selectedLocation }) else { return }
++                        propose(NSRange(location: item.location, length: item.length))
++                    }.disabled(selectedLocation == nil || editing.hasPendingWork)
++                        .accessibilityIdentifier("canvasInkTextDeletePropose")
++                }.buttonStyle(.bordered).frame(minHeight: 44)
++            }.padding()
++        }
++    }
++}
+diff --git a/iOSClient/CanvasBridge/CanvasModel.swift b/iOSClient/CanvasBridge/CanvasModel.swift
+index 28ca010..7827dc7 100644
+--- a/iOSClient/CanvasBridge/CanvasModel.swift
++++ b/iOSClient/CanvasBridge/CanvasModel.swift
+@@ -1079,7 +1079,7 @@ struct VaultNoteRecoveryFile: Codable {
+ }
+ 
+ struct CanvasNode: Codable, Identifiable, Equatable {
+-    enum Kind: String, Codable { case note, box }
++    enum Kind: String, Codable { case note, box, ellipse, line }
+     enum Confidence: String, Codable { case confirmed, proposal }
+ 
+     var id: UUID
+@@ -1300,6 +1300,13 @@ struct CanvasLinkEdit: Codable {
+     var replacement: CanvasLink
+ }
+ 
++enum CanvasSceneWireError: LocalizedError {
++    case shapeContractPending
++    var errorDescription: String? {
++        "shape_wire_contract_pending · 선·타원은 구형 68 및 현재 Obsidian/Pele 계약과 호환되지 않아 저장·동기화하지 않습니다. 원본 획을 유지합니다."
++    }
++}
++
+ struct CanvasScene: Codable, Equatable {
+     static let localByteLimit = 4 * 1024 * 1024
+     var schemaVersion = 1
+@@ -1313,6 +1320,10 @@ struct CanvasScene: Codable, Equatable {
+     var links: [CanvasLink] = []
+     var annotations: [CanvasAnnotation] = []
+     var penSettings: CanvasPenSettings? = nil
++    var hasLegacyCompatibleNodeKinds: Bool { nodes.allSatisfy { $0.kind == .note || $0.kind == .box } }
++    func requireCompatibleNodeKinds() throws {
++        guard hasLegacyCompatibleNodeKinds else { throw CanvasSceneWireError.shapeContractPending }
++    }
+     var effectivePenSettings: CanvasPenSettings { penSettings ?? .default }
+     var hasSupportedInkProjection: Bool {
+         (schemaVersion == 1 || schemaVersion == 2) && effectivePenSettings.isValid &&
+@@ -1663,6 +1674,7 @@ extension CanvasScene {
+         links = try values.decode([CanvasLink].self, forKey: .links)
+         annotations = try values.decode([CanvasAnnotation].self, forKey: .annotations)
+         penSettings = try values.decodeIfPresent(CanvasPenSettings.self, forKey: .penSettings)
++        try requireCompatibleNodeKinds()
+         guard hasSupportedInkProjection else { throw CanvasPenSettingsError.unsupportedInkProjection }
+     }
+ }
+@@ -1800,6 +1812,7 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
+     }
+ 
+     init(scene: CanvasScene) throws {
++        try scene.requireCompatibleNodeKinds()
+         guard scene.nodes.count <= 512, scene.links.count <= 1024 else { throw Failure.limit }
+         let ids = Set(scene.nodes.map(\.id))
+         guard ids.count == scene.nodes.count, Set(scene.links.map(\.id)).count == scene.links.count,
+@@ -2182,6 +2195,7 @@ final class CanvasFileWorkspace {
+     }
+     @discardableResult
+     func save(_ scene: CanvasScene, preview: Data, expected: String?) throws -> Snapshot {
++        try scene.requireCompatibleNodeKinds()
+         let sceneBytes = try Self.bytes(scene)
+         guard sceneBytes.count <= CanvasScene.localByteLimit,
+               let drawing = Data(base64Encoded:scene.drawingBase64),
+diff --git a/iOSClient/CanvasBridge/CanvasRelay.swift b/iOSClient/CanvasBridge/CanvasRelay.swift
+index 0f5c215..c8298db 100644
+--- a/iOSClient/CanvasBridge/CanvasRelay.swift
++++ b/iOSClient/CanvasBridge/CanvasRelay.swift
+@@ -213,6 +213,7 @@ struct CanvasRelay {
+ 
+     func saveVaultCanvas(scene: CanvasScene, imagePNG: Data,
+                          baseSha256: String?) async throws -> VaultCanvasSaved {
++        try scene.requireCompatibleNodeKinds()
+         let encoder = JSONEncoder()
+         encoder.outputFormatting = [.sortedKeys]
+         let sceneBytes = try encoder.encode(scene)
+diff --git a/iOSClient/CanvasBridge/CanvasStore.swift b/iOSClient/CanvasBridge/CanvasStore.swift
+index 1e0ca39..076f0d6 100644
+--- a/iOSClient/CanvasBridge/CanvasStore.swift
++++ b/iOSClient/CanvasBridge/CanvasStore.swift
+@@ -119,6 +119,7 @@ final class CanvasInkHistory: ObservableObject {
+ final class CanvasStore: ObservableObject {
+     @Published var scene = CanvasScene() {
+         didSet {
++            pendingInkTextEditing?.invalidatePending()
+             linkSceneGeneration &+= 1
+             nodeResizeDrag = nil
+             nodeRotationDrag = nil
+@@ -141,6 +142,8 @@ final class CanvasStore: ObservableObject {
+     @Published var mode: CanvasMode = .pen {
+         didSet {
+             if oldValue != mode {
++                cancelInkShape()
++                pendingInkTextEditing?.invalidatePending()
+                 nodeResizeDrag = nil
+                 nodeRotationDrag = nil
+                 clearPendingLink()
+@@ -156,7 +159,11 @@ final class CanvasStore: ObservableObject {
+     var inkBusy: Bool { pencilTraceActive || inkHistory.usingTool }
+     func setPencilTraceActive(_ active: Bool, owner: UUID) {
+         if active {
+-            if pencilTraceOwner == nil || pencilTraceOwner == owner { pencilTraceOwner = owner }
++            if pencilTraceOwner == nil || pencilTraceOwner == owner {
++                pendingInkTextEditing?.invalidatePending()
++                cancelInkShape()
++                pencilTraceOwner = owner
++            }
+         } else if pencilTraceOwner == owner { pencilTraceOwner = nil }
+     }
+ 
+@@ -199,6 +206,59 @@ final class CanvasStore: ObservableObject {
+     func rulerIsActive(isVisible: Bool) -> Bool {
+         rulerEnabled && mode == .pen && isVisible
+     }
++    @Published private(set) var inkShapeProposal: CanvasInkShapeProposal?
++    private var inkShapeGeneration: UInt64?
++    private var inkShapeSelectionGeneration: UInt64 = 0
++    private var inkShapeExpectedSelectionGeneration: UInt64?
++
++    var inkShapeIsCurrent: Bool {
++        guard let proposal = inkShapeProposal else { return false }
++        return sceneReadable && inkShapeCompatibilityMessage == nil && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
++            !vaultLoading && !vaultInputBusy && !vaultBlockEditing && mode == .lasso && proposal.source == scene &&
++            proposal.selection == inkSelection && inkShapeGeneration == linkSceneGeneration &&
++            inkShapeExpectedSelectionGeneration == inkShapeSelectionGeneration
++    }
++
++    var inkShapeCompatibilityMessage: String? {
++        guard let kind = inkShapeProposal?.node.kind, kind == .line || kind == .ellipse else { return nil }
++        return CanvasSceneWireError.shapeContractPending.localizedDescription
++    }
++
++    func proposeInkShape() {
++        cancelInkShape()
++        pendingInkTextEditing?.invalidatePending()
++        guard sceneReadable, !fileSaveBusy, fileWorkspaceState != .blocked, !vaultDirty, !vaultSaving,
++              !vaultLoading, !vaultInputBusy, !vaultBlockEditing, !inkBusy, mode == .lasso else { status = "영역 선택 도구로 도형을 먼저 선택하세요."; return }
++        do {
++            inkShapeProposal = try CanvasInkShapeProposal.make(scene:scene,drawing:drawing,selection:inkSelection)
++            inkShapeGeneration = linkSceneGeneration
++            inkShapeExpectedSelectionGeneration = inkShapeSelectionGeneration
++            status = inkShapeCompatibilityMessage ?? "도형 후보를 원본과 비교한 뒤 확정하세요."
++        } catch { status = error.localizedDescription }
++    }
++
++    func cancelInkShape() { inkShapeProposal = nil; inkShapeGeneration = nil; inkShapeExpectedSelectionGeneration = nil }
++
++    @discardableResult
++    func confirmInkShape() -> Bool {
++        if let message = inkShapeCompatibilityMessage { status = message; return false }
++        guard inkShapeIsCurrent, let proposal = inkShapeProposal else {
++            status = "원본이나 선택이 바뀌어 확정하지 않았습니다."
++            cancelInkShape()
++            return false
++        }
++        do {
++            let before = scene
++            let next = try proposal.confirmed(in:scene,selection:inkSelection)
++            try persistScene(next)
++            scene = next
++            recordGraphEdit(before:before)
++            cancelInkShape()
++            status = "도형을 복구본에 확정하고 원본 획을 보존했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
++            return true
++        } catch { status = error.localizedDescription; return false }
++    }
++
+     @Published private(set) var inkSelection: Set<UUID> = []
+     static let eraserStyleKey = "canvasEraserStyle"
+     static let eraserSizeKey = "canvasPartialEraserWidth"
+@@ -243,7 +303,7 @@ final class CanvasStore: ObservableObject {
+     private var workspaceToken: String?
+     private var fileSaveBusy = false
+     var fileWorkspaceCanSync: Bool {
+-        guard fileWorkspaceState != .blocked else { return false }
++        guard scene.hasLegacyCompatibleNodeKinds, fileWorkspaceState != .blocked else { return false }
+         return (workspaceBinding == nil && fileWorkspace == nil) || fileWorkspaceState == .ready
+     }
+ 
+@@ -907,6 +967,7 @@ final class CanvasStore: ObservableObject {
+     var drawing: PKDrawing {
+         get { storedDrawing }
+         set {
++            pendingInkTextEditing?.invalidatePending()
+             objectWillChange.send()
+             storedDrawing = newValue
+             setInkSelection([])
+@@ -2091,6 +2152,7 @@ final class CanvasStore: ObservableObject {
+         guard sceneReadable else { throw ScenePersistenceError.unreadable }
+         guard let url = Self.sceneURL() else { throw ScenePersistenceError.unreadable }
+         let candidate = candidate ?? scene
++        try candidate.requireCompatibleNodeKinds()
+         try candidate.validateNativeInkProjection()
+         let data = try JSONEncoder().encode(candidate)
+         guard data.count <= Self.sceneByteLimit else { throw ScenePersistenceError.tooLarge }
+@@ -2232,6 +2294,8 @@ final class CanvasStore: ObservableObject {
+     func setInkSelection(_ ids: Set<UUID>) {
+         let next = ids.intersection(drawing.strokes.map(\.id))
+         guard next != inkSelection else { return }
++        pendingInkTextEditing?.invalidatePending()
++        inkShapeSelectionGeneration &+= 1
+         inkSelection = next
+         handwritingRequest = nil
+     }
+@@ -2265,6 +2329,70 @@ final class CanvasStore: ObservableObject {
+         status = "글자 후보입니다. 수정한 뒤 확인하면 구조 데이터에 확정됩니다."
+     }
+ 
++
++    private weak var pendingInkTextEditing: CanvasInkTextEditing?
++
++    var inkTextDeletionTarget: CanvasNode? {
++        guard !inkSelection.isEmpty else { return nil }
++        let candidates = scene.nodes.filter {
++            $0.kind == .note && $0.vaultNote == nil && Set($0.sourceStrokeIds) == inkSelection
++        }
++        return candidates.count == 1 ? candidates[0] : nil
++    }
++
++    private var inkTextEditAllowed: Bool {
++        sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
++            !fileSaveBusy && fileWorkspaceState != .blocked
++    }
++
++    func proposeInkTextDeletion(range: NSRange, editing: CanvasInkTextEditing,
++                               readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
++        pendingInkTextEditing?.invalidatePending()
++        pendingInkTextEditing = editing
++        cancelInkShape()
++        guard inkTextEditAllowed, let node = inkTextDeletionTarget else {
++            editing.cancel()
++            status = "인식된 문장에 대응하는 원본 획만 선택하세요. 편집 중인 입력은 먼저 마쳐 주세요."
++            return
++        }
++        await editing.propose(scene: scene, nodeID: node.id, selection: inkSelection, range: range,
++            isCurrent: { [weak self] snapshot in
++                guard let self else { return false }
++                return self.inkTextEditAllowed && snapshot.matches(scene: self.scene, selection: self.inkSelection)
++            }, readEvidence: readEvidence)
++    }
++
++    @discardableResult
++    func confirmInkTextDeletion(_ editing: CanvasInkTextEditing) -> Bool {
++        guard inkTextEditAllowed else { status = "다른 입력이 진행 중이어서 원본을 유지했습니다."; return false }
++        do {
++            let next = try editing.confirm(current: scene, selection: inkSelection, persist: { try self.persistScene($0) })
++            installInkTextScene(next)
++            status = "한 글자와 대응 획을 기기 복구본에 반영했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
++            return true
++        } catch { status = "글자 삭제를 저장하지 않았습니다. \(error.localizedDescription)"; return false }
++    }
++
++    @discardableResult
++    func undoInkTextDeletion(_ editing: CanvasInkTextEditing, redo: Bool = false) -> Bool {
++        guard inkTextEditAllowed else { status = "다른 입력이 진행 중이어서 원본을 유지했습니다."; return false }
++        do {
++            let next = try redo ? editing.redo(current: scene, persist: { try self.persistScene($0) }) :
++                editing.undo(current: scene, persist: { try self.persistScene($0) })
++            installInkTextScene(next)
++            status = redo ? "한 글자 삭제를 복구본에 다시 반영했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다." : "원래 글자와 원본 획을 복구본에 복원했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
++            return true
++        } catch { status = "장면을 덮어쓰지 않았습니다. \(error.localizedDescription)"; return false }
++    }
++
++    private func installInkTextScene(_ next: CanvasScene) {
++        // 확정 전에 네이티브 원본과 투영을 검증하고 저장했으므로 같은 바이트만 설치한다.
++        guard let bytes = Data(base64Encoded: next.drawingBase64), let restored = try? PKDrawing(data: bytes) else { return }
++        scene = next
++        drawing = restored
++        packet = nil
++    }
++
+     func searchHandwriting(_ query: String, search: (PKDrawing, String) async -> [Set<UUID>] = { drawing, query in
+         let recognizer = PKStrokeRecognizer()
+         await recognizer.updateDrawing(drawing)
+diff --git a/iOSClient/CanvasBridge/CanvasWorkspace.swift b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+index 7264a21..df5ea3f 100644
+--- a/iOSClient/CanvasBridge/CanvasWorkspace.swift
++++ b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+@@ -14,6 +14,8 @@ struct CanvasWorkspace: View {
+     @Environment(\.scenePhase) private var scenePhase
+     @StateObject private var store = CanvasStore()
+     @StateObject private var dictation = CanvasDictation()
++    @StateObject private var inkTextEditing = CanvasInkTextEditing()
++    @State private var inkTextDeleteOpen = false
+     @State private var relayAddress = "http://192.168.45.4:8791"
+     @State private var relayToken = ""
+     @State private var connectionOpen = false
+@@ -139,7 +141,12 @@ struct CanvasWorkspace: View {
+         }
+         .background(Color.black)
+         .preferredColorScheme(.dark)
+-        .onDisappear { dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
++        .sheet(item:Binding(get:{ store.inkShapeProposal },set:{ if $0 == nil { store.cancelInkShape() } })) { proposal in
++            CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
++                blockedReason:store.inkShapeCompatibilityMessage,
++                confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
++        }
++        .onDisappear { store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+         .onChange(of:scenePhase) { _,phase in
+             if phase != .active {
+                 store.cancelLink()
+@@ -149,6 +156,24 @@ struct CanvasWorkspace: View {
+             }
+             else { store.refreshFileWorkspace(); Task { await checkConnection() } }
+         }
++        .onChange(of:store.scene) { _,_ in inkTextEditing.invalidatePending() }
++        .onChange(of:store.inkSelection) { _,_ in inkTextEditing.invalidatePending() }
++        .sheet(isPresented:$inkTextDeleteOpen, onDismiss: { inkTextEditing.invalidatePending() }) {
++            if let target = store.inkTextDeletionTarget {
++                VStack {
++                    CanvasInkTextDeleteSheet(editing: inkTextEditing, text: target.text,
++                        propose: { range in Task { await store.proposeInkTextDeletion(range: range, editing: inkTextEditing) } },
++                        confirm: { if store.confirmInkTextDeletion(inkTextEditing) { inkTextDeleteOpen = false } },
++                        cancel: { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false })
++                    Text(store.status).font(.footnote).padding()
++                }
++            } else {
++                VStack {
++                    Text("원본 획 선택이 바뀌었습니다. 인식된 문장의 획만 다시 선택하세요.")
++                    Button("닫기") { inkTextEditing.invalidatePending(); inkTextDeleteOpen = false }
++                }.padding()
++            }
++        }
+         .onChange(of:relayAddress) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+         .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
+         .onChange(of:relayToken) { _,_ in store.setNoteConnection(address:relayAddress,token:relayToken) }
+@@ -382,12 +407,24 @@ struct CanvasWorkspace: View {
+             .accessibilityValue(store.eraserStyle == .partial ? store.eraserSize.label : "획 전체 지우기에서는 적용되지 않음")
+             .accessibilityHint("CCR에서 정한 캔버스 포인트 단위이며 확대 비율에 따라 표시 크기가 달라집니다.")
+             .accessibilityIdentifier("canvasPartialEraserSize")
++            Button("선택한 획 도형 보정",systemImage:"wand.and.stars") { store.proposeInkShape() }
++                .disabled(store.inkSelection.isEmpty || store.inkBusy || store.mode != .lasso)
++                .accessibilityIdentifier("canvasProposeInkShape")
+             Button("상자") { store.addNode(.box) }
+             Button("메모") { store.addNode(.note) }
+             Button("손글씨 찾기",systemImage:"magnifyingglass") { handwritingSearchOpen = true }
+             Button("글자 인식") { Task { await store.proposeHandwriting() } }
+             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
+                 .disabled(store.inkSelection.isEmpty)
++            Button("선택한 원본 획의 한 글자 삭제") { inkTextDeleteOpen = true }
++                .disabled(store.inkTextDeletionTarget == nil)
++                .accessibilityIdentifier("canvasInkTextDeleteOpen")
++            Button("글자 삭제 되돌리기") { store.undoInkTextDeletion(inkTextEditing) }
++                .disabled(!inkTextEditing.canUndo)
++                .accessibilityIdentifier("canvasInkTextDeleteUndo")
++            Button("글자 삭제 다시 실행") { store.undoInkTextDeletion(inkTextEditing, redo: true) }
++                .disabled(!inkTextEditing.canRedo)
++                .accessibilityIdentifier("canvasInkTextDeleteRedo")
+             Button("음성 설명",systemImage:"mic") { dictationOpen = true }
+             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
+             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
+@@ -1048,7 +1085,7 @@ struct CanvasWorkspace: View {
+             Divider()
+             if let id = store.selectedNode,
+                let node = store.scene.nodes.first(where:{$0.id == id}) {
+-                Text(node.kind == .box ? "선택한 상자" : "선택한 메모")
++                Text(node.kind == .box ? "선택한 상자" : node.kind == .ellipse ? "선택한 타원" : node.kind == .line ? "선택한 직선" : "선택한 메모")
+                 Text(node.confidence == .proposal ? "확인 전 제안" : "확정된 요소")
+                     .foregroundStyle(node.confidence == .proposal ? .orange : .green)
+                 TextField("내용",text:Binding(get:{node.text},set:{ _ in }))
+@@ -2181,7 +2218,7 @@ private struct NodeTile: View {
+ 
+     var body: some View {
+         VStack(spacing:4) {
+-            Text(node.text.isEmpty ? "내용 입력" : node.text).font(.title3)
++            Text(node.text.isEmpty ? (node.kind == .note ? "내용 입력" : "") : node.text).font(.title3)
+                 .lineLimit(node.vaultNote == nil ? nil : 3)
+             if let reference = node.vaultNote {
+                 Text(reference.blockID.map { "^\($0)" } ?? reference.path).font(.caption).lineLimit(1)
+@@ -2190,13 +2227,14 @@ private struct NodeTile: View {
+         }
+             .frame(width:node.frame.width,height:node.frame.height)
+             .foregroundStyle(Color(uiColor:CanvasPalette.nodeText))
+-            .background(Color(uiColor:CanvasPalette.nodeFill),
++            .background(node.kind == .note ? Color(uiColor:CanvasPalette.nodeFill) : .clear,
+                         in:RoundedRectangle(cornerRadius:14))
+-            .overlay(RoundedRectangle(cornerRadius:14)
++            .overlay(CanvasInkShapeOutline(kind:node.kind)
+                 .stroke(node.confidence == .proposal ? .orange :
+                     store.selectedNode == node.id ? Color(uiColor:CanvasPalette.link) : .gray,
+                     lineWidth:3))
+             .rotationEffect(.radians(node.rotationRadians))
++            .contentShape(.interaction, Rectangle().inset(by:node.kind == .line ? -21 : 0))
+             .onTapGesture { store.select(node.id) }
+             .accessibilityElement(children:.combine)
+             .accessibilityIdentifier("canvasNode-\(node.id.uuidString)")
+diff --git a/iOSClient/CanvasBridge/SceneRenderer.swift b/iOSClient/CanvasBridge/SceneRenderer.swift
+index 05fcb15..0d5e1fe 100644
+--- a/iOSClient/CanvasBridge/SceneRenderer.swift
++++ b/iOSClient/CanvasBridge/SceneRenderer.swift
+@@ -85,10 +85,17 @@ enum SceneRenderer {
+                 cg.rotate(by:node.rotationRadians)
+                 cg.translateBy(x:-node.frame.center.x,y:-node.frame.center.y)
+                 CanvasPalette.nodeFill.setFill()
+-                UIBezierPath(roundedRect: frame, cornerRadius: 14).fill()
++                if node.kind == .note { UIBezierPath(roundedRect: frame, cornerRadius: 14).fill() }
+                 let color = node.confidence == .proposal ? UIColor.systemOrange : CanvasPalette.link
+                 color.setStroke()
+-                let outline = UIBezierPath(roundedRect: frame, cornerRadius: 14)
++                let outline: UIBezierPath
++                if node.kind == .ellipse { outline = UIBezierPath(ovalIn:frame) }
++                else if node.kind == .line {
++                    outline = UIBezierPath()
++                    outline.move(to:CGPoint(x:frame.minX,y:frame.midY))
++                    outline.addLine(to:CGPoint(x:frame.maxX,y:frame.midY))
++                } else if node.kind == .note { outline = UIBezierPath(roundedRect:frame,cornerRadius:14) }
++                else { outline = UIBezierPath(rect:frame) }
+                 outline.lineWidth = 3
+                 outline.stroke()
+                 let attributes: [NSAttributedString.Key: Any] = [
+diff --git a/iOSClient/Sill.xcodeproj/project.pbxproj b/iOSClient/Sill.xcodeproj/project.pbxproj
+index a57eb28..0736d22 100644
+--- a/iOSClient/Sill.xcodeproj/project.pbxproj
++++ b/iOSClient/Sill.xcodeproj/project.pbxproj
+@@ -7,6 +7,8 @@
+ 	objects = {
+ 
+ /* Begin PBXBuildFile section */
++		8C932E21227A4CE7F8136712 /* CanvasInkTextEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */; };
++		8C932E21227A4CE7F8136713 /* CanvasInkTextEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */; };
+ 		D7250001000000000000B006 /* StreamClient+SentryReturn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F006 /* StreamClient+SentryReturn.swift */; };
+ 		D7250001000000000000A006 /* StreamClient+SentryReturn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F006 /* StreamClient+SentryReturn.swift */; };
+ 		D7250001000000000000B005 /* IPadSentryReturnKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F005 /* IPadSentryReturnKeys.swift */; };
+@@ -89,6 +91,7 @@
+ 		A1000001000000000000AB01 /* DuoPosture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB01 /* DuoPosture.swift */; };
+ 		A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
+ 		B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000F001 /* PencilTextCorrection.swift */; };
++		5A9E20261029000000000000 /* CanvasInkShapeProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A9E20261029000000000001 /* CanvasInkShapeProposal.swift */; };
+ 		B2000001000000000000A001 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
+ 		B2000001000000000000A002 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
+ 		B2000001000000000000A003 /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
+@@ -172,6 +175,7 @@
+ 		0364640D40BCD2A5A34F4C92 /* DuoPosture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB01 /* DuoPosture.swift */; };
+ 		2375D34FA9899ACF736E899A /* DuoPostureReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001000000000000FB02 /* DuoPostureReader.swift */; };
+ 		D24052ABBDDD29A6A5DE4F8B /* PencilTextCorrection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000021000000000000F001 /* PencilTextCorrection.swift */; };
++		5A9E20261029000000000002 /* CanvasInkShapeProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A9E20261029000000000001 /* CanvasInkShapeProposal.swift */; };
+ 		8120D38B28D3FA07C94A2C79 /* CanvasModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F001 /* CanvasModel.swift */; };
+ 		7BAF96FF18E05E678BDAAD15 /* CanvasRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F002 /* CanvasRelay.swift */; };
+ 		F171544FC7BFE8A0CB69160D /* CanvasStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000001000000000000F003 /* CanvasStore.swift */; };
+@@ -218,6 +222,7 @@
+ /* End PBXBuildFile section */
+ 
+ /* Begin PBXFileReference section */
++		8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasInkTextEditing.swift; sourceTree = "<group>"; };
+ 		D7250001000000000000F006 /* StreamClient+SentryReturn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+SentryReturn.swift"; sourceTree = "<group>"; };
+ 		D7250001000000000000F005 /* IPadSentryReturnKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadSentryReturnKeys.swift"; sourceTree = "<group>"; };
+ 		D7250001000000000000F004 /* IPadSentryReturn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadSentryReturn.swift"; sourceTree = "<group>"; };
+@@ -294,6 +299,7 @@
+ 		A1000001000000000000FB01 /* DuoPosture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPosture.swift; sourceTree = "<group>"; };
+ 		A1000001000000000000FB02 /* DuoPostureReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoPostureReader.swift; sourceTree = "<group>"; };
+ 		B2000021000000000000F001 /* PencilTextCorrection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PencilTextCorrection.swift; sourceTree = "<group>"; };
++		5A9E20261029000000000001 /* CanvasInkShapeProposal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasInkShapeProposal.swift; sourceTree = "<group>"; };
+ 		B2000001000000000000F001 /* CanvasModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasModel.swift; sourceTree = "<group>"; };
+ 		B2000001000000000000F002 /* CanvasRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasRelay.swift; sourceTree = "<group>"; };
+ 		B2000001000000000000F003 /* CanvasStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasStore.swift; sourceTree = "<group>"; };
+@@ -453,10 +459,12 @@
+ 			children = (
+ 				B2000001000000000000F001 /* CanvasModel.swift */,
+ 				B2000021000000000000F001 /* PencilTextCorrection.swift */,
++				5A9E20261029000000000001 /* CanvasInkShapeProposal.swift */,
+ 				B2000001000000000000F013 /* CanvasPeleView.swift */,
+ 				B2000001000000000000F014 /* Pele */,
+ 				B2000001000000000000F002 /* CanvasRelay.swift */,
+ 				B2000001000000000000F003 /* CanvasStore.swift */,
++				8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */,
+ 				B2000001000000000000F004 /* CanvasWorkspace.swift */,
+ 				B2000001000000000000F00A /* CanvasDictation.swift */,
+ 				B2000001000000000000F005 /* ControlRoomProjection.swift */,
+@@ -686,9 +694,11 @@
+ 				A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */,
+ 				B2000001000000000000A001 /* CanvasModel.swift in Sources */,
+ 				B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */,
++				5A9E20261029000000000000 /* CanvasInkShapeProposal.swift in Sources */,
+ 				B2000001000000000000A013 /* CanvasPeleView.swift in Sources */,
+ 				B2000001000000000000A002 /* CanvasRelay.swift in Sources */,
+ 				B2000001000000000000A003 /* CanvasStore.swift in Sources */,
++				8C932E21227A4CE7F8136712 /* CanvasInkTextEditing.swift in Sources */,
+ 				B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */,
+ 				B2000001000000000000A00A /* CanvasDictation.swift in Sources */,
+ 				B2000001000000000000A005 /* ControlRoomProjection.swift in Sources */,
+@@ -793,9 +803,11 @@
+ 				2375D34FA9899ACF736E899A /* DuoPostureReader.swift in Sources */,
+ 				8120D38B28D3FA07C94A2C79 /* CanvasModel.swift in Sources */,
+ 				D24052ABBDDD29A6A5DE4F8B /* PencilTextCorrection.swift in Sources */,
++				5A9E20261029000000000002 /* CanvasInkShapeProposal.swift in Sources */,
+ 				BC19A867F7B274D2FE4D33B8 /* CanvasPeleView.swift in Sources */,
+ 				7BAF96FF18E05E678BDAAD15 /* CanvasRelay.swift in Sources */,
+ 				F171544FC7BFE8A0CB69160D /* CanvasStore.swift in Sources */,
++				8C932E21227A4CE7F8136713 /* CanvasInkTextEditing.swift in Sources */,
+ 				BC459CE1617471593F9E4735 /* CanvasWorkspace.swift in Sources */,
+ 				E3753868372CBB71F5A7A409 /* CanvasDictation.swift in Sources */,
+ 				3C938CEDA7C004CB4E2143F5 /* ControlRoomProjection.swift in Sources */,

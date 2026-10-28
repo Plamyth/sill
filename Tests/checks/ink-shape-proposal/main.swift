@@ -43,7 +43,7 @@ import UIKit
         do { try operation(); preconditionFailure("accepted \(label)") }
         catch { check(true,label) }
     }
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         setbuf(stdout,nil)
         let home = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!
         let support = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!
@@ -62,8 +62,15 @@ import UIKit
             let file = support.appendingPathComponent("shape-\(kind.rawValue).json")
             try FileManager.default.createDirectory(at:support,withIntermediateDirectories:true)
             try JSONEncoder().encode(s).write(to:file,options:.atomic)
-            let reopened = try JSONDecoder().decode(CanvasScene.self,from:Data(contentsOf:file))
-            check(reopened == s,"actual JSON file reopen \(kind.rawValue)")
+            if kind == .box {
+                let reopened = try JSONDecoder().decode(CanvasScene.self,from:Data(contentsOf:file))
+                check(reopened == s,"actual JSON file reopen box")
+            } else {
+                rejects("schema2 new kind explicitly refused \(kind.rawValue)") {
+                    _ = try JSONDecoder().decode(CanvasScene.self,from:Data(contentsOf:file))
+                }
+                rejects("Pele refuses incompatible kind instead of box fallback") { _ = try CanvasDiagramSnapshot(scene:s) }
+            }
             rejects("duplicate/stale confirmation") { _ = try p.confirmed(in:s,selection:p.selection) }
             rejects("changed selection") { _ = try p.confirmed(in:p.source,selection:[]) }
             var changed = p.source; changed.revision += 1
@@ -99,18 +106,26 @@ import UIKit
         let d = PKDrawing(strokes:[line])
         rejects("empty selection") { _ = try CanvasInkShapeProposal.make(scene:scene(d),drawing:d,selection:[]) }
         rejects("unknown selection") { _ = try CanvasInkShapeProposal.make(scene:scene(d),drawing:d,selection:[UUID()]) }
+        let pending = CanvasStore()
+        check(pending.updateDrawing(PKDrawing(strokes:[oval])),"ellipse preview native source")
+        pending.mode = .lasso; pending.setInkSelection([oval.id]); pending.proposeInkShape()
+        let unsupportedOriginal = pending.scene
+        check(pending.inkShapeProposal?.node.kind == .ellipse && !pending.inkShapeIsCurrent && !pending.confirmInkShape(),
+              "ellipse compatibility pending: preview only, no confirmation")
+        check(pending.scene == unsupportedOriginal && pending.status.contains("shape_wire_contract_pending"),
+              "unsupported kind preserves original and explicit reason")
         let store = CanvasStore()
-        check(store.updateDrawing(PKDrawing(strokes:[oval])),"store accepts native drawing")
-        store.mode = .lasso; store.setInkSelection([oval.id]); store.proposeInkShape()
-        check(store.inkShapeIsCurrent && store.inkShapeProposal?.node.kind == .ellipse,"product proposal selected native ink")
+        check(store.updateDrawing(PKDrawing(strokes:[box])),"store accepts native drawing")
+        store.mode = .lasso; store.setInkSelection([box.id]); store.proposeInkShape()
+        check(store.inkShapeIsCurrent && store.inkShapeProposal?.node.kind == .box,"product proposal selected native ink")
         let before = store.scene
         store.cancelInkShape()
         check(store.scene == before && !store.confirmInkShape(),"cancel leaves scene unchanged")
-        store.proposeInkShape(); store.setInkSelection([]); store.setInkSelection([oval.id])
+        store.proposeInkShape(); store.setInkSelection([]); store.setInkSelection([box.id])
         check(!store.inkShapeIsCurrent && !store.confirmInkShape(),"selection ABA is stale")
         store.proposeInkShape(); store.mode = .pen; store.mode = .lasso
         check(!store.confirmInkShape(),"mode change cancels")
-        store.setInkSelection([oval.id]); store.proposeInkShape(); check(store.confirmInkShape(),"store confirmation persists")
+        store.setInkSelection([box.id]); store.proposeInkShape(); check(store.confirmInkShape(),"store confirmation persists")
         check(store.canUndoGraph,"existing graph undo available")
         store.undoGraphEdit(); check(store.scene.nodes == before.nodes && store.scene.drawingBase64 == before.drawingBase64,"undo preserves ink")
         store.redoGraphEdit(); check(store.scene.nodes.count == before.nodes.count+1 && store.scene.drawingBase64 == before.drawingBase64,"redo preserves ink")
@@ -118,14 +133,64 @@ import UIKit
         let reopened = CanvasStore()
         check(reopened.scene == store.scene && reopened.drawing == store.drawing,"fresh store reopens actual saved JSON and native drawing")
         check(CanvasInkShapeProposal.Failure.ambiguous.localizedDescription.contains("원본"),"Korean rejection")
-        store.mode = .lasso; store.setInkSelection([oval.id]); store.proposeInkShape()
+        store.mode = .lasso; store.setInkSelection([box.id]); store.proposeInkShape()
         let saved = store.scene
         store.scene = saved
         check(!store.inkShapeIsCurrent && !store.confirmInkShape(),"same scene replacement invalidates generation")
-        store.setInkSelection([oval.id]); store.proposeInkShape()
+        store.setInkSelection([box.id]); store.proposeInkShape()
         store.inkHistory.setUsingTool(true)
         check(!store.confirmInkShape(),"active ink blocks confirmation")
         store.inkHistory.setUsingTool(false)
+        if let outputPath = ProcessInfo.processInfo.environment["INK_SHAPE_OUTPUT"] {
+            let output = URL(fileURLWithPath: outputPath, isDirectory: true)
+            let folder = output.appendingPathComponent("shape-selected-files", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")!
+            let files = CanvasFileWorkspace(folder: folder, requiresScope: false)
+            let incompatible = try proposal([oval])
+            let unsupported = try incompatible.confirmed(in:incompatible.source,selection:incompatible.selection)
+            rejects("Files refuses new shape kind before external writes") { _ = try files.save(unsupported,preview:png,expected:nil) }
+            check(!FileManager.default.fileExists(atPath:files.documentURL(unsupported.id).path),
+                  "unsupported kind creates no external source document")
+            _ = try files.save(before, preview: png, expected: nil)
+            let binding = CanvasFileWorkspace.Binding(bookmark: try folder.bookmarkData(options: .minimalBookmark,
+                includingResourceValuesForKeys: nil, relativeTo: nil), sceneID: before.id,
+                savedSceneSHA: try CanvasFileWorkspace.sceneSHA(before))
+            try CanvasLocalFile.write(CanvasFileWorkspace.bytes(before), to: CanvasRuntime.stateURL(.scene))
+            try CanvasLocalFile.write(JSONEncoder().encode(binding), to: CanvasRuntime.stateURL(.workspace))
+            let real = CanvasStore(); real.filePreview = { _ in png }
+            real.mode = .lasso; real.setInkSelection([box.id]); real.proposeInkShape()
+            check(real.confirmInkShape(), "combined Store shape confirmation")
+            check(!real.fileWorkspaceCanSync && real.fileWorkspaceState == .pending && real.status.contains("미저장"),
+                  "shape cache is not Files success and relay waits")
+            let after = real.scene
+            check(after.drawingBase64 == before.drawingBase64 && after.strokes == before.strokes,
+                  "combined Store never deletes original shape ink")
+            await real.saveFileWorkspace()
+            let saved = try files.load(before.id)
+            check(saved.scene == after && real.fileWorkspaceCanSync, "shape actual Files save/readback enables relay")
+            let fresh = CanvasStore(); fresh.filePreview = { _ in png }
+            check(fresh.scene == after && fresh.drawing == real.drawing, "shape fresh Store reopens Files JSON/native source")
+            real.undoGraphEdit(); real.saveNow(); await real.saveFileWorkspace()
+            let undoSaved = try files.load(before.id)
+            check(undoSaved.scene.nodes == before.nodes, "shape Undo Files roundtrip")
+            let undone = real.scene
+            let originalHead = try Data(contentsOf: files.documentURL(before.id).appendingPathComponent("current.json"))
+            let revisions = files.documentURL(before.id).appendingPathComponent("revisions")
+            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: revisions.path)
+            real.redoGraphEdit(); real.saveNow(); await real.saveFileWorkspace()
+            check(real.fileWorkspaceState == .blocked && !real.fileWorkspaceCanSync && real.fileWorkspaceStatus.contains("미저장"),
+                  "shape original-folder failure blocks relay and retains pending recovery")
+            let failedHead = try Data(contentsOf: files.documentURL(before.id).appendingPathComponent("current.json"))
+            check(failedHead == originalHead,
+                  "shape folder failure preserves original current pointer")
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: revisions.path)
+            real.mode = .lasso; real.setInkSelection([box.id]); real.proposeInkShape()
+            check(real.inkShapeProposal == nil, "blocked Files rejects a new shape proposal")
+            try CanvasFileWorkspace.bytes(before).write(to: output.appendingPathComponent("shape-before.json"))
+            try CanvasFileWorkspace.bytes(after).write(to: output.appendingPathComponent("shape-after.json"))
+            try CanvasFileWorkspace.bytes(undone).write(to: output.appendingPathComponent("shape-undo.json"))
+        }
         print("SHAPE_CHECKS_OK \(checks)")
     }
 }

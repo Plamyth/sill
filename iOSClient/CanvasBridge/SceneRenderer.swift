@@ -85,10 +85,17 @@ enum SceneRenderer {
                 cg.rotate(by:node.rotationRadians)
                 cg.translateBy(x:-node.frame.center.x,y:-node.frame.center.y)
                 CanvasPalette.nodeFill.setFill()
-                UIBezierPath(roundedRect: frame, cornerRadius: 14).fill()
+                if node.kind == .note { UIBezierPath(roundedRect: frame, cornerRadius: 14).fill() }
                 let color = node.confidence == .proposal ? UIColor.systemOrange : CanvasPalette.link
                 color.setStroke()
-                let outline = UIBezierPath(roundedRect: frame, cornerRadius: 14)
+                let outline: UIBezierPath
+                if node.kind == .ellipse { outline = UIBezierPath(ovalIn:frame) }
+                else if node.kind == .line {
+                    outline = UIBezierPath()
+                    outline.move(to:CGPoint(x:frame.minX,y:frame.midY))
+                    outline.addLine(to:CGPoint(x:frame.maxX,y:frame.midY))
+                } else if node.kind == .note { outline = UIBezierPath(roundedRect:frame,cornerRadius:14) }
+                else { outline = UIBezierPath(rect:frame) }
                 outline.lineWidth = 3
                 outline.stroke()
                 let attributes: [NSAttributedString.Key: Any] = [

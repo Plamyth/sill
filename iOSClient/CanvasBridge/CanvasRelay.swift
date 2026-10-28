@@ -213,6 +213,7 @@ struct CanvasRelay {
 
     func saveVaultCanvas(scene: CanvasScene, imagePNG: Data,
                          baseSha256: String?) async throws -> VaultCanvasSaved {
+        try scene.requireCompatibleNodeKinds()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let sceneBytes = try encoder.encode(scene)
