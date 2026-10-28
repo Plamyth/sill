@@ -120,6 +120,7 @@ final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
             pendingInkTextEditing?.invalidatePending()
+            pendingInkSpacing?.invalidatePending()
             inkMathRequest = nil
             linkSceneGeneration &+= 1
             nodeResizeDrag = nil
@@ -146,6 +147,7 @@ final class CanvasStore: ObservableObject {
                 cancelInkMath()
                 cancelInkShape()
                 pendingInkTextEditing?.invalidatePending()
+                pendingInkSpacing?.invalidatePending()
                 nodeResizeDrag = nil
                 nodeRotationDrag = nil
                 clearPendingLink()
@@ -163,6 +165,7 @@ final class CanvasStore: ObservableObject {
         if active {
             if pencilTraceOwner == nil || pencilTraceOwner == owner {
                 pendingInkTextEditing?.invalidatePending()
+                pendingInkSpacing?.invalidatePending()
                 cancelInkShape()
                 cancelInkMath()
                 pencilTraceOwner = owner
@@ -227,6 +230,7 @@ final class CanvasStore: ObservableObject {
         cancelInkMath()
         cancelInkShape()
         pendingInkTextEditing?.invalidatePending()
+        pendingInkSpacing?.invalidatePending()
         guard sceneReadable, !fileSaveBusy, fileWorkspaceState != .blocked, !vaultDirty, !vaultSaving,
               !vaultLoading, !vaultInputBusy, !vaultBlockEditing, !inkBusy, mode == .lasso else { status = "영역 선택 도구로 도형을 먼저 선택하세요."; return }
         do {
@@ -288,6 +292,7 @@ final class CanvasStore: ObservableObject {
         }
         cancelInkMath()
         pendingInkTextEditing?.invalidatePending()
+        pendingInkSpacing?.invalidatePending()
         cancelInkShape()
         do {
             let snapshot = try CanvasInkMathProposal.capture(scene:scene,drawing:drawing,selection:inkSelection,recognized:nil)
@@ -896,6 +901,12 @@ final class CanvasStore: ObservableObject {
 
     var canUndoGraph: Bool {
         guard let undo = graphUndo, scene.id == undo.after.id else { return false }
+        if undo.before.drawingBase64 != undo.after.drawingBase64 {
+            let expected = undo.after
+            guard let currentBytes = try? CanvasInkTextEditing.encode(scene), let expectedBytes = try? CanvasInkTextEditing.encode(expected) else { return false }
+            return scene.revision < Int.max && inkTextEditAllowed && pendingInkTextEditing?.hasPendingWork != true && pendingInkSpacing?.hasPendingWork != true &&
+                currentBytes == expectedBytes && inkSpacingDrawingIsCurrent
+        }
         return scene.hasSameGraph(as:undo.after)
     }
 
@@ -904,19 +915,31 @@ final class CanvasStore: ObservableObject {
             status = "구조가 바뀌어 이전 수정으로 되돌릴 수 없습니다. 최신 내용을 유지합니다."
             return
         }
-        var next = scene
-        next.nodes = undo.before.nodes
-        next.links = undo.before.links
-        next.annotations = undo.before.annotations
-        next.revision += 1
-        scene = next
+        if undo.before.drawingBase64 != undo.after.drawingBase64 {
+            var next = undo.before; next.revision = scene.revision + 1
+            do { try persistScene(next); installInkTextScene(next) }
+            catch { status = "원본 획 간격을 되돌리지 않았습니다. \(error.localizedDescription)"; return }
+        } else {
+            var next = scene
+            next.nodes = undo.before.nodes
+            next.links = undo.before.links
+            next.annotations = undo.before.annotations
+            next.revision += 1
+            scene = next
+        }
         graphUndo = nil
-        graphRedo = undo
-        status = "구조 수정을 되돌렸습니다. 현재 원본 획은 그대로 보존했습니다."
+        graphRedo = undo.before.drawingBase64 != undo.after.drawingBase64 ? (scene,undo.after) : undo
+        status = undo.before.drawingBase64 != undo.after.drawingBase64 ? "원본 획과 간격 수정을 되돌려 복구본에 저장했습니다." : "구조 수정을 되돌렸습니다. 현재 원본 획은 그대로 보존했습니다."
     }
 
     var canRedoGraph: Bool {
         guard let redo = graphRedo, scene.id == redo.before.id else { return false }
+        if redo.before.drawingBase64 != redo.after.drawingBase64 {
+            let expected = redo.before
+            guard let currentBytes = try? CanvasInkTextEditing.encode(scene), let expectedBytes = try? CanvasInkTextEditing.encode(expected) else { return false }
+            return scene.revision < Int.max && inkTextEditAllowed && pendingInkTextEditing?.hasPendingWork != true && pendingInkSpacing?.hasPendingWork != true &&
+                currentBytes == expectedBytes && inkSpacingDrawingIsCurrent
+        }
         return scene.hasSameGraph(as:redo.before)
     }
 
@@ -925,15 +948,21 @@ final class CanvasStore: ObservableObject {
             status = "구조가 바뀌어 다시 실행하지 않았습니다. 최신 내용을 유지합니다."
             return
         }
-        var next = scene
-        next.nodes = redo.after.nodes
-        next.links = redo.after.links
-        next.annotations = redo.after.annotations
-        next.revision += 1
-        scene = next
-        graphUndo = redo
+        if redo.before.drawingBase64 != redo.after.drawingBase64 {
+            var next = redo.after; next.revision = scene.revision + 1
+            do { try persistScene(next); installInkTextScene(next) }
+            catch { status = "원본 획 간격을 다시 실행하지 않았습니다. \(error.localizedDescription)"; return }
+        } else {
+            var next = scene
+            next.nodes = redo.after.nodes
+            next.links = redo.after.links
+            next.annotations = redo.after.annotations
+            next.revision += 1
+            scene = next
+        }
+        graphUndo = redo.before.drawingBase64 != redo.after.drawingBase64 ? (redo.before,scene) : redo
         graphRedo = nil
-        status = "구조 수정을 다시 실행했습니다. 현재 원본 획은 그대로 보존했습니다."
+        status = redo.before.drawingBase64 != redo.after.drawingBase64 ? "원본 획과 간격 수정을 다시 실행해 복구본에 저장했습니다." : "구조 수정을 다시 실행했습니다. 현재 원본 획은 그대로 보존했습니다."
     }
 
     struct EndpointDrag {
@@ -1041,6 +1070,7 @@ final class CanvasStore: ObservableObject {
             inkMathRequest = nil
             inkMathSelectionGeneration &+= 1
             pendingInkTextEditing?.invalidatePending()
+            pendingInkSpacing?.invalidatePending()
             objectWillChange.send()
             storedDrawing = newValue
             setInkSelection([])
@@ -2422,6 +2452,7 @@ final class CanvasStore: ObservableObject {
         let next = ids.intersection(drawing.strokes.map(\.id))
         guard next != inkSelection else { return }
         pendingInkTextEditing?.invalidatePending()
+        pendingInkSpacing?.invalidatePending()
         inkShapeSelectionGeneration &+= 1
         inkMathRequest = nil
         inkMathSelectionGeneration &+= 1
@@ -2460,6 +2491,52 @@ final class CanvasStore: ObservableObject {
 
 
     private weak var pendingInkTextEditing: CanvasInkTextEditing?
+    private weak var pendingInkSpacing: CanvasInkSpacingProposal?
+
+    private var inkSpacingDrawingIsCurrent: Bool {
+        guard let bytes = Data(base64Encoded:scene.drawingBase64), let native = try? PKDrawing(data:bytes) else { return false }
+        return drawing == native
+    }
+
+    var canProposeInkSpacing: Bool {
+        inkTextEditAllowed && mode == .lasso && inkTextDeletionTarget != nil &&
+            inkMathRequest == nil && inkMathProposal == nil && inkShapeProposal == nil &&
+            pendingInkTextEditing?.hasPendingWork != true
+    }
+
+    func proposeInkSpacing(left: String, right: String, action: CanvasInkSpacingProposal.Action,
+                           amount: Double, editing: CanvasInkSpacingProposal,
+                           readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
+        guard canProposeInkSpacing, let node = inkTextDeletionTarget,
+              inkSpacingDrawingIsCurrent else {
+            editing.cancel(); status = "원본 필기 전체에 대응하는 메모 하나를 선택하고 다른 입력·저장을 마쳐 주세요."; return
+        }
+        pendingInkSpacing?.invalidatePending()
+        pendingInkSpacing = editing
+        let generation = linkSceneGeneration
+        await editing.propose(scene:scene,nodeID:node.id,selection:inkSelection,left:left,right:right,action:action,amount:amount,
+            isCurrent:{ [weak self] snapshot in
+                guard let self else { return false }
+                return self.inkTextEditAllowed && self.mode == .lasso && generation == self.linkSceneGeneration &&
+                    snapshot.matches(scene:self.scene,selection:self.inkSelection)
+            },readEvidence:readEvidence)
+    }
+
+    @discardableResult
+    func confirmInkSpacing(_ editing: CanvasInkSpacingProposal) -> Bool {
+        guard inkTextEditAllowed, mode == .lasso, pendingInkSpacing === editing else {
+            status = "다른 입력이나 저장이 진행 중입니다. 원본 간격을 유지합니다."; return false
+        }
+        do {
+            let before = scene
+            let next = try editing.confirm(current:scene,selection:inkSelection,persist:{ try self.persistScene($0) })
+            installInkTextScene(next)
+            recordGraphEdit(before:before)
+            status = "원본 획 간격을 복구본에 반영했습니다. 구조 수정 되돌리기를 사용할 수 있습니다. 파일 원본 저장·동기화는 별도 상태를 확인하세요."
+            return true
+        } catch { status = "원본 간격을 저장하지 않았습니다. \(error.localizedDescription)"; return false }
+    }
+
 
     var inkTextDeletionTarget: CanvasNode? {
         guard !inkSelection.isEmpty else { return nil }
@@ -2479,6 +2556,7 @@ final class CanvasStore: ObservableObject {
         guard !inkMathInputBusy else { status = "수식 교정 입력을 먼저 마쳐 주세요."; return }
         cancelInkMath()
         pendingInkTextEditing?.invalidatePending()
+        pendingInkSpacing?.invalidatePending()
         pendingInkTextEditing = editing
         cancelInkShape()
         guard inkTextEditAllowed, let node = inkTextDeletionTarget else {

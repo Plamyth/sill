@@ -1,0 +1,199 @@
+--- a/iOSClient/CanvasBridge/CanvasStore.swift
++++ b/iOSClient/CanvasBridge/CanvasStore.swift
+@@ -120,6 +120,7 @@
+     @Published var scene = CanvasScene() {
+         didSet {
+             pendingInkTextEditing?.invalidatePending()
++            pendingInkSpacing?.invalidatePending()
+             linkSceneGeneration &+= 1
+             nodeResizeDrag = nil
+             nodeRotationDrag = nil
+@@ -144,6 +145,7 @@
+             if oldValue != mode {
+                 cancelInkShape()
+                 pendingInkTextEditing?.invalidatePending()
++            pendingInkSpacing?.invalidatePending()
+                 nodeResizeDrag = nil
+                 nodeRotationDrag = nil
+                 clearPendingLink()
+@@ -161,6 +163,7 @@
+         if active {
+             if pencilTraceOwner == nil || pencilTraceOwner == owner {
+                 pendingInkTextEditing?.invalidatePending()
++            pendingInkSpacing?.invalidatePending()
+                 cancelInkShape()
+                 pencilTraceOwner = owner
+             }
+@@ -222,6 +225,7 @@
+     func proposeInkShape() {
+         cancelInkShape()
+         pendingInkTextEditing?.invalidatePending()
++            pendingInkSpacing?.invalidatePending()
+         guard sceneReadable, !fileSaveBusy, fileWorkspaceState != .blocked, !vaultDirty, !vaultSaving,
+               !vaultLoading, !vaultInputBusy, !vaultBlockEditing, !inkBusy, mode == .lasso else { status = "영역 선택 도구로 도형을 먼저 선택하세요."; return }
+         do {
+@@ -962,6 +966,7 @@
+         get { storedDrawing }
+         set {
+             pendingInkTextEditing?.invalidatePending()
++            pendingInkSpacing?.invalidatePending()
+             objectWillChange.send()
+             storedDrawing = newValue
+             setInkSelection([])
+@@ -2289,6 +2294,7 @@
+         let next = ids.intersection(drawing.strokes.map(\.id))
+         guard next != inkSelection else { return }
+         pendingInkTextEditing?.invalidatePending()
++            pendingInkSpacing?.invalidatePending()
+         inkShapeSelectionGeneration &+= 1
+         inkSelection = next
+         handwritingRequest = nil
+@@ -2325,6 +2331,46 @@
+ 
+ 
+     private weak var pendingInkTextEditing: CanvasInkTextEditing?
++    private weak var pendingInkSpacing: CanvasInkSpacingProposal?
++
++    func proposeInkSpacing(left: String, right: String, action: CanvasInkSpacingProposal.Action,
++                           amount: Double, editing: CanvasInkSpacingProposal,
++                           readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
++        pendingInkSpacing?.invalidatePending()
++        pendingInkTextEditing?.invalidatePending()
++        cancelInkShape()
++        pendingInkSpacing = editing
++        guard inkTextEditAllowed, let node = inkTextDeletionTarget else {
++            editing.cancel(); status = "두 그룹 전체에 대응하는 원본 획을 먼저 선택하세요."; return
++        }
++        await editing.propose(scene:scene,nodeID:node.id,selection:inkSelection,left:left,right:right,action:action,amount:amount,
++            isCurrent:{ [weak self] snapshot in
++                guard let self else { return false }
++                return self.inkTextEditAllowed && snapshot.matches(scene:self.scene,selection:self.inkSelection)
++            },readEvidence:readEvidence)
++    }
++    @discardableResult
++    func confirmInkSpacing(_ editing: CanvasInkSpacingProposal) -> Bool {
++        guard inkTextEditAllowed else { status = "다른 입력이나 저장이 진행 중입니다. 원본 간격을 유지합니다."; return false }
++        do {
++            let next = try editing.confirm(current:scene,selection:inkSelection,persist:{ try self.persistScene($0) })
++            installInkTextScene(next)
++            status = "원본 획 간격을 복구본에 반영했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
++            return true
++        } catch { status = "원본 간격을 저장하지 않았습니다. \(error.localizedDescription)"; return false }
++    }
++    @discardableResult
++    func undoInkSpacing(_ editing: CanvasInkSpacingProposal, redo: Bool = false) -> Bool {
++        guard inkTextEditAllowed else { status = "다른 입력이나 저장이 진행 중입니다. 원본을 유지합니다."; return false }
++        do {
++            let next = try redo ? editing.redo(current:scene,persist:{ try self.persistScene($0) }) :
++                editing.undo(current:scene,persist:{ try self.persistScene($0) })
++            installInkTextScene(next)
++            status = "원본 획 간격 이력을 복구본에 반영했습니다. Files 원본 미저장·Obsidian 동기화 대기입니다."
++            return true
++        } catch { status = "원본을 덮어쓰지 않았습니다. \(error.localizedDescription)"; return false }
++    }
++
+ 
+     var inkTextDeletionTarget: CanvasNode? {
+         guard !inkSelection.isEmpty else { return nil }
+@@ -2342,6 +2388,7 @@
+     func proposeInkTextDeletion(range: NSRange, editing: CanvasInkTextEditing,
+                                readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
+         pendingInkTextEditing?.invalidatePending()
++            pendingInkSpacing?.invalidatePending()
+         pendingInkTextEditing = editing
+         cancelInkShape()
+         guard inkTextEditAllowed, let node = inkTextDeletionTarget else {
+--- a/iOSClient/CanvasBridge/CanvasWorkspace.swift
++++ b/iOSClient/CanvasBridge/CanvasWorkspace.swift
+@@ -13,6 +13,9 @@
+ struct CanvasWorkspace: View {
+     @Environment(\.scenePhase) private var scenePhase
+     @StateObject private var store = CanvasStore()
++    @StateObject private var inkSpacing = CanvasInkSpacingProposal()
++    @State private var inkSpacingOpen = false
++
+     @StateObject private var dictation = CanvasDictation()
+     @StateObject private var inkTextEditing = CanvasInkTextEditing()
+     @State private var inkTextDeleteOpen = false
+@@ -145,7 +148,13 @@
+             CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
+                 confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
+         }
+-        .onDisappear { store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
++        .sheet(isPresented:$inkSpacingOpen) {
++            CanvasInkSpacingSheet(editing:inkSpacing,text:store.inkTextDeletionTarget?.text ?? "선택한 문구 없음",
++                propose:{ left,right,action,amount in Task { await store.proposeInkSpacing(left:left,right:right,action:action,amount:amount,editing:inkSpacing) } },
++                confirm:{ if store.confirmInkSpacing(inkSpacing) { inkSpacingOpen = false } },
++                cancel:{ inkSpacing.cancel(); inkSpacingOpen = false })
++        }
++        .onDisappear { inkSpacing.invalidatePending(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+         .onChange(of:scenePhase) { _,phase in
+             if phase != .active {
+                 store.cancelLink()
+@@ -406,6 +415,11 @@
+             .accessibilityValue(store.eraserStyle == .partial ? store.eraserSize.label : "획 전체 지우기에서는 적용되지 않음")
+             .accessibilityHint("CCR에서 정한 캔버스 포인트 단위이며 확대 비율에 따라 표시 크기가 달라집니다.")
+             .accessibilityIdentifier("canvasPartialEraserSize")
++            Button("원본 획 간격") { inkSpacing.cancel(); inkSpacingOpen = true }
++                .disabled(store.inkTextDeletionTarget == nil || store.inkBusy)
++                .accessibilityIdentifier("canvasInkSpacing")
++            Button("원본 간격 되돌리기") { _ = store.undoInkSpacing(inkSpacing) }.disabled(!inkSpacing.canUndo)
++            Button("원본 간격 다시 실행") { _ = store.undoInkSpacing(inkSpacing,redo:true) }.disabled(!inkSpacing.canRedo)
+             Button("선택한 획 도형 보정",systemImage:"wand.and.stars") { store.proposeInkShape() }
+                 .disabled(store.inkSelection.isEmpty || store.inkBusy || store.mode != .lasso)
+                 .accessibilityIdentifier("canvasProposeInkShape")
+--- a/iOSClient/Sill.xcodeproj/project.pbxproj
++++ b/iOSClient/Sill.xcodeproj/project.pbxproj
+@@ -8,7 +8,9 @@
+ 
+ /* Begin PBXBuildFile section */
+ 		8C932E21227A4CE7F8136712 /* CanvasInkTextEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */; };
++		6C9C20261029000000000001 /* CanvasInkSpacingProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C9C20261029000000000000 /* CanvasInkSpacingProposal.swift */; };
+ 		8C932E21227A4CE7F8136713 /* CanvasInkTextEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */; };
++		6C9C20261029000000000002 /* CanvasInkSpacingProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C9C20261029000000000000 /* CanvasInkSpacingProposal.swift */; };
+ 		D7250001000000000000B006 /* StreamClient+SentryReturn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F006 /* StreamClient+SentryReturn.swift */; };
+ 		D7250001000000000000A006 /* StreamClient+SentryReturn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F006 /* StreamClient+SentryReturn.swift */; };
+ 		D7250001000000000000B005 /* IPadSentryReturnKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7250001000000000000F005 /* IPadSentryReturnKeys.swift */; };
+@@ -223,6 +225,7 @@
+ 
+ /* Begin PBXFileReference section */
+ 		8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasInkTextEditing.swift; sourceTree = "<group>"; };
++		6C9C20261029000000000000 /* CanvasInkSpacingProposal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasInkSpacingProposal.swift; sourceTree = "<group>"; };
+ 		D7250001000000000000F006 /* StreamClient+SentryReturn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+SentryReturn.swift"; sourceTree = "<group>"; };
+ 		D7250001000000000000F005 /* IPadSentryReturnKeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadSentryReturnKeys.swift"; sourceTree = "<group>"; };
+ 		D7250001000000000000F004 /* IPadSentryReturn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadSentryReturn.swift"; sourceTree = "<group>"; };
+@@ -465,6 +468,7 @@
+ 				B2000001000000000000F002 /* CanvasRelay.swift */,
+ 				B2000001000000000000F003 /* CanvasStore.swift */,
+ 				8C932E21227A4CE7F8136711 /* CanvasInkTextEditing.swift */,
++				6C9C20261029000000000000 /* CanvasInkSpacingProposal.swift */,
+ 				B2000001000000000000F004 /* CanvasWorkspace.swift */,
+ 				B2000001000000000000F00A /* CanvasDictation.swift */,
+ 				B2000001000000000000F005 /* ControlRoomProjection.swift */,
+@@ -699,6 +703,7 @@
+ 				B2000001000000000000A002 /* CanvasRelay.swift in Sources */,
+ 				B2000001000000000000A003 /* CanvasStore.swift in Sources */,
+ 				8C932E21227A4CE7F8136712 /* CanvasInkTextEditing.swift in Sources */,
++				6C9C20261029000000000001 /* CanvasInkSpacingProposal.swift in Sources */,
+ 				B2000001000000000000A004 /* CanvasWorkspace.swift in Sources */,
+ 				B2000001000000000000A00A /* CanvasDictation.swift in Sources */,
+ 				B2000001000000000000A005 /* ControlRoomProjection.swift in Sources */,
+@@ -808,6 +813,7 @@
+ 				7BAF96FF18E05E678BDAAD15 /* CanvasRelay.swift in Sources */,
+ 				F171544FC7BFE8A0CB69160D /* CanvasStore.swift in Sources */,
+ 				8C932E21227A4CE7F8136713 /* CanvasInkTextEditing.swift in Sources */,
++				6C9C20261029000000000002 /* CanvasInkSpacingProposal.swift in Sources */,
+ 				BC459CE1617471593F9E4735 /* CanvasWorkspace.swift in Sources */,
+ 				E3753868372CBB71F5A7A409 /* CanvasDictation.swift in Sources */,
+ 				3C938CEDA7C004CB4E2143F5 /* ControlRoomProjection.swift in Sources */,
+--- a/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj
++++ b/Tests/integration/ipad-runtime/CanvasBridge.xcodeproj/project.pbxproj
+@@ -4,6 +4,8 @@
+  classes = {};
+  objectVersion = 56;
+  objects = {
++  6C9C20261029000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkSpacingProposal.swift"; sourceTree = "<group>"; };
++  6C9C20261029000000000002 = {isa = PBXBuildFile; fileRef = 6C9C20261029000000000001; };
+   8C932E21227A4CE7F8136731 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkTextEditing.swift"; sourceTree = "<group>"; };
+   8C932E21227A4CE7F8136732 = {isa = PBXBuildFile; fileRef = 8C932E21227A4CE7F8136731; };
+   5A9E20261028000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../../iOSClient/CanvasBridge/CanvasInkShapeProposal.swift"; sourceTree = "<group>"; };
