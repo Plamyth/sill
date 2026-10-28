@@ -134,3 +134,8 @@ NativeCodeImagesContract는 별도 Mac 명령행 fixture(정상 Sill 설치 후�
 경로의 현재 inode만으로 이미 로드된 파일을 증명할 수 없다. receipt는 main과 Debug dylib 각각에 대해 `_dyld_get_image_header`의 실제 LC_UUID를 읽고, 해시를 계산하는 동일 Data의 Mach-O UUID와 CPU/subtype별로 대조한다. thin64와 fat/fat64의 해당 slice만 지원하며 UUID 누락·중복·일치하지 않는 아키텍처·경로 교체는 거부한다. 로드된 Debug dylib가 디스크에서 사라진 경우에도 main-only로 축소하지 않는다. `codeImageUUIDs`를 추가하고 prepared readback에 필수로 요구하므로 이 결속 필드가 없는 old receipt는 거부한다. 이는 file hash와 loaded LC_UUID의 결속이며 실행 메모리 전체의 SHA나 현재 기기 서명 직접 추출로 부르지 않는다.
 
 실제 Mac fixture에서 정상 A/B, A를 계속 실행하면서 dylib 경로만 B로 교체, main 경로 교체, 로드된 dylib 삭제를 검사했다. 변경 경로는 receipt를 갱신하지 않고 이전 바이트를 보존한다. 실제 iPad에서 파일 교체가 가능함이나 전체 prepared 설치 우회가 입증됐다는 의미는 아니다.
+
+
+### R2: 단일 Xcode 실행 문맥
+
+session 전체에서 세 문자열이 발견되는 것만으로 결속하지 않는다. 단일 Beginning test session의 ID/host PID, 같은 host의 RemotePath, 단일 runner의 Loading test bundle/active configuration PID와 순서를 확인한다. active configuration 안의 sessionIdentifier·testBundleURL·testApplicationDependencies의 runner mapping을 함께 검증하고 같은 session 파일의 중복·모순 URL/mapping은 거부한다. 과거 정상 문구를 붙인 현재 다른 container, 서로 떨어진 진단 문구, 중복 session, 다른 host/runner PID 및 다른 session ID는 거부한다. 이는 xcode_install_identity 파서의 반례 수정이며 전체 pinned xcresult/서명/device 검증이 우회됐다는 주장이 아니다.

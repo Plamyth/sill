@@ -428,9 +428,39 @@ def xcode_install_identity(action, session, artifact, bundle):
     runnables = [n['testDetails'] for n in log_nodes(action) if isinstance(n.get('testDetails'),dict) and 'runnablePath' in n['testDetails']]
     require(len(runnables) == 1 and Path(runnables[0].get('runnablePath','')).is_dir() and
             Path(runnables[0]['runnablePath']).samefile(artifact), 'xcode_local_artifact_mismatch')
-    require('testBundleURL:' + url + 'PlugIns/CanvasBridgeUITests.xctest/' in session and
-            'RemotePath \'' + endpoint.path.rstrip('/') + "' for bundleIdentifier: " + bundle in session and
-            '"' + bundle + '" = "' + runnables[0]['runnablePath'] + '";' in session,
+    # 한 실행의 host session -> install path -> runner load -> active configuration을 결속한다.
+    event_pattern = re.compile(r'(?m)^\d{2}:\d{2}:\d{2}\.\d{3} (xcodebuild|CanvasBridgeUITests-Runner)\[(\d+):\d+\] (.*)$')
+    matches = list(event_pattern.finditer(session))
+    events = [{'process':m[1],'pid':m[2],'message':m[3],
+        'body':session[m.end():matches[i+1].start() if i+1 < len(matches) else len(session)]}
+        for i,m in enumerate(matches)]
+    begins = [(i,e,re.match(r'Beginning test session CanvasBridgeUITests-([A-Fa-f0-9-]{36}) at ',e['message']))
+              for i,e in enumerate(events) if e['process'] == 'xcodebuild' and e['message'].startswith('Beginning test session ')]
+    active = [(i,e) for i,e in enumerate(events) if e['process'] == 'CanvasBridgeUITests-Runner' and
+              e['message'].startswith('Running tests with active test configuration: <XCTestConfiguration: ')]
+    remote = [(i,e,re.search(r"RemotePath '([^']+)' for bundleIdentifier: " + re.escape(bundle) + r'$',e['message']))
+              for i,e in enumerate(events) if e['process'] == 'xcodebuild' and "RemotePath '" in e['message'] and
+              e['message'].endswith('for bundleIdentifier: ' + bundle)]
+    loads = [(i,e) for i,e in enumerate(events) if e['process'] == 'CanvasBridgeUITests-Runner' and
+             e['message'].startswith('Loading test bundle at: ')]
+    reason = 'xcode_session_context_mismatch'
+    require(len(begins) == len(active) == len(remote) == len(loads) == 1 and begins[0][2] and remote[0][2],reason)
+    start,host,begin = begins[0]; config_index,runner = active[0]; remote_index,installer,path = remote[0]; load_index,loader = loads[0]
+    require(start < remote_index < load_index < config_index and host['pid'] == installer['pid'] and
+            runner['pid'] == loader['pid'],reason)
+    body = runner['body']
+    session_ids = re.findall(r'(?m)^[ \t]*sessionIdentifier:([A-Fa-f0-9-]{36})[ \t]*$',body)
+    require(len(session_ids) == 1 and session_ids[0].lower() == begin[1].lower(),reason)
+    test_url = url + 'PlugIns/CanvasBridgeUITests.xctest/'
+    config_urls = re.findall(r'(?m)^[ \t]*testBundleURL:([^\r\n]+)$',body)
+    all_urls = re.findall(r'(?m)^[ \t]*testBundleURL:([^\r\n]+)$',session)
+    dependencies = re.findall(r'(?ms)^[ \t]*testApplicationDependencies:[ \t]*\n\{(.*?)^\}',body)
+    mapping_pattern = r'(?m)^[ \t]*"' + re.escape(bundle) + r'"[ \t]*=[ \t]*"(/[^"\r\n]+)";[ \t]*$'
+    mappings = re.findall(mapping_pattern,dependencies[0]) if len(dependencies) == 1 else []
+    all_mappings = re.findall(mapping_pattern,session)
+    require(path[1] == endpoint.path.rstrip('/') and loader['message'] == 'Loading test bundle at: ' + test_url and
+            config_urls == all_urls == [test_url] and len(mappings) == len(all_mappings) == 1 and
+            mappings == all_mappings and Path(mappings[0]).is_dir() and Path(mappings[0]).samefile(artifact),
             'xcode_session_bundle_correlation_missing')
     return url
 

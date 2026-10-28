@@ -548,6 +548,23 @@ class XcodeRunnerLineageContract(unittest.TestCase):
         state.command=command
         return state
 
+
+    def test_session_records_reject_prior_echo_and_disconnected_paths(self):
+        session=self.session.decode();bundle=adapter.RUNNER_BUNDLE;artifact=Path(self.reference['artifact'])
+        echo='\n'.join(line for line in session.splitlines() if 'testBundleURL:' in line or "RemotePath '" in line or
+            ('"'+bundle+'" = "') in line and line.rstrip().endswith('Runner.app";'))
+        foreign=session.replace('E42A765D-D4C8-4768-8866-F9CD1B30D47D','AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE')
+        fragments='\n'.join('[unrelated note '+str(i)+'] '+line for i,line in enumerate(echo.splitlines()))
+        cases={'foreign-current':foreign,'old-echo-foreign-current':'[prior diagnostic echo]\n'+echo+'\n[current session]\n'+foreign,
+            'disconnected':fragments,'duplicate-session':session+'\n'+session,
+            'different-runner-pid':session.replace('CanvasBridgeUITests-Runner[10600:8227188] Loading test bundle','CanvasBridgeUITests-Runner[99999:8227188] Loading test bundle'),
+            'different-session-id':session.replace('sessionIdentifier:E6CBDE32-C16C-469E-ACA2-F8B67ED4096E','sessionIdentifier:AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'),
+            'different-host-pid':session.replace("xcodebuild[20304:133134218] Ambrion의 iPad RemotePath", "xcodebuild[99999:133134218] Ambrion의 iPad RemotePath")}
+        self.assertEqual(adapter.xcode_install_identity(self.action,session,artifact,bundle),self.approved['xcodeInstall']['installationURL'])
+        for name,text in cases.items():
+            with self.subTest(name=name),self.assertRaisesRegex(adapter.Held,'xcode_session'):
+                adapter.xcode_install_identity(self.action,text,artifact,bundle)
+
     def test_actual_official_xcode_history_and_signed_runner_are_accepted_without_device(self):
         with tempfile.TemporaryDirectory() as directory,patch.object(adapter,'device') as device:
             work=Path(directory)
