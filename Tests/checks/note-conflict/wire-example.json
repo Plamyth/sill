@@ -1,0 +1,59 @@
+{
+  "get": {
+    "schema": "ccr.note-conflict/v1",
+    "path": "Notes/발췌 é.md",
+    "recoveryID": "e8763436-2948-49e2-a0ff-be8b2cbfc4b3",
+    "code": "note_reconciliation_required",
+    "reconciliationRequired": true,
+    "publicationAttempted": true,
+    "expected": {
+      "activeSha256": "87174762286e6cf14887185297c5e45593b46cb0accace669815fd1287f4793c",
+      "baseSha256": "f87f917fc47fe477c599decdf2c4f3e48ccdcb53188a0350903dd18418ebbfe3",
+      "displacedSha256": "adfa2b45a2ab030959d1a0fa182772714ecc7af8210bdca294bd00d4392b6b3d",
+      "proposalSha256": "87174762286e6cf14887185297c5e45593b46cb0accace669815fd1287f4793c",
+      "historySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "materials": {
+      "active": {
+        "sha256": "87174762286e6cf14887185297c5e45593b46cb0accace669815fd1287f4793c",
+        "markdownBase64": "77u/IyBQREYg7JuQ66y4DQoNCuybkOusuCDsnbjsmqkgZcyBIPCfk50gXmV4Y2VycHQNCg0KaVBhZCDrr7jsoITshqEg7LSI7JWIDQo=",
+        "validNote": true
+      },
+      "base": {
+        "sha256": "f87f917fc47fe477c599decdf2c4f3e48ccdcb53188a0350903dd18418ebbfe3",
+        "markdownBase64": "77u/IyBQREYg7JuQ66y4DQoNCuybkOusuCDsnbjsmqkgZcyBIPCfk50gXmV4Y2VycHQNCg==",
+        "validNote": true
+      },
+      "displaced": {
+        "sha256": "adfa2b45a2ab030959d1a0fa182772714ecc7af8210bdca294bd00d4392b6b3d",
+        "markdownBase64": "77u/IyBQREYg7JuQ66y4DQoNCuybkOusuCDsnbjsmqkgZcyBIPCfk50gXmV4Y2VycHQNCg0K7Jm467aAIOyekeyEseyekOydmCDsnKDsnbztlZwg66mU66qoDQo=",
+        "validNote": true
+      },
+      "proposal": {
+        "sha256": "87174762286e6cf14887185297c5e45593b46cb0accace669815fd1287f4793c",
+        "markdownBase64": "77u/IyBQREYg7JuQ66y4DQoNCuybkOusuCDsnbjsmqkgZcyBIPCfk50gXmV4Y2VycHQNCg0KaVBhZCDrr7jsoITshqEg7LSI7JWIDQo=",
+        "validNote": true
+      }
+    },
+    "history": []
+  },
+  "put": {
+    "recoveryID": "e8763436-2948-49e2-a0ff-be8b2cbfc4b3",
+    "expected": {
+      "activeSha256": "87174762286e6cf14887185297c5e45593b46cb0accace669815fd1287f4793c",
+      "baseSha256": "f87f917fc47fe477c599decdf2c4f3e48ccdcb53188a0350903dd18418ebbfe3",
+      "displacedSha256": "adfa2b45a2ab030959d1a0fa182772714ecc7af8210bdca294bd00d4392b6b3d",
+      "proposalSha256": "87174762286e6cf14887185297c5e45593b46cb0accace669815fd1287f4793c",
+      "historySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "decision": "useDisplaced"
+  },
+  "result": {
+    "path": "Notes/발췌 é.md",
+    "sha256": "adfa2b45a2ab030959d1a0fa182772714ecc7af8210bdca294bd00d4392b6b3d",
+    "recoveryID": "e8763436-2948-49e2-a0ff-be8b2cbfc4b3",
+    "decision": "useDisplaced",
+    "resolved": true,
+    "reconciliationRequired": false
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "commit": "f6e7b7d52fd1ca8d768286123b260c1e0c351f00",
+  "tree": "783ff92c98f6f7005e28ecd99b3c3287241998b2",
+  "example": "CanvasRelay/relay/test-input/note-reconciliation-v1/wire-example.json",
+  "exampleSHA256": "963106d38c840d45016119b28726686e251f1215d2fe4575736ef1bfc11996df",
+  "contractSHA256": "cd842fc834060f8ad046af2c09ce19de8b3a7ebb2a6a594486e50d3fddaad32f",
+  "serverSourceImported": false,
+  "sourceAttribution": "부모가 기존 사용자 승인 목표의 일반 노트 복구를 위해 채택한 계약",
+  "serverIndependentClear": "pending at import"
+}
