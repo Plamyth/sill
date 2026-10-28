@@ -13,6 +13,14 @@ spec = importlib.util.spec_from_file_location('adapter', Path(__file__).with_nam
 adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
 
+def existing_runner_fixture(work, run):
+    receipt = work/'existing-runner.json'
+    adapter.write(receipt,{'schema':'ccr.existing-xctest-runner/v1','installed':True,'team':adapter.NORMAL_TEAM,
+        'bundleIdentifier':'com.ambrion.rea.appaudit.UITests.xctrunner',
+        'testBundleRelativePath':'__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest'})
+    return {'deviceUDID':'offline','existingXctestrun':str(run),'existingXctestrunSHA256':adapter.sha(run.read_bytes()),
+        'existingRunnerReceipt':str(receipt),'existingRunnerReceiptSHA256':adapter.sha(receipt.read_bytes())}
+
 class SingleAppHoldContract(unittest.TestCase):
     def test_public_entrypoints_hold_before_every_subprocess_and_device_effect(self):
         import contextlib
@@ -50,7 +58,7 @@ class SingleAppHoldContract(unittest.TestCase):
                  'DependentProductPaths':['__TESTROOT__/CanvasBridge.app']}})
             run.write_bytes(data)
             with patch.object(adapter,'command') as command, patch.object(adapter.subprocess,'Popen') as popen:
-                with self.assertRaisesRegex(adapter.Held,'xctestrun_still_depends_on_canvasbridge'):
+                with self.assertRaisesRegex(adapter.Held,'latest_normal_candidate_preservation'):
                     adapter.harness({},work,'testEditAndSave')
                 command.assert_not_called(); popen.assert_not_called()
             self.assertEqual(run.read_bytes(),data)
@@ -78,6 +86,87 @@ class SingleAppHoldContract(unittest.TestCase):
             with self.assertRaisesRegex(adapter.Held,'single_app_runtime_held'):
                 adapter.single_app_installation_gate()
             self.assertEqual(data,profile.read_bytes())
+
+class PreservationSnapshotContract(unittest.TestCase):
+    def test_full_documents_preferences_and_metadata_are_checked_separately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            def device(config,args,log):
+                adapter.write(args[-1],{'result':{'build':'70','bundleIdentifier':adapter.USER_BUNDLE}})
+            copied = []
+            def copy(config,work,source,target,**kwargs):
+                self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE)
+                copied.append(str(source));target=Path(target)
+                if source in ['Documents','Library/Preferences']:
+                    target.mkdir(parents=True)
+                    (target/'one').write_bytes(b'normal preserved bytes')
+                    (target/'two').write_bytes(b'other bytes')
+                else: target.write_bytes(b'protected scene or recovery')
+                return True
+            with patch.object(adapter,'device',side_effect=device),patch.object(adapter,'copy_file',side_effect=copy):
+                before=adapter.snapshots({},work,'before')
+            self.assertIn('Documents',copied);self.assertIn('Library/Preferences',copied)
+            self.assertIn('Library/Application Support/CanvasNoteEdit/recovery.json',copied)
+            after=json.loads(json.dumps(before));after['installedUserApp']['build']='71'
+            self.assertTrue(adapter.same_user_data(before,after))
+            after['Library/Preferences']['two']='changed hash'
+            self.assertFalse(adapter.same_user_data(before,after))
+            after=json.loads(json.dumps(before));after['Documents']['one']='changed hash'
+            self.assertFalse(adapter.same_user_data(before,after))
+
+class DestinationArtifactContract(unittest.TestCase):
+    def test_normal_bundle_and_existing_runner_only_for_v1_and_v2(self):
+        import plistlib
+        runner = {'schema':'ccr.existing-xctest-runner/v1','installed':True,'team':adapter.NORMAL_TEAM,
+            'bundleIdentifier':'com.ambrion.rea.appaudit.UITests.xctrunner',
+            'testBundleRelativePath':'__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest'}
+        for version in [1,2]:
+            target = {'IsUITestBundle':True,'TestHostPath':'old.app','TestBundlePath':'old.xctest',
+                'UITargetAppPath':'CanvasBridge.app','DependentProductPaths':['CanvasBridge.app'],
+                'TestingEnvironmentVariables':{},'EnvironmentVariables':{'CCR_TEST_BUNDLE':adapter.BUNDLE}}
+            payload = {'TestConfigurations':[{'IsEnabled':True,'TestTargets':[target]}]} if version==2 else {'CanvasBridgeUITests':target}
+            before = plistlib.dumps(payload)
+            result = adapter.destination_artifacts_run(payload,runner,str(uuid.uuid4()))
+            actual = result['TestConfigurations'][0]['TestTargets'][0] if version==2 else result['CanvasBridgeUITests']
+            self.assertIs(actual['UseDestinationArtifacts'],True)
+            self.assertEqual(actual['TestHostBundleIdentifier'],runner['bundleIdentifier'])
+            self.assertEqual(actual['UITargetAppBundleIdentifier'],adapter.USER_BUNDLE)
+            self.assertEqual(actual['EnvironmentVariables']['CCR_TEST_BUNDLE'],adapter.USER_BUNDLE)
+            for key in ['TestHostPath','TestBundlePath','UITargetAppPath','DependentProductPaths']:
+                self.assertNotIn(key,actual)
+            self.assertEqual(plistlib.dumps(payload),before)
+            for changed in [dict(runner,installed=False),dict(runner,team='another'),dict(runner,bundleIdentifier='new.runner')]:
+                with self.assertRaises(adapter.Held): adapter.destination_artifacts_run(payload,changed,str(uuid.uuid4()))
+
+    def test_prepared_harness_never_builds_and_preserves_input_run(self):
+        import plistlib
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            original = work/'original.xctestrun'
+            original.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'IsUITestBundle':True,
+                'TestHostPath':'CanvasBridgeUITests-Runner.app','UITargetAppPath':'CanvasBridge.app',
+                'TestBundlePath':'CanvasBridgeUITests.xctest','DependentProductPaths':['CanvasBridge.app'],
+                'TestingEnvironmentVariables':{}}}))
+            before = original.read_bytes()
+            config = existing_runner_fixture(work,original)
+            adapter.write(work/'deployment.json',{'testId':str(uuid.uuid4()),'bundleIdentifier':adapter.USER_BUNDLE,
+                'configuration':'Debug','sourceReadbackVerified':True})
+            with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), \
+                 patch.object(adapter,'actual_xcresult'), patch.object(adapter,'command') as command:
+                adapter.harness(config,work,'testEditAndSave')
+                command.assert_called_once()
+                args = command.call_args.args[0]
+                self.assertEqual(args[:2],['xcodebuild','test-without-building'])
+                self.assertNotIn('build-for-testing',args)
+            self.assertEqual(original.read_bytes(),before)
+            prepared = plistlib.loads((work/'ExistingRunner.xctestrun').read_bytes())['CanvasBridgeUITests']
+            self.assertTrue(prepared['UseDestinationArtifacts'])
+            with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), \
+                 patch.object(adapter,'command') as command:
+                with self.assertRaisesRegex(adapter.Held,'existing_xctestrun_changed'):
+                    adapter.harness(dict(config,existingXctestrunSHA256='0'*64),work,'testEditAndSave')
+                command.assert_not_called()
+
 
 class NativeDefaultsContract(unittest.TestCase):
     @unittest.skipUnless(__import__('os').environ.get('CCR_NATIVE_ADAPTER_TEST_DIR'),
@@ -524,8 +613,8 @@ class HarnessResultAcceptance(unittest.TestCase):
         import plistlib
         run = root / 'HarnessDerivedData/Build/Products/test.xctestrun'
         run.parent.mkdir(parents=True)
-        run.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'EnvironmentVariables':{}}}))
-        adapter.write(root/'deployment.json',{'testId':'isolated'})
+        run.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'IsUITestBundle':True,'EnvironmentVariables':{}}}))
+        adapter.write(root/'deployment.json',{'testId':str(uuid.uuid4()),'bundleIdentifier':adapter.USER_BUNDLE,'configuration':'Debug','sourceReadbackVerified':True})
         def command(args, *unused):
             if args[0] == 'xcodebuild':
                 if exists: Path(args[args.index('-resultBundlePath')+1]).mkdir()
@@ -538,7 +627,7 @@ class HarnessResultAcceptance(unittest.TestCase):
         calls = []
         with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), patch.object(adapter,'command',side_effect=command) as cmd, \
              patch.object(adapter,'run_live_harness',side_effect=run_live):
-            result = adapter.harness({'deviceUDID':'unexecuted'},root,'testReviewReopen',variables,
+            result = adapter.harness(existing_runner_fixture(root,run),root,'testReviewReopen',variables,
                                      on_ready=(lambda:calls.append(True)) if live else None)
             self.assertEqual(sum(call.args[0][0] == 'xcrun' for call in cmd.call_args_list),1)
         self.assertEqual(calls,[True] if live else [])
@@ -591,13 +680,13 @@ class HarnessResultAcceptance(unittest.TestCase):
             with self.subTest(live=live), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self.exercise(root,self.details('testReviewReopen'),live,variables=variables)
-                run = root / 'HarnessDerivedData/Build/Products/test.xctestrun'
+                run = root / 'ExistingRunner.xctestrun'
                 loaded = plistlib.loads(run.read_bytes())['CanvasBridgeUITests']['EnvironmentVariables']
                 for name, text in variables.items():
                     with self.subTest(variable=name):
                         self.assertEqual(loaded[name].encode('utf-8'),text.encode('utf-8'))
-                self.assertEqual(loaded['CCR_TEST_RUNTIME_ID'],'isolated')
-                self.assertEqual(loaded['CCR_TEST_BUNDLE'],adapter.BUNDLE)
+                self.assertEqual(loaded['CCR_TEST_RUNTIME_ID'],adapter.read(root/'deployment.json')['testId'])
+                self.assertEqual(loaded['CCR_TEST_BUNDLE'],adapter.USER_BUNDLE)
 
 class ReviewJournalAcceptance(unittest.TestCase):
     def test_only_absent_payload_can_be_cleared(self):
@@ -944,18 +1033,18 @@ class FourGradeAcceptance(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); run=root/'HarnessDerivedData/Build/Products/test.xctestrun'
             run.parent.mkdir(parents=True)
-            run.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'EnvironmentVariables':{
+            run.write_bytes(plistlib.dumps({'CanvasBridgeUITests':{'IsUITestBundle':True,'EnvironmentVariables':{
                 'CCR_REVIEW_GRADE_BUTTON_ID':'stale','CCR_REVIEW_FOREIGN':'pollution','UNRELATED':'preserved'}}},
                 fmt=plistlib.FMT_BINARY))
-            adapter.write(root/'deployment.json',{'testId':'isolated'})
+            adapter.write(root/'deployment.json',{'testId':str(uuid.uuid4()),'bundleIdentifier':adapter.USER_BUNDLE,'configuration':'Debug','sourceReadbackVerified':True})
             for button,label in expected:
                 variables={'CCR_REVIEW_GRADE_BUTTON_ID':button,'CCR_REVIEW_GRADE_INTERVAL':label,
                            'CCR_REVIEW_DRAFT':'바깥\r\ne\u0301 👩🏽‍💻\r\n'}
                 with patch.object(adapter,'single_app_installation_gate'), patch.object(adapter,'lease'), patch.object(adapter,'command') as command, \
                      patch.object(adapter,'actual_xcresult') as actual:
-                    result=adapter.harness({'deviceUDID':'offline'},root,'testReviewSelectedGrade',variables)
-                self.assertTrue(run.read_bytes().startswith(b'bplist00'))
-                loaded=plistlib.loads(run.read_bytes())['CanvasBridgeUITests']['EnvironmentVariables']
+                    result=adapter.harness(existing_runner_fixture(root,run),root,'testReviewSelectedGrade',variables)
+                self.assertTrue((root/'ExistingRunner.xctestrun').read_bytes().startswith(b'bplist00'))
+                loaded=plistlib.loads((root/'ExistingRunner.xctestrun').read_bytes())['CanvasBridgeUITests']['EnvironmentVariables']
                 self.assertNotIn('CCR_REVIEW_FOREIGN',loaded)
                 self.assertEqual(loaded['UNRELATED'],'preserved')
                 for name,value in variables.items(): self.assertEqual(loaded[name].encode(),value.encode())

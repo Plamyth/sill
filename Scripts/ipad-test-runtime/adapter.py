@@ -29,16 +29,15 @@ BUNDLE = 'com.ambrion.rea.ipad-runtime'
 USER_BUNDLE = 'com.ambrion.sillcanvas.ipad'
 NORMAL_TEAM = 'ZPTXHJ866D'
 SINGLE_APP_BLOCKERS = (
-    'normal_install_full_preferences_and_documents_preservation_unverified',
+    'latest_normal_candidate_preservation_readback_required',
     'installed_build_version_and_keychain_entitlements_not_read_back',
     'install_candidate_still_uses_synthetic_owner_bootstrap',
-    'isolated_app_delegate_still_reads_standard_defaults',
-    'xctestrun_still_depends_on_canvasbridge_prototype_app',
-    'existing_runner_reuse_and_return_to_normal_launch_unverified',
+    'installed_runner_identity_receipt_and_normal_launch_return_required',
 )
 NODE = 'D29DDF60-B4C6-48DD-A75A-219C8F2A52A7'
 ORIGINALS = ['CanvasScene.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/ledger.json',
-             'CanvasBlockEdit/recovery.json', 'CCR Sill/keyboard-diagnostics.json',
+             'CanvasBlockEdit/recovery.json', 'CanvasNoteEdit/recovery.json',
+             'CanvasLegacyScene.json', 'CanvasWorkspace/bookmark.json', 'CCR Sill/keyboard-diagnostics.json',
              'CCR Sill/microphone-diagnostics.json']
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',
            PATH='/Applications/Xcode.app/Contents/Developer/usr/bin:' + os.environ.get('PATH', '/usr/bin:/bin'))
@@ -52,6 +51,42 @@ def require(ok, reason):
 
 def single_app_installation_gate():
     raise Held('single_app_runtime_held:' + ','.join(SINGLE_APP_BLOCKERS))
+
+def destination_artifacts_run(payload, runner, test_id, variables=None):
+    require(runner.get('schema') == 'ccr.existing-xctest-runner/v1' and
+            runner.get('installed') is True and runner.get('team') == NORMAL_TEAM,
+            'existing_runner_identity_required')
+    identifier = runner.get('bundleIdentifier')
+    require(identifier == 'com.ambrion.rea.appaudit.UITests.xctrunner', 'existing_runner_bundle_mismatch')
+    require(runner.get('testBundleRelativePath') == '__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest',
+            'existing_runner_test_bundle_mismatch')
+    require(str(uuid.UUID(test_id)) == test_id.lower(), 'runtime_uuid_invalid')
+    run = plistlib.loads(plistlib.dumps(payload))
+    if 'TestConfigurations' in run:
+        configs = run['TestConfigurations']
+        require(isinstance(configs, list) and len(configs) == 1 and isinstance(configs[0], dict) and
+                configs[0].get('IsEnabled', True),
+                'existing_runner_configuration_ambiguous')
+        targets = configs[0].get('TestTargets', [])
+    else:
+        targets = [value for key, value in run.items() if key != '__xctestrun_metadata__']
+    require(len(targets) == 1 and isinstance(targets[0], dict), 'existing_runner_target_ambiguous')
+    target = targets[0]
+    require(target.get('IsUITestBundle') is True, 'existing_runner_not_ui_test')
+    for field in ['TestHostPath', 'TestBundlePath', 'UITargetAppPath', 'DependentProductPaths']:
+        target.pop(field, None)
+    target.update(UseDestinationArtifacts=True, TestHostBundleIdentifier=identifier,
+        TestBundleDestinationRelativePath=runner['testBundleRelativePath'],
+        UITargetAppBundleIdentifier=USER_BUNDLE, ParallelizationEnabled=False,
+        UITargetAppCommandLineArguments=['--ccr-test-runtime', test_id])
+    environment = target.setdefault('EnvironmentVariables', {})
+    for key in list(environment):
+        if key.startswith('CCR_'):
+            del environment[key]
+    require(all(key.startswith(('CCR_REVIEW_', 'CCR_ROTATION_', 'CCR_COMMENT_')) and isinstance(value, str)
+                for key, value in (variables or {}).items()), 'runner_environment_not_allowed')
+    environment.update(variables or {}, CCR_TEST_RUNTIME_ID=test_id, CCR_TEST_BUNDLE=USER_BUNDLE)
+    return run
 
 def owner_bootstrap_identity(config):
     supplied = Path(config['ownerBootstrapProfile']).absolute()
@@ -138,8 +173,31 @@ def snapshots(config, work, label):
         target.parent.mkdir(parents=True, exist_ok=True)
         found = copy_file(config, work, 'Library/Application Support/' + relative, target, optional=True, bundle=USER_BUNDLE)
         result[relative] = sha(target.read_bytes()) if found else None
+    for relative in ['Documents', 'Library/Preferences']:
+        target = work / label / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        found = copy_file(config, work, relative, target, optional=True, bundle=USER_BUNDLE)
+        if not found:
+            result[relative] = None
+            continue
+        require(target.is_dir() and not target.is_symlink(), 'protected_snapshot_not_directory')
+        result[relative] = {}
+        target.chmod(0o700)
+        for item in sorted(target.rglob('*')):
+            require(not item.is_symlink(), 'protected_snapshot_symlink')
+            key = str(item.relative_to(target))
+            if item.is_file():
+                item.chmod(0o600)
+                result[relative][key] = sha(item.read_bytes())
+            else:
+                require(item.is_dir(), 'protected_snapshot_non_regular')
+                result[relative][key + '/'] = None
     write(work / (label + '.json'), result)
     return result
+
+def same_user_data(before, after):
+    return ({key: value for key, value in before.items() if key != 'installedUserApp'} ==
+            {key: value for key, value in after.items() if key != 'installedUserApp'})
 
 def request(server, method, path, body=None, authenticated=True):
     headers = {'x-canvas-token': server['token']} if authenticated else {}
@@ -203,7 +261,7 @@ def deploy(config, work, source):
     lease(config)
     previous = snapshots(config, work, 'user-before-current')
     if (work / 'user-before.json').exists():
-        require(read(work / 'user-before.json') == previous, 'user_data_changed_since_previous_deploy')
+        require(same_user_data(read(work / 'user-before.json'), previous), 'user_data_changed_since_previous_deploy')
     else:
         write(work / 'user-before.json', previous)
     derived = Path(config.get('buildCache', str(Path(config['outputRoot']) / 'AppDerivedData'))).resolve()
@@ -264,7 +322,7 @@ def deploy(config, work, source):
     observed, evidence = runtime_readback(config, work, test_id)
     require(all(observed.get(k) == source[k] for k in source), 'runtime_source_mismatch')
     require(observed.get('executableSHA256') == executable, 'runtime_executable_mismatch')
-    require(snapshots(config, work, 'user-after-deploy') == previous, 'original_data_changed')
+    require(same_user_data(snapshots(config, work, 'user-after-deploy'), previous), 'original_data_changed')
     result = {'status': 'applied', **source, 'runtimeId': BUNDLE + ':' + test_id + ':' + executable,
               'testId': test_id, 'executableSHA256': executable, 'sourceReadback': str(evidence), 'app': str(app)}
     write(work / 'deployment.json', result)
@@ -318,28 +376,19 @@ def actual_xcresult(result, method):
 def harness(config, work, method, variables=None, on_ready=None, ready_marker='CCR_ROTATION_LIVE_READY'):
     single_app_installation_gate()
     lease(config)
-    derived = work / 'HarnessDerivedData'
-    if not list((derived / 'Build/Products').glob('*.xctestrun')):
-        command(['xcodebuild', '-project', Path(config['repo']) / 'Tests/integration/ipad-runtime/CanvasBridge.xcodeproj',
-                 '-scheme', 'CanvasBridge', '-configuration', 'Debug', '-destination', 'id=' + config['deviceUDID'],
-                 '-derivedDataPath', derived, 'DEVELOPMENT_TEAM=' + config['developmentTeam'], 'build-for-testing'],
-                work / 'harness-build.log', 600)
-    runs = list((derived / 'Build/Products').glob('*.xctestrun'))
-    require(len(runs) == 1, 'harness_run_ambiguous')
-    run = plistlib.loads(runs[0].read_bytes())
-    for key, value in run.items():
-        if isinstance(value, dict) and key != '__xctestrun_metadata__':
-            value.setdefault('EnvironmentVariables', {})['CCR_TEST_RUNTIME_ID'] = read(work / 'deployment.json')['testId']
-            value['EnvironmentVariables']['CCR_TEST_BUNDLE'] = BUNDLE
-            for name in ['CCR_ROTATION_EXPECTED', 'CCR_ROTATION_DELTA', 'CCR_COMMENT_TEXT', 'CCR_COMMENT_PREVIOUS']:
-                value['EnvironmentVariables'].pop(name, None)
-            for name in list(value['EnvironmentVariables']):
-                if name.startswith('CCR_REVIEW_'):
-                    del value['EnvironmentVariables'][name]
-            value['EnvironmentVariables'].update(variables or {})
-    runs[0].write_bytes(plistlib.dumps(run, fmt=plistlib.FMT_BINARY))
+    run_path = Path(config['existingXctestrun']).resolve()
+    runner_path = Path(config['existingRunnerReceipt']).resolve()
+    require(sha(runner_path.read_bytes()) == config['existingRunnerReceiptSHA256'], 'existing_runner_receipt_changed')
+    run_bytes = run_path.read_bytes()
+    require(sha(run_bytes) == config['existingXctestrunSHA256'], 'existing_xctestrun_changed')
+    deployed = read(work / 'deployment.json')
+    require(deployed.get('bundleIdentifier') == USER_BUNDLE and deployed.get('configuration') == 'Debug' and
+            deployed.get('sourceReadbackVerified') is True, 'normal_debug_runtime_receipt_required')
+    run = destination_artifacts_run(plistlib.loads(run_bytes),read(runner_path),deployed['testId'],variables)
+    prepared = work / 'ExistingRunner.xctestrun'
+    prepared.write_bytes(plistlib.dumps(run,fmt=plistlib.FMT_BINARY))
     result = work / (method + '-' + str(time.time_ns()) + '.xcresult')
-    args = ['xcodebuild', 'test-without-building', '-xctestrun', str(runs[0]), '-destination', 'id=' + config['deviceUDID'],
+    args = ['xcodebuild', 'test-without-building', '-xctestrun', str(prepared), '-destination', 'id=' + config['deviceUDID'],
             '-only-testing:CanvasBridgeUITests/CanvasBridgeUITests/' + method, '-resultBundlePath', str(result),
             '-parallel-testing-enabled', 'NO']
     log = work / (method + '.log')
@@ -970,7 +1019,7 @@ def cleanup(config, work, service, vault, test_id, before):
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         results['vaultEmpty'] = False
     try:
-        results['originalDataPreserved'] = snapshots(config, work, 'user-after-reset') == before
+        results['originalDataPreserved'] = same_user_data(snapshots(config, work, 'user-after-reset'), before)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         results['originalDataPreserved'] = False
     write(work / 'reset-readback.json', results)
@@ -1018,7 +1067,7 @@ def accept(config, work, source):
         rotation = accept_rotation(config, work, server, vault, test_id)
         comments = accept_comments(config, work, server, test_id)
         review = accept_review(config, work, server, vault, test_id)
-        require(snapshots(config, work, 'user-after-accept') == before, 'original_data_changed')
+        require(same_user_data(snapshots(config, work, 'user-after-accept'), before), 'original_data_changed')
         observed, runtime_evidence = runtime_readback(config, work, test_id)
         require(all(observed.get(k) == source[k] for k in source) and observed.get('executableSHA256') == deployed['executableSHA256'], 'accepted_runtime_mismatch')
         proof = {'nativeResult': str(ui), 'reverseResult': str(reverse), 'vault': current, 'runtime': observed,
