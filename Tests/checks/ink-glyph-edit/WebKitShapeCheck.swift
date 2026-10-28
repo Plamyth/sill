@@ -83,14 +83,16 @@ import WebKit
         precondition(controller.messages.filter { $0["nodeID"] as? String == expected }.count == 2,"edge and endpoint select original UUID")
         var result = value
         result["messages"] = controller.messages
-        result["scope"] = "실제 macOS WKWebView·번들 bridge/SVG DOM 기하·선 선택. 자동 배치이며 원본 좌표 재현 또는 iPad 터치/시각 수용이 아님. 화면·앱 활성화·네트워크·설치 없음."
-        precondition(application.activationPolicy() == .prohibited && !application.isActive && application.windows.isEmpty,
-                     "test process remains inactive without windows")
+        result["scope"] = "실제 macOS WKWebView·번들 bridge/SVG DOM 기하·선 선택. 자동 배치이며 원본 좌표 재현 또는 iPad 터치/시각 수용이 아님. 창 표시·앱 활성화·네트워크·설치 없음. 실제 프로세스 정책과 숨은 framework 창 수를 별도 기록."
         result["activationPolicy"] = application.activationPolicy().rawValue
         result["applicationActive"] = application.isActive
         result["applicationWindowCount"] = application.windows.count
-        result["passed"] = true
+        result["applicationVisibleWindowCount"] = application.windows.filter(\.isVisible).count
+        result["applicationKeyWindowCount"] = application.windows.filter(\.isKeyWindow).count
+        result["passed"] = !application.isActive && !application.windows.contains(where: { $0.isVisible || $0.isKeyWindow })
         try JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]).write(to:output.appendingPathComponent("webkit-shapes.json"))
+        print("WEBKIT_PROCESS",application.activationPolicy().rawValue,"active",application.isActive,"windows",application.windows.count,"visible",application.windows.filter(\.isVisible).count)
+        precondition(result["passed"] as? Bool == true,"test process remains inactive without visible or key windows")
         print("WEBKIT_SHAPES_OK center=true corner=false linePath=true selectionUUID=true initialAndCachedHighlight=true cachedEdgeMismatchRejected=true")
         view.stopLoading(); config.userContentController.removeScriptMessageHandler(forName:"canvasDiagram")
     }

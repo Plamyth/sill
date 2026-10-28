@@ -19,3 +19,5 @@ Laplace의 schema3-cross-review-8509e3c P2는 기존 scene2 + 원격 line/ellips
 최종 후보는 math/glyph/shape/Files 및 adapter 필수 검사와 변경된 WebKit 회귀를 조합한다. 원앱 조사·새 native 인식 호출·실제 UI·Host·기기·Pencil 요청·설치·push는0이며 전체 두 앱 완료는 false다. 부모의 새 exact 후보 독립 검수는 별도다. Pstack의 반례→원인→공유 경로 수정→실제 산출물 검증을 따르고 Ponytail로 기존 선택 갱신과 저장 경로를 재사용했다. 새 provider·모델·의존성·ARENA·순정 Goal은 없다.
 
 검사 프로세스의 setActivationPolicy 반환값은 이미 prohibited인 CLI에서도 false였다. 자기 프로세스 읽기 probe는 실제 정책2/prohibited·active=false·windows=0을 확인했다. 따라서 명령 반환값을 성공으로 추정하지 않고, WebKit 실행 전후의 실제 정책·비활성·창0을 검사하도록 고쳤다. Host 설정이나 활성화 정책은 바꾸지 않는다. 이 후속은 검사 파일만 바꾸므로 직전 후보의 동일 제품 입력 SHA를 가진 math/glyph/shape/Files/adapter·SDK 결과는 재사용하며, 변경된 WebKit 회귀와 최종 source identity의 전체 target build를 따로 확인한다.
+
+WebKit 수명주기는 CLI의 초기 정책 또는 내부 숨은 창 수를 바꿀 수 있다. 종료 때 정책2/전체 창0을 가정한 검사는 도형·선 CSS 단정을 통과한 뒤 안전 가드에서 중단됐다. 마지막 검사는 실제 정책·활성·전체/표시/key 창 수를 먼저 영수증에 기록하고, 비활성 및 표시/key 창0을 요구한다. 숨은 framework 창을 사용자에게 보이는 UI와 혼동하지 않으며 활성화·창 표시 명령은 추가하지 않는다.
