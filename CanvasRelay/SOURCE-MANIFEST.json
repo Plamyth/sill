@@ -1,0 +1,339 @@
+{
+  "schema": "ccr.canvas-relay.source-import/v1",
+  "sourceCommit": "f61f51696aa5cd5b1973277a347ffca3f534fa26",
+  "sourceTree": "1040bae0b3b2befd60e589b559fbe96db79aabe2",
+  "selectedPath": "relay/",
+  "baseCommit": "68a1b4aaad6faba5a5449d82b81e147479b81930",
+  "baseTree": "d2e14f2df0797a26827a73a6c1d0261614b87dd3",
+  "officialRemote": "https://github.com/Plamyth/sill.git",
+  "files": [
+    {
+      "sourcePath": "relay/app-server-socket.py",
+      "destinationPath": "CanvasRelay/relay/app-server-socket.py",
+      "mode": "100644",
+      "gitBlob": "50c930a79c5b0e9da18676eae8a62a9866cd4060",
+      "bytes": 1166,
+      "sha256": "58ba9f7dbf300e24952984e4f1da82cc3b1a1d07e683201e53f2c960a9b65f00"
+    },
+    {
+      "sourcePath": "relay/braintrinity-projection.test.js",
+      "destinationPath": "CanvasRelay/relay/braintrinity-projection.test.js",
+      "mode": "100644",
+      "gitBlob": "46aeaba53ee45c4eaa1fe05bbe4b8783f4c7e6bc",
+      "bytes": 10051,
+      "sha256": "4682f1af3e59526ed628491c501d5ca1d4e459cead5b8e201b6dad824d5914fa"
+    },
+    {
+      "sourcePath": "relay/canvas-diagram.js",
+      "destinationPath": "CanvasRelay/relay/canvas-diagram.js",
+      "mode": "100644",
+      "gitBlob": "08342edcdde6ce73f93e160e3e4b02da65c1f12e",
+      "bytes": 3526,
+      "sha256": "1b87a14b497677df6a55583e7af3d39a9fbce0c515167acba73533c81272fa91"
+    },
+    {
+      "sourcePath": "relay/canvas-diagram.test.js",
+      "destinationPath": "CanvasRelay/relay/canvas-diagram.test.js",
+      "mode": "100644",
+      "gitBlob": "03bbdd2388040bfa1ed03ee75d5ab202d8c6ede8",
+      "bytes": 2347,
+      "sha256": "2de50b90d9b284af9c8372a16c6cb99f58c41711cd2109045a6dfe78f04c0e54"
+    },
+    {
+      "sourcePath": "relay/canvas-limits.test.js",
+      "destinationPath": "CanvasRelay/relay/canvas-limits.test.js",
+      "mode": "100644",
+      "gitBlob": "cf5c55a3fb7ab1abdbfb983dab3136c196007111",
+      "bytes": 15878,
+      "sha256": "c3b42ca81920ff013af1c050afe99ba9a5a8c1c2c640fceb764cace9fab91563"
+    },
+    {
+      "sourcePath": "relay/canvas-scene.js",
+      "destinationPath": "CanvasRelay/relay/canvas-scene.js",
+      "mode": "100644",
+      "gitBlob": "5d0681777bf52375d6400f740ef80391fece99be",
+      "bytes": 2240,
+      "sha256": "f38cffa72d917995b632f9d94f304fbeaedbb2a1e245a471c956d72fc6f65b8f"
+    },
+    {
+      "sourcePath": "relay/canvas-schema.test.js",
+      "destinationPath": "CanvasRelay/relay/canvas-schema.test.js",
+      "mode": "100644",
+      "gitBlob": "380a60cbba25af1dcf33f9ee2e65228629ddef52",
+      "bytes": 13053,
+      "sha256": "65c6444fed0ec5198c45c20c06a79f3ed8d5a34621d0d92088f43d47d33b3e95"
+    },
+    {
+      "sourcePath": "relay/codex-delivery.js",
+      "destinationPath": "CanvasRelay/relay/codex-delivery.js",
+      "mode": "100644",
+      "gitBlob": "20968ae575c15d2394b08ffa5161cec6a01fb8bf",
+      "bytes": 12872,
+      "sha256": "b551c9f8a2d73c6265ecc53d1c43914a122a6e47c4e62ee1cfccd78f0371be0f"
+    },
+    {
+      "sourcePath": "relay/codex-delivery.test.js",
+      "destinationPath": "CanvasRelay/relay/codex-delivery.test.js",
+      "mode": "100644",
+      "gitBlob": "770427b572bc1550b74542145c3d4d266e3e8ef4",
+      "bytes": 20650,
+      "sha256": "096abb7b6cdb7c093db8c330caef91dfb96c3e27ac516d05e8c6f464832c41d9"
+    },
+    {
+      "sourcePath": "relay/control-room-events.js",
+      "destinationPath": "CanvasRelay/relay/control-room-events.js",
+      "mode": "100644",
+      "gitBlob": "3fc4e3dc5e3f52a7776425e8b41d7e053ac615c3",
+      "bytes": 8275,
+      "sha256": "9d5bd0c989fba318d4267410b85251b880c0ba78d84a57115f68b1cfe57b17a7"
+    },
+    {
+      "sourcePath": "relay/control-room-events.test.js",
+      "destinationPath": "CanvasRelay/relay/control-room-events.test.js",
+      "mode": "100644",
+      "gitBlob": "7e98eb83eb83e8453bc7e1876c05b5d8dc9705fa",
+      "bytes": 38605,
+      "sha256": "cd1915932ca22871b3d38066d6c8cde1a19eeb2bf8068f56e19a47aae9c3a9ef"
+    },
+    {
+      "sourcePath": "relay/control-room-incremental.test.js",
+      "destinationPath": "CanvasRelay/relay/control-room-incremental.test.js",
+      "mode": "100644",
+      "gitBlob": "2668f38ded7e40ecef7d19787163abe352eb5486",
+      "bytes": 27009,
+      "sha256": "82d453030ccfba34272525265e6dc794efbacd771daaf0efb3e16bcb0ae4a040"
+    },
+    {
+      "sourcePath": "relay/control-room-projection.js",
+      "destinationPath": "CanvasRelay/relay/control-room-projection.js",
+      "mode": "100644",
+      "gitBlob": "272e05a54bff217cbf90f7cbaab9ee51b0d96c2a",
+      "bytes": 13958,
+      "sha256": "b2d522a51814c89623387226d78ce591f757fb0b83967e06e0e8e3ffdae7c32b"
+    },
+    {
+      "sourcePath": "relay/control-room-projection.test.js",
+      "destinationPath": "CanvasRelay/relay/control-room-projection.test.js",
+      "mode": "100644",
+      "gitBlob": "146c9b5f6e7f9c1851827ec94a870b1b013b5c63",
+      "bytes": 24295,
+      "sha256": "69c2ee38658478a61112aeff1440c0195910d1d995b4c816c5633e017ba6d4e7"
+    },
+    {
+      "sourcePath": "relay/control-room-public-relay.test.js",
+      "destinationPath": "CanvasRelay/relay/control-room-public-relay.test.js",
+      "mode": "100644",
+      "gitBlob": "c164f1aa7a79e50bee159b8b690c891b9aa1f11b",
+      "bytes": 9624,
+      "sha256": "bbd8e172575d2a989e81b1b57a75852663b1a9dbefb4172bf0b223dace5b2622"
+    },
+    {
+      "sourcePath": "relay/control-room-sources.js",
+      "destinationPath": "CanvasRelay/relay/control-room-sources.js",
+      "mode": "100644",
+      "gitBlob": "9f7dc5704cd01d17811a6cbb5264a3b07de48c6a",
+      "bytes": 525,
+      "sha256": "1c023956fbc8642e235bb2867cf283cec02991c8f82fcdc8908a17d4160a39a4"
+    },
+    {
+      "sourcePath": "relay/control-room-sources.test.js",
+      "destinationPath": "CanvasRelay/relay/control-room-sources.test.js",
+      "mode": "100644",
+      "gitBlob": "d3a4fc01c3e05aba375a51662ff0b7a1d8b4cbea",
+      "bytes": 14356,
+      "sha256": "12cf6aa7bd86a6a1eb82e26ce110d0eb94133f26ec89644290fc53f845fbf6da"
+    },
+    {
+      "sourcePath": "relay/obsidian-vault.js",
+      "destinationPath": "CanvasRelay/relay/obsidian-vault.js",
+      "mode": "100644",
+      "gitBlob": "6c15dfa447bed0801b89e609ac9c1cc7e440b58e",
+      "bytes": 12643,
+      "sha256": "5498309965611ee8e311860bd4d71e149d790a81426667ced5f9294d8e035b73"
+    },
+    {
+      "sourcePath": "relay/obsidian-vault.test.js",
+      "destinationPath": "CanvasRelay/relay/obsidian-vault.test.js",
+      "mode": "100644",
+      "gitBlob": "c49053a059368c63e74b7885b90f7c6593084ace",
+      "bytes": 24590,
+      "sha256": "cd23e90750c2ef53187e2b84b74442533450b659893fe4ddce14f7836a56d6aa"
+    },
+    {
+      "sourcePath": "relay/server.js",
+      "destinationPath": "CanvasRelay/relay/server.js",
+      "mode": "100644",
+      "gitBlob": "6060eef1b84d90767bc045c4f40d7ed2b9b45e6b",
+      "bytes": 27026,
+      "sha256": "8b7c5db26da8ed53cca148df496449f3c5db131717f44b36b35aab072739bfe4"
+    },
+    {
+      "sourcePath": "relay/server.test.js",
+      "destinationPath": "CanvasRelay/relay/server.test.js",
+      "mode": "100644",
+      "gitBlob": "2534abffdd9a97025f0a7d369d3f9809e90eab16",
+      "bytes": 49393,
+      "sha256": "d5acb64c3584622cf114f5c042fbc17a0ccbbd549c5a51904a5d1d8bafaa52bf"
+    },
+    {
+      "sourcePath": "relay/start.js",
+      "destinationPath": "CanvasRelay/relay/start.js",
+      "mode": "100644",
+      "gitBlob": "c45f1ff3dea8a0cde5448aef7c1a55fee1b0966c",
+      "bytes": 466,
+      "sha256": "cf717b613650de455014de8148cd84037f3a71c284e078fc5ce58d0798457ccd"
+    },
+    {
+      "sourcePath": "relay/test-input/control-events-server.js",
+      "destinationPath": "CanvasRelay/relay/test-input/control-events-server.js",
+      "mode": "100644",
+      "gitBlob": "c190d89249360e79226d01e2ed04a9a30c31a25b",
+      "bytes": 10547,
+      "sha256": "b030979f74c8a9a4881c1f1562c2e238a362b7e5978abbc314658e38ab29b149"
+    },
+    {
+      "sourcePath": "relay/test-input/control-room-source-dto.json",
+      "destinationPath": "CanvasRelay/relay/test-input/control-room-source-dto.json",
+      "mode": "100644",
+      "gitBlob": "91d9909e02ffd79c2045950b08a7f915e04aeae3",
+      "bytes": 6105,
+      "sha256": "0fa69160a50b401951c8a23a6d032313ef94b375cfff16b61a8294d73c8ab513"
+    },
+    {
+      "sourcePath": "relay/test-input/core-a6/bridge/cursor-desktop-catalog.js",
+      "destinationPath": "CanvasRelay/relay/test-input/core-a6/bridge/cursor-desktop-catalog.js",
+      "mode": "100644",
+      "gitBlob": "63c4e5ea48830206c36d43614f741f3809376e87",
+      "bytes": 7097,
+      "sha256": "003e8a46557f984f4cae4e0bd684e12597c81b4768785636d729f0e0a5f5a66d"
+    },
+    {
+      "sourcePath": "relay/test-input/core-a6/bridge/cursor-desktop-client.js",
+      "destinationPath": "CanvasRelay/relay/test-input/core-a6/bridge/cursor-desktop-client.js",
+      "mode": "100644",
+      "gitBlob": "327ec155b7873f9f649ad1edf536b77e455facbe",
+      "bytes": 23625,
+      "sha256": "1b6d4645aed9f6ca1fdf352d8c5afe94ee06a683727bece5b251351c521400bb"
+    },
+    {
+      "sourcePath": "relay/test-input/core-a6/plugin/cursor-history-pages.js",
+      "destinationPath": "CanvasRelay/relay/test-input/core-a6/plugin/cursor-history-pages.js",
+      "mode": "100644",
+      "gitBlob": "aac974397775983579d4d01736aa8e6d06fb5294",
+      "bytes": 5748,
+      "sha256": "bf6faf42ae7a9f3e749859a559cecc1163b00689a047c7b72d9f264112e39996"
+    },
+    {
+      "sourcePath": "relay/test-input/core-a6/plugin/unified-control.js",
+      "destinationPath": "CanvasRelay/relay/test-input/core-a6/plugin/unified-control.js",
+      "mode": "100644",
+      "gitBlob": "ca570c2fcac5f291d969bb6039d36fc3f3d4794c",
+      "bytes": 16000,
+      "sha256": "beccbb466eb787d3feee90688227795787f97f4d28fe79be29a2d7998e0d101f"
+    },
+    {
+      "sourcePath": "relay/test-input/core-a6/provenance.json",
+      "destinationPath": "CanvasRelay/relay/test-input/core-a6/provenance.json",
+      "mode": "100644",
+      "gitBlob": "169d3f001200c555cd1a69f49af0f2910edb69da",
+      "bytes": 592,
+      "sha256": "c7216cf9f96b17013bbede665c208cb7fed4e3ac303e8fe5be4726f51de625ea"
+    },
+    {
+      "sourcePath": "relay/test-input/public-relay-lineage-v1.json",
+      "destinationPath": "CanvasRelay/relay/test-input/public-relay-lineage-v1.json",
+      "mode": "100644",
+      "gitBlob": "51bf647a319091f1ee71eb06f51dfccf0818d055",
+      "bytes": 58889,
+      "sha256": "66fa069873aeb2cb846eda1bf1adb0a007cfc23cd0d4b92d9376975d6dbb1bbe"
+    },
+    {
+      "sourcePath": "relay/vault-block-edits.js",
+      "destinationPath": "CanvasRelay/relay/vault-block-edits.js",
+      "mode": "100644",
+      "gitBlob": "edb45697ab96d7a92e7edc96bd499cb6fff9193e",
+      "bytes": 10280,
+      "sha256": "5c4b7c17499a3b7fc9bb6142f6de4545747d6d46f58cf6b63e57cfba3172e0e0"
+    },
+    {
+      "sourcePath": "relay/vault-block-edits.test.js",
+      "destinationPath": "CanvasRelay/relay/vault-block-edits.test.js",
+      "mode": "100644",
+      "gitBlob": "fcf69005adc0867bc86e03bd43b601d082e75534",
+      "bytes": 19513,
+      "sha256": "5ae4172011d1e46d3ea728d20f203ed0ddd96ea87ce249707018a06936388474"
+    },
+    {
+      "sourcePath": "relay/vendor/control-events/control-events-client.js",
+      "destinationPath": "CanvasRelay/relay/vendor/control-events/control-events-client.js",
+      "mode": "100644",
+      "gitBlob": "f269c32693a63b5427a82a3aa8076af8e0a5cbaf",
+      "bytes": 3922,
+      "sha256": "5774b4264afdd51ead498a78dfe8b5169dd984714a2173128ce9ebf7cdcd8cb9"
+    },
+    {
+      "sourcePath": "relay/vendor/control-events/control-events-fields-v1.json",
+      "destinationPath": "CanvasRelay/relay/vendor/control-events/control-events-fields-v1.json",
+      "mode": "100644",
+      "gitBlob": "5d6602f161600525163089caf4038e5a7fa21207",
+      "bytes": 1367,
+      "sha256": "a17cad702852a0c884fc5f0af081924a9c34b22be710ee525ad7c6f60f832a53"
+    },
+    {
+      "sourcePath": "relay/vendor/control-events/control-events-v1.json",
+      "destinationPath": "CanvasRelay/relay/vendor/control-events/control-events-v1.json",
+      "mode": "100644",
+      "gitBlob": "eb529b83fb849b06f82a99d851dc540559cf7d25",
+      "bytes": 2391,
+      "sha256": "a026a9f697a88ebe2838e02c24b980774572683e35189962f4900eb059609454"
+    },
+    {
+      "sourcePath": "relay/vendor/control-events/control-events.js",
+      "destinationPath": "CanvasRelay/relay/vendor/control-events/control-events.js",
+      "mode": "100644",
+      "gitBlob": "92a19033afa6adcdf21f5d5d1494e6d7f164ef23",
+      "bytes": 8801,
+      "sha256": "803f6d4399ff1b9ccdf7bdcff45efe8a678873f0a517d90d41fbbb11fa5d5266"
+    },
+    {
+      "sourcePath": "relay/vendor/control-events/provenance.json",
+      "destinationPath": "CanvasRelay/relay/vendor/control-events/provenance.json",
+      "mode": "100644",
+      "gitBlob": "10037cec8f98fa0b13e44aabc5ffd8343e85c49c",
+      "bytes": 1407,
+      "sha256": "6feba2338a858e848bd43d1d5c550671d4383efb0943154bc8e02229fea6343b"
+    },
+    {
+      "sourcePath": "relay/vendor/mobile-control/control-privacy-policy.js",
+      "destinationPath": "CanvasRelay/relay/vendor/mobile-control/control-privacy-policy.js",
+      "mode": "100644",
+      "gitBlob": "fe08347bf0644fc8de94971de9b220ca1731d9f3",
+      "bytes": 969,
+      "sha256": "6c7ab01210c7e1dbaddf0b85e9b23555626019b750e03b0436cb4ebef4f22700"
+    },
+    {
+      "sourcePath": "relay/vendor/mobile-control/mobile-control-events-v1.json",
+      "destinationPath": "CanvasRelay/relay/vendor/mobile-control/mobile-control-events-v1.json",
+      "mode": "100644",
+      "gitBlob": "dd01e776fd5ab9bd6391841676e9f2d30c4ec077",
+      "bytes": 28543,
+      "sha256": "9fb6288d6ac3d68f4d743d8703b091f263664d239248b53e6ba82d8cb554b319"
+    },
+    {
+      "sourcePath": "relay/vendor/mobile-control/mobile-control.js",
+      "destinationPath": "CanvasRelay/relay/vendor/mobile-control/mobile-control.js",
+      "mode": "100644",
+      "gitBlob": "56a9a1abe9506916fe2762ea82e9b21cb7bb0141",
+      "bytes": 18146,
+      "sha256": "376a68815e29f8b936ae0b09f5f4c7833ad7f84c78760533bf0c66a2e38b13bc"
+    },
+    {
+      "sourcePath": "relay/vendor/mobile-control/provenance.json",
+      "destinationPath": "CanvasRelay/relay/vendor/mobile-control/provenance.json",
+      "mode": "100644",
+      "gitBlob": "c2e717fae11bfe951c91b9c1166852c16391b31c",
+      "bytes": 998,
+      "sha256": "35c45b20ba119e5dbf4011c763ed70d5f203edd9537da3a0aa2a6a1c435d97d6"
+    }
+  ]
+}
