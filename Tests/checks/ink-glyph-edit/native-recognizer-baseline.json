@@ -1,0 +1,65 @@
+{
+  "sourceHashes": {
+    "iOSClient/CanvasBridge/CanvasDictation.swift": "a23d839f53b3c7746b05f0a7610d03b1d3013a64a8ff16686417a6fce88ccc2f",
+    "iOSClient/CanvasBridge/CanvasInkTextEditing.swift": "477bc6a64c32af579c9c6ffaa725bf07c476f615a73242c8f8fbc74b2dedc600",
+    "iOSClient/CanvasBridge/CanvasModel.swift": "3d5a8fbe60dffd3a5fbca3a53ce34db89a0b051d7eb8ddfb6dfd3ce693d4deb3",
+    "iOSClient/CanvasBridge/CanvasPeleView.swift": "71655376d7c968a9f8cbf0137d12d9d7e9c06b68e5a1808694e78e6f60f4cf70",
+    "iOSClient/CanvasBridge/CanvasRelay.swift": "1c5db2888fc281230fbb0bdfd21c2403c8d25ca6d4e1e26fe9daaf38ea688177",
+    "iOSClient/CanvasBridge/CanvasStore.swift": "023178240eebf66fba97fcfdd24e34c350059540ed2249f358ef5aa817222c6a",
+    "iOSClient/CanvasBridge/CanvasWorkspace.swift": "7bd154eb8e6de0138e3cd1108d98cf923d5b50b4aaaf752fd56d4665d4fe09a8",
+    "iOSClient/CanvasBridge/ControlRoomProjection.swift": "135dc595463321d896a38aa5296661d0104f23d546c99fcd666eb8fc56eaf8cc",
+    "iOSClient/CanvasBridge/ControlRoomViews.swift": "fdfb8b345ecce8e4a8caa561d0b94e1ce0c9ea0f127a6b40a01a7a9a3e78f5e4",
+    "iOSClient/CanvasBridge/PencilCanvas.swift": "d985bac6d642249f8235300d204ac8d11e700009dbc01a58cf6a0c9e902a075d",
+    "iOSClient/CanvasBridge/PencilTextCorrection.swift": "e5692da4e7ee5e9ea38b36a6a547791e0c081101e62982a12b1a0dcd0f46801b",
+    "iOSClient/CanvasBridge/SceneFile.swift": "8fbef60d7209078e83eb240262cd50c7b5c0d6dcc174239b51f749a089b37bf3",
+    "iOSClient/CanvasBridge/SceneRenderer.swift": "ea420047e019d5c28191adcd11b7f9d53d8a489b4b80d4be6633f7fc707eec78",
+    "iOSClient/IPadAudioSession.swift": "1d865368270feab57c0afba13ca762f737b21ebe67ddb4b88af03d8fb19ed723",
+    "iOSClient/IPadAudioLeaseState.swift": "1269f2b2042f5dc6431308825f8941de23b6208ab587d75a62e1eacd6fff086e",
+    "iOSClient/IPadAudioLeaseCoordinator.swift": "5b39cbcfdc4f1d6f83c60b4af23db2415be7dc884edf96fd4a448301c2f4c587",
+    "iOSClient/TestDestinations/TestDestinationsPolicy.swift": "1cb9d42b5b2b0ffa59efd2051642205d1624c86422a43daf8ce138798cbd31b0",
+    "Sources/StreamProtocol/TestDestinations.swift": "39804587a04b5977748f74de97cf6a3e3e196f6d6dba2ffc8a1c787e221b7a44",
+    "Tests/checks/ink-glyph-edit/main.swift": "817d6d2911cae98f03f5f9881bce9cfa2210d9f594cb78504f71c6e2f7017adc",
+    "Tests/checks/ink-glyph-edit/Info.plist": "50a0aded2a05d31bee2c5780710d3d765c59f26d7c0f9775e092b6954d606153",
+    "Tests/checks/ink-glyph-edit/integration.patch": "83df0eaed0be8ef03ad77d1c637ea1894fe69fb7d138ee22252e7707f2fd2a7d",
+    "Tests/checks/ink-glyph-edit/run.py": "e4efa6a426bdbb26dd631ab25bebcb011f1d56ed2353d292fcf16cc953d393fb"
+  },
+  "results": [
+    {
+      "evidenceInjected": false,
+      "fixture": "01b38bad8aac4227687f4656b1e67e40.pkdrawing",
+      "productOutcome": "unsupported",
+      "query": "a",
+      "recognitionText": null,
+      "searchMatchCount": 0,
+      "sensorInput": false,
+      "sourceSHA256": "db078137f5141743e23fdd210026c5d4b487661c4f646711fd46e2d076c12711",
+      "strokeCount": 34,
+      "targetStrokeCounts": []
+    },
+    {
+      "evidenceInjected": false,
+      "fixture": "7a7ca439ba5f9db2d2cc53fb70dd9e3b.pkdrawing",
+      "productOutcome": "unsupported",
+      "query": "a",
+      "recognitionText": null,
+      "searchMatchCount": 0,
+      "sensorInput": false,
+      "sourceSHA256": "c8be8146059d8f252becf57925d2e8b9076bce3cf97d7da133ba60cd34091d88",
+      "strokeCount": 1,
+      "targetStrokeCounts": []
+    },
+    {
+      "evidenceInjected": false,
+      "fixture": "991c0a6269404bfb4530cafea25e9bc1.pkdrawing",
+      "productOutcome": "unsupported",
+      "query": "a",
+      "recognitionText": null,
+      "searchMatchCount": 0,
+      "sensorInput": false,
+      "sourceSHA256": "28f174a2716d11d38a9c7a108e7e36d141ee56217018375ff7ddbe5df7a9e132",
+      "strokeCount": 0,
+      "targetStrokeCounts": []
+    }
+  ],
+  "successPathProven": false
+}

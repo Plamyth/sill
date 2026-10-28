@@ -1,0 +1,47 @@
+# 원본 획과 한 글자 삭제
+
+기준은 `c03d9c2de9eb39cfd50501a73a060a0a34375c8c`다. 제품 소유 파일은 `iOSClient/CanvasBridge/CanvasInkTextEditing.swift` 하나다. 기존 Model/Store/Workspace는 수정하지 않았다. `integration.patch`는 이 기준 Store/Workspace에 적용할 정확한 접합 패치이며 검사는 자기 `.build`의 사본에서만 적용한다. 제품 편집기 전체 완료나 설치 수용은 아니다.
+
+## 구현 계약
+
+`Snapshot`은 sceneID/revision/scene SHA/native drawing SHA/선택 획 ID/원문/노드 ID/UTF16 범위를 보존한다. `Phase`는 인식 중·명시 모호·미리보기·적용·Undo 상태를 구분한다. `PKStrokeRecognizer.recognizedText(strokeIDs:)`와 대소문자 일치·부분단어 검색의 실제 strokeID를 사용하며 bbox로 문자 소유권을 정하지 않는다.
+
+유일한 Character만 처리한다. 전체 인식문, 삭제 획만의 재인식, 나머지 획의 재인식이 기대 문자와 UTF8로 일치해야 한다. 다른 글자의 검색 획과 삭제 획이 겹치거나, 다른 노드가 출처를 공유하거나, 대상에 mask가 있으면 원본을 유지하고 명시적으로 거절한다. 반복 문자·검색0/복수결과·알 수 없는 ID·미지원 인식도 거절한다. 주변 획의 mask/transform/필압은 보존한다. 현재 기능은 획의 일부를 새로 잘라 glyph에 배분하지 않는다.
+
+미리보기는 원본과 결과의 native drawing·문자를 보여준다. 확정은 같은 snapshot에서 원자 저장 콜백이 성공한 뒤 상태를 바꾼다. Undo/Redo는 전체 문자·획을 함께 복원하고 revision은 계속 증가한다. 다른 수정이 들어오면 Undo로 덮지 않는다. 이력은 현재 편집 세션 한 단계이며 앱 재실행 뒤 Undo 복원은 구현하지 않았다.
+
+## 실제 검사와 증거 주입의 구분
+
+최초 유효 실행의 51개 검사는 native PKDrawing 생성·마스크·변환·필압·파일 쓰기/읽기와 접합된 실제 CanvasStore의 저장·새 Store 재열기·Undo/Redo를 포함한다. 이 성공 경로의 **문자-획 대응 Evidence는 주입했다**. Apple 인식 성공이나 실제 Pencil 수용이 아니다.
+
+`native-recognizer-baseline.json`은 별도 무주입 결과다. 보존된 ownfixture 3개를 실제 recognizer로 읽었으나 모두 text=nil/search0이었다. 34획 원본 한 개가 혼합 한글/영문 필기이고, 나머지는 mask가 있는1획과0획 음성 대조군이다. 후자 둘을 유효 손글씨 인식 실패 표본으로 확대하지 않는다.
+
+`native-capability.json`은 추가 가설 한 번의 결과다. macOS27.0.1 명령행 bundle에서 API recognitionVersion9와 en/ko 지원·실효 언어를 읽었고 recognizer.drawing은 원본34획과 같다. strokeID 필터 없는 recognizedText도 nil이다. 언어 목록과 버전은 엔진 추론 성공이 아니다.
+
+`recognizer-log-extract.json`은 그 자기 프로세스만의 기존 로그다. handwritingd.remoterecognition 연결과34획 처리가 기록됐으나 `Remote Recognition error` 및 `Document layout analysis failed ... bailing out the whole analysis`가 있다. 상세 오류는 OS의 private 값이다. 권한·키·로그 개인정보 설정을 바꾸지 않았다. 명령행 macOS에서 전체 엔진이 원천 미지원인지, 샘플/좌표/런타임 문맥 제한인지는 확정하지 않았다. 같은 query와 parameter 변형을 반복하지 않는다.
+
+ownfixture의 원본34획은 PDF 계열 transform을 포함한다. native 렌더에서 영문 줄과 밑줄·다른 한글·선이 함께 보이며 y축 반전 표현도 있다. 34획 전체를 `Apple pencil`만의 획 선택으로 표시할 근거가 없다. 원래 올가미 선택의 UUID 집합은 보존 기록에 없으므로 시각적 bbox로 이를 자동 추정하지 않는다.0획 OCR 카드의 PKDrawing을 원래 영문 필기로 바꾸지 않는다. 원본/좌표를 임의로 고쳐 인식 성공을 만드는 경로도 제품에 넣지 않았다.
+
+실제 인식→안전한 단일 글리프 획 대응의 성공은 **미입증**이다. 부모가 정한 최종 설치 빌드의 한 Pencil 묶음에서 지원 언어와 실제 선택 획을 사용해 확인해야 한다. 지금 새 Pencil 요청은0이다.
+
+## 재현
+
+`python3 Tests/checks/ink-glyph-edit/run.py --policy-only`는 보존 native nil 결과를 반복 호출하지 않고 정책·Store·SDK를 검사한다. 원래 무주입 실행은 baseline 영수증과 capability probe에 보존했다. 새 조건의 근거가 있는 경우에만 기본 실행으로 native API를 추가 확인한다. `CapabilityProbe.swift`는 언어·엔진·전체/ID 필터 차이를 조사한 좁은 독립 실행이며 앱 설치·기기 제어를 하지 않는다.
+
+컴파일과 파일 왕복은 iOS/macOS27 PencilKit SDK 및 실제 macOS27.0.1이 있는 맥북에서 실행했다. Mini의 OS26.6.2/SDK26.5에는 이27 API가 없어 해당 실행을 옮겼다고 표시하지 않는다. 모든 출력은 storage-route의 동일 SSD에서 자기 `.build`에만 둔다.
+
+## Pstack 작업 기록
+
+- [x] how. 기존 proposeHandwriting/searchHandwriting→PencilKit→scene projection→persistScene→파일 재열기 경로를 대조했다.
+- [x] 데이터형 우선. Snapshot/Proposal/Phase/History와 명시 Refusal을 선택했다.
+- [x] 설계. 사용자 ARENA 금지에 따라 기존 native API·정상 scene·원자 파일 저장을 재사용했다. 다른 이름의 경쟁 절차를 만들지 않았다.
+- [x] 병목. 소유 브랜치·c03d·storage writer 분리와 SDK27 필요를 먼저 확인했다.
+- [x] 독립 작업. SDK 검사와 native 검사 컴파일은 병렬 실행했다. 같은 파일 쓰기는 단일 writer다.
+- [x] 공유 상태. 다른 WT·기기·원앱·REA active target·Host·사용자 원본에 쓰기0이다.
+- [x] 최소 분해. 결합된 문자/획/Undo 책임을 한 제품 파일에 둔다. Store/Workspace 접합은 별도 패치다.
+- [x] Ponytail full. 기존 PKStrokeRecognizer·CanvasScene·CanvasLocalFile·SDK를 재사용했다. 새 provider/의존성0이다.
+- [x] 유효 표면 검사. 증거주입 성공과 무주입 nil/엔진 오류를 분리했다. 테스트 수를 기능 완료율로 쓰지 않는다.
+- [ ] 새 독립 검수. spawn_agent 도구가 없고 부모의 최종 통합 검수가 남는다. 최초 초안에 대한 부모의 검토를 새 head 전체 CLEAR로 확대하지 않는다.
+- [ ] 제품 통합·whole unsigned build. 부모가 배정한 storage 통합 기준의 별도 WT에서 이어간다.
+
+초기 검사 실행기의 경로 문자열 비교는 BT_CCR-iPad/ipad 대소문자 별칭 때문에 거절됐다. 실제 같은 디스크/디렉터리 inode를 검증하는 samefile로 고쳤다. 타입 검사 초안의 MainActor encode와 테스트 CGFloat/PKInk 비교 오류도 수정했다. 초기 실패 로그는 자기 `.build`에 보존했으며 native 인식 실패와 구분한다.

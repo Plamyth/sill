@@ -1,0 +1,61 @@
+{
+  "bundleIdentifier" : "dev.ambrion.InkGlyphCheck",
+  "deviceHostChanges" : false,
+  "effectiveLanguageCodes" : [
+    "en",
+    "ko"
+  ],
+  "evidenceInjected" : false,
+  "fullTextWithoutStrokeFilter" : null,
+  "inputStrokeCount" : 34,
+  "operatingSystem" : "Version 27.0.1 (Build 26A434)",
+  "pid" : 61240,
+  "preferredSystemLanguages" : [
+    "ko-KR"
+  ],
+  "providerInstall" : false,
+  "recognitionVersion" : 9,
+  "recognizerDrawingEqualsInput" : true,
+  "recognizerDrawingStrokeCount" : 34,
+  "requestedLanguageCodes" : [
+    "en",
+    "ko"
+  ],
+  "schema" : "ccr.ink-recognizer-capability\/v1",
+  "supportedLanguageCodes" : [
+    "ar",
+    "cs",
+    "da",
+    "de",
+    "en",
+    "es",
+    "fi",
+    "fr",
+    "hi",
+    "hi",
+    "id",
+    "it",
+    "ja",
+    "ko",
+    "mr",
+    "ms",
+    "nb",
+    "nl",
+    "nn",
+    "no",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sv",
+    "th",
+    "tr",
+    "uk",
+    "vi",
+    "yue",
+    "yue",
+    "zh",
+    "zh"
+  ],
+  "textWithAllInputStrokeIDs" : null
+}
