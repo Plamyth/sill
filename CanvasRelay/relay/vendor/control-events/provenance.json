@@ -1,0 +1,26 @@
+{
+  "sourceRepository": "/Users/ambrion/.codex/worktrees/ccr-live-state-20261023",
+  "commit": "a6e3047135e296223b88471344720ba5bfdb829e",
+  "tree": "975534c73b332ad13b80f974e12d922d708a0927",
+  "files": {
+    "bridge/control-events.js": "803f6d4399ff1b9ccdf7bdcff45efe8a678873f0a517d90d41fbbb11fa5d5266",
+    "bridge/control-events-client.js": "5774b4264afdd51ead498a78dfe8b5169dd984714a2173128ce9ebf7cdcd8cb9",
+    "bridge/control-events-server.js": "b030979f74c8a9a4881c1f1562c2e238a362b7e5978abbc314658e38ab29b149",
+    "tests/fixtures/control-events-v1.json": "a026a9f697a88ebe2838e02c24b980774572683e35189962f4900eb059609454",
+    "tests/fixtures/control-events-fields-v1.json": "a17cad702852a0c884fc5f0af081924a9c34b22be710ee525ad7c6f60f832a53"
+  },
+  "locations": {
+    "bridge/control-events.js": "relay/vendor/control-events/control-events.js",
+    "bridge/control-events-client.js": "relay/vendor/control-events/control-events-client.js",
+    "bridge/control-events-server.js": "relay/test-input/control-events-server.js",
+    "tests/fixtures/control-events-v1.json": "relay/vendor/control-events/control-events-v1.json",
+    "tests/fixtures/control-events-fields-v1.json": "relay/vendor/control-events/control-events-fields-v1.json"
+  },
+  "runtimeEntries": [
+    "bridge/control-events.js",
+    "bridge/control-events-client.js"
+  ],
+  "testOnly": [
+    "bridge/control-events-server.js"
+  ]
+}

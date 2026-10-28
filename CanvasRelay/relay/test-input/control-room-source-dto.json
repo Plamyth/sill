@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-23T00:00:00.000Z",
+  "workspace": "all",
+  "threads": [
+    {
+      "id": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      "hostId": "local",
+      "forkedFromId": null,
+      "forkLineageVerified": true,
+      "source": "codex",
+      "slotIndex": 0,
+      "available": true,
+      "projectId": "ipad-relay-boundary",
+      "projectVerified": true,
+      "title": "iPad 릴레이 경계 원본",
+      "status": "대기",
+      "activeTurnId": "Local-Run-A",
+      "sourceConnection": {
+        "provider": "codex",
+        "sessionId": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "runId": "Local-Run-A",
+        "owner": "DTO-Runtime-A",
+        "sourceRevision": 11,
+        "connected": true,
+        "state": "connected",
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "connectedAt": "2026-10-23T00:00:00.000Z",
+        "readOnly": false,
+        "capabilities": {
+          "read": true,
+          "send": true
+        }
+      },
+      "observedAt": "2026-10-23T00:00:00.000Z",
+      "capabilities": {
+        "read": true,
+        "send": true
+      }
+    }
+  ],
+  "catalog": [
+    {
+      "id": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      "hostId": "local",
+      "forkedFromId": null,
+      "forkLineageVerified": true,
+      "source": "codex",
+      "slotIndex": 0,
+      "available": true,
+      "projectId": "ipad-relay-boundary",
+      "projectVerified": true,
+      "title": "iPad 릴레이 경계 원본",
+      "status": "대기",
+      "activeTurnId": "Local-Run-A",
+      "sourceConnection": {
+        "provider": "codex",
+        "sessionId": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "runId": "Local-Run-A",
+        "owner": "DTO-Runtime-A",
+        "sourceRevision": 11,
+        "connected": true,
+        "state": "connected",
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "connectedAt": "2026-10-23T00:00:00.000Z",
+        "readOnly": false,
+        "capabilities": {
+          "read": true,
+          "send": true
+        }
+      },
+      "observedAt": "2026-10-23T00:00:00.000Z",
+      "capabilities": {
+        "read": true,
+        "send": true
+      }
+    }
+  ],
+  "projects": [
+    {
+      "id": "ipad-relay-boundary",
+      "label": "iPad 릴레이 경계",
+      "projectKind": "codex",
+      "sourceConnection": {
+        "roots": [
+          {
+            "path": "/synthetic/ipad-relay"
+          }
+        ]
+      }
+    }
+  ],
+  "sourceConnections": [
+    {
+      "provider": "codex",
+      "sessionId": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      "runId": "Local-Run-A",
+      "owner": "DTO-Runtime-A",
+      "sourceRevision": 11,
+      "connected": true,
+      "state": "connected",
+      "observedAt": "2026-10-23T00:00:00.000Z",
+      "connectedAt": "2026-10-23T00:00:00.000Z",
+      "readOnly": false,
+      "capabilities": {
+        "read": true,
+        "send": true
+      }
+    },
+    {
+      "provider": "cursor-cloud",
+      "sessionId": "Opaque-Cloud-A",
+      "runId": "Cloud-Run-A",
+      "owner": "Cloud-Owner-A",
+      "sourceRevision": "dto-revision-7",
+      "observedAt": "2026-10-23T00:00:00.000Z",
+      "connectedAt": "2026-10-23T00:00:00.000Z",
+      "connected": true,
+      "state": "connected",
+      "readOnly": true,
+      "capabilities": {
+        "read": true,
+        "send": false
+      }
+    }
+  ],
+  "unifiedControl": {
+    "schema": 1,
+    "observedAt": "2026-10-23T00:00:00.000Z",
+    "sources": [
+      {
+        "id": "cursor-cloud",
+        "state": "observed"
+      },
+      {
+        "id": "cursor-desktop",
+        "state": "observed"
+      }
+    ],
+    "items": [
+      {
+        "source": "cursor-cloud",
+        "externalId": "Opaque-Cloud-A",
+        "runId": "Cloud-Run-A",
+        "ownerThreadId": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "ownerVerified": true,
+        "projectId": "ipad-relay-boundary",
+        "title": "공개 Cloud 원본",
+        "status": "FINISHED",
+        "executionStatus": "FINISHED",
+        "statusSource": "cursor-cloud-sse",
+        "agentStatus": "IDLE",
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "connectedAt": "2026-10-23T00:00:00.000Z",
+        "sourceRevision": "dto-revision-7",
+        "readFailed": false,
+        "connectionState": "closed",
+        "model": "test-model",
+        "native": false,
+        "capabilities": {
+          "read": true,
+          "send": true
+        },
+        "privateMetadata": "공개하지 않는 DTO 값"
+      },
+      {
+        "source": "cursor-cloud",
+        "externalId": "opaque-cloud-a",
+        "runId": "cloud-run-a",
+        "ownerThreadId": null,
+        "ownerVerified": false,
+        "projectId": "ipad-relay-boundary",
+        "title": "별도 opaque 원본",
+        "status": "FINISHED",
+        "executionStatus": "FINISHED",
+        "statusSource": "cursor-cloud-sse",
+        "agentStatus": "IDLE",
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "connectedAt": "2026-10-23T00:00:00.000Z",
+        "sourceRevision": "dto-revision-7",
+        "readFailed": false,
+        "connectionState": "closed",
+        "model": "test-model",
+        "native": false,
+        "capabilities": {
+          "read": true,
+          "send": true
+        },
+        "privateMetadata": "공개하지 않는 DTO 값"
+      }
+    ],
+    "sessions": [],
+    "cursorDesktop": [
+      {
+        "instanceId": "11111111-1111-4111-8111-111111111111",
+        "workspaceIdentity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "workspaceUris": [
+          "file:///synthetic/ipad-relay"
+        ],
+        "selectedIds": [
+          "bc-22222222-2222-4222-8222-222222222222"
+        ],
+        "observedAt": "2026-10-23T00:00:00.000Z",
+        "state": "observed"
+      }
+    ]
+  },
+  "mobile": {
+    "workspaces": [
+      {
+        "id": "all",
+        "label": "전체",
+        "slots": [
+          {
+            "threadId": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+          }
+        ]
+      }
+    ],
+    "threads": [],
+    "marker": "비투영 원본"
+  },
+  "privateRaw": "비공개 최상위 DTO"
+}
