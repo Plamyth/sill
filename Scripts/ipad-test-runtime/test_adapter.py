@@ -126,6 +126,7 @@ class PreparedInstallContract(unittest.TestCase):
                 runtime['codeImages']={'Sill':adapter.sha((app/'Sill').read_bytes())}
                 if (app/'Sill.debug.dylib').exists():runtime['codeImages']['Sill.debug.dylib']=adapter.sha((app/'Sill.debug.dylib').read_bytes())
                 runtime['loadedCodeImagePaths']={name:'/installed/Sill.app/'+name for name in runtime['codeImages']}
+                runtime['codeImageUUIDs']={name:'0'*32 for name in runtime['codeImages']}
                 if state.mode=='runtime-source':runtime['commit']='f'*40
                 adapter.write(data/('Library/Application Support/CCRIntegrationTests/'+context['id']+'/state/runtime.json'),runtime)
             else:self.fail('unexpected command boundary')
@@ -289,7 +290,7 @@ class PreparedInstallContract(unittest.TestCase):
 
 
     def test_prepared_code_image_set_and_loaded_paths_are_mandatory(self):
-        for failure in [None,'old-runtime','missing-debug','different-debug','different-loader','extra','wrong-loaded','missing-loaded','old-deployment']:
+        for failure in [None,'old-runtime','missing-debug','different-debug','different-loader','extra','wrong-loaded','missing-loaded','missing-uuid','wrong-uuid-shape','old-deployment']:
             with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:
                 state=self.fixture(directory);(state.app/'Sill.debug.dylib').write_bytes(b'actual Debug implementation');state.seal()
                 deployed=self.invoke(state)
@@ -303,6 +304,8 @@ class PreparedInstallContract(unittest.TestCase):
                 elif failure=='extra':runtime['codeImages']['other.dylib']='0'*64
                 elif failure=='wrong-loaded':runtime['loadedCodeImagePaths']['Sill.debug.dylib']='/different/Sill.debug.dylib'
                 elif failure=='missing-loaded':runtime['loadedCodeImagePaths'].pop('Sill.debug.dylib')
+                elif failure=='missing-uuid':runtime.pop('codeImageUUIDs')
+                elif failure=='wrong-uuid-shape':runtime['codeImageUUIDs']['Sill.debug.dylib']='not-a-uuid'
                 elif failure=='old-deployment':
                     deployed.pop('codeImages');deployed.pop('codeImagesSHA256');adapter.write(state.work/'deployment.json',deployed)
                 adapter.write(path,runtime)
@@ -708,6 +711,66 @@ class SingleAppHoldContract(unittest.TestCase):
             with self.assertRaisesRegex(adapter.Held,'single_app_runtime_held'):
                 adapter.single_app_installation_gate()
             self.assertEqual(data,profile.read_bytes())
+
+class NativeLoadedUUIDContract(unittest.TestCase):
+    @unittest.skipUnless(__import__('os').environ.get('CCR_CODE_UUID_TEST_DIR'),'Set routed output for loaded UUID regression')
+    def test_loaded_main_and_debug_uuid_reject_path_replacement(self):
+        import os,shutil,plistlib,subprocess,concurrent.futures
+        output=Path(os.environ['CCR_CODE_UUID_TEST_DIR']).resolve();output.mkdir(parents=True,exist_ok=True)
+        route=json.loads(adapter.command(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad']))
+        self.assertTrue(output.is_relative_to(Path(route['path']).resolve()))
+        repo=Path(adapter.__file__).resolve().parents[2]
+        review=repo.parent/'adapter-runtime-independent-review'
+        implementation=(review/'DebugImplementation.swift').read_text()
+        implementation=implementation.replace('        try CanvasRuntime.writeRuntimeReceipt(launchState:launch)',r'''        if mode == "replace-main" {
+            try FileManager.default.moveItem(at:executable,to:root.appendingPathComponent("still-mapped-main"))
+            try FileManager.default.copyItem(at:URL(fileURLWithPath:env["REVIEW_REPLACEMENT_MAIN"]!),to:executable)
+        }
+        let sentinel = Data("prior pending runtime receipt".utf8)
+        let receiptPath = state.appendingPathComponent("runtime.json")
+        try sentinel.write(to:receiptPath)
+        do { try CanvasRuntime.writeRuntimeReceipt(launchState:launch) }
+        catch {
+            let preserved = try Data(contentsOf:receiptPath) == sentinel
+            let observation: [String:Any] = ["executingValue":reviewValue(),"priorPreserved":preserved]
+            try JSONSerialization.data(withJSONObject:observation).write(to:root.appendingPathComponent("rejected.json"))
+            return 11
+        }''')
+        swift=output/'Implementation.swift';swift.write_text(implementation)
+        loader=output/'Loader.c';loader.write_text('#ifdef MAIN_B\n__attribute__((used)) volatile int loader_version=2;\n#else\n__attribute__((used)) volatile int loader_version=1;\n#endif\n'+(review/'DebugLoader.c').read_text())
+        info=output/'Info.plist';info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'org.ccr.loaded-uuid.fixture','CFBundleExecutable':'Sill','CFBundleVersion':'1','CCRSourceCommit':'a'*40,'CCRSourceTree':'b'*40}))
+        for name,flags in [('main-A',[]),('main-B',['-DMAIN_B'])]:
+            adapter.command(['xcrun','clang',*flags,loader,'-Wl,-sectcreate,__TEXT,__info_plist,'+str(info),'-o',output/name],output/(name+'.log'))
+        def build(name):
+            adapter.command(['xcrun','swiftc','-D','DEBUG',*(['-D','REVIEW_VARIANT_B'] if name=='B' else []),
+                '-swift-version','5','-parse-as-library','-emit-library','-module-cache-path',output/'modules',
+                repo/'iOSClient/CanvasBridge/CanvasModel.swift',swift,'-o',output/(name+'.dylib')],output/(name+'.log'))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(build,['A','B']))
+        cases=[]
+        for name,variant,mode,expected in [('healthy-A','A','healthy',0),('healthy-B','B','healthy',0),
+                ('replaced-debug','A','replace-loaded',11),('replaced-main','A','replace-main',11),('removed-debug','A','remove-loaded',11)]:
+            case=output/name;app=case/'Sill.app';app.mkdir(parents=True)
+            shutil.copyfile(output/'main-A',app/'Sill');(app/'Sill').chmod(0o700)
+            shutil.copyfile(output/(variant+'.dylib'),app/'Sill.debug.dylib');shutil.copyfile(info,app/'Info.plist')
+            env=dict(adapter.ENV,REVIEW_CASE_ROOT=str(case),REVIEW_MODE=mode,REVIEW_REPLACEMENT=str(output/'B.dylib'),REVIEW_REPLACEMENT_MAIN=str(output/'main-B'))
+            run=subprocess.run([app/'Sill'],env=env,capture_output=True,text=True,timeout=30)
+            (case/'run.log').write_text(run.stdout+run.stderr)
+            self.assertEqual(run.returncode,expected,name+': '+run.stdout+run.stderr)
+            if expected:
+                observed=adapter.read(case/'rejected.json');self.assertEqual(observed['executingValue'],1);self.assertTrue(observed['priorPreserved'])
+                self.assertFalse((case/'native-receipt.json').exists())
+            else:
+                receipt=adapter.read(case/'native-receipt.json');self.assertEqual(set(receipt['codeImageUUIDs']),{'Sill','Sill.debug.dylib'})
+                for image in receipt['codeImages']:
+                    identity=adapter.command(['dwarfdump','--uuid',app/image]).split()[1].replace('-','').lower()
+                    self.assertEqual(receipt['codeImageUUIDs'][image],identity)
+                    self.assertEqual(receipt['codeImages'][image],adapter.sha((app/image).read_bytes()))
+            cases.append({'name':name,'exitCode':run.returncode,'passed':True})
+        adapter.write(output/'native-cases.json',{'cases':cases})
+        sdk=adapter.command(['xcrun','--sdk','iphoneos','--show-sdk-path']).strip()
+        adapter.command(['xcrun','swiftc','-typecheck','-D','DEBUG','-swift-version','5','-parse-as-library','-sdk',sdk,
+            '-target','arm64-apple-ios17.0','-module-cache-path',output/'ios-modules',repo/'iOSClient/CanvasBridge/CanvasModel.swift'],output/'ios27-typecheck.log')
+
 
 class NativeCodeImagesContract(unittest.TestCase):
     @unittest.skipUnless(__import__('os').environ.get('CCR_CODE_IMAGES_TEST_DIR'),'Set a routed output directory for native/SDK checks')

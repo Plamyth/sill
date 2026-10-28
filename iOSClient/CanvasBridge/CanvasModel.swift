@@ -198,9 +198,63 @@ enum CanvasRuntime {
                   let build = bundle.object(forInfoDictionaryKey:"CFBundleVersion") as? String, !build.isEmpty,
                   let executable = bundle.executableURL else { throw TestError.invalid }
             let manager = FileManager.default
-            let loadedImages = (0..<_dyld_image_count()).compactMap { index -> URL? in
+            func word(_ data: Data,_ offset: Int,_ big: Bool = false) throws -> UInt32 {
+                guard offset >= 0, offset <= data.count - 4 else { throw TestError.invalid }
+                let bytes = Array(data[offset..<offset+4])
+                return (big ? bytes : Array(bytes.reversed())).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            }
+            func thinIdentity(_ data: Data) throws -> (UInt32,UInt32,Data) {
+                guard data.count >= 32 else { throw TestError.invalid }
+                let magic = try word(data,0)
+                guard magic == MH_MAGIC_64 || magic == MH_CIGAM_64 else { throw TestError.invalid }
+                let big = magic == MH_CIGAM_64
+                let count = Int(try word(data,16,big)), size = Int(try word(data,20,big))
+                guard size <= 1_048_576, size <= data.count - 32, count <= size / 8 else { throw TestError.invalid }
+                var cursor = 32, uuid: Data?
+                for _ in 0..<count {
+                    let command = try word(data,cursor,big), length = Int(try word(data,cursor+4,big))
+                    guard length >= 8, length <= 32 + size - cursor else { throw TestError.invalid }
+                    if command == LC_UUID {
+                        guard uuid == nil, length == 24 else { throw TestError.invalid }
+                        uuid = data.subdata(in:cursor+8..<cursor+24)
+                    }
+                    cursor += length
+                }
+                guard cursor == 32 + size, let uuid else { throw TestError.invalid }
+                return (try word(data,4,big),try word(data,8,big),uuid)
+            }
+            func diskUUID(_ data: Data, cpu: UInt32, subtype: UInt32) throws -> Data {
+                let magic = try word(data,0,true)
+                if [FAT_MAGIC,FAT_CIGAM,FAT_MAGIC_64,FAT_CIGAM_64].contains(magic) {
+                    let big = magic == FAT_MAGIC || magic == FAT_MAGIC_64
+                    let wide = magic == FAT_MAGIC_64 || magic == FAT_CIGAM_64
+                    let count = Int(try word(data,4,big)), stride = wide ? 32 : 20
+                    guard data.count >= 8, count <= (data.count - 8) / stride else { throw TestError.invalid }
+                    var match: Data?
+                    for index in 0..<count {
+                        let position = 8 + index * stride
+                        guard try word(data,position,big) == cpu, try word(data,position+4,big) == subtype else { continue }
+                        let offset: UInt64, length: UInt64
+                        if wide {
+                            offset = (UInt64(try word(data,position+8,big)) << 32) | UInt64(try word(data,position+12,big))
+                            length = (UInt64(try word(data,position+16,big)) << 32) | UInt64(try word(data,position+20,big))
+                        } else {
+                            offset = UInt64(try word(data,position+8,big)); length = UInt64(try word(data,position+12,big))
+                        }
+                        guard match == nil, offset <= UInt64(data.count), length <= UInt64(data.count) - offset else { throw TestError.invalid }
+                        let identity = try thinIdentity(data.subdata(in:Int(offset)..<Int(offset+length)))
+                        guard identity.0 == cpu, identity.1 == subtype else { throw TestError.invalid }
+                        match = identity.2
+                    }
+                    guard let match else { throw TestError.invalid }; return match
+                }
+                let identity = try thinIdentity(data)
+                guard identity.0 == cpu, identity.1 == subtype else { throw TestError.invalid }
+                return identity.2
+            }
+            let loadedImages = (0..<_dyld_image_count()).compactMap { index -> (URL,UInt32)? in
                 guard let name = _dyld_get_image_name(index) else { return nil }
-                return URL(fileURLWithPath:String(cString:name)).resolvingSymlinksInPath().standardizedFileURL
+                return (URL(fileURLWithPath:String(cString:name)).resolvingSymlinksInPath().standardizedFileURL,index)
             }
             var images = [executable]
             let debugImage = executable.deletingLastPathComponent()
@@ -208,22 +262,30 @@ enum CanvasRuntime {
             do {
                 _ = try manager.attributesOfItem(atPath:debugImage.path)
                 images.append(debugImage)
-            } catch CocoaError.fileReadNoSuchFile { /* Release images can contain only the main executable. */ }
+            } catch CocoaError.fileReadNoSuchFile {
+                guard !loadedImages.contains(where:{ $0.0.lastPathComponent == debugImage.lastPathComponent }) else { throw TestError.invalid }
+            }
             var codeImages: [String:String] = [:]
             var loadedCodeImagePaths: [String:String] = [:]
+            var codeImageUUIDs: [String:String] = [:]
             for image in images {
                 let attributes = try manager.attributesOfItem(atPath:image.path)
                 guard attributes[.type] as? FileAttributeType == .typeRegular,
                       let device = attributes[.systemNumber] as? NSNumber,
                       let inode = attributes[.systemFileNumber] as? NSNumber,
-                      let loaded = loadedImages.first(where: { url in
-                          guard let observed = try? manager.attributesOfItem(atPath:url.path) else { return false }
+                      let loaded = loadedImages.first(where: { image in
+                          guard let observed = try? manager.attributesOfItem(atPath:image.0.path) else { return false }
                           return observed[.systemNumber] as? NSNumber == device &&
                               observed[.systemFileNumber] as? NSNumber == inode
                       }) else { throw TestError.invalid }
-                codeImages[image.lastPathComponent] = SHA256.hash(data:try Data(contentsOf:image))
-                    .map { String(format:"%02x",$0) }.joined()
-                loadedCodeImagePaths[image.lastPathComponent] = loaded.path
+                guard let header = _dyld_get_image_header(loaded.1), header.pointee.magic == MH_MAGIC_64,
+                      header.pointee.sizeofcmds <= 1_048_576 else { throw TestError.invalid }
+                let identity = try thinIdentity(Data(bytes:header,count:32 + Int(header.pointee.sizeofcmds)))
+                let bytes = try Data(contentsOf:image)
+                guard try diskUUID(bytes,cpu:identity.0,subtype:identity.1) == identity.2 else { throw TestError.invalid }
+                codeImages[image.lastPathComponent] = SHA256.hash(data:bytes).map { String(format:"%02x",$0) }.joined()
+                loadedCodeImagePaths[image.lastPathComponent] = loaded.0.path
+                codeImageUUIDs[image.lastPathComponent] = identity.2.map { String(format:"%02x",$0) }.joined()
             }
             guard let executableSHA256 = codeImages[executable.lastPathComponent] else { throw TestError.invalid }
             struct Receipt: Encodable {
@@ -238,12 +300,13 @@ enum CanvasRuntime {
                 let executableSHA256: String
                 let codeImages: [String:String]
                 let loadedCodeImagePaths: [String:String]
+                let codeImageUUIDs: [String:String]
                 let processID: Int32
             }
             let state = context.root.appendingPathComponent("state",isDirectory:true)
             let receipt = Receipt(id:context.id.uuidString.lowercased(),commit:context.commit,tree:context.tree,
                 bundleID:bundleID,build:build,storageRoot:state.path,relayAddress:context.relayAddress,
-                executableSHA256:executableSHA256,codeImages:codeImages,loadedCodeImagePaths:loadedCodeImagePaths,
+                executableSHA256:executableSHA256,codeImages:codeImages,loadedCodeImagePaths:loadedCodeImagePaths,codeImageUUIDs:codeImageUUIDs,
                 processID:getpid())
             let url = state.appendingPathComponent("runtime.json")
             try checkPath(url,beneath:context.support)

@@ -260,6 +260,10 @@ def artifact_code_images(files, executable):
 
 def validate_runtime_code_images(runtime, expected, installation_url):
     require(runtime.get('codeImages') == expected, 'runtime_code_images_missing_or_mismatched')
+    uuids = runtime.get('codeImageUUIDs')
+    require(isinstance(uuids,dict) and set(uuids) == set(expected) and
+            all(isinstance(value,str) and re.fullmatch('[0-9a-f]{32}',value) for value in uuids.values()),
+            'runtime_code_images_uuid_binding_required')
     paths = runtime.get('loadedCodeImagePaths')
     require(isinstance(paths,dict) and set(paths) == set(expected), 'runtime_code_images_loaded_paths_missing')
     root = urllib.parse.unquote(urllib.parse.urlsplit(installation_url).path).rstrip('/')
