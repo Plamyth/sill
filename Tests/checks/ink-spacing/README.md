@@ -6,7 +6,7 @@ Pstack의 how→계약/소유 확인→원본 이동 구현→실제 native/파�
 
 ## 정확히 지원하는 입력
 
-기존 note 하나가 선택한 native 획 전체를 sourceStrokeIds로 참조해야 한다. 사용자가 왼쪽/오른쪽 문자 또는 공백 없는 단어와1~512포인트를 명시한다. 이번 이동 검사는 정수 거리20/10포인트를 사용했으며, 비정수 거리의 일반 수용은 별도 미검증이다. native 직렬화 뒤 요청 affine를 정확히 유지하지 못하는 값은 적용하지 않는다. split은 기존 문구가 두 그룹을 붙인 문자열일 때만 오른쪽 그룹을 +x로 해당 거리만큼 이동하고 ASCII 공백 하나를 넣는다. join은 기존 문구가 두 그룹 사이에 공백 하나인 경우, 두 그룹 사이 확인한 빈 간격보다 작은 양만큼 오른쪽을 -x로 이동하고 그 공백 하나를 제거한다. 단순 UITextView 공백 편집으로 완료하지 않는다.
+기존 note 하나가 선택한 native 획 전체를 sourceStrokeIds로 참조해야 한다. 사용자가 왼쪽/오른쪽 문자 또는 공백 없는 단어와 **정수 1~512포인트**를 명시한다. UI와 propose 모두 소수·비유한 값·범위 밖 입력을 거부한다. 기존 이동 검사는 정수 거리20/10포인트를 사용했다. native 직렬화 뒤 요청 affine를 정확히 유지하지 못하는 경우도 적용하지 않으며 필압·ID·다른 획 보존 검사를 완화하지 않는다. split은 기존 문구가 두 그룹을 붙인 문자열일 때만 오른쪽 그룹을 +x로 해당 거리만큼 이동하고 ASCII 공백 하나를 넣는다. join은 기존 문구가 두 그룹 사이에 공백 하나인 경우, 두 그룹 사이 확인한 빈 간격보다 작은 양만큼 오른쪽을 -x로 이동하고 그 공백 하나를 제거한다. 단순 UITextView 공백 편집으로 완료하지 않는다.
 
 두 그룹마다 기존 nativeEvidence를 호출한다. wholeText가 기존 note 원문과 UTF-8까지 같고, targetText/remainingText가 양쪽 입력과 각각 일치하며, 검색 결과가 각각 단 하나의 비어 있지 않은 strokeID 집합이어야 한다. 양쪽 집합이 서로 겹치지 않고 선택 전체를 정확히 덮고 서로의 otherCharacterMatches도 같은 유일 집합이어야 한다. native 대응이 없으면 거부한다. bbox로 문자를 추측하지 않는다.
 
@@ -27,6 +27,10 @@ integration.patch는 Store의 기존 입력/Files/보관함 보호, scene·selec
 Workspace의 ‘원본 획 간격’ 버튼에서 두 그룹·거리·동작을 입력하고 동일한 공통 bounds의 before/after native 이미지를 비교한 뒤 확정한다. 글자별 Scribble 제스처를 복제한 것이 아니라 명시적 간격 제안 UI다. 두 pbx에 새 소스만 추가한다. Model/Store/Workspace/pbx의 live 파일은 수정하지 않는다. 부모 writer가 patch를 대조·통합해야 하며 여기서는 push·병합·설치하지 않는다.
 
 ## 검사와 남은 범위
+
+86f425 후속 반례는 `boundary-check.py OUT --baseline`으로 고정 Git 객체의 두 경우만 한 번 관측했다. 정상 native 자료에서 schemaVersion만99로 바꾸면 기존 validateNativeInkProjection→hasSupportedInkProjection이 native 검색 전에 명시 거부했고 장면/원본 바이트는 그대로였다. 따라서 별도 schema validator나 중복 호환 검사를 추가하지 않았다. amount1.1은 두 그룹 대응 후 identity 거부였고 native 직렬화에서 transform.tx가1.1→1.100000023841858로 바뀌었다. 이 단위는 소수 정규화/허용오차 수용을 추가하지 않고 정수만 지원한다.
+
+`python3 Tests/checks/ink-spacing/boundary-check.py OUT`은 수정 뒤1.1이 검색 전에 구체적인 정수 입력 오류로 거부되는지, 정수20의 native 직렬화 이동·schema3·source IDs·필압·다른 획·원본 보존을 검사하고 변경 모듈만 iOS27 SDK로 검사한다. 기존40개 검사와 전체 SDK 검사는 반복하지 않는다. integration.patch 및 Model/Store/Workspace/pbx는 이 후속에서 바꾸지 않는다. 두 명령의 OUT은 storage-route가 확인한 외장 development-archive 아래여야 한다.
 
 `python3 Tests/checks/ink-spacing/run.py /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/ink-spacing-checks`로 실행한다. 테스트 입력은 격리 복사본에 패치를 적용한다. SDK의 native stroke를 사용하지만 글자 검색 대응은 주입 정책 검사와 실제 nativeEvidence 호출을 분리한다. 이번 실제 호출은 두 그룹 대응을 확정하지 못해 거부됐고, 성공한 간격 제안·적용 검사는 증거 주입 정책 검사다. 기존 자체 선형 fixture의 native 검색/인식은 실제 문자 간격 편집 성공 증거가 아니다. 실제 Pencil 센서·UI·Host·개인 vault·네트워크·계정/키·설치는0이다.
 

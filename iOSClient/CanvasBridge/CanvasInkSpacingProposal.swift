@@ -14,7 +14,7 @@ final class CanvasInkSpacingProposal: ObservableObject {
             case .shared: return "다른 요소가 이동할 획을 참조합니다. 함께 바꾸지 않고 원본을 유지합니다."
             case .masked: return "부분 지워진 그룹의 간격 편집은 지원하지 않습니다. 원본 마스크를 유지합니다."
             case .orientation: return "회전·기울기·여러 줄 또는 겹친 그룹의 간격은 확정할 수 없습니다."
-            case .amount: return "1~512포인트를 입력하세요. 합치기 값은 확인한 두 그룹 사이의 빈 간격보다 작아야 합니다."
+            case .amount: return "1~512포인트의 정수를 입력하세요. 소수 간격은 지원하지 않습니다. 합치기 값은 확인한 두 그룹 사이의 빈 간격보다 작아야 합니다."
             case .identity: return "변환 뒤 획 식별자·필압·원본 계약을 보존하지 못해 적용하지 않았습니다."
             case .stale: return "장면·선택·문자가 바뀌었거나 제안이 취소됐습니다. 원본을 유지합니다."
             }
@@ -48,7 +48,7 @@ final class CanvasInkSpacingProposal: ObservableObject {
                  readEvidence: CanvasInkTextEditing.ReadEvidence = CanvasInkTextEditing.nativeEvidence) async {
         let token = UUID(); request = token; phase = .reading
         do {
-            guard amount.isFinite, (1...512).contains(amount) else { throw Refusal.amount }
+            guard amount.isFinite, (1...512).contains(amount), amount.rounded() == amount else { throw Refusal.amount }
             guard let node = scene.nodes.first(where:{ $0.id == nodeID }), node.kind == .note, node.vaultNote == nil,
                   !left.isEmpty, !right.isEmpty, left.count <= 32, right.count <= 32,
                   !left.contains(where: \.isWhitespace), !right.contains(where: \.isWhitespace),
@@ -174,6 +174,10 @@ struct CanvasInkSpacingSheet: View {
     @State private var right = ""
     @State private var amount = ""
     @State private var action = CanvasInkSpacingProposal.Action.split
+    private var requestedAmount: Double? {
+        guard let value = Double(amount), value.isFinite, (1...512).contains(value), value.rounded() == value else { return nil }
+        return value
+    }
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
@@ -188,12 +192,13 @@ struct CanvasInkSpacingSheet: View {
                     Text("전체 선택 문구를 이루는 두 그룹을 입력하세요. 문자 검색 대응이 유일할 때만 제안하며, 좌표만으로 글자를 판정하지 않습니다.")
                     TextField("왼쪽 글자 또는 단어",text:$left)
                     TextField("오른쪽 글자 또는 단어",text:$right)
-                    TextField("이동 또는 줄일 간격 · 포인트",text:$amount)
+                    TextField("이동 또는 줄일 간격 · 정수 1~512포인트",text:$amount)
+                    Text("소수 간격은 지원하지 않습니다.").font(.caption)
                     Picker("편집",selection:$action) { ForEach(CanvasInkSpacingProposal.Action.allCases,id:\.self) { Text($0.rawValue).tag($0) } }
                     if case .reading = editing.phase { ProgressView("native 문자와 원본 획을 대조합니다.") }
                     if case .refused(let reason) = editing.phase { Text(reason).foregroundStyle(.orange) }
-                    Button("원본 간격 미리보기") { if let value = Double(amount) { propose(left,right,action,value) } }
-                        .disabled(editing.hasPendingWork || Double(amount) == nil)
+                    Button("원본 간격 미리보기") { if let value = requestedAmount { propose(left,right,action,value) } }
+                        .disabled(editing.hasPendingWork || requestedAmount == nil)
                 }
                 Button("취소",action:cancel)
             }.padding().buttonStyle(.bordered).frame(minHeight:44)
