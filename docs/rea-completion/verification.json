@@ -1,0 +1,79 @@
+{
+  "schema": "ccr.rea.coverage-verification/v1",
+  "verifiedAt": "2026-10-28T14:50:50.208812+00:00",
+  "oneShotDocumentValidation": true,
+  "errors": [],
+  "passed": true,
+  "counts": {
+    "leafTotal": 385,
+    "legacyGroups": 114,
+    "byTarget": {
+      "MS-IPAD-7.5.2": 110,
+      "MN-MAC-4.4.6": 146,
+      "MN-IPAD-4.4.6": 129
+    },
+    "byStatus": {
+      "parity_gap": 113,
+      "implementation_evidence_missing": 234,
+      "support_unverified": 32,
+      "integration_pending": 6
+    },
+    "byOriginalStatus": {
+      "behavior_observed": 108,
+      "evidence_incomplete": 225,
+      "legacy_narrow_complete": 18,
+      "attempt_observed": 2,
+      "support_unverified": 32
+    },
+    "complete": 0,
+    "incomplete": 385,
+    "notApplicable": 0,
+    "overlapReferenceRows": 6,
+    "distinctBehaviorRows": 379
+  },
+  "evidenceFilesChecked": 131,
+  "legacyReferencedPathsExistenceChecked": 161,
+  "legacyMissingPaths": [],
+  "duplicateIDs": 0,
+  "missingKeys": 0,
+  "missingOrChangedSelectedReferences": 0,
+  "sourcePathsExistenceOnly": 9,
+  "goalPromptExactCopy": true,
+  "productChanges": 0,
+  "deviceHostOriginalAppAccess": 0,
+  "newProviderOrExternalModelCalls": 0,
+  "reaTargetOperations": 0,
+  "independentReview": "새 독립 검수 미실행. 부모 검토 전이며 자동검사를 독립 검수로 세지 않음.",
+  "historicalReferenceCorrections": [
+    "원래 coverage-audit의 D 스냅샷은705행/옛SHA이며 현재 원장은739행. 옛라인을 최신 hash 증명으로 사용하지 않음.",
+    "원장 가방 영수증의 오래된 rea-ipad-functional-parity 경로 대신 batch-readiness가 제시한 whole-note-recovery-20261023/gabang-mac-roundtrip-receipt.json을 따른다.",
+    "precision-storage-delta의 reopen=false는 후속precision-final-review의 정상/cold reopen 수용으로 보완.",
+    "새 검색 json/md는CUA 직접 관측, canonical4 import와 구분. negative 이름 이미지는 성공 근거 아님."
+  ],
+  "files": [
+    {
+      "path": "docs/rea-completion/GOAL_PROMPT.md",
+      "lines": 29,
+      "bytes": 4779,
+      "sha256": "0034021abac5ded3e355a1d41a336bd527c1836f24dc98eafe98613826c1ed62"
+    },
+    {
+      "path": "docs/rea-completion/NEXT.md",
+      "lines": 45,
+      "bytes": 7266,
+      "sha256": "0fe718774bd9048a46711a38e531f217f5fd18c943b5ccdcd4e18936e9abcc87"
+    },
+    {
+      "path": "docs/rea-completion/README.md",
+      "lines": 1509,
+      "bytes": 431440,
+      "sha256": "41b49d0c80f61128de0040591aa05af9913d0478f1975870ab3d024840cc5109"
+    },
+    {
+      "path": "docs/rea-completion/coverage.json",
+      "lines": 24761,
+      "bytes": 1158744,
+      "sha256": "663e0118e51c39a64ad379d95d633e283f82f9fe0dda370a96f9038327b23d95"
+    }
+  ]
+}
