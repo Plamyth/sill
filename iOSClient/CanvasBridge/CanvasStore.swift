@@ -119,6 +119,7 @@ final class CanvasInkHistory: ObservableObject {
 final class CanvasStore: ObservableObject {
     @Published var scene = CanvasScene() {
         didSet {
+            cancelCardMerge()
             pendingInkTextEditing?.invalidatePending()
             pendingInkSpacing?.invalidatePending()
             inkMathRequest = nil
@@ -144,6 +145,7 @@ final class CanvasStore: ObservableObject {
     @Published var mode: CanvasMode = .pen {
         didSet {
             if oldValue != mode {
+                cancelCardMerge()
                 cancelInkMath()
                 cancelInkShape()
                 pendingInkTextEditing?.invalidatePending()
@@ -164,6 +166,7 @@ final class CanvasStore: ObservableObject {
     func setPencilTraceActive(_ active: Bool, owner: UUID) {
         if active {
             if pencilTraceOwner == nil || pencilTraceOwner == owner {
+                cancelCardMerge()
                 pendingInkTextEditing?.invalidatePending()
                 pendingInkSpacing?.invalidatePending()
                 cancelInkShape()
@@ -696,10 +699,101 @@ final class CanvasStore: ObservableObject {
     let inkHistory = CanvasInkHistory()
     @Published private var graphUndo: (before: CanvasScene, after: CanvasScene)?
     @Published private var graphRedo: (before: CanvasScene, after: CanvasScene)?
+    private var graphRequiresPersistence = false
+    private var graphPersistenceEpoch: UInt64?
 
-    private func recordGraphEdit(before: CanvasScene) {
+    private func recordGraphEdit(before: CanvasScene, persistHistory: Bool = false) {
         graphUndo = (before,scene)
         graphRedo = nil
+        graphRequiresPersistence = persistHistory
+        graphPersistenceEpoch = persistHistory ? linkSceneGeneration : nil
+    }
+
+    @Published private(set) var cardMergeDraft: CanvasCardMerge.Draft?
+    private var cardMergeEpoch: UInt64?
+    private var cardMergeSelectionGeneration: UInt64?
+
+    var cardMergeInputAllowed: Bool {
+        canApplyReconciledCanvas && mode == .select && nodeResizeDrag == nil &&
+        nodeRotationDrag == nil && endpointDrag == nil && linkStart == nil
+    }
+
+    var canBeginCardMerge: Bool {
+        guard cardMergeInputAllowed, cardMergeDraft == nil, let id = selectedNode else { return false }
+        return (try? CanvasCardMerge.Draft(scene:scene,memberIDs:[id])) != nil
+    }
+
+    var canAppendCardMerge: Bool {
+        guard cardMergeInputAllowed, let draft = cardMergeDraft, let id = selectedNode,
+              cardMergeEpoch == linkSceneGeneration else { return false }
+        return (try? draft.appending(id,in:scene)) != nil
+    }
+
+    var canConfirmCardMerge: Bool {
+        guard cardMergeInputAllowed, let draft = cardMergeDraft, draft.memberIDs.count >= 2,
+              cardMergeEpoch == linkSceneGeneration, cardMergeSelectionGeneration == noteSelectionGeneration,
+              selectedNode == draft.memberIDs.last else { return false }
+        return (try? CanvasFileWorkspace.sceneSHA(scene)) == draft.sceneSHA
+    }
+
+    func cancelCardMerge() {
+        cardMergeDraft = nil
+        cardMergeEpoch = nil
+        cardMergeSelectionGeneration = nil
+    }
+
+    func beginCardMerge(_ expected: CanvasNode) {
+        guard canBeginCardMerge, selectedNode == expected.id,
+              scene.nodes.contains(where:{ CanvasScene.sameNode($0,expected) }) else { return }
+        do {
+            cardMergeDraft = try CanvasCardMerge.Draft(scene:scene,memberIDs:[expected.id])
+            cardMergeEpoch = linkSceneGeneration
+            cardMergeSelectionGeneration = noteSelectionGeneration
+            status = "첫 카드를 선택했습니다. 다음 카드를 선택하고 병합 순서에 추가하세요. 원본은 유지됩니다."
+        } catch { status = error.localizedDescription }
+    }
+
+    func appendCardMerge(_ expected: CanvasNode) {
+        guard canAppendCardMerge, selectedNode == expected.id, let draft = cardMergeDraft,
+              scene.nodes.contains(where:{ CanvasScene.sameNode($0,expected) }) else { return }
+        do {
+            cardMergeDraft = try draft.appending(expected.id,in:scene)
+            cardMergeSelectionGeneration = noteSelectionGeneration
+            status = "병합 순서에 카드를 추가했습니다. 원본과 부모·자식 관계는 바꾸지 않았습니다."
+        } catch { status = error.localizedDescription }
+    }
+
+    @discardableResult
+    func confirmCardMerge() -> Bool {
+        guard canConfirmCardMerge, let draft = cardMergeDraft else {
+            status = CanvasCardMerge.Failure.changed.localizedDescription
+            return false
+        }
+        do {
+            let before = scene
+            let applied = try draft.applying(to:before)
+            try persistScene(applied.scene)
+            scene = applied.scene
+            selectedNode = applied.cardID
+            recordGraphEdit(before:before,persistHistory:true)
+            status = "순서가 있는 병합 카드를 만들고 복구본에 보관했습니다. 원본 카드는 그대로이며 Files 원본 저장은 별도 상태를 확인하세요."
+            return true
+        } catch { status = "병합하지 않았습니다. \(error.localizedDescription)"; return false }
+    }
+
+    @discardableResult
+    func unmergeCard(_ expected: CanvasNode) -> Bool {
+        guard cardMergeInputAllowed, cardMergeDraft == nil, selectedNode == expected.id,
+              scene.nodes.contains(where:{ CanvasScene.sameNode($0,expected) }) else { return false }
+        do {
+            let before = scene
+            let next = try CanvasCardMerge.unmerging(expected.id,in:before)
+            try persistScene(next)
+            scene = next
+            recordGraphEdit(before:before,persistHistory:true)
+            status = "병합 연결을 해제하고 복구본에 보관했습니다. 합친 본문·원본·부모자식·다른 연결은 유지했습니다."
+            return true
+        } catch { status = "병합을 해제하지 않았습니다. \(error.localizedDescription)"; return false }
     }
 
     struct NodeResizeDrag {
@@ -901,6 +995,10 @@ final class CanvasStore: ObservableObject {
 
     var canUndoGraph: Bool {
         guard let undo = graphUndo, scene.id == undo.after.id else { return false }
+        if graphRequiresPersistence {
+            guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
+                  cardMergeInputAllowed, cardMergeDraft == nil else { return false }
+        }
         if undo.before.drawingBase64 != undo.after.drawingBase64 {
             let expected = undo.after
             guard let currentBytes = try? CanvasInkTextEditing.encode(scene), let expectedBytes = try? CanvasInkTextEditing.encode(expected) else { return false }
@@ -925,15 +1023,24 @@ final class CanvasStore: ObservableObject {
             next.links = undo.before.links
             next.annotations = undo.before.annotations
             next.revision += 1
+            if graphRequiresPersistence {
+                do { try persistScene(next) }
+                catch { status = "카드 수정을 되돌리지 않았습니다. \(error.localizedDescription)"; return }
+            }
             scene = next
         }
         graphUndo = nil
         graphRedo = undo.before.drawingBase64 != undo.after.drawingBase64 ? (scene,undo.after) : undo
+        if graphRequiresPersistence { graphPersistenceEpoch = linkSceneGeneration }
         status = undo.before.drawingBase64 != undo.after.drawingBase64 ? "원본 획과 간격 수정을 되돌려 복구본에 저장했습니다." : "구조 수정을 되돌렸습니다. 현재 원본 획은 그대로 보존했습니다."
     }
 
     var canRedoGraph: Bool {
         guard let redo = graphRedo, scene.id == redo.before.id else { return false }
+        if graphRequiresPersistence {
+            guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
+                  cardMergeInputAllowed, cardMergeDraft == nil else { return false }
+        }
         if redo.before.drawingBase64 != redo.after.drawingBase64 {
             let expected = redo.before
             guard let currentBytes = try? CanvasInkTextEditing.encode(scene), let expectedBytes = try? CanvasInkTextEditing.encode(expected) else { return false }
@@ -958,10 +1065,15 @@ final class CanvasStore: ObservableObject {
             next.links = redo.after.links
             next.annotations = redo.after.annotations
             next.revision += 1
+            if graphRequiresPersistence {
+                do { try persistScene(next) }
+                catch { status = "카드 수정을 다시 실행하지 않았습니다. \(error.localizedDescription)"; return }
+            }
             scene = next
         }
         graphUndo = redo.before.drawingBase64 != redo.after.drawingBase64 ? (redo.before,scene) : redo
         graphRedo = nil
+        if graphRequiresPersistence { graphPersistenceEpoch = linkSceneGeneration }
         status = redo.before.drawingBase64 != redo.after.drawingBase64 ? "원본 획과 간격 수정을 다시 실행해 복구본에 저장했습니다." : "구조 수정을 다시 실행했습니다. 현재 원본 획은 그대로 보존했습니다."
     }
 

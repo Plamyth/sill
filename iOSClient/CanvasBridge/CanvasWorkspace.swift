@@ -455,6 +455,7 @@ struct CanvasWorkspace: View {
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
             foldButton
+            CanvasCardMergeMenu(store:store)
             if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("구조 수정 되돌리기",systemImage:"arrow.uturn.backward") { store.undoGraphEdit() }
