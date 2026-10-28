@@ -1116,7 +1116,10 @@ final class CanvasStore: ObservableObject {
     }
     @Published private(set) var vaultBlockEditing = false
     @Published var vaultBlockDraft = "" {
-        didSet { if !changingBlockState { persistBlockDraft() } }
+        didSet {
+            noteEditGeneration &+= 1
+            if !changingBlockState { persistBlockDraft() }
+        }
     }
     @Published var vaultBlockSelection = NSRange(location:0,length:0)
     private var pendingBlockEdit: VaultBlockEdit?

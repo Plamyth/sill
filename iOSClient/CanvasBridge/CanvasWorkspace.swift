@@ -789,7 +789,8 @@ struct CanvasWorkspace: View {
             if refresh, var prior = previous {
                 let archive = try CanvasRuntime.conflictRecoveryURL("NoteConflictAttempt-\(UUID().uuidString.lowercased()).json")
                 try CanvasLocalFile.write(JSONEncoder().encode(prior),to:archive)
-                prior.phase = .superseded
+                // A fresh GET is not authority to resolve an unfinished local choice.
+                if ![.completed,.superseded].contains(prior.phase) { prior.phase = .refreshRequired }
                 try CanvasLocalFile.write(JSONEncoder().encode(prior),to:noteChoiceURL())
             }
             noteConflict = snapshot; noteConflictLocal = local; noteConflictChoice = nil

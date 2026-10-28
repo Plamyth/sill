@@ -3,7 +3,7 @@
 from pathlib import Path
 import argparse, subprocess, os, json, uuid, hashlib, plistlib
 root=Path(__file__).resolve().parents[3];here=Path(__file__).resolve().parent
-p=argparse.ArgumentParser();p.add_argument('--case',choices=['full','bom'],default='full');p.add_argument('--output',type=Path,required=True);p.add_argument('--isolated',action='store_true');p.add_argument('--sdk-check',action='store_true');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--case',choices=['full','bom','reconciliation'],default='full');p.add_argument('--output',type=Path,required=True);p.add_argument('--isolated',action='store_true');p.add_argument('--sdk-check',action='store_true');args=p.parse_args()
 route=json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))
 assert any(x.exists() and os.path.samefile(x,route['path']) for x in [args.output,*args.output.parents])
 args.output.mkdir(parents=True,exist_ok=True)
@@ -30,7 +30,7 @@ if args.isolated:
 base=['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-module-cache-path',str(out/'modules')]
 commands=[('protocol',base+['-emit-module','-emit-object','-module-name','StreamProtocol',root/'Sources/StreamProtocol/TestDestinations.swift','-emit-module-path',out/'StreamProtocol.swiftmodule','-o',out/'StreamProtocol.o']),
  ('compile',base+['-I',out,*sources,out/'StreamProtocol.o','-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',out/'Info.plist','-o',out/'check']),
- ('actual-relay-store',[out/'check',out,here/'wire-example.json']+(['--ccr-test-runtime',identity] if args.isolated else [])+(['--bom-only'] if args.case=='bom' else []))]
+ ('actual-relay-store',[out/'check',out,here/'wire-example.json']+(['--ccr-test-runtime',identity] if args.isolated else [])+(['--bom-only'] if args.case=='bom' else ['--reconciliation-only'] if args.case=='reconciliation' else []))]
 def extract(text, marker):
  start=text.index(marker);opening=text.index('{',start);depth=1;end=opening+1
  while depth:

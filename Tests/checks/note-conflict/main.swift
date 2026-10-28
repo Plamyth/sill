@@ -93,6 +93,60 @@ final class NoteConflictProtocol: URLProtocol {
             print("NOTE_BOM_OK",count,"actual isolated Relay/Store/Workspace actions; URLProtocol fixture; no live HTTP")
             session.invalidateAndCancel();return
         }
+        if CommandLine.arguments.contains("--reconciliation-only") {
+            let store=CanvasStore();store.saveNow();store.setNoteConnection(address:relay.address,token:relay.token)
+            await store.openVaultNote(path) {_ in note(NoteConflictProtocol.base)}
+            let first=NoteWorkspaceHarness(store,relay);await first.read()
+            NoteConflictProtocol.mode="stale";await first.resolve(.keepCurrent)
+            check(store.noteReconciliationHeld && store.noteConflictChoice?.phase == .refreshRequired,"server rejection creates durable unresolved barrier")
+            let fresh=CanvasStore();fresh.setNoteConnection(address:relay.address,token:relay.token)
+            let ui=NoteWorkspaceHarness(fresh,relay)
+            check(fresh.noteReconciliationHeld && !fresh.canApplyReconciledCanvas,"restart without active draft still blocks Canvas apply")
+            NoteConflictProtocol.mode="normal";let puts=NoteConflictProtocol.putBodies.count
+            await ui.read(refresh:true)
+            check(ui.noteConflict != nil && fresh.noteConflictChoice?.phase == .refreshRequired && fresh.noteReconciliationHeld && !fresh.canApplyReconciledCanvas && NoteConflictProtocol.putBodies.count==puts && !NoteConflictProtocol.resolved,"fresh GET keeps durable barrier and never counts as explicit selection")
+            let again=CanvasStore();again.setNoteConnection(address:relay.address,token:relay.token)
+            check(again.noteReconciliationHeld && !again.canApplyReconciledCanvas,"restart after refresh retains unresolved barrier")
+            var imported=fresh.scene;imported.revision += 100
+            let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys];let bytes=try encoder.encode(fresh.scene)
+            let preserve=try CanvasRuntime.conflictRecoveryURL("CanvasConflictLocal-\(UUID().uuidString.lowercased()).json");try CanvasLocalFile.write(bytes,to:preserve)
+            do {try fresh.applyReconciledCanvas(imported,expectedLocalSHA:CanvasPacket.sha(bytes),preservedAt:preserve);preconditionFailure("refresh permitted Canvas apply")}
+            catch {check(fresh.scene.revision != imported.revision,"actual Canvas apply refuses refresh-only authority")}
+            await ui.resolve(.useDisplaced)
+            check(!fresh.noteReconciliationHeld && !fresh.vaultBlocked && fresh.canApplyReconciledCanvas,"new explicit selection completes and releases barrier normally")
+            fresh.addNode(.note);let node=fresh.selectedNode!
+            let base=note(NoteConflictProtocol.base)
+            fresh.scene.nodes[fresh.scene.nodes.count-1].vaultNote=VaultNoteReference(path:path,sha256:base.sha256,relayAddress:relay.address,blockID:"pdfx");fresh.saveNow()
+            await fresh.openVaultNote(path,nodeID:node) {_ in base};precondition(fresh.beginLinkedBlockEdit())
+            let nfd="새 입력 e\u{301} 👩🏽‍💻",nfc=nfd.precomposedStringWithCanonicalMapping
+            fresh.vaultBlockDraft=nfd
+            await fresh.saveLinkedBlock(replace:{_,_,_ in throw NSError(domain:"CanvasRelay",code:409,userInfo:[VaultSaveConflict.errorKey:VaultSaveConflict.reconciliationRequired.rawValue])},load:{_ in base})
+            let captured=try fresh.captureNoteConflictLocal(path:path)
+            var raw=try JSONSerialization.jsonObject(with:JSONEncoder().encode(captured)) as! [String:Any];raw["blockDraft"]=nfc
+            let equivalent=try JSONDecoder().decode(NoteConflictLocalState.self,from:JSONSerialization.data(withJSONObject:raw))
+            check(nfd==nfc && captured != equivalent,"recovery snapshot equality preserves byte-distinct canonical Unicode even with equal generations")
+            let blockUI=NoteWorkspaceHarness(fresh,relay);await blockUI.read()
+            var durable=false
+            NoteConflictProtocol.hook={ endpoint,method in
+                guard endpoint=="/vault/note/conflict",method=="PUT" else{return};NoteConflictProtocol.hook=nil
+                fresh.vaultBlockDraft=nfc;durable=fresh.blockRecovery?.draft.utf8.elementsEqual(nfc.utf8)==true
+            }
+            await blockUI.resolve(.keepCurrent)
+            check(durable,"new NFC block input is durable during pending PUT")
+            check(fresh.noteReconciliationHeld && fresh.noteConflictChoice?.phase == .pending && fresh.vaultBlockDraft.utf8.elementsEqual(nfc.utf8) && fresh.blockRecovery?.draft.utf8.elementsEqual(nfc.utf8)==true,"late NFC input blocks installation and survives active draft and recovery")
+            let archiveURL=try CanvasRuntime.conflictRecoveryURL(fresh.noteConflictChoice!.backupFilename)
+            let archived=try JSONDecoder().decode(NoteConflictLocalState.self,from:CanvasLocalFile.read(archiveURL))
+            check(archived.blockRecovery?.draft.utf8.elementsEqual(nfd.utf8)==true,"original NFD proposal archive remains unchanged")
+            let after=CanvasStore();after.setNoteConnection(address:relay.address,token:relay.token)
+            check(after.noteReconciliationHeld && after.blockRecovery?.draft.utf8.elementsEqual(nfc.utf8)==true,"restart preserves late NFC block input and held barrier")
+            let refreshed=try fresh.captureNoteConflictLocal(path:path)
+            fresh.vaultBlockDraft=nfd;fresh.vaultBlockDraft=nfc
+            check(try fresh.captureNoteConflictLocal(path:path) != refreshed,"block input generation catches change-and-return ABA")
+            await blockUI.read(refresh:true);await blockUI.resolve(.keepCurrent)
+            check(!fresh.noteReconciliationHeld && blockUI.noteConflictArchive?.blockRecovery?.draft.utf8.elementsEqual(nfc.utf8)==true,"fresh explicit selection completes while preserving newer NFC input")
+            print("NOTE_RECONCILIATION_OK",count,"actual isolated Model Store file IO and extracted Workspace; URLProtocol fixture")
+            session.invalidateAndCancel();return
+        }
         for name in ["NoteConflictChoice.json","NoteConflictLocal-33333333-3333-4333-8333-333333333333.json","NoteConflictAttempt-44444444-4444-4444-8444-444444444444.json"] {
             for base in [support,support.appendingPathComponent("CCRIntegrationTests/55555555-5555-4555-8555-555555555555/state/CanvasConflictRecovery"),state] {
                 do {try CanvasLocalFile.write(Data([1]),to:base.appendingPathComponent(name));preconditionFailure("root escape")}

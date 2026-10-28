@@ -1158,6 +1158,12 @@ struct NoteConflictLocalState: Codable, Equatable {
     let noteRecovery: VaultNoteRecovery?
     let blockRecovery: VaultBlockRecovery?
     let connectionGeneration: UInt64, sceneGeneration: UInt64, sceneEditGeneration: UInt64, editorGeneration: UInt64, editGeneration: UInt64
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        // Swift String equality folds canonical Unicode; recovery must compare original bytes.
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        guard let left = try? encoder.encode(lhs), let right = try? encoder.encode(rhs) else { return false }
+        return left == right
+    }
 }
 struct NoteConflictLocalChoice: Codable {
     enum Phase: String, Codable { case pending, refreshRequired, serverResolved, completed, superseded }

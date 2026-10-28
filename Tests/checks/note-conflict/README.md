@@ -29,3 +29,7 @@
 ## BOM 원문 보존 후속
 
 실제 HTTP fdeeee5b9d4f가 e0c2910의 BOM 제거 반례를 발견했다. Foundation의 `String(data:encoding:.utf8)`는 엄격 유효성 확인에만 쓰고, `String(decoding:as:UTF8.self)`로 BOM을 포함한 원문을 유지한다. 최종 재열기 대조는 선택한 material의 원본 Data와 직접 비교한다. 기존 UI의 material 표시와 Store 적용도 같은 원문을 유지한다. 잘못된 UTF-8은 replacement 문자열로 수용하지 않는다. `--case bom --isolated --output <검증 외장>`은 두 decision의 BOM/CRLF/NFD 재열기·실제 추출 Workspace/Store 적용·초안 보존과 invalid UTF-8 거부만 검사하며 기존 전체 검사나 whole build를 반복하지 않는다. HTTP는 URLProtocol 주입이며 Galileo의 실제 URLSession/서버 후속 검사와 구분한다.
+
+## 조회 권한·연결 문단 입력 후속
+
+독립 native 검수의 refresh-barrier 및 block-unicode-late 두 반례를 별도 수정했다. refresh GET은 이전 미완료 choice를 Attempt에 보존하면서 현재 choice를 refreshRequired로 유지한다. 새 선택·서버 성공·원문 재열기·로컬 완료 기록 전에는 같은 scene/address의 지속 차단을 해제하지 않는다. NoteConflictLocalState의 동등성은 정렬 JSON의 원문 바이트로 대조하여 Swift String의 canonical Unicode 동등성과 구분한다. vaultBlockDraft 변경은 whole-note와 같은 입력 세대를 올려 NFD→NFC 및 변경 후 원복 ABA를 감지한다. `--case reconciliation --isolated --sdk-check`는 두 실제 반례·프로세스 재시작·실제 Canvas apply 거부·후속 명시 선택의 정상 완료·원문 보존을 좁게 검사한다. BOM transport는 e02545a의 SHA와 동일하며 별도 actual HTTP 증거를 재사용한다.
