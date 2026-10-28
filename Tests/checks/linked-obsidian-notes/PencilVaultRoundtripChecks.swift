@@ -12,6 +12,10 @@ private struct PencilVaultFailure: Error { let status: Int }
 
 private struct PencilVaultBridge {
     func run<Value: Decodable>(_ request: [String: Any], as: Value.Type) throws -> Value {
+        if let remote = PDFRemoteVault.shared {
+            do { return try remote.run(request,as:Value.self) }
+            catch let error as PDFRemoteFailure { throw PencilVaultFailure(status:error.status) }
+        }
         let environment = ProcessInfo.processInfo.environment
         let process = Process()
         process.executableURL = URL(fileURLWithPath: environment["PENCIL_NODE"]!)

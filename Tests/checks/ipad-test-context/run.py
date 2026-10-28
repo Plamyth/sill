@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Foundation-only extraction checks. No iOS SDK build, UI, network or real Keychain."""
 import os
+import re
+import sys
+import uuid
 import hashlib
 import json
 from pathlib import Path
@@ -76,9 +79,9 @@ check('CanvasLocalFile.read' in function(store, 'private static func readBlockRe
       'every persistent restore/readback uses descriptor-checked state reads')
 
 runtime = between(model, 'enum CanvasRuntime {', 'func canvasSelectedCharacterRange')
-local_file = model[model.index('enum CanvasLocalFile {'):]
+local_file = function(model, 'enum CanvasLocalFile {')
 relay_code = between(relay, '    let address: String\n', '    private func response<')
-checkpoint = between(workspace, 'private struct CanvasVaultCheckpoint:', 'struct CanvasWorkspace:').replace('private struct', 'struct', 1)
+checkpoint = between(model, 'enum VaultSaveConflict:', 'enum VaultBlockRecoveryError:')
 workspace_init = function(workspace, '    init()')
 workspace_path = function(workspace, '    private static func canvasVaultCheckpointURL()')
 standins = (here / 'Standins.swift').read_text()
@@ -98,11 +101,16 @@ source = ('import Foundation\nimport CryptoKit\nimport Darwin\nimport CoreFounda
               ('relayAddress', 'String', '"default"'), ('relayToken', 'String', '""'),
               ('vaultSceneID', 'UUID?', 'nil'), ('vaultSyncAddress', 'String?', 'nil'),
               ('syncedSceneSha', 'String?', 'nil'), ('canvasNoteSha', 'String?', 'nil'),
-              ('pendingSceneSha', 'String?', 'nil')]) + '\n' + workspace_init + '\n' +
+              ('pendingSceneSha', 'String?', 'nil'), ('canvasVaultBlocked', 'Bool', 'false'),
+              ('canvasSaveConflict', 'VaultSaveConflict?', 'nil')]) + '\n' + workspace_init + '\n' +
           workspace_path + '\n}\n' + scenarios)
 
-audit = root / '.audit'
-audit.mkdir(exist_ok=True)
+archive = json.loads(subprocess.check_output([
+    '/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'BT_CCR-ipad'], text=True))
+audit = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(archive['path']) / ('context-check-' + uuid.uuid4().hex)
+check(any(parent.exists() and parent.samefile(archive['path']) for parent in [audit, *audit.parents]),
+      'context outputs use the verified development archive')
+audit.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='ipad-context-check-', dir=audit) as temporary:
     output = Path(temporary)
     swift = output / 'main.swift'
@@ -152,8 +160,7 @@ with tempfile.TemporaryDirectory(prefix='ipad-context-check-', dir=audit) as tem
             if mode == 'unsafe-state':
                 (context / 'state').symlink_to(support, target_is_directory=True)
             # Sentinels prove the existing user files/default import remain untouched.
-            for relative in ['CanvasScene.json', 'CanvasOutbox/ledger.json',
-                             'CanvasBlockEdit/recovery.json', 'CanvasVaultCheckpoint.json']:
+            for relative in re.findall(r'case \w+ = "([^"]+)"', between(model, 'enum StateFile:', 'enum Defaults')):
                 file = support / relative
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_bytes(b'original-state')

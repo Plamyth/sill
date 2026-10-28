@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 
 final class NoteConflictProtocol: URLProtocol {
     static var path="Notes/plan.md",id=UUID().uuidString.lowercased(),mode="normal"
@@ -276,6 +277,43 @@ final class NoteConflictProtocol: URLProtocol {
         check(!pdf.canCompareNoteConflict,"oversized or unpreserved local input cannot create an unbounded recovery archive")
         pdf.vaultDraft=validDraft
         check(pdf.canCompareNoteConflict,"returning to bounded input restores recovery comparison eligibility")
+        _ = pdf.closeVaultEditor(discard:true)
+        let nativePDFBytes = try Data(contentsOf:URL(fileURLWithPath:ProcessInfo.processInfo.environment["PDF_RECOVERY_FIXTURE"]!))
+        let nativePDF = PDFDocument(data:nativePDFBytes)!, nativePage = nativePDF.page(at:0)!
+        let source = try VaultPDFExcerpt.capture(snapshot:VaultPDFSnapshot(path:"원문/Unicode.pdf",sha256:CanvasPacket.sha(nativePDFBytes),dataBase64:nativePDFBytes.base64EncodedString()),
+            document:nativePDF,selection:nativePage.selection(for:NSRange(location:0,length:(nativePage.string! as NSString).length))!)
+        let cardText = try source.markdown(), cardBase = try VaultPDFCard.parse(cardText)!
+        let externalTitle = "외부 제목 e\u{301}", externalMemo = "외부 메모 e\u{301} 👩🏽‍💻"
+        let titled = try cardBase.replacing(.title,with:externalTitle)
+        let externalCard = try VaultPDFCard.parse(titled)!.replacing(.memo,with:externalMemo)
+        let externalBytes = "\u{feff}" + externalCard.replacingOccurrences(of:"\n",with:"\r\n")
+        NoteConflictProtocol.path=source.notePath;NoteConflictProtocol.id=UUID().uuidString.lowercased()
+        NoteConflictProtocol.base=cardText;NoteConflictProtocol.active=cardText;NoteConflictProtocol.displaced=externalBytes
+        NoteConflictProtocol.mode="normal";NoteConflictProtocol.resolved=false
+        let cardStore=CanvasStore();cardStore.setNoteConnection(address:relay.address,token:relay.token)
+        await cardStore.openVaultNote(source.notePath) {_ in note(cardText)}
+        let cardID=cardStore.attachOpenedVaultNote()!, oldSession=cardStore.vaultPDFEditSession!
+        check(cardStore.editVaultPDF(.memo,text:"내 미저장 메모",session:oldSession),"actual PDF field uses the shared Markdown draft before conflict")
+        await cardStore.saveVaultNote {_,_,_ in throw NSError(domain:"CanvasRelay",code:409,userInfo:[VaultSaveConflict.errorKey:VaultSaveConflict.reconciliationRequired.rawValue])}
+        let cardUI=NoteWorkspaceHarness(cardStore,relay);await cardUI.read();await cardUI.resolve(.useDisplaced)
+        let restoredCard=try VaultPDFCard.parse(cardStore.vaultDraft)!
+        check(!cardStore.noteReconciliationHeld && !cardStore.vaultBlocked && cardStore.vaultDraft.utf8.elementsEqual(externalBytes.utf8),
+            "PDF explicit note recovery installs exact external BOM/CRLF bytes before enabling normal writes")
+        check(restoredCard.title==externalTitle && restoredCard.memo==externalMemo && restoredCard.sourceSHA256==cardBase.sourceSHA256,
+            "recovered title and memo are separate from unchanged native PDF quote SHA and textRanges")
+        check(cardStore.scene.nodes.contains {$0.id==cardID && $0.vaultNote?.path==source.notePath && $0.text.contains(externalTitle)},
+            "external PDF memo recovery refreshes the same existing card identity")
+        check(!cardStore.editVaultPDF(.memo,text:"늦은 이전 입력",session:oldSession),"pre-recovery PDF field session cannot overwrite recovered memo")
+        let recoveredSession=cardStore.vaultPDFEditSession!
+        check(cardStore.editVaultPDF(.memo,text:"복구 뒤 메모",session:recoveredSession),"explicit recovery returns PDF fields to ordinary Markdown editing")
+        var cardSaved=note(externalBytes)
+        await cardStore.saveVaultNote(save:{_,base,text in
+            precondition(base==CanvasPacket.sha(Data(externalBytes.utf8)))
+            cardSaved=note(text);return cardSaved
+        },load:{_ in cardSaved})
+        let finalCard=try VaultPDFCard.parse(cardSaved.text)!
+        check(!cardStore.vaultDirty && finalCard.memo=="복구 뒤 메모" && finalCard.title==externalTitle && finalCard.sourceSHA256==cardBase.sourceSHA256,
+            "post-recovery PDF memo CAS/readback preserves title and immutable source")
         let canvasText="---\nccr_scene_id: 123\n---\nmanaged"
         NoteConflictProtocol.active=canvasText
         do {_=try await relay.vaultNoteConflict(path:NoteConflictProtocol.path);preconditionFailure("managed bypass")}
