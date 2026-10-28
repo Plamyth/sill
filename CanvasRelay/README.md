@@ -33,3 +33,7 @@ Pstack Refactoring의 원본 동작 고정·대조·실행 검증을 적용했�
 ## 일반 Markdown의 명시 복구
 
 `NOTE-RECONCILIATION-CONTRACT.md`와 실행 예제 `relay/test-input/note-reconciliation-v1/wire-example.json`을 사용한다. `run-checks.py --notes --output <승인된_절대경로>`는 일반 노트의 새16경계만 실행한다. 옵션 없는 실행은 기존 Canvas·scene 회귀도 포함한다. 기존 network 차단과 정확 helper/fixture writer 허용·PID 종료 영수증을 재사용하며 실제 서비스나 사용자 vault는 사용하지 않는다.
+
+## PDF 읽기 접합
+
+일반 노트 복구 위의 별도 PDF 읽기 소스는 `PDF-READ-CONTRACT.md`에 있다. `run-checks.py --pdf --output <승인된_절대경로>`로 소켓 없는 집중4개를 실행한다. PDF actual HTTP·렌더·설치 수용은 별도다.
