@@ -29801,8 +29801,8 @@
         "MN-IPAD-4.4.6": 129
       },
       "byStatus": {
-        "parity_gap": 120,
-        "implementation_evidence_missing": 227,
+        "parity_gap": 113,
+        "implementation_evidence_missing": 234,
         "support_unverified": 32,
         "integration_pending": 6
       },
