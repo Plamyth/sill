@@ -109,9 +109,15 @@ import UIKit
         #else
         store.filePreview = { _ in png }
         #endif
-        check(!store.fileWorkspaceCanSync,"unconnected pending scene cannot publish as Files original")
+        check(store.fileWorkspaceCanSync,"no Files selection preserves the existing Obsidian sync path")
         check(store.updateDrawing(drawing),"store accepts real native drawing")
         store.addNode(.note)
+        check(store.fileWorkspaceCanSync,"legacy edits without Files binding keep Obsidian sync available")
+        store.saveNow()
+        let legacyRestart = CanvasStore(defaults:defaults)
+        check(legacyRestart.scene == store.scene && legacyRestart.fileWorkspaceCanSync,
+            "restart without Files binding keeps Obsidian refresh and sync available")
+        legacyRestart.saveNow()
         let localScene = store.scene
         await store.connectFileWorkspace(storeFolder)
         check(store.fileWorkspaceCanSync,"store exports and connects selected folder")
@@ -170,7 +176,8 @@ import UIKit
         let pending = try JSONDecoder().decode(CanvasScene.self,from:CanvasLocalFile.read(CanvasRuntime.stateURL(.scene)))
         check(pending == pendingScene,"pending cache retains unsaved scene bytes")
         let conflictRestart = CanvasStore(defaults:defaults)
-        check(conflictRestart.fileWorkspaceState == .blocked && conflictRestart.scene == pendingScene,"restart retains unsaved conflict instead of external overwrite")
+        check(conflictRestart.fileWorkspaceState == .blocked && !conflictRestart.fileWorkspaceCanSync &&
+            conflictRestart.scene == pendingScene,"restart retains unsaved conflict and blocks Files relay")
         let target = root.appendingPathComponent("race-export",isDirectory:true)
         try FileManager.default.createDirectory(at:target,withIntermediateDirectories:true)
         let raceSource = root.appendingPathComponent("race-source",isDirectory:true)
@@ -189,6 +196,16 @@ import UIKit
         check(raceStore.scene.nodes.count == beforeRace.nodes.count + 1 && !raceStore.fileWorkspaceCanSync,
             "input during export remains pending and is not falsely marked saved")
         try check(try CanvasFileWorkspace(folder:target,requiresScope:false).documents().isEmpty,"stale preview cannot create exported original")
+        let invalidBinding = CanvasFileWorkspace.Binding(bookmark:Data([1,2,3]),sceneID:raceStore.scene.id,
+            savedSceneSHA:try CanvasFileWorkspace.sceneSHA(raceStore.scene))
+        try CanvasLocalFile.write(JSONEncoder().encode(invalidBinding),to:CanvasRuntime.stateURL(.workspace))
+        let invalidBookmarkRestart = CanvasStore(defaults:defaults)
+        check(invalidBookmarkRestart.fileWorkspaceState == .blocked && !invalidBookmarkRestart.fileWorkspaceCanSync,
+            "invalid persisted Files bookmark cannot fall back to the legacy Obsidian path")
+        try CanvasLocalFile.write(Data("invalid binding".utf8),to:CanvasRuntime.stateURL(.workspace))
+        let corruptBindingRestart = CanvasStore(defaults:defaults)
+        check(corruptBindingRestart.fileWorkspaceState == .blocked && !corruptBindingRestart.fileWorkspaceCanSync,
+            "unreadable Files binding cannot masquerade as no Files selection")
         print("PASSED \(checks) file workspace checks")
     }
 }

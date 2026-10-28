@@ -242,7 +242,10 @@ final class CanvasStore: ObservableObject {
     private var workspaceBinding: CanvasFileWorkspace.Binding?
     private var workspaceToken: String?
     private var fileSaveBusy = false
-    var fileWorkspaceCanSync: Bool { fileWorkspaceState == .ready }
+    var fileWorkspaceCanSync: Bool {
+        guard fileWorkspaceState != .blocked else { return false }
+        return (workspaceBinding == nil && fileWorkspace == nil) || fileWorkspaceState == .ready
+    }
 
     private func writeWorkspaceBinding(_ binding: CanvasFileWorkspace.Binding) throws {
         try CanvasLocalFile.write(JSONEncoder().encode(binding),to:CanvasRuntime.stateURL(.workspace))

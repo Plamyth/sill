@@ -10,7 +10,7 @@ python3 Tests/checks/canvas-file-workspace/run.py /Volumes/BT-Workspace/Developm
 
 사용자가 고른 폴더의 `<scene UUID>.sill/current.json`이 현재 원본 세대를 지정한다. `revisions/<generation UUID>/scene.json`은 기존 CanvasScene JSON이고 `drawing.pkdrawing`은 그 장면의 drawingBase64를 디코딩한 원본 바이트다. `preview.png`는 같은 장면에서 생성한 이미지다. current.json은 세 파일의 SHA-256과 scene identity를 담으며 마지막에 원자 교체한다. 파일 조정 안에서 이전 토큰과 세 파일 해시를 검사한 뒤 쓰므로 외부 변경을 덮지 않는다. 중단된 세대는 current.json에 연결되지 않는다. 과거 세대와 중단 세대의 자동 삭제는 구현하지 않았다.
 
-외부 도구가 수정할 때는 세 파일을 일치시키고 새 세대와 해시를 게시해야 한다. scene.json만 고치면 불일치로 보존·중단한다. 기존 relay/CAS payload와 서버 계약은 바꾸지 않았다. Files 원본이 미저장 또는 실패 상태이면 그림 relay의 전송과 역방향 적용을 막는다. 실제 relay 통신 시험은 이 검사 범위 밖이다.
+외부 도구가 수정할 때는 세 파일을 일치시키고 새 세대와 해시를 게시해야 한다. scene.json만 고치면 불일치로 보존·중단한다. 기존 relay/CAS payload와 서버 계약은 바꾸지 않았다. Files 원본을 선택한 뒤 미저장 또는 실패 상태이면 그림 relay의 전송과 역방향 적용을 막는다. Files binding과 선택 폴더가 전혀 없으면 기존 Obsidian 경로를 허용하며, 기존 화면의 canvasVaultEnabled와 relay/CAS 검증은 그대로 적용한다. 실제 relay 통신 시험은 이 검사 범위 밖이다.
 
 자기 앱 Documents/ApplicationSupport는 외부 원본으로 수용하지 않는다. 기존 CanvasScene.json의 Legacy 원문은 첫 전환 전 CanvasLegacyScene.json에 복사하고 바이트 해시를 대조한다. 문서를 열기 전 현재 장면은 CanvasPending-UUID.json으로 복사·해시 확인한다. 기존 CanvasScene.json은 이후 캐시·미저장 복구본으로만 쓰며 실패를 Files 저장 성공으로 표시하지 않는다.
 
