@@ -416,3 +416,96 @@ extension CanvasRelay {
         return (result,reopened)
     }
 }
+
+
+extension CanvasRelay {
+    struct NoteConflictMaterial: Codable {
+        let sha256: String, markdownBase64: String
+        let validNote: Bool
+        let refusal: String?
+        var bytes: Data? { Data(base64Encoded:markdownBase64) }
+        var markdown: String? {
+            guard let bytes, String(data:bytes,encoding:.utf8) != nil else { return nil }
+            // Validate strictly first; decoding preserves the original UTF-8 BOM as U+FEFF.
+            return String(decoding:bytes,as:UTF8.self)
+        }
+        func validated(expected: String?) throws {
+            guard sha256 == expected, ConflictMaterial.hash(sha256), let bytes,
+                  bytes.count <= 1024*1024, CanvasPacket.sha(bytes) == sha256 else { throw URLError(.badServerResponse) }
+            if validNote {
+                guard let markdown, !CanvasRelay.managedCanvasMarkdown(markdown) else { throw URLError(.cannotDecodeContentData) }
+            } else if refusal?.isEmpty != false { throw URLError(.badServerResponse) }
+        }
+    }
+    static func ordinaryNotePath(_ path: String) -> Bool {
+        VaultNoteReference.validPath(path) &&
+        path.precomposedStringWithCanonicalMapping.split(separator:"/").first?.lowercased() != "ccr canvas"
+    }
+    private static func managedCanvasMarkdown(_ text: String) -> Bool {
+        let probe = text.hasPrefix("\u{feff}") ? String(text.dropFirst()) : text
+        guard probe.hasPrefix("---\n") || probe.hasPrefix("---\r\n") else { return false }
+        let lines = probe.components(separatedBy:.newlines)
+        for line in lines.dropFirst() {
+            if line == "---" { break }
+            if ["ccr_scene_id:","ccr_scene_sha256:","ccr_image_sha256:"].contains(where:{ line.trimmingCharacters(in:.whitespaces).lowercased().hasPrefix($0) }) { return true }
+        }
+        return false
+    }
+    struct NoteConflictMaterials: Codable {
+        let active: NoteConflictMaterial?, base: NoteConflictMaterial?, displaced: NoteConflictMaterial?, proposal: NoteConflictMaterial?
+        enum CodingKeys: String, CodingKey, CaseIterable { case active, base, displaced, proposal }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy:CodingKeys.self)
+            guard CodingKeys.allCases.allSatisfy({ c.contains($0) }) else { throw URLError(.badServerResponse) }
+            active = try c.decodeIfPresent(NoteConflictMaterial.self,forKey:.active)
+            base = try c.decodeIfPresent(NoteConflictMaterial.self,forKey:.base)
+            displaced = try c.decodeIfPresent(NoteConflictMaterial.self,forKey:.displaced)
+            proposal = try c.decodeIfPresent(NoteConflictMaterial.self,forKey:.proposal)
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy:CodingKeys.self)
+            try c.encode(active,forKey:.active); try c.encode(base,forKey:.base)
+            try c.encode(displaced,forKey:.displaced); try c.encode(proposal,forKey:.proposal)
+        }
+    }
+    struct NoteConflict: Codable {
+        let schema: String, path: String, recoveryID: UUID, code: String
+        let reconciliationRequired: Bool, publicationAttempted: Bool
+        let expected: ConflictExpected, materials: NoteConflictMaterials
+        let history: [ConflictHistory]
+        func selected(_ decision: ConflictDecision) -> NoteConflictMaterial? { decision == .keepCurrent ? materials.active : materials.displaced }
+        func validated(path expectedPath: String) throws -> Self {
+            guard schema == "ccr.note-conflict/v1", path.utf8.elementsEqual(expectedPath.utf8), CanvasRelay.ordinaryNotePath(path),
+                  code == "note_reconciliation_required", reconciliationRequired, ConflictMaterial.hash(expected.historySha256),
+                  history.count <= 32, Set(history.map(\.recoveryID)).count == history.count,
+                  history.allSatisfy({ $0.files.count <= 7 && $0.files.values.allSatisfy { $0.map(ConflictMaterial.hash) ?? true } }) else { throw URLError(.badServerResponse) }
+            for (m,h) in [(materials.active,expected.activeSha256),(materials.base,expected.baseSha256),
+                          (materials.displaced,expected.displacedSha256),(materials.proposal,expected.proposalSha256)] {
+                if let m { try m.validated(expected:h) } else if h != nil { throw URLError(.badServerResponse) }
+            }
+            return self
+        }
+    }
+    struct NoteConflictResolved: Decodable {
+        let path: String, sha256: String, recoveryID: UUID
+        let decision: ConflictDecision
+        let resolved: Bool, reconciliationRequired: Bool
+    }
+    func vaultNoteConflict(path: String) async throws -> NoteConflict {
+        guard Self.ordinaryNotePath(path) else { throw URLError(.badURL) }
+        return try await response(request(vaultURL("/vault/note/conflict",path:path)),as:NoteConflict.self,
+                                  maximumBytes:8*1024*1024).validated(path:path)
+    }
+    func resolveVaultNoteConflict(_ conflict: NoteConflict,decision: ConflictDecision) async throws -> VaultNoteSnapshot {
+        _ = try conflict.validated(path:conflict.path)
+        guard let chosen = conflict.selected(decision), chosen.validNote, chosen.markdown != nil, let selectedBytes = chosen.bytes else { throw URLError(.cannotDecodeContentData) }
+        let body = try JSONEncoder().encode(ConflictRequest(recoveryID:conflict.recoveryID.uuidString.lowercased(),expected:conflict.expected,decision:decision))
+        let result = try await response(request(vaultURL("/vault/note/conflict",path:conflict.path),method:"PUT",body:body),as:NoteConflictResolved.self,maximumBytes:64*1024)
+        guard result.path.utf8.elementsEqual(conflict.path.utf8), result.recoveryID == conflict.recoveryID, result.decision == decision,
+              result.resolved, !result.reconciliationRequired, result.sha256 == chosen.sha256 else { throw URLError(.badServerResponse) }
+        let reopened = try await vaultNote(at:conflict.path)
+        guard reopened.path.utf8.elementsEqual(conflict.path.utf8), reopened.reconciliationRequired != true, reopened.sha256 == result.sha256,
+              Data(reopened.text.utf8) == selectedBytes else { throw URLError(.badServerResponse) }
+        return reopened
+    }
+}

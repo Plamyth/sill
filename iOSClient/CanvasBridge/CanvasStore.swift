@@ -1116,7 +1116,10 @@ final class CanvasStore: ObservableObject {
     }
     @Published private(set) var vaultBlockEditing = false
     @Published var vaultBlockDraft = "" {
-        didSet { if !changingBlockState { persistBlockDraft() } }
+        didSet {
+            noteEditGeneration &+= 1
+            if !changingBlockState { persistBlockDraft() }
+        }
     }
     @Published var vaultBlockSelection = NSRange(location:0,length:0)
     private var pendingBlockEdit: VaultBlockEdit?
@@ -1156,6 +1159,76 @@ final class CanvasStore: ObservableObject {
     private var noteContext: NoteContext?
     private var pendingExcerptAnchor: (context: NoteContext, id: String)?
 
+    var noteConflictChoice: NoteConflictLocalChoice? {
+        guard let url = try? CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json"),
+              let data = try? CanvasLocalFile.read(url), data.count <= 12*1024*1024 else { return nil }
+        return try? JSONDecoder().decode(NoteConflictLocalChoice.self,from:data).validated()
+    }
+    var noteReconciliationHeld: Bool {
+        guard let url = try? CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json") else { return true }
+        if !FileManager.default.fileExists(atPath:url.path) { return false }
+        guard let choice = noteConflictChoice else { return true }
+        return choice.sceneID == scene.id && choice.address == noteAddress && choice.phase != .completed && choice.phase != .superseded
+    }
+    var noteConflictPath: String? {
+        noteRecovery?.base.path ?? blockRecovery?.base.path ?? vaultNote?.path ??
+            noteConflictChoice.flatMap { $0.sceneID == scene.id && $0.address == noteAddress ? $0.path : nil }
+    }
+    var canCompareNoteConflict: Bool {
+        noteRecoveryReadable && blockRecoveryReadable && !noteRecoveryWriteFailed &&
+        vaultDraft.utf8.count <= 1024*1024 && vaultBlockDraft.utf8.count <= 1024*1024 && noteConflictPath != nil && !vaultSaving && !vaultLoading && !vaultInputBusy && !inkBusy && !fileSaveBusy &&
+        !hasPendingInkProposal && !inkMathInputBusy && !commentInputBusy && !noteToken.isEmpty
+    }
+    func captureNoteConflictLocal(path: String) throws -> NoteConflictLocalState {
+        guard canCompareNoteConflict, noteConflictPath.map({ $0.utf8.elementsEqual(path.utf8) }) == true else { throw VaultBlockRecoveryError.context }
+        return NoteConflictLocalState(sceneID:scene.id,path:path,address:noteAddress,sceneSHA256:try CanvasFileWorkspace.sceneSHA(scene),note:vaultNote,
+            draft:vaultDraft,blockDraft:vaultBlockDraft,noteRecovery:noteRecovery,blockRecovery:blockRecovery,
+            connectionGeneration:noteConnectionGeneration,sceneGeneration:noteSceneGeneration,sceneEditGeneration:linkSceneGeneration,
+            editorGeneration:noteEditorGeneration,editGeneration:noteEditGeneration)
+    }
+    func installReconciledNote(_ selected: VaultNoteSnapshot, expected: NoteConflictLocalState,
+                               archive: URL, archiveSHA: String) throws {
+        guard try captureNoteConflictLocal(path:expected.path) == expected,
+              CanvasPacket.sha(try CanvasLocalFile.read(archive)) == archiveSHA else { throw VaultBlockRecoveryError.changed }
+        _ = try selected.validated(at:expected.path)
+        // The entire original draft/base/submitted bytes and block operation ID already exist in archive.
+        // Keep the choice barrier until the UI durably confirms both local records and the selected note.
+        if noteRecovery != nil { try writeNoteRecovery(nil) }
+        if blockRecovery != nil { try writeBlockRecovery(nil) }
+        changingNoteState = true; changingBlockState = true
+        defer { changingNoteState = false; changingBlockState = false }
+        noteEditorGeneration &+= 1; noteInputSession = UUID(); noteRequest = nil
+        noteContext = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
+            connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
+            path:selected.path,nodeID:nil,blockID:nil)
+        vaultNote = selected; vaultDraft = selected.text; vaultBlockEditing = false
+        vaultBlockDraft = ""; pendingBlockEdit = nil; vaultSelection = NSRange(location:0,length:0)
+        vaultBlocked = true
+        refreshNoteCache(selected)
+        vaultStatus = "선택한 원문을 재열었습니다. 이전 입력과 문단 작업 ID는 별도 복구본에 보존하며 완료 기록을 확인합니다."
+    }
+    func finishNoteReconciliation(_ selected: VaultNoteSnapshot) throws {
+        guard let choice = noteConflictChoice, choice.sceneID == scene.id, choice.address == noteAddress,
+              choice.phase == .completed, choice.path == selected.path, choice.resolvedSHA256 == selected.sha256,
+              vaultNote?.sha256 == selected.sha256, vaultDraft.utf8.elementsEqual(selected.text.utf8),
+              noteContext.map(noteContextIsCurrent) == true else { throw VaultBlockRecoveryError.changed }
+        vaultBlocked = false
+        vaultStatus = "명시 복구와 원문 재열기를 확인했습니다. 이전 미저장 입력·작업 ID는 보존본에서 계속 확인할 수 있습니다."
+    }
+    func resumeArchivedNoteDraft(_ saved: NoteConflictLocalState) throws {
+        guard !noteReconciliationHeld, !vaultBlocked, !vaultDirty, !vaultSaving, !vaultLoading,
+              !vaultInputBusy, saved.sceneID == scene.id, saved.address == noteAddress,
+              saved.path == vaultNote?.path else { throw VaultBlockRecoveryError.context }
+        if let record = saved.noteRecovery { vaultDraft = record.draft }
+        else if let record = saved.blockRecovery {
+            guard let note = vaultNote else { throw VaultBlockRecoveryError.context }
+            // Reuse the selected current anchor; an old pending operation is never replayed on a new base.
+            let text = try VaultMarkdownBlocks(note.text).replacing(record.blockID,with:record.draft)
+            vaultDraft = text
+        } else { vaultDraft = saved.draft }
+        vaultStatus = "보존 입력을 새 원문 위 편집 초안으로만 열었습니다. 이전 작업 ID는 재전송하지 않았고 저장은 별도 확인입니다."
+    }
+
     private var vaultWholeNoteDirty: Bool { !vaultDraft.utf8.elementsEqual((vaultNote?.text ?? "").utf8) }
     var vaultDirty: Bool {
         vaultWholeNoteDirty || (vaultBlockEditing && (pendingBlockEdit != nil || vaultBlockTextChanged))
@@ -1166,16 +1239,16 @@ final class CanvasStore: ObservableObject {
         return !canonicalBlockText(vaultBlockDraft,original:note.text).utf8.elementsEqual(block.quote.utf8)
     }
     var vaultBlockCanSave: Bool {
-        vaultBlockEditing && !vaultBlocked && blockRecovery?.saveConflict?.requiresExplicitReconciliation != true && (pendingBlockEdit != nil || vaultBlockTextChanged) &&
+        vaultBlockEditing && !noteReconciliationHeld && !vaultBlocked && blockRecovery?.saveConflict?.requiresExplicitReconciliation != true && (pendingBlockEdit != nil || vaultBlockTextChanged) &&
         !vaultInputBusy && !vaultSaving && !vaultLoading && noteContext.map(noteContextIsCurrent) == true
     }
     var vaultBlockHasPendingSave: Bool { pendingBlockEdit != nil }
     var vaultCanSave: Bool {
-        noteRecoveryReadable && !noteRecoveryWriteFailed && !vaultBlockEditing && vaultNote != nil && vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        !noteReconciliationHeld && noteRecoveryReadable && !noteRecoveryWriteFailed && !vaultBlockEditing && vaultNote != nil && vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
     var vaultCanAttach: Bool {
-        !vaultBlockEditing && vaultNote != nil && !vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
+        !noteReconciliationHeld && !vaultBlockEditing && vaultNote != nil && !vaultDirty && !vaultInputBusy && !vaultSaving && !vaultLoading && !vaultBlocked &&
         noteContext.map(noteContextIsCurrent) == true
     }
     struct VaultReviewSession: Identifiable {
@@ -1643,7 +1716,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func restoreNoteDraft(load: (String) async throws -> VaultNoteSnapshot) async {
-        guard let record = noteRecovery, noteRecoveryReadable, !vaultDirty, !vaultBlockEditing,
+        guard !noteReconciliationHeld, let record = noteRecovery, noteRecoveryReadable, !vaultDirty, !vaultBlockEditing,
               !vaultSaving, !vaultLoading, !vaultInputBusy, !noteToken.isEmpty else { return }
         do {
             _ = try record.validated()
@@ -1695,7 +1768,7 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func discardNoteRecovery() -> Bool {
-        guard !vaultSaving, !vaultLoading, !vaultDirty, !vaultInputBusy else { return false }
+        guard !noteReconciliationHeld, !vaultSaving, !vaultLoading, !vaultDirty, !vaultInputBusy else { return false }
         do { try writeNoteRecovery(nil); return true }
         catch { noteRecoveryNotice = error.localizedDescription; return false }
     }
@@ -1710,7 +1783,7 @@ final class CanvasStore: ObservableObject {
     @discardableResult
     func restoreLinkedBlockDraft() -> Bool {
         do {
-            guard noteRecoveryReadable, noteRecovery == nil else { throw VaultBlockRecoveryError.context }
+            guard !noteReconciliationHeld, noteRecoveryReadable, noteRecovery == nil else { throw VaultBlockRecoveryError.context }
             guard blockRecoveryReadable, let record = blockRecovery else { throw VaultBlockRecoveryError.corrupt }
             guard record.saveConflict?.requiresExplicitReconciliation != true else { throw VaultBlockRecoveryError.publicationConflict }
             _ = try record.validated()
@@ -2680,7 +2753,7 @@ final class CanvasStore: ObservableObject {
         inkShapeProposal != nil || inkMathRequest != nil || inkMathProposal != nil || handwritingRequest != nil
     }
     var canApplyReconciledCanvas: Bool {
-        sceneReadable && !hasPendingInkProposal && fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
+        sceneReadable && !noteReconciliationHeld && !hasPendingInkProposal && fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
         !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
         !inkMathInputBusy && inkMathProposal == nil && !commentInputBusy && commentSession == nil && proposedNode == nil
     }
