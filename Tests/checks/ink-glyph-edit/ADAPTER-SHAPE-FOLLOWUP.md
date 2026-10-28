@@ -17,3 +17,5 @@ adapter-native-check.py --output <검증된 외장>은 Ohm 소유 Scripts3파일
 Laplace의 schema3-cross-review-8509e3c P2는 기존 scene2 + 원격 line/ellipse revision에서 iPad는3으로 승격하지만 relay4a8cc06이409로 막는 차이다. iPad의 데이터 보존/승격은 그대로다. 다음 paired HTTP 검사는 기존 scene2→새 line/ellipse 원격 revision→scene3 저장·재조회·native/기하/출처 불변, 기존 scene3 대조군, 잘못된 scene2 저장/unknown kind 거부를 같은 exact iPad/relay에서 대조해야 한다. relay writer 수정 전 이를 전체 왕복 성공으로 세지 않는다.
 
 최종 후보는 math/glyph/shape/Files 및 adapter 필수 검사와 변경된 WebKit 회귀를 조합한다. 원앱 조사·새 native 인식 호출·실제 UI·Host·기기·Pencil 요청·설치·push는0이며 전체 두 앱 완료는 false다. 부모의 새 exact 후보 독립 검수는 별도다. Pstack의 반례→원인→공유 경로 수정→실제 산출물 검증을 따르고 Ponytail로 기존 선택 갱신과 저장 경로를 재사용했다. 새 provider·모델·의존성·ARENA·순정 Goal은 없다.
+
+검사 프로세스의 setActivationPolicy 반환값은 이미 prohibited인 CLI에서도 false였다. 자기 프로세스 읽기 probe는 실제 정책2/prohibited·active=false·windows=0을 확인했다. 따라서 명령 반환값을 성공으로 추정하지 않고, WebKit 실행 전후의 실제 정책·비활성·창0을 검사하도록 고쳤다. Host 설정이나 활성화 정책은 바꾸지 않는다. 이 후속은 검사 파일만 바꾸므로 직전 후보의 동일 제품 입력 SHA를 가진 math/glyph/shape/Files/adapter·SDK 결과는 재사용하며, 변경된 WebKit 회귀와 최종 source identity의 전체 target build를 따로 확인한다.

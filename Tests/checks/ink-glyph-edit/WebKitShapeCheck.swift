@@ -14,7 +14,8 @@ import WebKit
 @main struct WebKitShapeCheck {
     @MainActor static func main() async throws {
         let application = NSApplication.shared
-        precondition(application.setActivationPolicy(.prohibited),"test process cannot activate or open user UI")
+        precondition(application.activationPolicy() == .prohibited && !application.isActive && application.windows.isEmpty,
+                     "test process must already prohibit activation and have no windows")
         let directory = URL(fileURLWithPath:CommandLine.arguments[1])
         let output = URL(fileURLWithPath:CommandLine.arguments[2])
         let payload = try JSONSerialization.jsonObject(with:Data(contentsOf:output.appendingPathComponent("projection-snapshot.json"))) as! [String:Any]
@@ -83,6 +84,11 @@ import WebKit
         var result = value
         result["messages"] = controller.messages
         result["scope"] = "실제 macOS WKWebView·번들 bridge/SVG DOM 기하·선 선택. 자동 배치이며 원본 좌표 재현 또는 iPad 터치/시각 수용이 아님. 화면·앱 활성화·네트워크·설치 없음."
+        precondition(application.activationPolicy() == .prohibited && !application.isActive && application.windows.isEmpty,
+                     "test process remains inactive without windows")
+        result["activationPolicy"] = application.activationPolicy().rawValue
+        result["applicationActive"] = application.isActive
+        result["applicationWindowCount"] = application.windows.count
         result["passed"] = true
         try JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]).write(to:output.appendingPathComponent("webkit-shapes.json"))
         print("WEBKIT_SHAPES_OK center=true corner=false linePath=true selectionUUID=true initialAndCachedHighlight=true cachedEdgeMismatchRejected=true")
