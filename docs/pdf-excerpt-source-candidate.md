@@ -18,6 +18,16 @@
 
 2026-10-29 부모의 CUA 원앱 관측에서 자체 MarginNote PDF의 `Core` 강조 후 발췌 toolbar 첫 편집 아이콘을 열었고, 제목 `REA iPad Core A`, 인용 `Core`, 기존 댓글이 실제 화면에 나타났다. 텍스트 변경·삭제·복사·내보내기는 하지 않았다. 근거는 외장 작업 루트 `margin-core-card-editor-observation-20261029.json`과 해당 menu PNG다. 이번 후보의 PDF 출처·원문 quote·편집 메모 분리는 이 흐름과 대조했다. 이 관측은 REA 실행, 카드에서 원문 점프, cold reopen의 증거가 아니다. 부모의 공식45b5eab 통합은 이868기준 독립 후보의 기준을 변경하지 않는다.
 
+## 문단 anchor 재진입 후속 수리
+
+부모 요청으로 위 기존 linked 실패 세 건도 제품 결함으로 수리했다. PUT 전에 보존한 정확한 anchor 제출문은 `unclassified`로 시작한다. 일반 노트 저장과 달리 anchor 저장은 ordinary 통신 실패를 이 초기값에서 `acknowledgementLost`로 분류하지 않아 기존 '원본 다시 읽기'가 `restoreNoteDraft`의 보호 경계에서 GET 전에 막혔다. PUT가 성공하고 그 뒤 GET만 실패한 경우도 같았다.
+
+후속 구현은 현재 요청의 저장/조회 결과를 같은 원장에 분류한다. 명시 typed 409와 unclassified 409는 기존대로 차단하며, GET에서 `reconciliationRequired:true`를 확인하면 해당 사실을 원장에 보존한다. noteRecovery·입력·세대·원문 SHA의 guard를 제거하지 않았다. 기록 실패나 늦은 다른 연결의 콜백도 기존 원장과 입력을 덮지 않는다.
+
+사용자는 기존 '원본 다시 읽기' 동작을 유지한다. 원래 제출문의 정확한 원문을 GET한 때만 보존 문단 ID를 선택하며, 다음 발췌 클릭은 추가 PUT 없이 같은 표식을 연결한다. 원문에 시도한 표식이 없으면 첫 문단으로 fallback하지 않고 표식을 포함한 기존 원고를 보존한다. 기존 세 검사의 기대를 바꾸거나 제외하지 않았다.
+
+수리 전 실제 Store 문단 검사124개에서 동일3개 실패를 확인했고, 수리 후124개가 통과했다. 집중27개, 전체 linked385개와 iOS SDK 검사도 통과했다. 실패 재현은 별도 test 커밋에 먼저 보존하고 수리는 후속 커밋으로 분리했다. 실행·입력SHA·원장 보존 근거는 외장 작업 루트 `evidence/anchor-reentry/`에 있다. 이 결과는 자동 검사이며 부모의 독립 검수·공식 통합·GUI·설치·실기기 수용과 구분한다.
+
 ---
 
 # PDF 발췌 후보 설계

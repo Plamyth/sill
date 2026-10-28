@@ -1854,6 +1854,7 @@ final class CanvasStore: ObservableObject {
                 !Task.isCancelled && noteRequest == request && noteContext == context &&
                     noteContextIsCurrent(context) && vaultNote?.sha256 == base.sha256
             }
+            var publicationState = VaultSaveConflict.acknowledgementLost
             do {
                 let saved = try await save(base.path,base.sha256,anchor.text).validated(at:base.path)
                 guard saved.text.utf8.elementsEqual(anchor.text.utf8) else { throw URLError(.badServerResponse) }
@@ -1869,7 +1870,7 @@ final class CanvasStore: ObservableObject {
                     vaultStatus = VaultBlockRecoveryError.publicationConflict.localizedDescription
                     return nil
                 }
-                // Only an ordinary lost ACK may be reconciled by reading the same marker.
+                publicationState = VaultSaveConflict.classified(error) ?? .acknowledgementLost
             }
             guard current() else { return nil }
             noteReadSequence &+= 1
@@ -1899,6 +1900,14 @@ final class CanvasStore: ObservableObject {
                 return id
             } catch {
                 guard current() else { return nil }
+                if var recovery = noteRecovery {
+                    recovery.saveConflict = VaultSaveConflict.classified(error) ?? publicationState
+                    if let failure = error as? VaultBlockRecoveryError, case .publicationConflict = failure {
+                        recovery.saveConflict = .reconciliationRequired
+                    }
+                    do { try writeNoteRecovery(recovery) }
+                    catch { noteRecoveryWriteFailed = true }
+                }
                 vaultBlocked = true
                 vaultStatus = "블록 저장 결과를 확인하지 못했습니다: \(error.localizedDescription). 입력을 보존했습니다. 원본 다시 읽기 후 같은 표식을 확인하세요."
                 return nil

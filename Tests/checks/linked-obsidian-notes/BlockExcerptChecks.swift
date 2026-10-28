@@ -648,9 +648,9 @@ private func checkBlockDraftRecovery(_ check: (Bool,String) -> Void) async throw
     func note(_ text: String, held: Bool? = nil) -> VaultNoteSnapshot {
         VaultNoteSnapshot(path:path,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"fixture",reconciliationRequired:held)
     }
-    func setup(_ label: String) async -> (CanvasStore,URL) {
+    func setup(_ label: String, write: @escaping (Data,URL) throws -> Void = CanvasLocalFile.write) async -> (CanvasStore,URL) {
         let url = root.appendingPathComponent(label + ".json")
-        let store = CanvasStore(noteRecoveryURL:url)
+        let store = CanvasStore(noteRecoveryURL:url,noteRecoveryWrite:write)
         store.scene = CanvasScene()
         store.setNoteConnection(address:"http://fixture.invalid",token:"fixture-only")
         await store.openVaultNote(path,load:{_ in note(source)})
@@ -715,4 +715,44 @@ private func checkBlockDraftRecovery(_ check: (Bool,String) -> Void) async throw
         check(try Data(contentsOf:journal) == bytes && held.vaultDraft == draft && held.vaultSelection == selection,
               "held conflict preserves journal bytes, input and selection")
     }
+    let (heldRead,heldURL) = await setup("held-read")
+    var submitted = "", heldReads = 0
+    _ = await heldRead.excerptSelectedVaultBlock(save:{_,_,text in
+        submitted = text; throw URLError(.networkConnectionLost)
+    },load:{_ in heldReads += 1; return note(submitted,held:true)})
+    let heldBytes = try Data(contentsOf:heldURL)
+    check(heldRead.noteRecovery?.saveConflict == .reconciliationRequired && heldRead.vaultBlocked,
+          "GET reconciliationRequired is durably distinguished from ordinary lost acknowledgement")
+    await heldRead.openVaultNote(path,load:{_ in heldReads += 1; return note(submitted,held:false)})
+    check(try heldReads == 1 && Data(contentsOf:heldURL) == heldBytes && heldRead.scene.nodes.isEmpty,
+          "a later same-text unheld GET cannot silently release an observed publication conflict")
+
+    var failWrite = false
+    let (io,ioURL) = await setup("io-failure",write:{data,url in
+        if failWrite { throw CocoaError(.fileWriteNoPermission) }
+        try CanvasLocalFile.write(data,to:url)
+    })
+    var ioGets = 0
+    _ = await io.excerptSelectedVaultBlock(save:{_,_,_ in failWrite = true; throw URLError(.networkConnectionLost)},
+        load:{_ in ioGets += 1; throw URLError(.timedOut)})
+    let ioBytes = try Data(contentsOf:ioURL)
+    await io.openVaultNote(path,load:{_ in ioGets += 1; return note(source)})
+    check(ioGets == 1 && io.noteRecoveryWriteFailed && io.noteRecovery?.saveConflict == .unclassified,
+          "classification write failure leaves the durable pre-dispatch guard closed")
+    check(try Data(contentsOf:ioURL) == ioBytes && io.vaultDraft == source && io.scene.nodes.isEmpty,
+          "journal IO failure preserves existing input and journal bytes without publishing a card")
+
+    let (stale,staleURL) = await setup("stale")
+    let gate = NoteGate()
+    var staleGets = 0
+    let task = Task { await stale.excerptSelectedVaultBlock(save:{p,_,_ in try await gate.load(p)},
+        load:{_ in staleGets += 1; return note(source)}) }
+    await gate.wait()
+    let staleBytes = try Data(contentsOf:staleURL)
+    stale.setNoteConnection(address:"http://replacement.invalid",token:"new-fixture")
+    gate.fail()
+    _ = await task.value
+    check(try staleGets == 0 && Data(contentsOf:staleURL) == staleBytes && stale.noteRecovery?.saveConflict == .unclassified,
+          "late callback after connection change cannot reclassify another context's recovery")
+
 }
