@@ -81,7 +81,7 @@ final class ReconciliationProtocol: URLProtocol {
         let expected:[String:Any]=["activeSha256":ReconciliationProtocol.active["sha256"]!,"baseSha256":NSNull(),
             "displacedSha256":ReconciliationProtocol.displaced["sha256"]!,"proposalSha256":ReconciliationProtocol.active["sha256"]!,
             "historySha256":CanvasPacket.sha(Data("[]".utf8))]
-        ReconciliationProtocol.snapshot=["schema":"ccr.canvas-conflict/v1","id":id.uuidString,"recoveryID":recovery.uuidString,
+        ReconciliationProtocol.snapshot=["schema":"ccr.canvas-conflict/v1","id":id.uuidString,"recoveryID":recovery.uuidString.lowercased(),
             "code":"note_reconciliation_required","reconciliationRequired":true,"publicationAttempted":true,
             "expected":expected,"materials":["active":ReconciliationProtocol.active,"base":NSNull(),"displaced":ReconciliationProtocol.displaced,"proposal":ReconciliationProtocol.active],"history":[]]
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[ReconciliationProtocol.self]
@@ -96,6 +96,7 @@ final class ReconciliationProtocol: URLProtocol {
             let (result,readback)=try await relay.resolveVaultCanvasConflict(snapshot,decision:decision)
             check(result.decision==decision && readback.noteSha256==snapshot.selected(decision)?.sha256,"explicit "+decision.rawValue+" validates response and canvas/note readbacks")
             let body=ReconciliationProtocol.requests.last!,e=body["expected"] as! [String:Any]
+            check(body["recoveryID"] as? String == snapshot.recoveryID.uuidString.lowercased(),"actual recoveryID JSON string matches canonical server journal ID")
             check(Set(body.keys)==Set(["recoveryID","expected","decision"]) && Set(e.keys)==Set(expected.keys) && e["baseSha256"] is NSNull,"PUT emits only three keys and all five original expected keys including null")
         }
         for mode in ["stale","candidate","bad-result","changed-readback"] {

@@ -390,7 +390,7 @@ extension CanvasRelay {
         let resolved: Bool, reconciliationRequired: Bool
     }
     private struct ConflictRequest: Encodable {
-        let recoveryID: UUID, expected: ConflictExpected, decision: ConflictDecision
+        let recoveryID: String, expected: ConflictExpected, decision: ConflictDecision
     }
     func vaultCanvasConflict(id: UUID) async throws -> VaultConflict {
         try await response(request("/vault/canvas/conflict?id=\(id.uuidString.lowercased())"),as:VaultConflict.self,
@@ -400,7 +400,7 @@ extension CanvasRelay {
         _ = try conflict.validated(id:conflict.id)
         guard let material = conflict.selected(decision), let selected = material.canvas else { throw URLError(.cannotDecodeContentData) }
         _ = try material.scene(id:conflict.id)
-        let body = try JSONEncoder().encode(ConflictRequest(recoveryID:conflict.recoveryID,expected:conflict.expected,decision:decision))
+        let body = try JSONEncoder().encode(ConflictRequest(recoveryID:conflict.recoveryID.uuidString.lowercased(),expected:conflict.expected,decision:decision))
         let result = try await response(request("/vault/canvas/conflict?id=\(conflict.id.uuidString.lowercased())",method:"PUT",body:body),as:ConflictResolution.self,maximumBytes:64*1024)
         guard result.resolved, !result.reconciliationRequired, result.recoveryID == conflict.recoveryID,
               result.decision == decision, result.path == selected.path, result.noteSha256 == selected.noteSha256,
