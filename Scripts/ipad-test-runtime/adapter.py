@@ -148,7 +148,8 @@ def device(config, args, name):
     lease(config)
     return command(['xcrun', 'devicectl', 'device', *args[:2], '--device', config['deviceUDID'], *args[2:]], name, 120)
 
-def copy_file(config, work, source, destination, direction='from', optional=False, replace=False, bundle=BUNDLE):
+def copy_file(config, work, source, destination, direction='from', optional=False, replace=False, bundle=None):
+    bundle = bundle or config.get('_runtimeBundle', BUNDLE)
     lease(config)
     args = ['xcrun', 'devicectl', 'device', 'copy', direction, '--device', config['deviceUDID'],
             '--domain-type', 'appDataContainer', '--domain-identifier', bundle,
@@ -234,11 +235,14 @@ def save_scene(server, scene, image, base):
         'revision': scene['revision'], 'sceneJSONBase64': base64.b64encode(encode_scene(server,scene)).decode(),
         'imagePNGBase64': base64.b64encode(image).decode(), 'baseSha256': base})
 
-def runtime_readback(config, work, test_id, bundle=BUNDLE):
+def runtime_readback(config, work, test_id, bundle=None, optional=False):
     destination = work / ('runtime-readback-' + str(time.time_ns()) + '.json')
-    copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/runtime.json', destination, bundle=bundle)
+    found = copy_file(config, work, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state/runtime.json', destination,
+                      bundle=bundle, optional=optional)
+    if not found:
+        return None, destination
     data = read(destination)
-    require(data.get('schema') == 'ccr.ipad-test-runtime/v1' and data.get('id').lower() == test_id.lower(), 'runtime_context_mismatch')
+    require(data.get('schema') == 'ccr.ipad-test-runtime/v1' and isinstance(data.get('id'),str) and data['id'].lower() == test_id.lower(), 'runtime_context_mismatch')
     return data, destination
 
 def version_tuple(value):
@@ -280,14 +284,79 @@ def install_attempt(work, value):
     finally:
         os.close(fd)
 
-def installed_normal(snapshot):
+def installed_app(snapshot, bundle):
     result = snapshot.get('installedUserApp') or {}
     rows = result.get('apps', [])
-    matches = [row for row in rows if row.get('bundleIdentifier') == USER_BUNDLE]
+    matches = [row for row in rows if row.get('bundleIdentifier') == bundle]
     require(len(rows) == 1 and len(matches) == 1 and matches[0].get('containerAccessible') is True,
             'installed_normal_identity_missing')
     version_tuple(matches[0].get('bundleVersion'))
     return matches[0]
+
+def installed_normal(snapshot):
+    return installed_app(snapshot, USER_BUNDLE)
+
+def signed_entitlements(app, work, label, bundle=USER_BUNDLE):
+    requirement = '=anchor apple generic and identifier "' + bundle + '" and certificate leaf[subject.OU] = "' + NORMAL_TEAM + '"'
+    command(['codesign', '--verify', '--deep', '--strict', '--test-requirement', requirement, app], work / (label + '-verify.log'))
+    log = work / (label + '-signature.log')
+    command(['codesign', '--display', '--verbose=4', app], log)
+    signing = log.read_text()
+    require(re.search(r'^TeamIdentifier=' + NORMAL_TEAM + r'$', signing, re.M) and
+            re.search(r'^Identifier=' + re.escape(bundle) + r'$', signing, re.M) and
+            'Signature=adhoc' not in signing, label + '_codesign_identity_mismatch')
+    entitlements = plistlib.loads(command(['codesign', '--display', '--entitlements', ':-', app]).encode())
+    require(entitlements.get('com.apple.developer.team-identifier') == NORMAL_TEAM and
+            entitlements.get('application-identifier') == NORMAL_TEAM + '.' + bundle,
+            label + '_entitlements_identity_mismatch')
+    return entitlements
+
+def lineage_inputs(reference):
+    require(reference.get('schema') == 'ccr.known-installed-artifact/v1', 'known_installed_lineage_required')
+    artifact = Path(reference['artifact']).resolve()
+    require(digest_value(artifact_files(artifact)) == reference['artifactManifestSHA256'], 'known_installed_artifact_changed')
+    return artifact, [pinned_json(reference, key, digest) for key, digest in [
+        ('signingReadbackPath', 'signingReadbackSHA256'), ('installRecordPath', 'installRecordSHA256'),
+        ('metadataPath', 'metadataSHA256')]]
+
+def known_installed_lineage(config, work):
+    reference = pinned_json(config, 'installedIdentityReceipt', 'installedIdentityReceiptSHA256')
+    return verify_known_lineage(config, work, reference, USER_BUNDLE)
+
+def verify_known_lineage(config, work, reference, bundle):
+    artifact, (record, install, metadata) = lineage_inputs(reference)
+    info = plistlib.loads((artifact / 'Info.plist').read_bytes())
+    keys = ['CFBundleIdentifier','CFBundleVersion'] + (['CCRSourceCommit','CCRSourceTree','CCRSourceIdentityVerified'] if bundle == USER_BUNDLE else [])
+    require(info.get('CFBundleIdentifier') == bundle and record.get('signatureValid') is True and
+            all(info.get(key) == record.get(key) for key in keys), 'known_installed_info_mismatch')
+    executable = info.get('CFBundleExecutable', '')
+    require(re.fullmatch('[A-Za-z0-9_.-]+', executable) and
+            sha((artifact / executable).read_bytes()) == record.get('executableSHA256'), 'known_installed_readback_mismatch')
+    if bundle == USER_BUNDLE:
+        require(info.get('CCRSourceIdentityVerified') is True and
+                all(re.fullmatch('[0-9a-f]{40}',str(info.get(key,''))) for key in ['CCRSourceCommit','CCRSourceTree']),
+                'known_installed_source_identity_missing')
+        require(sha((artifact / 'CCR-OwnerMacBootstrap.json').read_bytes()) == record.get('bootstrapSHA256') ==
+                APPROVED_OWNER_PROFILE_SHA256, 'known_installed_profile_mismatch')
+    entitlements = signed_entitlements(artifact, work, 'known-installed-' + bundle.rsplit('.', 1)[-1], bundle)
+    require(entitlements == record.get('entitlements'), 'known_installed_entitlements_changed')
+    args = install.get('info', {}).get('arguments', [])
+    require(isinstance(args,list) and all(isinstance(arg,str) for arg in args) and
+            install.get('info', {}).get('outcome') == 'success' and args[:4] == ['devicectl','device','install','app'] and
+            '--device' in args and args.index('--device') + 1 < len(args) and
+            args[args.index('--device') + 1] == config['deviceUDID'] and
+            [Path(arg).resolve() for arg in args if arg.endswith('.app')] == [artifact],
+            'known_installed_command_mismatch')
+    rows = install.get('result', {}).get('installedApplications', [])
+    row = installed_app({'installedUserApp':metadata.get('result')}, bundle)
+    require(len(rows) == 1 and rows[0].get('bundleID') == bundle and
+            rows[0].get('installationURL') == row.get('url') and row['bundleVersion'] == info['CFBundleVersion'],
+            'known_installed_metadata_mismatch')
+    return {'evidenceKind':'known-installed-artifact-lineage', 'reference':reference, 'artifact':artifact,
+            'remoteSignatureReadback':False, 'build':row['bundleVersion'],
+            'deviceIdentifier':metadata['result'].get('deviceIdentifier'), 'metadataSHA256':digest_value(row),
+            'securityEntitlements':{key:value for key,value in entitlements.items() if key != 'get-task-allow'},
+            'ownerBootstrapSHA256':record.get('bootstrapSHA256')}
 
 def verify_prepared_artifact(config, work, source):
     require(not Path(config['preparedArtifact']).is_symlink(), 'prepared_artifact_symlink')
@@ -321,16 +390,7 @@ def verify_prepared_artifact(config, work, source):
     require(files.get('CCR-OwnerMacBootstrap.json') == profile['sha256'] == receipt.get('ownerBootstrapSHA256') ==
             APPROVED_OWNER_PROFILE_SHA256,
             'prepared_actual_owner_profile_mismatch')
-    requirement = 'anchor apple generic and identifier "' + USER_BUNDLE + '" and certificate leaf[subject.OU] = "' + NORMAL_TEAM + '"'
-    command(['codesign', '--verify', '--strict', '--test-requirement', requirement, app], work / 'prepared-codesign-verify.log')
-    signing_log = work / 'prepared-signature.log'
-    command(['codesign', '--display', '--verbose=4', app], signing_log)
-    signing = signing_log.read_text()
-    require(re.search(r'^TeamIdentifier=' + NORMAL_TEAM + r'$', signing, re.M) and
-            re.search(r'^Identifier=' + re.escape(USER_BUNDLE) + r'$', signing, re.M) and
-            'Signature=adhoc' not in signing, 'prepared_codesign_identity_mismatch')
-    raw = command(['codesign', '--display', '--entitlements', ':-', app])
-    entitlements = plistlib.loads(raw.encode())
+    entitlements = signed_entitlements(app, work, 'prepared')
     require(entitlements.get('get-task-allow') is True and
             entitlements.get('com.apple.developer.team-identifier') == NORMAL_TEAM and
             entitlements.get('application-identifier') == NORMAL_TEAM + '.' + USER_BUNDLE and
@@ -360,10 +420,7 @@ def deploy_prepared(config, work, source):
     work.chmod(0o700)
     require(not (work / 'prepared-install-attempt.json').exists(), 'prepared_install_already_attempted_readback_required')
     app, receipt, files, entitlements, profile = verify_prepared_artifact(config, work, source)
-    prior = pinned_json(config, 'installedIdentityReceipt', 'installedIdentityReceiptSHA256')
-    require(prior.get('schema') == 'ccr.ipad-installed-identity/v1' and prior.get('signingReadbackVerified') is True and
-            prior.get('deviceUDID') == config['deviceUDID'] and prior.get('bundleIdentifier') == USER_BUNDLE and
-            prior.get('team') == NORMAL_TEAM, 'installed_signing_reference_required')
+    prior = known_installed_lineage(config, work)
     security = {key: value for key, value in entitlements.items() if key != 'get-task-allow'}
     require(prior.get('securityEntitlements') == security and
             prior.get('ownerBootstrapSHA256') == profile['sha256'], 'existing_security_entitlements_changed')
@@ -398,6 +455,7 @@ def deploy_prepared(config, work, source):
                                    ('installedIdentityReceipt', 'installedIdentityReceiptSHA256'),
                                    ('preparedContext', 'preparedContextSHA256')]:
             pinned_json(config, path_key, hash_key)
+        lineage_inputs(prior['reference'])
         require(artifact_files(app) == files and artifact_files(staged) == files and
                 sha(Path(profile['path']).read_bytes()) == profile['sha256'], 'prepared_input_changed_before_effect')
     unchanged_inputs()
@@ -453,6 +511,10 @@ def deploy_prepared(config, work, source):
                   'executableSHA256': runtime['executableSHA256'], 'sourceReadback': str(evidence),
                   'app': str(staged), 'artifactManifestSHA256': receipt['manifestSHA256'],
                   'normalReturnRequired': True, 'functionalAcceptance': False}
+        result.update(protectionBaseline='prepared-before.json', protectionBaselineSHA256=digest_value(baseline),
+                      signingEvidenceKind=prior['evidenceKind'],
+                      installedMetadataSHA256=digest_value(installed_normal(final)),
+                      deviceIdentifier=final['installedUserApp'].get('deviceIdentifier'))
         write(work / 'deployment.json', result)
         install_attempt(work, dict(attempt, status='isolated-runtime-verified'))
         return result
@@ -461,6 +523,18 @@ def deploy_prepared(config, work, source):
         raise
 
 def stop_owned(config, work):
+    if config.get('_runtimeBundle') == USER_BUNDLE:
+        deployed = prepared_runtime(config, work, allow_stopped=True)
+        runtime = deployed['_runtime']
+        if deployed['_running']:
+            device(config, ['process', 'terminate', '--pid', str(runtime['processID'])], work / 'stop.log')
+            path = work / 'stopped-processes.json'
+            device(config, ['info', 'processes', '--json-output', str(path)], work / 'stopped-processes.log')
+            require(not any(row.get('processIdentifier') == runtime['processID'] for row in
+                    read(path).get('result', {}).get('runningProcesses', [])), 'prepared_process_stop_unconfirmed')
+        write(work / 'owned-stop.json', {'testId':deployed['testId'], 'runtime':runtime,
+            'artifactManifestSHA256':deployed['artifactManifestSHA256'], 'confirmedAbsentPID':runtime['processID']})
+        return
     test_id = read(work / 'deployment.json')['testId']
     observed, _ = runtime_readback(config, work, test_id)
     pid = observed['processID']
@@ -595,17 +669,15 @@ def actual_xcresult(result, method):
     return details
 
 def harness(config, work, method, variables=None, on_ready=None, ready_marker='CCR_ROTATION_LIVE_READY'):
-    single_app_installation_gate()
+    deployed = prepared_runtime(config, work, allow_stopped=True)
     lease(config)
     run_path = Path(config['existingXctestrun']).resolve()
-    runner_path = Path(config['existingRunnerReceipt']).resolve()
-    require(sha(runner_path.read_bytes()) == config['existingRunnerReceiptSHA256'], 'existing_runner_receipt_changed')
+    runner = verified_runner(config, work, method)
     run_bytes = run_path.read_bytes()
     require(sha(run_bytes) == config['existingXctestrunSHA256'], 'existing_xctestrun_changed')
-    deployed = read(work / 'deployment.json')
     require(deployed.get('bundleIdentifier') == USER_BUNDLE and deployed.get('configuration') == 'Debug' and
             deployed.get('sourceReadbackVerified') is True, 'normal_debug_runtime_receipt_required')
-    run = destination_artifacts_run(plistlib.loads(run_bytes),read(runner_path),deployed['testId'],variables)
+    run = destination_artifacts_run(plistlib.loads(run_bytes),runner,deployed['testId'],variables)
     prepared = work / 'ExistingRunner.xctestrun'
     prepared.write_bytes(plistlib.dumps(run,fmt=plistlib.FMT_BINARY))
     result = work / (method + '-' + str(time.time_ns()) + '.xcresult')
@@ -619,6 +691,88 @@ def harness(config, work, method, variables=None, on_ready=None, ready_marker='C
         run_live_harness(args, log, on_ready, ready_marker=ready_marker)
     actual_xcresult(result, method)
     return result
+
+def prepared_runtime(config, work, source=None, allow_stopped=False):
+    require((work / 'deployment.json').is_file() and 'preparedArtifactReceipt' in config, 'prepared_deployment_required')
+    lease(config)
+    deployed = read(work / 'deployment.json')
+    expected = source or {key:deployed.get(key) for key in ['commit','tree']}
+    require(deployed.get('bundleIdentifier') == USER_BUNDLE and deployed.get('configuration') == 'Debug' and
+            deployed.get('sourceReadbackVerified') is True and
+            all(deployed.get(key) == expected[key] for key in expected) and identity(config) == expected,
+            'prepared_deployment_source_mismatch')
+    _, receipt, files, _, _ = verify_prepared_artifact(config, work, expected)
+    attempt = read(work / 'prepared-install-attempt.json')
+    require(attempt.get('status') == 'isolated-runtime-verified' and
+            attempt.get('artifactManifestSHA256') == receipt['manifestSHA256'] and
+            attempt.get('contextSHA256') == config['preparedContextSHA256'] and
+            attempt.get('artifactReceiptSHA256') == config['preparedArtifactReceiptSHA256'] and
+            attempt.get('testId') == deployed['testId'] and all(attempt.get(k) == expected[k] for k in expected),
+            'prepared_attempt_not_verified')
+    artifact = Path(deployed['app']).resolve()
+    require(artifact == (work / 'PreparedArtifact/Sill.app').resolve() and artifact_files(artifact) == files and
+            deployed.get('artifactManifestSHA256') == receipt['manifestSHA256'], 'prepared_runtime_artifact_changed')
+    context = pinned_json(config, 'preparedContext', 'preparedContextSHA256')
+    require(context.get('id') == deployed['testId'] and all(context.get(key) == expected[key] for key in expected),
+            'prepared_runtime_context_changed')
+    runtime, _ = runtime_readback(config, work, deployed['testId'], bundle=USER_BUNDLE, optional=allow_stopped)
+    if runtime is None:
+        stopped = read(work / 'owned-stop.json')
+        runtime = stopped['runtime']
+        require(stopped.get('testId') == deployed['testId'] and
+                stopped.get('artifactManifestSHA256') == receipt['manifestSHA256'] and
+                stopped.get('confirmedAbsentPID') == runtime.get('processID'), 'prepared_stop_reference_mismatch')
+    require(runtime.get('id') == deployed['testId'] and runtime.get('bundleID') == USER_BUNDLE and
+            all(runtime.get(key) == expected[key] for key in expected) and runtime.get('build') == receipt['build'] and
+            runtime.get('executableSHA256') == deployed['executableSHA256'] and
+            runtime.get('relayAddress') == context.get('relayAddress') and
+            type(runtime.get('processID')) is int and runtime['processID'] > 0, 'prepared_runtime_mismatch')
+    inventory = work / 'prepared-current-apps.json'
+    device(config, ['info','apps','--filter','bundleIdentifier == "' + USER_BUNDLE + '"','--json-output',str(inventory)],
+           work / 'prepared-current-apps.log')
+    row = installed_normal({'installedUserApp':read(inventory).get('result')})
+    require(row['bundleVersion'] == receipt['build'] and digest_value(row) == deployed.get('installedMetadataSHA256') and
+            read(inventory).get('result',{}).get('deviceIdentifier') == deployed.get('deviceIdentifier'),
+            'prepared_installed_metadata_changed')
+    process_file = work / 'prepared-current-processes.json'
+    device(config, ['info','processes','--json-output',str(process_file)], work / 'prepared-current-processes.log')
+    processes = read(process_file).get('result', {}).get('runningProcesses', [])
+    executable = plistlib.loads((artifact / 'Info.plist').read_bytes())['CFBundleExecutable']
+    require(deployed['executableSHA256'] == files[executable] and
+            str(runtime.get('storageRoot', '')).endswith('/Library/Application Support/CCRIntegrationTests/' + deployed['testId'] + '/state'),
+            'prepared_runtime_storage_or_binary_mismatch')
+    expected_path = urllib.parse.urljoin(row['url'].rstrip('/') + '/', executable)
+    matching = [p for p in processes if p.get('processIdentifier') == runtime['processID']]
+    require((len(matching) == 1 and matching[0].get('executable') == expected_path) or
+            (allow_stopped and not matching and not any(p.get('executable') == expected_path for p in processes)),
+            'prepared_runtime_process_mismatch')
+    return dict(deployed, _runtime=runtime, _running=bool(matching))
+
+def test_context_path(config, work):
+    return Path(config['preparedContext']) if config.get('_runtimeBundle') == USER_BUNDLE else work / 'context.json'
+
+def verified_runner(config, work, method):
+    receipt = pinned_json(config, 'existingRunnerReceipt', 'existingRunnerReceiptSHA256')
+    require(receipt.get('schema') == 'ccr.known-installed-runner/v1', 'known_installed_runner_lineage_required')
+    bundle = 'com.ambrion.rea.appaudit.UITests.xctrunner'
+    lineage = verify_known_lineage(config, work, receipt['lineage'], bundle)
+    path = work / 'existing-runner-current-apps.json'
+    device(config, ['info','apps','--bundle-id',bundle,'--json-output',str(path)], work / 'existing-runner-current-apps.log')
+    current = read(path).get('result', {})
+    row = installed_app({'installedUserApp':current}, bundle)
+    require(digest_value(row) == lineage['metadataSHA256'] and current.get('deviceIdentifier') == lineage['deviceIdentifier'],
+            'existing_runner_metadata_changed')
+    binary = lineage['artifact'] / 'PlugIns/CanvasBridgeUITests.xctest/CanvasBridgeUITests'
+    requested = {method} if isinstance(method,str) else set(method)
+    require(requested and requested <= runner_methods(binary), 'existing_runner_method_unavailable')
+    return {'schema':'ccr.existing-xctest-runner/v1','installed':True,'team':NORMAL_TEAM,
+            'bundleIdentifier':bundle,'testBundleRelativePath':'__TESTHOST__/PlugIns/CanvasBridgeUITests.xctest'}
+
+def runner_methods(binary):
+    symbols = [s for s in command(['nm','-j',binary]).splitlines() if 'CanvasBridgeUITests' in s and 'test' in s]
+    require(symbols and sum(map(len,symbols)) < 64000, 'existing_runner_symbols_unavailable')
+    demangled = command(['xcrun','swift-demangle','--compact',*symbols])
+    return set(re.findall(r'CanvasBridgeUITests\.CanvasBridgeUITests\.(test\w+)\(', demangled))
 
 def strict_canvas_png(data):
     try:
@@ -689,7 +843,7 @@ def accept_rotation(config, work, server, vault, test_id):
     seed = work / 'rotation-state'; seed.mkdir(exist_ok=True)
     write(seed / 'CanvasScene.json', start)
     copy_file(config, work, seed, 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', 'to', replace=True)
-    copy_file(config, work, work / 'context.json', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/context.json', 'to')
+    copy_file(config, work, test_context_path(config, work), 'Library/Application Support/CCRIntegrationTests/' + test_id + '/context.json', 'to')
     rotated_ui = harness(config, work, 'testRotateAndSave')
     def rotated(expected):
         deadline = time.monotonic() + 20
@@ -781,7 +935,7 @@ def accept_comments(config, work, server, test_id):
     write(seed / 'CanvasScene.json',baseline)
     root = 'Library/Application Support/CCRIntegrationTests/' + test_id
     copy_file(config,work,seed,root + '/state','to',replace=True)
-    copy_file(config,work,work / 'context.json',root + '/context.json','to')
+    copy_file(config,work,test_context_path(config, work),root + '/context.json','to')
     results = []
     previous = ''
     previous_revision = baseline['revision']
@@ -1146,6 +1300,43 @@ def accept_review_grades(config, work, server, vault, test_id, normal68_evidence
     return proof
 
 def relay_runtime(config, work, source):
+    if config.get('_runtimeBundle') == USER_BUNDLE:
+        receipt = pinned_json(config, 'existingRelayReceipt', 'existingRelayReceiptSHA256')
+        context = read(test_context_path(config, work))
+        require(receipt.get('schema') == 'ccr.existing-ipad-test-relay/v1' and
+                receipt.get('testId') == context['id'] and receipt.get('address') == context['relayAddress'] and
+                urllib.parse.urlsplit(receipt['address']).port == 8793, 'existing_relay_context_mismatch')
+        lifecycle = runpy.run_path('/Users/ambrion/.local/bin/bt-service-lifecycle')
+        current = read(lifecycle['LEASES'] / (receipt['leaseId'] + '.json'))
+        require(current.get('owner') == OWNER and current.get('serviceId') == 'ccr-ipad-integration-relay-8793' and current.get('generation') == source['commit'] and
+                all(current.get(k) == receipt.get(k) for k in ['leaseId','owner','serviceId','generation','pid','birth']) and
+                lifecycle['is_live'](current) and lifecycle['expiry'](current) > lifecycle['now'](),
+                'existing_relay_lease_not_current')
+        private = pinned_json(receipt, 'configurationPath', 'configurationSHA256')
+        argv = current.get('argv', [])
+        require(len(argv) == 3 and Path(argv[1]).resolve() == (Path(config['repo']) / 'Scripts/ipad-test-runtime/relay.js').resolve() and
+                Path(argv[2]).resolve() == Path(receipt['configurationPath']).resolve() and
+                private.get('vault') == receipt.get('vault') and private.get('token') == context['token'] and
+                private.get('host') == urllib.parse.urlsplit(context['relayAddress']).hostname and private.get('port') == 8793 and
+                current.get('pid') in lifecycle['listener_pids'](8793), 'existing_relay_configuration_mismatch')
+        vault = Path(receipt['vault']).resolve()
+        require(vault.is_dir() and not Path(receipt['vault']).is_symlink() and not (work / 'isolated-vault').is_symlink() and
+                vault.is_relative_to(work.resolve()) and
+                vault == (work / 'isolated-vault' / context['id']).resolve(), 'existing_relay_vault_not_uuid_owned')
+        require(Path(private.get('relayRepo','')).resolve() == Path(config['relayRepo']).resolve() and
+                private.get('noteAudit') == str(work / 'review-note-writes.jsonl'), 'existing_relay_source_or_audit_mismatch')
+        for key in ['store','snapshot','hidden']:
+            path = Path(private.get(key,''))
+            require(not path.is_symlink() and path.resolve().is_relative_to(work.resolve()), 'existing_relay_storage_not_owned')
+        encoder = Path(receipt['encoder']).resolve()
+        require(sha(encoder.read_bytes()) == receipt['encoderSHA256'] and
+                receipt.get('encoderSourceCommit') == source['commit'], 'existing_encoder_source_mismatch')
+        relay_repo = Path(config['relayRepo']).resolve()
+        require(command(['git','rev-parse','HEAD'],cwd=relay_repo).strip() == config['relayCommit'] and
+                not command(['git','status','--porcelain','--untracked-files=no'],cwd=relay_repo).strip(), 'relay_source_mismatch')
+        server = {'address':context['relayAddress'],'token':context['token'],'encoder':encoder}
+        require(request(server,'GET','/vault/entries')[0] == 200, 'existing_relay_not_ready')
+        return server, vault, dict(current, borrowed=True)
     relay_repo = Path(config['relayRepo']).resolve()
     require(command(['git', 'rev-parse', 'HEAD'], cwd=relay_repo).strip() == config['relayCommit'], 'relay_source_mismatch')
     require(not command(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=relay_repo).strip(), 'relay_source_dirty')
@@ -1199,13 +1390,16 @@ def relay_runtime(config, work, source):
 def cleanup(config, work, service, vault, test_id, before):
     lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
     results = {}
-    try:
-        released = json.loads(command([lifecycle, 'release', '--owner', OWNER, service['leaseId']], work / 'relay-release.log'))
-        require(released.get('released') is True, 'relay_lease_release_unconfirmed')
-        write(work / 'relay-release.json', released)
-        results['relayReleased'] = True
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        results['relayReleased'] = False
+    if service.get('borrowed'):
+        results['relayPreserved'] = True
+    if not service.get('borrowed'):
+        try:
+            released = json.loads(command([lifecycle, 'release', '--owner', OWNER, service['leaseId']], work / 'relay-release.log'))
+            require(released.get('released') is True, 'relay_lease_release_unconfirmed')
+            write(work / 'relay-release.json', released)
+            results['relayReleased'] = True
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+            results['relayReleased'] = False
     try:
         stop_owned(config, work)
         results['testProcessStopped'] = True
@@ -1217,15 +1411,15 @@ def cleanup(config, work, service, vault, test_id, before):
         lease(config)
         try:
             command(['xcrun', 'devicectl', 'device', 'copy', 'to', '--device', config['deviceUDID'], '--domain-type', 'appDataContainer',
-                     '--domain-identifier', BUNDLE, '--source', empty, '--destination', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state',
+                     '--domain-identifier', config.get('_runtimeBundle',BUNDLE), '--source', empty, '--destination', 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state',
                      '--remove-existing-content', 'true'], work / 'reset.log', 60)
         except Held:
             pass
         inventory = work / ('reset-device-files-' + str(time.time_ns()) + '.json')
-        device(config, ['info', 'files', '--domain-type', 'appDataContainer', '--domain-identifier', BUNDLE,
+        device(config, ['info', 'files', '--domain-type', 'appDataContainer', '--domain-identifier', config.get('_runtimeBundle',BUNDLE),
                         '--json-output', str(inventory)], work / 'reset-inventory.log')
         observed = read(inventory)['result']
-        require(observed['domainIdentifier'] == BUNDLE, 'device_reset_domain_mismatch')
+        require(observed['domainIdentifier'] == config.get('_runtimeBundle',BUNDLE), 'device_reset_domain_mismatch')
         prefix = 'Library/Application Support/CCRIntegrationTests/' + test_id + '/state'
         require(not any(row['relativePath'].startswith(prefix + '/') or
                         row['relativePath'] == prefix and not row['resources']['isDirectory']
@@ -1234,7 +1428,10 @@ def cleanup(config, work, service, vault, test_id, before):
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         results['deviceStateEmpty'] = False
     try:
-        require(results['relayReleased'] and not vault.is_symlink() and vault.resolve().parent == work.resolve(), 'vault_cleanup_not_owned')
+        expected_vault = work / 'isolated-vault' / test_id if service.get('borrowed') else None
+        require((results.get('relayReleased') or results.get('relayPreserved')) and not vault.is_symlink() and
+                vault.resolve().is_relative_to(work.resolve()) and not (work / 'isolated-vault').is_symlink() and
+                (vault.resolve() == expected_vault.resolve() if expected_vault else vault.resolve().parent == work.resolve()), 'vault_cleanup_not_owned')
         shutil.rmtree(vault); vault.mkdir()
         results['vaultEmpty'] = not list(vault.iterdir())
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
@@ -1247,16 +1444,27 @@ def cleanup(config, work, service, vault, test_id, before):
     return all(results.values())
 
 def accept(config, work, source):
-    single_app_installation_gate()
+    deployed = prepared_runtime(config, work, source)
+    config = dict(config, _runtimeBundle=USER_BUNDLE)
     lease(config)
     contract = acceptance_contract(config)
-    deployed = read(work / 'deployment.json')
     require(all(deployed[k] == source[k] for k in source), 'deployment_source_mismatch')
-    test_id = deployed['testId']; before = read(work / 'user-before.json')
+    test_id = deployed['testId']; before = read(work / 'prepared-before.json')
+    require(digest_value(before) == deployed.get('protectionBaselineSHA256'), 'prepared_baseline_changed')
+    # 모든 요구 method와 원본 xctestrun을 fixture 쓰기 전에 검증한다.
+    methods = ['testEditAndSave','testReopenRemoteRevision','testRotateAndSave','testReopenRotatedScene',
+        'testLiveRotatedRemoteRevision','testCommentSave','testCommentReopen','testStaleCommentDraftRequiresExplicitDiscard',
+        'testRulerToggleAcrossDrawingAndSelection','testReviewEditDraftPreserved','testReviewSaveDraft','testReviewReopen',
+        'testReviewLiveRemoteRevision','testReviewGood','testReviewStaleSessionRejected','testReviewMissingSourceRejected']
+    runner = verified_runner(config, work, methods)
+    run_bytes = Path(config['existingXctestrun']).read_bytes()
+    require(sha(run_bytes) == config['existingXctestrunSHA256'], 'existing_xctestrun_changed')
+    destination_artifacts_run(plistlib.loads(run_bytes),runner,test_id)
     server, vault, service = relay_runtime(config, work, source)
     lifecycle = '/Users/ambrion/.local/bin/bt-service-lifecycle'
     accepted = False
     try:
+        stop_owned(config, work)
         time.sleep(1)
         start = fixture(test_id)
         prior_status, prior = request(server, 'GET', '/vault/canvas?id=' + test_id)
@@ -1265,10 +1473,11 @@ def accept(config, work, source):
         if prior_status == 200:
             start['revision'] = prior['revision'] + 1
         code, saved = save_scene(server, start, pixel(), base); require(code == 200, 'fixture_seed_failed')
+        (work / 'seed-state').mkdir(mode=0o700,exist_ok=True)
         write(work / 'seed-state/CanvasScene.json', start)
         copy_file(config, work, work / 'seed-state',
                   'Library/Application Support/CCRIntegrationTests/' + test_id + '/state', 'to', replace=True)
-        copy_file(config, work, work / 'context.json',
+        copy_file(config, work, test_context_path(config, work),
                   'Library/Application Support/CCRIntegrationTests/' + test_id + '/context.json', 'to')
         ui = harness(config, work, 'testEditAndSave')
         code, current = request(server, 'GET', '/vault/canvas?id=' + test_id); require(code == 200, 'vault_readback_failed')
@@ -1283,7 +1492,8 @@ def accept(config, work, source):
         code, _ = save_scene(server, start, pixel(), '0' * 64); require(code == 409, 'stale_contract_failed')
         actual['revision'] += 1; actual['nodes'][0]['text'] = 'Mac에서 수정한 시험 글자'
         code, _ = save_scene(server, actual, pixel(), current['noteSha256']); require(code == 200, 'reverse_update_failed')
-        command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
+        if not service.get('borrowed'):
+            command([lifecycle, 'renew', '--owner', OWNER, '--ttl', '900', service['leaseId']], work / 'relay-renew.log')
         reverse = harness(config, work, 'testReopenRemoteRevision')
         rotation = accept_rotation(config, work, server, vault, test_id)
         comments = accept_comments(config, work, server, test_id)
@@ -1325,7 +1535,7 @@ def main():
     parser = argparse.ArgumentParser(); parser.add_argument('phase', choices=['deploy', 'accept', 'deploy-prepared']); parser.add_argument('--config', required=True)
     args = parser.parse_args()
     try:
-        if args.phase != 'deploy-prepared':
+        if args.phase == 'deploy':
             single_app_installation_gate()
         config = read(args.config)
         output = Path(config['outputRoot']).resolve()
