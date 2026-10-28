@@ -15,6 +15,9 @@ struct CanvasWorkspace: View {
     @StateObject private var store = CanvasStore()
     @StateObject private var dictation = CanvasDictation()
     @StateObject private var inkTextEditing = CanvasInkTextEditing()
+    @StateObject private var inkSpacing = CanvasInkSpacingProposal()
+    @State private var inkSpacingOpen = false
+    @State private var inkSpacingTask: Task<Void,Never>?
     @State private var inkTextDeleteOpen = false
     @State private var relayAddress = "http://192.168.45.4:8791"
     @State private var relayToken = ""
@@ -147,9 +150,11 @@ struct CanvasWorkspace: View {
                 confirm:{ _ = store.confirmInkShape() },cancel:{ store.cancelInkShape() })
         }
         .sheet(item:Binding(get:{ store.inkMathProposal },set:{ if $0 == nil { store.cancelInkMath() } })) { _ in inkMathSheet }
-        .onDisappear { store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
+        .onDisappear { inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
+                inkSpacingTask?.cancel()
+                inkSpacing.invalidatePending()
                 store.cancelLink()
                 store.clearLinkSelection()
                 store.saveNow()
@@ -159,6 +164,21 @@ struct CanvasWorkspace: View {
         }
         .onChange(of:store.scene) { _,_ in inkTextEditing.invalidatePending() }
         .onChange(of:store.inkSelection) { _,_ in inkTextEditing.invalidatePending() }
+        .sheet(isPresented:$inkSpacingOpen, onDismiss:{ inkSpacingTask?.cancel(); inkSpacing.invalidatePending() }) {
+            VStack {
+                CanvasInkSpacingSheet(editing:inkSpacing,text:store.inkTextDeletionTarget?.text ?? "선택한 문구 없음",
+                    propose:{ left,right,action,amount in
+                        inkSpacingTask?.cancel()
+                        inkSpacingTask = Task {
+                            guard !Task.isCancelled, inkSpacingOpen else { return }
+                            await store.proposeInkSpacing(left:left,right:right,action:action,amount:amount,editing:inkSpacing)
+                        }
+                    },
+                    confirm:{ if store.confirmInkSpacing(inkSpacing) { inkSpacingOpen = false } },
+                    cancel:{ inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); inkSpacingOpen = false })
+                Text(store.status).font(.footnote).padding()
+            }
+        }
         .sheet(isPresented:$inkTextDeleteOpen, onDismiss: { inkTextEditing.invalidatePending() }) {
             if let target = store.inkTextDeletionTarget {
                 VStack {
@@ -420,6 +440,9 @@ struct CanvasWorkspace: View {
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
                 .disabled(store.inkSelection.isEmpty)
+            Button("원본 획 간격 편집") { inkSpacing.cancel(); inkSpacingOpen = true }
+                .disabled(!store.canProposeInkSpacing)
+                .accessibilityIdentifier("canvasInkSpacingOpen")
             Button("선택한 원본 획의 한 글자 삭제") { inkTextDeleteOpen = true }
                 .disabled(store.inkTextDeletionTarget == nil)
                 .accessibilityIdentifier("canvasInkTextDeleteOpen")

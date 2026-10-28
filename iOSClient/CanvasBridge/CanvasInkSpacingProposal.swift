@@ -183,6 +183,7 @@ struct CanvasInkSpacingSheet: View {
             VStack(alignment:.leading,spacing:16) {
                 Text("원본 획 간격 합치기·나누기").font(.headline)
                 Text("현재 문구: \(text)")
+                Text("원본 필기 인식이 두 그룹을 확인하지 못하면 적용하지 않습니다. 정수 1~512포인트만 지원합니다.").font(.caption)
                 if let p = editing.proposal {
                     Text("오른쪽의 대응 획 \(p.rightIDs.count)개를 \(p.delta)포인트 이동합니다. 원본은 확인 후에만 저장합니다.")
                     image(p.before,bounds:p.before,after:p.after,label:"변경 전 원본 잉크")
@@ -195,7 +196,7 @@ struct CanvasInkSpacingSheet: View {
                     TextField("이동 또는 줄일 간격 · 정수 1~512포인트",text:$amount)
                     Text("소수 간격은 지원하지 않습니다.").font(.caption)
                     Picker("편집",selection:$action) { ForEach(CanvasInkSpacingProposal.Action.allCases,id:\.self) { Text($0.rawValue).tag($0) } }
-                    if case .reading = editing.phase { ProgressView("native 문자와 원본 획을 대조합니다.") }
+                    if case .reading = editing.phase { ProgressView("원본 필기와 획을 대조합니다.") }
                     if case .refused(let reason) = editing.phase { Text(reason).foregroundStyle(.orange) }
                     Button("원본 간격 미리보기") { if let value = requestedAmount { propose(left,right,action,value) } }
                         .disabled(editing.hasPendingWork || requestedAmount == nil)
