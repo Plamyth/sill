@@ -3,6 +3,31 @@ import Security
 import StreamProtocol
 @testable import SillHostCore
 
+#if OWNER_PUBLIC_PROFILE_NO_PRINCIPAL
+private func rejectPublicPrincipal(_ profile: TailnetDeviceAccess.PublicProfile) -> String { profile.principal }
+#endif
+#if OWNER_PUBLIC_PROFILE_NO_BINDING
+private func rejectPublicBinding(_ profile: TailnetDeviceAccess.PublicProfile) -> OwnerBootstrapSocket.Binding? { profile.binding }
+#endif
+#if OWNER_PUBLIC_PROFILE_NO_PROOF
+private func rejectPublicProof(_ profile: TailnetDeviceAccess.PublicProfile) -> TailnetDeviceAccess.Proof { profile }
+#endif
+#if OWNER_PUBLIC_PROFILE_NO_EVIDENCE
+private func rejectPublicEvidence(_ profile: TailnetDeviceAccess.PublicProfile, sensor: TailnetDeviceAccess) -> OwnerBootstrapSocket.Evidence {
+    .init(sensor: sensor, proof: profile)
+}
+#endif
+#if OWNER_PUBLIC_PROFILE_NO_ADMIT
+private func rejectPublicAdmission(_ profile: TailnetDeviceAccess.PublicProfile, socket: OwnerBootstrapSocket, box: TrustBox) {
+    _ = socket.admit(in: box, evidence: profile) { _ in }
+}
+#endif
+#if OWNER_PUBLIC_PROFILE_NO_RECEIPT
+private func rejectPublicReceipt(_ profile: TailnetDeviceAccess.PublicProfile, socket: OwnerBootstrapSocket, box: TrustBox) {
+    _ = socket.issueReceipt(in: box, evidence: profile, valid: { _ in true }, issue: { PairResult(ok: false) })
+}
+#endif
+
 private final class SensorFixture: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     var status: [String: Any] = ["BackendState": "Running", "Self": ["ID": "host-node", "UserID": 7,
@@ -13,7 +38,8 @@ private final class SensorFixture: @unchecked Sendable {
     var commands: [TailnetDeviceAccess.Command] = []
     var beforeRead: ((TailnetDeviceAccess.Command) throws -> Void)?
 
-    func sensor(diagnosticSink: (@Sendable (String) -> Void)? = nil) -> TailnetDeviceAccess {
+    func sensor(signatureCheck: TailnetDeviceAccess.Check? = nil,
+                diagnosticSink: (@Sendable (String) -> Void)? = nil) -> TailnetDeviceAccess {
         TailnetDeviceAccess(testingRead: { [self] command, check in
             lock.lock(); defer { lock.unlock() }
             try check()
@@ -23,8 +49,25 @@ private final class SensorFixture: @unchecked Sendable {
             case .status: return try JSONSerialization.data(withJSONObject: status)
             case .whois: return try JSONSerialization.data(withJSONObject: ["Node": node, "UserProfile": ["ID": user]])
             }
-        }, testingDiagnosticSink: diagnosticSink)
+        }, testingSignatureCheck: signatureCheck, testingDiagnosticSink: diagnosticSink)
     }
+}
+
+private final class SignatureChecks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private var events: [String] = []
+    let failAt: Int?
+    init(failAt: Int? = nil) { self.failAt = failAt }
+    func validate() throws {
+        lock.lock(); defer { lock.unlock() }
+        calls += 1
+        events.append("signature")
+        if calls == failAt { throw TailnetDeviceAccess.Failure.sensorFailure }
+    }
+    func read() { lock.lock(); events.append("read"); lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return calls }
+    var trace: [String] { lock.lock(); defer { lock.unlock() }; return events }
 }
 
 private final class DiagnosticLines: @unchecked Sendable {
@@ -196,30 +239,23 @@ final class OwnerBootstrapChecks {
             ([String: Any](), .malformedEvidence, "[TailnetDeviceAccess] stage=whois code=malformedEvidence"),
             (true, nil, nil)
         ]
-        for local in [false, true] {
-            for (value, failure, log) in cases {
-                let fixture = SensorFixture()
-                fixture.node["MachineAuthorized"] = value
-                if local {
-                    fixture.node["StableID"] = "host-node"
-                    fixture.node["Addresses"] = ["100.64.0.1/32"]
-                }
-                let lines = DiagnosticLines()
-                let sensor = fixture.sensor(diagnosticSink: { lines.append($0) })
-                let result = local ? await sensor.localProfile() : await sensor.principal(for: binding())
-                switch result {
-                case .failure(let actual): expectEqual(Optional(actual), failure)
-                case .success(let proof):
-                    expectNil(failure)
-                    expectTrue(sensor.isCurrent(proof))
-                    expectEqual(proof.binding == nil, local)
-                }
-                let source = local ? "100.64.0.1" : "100.64.0.2"
-                let decoded = failure == nil || failure == .unauthorizedNode
-                expectEqual(fixture.commands, decoded ? [.status, .whois(source), .status] : [.status, .whois(source)])
-                await sensor.drainDiagnosticsForTesting()
-                expectEqual(lines.snapshot, log.map { [$0] } ?? [])
+        for (value, failure, log) in cases {
+            let fixture = SensorFixture()
+            fixture.node["MachineAuthorized"] = value
+            let lines = DiagnosticLines()
+            let sensor = fixture.sensor(diagnosticSink: { lines.append($0) })
+            let result = await sensor.principal(for: binding())
+            switch result {
+            case .failure(let actual): expectEqual(Optional(actual), failure)
+            case .success(let proof):
+                expectNil(failure)
+                expectTrue(sensor.isCurrent(proof))
+                expectNotNil(proof.binding)
             }
+            let decoded = failure == nil || failure == .unauthorizedNode
+            expectEqual(fixture.commands, decoded ? [.status, .whois("100.64.0.2"), .status] : [.status, .whois("100.64.0.2")])
+            await sensor.drainDiagnosticsForTesting()
+            expectEqual(lines.snapshot, log.map { [$0] } ?? [])
         }
     }
 
@@ -578,26 +614,166 @@ final class OwnerBootstrapChecks {
         assertClosed(await remote(foreign).judgeOwnerBootstrap(attempt(OwnerBootstrapSocket.fixture(binding: binding()))))
     }
 
-    func testPublicProfileFactoryUsesCurrentIdentityAndOnlyLocalSensorProof() async throws {
-        let fixture = SensorFixture()
-        fixture.node["StableID"] = "host-node"
-        fixture.node["Addresses"] = ["100.64.0.1/32"]
-        let sensor = fixture.sensor()
-        guard case .success(let proof) = await sensor.localProfile() else { return fail("자기 노드 검증 실패") }
+    func testPublicProfileUsesSingleStatusWithoutApprovalOrKeys() async {
+        for approval: Any? in [nil, false, NSNull(), "true", true] {
+            let fixture = SensorFixture()
+            fixture.node["MachineAuthorized"] = approval
+            fixture.node["StableID"] = "private-peer"
+            fixture.beforeRead = { command in
+                if case .whois = command { throw TailnetDeviceAccess.Failure.sensorFailure }
+            }
+            fixture.status["Self"] = ["ID": "host-node", "UserID": 7,
+                "TailscaleIPs": ["100.64.0.1", "fd7a:115c:a1e0:0:0:0:0:1"], "Expired": false]
+            let sensor = fixture.sensor()
+            guard case .success(let profile) = await sensor.publicProfile() else {
+                fail("공개 관측이 권한 증거를 요구했습니다."); continue
+            }
+            expectEqual(fixture.commands, [.status])
+            expectEqual(profile.nodeID, "host-node")
+            expectEqual(profile.userID, 7)
+            expectEqual(profile.localIPs, ["100.64.0.1", "fd7a:115c:a1e0::1"])
+            expectTrue(sensor.isCurrent(profile))
+            expectFalse(sensor.independent().isCurrent(profile))
+            let fields = Set(Mirror(reflecting: profile).children.compactMap(\.label))
+            expectEqual(fields, Set(["nodeID", "userID", "localIPs", "issuer", "deadline"]))
+        }
+    }
+
+    func testPublicAndProofSignedReadContracts() async {
+        for publicOnly in [true, false] {
+            let checks = publicOnly ? 2 : 6
+            for failAt in [nil] + (1...checks).map(Optional.some) {
+                let signatures = SignatureChecks(failAt: failAt), fixture = SensorFixture()
+                fixture.beforeRead = { _ in signatures.read() }
+                let sensor = fixture.sensor(signatureCheck: { try signatures.validate() })
+                if publicOnly {
+                    switch await sensor.publicProfile() {
+                    case .success: expectNil(failAt)
+                    case .failure(let failure): expectNotNil(failAt); expectEqual(failure, .sensorFailure)
+                    }
+                } else {
+                    switch await sensor.principal(for: binding()) {
+                    case .success: expectNil(failAt)
+                    case .failure(let failure): expectNotNil(failAt); expectEqual(failure, .sensorFailure)
+                    }
+                }
+                expectEqual(signatures.count, failAt ?? checks)
+                let commands: [TailnetDeviceAccess.Command] = publicOnly ? [.status] : [.status, .whois("100.64.0.2"), .status]
+                expectEqual(fixture.commands, Array(commands.prefix(failAt.map { $0 / 2 } ?? commands.count)))
+                let trace = commands.flatMap { _ in ["signature", "read", "signature"] }
+                expectEqual(signatures.trace, Array(trace.prefix(failAt.map { $0 + $0 / 2 } ?? trace.count)))
+            }
+        }
+    }
+
+    func testPublicObservationCanTakeMoreThanProofDeadline() async {
+        for publicOnly in [true, false] {
+            let fixture = SensorFixture()
+            fixture.beforeRead = { _ in Thread.sleep(forTimeInterval: 2.05) }
+            let sensor = fixture.sensor()
+            if publicOnly {
+                if case .success = await sensor.publicProfile() { expectEqual(fixture.commands, [.status]) }
+                else { fail("공개 관측에 권한 증명의 2초 기한을 적용했습니다.") }
+            } else {
+                if case .failure(let failure) = await sensor.principal(for: binding()) { expectEqual(failure, .deadlineExceeded) }
+                else { fail("권한 증명의 2초 기한을 늘렸습니다.") }
+            }
+            await sensor.drainDiagnosticsForTesting()
+        }
+    }
+
+    func testPublicProfileRejectsInvalidSelfAndOutput() async {
+        let cases: [([String: Any], TailnetDeviceAccess.Failure)] = [
+            (["ID": ""], .malformedEvidence), (["ID": "bad id"], .malformedEvidence),
+            (["ID": String(repeating: "a", count: 257)], .malformedEvidence),
+            (["UserID": 0], .malformedEvidence), (["UserID": "7"], .malformedEvidence),
+            (["TailscaleIPs": []], .malformedEvidence),
+            (["TailscaleIPs": ["192.168.1.2"]], .malformedEvidence),
+            (["TailscaleIPs": ["100.64.0.1", "100.64.0.1"]], .malformedEvidence),
+            (["TailscaleIPs": ["fd7a:115c:a1e0::1", "fd7a:115c:a1e0:0:0:0:0:1"]], .malformedEvidence),
+            (["TailscaleIPs": ["100.64.0.1%utun9"]], .malformedEvidence),
+            (["Expired": true], .expiredNode), (["Expired": "false"], .malformedEvidence),
+            (["Tags": ["tag:server"]], .unauthorizedNode), (["ShareeNode": true], .unauthorizedNode)
+        ]
+        for (changes, expected) in cases {
+            let fixture = SensorFixture()
+            var node = fixture.status["Self"] as! [String: Any]
+            node.merge(changes) { _, new in new }
+            fixture.status["Self"] = node
+            if case .failure(let failure) = await fixture.sensor().publicProfile() { expectEqual(failure, expected) }
+            else { fail("잘못된 Self를 허용했습니다.") }
+            expectEqual(fixture.commands, [.status])
+        }
+        for selfNode: Any in [NSNull(), [], "host"] {
+            let fixture = SensorFixture(); fixture.status["Self"] = selfNode
+            if case .success = await fixture.sensor().publicProfile() { fail("잘못된 Self를 허용했습니다.") }
+        }
+        let fixture = SensorFixture(); fixture.status["BackendState"] = "Stopped"
+        if case .failure(let failure) = await fixture.sensor().publicProfile() { expectEqual(failure, .backendNotRunning) }
+        else { fail("중지 상태의 공개 프로필을 발급했습니다.") }
+        let sensor = TailnetDeviceAccess(testingRead: { _, _ in Data(repeating: 32, count: TailnetDeviceAccess.outputLimit + 1) })
+        if case .failure(let failure) = await sensor.publicProfile() { expectEqual(failure, .outputLimit) }
+        else { fail("공개 관측의 출력 한도를 우회했습니다.") }
+    }
+
+    func testPublicProfileStopCancellationBusyAndDeadline() async {
+        for expected in [TailnetDeviceAccess.Failure.stopped, .cancelled, .deadlineExceeded] {
+            let entered = DispatchSemaphore(value: 0), cleaned = DispatchSemaphore(value: 0)
+            let sensor = TailnetDeviceAccess(testingRead: { command, check in
+                guard command == .status else { throw TailnetDeviceAccess.Failure.sensorFailure }
+                defer { cleaned.signal() }
+                entered.signal()
+                while true { try check(); Thread.sleep(forTimeInterval: 0.001) }
+            })
+            let query = Task.detached { await sensor.publicProfile() }
+            let started = await waitForSignal(entered)
+            expectTrue(started)
+            if case .failure(let failure) = await sensor.publicProfile() { expectEqual(failure, .busy) }
+            else { fail("동시 공개 조회를 허용했습니다.") }
+            if case .failure(let failure) = await sensor.principal(for: binding()) { expectEqual(failure, .busy) }
+            else { fail("공개 조회 중 권한 조회를 중복 실행했습니다.") }
+            if expected == .stopped { sensor.stop() }
+            if expected == .cancelled { query.cancel() }
+            if case .failure(let failure) = await query.value { expectEqual(failure, expected) }
+            else { fail("중지·취소·기한 이후 공개 결과를 발급했습니다.") }
+            let didClean = await waitForSignal(cleaned)
+            expectTrue(didClean)
+            await sensor.drainDiagnosticsForTesting()
+        }
+    }
+
+    func testPublicProfileFactoryAndMonotonicExpiryAreSeparateFromProof() async throws {
+        let fixture = SensorFixture(), sensor = fixture.sensor()
+        let started = DispatchTime.now().uptimeNanoseconds
+        guard case .success(let observation) = await sensor.publicProfile() else { return fail("자기 노드 관측 실패") }
         let store = MemoryIdentityStore()
         let identity = try require(HostIdentity(privateKey: store.loadOrCreateKey(), recognitionKey: store.loadOrCreateRecognitionKey()))
-        let profile = try require(identity.ownerMacBootstrap(sensor: sensor, proof: proof, remotePort: 7455))
+        let profile = try require(identity.ownerMacBootstrap(sensor: sensor, profile: observation, remotePort: 7455))
         expectEqual(profile.fingerprintData, identity.fingerprint)
         expectEqual(profile.macID, identity.macID)
         expectEqual(profile.addresses, ["100.64.0.1"])
         let data = try JSONEncoder().encode(profile)
         let fields = try require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         expectEqual(Set(fields.keys), Set(["schema", "macID", "fingerprint", "addresses", "remotePort"]))
+        expectNil(identity.ownerMacBootstrap(sensor: sensor.independent(), profile: observation, remotePort: 7455))
         let peerSensor = SensorFixture().sensor()
         guard case .success(let peerProof) = await peerSensor.principal(for: binding()) else { return fail("기기 proof 발급 실패") }
-        expectNil(identity.ownerMacBootstrap(sensor: peerSensor, proof: peerProof, remotePort: 7455))
-        sensor.stop()
-        expectNil(identity.ownerMacBootstrap(sensor: sensor, proof: proof, remotePort: 7455))
+        expectTrue(peerProof.validUntil.timeIntervalSinceNow <= 2)
+        try await Task.sleep(nanoseconds: 2_050_000_000)
+        expectFalse(peerSensor.isCurrent(peerProof))
+        expectTrue(sensor.isCurrent(observation))
+        let expires = started + 10_050_000_000
+        let now = DispatchTime.now().uptimeNanoseconds
+        if now < expires { try await Task.sleep(nanoseconds: expires - now) }
+        expectFalse(sensor.isCurrent(observation))
+        expectNil(identity.ownerMacBootstrap(sensor: sensor, profile: observation, remotePort: 7455))
+        let stopped = fixture.sensor()
+        guard case .success(let fresh) = await stopped.publicProfile() else { return fail("중지 검사 관측 실패") }
+        stopped.stop()
+        expectFalse(stopped.isCurrent(fresh))
+        expectNil(identity.ownerMacBootstrap(sensor: stopped, profile: fresh, remotePort: 7455))
+        if case .failure(let failure) = await stopped.publicProfile() { expectEqual(failure, .stopped) }
+        else { fail("중지된 센서가 공개 관측을 발급했습니다.") }
     }
 
     @MainActor func testRemoteSettingEpochAndProofExpiryBeforeSave() async throws {
@@ -1426,7 +1602,12 @@ private struct OwnerHostBootstrapCheck {
         checks.testProductionRouteBindingRequiresTailnetTunnelAndFreshGeneration()
         do { try await checks.testLastCheckAfterReservationDeniesChangedSocket() } catch { fail("testLastCheckAfterReservationDeniesChangedSocket 예외") }
         do { try await checks.testMissingRegistryAndForeignSignatureDenyOnlyAutomaticTrust() } catch { fail("testMissingRegistryAndForeignSignatureDenyOnlyAutomaticTrust 예외") }
-        do { try await checks.testPublicProfileFactoryUsesCurrentIdentityAndOnlyLocalSensorProof() } catch { fail("testPublicProfileFactoryUsesCurrentIdentityAndOnlyLocalSensorProof 예외") }
+        await checks.testPublicProfileUsesSingleStatusWithoutApprovalOrKeys()
+        await checks.testPublicAndProofSignedReadContracts()
+        await checks.testPublicObservationCanTakeMoreThanProofDeadline()
+        await checks.testPublicProfileRejectsInvalidSelfAndOutput()
+        await checks.testPublicProfileStopCancellationBusyAndDeadline()
+        do { try await checks.testPublicProfileFactoryAndMonotonicExpiryAreSeparateFromProof() } catch { fail("공개 관측의 현재성·권한 수명 분리 검사 예외") }
         do { try await checks.testRemoteSettingEpochAndProofExpiryBeforeSave() } catch { fail("설정 세대 및 저장 직전 만료 검사 예외") }
         await checks.testCancelledQueryNeverIssuesProof()
         do { try await checks.testUnsupportedStorePreservesLegacyPairing() } catch { fail("구형 저장소 호환성 검사 예외") }

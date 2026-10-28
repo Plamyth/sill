@@ -168,9 +168,9 @@ enum OwnerBootstrapWire {
 }
 
 extension HostIdentity {
-    func ownerMacBootstrap(sensor: TailnetDeviceAccess, proof: TailnetDeviceAccess.Proof, remotePort: Int) -> OwnerMacBootstrap? {
-        guard proof.binding == nil, sensor.isCurrent(proof), proof.localIPs.contains(proof.sourceIP) else { return nil }
+    func ownerMacBootstrap(sensor: TailnetDeviceAccess, profile: TailnetDeviceAccess.PublicProfile, remotePort: Int) -> OwnerMacBootstrap? {
+        guard sensor.isCurrent(profile) else { return nil }
         return OwnerMacBootstrap(macID: macID, fingerprint: Base64URL.encode(fingerprint),
-                                 addresses: proof.localIPs, remotePort: remotePort)
+                                 addresses: profile.localIPs, remotePort: remotePort)
     }
 }

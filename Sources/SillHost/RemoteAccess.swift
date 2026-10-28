@@ -931,19 +931,25 @@ package final class RemoteAccess {
 
     package func ownerMacBootstrapProfile() async throws -> Data {
         guard Bundle.main.bundleURL.path == "/Applications/CCR Sill.app",
-              let executable = Bundle.main.executablePath, let identity, remoteAccess else {
+              let executable = Bundle.main.executablePath, let identity, remoteAccess, !Task.isCancelled else {
             throw IdentityStoreError("정식 CCR Sill 호스트에서 원격 접속을 켠 뒤 내보내세요.")
         }
         try SignedHostExecutable.validate(path: executable, identifier: "com.ambrion.sillcanvas.mac", team: "ZPTXHJ866D")
         let epoch = trust.snapshot.ownerBootstrapEpoch
-        guard case .success(let proof) = await ownerSensor.localProfile(), !Task.isCancelled,
-              ownerSensor.isCurrent(proof), remoteAccess, trust.snapshot.ownerBootstrapEpoch == epoch,
-              let profile = identity.ownerMacBootstrap(sensor: ownerSensor, proof: proof, remotePort: remotePort) else {
+        guard case .success(let observation) = await ownerSensor.publicProfile(), !Task.isCancelled,
+              self.identity === identity, ownerSensor.isCurrent(observation), remoteAccess,
+              trust.snapshot.ownerBootstrapEpoch == epoch,
+              let profile = identity.ownerMacBootstrap(sensor: ownerSensor, profile: observation, remotePort: remotePort) else {
             throw IdentityStoreError("현재 소유 Mac의 Tailscale 공개 설정을 검증하지 못했습니다.")
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(profile)
+        let data = try encoder.encode(profile)
+        guard !Task.isCancelled, self.identity === identity, ownerSensor.isCurrent(observation),
+              remoteAccess, trust.snapshot.ownerBootstrapEpoch == epoch else {
+            throw IdentityStoreError("현재 소유 Mac의 Tailscale 공개 설정을 검증하지 못했습니다.")
+        }
+        return data
     }
 
     #if OWNER_BOOTSTRAP_CONTRACT
