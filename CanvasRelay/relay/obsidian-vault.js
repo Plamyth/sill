@@ -178,7 +178,7 @@ class ObsidianVault {
       const stat = fs.lstatSync(component), previous = identities[index];
       return !stat.isSymbolicLink() && stat.dev === previous.dev && stat.ino === previous.ino;
     });
-    const fd = fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const fd = fs.openSync(file,fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     try {
       const before = fs.fstatSync(fd), expected = identities.at(-1);
       if (before.dev !== expected.dev || before.ino !== expected.ino || !samePath())

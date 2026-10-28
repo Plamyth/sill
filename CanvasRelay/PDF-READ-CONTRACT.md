@@ -11,3 +11,7 @@ PDF의 최대 크기는20MiB다. Vault 경로 검증으로 절대·숨은·dot·
 집중 검사는 PDF 목록/인증/읽기전용, 경로·크기·signature 거부, 읽기 중 파일 성장, 부모 symlink 교체의4개다. snapshot/hiddenPolicy는 synthetic root의 부재 경로만 사용하며 listener/connect/fetch/datagram을 금지한다. run-checks.py --pdf는 이4개만 실행하며 main Node PID 종료와 원문/입력 SHA, 한시 소스 삭제를 기록한다. 같은 제품 SHA의 Dalton PDF4/일반노트16 근거는 별도 보존하고 불필요한 전체 회귀를 반복하지 않는다.
 
 현재 일반노트 actualHTTP는 별도 exactf6 서버에서 검증했고 이 PDF 패치는 포함하지 않았다. PDF의 실제 HTTP/앱 렌더/설치/실기기/공유런타임 수용으로 표시하지 않는다. source/검사/공식 통합/설치 수용은 분리한다. 부모가 단일 공식 통합을 소유하며 이 branch에서 push/PR/merge/8791/8793·Host·사용자vault·기기 변경은0이다.
+
+## FIFO 교체 경계 후속
+
+6475df0의 독립 SOURCE_CLEAR는 FIFO 교체 반례 이전 범위로 보존한다. Mini의 별도 자식에서 regular 원본을 rename 보존하고 마지막 stat/open 사이 mkfifo로 바꾼 실제 open은 1.2초 timeout에 도달했다. O_NONBLOCK을 PDF open에 추가해 기존 dev/ino·samePath·regular fstat 검사까지 즉시 진행하도록 한다. 이 flag는 일반 파일의 바이트 읽기 의미를 바꾸지 않는다. vault-pdf-fifo.test.js는 동일 교체에서409, PDF read0, FD close, 자식 PID 부재, 원문 SHA 보존과 fixture 정리를 확인한다. 새 HTTP 검사는 이 수정의 정확한 후속 서버 commit을 별도로 고정한다.
