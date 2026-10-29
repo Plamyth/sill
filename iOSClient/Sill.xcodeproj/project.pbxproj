@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E9AB20261029000000000021 /* VaultEPUBReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000020 /* VaultEPUBReader.swift */; };
+		E9AB20261029000000000022 /* VaultEPUBReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000020 /* VaultEPUBReader.swift */; };
+		E9AB20261029000000000011 /* VaultEPUBExcerpt.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000010 /* VaultEPUBExcerpt.swift */; };
+		E9AB20261029000000000012 /* VaultEPUBExcerpt.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000010 /* VaultEPUBExcerpt.swift */; };
+		E9AB20261029000000000001 /* VaultEPUB.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000000 /* VaultEPUB.swift */; };
+		E9AB20261029000000000002 /* VaultEPUB.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000000 /* VaultEPUB.swift */; };
 		CD0C20261029000000000031 /* CanvasDocumentRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0C20261029000000000030 /* CanvasDocumentRelay.swift */; };
 		CD0C20261029000000000032 /* CanvasDocumentRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0C20261029000000000030 /* CanvasDocumentRelay.swift */; };
 		CA7A20261029000000000001 /* CanvasCardTags.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA7A20261029000000000000 /* CanvasCardTags.swift */; };
@@ -242,6 +248,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		E9AB20261029000000000020 /* VaultEPUBReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultEPUBReader.swift; sourceTree = "<group>"; };
+		E9AB20261029000000000010 /* VaultEPUBExcerpt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultEPUBExcerpt.swift; sourceTree = "<group>"; };
+		E9AB20261029000000000000 /* VaultEPUB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultEPUB.swift; sourceTree = "<group>"; };
 		CD0C20261029000000000030 /* CanvasDocumentRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDocumentRelay.swift; sourceTree = "<group>"; };
 		CA7A20261029000000000000 /* CanvasCardTags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasCardTags.swift; sourceTree = "<group>"; };
 		CD0C20261029000000000001 /* CanvasDocumentFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasDocumentFiles.swift; sourceTree = "<group>"; };
@@ -488,6 +497,9 @@
 			children = (
 				B2000001000000000000F001 /* CanvasModel.swift */,
 				D2600026000000000000F001 /* VaultPDFReader.swift */,
+				E9AB20261029000000000020 /* VaultEPUBReader.swift */,
+				E9AB20261029000000000010 /* VaultEPUBExcerpt.swift */,
+				E9AB20261029000000000000 /* VaultEPUB.swift */,
 				D2600026000000000000F000 /* VaultPDFExcerpt.swift */,
 				B2000021000000000000F001 /* PencilTextCorrection.swift */,
 				6A7A20261029000000000001 /* CanvasInkMathProposal.swift */,
@@ -732,6 +744,9 @@
 				A1000001000000000000AB02 /* DuoPostureReader.swift in Sources */,
 				B2000001000000000000A001 /* CanvasModel.swift in Sources */,
 				D2600026000000000000A001 /* VaultPDFReader.swift in Sources */,
+				E9AB20261029000000000021 /* VaultEPUBReader.swift in Sources */,
+				E9AB20261029000000000011 /* VaultEPUBExcerpt.swift in Sources */,
+				E9AB20261029000000000001 /* VaultEPUB.swift in Sources */,
 				D2600026000000000000A000 /* VaultPDFExcerpt.swift in Sources */,
 				B2000021000000000000A001 /* PencilTextCorrection.swift in Sources */,
 				6A7A20261029000000000000 /* CanvasInkMathProposal.swift in Sources */,
@@ -850,6 +865,9 @@
 				2375D34FA9899ACF736E899A /* DuoPostureReader.swift in Sources */,
 				8120D38B28D3FA07C94A2C79 /* CanvasModel.swift in Sources */,
 				D2600026000000000000A011 /* VaultPDFReader.swift in Sources */,
+				E9AB20261029000000000022 /* VaultEPUBReader.swift in Sources */,
+				E9AB20261029000000000012 /* VaultEPUBExcerpt.swift in Sources */,
+				E9AB20261029000000000002 /* VaultEPUB.swift in Sources */,
 				D2600026000000000000A010 /* VaultPDFExcerpt.swift in Sources */,
 				D24052ABBDDD29A6A5DE4F8B /* PencilTextCorrection.swift in Sources */,
 				6A7A20261029000000000002 /* CanvasInkMathProposal.swift in Sources */,
