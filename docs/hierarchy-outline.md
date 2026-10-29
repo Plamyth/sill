@@ -38,3 +38,7 @@ Pstack how/feature로 기존 투영·group membership·접기·원본 저장·in
 `evidence/outline-5c8cf12e-a781-49ae-b1e4-1a78f68f757b/result.json`·`observations.json`에 실제 Store/PKDrawing/격리 preferences/자체 Markdown/전체 Document Files의 compile/native exit0과 입력·normal sentinel 불변을 기록했다. 별도 프로세스 재열기는 legacy1회와 Document1회다. 보기는 같은 카드 ID·원본 접힘을 공유하고 일반 가지/그룹 각각의 Undo/Redo, 보기/페이지 ABA, 입력 busy 거부, 초점/태그/열린 그룹 범위, 실제 원문 참조 갱신/Files 역수신, hidden 데이터·AI packet 전체 직렬화를 확인했다. 미존재 key 뒤 외부 dictionary/숫자가 생긴 반례도 각각 원문·설정 bytes를 보존했다. revision 소진은 public 내부 편집 입력의 거부 반례이며 실제 외부 Files가 그 값을 수용했다는 뜻이 아니다.
 
 첫 실행 `outline-0236707a-d8d1-41d7-b507-b52427b7cf34`는 태그 API가 요구하는 `#읽기` 대신 `읽기`를 넘긴 fixture 기대 오류로 중단했다. 제품 tag validator를 바꾸지 않고 fixture만 수정했으며 실패 영수증도 보존했다. 통과 뒤 현재 범위가 빈 개요의 한국어 안내를 추가했으므로 그 UI 한 줄은 native 행동 실행의 근거로 세지 않고 최종 SDK 범위로 확인한다.
+
+## iOS27 SDK
+
+`evidence/outline-6e4196a9-c634-4c56-8c9c-e9293640e1f6/result.json`에서 제품 commit `ce7d652470f2d11415243213bd20ac529c0d80ab` / tree `9fa08c46bba5a465109eb91a19f5f2bcd2d72e9c`의 plist·iOS StreamProtocol·전체 Store/Workspace typecheck가 모두 exit0이었다. 입력 전후 SHA·normal sentinel은 같았고 native를 다시 실행하지 않은 `--sdk-only` 결과다. 기존 installTap/UIScreen.main deprecation 경고는 이 단위에서 수정하지 않았다. 이 영수증 연결 후속은 문서만 바꾸며 제품 bytes는 같다. 독립 source 검수·부모 초점 P2 수리와의 통합·실제 UIKit/iPad 수용은 남아 있다.
