@@ -1,5 +1,7 @@
 import Foundation
 import PencilKit
+import PDFKit
+import AppKit
 
 @main struct PageActionChecks {
     static var checks = 0
@@ -97,6 +99,24 @@ import PencilKit
         child.arguments = [out.path,"--ccr-test-runtime",context.id.uuidString.lowercased(),"--reopen-pages"]
         try child.run(); child.waitUntilExit()
         check(child.terminationStatus == 0,"별도 프로세스 재열기 종료 확인")
+        let pdf = PDFDocument()
+        let image = NSImage(size:.init(width:200,height:200),flipped:false) { rect in
+            NSColor.white.setFill(); rect.fill(); return true
+        }
+        pdf.insert(PDFPage(image:image)!,at:0)
+        let pdfBytes = pdf.dataRepresentation()!
+        let snapshot = VaultPDFSnapshot(path:"PDF/페이지 결합 검증.pdf",sha256:CanvasPacket.sha(pdfBytes),dataBase64:pdfBytes.base64EncodedString())
+        store.setNoteConnection(address:context.relayAddress,token:context.token)
+        let opened = await store.openPDFView(snapshot.path,loadPDF:{ _ in snapshot },loadNote:{ _ in throw NSError(domain:"CanvasRelay",code:404) })
+        check(opened,"전체 문서에 PDF 보기 상태 접합")
+        let reader = store.pdfViewReader!
+        try reader.setCrop(.init(x:0,y:0,width:0.8,height:1),physicalPageNumber:1)
+        await store.addBlankDocumentPage()
+        await store.moveDocumentPage(added,by:-1)
+        check(try store.document.bytes() == expected && reader.hasViewEdits,"미저장 PDF 보기 초안이 페이지 추가·순서 변경을 막고 입력 보존")
+        check(store.closePDFView() && store.hasPendingPDFView,"PDF 닫기도 보기 초안을 기존 복구 원장에 보존")
+        await store.addBlankDocumentPage()
+        check(try store.document.bytes() == expected,"보존 PDF 복구 의도가 있는 동안 페이지 변경 우회 없음")
         print("PAGE ACTION CHECKS \(checks)")
     }
 }
