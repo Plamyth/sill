@@ -9,7 +9,7 @@ assert a.output.resolve().is_relative_to(archive)
 out=a.output.resolve()/('native-'+str(uuid.uuid4()));out.mkdir(parents=True)
 for n in ['home','tmp','modules','vault']: (out/n).mkdir()
 canvas=root/'iOSClient/CanvasBridge'
-names=['CanvasModel','CanvasDocument','CanvasDocumentFiles','CanvasStore','VaultPDFExcerpt','VaultPDFViewState','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection']
+names=['CanvasModel','CanvasDocument','CanvasDocumentFiles','CanvasStore','VaultPDFExcerpt','VaultPDFViewState','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection','VaultEPUB','VaultEPUBExcerpt','VaultEPUBReader']
 main=Path(__file__).with_name('BookmarkChecks.swift' if a.bookmarks else 'main.swift')
 sources=[canvas/(n+'.swift') for n in names]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',main]
 extra=[]
@@ -18,6 +18,7 @@ if a.bookmarks:
  legacyBytes=subprocess.check_output(['git','show','cd5e79105904e25438c50a53b845c2d17a2b6b3e:iOSClient/CanvasBridge/VaultPDFViewState.swift'],cwd=root)
  legacy=out/'LegacyPDFViewState.swift';legacy.write_text(legacyBytes.decode().replace('VaultPDFViewState','LegacyPDFViewState'));extra.append(legacy)
  (out/'legacy-input.json').write_text(json.dumps(dict(commit='cd5e79105904e25438c50a53b845c2d17a2b6b3e',path='iOSClient/CanvasBridge/VaultPDFViewState.swift',sha256=hashlib.sha256(legacyBytes).hexdigest(),adaptation='type name only; exact old codec emits legacy Markdown and Codable request'),indent=2))
+
 protocol=root/'Sources/StreamProtocol/TestDestinations.swift'
 reader=out/'PDFNativeReader.swift';reader.write_text((canvas/'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
 inputs=sources+[protocol,canvas/'VaultPDFReader.swift',canvas/'CanvasWorkspace.swift',canvas/'PencilCanvas.swift',Path(__file__),Path(__file__).with_name('main.swift'),Path(__file__).with_name('vault.cjs')]+list((root/'CanvasRelay/relay').glob('*.js'))+[root/'CanvasRelay/relay/vault-note-exchange.py',root/'CanvasRelay/test-guard.cjs']
