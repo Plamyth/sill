@@ -31,3 +31,7 @@ Pstack how로 canonical mutation·기존 visibility·그룹/태그·defaults·na
 `evidence/focus-70ea4ae4-8836-4e6c-8e33-51b32dcdb710/result.json`·`observations.json`에 실제 Store/PKDrawing/격리 preferences/전체 Document Files 실행을 보존했다. compile/native exit0, source·normal sentinel 불변이다. 별도 프로세스 재열기는 legacy1회와 전체문서2회이며 총3회다. 원문/주석/교차링크/native ink 보존, AI packet·Document Relay PUT 전체 bytes, 초점 중 편집·Undo/Redo, 부모/자식 및 페이지 ABA, 기존 접기·그룹 진입, 외부 preference 충돌, 실제 Files 수정·루트 삭제 역수신을 확인했다. 순환은 public Store.scene에 주어진 in-memory 원문 입력의 반례이며 손상 외부 Files를 성공 수용했다고 주장하지 않는다.
 
 native Undo는 초점 동안 기존 manager의 명령 진입만 막고 이력을 소비하지 않는 대조를 수행했다. 실제 UIKit/Pencil native Undo 수용은 아니다. 시험 코드 API 이름·초기 schema·그룹 초기 접기 가정 오류와 후속 교정 실행은 각각 실패 영수증으로 보존하며 제품 기능 실패/수리와 섞지 않는다. 통과 뒤 `--sdk-only`로 새 iOS Store/Workspace 입력만 검사할 수 있어 native 재실행이 필요 없다.
+
+### iOS27 SDK
+
+`evidence/focus-1ca0b415-5821-4f9a-85ec-d505f2c8a00d/result.json`에서 정확 제품 commit `c5129946901d50b8d6cd58fdf1bd099a5f33763a` / tree `8ec6716e4f66d135f1f981094542e0957f1efbef`의 plist·iOS StreamProtocol·전체 Store/Workspace typecheck가 모두 exit0이었다. 시작/종료 입력 SHA와 normal sentinel이 같았다. native를 다시 실행하지 않은 `--sdk-only` 결과다. 기존 오디오/UIScreen API deprecation 경고는 수리 범위에 포함하지 않았다. 최종 문서 근거 추가는 제품 bytes를 바꾸지 않는다. SDK 통과는 UIKit/iPad/설치·독립 수용이 아니다.
