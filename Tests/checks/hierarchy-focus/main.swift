@@ -47,6 +47,30 @@ import PencilKit
         let full=try CanvasFileWorkspace.bytes(scene)
         try CanvasLocalFile.write(full,to:sceneURL)
         var s=store();s.selectedNode=a
+        if CommandLine.arguments.contains("--teardown-only") {
+            let owner = s.nativeHistoryOwner, manager = s.inkHistory.activate(s.nativeHistoryOwner)
+            let generation = s.inkHistory.generation
+            var actions = 0
+            manager.beginUndoGrouping();manager.registerUndo(withTarget:s) { _ in actions += 1 };manager.endUndoGrouping()
+            check(manager.canUndo,"legacy canvas owns a completed native action before focus")
+            check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"enter focus before native view retirement")
+            check(manager.canUndo && s.inkHistory.generation == generation,"view-only focus keeps same-owner native actions and generation")
+            s.inkHistory.undo();check(actions == 0 && manager.canUndo,"suspended focus refuses commands without consuming actions")
+            check(s.leaveHierarchyFocus(owner:s.hierarchyFocusOwner),"leave focus before new native view activation")
+            check(s.inkHistory.activate(owner) === manager && manager.canUndo,"new canvas reuses the exact retained manager")
+            s.inkHistory.undo();check(actions == 1,"retained action remains executable after full view returns")
+            manager.beginUndoGrouping();manager.registerUndo(withTarget:s) { _ in actions += 1 };manager.endUndoGrouping()
+            check(s.inkHistory.activate(owner) === manager && manager.canUndo && s.inkHistory.generation == generation,"ordinary same-source view reactivation also retains history")
+            s.drawing = try drawing(80)
+            check(!manager.canUndo && s.inkHistory.generation != generation,"actual model drawing replacement still invalidates old native actions")
+            manager.beginUndoGrouping();manager.registerUndo(withTarget:s) { _ in actions += 1 };manager.endUndoGrouping()
+            var replacement = s.scene;replacement.id = UUID();s.scene = replacement
+            check(!manager.canUndo,"actual legacy source identity replacement still invalidates prior actions")
+            let newManager = s.inkHistory.activate(s.nativeHistoryOwner)
+            check(newManager !== manager,"different source gets a distinct history manager")
+            try JSONSerialization.data(withJSONObject:["count":checks.count,"checks":checks,"TeardownOnly":true,"UIExecuted":false,"whole60Repeated":false],options:[.prettyPrinted,.sortedKeys]).write(to:out.appendingPathComponent("observations.json"))
+            return
+        }
         if CommandLine.arguments.contains("--preferences-only") {
             let preferences = CanvasRuntime.defaults(), key = "canvas.hierarchyFocus.v1"
             let before = try s.document.bytes()

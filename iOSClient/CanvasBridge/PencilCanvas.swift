@@ -162,7 +162,7 @@ struct PencilCanvas: UIViewRepresentable {
         canvas.delegate = nil
         coordinator.flushPendingDrawing(save:true)
         coordinator.retire()
-        if !coordinator.store.isDocumentSource { coordinator.store.inkHistory.detach(canvas.inkUndoManager) }
+        // View removal retires callbacks; source replacement owns history invalidation.
         coordinator.canvas = nil
     }
 

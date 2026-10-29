@@ -39,3 +39,10 @@ native Undo는 초점 동안 기존 manager의 명령 진입만 막고 이력을
 ### 같은 루트로 돌아오는 ABA의 별도 반례
 
 기존58의 child-owner 거부는 자식→부모 전환 경계다. 같은 루트/선택 UUID까지 돌아오는 ABA는 `evidence/focus-1fbf4f76-bbd9-4827-8520-34fa2f8c696e/result.json`·`observations.json`의 별도6조건으로 확인했다. A 초점 owner를 캡처한 뒤 A→B→A를 실행하고, 과거 A owner로 C 초점을 적용하려는 callback을 거부하며 원문/revision도 그대로였다. `--aba-only`는 해당 반례만 실행했고 기존58/child3/SDK를 반복하지 않았다. 제품은 SDK를 통과한 c512 그대로이며 이 후속은 검사·문서만 바꾼다.
+
+
+### 임시 뷰 제거와 원본 Undo 수명의 분리
+
+후속 통합 검수 HIERARCHY-FOCUS-UNION-R1은 legacy PencilCanvas를 초점/다른 보기 때문에 제거할 때 기존 detach가 원본 Undo까지 지우는 경로를 확인했다. dismantleUIView는 pending drawing flush, delegate 해제, Coordinator retire와 canvas 해제를 유지하되 inkHistory.detach를 호출하지 않는다. 기존 여러 페이지 문서와 동일하게 Store가 원본 소유 이력을 유지한다. 실제 drawing 교체와 legacy scene identity 변경의 invalidate는 그대로다. 다른 보기에서도 동일 원본이라면 이력을 보존하며, 새 원본·늦은 콜백을 임의로 수용하지 않는다.
+
+`--teardown-only --sdk-check`는 별도 좁은 native owner 검사 12관측(공통 fixture 1 포함), 실제 teardown의 flush/retire/해제 순서·무효화 부재 소스 검사 4개와 iOS SDK typecheck를 수행한다. macOS native 검사는 UIKit dismantle 실행이 아니다. 최초 예비 fixture에서 activate 이전 generation을 캡처한 기대 오류를 보존했고 제품 보호 조건을 완화하지 않았다. 실제 UIKit/Pencil 수명·설치 수용은 최종 일괄 검증에 남긴다.
