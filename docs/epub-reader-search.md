@@ -16,13 +16,22 @@ SearchState는 idle/searching/complete(more)/invalid이며 별도 불리언 조�
 
 `VaultEPUBSearchControls(reader:isCurrent:)`는 질의·검색/지우기·완료/초과/오류 상태·장/문단별 결과 미리보기·결과 이동 버튼을 제공한다. 시작/결과 이동은 기존 owner의 isCurrent closure로 검증하고, 종료 시 task/검색 세대를 무효화한다. 기존 `VaultEPUBReaderPanel`에는 같은 controls를 연결했다.
 
-중요: 실제 앱 Workspace는 이 Panel이 아닌 private `VaultEPUBStoreReader`를 소비한다. 이 단위는 사용자 지정 Store/Workspace/Relay 수정0을 유지한다. 따라서 부모 소유 Workspace의 기존 StoreReader VStack에 아래 한 줄을 추가해야 실제 앱 진입점의 검색 UI 접합이 완료된다. 이 후속 전에는 모듈 Panel/native 구현을 실제 앱 화면 완료로 표시하지 않는다.
+중요: 실제 앱 Workspace는 이 Panel이 아닌 private `VaultEPUBStoreReader`를 소비한다. 이 단위는 사용자 지정 Store/Workspace/Relay 수정0을 유지한다. 따라서 부모 소유 Workspace에서 기존 StoreReader에 순수 읽기 소유권 closure를 전달하고 아래 controls를 넣어야 실제 앱 진입점의 검색 UI 접합이 완료된다. 이 후속 전에는 모듈 Panel/native 구현을 실제 앱 화면 완료로 표시하지 않는다.
 
 ```swift
-VaultEPUBSearchControls(reader:reader,isCurrent:{ canAct })
+// private VaultEPUBStoreReader의 기존 canAct 옆에 추가
+let searchIsCurrent: @MainActor () -> Bool
+// 기존 VaultEPUBStoreText(reader:reader) 바로 앞
+VaultEPUBSearchControls(reader:reader,isCurrent:searchIsCurrent)
 ```
 
-정확 위치: c8992 기준 CanvasWorkspace.swift의 `private struct VaultEPUBStoreReader`, 기존 `VaultEPUBStoreText(reader:reader)` 바로 앞. canAct는 이미 `store.epubIsCurrent(reader) && !store.vaultSaving && !store.hasPendingEPUBExcerpt`에서 전달되므로 새로운 connection/권한/저장 API는 필요 없다. 부모가 새 결합 exact SHA에서 같은 UI소유 경계와 SDK를 확인한다. 모듈 `isCurrent`는 순수 읽기 guard이며 SearchControls가 Store/Relay를 소유하지 않는다. pending 발췌가 있는 경우 실제앱 결과 이동을 허용할지는 기존 canAct를 좁게 재사용한 이 후속으로 고정한다. Reader 공개 API 자체는 pending ID를 바꾸지 않는 읽기 검색을 지원한다.
+기존 StoreReader 호출부에 전달할 값:
+
+```swift
+searchIsCurrent: { store.epubIsCurrent(reader) && !store.vaultSaving && !store.hasPendingEPUBExcerpt }
+```
+
+정확 위치는 c8992 기준 CanvasWorkspace.swift의 기존 `VaultEPUBStoreReader` 호출과 private 타입 내부다. 기존 canAct Bool을 캡처한 `{ canAct }`만 넘기면 비동기 Task가 시작 시점의 Bool을 보관할 수 있으므로 권고하지 않는다. 기존 Store API를 매번 조회하는 closure를 전달해야 현재 Reader/연결/페이지 소유권을 재평가한다. 새로운 connection/권한/저장 API는 필요 없다. 부모가 새 결합 exact SHA에서 이 UI소유 경계와 SDK를 확인한다. pending 발췌 중 실제 앱 검색 이동은 기존 canAct와 같은 조건으로 제한한다. Reader 공개 API 자체는 pending ID를 바꾸지 않는 읽기 검색을 지원한다.
 
 ## 검증
 
