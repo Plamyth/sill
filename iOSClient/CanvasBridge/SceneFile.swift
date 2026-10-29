@@ -6,18 +6,23 @@ struct SceneFile: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     static var writableContentTypes: [UTType] { [.json] }
     var scene: CanvasScene
+    var document: CanvasDocument? = nil
 
     init(scene: CanvasScene) { self.scene = scene }
+    init(document: CanvasDocument) { self.scene = document.activePage; self.document = document }
     init(configuration: ReadConfiguration) throws {
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        scene = try JSONDecoder().decode(CanvasScene.self,from:data)
+        let decoded = try CanvasDocument.decode(data)
+        let fields = try JSONSerialization.jsonObject(with:data) as? [String:Any]
+        scene = decoded.activePage
+        if fields?["format"] != nil || fields?["pages"] != nil || fields?["version"] != nil { document = decoded }
     }
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-        return FileWrapper(regularFileWithContents:try encoder.encode(scene))
+        return FileWrapper(regularFileWithContents:try document.map { try $0.bytes() } ?? encoder.encode(scene))
     }
 }
 

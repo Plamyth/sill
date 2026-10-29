@@ -13,7 +13,7 @@ final class CanvasNativeUndoManager: UndoManager {
 }
 
 final class CanvasInkView: PKCanvasView {
-    let inkUndoManager = UndoManager()
+    var inkUndoManager = UndoManager()
     let nativeUndoManager = CanvasNativeUndoManager()
     override var undoManager: UndoManager? { nativeUndoManager }
 }
@@ -66,7 +66,7 @@ struct PencilCanvas: UIViewRepresentable {
 
         context.coordinator.canvas = canvas
         canvas.isRulerActive = store.rulerIsActive(isVisible: isVisible)
-        store.inkHistory.attach(canvas.inkUndoManager)
+        canvas.inkUndoManager = store.inkHistory.activate(store.nativeHistoryOwner)
         context.coordinator.replaceDrawingFromStore()
 
         let trace = PencilTraceRecognizer()
@@ -114,11 +114,11 @@ struct PencilCanvas: UIViewRepresentable {
         host.isHidden = !isVisible
         host.isUserInteractionEnabled = isVisible
         host.accessibilityValue = "확대 \(Int(store.zoom * 100))%"
-        if context.coordinator.renderedGeneration != store.inkHistory.generation ||
+        if context.coordinator.renderedOwner != store.nativeHistoryOwner || context.coordinator.renderedGeneration != store.inkHistory.generation ||
            context.coordinator.renderedModelDrawing != store.drawing {
             context.coordinator.replaceDrawingFromStore()
         }
-        canvas.isUserInteractionEnabled = store.mode != .select
+        canvas.isUserInteractionEnabled = store.mode != .select && !store.documentBusy
         canvas.isRulerActive = store.rulerIsActive(isVisible: isVisible)
         if !store.inkBusy {
             switch store.mode {
@@ -139,12 +139,13 @@ struct PencilCanvas: UIViewRepresentable {
         guard let canvas = coordinator.canvas else { return }
         canvas.isRulerActive = false
         canvas.delegate = nil
-        if coordinator.renderedGeneration == coordinator.store.inkHistory.generation,
+        if coordinator.renderedOwner == coordinator.store.nativeHistoryOwner,
+           coordinator.renderedGeneration == coordinator.store.inkHistory.generation,
            canvas.drawing != coordinator.store.drawing {
             coordinator.store.updateDrawing(canvas.drawing)
             coordinator.store.saveNow()
         }
-        coordinator.store.inkHistory.detach(canvas.inkUndoManager)
+        if !coordinator.store.isDocumentSource { coordinator.store.inkHistory.detach(canvas.inkUndoManager) }
         coordinator.store.setPencilTraceActive(false, owner: coordinator.traceOwner)
         coordinator.canvas = nil
     }
@@ -161,6 +162,8 @@ struct PencilCanvas: UIViewRepresentable {
         }
         var renderedModelDrawing = PKDrawing()
         var renderedGeneration = UUID()
+        var renderedOwner: CanvasInkHistory.Owner?
+        var renderedDocument: CanvasDocument.PageSnapshot?
         private var replacingDrawing = false
         let previewLayer = CAShapeLayer()
         let hoverLayer = CAShapeLayer()
@@ -191,7 +194,7 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         func replaceDrawingFromStore() {
-            canvas?.inkUndoManager.removeAllActions()
+            if let canvas { canvas.inkUndoManager = store.inkHistory.activate(store.nativeHistoryOwner) }
             restoreDrawingFromStore()
         }
 
@@ -210,6 +213,8 @@ struct PencilCanvas: UIViewRepresentable {
             manager.removeAllActions()
             renderedModelDrawing = store.drawing
             renderedGeneration = store.inkHistory.generation
+            renderedOwner = store.nativeHistoryOwner
+            renderedDocument = try? store.document.pageSnapshot()
             isDrawing = false
             usingTool = false
             store.inkHistory.setUsingTool(false)
@@ -223,11 +228,11 @@ struct PencilCanvas: UIViewRepresentable {
         private func registerDrawingUndo(_ previous: PKDrawing) {
             guard let canvas else { return }
             let manager = canvas.inkUndoManager
-            let generation = renderedGeneration
+            let generation = renderedGeneration, owner = store.nativeHistoryOwner
             let needsGroup = manager.groupingLevel == 0 && !manager.isUndoing && !manager.isRedoing
             if needsGroup { manager.beginUndoGrouping() }
             manager.registerUndo(withTarget: self) { coordinator in
-                guard coordinator.renderedGeneration == generation,
+                guard coordinator.renderedGeneration == generation, coordinator.store.nativeHistoryOwner == owner,
                       coordinator.store.inkHistory.generation == generation else { return }
                 coordinator.commitDrawing(previous)
                 coordinator.restoreDrawingFromStore()
@@ -345,19 +350,21 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         func canvasViewSelectionDidChange(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
             store.setInkSelection(canvasView.selection)
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
             drawingChangeSerial += 1
             guard !usingTool else { return }
             let serial = drawingChangeSerial
             let generation = renderedGeneration
-            let drawing = canvasView.drawing
+            let drawing = canvasView.drawing, owner = renderedOwner
+            let snapshot = try? store.document.pageSnapshot()
             Task { @MainActor [weak self] in
-                guard let self, self.drawingChangeSerial == serial,
+                guard let self, self.drawingChangeSerial == serial, self.store.nativeHistoryOwner == owner,
+                      snapshot.map(self.store.document.accepts) == true,
                       self.store.inkHistory.generation == generation else { return }
                 self.commitDrawing(drawing)
                 self.store.inkHistory.scheduleRefresh()
@@ -365,14 +372,14 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
             drawingChangeSerial += 1
             usingTool = true
             store.inkHistory.setUsingTool(true)
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
             flushPendingDrawing()
             usingTool = false
             store.inkHistory.setUsingTool(false)
@@ -380,7 +387,7 @@ struct PencilCanvas: UIViewRepresentable {
 
         func flushPendingDrawing(save: Bool = false) {
             guard let canvas, !replacingDrawing,
-                  renderedGeneration == store.inkHistory.generation else { return }
+                  renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
             drawingChangeSerial += 1
             commitDrawing(canvas.drawing)
             store.inkHistory.scheduleRefresh()

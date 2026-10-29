@@ -11,6 +11,7 @@ enum CanvasRuntime {
     enum StateFile: String, CaseIterable {
         case scene = "CanvasScene.json"
         case legacyScene = "CanvasLegacyScene.json"
+        case documentSource = "CanvasDocumentSource.json"
         case outbox = "CanvasOutbox/ledger.json"
         case blockRecovery = "CanvasBlockEdit/recovery.json"
         case noteRecovery = "CanvasNoteEdit/recovery.json"
