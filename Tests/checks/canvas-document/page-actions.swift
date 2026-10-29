@@ -146,7 +146,7 @@ import AppKit
         check(try CanvasGroup.entries(in:grid)[0].memberIDs == originalMembers && grid.annotations.contains(groupRecord),"용지 설정은 그룹 ID·소속·예약 주석을 유지")
         var folded = grid; folded.nodes[0].isCollapsed = true
         let visible = CanvasGroup.visibility(in:folded)
-        check(!visible.nodeIDs.contains(originalMembers[0]) && visible.nodeIDs.contains(grouping.groupID) && (try CanvasPagePaper.pattern(in:folded)) == .grid,"격자와 접힌 그룹의 표시 투영을 함께 유지")
+        check(try !visible.nodeIDs.contains(originalMembers[0]) && visible.nodeIDs.contains(grouping.groupID) && CanvasPagePaper.pattern(in:folded) == .grid,"격자와 접힌 그룹의 표시 투영을 함께 유지")
         let diagram = try CanvasDiagramSnapshot(scene:folded)
         check(!diagram.nodes.contains { $0.id == originalMembers[0] } && folded.annotations.contains(groupRecord),"도식 투영은 그룹 멤버를 숨기되 원본 주석·용지 설정 유지")
         check(try CanvasPagePaper.pattern(in:original) == .plain && CanvasPagePaper.pattern(in:grid) == .grid,"일반 사람 주석을 설정으로 오인하지 않고 격자 추가")
