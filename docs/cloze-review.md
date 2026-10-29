@@ -36,3 +36,19 @@ Pstack Feature/how로 기존 데이터·선택·저장/평가 흐름을 먼저 �
 최종 입력 고정 전에 검사 컴파일 도중 main에 UI Binding 검사를 추가한 실행은 무효로 남겼다. 그 실패를 통과로 고치지 않았고 이후 원본 입력을 바꾸지 않는 성공 실행으로 다시 검증했다. 앞선 전체 iOS27 typecheck 뒤 한 줄 UI identity 수리를 적용했다. Workspace 단독 frontend 방식은180초 예산을 넘겨 판정 불가로 보존하고, 기존 Swift driver 명령으로 최종32입력 SDK 결속을 검증한다. 전체 앱 번들 빌드·xrOS·실제HTTP·기기·GUI·설치는 별도 미수행이다. 정확한 종료 코드와 최종 커밋/입력 SHA 결속은 writer 영수증에 둔다.
 
 최종 Swift driver의 iOS27 전체 Canvas typecheck 종료 코드는0이며 입력32파일과 전후 SHA가 일치한다. 별도 UI 소스 연결11조건도 통과했다. 성공 네이티브 실행의 checkpoint 표기는 기준c899이고 소유 dirty 구현의64입력 SHA가 최종 커밋의 같은 파일과 일치함을 따로 대조한다. 과거 실행의 commit 필드를 새 커밋으로 고치지 않는다.
+
+## 8938 독립 검수의 두 P2 수리
+
+Nash의 `cloze-independent-review-8938c239-20261029/REVIEW.md` SHA `ae689e3ae511a26d994bf86255c83639e53b45eecc04bdb06c3d9721255ebc69`는 CLOZE-R1 들여쓰기 코드와 CLOZE-R2 U+2028 payload를 보고했다. 원래8938 WT·검사95건·원반례·보고서는 읽기 전용으로 보존하고 같은8938에서 전용 `codex/ipad-cloze-repair-20261029` WT를 만들었다. 위 절의95/SDK32는 그 이전 단위의 역사적 근거이며 이번 수리의 재실행 수가 아니다.
+
+제품 수리는 `CanvasModel.swift`의 기존 `clozes()`와 `noteSelection`뿐이다. 표식이 있는 줄의 처음 ASCII 공백/탭을4칸 tab stop으로 세어4열 이상이면 기존 코드/모호한 표현 계약으로 거부한다. 원문을 trim하거나 탭/공백을 치환하지 않는다. 표식 없는 네 칸/탭 평문 복습은 그대로 허용한다. 완전한 Markdown 엔진이나 모든 리스트/인용/HTML/Anki 문법 해석을 새로 만들지 않는다. 기존 backtick·주석 거부도 그대로다.
+
+payload의 CR/LF 개별 비교는 Foundation `CharacterSet.newlines` scalar 검사로 바꾼다. 실제 지정 결과·표시/공개·평가는 이미 같은 `clozes()`를 거치고, `noteSelection`도 같은 검증을 소비한다. 미지원 표식 원문은 여전히 parse/field/raw edit로 보존하고 복습·구조 명령·평가만 거부한다. 일반 카드의 payload 밖 CRLF와 원문/body/back·metadata는 바꾸지 않는다.
+
+원래 `Counterexample.swift` 바이트를 수정하지 않고 정확8938 Model에서 먼저 재현했다. 원래 들여쓰기4칸·탭은 표시/평가/새 지정이 모두 수용됐고 U+2028도 수용됐다. 같은 원반례를 수리 Model에서 실행해 양쪽의 거부를 대조한다. `<code>` 추가 관측은 이번 두 finding의 범위로 승격하지 않으며 예전 결과 그대로 남긴다.
+
+`python3 Tests/checks/pdf-view-product/run.py --cloze-repair --output <승인 경로>`는 기존 격리 Store/파일 실행기의 의존만 재사용하고 새 좁은 경계 main을 고른다. 네 칸/탭/공백+탭/CRLF 문맥, payload CR·LF·CRLF·U+2028·U+2029·NEL·VT·FF, 정상 한글/공백/탭 payload·평문 카드와 기존 hard600초 평가 CAS/GET을 확인한다. 전체 원95·전체 SDK·HTTP는 반복하지 않는다. 필요한 iOS27 SDK는 변경 Model 하나만 typecheck하고 실제 Store는 기존 source 전체에 연결해 native로 검사한다. 원래 Store·Workspace·UI·Relay bytes는8938과 같다.
+
+Pstack Bug fix/how는 원반례 재현→공통 parser 원인→최소 수리→동일 원반례와 Store 경계 검증 순서다. Ponytail은 기존 parser·newlines 표준 문자군·기존 실행기를 재사용한다. 선행 조건은 exact8938/clean WT/storage-route이며 독립 원반례·Model SDK와 Store 검사를 병렬 읽기로 진행한다. 공유 가변 정본은 전용 WT로 분리했고 제품 수정은 Model 한 파일의 parser 경계에 한정한다. 독립 재검수·부모 통합은 writer 결과와 별도다. GUI·실기기·설치·Host·오디오·키/권한·사용자 vault·질문/알림·ARENA/Goal/루프는 모두0이다.
+
+이번 writer 결과는 동일 원반례6입력의 전후 대조, 좁은 회귀19입력과 새 지정6범위에서164확인, 변경 Model1파일 iOS27 SDK typecheck0이다. 원래 R1/R2는 수리 전 표시/평가 수용, 수리 뒤 거부로 바뀌고 plain c1/backtick 대조와 별도 HTML 관측은 원래 범위를 유지했다. 실제 Store·ObsidianVault 파일 경로에서도 미지원 입력을 trim/치환하지 않고 거부하며, 정상7입력은 기존 hard600초 평가 CAS/GET을 통과했다. 입력·normal 보호 파일은 전후 동일하고 atomic helper13개가 모두 종료됐다. 정확 helper 수와 SHA는 최종 영수증의 실행 결과를 기준으로 한다. 기존 원95·전체 SDK·HTTP·새 프로세스 재열기는 재실행하지 않았다. 기존8938의 해당 근거를 유지하며 새 수리를 독립 SOURCE_CLEAR로 표시하지 않는다.

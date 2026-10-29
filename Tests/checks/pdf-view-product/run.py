@@ -3,17 +3,17 @@
 import argparse,hashlib,json,os,plistlib,shutil,subprocess,uuid
 from pathlib import Path
 root=Path(__file__).resolve().parents[3]
-p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);mode=p.add_mutually_exclusive_group();mode.add_argument('--bookmarks',action='store_true');mode.add_argument('--cloze',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);mode=p.add_mutually_exclusive_group();mode.add_argument('--bookmarks',action='store_true');mode.add_argument('--cloze',action='store_true');mode.add_argument('--cloze-repair',action='store_true');a=p.parse_args()
 archive=Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
 assert a.output.resolve().is_relative_to(archive)
 out=a.output.resolve()/('native-'+str(uuid.uuid4()));out.mkdir(parents=True)
 for n in ['home','tmp','modules','vault']: (out/n).mkdir()
 canvas=root/'iOSClient/CanvasBridge'
 names=['CanvasModel','CanvasDocument','CanvasDocumentFiles','CanvasStore','VaultPDFExcerpt','VaultPDFViewState','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection','VaultEPUB','VaultEPUBExcerpt','VaultEPUBReader']
-main=root/'Tests/checks/obsidian-review-cards/ClozeChecks.swift' if a.cloze else Path(__file__).with_name('BookmarkChecks.swift' if a.bookmarks else 'main.swift')
+main=root/'Tests/checks/obsidian-review-cards/ClozeRepairChecks.swift' if a.cloze_repair else root/'Tests/checks/obsidian-review-cards/ClozeChecks.swift' if a.cloze else Path(__file__).with_name('BookmarkChecks.swift' if a.bookmarks else 'main.swift')
 sources=[canvas/(n+'.swift') for n in names]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',main]
 extra=[]
-if a.bookmarks or a.cloze:
+if a.bookmarks or a.cloze or a.cloze_repair:
  support=out/'PDFCheckSupport.swift';support.write_text(Path(__file__).with_name('main.swift').read_text().split('@main struct PDFProductChecks')[0]);extra.append(support)
 if a.bookmarks:
  legacyBytes=subprocess.check_output(['git','show','cd5e79105904e25438c50a53b845c2d17a2b6b3e:iOSClient/CanvasBridge/VaultPDFViewState.swift'],cwd=root)

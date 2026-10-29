@@ -1068,6 +1068,15 @@ struct VaultReviewCard {
         let text = self.text(for:.front), ns = text as NSString
         if text.contains("{{") || text.contains("}}") {
             guard !text.contains("`"), !text.contains("~~~"), !text.contains("<!--") else { throw VaultReviewError.cloze }
+            for line in text.components(separatedBy:.newlines) where line.contains("{{") || line.contains("}}") {
+                var columns = 0
+                for character in line {
+                    if character == " " { columns += 1 }
+                    else if character == "\t" { columns += 4 - columns % 4 }
+                    else { break }
+                }
+                guard columns < 4 else { throw VaultReviewError.cloze }
+            }
         }
         var tokens = [Cloze](), cursor = 0
         while cursor < ns.length {
@@ -1086,7 +1095,7 @@ struct VaultReviewCard {
             let value = ns.substring(with:content)
             guard !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
                   !value.contains("{"), !value.contains("}"), !value.contains("::"),
-                  !value.contains("\n"), !value.contains("\r") else { throw VaultReviewError.cloze }
+                  !value.unicodeScalars.contains(where:CharacterSet.newlines.contains) else { throw VaultReviewError.cloze }
             let range = NSRange(location:open.location,length:NSMaxRange(close) - open.location)
             tokens.append(Cloze(range:range,content:content)); cursor = NSMaxRange(range)
         }
@@ -1105,6 +1114,7 @@ struct VaultReviewCard {
     }
 
     func noteSelection(_ selection: NSRange, field: Field) -> NSRange? {
+        guard (try? clozes()) != nil else { return nil }
         let text = text(for:field)
         guard selection.location >= 0, selection.length >= 0, selection.location <= text.utf16.count,
               selection.length <= text.utf16.count - selection.location,
