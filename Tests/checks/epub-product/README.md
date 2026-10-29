@@ -17,3 +17,6 @@
 
 ## 발췌 재조회·복구 출처 구분 회귀
 `run.py --source-repairs --output <storage-route 외장 폴더>`는 원래 독립 반례의 실제 Store·Reader와 결정적 note callback을 사용한다. 동일 GET의 quote SHA/current 유지, 명시 preview 잘림 상태, 순수 PDF/EPUB 수용, 이중 출처 복구와 채택 거부, 메모 수정과 missing/unsupported/ambiguous 원문에서 마지막 캐시·결속 보존을 확인한다. HTTP나 실제 ObsidianVault 서버 실행이 아니며 전체54·SDK 검사를 반복하지 않는다. 원래 반례 archive와 실행 증거는 외장 epub-store-independent-review-70b3dc55-20261029 및 epub-store-source-repair-20261029에서 보존한다.
+
+
+`run.py --source-composition --output <승인 외장 폴더>`는 이전 발췌 반례를 반복하지 않고 EPUB 카드·그룹·용지를 한 전체 문서에 함께 저장한다. 같은 원본의 외부 용지/메모 CAS 수정이 역수신되고, 그룹 소속·발췌 reference·native PKDrawing을 유지하며 새 Store 프로세스가 동일 문서를 복원하는지만 검사한다. 미리보기 PNG는 고정1픽셀 fixture이며 UIKit 렌더링이나 실기기 수용은 아니다.

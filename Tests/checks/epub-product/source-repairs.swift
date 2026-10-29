@@ -5,9 +5,20 @@ import PencilKit
 @main struct IndependentEPUBStoreCheck {
  @MainActor static func main() async throws {
   guard case .isolated(let ctx) = CanvasRuntime.launch else { fatalError("isolation required") }
-  let out = URL(fileURLWithPath:CommandLine.arguments[1])
+  let out = URL(fileURLWithPath:CommandLine.arguments[1]).resolvingSymlinksInPath()
   let archive = try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[2]))
   let snapshot = try VaultEPUBSnapshot(path:"book.epub",bytes:archive)
+  if CommandLine.arguments.contains("--group-paper-reopen") {
+   let reopened = CanvasStore(); reopened.enableDocumentChecks()
+   let expected = try CanvasDocument.decode(Data(contentsOf:out.appendingPathComponent("composition-expected.json")))
+   precondition(reopened.document == expected && reopened.documentFileReady)
+   print("PASS composite whole document fresh Store process")
+   return
+  }
+  if CommandLine.arguments.contains("--group-paper-only") {
+   try await composition(snapshot:snapshot,out:out,contextID:ctx.id)
+   return
+  }
   let s = CanvasStore(); s.enableDocumentChecks(); s.setNoteConnection(address:ctx.relayAddress,token:ctx.token)
   let opened = await s.openEPUB("book.epub",load:{ _ in snapshot }); precondition(opened)
   let r = s.epubReader!; try r.openChapter(1)
@@ -66,4 +77,44 @@ import PencilKit
   let result:[String:Any] = ["supplemental":supplemental,"sourceCommit":ctx.commit,"sourceTree":ctx.tree,"rows":rows,"mixedRecovery":mixedRows,"creates":creates,"originalArchiveSHA":CanvasPacket.sha(archive),"expectedQuoteSHA":CanvasPacket.sha(Data(source.quote.utf8)),"actualHTTP":false,"GUI":false,"fullNative54Repeated":false]
   let data = try JSONSerialization.data(withJSONObject:result,options:[.prettyPrinted,.sortedKeys]); try data.write(to:out.appendingPathComponent("counterexample-result.json")); print(String(decoding:data,as:UTF8.self))
  }
+ @MainActor static func composition(snapshot:VaultEPUBSnapshot,out:URL,contextID:UUID) async throws {
+  var checks = [String]()
+  func check(_ value:Bool,_ name:String) { precondition(value,name); checks.append(name); print("PASS",name) }
+  let book = try VaultEPUBBook(snapshot:snapshot)
+  let text = book.chapters[1].paragraphs[0].text
+  let source = try VaultEPUBExcerpt.capture(book:book,chapter:1,paragraph:0,range:(text as NSString).range(of:"문구 😀"))
+  let markdown = try source.markdown()
+  let note = VaultNoteSnapshot(path:source.notePath,text:markdown,sha256:CanvasPacket.sha(Data(markdown.utf8)),modifiedAt:"")
+  let reference = try source.reference(note:note,relayAddress:"http://192.168.88.88:4242")
+  let drawing = PKDrawing(strokes:[PKStroke(ink:PKInk(.pen,color:.black),path:PKStrokePath(controlPoints:[
+   PKStrokePoint(location:.init(x:10,y:20),timeOffset:0,size:.init(width:2,height:2),opacity:1,force:0.7,azimuth:0,altitude:1),
+   PKStrokePoint(location:.init(x:50,y:40),timeOffset:0.1,size:.init(width:2,height:2),opacity:1,force:0.9,azimuth:0,altitude:1)
+  ],creationDate:Date(timeIntervalSince1970:0)))])
+  var scene = CanvasScene();scene.schemaVersion = 3;scene.drawingBase64 = drawing.dataRepresentation().base64EncodedString();scene.strokes = CanvasScene.nativeInkStrokes(drawing)
+  let first = UUID(), second = UUID()
+  scene.nodes = [.init(id:first,kind:.note,frame:.init(x:40,y:80,width:260,height:120),text:VaultPDFCard.preview(markdown),confidence:.confirmed,sourceStrokeIds:[],vaultNote:reference),
+   .init(id:second,kind:.note,frame:.init(x:400,y:80,width:260,height:120),text:"사용자 메모",confidence:.confirmed,sourceStrokeIds:[])]
+  let grouped = try CanvasGroup.Draft(scene:scene,memberIDs:[first,second]).applying(to:scene)
+  let grid = try CanvasPagePaper.applying(.grid,to:grouped.scene)
+  check(grid.nodes.first { $0.id == first }?.vaultNote == reference && grid.drawingBase64 == scene.drawingBase64,"EPUB card group and paper retain native ink and exact quote reference")
+  let store = CanvasStore();store.enableDocumentChecks();try store.importSourceBytes(CanvasFileWorkspace.bytes(grid));try store.createDocument()
+  let png = Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=")!
+  store.filePreview = { _ in png }
+  let folder = out.appendingPathComponent("composition-selected-files",isDirectory:true);try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+  await store.connectDocumentWorkspace(folder)
+  let files = CanvasDocumentFiles(folder:folder,requiresScope:false), base = try files.load(store.document.id)
+  check(store.documentFileReady && base.document == store.document,"composite document actual Store and whole Files readback match")
+  var external = base.document, page = try CanvasPagePaper.applying(.plain,to:external.activePage)
+  page.nodes[page.nodes.firstIndex { $0.id == second }!].text = "AI가 보완한 같은 원본 메모"
+  try external.replacePage(page,expectedRevision:external.revision)
+  _ = try files.save(external,previews:base.previews,expected:base.token)
+  store.refreshDocumentWorkspace()
+  check(try store.documentFileReady && CanvasPagePaper.pattern(in:store.scene) == .plain && store.scene.nodes.first { $0.id == second }?.text == "AI가 보완한 같은 원본 메모","external paper and card edits return through existing full document CAS")
+  check(try CanvasGroup.entries(in:store.scene)[0].memberIDs == [first,second] && store.scene.nodes.first { $0.id == first }?.vaultNote == reference && store.scene.drawingBase64 == scene.drawingBase64,"reverse sync preserves ordered membership source identity and native ink")
+  try store.document.bytes().write(to:out.appendingPathComponent("composition-expected.json"))
+  let child = Process();child.executableURL = URL(fileURLWithPath:CommandLine.arguments[0]);child.arguments = [out.path,CommandLine.arguments[2],"--group-paper-reopen","--ccr-test-runtime",contextID.uuidString.lowercased()]
+  try child.run();child.waitUntilExit();check(child.terminationStatus==0,"fresh Store child restores the exact composite canonical document")
+  try JSONSerialization.data(withJSONObject:["checks":checks,"count":checks.count,"childProcesses":1,"actualStoreFiles":true,"previewFixture":true,"HTTP":false,"GUI":false],options:[.prettyPrinted,.sortedKeys]).write(to:out.appendingPathComponent("composition-observations.json"))
+ }
+
 }

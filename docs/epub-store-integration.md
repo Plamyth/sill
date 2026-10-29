@@ -57,3 +57,11 @@ native는 실제 자체 ObsidianVault 파일 처리와 전체 Document Files gen
 ### 부모 전체 iOS27 SDK 수신
 
 부모가 정확 `70b3dc55` 제품의 `epub-product-sdk-70b3dc55-20261029/result.json`을 반환했다. `project-plist`/`ios-protocol`/`ios27-store-ui-typecheck`는 모두 exit0이고 실행 입력의 전후 SHA·70b Git blob 일치가 기록됐다. 이 writer도 영수증 필드와 현재 제품 bytes를 대조했다. 이는 위에서 대기였던 전체 Store/Workspace SDK의 후속 통과이며 실제 GUI·기기·설치 수용은 아니다. 이후 test/docs 후속 커밋은 제품 bytes를 바꾸지 않아 그 한정 범위로 기존 SDK 결과를 재사용한다. Nash 접합 독립 검수와 Laplace actual HTTP는 별도 진행 중이다. 전체 완료는 false다.
+
+
+## 접합 P2 수리와 문서 기능 결합
+70b의 독립 접합 검수는 같은 노트 GET에서 quote SHA를 지우는 R1과 유효 PDF/EPUB 출처가 섞인 복구 draft를 수용하는 R2를 찾았다. 별도 수리68b07ed418d9d5df3986b66bdd46928d2024df9f는 기존 인용 결속을 유지하고 원문 상실·미지원·모호함에서는 마지막 캐시/확정 SHA를 보존한다. 전체 노트 SHA가 달라지면 메모와 앵커의 구분을 추측하지 않고 changed로 표시한다. 생성 시 cacheTruncated도 명시한다. 복구 validator와 명시 현재 원문 채택은 PDF와 EPUB 실제 source를 상호 배타적으로 확인한다. 경로/envelope/kind/API·모듈은 그대로다. Nash가 원 두 P2를 해소해 SOURCE_CLEAR로 재검수했고19제품입력을 실제 경로 식별과 Git bytes에 결속했다. 원 반례와 실패 이력은 외장 epub-store-source-repair-20261029 및 epub-store-source-repair-independent-review-68b07ed4-20261029에 보존한다.
+
+실제 인증 HTTP는 정확70b 제품과 c6629363 검사에서 실행된 별도 근거다. 100관측·원문 SHA/CAS·새 Store/Files·ACK 대상 PUT1/명시 확인 PUT0·임시 런타임 반납을 Ohm이 EVIDENCE_CLEAR_SCOPED_EPUB_STORE_HTTP로 확인했다. 이 실행을 후속 수리 소스의 실제 UI나 정상 서비스 배포로 바꿔 쓰지 않는다. 서버/프로토콜/원 EPUB parser가 수리에서 불변임을 정확 결합에서 확인한다.
+
+그룹·용지 공식f4a00d0d와 수리68b를 결합한1e4e9b67cb852288f31bf573a575daa1710d089a는 충돌 없이 병합됐다. 표준 source-repairs10과 정확 전체 iOS27 SDK가 통과했다. 별도의 source-composition은 EPUB 발췌 카드와 그룹·용지를 같은 실제 Document Files에 저장하고 외부 메모/용지 수정 역수신 및 새 Store 프로세스 복원을 통과했다. 모든 단계에서 quote reference·ordered membership·native PKDrawing을 유지했다. 이 결합은 아직 별도 독립 검수와 공식 반영 전이며 GUI/설치/기기/wholeEPUBAccepted는 false다.
