@@ -105,9 +105,9 @@ import AppKit
         }
         pdf.insert(PDFPage(image:image)!,at:0)
         let pdfBytes = pdf.dataRepresentation()!
-        let snapshot = VaultPDFSnapshot(path:"PDF/페이지 결합 검증.pdf",sha256:CanvasPacket.sha(pdfBytes),dataBase64:pdfBytes.base64EncodedString())
+        let pdfSnapshot = VaultPDFSnapshot(path:"PDF/페이지 결합 검증.pdf",sha256:CanvasPacket.sha(pdfBytes),dataBase64:pdfBytes.base64EncodedString())
         store.setNoteConnection(address:context.relayAddress,token:context.token)
-        let opened = await store.openPDFView(snapshot.path,loadPDF:{ _ in snapshot },loadNote:{ _ in throw NSError(domain:"CanvasRelay",code:404) })
+        let opened = await store.openPDFView(pdfSnapshot.path,loadPDF:{ _ in pdfSnapshot },loadNote:{ _ in throw NSError(domain:"CanvasRelay",code:404) })
         check(opened,"전체 문서에 PDF 보기 상태 접합")
         let reader = store.pdfViewReader!
         try reader.setCrop(.init(x:0,y:0,width:0.8,height:1),physicalPageNumber:1)
