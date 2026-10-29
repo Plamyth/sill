@@ -176,6 +176,12 @@ final class CanvasStore: ObservableObject {
     }
     private func sceneDidChange(from oldScene: CanvasScene) {
             cancelCardMerge()
+            cancelGroupDraft()
+            if let id = openedGroupID {
+                let old = try? CanvasGroup.entries(in:oldScene).first { $0.node.id == id }
+                let next = try? CanvasGroup.entries(in:scene).first { $0.node.id == id }
+                if oldScene.id != scene.id || next?.node.isCollapsed != true || old?.memberIDs != next?.memberIDs { leaveGroup() }
+            }
             pendingInkTextEditing?.invalidatePending()
             pendingInkSpacing?.invalidatePending()
             inkMathRequest = nil
@@ -204,6 +210,8 @@ final class CanvasStore: ObservableObject {
             if oldValue != mode {
                 if let editor = cardTagEditor { cancelCardTagInput(sessionID:editor.id) }
                 cancelCardMerge()
+                cancelGroupDraft()
+                if mode != .select { leaveGroup() }
                 cancelInkMath()
                 cancelInkShape()
                 pendingInkTextEditing?.invalidatePending()
@@ -226,6 +234,7 @@ final class CanvasStore: ObservableObject {
             if pencilTraceOwner == nil || pencilTraceOwner == owner {
                 if let editor = cardTagEditor { cancelCardTagInput(sessionID:editor.id) }
                 cancelCardMerge()
+                cancelGroupDraft()
                 pendingInkTextEditing?.invalidatePending()
                 pendingInkSpacing?.invalidatePending()
                 cancelInkShape()
@@ -780,10 +789,11 @@ final class CanvasStore: ObservableObject {
     private var cardMergeEpoch: UInt64?
     private var cardMergeSelectionGeneration: UInt64?
 
-    var cardMergeInputAllowed: Bool {
+    private var containerInputAllowed: Bool {
         canApplyReconciledCanvas && mode == .select && nodeResizeDrag == nil &&
         nodeRotationDrag == nil && endpointDrag == nil && linkStart == nil
     }
+    var cardMergeInputAllowed: Bool { containerInputAllowed && groupDraft == nil }
 
     var canBeginCardMerge: Bool {
         guard cardMergeInputAllowed, cardMergeDraft == nil, let id = selectedNode else { return false }
@@ -863,19 +873,109 @@ final class CanvasStore: ObservableObject {
         } catch { status = "병합을 해제하지 않았습니다. \(error.localizedDescription)"; return false }
     }
 
+    struct GroupOwner: Equatable {
+        let documentID: UUID
+        let sceneID: UUID
+        let epoch: UInt64
+        let selection: UInt64
+        let view: UInt64
+    }
+    var groupCommandOwner: GroupOwner {
+        .init(documentID:document.id,sceneID:scene.id,epoch:linkSceneGeneration,selection:noteSelectionGeneration,view:groupViewGeneration)
+    }
+    @Published private(set) var groupDraft: CanvasGroup.Draft?
+    private var groupDraftOwner: GroupOwner?
+    @Published private(set) var openedGroupID: UUID?
+    private var groupViewGeneration: UInt64 = 0
+    private var groupRootViewport: CanvasViewport?
+    var groups: [CanvasGroup.Entry] { (try? CanvasGroup.entries(in:scene)) ?? [] }
+    var groupReadError: String? {
+        do { _ = try CanvasGroup.entries(in:scene); return nil } catch { return error.localizedDescription }
+    }
+    var groupInputAllowed: Bool { containerInputAllowed && cardMergeDraft == nil && groupReadError == nil }
+    var canBeginGroup: Bool {
+        guard groupInputAllowed, groupDraft == nil, openedGroupID == nil, let id = selectedNode else { return false }
+        return (try? CanvasGroup.Draft(scene:scene,memberIDs:[id])) != nil
+    }
+    var canAppendGroupCard: Bool {
+        guard groupInputAllowed, let draft = groupDraft, let id = selectedNode,
+              groupDraftOwner?.epoch == linkSceneGeneration else { return false }
+        return (try? draft.appending(id,in:scene)) != nil
+    }
+    var canConfirmGroup: Bool {
+        guard groupInputAllowed, let draft = groupDraft, groupDraftOwner == groupCommandOwner,
+              selectedNode == draft.memberIDs.last else { return false }
+        return (try? CanvasFileWorkspace.sceneSHA(scene)) == draft.sceneSHA
+    }
+    func cancelGroupDraft() { groupDraft = nil; groupDraftOwner = nil }
+    func beginGroup(owner: GroupOwner) {
+        guard owner == groupCommandOwner, canBeginGroup, let id = selectedNode else { return }
+        do {
+            groupDraft = try .init(scene:scene,memberIDs:[id]); groupDraftOwner = groupCommandOwner
+            status = "첫 카드를 골랐습니다. 카드를 하나씩 선택해 그룹 순서에 추가하세요."
+        } catch { status = error.localizedDescription }
+    }
+    func appendGroupCard(owner: GroupOwner) {
+        guard owner == groupCommandOwner, canAppendGroupCard, let draft = groupDraft, let id = selectedNode else { return }
+        do { groupDraft = try draft.appending(id,in:scene); groupDraftOwner = groupCommandOwner }
+        catch { status = error.localizedDescription }
+    }
+    @discardableResult func confirmGroup() -> Bool {
+        guard canConfirmGroup, let draft = groupDraft else { status = CanvasGroup.Failure.changed.localizedDescription; return false }
+        do {
+            let before = scene, applied = try draft.applying(to:scene)
+            try persistScene(applied.scene); scene = applied.scene; selectedNode = applied.groupID
+            recordGraphEdit(before:before,persistHistory:true)
+            status = "같은 원본 카드로 그룹을 만들고 복구본에 보관했습니다. Files·Obsidian 저장 상태를 확인하세요."
+            return true
+        } catch { status = "그룹을 만들지 않았습니다. \(error.localizedDescription)"; return false }
+    }
+    @discardableResult func toggleGroup(_ expected: CanvasNode, owner: GroupOwner) -> Bool {
+        guard owner == groupCommandOwner, groupInputAllowed, groupDraft == nil else { return false }
+        do {
+            let before = scene, next = try CanvasGroup.toggling(expected,in:scene)
+            try persistScene(next); scene = next; recordGraphEdit(before:before,persistHistory:true)
+            status = expected.isCollapsed == true ? "같은 원본 카드의 그룹을 펼쳤습니다." : "그룹을 하위 지도로 접었습니다. 원본은 그대로입니다."
+            return true
+        } catch { status = error.localizedDescription; return false }
+    }
+    @discardableResult func enterGroup(_ expected: CanvasNode, owner: GroupOwner) -> Bool {
+        guard owner == groupCommandOwner, groupInputAllowed, groupDraft == nil,
+              let group = groups.first(where:{ $0.node.id == expected.id }),
+              CanvasScene.sameNode(group.node,expected), group.node.isCollapsed == true else { return false }
+        if openedGroupID == nil { groupRootViewport = viewport }
+        openedGroupID = expected.id; groupViewGeneration &+= 1; selectedNode = nil; clearLinkSelection(); clearPendingLink()
+        viewport = .init(zoom:1,pan:.init(width:24 - expected.frame.x,height:24 - expected.frame.y))
+        status = "하위 지도를 열었습니다. 같은 카드와 원문·원본 획을 사용합니다."
+        return true
+    }
+    func leaveGroup(owner: GroupOwner? = nil) {
+        if let owner, owner != groupCommandOwner { return }
+        guard openedGroupID != nil else { return }
+        openedGroupID = nil; groupViewGeneration &+= 1; selectedNode = nil; clearLinkSelection(); clearPendingLink()
+        if let saved = groupRootViewport { viewport = saved }; groupRootViewport = nil
+    }
+
     @Published private(set) var cardTagFilter: String?
     @Published private(set) var cardTagInputBusy = false
     private var cardTagEditor: (id:UUID, nodeID:UUID, sceneSHA:String, epoch:UInt64, selection:UInt64)?
 
     var availableCardTags: [String] { CanvasCardTags.available(in:scene) }
-    var cardTagVisibility: CanvasScene.Visibility { CanvasCardTags.visibility(in:scene,filter:cardTagFilter) }
+    var cardTagVisibility: CanvasScene.Visibility {
+        let tags = CanvasCardTags.visibility(in:scene,filter:cardTagFilter)
+        let group = CanvasGroup.visibility(in:scene,opened:openedGroupID)
+        return .init(nodeIDs:tags.nodeIDs.intersection(group.nodeIDs),linkIDs:tags.linkIDs.intersection(group.linkIDs),
+                     annotationIDs:tags.annotationIDs.intersection(group.annotationIDs))
+    }
     var cardTagDisplayScene: CanvasScene {
         var displayed = displayedScene
-        guard cardTagFilter != nil else { return displayed }
         let visible = cardTagVisibility
         displayed.nodes.removeAll { !visible.nodeIDs.contains($0.id) }
         displayed.links.removeAll { !visible.linkIDs.contains($0.id) }
         displayed.annotations.removeAll { !visible.annotationIDs.contains($0.id) }
+        if let id = openedGroupID, let group = groups.first(where:{ $0.node.id == id }) {
+            displayed.nodes = group.memberIDs.compactMap { id in displayed.nodes.first { $0.id == id } }
+        }
         return displayed
     }
 
@@ -960,6 +1060,7 @@ final class CanvasStore: ObservableObject {
     @discardableResult
     func beginNodeResize(_ expected: CanvasNode, sceneID: UUID, owner: UUID) -> Bool {
         guard nodeResizeDrag == nil, nodeRotationDrag == nil, endpointDrag == nil, scene.id == sceneID,
+              groupReadError == nil, !groups.contains(where:{ $0.node.id == expected.id }),
               expected.hasValidRotation, expected.frame.isValidLinkFrame else { return false }
         let drag = NodeResizeDrag(owner:owner,generation:linkSceneGeneration,sceneID:sceneID,
             revision:scene.revision,expected:expected,frame:expected.frame)
@@ -1064,6 +1165,7 @@ final class CanvasStore: ObservableObject {
     @discardableResult
     func beginNodeRotation(_ expected: CanvasNode, sceneID: UUID, owner: UUID) -> Bool {
         guard nodeRotationDrag == nil, nodeResizeDrag == nil, endpointDrag == nil,
+              groupReadError == nil, !groups.contains(where:{ $0.node.id == expected.id }),
               scene.id == sceneID, expected.frame.isValidLinkFrame, expected.hasValidRotation else { return false }
         let drag = NodeRotationDrag(owner:owner,generation:linkSceneGeneration,sceneID:sceneID,
             revision:scene.revision,expected:expected,degrees:expected.rotationDegrees)
@@ -2985,6 +3087,7 @@ final class CanvasStore: ObservableObject {
         guard !documentEditingBlocked else { return }
         clearPendingLink()
         guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode),
+              scene.canToggleChildren(of:selectedNode),
               scene.toggleChildren(of: selectedNode) else { return }
         let collapsed = scene.nodes.first { $0.id == selectedNode }?.isCollapsed == true
         status = collapsed ? "하위 요소를 접었습니다. 원본 데이터는 보존됩니다." : "하위 요소를 펼쳤습니다."
@@ -3003,6 +3106,9 @@ final class CanvasStore: ObservableObject {
 
     func moveSelected(to point: CGPoint) {
         guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode) else { return }
+        guard groupReadError == nil, !groups.contains(where:{ $0.node.id == selectedNode }) else {
+            status = "그룹 전체 이동·크기·회전은 지원하지 않습니다. 원본 카드와 소속을 유지합니다."; return
+        }
         scene.moveNode(selectedNode, to: CanvasPoint(x: Double(point.x), y: Double(point.y)))
     }
 
@@ -3554,7 +3660,7 @@ final class CanvasStore: ObservableObject {
     private func documentRecoveryInputsClear(recoveringFiles: Bool = false) -> Bool {
         documentOperationsEnabled && (sceneReadable || recoveringFiles) &&
         !fileSaveBusy && (fileWorkspaceState != .blocked || recoveringFiles) && !inkBusy && !hasPendingInkProposal &&
-        !inkMathInputBusy && !cardTagInputBusy && cardTagEditor == nil && cardMergeDraft == nil &&
+        !inkMathInputBusy && !cardTagInputBusy && cardTagEditor == nil && cardMergeDraft == nil && groupDraft == nil &&
         proposedNode == nil && commentSession == nil && !commentInputBusy &&
         nodeResizeDrag == nil && nodeRotationDrag == nil && endpointDrag == nil && linkStart == nil &&
         !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&

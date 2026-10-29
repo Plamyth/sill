@@ -1424,6 +1424,86 @@ extension CanvasNode {
     }
 }
 
+// Membership lives only in existing ordered general links. The open map is a view, not another scene.
+enum CanvasGroup {
+    static let author = "ccr.sill.group/v1"
+    static let marker = "같은 원본 카드의 그룹입니다. 번호가 있는 소속 연결이 카드 순서입니다."
+    static let linkPrefix = "ccr.sill.group/v1 · "
+
+    enum Failure: LocalizedError {
+        case unsupported, selection, changed
+        var errorDescription: String? {
+            switch self {
+            case .unsupported: return "그룹 소속이 손상되었거나 지원 범위를 벗어났습니다. 원본을 유지하며 그룹 명령을 중단합니다."
+            case .selection: return "그룹에 속하지 않은 일반 메모 카드를 순서대로 선택하세요. 부모·자식 계층과 중첩 그룹은 지원하지 않습니다."
+            case .changed: return "페이지·장면·선택이 바뀌었습니다. 이전 그룹 명령을 적용하지 않았습니다."
+            }
+        }
+    }
+    struct Entry {
+        let node: CanvasNode
+        let memberIDs: [UUID]
+    }
+
+    static func orderedMembers(of id: UUID, in scene: CanvasScene, prefix: String,
+                               count: ClosedRange<Int>) -> [CanvasNode]? {
+        let links = scene.links.filter { $0.from == id && $0.label.hasPrefix(prefix) }
+        guard count.contains(links.count), Set(links.map(\.to)).count == links.count else { return nil }
+        var result = [CanvasNode]()
+        for index in 1...links.count {
+            let matches = links.filter { $0.label.utf8.elementsEqual((prefix + String(index)).utf8) }
+            guard matches.count == 1, let link = matches.first, link.kind == .general, link.to != id,
+                  let member = scene.nodes.first(where:{ $0.id == link.to }), member.kind == .note else { return nil }
+            result.append(member)
+        }
+        return result
+    }
+
+    static func entries(in scene: CanvasScene) throws -> [Entry] {
+        let marks = scene.annotations.filter { $0.author.hasPrefix("ccr.sill.group/") }
+        let owned = scene.links.filter { $0.label.hasPrefix("ccr.sill.group/") }
+        guard !marks.isEmpty || !owned.isEmpty else { return [] }
+        guard Set(scene.nodes.map(\.id)).count == scene.nodes.count,
+              Set(scene.links.map(\.id)).count == scene.links.count,
+              Set(scene.annotations.map(\.id)).count == scene.annotations.count else { throw Failure.unsupported }
+        var entries = [Entry](), groups = Set<UUID>(), members = Set<UUID>()
+        for mark in marks {
+            guard mark.author.utf8.elementsEqual(author.utf8), mark.text.utf8.elementsEqual(marker.utf8),
+                  let id = mark.nodeId, groups.insert(id).inserted,
+                  let node = scene.nodes.first(where:{ $0.id == id }), node.kind == .box,
+                  node.confidence == .confirmed, node.vaultNote == nil, node.sourceStrokeIds.isEmpty,
+                  node.frame.isValidLinkFrame, (node.rotationDegrees ?? 0) == 0,
+                  let targets = orderedMembers(of:id,in:scene,prefix:linkPrefix,count:1...20),
+                  !scene.links.contains(where:{ $0.kind == .parentChild && ($0.from == id || $0.to == id) })
+            else { throw Failure.unsupported }
+            for target in targets {
+                guard target.confidence == .confirmed, target.frame.isValidLinkFrame, target.hasValidRotation,
+                      members.insert(target.id).inserted,
+                      !scene.links.contains(where:{ $0.kind == .parentChild && ($0.from == target.id || $0.to == target.id) })
+                else { throw Failure.unsupported }
+            }
+            entries.append(.init(node:node,memberIDs:targets.map(\.id)))
+        }
+        guard owned.allSatisfy({ groups.contains($0.from) && $0.label.hasPrefix(linkPrefix) }) else { throw Failure.unsupported }
+        return entries
+    }
+
+    static func visibility(in scene: CanvasScene, opened: UUID? = nil) -> CanvasScene.Visibility {
+        let base = scene.visibility
+        guard let entries = try? entries(in:scene) else { return base }
+        var ids = base.nodeIDs
+        if let opened {
+            guard let group = entries.first(where:{ $0.node.id == opened && $0.node.isCollapsed == true }) else { return base }
+            ids.formIntersection(group.memberIDs)
+        } else {
+            for group in entries where group.node.isCollapsed == true { ids.subtract(group.memberIDs) }
+        }
+        return .init(nodeIDs:ids,
+                     linkIDs:Set(scene.links.filter { ids.contains($0.from) && ids.contains($0.to) && !$0.label.hasPrefix(linkPrefix) }.map(\.id)),
+                     annotationIDs:Set(scene.annotations.filter { $0.nodeId.map(ids.contains) == true && $0.author != author }.map(\.id)))
+    }
+}
+
 struct CanvasLinkAnchor: Codable, Equatable {
     enum Side: String, Codable, CaseIterable { case top, right, bottom, left }
     var side: Side
@@ -1698,7 +1778,8 @@ struct CanvasScene: Codable, Equatable {
     }
 
     func canToggleChildren(of id: UUID) -> Bool {
-        nodes.contains { $0.id == id && $0.isCollapsed == true } ||
+        guard !annotations.contains(where:{ $0.nodeId == id && $0.author.hasPrefix("ccr.sill.group/") }) else { return false }
+        return nodes.contains { $0.id == id && $0.isCollapsed == true } ||
             links.contains { link in
                 link.kind == .parentChild && link.from == id && link.to != id &&
                     nodes.contains { $0.id == link.to }
@@ -1736,7 +1817,10 @@ struct CanvasScene: Codable, Equatable {
     mutating func connect(_ from: UUID, to: UUID, label: String = "") -> Bool {
         guard from != to, nodes.contains(where: { $0.id == from }),
               nodes.contains(where: { $0.id == to }) else { return false }
-        links.append(CanvasLink(id: UUID(), from: from, to: to, label: label))
+        let link = CanvasLink(id:UUID(),from:from,to:to,label:label)
+        var next = self; next.links.append(link)
+        guard (try? CanvasGroup.entries(in:next)) != nil else { return false }
+        links.append(link)
         revision += 1
         return true
     }
@@ -1744,6 +1828,8 @@ struct CanvasScene: Codable, Equatable {
     mutating func connectAsChild(parent: UUID, child: UUID, label: String = "") -> Bool {
         let link = CanvasLink(id: UUID(), from: parent, to: child, label: label, kind: .parentChild)
         guard Self.validHierarchy(links + [link], nodeIds: Set(nodes.map(\.id))) else { return false }
+        var next = self; next.links.append(link)
+        guard (try? CanvasGroup.entries(in:next)) != nil else { return false }
         links.append(link)
         revision += 1
         return true
@@ -1822,6 +1908,8 @@ struct CanvasScene: Codable, Equatable {
             nextLinks[index] = value
         }
         guard Self.validHierarchy(nextLinks,nodeIds:ids) else { return false }
+        var next = self; next.nodes = nextNodes; next.links = nextLinks
+        guard (try? CanvasGroup.entries(in:next)) != nil else { return false }
         nodes = nextNodes
         links = nextLinks
         revision += 1
@@ -1910,7 +1998,8 @@ struct CanvasScene: Codable, Equatable {
         guard next.links.allSatisfy({ $0.from != $0.to && availableIds.contains($0.from) &&
                   availableIds.contains($0.to) && $0.hasValidAnchors }),
               proposedLinks.allSatisfy({ next.linkEndpoints($0) != nil }),
-              Self.validHierarchy(next.links,nodeIds:availableIds) else { return false }
+              Self.validHierarchy(next.links,nodeIds:availableIds),
+              (try? CanvasGroup.entries(in:next)) != nil else { return false }
         next.revision = revision + 1
         self = next
         return true
@@ -2092,7 +2181,7 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
                 return String(value)
             }.joined()
         }
-        let visible = scene.visibility
+        let visible = CanvasGroup.visibility(in:scene)
         nodes = scene.nodes.filter { visible.nodeIDs.contains($0.id) }.map {
             Node(diagramID:diagramID($0.id),id:$0.id,text:$0.text,kind:$0.kind)
         }

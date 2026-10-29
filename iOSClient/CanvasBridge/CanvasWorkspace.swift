@@ -515,6 +515,7 @@ struct CanvasWorkspace: View {
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
             foldButton
             CanvasCardMergeMenu(store:store)
+            CanvasGroupMenu(store:store)
             CanvasCardTagsMenu(store:store)
             if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
@@ -1819,6 +1820,7 @@ struct CanvasWorkspace: View {
     }
 
     private var canvas: some View {
+        let groupOwner = store.groupCommandOwner
         let visible = store.cardTagVisibility
         let displayed = store.displayedScene
         let annotationFrames = displayed.annotationFrames
@@ -1837,6 +1839,7 @@ struct CanvasWorkspace: View {
                     annotationView(note,frame:annotationFrames[note.id]).accessibilityHidden(diagramMode == .diagram)
                 }
                 if store.mode == .select, let id = store.selectedNode, visible.nodeIDs.contains(id),
+                   !store.groups.contains(where:{ $0.node.id == id }),
                    let node = store.scene.nodes.first(where:{ $0.id == id }),
                    let shown = displayed.nodes.first(where:{ $0.id == id }),
                    let corner = shown.scenePoint(.init(x:shown.frame.x + shown.frame.width,y:shown.frame.y + shown.frame.height)),
@@ -1867,6 +1870,14 @@ struct CanvasWorkspace: View {
             .offset(store.pan)
         }
         .clipped()
+        .overlay(alignment:.topLeading) {
+            if let id = store.openedGroupID, let group = store.groups.first(where:{ $0.node.id == id }) {
+                HStack {
+                    Button("전체 지도로 돌아가기") { store.leaveGroup(owner:groupOwner) }
+                    Text("하위 지도 · \(group.node.text) · 같은 원본 획 바탕").font(.caption)
+                }.padding(8).background(.regularMaterial)
+            } else if let error = store.groupReadError { Text(error).padding(8).background(.regularMaterial) }
+        }
         .contentShape(Rectangle())
         .allowsHitTesting(!store.documentEditingBlocked)
         .background(Color(uiColor:.secondarySystemBackground))
@@ -1883,7 +1894,7 @@ struct CanvasWorkspace: View {
                 store.selectedNode = id
                 inspectorOpen = true
             },onError:{ if owner.map(store.document.accepts) == true { store.status = $0 } })
-            .id(store.isDocumentSource ? "\(store.document.id):\(store.document.pageEpoch)" : store.scene.id.uuidString)
+            .id((store.isDocumentSource ? "\(store.document.id):\(store.document.pageEpoch)" : store.scene.id.uuidString) + ":group:\(store.groupCommandOwner.view)")
         }.padding(8)
     }
 

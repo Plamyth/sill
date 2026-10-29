@@ -12,6 +12,18 @@ import AppKit
         setbuf(stdout, nil)
         guard case .isolated(let context) = CanvasRuntime.launch else { fatalError("isolated runtime required") }
         let output = URL(fileURLWithPath:CommandLine.arguments[1],isDirectory:true)
+        if CommandLine.arguments.contains("--group-submap") {
+            try await checkGroups(output:output)
+            return
+        }
+        if CommandLine.arguments.contains("--group-submap-reopen") {
+            try checkGroupsReopen(output:output)
+            return
+        }
+        if CommandLine.arguments.contains("--group-submap-document") {
+            try await checkGroupsDocument(output:output)
+            return
+        }
         let sceneURL = try CanvasRuntime.stateURL(.scene)
         let state = sceneURL.deletingLastPathComponent()
         let folder = state.appendingPathComponent("selected-files",isDirectory:true)
