@@ -1,0 +1,36 @@
+{
+  "method": "GET",
+  "path": "/vault/canvas/capabilities",
+  "status": 200,
+  "request": null,
+  "response": {
+    "schema": "ccr.canvas-capabilities/v1",
+    "sceneSchemaVersions": [
+      1,
+      2,
+      3
+    ],
+    "nodeKinds": [
+      "note",
+      "box",
+      "ellipse",
+      "line"
+    ],
+    "diagramProjection": "ccr.diagram-shapes/v1",
+    "document": {
+      "schema": "ccr.vault-document/v1",
+      "format": "ccr.canvas-document",
+      "versions": [
+        1
+      ],
+      "wholeDocument": true,
+      "explicitConflictResolution": true,
+      "maxDocumentJSONBytes": 16777216,
+      "maxPageCount": 128,
+      "maxPreviewTotalBytes": 33554432,
+      "maxRequestBytes": 67139536
+    }
+  },
+  "responseJSONBase64": "eyJzY2hlbWEiOiJjY3IuY2FudmFzLWNhcGFiaWxpdGllcy92MSIsInNjZW5lU2NoZW1hVmVyc2lvbnMiOlsxLDIsM10sIm5vZGVLaW5kcyI6WyJub3RlIiwiYm94IiwiZWxsaXBzZSIsImxpbmUiXSwiZGlhZ3JhbVByb2plY3Rpb24iOiJjY3IuZGlhZ3JhbS1zaGFwZXMvdjEiLCJkb2N1bWVudCI6eyJzY2hlbWEiOiJjY3IudmF1bHQtZG9jdW1lbnQvdjEiLCJmb3JtYXQiOiJjY3IuY2FudmFzLWRvY3VtZW50IiwidmVyc2lvbnMiOlsxXSwid2hvbGVEb2N1bWVudCI6dHJ1ZSwiZXhwbGljaXRDb25mbGljdFJlc29sdXRpb24iOnRydWUsIm1heERvY3VtZW50SlNPTkJ5dGVzIjoxNjc3NzIxNiwibWF4UGFnZUNvdW50IjoxMjgsIm1heFByZXZpZXdUb3RhbEJ5dGVzIjozMzU1NDQzMiwibWF4UmVxdWVzdEJ5dGVzIjo2NzEzOTUzNn19",
+  "responseSha256": "02ae24c4d79c5c6f92a056a1d107b7e6effc325f4069a815df6413d66c5bb97b"
+}
