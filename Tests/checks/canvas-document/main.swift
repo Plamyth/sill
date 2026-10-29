@@ -131,10 +131,11 @@ import AppKit
         let h2 = try Data(contentsOf:racePointer)
         try h1.write(to:racePointer)
         let nonCooperator = CanvasDocumentFiles(folder:raceFolder,requiresScope:false,hooks:.init(beforeExchange:{ try h2.write(to:racePointer) }))
-        refusesFile(.publicationUnconfirmed,"CAS 확인 직후 외부 head 교환 경합 탐지") { _ = try nonCooperator.save(document,previews:previews,expected:r1.token) }
+        // 실제 변경 저장으로 head 교환에 진입한다. 동일 문서 저장은 새 no-op 경로의 검사 대상이다.
+        refusesFile(.publicationUnconfirmed,"CAS 확인 직후 외부 head 교환 경합 탐지") { _ = try nonCooperator.save(external,previews:previews,expected:r1.token) }
         let raceRead = try race.load(document.id)
         let stages = try fm.contentsOfDirectory(at:raceDir,includingPropertiesForKeys:nil).filter { $0.lastPathComponent.hasPrefix("head-") }
-        check(raceRead.publicationPending && raceRead.document == document,"경합 뒤 원자적 전체 제안본 유지와 미확인 barrier")
+        check(raceRead.publicationPending && raceRead.document == external,"경합 뒤 원자적 전체 제안본 유지와 미확인 barrier")
         check(try stages.contains { try Data(contentsOf:$0) == h2 },"비협력 외부 head도 별도 보존하고 자동 rollback하지 않음")
         print("CANVAS_DOCUMENT_OK \(count)")
     }
