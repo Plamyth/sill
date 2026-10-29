@@ -20,6 +20,7 @@ if not any(parent.exists() and parent.samefile(archive['path']) for parent in [o
 output.mkdir(parents=True, exist_ok=True)
 sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            root / 'iOSClient/CanvasBridge/VaultPDFExcerpt.swift',
+           root / 'iOSClient/CanvasBridge/VaultPDFViewState.swift',
            root / 'iOSClient/CanvasBridge/CanvasCardMerge.swift',
            root / 'iOSClient/CanvasBridge/CanvasCardTags.swift',
            root / 'iOSClient/CanvasBridge/CanvasStore.swift',
@@ -43,6 +44,7 @@ sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
            Path(__file__).with_name('PDFExcerptFenceChecks.swift'),
            Path(__file__).with_name('PDFCardFieldChecks.swift'),
            root / 'Tests/checks/pdf-pages-rotation/PagesChecks.swift',
+           root / 'Tests/checks/pdf-view-state/ViewStateChecks.swift',
            Path(__file__).with_name('main.swift')]
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 ios = sorted((root / 'iOSClient/CanvasBridge').glob('*.swift')) + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
