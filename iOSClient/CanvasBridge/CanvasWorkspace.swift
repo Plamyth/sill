@@ -191,6 +191,10 @@ struct CanvasWorkspace: View {
                 .coordinateSpace(name:"voicePIPContainer")
                 .clipped()
                 .onChange(of:geometry.size) { _,_ in pipDragOrigin = nil }
+                .onChange(of:handwritingSearchSurface(in:geometry.size),initial:true) { _,size in
+                    store.setHandwritingSearchSurface(size)
+                }
+                .onDisappear { store.setHandwritingSearchSurface(nil) }
             }
             Text(store.sceneRecoveryNotice.isEmpty ? store.status : store.sceneRecoveryNotice)
                 .font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
@@ -291,9 +295,9 @@ struct CanvasWorkspace: View {
                 let query = handwritingQuery
                 Task { await store.searchHandwriting(query) }
             }.disabled(handwritingQuery.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
-            Button("취소", role:.cancel) { }
+            Button("취소", role:.cancel) { store.cancelHandwritingSearch() }
         } message: {
-            Text("원본 획에서 일치하는 손글씨를 찾아 영역으로 선택합니다.")
+            Text("현재 페이지의 손글씨를 찾아 선택하고 첫 결과 위치로 이동합니다.")
         }
         .fileImporter(isPresented:$workspacePickerOpen,allowedContentTypes:[.folder]) { result in
             workspacePickerOpen = false
@@ -516,7 +520,9 @@ struct CanvasWorkspace: View {
                 .accessibilityIdentifier("canvasProposeInkMath")
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
-            Button("손글씨 찾기",systemImage:"magnifyingglass") { handwritingSearchOpen = true }
+            Button("손글씨 찾기",systemImage:"magnifyingglass") {
+                store.cancelHandwritingSearch(); handwritingSearchOpen = true
+            }
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
                 .disabled(store.inkSelection.isEmpty)
@@ -556,11 +562,12 @@ struct CanvasWorkspace: View {
         .frame(minWidth:44,minHeight:44)
     }
 
-    private var documentUIBusy: Bool {
+    private var documentUIBusy: Bool { handwritingSearchOpen || otherDocumentUIBusy }
+    private var otherDocumentUIBusy: Bool {
         inspectorOpen || commentEditorOpen || pendingNodeEdit != nil || pendingCommentEdit != nil ||
         dictationOpen || dictation.isListening || dictation.isStarting || dictation.isFinalizing || vaultOpen || pdfLoading || expandedCard != nil ||
         connectionOpen || workspacePickerOpen || workspaceDocumentsOpen || importOpen || exportOpen ||
-        renderedExport.isBusy || handwritingSearchOpen || proposalInputBusy ||
+        renderedExport.isBusy || proposalInputBusy ||
         inkSpacingOpen || inkTextDeleteOpen || canvasConflictOpen || canvasEditorSheet != nil ||
         pageManagerOpen || documentConflictOpen || documentConflictConfirm
     }
@@ -1967,6 +1974,12 @@ struct CanvasWorkspace: View {
             .frame(width:cardSize.width,height:cardSize.height)
             .contentShape(RoundedRectangle(cornerRadius:16))
             .offset(x:origin.x,y:origin.y)
+    }
+
+    private func handwritingSearchSurface(in size: CGSize) -> CGSize? {
+        guard scenePhase == .active, diagramMode != .diagram,
+              !otherDocumentUIBusy else { return nil }
+        return CGSize(width:diagramMode == .split ? max(0,(size.width - 1) / 2) : size.width,height:size.height)
     }
 
     private var canvas: some View {

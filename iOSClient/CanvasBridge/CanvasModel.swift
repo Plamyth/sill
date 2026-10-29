@@ -469,6 +469,21 @@ struct CanvasViewport: Equatable {
     var zoom = 1.0
     var pan = CGSize.zero
 
+    func revealing(_ bounds: CGRect, in size: CGSize) -> CanvasViewport? {
+        guard [bounds.minX,bounds.minY,bounds.width,bounds.height,size.width,size.height,
+               CGFloat(zoom),pan.width,pan.height].allSatisfy(\.isFinite),
+              bounds.width > 0, bounds.height > 0, size.width > 0, size.height > 0,
+              (0.5...3).contains(zoom) else { return nil }
+        let visible = CGRect(origin:.zero,size:size)
+        let shown = CGRect(x:bounds.minX * zoom + pan.width,y:bounds.minY * zoom + pan.height,
+                           width:bounds.width * zoom,height:bounds.height * zoom)
+        if visible.insetBy(dx:min(24,size.width / 4),dy:min(24,size.height / 4)).contains(shown) { return self }
+        let next = CanvasViewport(zoom:zoom,pan:CGSize(width:size.width / 2 - bounds.midX * zoom,
+                                                      height:size.height / 2 - bounds.midY * zoom))
+        guard next.pan.width.isFinite, next.pan.height.isFinite else { return nil }
+        return next
+    }
+
     func translated(by shift: CGSize) -> CanvasViewport {
         CanvasViewport(zoom: zoom,
                        pan: CGSize(width: pan.width + shift.width, height: pan.height + shift.height))

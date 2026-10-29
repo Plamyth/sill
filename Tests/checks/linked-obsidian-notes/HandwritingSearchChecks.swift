@@ -30,6 +30,7 @@ import PencilKit
         s.drawing = PKDrawing()
         s.updateDrawing(ink)
         s.mode = .pen
+        s.setHandwritingSearchSurface(CGSize(width:800,height:600))
         return s
     }
     let s = store(), before = s.scene

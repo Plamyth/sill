@@ -769,7 +769,23 @@ final class CanvasStore: ObservableObject {
     @Published var sendBusy = false
     private var outboxReadable = true
     @Published var packet: PacketReceipt?
-    @Published var viewport = CanvasViewport()
+    @Published var viewport = CanvasViewport() {
+        didSet { if viewport != oldValue { cancelHandwritingSearch() } }
+    }
+    private var handwritingSearchSurface: CGSize?
+    func setHandwritingSearchSurface(_ size: CGSize?) {
+        let valid = size.flatMap { value in
+            value.width.isFinite && value.height.isFinite && value.width > 0 && value.height > 0 ? value : nil
+        }
+        guard handwritingSearchSurface != valid else { return }
+        handwritingSearchSurface = valid
+        cancelHandwritingSearch()
+    }
+    private var handwritingSearchRequest: UUID?
+    func cancelHandwritingSearch() {
+        if let request = handwritingSearchRequest, handwritingRequest == request { handwritingRequest = nil }
+        handwritingSearchRequest = nil
+    }
     var zoom: Double { viewport.zoom }
     var pan: CGSize { viewport.pan }
     let inkHistory = CanvasInkHistory()
@@ -3850,32 +3866,52 @@ final class CanvasStore: ObservableObject {
         packet = nil
     }
 
-    func searchHandwriting(_ query: String, search: (PKDrawing, String) async -> [Set<UUID>] = { drawing, query in
+    func searchHandwriting(_ query: String, search: (PKDrawing, String) async throws -> [Set<UUID>] = { drawing, query in
         let recognizer = PKStrokeRecognizer()
         await recognizer.updateDrawing(drawing)
         return await recognizer.search(query).map(\.strokes)
     }) async {
+        cancelHandwritingSearch()
         handwritingRequest = nil
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { status = "찾을 글자를 입력하세요."; return }
         let source = drawing
         guard !source.strokes.isEmpty else { status = "검색할 획이 없습니다."; return }
-        guard !documentEditingBlocked else { return }
+        guard !documentEditingBlocked, !inkBusy else { return }
+        guard let surface = handwritingSearchSurface, openedGroupID == nil else {
+            status = "전체 원본 그림이 보이는 화면에서 검색하세요."; return
+        }
         let request = UUID()
         handwritingRequest = request
+        handwritingSearchRequest = request
         let owner = try? document.pageSnapshot()
-        let matches = await search(source, query)
-        guard owner.map(document.accepts) == true, handwritingRequest == request else { return }
-        handwritingRequest = nil
-        let validIDs = Set(source.strokes.map(\.id))
-        let validMatches = matches.map { $0.intersection(validIDs) }.filter { !$0.isEmpty }
-        guard !validMatches.isEmpty else {
-            status = "일치하는 손글씨를 찾지 못했습니다. 원본과 선택은 유지했습니다."
-            return
+        defer {
+            if handwritingRequest == request { handwritingRequest = nil }
+            if handwritingSearchRequest == request { handwritingSearchRequest = nil }
         }
-        mode = .lasso
-        setInkSelection(validMatches.reduce(into:Set<UUID>()) { $0.formUnion($1) })
-        status = "손글씨 검색 결과 \(validMatches.count)곳을 선택했습니다."
+        do {
+            let matches = try await search(source, query)
+            guard !Task.isCancelled, owner.map(document.accepts) == true, handwritingRequest == request,
+                  !documentEditingBlocked, !inkBusy, handwritingSearchSurface == surface, openedGroupID == nil else { return }
+            let validIDs = Set(source.strokes.map(\.id))
+            let validMatches = matches.map { $0.intersection(validIDs) }.filter { !$0.isEmpty }
+            guard let first = validMatches.first else {
+                status = "일치하는 손글씨를 찾지 못했습니다. 원본과 선택은 유지했습니다."; return
+            }
+            let bounds = PKDrawing(strokes:source.strokes.filter { first.contains($0.id) }).bounds
+            let page = CGRect(x:0,y:0,width:scene.width,height:scene.height)
+            guard [bounds.minX,bounds.minY,bounds.width,bounds.height].allSatisfy(\.isFinite),
+                  let next = viewport.revealing(bounds.intersection(page),in:surface) else {
+                status = "검색 결과의 표시 위치를 확인하지 못했습니다. 원본과 보기를 유지했습니다."; return
+            }
+            mode = .lasso
+            setInkSelection(validMatches.reduce(into:Set<UUID>()) { $0.formUnion($1) })
+            viewport = next
+            status = "손글씨 검색 결과 \(validMatches.count)곳을 선택하고 첫 결과 위치를 표시했습니다."
+        } catch {
+            guard !Task.isCancelled, owner.map(document.accepts) == true, handwritingRequest == request else { return }
+            status = "손글씨 검색을 마치지 못했습니다. 원본과 보기를 유지했습니다."
+        }
     }
 
     var proposalIsCurrent: Bool {
