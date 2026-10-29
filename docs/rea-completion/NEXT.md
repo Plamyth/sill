@@ -1,3 +1,15 @@
+# 다음 작업 — 현재 공식 f4의 구현을 유지한 후속 경계
+
+현재 공식은 `f4a00d0d146b900b10e186f189f5ddcdd452b09d` / tree `54bd85c28a6e8245a43d685a7400da5e0f577b53`다. 문서 WT 시작점은 공식cd5/tree5741ea4a이며 f09는 역사적 기준이다. 문서 정합성은 실제 제품 개발과 병렬인 작업이며 그 대체 완료가 아니다. 이미 있는 문서/Store/Files/태그/참조 병합·PDF·그룹/용지 경로를 다시 구현하지 않는다.
+
+1. **공식 페이지/PDF/그룹·용지 경로 유지.** cd5의 빈 페이지·순서/복제·PDF 보기/durable 복구·펜 schema 수리를 유지한다(R179/R183–R186/R192). 그룹1f59와 용지922의 개별 CLEAR뿐 아니라 부모 결합f4의 Ohm `SOURCE_CLEAR_SCOPED_GROUP_PAPER_COMPOSITION`도 수용됐고 공식ff/push/원격readback·sourceguard0까지 끝났다(R193–R195). 원앱 개별 미관측, 색상 인코딩·픽셀, 실제 입력/권한/FileProvider/기기 간극은 그대로 남는다.
+2. **EPUB 수리 CLEAR·HTTP evidence CLEAR와 결합 후보를 분리.** Nash는68b/treecee71266의 두P2 수리를 `SOURCE_CLEAR_SCOPED_EPUB_STORE_P2_REPAIR`로 닫았고(R197/R198/R200), Ohm은70b 실제HTTP100을 `EVIDENCE_CLEAR_SCOPED_EPUB_STORE_HTTP`로 수용했다(R199/R201). 결합 `1e4e9b67cb852288f31bf573a575daa1710d089a` / tree `c6af5777194cb1ba56dea6d95328be11a48eb03c`는 전체iOS27·표준source-repairs10이0이다(R202/R203). 부모가 현재 그룹/용지/EPUB whole Files·역수신·새Store 교차검사를 진행 중이며 아직 공식f4에 통합되지 않았다. 원19입력/원반례·확장10조건을 재사용한 검수를 전체기기·정상runtime 수용으로 바꾸지 않는다.
+3. **원래 목표와 설치 경계 유지.** 원앱·앵커·리플로·그룹·용지의 개별 미관측과385행/원ID·114그룹·지원 미확인32행을 보존한다. SDK/HTTP/source 판정을 기능 수나 원앱 완료로 합산하지 않는다. 실제 설치68은 그대로이며 signed74는 구source624/tree05d2249f의 미설치 로컬 후보(R181)다. 모든 whole/physical/runtime/testAccepted=false다.
+
+기존 Store HTTP79는 R175/R176의 scoped 판정이고, 실제 서버200 게시 후 ACK 유실은 R178에 대한 [R182 Nash 독립 판정](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-success200-ack-independent-review-20261029)까지 수용됐다. 이는 전체 source/현재 실행 앱/iPad 수용이 아니다. 원장의 R196은 f4 integrationObserved와 과거 held 시도 이력이며 **test-deploy-held**, f4 testDeployed/testAccepted/productionEligible 없음이다. 이 문서가 formal reconcile·listener·설치·기기·Host·GUI·서비스·사용자 질문·알림을 실행하지 않는다. 통합 변동은 부모가 exact 후속으로 기록한다.
+
+## 아래는 f09 시점의 NEXT 전체 원문 — 현재 착수 지시가 아닌 이력
+
 > 범위 안내: 아래 f09 진행표는 그 커밋 시점의 검증 기록입니다. 이후 공식 `5fcb42cc1a1430a64210dd5d89c930a61fd8a0da`에는 빈 페이지·순서 변경과 PDF 보기 저장·복구 수리가 통합됐습니다. 펜 설정을 가진 빈 페이지의 표현 버전 수리 `edba258141b67e5dee6bcc6bdcda08d6cdb6dca5`도 별도 소스 검수를 통과했습니다. 이 후속을 f09의 과거 후보 상태와 혼동하지 않습니다. 현재 원앱·기기 수용과 전체 완료는 여전히 별도이며, 그룹·EPUB는 각각의 정확 후속 판정을 따릅니다.
 
 # 다음 작업 — 공식 f09의 기존 구현을 유지한 후속 경계
