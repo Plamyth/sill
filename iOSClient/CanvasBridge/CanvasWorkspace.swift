@@ -165,6 +165,8 @@ struct CanvasWorkspace: View {
                 .font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
                 .padding(.horizontal,10).padding(.vertical,6)
                 .accessibilityIdentifier("canvasFilesStatus")
+            CanvasHierarchyPresentationPicker(store:store)
+            if !store.hierarchyOutlineVisible {
             Picker("그림판 보기",selection:$diagramMode) {
                 Text("원본 그림").tag(DiagramMode.original)
                 Text("다이어그램").tag(DiagramMode.diagram)
@@ -172,8 +174,12 @@ struct CanvasWorkspace: View {
             }
             .pickerStyle(.segmented).padding(.horizontal,10).padding(.vertical,6)
             .accessibilityIdentifier("canvasDiagramMode")
+            }
             GeometryReader { geometry in
                 ZStack(alignment:.topLeading) {
+                    if store.hierarchyOutlineVisible {
+                        CanvasHierarchyOutlineView(store:store)
+                    } else {
                     HStack(spacing:diagramMode == .split ? 1 : 0) {
                         canvas
                             .frame(width:diagramMode == .diagram ? 0 :
@@ -183,6 +189,7 @@ struct CanvasWorkspace: View {
                             .allowsHitTesting(diagramMode != .diagram)
                             .accessibilityHidden(diagramMode == .diagram)
                         if diagramMode != .original { diagram }
+                    }
                     }
                     if geometry.size.width >= 100 && geometry.size.height >= 100 {
                         voicePIP(in:geometry.size)
@@ -2620,6 +2627,71 @@ private struct CanvasNodeResizeHandle: View {
                 store.adjustNodeSize(node,sceneID:sceneID,by:.init(x:0,y:-20))
             }
             .accessibilityIdentifier("canvasNodeResize-\(node.id.uuidString)")
+    }
+}
+
+private struct CanvasHierarchyPresentationPicker: View {
+    @ObservedObject var store: CanvasStore
+    var body: some View {
+        let owner = store.hierarchyFocusOwner
+        HStack {
+            Button("지도 보기",systemImage:"point.3.connected.trianglepath.dotted") {
+                _ = store.setHierarchyOutlineVisible(false,owner:owner)
+            }.disabled(!store.hierarchyOutlineVisible || !store.hierarchyViewInputAllowed)
+            Button("개요 보기",systemImage:"list.bullet.indent") {
+                _ = store.setHierarchyOutlineVisible(true,owner:owner)
+            }.disabled(store.hierarchyOutlineVisible || !store.hierarchyViewInputAllowed)
+            Text(store.hierarchyOutlineVisible ? "같은 카드의 개요" : "같은 카드의 지도").font(.caption)
+        }.buttonStyle(.bordered).controlSize(.large)
+            .accessibilityIdentifier("canvasHierarchyPresentation")
+    }
+}
+
+private struct CanvasHierarchyOutlineView: View {
+    @ObservedObject var store: CanvasStore
+    var body: some View {
+        let owner = store.hierarchyFocusOwner
+        VStack(alignment:.leading,spacing:8) {
+            Text("개요 · 현재 초점·태그·열린 그룹 범위").font(.headline)
+            if !store.hierarchyPresentationNotice.isEmpty { Text(store.hierarchyPresentationNotice).font(.footnote) }
+            if let error = store.hierarchyOutlineError {
+                Text(error)
+                Button("원문을 유지하고 지도 보기로 돌아가기") { _ = store.setHierarchyOutlineVisible(false,owner:owner) }
+                    .frame(minHeight:44).disabled(!store.hierarchyViewInputAllowed)
+            } else {
+                if store.hierarchyOutlineRows.isEmpty { Text("현재 범위에 표시할 카드가 없습니다. 원문과 잉크는 지도에 보존됩니다.").font(.footnote) }
+                ScrollView {
+                    LazyVStack(alignment:.leading,spacing:4) {
+                        ForEach(store.hierarchyOutlineRows) { row in
+                            if let node = store.scene.nodes.first(where:{ $0.id == row.id }) {
+                                HStack(spacing:6) {
+                                    if row.canFold {
+                                        Button { _ = store.toggleHierarchyOutlineRow(row.id,owner:owner) } label: {
+                                            Image(systemName:row.collapsed ? "chevron.right" : "chevron.down").frame(width:44,height:44)
+                                        }.accessibilityLabel((row.isGroup ? "그룹" : "하위 요소") + (row.collapsed ? " 펼치기" : " 접기"))
+                                    } else { Color.clear.frame(width:44,height:44).accessibilityHidden(true) }
+                                    Button { _ = store.selectHierarchyOutlineRow(row.id,owner:owner) } label: {
+                                        VStack(alignment:.leading) {
+                                            if row.isGroup { Text("그룹 · 기존 순서").font(.caption).foregroundStyle(.secondary) }
+                                            Text(node.text.isEmpty ? "이름 없는 요소" : node.text).lineLimit(2)
+                                            if let reference = node.vaultNote { Text(reference.path).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                                        }.frame(maxWidth:.infinity,minHeight:44,alignment:.leading)
+                                    }.accessibilityAddTraits(store.selectedNode == row.id ? .isSelected : [])
+                                }
+                                .padding(.leading,CGFloat(min(row.depth,12))*18)
+                                .padding(.trailing,8)
+                                .background(store.selectedNode == row.id ? Color.accentColor.opacity(0.12) : Color.clear)
+                                .accessibilityValue("계층 \(row.depth), " + (row.collapsed ? "접힘" : "펼침"))
+                                .accessibilityIdentifier("canvasOutlineRow-\(row.id.uuidString.lowercased())")
+                                .disabled(!store.hierarchyViewInputAllowed)
+                            }
+                        }
+                    }
+                }
+                Text("보기와 선택은 같은 카드 ID를 사용합니다. 접기·펼치기만 기존 원문의 접힘 상태와 Undo에 기록됩니다. 자유 잉크는 지도 보기에서 표시합니다.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }.padding().frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
     }
 }
 

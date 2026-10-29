@@ -939,7 +939,9 @@ final class CanvasStore: ObservableObject {
         } catch { status = "그룹을 만들지 않았습니다. \(error.localizedDescription)"; return false }
     }
     @discardableResult func toggleGroup(_ expected: CanvasNode, owner: GroupOwner) -> Bool {
-        guard owner == groupCommandOwner, groupInputAllowed, groupDraft == nil else { return false }
+        guard owner == groupCommandOwner,
+              (groupInputAllowed || (hierarchyOutlineVisible && hierarchyViewInputAllowed && groupReadError == nil)),
+              groupDraft == nil else { return false }
         do {
             let before = scene, next = try CanvasGroup.toggling(expected,in:scene)
             try persistScene(next); scene = next; recordGraphEdit(before:before,persistHistory:true)
@@ -1061,7 +1063,7 @@ final class CanvasStore: ObservableObject {
             try eraserDefaults.set(text,forKey:Self.hierarchyFocusKey)
             guard eraserDefaults.string(forKey:Self.hierarchyFocusKey) == text else { throw CanvasDocument.Failure.stale }
             hierarchyFocusPreferences = next; hierarchyFocusRaw = text; hierarchyFocusRootID = root
-            inkHistory.setFocusSuspended(root != nil)
+            inkHistory.setFocusSuspended(root != nil || hierarchyOutlineVisible)
             groupViewGeneration &+= 1
             clearLinkSelection(); clearPendingLink(); setInkSelection([])
             if let root { selectedNode = root }
@@ -1101,7 +1103,7 @@ final class CanvasStore: ObservableObject {
             hierarchyFocusRootID = nil; groupViewGeneration &+= 1
             hierarchyFocusNotice = "초점 카드가 없거나 계층을 확인할 수 없습니다. 원문·방문 이력을 보존하고 전체 보기를 표시합니다."
         }
-        inkHistory.setFocusSuspended(hierarchyFocusRootID != nil)
+        inkHistory.setFocusSuspended(hierarchyFocusRootID != nil || hierarchyOutlineVisible)
     }
     // Read-only projection; only the canonical document/scene is ever persisted or sent.
     private var hierarchyFocusProjection: CanvasScene {
@@ -1111,6 +1113,108 @@ final class CanvasStore: ObservableObject {
         projection.links.removeAll { !ids.contains($0.from) || !ids.contains($0.to) }
         projection.annotations.removeAll { $0.nodeId.map(ids.contains) != true }
         return projection
+    }
+
+    struct HierarchyOutlineRow: Identifiable, Equatable {
+        let id: UUID
+        let depth: Int
+        let isGroup: Bool
+        let canFold: Bool
+        let collapsed: Bool
+    }
+    private static let hierarchyPresentationKey = "canvas.hierarchyPresentation.v1"
+    @Published private(set) var hierarchyOutlineVisible = false
+    @Published private(set) var hierarchyPresentationNotice = ""
+    private var hierarchyPresentationRaw: String?
+    private var hierarchyPresentationReadable = true
+    var hierarchyViewInputAllowed: Bool {
+        canApplyReconciledCanvas && nodeResizeDrag == nil && nodeRotationDrag == nil && endpointDrag == nil && linkStart == nil &&
+        groupDraft == nil && cardMergeDraft == nil && cardTagEditor == nil
+    }
+    private func makeHierarchyOutlineRows() throws -> [HierarchyOutlineRow] {
+        guard !scene.nodes.isEmpty || scene.links.isEmpty else { throw CanvasDocument.Failure.stale }
+        if let first = scene.nodes.first { _ = try hierarchyFocusScope(first.id) }
+        let entries = try CanvasGroup.entries(in:scene), visible = cardTagVisibility.nodeIDs
+        let order = cardTagDisplayScene.nodes.map(\.id)
+        var parents = [UUID:UUID](), children = [UUID:[UUID]]()
+        // Temporary display indexes; canonical relations and group ownership are unchanged.
+        for link in scene.links where link.kind == .parentChild {
+            parents[link.to] = link.from; children[link.from,default:[]].append(link.to)
+        }
+        for group in entries {
+            children[group.node.id] = group.memberIDs
+            for id in group.memberIDs { parents[id] = group.node.id }
+        }
+        let groups = Set(entries.map { $0.node.id }), nodes = Dictionary(uniqueKeysWithValues:scene.nodes.map { ($0.id,$0) })
+        let roots = order.filter { parents[$0].map { !visible.contains($0) } ?? true }
+        var pending = roots.reversed().map { ($0,0) }, result = [HierarchyOutlineRow](), seen = Set<UUID>()
+        while let (id,depth) = pending.popLast() {
+            guard visible.contains(id), seen.insert(id).inserted, let node = nodes[id] else { throw CanvasDocument.Failure.stale }
+            result.append(.init(id:id,depth:depth,isGroup:groups.contains(id),
+                canFold:groups.contains(id) || scene.canToggleChildren(of:id),collapsed:node.isCollapsed == true))
+            pending.append(contentsOf:children[id,default:[]].filter(visible.contains).reversed().map { ($0,depth+1) })
+        }
+        guard seen == visible else { throw CanvasDocument.Failure.stale }
+        return result
+    }
+    var hierarchyOutlineRows: [HierarchyOutlineRow] { (try? makeHierarchyOutlineRows()) ?? [] }
+    var hierarchyOutlineError: String? {
+        do { _ = try makeHierarchyOutlineRows(); return nil }
+        catch { return "계층이나 그룹을 확인할 수 없어 개요를 표시하지 않았습니다. 원문을 보존하며 지도 보기로 돌아갈 수 있습니다." }
+    }
+    @discardableResult func setHierarchyOutlineVisible(_ visible: Bool, owner: HierarchyFocusOwner) -> Bool {
+        guard owner == hierarchyFocusOwner, hierarchyViewInputAllowed, hierarchyPresentationReadable else { return false }
+        do {
+            if visible { _ = try makeHierarchyOutlineRows() }
+            let current = eraserDefaults.object(forKey:Self.hierarchyPresentationKey)
+            if let expected = hierarchyPresentationRaw {
+                guard let text = current as? String, text.utf8.elementsEqual(expected.utf8) else { throw CanvasDocument.Failure.stale }
+            } else { guard current == nil else { throw CanvasDocument.Failure.stale } }
+            let value = visible ? "outline" : "map"
+            try eraserDefaults.set(value,forKey:Self.hierarchyPresentationKey)
+            guard eraserDefaults.string(forKey:Self.hierarchyPresentationKey) == value else { throw CanvasDocument.Failure.stale }
+            hierarchyPresentationRaw = value; hierarchyOutlineVisible = visible
+            groupViewGeneration &+= 1; clearLinkSelection(); setInkSelection([])
+            inkHistory.setFocusSuspended(hierarchyFocusRootID != nil || visible)
+            hierarchyPresentationNotice = ""
+            return true
+        } catch {
+            hierarchyPresentationNotice = "보기를 바꾸지 않았습니다. 원문과 기존 보기 설정을 보존합니다. " + error.localizedDescription
+            return false
+        }
+    }
+    private func restoreHierarchyPresentation() {
+        guard let value = eraserDefaults.object(forKey:Self.hierarchyPresentationKey) else { return }
+        guard let text = value as? String, ["map","outline"].contains(text) else {
+            hierarchyPresentationReadable = false; hierarchyPresentationNotice = "보기 환경설정을 확인하지 못했습니다. 원문과 설정을 보존하고 지도를 표시합니다."
+            return
+        }
+        hierarchyPresentationRaw = text; hierarchyOutlineVisible = text == "outline"
+        inkHistory.setFocusSuspended(hierarchyFocusRootID != nil || hierarchyOutlineVisible)
+    }
+    @discardableResult func selectHierarchyOutlineRow(_ id: UUID, owner: HierarchyFocusOwner) -> Bool {
+        guard hierarchyOutlineVisible, owner == hierarchyFocusOwner, hierarchyViewInputAllowed,
+              hierarchyOutlineRows.contains(where:{ $0.id == id }) else { return false }
+        select(id); return selectedNode == id
+    }
+    @discardableResult func toggleHierarchyOutlineRow(_ id: UUID, owner: HierarchyFocusOwner) -> Bool {
+        guard hierarchyOutlineVisible, owner == hierarchyFocusOwner, hierarchyViewInputAllowed,
+              let row = hierarchyOutlineRows.first(where:{ $0.id == id }), row.canFold,
+              let node = scene.nodes.first(where:{ $0.id == id }) else { return false }
+        if row.isGroup { return toggleGroup(node,owner:groupCommandOwner) }
+        return toggleHierarchyChildren(node,owner:owner)
+    }
+    @discardableResult private func toggleHierarchyChildren(_ expected: CanvasNode, owner: HierarchyFocusOwner) -> Bool {
+        guard owner == hierarchyFocusOwner, hierarchyViewInputAllowed, scene.revision < Int.max,
+              cardTagVisibility.nodeIDs.contains(expected.id),
+              scene.nodes.contains(where:{ CanvasScene.sameNode($0,expected) }), scene.canToggleChildren(of:expected.id) else { return false }
+        do {
+            let before = scene; var next = scene
+            guard next.toggleChildren(of:expected.id) else { return false }
+            try persistScene(next); scene = next; recordGraphEdit(before:before,persistHistory:true)
+            status = next.nodes.first(where:{ $0.id == expected.id })?.isCollapsed == true ? "하위 요소를 접었습니다. 두 보기가 같은 원문 상태를 사용합니다." : "하위 요소를 펼쳤습니다. 두 보기가 같은 원문 상태를 사용합니다."
+            return true
+        } catch { status = "접기 상태를 저장하지 못했습니다. 원문과 Undo를 보존합니다. " + error.localizedDescription; return false }
     }
 
     @Published private(set) var cardTagFilter: String?
@@ -1409,12 +1513,21 @@ final class CanvasStore: ObservableObject {
         return finishNodeRotation(owner:owner)
     }
 
+    private func hierarchyFoldHistory(_ before: CanvasScene, _ after: CanvasScene) -> Bool {
+        guard before.nodes.map(\.id) == after.nodes.map(\.id) else { return false }
+        var restored = after
+        restored.revision = before.revision
+        for index in restored.nodes.indices { restored.nodes[index].isCollapsed = before.nodes[index].isCollapsed }
+        guard let a = try? CanvasFileWorkspace.bytes(before), let b = try? CanvasFileWorkspace.bytes(restored) else { return false }
+        return a == b
+    }
     var canUndoGraph: Bool {
         guard !documentEditingBlocked else { return false }
         guard let undo = graphUndo, scene.id == undo.after.id else { return false }
         if graphRequiresPersistence {
             guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
-                  (CanvasPagePaper.isOnlyChange(from:undo.before,to:undo.after) ? canTransitionDocument : cardMergeInputAllowed),
+                  (CanvasPagePaper.isOnlyChange(from:undo.before,to:undo.after) ? canTransitionDocument :
+                    (cardMergeInputAllowed || (hierarchyViewInputAllowed && hierarchyFoldHistory(undo.before,undo.after)))),
                   cardMergeDraft == nil else { return false }
         }
         if undo.before.drawingBase64 != undo.after.drawingBase64 {
@@ -1458,7 +1571,8 @@ final class CanvasStore: ObservableObject {
         guard let redo = graphRedo, scene.id == redo.before.id else { return false }
         if graphRequiresPersistence {
             guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
-                  (CanvasPagePaper.isOnlyChange(from:redo.before,to:redo.after) ? canTransitionDocument : cardMergeInputAllowed),
+                  (CanvasPagePaper.isOnlyChange(from:redo.before,to:redo.after) ? canTransitionDocument :
+                    (cardMergeInputAllowed || (hierarchyViewInputAllowed && hierarchyFoldHistory(redo.before,redo.after)))),
                   cardMergeDraft == nil else { return false }
         }
         if redo.before.drawingBase64 != redo.after.drawingBase64 {
@@ -3588,6 +3702,7 @@ final class CanvasStore: ObservableObject {
         restoreDocumentSource()
         if !documentSourcePresent { restoreFileWorkspace() }
         restoreHierarchyFocusPreferences()
+        restoreHierarchyPresentation()
     }
 
     private static func outboxURL() throws -> URL {
@@ -3719,7 +3834,7 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func updateDrawing(_ next: PKDrawing) -> Bool {
-        guard !documentEditingBlocked, hierarchyFocusRootID == nil else { return false }
+        guard !documentEditingBlocked, hierarchyFocusRootID == nil, !hierarchyOutlineVisible else { return false }
         guard drawing != next else { return true }
         let nativeBytes = next.dataRepresentation()
         guard let authoritative = try? PKDrawing(data: nativeBytes) else {
@@ -3823,13 +3938,8 @@ final class CanvasStore: ObservableObject {
     }
 
     func toggleSelectedChildren() {
-        guard !documentEditingBlocked else { return }
-        clearPendingLink()
-        guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode),
-              scene.canToggleChildren(of:selectedNode),
-              scene.toggleChildren(of: selectedNode) else { return }
-        let collapsed = scene.nodes.first { $0.id == selectedNode }?.isCollapsed == true
-        status = collapsed ? "하위 요소를 접었습니다. 원본 데이터는 보존됩니다." : "하위 요소를 펼쳤습니다."
+        guard let id = selectedNode, let node = scene.nodes.first(where:{ $0.id == id }) else { return }
+        _ = toggleHierarchyChildren(node,owner:hierarchyFocusOwner)
     }
 
     func unlinkFromParent() {
@@ -3852,7 +3962,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func setInkSelection(_ ids: Set<UUID>) {
-        guard hierarchyFocusRootID == nil || ids.isEmpty else { return }
+        guard (hierarchyFocusRootID == nil && !hierarchyOutlineVisible) || ids.isEmpty else { return }
         let next = ids.intersection(drawing.strokes.map(\.id))
         guard next != inkSelection else { return }
         pendingInkTextEditing?.invalidatePending()
@@ -3954,7 +4064,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private var inkTextEditAllowed: Bool {
-        hierarchyFocusRootID == nil && !documentEditingBlocked && !inkMathInputBusy && sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
+        hierarchyFocusRootID == nil && !hierarchyOutlineVisible && !documentEditingBlocked && !inkMathInputBusy && sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
             !fileSaveBusy && fileWorkspaceState != .blocked
     }
 
