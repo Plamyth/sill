@@ -1,3 +1,20 @@
+# 현재 상태 정합성 — 공식 f4와 검수·실행·설치의 구분
+
+현재 공식은 **`f4a00d0d146b900b10e186f189f5ddcdd452b09d` / tree `54bd85c28a6e8245a43d685a7400da5e0f577b53`**다. 이 문서 WT는 공식cd5 `cd5e79105904e25438c50a53b845c2d17a2b6b3e` / tree `5741ea4adac55e33b951c160462be7aaede4021b`에서 시작했고 작업 중 전달된 후속을 반영했다. f09와cd5는 각 시점의 역사적 기준이다. 제품 개발·검사·공식 통합·설치 수용을 합산하지 않는다.
+
+| 구분 | 확인한 상태와 근거 | 남은 경계 |
+| --- | --- | --- |
+| 공식 소스 | cd5의 페이지·PDF 보기/복구·빈 페이지 pen schema 수리를 보존한다. 그룹1f59·용지922의 개별 CLEAR 뒤 Ohm의 **exact f4 결합 SOURCE_CLEAR**도 수용됐고 공식ff/push/원격readback/sourceguard0까지 완료됐다(R179/R183–R188/R191–R195). | 소스 결합을 원앱 전체 의미·실제 UI/기기 수용으로 바꾸지 않는다. |
+| 설치·서명·formal 상태 | 실제 설치는 기존68이다. signed74는 구source `624597f62326df776099e90a626630e52e751803` / tree `05d2249fbcef40f4c95d02316a75dd0e5f96a9ca`의 미설치 로컬 후보(R181)다. 기존 R196은 f4 integrationObserved와 과거 held 시도 이력이며 test-deploy-held/배포 미수용을 유지한다. | f4 testDeployed/testAccepted/productionEligible은 없다. 이번 새 reconcile·기기 조회·설치 실행0. |
+| 실제 서버200 게시 후 ACK 유실 | [R182 Nash 독립 보고서](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-success200-ack-independent-review-20261029)의 `PASS_SCOPED_SUCCESS200_ACK_LOSS_INDEPENDENT_REVIEW`를 수용했다. f09의 sending/held·새 프로세스·명시 전체GET 복귀 증거만이다. | 클라이언트200 수신이나 현재f4 전체 source/앱 수용이 아니다. 과거 pending 기록은 당시 이력이다. |
+| EPUB 제품 검수 | 70b/tree593ee57f·동일 제품 b979/tree37780af1의 SDK0과 과거 P2둘을 보존한다(R189/R190/R197). Nash가 수리 `68b07ed418d9d5df3986b66bdd46928d2024df9f` / tree `cee71266f8638cc48e23b077562840d8093ae139`를 `SOURCE_CLEAR_SCOPED_EPUB_STORE_P2_REPAIR`로 닫았다(R198/R200). | 원19입력·원반례와 확장10조건을 재사용한 수리 범위다. 공식f4·전체 제품/기기 수용과 구분한다. |
+| EPUB 실제HTTP | 작성자 실제HTTP100과 Ohm의 `EVIDENCE_CLEAR_SCOPED_EPUB_STORE_HTTP`를 수용했다(R199/R201). 제품은70b이며 이 HTTP 판정 자체가 두P2의 수리가 아니다. | 최종 기기·정상runtime·전체 앱 수용은 미완료다. |
+| EPUB 결합 후보 | `1e4e9b67cb852288f31bf573a575daa1710d089a` / tree `c6af5777194cb1ba56dea6d95328be11a48eb03c`의 전체iOS27·표준source-repairs10이0이다(R202/R203). | 부모의 그룹/용지/EPUB whole Files·역수신·새Store 교차검사는 진행 중이다. 아직 공식은f4이며 결합/설치 완료로 올리지 않는다. |
+
+**385행·원ID/순서·114그룹·원앱 관측/지원 미확인32행·원래 목표는 그대로다.** 관련41행의 `currentProgress`만 갱신하고 status·remaining·집계·원앱 관측은 보존했다. 완료0/미완료385/N/A0이며 모든 whole/physical/runtime/testAccepted는 false다. 원앱 색상 인코딩·픽셀 동등성도 여전히 미해독이다. 현재 판독은 `coverage.json.currentProgress`와 각 행의 `currentProgress`를 우선한다. 아래 f09의 “현재/후보/대기” 표현은 그 시점 이력이다. 이번 제품 수정·제품 검사·SDK·HTTP·GUI·기기·설치·서비스·질문·알림 실행0이며 문서 JSON/참조 검사만 수행했다. 이후 통합 변동은 부모가 exact 근거로 별도 기록한다.
+
+## 아래는 f09 시점에 보존한 진행표 — 현재 착수 지시가 아닌 이력
+
 > 범위 안내: 아래 f09 진행표는 그 커밋 시점의 검증 기록입니다. 이후 공식 `5fcb42cc1a1430a64210dd5d89c930a61fd8a0da`에는 빈 페이지·순서 변경과 PDF 보기 저장·복구 수리가 통합됐습니다. 펜 설정을 가진 빈 페이지의 표현 버전 수리 `edba258141b67e5dee6bcc6bdcda08d6cdb6dca5`도 별도 소스 검수를 통과했습니다. 이 후속을 f09의 과거 후보 상태와 혼동하지 않습니다. 현재 원앱·기기 수용과 전체 완료는 여전히 별도이며, 그룹·EPUB는 각각의 정확 후속 판정을 따릅니다.
 
 # REA 기능 조사·구현 진행표
