@@ -2,7 +2,7 @@
 
 이 문서는 클라이언트 SDK와 Store를 병렬로 구현하기 위한 고정 인터페이스다. 서버의 독립 검수, Swift URLSession 결합, 설치 및 실기기 수용은 별도 단계다.
 
-서버 구현은 공식 `9006908998dbcbe0b278b3dc75c71d5d2006342a`에서 시작했다. 최신 공식 `0c230d2ad0e360dcf7ee0ef31a849fc3832ef1a5` / tree `ebe9215b7499a9cd8b7401807d9efcdb3e5852eb`는 태그 예약 namespace와 일반 Markdown 보호의 접합 검수 기준이다. 원래 작업 WT와 다른 담당의 변경을 보존한다.
+서버 구현은 공식 `9006908998dbcbe0b278b3dc75c71d5d2006342a`에서 시작했다. 이후 공식 `0c230d2ad0e360dcf7ee0ef31a849fc3832ef1a5` / tree `ebe9215b7499a9cd8b7401807d9efcdb3e5852eb`에 PDF·태그가 결합됐고, 현재 접합 검수 기준은 모델 782를 포함한 공식 `b1b7e30efb32a615eae847cbf8280983fb3b0982` / tree `e7ce8079e3ea3753814be615a78ade2f6914d71b`다. 원래 작업 WT와 다른 담당의 변경을 보존한다.
 
 형식명·DTO·한도 계산은 부모 조율 담당이 수용한 설계의 구현 선택이다. 사용자가 각 세부값을 직접 확정한 것으로 기록하지 않는다. iOS/Core 및 기존 packet 계약은 이 서버 단위에서 변경하지 않는다.
 
@@ -263,6 +263,6 @@ canonical Markdown은 모든 페이지의 순서·원본/preview 링크를 갖�
 
 교환 후 정본 경로·자산·SHA·내구성 확인 실패는 지속되는 typed barrier로 반환한다. 문서 원장은 CCR Documents 부모 교체에도 남도록 설정된 vault root에 둔다. 기존 exchange/atomic preserve와 owner/no-follow/nonblocking/identity 검사를 재사용하고 base/displaced/proposal 원문을 삭제하지 않는다. 비협력 writer의 미래 쓰기나 설정된 vault root 자체 교체를 절대 배제하는 CAS라고 주장하지 않는다.
 
-모델 `0fd008a436252f9b53bfd7cae37dcdf54542fc1f`의 DOC-R1/R2/R3 수리 후보 `782978d7bc574080ae72fd9ebd48b5699473f0ea` / tree `3cb212afd4f4cc05407b4dfb32c403e50c0a5bc9`의 지원 키 표를 직접 대조했다. Node의 scene/node/frame/vaultNote/link/anchor/annotation/stroke/point/visibility/segment/style/color/transform/sample/penSettings는 같은 닫힌 키 목록을 사용한다. 원문 JSON을 재직렬화하지 않는다. 모델의 독립 재검수 상태는 별도로 확인하며 이 문서가 SOURCE_CLEAR를 대신하지 않는다.
+모델 `0fd008a436252f9b53bfd7cae37dcdf54542fc1f`의 DOC-R1/R2/R3 수리 소스 `782978d7bc574080ae72fd9ebd48b5699473f0ea` / tree `3cb212afd4f4cc05407b4dfb32c403e50c0a5bc9`의 지원 키 표를 직접 대조했다. 부모는 해당 모델의 독립 SOURCE_CLEAR, pbx 결합 검수와 전체 iOS 27개 검사 통과 및 공식 통합을 알렸다. 서버 측에서는 공식 b1b7e30의 CanvasDocument.swift가 782와 바이트 동일함을 확인하고 문서 루트와 모든 중첩 구조의 닫힌 키 17개 그룹이 Node와 같음을 기계적으로 검사했다. 원문 JSON을 재직렬화하지 않는다. 이 모델 수용을 서버의 독립 SOURCE_CLEAR나 Swift HTTP 결합 성공으로 확대하지 않는다.
 
 자유 주석의 author/text를 보존하며 태그 예약 namespace `ccr.sill.card-tag/v1`과 사람이 쓴 주석을 혼동하거나 자동 이관하지 않는다. 최신 공식과의 태그 투영·일반 MD 보호 접합은 별도 검수한다. 서버 GET/저장 성공은 구조·SHA·PNG 검사이며 Apple PKDrawing 네이티브 해석을 대신하지 않는다. Swift 모델/Files의 전체 재열기와 Core의 documentID/pageID/documentSHA 소비는 별도 결합 경계다.

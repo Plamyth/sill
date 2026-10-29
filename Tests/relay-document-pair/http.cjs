@@ -4,7 +4,7 @@ const {createServer}=require('../../CanvasRelay/relay/server'),{ObsidianVault}=r
 const {document,page,body,base,png}=require('../../CanvasRelay/relay/test-input/document-fixture.cjs');
 const root=path.resolve(process.argv[2]),cfg=JSON.parse(fs.readFileSync(path.join(root,'settings.json'))),vaultRoot=path.join(root,'vault');fs.mkdirSync(vaultRoot);
 const server=createServer({token:cfg.token,vaultRoot,store:path.join(root,'packets'),snapshotPath:path.join(root,'absent-snapshot'),hiddenPath:path.join(root,'absent-hidden'),deliveryReady:()=>false,deliver:()=>{throw Error('External delivery forbidden');}});
-const requests=[],children=[];let port,inject=null,delay=null;
+const requests=[],children=[],wireFixtures=[];let port,inject=null,delay=null;
 const sha=w.sha,gone=pid=>{try{process.kill(pid,0);return false;}catch(e){return e.code==='ESRCH';}};
 child.execFileSync=function(program,args,options){
  if(program!=='/usr/bin/python3'||!args[0].endsWith('/CanvasRelay/relay/vault-note-exchange.py'))throw Error('Unexpected child');
@@ -23,7 +23,7 @@ const actual=server.listeners('request')[0];server.removeAllListeners('request')
 function request(method,route,value,{expected=200,auth=true,timeout=120000,raw=false}={}){
  return new Promise((resolve,reject)=>{
   const data=value===undefined?null:raw?value:Buffer.from(JSON.stringify(value));
-  const req=http.request({hostname:'127.0.0.1',port,path:route,method,headers:{...(auth?{'X-Canvas-Token':cfg.token}:{}),...(data?{'content-type':'application/json','content-length':data.length}:{})}},res=>{const chunks=[];let n=0;res.on('data',b=>{n+=b.length;if(n>65*1024*1024){res.destroy();reject(Error('Response exceeds bound'));}else chunks.push(b);});res.on('end',()=>{try{assert.equal(res.statusCode,expected);resolve(JSON.parse(Buffer.concat(chunks)));}catch(e){reject(e);}});});
+  const req=http.request({hostname:'127.0.0.1',port,path:route,method,headers:{...(auth?{'X-Canvas-Token':cfg.token}:{}),...(data?{'content-type':'application/json','content-length':data.length}:{})}},res=>{const chunks=[];let n=0;res.on('data',b=>{n+=b.length;if(n>65*1024*1024){res.destroy();reject(Error('Response exceeds bound'));}else chunks.push(b);});res.on('end',()=>{try{assert.equal(res.statusCode,expected);const bytes=Buffer.concat(chunks),response=JSON.parse(bytes);if(cfg.wireFixturesOnly)wireFixtures.push({method,path:route,status:res.statusCode,request:value??null,response,responseJSONBase64:bytes.toString('base64'),responseSha256:sha(bytes)});resolve(response);}catch(e){reject(e);}});});
   req.setTimeout(timeout,()=>req.destroy(Error('owned-request-timeout')));req.on('error',reject);
   if(data){let index=0;const write=()=>{while(index<data.length){const next=Math.min(index+65536,data.length);const ready=req.write(data.subarray(index,next));index=next;if(!ready){req.once('drain',write);return;}}req.end();};write();}else req.end();
  });
@@ -34,6 +34,7 @@ async function run(){
  const caps=await request('GET','/vault/canvas/capabilities');assert.equal(caps.document.maxRequestBytes,w.MAX_DOCUMENT_REQUEST_BYTES);assert.equal(caps.document.wholeDocument,true);
  assert.equal((await request('GET','/delivery/ready')).available,false);
  const d=document(),endpoint='/vault/document?id='+d.id;
+ if(cfg.wireFixturesOnly){d.pages[1].nodes[0].kind='note';d.pages[1].annotations.push({id:crypto.randomUUID(),nodeId:d.pages[1].nodes[0].id,author:'ccr.sill.card-tag/v1',text:'#업무'},{id:crypto.randomUUID(),nodeId:d.pages[1].nodes[0].id,author:'카드 태그',text:'사람이 쓴 원문 e\u0301\r\n#주석'});}
  const first=await request('PUT',endpoint,body(d));const read=await request('GET',endpoint);assert.equal(read.documentJSONBase64,body(d).documentJSONBase64);
  d.pages.reverse();d.pages[1].nodes[0].text+=' HTTP 반대방향';d.revision++;
  const next=await request('PUT',endpoint,body(d,base(first)));assert.equal((await request('GET',endpoint)).documentJSONBase64,body(d).documentJSONBase64);
@@ -56,6 +57,7 @@ async function run(){
  const reopened=await request('GET',endpoint);assert.equal(reopened.documentSha256,state.materials.displaced.document.documentSha256);d.revision++;
  await request('PUT',endpoint,body(d,base(reopened)));
  checks.push('409 ACK 유실→active=proposal여도GET barrier→고정후보→명시useDisplaced→재열기/멱등/정상쓰기');
+ if(cfg.wireFixturesOnly){assert(children.every(c=>c.exitCode===0&&c.pidGone));return {passed:true,actualHTTP:true,urlProtocolMock:false,checks,requests,children,wireFixtures,maximumValidRequestBytes:null,maximumBoundaryNotRepeated:true,legacySceneLimitBytes:13*1024*1024,externalEffects:0};}
  // Maximal valid wire uses all128 pages,16MiB JSON,32MiB PNGs and worst base64 padding.
  const big=document();big.pages=Array.from({length:128},page);big.activePageID=big.pages[0].id;
  const seed=await request('PUT','/vault/document?id='+big.id,body(big));big.revision++;

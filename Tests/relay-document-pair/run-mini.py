@@ -9,8 +9,9 @@ def gone(pid):
 report={'schema':'ccr.document-source-http-checks/v1','host':socket.gethostname(),'inputs':manifest,'sourceBefore':hashes(),'passed':False,'cleanupVerified':False};lease=None
 try:
  assert report['sourceBefore']=={x['path']:x['sha256'] for x in manifest['files']}
- if manifest.get('verificationScope')=='document-delta':report['regression']={'executed':False,'reason':'문서 경계만 변경되어 기존 82ad9e7142fd의 전체 회귀와 분리하고 문서 파일/HTTP 경계를 검사한다. 이전 통과를 새 전체 회귀로 표시하지 않는다.'}
- for mode in (['documents'] if manifest.get('verificationScope')=='document-delta' else ['documents','regression']):
+ scope=manifest.get('verificationScope')
+ if scope in ['document-delta','wire-fixtures']:report['regression']={'executed':False,'reason':'이미 통과한 전체 회귀를 반복하지 않고 문서 변경 경계 또는 실제 wire 응답 수집만 검사한다.'}
+ for mode in ([] if scope=='wire-fixtures' else ['documents'] if scope=='document-delta' else ['documents','regression']):
   cmd=['python3','CanvasRelay/run-checks.py','--output',str(out/mode)]+(['--documents'] if mode=='documents' else [])
   p=subprocess.Popen(cmd,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
   try:stdout,stderr=p.communicate(timeout=180)
@@ -20,7 +21,7 @@ try:
  status=subprocess.run([life,'status'],capture_output=True,text=True);assert status.returncode in [0,2];before=json.loads(status.stdout);assert not [r for r in before['leases'] if r.get('serviceId')==service_id]
  report['ownLeaseBefore']=[];report['unrelatedLifecycleViolations']=len(before['violations'])
  cfg=json.loads((Path.home()/'.config/service-lifecycle/services.json').read_text());entry=next(x for x in cfg['services'] if x['id']==service_id);assert entry['lifecycle']=='leased' and entry['maxTtlSeconds']>=600
- settings={'token':uuid.uuid4().hex,'owner':owner,'ttlSeconds':600};(runtime/'settings.json').write_text(json.dumps(settings));(runtime/'settings.json').chmod(0o600)
+ settings={'token':uuid.uuid4().hex,'owner':owner,'ttlSeconds':600,'wireFixturesOnly':scope=='wire-fixtures'};(runtime/'settings.json').write_text(json.dumps(settings));(runtime/'settings.json').chmod(0o600)
  cmd=[str(life),'start',service_id,'--owner',owner,'--ttl','600','--generation',manifest['commit'],'--stdout',str(out/'node.out.log'),'--stderr',str(out/'node.err.log'),'--',str(node),str(root/'Tests/relay-document-pair/http.cjs'),str(runtime)]
  start=subprocess.run(cmd,capture_output=True,text=True);assert start.returncode==0,start.stderr
  lease=next(json.loads(p.read_text()) for p in (Path.home()/'.local/state/service-lifecycle/leases').glob('*.json') if json.loads(p.read_text()).get('serviceId')==service_id)
