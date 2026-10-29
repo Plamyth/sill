@@ -8,4 +8,8 @@
 
 제품 Store·Files 코드는 주입하지 않는다. 네트워크 callback에는 자체 Vault 결과/의도적 ACK·연결실패를 전달한다. **실제 HTTP/200 ACK 유실의 네트워크 관측, SwiftUI 화면, iOS 최종 SDK, 설치·원앱 iPad·Pencil 수용은 아니다.** Native compile은 macOS27 SDK를 사용한다. Workspace는 별도 syntax parse이며 전체 iOS Store/UI 검사는 부모의 최종 결합에서 한 번 수행한다.
 
-현재 e554 모듈 수리는 소비했으나 Nash 재검수 대기다. raw endpoint 소유와 기존 복구 envelope의 명시 EPUB 구분은 부모 계약 결정 대기다. 스키마 수용·배포·전체 EPUB 완료는 false다. `preflight.py`의 이전 raw 파일10검사는 실제 Store/HTTP 검사와 별개이며 동일 서버 바이트 근거를 재사용한다. 모듈44/25·기존 PDF 전체 검사는 다시 돌리지 않는다.
+현재 e554 모듈 수리는 소비했으나 Nash 재검수 대기다. raw endpoint 소유와 기존 복구 envelope의 optional sourceKind=epub·명시 choice schema는 부모 소유 범위에서 확정됐다. 모듈/접합 독립 검수·HTTP·UI 수용·배포·전체 EPUB 완료는 false다. `preflight.py`의 이전 raw 파일10검사는 실제 Store/HTTP 검사와 별개이며 동일 서버 바이트 근거를 재사용한다. 모듈44/25·기존 PDF 전체 검사는 다시 돌리지 않는다.
+
+부가 거부 경계만 실행하려면 `--contract-boundaries --choice-input <이전 자체 native 실행의 격리 NoteConflictChoice.json>`을 추가한다. 실제 이전 server-choice DTO를 입력으로 재사용하고 schema만 바꾸므로 서버 필드를 추정하지 않는다. 별도 `contract-UUID` 출력과 actual Store/원장/새 프로세스로 알 수 없는 kind·PDF 혼합·틀린 choice schema의 거부/원문 보존만 검사한다. 기존54 실행이나 HTTP를 다시 수행하지 않는다.
+
+확정 계약 부가 실행 `contract-6b090520-34a4-4d0c-86bd-531c5d0b7fb7`은 부모34조건·새 프로세스1회(2개 관측)와 입력/normal sentinel 불변을 통과했다. 제품은 70b와 같으며 기존54를 반복하지 않았다. 새 경계 fixture의 Rect initializer compile 오류와 후속 정상 실행은 별도 영수증으로 보존한다. 전체 SDK는 부모, actual HTTP는 Laplace 소유다.

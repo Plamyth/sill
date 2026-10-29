@@ -3,19 +3,24 @@
 import argparse,hashlib,json,os,plistlib,shutil,subprocess,uuid,zipfile
 from pathlib import Path
 root=Path(__file__).resolve().parents[3]
-p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--contract-boundaries',action='store_true');p.add_argument('--choice-input',type=Path);a=p.parse_args()
 archive=Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
 assert a.output.resolve().is_relative_to(archive)
-out=a.output.resolve()/('native-'+str(uuid.uuid4()));out.mkdir(parents=True)
+out=a.output.resolve()/(('contract-' if a.contract_boundaries else 'native-')+str(uuid.uuid4()));out.mkdir(parents=True)
 for n in ['home','tmp','modules','vault']: (out/n).mkdir()
 canvas=root/'iOSClient/CanvasBridge'
 names=['CanvasModel','CanvasDocument','CanvasDocumentFiles','CanvasStore','VaultPDFExcerpt','VaultPDFViewState','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection','VaultEPUB','VaultEPUBExcerpt','VaultEPUBReader']
-sources=[canvas/(n+'.swift') for n in names]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('main.swift')]
+sources=[canvas/(n+'.swift') for n in names]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('contract-boundaries.swift' if a.contract_boundaries else 'main.swift')]
 protocol=root/'Sources/StreamProtocol/TestDestinations.swift'
 reader=out/'PDFNativeReader.swift';reader.write_text((canvas/'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
 inputs=sources+[protocol,canvas/'VaultPDFReader.swift',canvas/'CanvasWorkspace.swift',canvas/'PencilCanvas.swift',Path(__file__),Path(__file__).with_name('vault.cjs')]+list((root/'CanvasRelay/relay').glob('*.js'))+[root/'CanvasRelay/relay/vault-note-exchange.py',root/'CanvasRelay/test-guard.cjs']
 def hashes():return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 before=hashes();commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip();tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=root,text=True).strip()
+choice_input=None
+if a.contract_boundaries:
+ assert a.choice_input and not a.choice_input.is_symlink() and a.choice_input.resolve().is_relative_to(archive) and a.choice_input.stat().st_size<=2*1024*1024
+ data=a.choice_input.read_bytes();(out/'prior-choice.json').write_bytes(data)
+ choice_input=dict(path=str(a.choice_input.resolve()),sha256=hashlib.sha256(data).hexdigest(),bytes=len(data))
 metadata=plistlib.loads((root/'Tests/checks/ink-glyph-edit/Info.plist').read_bytes());metadata.update(CCRSourceCommit=commit,CCRSourceTree=tree)
 info=out/'Info.plist';info.write_bytes(plistlib.dumps(metadata))
 identity=str(uuid.uuid4());support=out/'home/Library/Application Support';state=support/'CCRIntegrationTests'/identity/'state';state.mkdir(parents=True)
@@ -42,7 +47,7 @@ for name,cmd in commands:
  r=subprocess.run(list(map(str,cmd)),cwd=root,env=env,capture_output=True,text=True,timeout=240);(out/(name+'.log')).write_text(r.stdout+r.stderr);print(name,r.returncode,(r.stdout+r.stderr)[-6500:],flush=True);results.append(dict(name=name,exitCode=r.returncode,command=list(map(str,cmd))))
  if r.returncode:break
 children=[json.loads(line) for line in (out/'tmp/children.jsonl').read_text().splitlines()] if (out/'tmp/children.jsonl').exists() else []
-children_ok=bool(children) and all(x['pidGone'] and x['exitCode']==0 for x in children)
+children_ok=(not children) if a.contract_boundaries else bool(children) and all(x['pidGone'] and x['exitCode']==0 for x in children)
 after=hashes();normal=all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())
 code=0 if len(results)==3 and all(x['exitCode']==0 for x in results) and before==after and normal and children_ok else 1
-(out/'result.json').write_text(json.dumps(dict(commit=commit,tree=tree,dirty=subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True),inputs=before,after=after,sourceUnchanged=before==after,normalProtectedFileHashes=protected,normalUnchanged=normal,atomicHelperChildren=children,atomicHelperChildrenGone=children_ok,commands=results,exitCode=code,actualStore=True,actualObsidianFiles=True,HTTP=False,GUI=False,physicalPencil=False,installed=False,wholeSDK='parent-final-union',wholeEPUBAccepted=False,moduleGate='e554 P2 repair consumed; Nash re-review pending',contractGate='parent decision pending'),indent=2)+'\n');print(out/'result.json');raise SystemExit(code)
+(out/'result.json').write_text(json.dumps(dict(commit=commit,tree=tree,dirty=subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True),inputs=before,after=after,sourceUnchanged=before==after,normalProtectedFileHashes=protected,normalUnchanged=normal,atomicHelperChildren=children,atomicHelperChildrenGone=children_ok,commands=results,exitCode=code,actualStore=True,actualObsidianFiles=not a.contract_boundaries,contractBoundaries=a.contract_boundaries,choiceInput=choice_input,HTTP=False,GUI=False,physicalPencil=False,installed=False,wholeSDK='parent-final-union',wholeEPUBAccepted=False,moduleGate='e554 P2 repair consumed; Nash re-review pending',contractGate='parent confirmed raw endpoint and optional recovery sourceKind; service unchanged'),indent=2)+'\n');print(out/'result.json');raise SystemExit(code)
