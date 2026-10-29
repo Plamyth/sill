@@ -56,11 +56,14 @@ if a.sdk_check:
     commands.append(('ios27-unit-typecheck',['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'ios-modules','-typecheck',*sources]))
 if a.store or a.store_r1:
     assert not a.repairs and not a.storage_reuse and not (a.store and a.store_r1)
-    sources += [canvas/(n+'.swift') for n in ['CanvasStore','VaultPDFExcerpt','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection']]
+    sources += [canvas/(n+'.swift') for n in ['CanvasStore','VaultPDFExcerpt','VaultPDFViewState','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection']]
+    native_reader=out/'PDFNativeReader.swift'
+    native_reader.write_text((canvas/'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
+    sources += [native_reader]
     sources += [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('transition.swift' if a.store_r1 else 'store.swift')]
     protocol = root/'Sources/StreamProtocol/TestDestinations.swift'
     ios_sources = sorted(canvas.glob('*.swift')) + [root/'iOSClient'/(n+'.swift') for n in ['IPadAudioSession','IPadAudioLeaseState','IPadAudioLeaseCoordinator']] + [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
-    inputs += sources + [protocol,canvas/'PencilCanvas.swift',canvas/'CanvasWorkspace.swift'] + (ios_sources if a.sdk_check else [])
+    inputs += [p for p in sources if p != native_reader] + [canvas/'VaultPDFReader.swift',protocol,canvas/'PencilCanvas.swift',canvas/'CanvasWorkspace.swift'] + (ios_sources if a.sdk_check else [])
     before = hashes()
     metadata = plistlib.loads(info.read_bytes()); metadata.update(CCRSourceCommit=commit,CCRSourceTree=tree)
     info = out/'Info.plist'; info.write_bytes(plistlib.dumps(metadata))

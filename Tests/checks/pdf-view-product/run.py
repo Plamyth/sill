@@ -32,6 +32,8 @@ results=[]
 for name,cmd in commands:
  r=subprocess.run(list(map(str,cmd)),cwd=root,env=env,capture_output=True,text=True,timeout=240);(out/(name+'.log')).write_text(r.stdout+r.stderr);print(name,r.returncode,(r.stdout+r.stderr)[-6500:],flush=True);results.append(dict(name=name,exitCode=r.returncode,command=list(map(str,cmd))))
  if r.returncode:break
+children=[json.loads(line) for line in (out/'tmp/children.jsonl').read_text().splitlines()] if (out/'tmp/children.jsonl').exists() else []
+children_ok=bool(children) and all(x['pidGone'] and x['exitCode']==0 for x in children)
 after=hashes();normal=all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())
-code=0 if len(results)==3 and all(x['exitCode']==0 for x in results) and before==after and normal else 1
-(out/'result.json').write_text(json.dumps(dict(commit=commit,tree=tree,dirty=subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True),inputs=before,after=after,sourceUnchanged=before==after,normalProtectedFileHashes=protected,normalUnchanged=normal,commands=results,exitCode=code,actualStore=True,actualObsidianFiles=True,HTTP=False,GUI=False,physicalPencil=False,installed=False,wholeSDK='parent-final-union'),indent=2)+'\n');print(out/'result.json');raise SystemExit(code)
+code=0 if len(results)==3 and all(x['exitCode']==0 for x in results) and before==after and normal and children_ok else 1
+(out/'result.json').write_text(json.dumps(dict(commit=commit,tree=tree,dirty=subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True),inputs=before,after=after,sourceUnchanged=before==after,normalProtectedFileHashes=protected,normalUnchanged=normal,atomicHelperChildren=children,atomicHelperChildrenGone=children_ok,commands=results,exitCode=code,actualStore=True,actualObsidianFiles=True,HTTP=False,GUI=False,physicalPencil=False,installed=False,wholeSDK='parent-final-union'),indent=2)+'\n');print(out/'result.json');raise SystemExit(code)

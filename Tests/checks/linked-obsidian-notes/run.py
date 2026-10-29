@@ -19,6 +19,7 @@ if not any(parent.exists() and parent.samefile(archive['path']) for parent in [o
     raise SystemExit('Output must use the verified storage-route development archive')
 output.mkdir(parents=True, exist_ok=True)
 sources = [root / 'iOSClient/CanvasBridge/CanvasModel.swift',
+           root / 'iOSClient/CanvasBridge/CanvasDocumentFiles.swift',
            root / 'iOSClient/CanvasBridge/VaultPDFExcerpt.swift',
            root / 'iOSClient/CanvasBridge/VaultPDFViewState.swift',
            root / 'iOSClient/CanvasBridge/CanvasCardMerge.swift',

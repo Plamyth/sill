@@ -765,6 +765,13 @@ struct CanvasWorkspace: View {
                         Text(store.pdfExcerptRecoveryNotice).font(.footnote)
                         if let recovery = store.pdfExcerptRecovery, let view = recovery.viewRecovery {
                             Text(recovery.path).font(.caption).textSelection(.enabled)
+                            if let reader = pdfReader {
+                                Button("전송 없이 보기 설정 저장 결과 확인") {
+                                    let connection = relay
+                                    Task { await store.reloadPDFView(reader:reader,load:connection.vaultNote) }
+                                }.disabled(store.pdfViewBusy || store.vaultSaving || recovery.saveConflict?.requiresExplicitReconciliation == true)
+                                    .frame(minHeight:44)
+                            }
                             Button("보존된 PDF 보기 초안 열기") { Task { await openVaultPDF(view.draft.state.pdfPath) } }
                                 .frame(minHeight:44).disabled(store.vaultSaving || pdfLoading)
                         } else if let recovery = store.pdfExcerptRecovery {
@@ -799,7 +806,7 @@ struct CanvasWorkspace: View {
                     if store.hasPendingPDFView || store.pdfViewChoice?.closed == false {
                         Button("보기 설정 충돌 원문 비교") {
                             let connection = relay
-                            Task { await store.comparePDFViewConflict(reader:reader,load:connection.vaultNoteConflict) }
+                            Task { await store.comparePDFViewConflict(reader:reader,load:connection.vaultNoteConflict,loadCurrent:connection.vaultNote) }
                         }.disabled(store.pdfViewBusy || store.vaultSaving).frame(minHeight:44)
                     }
                     if let choice = store.pdfViewChoice, !choice.closed {
@@ -819,6 +826,19 @@ struct CanvasWorkspace: View {
                                     let connection = relay
                                     Task { await store.resolvePDFViewConflict(.useDisplaced,reader:reader,resolve:connection.resolveVaultNoteConflict) }
                                 }.disabled(choice.conflict.materials.displaced?.validNote != true || store.pdfViewBusy)
+                            }.padding()
+                        }.frame(maxHeight:320)
+                    }
+                    if let choice = store.pdfViewLocalChoice, !choice.closed {
+                        ScrollView {
+                            VStack(alignment:.leading,spacing:12) {
+                                Text("현재 보기 원문과 보존된 로컬 초안").font(.headline)
+                                Text("로컬 초안\n" + choice.original.draft).textSelection(.enabled)
+                                Text("현재 원문\n" + choice.current.text).textSelection(.enabled)
+                                Button("현재 보기 채택 · 이전 전체 초안 보존") {
+                                    let connection = relay
+                                    Task { await store.adoptPDFViewCurrent(reader:reader,load:connection.vaultNote) }
+                                }.disabled(store.pdfViewBusy).frame(minHeight:44)
                             }.padding()
                         }.frame(maxHeight:320)
                     }
@@ -1055,6 +1075,10 @@ struct CanvasWorkspace: View {
             var previous: NoteConflictLocalChoice?
             if let raw = try? CanvasLocalFile.read(noteChoiceURL()) {
                 guard raw.count <= 12*1024*1024 else { throw VaultBlockRecoveryError.corrupt }
+                if store.pdfViewChoice != nil || store.pdfViewLocalChoice != nil {
+                    guard store.pdfViewChoice?.closed == true || store.pdfViewLocalChoice?.closed == true else { throw VaultBlockRecoveryError.publicationConflict }
+                    try store.archiveCompletedPDFViewChoiceForNoteEditor()
+                } else {
                 let old = try JSONDecoder().decode(NoteConflictLocalChoice.self,from:raw).validated()
                 if old.address == address, old.path == path, old.sceneID == local.sceneID {
                 previous = old
@@ -1070,6 +1094,7 @@ struct CanvasWorkspace: View {
                 }
                 } else {
                     guard [.completed,.superseded].contains(old.phase) else { throw VaultBlockRecoveryError.context }
+                }
                 }
             }
             let snapshot: CanvasRelay.NoteConflict

@@ -17,7 +17,7 @@ struct VaultPDFCreateRecovery: Codable, Equatable {
               url.query == nil, url.fragment == nil else { throw VaultBlockRecoveryError.corrupt }
         if let viewRecovery {
             try viewRecovery.validate()
-            guard path.utf8.elementsEqual(viewRecovery.draft.path.utf8), draft.utf8.elementsEqual(viewRecovery.draft.markdown.utf8),
+            guard (submittedText == nil) == (viewRecovery.submitted == nil), path.utf8.elementsEqual(viewRecovery.draft.path.utf8), draft.utf8.elementsEqual(viewRecovery.draft.markdown.utf8),
                   submittedText.map({ $0.utf8.elementsEqual(viewRecovery.submitted?.markdown.utf8 ?? "".utf8) }) ?? (viewRecovery.submitted == nil) else { throw VaultBlockRecoveryError.corrupt }
         } else {
             guard let source = try VaultPDFExcerpt.parse(draft), source.notePath == path,
@@ -358,7 +358,10 @@ struct VaultPDFViewRecovery: Codable, Equatable {
                   request.state.pdfPath.utf8.elementsEqual(draft.state.pdfPath.utf8), request.state.pdfSHA256 == draft.state.pdfSHA256,
                   request.state.pageCount == draft.state.pageCount else { throw VaultBlockRecoveryError.corrupt }
         }
-        if let base { _ = try base.validated(at:draft.path) }
+        if let base {
+            _ = try base.validated(at:draft.path)
+            _ = try VaultPDFViewState.parse(base.text,snapshot:.init(path:draft.state.pdfPath,sha256:draft.state.pdfSHA256,dataBase64:""),pageCount:draft.state.pageCount)
+        }
     }
 }
 struct VaultPDFViewChoice: Codable {
@@ -380,6 +383,26 @@ struct VaultPDFViewChoice: Codable {
             guard let resolved, let decision, resolved.sha256 == conflict.selected(decision)?.sha256 else { throw VaultBlockRecoveryError.corrupt }
             _ = try resolved.validated(at:original.path)
         }
+        return self
+    }
+}
+
+// Ordinary CAS rejection may have no server preservation journal. A fresh non-held full GET
+// can be adopted only by explicit choice; the complete former local intent remains here.
+struct VaultPDFViewLocalChoice: Codable {
+    enum Phase: String, Codable { case compared, resolved, superseded }
+    static let schemaName = "ccr.pdf-view-current-choice/v1"
+    let schema: String
+    let original: VaultPDFCreateRecovery
+    let current: VaultNoteSnapshot
+    var phase: Phase
+    var closed: Bool { phase != .compared }
+    func validated() throws -> Self {
+        _ = try original.validated()
+        guard schema == Self.schemaName, let view = original.viewRecovery else { throw VaultBlockRecoveryError.corrupt }
+        _ = try current.validated(at:original.path)
+        try VaultPDFViewState.SaveRequest.checkHeld(current)
+        _ = try VaultPDFViewState.parse(current.text,snapshot:.init(path:view.draft.state.pdfPath,sha256:view.draft.state.pdfSHA256,dataBase64:""),pageCount:view.draft.state.pageCount)
         return self
     }
 }

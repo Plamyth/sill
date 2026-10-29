@@ -64,7 +64,7 @@ func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data
  @MainActor static func main() async throws {
   setbuf(stdout,nil)
   guard case .isolated(let context)=CanvasRuntime.launch else {fatalError("isolated only")}
-  let out=URL(fileURLWithPath:CommandLine.arguments[1]),vault=try OwnVault();defer{vault.close()}
+  let out=URL(fileURLWithPath:CommandLine.arguments[1],isDirectory:true).resolvingSymlinksInPath(),vault=try OwnVault();defer{vault.close()}
   func newStore()->CanvasStore {let s=CanvasStore();s.enableDocumentChecks();s.setNoteConnection(address:context.relayAddress,token:context.token);return s}
   let path="문서/원본.pdf"
   if CommandLine.arguments.contains("--reopen") {
@@ -94,7 +94,8 @@ func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data
   let id=await s.savePDFExcerpt(allowCreate:true,create:{try await vault.save($0,nil,$1)},load:vault.note)
   check(id != nil,"actual Obsidian note Files PUT/GET attaches original source card")
   let sourceNote=try await vault.note(source.notePath),sourceCard=s.scene.nodes.first{$0.id==id}!
-  let sourceJSON=try JSONEncoder().encode(source),sceneBefore=s.scene
+  let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+  let sourceJSON=try encoder.encode(source),sceneBefore=s.scene
   check(s.closeVaultEditor(),"source note editor closes without draft loss")
   try s.createDocument()
   let files=out.appendingPathComponent("selected-files",isDirectory:true);try FileManager.default.createDirectory(at:files,withIntermediateDirectories:true)
@@ -110,6 +111,10 @@ func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data
   try reader.moveDisplayPage(from:1,to:2)
   try reader.setCrop(.init(x:0.1,y:0.1,width:0.8,height:0.8),physicalPageNumber:2)
   let savedState=reader.viewState
+  try reader.undoViewState()
+  check(s.preservePDFViewDraft(reader) && reader.viewState != savedState,"native metadata Undo updates durable local draft without changing source")
+  try reader.redoViewState()
+  check(s.preservePDFViewDraft(reader) && reader.viewState == savedState,"native metadata Redo restores exact pending order and crop")
   check(s.preservePDFViewDraft(reader) && s.hasPendingPDFView,"order and crop persist complete durable local draft")
   check(!s.canTransitionDocument,"pending view state participates in whole document recovery barrier")
   let request=try reader.prepareViewStateSave(base:s.pdfViewBase)
@@ -164,9 +169,92 @@ func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data
   check(restored.pdfViewReader?.viewState==displaced,"resolved external order and crop are installed as new Reader")
   check(restored.pdfViewChoice?.original==intent,"resolution retains old base/draft/submitted in immutable recovery payload")
   try reopen(displaced)
+  // A later edit arriving during PUT stays dirty against the newly confirmed base.
+  reader=restored.pdfViewReader!
+  try reader.setCrop(.init(x:0,y:0,width:0.8,height:1),physicalPageNumber:1)
+  let first=try reader.prepareViewStateSave(base:restored.pdfViewBase)
+  await restored.savePDFView(first,reader:reader,save:{p,b,t in
+   let response=try await vault.save(p,b,t)
+   try reader.setCrop(.init(x:0.1,y:0,width:0.9,height:1),physicalPageNumber:3)
+   check(restored.preservePDFViewDraft(reader),"new input during PUT persists beside immutable submitted request")
+   return response
+  },load:vault.note)
+  check(reader.hasViewEdits && restored.hasPendingPDFView && restored.pdfExcerptRecovery?.viewRecovery?.submitted == nil,"late successful callback advances base without overwriting newer crop")
+  let newer=try reader.prepareViewStateSave(base:restored.pdfViewBase)
+  await restored.savePDFView(newer,reader:reader,save:vault.save,load:vault.note)
+  check(!restored.hasPendingPDFView,"explicit save of later crop confirms new base")
+  let beforeBad=reader.viewState
+  let unsupported=await restored.openPDFView(path,loadPDF:vault.pdf,loadNote:{p in .init(path:p,text:"unsupported PDF state",sha256:CanvasPacket.sha(Data("unsupported PDF state".utf8)),modifiedAt:"")})
+  check(!unsupported && restored.pdfViewReader === reader && reader.viewState==beforeBad,"unsupported sidecar preserves existing Reader and source instead of default fallback")
+  let denied=await restored.openPDFView(path,loadPDF:vault.pdf,loadNote:{_ in throw NSError(domain:"CanvasRelay",code:403)})
+  check(!denied && restored.pdfViewReader === reader,"permission error does not become missing sidecar or a new default")
+  let documentBeforeLate=try restored.document.bytes()
+  let late=await restored.openPDFView(path,loadPDF:{p in
+   restored.setNoteConnection(address:"http://192.168.88.88:4243",token:context.token)
+   return try await vault.pdf(p)
+  },loadNote:vault.note)
+  let documentAfterLate=try restored.document.bytes()
+  check(!late && restored.pdfViewReader == nil && documentAfterLate==documentBeforeLate,"late callback after connection retirement never installs PDF state")
+  restored.setNoteConnection(address:context.relayAddress,token:context.token)
+  var fail=false
+  let failing=CanvasStore(pdfExcerptRecoveryWrite:{data,url in if fail {throw CocoaError(.fileWriteNoPermission)};try CanvasLocalFile.write(data,to:url)})
+  failing.enableDocumentChecks();failing.setNoteConnection(address:context.relayAddress,token:context.token)
+  check(await failing.openPDFView(path,source:source,loadPDF:vault.pdf,loadNote:vault.note),"IO boundary opens existing Reader before injected failure")
+  let failedReader=failing.pdfViewReader!;try failedReader.setCrop(.init(x:0,y:0,width:0.9,height:1),physicalPageNumber:2)
+  fail=true
+  check(!failing.preservePDFViewDraft(failedReader) && !failing.closePDFView() && failing.pdfViewReader === failedReader,"local intent write failure keeps same Reader and complete unsaved input")
+  check(!failing.canApplyReconciledCanvas && !failing.canTransitionDocument,"unwritten metadata draft blocks original replacement before UI change callback")
+  failing.setNoteConnection(address:"http://192.168.88.88:4243",token:context.token)
+  check(failing.pdfViewReader === failedReader && !failing.pdfViewCanPersist,"connection retirement on IO failure retains Reader while blocking old-provider actions")
+  failing.setNoteConnection(address:context.relayAddress,token:context.token)
+  fail=false;check(failing.preservePDFViewDraft(failedReader),"retry local durability only after actual write failure is removed")
+  let repair=try failedReader.prepareViewStateSave(base:failing.pdfViewBase)
+  await failing.savePDFView(repair,reader:failedReader,save:vault.save,load:vault.note)
+  check(!failing.hasPendingPDFView,"explicit metadata save closes recovered local IO boundary")
+  try reopen(failedReader.viewState)
+  let casReader=failing.pdfViewReader!
+  try casReader.setCrop(.init(x:0.1,y:0,width:0.9,height:1),physicalPageNumber:2)
+  check(failing.preservePDFViewDraft(casReader),"ordinary CAS local draft persists before external write")
+  let cas=try casReader.prepareViewStateSave(base:failing.pdfViewBase)
+  var remote=casReader.viewState;remote.displayOrder=[2,3,1]
+  _ = try vault.call("external",["path":remote.notePath,"text":try remote.markdown()])
+  await failing.savePDFView(cas,reader:casReader,save:vault.save,load:vault.note)
+  check(failing.pdfExcerptRecovery?.saveConflict == .unclassified && !failing.pdfViewCanPersist,"ordinary unclassified409 is held rather than silently retried or checkpointed")
+  let casIntent=failing.pdfExcerptRecovery!
+  await failing.comparePDFViewConflict(reader:casReader,load:vault.compare,loadCurrent:vault.note)
+  let remoteText=try remote.markdown()
+  check(failing.pdfViewLocalChoice?.original == casIntent && failing.pdfViewLocalChoice?.current.text == remoteText,"explicit404 conflict journal plus complete non-held GET stages a local comparison")
+  var raced=remote;raced.crops[2] = .init(x:0,y:0,width:1,height:0.9)
+  _ = try vault.call("external",["path":remote.notePath,"text":try raced.markdown()])
+  let putsBeforeChoice=vault.operations.filter{$0=="saveNote"}.count
+  await failing.adoptPDFViewCurrent(reader:casReader,load:vault.note)
+  check(failing.pdfExcerptRecovery == casIntent && failing.pdfViewLocalChoice?.closed == false && failing.pdfViewReader === casReader,"comparison-to-choice external race preserves intent and rejects stale current candidate")
+  await failing.comparePDFViewConflict(reader:casReader,load:vault.compare,loadCurrent:vault.note)
+  await failing.adoptPDFViewCurrent(reader:casReader,load:vault.note)
+  check(!failing.hasPendingPDFView && failing.pdfViewReader?.viewState == raced && failing.pdfViewLocalChoice?.phase == .resolved,"explicit current choice resolves ordinary CAS refusal without a server recovery journal")
+  check(vault.operations.filter{$0=="saveNote"}.count == putsBeforeChoice,"ordinary CAS reconciliation performs no retry or original overwrite")
+  check(failing.pdfViewLocalChoice?.original == casIntent,"ordinary current choice preserves complete former base draft and submitted request")
+  try failing.archiveCompletedPDFViewChoiceForNoteEditor()
+  // Existing file/cache tasks can briefly own the shared transition gate after a new Store restore.
+  for _ in 0..<200 where !failing.canTransitionDocument { await Task.yield() }
+  check(failing.canTransitionDocument,"closed PDF comparison archives do not block a later document transition")
+  try reopen(raced)
+  var failAfter=true
+  let post=CanvasStore(pdfExcerptRecoveryWrite:{data,url in try CanvasLocalFile.write(data,to:url);if failAfter {throw CocoaError(.fileWriteUnknown)}})
+  post.enableDocumentChecks();post.setNoteConnection(address:context.relayAddress,token:context.token)
+  check(await post.openPDFView(path,source:source,loadPDF:vault.pdf,loadNote:vault.note),"post-write failure fixture reuses exact original Files document")
+  let postReader=post.pdfViewReader!;try postReader.setCrop(.init(x:0,y:0,width:1,height:0.85),physicalPageNumber:1)
+  check(!post.preservePDFViewDraft(postReader),"write-then-error keeps unknown local intent instead of claiming success")
+  let attempted=try JSONDecoder().decode(VaultPDFCreateRecoveryFile.self,from:CanvasLocalFile.read(CanvasRuntime.stateURL(.pdfExcerptRecovery))).record()!
+  failAfter=false
+  check(post.preservePDFViewDraft(postReader) && post.pdfExcerptRecovery?.viewRecovery?.id==attempted.viewRecovery?.id,"local unknown-write retry reuses preserved operation ID")
+  let postRequest=try postReader.prepareViewStateSave(base:post.pdfViewBase)
+  await post.savePDFView(postRequest,reader:postReader,save:vault.save,load:vault.note)
+  check(!post.hasPendingPDFView,"explicit save closes write-then-error without duplicate operation")
   let finalPDF=try await vault.pdf(path),finalNote=try await vault.note(source.notePath)
-  check(finalPDF.sha256==snapshot.sha256 && finalNote.sha256==sourceNote.sha256 && sourceCard.vaultNote?.quoteSha256==CanvasPacket.sha(Data(source.quote.utf8)),"PDF/source-note/quote three SHA remain unchanged")
-  check(try JSONEncoder().encode(source)==sourceJSON && restored.scene.nodes.first{$0.id==id}==sourceCard,"physical page range boxes rotation and original source card remain byte exact")
+  let finalExcerpt=try VaultPDFExcerpt.parse(finalNote.text)!
+  check(finalPDF.sha256==snapshot.sha256 && finalNote.sha256==sourceNote.sha256 && sourceCard.vaultNote?.sha256==sourceNote.sha256 && CanvasPacket.sha(Data(finalExcerpt.quote.utf8))==CanvasPacket.sha(Data(source.quote.utf8)),"PDF/source-note/quote three SHA remain unchanged")
+  check(try encoder.encode(source)==sourceJSON && failing.scene.nodes.first{$0.id==id}==sourceCard,"physical page range boxes rotation and original source card remain byte exact")
   check(NSApplication.shared.windows.isEmpty,"native PDFKit checks created no visible Window")
   try JSONSerialization.data(withJSONObject:["assertions":assertions,"count":assertions.count,"operations":vault.operations,"PDFSHA":snapshot.sha256,"sourceMarkdownSHA":sourceNote.sha256,"quoteSHA":CanvasPacket.sha(Data(source.quote.utf8))],options:[.prettyPrinted,.sortedKeys]).write(to:out.appendingPathComponent("observations.json"))
  }

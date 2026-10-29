@@ -51,3 +51,18 @@ PDF SHA256: <실제64자리 SHA256>
 기존 linked-obsidian-notes 실행기를 확장해 --pdf-view-state(native/codec), --pdf-view-state-files(실제 ObsidianVault 파일 note CAS/GET), --pdf-view-state-reopen(새 Swift 프로세스)을 분리한다. 실제 PDFKit으로0/90/180/270도·음수 원점/CropBox·선택 범위·기존 발췌/목차를 대조하고 상태 Markdown/PDF/기존 source note의 실제 파일 재열기를 검사한다. 지원 밖 상태·외부 CAS·응답 유실·typed409·늦은 응답에서 입력과 원본을 보존한다. Files phase는 기존 mini-ephemeral-source와 격리 stdio backend를 재사용하며 listener0이다.
 
 새 codec을 기존 iOS Sill/SillPhone 두 대상의 Sources에 등록하고 관련 SDK typecheck를 수행한다. UI 손조작·Window 생성·기기·Host·설치·실 vault·질문·알림은 수면 Sentinel 경계로 실행하지 않는다. 원앱 Mac 관측을 iPad 실물 수용으로 확대하지 않는다. 기존 전체385/43/191 및 서버13검사를 반복하지 않는다. 정확한 결과/해시·소유 범위·실패와 수리는 전용 evidence 영수증으로 반환한다.
+
+## Store·Workspace 제품 접합 (Helm)
+
+별도 `pdf-view-product-20261029/source`에서 df4eab84를 기준으로 e09486a8/c2118385를 소비하고 f09daa17을 의미 병합했다. `CanvasStore` 상단 잉크 Undo/tool owner, `CanvasDocument`의 activation 및 `PencilCanvas`는 f09 바이트를 그대로 보존한다. Pstack의 기존 경로 대조와 경계 중심 구현, Ponytail의 기존 note API·기록 파일 재사용을 적용했다. 새 네트워크 API·DB·원본 복사 계층은 없다.
+
+- 기존 PDF 보기 메뉴가 Store 소유 Reader와 표시 순서·crop·보기 Undo/Redo·저장/재조회 UI를 사용한다. 원문 PDF는 쓰지 않으며 sidecar는 같은 폴더의 일반 Markdown이다. 명시 404만 새 보기 기준으로 인정한다. 기존 note 편집·발췌 카드와 전체 Document Files 원본을 동일 기능으로 합치지 않는다.
+- 기존 `CanvasPDFExcerptCreate/recovery.json`에 선택적인 `viewRecovery`를 넣어 원래 base, 최신 draft, 불변 submitted 및 작업 ID를 보존한다. 기존 발췌 payload와 상호 오해하지 않는다. 옛 reader가 이 새 payload를 읽으면 발췌 형식 검증에서 거부해 원본을 보존한다. 이 로컬 복구 확장은 기존 scene/Document/server wire를 바꾸지 않는다.
+- PUT보다 먼저 실제 복구 파일을 기록한다. 제출과 전체 GET이 같고 문서 snapshot·연결 세대·Reader identity가 그대로일 때만 확인한다. 저장 중 새 입력은 새 기준 위 초안으로 남는다. 응답 유실은 명시 GET만 허용하고, typed 또는 unclassified409는 SHA만으로 해제하지 않는다.
+- 보존 충돌은 기존 `/vault/note/conflict` 비교·선택 계약을 소비한다. `NoteConflictChoice.json`과 기존 정확 UUID형 `NoteConflictAttempt-*`에 이전 전체 입력과 후보를 보존하고 선택 자료를 PDF 상태로 검증한 뒤 기존 resolve/GET을 사용한다. 미지원 후보·역수신·IO·늦은 callback은 원본을 교체하지 않는다.
+- 서버 conflict GET의 명시 404 **뒤** 현재 note 전체 GET이 비보존 상태이며 PDF identity/형식 검증을 통과한 경우에만 일반 CAS 비교 후보를 만든다. 사용자가 현재 원문 채택을 누르면 전체 GET을 다시 대조하고 옛 base/draft/submitted를 보존한 채 로컬 보기를 연다. PUT 재시도·원문 덮어쓰기·서버 충돌 해제 추정은 없다. 비교 뒤 외부 원문이 바뀌면 다시 거부한다.
+- 미기록 Reader 초안·기록 IO 실패·미확인 제출·숨은 비교 파일은 원본/페이지 교체 gate에 포함된다. 연결이 바뀌어도 기록 실패한 Reader는 메모리에 남기고 이전 provider의 action/callback은 차단한다. 완료된 PDF 비교는 일반 노트 편집의 기존 비교 슬롯에 넘기기 전에 전체 보존본을 기존 attempt 파일로 남긴다. 사용자 복구 자료를 삭제하거나 GC하지 않는다.
+
+`Tests/checks/pdf-view-product/run.py --output <승인된 외장 출력 폴더>`는 실제 macOS SDK/PDFKit·CanvasLocalFile·전체 Document Files·공식 ObsidianVault 파일 모듈을 격리 stdio로 연결한다. 자체 3쪽 PDF/발췌를 만들고 별도 프로세스 재열기, 외부 Markdown 역수신, 원자 교환 후 충돌, 응답 유실, 명시 복구, 원래 PDF/발췌 Markdown/인용문 SHA와 물리 앵커 보존을 확인한다. 정상 앱 파일 sentinel에는 `CanvasDocumentSource.json`도 포함한다. 외장 출력의 `result.json`은 정확 입력 SHA·원본 불변·실제 helper 종료를 기록하며 tracked 결과 파일을 갱신하지 않는다. 기존 canvas-document 및 linked-obsidian runner는 새 제품의 누락된 컴파일 입력만 보완했다.
+
+실제 socket HTTP, SwiftUI 손조작, iPad/Pencil, 설치, 실 Vault·Host 사용은 이 검사의 범위가 아니다. 전체 iOS27 SDK는 부모의 최종 정확 결합에서 한 번 수행한다. 독립 소스 검수·최종 SDK·기기 UI 수용 전 전체 기능 완료로 보고하지 않는다.
