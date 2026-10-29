@@ -44,7 +44,7 @@ SINGLE_APP_BLOCKERS = (
     'installed_runner_identity_receipt_and_normal_launch_return_required',
 )
 NODE = 'D29DDF60-B4C6-48DD-A75A-219C8F2A52A7'
-ORIGINALS = ['CanvasScene.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/ledger.json',
+ORIGINALS = ['CanvasScene.json', 'CanvasDocumentSource.json', 'CanvasVaultCheckpoint.json', 'CanvasOutbox/ledger.json',
              'CanvasBlockEdit/recovery.json', 'CanvasNoteEdit/recovery.json',
              'CanvasPDFExcerptCreate/recovery.json',
              'CanvasLegacyScene.json', 'CanvasWorkspace/bookmark.json', 'CCR Sill/keyboard-diagnostics.json',

@@ -145,4 +145,6 @@ session 전체에서 세 문자열이 발견되는 것만으로 결속하지 않
 
 사용자가 확정한 새 복구 원본 위치는 정확히 `Library/Application Support/CanvasConflictRecovery/`다. ORIGINALS에 이 디렉터리를 추가했고, 기존 Documents/전체 Preferences와 같은 전체 tree SHA 계산을 재사용한다. choice/local-UUID/attempt-UUID뿐 아니라 내부 모든 regular file과 빈 디렉터리를 기록한다. filename prefix 필터는 없다. 디렉터리 부재는 null, 존재하는 빈 tree는 빈 map, 파일·하위 디렉터리 추가/삭제/변경은 다른 map으로 구분한다. symlink·비정규 파일·기존 recovery snapshot 목적지 재사용은 거부하고 원본·이전 증거를 삭제하지 않는다.
 
+여러 페이지 문서의 `Library/Application Support/CanvasDocumentSource.json`도 ORIGINALS의 고정 파일로 보호한다. 전체 문서 캐시뿐 아니라 미확인 전송·명시 복구 의도가 들어 있으므로, 기존 scene 파일이나 선택 페이지 snapshot으로 대신하지 않는다. 기존 SHA 비교를 그대로 사용해 부재·추가·바이트 변경·삭제를 구분한다. 목록 확장과 격리 단위 검사는 실제 기기 snapshot·설치·복원 완료를 뜻하지 않는다.
+
 이 key를 캡처하지 않은 과거 snapshot을 null/부재로 추정하지 않는다. 부모 설치 전 새 adapter로 전체 보호 baseline을 얻어야 한다. 이 변경은 명명된 디렉터리의 읽기/해시 보존뿐이며, runtime.json이나 일반 Application Support 바깥 쓰기 허용을 넓히지 않는다. Helm의 별도 WT가 새 conflict 파일 URL과 격리 whitelist를 정확한 디렉터리·UUID로 제한하고 부모가 의미 통합한다. 기존 scene/outbox/recovery 위치는 그대로다. 실제 기기 copy 및 최신 후보 보존 수용은 부모 lease의 후속 단계다.

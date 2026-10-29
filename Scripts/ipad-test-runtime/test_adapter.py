@@ -22,6 +22,33 @@ def existing_runner_fixture(work, run):
         'existingRunnerReceipt':str(receipt),'existingRunnerReceiptSHA256':adapter.sha(receipt.read_bytes())}
 
 class PDFRecoveryProtectionContract(unittest.TestCase):
+    def test_complete_document_cache_and_pending_intent_are_protected(self):
+        name='CanvasDocumentSource.json'
+        self.assertIn(name,adapter.ORIGINALS)
+        with tempfile.TemporaryDirectory() as temporary:
+            work=Path(temporary)
+            content=None
+            def copy(config,work,source,target,**kwargs):
+                if source=='Library/Application Support/'+name and content is not None:
+                    self.assertEqual(kwargs['bundle'],adapter.USER_BUNDLE)
+                    target.write_bytes(content)
+                    return True
+                return False
+            def device(config,args,log):
+                adapter.write(Path(args[-1]),{'result':{'unchanged':True}})
+            with patch.object(adapter,'device',side_effect=device),patch.object(adapter,'copy_file',side_effect=copy):
+                absent=adapter.snapshots({},work,'absent')
+                self.assertIsNone(absent[name])
+                content=b'{"document":{"pages":["entire original"]},"sync":{"phase":"sending"}}'
+                before=adapter.snapshots({},work,'before-document')
+                self.assertEqual(before[name],adapter.sha(content))
+                self.assertFalse(adapter.same_user_data(absent,before))
+                self.assertTrue(adapter.same_user_data(before,adapter.snapshots({},work,'same-document')))
+                content=content.replace(b'sending',b'held')
+                self.assertFalse(adapter.same_user_data(before,adapter.snapshots({},work,'changed-intent')))
+                content=None
+                self.assertFalse(adapter.same_user_data(before,adapter.snapshots({},work,'removed-document')))
+
     def test_pdf_journal_changes_are_in_normal_snapshot(self):
         self.assertIn('CanvasPDFExcerptCreate/recovery.json',adapter.ORIGINALS)
         self.assertIn('CanvasConflictRecovery',adapter.ORIGINALS)
