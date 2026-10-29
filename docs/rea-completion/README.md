@@ -1,5 +1,22 @@
 # REA 기능 조사·구현 진행표
 
+## 2026-10-29 후속 근거 — 공식 PDF900 기준
+
+이번 문서 작업의 기준은 `9006908998dbcbe0b278b3dc75c71d5d2006342a` / tree `c9d3fd1f19996328c191672ed30ef3051b9d7f3f`다. 아래의 기존 본문·385행 표는 **9646469 당시 snapshot**으로 보존한다. `coverage.json`의 기존 source snapshot·13개 sourceFileRegistry·상태·과거 count도 바꾸지 않았다. 새 사실은 `additionalOriginalEvidence`, `implementationUpdates.pdfPagesRotation9006908`, `evidenceFollowups`에서 구분한다.
+
+- **MS14.03 페이지 복제:** 자체 문서145의 원본146을 복제해153이 생겼고, 서재에서 같은 문서를 재열어 2/2와 기존 내용 유지를 확인했다. 원본 packed 바이트와 두 페이지 ink.bink는 유지됐다. 두 패키지 내부의 `qoxhavla`는 같으므로 전역 ID가 아니다. 외부 페이지 UUID와 부모145의 child_index로 146→153의 저장 순서를 대조했으며, 순서 변경을 실행한 근거는 없다. [R156](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/observation.json), [R159](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/result.json).
+- **MS15.03 배경 변경:** 복제 페이지153의 회색 격자와 기존 내용, 원본146의 검은 thumbnail이 서재→문서 재열기에도 유지됐다. 저장 자료는 153의 background_pattern=grid·page.bdom 변경과 원본/양쪽 ink 바이트 보존을 뒷받침한다. 색상은 화면 관측이며 저장 색상 필드 해독은 아니다. R159의 당시 배경 재열기 미검증을 지우지 않고 이후 R158로 보완한다. R157에 기록된 240초 허용/343초 경과/103초 초과도 보존한다. [R157](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/background-observation.json), [R158](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/background-reopen-observation.json).
+
+두 행동 모두 자체 표본의 좁은 원앱 관측이다. cold restart·빈 페이지 삽입·순서 변경·전체 오류 복구는 미검증이다. 저장 자료는 자체 문서 투영의 안정된 읽기이며 앱 전체의 원자적 snapshot이 아니다. CCR 복수 페이지 모델 `0fd`는 미통합·제품 UI0이므로 원앱 사실을 CCR 완료로 옮기지 않는다.
+
+**PDF900 소스 후속:** 기존 한 페이지·회전0 후보의 한계를 다중 페이지 탐색, 선택한 한 페이지의 앵커 저장·재열기·원문 복귀, schema2의 PDFKit 해석 0/90/180/270도 page-space 좌표 범위에서 닫았다. canonical Markdown·sourceSHA·명시 CAS+GET·복구 barrier를 재사용하고 schema1 회전0은 유지한다. 이전 한 페이지 설명과 후보 미통합 기록은 역사로 남는다. 원본/보기회전 편집, 페이지를 가로지르는 하나의 발췌, 표시 순서·크롭 편집, 실제 iPad/HTTP/설치 수용이나 전체 MarginNote 동등성은 아니다. [R160 최종 영수증](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/pdf-pages-rotation-20261029/evidence/FINAL-RECEIPT.json), [R161 Sartre 독립 검수](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/pdf-pages-rotation-independent-review-9006908/result.json). 부모의 공식 반영 완료 통지와 이 영수증을 재사용하며 추가 ACK·제품 검사·원격 검사를 반복하지 않았다.
+
+현재 원장에서 다시 계산한 값은 385행/114그룹, 미완료385/완료0, parity_gap120·implementation_evidence_missing227·support_unverified32·integration_pending6이다. 기존155개 근거를 보존하고 새6개를 더해161개다. 원앱 후속2행·PDF 소스 후속5행은 기능 완료 수에 더하지 않는다. 원앱 historical status와 원장 status 변경은 모두0이다. 이번 제품 코드·빌드·테스트틀·UI·기기·Host·실사용 vault·공유서비스 변경도0이다.
+
+R153의 현재 원본 경로에는 이후 `followup` 객체가 추가돼 당시 해시·크기와 다르다. 기존 registry는 그대로 유지하고, 추가 객체를 제외했을 때 당시 1422바이트/SHA256이 정확히 재현됨을 확인했다. 복원본과 현재 파일 해시는 `evidenceFollowups[].historicalEvidenceReadback`에 별도로 남겼다. 현재 경로가 과거 해시와 같다고 보고하지 않으며, 새 두 행동은 R156~R159로만 뒷받침한다.
+
+## 보존한 9646469 당시 기록
+
 문서 기준은 공식 integration `9646469ba63b2ed6a65c61a6384f541222dd5dee` / tree `4e8b7abf92485050610da334d6ec0166094adacb`이다. 목표는 MyScript Notes와 MarginNote의 사용자 행동을 CCR Sill의 Obsidian 데이터 흐름으로 재현하는 것이다. **전체 완료는 false, 최종 동등성 완료는 0행**이다. 기존 385행 ID와 114 원행, 원앱 관찰·지원 미확인·false는 보존했다. 385는 조사 질문의 행동 분해이며 확인된 기능 수나 완료율의 분모가 아니다.
 
 이번 변경은 문서만 소유한다. 기존 제품 검사와 독립 검수 영수증을 읽었고 제품 테스트를 다시 실행하지 않았다. 원앱·기기·GUI·Host·사용자 vault·서비스 변경은 0이다. 기계 판독 원장은 [coverage.json](coverage.json), 다음 행동 제안은 [NEXT.md](NEXT.md), 문서 정합성 결과는 [verification.json](verification.json)이다.

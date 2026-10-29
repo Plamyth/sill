@@ -7956,7 +7956,11 @@
         "integrationStage": "feature_not_revalidated_at_current_source",
         "installedStage": "normal68_historical_only",
         "currentPhysicalAcceptance": false
-      }
+      },
+      "additionalOriginalEvidenceRefs": [
+        "R156",
+        "R159"
+      ]
     },
     {
       "id": "MS14.04",
@@ -8216,7 +8220,12 @@
         "integrationStage": "feature_not_revalidated_at_current_source",
         "installedStage": "normal68_historical_only",
         "currentPhysicalAcceptance": false
-      }
+      },
+      "additionalOriginalEvidenceRefs": [
+        "R157",
+        "R158",
+        "R159"
+      ]
     },
     {
       "id": "MS15.04",
@@ -13408,7 +13417,10 @@
         "integrationStage": "feature_not_revalidated_at_current_source",
         "installedStage": "normal68_historical_only",
         "currentPhysicalAcceptance": false
-      }
+      },
+      "additionalImplementationRefs": [
+        "pdfPagesRotation9006908"
+      ]
     },
     {
       "id": "MM11.02",
@@ -14570,7 +14582,10 @@
         "integrationStage": "candidate_not_integrated",
         "installedStage": "normal68_historical_only",
         "currentPhysicalAcceptance": false
-      }
+      },
+      "additionalImplementationRefs": [
+        "pdfPagesRotation9006908"
+      ]
     },
     {
       "id": "MM15.02",
@@ -22394,7 +22409,10 @@
         "integrationStage": "feature_not_revalidated_at_current_source",
         "installedStage": "normal68_historical_only",
         "currentPhysicalAcceptance": false
-      }
+      },
+      "additionalImplementationRefs": [
+        "pdfPagesRotation9006908"
+      ]
     },
     {
       "id": "MI12.02",
@@ -23185,7 +23203,10 @@
         "integrationStage": "candidate_not_integrated",
         "installedStage": "normal68_historical_only",
         "currentPhysicalAcceptance": false
-      }
+      },
+      "additionalImplementationRefs": [
+        "pdfPagesRotation9006908"
+      ]
     },
     {
       "id": "MI16.02",
@@ -23243,7 +23264,10 @@
         "integrationStage": "candidate_not_integrated",
         "installedStage": "normal68_historical_only",
         "currentPhysicalAcceptance": false
-      }
+      },
+      "additionalImplementationRefs": [
+        "pdfPagesRotation9006908"
+      ]
     },
     {
       "id": "MI16.03",
@@ -29742,6 +29766,70 @@
       "locator": "2026-10-29 부모 제공 보존 파일만 읽음. 새로운 REA/UI/기기 실행 없음. 저장/메뉴 관측이며 동작 전체 수용 아님.",
       "role": "bounded_storage_interpretation",
       "reaEvidenceIds": []
+    },
+    "R156": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/observation.json",
+      "exists": true,
+      "bytes": 2144,
+      "sha256": "d92eae36c38b7570f59279c91dbc485fe0d6ad16f281c6045ae67022ba5d57d3",
+      "locator": "2026-10-29 보존 자료 후속 연결. 이번 작업의 원앱/GUI/기기/제품 검사 실행 없음.",
+      "role": "bounded_original_app_duplication_observation",
+      "reaEvidenceIds": []
+    },
+    "R157": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/background-observation.json",
+      "exists": true,
+      "bytes": 1349,
+      "sha256": "9e03a6569404bcbc68fbe60f03a5db8627e100fc7d0f3a41441276b3ccf619bd",
+      "locator": "2026-10-29 보존 자료 후속 연결. 이번 작업의 원앱/GUI/기기/제품 검사 실행 없음.",
+      "role": "bounded_original_app_background_observation",
+      "reaEvidenceIds": []
+    },
+    "R158": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/background-reopen-observation.json",
+      "exists": true,
+      "bytes": 897,
+      "sha256": "e194374ebdab98fdb3fdecfb02a304bd572b55a23711b00a62da698f527f1b79",
+      "locator": "2026-10-29 보존 자료 후속 연결. 이번 작업의 원앱/GUI/기기/제품 검사 실행 없음.",
+      "role": "bounded_original_app_background_reopen_observation",
+      "reaEvidenceIds": []
+    },
+    "R159": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/result.json",
+      "exists": true,
+      "bytes": 9350,
+      "sha256": "6681f179248994d5d7078e92e30b3efaa2b55ad9b136805fca7e5521459b5f78",
+      "locator": "2026-10-29 보존 자료 후속 연결. 이번 작업의 원앱/GUI/기기/제품 검사 실행 없음.",
+      "role": "bounded_original_app_identity_order_ink_evidence",
+      "reaEvidenceIds": [
+        "ev_b1a4da7c1750c099ca785e32eccb5385e47f9cfe731be75b6b329b4af7f8ff4d",
+        "ev_ab8aa390c9fac62bb34c991fe4b4c02c706ecb767ff36663cece91d7fc50be4c",
+        "ev_d415121e36b59f2f82a36e06cdee45c9153b4a4b3ef800fc4bbe2190cef0b6d6",
+        "ev_fddfe80ad091aa975cd763a08fe409e94baa3c78c063e29c009223c4e23bfe99",
+        "ev_d43023f924f35d250757df7b1177f7501a1eea3b6c2da34d3963f44b5e921c96",
+        "ev_820a416beba97e147058d909343d30a28758455ce31d0a05de2c67f1a4972e4a",
+        "ev_5d84540a37178264514b3bb0cbebc461475730b54dc851dc8a2cb0ff0d216dc1",
+        "ev_4800fc112e11e4153bbb898233194fd900830dcbb275f4ebdefa2c10e2145899",
+        "ev_126cdabcb4fe9fc7b35e26e2cfc587515c9d18434556153a47c1be5b5feb568d"
+      ]
+    },
+    "R160": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/pdf-pages-rotation-20261029/evidence/FINAL-RECEIPT.json",
+      "exists": true,
+      "bytes": 6823,
+      "sha256": "8f8af1c0322e049d197ce80104644bb68c049c6549186c3d7a7c71dad38fb072",
+      "locator": "2026-10-29 보존 자료 후속 연결. 이번 작업의 원앱/GUI/기기/제품 검사 실행 없음.",
+      "role": "scoped_pdf_implementation_receipt",
+      "reaEvidenceIds": []
+    },
+    "R161": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/pdf-pages-rotation-independent-review-9006908/result.json",
+      "exists": true,
+      "bytes": 679,
+      "sha256": "d134aa2405afe98414a157ca0f73b42681d4351c979d4204e9a023e68c9c4cb6",
+      "locator": "2026-10-29 보존 자료 후속 연결. 이번 작업의 원앱/GUI/기기/제품 검사 실행 없음.",
+      "role": "scoped_pdf_independent_review",
+      "reaEvidenceIds": []
     }
   },
   "limitations": [
@@ -30131,6 +30219,49 @@
         "nativeRecognitionAccepted": false,
         "testCountsAreFeatureCounts": false
       }
+    },
+    "pdfPagesRotation9006908": {
+      "label": "PDF 다중 페이지 탐색·선택 페이지 앵커·직각 회전 좌표",
+      "behavior": "이전 단일페이지·회전0 후보의 제한을 확장해 이전/다음/페이지 번호 탐색과 현재/선택 페이지 표시를 제공한다. 유효한 이동은 옛 선택을 지우고 범위 밖 입력은 현재 페이지·선택을 보존한다. 한 발췌는 한 선택 페이지이며 schema2 pageIndex/PDF SHA/textRanges/원문 인용과 PDFKit page-space를 결속해 저장·재열기·원문 복귀한다.",
+      "rowIds": [
+        "MM11.01",
+        "MI12.01",
+        "MM15.01",
+        "MI16.01",
+        "MI16.02"
+      ],
+      "files": [
+        "iOSClient/CanvasBridge/VaultPDFReader.swift",
+        "iOSClient/CanvasBridge/VaultPDFExcerpt.swift",
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift"
+      ],
+      "checks": "기존 영수증만 재사용: native191·실제 파일40·새 프로세스25·notification2·iOS SDK exit0, Sartre 독립 native40 SOURCE_CLEAR. native191/SDK 이후 test-only flag/finish 수정은 제품 불변이며 최종 파일검사38입력과 SDK 제품23입력의 해시 일치를 독립 검수에서 구분했다. 이번 제품 검사 재실행0.",
+      "limits": [
+        "PDFKit이 해석한 0/90/180/270도 page-space 좌표 지원만. schema1은 회전0을 유지. 보기회전/원본 PDF metadata 편집 UI와 원앱 회전 발췌의 전체 동등성은 미수용.",
+        "페이지를 가로지르는 하나의 발췌·표시 순서 편집·크롭 편집·전체 MarginNote 동등성 미수용.",
+        "실제 iPad UI/터치/Pencil·설치·새 다중 페이지 HTTP 수용 근거 없음. MyScript 노트북 복수 페이지 모델/UI의 완료 근거로 전이하지 않음."
+      ],
+      "evidenceRefs": [
+        "R160",
+        "R161"
+      ],
+      "integration": {
+        "commit": "9006908998dbcbe0b278b3dc75c71d5d2006342a",
+        "tree": "c9d3fd1f19996328c191672ed30ef3051b9d7f3f",
+        "sourcePresent": true,
+        "acceptance": "SOURCE_CLEAR 및 부모의 공식 fast-forward/push/sourceguard 완료 직접 통지. 이 문서 작업에서 원격·runtime을 다시 검사하지 않음."
+      },
+      "preservation": "기존 canonical Markdown/sourceSHA, 명시 CAS+GET, typed409·PDFRecovery/ConflictRecovery barrier 재사용. 새 scene kind/DB/의존성·PDF 원본 쓰기 없음.",
+      "physical": {
+        "accepted": false,
+        "note": "source/SDK/격리 파일 검사와 실제 기기·HTTP·설치를 분리한다."
+      },
+      "automaticScope": {
+        "testsRerunThisUpdate": false,
+        "newHTTPAccepted": false,
+        "testCountsAreFeatureCounts": false
+      },
+      "supersedesOnly": "9646469 당시의 후보 미통합·한 페이지/회전0 제한 설명에 대한 후속. 역사적 원문·sourceFileRegistry·상태는 수정하지 않음."
     }
   },
   "updateDelta": {
@@ -30421,6 +30552,179 @@
       "subjectSHA256": "d50c8d3d3ad103849d2ee894732ee135415e940894a2c523ca2a3a12c1d499a5",
       "scope": "자체 ZBOOKNOTE 4행의 편집문자/미디어 참조 분리만. ZRECOGNIZE_TEXT JSON 메타데이터를 인식 문자로 해석하지 않음. OCR 전후·정확도·양방향 수정·cold reopen 미수용. Mac/iPad 실행 버전 성공으로 전이하지 않음.",
       "behaviorAccepted": false
+    },
+    "myscriptPageDuplication20261029": {
+      "rowIds": [
+        "MS14.03"
+      ],
+      "evidenceRefs": [
+        "R156",
+        "R159"
+      ],
+      "scope": "자체 문서 REA 기능 조사 2026-10-18의 페이지 146 복제→153, 2/2 표시, 서재 복귀 후 같은 문서 재열기만 관측. 전체 앱 재시작 아님.",
+      "input": "페이지 메뉴의 복제를 실행하고 서재로 돌아갔다가 같은 문서를 재열었다.",
+      "result": "기존 내용이 보이는 두 페이지와 2/2 선택 상태를 확인했다. 원본 페이지의 packed 바이트와 두 페이지 ink.bink 바이트가 유지됐다.",
+      "save": "원본 전체 packed SHA가 전후 동일하고, 복제본의 배경 변경 뒤 달라진 멤버는 pages/qoxhavla/page.bdom뿐이다.",
+      "reopen": "R156의 서재→문서 재열기에서 두 페이지와 내용 유지. 프로세스 cold restart는 미검증.",
+      "identity": {
+        "notebook": {
+          "objectID": 145,
+          "UUID": "413857cd-539c-4d4c-8456-88e77ffd27ed",
+          "pageIsContainer": true
+        },
+        "pages": [
+          {
+            "id": 146,
+            "uuid": "d6849c4b-cb19-4b1e-a759-5a10c12f2f8c",
+            "child_index": -0.02972748914936474,
+            "latestContentID": 1006,
+            "latestTimestamp": 1793227717287254,
+            "latestSignature": "a059f43d48ff92f2412f2503c4663b3790a1635f4f1cbc268f000cd33cac8d52",
+            "packedSHA256": "a059f43d48ff92f2412f2503c4663b3790a1635f4f1cbc268f000cd33cac8d52"
+          },
+          {
+            "id": 153,
+            "uuid": "b8f804a5-23c0-4916-babe-615e07340329",
+            "child_index": 1.0251418578669333,
+            "latestContentID": 1009,
+            "latestTimestamp": 1793228466933032,
+            "latestSignature": "99a2a0b51e6df0fda79ee85e094c4af40a67208c051640b9226cc9a0bdc08784",
+            "packedSHA256": "99a2a0b51e6df0fda79ee85e094c4af40a67208c051640b9226cc9a0bdc08784"
+          }
+        ],
+        "orderedTreeFromREA": [
+          {
+            "parent_id": "145",
+            "child_id": "146",
+            "child_index": -0.02972748914936474
+          },
+          {
+            "parent_id": "145",
+            "child_id": "153",
+            "child_index": 1.0251418578669333
+          }
+        ],
+        "duplicateOf": "d6849c4b-cb19-4b1e-a759-5a10c12f2f8c",
+        "bothInkSHA256": "9649618db27ab5d22f2f90f7a09baa98dd02f8245c52ff3a3e13453c901dae92",
+        "originalPagePackedBytesUnchanged": true,
+        "inkBytesUnchangedForBoth": true,
+        "sharedPackageInternalPageID": "qoxhavla",
+        "identityLimit": "qoxhavla는 두 패키지에서 같으므로 전역 페이지 ID로 사용하지 않는다. 이 표본은 외부 UUID와 parent_id/child_index로 식별·순서를 대조했다. 순서 변경을 실행한 근거는 아니다."
+      },
+      "acquisitionLimit": "자체 문서 투영의 두 읽기와 마지막 읽기·metadata 일치만. 앱 전체의 원자적 snapshot이나 BDOM/ink 전체 의미 해독은 아니다.",
+      "notAccepted": [
+        "빈 페이지 삽입",
+        "페이지 순서 변경",
+        "삭제/공유",
+        "프로세스 cold restart",
+        "복제 실패·취소 복구",
+        "CCR 복수 페이지 제품 동작"
+      ],
+      "boundedBehaviorObserved": true,
+      "behaviorAccepted": false,
+      "acceptanceMeaning": "자체 표본의 복제·서재 재열기는 관측. 전체 행동·오류 경계나 CCR 기능 완료 수용은 아님.",
+      "ccrComplete": false
+    },
+    "myscriptPageBackground20261029": {
+      "rowIds": [
+        "MS15.03"
+      ],
+      "evidenceRefs": [
+        "R157",
+        "R158",
+        "R159"
+      ],
+      "scope": "같은 자체 문서의 복제 페이지 153에 배경 적용 후 서재→같은 문서 재열기. 원본 페이지 146의 배경·내용은 보존.",
+      "input": "두 번째 페이지의 배경 선택에서 회색 격자를 적용하고 서재로 돌아간 뒤 같은 문서를 재열었다.",
+      "result": "2/2와 두 번째 페이지의 회색 격자·기존 내용, 첫 페이지의 검은 thumbnail 유지가 화면에 기록됐다.",
+      "save": "REA metadata에서 object153 background_pattern=grid와 duplicate_of=원본 UUID, object146 background_pattern=none을 확인했다. page153의 page.bdom만 변경되고 두 ink.bink 및 page146 packed 바이트는 유지됐다. 색상은 CUA 화면 근거이며 저장 색상 필드 해독을 주장하지 않는다.",
+      "reopen": "R158에서 배경과 내용·2/2 유지. R157/R159의 당시 배경 재열기 미검증 기록은 그대로 두고 이후 R158 관측으로 보완한다.",
+      "observationSequence": {
+        "changeReturnedAt": "2026-10-28T23:02:45Z",
+        "dataFinishedAt": "2026-10-28T23:08:48.249587+00:00",
+        "laterReopenReturnedAt": "2026-10-28T23:16:19Z",
+        "earlierBackgroundReopenAccepted": false,
+        "laterLibraryReopenObserved": true,
+        "coldProcessRestartAccepted": false
+      },
+      "windowRecord": {
+        "authorizedWindowSeconds": 240,
+        "elapsedSeconds": 343,
+        "windowOverrunSeconds": 103,
+        "note": "R157의 시간 초과 이력을 보존한다. 이번 문서 작업은 추가 입력이나 GUI 권한을 사용하지 않았다."
+      },
+      "notAccepted": [
+        "빈 페이지 삽입",
+        "페이지 순서 변경",
+        "프로세스 cold restart",
+        "모든 배경 양식/색상",
+        "배경 변경 실패·취소 복구",
+        "CCR 배경 UI"
+      ],
+      "boundedBehaviorObserved": true,
+      "behaviorAccepted": false,
+      "acceptanceMeaning": "자체 표본의 격자 배경 변경·서재 재열기는 관측. 전체 행동·오류 경계나 CCR 기능 완료 수용은 아님.",
+      "ccrComplete": false
     }
-  }
+  },
+  "evidenceFollowups": [
+    {
+      "recordedAt": "2026-10-29T09:00:17+09:00",
+      "owner": "01a183db-e516-7900-ba5c-5cbd3f7ff7a7",
+      "taskKey": "ipad-rea-page-evidence-20261029",
+      "baseCommit": "9006908998dbcbe0b278b3dc75c71d5d2006342a",
+      "baseTree": "c9d3fd1f19996328c191672ed30ef3051b9d7f3f",
+      "scope": "기존 385행의 역사적 상태를 보존한 원앱 근거 및 PDF 소스 후속 연결. 제품 변경 없음.",
+      "originalEvidenceRefs": [
+        "R156",
+        "R157",
+        "R158",
+        "R159"
+      ],
+      "implementationRefs": [
+        "pdfPagesRotation9006908"
+      ],
+      "preserved": "기존 baseCommit/baseTree/currentVersions/historicalSnapshot/counts/sourceFileRegistry/updateDelta/nextActions 및 original/support/status/complete/currentProgress는 당시 기록 그대로. 이번 추가는 후속 필드로만 읽는다.",
+      "currentCounts": {
+        "leafTotal": 385,
+        "legacyGroups": 114,
+        "byStatus": {
+          "parity_gap": 120,
+          "implementation_evidence_missing": 227,
+          "support_unverified": 32,
+          "integration_pending": 6
+        },
+        "complete": 0,
+        "incomplete": 385,
+        "evidenceRecords": 161,
+        "newEvidenceRecords": 6,
+        "newOriginalEvidenceRows": 2,
+        "newImplementationEvidenceRows": 5,
+        "statusChanges": 0,
+        "historicalOriginalStatusChanges": 0
+      },
+      "ccrNotebookPagesBoundary": "사용자가 전달한 CCR 복수 페이지 모델 0fd는 미통합·제품 UI0. 이번 원앱 사실을 그 구현/수용으로 옮기지 않음.",
+      "workflow": {
+        "Pstack": "how/근거 대조·technical-writing reference·기존 형식 검증",
+        "Ponytail": "기존 원장·영수증 재사용, 추가 제품 검사/테스트틀/의존성 없음",
+        "ARENA": false,
+        "nativeGoal": false
+      },
+      "historicalEvidenceReadback": [
+        {
+          "evidenceRef": "R153",
+          "recordedSHA256": "ef65c78cb56fe3bfb151332693defca51cd2b355d69a9c6635f3966d603328be",
+          "recordedBytes": 1422,
+          "currentPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-own-notebook-open-observation-20261029.json",
+          "currentSHA256": "3b3621bf0267132cfa4d9b67ba244b193fb0036f3428b795eff4b51871b58b9e",
+          "currentBytes": 2194,
+          "historicalExactCopy": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/rea-page-evidence-20261029/evidence/R153-historical-exact.json",
+          "historicalExactCopySHA256": "ef65c78cb56fe3bfb151332693defca51cd2b355d69a9c6635f3966d603328be",
+          "historicalExactCopyBytes": 1422,
+          "reason": "현재 파일에 followup 객체가 추가됐다. 그 객체만 제외한 JSON 직렬화가 당시1422바이트 및 SHA256과 정확히 일치함을 확인해 자기 evidence에 보존했다. 원장 R153과 원본 파일은 바꾸지 않음.",
+          "acceptance": "현재 경로의 해시 일치로 수용하지 않는다. 기존 메뉴 관측 snapshot의 정확 복원만 확인. 새 페이지/배경 행동은 R156~R159를 사용한다."
+        }
+      ]
+    }
+  ]
 }

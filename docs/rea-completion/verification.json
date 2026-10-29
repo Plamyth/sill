@@ -283,5 +283,407 @@
         }
       ]
     }
-  }
+  },
+  "followupVerifications": [
+    {
+      "schema": "ccr.rea.coverage-verification/v1",
+      "verifiedAt": "2026-10-29T09:01:59+09:00",
+      "baseCommit": "9006908998dbcbe0b278b3dc75c71d5d2006342a",
+      "baseTree": "c9d3fd1f19996328c191672ed30ef3051b9d7f3f",
+      "scope": "문서 형식·385행/역사적 snapshot 보존·보존 파일 해시만 검사. 제품/SDK/HTTP/실기기 재실행 없음.",
+      "oneShotDocumentValidation": true,
+      "passed": true,
+      "errors": [],
+      "checks": [
+        {
+          "name": "exact_base_commit_tree",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "385_IDs_order_and_uniqueness_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "114_original_groups_unchanged",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "original_catalog_and_count_policy_unchanged",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "original_support_action_target_overlap_complete_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "all_completion_false",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "32_support_unverified_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "status_count_matches_rows",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "original_status_count_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "7_changes_only_missing_to_partial",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "21_partial_rows_no_current_physical_acceptance",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "historical_ccr_changes_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "legacy_131_evidence_records_unchanged",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "161_evidence_readbacks_with_one_explicit_exact_historical_recovery",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "all_structured_evidence_refs_resolve",
+          "passed": true,
+          "details": []
+        },
+        {
+          "name": "13_historical_source_records_match_9646469_blobs",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "signed72_evidence_immutable_and_uninstalled",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "new_storage_and_menu_evidence_not_behavior_acceptance",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "three_concrete_next_actions_remain_unimplemented",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "human_progress_table_385_IDs_same_order",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "goal_prompt_byte_unchanged",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "documentation_write_scope_only",
+          "passed": true,
+          "details": {
+            "changed": [
+              "docs/rea-completion/NEXT.md",
+              "docs/rea-completion/README.md",
+              "docs/rea-completion/coverage.json",
+              "docs/rea-completion/verification.json"
+            ],
+            "untracked": []
+          }
+        },
+        {
+          "name": "diff_check",
+          "passed": true,
+          "details": ""
+        },
+        {
+          "name": "all_existing_root_snapshots_and_counts_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "all_385_existing_row_fields_and_order_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "evidenceRegistry_all_existing_entries_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "implementationUpdates_all_existing_entries_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "additionalOriginalEvidence_all_existing_entries_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "GOAL_and_historical_readme_table_and_NEXT_byte_preserved",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "exact_two_original_and_five_PDF_row_followups",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "followup_counts_actually_computed_without_rewriting_history",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "7_preserved_screenshots_and_9_REA_files_hashes",
+          "passed": true,
+          "details": [
+            {
+              "kind": "preserved_screenshot",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/01-page-menu.png",
+              "sha256": "28d510517c4e7313b9d239533e471b90246bf8c7c632240eb224122a39284115",
+              "matches": true
+            },
+            {
+              "kind": "preserved_screenshot",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/02-duplicated-page.png",
+              "sha256": "9ac0450ca05fea60142c69af328e510daf397ad640ae5455c9278f423bb97532",
+              "matches": true
+            },
+            {
+              "kind": "preserved_screenshot",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/03-page-manager.png",
+              "sha256": "c7cb659917bb9d9d314004da8422188541b43d6eef9ec9e82852a27c00f71a4a",
+              "matches": true
+            },
+            {
+              "kind": "preserved_screenshot",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/04-reopened-two-pages.png",
+              "sha256": "9d6c74d535b53d4434e25fbc2c7944f995707d8970faa1bf148dc1c9c58bae3f",
+              "matches": true
+            },
+            {
+              "kind": "preserved_screenshot",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/05-background-options.png",
+              "sha256": "81a2b656c6908e31e2d9a874a424d24109cddbfec86e99daf23d95c9f92ce285",
+              "matches": true
+            },
+            {
+              "kind": "preserved_screenshot",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/06-page-two-grid.png",
+              "sha256": "fd639204ee67b591945a1b166574b928c4573a49d979e3b2a09765f4f6e7ed63",
+              "matches": true
+            },
+            {
+              "kind": "preserved_screenshot",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-management-20261029/07-grid-reopened.png",
+              "sha256": "4aa07965c3dd5702f7d40e47bd078d49fbacf9d55461c465bd66bde696724932",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/sqlite-inventory-rea.json",
+              "id": "ev_b1a4da7c1750c099ca785e32eccb5385e47f9cfe731be75b6b329b4af7f8ff4d",
+              "sha256": "51be9249f15e6e7d8c794f00d29cf0170c8eaacd173ea8e418742751ade53e3b",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/sqlite-tree-rea.json",
+              "id": "ev_ab8aa390c9fac62bb34c991fe4b4c02c706ecb767ff36663cece91d7fc50be4c",
+              "sha256": "1c5d6fe204407f8cd58be6bd6a85ccb425f9e1332030f9c4dc3227e25e29ec51",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/sqlite-object-rea.json",
+              "id": "ev_d415121e36b59f2f82a36e06cdee45c9153b4a4b3ef800fc4bbe2190cef0b6d6",
+              "sha256": "d8f6fcf87614e3739ab2a95cd26e3ec17cb903bff47d2e94cddd5ea80863c516",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/sqlite-metadata-rea.json",
+              "id": "ev_fddfe80ad091aa975cd763a08fe409e94baa3c78c063e29c009223c4e23bfe99",
+              "sha256": "5a9a57a75dafac381cb4b2b368d13fb9ee25110c88878a03e28486117c513776",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/sqlite-content-rea.json",
+              "id": "ev_d43023f924f35d250757df7b1177f7501a1eea3b6c2da34d3963f44b5e921c96",
+              "sha256": "2ac3243798967f0db19846cef8d3e64651c98449e45c0385e222207e51b634c3",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/final153summary-rea.json",
+              "id": "ev_820a416beba97e147058d909343d30a28758455ce31d0a05de2c67f1a4972e4a",
+              "sha256": "44e66caca82479e2c69682e4ac2d2dc499b445009bbd7fffd9cf8dcd0d640b7e",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/final153inventory-rea.json",
+              "id": "ev_5d84540a37178264514b3bb0cbebc461475730b54dc851dc8a2cb0ff0d216dc1",
+              "sha256": "629cbc5dcb88cc775b311ebe624b6b3ac5ecbc8344c5f84a3496a746e5f6ad81",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-rea-20261029/page146summary-rea.json",
+              "id": "ev_4800fc112e11e4153bbb898233194fd900830dcbb275f4ebdefa2c10e2145899",
+              "sha256": "0d5e4e39c0ecc62b07190de0b88a1cb2dcb04bb4eefaab6cde41b871dbe0a0cd",
+              "matches": true
+            },
+            {
+              "kind": "preserved_REA_file",
+              "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-rea-20261029/page146inventory-rea.json",
+              "id": "ev_126cdabcb4fe9fc7b35e26e2cfc587515c9d18434556153a47c1be5b5feb568d",
+              "sha256": "45ed460b725817c0f779fc234f95159b3a367e2fd423d8e6773ca90b7b855199",
+              "matches": true
+            }
+          ]
+        },
+        {
+          "name": "own145_146_to153_identity_order_ink_from_original",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "later_background_reopen_supplements_not_rewrites_prior_unknown",
+          "passed": true,
+          "details": null
+        },
+        {
+          "name": "PDF900_exact_receipt_and_three_product_source_hashes",
+          "passed": true,
+          "details": [
+            {
+              "path": "iOSClient/CanvasBridge/VaultPDFReader.swift",
+              "sha256": "1508260bb04e6e92c4d3f354c6599fc6ab63ef3eed0b346b93c3a3af740cdc59",
+              "matches": true
+            },
+            {
+              "path": "iOSClient/CanvasBridge/VaultPDFExcerpt.swift",
+              "sha256": "bfc2f0c989bb31587ad4794016a0997dc187ed81f8bd422298976560c55804b8",
+              "matches": true
+            },
+            {
+              "path": "iOSClient/CanvasBridge/CanvasWorkspace.swift",
+              "sha256": "eb70871f6f316e7f92850bc8d505a435a9b1f0770645122afec5e56f66f55902",
+              "matches": true
+            }
+          ]
+        },
+        {
+          "name": "PDF_source_scope_does_not_raise_physical_HTTP_or_complete",
+          "passed": true,
+          "details": null
+        }
+      ],
+      "counts": {
+        "leafTotal": 385,
+        "legacyGroups": 114,
+        "byStatus": {
+          "parity_gap": 120,
+          "implementation_evidence_missing": 227,
+          "support_unverified": 32,
+          "integration_pending": 6
+        },
+        "complete": 0,
+        "incomplete": 385,
+        "evidenceRecords": 161,
+        "newEvidenceRecords": 6,
+        "newOriginalEvidenceRows": 2,
+        "newImplementationEvidenceRows": 5,
+        "statusChanges": 0,
+        "historicalOriginalStatusChanges": 0
+      },
+      "evidenceFilesChecked": 161,
+      "directEvidenceHashesMatched": 160,
+      "exactHistoricalRecoveries": [
+        {
+          "evidenceRef": "R153",
+          "recordedSHA256": "ef65c78cb56fe3bfb151332693defca51cd2b355d69a9c6635f3966d603328be",
+          "recordedBytes": 1422,
+          "currentPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-own-notebook-open-observation-20261029.json",
+          "currentSHA256": "3b3621bf0267132cfa4d9b67ba244b193fb0036f3428b795eff4b51871b58b9e",
+          "currentBytes": 2194,
+          "historicalExactCopy": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/rea-page-evidence-20261029/evidence/R153-historical-exact.json",
+          "historicalExactCopySHA256": "ef65c78cb56fe3bfb151332693defca51cd2b355d69a9c6635f3966d603328be",
+          "historicalExactCopyBytes": 1422,
+          "reason": "현재 파일에 followup 객체가 추가됐다. 그 객체만 제외한 JSON 직렬화가 당시1422바이트 및 SHA256과 정확히 일치함을 확인해 자기 evidence에 보존했다. 원장 R153과 원본 파일은 바꾸지 않음.",
+          "acceptance": "현재 경로의 해시 일치로 수용하지 않는다. 기존 메뉴 관측 snapshot의 정확 복원만 확인. 새 페이지/배경 행동은 R156~R159를 사용한다."
+        }
+      ],
+      "initialValidationFailure": "R153 경로에 이후 followup 추가. initial-document-audit-evidence.json에 실패 영수증 보존. 과거1422바이트/SHA256 정확 복원으로 보완했으며 registry와 원본은 불변.",
+      "nestedEvidenceFilesChecked": 16,
+      "historicalSourceRecordsCompared": 13,
+      "currentPDFProductFilesCompared": 3,
+      "existingProductTestsRepeated": 0,
+      "productChanges": 0,
+      "deviceHostOriginalAppAccess": 0,
+      "reaTargetOperations": 0,
+      "newProviderOrExternalModelCalls": 0,
+      "independentReview": "새 독립 제품 검수 요청 없음. PDF900의 Sartre SOURCE_CLEAR는 해당 소스/범위로만 연결.",
+      "files": [
+        {
+          "path": "docs/rea-completion/GOAL_PROMPT.md",
+          "bytes": 4779,
+          "lines": 29,
+          "sha256": "0034021abac5ded3e355a1d41a336bd527c1836f24dc98eafe98613826c1ed62"
+        },
+        {
+          "path": "docs/rea-completion/NEXT.md",
+          "bytes": 9026,
+          "lines": 51,
+          "sha256": "97f47d91f2d4faa84e86d90936842c2afdc8c29bcb104e0f604cba6e124e620a"
+        },
+        {
+          "path": "docs/rea-completion/README.md",
+          "bytes": 87224,
+          "lines": 473,
+          "sha256": "8855e871946625d875872a586a4899f4e8b824a23bd9ef93c0364f0f5bfb3de0"
+        },
+        {
+          "path": "docs/rea-completion/coverage.json",
+          "bytes": 1479980,
+          "lines": 30730,
+          "sha256": "48108841f4d3dc61fe0f3c7864fd4e36bcc50e03b5d7a27961a76ee3c016a6b6"
+        }
+      ],
+      "validationScript": {
+        "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/rea-page-evidence-20261029/source/../evidence/validate_documents.py",
+        "sha256": "50d6527bb925caa5b738c5b5a54f8be1ddacd22ddef562df1f56abc1f74a068e",
+        "derivedFrom": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/coverage-evidence-20261029/validate_documents.py",
+        "derivedFromSHA256": "d9a6d907b88bfa00cdb58bef0f3bfad7d025dc5f6e50a0d1cc7fb5a194157d33",
+        "adaptations": "기존 23개 검사 재사용. 현재 HEAD900·역사적 source964 분리, 근거161개(직접160·R153 정확 과거 복원1) 및 새 후속 보존/파일 대조 추가. 출력은 자기 WT/evidence와 verification 후속 배열에만 기록."
+      }
+    }
+  ]
 }
