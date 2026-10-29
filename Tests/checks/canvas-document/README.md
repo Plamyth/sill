@@ -17,3 +17,11 @@ python3 Tests/checks/canvas-document/run.py --repairs /Volumes/BT-Workspace/Deve
 ```
 
 `regression.swift`는 정본 디렉터리 교체 후 폴더 수준 barrier·원본/외부/제안 전체 보존, nested 원문 거부, 실제 별도 프로세스의 LOCK_EX 경합 중 즉시 busy 반환과 해제 후 정상 저장을 확인한다. 디렉터리 교체는 명시 hook에서 실제 파일 rename을 수행한다. lock은 주입 evidence가 아니라 자체 두 프로세스의 실제 flock이며 앱 UI는 실행하지 않는다.
+
+Files 저장 재사용은 `--storage-reuse`를 추가해 같은 입력/workload를 exact782 baseline 및 새 소스에 각각 실행한다. 실제 파일 내용 바이트·regular 경로·디렉터리 포함 전체 경로를 측정하며 물리 APFS 할당으로 확대하지 않는다.
+
+```sh
+python3 Tests/checks/canvas-document/run.py --storage-reuse --repairs /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/canvas-document-independent-review-0fd008a --sdk-check --output /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/canvas-document-storage-evidence
+```
+
+`storage.swift`는 no-op의 새 경로/바이트 0, 정상 base 복사 생략, typed owner/UUID/형식, v1 committed 호환과 독립 복구, preview/현재 페이지 변경 저장, legacy/외부 fallback, 손상·참조 교체·미확인 barrier 유지까지 확인한다. no-op이 생긴 뒤 기존 main.swift의 마지막 교환 경합 fixture는 실제 내용이 다른 proposal을 저장하도록 바꿨다. 이전처럼 동일 문서를 저장하면 새 no-op이 정당하게 교환 hook에 진입하지 않기 때문이다. 교환 반례 자체를 생략하지 않고 별도 no-op identity 반례도 유지한다.

@@ -84,3 +84,43 @@ Files head와 page asset metadata도 알려진 키만 읽는다. 지원하지 �
 ### 재현 범위
 
 `run.py --repairs <독립 검수 폴더> --sdk-check --output <승인 외장 경로>`는 reviewer의 `unsupported-nodes/links/annotations.json` 세 원문 바이트를 그대로 입력하고 SHA를 과거 관측과 대조한다. 디렉터리 rename/copy 후 교환의 원래 반례와 교환 전·generation 후의 동일 경계를 검사한다. 별도 자체 프로세스의 실제 파일 lock을 사용하며 holder의 유한 수명·정상 종료·PID 부재를 기록한다. 기존 39조건·문서 단위 SDK와 좁은 수리 검사를 구분하며 GUI/기기/Pencil 수용으로 세지 않는다.
+
+## Files 저장 재사용 단위 — 782 이후 별도 writer
+
+이 단위는 exact `782978d7bc574080ae72fd9ebd48b5699473f0ea`에서 분리한 `codex/ipad-document-storage-reuse-20261029`의 변경이다. 원래 782 WT는 수정하지 않는다. Store/Workspace/Model·Document JSON·서버·앱 UI와 설치는 변경하지 않는다. 아래 로컬 metadata 형식은 작성자가 정한 것으로 paired 서버 DTO를 대신하지 않는다.
+
+### 전체 내용 불변 저장
+
+기존 root/local pending, 비차단 lock, expected head token, 원래 문서의 모든 페이지·잉크·preview와 정본 디렉터리 identity를 확인한다. 문서 전체 canonical bytes와 모든 preview bytes가 같고 legacy가 아닌 경우에만 새 generation/intent/복구 사본 작성 전에 정본 경로에서 전체 readback을 다시 하고 기존 snapshot/token을 반환한다. native drawing은 Document 바이트와 각 실제 파일의 SHA·바이트 검증에 포함된다. 틀린 expected token, pending marker, 잘못된 자산, 같은 내용의 디렉터리 교체는 통과하지 않는다. legacy v1에서 새 문서 형식으로 올리는 저장과 preview/비선택 페이지/현재 페이지 변경은 생략하지 않는다.
+
+### durable base 참조
+
+신규 로컬 발행 기록은 `ccr.document-publication/v2`이고 `attempt.json`을 해당 root recovery attempt에 독립적으로 fsync한다. root/local intent와 committed/aborted 기록의 기존 수명·보류 조건은 유지한다. v2는 optional `baseReference`를 가진다. `ccr.document-base-reference/v1`의 필드는 `schema`, `documentID`, `generationID`, `headSHA`다. 임의 상대/절대 경로·URL은 받지 않는다.
+
+참조 위치는 선택 폴더 아래 `document-recovery-<documentID>/<generationID>/proposal/`로만 계산한다. target attempt의 `committed.json`은 지원하는 v1/v2 발행 기록이어야 하고 owner 문서·attempt UUID·proposal head SHA가 참조와 일치해야 한다. target current/observed head가 바이트로 같고 그 head SHA가 일치해야 한다. head의 document SHA와 순서 있는 페이지·drawing/preview SHA 전체를 snapshot으로 읽고, fd와 parent entry identity·head/committed 바이트를 재확인한다. head SHA가 모든 자산 manifest를 결속하므로 별도의 자산 목록 사본을 ref에 중복 저장하지 않는다. 미지원 키/버전·owner/UUID·SHA 불일치는 거부한다.
+
+이 검증이 성공하면 새 정상 attempt에 `base/revisions/...` 전체 세대를 다시 쓰지 않는다. 이전 안정 proposal은 그 자리에 그대로 유지하며 head 교환 전과 최종 canonical 검증 단계에서도 참조를 재검증한다. 새 canonical 세대와 새 proposal 독립 사본은 둘 다 유지한다. 기존 782의 v1 committed proposal도 전체 검증 후 재사용할 수 있다. legacy 또는 안정 attempt 위치가 없는 외부 generation은 기존 전체 base 사본으로 보존한다. 위치는 있는데 committed가 없는 미확인 상태나 손상본은 새 generation 작성 전에 보류/거부하며 덮어써 수리하지 않는다.
+
+교환 후 참조 경합이 생기면 저장 성공을 반환하지 않는다. root pending을 유지하고 가능한 원래 base를 열린 원본 generation에서 새 독립 base 사본으로 보존한다. 따라서 **정상 복사만 생략**하며 미확인·외부 세대의 기존 보존은 줄이지 않는다. 원본이나 stable target이 읽을 수 없게 된 경우 복구 성공을 추정하지 않는다.
+
+`recoveryBase(documentID,attemptID:)`는 새 typed attempt의 참조 또는 독립 fallback base를 완전히 검증해서 읽는 비교용 API다. state 설치·선택·원장 해제·자동 저장은 하지 않는다. 문서 root가 pending이면 반환 Snapshot에도 pending을 유지한다. 반환된 base head token을 현재 canonical 저장 승인 token으로 바꾸지 않는다. 예전 v1 독립 archive 자체의 새 UI 조정은 이 단위가 아니며 기존 자료를 변환/삭제하지 않는다.
+
+### 측정과 남은 한계
+
+검사는 같은 자체 입력과 저장 workload를 exact782 Files 소스 및 새 Files 소스로 각각 컴파일해 실제 regular file 내용 바이트와 전체 경로 수를 비교한다. baseline 모드는 세 저장 호출과 측정만 수행하고, 비교 assertion은 새 runner/후속 실행에서 한다. 실제 APFS 물리 할당·File Provider 전송량의 절감이나 사용자 파일 증가율을 주장하지 않는다.
+
+기존 구조가 새 generation마다 자산을 두 벌 유지하는 점과 committed·Undo·복구 참조 누적은 남는다. 참조 재사용은 GC나 전체 보존 용량 상한이 아니다. stable base가 어떤 후속 attempt에서 참조되면 그 수명은 유지해야 한다. 원본·미확인·Undo·외부·기존 recovery 삭제, hardlink/symlink, 새 DB·GC·cleanup은 0이다. 이후 중복 정리도 전체 해시·복원·참조 검증을 통과해야 한다.
+
+독립 검수 후 부모가 공식 통합을 소유한다. Store 자동 저장 활성화는 별도 gate다. 내부 scene mutation/완성 transaction과 외부 full validation의 책임 분리는 다음 Store 단위에서 대조하며, 검증형 computed setter나 shadow activeScene으로 이 단위를 우회하지 않는다.
+
+이 자체 두 페이지 표본의 정확 비교 결과는 다음과 같다. 기존 실행물을 읽은 추산이 아니라 동일 입력·저장 workload를 exact782와 변경 소스로 각각 실행한 결과다.
+
+|한 호출의 추가량|782|재사용 소스|
+|---|---:|---:|
+|불변 no-op의 논리 내용 바이트|15,121|0|
+|불변 no-op의 새 전체 경로|40|0|
+|정상 변경 저장의 논리 내용 바이트|15,161|11,356|
+|정상 변경 저장의 새 regular file|23|17|
+|정상 변경 저장의 새 전체 경로(디렉터리 포함)|40|28|
+
+정상 변경에서는 base payload 전체 재복사와 그 두 head 사본이 없어지고 typed reference/attempt metadata가 추가됐다. 새 canonical 및 proposal 자산 두 벌은 유지한다. 이 작은 fixture의 숫자는 사용자 파일 증가율이나 물리 저장공간 절감량으로 외삽하지 않는다. 초기 컴파일의 빠진 try 두 곳과 기존 교환 fixture가 새 no-op으로 분기한 실패도 별도 영수증으로 보존했다. 최종 recoveryBase의 pending 표시 보완 후 해당 27개 재사용·복구 조건, DOC-R1/2/3의 77개 assertion과 iOS27 문서 단위 타입 검사를 정확 변경 소스로 다시 확인했다. 먼저 통과한 기존39는 보완 전과의 차이 범위를 영수증에 명시해 구분한다.
