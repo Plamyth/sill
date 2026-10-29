@@ -58,6 +58,7 @@ struct CanvasWorkspace: View {
     @State private var proposalInputBusy = false
     @State private var mathSelection = NSRange(location:0,length:0)
     @State private var handwritingSearchOpen = false
+    @State private var handwritingSearchOwner: CanvasStore.HandwritingSearchOwner?
     @State private var handwritingQuery = ""
     @State private var dictationOpen = false
     @State private var vaultOpen = false
@@ -300,7 +301,8 @@ struct CanvasWorkspace: View {
             TextField("찾을 글자", text:$handwritingQuery)
             Button("찾기") {
                 let query = handwritingQuery
-                Task { await store.searchHandwriting(query) }
+                guard let owner = handwritingSearchOwner else { return }
+                Task { await store.searchHandwriting(query,owner:owner) }
             }.disabled(handwritingQuery.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
             Button("취소", role:.cancel) { store.cancelHandwritingSearch() }
         } message: {
@@ -528,7 +530,9 @@ struct CanvasWorkspace: View {
             Button("상자") { store.addNode(.box) }
             Button("메모") { store.addNode(.note) }
             Button("손글씨 찾기",systemImage:"magnifyingglass") {
-                store.cancelHandwritingSearch(); handwritingSearchOpen = true
+                store.cancelHandwritingSearch()
+                handwritingSearchOwner = store.captureHandwritingSearchOwner()
+                handwritingSearchOpen = handwritingSearchOwner != nil
             }.disabled(store.hierarchyFocusRootID != nil || store.hierarchyOutlineVisible)
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }

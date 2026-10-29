@@ -789,8 +789,20 @@ final class CanvasStore: ObservableObject {
         handwritingSearchSurface = valid
         cancelHandwritingSearch()
     }
+    struct HandwritingSearchOwner {
+        fileprivate let page: CanvasDocument.PageSnapshot
+        fileprivate let view: UInt64
+        fileprivate let generation: UUID
+    }
+    private var handwritingSearchIntentGeneration = UUID()
+    func captureHandwritingSearchOwner() -> HandwritingSearchOwner? {
+        guard hierarchyFocusRootID == nil, !hierarchyOutlineVisible, openedGroupID == nil,
+              handwritingSearchSurface != nil, let page = try? document.pageSnapshot() else { return nil }
+        return .init(page:page,view:groupCommandOwner.view,generation:handwritingSearchIntentGeneration)
+    }
     private var handwritingSearchRequest: UUID?
     func cancelHandwritingSearch() {
+        handwritingSearchIntentGeneration = UUID()
         if let request = handwritingSearchRequest, handwritingRequest == request { handwritingRequest = nil }
         handwritingSearchRequest = nil
     }
@@ -4176,6 +4188,18 @@ final class CanvasStore: ObservableObject {
         scene = next
         drawing = restored
         packet = nil
+    }
+
+    func searchHandwriting(_ query: String, owner: HandwritingSearchOwner,
+                           search: (PKDrawing,String) async throws -> [Set<UUID>] = { drawing,query in
+        let recognizer = PKStrokeRecognizer()
+        await recognizer.updateDrawing(drawing)
+        return await recognizer.search(query).map(\.strokes)
+    }) async {
+        guard document.accepts(owner.page), groupCommandOwner.view == owner.view,
+              handwritingSearchIntentGeneration == owner.generation,
+              hierarchyFocusRootID == nil, !hierarchyOutlineVisible, openedGroupID == nil else { return }
+        await searchHandwriting(query,search:search)
     }
 
     func searchHandwriting(_ query: String, search: (PKDrawing, String) async throws -> [Set<UUID>] = { drawing, query in

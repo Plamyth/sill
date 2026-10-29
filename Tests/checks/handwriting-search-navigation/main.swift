@@ -70,6 +70,21 @@ import PencilKit
         if CommandLine.arguments.contains("--view-only") {
             let original = try s.document.bytes()
             for kind in ["focus","outline"] {
+                let captured = s.captureHandwritingSearchOwner()!
+                if kind == "focus" {
+                    check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner) && s.leaveHierarchyFocus(owner:s.hierarchyFocusOwner),"deferred menu intent crosses actual focus ABA before dispatch")
+                } else {
+                    check(s.setHierarchyOutlineVisible(true,owner:s.hierarchyFocusOwner) && s.setHierarchyOutlineVisible(false,owner:s.hierarchyFocusOwner),"deferred menu intent crosses actual outline ABA before dispatch")
+                }
+                var called = false
+                await s.searchHandwriting("한글",owner:captured) { _,_ in called=true;return [[first.id]] }
+                check(!called && s.viewport==CanvasViewport() && s.inkSelection.isEmpty,"old \(kind) menu intent refuses before native provider starts")
+            }
+            let cancelled = s.captureHandwritingSearchOwner()!
+            s.cancelHandwritingSearch();var dispatched=false
+            await s.searchHandwriting("한글",owner:cancelled) { _,_ in dispatched=true;return [[first.id]] }
+            check(!dispatched,"explicit cancellation retires an unstarted menu Task")
+            for kind in ["focus","outline"] {
                 let gate = SearchGate(), viewport = s.viewport
                 let task = Task { @MainActor in await s.searchHandwriting("한글",search:gate.search) }
                 await gate.wait()
@@ -98,7 +113,8 @@ import PencilKit
             await s.searchHandwriting("한글") { _,_ in invoked=true;return [[first.id]] }
             check(!invoked && s.inkSelection.isEmpty,"outline hidden ink does not enter native search")
             check(s.setHierarchyOutlineVisible(false,owner:s.hierarchyFocusOwner),"map view can return after refused search")
-            await s.searchHandwriting("한글") { _,_ in [[first.id]] }
+            let currentIntent = s.captureHandwritingSearchOwner()!
+            await s.searchHandwriting("한글",owner:currentIntent) { _,_ in [[first.id]] }
             check(s.viewport != CanvasViewport() && s.inkSelection==Set([first.id]),"current full map still reveals native search result")
             check(try s.document.bytes()==original,"view guards and successful navigation preserve canonical source")
             try JSONSerialization.data(withJSONObject:["count":checks.count,"checks":checks,"viewOnly":true,"GUI":false],options:[.prettyPrinted,.sortedKeys]).write(to:out.appendingPathComponent("observations.json"))
