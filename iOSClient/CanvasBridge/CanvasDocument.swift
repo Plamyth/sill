@@ -58,11 +58,58 @@ struct CanvasDocument: Codable, Equatable {
         init?(intValue: Int) { return nil }
     }
     private static let sceneKeys: Set<String> = ["schemaVersion","id","revision","width","height","drawingBase64","strokes","nodes","links","annotations","penSettings"]
+    // 새 문서의 byte ingress에서만 엄격 검사한다. 기존 scene wire decoder는 바꾸지 않는다.
+    private enum Shape {
+        case scene, node, link, annotation, rect, reference, anchor, stroke, point, visibility, segment, style, color, transform, sample, pen
+        var fields: Set<String> {
+            switch self {
+            case .scene: return sceneKeys
+            case .node: return ["id","kind","frame","text","confidence","sourceStrokeIds","vaultNote","isCollapsed","rotationDegrees"]
+            case .link: return ["id","from","to","label","kind","fromAnchor","toAnchor"]
+            case .annotation: return ["id","nodeId","text","author"]
+            case .rect: return ["x","y","width","height"]
+            case .reference: return ["path","sha256","relayAddress","cacheTruncated","blockID","sourceState","observedSha256","quoteSha256"]
+            case .anchor: return ["side","offset"]
+            case .stroke: return ["id","points","createdAt","visibility","style"]
+            case .point: return ["x","y","pressure"]
+            case .visibility: return ["kind","visibleSegments"]
+            case .segment: return ["lowerBound","upperBound","worldPoints"]
+            case .style: return ["version","inkType","color","transform","samples"]
+            case .color: return ["red","green","blue","alpha"]
+            case .transform: return ["a","b","c","d","tx","ty"]
+            case .sample: return ["width","height","opacity"]
+            case .pen: return ["version","color","width"]
+            }
+        }
+        var children: [(String,Shape,Bool)] {
+            switch self {
+            case .scene: return [("nodes",.node,true),("links",.link,true),("annotations",.annotation,true),("strokes",.stroke,true),("penSettings",.pen,false)]
+            case .node: return [("frame",.rect,false),("vaultNote",.reference,false)]
+            case .link: return [("fromAnchor",.anchor,false),("toAnchor",.anchor,false)]
+            case .stroke: return [("points",.point,true),("visibility",.visibility,false),("style",.style,false)]
+            case .visibility: return [("visibleSegments",.segment,true)]
+            case .segment: return [("worldPoints",.point,true)]
+            case .style: return [("color",.color,false),("transform",.transform,false),("samples",.sample,true)]
+            default: return []
+            }
+        }
+        func check(_ decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy:Field.self)
+            guard c.allKeys.allSatisfy({ fields.contains($0.stringValue) }) else { throw Failure.unsupported }
+            for (name,shape,array) in children {
+                let key = Field(stringValue:name)!
+                guard c.contains(key), try !c.decodeNil(forKey:key) else { continue }
+                if array {
+                    var items = try c.nestedUnkeyedContainer(forKey:key)
+                    while !items.isAtEnd { try shape.check(items.superDecoder()) }
+                } else { try shape.check(c.superDecoder(forKey:key)) }
+            }
+        }
+    }
     private struct SceneReader: Decodable {
         let scene: CanvasScene
         init(from decoder: Decoder) throws {
-            let fields = try decoder.container(keyedBy:Field.self)
-            guard fields.allKeys.allSatisfy({ CanvasDocument.sceneKeys.contains($0.stringValue) }) else { throw Failure.unsupported }
+            try Shape.scene.check(decoder)
             scene = try CanvasScene(from:decoder)
         }
     }
@@ -90,7 +137,7 @@ struct CanvasDocument: Codable, Equatable {
         guard bytes.count <= CanvasScene.localByteLimit else { throw Failure.tooLarge }
         guard let object = try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else { throw Failure.invalid }
         guard Set(object.keys).isSubset(of:sceneKeys) else { throw Failure.unsupported }
-        return try Self(legacy:JSONDecoder().decode(CanvasScene.self,from:bytes))
+        return try Self(legacy:JSONDecoder().decode(SceneReader.self,from:bytes).scene)
     }
     func bytes() throws -> Data {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]

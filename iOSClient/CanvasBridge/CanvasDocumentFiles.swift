@@ -24,9 +24,10 @@ final class CanvasDocumentFiles {
         let publicationPending: Bool
     }
     enum Failure: LocalizedError, Equatable {
-        case permission, corrupt, conflict, pending, publicationUnconfirmed, unsupported
+        case permission, corrupt, conflict, pending, publicationUnconfirmed, unsupported, busy
         var errorDescription: String? {
             switch self {
+            case .busy: return "다른 문서 저장이 진행 중입니다. 현재 원본을 보존하며 저장을 보류합니다."
             case .permission: return "문서 폴더에 접근할 수 없습니다. 기존 원본을 유지합니다."
             case .corrupt: return "문서 세대의 바이트와 페이지 자료가 일치하지 않습니다. 원본을 보존합니다."
             case .conflict: return "외부 문서가 바뀌었습니다. 제안 세대와 원본을 보존했습니다."
@@ -71,7 +72,12 @@ final class CanvasDocumentFiles {
                 guard result.count <= limit - size else { throw Failure.corrupt }
                 result.append(contentsOf:buffer.prefix(size))
             }
-            guard result.count == Int(info.st_size) else { throw Failure.corrupt }
+            var end = stat(), entry = stat()
+            guard result.count == Int(info.st_size), fstat(file,&end) == 0,
+                  fstatat(fd,name,&entry,AT_SYMLINK_NOFOLLOW) == 0, (entry.st_mode & S_IFMT) == S_IFREG,
+                  info.st_dev == entry.st_dev, info.st_ino == entry.st_ino,
+                  info.st_size == end.st_size, info.st_mtimespec.tv_sec == end.st_mtimespec.tv_sec,
+                  info.st_mtimespec.tv_nsec == end.st_mtimespec.tv_nsec else { throw Failure.corrupt }
             return result
         }
         func exists(_ name: String) throws -> Bool {
@@ -107,6 +113,14 @@ final class CanvasDocumentFiles {
             return result
         }
         func sync() throws { guard fsync(fd) == 0 else { throw Failure.permission } }
+        func isChild(_ child: Directory, named name: String) -> Bool {
+            var opened = stat(), current = stat()
+            return fstat(child.fd,&opened) == 0 && fstatat(fd,name,&current,AT_SYMLINK_NOFOLLOW) == 0 &&
+                (current.st_mode & S_IFMT) == S_IFDIR && opened.st_dev == current.st_dev && opened.st_ino == current.st_ino
+        }
+        func requireChild(_ child: Directory, named name: String) throws {
+            guard isChild(child,named:name) else { throw Failure.publicationUnconfirmed }
+        }
     }
     private func coordinated<T>(writing: Bool, _ operation: (Directory) throws -> T) throws -> T {
         let access = folder.startAccessingSecurityScopedResource()
@@ -136,6 +150,13 @@ final class CanvasDocumentFiles {
     private func snapshot(_ id: UUID, directory: Directory, headBytes: Data) throws -> Snapshot {
         guard let header = try JSONSerialization.jsonObject(with:headBytes) as? [String:Any],
               let schema = header["schema"] as? String else { throw Failure.corrupt }
+        let allowed: Set<String> = schema == "ccr.sill-files/v1" ?
+            ["schema","sceneID","generation","sceneSHA","drawingSHA","previewSHA"] :
+            ["schema","documentID","generation","documentSHA","pages"]
+        guard Set(header.keys).isSubset(of:allowed) else { throw Failure.unsupported }
+        if let assets = header["pages"] as? [[String:Any]] {
+            guard assets.allSatisfy({ Set($0.keys).isSubset(of:["id","drawingSHA","previewSHA"]) }) else { throw Failure.unsupported }
+        }
         let revisions = try directory.child("revisions")
         if schema == "ccr.sill-files/v1" {
             let h = try JSONDecoder().decode(CanvasFileWorkspace.Head.self,from:headBytes)
@@ -148,6 +169,8 @@ final class CanvasDocumentFiles {
             guard document.id == id, CanvasPacket.sha(raw) == h.sceneSHA,
                   CanvasPacket.sha(drawing) == h.drawingSHA, CanvasPacket.sha(preview) == h.previewSHA,
                   Data(base64Encoded:document.activePage.drawingBase64) == drawing else { throw Failure.corrupt }
+            try revisions.requireChild(generation,named:h.generation.uuidString.lowercased())
+            try directory.requireChild(revisions,named:"revisions")
             return Snapshot(document:document,token:CanvasPacket.sha(headBytes),previews:[id:preview],legacy:true,publicationPending:try pending(directory))
         }
         guard schema == Self.headSchema else { throw Failure.unsupported }
@@ -168,14 +191,58 @@ final class CanvasDocumentFiles {
             guard previewBytes <= 32*1024*1024, preview.starts(with:[137,80,78,71,13,10,26,10]),
                   Data(base64Encoded:scene.drawingBase64) == drawing,
                   CanvasPacket.sha(drawing) == asset.drawingSHA, CanvasPacket.sha(preview) == asset.previewSHA else { throw Failure.corrupt }
+            try pages.requireChild(page,named:scene.id.uuidString.lowercased())
             previews[scene.id] = preview
         }
+        try generation.requireChild(pages,named:"pages")
+        try revisions.requireChild(generation,named:head.generation.uuidString.lowercased())
+        try directory.requireChild(revisions,named:"revisions")
         return Snapshot(document:document,token:CanvasPacket.sha(headBytes),previews:previews,legacy:false,publicationPending:try pending(directory))
+    }
+    private func pendingName(_ id: UUID) -> String { "document-pending-" + id.uuidString.lowercased() + ".json" }
+
+    // 문서 디렉터리와 독립된 선택 폴더 아래에 완전한 세대를 보존한다.
+    private func preserve(_ id: UUID, from source: Directory, headBytes: Data, to archive: Directory) throws {
+        try archive.writeNew("observed-head.json",headBytes)
+        _ = try snapshot(id,directory:source,headBytes:headBytes)
+        let header = try JSONSerialization.jsonObject(with:headBytes) as! [String:Any]
+        let revisions = try source.child("revisions"), copies = try archive.child("revisions",create:true)
+        if header["schema"] as? String == "ccr.sill-files/v1" {
+            let h = try JSONDecoder().decode(CanvasFileWorkspace.Head.self,from:headBytes)
+            let src = try revisions.child(h.generation.uuidString.lowercased())
+            let dst = try copies.child(h.generation.uuidString.lowercased(),create:true)
+            for name in ["scene.json","drawing.pkdrawing","preview.png"] {
+                try dst.writeNew(name,src.read(name,limit:name == "preview.png" ? 32*1024*1024 : CanvasScene.localByteLimit))
+            }
+            try dst.sync()
+        } else {
+            let h = try JSONDecoder().decode(Head.self,from:headBytes)
+            let src = try revisions.child(h.generation.uuidString.lowercased())
+            let dst = try copies.child(h.generation.uuidString.lowercased(),create:true)
+            try dst.writeNew("document.json",src.read("document.json",limit:CanvasDocument.byteLimit))
+            let srcPages = try src.child("pages"), dstPages = try dst.child("pages",create:true)
+            for asset in h.pages {
+                let name = asset.id.uuidString.lowercased(), a = try srcPages.child(name), b = try dstPages.child(name,create:true)
+                try b.writeNew("drawing.pkdrawing",a.read("drawing.pkdrawing",limit:CanvasScene.localByteLimit))
+                try b.writeNew("preview.png",a.read("preview.png",limit:32*1024*1024)); try b.sync()
+            }
+            try dstPages.sync(); try dst.sync()
+        }
+        try copies.sync(); try archive.writeNew("current.json",headBytes); try archive.sync()
+        _ = try snapshot(id,directory:archive,headBytes:headBytes)
     }
     func load(_ id: UUID) throws -> Snapshot {
         try coordinated(writing:false) { root in
-            let dir = try root.child(id.uuidString.lowercased() + ".sill")
-            return try snapshot(id,directory:dir,headBytes:dir.read("current.json",limit:256*1024))
+            let held = try root.exists(pendingName(id)), name = id.uuidString.lowercased() + ".sill"
+            do {
+                let dir = try root.child(name), head = try dir.read("current.json",limit:256*1024)
+                let result = try snapshot(id,directory:dir,headBytes:head)
+                try root.requireChild(dir,named:name)
+                guard try dir.read("current.json",limit:256*1024) == head else { throw Failure.publicationUnconfirmed }
+                let currentHeld = try root.exists(pendingName(id))
+                return Snapshot(document:result.document,token:result.token,previews:result.previews,
+                                legacy:result.legacy,publicationPending:held || result.publicationPending || currentHeld)
+            } catch { if held { throw Failure.pending }; throw error }
         }
     }
     @discardableResult
@@ -186,13 +253,20 @@ final class CanvasDocumentFiles {
               previews.values.allSatisfy({ $0.starts(with:[137,80,78,71,13,10,26,10]) }) else { throw Failure.corrupt }
         let bytes = try document.bytes()
         return try coordinated(writing:true) { root in
-            let dir = try root.child(document.id.uuidString.lowercased() + ".sill",create:true)
+            let name = document.id.uuidString.lowercased() + ".sill", rootIntent = pendingName(document.id)
+            guard try !root.exists(rootIntent) else { throw Failure.pending }
+            let dir = try root.child(name,create:true)
             try root.sync()
             let lock = openat(dir.fd,"writer.lock",O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC,0o600)
             guard lock >= 0 else { throw Failure.permission }; defer { close(lock) }
             var lockInfo = stat()
             guard fstat(lock,&lockInfo) == 0, (lockInfo.st_mode & S_IFMT) == S_IFREG else { throw Failure.permission }
-            guard flock(lock,LOCK_EX) == 0 else { throw Failure.permission }; defer { _ = flock(lock,LOCK_UN) }
+            guard flock(lock,LOCK_EX | LOCK_NB) == 0 else {
+                if errno == EWOULDBLOCK || errno == EAGAIN { throw Failure.busy }
+                throw Failure.permission
+            }
+            defer { _ = flock(lock,LOCK_UN) }
+            try root.requireChild(dir,named:name)
             guard try !pending(dir) else { throw Failure.pending }
             let base = try dir.exists("current.json") ? dir.read("current.json",limit:256*1024) : nil
             guard base.map(CanvasPacket.sha) == expected else { throw Failure.conflict }
@@ -212,37 +286,68 @@ final class CanvasDocumentFiles {
                             documentSHA:CanvasPacket.sha(bytes),pages:assets)
             let headBytes = try JSONEncoder().encode(head)
             _ = try snapshot(document.id,directory:dir,headBytes:headBytes)
-            try hooks.afterGeneration?()
             let key = generationID.uuidString.lowercased(), stage = "head-\(key).json", intent = "publish-\(key).json"
-            if let base { try dir.writeNew("base-\(key).json",base) }
-            try dir.writeNew(stage,headBytes)
-            try dir.writeNew(intent,Data("문서 전체 세대 발행 결과 확인 전\n".utf8)); try dir.sync()
+            let recovery = try root.child("document-recovery-" + document.id.uuidString.lowercased(),create:true)
+            let archive = try recovery.child(key,create:true)
+            try archive.sync(); try recovery.sync(); try root.sync()
+            let intentBytes = try JSONSerialization.data(withJSONObject:["schema":"ccr.document-publication/v1",
+                "documentID":document.id.uuidString.lowercased(),"attemptID":key,
+                "proposalSHA":CanvasPacket.sha(headBytes),"baseSHA":base.map(CanvasPacket.sha) as Any? ?? NSNull()],options:.sortedKeys)
+            try root.writeNew(rootIntent,intentBytes); try root.sync()
             var published = false
+            func canonicalSnapshot() throws -> Snapshot {
+                let canonical = try root.child(name)
+                try root.requireChild(dir,named:name)
+                guard try canonical.read("current.json",limit:256*1024) == headBytes else { throw Failure.conflict }
+                let result = try snapshot(document.id,directory:canonical,headBytes:headBytes)
+                try root.requireChild(canonical,named:name)
+                try root.requireChild(dir,named:name)
+                guard try canonical.read("current.json",limit:256*1024) == headBytes else { throw Failure.conflict }
+                return result
+            }
             do {
+                if let base { try preserve(document.id,from:dir,headBytes:base,to:archive.child("base",create:true)) }
+                try preserve(document.id,from:dir,headBytes:headBytes,to:archive.child("proposal",create:true))
+                try archive.sync(); try recovery.sync(); try root.sync()
+                try hooks.afterGeneration?()
+                try root.requireChild(dir,named:name)
+                if let base { try dir.writeNew("base-\(key).json",base) }
+                try dir.writeNew(stage,headBytes)
+                try dir.writeNew(intent,intentBytes); try dir.sync()
                 let latest = try dir.exists("current.json") ? dir.read("current.json",limit:256*1024) : nil
                 guard latest.map(CanvasPacket.sha) == expected else { throw Failure.conflict }
                 try hooks.beforeExchange?()
+                try root.requireChild(dir,named:name)
                 let flag = UInt32(base == nil ? RENAME_EXCL : RENAME_SWAP)
                 guard renameatx_np(dir.fd,stage,dir.fd,"current.json",flag) == 0 else { throw Failure.conflict }
                 published = true; try dir.sync()
-                // 교환 후 충돌이면 외부 head가 stage에 남는다. 자동 rollback/성공 처리를 하지 않는다.
                 if let base { guard try dir.read(stage,limit:256*1024) == base else { throw Failure.conflict } }
                 try hooks.afterExchange?()
-                guard try dir.read("current.json",limit:256*1024) == headBytes else { throw Failure.conflict }
-                _ = try snapshot(document.id,directory:dir,headBytes:headBytes)
+                _ = try canonicalSnapshot()
                 guard renameatx_np(dir.fd,intent,dir.fd,"commit-\(key).json",UInt32(RENAME_EXCL)) == 0 else { throw Failure.publicationUnconfirmed }
                 try dir.sync()
-                return try snapshot(document.id,directory:dir,headBytes:headBytes)
+                _ = try canonicalSnapshot()
+                guard renameatx_np(root.fd,rootIntent,archive.fd,"committed.json",UInt32(RENAME_EXCL)) == 0 else { throw Failure.publicationUnconfirmed }
+                try archive.sync(); try root.sync()
+                return try canonicalSnapshot()
             } catch {
-                if published {
-                    // 마지막 commit rename/readback 뒤 실패도 미확인으로 다시 표시한다.
-                    if (try? dir.exists(intent)) == false {
-                        try? dir.writeNew(intent,Data("문서 발행 후 확인 실패\n".utf8))
-                        try? dir.sync()
+                if published || !root.isChild(dir,named:name) {
+                    if (try? root.exists(rootIntent)) == false { try? root.writeNew(rootIntent,intentBytes); try? root.sync() }
+                    if (try? dir.exists(intent)) == false { try? dir.writeNew(intent,intentBytes); try? dir.sync() }
+                    // 외부 head와 세대도 별도 보존한다. 알 수 없는 head는 raw 관측 바이트만 남긴다.
+                    if let displaced = try? dir.read(stage,limit:256*1024), displaced != base {
+                        try? preserve(document.id,from:dir,headBytes:displaced,to:archive.child("displaced",create:true))
                     }
+                    if let external = try? root.child(name), let observed = try? external.read("current.json",limit:256*1024) {
+                        try? preserve(document.id,from:external,headBytes:observed,to:archive.child("external",create:true))
+                    }
+                    try? archive.sync(); try? recovery.sync(); try? root.sync()
                     throw Failure.publicationUnconfirmed
                 }
                 _ = renameatx_np(dir.fd,intent,dir.fd,"aborted-\(key).json",UInt32(RENAME_EXCL))
+                if renameatx_np(root.fd,rootIntent,archive.fd,"aborted.json",UInt32(RENAME_EXCL)) == 0 {
+                    try? archive.sync(); try? root.sync()
+                }
                 throw error
             }
         }

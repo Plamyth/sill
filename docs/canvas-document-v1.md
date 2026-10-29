@@ -43,3 +43,44 @@ Store, Workspace, 기존 CanvasFileWorkspace·Model, relay, Pele, PDF·태그 �
 무주입 검사는 PKDrawing 바이트/필압/transform 왕복, ID 재매핑, 구형 reader 거부, 구 scene/Files 읽기, 두 페이지 파일 왕복, 비선택 페이지 CAS, 실제 파일 누락과 권한 실패, ABA 거부다. 별도 주입 검사는 generation 뒤 실패, 교환 뒤 실패, CAS 확인 직후 비협력 외부 head 교환이다. 주입 검사를 OS crash나 원앱 성공 근거로 세지 않는다. 원본 사용자 파일·앱 UI·기기·Host·네트워크·서비스는 사용하지 않는다. 전체 빌드·설치·실기기·MyScript 전체 동등성·제품 복수 페이지 수용은 모두 미완료다.
 
 Pstack의 기존 설계 재사용→경계 구현→네이티브 검증→정확 소스 고정 경로를 적용했다. Ponytail은 기존 CanvasScene, Foundation 파일 조정, PencilKit, Darwin 원자 rename을 재사용하는 데 적용했다. 별도 DB·provider·프레임워크·ARENA·순정 Goal을 추가하지 않는다. 독립 아키텍처 검토 조건은 구현/검사의 기준이며, 이번 코드의 독립 소스 검수와 공식 통합은 별도 단계다.
+
+## 0fd 독립 검수 반례의 수리
+
+`canvas-document-independent-review-0fd008a/REVIEW.md`의 DOC-R1(P1), DOC-R2·R3(P2)는 첫 버전의 실제 실패 근거다. 기존 39조건 통과가 이 실패를 닫았다고 보지 않는다. 원래 영수증과 원본 입력은 보존하며 다음 소스의 좁은 반례 결과를 별도로 연결한다. 독립 재검수 완료 전 SOURCE_CLEAR·paired/UI 수용으로 올리지 않는다.
+
+### 정본 문서 경로와 발행 원장
+
+첫 버전은 선택 폴더 inode만 검사해 문서 디렉터리를 옮기고 같은 이름에 외부 디렉터리를 놓으면 옛 fd 안의 저장을 성공으로 반환할 수 있었다. 이제 root의 UUID 문서 경로와 열린 문서 fd의 dev/inode를 비교하고, generation·pages·각 페이지 디렉터리와 파일 entry도 no-follow identity에 결속한다. 성공/commit 전후에는 정본 문서 경로를 새로 열어 동일 head와 전체 문서·자산을 재검증한다.
+
+선택 폴더 바로 아래 `document-pending-<문서UUID>.json`을 fsync해 문서 디렉터리와 독립된 발행 barrier로 둔다. `document-recovery-<문서UUID>/<시도UUID>/`에는 원래 base와 proposal의 완전한 세대·원시 head를 검증해 보존한다. 경로 교체/교환 후 실패에서는 현재 외부 세대와 displaced 자료도 별도로 보존한다. 알려지지 않거나 손상된 외부 head는 원시 관측 바이트를 보존하고 그 원본 디렉터리를 자동 rollback/삭제하지 않는다. 읽을 수 없는 외부 전체 내용을 안전하게 복제했다고 주장하지 않는다.
+
+새 인스턴스의 load/save는 폴더 수준 barrier를 확인한다. 교체된 옛 문서 디렉터리를 선택 폴더 밖으로 이동해도 새 정본을 `publicationPending`으로 읽으며 후속 쓰기를 막는다. 정본이 없거나 읽을 수 없는데 barrier가 남으면 `pending`으로 거부한다. 정상 전체 readback을 마친 경우에만 바깥 intent를 해당 시도 폴더의 commit 기록으로 옮긴다. 단순 lock 경합을 이 영구 barrier로 바꾸지 않는다.
+
+복구 세대는 크기 제한 안의 실제 파일 사본이다. 이 첫 단위는 성공/실패 자료를 자동 삭제하지 않으므로 기존 immutable generation 외에 보존 공간을 더 사용한다. 활성화 전 기존 generation/복구 보존 정책과 함께 확인할 대상이며, 숨은 자동 정리나 새 DB를 추가하지 않았다. 비협력 writer가 마지막 관측 뒤 다시 경로·내용을 바꾸거나 전체 선택 폴더를 삭제하는 것까지 막는 절대 CAS/클라우드 내구성을 주장하지 않는다.
+
+### byte ingress의 nested 지원 경계
+
+새 Document의 SceneReader와 legacy 바이트 읽기가 같은 엄격한 shape 검사를 통과한 후에만 기존 CanvasScene decoder를 사용한다. scene 1/2/3의 종류·스타일·값 검증은 기존 계약을 재사용한다. 지원 필드는 다음 구조까지 닫힌 목록으로 확인한다.
+
+|구조|지원 키|
+|---|---|
+|node|id, kind, frame, text, confidence, sourceStrokeIds, vaultNote, isCollapsed, rotationDegrees|
+|frame|x, y, width, height|
+|vaultNote|path, sha256, relayAddress, cacheTruncated, blockID, sourceState, observedSha256, quoteSha256|
+|link / anchor|id, from, to, label, kind, fromAnchor, toAnchor / side, offset|
+|annotation|id, nodeId, text, author|
+|stroke / InkPoint|id, points, createdAt, visibility, style / x, y, pressure|
+|visibility / segment|kind, visibleSegments / lowerBound, upperBound, worldPoints|
+|style / color|version, inkType, color, transform, samples / red, green, blue, alpha|
+|transform / sample|a, b, c, d, tx, ty / width, height, opacity|
+|penSettings|version, color, width|
+
+Files head와 page asset metadata도 알려진 키만 읽는다. 지원하지 않는 키는 선택되지 않은 페이지에 있어도 **decode/저장 전에 문서 전체를 거부**한다. 기존 일반 CanvasScene decoder 전체를 바꾼 것이 아니다. 다른 코드가 unknown 필드를 이미 버리고 typed CanvasScene만 전달했다면 그 유실을 사후 복원할 수 없으므로, 새 문서 raw ingress는 이 경계를 반드시 사용해야 한다. free-author 주석의 author/text 값은 그대로 보존하며 태그 의미를 소급 부여하지 않는다.
+
+### lock 경합
+
+`flock(LOCK_EX | LOCK_NB)`를 사용하고 EWOULDBLOCK/EAGAIN은 한글 `busy` 보류로 반환한다. 이때 head·전체 문서·발행 원장을 변경하지 않는다. 실제 lock holder가 여전히 보유한 동안 MainActor 호출이 반환하고, 명시 해제 후 같은 기대 token으로 정상 저장되는지 검사한다. 이는 추가 flock 대기를 제거한 것이며 동기 NSFileCoordinator와 모든 파일 IO가 비동기로 바뀌었다는 주장이 아니다.
+
+### 재현 범위
+
+`run.py --repairs <독립 검수 폴더> --sdk-check --output <승인 외장 경로>`는 reviewer의 `unsupported-nodes/links/annotations.json` 세 원문 바이트를 그대로 입력하고 SHA를 과거 관측과 대조한다. 디렉터리 rename/copy 후 교환의 원래 반례와 교환 전·generation 후의 동일 경계를 검사한다. 별도 자체 프로세스의 실제 파일 lock을 사용하며 holder의 유한 수명·정상 종료·PID 부재를 기록한다. 기존 39조건·문서 단위 SDK와 좁은 수리 검사를 구분하며 GUI/기기/Pencil 수용으로 세지 않는다.
