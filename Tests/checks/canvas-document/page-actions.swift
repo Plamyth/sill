@@ -27,7 +27,7 @@ import AppKit
         ],creationDate:Date(timeIntervalSince1970:0)))])
         var page = CanvasScene(); page.width = 1200; page.height = 900
         page.drawingBase64 = originalInk.dataRepresentation().base64EncodedString()
-        page.strokes = CanvasScene.nativeInkStrokes(originalInk); page.schemaVersion = 2
+        page.strokes = CanvasScene.nativeInkStrokes(originalInk); page.schemaVersion = 2; page.penSettings = .default
         page.nodes = [.init(id:UUID(),kind:.note,frame:.init(x:10,y:20,width:200,height:90),text:"원문 e\u{301} 🖊️",confidence:.confirmed,sourceStrokeIds:originalInk.strokes.map(\.id))]
         let pageBytes = try CanvasFileWorkspace.bytes(page)
         var model = try CanvasDocument(legacy:page)
@@ -35,6 +35,7 @@ import AppKit
         check(model.activePageID == blankID && model.pages.count == 2,"원본 다음에 빈 페이지 추가·선택")
         check(model.activePage.nodes.isEmpty && model.activePage.strokes.isEmpty && model.activePage.drawingBase64.isEmpty,"빈 페이지에 원본 필기·노드 복사 없음")
         check(model.activePage.width == 1200 && model.activePage.height == 900,"원본 용지 크기 유지")
+        check(model.activePage.schemaVersion == page.schemaVersion && model.activePage.penSettings == page.penSettings,"펜 설정과 그 표현 버전을 함께 이어받음")
         check(try CanvasFileWorkspace.bytes(model.pages[0]) == pageBytes,"원본 페이지 전체 바이트 보존")
         check(!model.accepts(snapshot),"추가 전 비동기 입력 거부")
         let beforeOrder = Dictionary(uniqueKeysWithValues:try model.pages.map { ($0.id,try CanvasFileWorkspace.bytes($0)) })

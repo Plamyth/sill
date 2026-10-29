@@ -257,6 +257,7 @@ struct CanvasDocument: Codable, Equatable {
         guard pages.count < Self.pageLimit, let index = pages.firstIndex(where:{ $0.id == pageID }) else { throw Failure.invalid }
         let source = pages[index]
         var page = CanvasScene()
+        page.schemaVersion = source.schemaVersion
         page.width = source.width; page.height = source.height; page.penSettings = source.penSettings
         var next = self
         next.pages.insert(page,at:index + 1); next.activePageID = page.id
