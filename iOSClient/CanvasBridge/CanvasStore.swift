@@ -3791,12 +3791,25 @@ final class CanvasStore: ObservableObject {
         } catch { documentFileReady = false; fileWorkspaceState = .blocked; status = error.localizedDescription }
     }
     func selectDocumentPage(_ id: UUID) async {
-        await changeDocumentPage(id,duplicate:false)
+        await changeDocumentPage(.select(id))
     }
     func duplicateDocumentPage() async {
-        await changeDocumentPage(scene.id,duplicate:true)
+        await changeDocumentPage(.duplicate(scene.id))
     }
-    private func changeDocumentPage(_ id: UUID, duplicate: Bool) async {
+    func addBlankDocumentPage() async {
+        await changeDocumentPage(.blank)
+    }
+    func moveDocumentPage(_ id: UUID, by offset: Int) async {
+        guard offset == -1 || offset == 1, let index = document.pages.firstIndex(where:{ $0.id == id }) else { return }
+        let target = index + offset
+        guard document.pages.indices.contains(target) else { return }
+        var ids = document.pages.map(\.id); ids.swapAt(index,target)
+        await changeDocumentPage(.reorder(ids))
+    }
+    private enum DocumentPageChange {
+        case select(UUID), duplicate(UUID), blank, reorder([UUID])
+    }
+    private func changeDocumentPage(_ action: DocumentPageChange) async {
         do {
             try documentBarrierCheck()
             guard isDocumentSource else { throw CanvasDocument.Failure.unsupported }
@@ -3804,8 +3817,12 @@ final class CanvasStore: ObservableObject {
             documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             var next = document
-            if duplicate { try next.duplicatePage(id,expectedRevision:next.revision) }
-            else { try next.selectPage(id,expectedRevision:next.revision) }
+            switch action {
+            case .select(let id): try next.selectPage(id,expectedRevision:next.revision)
+            case .duplicate(let id): try next.duplicatePage(id,expectedRevision:next.revision)
+            case .blank: try next.addBlankPage(after:next.activePageID,expectedRevision:next.revision)
+            case .reorder(let ids): try next.reorderPages(ids,expectedRevision:next.revision)
+            }
             let binding: DocumentFileBinding?
             if let files = documentFiles, let prior = documentFileBinding {
                 binding = try await savedDocument(next,files:files,bookmark:prior.bookmark,expected:prior.token,owner:owner)
@@ -3816,7 +3833,6 @@ final class CanvasStore: ObservableObject {
             documentFileReady = binding != nil
             fileWorkspaceStatus = binding == nil ? "전체 문서 복구본 저장 · Files 원본 미저장" : "페이지 변경을 전체 문서 원본에 저장했습니다."
         } catch { status = "페이지를 바꾸지 않았습니다. \(error.localizedDescription)" }
-        documentBusy = false
     }
 
     func returnToLegacySource() throws {

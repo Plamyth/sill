@@ -1,5 +1,13 @@
 # 복수 페이지 문서 Store·UI 접합
 
+## 빈 페이지와 순서 변경 후속
+
+f09 기반 후속은 기존 ‘문서 페이지’ 화면에 빈 페이지 추가와 한 칸 앞·뒤 이동을 연결한다. 빈 페이지는 현재 페이지 다음에 새 ID로 만들고 용지 크기·펜 설정만 이어받는다. 기존 필기·노드·댓글·원문 참조를 복사하거나 삭제하지 않는다. 순서 변경은 기존 모든 페이지 ID의 정확한 순열만 받으며 현재 선택한 페이지 ID와 각 페이지 바이트를 유지한다. 같은 순서는 revision도 바꾸지 않는다. 128페이지 상한·오래된 revision·누락·중복·외래 ID는 기존 문서를 보존하며 거부한다.
+
+Store는 별도 저장 경로 없이 기존 전체 미리보기→Files CAS→전체 재열기→원본 cache→설치 순서를 재사용한다. 페이지별 Undo와 입력 소유 무효화도 기존 설치 경로를 따른다. ‘삭제·복구’는 이 추가의 범위가 아니며, 서버의 페이지 유실 거부를 해제하지 않는다. 이 후속을 MyScript 원앱 iPad의 미확인 빈 페이지·순서 동작을 조사 완료했다는 근거로 쓰지 않는다.
+
+`Tests/checks/canvas-document/run.py --page-actions --sdk-check`는 기존 실행기를 재사용해 새 연산의 native PKDrawing 보존·전체 Files 저장·외부 순서 역수신·실패 보존·별도 프로세스 재열기를 검사한다. 정상 앱 경로의 sentinel과 실제 기기·GUI를 구분한다. 정확 실행 결과·원래 실패·수리·독립 검수는 해당 작업 영수증으로 확인한다.
+
 이 단위의 원래 기준은 `b1b7e30efb32a615eae847cbf8280983fb3b0982` / `e7ce8079e3ea3753814be615a78ade2f6914d71b`다. API 소유 단위 `422cefdad52667c5e73eb503e06c8287dbf4b99c`를 그대로 소비하고, 독립 수용된 저장 재사용과 PDF 목차를 포함한 공식 `486b2e02ad9178a37617a2e1cae6e660c7d97303`을 이 writer 브랜치에 병합했다. 기존 저장 원본 WT `782978d`, 저장 재사용 WT `ded8020`은 수정하지 않았다. 공식 integration 쓰기·push·설치·GUI·기기·Host·8791 서비스 전환은 이 단위의 작업이 아니다.
 
 소유 매핑을 정정한다. **Store·Workspace·Pencil/Undo 접합은 Helm**, **CanvasRelay.swift·CanvasDocumentRelay.swift·DTO/HTTP·프로젝트 등록은 Laplace**가 소유한다. 과거 저장 단위 HANDOFF의 ‘Store owner Laplace’는 잘못된 매핑이다. 해당 고정 영수증을 소급 변경하지 않고 여기서 바로잡는다. 서버와 원본 서비스는 Galileo/부모 소유이며 이 writer는 우회 구현하지 않는다.
