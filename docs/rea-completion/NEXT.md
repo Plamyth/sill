@@ -1,3 +1,15 @@
+# 공식 ccb에 이미 있는 기능을 유지한 다음 경계
+
+기준은 `ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b` / tree `889357e61e8b159f487d2a5327e5b36b1c63938d`의 고정 snapshot이다. 현재 구현 판단은 `coverage.json.currentProgress`와 각 행의 `currentProgress.currentRemaining`을 우선한다. 아래 f4/f09의 모듈 없음·EPUB 미통합 지시는 당시 이력이며 현재 재구현 지시가 아니다. 이후 부모 소스나 통합 상태를 이 문서 담당이 다시 관측하지 않는다.
+
+1. 공식311b의 EPUB 읽기/발췌/원문 복귀·Store/Files, c899 PDF 책갈피, 1516 초점/설정/임시 뷰 Undo 수리, ccb 지도/개요·공통 Undo/용지 장벽 결합을 그대로 재사용한다. 각 독립 scoped SOURCE_CLEAR와 공식 통합은 R204–R218에 연결했다. 원앱의 추가 미관측·실제 입력/화면·권한/FileProvider/기기 수용은 별도로 남긴다.
+2. 검색a235의 SDK37 성공과 exact 합본 독립 검수 대기를 구분한다(R219, R220). 현재 페이지 필기 결과와 열린 EPUB 검색을 전역·다른 페이지·OCR·태그·랭킹 전체 검색으로 확대하지 않는다. 공식ccb 기능이나 완료 행으로 승격하지 않는다.
+3. Cloze8938→f453→d834의 성공·반례를 보존한다(R221, R222, R223). d834의 원5 code 반례/R2 해소는 새 parsed-boundary P2의 해소가 아니므로 원저자 수리와 독립 재검수 전 수용하지 않는다. 이 문서 작업에서 제품 수리·새 테스트를 시작하지 않는다.
+
+실제 설치68·구source624의 미설치 signed74·test-deploy-held·모든 whole/physical/runtime/testAccepted=false를 유지한다. 기존 Store HTTP79·성공200 ACK scoped CLEAR와 EPUB70b 실제HTTP100 evidence CLEAR는 각 과거 실행 범위만 뜻한다. 385행/114그룹·지원 미확인32행과 원앱 목표를 유지하며 새 UI/기기/설치/Host/HTTP/SDK/질문/알림 실행은 없다. 이후 공식 변동은 부모가 새 exact 근거로 별도 기록한다.
+
+## 아래는 f4 시점의 원문. 현재 착수 지시가 아닌 이력
+
 # 다음 작업 — 현재 공식 f4의 구현을 유지한 후속 경계
 
 현재 공식은 `f4a00d0d146b900b10e186f189f5ddcdd452b09d` / tree `54bd85c28a6e8245a43d685a7400da5e0f577b53`다. 문서 WT 시작점은 공식cd5/tree5741ea4a이며 f09는 역사적 기준이다. 문서 정합성은 실제 제품 개발과 병렬인 작업이며 그 대체 완료가 아니다. 이미 있는 문서/Store/Files/태그/참조 병합·PDF·그룹/용지 경로를 다시 구현하지 않는다.

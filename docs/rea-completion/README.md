@@ -1,3 +1,22 @@
+# 공식 ccb 시점의 소스 기능 원장
+
+이 문서는 공식 `ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b` / tree `889357e61e8b159f487d2a5327e5b36b1c63938d`를 기준으로 고정한 snapshot이다. 부모 OUT의 `program/CURRENT-RESUME.md`와 기존 통합·독립 검수 영수증을 한 번 대조했다. 이후 소스·공식 상태를 다시 관측하지 않았다. 진행 중 수리도 실행하지 않았다. 현재 판독은 `coverage.json.currentProgress`와 각 행의 `currentProgress.currentRemaining`을 우선한다. 기존 `currentVersions/nextActions`, 아래 f4/f09 본문과 원래 행 상태는 당시 이력으로 보존한다.
+
+| 공식에 포함된 제한 소스 | 정확 근거 | 남은 범위 |
+| --- | --- | --- |
+| EPUB 읽기·발췌·원문 앵커와 Store/Files 복구 | 311b/tree2e7f48ef의 Ohm `SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION`과 공식 통합. R204, R205, R206. | 실제 HTTP100은 기존70b의 별도 scoped evidence CLEAR다. 임의 EPUB·서식/리플로 전체·iPad/정상runtime 수용으로 전이하지 않는다. |
+| PDF 물리 페이지 책갈피 | c899/treeb61c8345의 `SOURCE_CLEAR_SCOPED_BOOKMARKS_EPUB_RUNNER_COMPOSITION`과 공식 통합. R207, R208, R209. | 기존 sidecar v1/v2의 명시 추가·제거·목록 이동 범위다. 원앱 iPad 관측·실제 화면 수용은 별도다. |
+| 일반 가지 초점·상위/전체 복귀 | 1516/treef7d2cf22와 설정 c3 P2·임시 뷰 Undo 수리 독립 CLEAR. R210, R211, R213, R212. | 원앱 R085는 Mac 관측이다. 실제 UIKit teardown·Pencil·정상 환경설정 내구성은 미수용이다. |
+| 같은 원본의 지도/개요 보기 | ccb/tree889357e6의 `SOURCE_CLEAR_SCOPED_OUTLINE_COMMON_REPAIR_COMPOSITION`. R214, R215, R216. | 같은 ID/접힘·공통 Undo와 용지 장벽 결합 범위다. 개요 PDF 출력·스타일 전체·실제 UIKit 수용은 아니다. |
+
+검색 `a23536f00676e43847e7db8ddbeff51079e0e826` / tree `75d21fc63c608ee53530d33bd644c26cfd01ffa4`는 SDK37 입력이 최종 Git에 일치하지만 exact 합본 검수 대기이며 공식ccb에 포함되지 않는다(R219, R220). Cloze `8938→f453→d834`는 새 `CLOZE-R1-PARSED-BOUNDARY` P2로 미수용이다(R221, R222, R223). 기존 성공과 실패 이력·원문은 삭제하지 않았고 두 후보를 완료 행으로 바꾸지 않았다.
+
+385행의 ID·순서·원앱 관측·status·counts, 114그룹, 지원 미확인32행을 보존했다. 이번에는 관련17행의 `currentProgress`와 새 근거21개만 추가·정정했다. 완료0/미완료385/N/A0이며 원앱 목표와 모든 whole/physical/runtime/testAccepted=false를 유지한다. 실제 설치는 마지막 관측68이고 signed74는 구source624의 미설치 후보다. 공식 ccb의 integrationObserved와 test-deploy-held를 새 배포·실행 수용으로 바꾸지 않는다(R217, R218).
+
+Pstack technical-writing의 근거·시점 경계와 Ponytail의 기존 원장 재사용을 적용했다. 이번 실행은 문서 JSON/구조·참조SHA 검사와 문서 커밋뿐이다. 제품/검사/SDK/GUI/기기/HTTP/Host/설치/질문/알림/loop0, ARENA/순정 Goal0이다. 이 문서는 제품 완료를 대신하지 않으며 이후 통합 변동은 부모가 exact 후속으로 기록한다. 다음 경계는 [NEXT.md](NEXT.md), 기계 원장은 [coverage.json](coverage.json)이다.
+
+## 아래는 f4 시점의 원문. 현재 착수 지시가 아닌 이력
+
 # 현재 상태 정합성 — 공식 f4와 검수·실행·설치의 구분
 
 현재 공식은 **`f4a00d0d146b900b10e186f189f5ddcdd452b09d` / tree `54bd85c28a6e8245a43d685a7400da5e0f577b53`**다. 이 문서 WT는 공식cd5 `cd5e79105904e25438c50a53b845c2d17a2b6b3e` / tree `5741ea4adac55e33b951c160462be7aaede4021b`에서 시작했고 작업 중 전달된 후속을 반영했다. f09와cd5는 각 시점의 역사적 기준이다. 제품 개발·검사·공식 통합·설치 수용을 합산하지 않는다.
