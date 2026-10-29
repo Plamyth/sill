@@ -119,7 +119,7 @@ struct Checks {
             let f = ClickHarness()
             tap(f, a, expected: 1, label: label + " first")
             f.now = time
-            tap(f, a, expected: expected, label: label)
+            tap(f, a, expected: expected, label: label, at: point)
         }
 
         print("SUMMARY checks=\(checks) failures=\(failures); pure extracted Swift; CGEvent/Host/UI/HAL actions=0")
