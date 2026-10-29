@@ -44,6 +44,7 @@ final class CanvasInkHistory: ObservableObject {
     private weak var manager: UndoManager?
     private var observers: [NSObjectProtocol] = []
     private(set) var usingTool = false
+    private var toolOwner: UUID?
     private var refreshScheduled = false
     private var refreshing = false
 
@@ -67,7 +68,7 @@ final class CanvasInkHistory: ObservableObject {
         if let owner, let manager { histories[owner] = (manager,generation) }
         observers.forEach(NotificationCenter.default.removeObserver); observers.removeAll()
         let value = histories[next] ?? (UndoManager(),UUID())
-        histories[next] = value; owner = next; manager = value.manager; generation = value.generation; usingTool = false
+        histories[next] = value; owner = next; manager = value.manager; generation = value.generation; usingTool = false; toolOwner = nil
         for name in [NSNotification.Name.NSUndoManagerDidOpenUndoGroup,.NSUndoManagerDidCloseUndoGroup,.NSUndoManagerDidUndoChange,.NSUndoManagerDidRedoChange] {
             observers.append(NotificationCenter.default.addObserver(forName:name,object:value.manager,queue:.main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.scheduleRefresh() }
@@ -96,10 +97,13 @@ final class CanvasInkHistory: ObservableObject {
         manager?.removeAllActions()
         if let owner, let manager { histories[owner] = (manager,generation) }
         usingTool = false
+        toolOwner = nil
         scheduleRefresh()
     }
 
-    func setUsingTool(_ active: Bool) {
+    func setUsingTool(_ active: Bool, owner: UUID? = nil) {
+        if !active, toolOwner != owner { return }
+        toolOwner = active ? owner : nil
         usingTool = active
         if active {
             if availability != Availability() { availability = Availability() }

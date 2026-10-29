@@ -71,10 +71,24 @@ import AppKit
         object.removeValue(forKey:"schemaVersion"); object["activePageID"] = UUID().uuidString
         refuses("없는 현재 페이지 전체 거부") { _ = try CanvasDocument.decode(JSONSerialization.data(withJSONObject:object)) }
         let a = document.activePageID, b = page.id, snapshot = try document.pageSnapshot()
+        check(document.matchesPageActivation(snapshot),"현재 입력 activation은 전체 직렬화 없이 소유 확인")
         check(try !CanvasDocument.decode(document.bytes()).accepts(snapshot),"새로 연 인스턴스는 이전 비동기 snapshot 거부")
+        check(try !CanvasDocument.decode(document.bytes()).matchesPageActivation(snapshot),"새 인스턴스의 입력 activation 거부")
+        var changedHidden = document
+        var hidden = changedHidden.pages.first { $0.id != changedHidden.activePageID }!
+        hidden.nodes[0].text += " 숨은 페이지 수정"; hidden.revision += 1
+        try changedHidden.replacePage(hidden,expectedRevision:changedHidden.revision)
+        check(!changedHidden.matchesPageActivation(snapshot) && !changedHidden.accepts(snapshot),"비선택 페이지 변경도 이전 입력 activation 거부")
+        var changedActive = document, editing = document.activePage
+        editing.nodes[0].text += " 현재 페이지 수정"
+        try changedActive.updateActivePageForEditing(editing)
+        check(!changedActive.matchesPageActivation(snapshot),"편집 turn의 전체 revision도 입력 activation 무효화")
         try document.selectPage(b,expectedRevision:document.revision)
         try document.selectPage(a,expectedRevision:document.revision)
         check(!document.accepts(snapshot),"A→B→A 이전 비동기 snapshot 거부")
+        check(!document.matchesPageActivation(snapshot),"A→B→A 이전 입력 activation 거부")
+        let currentSnapshot = try document.pageSnapshot()
+        check(document.matchesPageActivation(currentSnapshot) && document.accepts(currentSnapshot),"최신 입력 activation과 전체 바이트 검사 일치")
         let beforeStale = try document.bytes()
         refuses("오래된 revision 복제 거부") { _ = try document.duplicatePage(a,expectedRevision:-1) }
         check(try document.bytes() == beforeStale,"stale 실패 전체 바이트 보존")

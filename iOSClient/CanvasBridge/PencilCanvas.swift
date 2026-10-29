@@ -136,7 +136,7 @@ struct PencilCanvas: UIViewRepresentable {
         host.accessibilityValue = "확대 \(Int(store.zoom * 100))%"
         if context.coordinator.renderedOwner != store.nativeHistoryOwner || context.coordinator.renderedGeneration != store.inkHistory.generation ||
            context.coordinator.renderedModelDrawing != store.drawing ||
-           context.coordinator.renderedDocument.map(store.document.accepts) != true {
+           context.coordinator.renderedDocument.map(store.document.matchesPageActivation) != true {
             context.coordinator.replaceDrawingFromStore()
         }
         canvas.isUserInteractionEnabled = store.mode != .select && !store.documentBusy
@@ -217,7 +217,7 @@ struct PencilCanvas: UIViewRepresentable {
 
         private var liveInput: Bool {
             !retired && canvas != nil && renderedOwner == store.nativeHistoryOwner &&
-                renderedGeneration == store.inkHistory.generation && renderedDocument.map(store.document.accepts) == true
+                renderedGeneration == store.inkHistory.generation && renderedDocument.map(store.document.matchesPageActivation) == true
         }
 
         private func currentCanvas(_ view: PKCanvasView) -> Bool { liveInput && canvas === view }
@@ -235,7 +235,7 @@ struct PencilCanvas: UIViewRepresentable {
             isDrawing = false; usingTool = false; hoverPoint = nil
             previewLayer.path = nil; hoverLayer.isHidden = true
             if renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation {
-                store.inkHistory.setUsingTool(false)
+                store.inkHistory.setUsingTool(false,owner:traceOwner)
             }
             store.setPencilTraceActive(false,owner:traceOwner)
         }
@@ -267,7 +267,7 @@ struct PencilCanvas: UIViewRepresentable {
             renderedDocument = try? store.document.pageSnapshot()
             isDrawing = false
             usingTool = false
-            store.inkHistory.setUsingTool(false)
+            store.inkHistory.setUsingTool(false,owner:traceOwner)
             store.setPencilTraceActive(false, owner: traceOwner)
             previewSession += 1
             previewLayer.path = nil
@@ -434,7 +434,7 @@ struct PencilCanvas: UIViewRepresentable {
             drawingChangeSerial += 1
             toolActivation = activation
             usingTool = true
-            store.inkHistory.setUsingTool(true)
+            store.inkHistory.setUsingTool(true,owner:traceOwner)
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
@@ -442,7 +442,7 @@ struct PencilCanvas: UIViewRepresentable {
             flushPendingDrawing()
             usingTool = false
             toolActivation = nil
-            store.inkHistory.setUsingTool(false)
+            store.inkHistory.setUsingTool(false,owner:traceOwner)
         }
 
         func flushPendingDrawing(save: Bool = false) {

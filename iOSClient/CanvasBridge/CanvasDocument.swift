@@ -39,6 +39,7 @@ struct CanvasDocument: Codable, Equatable {
         let sessionID: UUID
         let documentID: UUID
         let documentSHA: String
+        let documentRevision: Int
         let pageID: UUID
         let pageRevision: Int
         let epoch: UInt64
@@ -232,12 +233,16 @@ struct CanvasDocument: Codable, Equatable {
         if pageID != activePageID { activePageID = pageID; revision += 1; pageEpoch += 1 }
     }
     func pageSnapshot() throws -> PageSnapshot {
-        PageSnapshot(sessionID:sessionID,documentID:id,documentSHA:CanvasPacket.sha(try bytes()),pageID:activePageID,
+        PageSnapshot(sessionID:sessionID,documentID:id,documentSHA:CanvasPacket.sha(try bytes()),documentRevision:revision,pageID:activePageID,
                      pageRevision:activePage.revision,epoch:pageEpoch)
     }
+    /// 획·호버의 현재 입력 소유만 확인한다. 저장·비동기 결과 적용에는 전체 바이트 검사인 accepts를 사용한다.
+    func matchesPageActivation(_ snapshot: PageSnapshot) -> Bool {
+        snapshot.sessionID == sessionID && snapshot.documentID == id && snapshot.documentRevision == revision &&
+            snapshot.pageID == activePageID && snapshot.pageRevision == activePage.revision && snapshot.epoch == pageEpoch
+    }
     func accepts(_ snapshot: PageSnapshot) -> Bool {
-        snapshot.sessionID == sessionID && snapshot.documentID == id && snapshot.pageID == activePageID && snapshot.pageRevision == activePage.revision &&
-            snapshot.epoch == pageEpoch && (try? CanvasPacket.sha(bytes())) == snapshot.documentSHA
+        matchesPageActivation(snapshot) && (try? CanvasPacket.sha(bytes())) == snapshot.documentSHA
     }
     mutating func replacePage(_ page: CanvasScene, expectedRevision: Int) throws {
         guard revision == expectedRevision, revision < Int.max, pageEpoch < UInt64.max else { throw Failure.stale }
