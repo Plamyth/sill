@@ -873,7 +873,8 @@ struct CanvasWorkspace: View {
                     })
                 }
                 if let reader = epubReader {
-                    VaultEPUBStoreReader(reader:reader,canAct:store.epubIsCurrent(reader) && !store.vaultSaving && !store.hasPendingEPUBExcerpt) {
+                    VaultEPUBStoreReader(reader:reader,canAct:store.epubIsCurrent(reader) && !store.vaultSaving && !store.hasPendingEPUBExcerpt,
+                        searchIsCurrent:{ store.epubIsCurrent(reader) && !store.vaultSaving && !store.hasPendingEPUBExcerpt }) {
                         do {
                             guard store.epubIsCurrent(reader) else { throw VaultEPUBError.changed }
                             let excerpt = try reader.prepareExcerpt()
@@ -2819,6 +2820,7 @@ private struct VaultEPUBStoreText: UIViewRepresentable {
 private struct VaultEPUBStoreReader: View {
     @ObservedObject var reader: VaultEPUBReader
     let canAct: Bool
+    let searchIsCurrent: @MainActor () -> Bool
     let capture: () -> Void
     var body: some View {
         VStack {
@@ -2835,6 +2837,7 @@ private struct VaultEPUBStoreReader: View {
                 Button("글꼴 확대") { edit { try reader.setFontSize(min(48,reader.fontSize+2)) } }
                 Button("선택 텍스트를 EPUB 발췌 노트로 저장") { capture() }
             }.disabled(!canAct).buttonStyle(.bordered).controlSize(.large)
+            VaultEPUBSearchControls(reader:reader,isCurrent:searchIsCurrent)
             VaultEPUBStoreText(reader:reader).frame(maxWidth:.infinity,maxHeight:.infinity)
                 .accessibilityLabel("EPUB 원문 텍스트 · 읽기 전용")
             Text(reader.status).font(.footnote)
