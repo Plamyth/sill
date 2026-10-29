@@ -23,6 +23,17 @@ test('전체 문서·비선택 페이지·순서·자산과 메모를 정확 재
  assert(fs.existsSync(path.join(f.root,'CCR Documents/Assets',f.d.id,saved.generation,'document.json')));
 });
 
+test('대문자 UUID 원본을 보존하고 응답 문서·현재 페이지·자산 ID만 소문자로 투영한다',t=>{
+ const f=fixture(t);
+ f.d.id=f.d.id.toUpperCase();
+ for(const p of f.d.pages){p.id=p.id.toUpperCase();for(const n of p.nodes)n.id=n.id.toUpperCase();for(const l of p.links){l.id=l.id.toUpperCase();l.from=l.from.toUpperCase();l.to=l.to.toUpperCase();}for(const a of p.annotations){a.id=a.id.toUpperCase();a.nodeId=a.nodeId.toUpperCase();}}
+ f.d.activePageID=f.d.pages[1].id;
+ const input=body(f.d),saved=f.vault.saveDocument(f.d.id,input),fresh=new ObsidianVault(f.root).document(f.d.id);
+ for(const value of [saved,fresh]){assert.equal(value.id,f.d.id.toLowerCase());assert.equal(value.activePageID,f.d.activePageID.toLowerCase());assert.deepEqual(value.pages.map(p=>p.id),f.d.pages.map(p=>p.id.toLowerCase()));assert(value.pages.some(p=>p.id===value.activePageID));}
+ assert.equal(fresh.documentJSONBase64,input.documentJSONBase64);assert.equal(fresh.documentSha256,input.documentSha256);
+ const raw=Buffer.from(fresh.documentJSONBase64,'base64');assert.equal(JSON.parse(raw).activePageID,f.d.activePageID);assert.equal(sha(raw),input.documentSha256);
+});
+
 test('nested 미래 필드와 미지원 버전/종류/참조는 비선택 페이지에서도 전체 거부하며 파일 쓰기0이다',t=>{
  const f=fixture(t),targets=[d=>d.future=1,d=>d.pages[1].future=1,d=>d.pages[1].nodes[0].futureRequiredPayload={raw:1},d=>d.pages[1].links[0].futureRequiredPayload={raw:1},d=>d.pages[1].annotations[0].futureRequiredPayload={raw:1},d=>d.pages[1].nodes[0].frame.future=1,d=>d.pages[1].links[0].fromAnchor.future=1,d=>d.version=2,d=>d.pages[1].schemaVersion=4,d=>d.pages[1].nodes[0].kind='future',d=>d.pages[1].links[0].from=uuid(),d=>d.pages[1].annotations[0].nodeId=uuid(),d=>d.pages[1].id=d.pages[0].id,d=>d.activePageID=uuid()];
  for(const mutate of targets){const copy=structuredClone(f.d);mutate(copy);assert.throws(()=>f.vault.saveDocument(copy.id,body(copy)),{status:400,code:'invalid_document'});assert.deepEqual(fs.readdirSync(f.root),[]);}
