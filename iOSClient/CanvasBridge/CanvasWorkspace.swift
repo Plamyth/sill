@@ -550,13 +550,32 @@ struct CanvasWorkspace: View {
             List {
                 Text("같은 문서의 순서 있는 페이지입니다. 복제는 글·연결·댓글 ID를 다시 만들고 원본 필기와 출처 참조를 보존합니다.")
                 ForEach(Array(store.document.pages.enumerated()),id:\.element.id) { index,page in
-                    Button {
-                        dismissCanvasEditorSheet(); store.documentPresentationBusy = false
-                        Task { await store.selectDocumentPage(page.id) }
-                    } label: {
-                        Label("페이지 \(index + 1)",systemImage:page.id == store.scene.id ? "checkmark.circle.fill" : "doc")
+                    HStack {
+                        Button {
+                            dismissCanvasEditorSheet(); store.documentPresentationBusy = false
+                            Task { await store.selectDocumentPage(page.id) }
+                        } label: {
+                            Label("페이지 \(index + 1)",systemImage:page.id == store.scene.id ? "checkmark.circle.fill" : "doc")
+                        }
+                        .buttonStyle(.borderless)
+                        Spacer()
+                        Button("앞으로",systemImage:"arrow.up") {
+                            dismissCanvasEditorSheet(); store.documentPresentationBusy = false
+                            Task { await store.moveDocumentPage(page.id,by:-1) }
+                        }.buttonStyle(.borderless).disabled(index == 0)
+                            .accessibilityLabel("페이지 \(index + 1)을 앞으로 이동")
+                        Button("뒤로",systemImage:"arrow.down") {
+                            dismissCanvasEditorSheet(); store.documentPresentationBusy = false
+                            Task { await store.moveDocumentPage(page.id,by:1) }
+                        }.buttonStyle(.borderless).disabled(index + 1 == store.document.pages.count)
+                            .accessibilityLabel("페이지 \(index + 1)을 뒤로 이동")
                     }
                 }
+                Button("빈 페이지 추가",systemImage:"doc.badge.plus") {
+                    dismissCanvasEditorSheet(); store.documentPresentationBusy = false
+                    Task { await store.addBlankDocumentPage() }
+                }.disabled(store.document.pages.count >= CanvasDocument.pageLimit)
+                    .accessibilityIdentifier("canvasAddBlankPage")
                 Button("현재 페이지 복제",systemImage:"doc.on.doc") {
                     dismissCanvasEditorSheet(); store.documentPresentationBusy = false
                     Task { await store.duplicateDocumentPage() }

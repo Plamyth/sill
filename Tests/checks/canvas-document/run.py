@@ -11,6 +11,7 @@ p.add_argument('--store-r1', action='store_true', help='DOC-STORE-R1 원본 전�
 p.add_argument('--store-r1-review', type=Path, help='DOC-STORE-R1 검수 폴더; dirty-open만 대조')
 p.add_argument('--repairs', type=Path, help='DOC-R1/R2/R3 독립 검수 근거 폴더')
 p.add_argument('--storage-reuse', action='store_true')
+p.add_argument('--page-actions', action='store_true', help='빈 페이지와 순서 변경의 Store·Files 경계만 검사')
 a = p.parse_args()
 archive = Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
 assert a.output.resolve().is_relative_to(archive)
@@ -54,13 +55,13 @@ commands=[('compile',['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e
 if a.sdk_check:
     ios=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
     commands.append(('ios27-unit-typecheck',['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'ios-modules','-typecheck',*sources]))
-if a.store or a.store_r1:
-    assert not a.repairs and not a.storage_reuse and not (a.store and a.store_r1)
+if a.store or a.store_r1 or a.page_actions:
+    assert not a.repairs and not a.storage_reuse and sum([a.store,a.store_r1,a.page_actions]) == 1
     sources += [canvas/(n+'.swift') for n in ['CanvasStore','VaultPDFExcerpt','VaultPDFViewState','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection']]
     native_reader=out/'PDFNativeReader.swift'
     native_reader.write_text((canvas/'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
     sources += [native_reader]
-    sources += [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('transition.swift' if a.store_r1 else 'store.swift')]
+    sources += [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('page-actions.swift' if a.page_actions else ('transition.swift' if a.store_r1 else 'store.swift'))]
     protocol = root/'Sources/StreamProtocol/TestDestinations.swift'
     ios_sources = sorted(canvas.glob('*.swift')) + [root/'iOSClient'/(n+'.swift') for n in ['IPadAudioSession','IPadAudioLeaseState','IPadAudioLeaseCoordinator']] + [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
     inputs += [p for p in sources if p != native_reader] + [canvas/'VaultPDFReader.swift',protocol,canvas/'PencilCanvas.swift',canvas/'CanvasWorkspace.swift'] + (ios_sources if a.sdk_check else [])
@@ -132,7 +133,7 @@ if a.store_r1 and (out/'review-dirty-open/observations.json').exists():
     assert before_probe['counterexample'] and not after_probe['counterexample'] and after_probe['dirtyInOldFiles']
     assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in r1_review_hashes.items())
     r1_comparison=dict(before=before_probe,after=after_probe,reviewInputHashes=r1_review_hashes)
-if a.store or a.store_r1:
+if a.store or a.store_r1 or a.page_actions:
     assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())
 comparison={}
 if a.repairs and (out/'repair/repair-observations.json').exists():
@@ -154,7 +155,7 @@ if a.storage_reuse and (out/'storage-after/storage-observations.json').exists():
     assert old['normal']['baseDirectoryCreated'] and not new['normal']['baseDirectoryCreated']
     assert new['normal']['deltaBytes'] < old['normal']['deltaBytes']
     storage=dict(before=old,after=new,baselineFilesSHA256=baseline_sha,baselineCommit='782978d7bc574080ae72fd9ebd48b5699473f0ea')
-record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)) and (not a.storage_reuse or bool(storage)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=(not a.store_r1),previewFixture=(a.store or a.store_r1),controlledCallbackContinuation=a.store_r1,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,storageComparison=storage,storeR1Comparison=r1_comparison,normalFixturesUnchanged=(not (a.store or a.store_r1) or all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())),StoreIntegrated=(a.store or a.store_r1),pairedRelay=False,UIWriteEnabled=(a.store or a.store_r1),UIExecuted=False,UIAccepted=False,installation=False,wholeProductAccepted=False)
+record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)) and (not a.storage_reuse or bool(storage)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=(not a.store_r1),previewFixture=(a.store or a.store_r1 or a.page_actions),controlledCallbackContinuation=a.store_r1,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,storageComparison=storage,storeR1Comparison=r1_comparison,normalFixturesUnchanged=(not (a.store or a.store_r1 or a.page_actions) or all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())),StoreIntegrated=(a.store or a.store_r1 or a.page_actions),pairedRelay=False,UIWriteEnabled=(a.store or a.store_r1 or a.page_actions),UIExecuted=False,UIAccepted=False,installation=False,wholeProductAccepted=False)
 (out/'result.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')
 print('RECEIPT',out/'result.json',flush=True)
 raise SystemExit(0 if record['passed'] else 1)
