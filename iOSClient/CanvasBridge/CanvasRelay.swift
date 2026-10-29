@@ -164,16 +164,24 @@ struct CanvasRelay {
         guard let http = raw as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         let body = (try? JSONSerialization.jsonObject(with:data)) as? [String:Any]
         let vault = request.url?.path.contains("/vault/") ?? false
-        let required = body?["reconciliationRequired"] as? Bool
+        let document = ["/vault/document","/vault/document/conflict"].contains(request.url?.path ?? "")
+        func boolean(_ key: String) -> Bool? {
+            guard let value = body?[key] as? NSNumber,
+                  CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+            return value.boolValue
+        }
+        let required = boolean("reconciliationRequired")
+        let malformedFlags = document && ["reconciliationRequired","publicationAttempted"].contains {
+            body?[$0] != nil && boolean($0) == nil
+        }
         let preserved = vault && (body?["code"] as? String == "note_reconciliation_required" || required == true)
-        if !(200...299).contains(http.statusCode) || (preserved && (request.httpMethod != "GET" || rejectReconciliation)) {
+        if !(200...299).contains(http.statusCode) || malformedFlags || (preserved && (request.httpMethod != "GET" || rejectReconciliation)) {
             var info: [String:Any] = [NSLocalizedDescriptionKey:body?["error"] as? String ?? "Mac 수신 오류"]
-            let status = preserved ? 409 : http.statusCode
+            let status = preserved || (malformedFlags && (200...299).contains(http.statusCode)) ? 409 : http.statusCode
             if vault && status == 409 {
-                let document = ["/vault/document","/vault/document/conflict"].contains(request.url?.path ?? "")
                 let knownPrepublication = !document || ["document_stale","document_page_loss","document_schema_downgrade"].contains(body?["code"] as? String ?? "")
                 let kind: VaultSaveConflict = preserved ? .reconciliationRequired :
-                    (required == false && body?["publicationAttempted"] as? Bool == false && knownPrepublication ? .prepublication : .unclassified)
+                    (required == false && boolean("publicationAttempted") == false && knownPrepublication ? .prepublication : .unclassified)
                 info[VaultSaveConflict.errorKey] = kind.rawValue
                 if let recoveryID = body?["recoveryID"] as? String,
                    (document ? CanvasDocumentRelay.opaqueID(recoveryID) : UUID(uuidString:recoveryID) != nil) { info["CanvasRecoveryID"] = recoveryID }

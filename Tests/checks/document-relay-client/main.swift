@@ -47,6 +47,11 @@ final class WireProtocol: URLProtocol {
         guard case .isolated = CanvasRuntime.launch else { fatalError("isolated runtime required") }
         let folder = URL(fileURLWithPath:CommandLine.arguments[1])
         let wire = folder.appendingPathComponent("wire")
+        if let flag = CommandLine.arguments.firstIndex(of:"--repairs-only"), flag + 1 < CommandLine.arguments.count {
+            try await repairs(wire:wire,output:URL(fileURLWithPath:CommandLine.arguments[flag + 1]))
+            print("DOCUMENT_CLIENT_REPAIRS_OK \(count); no live service/UI/device")
+            return
+        }
         let manifest = try object(Data(contentsOf:wire.appendingPathComponent("manifest.json")))
         var fixtures: [Int:[String:Any]] = [:], replies: [Int:WireProtocol.Reply] = [:]
         for row in manifest["responseFixtures"] as! [[String:Any]] {

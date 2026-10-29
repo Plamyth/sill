@@ -125,9 +125,59 @@ struct CanvasDocument: Codable, Equatable {
         pages = try c.decode([SceneReader].self,forKey:.pages).map(\.scene)
         try validate()
     }
+    private static func checkedObject(_ bytes: Data) throws -> [String:Any] {
+        guard let object = try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else { throw Failure.invalid }
+        struct Scope {
+            let object: Bool
+            var expectsKey: Bool
+            var keys = Set<String>()
+        }
+        // Foundation이 문법을 검사한 뒤, 디코더가 값을 선택하기 전에 이스케이프 표기를 포함한 중복 키를 거부한다.
+        try bytes.withUnsafeBytes { raw in
+            let input = raw.bindMemory(to:UInt8.self)
+            var scopes: [Scope] = [], offset = 0
+            while offset < input.count {
+                switch input[offset] {
+                case 123: scopes.append(Scope(object:true,expectsKey:true))
+                case 91: scopes.append(Scope(object:false,expectsKey:false))
+                case 125, 93:
+                    guard !scopes.isEmpty else { throw Failure.invalid }
+                    scopes.removeLast()
+                case 44:
+                    if let last = scopes.indices.last, scopes[last].object { scopes[last].expectsKey = true }
+                case 34:
+                    let start = offset
+                    offset += 1
+                    var escaped = false
+                    while offset < input.count {
+                        let value = input[offset]
+                        if escaped { escaped = false }
+                        else if value == 92 { escaped = true }
+                        else if value == 34 { break }
+                        offset += 1
+                    }
+                    guard offset < input.count else { throw Failure.invalid }
+                    if let last = scopes.indices.last, scopes[last].object, scopes[last].expectsKey {
+                        let key = try JSONDecoder().decode(String.self,from:Data(input[start...offset]))
+                        guard scopes[last].keys.insert(key).inserted else { throw Failure.invalid }
+                        scopes[last].expectsKey = false
+                    }
+                default: break
+                }
+                offset += 1
+            }
+            guard scopes.isEmpty else { throw Failure.invalid }
+        }
+        return object
+    }
+    static func decodeDocument(_ bytes: Data) throws -> Self {
+        guard bytes.count <= byteLimit else { throw Failure.tooLarge }
+        _ = try checkedObject(bytes)
+        return try JSONDecoder().decode(Self.self,from:bytes)
+    }
     static func decode(_ bytes: Data) throws -> Self {
         guard bytes.count <= byteLimit else { throw Failure.tooLarge }
-        guard let object = try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else { throw Failure.invalid }
+        let object = try checkedObject(bytes)
         if object["format"] != nil || object["pages"] != nil || object["version"] != nil {
             return try JSONDecoder().decode(Self.self,from:bytes)
         }
@@ -135,7 +185,7 @@ struct CanvasDocument: Codable, Equatable {
     }
     static func decodeLegacy(_ bytes: Data) throws -> Self {
         guard bytes.count <= CanvasScene.localByteLimit else { throw Failure.tooLarge }
-        guard let object = try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else { throw Failure.invalid }
+        let object = try checkedObject(bytes)
         guard Set(object.keys).isSubset(of:sceneKeys) else { throw Failure.unsupported }
         return try Self(legacy:JSONDecoder().decode(SceneReader.self,from:bytes).scene)
     }

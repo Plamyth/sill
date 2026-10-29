@@ -1,6 +1,7 @@
 import Foundation
 import ImageIO
 import PencilKit
+import zlib
 
 /// 문서 wire 검증만 소유한다. Store/Files의 원본·dirty·복구 상태를 변경하지 않는다.
 enum CanvasDocumentRelay {
@@ -33,7 +34,57 @@ enum CanvasDocumentRelay {
     static func encoder() -> JSONEncoder {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys,.withoutEscapingSlashes]; return encoder
     }
+    private static func completePNG(_ bytes: Data) throws {
+        guard bytes.count <= 32 * 1024 * 1024, bytes.starts(with:[137,80,78,71,13,10,26,10]) else { throw Failure.invalid }
+        var compressed = Data()
+        try bytes.withUnsafeBytes { raw in
+            let input = raw.bindMemory(to:UInt8.self)
+            func word(_ at: Int) -> UInt32 {
+                UInt32(input[at]) << 24 | UInt32(input[at + 1]) << 16 | UInt32(input[at + 2]) << 8 | UInt32(input[at + 3])
+            }
+            var offset = 8, header = false, ended = false
+            while offset + 12 <= input.count {
+                let length = Int(word(offset))
+                guard length <= input.count - offset - 12,
+                      let kind = String(bytes:input[(offset + 4)..<(offset + 8)],encoding:.ascii) else { throw Failure.invalid }
+                let actual = crc32(0,input.baseAddress!.advanced(by:offset + 4),uInt(length + 4))
+                guard UInt32(actual) == word(offset + 8 + length) else { throw Failure.invalid }
+                if kind == "IHDR" {
+                    guard !header, offset == 8, length == 13 else { throw Failure.invalid }
+                    header = true
+                }
+                if kind == "IDAT" { compressed.append(contentsOf:input[(offset + 8)..<(offset + 8 + length)]) }
+                offset += length + 12
+                if kind == "IEND" {
+                    guard length == 0 else { throw Failure.invalid }
+                    ended = true
+                    break
+                }
+            }
+            guard header, ended, offset == input.count, !compressed.isEmpty else { throw Failure.invalid }
+        }
+        // 서버와 같은 64MiB 해제 한도를 작은 작업 버퍼로 검사한다.
+        try compressed.withUnsafeBytes { raw in
+            var stream = z_stream()
+            guard inflateInit_(&stream,ZLIB_VERSION,Int32(MemoryLayout<z_stream>.size)) == Z_OK else { throw Failure.invalid }
+            defer { inflateEnd(&stream) }
+            stream.next_in = UnsafeMutablePointer(mutating:raw.bindMemory(to:Bytef.self).baseAddress)
+            stream.avail_in = uInt(raw.count)
+            var buffer = [UInt8](repeating:0,count:64 * 1024)
+            try buffer.withUnsafeMutableBytes { output in
+                var result: Int32
+                repeat {
+                    stream.next_out = output.bindMemory(to:Bytef.self).baseAddress
+                    stream.avail_out = uInt(output.count)
+                    result = inflate(&stream,Z_NO_FLUSH)
+                    guard stream.total_out <= 64 * 1024 * 1024 else { throw Failure.invalid }
+                } while result == Z_OK
+                guard result == Z_STREAM_END else { throw Failure.invalid }
+            }
+        }
+    }
     static func png(_ bytes: Data) throws {
+        try completePNG(bytes)
         guard bytes.starts(with:[137,80,78,71,13,10,26,10]),
               let source = CGImageSourceCreateWithData(bytes as CFData,nil), CGImageSourceGetCount(source) == 1,
               let properties = CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],
@@ -111,7 +162,7 @@ enum CanvasDocumentRelay {
             try summary.validate(id:id)
             let bytes = try data(documentJSONBase64,limit:CanvasDocument.byteLimit)
             // 문서 decoder만 사용한다. legacy scene을 문서 응답으로 승격하지 않는다.
-            let document = try JSONDecoder().decode(CanvasDocument.self,from:bytes)
+            let document = try CanvasDocument.decodeDocument(bytes)
             try validate(document,bytes:bytes,pages:pages)
             try summary.matches(document,bytes:bytes,assets:pages.map(\.metadata))
             return Validated(summary:summary,document:document,documentJSON:bytes,
@@ -160,7 +211,7 @@ enum CanvasDocumentRelay {
         }
         static func make(bytes: Data, previews: [UUID:Data], base: Base?) throws -> (Self,CanvasDocument,Data) {
             guard bytes.count <= CanvasDocument.byteLimit else { throw Failure.tooLarge }
-            let document = try JSONDecoder().decode(CanvasDocument.self,from:bytes)
+            let document = try CanvasDocument.decodeDocument(bytes)
             guard Set(previews.keys) == Set(document.pages.map(\.id)) else { throw Failure.invalid }
             try base?.validate()
             let assets = document.pages.map { page in

@@ -44,9 +44,24 @@ function scene(page){
  assertInkScene(page);
  if(Buffer.byteLength(JSON.stringify(page))>SCENE_BYTES)throw Error('문서 페이지 JSON 한도를 초과했습니다.');
 }
+function uniqueObjectKeys(text) {
+ const scopes=[];
+ for(let offset=0;offset<text.length;offset++) {
+  const value=text[offset];
+  if(value==='{'||value==='[')scopes.push({keys:value==='{'?new Set():null,expectsKey:value==='{'});
+  else if(value==='}'||value===']')scopes.pop();
+  else if(value===','){const scope=scopes.at(-1);if(scope?.keys)scope.expectsKey=true;}
+  else if(value==='"') {
+   const start=offset;let escaped=false;
+   while(++offset<text.length){const c=text[offset];if(escaped)escaped=false;else if(c==='\\')escaped=true;else if(c==='"')break;}
+   const scope=scopes.at(-1);
+   if(scope?.keys&&scope.expectsKey){const name=JSON.parse(text.slice(start,offset+1));if(scope.keys.has(name))throw Error('문서 JSON에 같은 항목이 두 번 있습니다. 원본을 확정하지 않습니다.');scope.keys.add(name);scope.expectsKey=false;}
+  }
+ }
+}
 function decodeDocument(bytes){
  if(!Buffer.isBuffer(bytes)||bytes.length>DOC_BYTES)throw Error('문서 JSON 한도를 초과했습니다.');
- const d=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));fields(d,['format','version','id','revision','activePageID','pages']);
+ const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes),d=JSON.parse(text);uniqueObjectKeys(text);fields(d,['format','version','id','revision','activePageID','pages']);
  if(d.format!=='ccr.canvas-document'||d.version!==1||!id(d.id)||!integer(d.revision)||!id(d.activePageID)||!Array.isArray(d.pages)||!d.pages.length||d.pages.length>PAGE_LIMIT)throw Error('지원하지 않는 문서 형식입니다.');
  unique(d.pages);if(!d.pages.some(p=>key(p.id)===key(d.activePageID)))throw Error('문서의 현재 페이지가 없습니다.');d.pages.forEach(scene);return d;
 }

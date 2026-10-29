@@ -211,7 +211,7 @@ final class CanvasDocumentFiles {
         guard head.documentID == id else { throw Failure.corrupt }
         let generation = try revisions.child(head.generation.uuidString.lowercased())
         let bytes = try generation.read("document.json",limit:CanvasDocument.byteLimit)
-        let document = try JSONDecoder().decode(CanvasDocument.self,from:bytes)
+        let document = try CanvasDocument.decodeDocument(bytes)
         guard document.id == id, CanvasPacket.sha(bytes) == head.documentSHA,
               head.pages.map(\.id) == document.pages.map(\.id) else { throw Failure.corrupt }
         let pages = try generation.child("pages")

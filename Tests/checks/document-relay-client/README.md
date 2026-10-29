@@ -13,3 +13,9 @@ Validated는 모든 페이지 JSON/PKDrawing/PNG 검증 뒤에만 얻으며 summ
 Conflict는 Codable이며 opaque recoveryID와 expected6개 값을 null까지 보존한다. material 요약으로 선택본을 적용하지 않고 `vaultDocumentCandidate`로 전체 bundle을 읽는다. resolve는 검증된 candidate와 원래 conflict/decision을 요구한다. candidate 미지원·손상·stale면 쓰지 않는다.
 
 실행: `python3 -B Tests/checks/document-relay-client/run.py --output <storage-route 외장 evidence 경로> --sdk-check`. 실제 Relay/URLSession의 URLProtocol 전송, 실제 ImageIO와 PKDrawing, 전체 iOS27 CanvasBridge typecheck를 사용한다. 실제 Node→HTTP 수집 근거를 재사용하지만 새 Swift→Node socket HTTP·UI·기기·Pencil·설치·normalruntime 수용은 아니다. server9c의 독립 검수 P2는 서버 담당 수정/재검수 의존으로 남긴다. 기존8791/8793를 열지 않는다.
+
+## 독립 검수 후 경계 수정
+
+서버의 복구 원본 대조 수정은 공식 `6643098`에 통합됐다. 클라이언트의 별도 검수에서는 중복 JSON 키의 Swift/Node 해석 차이, 45바이트로 잘린 PNG의 ImageIO 수용, 숫자 `0`의 Bool 브리징을 확인했다. 원문을 정규화하지 않고 중복 키를 문서·legacy 가져오기·Files 재열기·GET/PUT에서 거부한다. 서버 문서 decoder도 같은 중복을 거부한다. PNG는 기존 ImageIO 검사 앞에서 전체 청크 경계와 CRC, IEND, zlib 스트림 및 64MiB 해제 한도를 검사한다. 복구 플래그는 실제 JSON Boolean만 인정한다.
+
+`--repairs-only`는 이 반례와 정상 경로 73개를 실행하며 별도의 nonempty PKDrawing 실기기 검사를 뜻하지 않는다. 같은 컴파일 결과의 기본 실행은 원래 URLProtocol 회귀 99개를 유지한다. 두 실행은 외부 서버·사용자 보관함·Host·UI·기기를 변경하지 않는다. `CFFIXED_USER_HOME`으로 검사 상태만 격리하며 `HOME`은 덮어쓰지 않는다. 검사 영수증의 `commit`이 컴파일 시점의 변경 전 HEAD일 수 있으므로, 작업 중 바이트 입력의 SHA와 후속 확정 커밋의 파일을 대조한 별도 영수증을 함께 확인해야 한다.
