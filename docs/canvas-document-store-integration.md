@@ -47,3 +47,11 @@ Store의 기존 전체 source envelope 안에 `ccr.document-sync/v1` 상태를 �
 `--sdk-check`는 프로젝트 plist와 실제 전체 CanvasBridge/의존 입력의 iOS27 타입 검사를 수행한다. 본문에 검사 숫자를 기능 동등성 수치로 사용하지 않는다. 정확 실행 소스 SHA·결과·실패/수리 이력은 외장 영수증을 따른다. 독립 Store/UI source 검수·paired 실제 HTTP·설치·실기기/IME/Pencil 최종 수용은 별도이며 전체 제품 완료는 false다.
 
 Pstack architect/how로 기존 소유·mutation·복구 경계를 대조했고 Ponytail로 기존 computed 접근·UndoManager·Files·단일 source envelope·sheet와 DTO를 재사용했다. ARENA·순정 Goal·heartbeat·provider·새 앱/runner/DB는 만들지 않았다. 현재 도구 매핑상 별도 spawn_agent가 없어 이 writer의 자체 검사를 독립 검수로 표시하지 않는다. 부모가 exact source에 독립 검수를 배정한다.
+
+## DOC-STORE-R1 수리
+
+독립 검수의 실제 유실을 수리한다. 기존 구현은 바인딩이 있으면 전체 미저장 문서를 교체될 단일 캐시에만 쓴 뒤 다른 문서를 설치했다. 현재 cache와 새 Store가 다른 문서로 바뀐 뒤 이전 Files에는 편집 전 내용만 남는 P1이었다. a1 검수 WT와 a3 writer WT는 고정하고, 수리는 exact a1에서 분리한 별도 writer에서 수행한다.
+
+다른 ID의 source cache를 쓰는 공통 `writeDocumentSource` 경계는 현재 전체 문서 SHA와 binding.savedSHA, 실제 Files head token, publicationPending 부재 및 전체 문서 재열기 일치를 요구한다. `documentFileReady`라는 UI 상태만으로 보존을 인정하지 않는다. Files 원본 열기는 현재 전체 cache를 먼저 보호하고, 미저장 변경이 있으면 기존 whole Files save/CAS/readback을 수행해 그 결과를 확인한 뒤에만 다른 원본을 설치한다. source가 이미 정확히 저장돼 있으면 새 generation을 만들지 않는다.
+
+바인딩 없음·외부 충돌·읽기 실패·취소에서는 기존 원본과 선택·Undo를 먼저 지우지 않는다. `id=nil`은 현재 문서의 안전 내보내기이므로 별도로 유지하고, 같은 전체 원본을 새 폴더에 연결했을 때 이력을 초기화하는 install을 반복하지 않는다. JSON import와 legacy 복귀도 같은 실제 보존 조건을 확인한다. 기존 Files generation/recovery와 cache 형식을 재사용하며 새 원장/DB/삭제/GC/파일 형식 변경은 없다. native/격리 Files 검사는 GUI·IME·Pencil 인식·기기·설치 수용과 별개다.

@@ -33,3 +33,11 @@ python3 Tests/checks/canvas-document/run.py --store --sdk-check --output /Volume
 ```
 
 실제 Store/PKDrawing/native Files/페이지별 UndoManager와 새 프로세스 재열기를 실행한다. URLSession 프로토콜 fixture는 실제 서버 HTTP가 아니다. 렌더 preview는 자체 PNG fixture이며 Pencil 인식·GUI·설치 수용은 아니다. 정상 앱 위치의 sentinel은 전후 대조하고 tracked 결과를 갱신하지 않는다. 자세한 소유·복구·wire 경계는 `docs/canvas-document-store-integration.md`를 따른다.
+
+DOC-STORE-R1 수리는 `--store-r1 --store-r1-review <검수 폴더>`로 같은 실행기를 사용한다. reviewer의 `Cases-v2.swift`는 읽기 전용으로 직접 컴파일하고 `dirty-open`만 실행해 과거 유실 관측과 대조한다. NFC/NFD 가설은 비재현으로 종결됐으므로 재실행하지 않는다.
+
+```sh
+python3 Tests/checks/canvas-document/run.py --store-r1 --store-r1-review /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-store-independent-review-d24c60f/followup-ohm --sdk-check --output /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-store-r1-repair-20261029/evidence
+```
+
+`transition.swift`는 바인딩된 미저장/정상 문서, 바인딩 없음, 외부 CAS 충돌, 실제 디렉터리 읽기 권한 실패, renderer 대기 중 취소, 대상 읽기 실패, JSON/legacy 전환을 별도 isolated context로 실행한다. 실패 때 원본·선택·native/graph Undo를 검사하고 새 프로세스에서는 실제 app cache/Files만 읽어 전체 문서와 현재 페이지를 재열어 확인한다. 비교용 expected.json·reviewer의 dirty-before.json은 제품 복구 자료로 주입하지 않으며 보존 성공에 세지 않는다. 성공한 다른 문서 열기 뒤에는 이전 Files 원본이 미저장 본문과 전 페이지를 정확히 유지해야 한다.
