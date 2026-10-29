@@ -66,3 +66,11 @@ PDF SHA256: <실제64자리 SHA256>
 `Tests/checks/pdf-view-product/run.py --output <승인된 외장 출력 폴더>`는 실제 macOS SDK/PDFKit·CanvasLocalFile·전체 Document Files·공식 ObsidianVault 파일 모듈을 격리 stdio로 연결한다. 자체 3쪽 PDF/발췌를 만들고 별도 프로세스 재열기, 외부 Markdown 역수신, 원자 교환 후 충돌, 응답 유실, 명시 복구, 원래 PDF/발췌 Markdown/인용문 SHA와 물리 앵커 보존을 확인한다. 정상 앱 파일 sentinel에는 `CanvasDocumentSource.json`도 포함한다. 외장 출력의 `result.json`은 정확 입력 SHA·원본 불변·실제 helper 종료를 기록하며 tracked 결과 파일을 갱신하지 않는다. 기존 canvas-document 및 linked-obsidian runner는 새 제품의 누락된 컴파일 입력만 보완했다.
 
 실제 socket HTTP, SwiftUI 손조작, iPad/Pencil, 설치, 실 Vault·Host 사용은 이 검사의 범위가 아니다. 전체 iOS27 SDK는 부모의 최종 정확 결합에서 한 번 수행한다. 독립 소스 검수·최종 SDK·기기 UI 수용 전 전체 기능 완료로 보고하지 않는다.
+
+### PDF013 독립 반례 수리
+
+Planck의 PDF-PRODUCT-R2(P1)는 제출 T1 crop0.8을 확인한 뒤 도착한 T2 crop0.6의 최종 복구 쓰기가 교체 후 오류를 반환했을 때, 네트워크 오류 catch가 이전 T1을 다시 쓰던 경계다. 저장 단계를 준비/전송/로컬확정으로 구분해 로컬 확정 오류를 PUT 실패로 처리하지 않는다. 기존 복구 writer는 오류 후 정본 바이트를 재조회하고 이전 관측값/정확 시도값 중 하나일 때만 해당 레코드를 메모리에 반영한다. 시도 바이트는 명시 재보존 전까지 남기며, 외부/손상/읽기 불가 값이면 쓰기를 차단한다. 오래된 캐시로 자동 재작성하거나 새 저장소·작업 ID를 만들지 않는다.
+
+PDF-PRODUCT-R1(P2)은 공개 close가 진행 중 저장 request를 바꿔 그 소유자의 busy 해제를 잃던 경계다. Store의 close API 자체가 저장 중 닫기를 false로 명시 거부하고 Reader/의도/request를 보존한다. 늦은 응답은 기존 소유 request에서만 busy를 해제하므로 새 작업의 busy를 대신 해제하지 않는다. 실제 SwiftUI 수명 관측을 주장하지 않으며 원래 공개 호출 순서와 별도 연결 변경 대조로 검증한다.
+
+`Tests/checks/pdf-view-product/repair.py --review <원래 독립 검수 폴더> --output <승인 외장 출력>`는 원래 main.swift를 수정 없이 직접 컴파일 입력으로 사용해 busy·cleanup 두 반례와 새 Store 자식만 실행한다. T2 0.6/SHA/동일 작업 ID/새 프로세스 복원을 원래 loss-values.json과 대조한다. 기존76·모듈147·iOS SDK는 반복하지 않는다. 제품 수리의 독립 재검수는 부모/Planck가 소유한다.

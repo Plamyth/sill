@@ -2412,7 +2412,7 @@ final class CanvasStore: ObservableObject {
             guard pdfViewBase != nil || pdfViewMissingConfirmed, let sceneID = pdfViewSceneID else { throw VaultBlockRecoveryError.context }
             let draft = try reader.prepareViewStateSave(base:pdfViewBase)
             let attempted = try pdfExcerptRecoveryAttemptedBytes.flatMap { try JSONDecoder().decode(VaultPDFCreateRecoveryFile.self,from:$0).record() }
-            let old = pdfExcerptRecovery ?? attempted
+            let old = attempted ?? pdfExcerptRecovery
             guard old == nil || (old?.viewRecovery != nil && old?.path.utf8.elementsEqual(draft.path.utf8) == true) else { throw VaultBlockRecoveryError.context }
             if !reader.hasViewEdits && old?.viewRecovery?.submitted == nil {
                 if old != nil { try writePDFExcerptRecovery(nil) }; return true
@@ -2425,6 +2425,12 @@ final class CanvasStore: ObservableObject {
     }
     @discardableResult
     func closePDFView() -> Bool {
+        // A public/lifecycle close cannot retire the request that owns vaultSaving.
+        // The caller may disappear, but this Store retains its Reader/intent until completion.
+        guard !vaultSaving else {
+            vaultStatus = "보기 설정 저장을 확인하는 중입니다. Reader와 저장 의도를 보존하며 닫기를 보류합니다."
+            return false
+        }
         if let reader = pdfViewReader, !preservePDFViewDraft(reader) { return false }
         pdfViewRequest = UUID(); pdfViewBusy = false; pdfViewReader = nil; pdfViewBase = nil
         pdfViewMissingConfirmed = false; pdfViewOwner = nil
@@ -2437,6 +2443,8 @@ final class CanvasStore: ObservableObject {
               preservePDFViewDraft(reader), var record = pdfExcerptRecovery, var recovery = record.viewRecovery,
               recovery.submitted == nil else { return }
         let request = UUID(), connection = noteConnectionGeneration
+        enum SaveStage: Equatable { case preparing, publishing, finalizing }
+        var stage = SaveStage.preparing
         do {
             let owner = try document.pageSnapshot()
             pdfViewRequest = request
@@ -2449,15 +2457,30 @@ final class CanvasStore: ObservableObject {
             try writePDFExcerptRecovery(record) // PUT보다 먼저 동일 path/base/text와 작업 ID를 보존한다.
             pdfViewRequest = request; vaultSaving = true
             defer { if pdfViewRequest == request { vaultSaving = false } }
+            stage = .publishing
             let note = try await submitted.submit(save:save,load:load)
             guard pdfViewIsCurrent(reader,request:request,owner:owner,connection:connection) else { return }
+            stage = .finalizing
             try finishPDFViewSave(submitted,reader:reader,note:note)
         } catch {
             guard pdfViewRequest == request else { return }
-            if let current = pdfExcerptRecovery, let recovery = current.viewRecovery {
+            // A local prepare/finalize error is not a failed PUT. In particular the
+            // finalize writer may already have installed a newer draft than this callback.
+            guard stage == .publishing else {
+                vaultStatus = stage == .finalizing ?
+                    "서버 저장·재조회는 확인했지만 로컬 복구 기록 결과는 미확인입니다. 정본·시도 바이트와 새 초안·동일 작업 ID를 유지합니다. " + error.localizedDescription :
+                    "저장 의도를 기록하지 못해 전송하지 않았습니다. 정본·시도 바이트와 입력을 유지합니다. " + error.localizedDescription
+                return
+            }
+            if pdfExcerptRecoveryAttemptedBytes == nil, let current = pdfExcerptRecovery, let recovery = current.viewRecovery {
                 let kind = VaultSaveConflict.classified(error) ?? .acknowledgementLost
-                try? writePDFExcerptRecovery(.init(sceneID:current.sceneID,relayAddress:current.relayAddress,path:current.path,draft:current.draft,
-                    submittedText:recovery.submitted?.markdown,saveConflict:kind,viewRecovery:recovery))
+                do {
+                    try writePDFExcerptRecovery(.init(sceneID:current.sceneID,relayAddress:current.relayAddress,path:current.path,draft:current.draft,
+                        submittedText:recovery.submitted?.markdown,saveConflict:kind,viewRecovery:recovery))
+                } catch {
+                    vaultStatus = "저장 응답과 로컬 복구 기록 결과를 확인하지 못했습니다. 정본·시도 바이트와 새 입력을 유지합니다. " + error.localizedDescription
+                    return
+                }
             }
             vaultStatus = "보기 설정 저장 결과 미확인·조정 대기. 입력을 보존하고 자동 재전송하지 않습니다. " + error.localizedDescription
         }
@@ -2661,7 +2684,22 @@ final class CanvasStore: ObservableObject {
         guard bytes.count <= VaultBlockRecoveryFile.byteLimit else { throw VaultBlockRecoveryError.unavailable }
         pdfExcerptRecoveryBytes = current
         pdfExcerptRecoveryAttemptedBytes = bytes
-        try pdfExcerptRecoveryWrite(bytes,url)
+        do { try pdfExcerptRecoveryWrite(bytes,url) }
+        catch {
+            let writeError = error
+            do {
+                let observed = FileManager.default.fileExists(atPath:url.path) ? try Self.readBlockRecovery(url) : nil
+                guard observed == current || observed == bytes else { throw VaultBlockRecoveryError.changed }
+                let restored = try observed.flatMap { try JSONDecoder().decode(VaultPDFCreateRecoveryFile.self,from:$0).record() }
+                pdfExcerptRecoveryBytes = observed
+                pdfExcerptRecovery = restored
+                // Keep attemptedBytes as an unresolved local write, even if readback matches.
+                // Explicit local preservation can retry with the same ID; an unknown/external
+                // value never authorizes overwriting the canonical file from stale memory.
+            } catch { pdfExcerptRecoveryReadable = false }
+            pdfExcerptRecoveryNotice = "로컬 복구 기록 결과 미확인 · 정본과 시도 바이트를 보존했습니다."
+            throw writeError
+        }
         pdfExcerptRecoveryBytes = bytes
         pdfExcerptRecoveryAttemptedBytes = nil
         pdfExcerptRecovery = record
