@@ -1561,6 +1561,55 @@ enum CanvasSceneWireError: LocalizedError {
     }
 }
 
+// 용지 설정은 원본 scene의 버전 있는 주석 한 개에 저장한다. 별도 정본은 없다.
+enum CanvasPagePaper {
+    enum Pattern: String, CaseIterable { case plain, grid
+        var label: String { self == .plain ? "무늬 없음" : "격자" }
+    }
+    static let author = "ccr.sill.page-paper/v1"
+    static let gridMarkdown = "# 용지\n무늬: 격자\n간격: 32 pt"
+    static func isMetadata(_ annotation: CanvasAnnotation) -> Bool {
+        annotation.author.hasPrefix("ccr.sill.page-paper/")
+    }
+    static func pattern(in scene: CanvasScene) throws -> Pattern {
+        let records = scene.annotations.filter(isMetadata)
+        guard records.count <= 1 else { throw Failure.unsupported }
+        guard let record = records.first else { return .plain }
+        guard record.nodeId == nil, record.author.utf8.elementsEqual(author.utf8),
+              record.text.utf8.elementsEqual(gridMarkdown.utf8) else { throw Failure.unsupported }
+        return .grid
+    }
+    static func applying(_ pattern: Pattern, to scene: CanvasScene) throws -> CanvasScene {
+        guard try Self.pattern(in:scene) != pattern else { return scene }
+        guard scene.revision >= 0, scene.revision < Int.max else { throw Failure.unsupported }
+        var next = scene
+        next.annotations.removeAll(where:isMetadata)
+        if pattern == .grid { next.annotations.append(record()) }
+        next.revision += 1
+        guard try JSONEncoder().encode(next).count <= CanvasScene.localByteLimit else { throw Failure.unsupported }
+        return next
+    }
+    static func record() -> CanvasAnnotation {
+        .init(id:UUID(),nodeId:nil,text:gridMarkdown,author:author)
+    }
+    static func isOnlyChange(from before: CanvasScene, to after: CanvasScene) -> Bool {
+        guard let old = try? pattern(in:before), let new = try? pattern(in:after), old != new else { return false }
+        var left = before, right = after
+        left.annotations.removeAll(where:isMetadata); right.annotations.removeAll(where:isMetadata)
+        left.revision = 0; right.revision = 0
+        return left == right
+    }
+    static func gridLines(width: Double, height: Double) -> [(CanvasPoint,CanvasPoint)] {
+        guard width.isFinite, height.isFinite, width > 0, height > 0, width <= 16384, height <= 16384 else { return [] }
+        return stride(from:32.0,to:width,by:32).map { (.init(x:$0,y:0),.init(x:$0,y:height)) } +
+            stride(from:32.0,to:height,by:32).map { (.init(x:0,y:$0),.init(x:width,y:$0)) }
+    }
+    enum Failure: LocalizedError {
+        case unsupported
+        var errorDescription: String? { "용지 설정의 형식·버전을 확인하지 못했습니다. 설정과 원본 필기를 유지합니다." }
+    }
+}
+
 struct CanvasScene: Codable, Equatable {
     static let localByteLimit = 4 * 1024 * 1024
     var schemaVersion = 1

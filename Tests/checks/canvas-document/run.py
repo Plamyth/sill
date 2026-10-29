@@ -12,7 +12,9 @@ p.add_argument('--store-r1-review', type=Path, help='DOC-STORE-R1 검수 폴더;
 p.add_argument('--repairs', type=Path, help='DOC-R1/R2/R3 독립 검수 근거 폴더')
 p.add_argument('--storage-reuse', action='store_true')
 p.add_argument('--page-actions', action='store_true', help='빈 페이지와 순서 변경의 Store·Files 경계만 검사')
+p.add_argument('--paper-only', action='store_true', help='--page-actions의 용지 저장 경계만 검사')
 a = p.parse_args()
+assert not a.paper_only or a.page_actions
 archive = Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
 assert a.output.resolve().is_relative_to(archive)
 a.output.mkdir(parents=True,exist_ok=True)
@@ -79,7 +81,7 @@ if a.store or a.store_r1 or a.page_actions:
     base = ['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'modules']
     commands = [('protocol',base+['-emit-module','-emit-object','-module-name','StreamProtocol',protocol,'-emit-module-path',out/'StreamProtocol.swiftmodule','-o',out/'StreamProtocol.o']),
         ('compile-store',base+['-I',out,*sources,out/'StreamProtocol.o','-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',info,'-o',out/'store-check']),
-        ('native-store',[out/'store-check',out,'--ccr-test-runtime',identity]),('project-plist',['plutil','-lint',project])]
+        ('native-store',[out/'store-check',out,'--ccr-test-runtime',identity]+(['--paper-only'] if a.paper_only else [])),('project-plist',['plutil','-lint',project])]
     if a.sdk_check:
         (out/'ios').mkdir()
         iosbase = ['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-module-cache-path',out/'ios-modules']

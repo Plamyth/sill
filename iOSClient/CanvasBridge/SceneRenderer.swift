@@ -14,6 +14,7 @@ enum SceneRenderer {
     static func png(scene: CanvasScene) async -> Data? {
         guard (try? scene.validateNativeInkProjection()) != nil else { return nil }
         guard scene.nodes.allSatisfy(\.hasValidRotation) else { return nil }
+        guard let paper = try? CanvasPagePaper.pattern(in:scene) else { return nil }
         let visible = scene.visibility
         let drawing: PKDrawing?
         if scene.drawingBase64.isEmpty {
@@ -43,6 +44,14 @@ enum SceneRenderer {
             CanvasPalette.background.setFill()
             context.fill(CGRect(origin: .zero, size: size))
             let cg = context.cgContext
+            if paper == .grid {
+                cg.setStrokeColor(UIColor.white.withAlphaComponent(0.15).cgColor)
+                cg.setLineWidth(1)
+                for (a,b) in CanvasPagePaper.gridLines(width:scene.width,height:scene.height) {
+                    cg.move(to:CGPoint(x:a.x,y:a.y)); cg.addLine(to:CGPoint(x:b.x,y:b.y))
+                }
+                cg.strokePath()
+            }
             cg.setLineWidth(4)
             cg.setLineCap(.round)
             cg.setLineJoin(.round)
