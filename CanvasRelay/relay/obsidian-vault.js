@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const child = require('node:child_process');
 const {validPNG} = require('./canvas-png');
+const documentWire = require('./canvas-document');
 const {canvasDiagramMarkdown} = require('./canvas-diagram');
 const {rows: canvasCardTagRows} = require('./canvas-card-tags');
 const {assertInkScene,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
@@ -226,7 +227,7 @@ class ObsidianVault {
   }
 
   #journals(relative) {
-    const file = this.resolve(relative,{allowMissing:true}),directory = path.dirname(file),records = [];
+    const directory = this.#journalDirectory(relative),records = [];
     // ponytail: scan the existing append-only journal; an index is warranted if this bounded scan becomes a bottleneck.
     const entries = fs.readdirSync(directory);
     if (entries.length > 16384) throw new VaultError('보존 원장 목록의 검사 한도를 초과했습니다.',409);
@@ -246,7 +247,7 @@ class ObsidianVault {
       if (receipt && receipt.schema !== 'ccr.note-save-preservation/v1')
         throw new VaultError('지원하지 않는 보존 원장입니다.',409);
       const recoveryID = name.slice(10),resolution = this.#record(path.join(folder,'resolution.json'));
-      if (resolution && (!['ccr.canvas-resolution/v1','ccr.note-resolution/v1'].includes(resolution.schema) || resolution.recoveryID !== recoveryID ||
+      if (resolution && (!['ccr.canvas-resolution/v1','ccr.note-resolution/v1','ccr.document-resolution/v1'].includes(resolution.schema) || resolution.recoveryID !== recoveryID ||
           typeof resolution.path !== 'string' || key(resolution.path) !== key(relative) || !/^[0-9a-f]{64}$/.test((resolution.schema === 'ccr.note-resolution/v1' ? resolution.result?.sha256 : resolution.result?.noteSha256) || '')))
         throw new VaultError('지원하지 않는 조정 기록입니다.',409);
       records.push({folder,recoveryID,intent,receipt,resolution});
@@ -285,7 +286,7 @@ class ObsidianVault {
 
   #generalNotePath(relative) {
     const file = this.resolve(relative,{allowMissing:true});
-    if (relative.split('/')[0].normalize('NFC').toLowerCase() === 'ccr canvas')
+    if (['ccr canvas','ccr documents'].includes(relative.split('/')[0].normalize('NFC').toLowerCase()) || this.#documentAlias(relative))
       throw new VaultError('관리되는 Canvas 노트는 Canvas 복구 경로를 사용해야 합니다.',409);
     const root = fs.lstatSync(this.root);
     if (!root.isDirectory() || root.isSymbolicLink() || root.uid !== process.getuid())
@@ -312,7 +313,7 @@ class ObsidianVault {
     if (bytes.length > MAX_NOTE_BYTES || digest(bytes) !== note.sha256)
       throw new VaultError('메모 원문 바이트와 SHA가 일치하지 않습니다.',409);
     const frontmatter = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(note.text)?.[1];
-    if (frontmatter && /^ccr_scene_id:/m.test(frontmatter))
+    if (frontmatter && /^(?:ccr_scene_id|ccr_document_id):/m.test(frontmatter))
       throw new VaultError('Canvas 원본 메타데이터는 Canvas 복구 검증을 거쳐야 합니다.',409);
     return {path:relative,sha256:note.sha256};
   }
@@ -349,15 +350,19 @@ class ObsidianVault {
     return this.#resolveConflict(relative,request);
   }
 
-  #conflictState(id, journal, notePath = null) {
-    const relative = notePath ?? `CCR Canvas/${id}.md`;
-    const valid = notePath ? 'validNote' : 'validCanvas';
+  #conflictState(id, journal, notePath = null, document = false) {
+    const relative = document ? `CCR Documents/${id}.md` : notePath ?? `CCR Canvas/${id}.md`;
+    const valid = document ? 'validDocument' : notePath ? 'validNote' : 'validCanvas';
     const material = file => {
       try { fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-      const bytes = notePath ? this.#ownedNoteBytes(file) : readAsset(file,MAX_NOTE_BYTES);
+      const bytes = notePath || document ? this.#ownedNoteBytes(file) : readAsset(file,MAX_NOTE_BYTES);
       const result = {sha256:digest(bytes),markdownBase64:bytes.toString('base64'),[valid]:false};
       try {
         const text = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);
+        if (document) {
+          result.document = this.#documentSnapshot(id,{path:relative,text,sha256:result.sha256},false);
+          result.validDocument = true;return result;
+        }
         if (notePath) {
           this.#noteSnapshot(relative,{path:relative,text,sha256:result.sha256});
           result.validNote = true;return result;
@@ -390,7 +395,7 @@ class ObsidianVault {
         const file = path.join(record.folder,name);
         try { fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') { files[name] = null; continue; } throw error; }
         const limit = name.endsWith('.md') ? MAX_NOTE_BYTES : 64*1024;
-        files[name] = digest(notePath ? this.#ownedNoteBytes(file,limit) : readAsset(file,limit));
+        files[name] = digest(notePath || document ? this.#ownedNoteBytes(file,limit) : readAsset(file,limit));
       }
       history.push({recoveryID:record.recoveryID,files});
       if (history.length > 32) throw this.#required(journal,'조정 시도 보존 자료의 검사 한도를 초과했습니다. 자료를 유지합니다.');
@@ -398,11 +403,12 @@ class ObsidianVault {
     const expected = {activeSha256:materials.active?.sha256 ?? null,baseSha256:materials.base?.sha256 ?? null,
       displacedSha256:materials.displaced?.sha256 ?? null,proposalSha256:materials.proposal?.sha256 ?? null,
       historySha256:digest(Buffer.from(JSON.stringify(history)))};
-    const result = {schema:notePath ? 'ccr.note-conflict/v1' : 'ccr.canvas-conflict/v1',
+    if (document) expected.bundlesSha256 = digest(Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(materials).map(([k,v]) => [k,v?.document ?? null])))));
+    const result = {schema:document ? 'ccr.document-conflict/v1' : notePath ? 'ccr.note-conflict/v1' : 'ccr.canvas-conflict/v1',
       ...(notePath ? {path:relative} : {id}),recoveryID:journal.recoveryID,
       code:'note_reconciliation_required',reconciliationRequired:true,
       publicationAttempted:journal.receipt?.publicationAttempted ?? true,expected,materials,history};
-    if (Buffer.byteLength(JSON.stringify(result)) > (notePath ? 8 : 64)*1024*1024)
+    if (Buffer.byteLength(JSON.stringify(result)) > (notePath || document ? 8 : 64)*1024*1024)
       throw this.#required(journal,'충돌 자료 응답의 크기 한도를 초과했습니다. 원본은 유지합니다.');
     return result;
   }
@@ -421,15 +427,16 @@ class ObsidianVault {
     return this.#resolveConflict(`CCR Canvas/${id}.md`,request,id);
   }
 
-  #resolveConflict(relative, request, id = null) {
-    const stateFor = (vault,journal) => vault.#conflictState(id,journal,id ? null : relative);
-    const snapshotFor = (vault,note) => id ? vault.#canvasSnapshot(id,note).snapshot : vault.#noteSnapshot(relative,note);
-    const valid = id ? 'validCanvas' : 'validNote';
+  #resolveConflict(relative, request, id = null, document = false) {
+    const documentLocation = document ? this.#documentLocation() : null;
+    const stateFor = (vault,journal) => vault.#conflictState(id,journal,id ? null : relative,document);
+    const snapshotFor = (vault,note) => document ? vault.#documentSnapshot(id,note,false) : id ? vault.#canvasSnapshot(id,note).snapshot : vault.#noteSnapshot(relative,note);
+    const valid = document ? 'validDocument' : id ? 'validCanvas' : 'validNote';
     const hashField = id ? 'noteSha256' : 'sha256';
     const keys = value => value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).sort().join(',') : '';
-    if (keys(request) !== 'decision,expected,recoveryID' || !UUID.test(request.recoveryID || '') || (!id && (typeof request.recoveryID !== 'string' || request.recoveryID !== request.recoveryID.toLowerCase())) ||
+    if (keys(request) !== 'decision,expected,recoveryID' || !UUID.test(request.recoveryID || '') || ((!id || document) && (typeof request.recoveryID !== 'string' || request.recoveryID !== request.recoveryID.toLowerCase())) ||
         !['keepCurrent','useDisplaced'].includes(request.decision) ||
-        keys(request.expected) !== 'activeSha256,baseSha256,displacedSha256,historySha256,proposalSha256' ||
+        keys(request.expected) !== (document ? 'activeSha256,baseSha256,bundlesSha256,displacedSha256,historySha256,proposalSha256' : 'activeSha256,baseSha256,displacedSha256,historySha256,proposalSha256') ||
         !Object.entries(request.expected).every(([key,value]) => /^[0-9a-f]{64}$/.test(value || '') || key !== 'historySha256' && value === null))
       throw new VaultError('Invalid explicit reconciliation request');
     const journals = this.#journals(relative),journal = journals.find(record => record.recoveryID === request.recoveryID);
@@ -462,14 +469,15 @@ class ObsidianVault {
     let resolutionStarted = false;
     try {
       const validate = saved => {
+        if(document)this.#checkDocumentLocation(documentLocation);
         const fresh = new ObsidianVault(this.root),note = fresh.#rawNote(relative,!id);
         const reopened = snapshotFor(fresh,note);
         if (!id && !Buffer.from(note.text,'utf8').equals(Buffer.from(chosen.markdownBase64,'base64')))
           throw new VaultError('선택한 메모 원문 바이트가 다릅니다.',409);
         if (note.sha256 !== saved.sha256 || saved.sha256 !== chosen.sha256 ||
-            (id && (reopened.sceneSha256 !== chosen.canvas.sceneSha256 || reopened.imageSha256 !== chosen.canvas.imageSha256)))
+            (document ? reopened.documentSha256 !== chosen.document.documentSha256 || reopened.manifestSha256 !== chosen.document.manifestSha256 : id && (reopened.sceneSha256 !== chosen.canvas.sceneSha256 || reopened.imageSha256 !== chosen.canvas.imageSha256)))
           throw new VaultError('선택한 Canvas의 재열기 결과가 다릅니다.',409);
-        if (id) {
+        if (id && !document) {
           const image = readAsset(path.join(this.root,'CCR Canvas/Assets',`${id}-${reopened.imageSha256}.png`),5*1024*1024,reopened.imageSha256);
           if (!validPNG(image)) throw new VaultError('선택한 PNG 원본을 검증하지 못했습니다.',409);
         }
@@ -484,11 +492,11 @@ class ObsidianVault {
         return reopened;
       };
       const saved = this.#save(relative,state.expected.activeSha256,
-        new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.from(chosen.markdownBase64,'base64')),validate,attempt,journal.recoveryID);
+        new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.from(chosen.markdownBase64,'base64')),validate,attempt,journal.recoveryID,document ? {id,pageIDs:chosen.document.pages.map(p=>p.id)} : undefined);
       const reopened = validate(saved);
       const {sceneJSONBase64,...metadata} = reopened;
       const result = {...metadata,recoveryID:journal.recoveryID,decision:request.decision,resolved:true,reconciliationRequired:false};
-      durableFile(path.join(journal.folder,'resolution.json'),Buffer.from(JSON.stringify({schema:id ? 'ccr.canvas-resolution/v1' : 'ccr.note-resolution/v1',
+      durableFile(path.join(journal.folder,'resolution.json'),Buffer.from(JSON.stringify({schema:document ? 'ccr.document-resolution/v1' : id ? 'ccr.canvas-resolution/v1' : 'ccr.note-resolution/v1',
         recoveryID:journal.recoveryID,savedJournalID:attemptID,path:relative,fingerprint,result,finalExpected:stateFor(this,journal).expected})+'\n'),
         () => { resolutionStarted = true; });
       syncDirectory(journal.folder);
@@ -523,12 +531,15 @@ class ObsidianVault {
   }
 
   save(relative, baseSha256, text, verify = () => {}) {
+    const documentHeader = typeof text==='string' ? /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)?.[1] : null;
+    if (this.#documentAlias(relative) || documentHeader && /^ccr_document_id:/m.test(documentHeader))
+      throw new VaultError('문서 전체 API로만 저장할 수 있습니다.',409,{code:'document_api_required'});
     this.#guard(relative);
     try { return this.#save(relative,baseSha256,text,verify); }
     catch (error) { this.#guard(relative); throw error; }
   }
 
-  #save(relative, baseSha256, text, verify, recovery, parentRecoveryID) {
+  #save(relative, baseSha256, text, verify, recovery, parentRecoveryID, documentResource) {
     if (typeof text !== 'string' || Buffer.byteLength(text,'utf8') > MAX_NOTE_BYTES)
       throw new VaultError('Note exceeds 1 MiB',413);
     if (baseSha256 !== null && !/^[0-9a-f]{64}$/.test(baseSha256 || ''))
@@ -540,11 +551,11 @@ class ObsidianVault {
     if ((current?.sha256 ?? null) !== baseSha256)
       throw new VaultError('Note changed on Mac; reload before saving',409);
     const bytes = Buffer.from(text,'utf8'),proposalHash = digest(bytes);
-    recovery ??= path.join(path.dirname(file),`.ccr-save-${crypto.randomUUID()}`);
+    recovery ??= path.join(this.#journalDirectory(relative),`.ccr-save-${crypto.randomUUID()}`);
     fs.mkdirSync(recovery,0o700);
     durableFile(path.join(recovery,'intent.json'),Buffer.from(JSON.stringify({
       schema:'ccr.note-save-intent/v1',path:relative,vaultKey:digest(Buffer.from(this.root)),
-      ...(parentRecoveryID ? {parentRecoveryID} : {})
+      ...(parentRecoveryID ? {parentRecoveryID} : {}),...(documentResource ? {documentResource} : {})
     })+'\n'));
     if (current) durableFile(path.join(recovery,'base.md'),Buffer.from(current.text,'utf8'));
     durableFile(path.join(recovery,'proposal.md'),bytes);
@@ -600,6 +611,211 @@ class ObsidianVault {
     }
   }
 
+  #journalDirectory(relative) {
+    return relative.split('/')[0].normalize('NFC').toLowerCase() === 'ccr documents' ? this.root : path.dirname(this.resolve(relative,{allowMissing:true}));
+  }
+
+  #documentDirectory(...parts) {
+    let folder = this.root;
+    for (const part of parts) {
+      folder = path.join(folder,part);
+      try { fs.mkdirSync(folder,0o700);syncDirectory(path.dirname(folder)); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+      const stat = fs.lstatSync(folder);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid())
+        throw new VaultError('문서 경로의 종류나 소유자가 다릅니다.',409);
+    }
+    return folder;
+  }
+
+  #documentLocation() {
+    return [this.root,path.join(this.root,'CCR Documents')].map(file => {
+      const stat = fs.lstatSync(file);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid())
+        throw new VaultError('문서 발행 경로가 올바르지 않습니다.',409);
+      return {file,dev:stat.dev,ino:stat.ino};
+    });
+  }
+
+  #checkDocumentLocation(location) {
+    for (const before of location) {
+      const after = fs.lstatSync(before.file);
+      if (!after.isDirectory() || after.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino)
+        throw new VaultError('문서 정본 디렉터리가 교체됐습니다. 모든 세대를 보존합니다.',409);
+    }
+  }
+
+  #documentAsset(file,limit,hash,identities=new Map()) {
+    let current=this.root;
+    for(const part of ['',...path.relative(this.root,file).split(path.sep)]) {
+      if(part)current=path.join(current,part);const info=fs.lstatSync(current),prior=identities.get(current);
+      if(info.isSymbolicLink()||info.uid!==process.getuid()||prior&&(prior.dev!==info.dev||prior.ino!==info.ino))throw new VaultError('문서 자산 경로가 바뀌었습니다.',409);
+      identities.set(current,prior??info);
+    }
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > limit) throw new VaultError('문서 자산이 일반 파일 또는 한도를 벗어났습니다.',409);
+    const bytes = this.#ownedNoteBytes(file,Math.min(stat.size,limit));
+    if (digest(bytes) !== hash) throw new VaultError('문서 자산의 SHA가 다릅니다.',409);
+    return bytes;
+  }
+
+  #documentMarkdown(id,manifest,manifestSHA,document,includeTags = true) {
+    const prefix = `Assets/${id}/${manifest.generation}`;
+    let text = `---\nccr_document_id: ${id}\nccr_document_revision: ${document.revision}\nccr_document_generation: ${manifest.generation}\nccr_document_sha256: ${manifest.documentSHA}\nccr_document_manifest_sha256: ${manifestSHA}\n---\n\n# iPad 문서 ${id.slice(0,8)}\n\n문서 전체 원본: [[${prefix}/document.json]]\n`;
+    let projected = 0;
+    for (let index=0;index<document.pages.length;index++) {
+      const page=document.pages[index],pageID=page.id.toLowerCase();
+      text += `\n## 페이지 ${index+1} · ${page.id}\n\n![[${prefix}/pages/${pageID}/preview.png]]\n\n원본 획: [[${prefix}/pages/${pageID}/drawing.pkdrawing]]\n`;
+      const projection = canvasStructure(page,includeTags) + canvasDiagramMarkdown(page);
+      if (projected+Buffer.byteLength(projection) <= 64*1024) { text += projection;projected += Buffer.byteLength(projection); }
+      else text += '\n이 페이지의 표시 글자는 생략됐습니다. 전체 원본은 문서 JSON에 있습니다.\n';
+    }
+    return text;
+  }
+
+  #documentSnapshot(id,note,includeAssets = true) {
+    const location = this.#documentLocation(),identities=new Map(),{managed,memo}=canvasNoteParts(note.text);
+    const header=/^---\nccr_document_id: ([0-9a-f-]{36})\nccr_document_revision: (\d+)\nccr_document_generation: ([0-9a-f-]{36})\nccr_document_sha256: ([0-9a-f]{64})\nccr_document_manifest_sha256: ([0-9a-f]{64})\n---\n/.exec(managed);
+    if (!header || header[1] !== id || !UUID.test(header[3])) throw new VaultError('문서 관리 원본이 올바르지 않습니다.',409);
+    const folder=path.join(this.root,'CCR Documents','Assets',id,header[3]);
+    const manifestBytes=this.#documentAsset(path.join(folder,'manifest.json'),256*1024,header[5],identities);
+    const manifest=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(manifestBytes));
+    documentWire.fields(manifest,['schema','documentID','generation','documentSHA','pages']);
+    if (manifest.schema!=='ccr.sill-document-files/v2'||manifest.documentID!==id||manifest.generation!==header[3]||manifest.documentSHA!==header[4]||!Array.isArray(manifest.pages)) throw new VaultError('문서 세대의 참조가 다릅니다.',409);
+    const bytes=this.#documentAsset(path.join(folder,'document.json'),documentWire.DOC_BYTES,manifest.documentSHA,identities),document=documentWire.decodeDocument(bytes);
+    if (document.id.toLowerCase()!==id||String(document.revision)!==header[2]||manifest.pages.length!==document.pages.length) throw new VaultError('문서 전체 식별자 또는 페이지 순서가 다릅니다.',409);
+    let total=0;const assets=[];
+    for(let index=0;index<document.pages.length;index++) {
+      const page=document.pages[index],asset=manifest.pages[index];documentWire.fields(asset,['id','drawingSHA','previewSHA']);
+      if(asset.id!==page.id.toLowerCase()||!documentWire.hash(asset.drawingSHA)||!documentWire.hash(asset.previewSHA))throw new VaultError('문서 페이지 자산의 순서가 다릅니다.',409);
+      const drawing=this.#documentAsset(path.join(folder,'pages',asset.id,'drawing.pkdrawing'),documentWire.SCENE_BYTES,asset.drawingSHA,identities);
+      const preview=this.#documentAsset(path.join(folder,'pages',asset.id,'preview.png'),documentWire.PREVIEW_BYTES,asset.previewSHA,identities);total+=preview.length;
+      if(total>documentWire.PREVIEW_BYTES||!validPNG(preview)||!drawing.equals(documentWire.base64(page.drawingBase64,documentWire.SCENE_BYTES)))throw new VaultError('문서 전체 자산을 재열 수 없습니다.',409);
+      assets.push({id:asset.id,drawingSha256:asset.drawingSHA,previewSha256:asset.previewSHA,...(includeAssets?{previewPNGBase64:preview.toString('base64')}:{})});
+    }
+    if(![true,false].some(includeTags=>managed===this.#documentMarkdown(id,manifest,header[5],document,includeTags)))throw new VaultError('문서 관리 Markdown이 바뀌었습니다.',409);
+    this.#checkDocumentLocation(location);
+    for(const [file,before] of identities){const after=fs.lstatSync(file);if(after.isSymbolicLink()||before.dev!==after.dev||before.ino!==after.ino||before.isFile()&&(before.size!==after.size||before.mtimeMs!==after.mtimeMs||before.ctimeMs!==after.ctimeMs))throw new VaultError('문서 전체 자산의 최종 경로 또는 바이트가 바뀌었습니다.',409);}
+    return {schema:'ccr.vault-document/v1',id,path:note.path,revision:document.revision,activePageID:document.activePageID,
+      noteSha256:note.sha256,documentSha256:manifest.documentSHA,manifestSha256:header[5],generation:manifest.generation,
+      pages:assets,...(includeAssets?{documentJSONBase64:bytes.toString('base64')}:{})};
+  }
+
+  #documentAlias(relative) {
+    const parts=relative.split('/'),top=parts[0].normalize('NFC').toLowerCase();
+    if(top==='ccr documents')return true;
+    if(top==='ccr canvas'&&UUID.test(parts.at(-1)?.slice(0,-3)||'')&&this.#documentOwns(parts.at(-1).slice(0,-3)))return true;
+    let file;
+    try { file=fs.lstatSync(this.resolve(relative,{allowMissing:true})); } catch(error) { if(error.code==='ENOENT'||error.status===404)return false;throw error; }
+    const folder=path.join(this.root,'CCR Documents');if(!fs.existsSync(folder))return false;
+    const root=fs.lstatSync(folder);if(!root.isDirectory()||root.isSymbolicLink())throw new VaultError('문서 관리 경로가 바뀌었습니다.',409);
+    const names=fs.readdirSync(folder);if(names.length>16384)throw new VaultError('문서 별칭 검사 한도입니다.',409);
+    return names.filter(name=>UUID.test(name.slice(0,-3))&&name.endsWith('.md')).some(name=>{const stat=fs.lstatSync(path.join(folder,name));return stat.dev===file.dev&&stat.ino===file.ino;});
+  }
+
+  #documentOwns(id) {
+    if(!UUID.test(id||''))return false;id=id.toLowerCase();const folder=path.join(this.root,'CCR Documents');
+    const roots=fs.readdirSync(this.root);if(roots.length>16384)throw new VaultError('문서 원장 검사 한도입니다.',409);
+    for(const name of roots.filter(n=>n.startsWith('.ccr-save-')&&UUID.test(n.slice(10)))) {
+      const journal=path.join(this.root,name);this.#privateDirectory(journal);const intent=this.#record(path.join(journal,'intent.json'));
+      if(!intent||typeof intent.path!=='string'||!/^CCR Documents\/[0-9a-f-]{36}\.md$/.test(intent.path))continue;
+      if(intent.schema!=='ccr.note-save-intent/v1'||intent.vaultKey!==digest(Buffer.from(this.root)))throw new VaultError('문서 소유 원장이 다릅니다.',409);
+      if(intent.path===`CCR Documents/${id}.md`)return true;
+      const resource=intent.documentResource;
+      if(resource){documentWire.fields(resource,['id','pageIDs']);if(!UUID.test(resource.id)||!Array.isArray(resource.pageIDs)||resource.pageIDs.length>128||resource.pageIDs.some(p=>!UUID.test(p)))throw new VaultError('문서 소유 원장이 올바르지 않습니다.',409);if(resource.pageIDs.some(p=>p.toLowerCase()===id))return true;}
+    }
+    if(!fs.existsSync(folder))return false;this.resolve('CCR Documents',{directory:true});
+    const names=fs.readdirSync(folder);if(names.length>16384)throw new VaultError('문서 소유 검사 한도입니다.',409);
+    for(const name of names.filter(n=>n.endsWith('.md')&&UUID.test(n.slice(0,-3)))) {
+      const documentID=name.slice(0,-3).toLowerCase();
+      if(id===documentID)return true;
+      const note=this.#rawNote(`CCR Documents/${name}`,true),value=this.#documentSnapshot(documentID,note,false);
+      if(value.pages.some(page=>page.id===id))return true;
+    }
+    return false;
+  }
+
+  #requireLegacyScene(id) {
+    if(this.#documentOwns(id))throw new VaultError('이 ID는 문서 전체 API로만 읽고 저장할 수 있습니다.',409,{code:'document_api_required'});
+  }
+
+  document(id) {
+    if(!UUID.test(id||''))throw new VaultError('Invalid document ID');id=id.toLowerCase();
+    const relative=`CCR Documents/${id}.md`;this.#guard(relative);
+    const note=this.#rawNote(relative,true),result=this.#documentSnapshot(id,note);
+    this.#guard(relative);if(this.#rawNote(relative,true).sha256!==note.sha256)throw new VaultError('읽는 동안 문서 정본이 바뀌었습니다.',409);return result;
+  }
+
+  saveDocument(id,body) {
+    if(!UUID.test(id||''))throw new VaultError('Invalid document ID');id=id.toLowerCase();
+    let input;
+    try {input=documentWire.request(body);}catch(error){throw new VaultError(error.message,400,{code:'invalid_document'});}
+    if(input.document.id.toLowerCase()!==id)throw new VaultError('문서 ID가 요청과 다릅니다.');
+    if(input.pages.some(page=>!validPNG(page.preview)))throw new VaultError('문서 PNG를 재열 수 없습니다.');
+    this.#documentDirectory('CCR Documents');const location=this.#documentLocation(),relative=`CCR Documents/${id}.md`;
+    this.#guard(relative);let current=null,prior=null;
+    try {current=this.#rawNote(relative,true);prior=this.#documentSnapshot(id,current,false);}catch(error){if(error.status!==404)throw error;}
+    if((body.base===null)!==(!current)||current&&['noteSha256','documentSha256','manifestSha256'].some(k=>body.base[k]!==prior[k]))throw new VaultError('문서 전체가 바뀌었습니다.',409,{code:'document_stale',publicationAttempted:false,reconciliationRequired:false});
+    if(current) {
+      const previous=documentWire.decodeDocument(this.#documentAsset(path.join(this.root,'CCR Documents/Assets',id,prior.generation,'document.json'),documentWire.DOC_BYTES,prior.documentSha256));
+      const pages=new Map(input.document.pages.map(page=>[page.id.toLowerCase(),page]));
+      if(previous.pages.some(page=>!pages.has(page.id.toLowerCase())))throw new VaultError('기존 페이지를 빠뜨린 문서는 저장할 수 없습니다.',409,{code:'document_page_loss',publicationAttempted:false,reconciliationRequired:false});
+      if(input.document.revision<previous.revision||body.documentSha256!==prior.documentSha256&&input.document.revision<=previous.revision)throw new VaultError('문서 revision이 이전 상태입니다.',409,{code:'document_stale',publicationAttempted:false,reconciliationRequired:false});
+      if(previous.pages.some(page=>page.schemaVersion===3&&pages.get(page.id.toLowerCase()).schemaVersion!==3))throw new VaultError('문서 페이지 형식을 이전 버전으로 낮출 수 없습니다.',409,{code:'document_schema_downgrade',publicationAttempted:false,reconciliationRequired:false});
+    }
+    let memo=current?canvasNoteParts(current.text).memo:null,legacy=null;
+    if(!current) {
+      const legacyRelative=`CCR Canvas/${id}.md`;
+      try {
+        const note=this.note(legacyRelative),snapshot=this.#canvasSnapshot(id,note).snapshot,old=JSON.parse(Buffer.from(snapshot.sceneJSONBase64,'base64'));
+        const page=input.document.pages.find(p=>p.id.toLowerCase()===id);
+        const sorted=v=>Array.isArray(v)?v.map(sorted):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sorted(v[k])])):v;
+        if(!page||JSON.stringify(sorted(page))!==JSON.stringify(sorted(old)))throw new VaultError('기존 단일 장면과 문서 승격 원본이 다릅니다.',409,{code:'document_stale'});
+        legacy={relative:legacyRelative,sha256:note.sha256};memo=canvasNoteParts(note.text).memo;
+      }catch(error){if(error.status!==404)throw error;}
+    }
+    const generation=crypto.randomUUID(),folder=this.#documentDirectory('CCR Documents','Assets',id,generation),pages=this.#documentDirectory('CCR Documents','Assets',id,generation,'pages');
+    const manifest={schema:'ccr.sill-document-files/v2',documentID:id,generation,documentSHA:body.documentSha256,pages:[]};
+    for(const asset of input.pages) {
+      const destination=this.#documentDirectory('CCR Documents','Assets',id,generation,'pages',asset.id);
+      durableFile(path.join(destination,'drawing.pkdrawing'),asset.drawing);durableFile(path.join(destination,'preview.png'),asset.preview);syncDirectory(destination);
+      manifest.pages.push({id:asset.id,drawingSHA:digest(asset.drawing),previewSHA:digest(asset.preview)});
+    }
+    syncDirectory(pages);durableFile(path.join(folder,'document.json'),input.bytes);
+    const manifestBytes=Buffer.from(JSON.stringify(manifest)),manifestHash=digest(manifestBytes);durableFile(path.join(folder,'manifest.json'),manifestBytes);syncDirectory(folder);syncDirectory(path.dirname(folder));
+    const text=this.#documentMarkdown(id,manifest,manifestHash,input.document)+MEMO_BOUNDARY+(memo??'\n## 메모\n\n');
+    if(Buffer.byteLength(text)>MAX_NOTE_BYTES)throw new VaultError('문서 메모를 유지한 Markdown이 한도를 초과했습니다.',413);
+    const verify=saved=>{
+      this.#checkDocumentLocation(location);const fresh=new ObsidianVault(this.root),note=fresh.#rawNote(relative,true),snapshot=fresh.#documentSnapshot(id,note,false);
+      if(note.sha256!==saved.sha256||snapshot.documentSha256!==body.documentSha256||snapshot.manifestSha256!==manifestHash)throw new VaultError('문서 전체 정본의 재열기 결과가 다릅니다.',409);
+      if(legacy&&fresh.#rawNote(legacy.relative,true).sha256!==legacy.sha256)throw new VaultError('문서 승격 중 기존 원본이 바뀌었습니다.',409);
+      return snapshot;
+    };
+    this.#documentSnapshot(id,{path:relative,text,sha256:digest(Buffer.from(text))},false);this.#checkDocumentLocation(location);
+    if(legacy&&this.#rawNote(legacy.relative,true).sha256!==legacy.sha256)throw new VaultError('문서 승격 전 원본이 바뀌었습니다.',409);
+    const recovery=path.join(this.root,`.ccr-save-${crypto.randomUUID()}`);let savedReturned=false;
+    try {const saved=this.#save(relative,current?.sha256??null,text,verify,recovery,undefined,{id,pageIDs:input.pages.map(p=>p.id)});savedReturned=true;return verify(saved);}
+    catch(error){
+      if(savedReturned&&fs.existsSync(path.join(recovery,'receipt.json'))) {fs.renameSync(path.join(recovery,'receipt.json'),path.join(recovery,'receipt-unconfirmed.json'));syncDirectory(recovery);}
+      this.#guard(relative);throw error;
+    }
+  }
+
+  documentConflict(id,selection=null) {
+    if(!UUID.test(id||''))throw new VaultError('Invalid document ID');id=id.toLowerCase();const relative=`CCR Documents/${id}.md`;
+    const journal=this.#journals(relative).find(r=>r.pending);if(!journal)throw new VaultError('조정이 필요한 문서가 없습니다.',404);
+    const state=this.#conflictState(id,journal,null,true);
+    if(!selection)return state;
+    documentWire.fields(selection,['recoveryID','material','sha256']);
+    if(selection.recoveryID!==journal.recoveryID||!['active','base','displaced','proposal'].includes(selection.material)||!documentWire.hash(selection.sha256))throw this.#required(journal,'현재 문서 조정 자료가 아닙니다.');
+    const candidate=state.materials[selection.material];if(!candidate?.validDocument||candidate.sha256!==selection.sha256)throw this.#required(journal,'선택한 전체 문서를 재열 수 없습니다.');
+    return this.#documentSnapshot(id,{path:relative,text:Buffer.from(candidate.markdownBase64,'base64').toString('utf8'),sha256:candidate.sha256});
+  }
+
+  resolveDocumentConflict(id,request) {
+    if(!UUID.test(id||''))throw new VaultError('Invalid document ID');id=id.toLowerCase();
+    return this.#resolveConflict(`CCR Documents/${id}.md`,request,id,true);
+  }
+
   canvasDirectory() {
     for (const relative of ['CCR Canvas','CCR Canvas/Assets']) {
       const folder = path.join(this.root,relative);
@@ -611,6 +827,7 @@ class ObsidianVault {
   }
 
   canvas(id) {
+    this.#requireLegacyScene(id);
     if (!UUID.test(id || '')) throw new VaultError('Invalid canvas ID');
     const relative = `CCR Canvas/${id.toLowerCase()}.md`;
     return this.#canvasSnapshot(id.toLowerCase(),this.note(relative)).snapshot;
@@ -645,10 +862,13 @@ class ObsidianVault {
   }
 
   saveCanvas(id, revision, sceneBytes, imageBytes, baseSha256) {
+    this.#requireLegacyScene(id);
     if (!UUID.test(id || '') || !Number.isSafeInteger(revision) || revision < 0 ||
         sceneBytes.length > MAX_CANVAS_SCENE_BYTES || imageBytes.length > 5*1024*1024)
       throw new VaultError('Invalid canvas scene');
     const scene = JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(sceneBytes));
+    if (['format','version','pages','activePageID'].some(key => Object.hasOwn(scene,key)))
+      throw new VaultError('문서 전체를 단일 장면으로 저장할 수 없습니다.',409,{code:'document_api_required'});
     try { assertInkScene(scene); } catch (error) { throw new VaultError(error.message); }
     if (scene.id?.toLowerCase() !== id.toLowerCase() || scene.revision !== revision)
       throw new VaultError('Canvas scene identity differs from request');

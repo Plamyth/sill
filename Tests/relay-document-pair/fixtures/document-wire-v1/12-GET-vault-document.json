@@ -1,0 +1,15 @@
+{
+  "method": "GET",
+  "path": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+  "status": 409,
+  "request": null,
+  "response": {
+    "error": "이 메모는 명시적인 충돌 조정이 필요합니다.",
+    "code": "note_reconciliation_required",
+    "reconciliationRequired": true,
+    "recoveryID": "db061f5a-b7f0-434e-a781-10166c67d80b",
+    "publicationAttempted": true
+  },
+  "responseJSONBase64": "eyJlcnJvciI6IuydtCDrqZTrqqjripQg66qF7Iuc7KCB7J24IOy2qeuPjCDsobDsoJXsnbQg7ZWE7JqU7ZWp64uI64ukLiIsImNvZGUiOiJub3RlX3JlY29uY2lsaWF0aW9uX3JlcXVpcmVkIiwicmVjb25jaWxpYXRpb25SZXF1aXJlZCI6dHJ1ZSwicmVjb3ZlcnlJRCI6ImRiMDYxZjVhLWI3ZjAtNDM0ZS1hNzgxLTEwMTY2YzY3ZDgwYiIsInB1YmxpY2F0aW9uQXR0ZW1wdGVkIjp0cnVlfQ==",
+  "responseSha256": "6035950a63a7b5926ba27c537b46f40a25135880e9aa81f91c842f92173b7e3f"
+}
