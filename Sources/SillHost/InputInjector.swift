@@ -20,7 +20,7 @@ import StreamProtocol
 /// host posts nothing (`dryRun`).
 @MainActor
 final class InputInjector {
-    /// Two downs of the same button within this time and distance are a double (then triple) click.
+    /// One device's downs of the same button within this time and distance are a double (then triple) click.
     private static let multiClickInterval: CFTimeInterval = 0.35
     private static let multiClickSlop: CGFloat = 12
 
@@ -39,6 +39,7 @@ final class InputInjector {
         var clicks: Int64 = 1
         var lastDownAt: CFAbsoluteTime = -1_000
         var lastDownPoint: CGPoint = .zero
+        var lastDownDevice: KeyStrokes.Device?
     }
 
     /// `.hidSystemState` merges with the real HID state, so a modifier physically held on the Mac
@@ -289,12 +290,13 @@ final class InputInjector {
     private func beginClick(_ state: inout ButtonState, at location: CGPoint, from device: KeyStrokes.Device) {
         let now = CFAbsoluteTimeGetCurrent()
         let moved = hypot(location.x - state.lastDownPoint.x, location.y - state.lastDownPoint.y)
-        if now - state.lastDownAt <= Self.multiClickInterval && moved <= Self.multiClickSlop {
+        if state.lastDownDevice == device && now - state.lastDownAt <= Self.multiClickInterval && moved <= Self.multiClickSlop {
             state.clicks += 1            // 2 = double-click, 3 = triple, and on up from there
         } else {
             state.clicks = 1
         }
         state.owner = device
+        state.lastDownDevice = device
         state.lastDownAt = now
         state.lastDownPoint = location
     }
