@@ -425,7 +425,7 @@ class ObsidianVault {
     const valid = document ? 'validDocument' : id ? 'validCanvas' : 'validNote';
     const hashField = id ? 'noteSha256' : 'sha256';
     const keys = value => value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).sort().join(',') : '';
-    if (keys(request) !== 'decision,expected,recoveryID' || !UUID.test(request.recoveryID || '') || (!id && (typeof request.recoveryID !== 'string' || request.recoveryID !== request.recoveryID.toLowerCase())) ||
+    if (keys(request) !== 'decision,expected,recoveryID' || !UUID.test(request.recoveryID || '') || ((!id || document) && (typeof request.recoveryID !== 'string' || request.recoveryID !== request.recoveryID.toLowerCase())) ||
         !['keepCurrent','useDisplaced'].includes(request.decision) ||
         keys(request.expected) !== (document ? 'activeSha256,baseSha256,bundlesSha256,displacedSha256,historySha256,proposalSha256' : 'activeSha256,baseSha256,displacedSha256,historySha256,proposalSha256') ||
         !Object.entries(request.expected).every(([key,value]) => /^[0-9a-f]{64}$/.test(value || '') || key !== 'historySha256' && value === null))
@@ -483,7 +483,7 @@ class ObsidianVault {
         return reopened;
       };
       const saved = this.#save(relative,state.expected.activeSha256,
-        new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.from(chosen.markdownBase64,'base64')),validate,attempt,journal.recoveryID);
+        new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.from(chosen.markdownBase64,'base64')),validate,attempt,journal.recoveryID,document ? {id,pageIDs:chosen.document.pages.map(p=>p.id)} : undefined);
       const reopened = validate(saved);
       const {sceneJSONBase64,...metadata} = reopened;
       const result = {...metadata,recoveryID:journal.recoveryID,decision:request.decision,resolved:true,reconciliationRequired:false};
@@ -530,7 +530,7 @@ class ObsidianVault {
     catch (error) { this.#guard(relative); throw error; }
   }
 
-  #save(relative, baseSha256, text, verify, recovery, parentRecoveryID) {
+  #save(relative, baseSha256, text, verify, recovery, parentRecoveryID, documentResource) {
     if (typeof text !== 'string' || Buffer.byteLength(text,'utf8') > MAX_NOTE_BYTES)
       throw new VaultError('Note exceeds 1 MiB',413);
     if (baseSha256 !== null && !/^[0-9a-f]{64}$/.test(baseSha256 || ''))
@@ -546,7 +546,7 @@ class ObsidianVault {
     fs.mkdirSync(recovery,0o700);
     durableFile(path.join(recovery,'intent.json'),Buffer.from(JSON.stringify({
       schema:'ccr.note-save-intent/v1',path:relative,vaultKey:digest(Buffer.from(this.root)),
-      ...(parentRecoveryID ? {parentRecoveryID} : {})
+      ...(parentRecoveryID ? {parentRecoveryID} : {}),...(documentResource ? {documentResource} : {})
     })+'\n'));
     if (current) durableFile(path.join(recovery,'base.md'),Buffer.from(current.text,'utf8'));
     durableFile(path.join(recovery,'proposal.md'),bytes);
@@ -705,6 +705,15 @@ class ObsidianVault {
 
   #documentOwns(id) {
     if(!UUID.test(id||''))return false;id=id.toLowerCase();const folder=path.join(this.root,'CCR Documents');
+    const roots=fs.readdirSync(this.root);if(roots.length>16384)throw new VaultError('문서 원장 검사 한도입니다.',409);
+    for(const name of roots.filter(n=>n.startsWith('.ccr-save-')&&UUID.test(n.slice(10)))) {
+      const journal=path.join(this.root,name);this.#privateDirectory(journal);const intent=this.#record(path.join(journal,'intent.json'));
+      if(!intent||typeof intent.path!=='string'||!/^CCR Documents\/[0-9a-f-]{36}\.md$/.test(intent.path))continue;
+      if(intent.schema!=='ccr.note-save-intent/v1'||intent.vaultKey!==digest(Buffer.from(this.root)))throw new VaultError('문서 소유 원장이 다릅니다.',409);
+      if(intent.path===`CCR Documents/${id}.md`)return true;
+      const resource=intent.documentResource;
+      if(resource){documentWire.fields(resource,['id','pageIDs']);if(!UUID.test(resource.id)||!Array.isArray(resource.pageIDs)||resource.pageIDs.length>128||resource.pageIDs.some(p=>!UUID.test(p)))throw new VaultError('문서 소유 원장이 올바르지 않습니다.',409);if(resource.pageIDs.some(p=>p.toLowerCase()===id))return true;}
+    }
     if(!fs.existsSync(folder))return false;this.resolve('CCR Documents',{directory:true});
     const names=fs.readdirSync(folder);if(names.length>16384)throw new VaultError('문서 소유 검사 한도입니다.',409);
     for(const name of names.filter(n=>n.endsWith('.md')&&UUID.test(n.slice(0,-3)))) {
@@ -768,7 +777,7 @@ class ObsidianVault {
     this.#documentSnapshot(id,{path:relative,text,sha256:digest(Buffer.from(text))},false);this.#checkDocumentLocation(location);
     if(legacy&&this.#rawNote(legacy.relative,true).sha256!==legacy.sha256)throw new VaultError('문서 승격 전 원본이 바뀌었습니다.',409);
     const recovery=path.join(this.root,`.ccr-save-${crypto.randomUUID()}`);let savedReturned=false;
-    try {const saved=this.#save(relative,current?.sha256??null,text,verify,recovery);savedReturned=true;return verify(saved);}
+    try {const saved=this.#save(relative,current?.sha256??null,text,verify,recovery,undefined,{id,pageIDs:input.pages.map(p=>p.id)});savedReturned=true;return verify(saved);}
     catch(error){
       if(savedReturned&&fs.existsSync(path.join(recovery,'receipt.json'))) {fs.renameSync(path.join(recovery,'receipt.json'),path.join(recovery,'receipt-unconfirmed.json'));syncDirectory(recovery);}
       this.#guard(relative);throw error;
