@@ -30,7 +30,7 @@ final class DocumentProductProtocol: URLProtocol {
     static func check(_ ok: Bool, _ name: String) { precondition(ok,name); assertions.append(name); print("PASS \(name)") }
     static func bytes(_ x: Any) throws -> Data { try JSONSerialization.data(withJSONObject:x,options:[.sortedKeys,.withoutEscapingSlashes]) }
     static func object(_ x: Data) throws -> [String:Any] { try JSONSerialization.jsonObject(with:x) as! [String:Any] }
-    static let png = Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")!
+    static let png = Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==")!
     static func drawing(_ x: Double) throws -> PKDrawing {
         let points = [0.0,10,20].enumerated().map { i,dx in PKStrokePoint(location:CGPoint(x:x+dx,y:20+dx),timeOffset:Double(i)/10,size:CGSize(width:3,height:5),opacity:0.8,force:0.7,azimuth:0.3,altitude:1) }
         let native = PKDrawing(strokes:[PKStroke(ink:PKInk(.pen,color:.black),path:PKStrokePath(controlPoints:points,creationDate:Date(timeIntervalSince1970:1)))])
