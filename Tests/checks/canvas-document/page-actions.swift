@@ -179,14 +179,28 @@ import AppKit
         let ink = store.scene.drawingBase64
         store.applyPagePaper(.grid)
         check(try CanvasPagePaper.pattern(in:store.scene) == .grid && store.scene.drawingBase64 == ink,"Store 용지 편집과 원본 필기 유지")
-        store.documentPresentationBusy = true
-        check(!store.canUndoGraph,"다른 입력 소유 중 용지 Undo 차단")
-        store.documentPresentationBusy = false
-        check(store.canUndoGraph,"펜 모드에서도 용지 전용 Undo 제공")
-        store.undoGraphEdit()
-        check(try CanvasPagePaper.pattern(in:store.scene) == .plain && store.scene.drawingBase64 == ink,"같은 graph Undo로 용지 복원")
-        store.redoGraphEdit()
-        check(try CanvasPagePaper.pattern(in:store.scene) == .grid,"같은 graph Redo로 용지 재적용")
+        for inputMode in [CanvasMode.pen,.select,.lasso] {
+            store.mode = inputMode
+            let heldGrid = try store.document.bytes()
+            store.documentPresentationBusy = true
+            check(!store.canUndoGraph,"다른 입력 소유 중 용지 Undo 차단 \(inputMode.rawValue)")
+            store.undoGraphEdit()
+            check(try store.document.bytes() == heldGrid,"거부된 Undo는 원본·revision·history 유지 \(inputMode.rawValue)")
+            store.documentPresentationBusy = false
+            check(store.canUndoGraph,"입력 반납 후 용지 Undo 복구 \(inputMode.rawValue)")
+            store.undoGraphEdit()
+            check(try CanvasPagePaper.pattern(in:store.scene) == .plain && store.scene.drawingBase64 == ink,"같은 graph Undo로 용지 복원 \(inputMode.rawValue)")
+            let heldPlain = try store.document.bytes()
+            store.documentPresentationBusy = true
+            check(!store.canRedoGraph,"다른 입력 소유 중 용지 Redo 차단 \(inputMode.rawValue)")
+            store.redoGraphEdit()
+            check(try store.document.bytes() == heldPlain,"거부된 Redo는 원본·revision·history 유지 \(inputMode.rawValue)")
+            store.documentPresentationBusy = false
+            check(store.canRedoGraph,"입력 반납 후 용지 Redo 복구 \(inputMode.rawValue)")
+            store.redoGraphEdit()
+            check(try CanvasPagePaper.pattern(in:store.scene) == .grid,"같은 graph Redo로 용지 재적용 \(inputMode.rawValue)")
+        }
+        store.mode = .pen
         await store.saveDocumentWorkspace()
         let files = CanvasDocumentFiles(folder:folder,requiresScope:false)
         check(try files.load(store.document.id).document == store.document,"전체 Files 원본에 용지와 필기 함께 저장")

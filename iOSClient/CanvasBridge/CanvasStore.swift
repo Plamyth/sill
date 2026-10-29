@@ -1154,7 +1154,7 @@ final class CanvasStore: ObservableObject {
         guard let undo = graphUndo, scene.id == undo.after.id else { return false }
         if graphRequiresPersistence {
             guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
-                  (cardMergeInputAllowed || (canTransitionDocument && CanvasPagePaper.isOnlyChange(from:undo.before,to:undo.after))),
+                  (CanvasPagePaper.isOnlyChange(from:undo.before,to:undo.after) ? canTransitionDocument : cardMergeInputAllowed),
                   cardMergeDraft == nil else { return false }
         }
         if undo.before.drawingBase64 != undo.after.drawingBase64 {
@@ -1198,7 +1198,7 @@ final class CanvasStore: ObservableObject {
         guard let redo = graphRedo, scene.id == redo.before.id else { return false }
         if graphRequiresPersistence {
             guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
-                  (cardMergeInputAllowed || (canTransitionDocument && CanvasPagePaper.isOnlyChange(from:redo.before,to:redo.after))),
+                  (CanvasPagePaper.isOnlyChange(from:redo.before,to:redo.after) ? canTransitionDocument : cardMergeInputAllowed),
                   cardMergeDraft == nil else { return false }
         }
         if redo.before.drawingBase64 != redo.after.drawingBase64 {
