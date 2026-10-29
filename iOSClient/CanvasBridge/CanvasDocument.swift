@@ -170,6 +170,12 @@ struct CanvasDocument: Codable, Equatable {
         }
         _ = try bytes()
     }
+    /// Store의 같은 MainActor 편집 turn 안에서만 사용한다. 외부 ingress/저장 검증을 대체하지 않는다.
+    mutating func updateActivePageForEditing(_ page: CanvasScene) throws {
+        guard page.id == activePageID, let index = pages.firstIndex(where:{ $0.id == activePageID }), revision < Int.max else { throw Failure.stale }
+        pages[index] = page
+        revision += 1
+    }
     mutating func selectPage(_ pageID: UUID, expectedRevision: Int) throws {
         guard revision == expectedRevision, revision < Int.max, pageEpoch < UInt64.max else { throw Failure.stale }
         guard pages.contains(where:{ $0.id == pageID }) else { throw Failure.invalid }

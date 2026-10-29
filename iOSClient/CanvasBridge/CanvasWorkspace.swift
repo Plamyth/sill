@@ -8,8 +8,16 @@ struct CanvasWorkspace: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store = CanvasStore()
     @StateObject private var dictation = CanvasDictation()
-    @StateObject private var inkTextEditing = CanvasInkTextEditing()
-    @StateObject private var inkSpacing = CanvasInkSpacingProposal()
+    @StateObject private var legacyInkTextEditing = CanvasInkTextEditing()
+    @StateObject private var legacyInkSpacing = CanvasInkSpacingProposal()
+    private var inkTextEditing: CanvasInkTextEditing { store.isDocumentSource ? store.documentGlyphEditor : legacyInkTextEditing }
+    private var inkSpacing: CanvasInkSpacingProposal { store.isDocumentSource ? store.documentSpacingEditor : legacyInkSpacing }
+    @State private var documentFilesMode = false
+    @State private var pageManagerOpen = false
+    @State private var documentConflictOpen = false
+    @State private var documentConflictConfirm = false
+    @State private var documentDecision: CanvasRelay.ConflictDecision?
+    @State private var sourcePickerOwner: CanvasDocument.PageSnapshot?
     @State private var inkSpacingOpen = false
     @State private var inkSpacingTask: Task<Void,Never>?
     @State private var inkTextDeleteOpen = false
@@ -132,6 +140,11 @@ struct CanvasWorkspace: View {
                     .font(.footnote).foregroundStyle(.orange)
                     .accessibilityIdentifier("canvasVaultPublicationConflict")
             }
+            if store.isDocumentSource {
+                Text("여러 페이지 문서 · \(store.document.pages.firstIndex(where:{ $0.id == store.scene.id }).map { $0 + 1 } ?? 0)/\(store.document.pages.count) · " + store.documentSyncStatus)
+                    .font(.footnote).foregroundStyle(store.documentSyncHeld ? .orange : .secondary)
+                    .accessibilityIdentifier("canvasDocumentStatus")
+            }
             Text(store.fileWorkspaceStatus)
                 .font(.footnote).frame(maxWidth:.infinity,alignment:.leading)
                 .padding(.horizontal,10).padding(.vertical,6)
@@ -177,6 +190,7 @@ struct CanvasWorkspace: View {
         .background(Color.black)
         .preferredColorScheme(.dark)
         .sheet(item:canvasEditorBinding,onDismiss:{ synchronizeCanvasEditorSheet() }) { canvasEditorContent($0) }
+        .onChange(of:documentUIBusy,initial:true) { _,busy in store.documentPresentationBusy = busy }
         .onChange(of:requestedCanvasEditors,initial:true) { _,_ in synchronizeCanvasEditorSheet() }
         .onChange(of:canPresentCanvasConflict) { _,allowed in if !allowed { advanceCanvasConflictEpoch() } }
         .onChange(of:canPresentRenderedExport) { _,allowed in if !allowed { cancelRenderedExportPreparation() } }
@@ -196,20 +210,21 @@ struct CanvasWorkspace: View {
         }
         .onChange(of:store.scene) { _,_ in inkTextEditing.invalidatePending() }
         .onChange(of:store.inkSelection) { _,_ in inkTextEditing.invalidatePending() }
-        .onChange(of:relayAddress) { _,_ in advanceCanvasConflictEpoch(); noteConflictGeneration &+= 1; store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:relayAddress) { _,_ in advanceCanvasConflictEpoch(); noteConflictGeneration &+= 1; store.setNoteConnection(address:relayAddress,token:relayToken); store.setDocumentConnection(address:relayAddress,token:relayToken) }
         .onChange(of:diagramMode) { _,_ in store.clearLinkSelection() }
-        .onChange(of:relayToken) { _,_ in advanceCanvasConflictEpoch(); noteConflictGeneration &+= 1; store.setNoteConnection(address:relayAddress,token:relayToken) }
+        .onChange(of:relayToken) { _,_ in advanceCanvasConflictEpoch(); noteConflictGeneration &+= 1; store.setNoteConnection(address:relayAddress,token:relayToken); store.setDocumentConnection(address:relayAddress,token:relayToken) }
         .task {
             store.filePreview = { await SceneRenderer.png(scene:$0) }
             store.refreshFileWorkspace()
             store.setNoteConnection(address:relayAddress,token:relayToken)
+            store.setDocumentConnection(address:relayAddress,token:relayToken)
             await checkConnection()
         }
         .task(id:"\(store.scene.id.uuidString):\(relayAddress):\(relayToken):\(canvasVaultEnabled)") {
             guard !relayToken.isEmpty else { return }
             do { try await Task.sleep(for:.milliseconds(700)) } catch { return }
             while !Task.isCancelled {
-                if canvasVaultEnabled && (!store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
+                if canvasVaultEnabled && (store.isDocumentSource || !store.scene.strokes.isEmpty || !store.scene.nodes.isEmpty ||
                     !store.scene.links.isEmpty || store.scene.penSettings != nil) {
                     await refreshCanvasFromVault()
                     await synchronizeCanvasToVault()
@@ -262,15 +277,18 @@ struct CanvasWorkspace: View {
             Text("원본 획에서 일치하는 손글씨를 찾아 영역으로 선택합니다.")
         }
         .fileImporter(isPresented:$workspacePickerOpen,allowedContentTypes:[.folder]) { result in
+            workspacePickerOpen = false
+            guard sourcePickerOwner.map(store.document.accepts) == true else { store.status = "문서가 바뀌어 폴더 선택을 적용하지 않았습니다."; return }
+            store.documentPresentationBusy = false
             switch result {
             case .success(let folder):
                 if workspaceOpening {
                     do {
-                        workspaceDocumentIDs = try store.workspaceDocuments(in:folder)
+                        workspaceDocumentIDs = try documentFilesMode ? store.documentWorkspaceDocuments(in:folder) : store.workspaceDocuments(in:folder)
                         workspaceFolder = folder
                         workspaceDocumentsOpen = true
                     } catch { store.status = "원본 폴더 열기 실패: \(error.localizedDescription)" }
-                } else { Task { await store.connectFileWorkspace(folder) } }
+                } else { Task { if documentFilesMode { await store.connectDocumentWorkspace(folder) } else { await store.connectFileWorkspace(folder) } } }
             case .failure(let error):
                 store.status = (error as? CocoaError)?.code == .userCancelled ?
                     "폴더 선택을 취소했습니다. 기존 연결과 그림은 유지됩니다." :
@@ -286,7 +304,8 @@ struct CanvasWorkspace: View {
                         Button(id.uuidString.lowercased() + ".sill") {
                             guard let folder = workspaceFolder else { return }
                             workspaceDocumentsOpen = false
-                            Task { await store.connectFileWorkspace(folder,opening:id) }
+                            store.documentPresentationBusy = false
+                            Task { if documentFilesMode { await store.connectDocumentWorkspace(folder,opening:id) } else { await store.connectFileWorkspace(folder,opening:id) } }
                         }
                     }
                 }
@@ -333,8 +352,8 @@ struct CanvasWorkspace: View {
         .sheet(item:Binding(get: { store.proposedNode.map(IdentifiedUUID.init) },
                             set: { store.proposedNode = $0?.id })) { _ in proposalSheet }
         .fileExporter(isPresented:$exportOpen,
-                      document:SceneFile(scene:store.scene),contentType:.json,
-                      defaultFilename:"canvas-\(store.scene.id.uuidString)") { result in
+                      document:store.isDocumentSource ? SceneFile(document:store.document) : SceneFile(scene:store.scene),contentType:.json,
+                      defaultFilename:"canvas-\(store.isDocumentSource ? store.document.id : store.scene.id)") { result in
             if case .failure(let error) = result { store.status = error.localizedDescription }
         }
         .fileExporter(isPresented:Binding(get:{ renderedExport.document != nil && canPresentRenderedExport },set:{ if !$0 { renderedExport = .idle } }),
@@ -351,8 +370,9 @@ struct CanvasWorkspace: View {
                 let url = try result.get()
                 guard url.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
                 defer { url.stopAccessingSecurityScopedResource() }
-                let imported = try JSONDecoder().decode(CanvasScene.self,from:Data(contentsOf:url))
-                try store.importScene(imported)
+                guard sourcePickerOwner.map(store.document.accepts) == true else { throw CanvasDocument.Failure.stale }
+                importOpen = false; store.documentPresentationBusy = false
+                try store.importSourceBytes(CanvasLocalFile.read(url))
             } catch { store.status = "가져오기 실패: \(error.localizedDescription)" }
         }
         .task(id:store.packet?.packetId) {
@@ -407,17 +427,35 @@ struct CanvasWorkspace: View {
             }
             Menu("저장 위치 · Files 원본") {
                 Button("현재 그림 안전 내보내기·폴더 연결",systemImage:"folder.badge.plus") {
-                    workspaceOpening = false
-                    workspacePickerOpen = true
+                    workspaceOpening = false; documentFilesMode = false
+                    sourcePickerOwner = try? store.document.pageSnapshot(); workspacePickerOpen = true
                 }
                 Button("폴더에서 원본 열기",systemImage:"folder") {
-                    workspaceOpening = true
-                    workspacePickerOpen = true
+                    workspaceOpening = true; documentFilesMode = false
+                    sourcePickerOwner = try? store.document.pageSnapshot(); workspacePickerOpen = true
                 }
                 Button("외부 변경 확인") { store.refreshFileWorkspace() }
                 Button("원본 저장 다시 시도") { store.retryFileWorkspaceSave() }
                 Text("앱 내부 보관은 캐시·미저장 복구본입니다. 기존 문서는 덮어쓰지 않습니다.")
-            }
+            }.disabled(store.isDocumentSource)
+            Menu("여러 페이지 문서") {
+                if store.isDocumentSource {
+                    Button("페이지 목록·복제") { pageManagerOpen = true }.disabled(!store.canTransitionDocument)
+                    Button("전체 문서 Files 폴더 연결") { openDocumentFolder(opening:false) }.disabled(!store.canTransitionDocument)
+                    Button("전체 문서 원본 저장") { Task { await store.saveDocumentWorkspace() } }.disabled(store.documentEditingBlocked)
+                    Button("전체 문서 외부 변경 확인") { store.refreshDocumentWorkspace() }.disabled(store.documentEditingBlocked)
+                    Button("기존 한 장 그림으로 돌아가기") { do { try store.returnToLegacySource() } catch { store.status = error.localizedDescription } }.disabled(!store.canTransitionDocument || !store.documentFileReady)
+                    if store.documentSyncHeld {
+                        Button("문서 충돌 비교·명시 조정") {
+                            Task { await store.readDocumentConflict(relay); if store.documentConflict != nil { documentConflictOpen = true } }
+                        }.disabled(documentUIBusy || store.documentBusy || store.inkBusy)
+                    }
+                } else {
+                    Button("현재 그림을 여러 페이지 문서로 시작") { do { try store.createDocument() } catch { store.status = error.localizedDescription } }.disabled(!store.canTransitionDocument)
+                }
+                Button("폴더에서 전체 문서 열기") { openDocumentFolder(opening:true) }.disabled(!store.canTransitionDocument)
+                Text("문서 전체를 별도 형식으로 저장합니다. 기존 장면 API로 줄여 보내지 않습니다.")
+            }.disabled(!store.documentOperationsEnabled)
             Divider()
             Button("Obsidian 노트",systemImage:"doc.text") {
                 vaultOpen = true
@@ -480,14 +518,93 @@ struct CanvasWorkspace: View {
             Button("구조 수정 다시 실행",systemImage:"arrow.uturn.forward") { store.redoGraphEdit() }
                 .disabled(!store.canRedoGraph)
             Button("연결",systemImage:"network") { connectionOpen = true }
-            Button("가져오기") { importOpen = true }
+            Button("가져오기") { sourcePickerOwner = try? store.document.pageSnapshot(); importOpen = true }.disabled(store.documentEditingBlocked)
             Menu("내보내기") {
                 Button("편집 원본 JSON") { exportOpen = true }
-                Button("PNG 이미지") { prepareRenderedExport(.png) }
-                Button("PDF · 한 장 이미지로 저장") { prepareRenderedExport(.pdf) }
+                Button("현재 페이지 PNG 이미지") { prepareRenderedExport(.png) }
+                Button("현재 페이지 PDF · 한 장 이미지로 저장") { prepareRenderedExport(.pdf) }
             }.disabled(renderedExport.isBusy || !canPresentRenderedExport)
         }
         .frame(minWidth:44,minHeight:44)
+    }
+
+    private var documentUIBusy: Bool {
+        inspectorOpen || commentEditorOpen || pendingNodeEdit != nil || pendingCommentEdit != nil ||
+        dictationOpen || dictation.isListening || dictation.isStarting || dictation.isFinalizing || vaultOpen || pdfLoading || expandedCard != nil ||
+        connectionOpen || workspacePickerOpen || workspaceDocumentsOpen || importOpen || exportOpen ||
+        renderedExport.isBusy || handwritingSearchOpen || proposalInputBusy ||
+        inkSpacingOpen || inkTextDeleteOpen || canvasConflictOpen || canvasEditorSheet != nil ||
+        pageManagerOpen || documentConflictOpen || documentConflictConfirm
+    }
+    private func openDocumentFolder(opening: Bool) {
+        guard store.canTransitionDocument else { return }
+        documentFilesMode = true; workspaceOpening = opening
+        sourcePickerOwner = try? store.document.pageSnapshot(); workspacePickerOpen = true
+    }
+    private var documentPagesSheet: some View {
+        NavigationStack {
+            List {
+                Text("같은 문서의 순서 있는 페이지입니다. 복제는 글·연결·댓글 ID를 다시 만들고 원본 필기와 출처 참조를 보존합니다.")
+                ForEach(Array(store.document.pages.enumerated()),id:\.element.id) { index,page in
+                    Button {
+                        dismissCanvasEditorSheet(); store.documentPresentationBusy = false
+                        Task { await store.selectDocumentPage(page.id) }
+                    } label: {
+                        Label("페이지 \(index + 1)",systemImage:page.id == store.scene.id ? "checkmark.circle.fill" : "doc")
+                    }
+                }
+                Button("현재 페이지 복제",systemImage:"doc.on.doc") {
+                    dismissCanvasEditorSheet(); store.documentPresentationBusy = false
+                    Task { await store.duplicateDocumentPage() }
+                }
+            }.navigationTitle("문서 페이지")
+            .toolbar { ToolbarItem(placement:.cancellationAction) { Button("닫기") { dismissCanvasEditorSheet() } } }
+        }
+    }
+    private var documentConflictSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment:.leading,spacing:16) {
+                    Text(store.documentSyncStatus)
+                    Text("로컬 전체 원본은 Files의 이전 세대에 보존됩니다. 서버 자료도 삭제하지 않습니다. 읽기만으로 미확인 상태가 해제되지 않습니다.")
+                    ForEach(CanvasDocumentRelay.MaterialName.allCases,id:\.rawValue) { name in
+                        if let material = store.documentConflict?.materials[name] {
+                            Text(documentMaterialTitle(name)).font(.headline)
+                            Text("원문 SHA: " + material.sha256).font(.caption).textSelection(.enabled)
+                            if let candidate = store.documentCandidates[name] {
+                                Text("\(candidate.document.pages.count)페이지 · 전체 문서 revision \(candidate.document.revision)")
+                                ForEach(Array(candidate.document.pages.enumerated()),id:\.element.id) { index,page in
+                                    Text("페이지 \(index + 1) · \(page.nodes.count)요소 · \(page.strokes.count)획")
+                                    ForEach(page.nodes) { node in Text(node.text).textSelection(.enabled) }
+                                }
+                            } else { Text(material.refusal ?? "이 자료의 전체 문서 자산을 확인하지 못해 선택할 수 없습니다.") }
+                            if let bytes = Data(base64Encoded:material.markdownBase64), let text = String(data:bytes,encoding:.utf8) {
+                                Text(text).font(.caption.monospaced()).textSelection(.enabled)
+                            }
+                        }
+                    }
+                    ForEach(CanvasRelay.ConflictDecision.allCases) { decision in
+                        Button(decision == .keepCurrent ? "서버 현재 전체 문서 유지" : "보존된 외부 전체 문서 사용") {
+                            documentDecision = decision; documentConflictConfirm = true
+                        }.disabled(store.documentBusy || store.documentConflict.flatMap { store.documentCandidates[$0.chosen(decision)] } == nil)
+                    }
+                }.padding()
+            }.navigationTitle("문서 충돌 비교")
+            .toolbar { ToolbarItem(placement:.cancellationAction) { Button("닫기") { dismissCanvasEditorSheet() } } }
+            .confirmationDialog("비교한 전체 문서로 조정할까요?",isPresented:$documentConflictConfirm,titleVisibility:.visible) {
+                if let decision = documentDecision {
+                    Button("선택한 전체 문서로 조정") {
+                        Task { await store.resolveDocumentConflict(decision,relay:relay)
+                            if !store.documentSyncHeld { dismissCanvasEditorSheet() }
+                        }
+                    }
+                }
+                Button("취소",role:.cancel) { documentDecision = nil }
+            } message: { Text("현재와 보존 자료 SHA가 바뀌면 적용하지 않습니다. 기존 원본·외부·제안 세대는 유지합니다.") }
+        }.interactiveDismissDisabled(store.documentBusy)
+    }
+    private func documentMaterialTitle(_ name: CanvasDocumentRelay.MaterialName) -> String {
+        switch name { case .active: return "서버 현재 원문"; case .base: return "기준 원문"; case .displaced: return "보존된 외부 원문"; case .proposal: return "우리 제안 원문" }
     }
 
     private enum RenderedExportState {
@@ -1169,6 +1286,7 @@ struct CanvasWorkspace: View {
     }
 
     private func synchronizeCanvasToVault() async {
+        if store.isDocumentSource { await store.synchronizeDocumentToVault(relay); return }
         store.refreshFileWorkspace()
         guard store.fileWorkspaceCanSync, !canvasSyncBusy, !Task.isCancelled, !store.inkHistory.usingTool else { return }
         if vaultSceneID != store.scene.id || vaultSyncAddress != relayAddress {
@@ -1276,7 +1394,7 @@ struct CanvasWorkspace: View {
     }
 
     private enum CanvasEditorSheet: String, Identifiable {
-        case shape, math, spacing, glyph, conflict
+        case shape, math, spacing, glyph, conflict, pages, documentConflict
         var id: String { rawValue }
     }
     private var requestedCanvasEditors: [CanvasEditorSheet] {
@@ -1285,7 +1403,9 @@ struct CanvasWorkspace: View {
         if store.inkMathProposal != nil { result.append(.math) }
         if inkSpacingOpen { result.append(.spacing) }
         if inkTextDeleteOpen { result.append(.glyph) }
-        if canvasConflictOpen { result.append(.conflict) }
+        if canvasConflictOpen && !store.isDocumentSource { result.append(.conflict) }
+        if pageManagerOpen { result.append(.pages) }
+        if documentConflictOpen { result.append(.documentConflict) }
         return result
     }
     private var canvasEditorBinding: Binding<CanvasEditorSheet?> {
@@ -1307,6 +1427,8 @@ struct CanvasWorkspace: View {
         case .shape: store.cancelInkShape()
         case .math: store.cancelInkMath()
         case .conflict: cancelCanvasConflictRead()
+        case .pages: pageManagerOpen = false
+        case .documentConflict: documentConflictOpen = false; documentDecision = nil
         case nil: break
         }
     }
@@ -1316,6 +1438,8 @@ struct CanvasWorkspace: View {
         case .glyph: glyphEditorSheet
         case .math: inkMathSheet
         case .conflict: canvasConflictSheet
+        case .pages: documentPagesSheet
+        case .documentConflict: documentConflictSheet
         case .shape:
             if let proposal = store.inkShapeProposal {
                 CanvasInkShapePreview(proposal:proposal,current:store.inkShapeIsCurrent,
@@ -1355,7 +1479,7 @@ struct CanvasWorkspace: View {
             }
     }
     private var canPresentCanvasConflict: Bool {
-        !store.hasPendingInkProposal && !inkSpacingOpen && !inkTextDeleteOpen && !proposalInputBusy &&
+        !store.isDocumentSource &&         !store.hasPendingInkProposal && !inkSpacingOpen && !inkTextDeleteOpen && !proposalInputBusy &&
         !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen && !connectionOpen &&
         !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen && !renderedExport.isBusy && expandedCard == nil &&
         (canvasEditorSheet == nil || canvasEditorSheet == .conflict)
@@ -1367,13 +1491,6 @@ struct CanvasWorkspace: View {
         advanceCanvasConflictEpoch(); canvasConflictOpen = false
     }
 
-    private enum CanvasConflictChoiceState: String, Codable { case pending, refreshRequired, resolved, superseded }
-    private struct CanvasConflictChoice: Codable {
-        let address: String, localSHA: String, backupFilename: String
-        let conflict: CanvasRelay.VaultConflict
-        let decision: CanvasRelay.ConflictDecision
-        var disposition = CanvasConflictChoiceState.pending
-    }
     private static func recoveryCheckpointWhenMissing(address: String) -> CanvasVaultCheckpoint? {
         guard let url = try? CanvasRuntime.conflictRecoveryURL("CanvasConflictChoice.json"),
               let bytes = try? CanvasLocalFile.read(url), bytes.count <= 65*1024*1024,
@@ -1618,6 +1735,7 @@ struct CanvasWorkspace: View {
     }
 
     private func refreshCanvasFromVault() async {
+        if store.isDocumentSource { await store.refreshDocumentFromVault(relay); return }
         store.refreshFileWorkspace()
         guard store.fileWorkspaceCanSync, !store.inkHistory.usingTool, !canvasVaultBlocked, (pendingSceneSha == nil || canvasSaveConflict == .acknowledgementLost), !canvasSyncBusy, let syncedSceneSha, let canvasNoteSha,
               vaultSceneID == store.scene.id, vaultSyncAddress == relayAddress else { return }
@@ -1745,6 +1863,7 @@ struct CanvasWorkspace: View {
         }
         .clipped()
         .contentShape(Rectangle())
+        .allowsHitTesting(!store.documentEditingBlocked)
         .background(Color(uiColor:.secondarySystemBackground))
     }
 
@@ -2097,6 +2216,7 @@ struct CanvasWorkspace: View {
 
     @MainActor
     private func send() async {
+        guard !store.isDocumentSource else { store.status = "여러 페이지 문서는 전체 문서 동기화를 사용하세요. 한 장 패킷으로 보내지 않습니다."; return }
         guard !store.sendBusy else { return }
         store.sendBusy = true
         defer { store.sendBusy = false }
@@ -2167,6 +2287,7 @@ struct CanvasWorkspace: View {
     }
 
     private func refreshRevision() async {
+        guard !store.isDocumentSource else { store.status = "문서 수정은 전체 문서 API에서만 받습니다."; return }
         guard let packet = store.packet else { return }
         do {
             if let revision = try await relay.revision(for:packet.packetId) {

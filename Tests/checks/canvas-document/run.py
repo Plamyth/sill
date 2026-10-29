@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """CanvasDocument 실제 PKDrawing/Files 검사. 출력은 승인 외장 경로에만 쓴다."""
 from pathlib import Path
-import argparse, hashlib, json, os, subprocess, uuid
+import argparse, hashlib, json, os, plistlib, subprocess, uuid
 root = Path(__file__).resolve().parents[3]
 p = argparse.ArgumentParser()
 p.add_argument('--output', type=Path, required=True)
 p.add_argument('--sdk-check', action='store_true')
+p.add_argument('--store', action='store_true', help='실제 단일 Document Store/Files 제품 경로')
 p.add_argument('--repairs', type=Path, help='DOC-R1/R2/R3 독립 검수 근거 폴더')
 a = p.parse_args()
 archive = Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
@@ -40,6 +41,29 @@ commands=[('compile',['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e
 if a.sdk_check:
     ios=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
     commands.append(('ios27-unit-typecheck',['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'ios-modules','-typecheck',*sources]))
+if a.store:
+    assert not a.repairs
+    sources += [canvas/(n+'.swift') for n in ['CanvasStore','VaultPDFExcerpt','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection']]
+    sources += [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('store.swift')]
+    protocol = root/'Sources/StreamProtocol/TestDestinations.swift'
+    ios_sources = sorted(canvas.glob('*.swift')) + [root/'iOSClient'/(n+'.swift') for n in ['IPadAudioSession','IPadAudioLeaseState','IPadAudioLeaseCoordinator']] + [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
+    inputs += sources + [protocol,canvas/'PencilCanvas.swift',canvas/'CanvasWorkspace.swift'] + (ios_sources if a.sdk_check else [])
+    before = hashes()
+    metadata = plistlib.loads(info.read_bytes()); metadata.update(CCRSourceCommit=commit,CCRSourceTree=tree)
+    info = out/'Info.plist'; info.write_bytes(plistlib.dumps(metadata))
+    identity = str(uuid.uuid4())
+    support = out/'home/Library/Application Support'
+    state = support/'CCRIntegrationTests'/identity/'state'; state.mkdir(parents=True)
+    (state.parent/'context.json').write_text(json.dumps(dict(schema='ccr.ipad-test-context/v1',id=identity,commit=commit,tree=tree,relayAddress='http://192.168.88.88:4242',token='own-document-fixture-01234567890123456789')))
+    base = ['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'modules']
+    commands = [('protocol',base+['-emit-module','-emit-object','-module-name','StreamProtocol',protocol,'-emit-module-path',out/'StreamProtocol.swiftmodule','-o',out/'StreamProtocol.o']),
+        ('compile-store',base+['-I',out,*sources,out/'StreamProtocol.o','-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',info,'-o',out/'store-check']),
+        ('native-store',[out/'store-check',out,'--ccr-test-runtime',identity]),('project-plist',['plutil','-lint',project])]
+    if a.sdk_check:
+        (out/'ios').mkdir()
+        iosbase = ['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-module-cache-path',out/'ios-modules']
+        commands += [('ios-protocol',iosbase+['-emit-module','-module-name','StreamProtocol',protocol,'-emit-module-path',out/'ios/StreamProtocol.swiftmodule']),('ios27-store-ui-typecheck',iosbase+['-parse-as-library','-I',out/'ios','-typecheck',*ios_sources])]
+
 if a.repairs:
     (out/'repair').mkdir()
     commands += [
@@ -66,7 +90,7 @@ if a.repairs and (out/'repair/repair-observations.json').exists():
         assert not after_case['decodeAccepted'] and not after_case['saveAccepted']
     assert old_nested['lock']['blockedWhileOtherProcessHoldsLock'] and new['lock']['returnedBusyBeforeUnlock']
     comparison=dict(beforeDirectory=old['directorySwap'],afterDirectory=new['directorySwap'],beforeNested=old_nested['nested'],afterNested=new['nested'],beforeLock=old_nested['lock'],afterLock=new['lock'])
-record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=True,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,StoreIntegrated=False,pairedRelay=False,UIWriteEnabled=False,installation=False,wholeProductAccepted=False)
+record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=True,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,StoreIntegrated=a.store,pairedRelay=False,UIWriteEnabled=False,installation=False,wholeProductAccepted=False)
 (out/'result.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')
 print('RECEIPT',out/'result.json',flush=True)
 raise SystemExit(0 if record['passed'] else 1)
