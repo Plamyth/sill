@@ -48,8 +48,9 @@ struct CanvasWorkspace: View {
     @State private var vaultDirectory = ""
     @State private var vaultEntries: [CanvasRelay.VaultEntry] = []
     @State private var vaultStatus = ""
+    private var epubReader: VaultEPUBReader? { store.epubReader }
     private var pdfReader: VaultPDFReader? { store.pdfViewReader }
-    private var pdfLoading: Bool { store.pdfViewBusy }
+    private var pdfLoading: Bool { store.pdfViewBusy || store.epubBusy }
     @State private var vaultDiscardOpen = false
     @State private var recoveryDiscardOpen = false
     @State private var noteRecoveryDiscardOpen = false
@@ -784,7 +785,17 @@ struct CanvasWorkspace: View {
                         Text(store.pdfExcerptRecoveryNotice).font(.footnote)
                         if let recovery = store.pdfExcerptRecovery, let view = recovery.viewRecovery {
                             Text(recovery.path).font(.caption).textSelection(.enabled)
-                            if let reader = pdfReader {
+                            if let reader = epubReader {
+                    VaultEPUBStoreReader(reader:reader,canAct:store.epubIsCurrent(reader) && !store.vaultSaving && !store.hasPendingEPUBExcerpt) {
+                        do {
+                            guard store.epubIsCurrent(reader) else { throw VaultEPUBError.changed }
+                            let excerpt = try reader.prepareExcerpt()
+                            if store.prepareEPUBExcerpt(excerpt) { Task { await saveEPUBExcerpt(allowCreate:true) } }
+                        } catch { store.vaultStatus = error.localizedDescription }
+                    }
+                    Button("EPUB 닫고 노트로 돌아가기") { _ = store.closeEPUBReader() }
+                        .frame(minHeight:44).disabled(store.vaultSaving)
+                } else if let reader = pdfReader {
                                 Button("전송 없이 보기 설정 저장 결과 확인") {
                                     let connection = relay
                                     Task { await store.reloadPDFView(reader:reader,load:connection.vaultNote) }
@@ -793,6 +804,18 @@ struct CanvasWorkspace: View {
                             }
                             Button("보존된 PDF 보기 초안 열기") { Task { await openVaultPDF(view.draft.state.pdfPath) } }
                                 .frame(minHeight:44).disabled(store.vaultSaving || pdfLoading)
+                        } else if let recovery = store.pdfExcerptRecovery, recovery.sourceKind == .epub {
+                            Text(recovery.path).font(.caption).textSelection(.enabled)
+                            Button("보존된 EPUB 발췌 원문 보기") {
+                                do {
+                                    guard let excerpt = try VaultEPUBExcerpt.parse(recovery.draft) else { throw VaultEPUBError.invalid }
+                                    Task { await openVaultEPUB(excerpt.sourcePath,source:excerpt) }
+                                } catch { store.vaultStatus = error.localizedDescription }
+                            }.frame(minHeight:44).disabled(store.vaultSaving || pdfLoading)
+                            Button("전송 없이 발췌 저장 결과 확인") { Task { await saveEPUBExcerpt(allowCreate:false) } }
+                                .frame(minHeight:44).disabled(store.vaultSaving || pdfLoading)
+                            Button("같은 EPUB 발췌 ID로 저장 재확인") { Task { await saveEPUBExcerpt(allowCreate:true) } }
+                                .frame(minHeight:44).disabled(store.vaultSaving || pdfLoading || recovery.saveConflict?.requiresExplicitReconciliation == true)
                         } else if let recovery = store.pdfExcerptRecovery {
                             Text(recovery.path).font(.caption).textSelection(.enabled)
                             Button("보존된 발췌 결과 확인") { Task { await savePDFExcerpt(allowCreate:false) } }
@@ -878,6 +901,14 @@ struct CanvasWorkspace: View {
                 } else if let note = store.vaultNote {
                     ScrollView {
                     VStack(spacing:6) {
+                    if note.text.contains("ccr-epub-source") {
+                        Button("EPUB 원문 보기 · SHA와 인용 출처 검증") {
+                            do {
+                                guard let source = try VaultEPUBExcerpt.parse(note.text) else { throw VaultEPUBError.invalid }
+                                Task { await openVaultEPUB(source.sourcePath,source:source) }
+                            } catch { store.vaultStatus = error.localizedDescription }
+                        }.frame(minHeight:44).disabled(store.vaultDirty || store.vaultInputBusy || store.vaultSaving)
+                    }
                     if note.text.contains("ccr-pdf-source") {
                         Button("PDF 원문 보기 · 출처 검증") {
                             do {
@@ -982,11 +1013,13 @@ struct CanvasWorkspace: View {
                             if entry.kind == "directory" {
                                 vaultDirectory = entry.path
                                 Task { await loadVaultEntries() }
+                            } else if entry.kind == "epub" {
+                                Task { await openVaultEPUB(entry.path) }
                             } else if entry.kind == "pdf" {
                                 Task { await openVaultPDF(entry.path) }
                             } else if entry.kind == "note" { Task { await openVaultNote(entry.path) } }
                         } label: {
-                            Label(entry.name,systemImage:entry.kind == "directory" ? "folder" : entry.kind == "pdf" ? "doc.richtext" : "doc.text")
+                            Label(entry.name,systemImage:entry.kind == "directory" ? "folder" : entry.kind == "pdf" ? "doc.richtext" : entry.kind == "epub" ? "book.closed" : "doc.text")
                         }.frame(minHeight:44)
                     }
                 }
@@ -994,11 +1027,13 @@ struct CanvasWorkspace: View {
                     .font(.footnote).frame(maxWidth:.infinity,alignment:.leading).padding(10)
                 }
             }
-            .navigationTitle(pdfReader == nil ? (store.vaultNote == nil ? "Obsidian 노트" : "노트 편집") : "PDF 원문 · 보기 설정")
+            .navigationTitle(epubReader != nil ? "EPUB 원문" : pdfReader == nil ? (store.vaultNote == nil ? "Obsidian 노트" : "노트 편집") : "PDF 원문 · 보기 설정")
             .toolbar {
                 ToolbarItem(placement:.topBarLeading) {
                     if noteConflict != nil { EmptyView() }
-                    else if pdfReader != nil {
+                    else if epubReader != nil {
+                        Button("EPUB 닫기") { _ = store.closeEPUBReader() }.frame(minWidth:44,minHeight:44).disabled(store.vaultSaving)
+                    } else if pdfReader != nil {
                         Button("PDF 닫기") { _ = store.closePDFView() }.frame(minWidth:44,minHeight:44)
                             .disabled(store.vaultSaving)
                     } else if store.vaultNote != nil {
@@ -1026,7 +1061,7 @@ struct CanvasWorkspace: View {
                         if noteConflict != nil { noteConflictGeneration &+= 1; noteConflict = nil }
                         else if store.vaultDirty && !store.vaultBlockEditing {
                             if store.pauseVaultNoteEditing() { vaultOpen = false }
-                        } else if store.closePDFView() && store.closeVaultEditor() { vaultOpen = false }
+                        } else if store.closeEPUBReader() && store.closePDFView() && store.closeVaultEditor() { vaultOpen = false }
                     }.frame(minWidth:44,minHeight:44)
                         .disabled(noteConflictBusy || store.vaultInputBusy || store.vaultSaving || store.vaultLoading || store.noteRecoveryWriteFailed)
                         .accessibilityIdentifier("obsidianClosePreservingDraft")
@@ -1034,10 +1069,10 @@ struct CanvasWorkspace: View {
             }
             .interactiveDismissDisabled(noteConflictBusy || store.vaultDirty || store.vaultSaving || store.vaultInputBusy || pdfLoading || pdfReader?.hasViewEdits == true)
             .onChange(of:store.vaultInputSessionID) { _,_ in vaultRawMarkdown = false }
-            .onChange(of:relayAddress) { _,_ in _ = store.closePDFView() }
-            .onChange(of:relayToken) { _,_ in _ = store.closePDFView() }
-            .onChange(of:store.scene.id) { _,_ in _ = store.closePDFView() }
-            .onDisappear { _ = store.closePDFView() }
+            .onChange(of:relayAddress) { _,_ in _ = store.closeEPUBReader(); _ = store.closePDFView() }
+            .onChange(of:relayToken) { _,_ in _ = store.closeEPUBReader(); _ = store.closePDFView() }
+            .onChange(of:store.scene.id) { _,_ in _ = store.closeEPUBReader(); _ = store.closePDFView() }
+            .onDisappear { _ = store.closeEPUBReader(); _ = store.closePDFView() }
             .sheet(item:$vaultReview) { session in
                 VaultReviewSheet(store:store,session:session) { grade in
                     store.setNoteConnection(address:relayAddress,token:relayToken)
@@ -1250,6 +1285,19 @@ struct CanvasWorkspace: View {
         } catch { vaultStatus = "노트 목록을 읽지 못했습니다: \(error.localizedDescription)" }
     }
 
+    private func openVaultEPUB(_ path: String, source: VaultEPUBExcerpt? = nil) async {
+        guard !noteConflictBusy, noteConflict == nil else { return }
+        store.setNoteConnection(address:relayAddress,token:relayToken)
+        let connection = relay
+        _ = await store.openEPUB(path,source:source,load:connection.vaultEPUB)
+    }
+    private func saveEPUBExcerpt(allowCreate: Bool) async {
+        store.setNoteConnection(address:relayAddress,token:relayToken)
+        let connection = relay
+        _ = await store.saveEPUBExcerpt(allowCreate:allowCreate,create:{ path,text in
+            try await connection.createVaultNote(at:path,text:text)
+        },load:connection.vaultNote)
+    }
     private func openVaultPDF(_ path: String, source: VaultPDFExcerpt? = nil) async {
         guard !noteConflictBusy, noteConflict == nil else { return }
         store.setNoteConnection(address:relayAddress,token:relayToken)
@@ -2553,6 +2601,43 @@ private struct CanvasEndpointHandle: View {
             .accessibilityLabel(endpoint == .from ? "연결선 시작점" : "연결선 끝점")
             .accessibilityHint("끌어서 이 요소 경계의 연결 위치를 바꿉니다.")
             .accessibilityIdentifier("canvasLinkEndpoint-\(endpoint.rawValue)-\(linkID.uuidString)")
+    }
+}
+
+// Small Store UI adapter around the module's native view; no second EPUB parser/reader.
+private struct VaultEPUBStoreText: UIViewRepresentable {
+    let reader: VaultEPUBReader
+    func makeUIView(context: Context) -> UITextView { reader.view }
+    func updateUIView(_ view: UITextView, context: Context) {}
+}
+private struct VaultEPUBStoreReader: View {
+    @ObservedObject var reader: VaultEPUBReader
+    let canAct: Bool
+    let capture: () -> Void
+    var body: some View {
+        VStack {
+            HStack {
+                Menu("목차·장") {
+                    ForEach(reader.book.toc) { entry in
+                        Button(entry.title) { edit { try reader.openChapter(entry.chapter,fragment:entry.fragment) } }
+                    }
+                    ForEach(reader.book.chapters.indices,id:\.self) { i in
+                        Button("장 \(i+1)") { edit { try reader.openChapter(i) } }
+                    }
+                }
+                Button("글꼴 축소") { edit { try reader.setFontSize(max(10,reader.fontSize-2)) } }
+                Button("글꼴 확대") { edit { try reader.setFontSize(min(48,reader.fontSize+2)) } }
+                Button("선택 텍스트를 EPUB 발췌 노트로 저장") { capture() }
+            }.disabled(!canAct).buttonStyle(.bordered).controlSize(.large)
+            VaultEPUBStoreText(reader:reader).frame(maxWidth:.infinity,maxHeight:.infinity)
+                .accessibilityLabel("EPUB 원문 텍스트 · 읽기 전용")
+            Text(reader.status).font(.footnote)
+            Text("장 \(reader.chapterIndex+1)/\(reader.book.chapters.count) · 원문 SHA \(reader.book.snapshot.sha256)")
+                .font(.caption).textSelection(.enabled)
+        }.padding()
+    }
+    private func edit(_ action: () throws -> Void) {
+        do { try action() } catch { reader.status = error.localizedDescription }
     }
 }
 

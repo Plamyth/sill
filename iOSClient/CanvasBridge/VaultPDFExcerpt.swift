@@ -1,7 +1,10 @@
 import Foundation
 import PDFKit
 
+// The existing file/envelope remains the only source-note creation intent.
+// Missing kind is the original PDF contract; EPUB must be explicitly discriminated.
 struct VaultPDFCreateRecovery: Codable, Equatable {
+    enum SourceKind: String, Codable { case epub }
     let sceneID: UUID
     let relayAddress: String
     let path: String
@@ -9,13 +12,23 @@ struct VaultPDFCreateRecovery: Codable, Equatable {
     var submittedText: String?
     var saveConflict: VaultSaveConflict? = nil
     var viewRecovery: VaultPDFViewRecovery? = nil
+    var sourceKind: SourceKind? = nil
+
+    func requireMatchingEPUBNote(_ note: VaultNoteSnapshot) throws {
+        guard sourceKind == .epub, let expected = try VaultEPUBExcerpt.parse(draft) else { throw VaultBlockRecoveryError.context }
+        _ = try expected.reference(note:note,relayAddress:relayAddress)
+    }
 
     func validated() throws -> Self {
         guard relayAddress.utf8.count <= 2048, let url = URLComponents(string:relayAddress),
               url.scheme.map({ ["http","https"].contains($0) }) == true,
               url.host?.isEmpty == false, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil else { throw VaultBlockRecoveryError.corrupt }
-        if let viewRecovery {
+        if sourceKind == .epub {
+            guard viewRecovery == nil, let source = try VaultEPUBExcerpt.parse(draft),
+                  source.notePath.utf8.elementsEqual(path.utf8),
+                  submittedText == nil || submittedText?.utf8.elementsEqual(draft.utf8) == true else { throw VaultBlockRecoveryError.corrupt }
+        } else if let viewRecovery {
             try viewRecovery.validate()
             guard (submittedText == nil) == (viewRecovery.submitted == nil), path.utf8.elementsEqual(viewRecovery.draft.path.utf8), draft.utf8.elementsEqual(viewRecovery.draft.markdown.utf8),
                   submittedText.map({ $0.utf8.elementsEqual(viewRecovery.submitted?.markdown.utf8 ?? "".utf8) }) ?? (viewRecovery.submitted == nil) else { throw VaultBlockRecoveryError.corrupt }
@@ -367,6 +380,7 @@ struct VaultPDFViewRecovery: Codable, Equatable {
 struct VaultPDFViewChoice: Codable {
     enum Phase: String, Codable { case compared, resolving, resolved, superseded }
     static let schemaName = "ccr.pdf-view-note-choice/v1"
+    static let epubSchema = "ccr.epub-excerpt-note-choice/v1"
     let schema: String
     let original: VaultPDFCreateRecovery
     let conflict: CanvasRelay.NoteConflict
@@ -376,12 +390,14 @@ struct VaultPDFViewChoice: Codable {
     var closed: Bool { phase == .resolved || phase == .superseded }
     func validated() throws -> Self {
         _ = try original.validated()
-        guard original.viewRecovery != nil, schema == Self.schemaName else { throw VaultBlockRecoveryError.corrupt }
+        guard (original.viewRecovery != nil && original.sourceKind == nil && schema == Self.schemaName) ||
+              (original.viewRecovery == nil && original.sourceKind == .epub && schema == Self.epubSchema) else { throw VaultBlockRecoveryError.corrupt }
         _ = try conflict.validated(path:original.path)
         if phase == .resolving || phase == .resolved { guard decision != nil else { throw VaultBlockRecoveryError.corrupt } }
         if phase == .resolved {
             guard let resolved, let decision, resolved.sha256 == conflict.selected(decision)?.sha256 else { throw VaultBlockRecoveryError.corrupt }
             _ = try resolved.validated(at:original.path)
+            if original.sourceKind == .epub { try original.requireMatchingEPUBNote(resolved) }
         }
         return self
     }
@@ -392,6 +408,7 @@ struct VaultPDFViewChoice: Codable {
 struct VaultPDFViewLocalChoice: Codable {
     enum Phase: String, Codable { case compared, resolved, superseded }
     static let schemaName = "ccr.pdf-view-current-choice/v1"
+    static let epubSchema = "ccr.epub-excerpt-current-choice/v1"
     let schema: String
     let original: VaultPDFCreateRecovery
     let current: VaultNoteSnapshot
@@ -399,10 +416,15 @@ struct VaultPDFViewLocalChoice: Codable {
     var closed: Bool { phase != .compared }
     func validated() throws -> Self {
         _ = try original.validated()
-        guard schema == Self.schemaName, let view = original.viewRecovery else { throw VaultBlockRecoveryError.corrupt }
         _ = try current.validated(at:original.path)
         try VaultPDFViewState.SaveRequest.checkHeld(current)
-        _ = try VaultPDFViewState.parse(current.text,snapshot:.init(path:view.draft.state.pdfPath,sha256:view.draft.state.pdfSHA256,dataBase64:""),pageCount:view.draft.state.pageCount)
+        if original.sourceKind == .epub {
+            guard schema == Self.epubSchema else { throw VaultBlockRecoveryError.corrupt }
+            try original.requireMatchingEPUBNote(current)
+        } else {
+            guard schema == Self.schemaName, let view = original.viewRecovery else { throw VaultBlockRecoveryError.corrupt }
+            _ = try VaultPDFViewState.parse(current.text,snapshot:.init(path:view.draft.state.pdfPath,sha256:view.draft.state.pdfSHA256,dataBase64:""),pageCount:view.draft.state.pageCount)
+        }
         return self
     }
 }
