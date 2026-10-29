@@ -1091,19 +1091,29 @@ struct VaultReviewCard {
             tokens.append(Cloze(range:range,content:content)); cursor = NSMaxRange(range)
         }
         if !tokens.isEmpty {
-            guard let markdown = try? AttributedString(markdown:text,options:.init(interpretedSyntax:.full,
+            let nonce = "CCRCLOZE" + UUID().uuidString.replacingOccurrences(of:"-",with:"")
+            guard !text.contains(nonce) else { throw VaultReviewError.cloze }
+            let boundaries = tokens.indices.map { (nonce + "OPEN\($0)Z",nonce + "CLOSE\($0)Z") }
+            let validation = NSMutableString(string:text)
+            for (index,token) in tokens.enumerated().reversed() {
+                validation.replaceCharacters(in:NSRange(location:NSMaxRange(token.range) - 2,length:2),with:boundaries[index].1)
+                validation.replaceCharacters(in:NSRange(location:token.range.location,length:6),with:boundaries[index].0)
+            }
+            guard let markdown = try? AttributedString(markdown:validation as String,options:.init(interpretedSyntax:.full,
                 failurePolicy:.throwError)) else { throw VaultReviewError.cloze }
             var position = markdown.startIndex
-            for _ in tokens {
-                guard let start = markdown[position..<markdown.endIndex].range(of:"{{c1::",options:.literal),
-                      let end = markdown[start.upperBound..<markdown.endIndex].range(of:"}}",options:.literal) else { throw VaultReviewError.cloze }
+            for (opening,closing) in boundaries {
+                guard let start = markdown.range(of:opening,options:.literal),
+                      let end = markdown.range(of:closing,options:.literal),
+                      start.lowerBound >= position, start.upperBound <= end.lowerBound,
+                      markdown[start.upperBound..<markdown.endIndex].range(of:opening,options:.literal) == nil,
+                      markdown[end.upperBound..<markdown.endIndex].range(of:closing,options:.literal) == nil else { throw VaultReviewError.cloze }
                 for run in markdown[start.lowerBound..<end.upperBound].runs {
                     let block = run.presentationIntent?.components.contains { if case .codeBlock = $0.kind { return true }; return false } ?? false
                     guard !block, run.inlinePresentationIntent?.contains(.code) != true else { throw VaultReviewError.cloze }
                 }
                 position = end.upperBound
             }
-            guard markdown[position..<markdown.endIndex].range(of:"{{c1::",options:.literal) == nil else { throw VaultReviewError.cloze }
         }
         return tokens
     }
