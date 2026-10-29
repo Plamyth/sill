@@ -68,3 +68,21 @@ Pstack Bug fix/how는 원반례 재현→공통 parser 원인→최소 수리→
 Pstack Bug fix/how의 원반례→원인 교체→동일 입력 검증을 따르며 Ponytail은 플랫폼 Markdown parser·AttributedString range/runs를 재사용한다. 더 많은 접두어 분기·새 Markdown 엔진·새 의존성을 만들지 않는다. exact f453/전용 WT/storage-route 확인 후 원반례/모델 검사와 Model SDK는 병렬 읽기로 진행하며, 공유 변경은 Model 한 파일로 제한한다. 부모 cad 고정 입력·합본·공식 integration은 수정하지 않는다. 독립 재검수·실기기·전체 수용은 별도다.
 
 최종 writer 결과는 수정 없는 Nash main9입력의 전후 대조에서 코드 우회5개 모두 표시/평가/새 지정 true→false, 정상3대조는 true 유지다. 별도 순수 Model24개 Markdown 문맥과 R2 newline8입력은122확인/실패0이다. 무관한 inline/fenced/들여쓰기 코드는 정상 c1을 막지 않으며, c1 payload 안의 inline code는 거부한다. 변경 Model 한 파일의 iOS27 SDK·최소 배포대상 iOS17 typecheck도0이다. Store/원95/전체 SDK/HTTP/GUI/기기/설치는 재실행하지 않았다. 앞선 sourcePosition 시도의3개 정상 대조 실패와 API 호출 컴파일 오류는 원시 로그에 남기고 최종 성공과 구분한다. 최종 Git 입력 SHA·원근거 보존·정확 커밋/트리는 전용 FINAL-RECEIPT.json으로 반환한다.
+
+## d834 후속: raw token과 검증 경계의 결속
+
+Nash의 `cloze-markdown-context-independent-review-d83471ca-20261029/REVIEW.md` SHA `9864156390c3b24156ce848137c0c21a9a7ec591fb9f9369b5f97a29477eb48a`는 payload의 `&#125;&#125;`/`&#x7d;&#x7d;`가 Markdown 파싱 뒤 `}}`로 바뀌어 검사 범위를 조기 종료시키는 새 P2를 확인했다. 위 d834의122확인은 당시 좁은 입력의 결과로 보존하며 이 entity 경계의 성공으로 바꾸지 않는다. 원8938·f453·d834와 독립 검수/실행 근거는 그대로 두고, 정확d834에서 `codex/ipad-cloze-token-boundary-20261029` 전용 WT를 만들었다. 부모 b773의 통합/실행은 수정하지 않는다.
+
+최종 제품 수정은 기존 `clozes()` 한 함수다. raw 엄격 parser가 확정한 각 token의 실제 여는6글자·닫는2글자만 **검증용 복사**에서 서로 다른 sentinel로 교체한다. sentinel은 실행 시 만든 UUID에서 하이픈을 뺀 일반 ASCII 문자/숫자와 token별 OPEN/CLOSE 번호다. 원문에 그 nonce가 이미 있으면 추측/재시도하지 않고 거부한다. 역순 NSRange 교체로 원래 payload bytes와 순서를 유지한다.
+
+Foundation full Markdown parser에 이 복사를 넣고, token별 양끝 sentinel이 각각 정확히 한 번, 순서대로 남았는지 확인한다. 둘 사이 전체 runs의 codeBlock/inline code를 검사한다. entity가 새 `}}`나 `{{c1::`를 만들더라도 검사 경계로 사용하지 않는다. entity 변환/Markdown 문맥 때문에 sentinel이 사라지거나 중복되거나 순서가 달라진 모호한 경우 기존 안내로 원문 보존·거부한다. 임의의 모든 `&`/HTML entity/정상 문장을 금지하지 않는다.
+
+검증용 복사와 파싱된 문자열은 저장·표시·평가 metadata에 사용하지 않는다. 원문/field 편집·CAS/GET/recovery·raw token으로 만드는 가림/공개 문자열은 이전과 같다. 지원된 entity payload의 공개는 `&#125;` 등의 원본 표기 그대로이며 Markdown 파서가 만든 문자로 재직렬화하지 않는다. 기존 strict c1/newline·HTML comment 거부도 유지한다.
+
+기존 `Tests/checks/obsidian-review-cards/run.py <승인 출력> --token-boundary`가 순수 Model용 새 좁은 main만 선택한다. 원 Nash6입력 main도 수정하지 않고 전후 실행한다. 원2반례, 정상 `&`/십진·16진 entity/파싱된 가짜 시작표식, 여러 raw token, 코드/정상 목록·무관한 inline/fenced 코드, 파싱 중 경계가 사라지는 destination, R2 newline8입력을 공통 Model API에서 확인한다. Store/기존122/원95/전체 SDK/HTTP를 반복하지 않고 변경 Model 한 파일만 iOS27 SDK·최소 iOS17로 typecheck한다.
+
+Pstack Bug fix/how로 원반례를 먼저 재현하고 원token→파싱 경계 결속이라는 실제 원인만 수리한다. Ponytail은 기존 raw parser/NSRange·Foundation Markdown·runs와 최소 검증 복사를 재사용한다. 별도 엔진·DB·API·새 상태 정본은 없다. exactd834/clean 별도WT/storage-route가 선행 조건이며 원반례·새 순수 Model·Model SDK는 독립 읽기로 병렬 진행한다. 제품 변경은 Model 한 함수에만 직렬 적용한다. 독립 재검수·공식/실기기 수용은 writer와 분리하며 Sleep·GUI/기기/Host/설치/오디오/키/권한/질문/알림/ARENA/Goal/루프0을 유지한다.
+
+동일 원 main6입력의 전후 대조에서 십진·16진 원2반례는 표시/평가/새 지정 true→false이며 plain c1·entity만 있는 원문·무관한 inline code 대조는 유지된다. 새 token-boundary main은25문맥·R2 newline8입력에서122확인/실패0이다. 이는 이전 d834 main의24문맥·122확인을 재실행한 수가 아니며 원main도 그대로 남긴다. 변경 Model1파일의 iPhoneOS27 SDK·최소 iOS17 typecheck0, 입력 전후 불변과 최종Git 결속은 영수증에 둔다. Store/원95/기존122/전체 SDK/HTTP/실기기 실행은0이다.
+
+새 main 첫 실행의 정상 기대값 하나에 기존 미지원 raw `::`가 포함돼 두 조건이 실패했다. raw 힌트 거부 계약은 완화하지 않았고 일반 entity 본문과 그 미지원 입력을 분리했다. 원래 실패 로그/JSON을 그대로 보존한 뒤 입력을 고정한 최종 검사에서 실패0을 확인했다. 이 검사 기대값 수리를 제품 문법 확장이나 원반례 수정으로 표시하지 않는다. 앞선 CHANGES_REQUESTED 계보도 모두 유지하며 이번 writer 통과를 독립 SOURCE_CLEAR로 바꾸지 않는다.

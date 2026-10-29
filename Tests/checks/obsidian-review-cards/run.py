@@ -15,15 +15,16 @@ parser.add_argument('output', type=Path)
 parser.add_argument('--worker', action='store_true')
 parser.add_argument('--native-worker', action='store_true')
 parser.add_argument('--markdown-context', action='store_true')
+parser.add_argument('--token-boundary', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
-if args.markdown_context:
+if args.markdown_context or args.token_boundary:
     route = json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))
     output = args.output.resolve()
     assert output.is_relative_to(Path(route['path']).resolve())
     output.mkdir(parents=True,exist_ok=True)
     for name in ['modules','home','tmp']: (output/name).mkdir(exist_ok=True)
-    selected = [root/'iOSClient/CanvasBridge/CanvasModel.swift',Path(__file__).with_name('ClozeMarkdownContextChecks.swift')]
+    selected = [root/'iOSClient/CanvasBridge/CanvasModel.swift',Path(__file__).with_name('ClozeTokenBoundaryChecks.swift' if args.token_boundary else 'ClozeMarkdownContextChecks.swift')]
     before = {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in selected+[Path(__file__)]}
     env = dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',CFFIXED_USER_HOME=str(output/'home'),TMPDIR=str(output/'tmp')+'/')
     sdk = subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],env=env,text=True).strip()
