@@ -2,7 +2,8 @@ import Foundation
 
 // The annotation's Markdown is the stored value. Tag lists and filters are derived, never persisted separately.
 enum CanvasCardTags {
-    static let author = "카드 태그"
+    // Versioned metadata namespace; a pre-existing human author label remains an ordinary comment.
+    static let author = "ccr.sill.card-tag/v1"
     enum Failure: LocalizedError {
         case invalid, changed, unsupported, tooLarge
         var errorDescription: String? {

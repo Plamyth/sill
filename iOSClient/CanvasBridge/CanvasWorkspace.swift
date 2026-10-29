@@ -1884,7 +1884,8 @@ struct CanvasWorkspace: View {
             ForEach(store.scene.annotations.filter {
                 $0.nodeId == nil || store.scene.visibility.annotationIDs.contains($0.id)
             }) { note in
-                Text("\(note.author): \(note.text)").font(.body).textSelection(.enabled)
+                let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : note.author
+                Text("\(author): \(note.text)").font(.body).textSelection(.enabled)
             }
             if let voice = store.displayedVoice {
                 Text("현재 음성 대화 \(voice.threadId.uuidString)").font(.caption)

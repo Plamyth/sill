@@ -36,7 +36,8 @@ import AppKit
             .init(id:other,kind:.ellipse,frame:.init(x:700,y:100,width:100,height:80),text:"다른 도형",confidence:.confirmed,sourceStrokeIds:[])]
         _ = base.connectAsChild(parent:parent,child:a,label:"기존 계층")
         _ = base.connect(a,to:b,label:"기존 원문 관계")
-        base.annotations=[.init(id:UUID(),nodeId:a,text:"유일 댓글 #댓글문자열 e\u{301}\r\n",author:"사용자")]
+        let legacy = CanvasAnnotation(id:UUID(),nodeId:a,text:"#기존댓글",author:"카드 태그")
+        base.annotations=[.init(id:UUID(),nodeId:a,text:"유일 댓글 #댓글문자열 e\u{301}\r\n",author:"사용자"),legacy]
         let sceneURL=try CanvasRuntime.stateURL(.scene),state=sceneURL.deletingLastPathComponent()
         let folder=state.appendingPathComponent("selected-files",isDirectory:true)
         try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
@@ -50,6 +51,8 @@ import AppKit
         let store=CanvasStore();store.mode = .select;store.selectedNode=a;store.filePreview={ _ in png }
         check(store.scene == base && store.fileWorkspaceCanSync,"actual Store restores original files and drawing")
         check(store.availableCardTags.isEmpty,"body PDF and ordinary comments never become classification tags")
+        check(store.scene.annotations.contains(legacy) && (try? CanvasCardTags.tags(for:a,in:store.scene)) == [],
+              "exact legacy human author and hashtag remain ordinary source comment")
         let initial=try Data(contentsOf:sceneURL)
         let cancelled=store.beginCardTagInput()!;store.cancelCardTagInput(sessionID:cancelled)
         check(!store.finishCardTagInput("취소",sessionID:cancelled) && store.scene == base,"cancel never applies or writes old input")
@@ -92,17 +95,20 @@ import AppKit
         let mixedUUID=try JSONDecoder().decode(CanvasScene.self,from:JSONSerialization.data(withJSONObject:identityWire))
         check((try? CanvasCardTags.tags(for:a,in:mixedUUID)) == ["#REA_TAG_20261021_A"],"UUID identity case matches relay without raw rewriting")
         var markerVariant=tagged
-        markerVariant.annotations[markerVariant.annotations.count-1].author=CanvasCardTags.author.decomposedStringWithCanonicalMapping
+        markerVariant.annotations[markerVariant.annotations.count-1].author=CanvasCardTags.author + "\u{200b}"
         check(CanvasCardTags.available(in:markerVariant).isEmpty,"classification author marker requires exact UTF8")
         let originalNodes=try bytes(base.nodes),taggedNodes=try bytes(tagged.nodes)
         check(originalNodes == taggedNodes && tagged.links == base.links && tagged.strokes == base.strokes &&
               tagged.drawingBase64 == base.drawingBase64 && store.drawing == drawing,"tag preserves exact node body PDF refs hierarchy geometry and native drawing")
         check(tagged.annotations.first == base.annotations.first && store.availableCardTags == ["#REA_TAG_20261021_A"],"tag annotation and ordinary comment stay distinct")
+        check(Array(tagged.annotations.dropLast()) == base.annotations && tagged.annotations.last?.author == "ccr.sill.card-tag/v1",
+              "new explicit metadata coexists with exact untouched legacy author record")
         await store.saveFileWorkspace()
         let saved=try files.load(base.id)
         check(saved.scene == tagged && saved.preview == png,"actual Files source JSON drawing and preview agree")
         let fresh=CanvasStore()
         check(fresh.scene == tagged && fresh.availableCardTags == ["#REA_TAG_20261021_A"],"new Store rebuilds tag index from actual stored source")
+        check(fresh.scene.annotations.contains(legacy),"legacy exact-label comment survives Files save and new Store reopen")
         try CanvasFileWorkspace.bytes(base).write(to:output.appendingPathComponent("untagged-scene.json"))
         try CanvasFileWorkspace.bytes(tagged).write(to:output.appendingPathComponent("tagged-scene.json"))
         try png.write(to:output.appendingPathComponent("preview.png"))

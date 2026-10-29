@@ -83,12 +83,19 @@ fs.writeFileSync(path.join(staleRoot, first.path), editedMemo);
 assert.throws(() => stale.saveCanvas(scene.id, scene.revision, source, image, first.noteSha256), { status: 409 });
 check(stale.note(first.path).text === editedMemo, 'stale CAS preserves external Markdown bytes');
 
-const a = scene.annotations.find(x => x.author === '카드 태그');
+const a = scene.annotations.find(x => x.author === 'ccr.sill.card-tag/v1');
+const legacyComment = scene.annotations.find(x => x.author === '카드 태그' && x.text === '#기존댓글');
+check(Boolean(legacyComment), 'actual native source contains exact legacy human-author comment');
+const legacyOnly = structuredClone(scene);
+legacyOnly.annotations = legacyOnly.annotations.filter(x => x.author !== 'ccr.sill.card-tag/v1');
+check(tags.rows(legacyOnly).length === 0, 'exact legacy human-author hashtag is not metadata');
+check(tags.rows(scene)[0].tags.length === 1 && scene.annotations.some(x => JSON.stringify(x) === JSON.stringify(legacyComment)),
+  'new metadata and untouched legacy comment coexist without reclassification');
 const mixedUUID = structuredClone(scene);
 mixedUUID.annotations.find(x => x.id === a.id).nodeId = a.nodeId.toLowerCase();
 check(tags.rows(mixedUUID)[0].tags[0] === a.text, 'UUID identity matches Swift without rewriting raw IDs');
 const nfdAuthor = structuredClone(scene);
-nfdAuthor.annotations.find(x => x.id === a.id).author = '카드 태그'.normalize('NFD');
+nfdAuthor.annotations.find(x => x.id === a.id).author = 'ccr.sill.card-tag/v1\u200b';
 check(tags.rows(nfdAuthor).length === 0, 'author marker requires exact bytes');
 for (const change of ['orphan', 'duplicate-id', 'duplicate-name', 'html', 'newline', 'null']) {
   const value = structuredClone(scene);

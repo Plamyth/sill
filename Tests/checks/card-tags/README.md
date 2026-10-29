@@ -4,10 +4,10 @@
 
 ## 저장 계약
 
-- 기존 CanvasAnnotation의 `author` UTF8가 정확히 `카드 태그`이고 `nodeId`가 실제 note 카드에 연결된 레코드의 `text`를 `#태그` Markdown 원문으로 저장한다. 새 scene 필드·schema·DB·상위 상태관리·API는 없다. 원본 node.text/vaultNote/PDF provenance/댓글/획/도형/링크/부모자식 관계는 유지한다.
+- 기존 CanvasAnnotation의 `author` UTF8가 정확히 `ccr.sill.card-tag/v1`이고 `nodeId`가 실제 note 카드에 연결된 레코드의 `text`를 `#태그` Markdown 원문으로 저장한다. 새 scene 필드·schema·DB·상위 상태관리·API는 없다. 원본 node.text/vaultNote/PDF provenance/댓글/획/도형/링크/부모자식 관계는 유지한다.
 - 이 단위는 **캔버스 카드 분류**다. 연결된 별도 원문 노트의 본문이나 PDF를 분류 태그로 덮어쓰지 않는다. 원문의 `#문자열`, 일반 댓글, PDF 내용에서 태그를 추정하지 않는다. 사람/AI는 scene JSON의 동일 Markdown 문자열을 읽으며, 태그 목록은 재생성 가능한 메모리 파생값이다.
 - 태그는 영문·한글·숫자·밑줄·붙임표의 공백 없는 단일 키워드 부분집합이며 숫자만/중첩 슬래시/이모지/HTML/개행은 이 단위에서 거부한다. 원본 표기·NFD는 저장 그대로 유지하고 비교 키에만 NFC/소문자를 사용한다. [Obsidian 공식 태그 문법](https://help.obsidian.md/tags)은 이보다 넓으므로 전체 문법 지원을 주장하지 않는다. 이름은UTF8 128바이트 이하다.
-- 태그의 UUID 참조/중복 판정은 대소문자 차이를 같은 ID로 비교하지만 raw scene ID/문자열을 재작성하지 않는다. literal author가 다르거나 orphan/중복/잘못된 표식이면 자동 선택·병합·정리하지 않는다. 원본 레코드는 보존하고 해석/변경을 거부하거나 파생 목록에서 제외한다.
+- 태그의 UUID 참조/중복 판정은 대소문자 차이를 같은 ID로 비교하지만 raw scene ID/문자열을 재작성하지 않는다. literal author가 다르거나 orphan/중복/잘못된 표식이면 자동 선택·병합·정리하지 않는다. 원본 레코드는 보존하고 해석/변경을 거부하거나 파생 목록에서 제외한다. 기존의 사람용 author `카드 태그`와 `#기존댓글` 조합도 일반 댓글로 유지하며 자동 이전하지 않는다. 버전이 붙은 기계용 namespace는 새 태그 메타데이터의 명시 선언이다. UI에는 `카드 태그`로 표시한다.
 - Obsidian 관리 Markdown은 실제 태그 문자열을 코드 블록 밖 `### 카드 태그` 목록에 내보낸다. 기존 노드/링크 표시 후, 기존64KiB append/생략표시/1MiB note한도 안에서만 추가한다. 생략돼도 전체 scene JSON에는 태그가 남는다. 동일Canvas 문서 내 카드들의 태그가 그 Obsidian 문서의 태그로 노출된다.
 - reader는 과거 legacy/structured/structured+diagram과 새 tagged/tagged+diagram의5종을 **각각 정확 생성**해 비교한다. 입력 Markdown을 strip/trim/NFC 정규화하지 않는다. 태그 없는 장면의 출력은 과거 바이트와 같다. 과거 문서 읽기는 note/JSON/PNG를 재작성하지 않으며 명시 CAS 저장 때만 새 표현을 쓴다. 메모 suffix의 BOM/CRLF/NFD/공백은 그대로 유지한다.
 - 관리 태그 줄의 외부 수동 변경은 기존409 충돌 보호 대상이다. 새 줄을 임의 역파싱해 scene을 덮지 않는다. 기존 resolver/JSON/PNG/메모 보존/CAS 계약은 유지한다. 과거 Relay와 새 관리 태그 Markdown의 조합은 fail-closed일 수 있으므로 부모가 같은 검수 통합본으로 맞춰야 한다. 정식 Obsidian 앱의 실제 인덱스/클릭 수용은 별도다.

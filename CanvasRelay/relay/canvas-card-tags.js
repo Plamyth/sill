@@ -1,6 +1,6 @@
 'use strict';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const AUTHOR = '카드 태그';
+const AUTHOR = 'ccr.sill.card-tag/v1';
 function markdown(input) {
   if (typeof input !== 'string') return null;
   const name = input.startsWith('#') ? input.slice(1) : input;
