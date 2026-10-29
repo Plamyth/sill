@@ -17,7 +17,7 @@ Pstack architect: Ground → 기존 PDF/노트 CAS와 REA 두 장·NCX 근거 �
 2. Workspace 소유자가 EPUB 목록/파일 열기를 native Reader에 연결하고 저장된 발췌 노트의 source payload에서 loader → snapshot SHA 확인 → Reader.reveal을 호출한다. 모든 await 뒤 기존 scene/연결/입력 epoch 검사를 유지한다.
 3. 기존 durable 노트 생성/CAS/전체 GET 확인 및 카드 첨부 경로를 재사용한다. PDF 전용 parser/복구 원장을 EPUB으로 가장하지 않는다. 정확 source payload 지원을 기존 소유자가 좁게 확장하거나 generic note-create 복구를 소비한다. typed409/ACK 유실을 자동 성공 처리하지 않는다.
 
-부모 직접 메시지 도구는 native ancestor 전송을 거부했고 Reason의 목록에 보인 주소도 수신되지 않았다. 그 전송을 완료로 세지 않는다. **후속 사용자 지시로 부모가 이 문서를 직접 확인했고 공유 Store/Workspace/Relay 접합을 Helm에게 별도 배정했다.** 전송 경로를 더 시험하지 않는다. 이 writer는 새 모듈·Reader·발췌 Markdown·pbx·자체 검사 단위를 반환한다. 이후 소비할 부모 private 결합 기준은 `5fcb42cc1a1430a64210dd5d89c930a61fd8a0da` / `5c63f332fd6786adbd4291461c9f5b83e83f34c5`이며, 이 브랜치의 기준을 임의로 바꾸거나 그 결합을 수정하지 않는다. 실제 접합과 독립 source 판정 전에는 전체 EPUB 제품 UI 완료를 선언하지 않는다.
+부모 직접 메시지 도구는 native ancestor 전송을 거부했고 Reason의 목록에 보인 주소도 수신되지 않았다. 그 전송을 완료로 세지 않는다. **후속 사용자 지시로 부모가 이 문서를 직접 확인했고 공유 Store/Workspace/Relay 접합을 Helm에게 별도 배정했다.** 전송 경로를 더 시험하지 않는다. 이 writer는 새 모듈·Reader·발췌 Markdown·pbx·자체 검사 단위를 반환한다. 이후 공식으로 확정된 `5fcb42cc1a1430a64210dd5d89c930a61fd8a0da` / `5c63f332fd6786adbd4291461c9f5b83e83f34c5`를 이 소유 브랜치에 소비했다. 프로젝트 충돌3곳은 PDF·EPUB 등록의 추가 union으로 해결했고 모든 기존 object는 EPUB 등록만 제거하면 공식과 같다. 공식 WT/브랜치는 수정하지 않았다. 실제 접합과 독립 source 판정 전에는 전체 EPUB 제품 UI 완료를 선언하지 않는다.
 
 ### Helm의 실제 callback 접합
 
