@@ -52,3 +52,19 @@ payload의 CR/LF 개별 비교는 Foundation `CharacterSet.newlines` scalar 검�
 Pstack Bug fix/how는 원반례 재현→공통 parser 원인→최소 수리→동일 원반례와 Store 경계 검증 순서다. Ponytail은 기존 parser·newlines 표준 문자군·기존 실행기를 재사용한다. 선행 조건은 exact8938/clean WT/storage-route이며 독립 원반례·Model SDK와 Store 검사를 병렬 읽기로 진행한다. 공유 가변 정본은 전용 WT로 분리했고 제품 수정은 Model 한 파일의 parser 경계에 한정한다. 독립 재검수·부모 통합은 writer 결과와 별도다. GUI·실기기·설치·Host·오디오·키/권한·사용자 vault·질문/알림·ARENA/Goal/루프는 모두0이다.
 
 이번 writer 결과는 동일 원반례6입력의 전후 대조, 좁은 회귀19입력과 새 지정6범위에서164확인, 변경 Model1파일 iOS27 SDK typecheck0이다. 원래 R1/R2는 수리 전 표시/평가 수용, 수리 뒤 거부로 바뀌고 plain c1/backtick 대조와 별도 HTML 관측은 원래 범위를 유지했다. 실제 Store·ObsidianVault 파일 경로에서도 미지원 입력을 trim/치환하지 않고 거부하며, 정상7입력은 기존 hard600초 평가 CAS/GET을 통과했다. 입력·normal 보호 파일은 전후 동일하고 atomic helper13개가 모두 종료됐다. 정확 helper 수와 SHA는 최종 영수증의 실행 결과를 기준으로 한다. 기존 원95·전체 SDK·HTTP·새 프로세스 재열기는 재실행하지 않았다. 기존8938의 해당 근거를 유지하며 새 수리를 독립 SOURCE_CLEAR로 표시하지 않는다.
+
+## f453 후속: 표준 Markdown 문맥 검증으로 교체
+
+앞선 두 단계의 한계를 보존한다. 8938은 코드/Unicode 줄 구분자의 미지원 계약이 빠져 두P2였고, f453의 선두 문자 세기는 최상위 코드와 R2만 닫았다. Nash의 `cloze-repair-independent-review-f453cbc5-20261029/REVIEW.md` SHA `d2d57e805efbcb73965e9729435477fbe037837d6bc64e0745d4c39ad57de16c`는 인용/목록 내부의 실제 codeBlock5문맥을 새로 재현했다. 위164와 Model SDK 결과는 f453 시점의 역사적 근거이며 전체 코드 문맥 수용으로 고치지 않는다. 원WT/원보고서/반례/영수증은 그대로 보존한다.
+
+이번은 정확 f453에서 새 `codex/ipad-cloze-markdown-context-20261029` WT를 만들고 제품 Model 한 파일의 공통 `clozes()`만 수정한다. 공백/탭 접두어 계수와 backtick/tilde의 전체 문자열 거부를 제거했다. Foundation `AttributedString(markdown:options:)`의 full Markdown parser를 검증에만 사용한다. 읽기 전용 파싱 결과에서 c1 표식 구간의 `inlinePresentationIntent.code` 또는 `presentationIntent.codeBlock`을 확인하며, 인용·목록·중첩 문맥 해석은 플랫폼이 담당한다. 다른 구간의 무관한 코드 때문에 일반 c1을 막지 않는다.
+
+원본의 엄격한 c1 문법·newline 검사 뒤, 파싱된 속성 문자열에서도 동일 개수의 c1 시작/종료 표식을 찾고 각 구간의 runs만 검사한다. 표식이 사라지거나 늘어난 모호한 파싱 결과·파싱 실패는 기존 안내로 거부한다. 이 파싱 결과는 표시/저장/field 값으로 되쓰지 않는다. raw 원문·원래 token NSRange·front/back·metadata와 기존 가림 투영은 그대로다. HTML 주석의 기존 미지원 거부와 R2 `CharacterSet.newlines`도 유지한다. HTML/모든 Anki/모든 Markdown 문법의 지원 선언은 아니다.
+
+초기 Foundation 적용에서는 code run의 sourcePosition을 원문 범위로 변환했다. 실제 SDK에서 NSRange 직접 변환은 시작 글자만 반환하는 사례가 있었고, String.Index Range 변환을 사용해도 무관한 들여쓰기 코드의 일부 끝 위치는 매핑되지 않아 정상 c1을 거부했다. 이 시도·probe·실패 출력은 전용 evidence에 남겼다. 최종 구현은 sourcePosition 범위 추정을 제거하고 파싱된 표식 구간의 실제 attributes를 검사한다. 원문을 trim·접두어 삭제·재직렬화하는 보정은 하지 않았다.
+
+`Tests/checks/obsidian-review-cards/run.py <승인 출력> --markdown-context`는 기존 실행기의 순수 Model 분기를 추가한 것이다. 실제 `CanvasModel.swift`와 좁은 main만 컴파일하고 Store·HTTP·원95·전체 SDK를 실행하지 않는다. 원5반례와 정상 인용/목록·중첩 목록·일반 c1/평문·무관한 inline/fenced/들여쓰기 코드·payload 내부 inline code 및 R2 newline 재발을 대조한다. 동일 Nash9입력 main도 바이트를 바꾸지 않고 수리 전후에 실행한다. 필요한 SDK는 변경 Model 하나를 기존 최소 iOS17 대상으로 typecheck하며 앱/Store/UI 결합 수용으로 확대하지 않는다.
+
+Pstack Bug fix/how의 원반례→원인 교체→동일 입력 검증을 따르며 Ponytail은 플랫폼 Markdown parser·AttributedString range/runs를 재사용한다. 더 많은 접두어 분기·새 Markdown 엔진·새 의존성을 만들지 않는다. exact f453/전용 WT/storage-route 확인 후 원반례/모델 검사와 Model SDK는 병렬 읽기로 진행하며, 공유 변경은 Model 한 파일로 제한한다. 부모 cad 고정 입력·합본·공식 integration은 수정하지 않는다. 독립 재검수·실기기·전체 수용은 별도다.
+
+최종 writer 결과는 수정 없는 Nash main9입력의 전후 대조에서 코드 우회5개 모두 표시/평가/새 지정 true→false, 정상3대조는 true 유지다. 별도 순수 Model24개 Markdown 문맥과 R2 newline8입력은122확인/실패0이다. 무관한 inline/fenced/들여쓰기 코드는 정상 c1을 막지 않으며, c1 payload 안의 inline code는 거부한다. 변경 Model 한 파일의 iOS27 SDK·최소 배포대상 iOS17 typecheck도0이다. Store/원95/전체 SDK/HTTP/GUI/기기/설치는 재실행하지 않았다. 앞선 sourcePosition 시도의3개 정상 대조 실패와 API 호출 컴파일 오류는 원시 로그에 남기고 최종 성공과 구분한다. 최종 Git 입력 SHA·원근거 보존·정확 커밋/트리는 전용 FINAL-RECEIPT.json으로 반환한다.

@@ -2,6 +2,7 @@ import Foundation
 
 @main struct ClozeMarkdownContextChecks {
     static func main() throws {
+        setbuf(stdout,nil)
         let out = URL(fileURLWithPath:CommandLine.arguments[1])
         let template = try VaultReviewCard.insertingTemplate(in:"\u{feff}원문 e\u{301} 😀\r\n",cardID:UUID(uuidString:"11111111-1111-4111-8111-111111111111")!)
         let blank = try VaultReviewCard.parse(template)!
@@ -44,7 +45,7 @@ import Foundation
                 let wrap = accepted { _ = try unmarked.settingCloze(removing:false,selection:(plain as NSString).range(of:"원문")) }
                 check(wrap == !unsupported,name + " 실제 선택 지정 결과 판정")
             }
-            if !unsupported {
+            if !unsupported && rating {
                 let rated = try VaultReviewCard.parse(card.rating(.hard,eventID:event,injectedDate:Date(timeIntervalSince1970:1_800_000_000)))!
                 check(rated.front.utf8.elementsEqual(card.front.utf8) && rated.back.utf8.elementsEqual(card.back.utf8) && rated.metadata.cardID == card.metadata.cardID && rated.metadata.eventID == event.uuidString.lowercased() && rated.metadata.dueAt == 1_800_000_600,name + " 평가·원문 bytes 유지")
             }

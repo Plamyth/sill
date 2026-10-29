@@ -1067,16 +1067,7 @@ struct VaultReviewCard {
     private func clozes() throws -> [Cloze] {
         let text = self.text(for:.front), ns = text as NSString
         if text.contains("{{") || text.contains("}}") {
-            guard !text.contains("`"), !text.contains("~~~"), !text.contains("<!--") else { throw VaultReviewError.cloze }
-            for line in text.components(separatedBy:.newlines) where line.contains("{{") || line.contains("}}") {
-                var columns = 0
-                for character in line {
-                    if character == " " { columns += 1 }
-                    else if character == "\t" { columns += 4 - columns % 4 }
-                    else { break }
-                }
-                guard columns < 4 else { throw VaultReviewError.cloze }
-            }
+            guard !text.contains("<!--") else { throw VaultReviewError.cloze }
         }
         var tokens = [Cloze](), cursor = 0
         while cursor < ns.length {
@@ -1098,6 +1089,21 @@ struct VaultReviewCard {
                   !value.unicodeScalars.contains(where:CharacterSet.newlines.contains) else { throw VaultReviewError.cloze }
             let range = NSRange(location:open.location,length:NSMaxRange(close) - open.location)
             tokens.append(Cloze(range:range,content:content)); cursor = NSMaxRange(range)
+        }
+        if !tokens.isEmpty {
+            guard let markdown = try? AttributedString(markdown:text,options:.init(interpretedSyntax:.full,
+                failurePolicy:.throwError)) else { throw VaultReviewError.cloze }
+            var position = markdown.startIndex
+            for _ in tokens {
+                guard let start = markdown[position..<markdown.endIndex].range(of:"{{c1::",options:.literal),
+                      let end = markdown[start.upperBound..<markdown.endIndex].range(of:"}}",options:.literal) else { throw VaultReviewError.cloze }
+                for run in markdown[start.lowerBound..<end.upperBound].runs {
+                    let block = run.presentationIntent?.components.contains { if case .codeBlock = $0.kind { return true }; return false } ?? false
+                    guard !block, run.inlinePresentationIntent?.contains(.code) != true else { throw VaultReviewError.cloze }
+                }
+                position = end.upperBound
+            }
+            guard markdown[position..<markdown.endIndex].range(of:"{{c1::",options:.literal) == nil else { throw VaultReviewError.cloze }
         }
         return tokens
     }
