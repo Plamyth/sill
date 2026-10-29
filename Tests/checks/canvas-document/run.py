@@ -7,6 +7,8 @@ p = argparse.ArgumentParser()
 p.add_argument('--output', type=Path, required=True)
 p.add_argument('--sdk-check', action='store_true')
 p.add_argument('--store', action='store_true', help='실제 단일 Document Store/Files 제품 경로')
+p.add_argument('--store-r1', action='store_true', help='DOC-STORE-R1 원본 전환 보존 회귀')
+p.add_argument('--store-r1-review', type=Path, help='DOC-STORE-R1 검수 폴더; dirty-open만 대조')
 p.add_argument('--repairs', type=Path, help='DOC-R1/R2/R3 독립 검수 근거 폴더')
 p.add_argument('--storage-reuse', action='store_true')
 a = p.parse_args()
@@ -52,10 +54,10 @@ commands=[('compile',['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e
 if a.sdk_check:
     ios=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
     commands.append(('ios27-unit-typecheck',['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'ios-modules','-typecheck',*sources]))
-if a.store:
-    assert not a.repairs and not a.storage_reuse
+if a.store or a.store_r1:
+    assert not a.repairs and not a.storage_reuse and not (a.store and a.store_r1)
     sources += [canvas/(n+'.swift') for n in ['CanvasStore','VaultPDFExcerpt','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection']]
-    sources += [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('store.swift')]
+    sources += [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('transition.swift' if a.store_r1 else 'store.swift')]
     protocol = root/'Sources/StreamProtocol/TestDestinations.swift'
     ios_sources = sorted(canvas.glob('*.swift')) + [root/'iOSClient'/(n+'.swift') for n in ['IPadAudioSession','IPadAudioLeaseState','IPadAudioLeaseCoordinator']] + [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
     inputs += sources + [protocol,canvas/'PencilCanvas.swift',canvas/'CanvasWorkspace.swift'] + (ios_sources if a.sdk_check else [])
@@ -79,6 +81,26 @@ if a.store:
         iosbase = ['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-module-cache-path',out/'ios-modules']
         commands += [('ios-protocol',iosbase+['-emit-module','-module-name','StreamProtocol',protocol,'-emit-module-path',out/'ios/StreamProtocol.swiftmodule']),('ios27-store-ui-typecheck',iosbase+['-parse-as-library','-I',out/'ios','-typecheck',*ios_sources])]
 
+
+if a.store_r1:
+    review = a.store_r1_review
+    assert review
+    review_inputs = [review/'Cases-v2.swift',review/'result.json',review/'retry-v2/dirty-open/observations.json']
+    r1_review_hashes = {str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in review_inputs}
+    before_probe = json.loads(review_inputs[2].read_text()); assert before_probe['counterexample']
+    def r1_case(name,executable,extra):
+        target=out/name; target.mkdir()
+        case_id=str(uuid.uuid4()); case_state=support/'CCRIntegrationTests'/case_id/'state'; case_state.mkdir(parents=True)
+        (case_state.parent/'context.json').write_text(json.dumps(dict(schema='ccr.ipad-test-context/v1',id=case_id,commit=commit,tree=tree,relayAddress='http://192.168.88.88:4242',token='own-document-fixture-01234567890123456789')))
+        return (name,[executable,target,*extra,'--ccr-test-runtime',case_id])
+    probe_sources=sources[:-1]+[review/'Cases-v2.swift']
+    commands = [row for row in commands if row[0] != 'native-store']
+    split=next(i for i,row in enumerate(commands) if row[0]=='project-plist')
+    extra=[('compile-review-dirty-open',base+['-I',out,*probe_sources,out/'StreamProtocol.o','-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',info,'-o',out/'review-check'])]
+    extra += [r1_case('review-dirty-open',out/'review-check',['dirty-open'])]
+    extra += [r1_case('r1-'+case,out/'store-check',[case]) for case in ['dirty-bound','clean-bound','unbound','external-conflict','read-failure','cancel','target-failure','raw-import']]
+    commands[split:split]=extra
+
 if a.repairs:
     (out/'repair').mkdir()
     commands += [
@@ -101,7 +123,13 @@ for name,cmd in commands:
     results.append(dict(name=name,exitCode=r.returncode,command=list(map(str,cmd))))
     if r.returncode: break
 after=hashes()
-if a.store:
+r1_comparison={}
+if a.store_r1 and (out/'review-dirty-open/observations.json').exists():
+    after_probe=json.loads((out/'review-dirty-open/observations.json').read_text())
+    assert before_probe['counterexample'] and not after_probe['counterexample'] and after_probe['dirtyInOldFiles']
+    assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in r1_review_hashes.items())
+    r1_comparison=dict(before=before_probe,after=after_probe,reviewInputHashes=r1_review_hashes)
+if a.store or a.store_r1:
     assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())
 comparison={}
 if a.repairs and (out/'repair/repair-observations.json').exists():
@@ -123,7 +151,7 @@ if a.storage_reuse and (out/'storage-after/storage-observations.json').exists():
     assert old['normal']['baseDirectoryCreated'] and not new['normal']['baseDirectoryCreated']
     assert new['normal']['deltaBytes'] < old['normal']['deltaBytes']
     storage=dict(before=old,after=new,baselineFilesSHA256=baseline_sha,baselineCommit='782978d7bc574080ae72fd9ebd48b5699473f0ea')
-record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)) and (not a.storage_reuse or bool(storage)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=True,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,storageComparison=storage,normalFixturesUnchanged=(not a.store or all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())),StoreIntegrated=a.store,pairedRelay=False,UIWriteEnabled=a.store,UIExecuted=False,UIAccepted=False,installation=False,wholeProductAccepted=False)
+record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)) and (not a.storage_reuse or bool(storage)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=(not a.store_r1),previewFixture=(a.store or a.store_r1),controlledCallbackContinuation=a.store_r1,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,storageComparison=storage,storeR1Comparison=r1_comparison,normalFixturesUnchanged=(not (a.store or a.store_r1) or all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())),StoreIntegrated=(a.store or a.store_r1),pairedRelay=False,UIWriteEnabled=(a.store or a.store_r1),UIExecuted=False,UIAccepted=False,installation=False,wholeProductAccepted=False)
 (out/'result.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')
 print('RECEIPT',out/'result.json',flush=True)
 raise SystemExit(0 if record['passed'] else 1)

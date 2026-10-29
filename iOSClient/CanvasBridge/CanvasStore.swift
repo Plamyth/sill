@@ -3576,8 +3576,23 @@ final class CanvasStore: ObservableObject {
             guard !latest.publicationPending, latest.token == binding.token else { throw CanvasDocumentFiles.Failure.conflict }
         }
     }
+    private func checkpointCurrentDocumentForReplacement() throws {
+        guard isDocumentSource, !documentBusy else { return }
+        try writeDocumentSource(document,binding:documentFileBinding)
+    }
+    private func requireCurrentDocumentPreserved() throws {
+        guard isDocumentSource else { return }
+        guard let files = documentFiles, let binding = documentFileBinding,
+              binding.id == document.id, try CanvasPacket.sha(document.bytes()) == binding.savedSHA else {
+            throw CanvasDocumentFiles.Failure.pending
+        }
+        let reopened = try files.load(document.id)
+        guard !reopened.publicationPending, reopened.token == binding.token,
+              reopened.document == document else { throw CanvasDocumentFiles.Failure.conflict }
+    }
     private func writeDocumentSource(_ next: CanvasDocument, binding: DocumentFileBinding?, sync: DocumentSyncState? = nil) throws {
         try next.validate()
+        if isDocumentSource, next.id != document.id { try requireCurrentDocumentPreserved() }
         let state = DocumentSourceState(schema:"ccr.canvas-document-source/v1",kind:.document,document:next,binding:binding,sync:sync ?? documentSync.flatMap { $0.id == next.id ? $0 : nil })
         let bytes = try JSONEncoder().encode(state)
         guard bytes.count <= CanvasDocument.byteLimit + CanvasDocumentRelay.conflictLimit + 1024*1024 else { throw CanvasDocument.Failure.tooLarge }
@@ -3650,18 +3665,22 @@ final class CanvasStore: ObservableObject {
         installingDocument = false
         saveTask?.cancel()
     }
-    private func documentPreviews(_ next: CanvasDocument, owner: CanvasDocument.PageSnapshot) async throws -> [UUID:Data] {
+    private func documentStorageInputsClear(recoveringFiles: Bool) -> Bool {
+        documentInputsClear || (recoveringFiles && isDocumentSource && !documentSyncHeld &&
+            !documentPresentationBusy && documentRecoveryInputsClear(recoveringFiles:true))
+    }
+    private func documentPreviews(_ next: CanvasDocument, owner: CanvasDocument.PageSnapshot, recoveringFiles: Bool = false) async throws -> [UUID:Data] {
         var result: [UUID:Data] = [:]
         for page in next.pages {
-            guard let png = await filePreview?(page), document.accepts(owner), documentInputsClear, !Task.isCancelled else { throw CanvasDocument.Failure.stale }
+            guard let png = await filePreview?(page), document.accepts(owner), documentStorageInputsClear(recoveringFiles:recoveringFiles), !Task.isCancelled else { throw CanvasDocument.Failure.stale }
             result[page.id] = png
         }
         return result
     }
     private func savedDocument(_ next: CanvasDocument, files: CanvasDocumentFiles, bookmark: Data,
-                               expected: String?, owner: CanvasDocument.PageSnapshot) async throws -> DocumentFileBinding {
-        let previews = try await documentPreviews(next,owner:owner)
-        guard document.accepts(owner), documentInputsClear else { throw CanvasDocument.Failure.stale }
+                               expected: String?, owner: CanvasDocument.PageSnapshot, recoveringFiles: Bool = false) async throws -> DocumentFileBinding {
+        let previews = try await documentPreviews(next,owner:owner,recoveringFiles:recoveringFiles)
+        guard document.accepts(owner), documentStorageInputsClear(recoveringFiles:recoveringFiles) else { throw CanvasDocument.Failure.stale }
         try checkDocumentRecoveryJournals()
         let readback = try files.save(next,previews:previews,expected:expected)
         guard readback.document == next, !readback.publicationPending else { throw CanvasDocumentFiles.Failure.publicationUnconfirmed }
@@ -3677,12 +3696,32 @@ final class CanvasStore: ObservableObject {
         try installDocument(next,binding:nil,preservingHistory:false)
         documentFileReady = false; fileWorkspaceStatus = "새 전체 문서 복구본 · Files 원본 저장 위치를 선택하세요."
     }
+    private func preserveDocumentBeforeOpening(owner: CanvasDocument.PageSnapshot, request: UUID) async throws {
+        guard isDocumentSource else { return }
+        guard let files = documentFiles, let prior = documentFileBinding else { throw CanvasDocumentFiles.Failure.pending }
+        let source = document, sha = CanvasPacket.sha(try source.bytes())
+        let reopened = try files.load(source.id)
+        guard !reopened.publicationPending, reopened.token == prior.token else { throw CanvasDocumentFiles.Failure.conflict }
+        if sha != prior.savedSHA {
+            let saved = try await savedDocument(source,files:files,bookmark:prior.bookmark,expected:prior.token,owner:owner)
+            guard documentRequest == request, documentRequestPresentationEpoch == documentPresentationEpoch,
+                  document.accepts(owner), !Task.isCancelled else { throw CanvasDocument.Failure.stale }
+            try writeDocumentSource(source,binding:saved)
+            documentFileBinding = saved
+        }
+        try requireCurrentDocumentPreserved()
+        documentFileReady = true
+        fileWorkspaceStatus = "현재 문서 전체를 원래 Files에서 재열어 보존을 확인했습니다."
+    }
     func connectDocumentWorkspace(_ folder: URL, opening id: UUID? = nil) async {
         do {
-            try documentBarrierCheck()
+            // 거부·충돌에서도 현재 전체 입력은 먼저 남긴다. 캐시만으로 교체를 승인하지는 않는다.
+            try checkpointCurrentDocumentForReplacement()
+            try documentBarrierCheck(checkFiles:false,recoveringFiles:isDocumentSource && id == nil)
             let owner = try document.pageSnapshot(), request = UUID()
             documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
+            if !isDocumentSource { try persistScene() }
             if documentRequiresScope, let own = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first?.deletingLastPathComponent() {
                 let selected = folder.resolvingSymlinksInPath().standardizedFileURL.path, app = own.resolvingSymlinksInPath().standardizedFileURL.path
                 guard selected != app, !selected.hasPrefix(app + "/") else { throw CanvasFileWorkspace.Failure.sandboxFolder }
@@ -3695,9 +3734,7 @@ final class CanvasStore: ObservableObject {
             #else
             let bookmark = try folder.bookmarkData(options:.minimalBookmark,includingResourceValuesForKeys:nil,relativeTo:nil)
             #endif
-            if isDocumentSource, documentFileBinding == nil, id != nil { throw CanvasDocumentFiles.Failure.pending }
-            if isDocumentSource { try writeDocumentSource(document,binding:documentFileBinding) }
-            else { try persistScene() }
+            if id != nil { try await preserveDocumentBeforeOpening(owner:owner,request:request) }
             let files = CanvasDocumentFiles(folder:folder,requiresScope:documentRequiresScope)
             let next: CanvasDocument, binding: DocumentFileBinding
             if let id {
@@ -3708,15 +3745,16 @@ final class CanvasStore: ObservableObject {
                 binding = DocumentFileBinding(bookmark:bookmark,id:next.id,token:snapshot.token,savedSHA:CanvasPacket.sha(try next.bytes()))
             } else {
                 next = document
-                binding = try await savedDocument(next,files:files,bookmark:bookmark,expected:nil,owner:owner)
+                binding = try await savedDocument(next,files:files,bookmark:bookmark,expected:nil,owner:owner,recoveringFiles:isDocumentSource)
             }
-            guard documentRequest == request, document.accepts(owner), !Task.isCancelled else { throw CanvasDocument.Failure.stale }
+            guard documentRequest == request, documentRequestPresentationEpoch == documentPresentationEpoch,
+                  document.accepts(owner), !Task.isCancelled else { throw CanvasDocument.Failure.stale }
             try writeDocumentSource(next,binding:binding)
-            try installDocument(next,binding:binding,preservingHistory:false)
+            if isDocumentSource, next == document { documentFileBinding = binding }
+            else { try installDocument(next,binding:binding,preservingHistory:false) }
             documentFiles = files; documentFileReady = true; sceneReadable = true; fileWorkspaceState = .ready
             fileWorkspaceStatus = "전체 문서 Files 원본 저장·재열기 확인 완료"
         } catch { status = "전체 문서 원본 연결을 완료하지 않았습니다. \(error.localizedDescription)" }
-        documentBusy = false
     }
     func saveDocumentWorkspace() async {
         guard isDocumentSource, documentInputsClear, !documentBusy, !fileSaveBusy, !inkBusy,
@@ -3778,10 +3816,11 @@ final class CanvasStore: ObservableObject {
     }
 
     func returnToLegacySource() throws {
-        try documentBarrierCheck()
-        guard isDocumentSource, documentFileReady, let binding = documentFileBinding,
-              try CanvasPacket.sha(document.bytes()) == binding.savedSHA,
-              let restored = try Self.restoreScene() else { throw CanvasDocumentFiles.Failure.pending }
+        guard isDocumentSource else { throw CanvasDocument.Failure.unsupported }
+        try checkpointCurrentDocumentForReplacement()
+        try documentBarrierCheck(checkFiles:false)
+        try requireCurrentDocumentPreserved()
+        guard isDocumentSource, let restored = try Self.restoreScene() else { throw CanvasDocumentFiles.Failure.pending }
         let previous = scene
         let marker = DocumentSourceState(schema:"ccr.canvas-document-source/v1",kind:.legacy,document:nil,binding:nil)
         try CanvasLocalFile.write(JSONEncoder().encode(marker),to:CanvasRuntime.stateURL(.documentSource))
@@ -3817,12 +3856,12 @@ final class CanvasStore: ObservableObject {
         guard bytes.count <= CanvasDocument.byteLimit,
               let root = try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else { throw CanvasDocument.Failure.invalid }
         if root["format"] != nil || root["pages"] != nil || root["version"] != nil {
-            try documentBarrierCheck()
+            try checkpointCurrentDocumentForReplacement()
+            try documentBarrierCheck(checkFiles:false)
             let next = try CanvasDocument.decode(bytes)
-            if isDocumentSource { guard documentFileReady else { throw CanvasDocumentFiles.Failure.pending } }
+            if isDocumentSource { try requireCurrentDocumentPreserved() }
             else { try persistScene() }
             // 다른 문서로 진입한다. 기존 Files 원본과 구 scene 캐시는 수정하지 않는다.
-            documentSync = nil
             try writeDocumentSource(next,binding:nil)
             try installDocument(next,binding:nil,preservingHistory:false)
             documentFiles = nil; documentFileReady = false
