@@ -53,7 +53,7 @@ if a.sdk_check:
     ios=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
     commands.append(('ios27-unit-typecheck',['xcrun','swiftc','-D','DEBUG','-sdk',ios,'-target','arm64-apple-ios27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'ios-modules','-typecheck',*sources]))
 if a.store:
-    assert not a.repairs
+    assert not a.repairs and not a.storage_reuse
     sources += [canvas/(n+'.swift') for n in ['CanvasStore','VaultPDFExcerpt','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection']]
     sources += [root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('store.swift')]
     protocol = root/'Sources/StreamProtocol/TestDestinations.swift'
@@ -64,6 +64,10 @@ if a.store:
     info = out/'Info.plist'; info.write_bytes(plistlib.dumps(metadata))
     identity = str(uuid.uuid4())
     support = out/'home/Library/Application Support'
+    protected = {}
+    for name in ['CanvasScene.json','CanvasDocumentSource.json','CanvasWorkspace/bookmark.json','CanvasConflictRecovery/CanvasConflictChoice.json']:
+        path = support/name; path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(('normal sentinel '+name).encode()); protected[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     state = support/'CCRIntegrationTests'/identity/'state'; state.mkdir(parents=True)
     (state.parent/'context.json').write_text(json.dumps(dict(schema='ccr.ipad-test-context/v1',id=identity,commit=commit,tree=tree,relayAddress='http://192.168.88.88:4242',token='own-document-fixture-01234567890123456789')))
     base = ['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-module-cache-path',out/'modules']
@@ -97,6 +101,8 @@ for name,cmd in commands:
     results.append(dict(name=name,exitCode=r.returncode,command=list(map(str,cmd))))
     if r.returncode: break
 after=hashes()
+if a.store:
+    assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())
 comparison={}
 if a.repairs and (out/'repair/repair-observations.json').exists():
     old=json.loads((a.repairs/'native/observations.json').read_text())
@@ -117,7 +123,7 @@ if a.storage_reuse and (out/'storage-after/storage-observations.json').exists():
     assert old['normal']['baseDirectoryCreated'] and not new['normal']['baseDirectoryCreated']
     assert new['normal']['deltaBytes'] < old['normal']['deltaBytes']
     storage=dict(before=old,after=new,baselineFilesSHA256=baseline_sha,baselineCommit='782978d7bc574080ae72fd9ebd48b5699473f0ea')
-record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)) and (not a.storage_reuse or bool(storage)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=True,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,storageComparison=storage,StoreIntegrated=a.store,pairedRelay=False,UIWriteEnabled=False,installation=False,wholeProductAccepted=False)
+record=dict(commit=commit,tree=tree,sourceHashes=before,sourceHashesAfter=after,sourceUnchanged=before==after,results=results,output=str(out),passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and review_before==review_hashes() and (not a.repairs or bool(comparison)) and (not a.storage_reuse or bool(storage)),actualPKDrawing=True,actualNativeFiles=True,injectedFailureHooks=True,reviewHashesBefore=review_before,reviewHashesAfter=review_hashes(),repairComparison=comparison,storageComparison=storage,normalFixturesUnchanged=(not a.store or all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in protected.items())),StoreIntegrated=a.store,pairedRelay=False,UIWriteEnabled=a.store,UIExecuted=False,UIAccepted=False,installation=False,wholeProductAccepted=False)
 (out/'result.json').write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')
 print('RECEIPT',out/'result.json',flush=True)
 raise SystemExit(0 if record['passed'] else 1)

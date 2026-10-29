@@ -190,7 +190,10 @@ struct CanvasWorkspace: View {
         .background(Color.black)
         .preferredColorScheme(.dark)
         .sheet(item:canvasEditorBinding,onDismiss:{ synchronizeCanvasEditorSheet() }) { canvasEditorContent($0) }
-        .onChange(of:documentUIBusy,initial:true) { _,busy in store.documentPresentationBusy = busy }
+        .onChange(of:documentUIBusy,initial:true) { _,busy in
+            store.documentPresentationBusy = busy
+            if !busy && store.isDocumentSource && !store.documentEditingBlocked { store.saveNow() }
+        }
         .onChange(of:requestedCanvasEditors,initial:true) { _,_ in synchronizeCanvasEditorSheet() }
         .onChange(of:canPresentCanvasConflict) { _,allowed in if !allowed { advanceCanvasConflictEpoch() } }
         .onChange(of:canPresentRenderedExport) { _,allowed in if !allowed { cancelRenderedExportPreparation() } }
@@ -298,7 +301,7 @@ struct CanvasWorkspace: View {
         .sheet(isPresented:$workspaceDocumentsOpen) {
             NavigationStack {
                 List {
-                    Text("열기 전 현재 그림은 미저장 복구본으로 보존합니다. 원본의 current.json이 가리키는 세대를 엽니다.")
+                    Text(documentFilesMode ? "전체 페이지를 검증한 원본 문서만 엽니다. 한 장 그림 목록과 별도 진입입니다." : "열기 전 현재 그림은 미저장 복구본으로 보존합니다. 원본의 current.json이 가리키는 세대를 엽니다.")
                     if workspaceDocumentIDs.isEmpty { Text("이 폴더에 CCR Sill 원본이 없습니다. 현재 그림 안전 내보내기로 먼저 저장하세요.") }
                     ForEach(workspaceDocumentIDs,id:\.self) { id in
                         Button(id.uuidString.lowercased() + ".sill") {
@@ -309,7 +312,7 @@ struct CanvasWorkspace: View {
                         }
                     }
                 }
-                .navigationTitle("Files 원본 열기")
+                .navigationTitle(documentFilesMode ? "전체 문서 원본 열기" : "한 장 Files 원본 열기")
                 .toolbar { ToolbarItem(placement:.cancellationAction) {
                     Button("취소") { workspaceDocumentsOpen = false }
                 } }
@@ -401,14 +404,14 @@ struct CanvasWorkspace: View {
                         .buttonStyle(.borderedProminent)
                         .tint(store.mode == mode ? .blue : .gray)
                 }
-                CanvasInkHistoryButtons(history: store.inkHistory)
+                CanvasInkHistoryButtons(history: store.inkHistory).disabled(store.documentEditingBlocked)
                 toolsMenu
                 inboxLabel
                 sendButton
             }.fixedSize(horizontal:true,vertical:false)
             HStack(spacing:8) {
                 toolsMenu
-                CanvasInkHistoryButtons(history: store.inkHistory).labelStyle(.iconOnly)
+                CanvasInkHistoryButtons(history: store.inkHistory).disabled(store.documentEditingBlocked).labelStyle(.iconOnly)
                 inboxLabel
                 Spacer(minLength:0)
                 sendButton.labelStyle(.iconOnly)
@@ -446,6 +449,8 @@ struct CanvasWorkspace: View {
                     Button("전체 문서 외부 변경 확인") { store.refreshDocumentWorkspace() }.disabled(store.documentEditingBlocked)
                     Button("기존 한 장 그림으로 돌아가기") { do { try store.returnToLegacySource() } catch { store.status = error.localizedDescription } }.disabled(!store.canTransitionDocument || !store.documentFileReady)
                     if store.documentSyncHeld {
+                        Button("미확인 문서 저장 · 전체 원본 재확인") { Task { await store.confirmDocumentAcknowledgement(relay) } }
+                            .disabled(documentUIBusy || store.documentBusy || store.inkBusy)
                         Button("문서 충돌 비교·명시 조정") {
                             Task { await store.readDocumentConflict(relay); if store.documentConflict != nil { documentConflictOpen = true } }
                         }.disabled(documentUIBusy || store.documentBusy || store.inkBusy)
@@ -460,7 +465,7 @@ struct CanvasWorkspace: View {
             Button("Obsidian 노트",systemImage:"doc.text") {
                 vaultOpen = true
                 Task { await loadVaultEntries() }
-            }
+            }.disabled(store.documentEditingBlocked)
             Divider()
             Picker("그리기 도구",selection:$store.mode) {
                 ForEach(CanvasMode.allCases,id:\.self) { Text($0.rawValue).tag($0) }
@@ -590,7 +595,7 @@ struct CanvasWorkspace: View {
                     }
                 }.padding()
             }.navigationTitle("문서 충돌 비교")
-            .toolbar { ToolbarItem(placement:.cancellationAction) { Button("닫기") { dismissCanvasEditorSheet() } } }
+            .toolbar { ToolbarItem(placement:.cancellationAction) { Button("닫기") { dismissCanvasEditorSheet() }.disabled(store.documentBusy) } }
             .confirmationDialog("비교한 전체 문서로 조정할까요?",isPresented:$documentConflictConfirm,titleVisibility:.visible) {
                 if let decision = documentDecision {
                     Button("선택한 전체 문서로 조정") {
@@ -614,7 +619,7 @@ struct CanvasWorkspace: View {
     }
 
     private var canPresentRenderedExport: Bool {
-        !store.hasPendingInkProposal && store.proposedNode == nil && !inkSpacingOpen && !inkTextDeleteOpen &&
+        !store.documentEditingBlocked &&         !store.hasPendingInkProposal && store.proposedNode == nil && !inkSpacingOpen && !inkTextDeleteOpen &&
         !proposalInputBusy && !store.cardTagInputBusy && !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen &&
         !connectionOpen && !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen &&
         !handwritingSearchOpen && expandedCard == nil && canvasEditorSheet == nil
@@ -1868,14 +1873,17 @@ struct CanvasWorkspace: View {
     }
 
     private var diagram: some View {
-        VStack(alignment:.leading,spacing:8) {
+        let owner = try? store.document.pageSnapshot()
+        return VStack(alignment:.leading,spacing:8) {
             Text("같은 구조 데이터의 자동 배치 · 원본 획 위치는 유지됩니다.").font(.caption)
             Text("자유그림의 자동 의미 해석은 미지원입니다. 요소를 누르면 기존 편집기로 연결됩니다.")
                 .font(.caption).foregroundStyle(.secondary)
             CanvasPeleView(scene:store.cardTagDisplayScene,selectedNode:store.selectedNode,onSelect:{ id in
+                guard !store.documentEditingBlocked, owner.map(store.document.accepts) == true else { return }
                 store.selectedNode = id
                 inspectorOpen = true
-            },onError:{ store.status = $0 })
+            },onError:{ if owner.map(store.document.accepts) == true { store.status = $0 } })
+            .id(store.isDocumentSource ? "\(store.document.id):\(store.document.pageEpoch)" : store.scene.id.uuidString)
         }.padding(8)
     }
 

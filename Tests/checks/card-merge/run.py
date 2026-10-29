@@ -28,7 +28,7 @@ env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer
            CFFIXED_USER_HOME=str(out / 'home'), TMPDIR=str(out / 'tmp') + '/')
 canvas = root / 'iOSClient/CanvasBridge'
 sources = [canvas / (name + '.swift') for name in [
-    'CanvasModel', 'VaultPDFExcerpt', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
+    'CanvasModel', 'CanvasDocument', 'CanvasDocumentFiles', 'CanvasDocumentRelay', 'VaultPDFExcerpt', 'CanvasCardTags', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
     'CanvasInkMathProposal', 'CanvasInkSpacingProposal', 'CanvasCardMerge', 'CanvasRelay', 'ControlRoomProjection'
 ]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / 'main.swift']
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'

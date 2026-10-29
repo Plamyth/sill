@@ -75,6 +75,14 @@ final class CanvasInkHistory: ObservableObject {
         }
         scheduleRefresh(); return value.manager
     }
+    func invalidateDocument(_ id: UUID) {
+        for (key,value) in histories where key.documentMode && key.documentID == id {
+            value.manager.removeAllActions()
+            let fresh = UUID(); histories[key] = (value.manager,fresh)
+            if owner == key { generation = fresh }
+        }
+        scheduleRefresh()
+    }
     func detach(_ manager: UndoManager) {
         guard self.manager === manager else { return }
         invalidate()
@@ -236,6 +244,7 @@ final class CanvasStore: ObservableObject {
     @discardableResult
     func setPenSettings(_ change: CanvasPenSettingsChange, sceneID: UUID,
                         baseRevision: Int) throws -> CanvasPenSettingsResult {
+        guard !documentEditingBlocked else { throw CanvasPenSettingsError.persistenceFailed }
         var next = scene
         let result = try next.setPenSettings(change, sceneID: sceneID, baseRevision: baseRevision, inkBusy: inkBusy)
         guard sceneReadable, let data = Data(base64Encoded: scene.drawingBase64),
@@ -269,7 +278,7 @@ final class CanvasStore: ObservableObject {
 
     var inkShapeIsCurrent: Bool {
         guard let proposal = inkShapeProposal else { return false }
-        return sceneReadable && !inkMathInputBusy && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
+        return !documentEditingBlocked && sceneReadable && !inkMathInputBusy && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked && !vaultDirty && !vaultSaving &&
             !vaultLoading && !vaultInputBusy && !vaultBlockEditing && mode == .lasso && proposal.source == scene &&
             proposal.selection == inkSelection && inkShapeGeneration == linkSceneGeneration &&
             inkShapeExpectedSelectionGeneration == inkShapeSelectionGeneration
@@ -281,7 +290,7 @@ final class CanvasStore: ObservableObject {
         cancelInkShape()
         pendingInkTextEditing?.invalidatePending()
         pendingInkSpacing?.invalidatePending()
-        guard sceneReadable, !fileSaveBusy, fileWorkspaceState != .blocked, !vaultDirty, !vaultSaving,
+        guard !documentEditingBlocked, sceneReadable, !fileSaveBusy, fileWorkspaceState != .blocked, !vaultDirty, !vaultSaving,
               !vaultLoading, !vaultInputBusy, !vaultBlockEditing, !inkBusy, mode == .lasso else { status = "영역 선택 도구로 도형을 먼저 선택하세요."; return }
         do {
             inkShapeProposal = try CanvasInkShapeProposal.make(scene:scene,drawing:drawing,selection:inkSelection)
@@ -326,7 +335,7 @@ final class CanvasStore: ObservableObject {
             inkMathExpectedSelectionGeneration == inkMathSelectionGeneration
     }
     private var inkMathEditAllowed: Bool {
-        sceneReadable && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked &&
+        !documentEditingBlocked && sceneReadable && !inkBusy && !fileSaveBusy && fileWorkspaceState != .blocked &&
             !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing
     }
     func cancelInkMath() { inkMathRequest = nil; inkMathProposal = nil; inkMathInputBusy = false }
@@ -703,6 +712,7 @@ final class CanvasStore: ObservableObject {
     }
 
     var commentIsCurrent: Bool {
+        guard !documentEditingBlocked else { return false }
         guard let session = commentSession, let context = commentContext else { return false }
         return selectedNode == session.node.id && session.matches(scene) &&
             context.sceneGeneration == linkSceneGeneration &&
@@ -937,7 +947,7 @@ final class CanvasStore: ObservableObject {
     @Published private(set) var nodeResizeDrag: NodeResizeDrag?
 
     private func nodeResizeIsCurrent(_ drag: NodeResizeDrag) -> Bool {
-        mode == .select && selectedNode == drag.expected.id &&
+        !documentEditingBlocked && mode == .select && selectedNode == drag.expected.id &&
             drag.generation == linkSceneGeneration && scene.id == drag.sceneID &&
             scene.revision == drag.revision && scene.visibility.nodeIDs.contains(drag.expected.id) &&
             scene.nodes.contains { CanvasScene.sameNode($0,drag.expected) }
@@ -1041,7 +1051,7 @@ final class CanvasStore: ObservableObject {
     @Published private(set) var nodeRotationDrag: NodeRotationDrag?
 
     private func nodeRotationIsCurrent(_ drag: NodeRotationDrag) -> Bool {
-        mode == .select && selectedNode == drag.expected.id &&
+        !documentEditingBlocked && mode == .select && selectedNode == drag.expected.id &&
             drag.generation == linkSceneGeneration && scene.id == drag.sceneID &&
             scene.revision == drag.revision && scene.visibility.nodeIDs.contains(drag.expected.id) &&
             scene.nodes.contains { CanvasScene.sameNode($0,drag.expected) }
@@ -1245,7 +1255,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private func endpointDragIsCurrent(_ drag: EndpointDrag) -> Bool {
-        mode == .select && selectedLink == drag.expected.id && drag.generation == linkSceneGeneration &&
+        !documentEditingBlocked && mode == .select && selectedLink == drag.expected.id && drag.generation == linkSceneGeneration &&
             scene.id == drag.sceneID && scene.revision == drag.revision &&
             scene.links.contains { CanvasScene.sameLink($0,drag.expected) }
     }
@@ -2570,7 +2580,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func refreshVaultNotes(load: (String) async throws -> VaultNoteSnapshot) async {
-        guard !noteToken.isEmpty else { return }
+        guard !documentEditingBlocked, !noteToken.isEmpty else { return }
         let sceneID = scene.id, sceneGeneration = noteSceneGeneration
         let connectionGeneration = noteConnectionGeneration
         let references = scene.nodes.reduce(into:[UUID:VaultNoteReference]()) { result,node in
@@ -2589,7 +2599,7 @@ final class CanvasStore: ObservableObject {
             let readSequence = noteReadSequence
             do {
                 let latest = try await load(path).validated(at:path)
-                guard !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
+                guard !documentEditingBlocked, !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
                       noteConnectionGeneration == connectionGeneration else { return }
                 guard readSequence >= acceptedNoteReads[path,default:0] else { continue }
                 acceptedNoteReads[path] = readSequence
@@ -2619,7 +2629,7 @@ final class CanvasStore: ObservableObject {
                     vaultStatus = "Mac에서도 수정됐습니다. 현재 입력은 보존했으며 자동 덮어쓰기를 중단했습니다."
                 }
             } catch {
-                guard !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
+                guard !documentEditingBlocked, !Task.isCancelled, scene.id == sceneID, noteSceneGeneration == sceneGeneration,
                       noteConnectionGeneration == connectionGeneration else { return }
                 guard readSequence >= acceptedNoteReads[path,default:0] else { continue }
                 var next = scene
@@ -2834,10 +2844,13 @@ final class CanvasStore: ObservableObject {
     private func persistScene(_ candidate: CanvasScene? = nil) throws {
         if isDocumentSource {
             var next = document
-            if let candidate { try next.updateActivePageForEditing(candidate) }
+            if let candidate {
+                guard !documentEditingBlocked else { throw CanvasDocument.Failure.stale }
+                try next.updateActivePageForEditing(candidate)
+            }
             try writeDocumentSource(next,binding:documentFileBinding)
-            documentFileReady = false
-            fileWorkspaceStatus = "전체 문서 복구본 보관 · Files 원본 저장 대기"
+            documentFileReady = documentFileBinding?.savedSHA == CanvasPacket.sha(try next.bytes()) && fileWorkspaceState != .blocked
+            fileWorkspaceStatus = documentFileReady ? "전체 문서 Files 원본 저장 확인 · 동기화 별도" : "전체 문서 복구본 보관 · Files 원본 저장 대기"
             return
         }
         guard sceneReadable else { throw ScenePersistenceError.unreadable }
@@ -2891,6 +2904,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func addNode(_ kind: CanvasNode.Kind) {
+        guard !documentEditingBlocked else { return }
         selectedNode = scene.addNode(kind: kind,
             at: CanvasPoint(x: 700 - pan.width, y: 430 - pan.height),
             text: kind == .box ? "새 요소" : "새 메모")
@@ -2898,6 +2912,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func addSpokenNote(_ text: String) {
+        guard !documentEditingBlocked else { return }
         let trimmed = text.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !trimmed.isEmpty else { status = "저장할 음성 설명이 없습니다."; return }
         selectedNode = scene.addNode(kind:.note,
@@ -2907,6 +2922,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func select(_ id: UUID) {
+        guard !documentEditingBlocked else { return }
         let from = linkStart
         let kind = linkKind
         clearPendingLink()
@@ -2937,6 +2953,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private func beginLink(kind: CanvasLink.Kind) {
+        guard !documentEditingBlocked else { return }
         clearPendingLink()
         guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode) else {
             status = "먼저 연결을 시작할 요소를 선택하세요."
@@ -2961,6 +2978,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func toggleSelectedChildren() {
+        guard !documentEditingBlocked else { return }
         clearPendingLink()
         guard let selectedNode, scene.visibility.nodeIDs.contains(selectedNode),
               scene.toggleChildren(of: selectedNode) else { return }
@@ -2969,6 +2987,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func unlinkFromParent() {
+        guard !documentEditingBlocked else { return }
         clearPendingLink()
         guard let selectedNode, scene.nodes.contains(where:{ $0.id == selectedNode }) else { return }
         let removed = scene.links.contains(where:{ $0.kind == .parentChild && $0.to == selectedNode })
@@ -3000,6 +3019,7 @@ final class CanvasStore: ObservableObject {
         await recognizer.updateDrawing(drawing)
         return await recognizer.recognizedText()
     }) async {
+        guard !documentEditingBlocked else { return }
         let request = UUID()
         handwritingRequest = request
         let sourceDrawing = selectedOnly ? PKDrawing(strokes:drawing.strokes.filter { inkSelection.contains($0.id) }) : drawing
@@ -3150,6 +3170,7 @@ final class CanvasStore: ObservableObject {
         guard !query.isEmpty else { status = "찾을 글자를 입력하세요."; return }
         let source = drawing
         guard !source.strokes.isEmpty else { status = "검색할 획이 없습니다."; return }
+        guard !documentEditingBlocked else { return }
         let request = UUID()
         handwritingRequest = request
         let owner = try? document.pageSnapshot()
@@ -3168,6 +3189,7 @@ final class CanvasStore: ObservableObject {
     }
 
     var proposalIsCurrent: Bool {
+        guard !documentEditingBlocked else { return false }
         guard let context = proposalContext, context.sceneID == scene.id,
               context.generation == noteSceneGeneration, context.node.id == proposedNode else { return false }
         guard let current = scene.nodes.first(where:{ $0.id == context.node.id }) else { return false }
@@ -3314,7 +3336,7 @@ final class CanvasStore: ObservableObject {
         documentConflict = nil; documentCandidates = [:]
     }
     private func documentCurrent(_ owner: CanvasDocument.PageSnapshot, request: UUID, relay: CanvasRelay) -> Bool {
-        documentRequest == request && document.accepts(owner) &&
+        documentRequest == request && documentRequestPresentationEpoch == documentPresentationEpoch && document.accepts(owner) &&
             documentAddress == relay.address && documentToken == relay.token && !Task.isCancelled
     }
     private func documentCurrentCheck(_ owner: CanvasDocument.PageSnapshot, request: UUID, relay: CanvasRelay) -> @Sendable () async -> Bool {
@@ -3357,7 +3379,7 @@ final class CanvasStore: ObservableObject {
                 guard prior.address == relay.address else { throw CanvasDocument.Failure.stale }
                 if prior.localSHA == sha { return }
             }
-            documentRequest = request; documentBusy = true
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             let previews = try await documentPreviews(document,owner:owner)
             guard documentCurrent(owner,request:request,relay:relay) else { throw CanvasDocument.Failure.stale }
@@ -3381,7 +3403,7 @@ final class CanvasStore: ObservableObject {
         do {
             try documentBarrierCheck()
             let owner = try document.pageSnapshot()
-            documentRequest = request; documentBusy = true
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             let received = try await relay.vaultDocument(id:document.id,isCurrent:documentCurrentCheck(owner,request:request,relay:relay))
             guard documentCurrent(owner,request:request,relay:relay) else { throw CanvasDocument.Failure.stale }
@@ -3394,6 +3416,34 @@ final class CanvasStore: ObservableObject {
             documentSyncStatus = "문서 전체 역수신을 적용하지 않았습니다. " + error.localizedDescription
         }
     }
+    /// 사용자가 직접 누른 읽기 재확인이다. 서버 미조정 journal은 typed GET 거부로 그대로 유지한다.
+    func confirmDocumentAcknowledgement(_ relay: CanvasRelay) async {
+        guard isDocumentSource, documentSyncHeld, !documentBusy, !inkBusy, !documentPresentationBusy,
+              let intent = documentSync, intent.address == relay.address, let binding = documentFileBinding,
+              let proposal = intent.proposalBinding, proposal.id == binding.id, proposal.token == binding.token,
+              proposal.savedSHA == binding.savedSHA, let files = documentFiles else { return }
+        let request = UUID()
+        do {
+            try documentBarrierCheck(reconciling:true)
+            let owner = try document.pageSnapshot(), before = try files.load(document.id)
+            guard !before.publicationPending, before.token == binding.token, before.document == document else { throw CanvasDocumentFiles.Failure.conflict }
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
+            defer { if documentRequest == request { documentBusy = false } }
+            let received = try await relay.vaultDocument(id:document.id,isCurrent:documentCurrentCheck(owner,request:request,relay:relay))
+            guard documentCurrent(owner,request:request,relay:relay), received.document == document,
+                  received.previews == before.previews else { throw CanvasDocument.Failure.stale }
+            let after = try files.load(document.id)
+            guard !after.publicationPending, after.token == before.token, after.document == before.document,
+                  after.previews == before.previews else { throw CanvasDocumentFiles.Failure.conflict }
+            let checkpoint = DocumentSyncState(schema:intent.schema,id:document.id,address:relay.address,phase:.synchronized,
+                base:received.summary.base,localSHA:CanvasPacket.sha(try document.bytes()))
+            try writeDocumentSource(document,binding:binding,sync:checkpoint); documentSync = checkpoint
+            documentSyncStatus = "사용자가 서버 전체 원본과 모든 페이지 자산의 일치를 재확인했습니다. 새 쓰기는 보내지 않았습니다."
+        } catch {
+            guard documentRequest == request else { return }
+            documentSyncStatus = "미확인 상태를 유지합니다. 전체 원본 재확인: " + error.localizedDescription
+        }
+    }
     // 사용자가 비교를 열었을 때만 읽는다. 409/같은 SHA/재실행 자체로 barrier를 해제하지 않는다.
     func readDocumentConflict(_ relay: CanvasRelay) async {
         guard isDocumentSource, documentSyncHeld, !documentBusy, !inkBusy, !documentPresentationBusy,
@@ -3401,7 +3451,7 @@ final class CanvasStore: ObservableObject {
         let request = UUID()
         do {
             let owner = try document.pageSnapshot()
-            documentRequest = request; documentBusy = true
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             let current = documentCurrentCheck(owner,request:request,relay:relay)
             let conflict = try await relay.vaultDocumentConflict(id:document.id,isCurrent:current)
@@ -3426,11 +3476,12 @@ final class CanvasStore: ObservableObject {
               let binding = documentFileBinding else { return }
         let request = UUID()
         do {
+            try documentBarrierCheck(reconciling:true)
             let latest = try files.load(document.id)
             guard !latest.publicationPending, latest.token == binding.token,
                   latest.document == document else { throw CanvasDocumentFiles.Failure.conflict }
             let owner = try document.pageSnapshot()
-            documentRequest = request; documentBusy = true
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             intent.phase = .resolving; intent.operationID = intent.operationID ?? UUID(); intent.decision = decision
             try writeDocumentSource(document,binding:binding,sync:intent); documentSync = intent
@@ -3459,7 +3510,9 @@ final class CanvasStore: ObservableObject {
     // 저장 재사용 ded8020의 독립 SOURCE_CLEAR와 공식486 통합을 전제로 한 제품 진입이다.
     @Published private(set) var documentOperationsEnabled = true
     @Published private(set) var documentBusy = false
-    @Published var documentPresentationBusy = false
+    @Published var documentPresentationBusy = false { didSet { if oldValue != documentPresentationBusy { documentPresentationEpoch &+= 1 } } }
+    private var documentPresentationEpoch: UInt64 = 0
+    private var documentRequestPresentationEpoch: UInt64 = 0
     @Published private(set) var documentFileReady = false
     private var documentFileBinding: DocumentFileBinding?
     private var documentFiles: CanvasDocumentFiles?
@@ -3474,6 +3527,7 @@ final class CanvasStore: ObservableObject {
         let persistence: Bool
     }
     private var documentGraphHistories: [PageOwner:PageGraphHistory] = [:]
+    private var legacyGraphHistory: PageGraphHistory?
     private var documentGlyphEditors: [PageOwner:CanvasInkTextEditing] = [:]
     private var documentSpacingEditors: [PageOwner:CanvasInkSpacingProposal] = [:]
     var documentGlyphEditor: CanvasInkTextEditing {
@@ -3492,8 +3546,9 @@ final class CanvasStore: ObservableObject {
     }
     #endif
     var canTransitionDocument: Bool { !documentBusy && documentInputsClear }
-    private var documentInputsClear: Bool {
-        documentOperationsEnabled && sceneReadable && !documentPresentationBusy &&
+    private var documentInputsClear: Bool { documentRecoveryInputsClear && !documentPresentationBusy && !documentSyncHeld }
+    private var documentRecoveryInputsClear: Bool {
+        documentOperationsEnabled && sceneReadable &&
         !fileSaveBusy && fileWorkspaceState != .blocked && !inkBusy && !hasPendingInkProposal &&
         !inkMathInputBusy && !cardTagInputBusy && cardTagEditor == nil && cardMergeDraft == nil &&
         proposedNode == nil && commentSession == nil && !commentInputBusy &&
@@ -3503,10 +3558,10 @@ final class CanvasStore: ObservableObject {
         noteRecoveryReadable && noteRecovery == nil && !noteRecoveryWriteFailed && noteRecoveryAttemptedBytes == nil &&
         blockRecoveryReadable && blockRecovery == nil && pendingBlockEdit == nil &&
         pdfExcerptRecoveryReadable && pdfExcerptRecovery == nil && pdfExcerptRecoveryAttemptedBytes == nil &&
-        !noteReconciliationHeld && !documentSyncHeld
+        !noteReconciliationHeld
     }
-    private func documentBarrierCheck(checkFiles: Bool = true) throws {
-        guard canTransitionDocument else { throw CocoaError(.userCancelled) }
+    private func documentBarrierCheck(checkFiles: Bool = true, reconciling: Bool = false) throws {
+        guard reconciling ? (!documentBusy && documentRecoveryInputsClear) : canTransitionDocument else { throw CocoaError(.userCancelled) }
         let checkpointURL = try CanvasRuntime.stateURL(.checkpoint)
         if FileManager.default.fileExists(atPath:checkpointURL.path) {
             let checkpoint = try JSONDecoder().decode(CanvasVaultCheckpoint.self,from:CanvasLocalFile.read(checkpointURL))
@@ -3522,7 +3577,7 @@ final class CanvasStore: ObservableObject {
         try next.validate()
         let state = DocumentSourceState(schema:"ccr.canvas-document-source/v1",kind:.document,document:next,binding:binding,sync:sync ?? documentSync.flatMap { $0.id == next.id ? $0 : nil })
         let bytes = try JSONEncoder().encode(state)
-        guard bytes.count <= CanvasDocument.byteLimit + 1024*1024 else { throw CanvasDocument.Failure.tooLarge }
+        guard bytes.count <= CanvasDocument.byteLimit + CanvasDocumentRelay.conflictLimit + 1024*1024 else { throw CanvasDocument.Failure.tooLarge }
         let url = try CanvasRuntime.stateURL(.documentSource)
         try CanvasLocalFile.write(bytes,to:url)
         guard try CanvasLocalFile.read(url) == bytes else { throw CanvasDocumentFiles.Failure.corrupt }
@@ -3533,7 +3588,7 @@ final class CanvasStore: ObservableObject {
             guard FileManager.default.fileExists(atPath:url.path) else { return }
             documentSourcePresent = true
             let bytes = try CanvasLocalFile.read(url)
-            guard bytes.count <= CanvasDocument.byteLimit + 1024*1024,
+            guard bytes.count <= CanvasDocument.byteLimit + CanvasDocumentRelay.conflictLimit + 1024*1024,
                   let fields = try JSONSerialization.jsonObject(with:bytes) as? [String:Any],
                   Set(fields.keys).isSubset(of:["schema","kind","document","binding","sync"]) else { throw CanvasDocument.Failure.unsupported }
             let state = try JSONDecoder().decode(DocumentSourceState.self,from:bytes)
@@ -3568,6 +3623,13 @@ final class CanvasStore: ObservableObject {
         guard let raw = Data(base64Encoded:next.activePage.drawingBase64) else { throw CanvasDocument.Failure.invalid }
         let native = try raw.isEmpty ? PKDrawing() : PKDrawing(data:raw)
         let previous = scene
+        if !preservingHistory {
+            inkHistory.invalidateDocument(next.id)
+            documentGraphHistories = documentGraphHistories.filter { $0.key.documentID != next.id }
+            documentGlyphEditors = documentGlyphEditors.filter { $0.key.documentID != next.id }
+            documentSpacingEditors = documentSpacingEditors.filter { $0.key.documentID != next.id }
+        }
+        if !isDocumentSource { legacyGraphHistory = .init(undo:graphUndo,redo:graphRedo,persistence:graphRequiresPersistence) }
         if preservingHistory {
             documentGraphHistories[PageOwner(documentID:document.id,pageID:previous.id)] = .init(undo:graphUndo,redo:graphRedo,persistence:graphRequiresPersistence)
         }
@@ -3616,7 +3678,7 @@ final class CanvasStore: ObservableObject {
         do {
             try documentBarrierCheck()
             let owner = try document.pageSnapshot(), request = UUID()
-            documentRequest = request; documentBusy = true
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             if documentRequiresScope, let own = FileManager.default.urls(for:.documentDirectory,in:.userDomainMask).first?.deletingLastPathComponent() {
                 let selected = folder.resolvingSymlinksInPath().standardizedFileURL.path, app = own.resolvingSymlinksInPath().standardizedFileURL.path
@@ -3654,11 +3716,11 @@ final class CanvasStore: ObservableObject {
         documentBusy = false
     }
     func saveDocumentWorkspace() async {
-        guard isDocumentSource, !documentBusy, !fileSaveBusy, !inkBusy,
+        guard isDocumentSource, documentInputsClear, !documentBusy, !fileSaveBusy, !inkBusy,
               let files = documentFiles, let prior = documentFileBinding else { return }
         do {
             let owner = try document.pageSnapshot(), next = document, request = UUID()
-            documentRequest = request; documentBusy = true
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             let binding = try await savedDocument(next,files:files,bookmark:prior.bookmark,expected:prior.token,owner:owner)
             guard documentRequest == request, document.accepts(owner) else { throw CanvasDocument.Failure.stale }
@@ -3693,7 +3755,7 @@ final class CanvasStore: ObservableObject {
             try documentBarrierCheck()
             guard isDocumentSource else { throw CanvasDocument.Failure.unsupported }
             let owner = try document.pageSnapshot(), request = UUID()
-            documentRequest = request; documentBusy = true
+            documentRequest = request; documentRequestPresentationEpoch = documentPresentationEpoch; documentBusy = true
             defer { if documentRequest == request { documentBusy = false } }
             var next = document
             if duplicate { try next.duplicatePage(id,expectedRevision:next.revision) }
@@ -3723,7 +3785,11 @@ final class CanvasStore: ObservableObject {
         document = try CanvasDocument(legacy:restored.scene)
         inkHistory.activate(nativeHistoryOwner)
         storedDrawing = restored.drawing; documentFiles = nil; documentFileBinding = nil; documentFileReady = false
-        sceneDidChange(from:previous); installingDocument = false; restoreFileWorkspace()
+        sceneDidChange(from:previous)
+        graphUndo = legacyGraphHistory?.undo; graphRedo = legacyGraphHistory?.redo
+        graphRequiresPersistence = legacyGraphHistory?.persistence ?? false
+        graphPersistenceEpoch = graphRequiresPersistence ? linkSceneGeneration : nil
+        installingDocument = false; restoreFileWorkspace()
     }
     func documentWorkspaceDocuments(in folder: URL) throws -> [UUID] {
         guard documentOperationsEnabled else { throw CanvasDocument.Failure.unsupported }
@@ -3748,7 +3814,7 @@ final class CanvasStore: ObservableObject {
               let root = try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else { throw CanvasDocument.Failure.invalid }
         if root["format"] != nil || root["pages"] != nil || root["version"] != nil {
             try documentBarrierCheck()
-            let next = try JSONDecoder().decode(CanvasDocument.self,from:bytes)
+            let next = try CanvasDocument.decode(bytes)
             if isDocumentSource { guard documentFileReady else { throw CanvasDocumentFiles.Failure.pending } }
             else { try persistScene() }
             // 다른 문서로 진입한다. 기존 Files 원본과 구 scene 캐시는 수정하지 않는다.

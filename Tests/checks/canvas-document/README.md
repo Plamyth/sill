@@ -25,3 +25,11 @@ python3 Tests/checks/canvas-document/run.py --storage-reuse --repairs /Volumes/B
 ```
 
 `storage.swift`는 no-op의 새 경로/바이트 0, 정상 base 복사 생략, typed owner/UUID/형식, v1 committed 호환과 독립 복구, preview/현재 페이지 변경 저장, legacy/외부 fallback, 손상·참조 교체·미확인 barrier 유지까지 확인한다. no-op이 생긴 뒤 기존 main.swift의 마지막 교환 경합 fixture는 실제 내용이 다른 proposal을 저장하도록 바꿨다. 이전처럼 동일 문서를 저장하면 새 no-op이 정당하게 교환 hook에 진입하지 않기 때문이다. 교환 반례 자체를 생략하지 않고 별도 no-op identity 반례도 유지한다.
+
+실제 단일 Document Store/UI 접합은 같은 실행기의 `--store` 모드로 검사한다. `--repairs`/`--storage-reuse`와는 별도 실행이다.
+
+```sh
+python3 Tests/checks/canvas-document/run.py --store --sdk-check --output /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/canvas-document-product-evidence
+```
+
+실제 Store/PKDrawing/native Files/페이지별 UndoManager와 새 프로세스 재열기를 실행한다. URLSession 프로토콜 fixture는 실제 서버 HTTP가 아니다. 렌더 preview는 자체 PNG fixture이며 Pencil 인식·GUI·설치 수용은 아니다. 정상 앱 위치의 sentinel은 전후 대조하고 tracked 결과를 갱신하지 않는다. 자세한 소유·복구·wire 경계는 `docs/canvas-document-store-integration.md`를 따른다.
