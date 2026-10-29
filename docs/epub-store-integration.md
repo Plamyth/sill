@@ -24,4 +24,14 @@ Pstack architect/how로 기존 PDF 생성 의도·note PUT/GET·파일 복구·�
 1. 같은 인증·Vault 경계의 `/vault/epub?path=` raw32MiB와 entries kind=epub를 이 writer의 소스 diff로 함께 소비할지, 서버 소유자가 별도 exact 단위로 반환할지. 현재 서버 소스는 이 WT에서만 좁게 구현했으며 서비스는 바꾸지 않았다.
 2. 기존 `ccr.pdf-create-recovery/v1` envelope/파일 경로를 유지하고 sourceKind=epub로 명시 구분하는 호환 확장을 허용할지. nil PDF payload는 기존 형식 그대로다. 기존 NoteConflictChoice/Attempt 파일에도 `ccr.epub-excerpt-note-choice/v1`/`ccr.epub-excerpt-current-choice/v1`이라는 별도 명시 schema를 쓰는 분기를 제안한다. EPUB을 PDF source parser로 처리하지 않으며 구형 reader는 거부·보존한다. 부모가 공통 source 명칭/버전을 선택하면 그 소유 변경으로 의미 조정한다.
 
-모듈은 정확 `c4a74190e14c499dbfe536b9b2d0dd3f4961fecc` Git 객체를 병합했다. dirty 파일 복사는 없다. 향후 모듈 수정은 원저자 exact commit으로만 소비한다. 이미 작성한 발췌 생성·snapshot/연결/page epoch·원문 복귀·기존 note conflict 소비 코드의 일부 UI/회귀 접합은 진행 중이다. 전체 Store 왕복·EPUB 신규복구 UI·최종 SDK·독립 수용은 아직 완료하지 않았다.
+초기 `be702c64` 후보는 정확 `c4a74190e14c499dbfe536b9b2d0dd3f4961fecc` Git 객체를 병합했다. dirty 파일 복사는 없다. 그 시점의 Store 왕복·복구 UI 미완료와 아래 후속 구현/실행 상태를 구분한다. 모듈 수정은 원저자 exact commit으로만 소비한다.
+
+후속 자체 native 실행에서 Store·전체 Files 왕복과 기존 note conflict 소비를 확인했다. EPUB Reader는 PDF 복구 안내에 종속되지 않는 본문 분기로 옮겼고, 기존 비교/선택 원장을 사용하는 한국어 복구 UI를 붙였다. 저장 중 닫기·미확인·외부 원문/동일 발췌 ID 확인은 Store가 계속 소유한다. 새 필드·추정 DTO·삭제·재전송 우회는 추가하지 않았다. UI는 source/syntax 단계이며 실제 화면 수용과 최종 iOS SDK는 남았다.
+
+## 모듈 독립 검수와 접합 검사의 구분
+
+Nash의 `epub-module-independent-review-c4a74190-20261029/REVIEW.md`는 c4에 P2 두 건으로 CHANGES_REQUESTED를 부여했다. MIME으로 읽는 `.dat` spine이 숨김 XHTML 검사를 우회하는 R1, NFC/NFD NCX fragment의 로딩/열기 identity가 다른 R2다. Ohm이 원 모듈에서 수리하며 이 writer는 해당 parser를 변경하거나 손상 원문을 표시하는 fallback을 추가하지 않는다. 후속 exact commit·재검수 전까지 모듈 SOURCE_CLEAR/공식 배포/전체 EPUB 수용은 false다.
+
+후속 `e554bfb3cede02c5298760741d363f2e715fd41d` / tree `02a060a470482aa6e21830f95c56c111ec324361`을 Git 객체로 cherry-pick했다. 새 product delta는 `VaultEPUB.swift`만이며 공개 API/Markdown은 같다. 소비 커밋은 `b2a31519`다. 원저자의 native25·새 프로세스1과 원반례 수리 영수증은 `epub-product-20261029/evidence/repair-p2-a54821e8-9df1-435f-9ae3-e307b01ae3d1/HANDOFF-REPAIR.json`에 있다. 독립 재검수 대기이며 이를 SOURCE_CLEAR로 바꾸지 않는다.
+
+`Tests/checks/epub-product/run.py --output <storage-route 외장 폴더>`는 자체 생성 ZIP/XHTML과 실제 Store·기존 원장·ObsidianVault 파일 처리·전체 Document Files를 사용한다. Node는 기존 네트워크 차단 guard 아래 stdio로 호출하며 HTTP endpoint·서비스·실제 GUI 수용 검사로 세지 않는다. 새 프로세스와 격리 Application Support의 원장 재열기를 별도로 관측하고, normal sentinel과 실행 입력 SHA를 보존한다. 이 검사가 모듈 두 반례의 수리나 부모의 두 계약 결정을 대신하지 않는다. 새 UI는 설치·활성화하지 않는다.
