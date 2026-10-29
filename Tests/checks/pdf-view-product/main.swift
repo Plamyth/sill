@@ -33,7 +33,7 @@ func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data
   try process.run()
  }
  func close() { try? input.fileHandleForWriting.close();process.waitUntilExit();precondition(process.terminationStatus == 0) }
- func call(_ op: String,_ args: [String:Any]) throws -> Data {
+ private func response(_ op: String,_ args: [String:Any]) throws -> Data {
   operations.append(op);var row=args;row["operation"]=op
   var bytes=try JSONSerialization.data(withJSONObject:row);bytes.append(10);try input.fileHandleForWriting.write(contentsOf:bytes)
   var line=Data()
@@ -44,12 +44,18 @@ func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data
    let held=answer["reconciliationRequired"] as? Bool == true || answer["code"] as? String == "note_reconciliation_required"
    throw NSError(domain:"CanvasRelay",code:status,userInfo:[NSLocalizedDescriptionKey:answer["message"] as? String ?? "own fixture",VaultSaveConflict.errorKey:held ? VaultSaveConflict.reconciliationRequired.rawValue : VaultSaveConflict.unclassified.rawValue])
   }
+  return line
+ }
+ func call(_ op: String,_ args: [String:Any]) throws -> Data {
+  let answer=try JSONSerialization.jsonObject(with:response(op,args)) as! [String:Any]
   return try JSONSerialization.data(withJSONObject:answer["value"]!)
  }
- func pdf(_ path:String) async throws -> VaultPDFSnapshot {try JSONDecoder().decode(VaultPDFSnapshot.self,from:call("readPDF",["path":path]))}
- func note(_ path:String) async throws -> VaultNoteSnapshot {try JSONDecoder().decode(VaultNoteSnapshot.self,from:call("readNote",["path":path]))}
+ private struct Response<Value: Decodable>: Decodable { let value: Value }
+ // Decode the original response directly: JSONSerialization's value roundtrip strips a leading text BOM.
+ func pdf(_ path:String) async throws -> VaultPDFSnapshot {try JSONDecoder().decode(Response<VaultPDFSnapshot>.self,from:response("readPDF",["path":path])).value}
+ func note(_ path:String) async throws -> VaultNoteSnapshot {try JSONDecoder().decode(Response<VaultNoteSnapshot>.self,from:response("readNote",["path":path])).value}
  func save(_ path:String,_ base:String?,_ text:String) async throws -> VaultNoteSnapshot {
-  try JSONDecoder().decode(VaultNoteSnapshot.self,from:call("saveNote",["path":path,"baseSha256":base as Any? ?? NSNull(),"text":text]))
+  try JSONDecoder().decode(Response<VaultNoteSnapshot>.self,from:response("saveNote",["path":path,"baseSha256":base as Any? ?? NSNull(),"text":text])).value
  }
  func compare(_ path:String) async throws -> CanvasRelay.NoteConflict {try JSONDecoder().decode(CanvasRelay.NoteConflict.self,from:call("compare",["path":path])).validated(path:path)}
  func resolve(_ c:CanvasRelay.NoteConflict,_ d:CanvasRelay.ConflictDecision) async throws -> VaultNoteSnapshot {
