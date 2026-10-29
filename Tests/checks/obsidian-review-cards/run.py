@@ -14,8 +14,29 @@ parser = argparse.ArgumentParser()
 parser.add_argument('output', type=Path)
 parser.add_argument('--worker', action='store_true')
 parser.add_argument('--native-worker', action='store_true')
+parser.add_argument('--markdown-context', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[3]
+if args.markdown_context:
+    route = json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))
+    output = args.output.resolve()
+    assert output.is_relative_to(Path(route['path']).resolve())
+    output.mkdir(parents=True,exist_ok=True)
+    for name in ['modules','home','tmp']: (output/name).mkdir(exist_ok=True)
+    selected = [root/'iOSClient/CanvasBridge/CanvasModel.swift',Path(__file__).with_name('ClozeMarkdownContextChecks.swift')]
+    before = {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in selected+[Path(__file__)]}
+    env = dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',CFFIXED_USER_HOME=str(output/'home'),TMPDIR=str(output/'tmp')+'/')
+    sdk = subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],env=env,text=True).strip()
+    command = ['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-module-cache-path',str(output/'modules'),*map(str,selected),'-o',str(output/'check')]
+    results=[]
+    for name,cmd in [('compile',command),('native',[str(output/'check'),str(output)])]:
+        r=subprocess.run(cmd,cwd=root,env=env,capture_output=True,text=True,timeout=120)
+        (output/(name+'.log')).write_text(r.stdout+r.stderr);results.append(dict(name=name,exitCode=r.returncode,command=cmd));print(name,r.returncode,(r.stdout+r.stderr)[-1500:],flush=True)
+        if r.returncode: break
+    after={p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in before}
+    passed=len(results)==2 and all(r['exitCode']==0 for r in results) and before==after and not (output/'home/Library/Application Support').exists()
+    (output/'result.json').write_text(json.dumps(dict(inputs=before,after=after,sourceUnchanged=before==after,results=results,passed=passed,ModelOnly=True,StoreExecuted=False,whole95Repeated=False,wholeSDKRepeated=False,GUI=False,HTTP=False),indent=2)+'\n')
+    sys.exit(0 if passed else 1)
 inputs = ['iOSClient/CanvasBridge/CanvasModel.swift', 'iOSClient/CanvasBridge/CanvasStore.swift',
           'iOSClient/CanvasBridge/CanvasWorkspace.swift',
           'Tests/checks/obsidian-review-cards/main.swift', 'Tests/checks/obsidian-review-cards/run.py']
