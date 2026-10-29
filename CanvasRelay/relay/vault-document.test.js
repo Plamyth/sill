@@ -46,6 +46,24 @@ for(const decision of ['keepCurrent','useDisplaced'])test(`typed409 뒤 명시 $
  assert(fs.existsSync(path.join(f.root,'.ccr-save-'+state.recoveryID,'base.md')));
 });
 
+for(const decision of ['keepCurrent','useDisplaced'])test(`명시 ${decision} 교환 중 비선택 보존 페이지의 자산 변경은 held를 유지한다`,t=>{
+ const f=fixture(t),{state,file}=fault(f),kind=decision==='keepCurrent'?'base':'proposal';
+ const preserved=state.materials[kind].document;
+ const asset=path.join(f.root,'CCR Documents/Assets',f.d.id,preserved.generation,'pages',f.d.pages[1].id,'preview.png');
+ const before=fs.readFileSync(asset),request={recoveryID:state.recoveryID,expected:state.expected,decision};
+ const journal=path.join(f.root,'.ccr-save-'+state.recoveryID);
+ const markdown=Object.fromEntries(['base','displaced','proposal'].map(k=>[k,fs.readFileSync(path.join(journal,k+'.md'))]));
+ atExchange(file,()=>fs.writeFileSync(asset,Buffer.from('외부에서 바뀐 비선택 페이지 미리보기')),()=>
+  assert.throws(()=>f.vault.resolveDocumentConflict(f.d.id,request),{status:409,code:'note_reconciliation_required'}));
+ const reopened=new ObsidianVault(f.root),held=reopened.documentConflict(f.d.id);
+ assert(held.reconciliationRequired);assert.equal(held.materials[kind].validDocument,false);
+ assert.throws(()=>reopened.document(f.d.id),{code:'note_reconciliation_required'});
+ assert.throws(()=>reopened.resolveDocumentConflict(f.d.id,request),{status:409,code:'note_reconciliation_required'});
+ assert.equal(fs.existsSync(path.join(journal,'resolution.json')),false);
+ assert(!fs.readFileSync(asset).equals(before));
+ for(const [k,bytes] of Object.entries(markdown))assert(fs.readFileSync(path.join(journal,k+'.md')).equals(bytes));
+});
+
 test('같은 UUID와 페이지의 단일scene/일반MD/hardlink 우회는 쓰기 전에 거부한다',t=>{
  const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d)),file=path.join(f.root,first.path),bytes=fs.readFileSync(file);
  for(const p of f.d.pages)assert.throws(()=>f.vault.saveCanvas(p.id,p.revision,Buffer.from(JSON.stringify(p)),png,null),{code:'document_api_required'});

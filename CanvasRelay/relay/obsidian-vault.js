@@ -484,6 +484,14 @@ class ObsidianVault {
         const after = stateFor(fresh,journal);
         for (const key of ['baseSha256','displacedSha256','proposalSha256'])
           if (after.expected[key] !== state.expected[key]) throw new VaultError('조정 중 보존 원본이 바뀌었습니다.',409);
+        if (document) {
+          for (const kind of ['base','displaced','proposal']) {
+            const before = state.materials[kind], current = after.materials[kind];
+            if (before?.validDocument !== current?.validDocument ||
+                JSON.stringify(before?.document ?? null) !== JSON.stringify(current?.document ?? null))
+              throw new VaultError('조정 중 보존 문서의 페이지 또는 자산이 바뀌었습니다.',409);
+          }
+        }
         const previousHistory = after.history.filter(item => item.recoveryID !== attemptID);
         if (JSON.stringify(previousHistory) !== JSON.stringify(state.history)) throw new VaultError('조정 중 이전 시도가 바뀌었습니다.',409);
         if (fresh.#rawNote(relative,!id).sha256 !== chosen.sha256) throw new VaultError('조정 중 새 외부 편집이 생겼습니다.',409);
