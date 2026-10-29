@@ -1,5 +1,31 @@
 # REA 기능 조사·구현 진행표
 
+## 현재 구현 기준 — 공식 f09, 기능 완료와 분리
+
+현재 source는 **`f09daa176fb9ff8ff45dcb30389eb06f33ea2b40` / tree `bd2347c35def444ca01dea8ec328c19e0ecffff0`**다. R162/R163의 공식 push/readback·clean·sourceguard와 R164의 기존 `program/units.tsv` 읽기 snapshot을 대조했다. 현재 판독 순서는 `coverage.json.currentProgress` → 각 행의 `currentProgress/remaining/status` → `implementationUpdates`다. 기존 `ccr/checks`, sourceFileRegistry13개, 원앱 관측과 아래 옛 설명은 당시 이력이며 새 구현 착수 지시가 아니다.
+
+| 이미 존재하는 제한 구현 | 실제 f09 파일·진입점 | 재사용한 근거와 다음 경계 |
+|---|---|---|
+| 전체 문서 Store·페이지 선택/복제·전체 import/Files 열기 | `CanvasDocument.swift`, `CanvasDocumentFiles.swift`, `CanvasStore.importSourceBytes/connectDocumentWorkspace/selectDocumentPage/duplicateDocumentPage`, `CanvasWorkspace.swift` | R165/R166/R167의 source 검수. 제목 있는 원앱 서재·`.nebo` 해독 전체는 아니다. 빈 페이지·임의 순서 이동·삭제/휴지통은 f09에 없으며 7e53 후보를 공식으로 오인하지 않는다. |
+| 원본 보존형 참조 카드 병합·명시 연결 해제 | `CanvasCardMerge.swift`, `CanvasStore.confirmCardMerge/unmergeCard` | R169/R170. 일반 note2~20개·순서 링크와 표시 본문, 원본·합친 유일 본문 보존. 원앱의 원본 이동/숨김·그룹·중첩 병합 전체 동등성은 아니다. 검수 모듈 바이트와 f09가 같다. |
+| 태그 추가·공통 Undo/Redo·보기 필터/해제 | `CanvasCardTags.swift`, `CanvasStore.finishCardTagInput/setCardTagFilter`, `canvas-card-tags.js` | R171/R172/R173/R174. 예약 author `ccr.sill.card-tag/v1`로 일반 댓글과 분리한다. 필터 해제는 저장 태그를 삭제하지 않는다. 실제 Obsidian 인덱스·다중 조건·배치·영구 태그 삭제 전체를 완료로 세지 않는다. 검수 모듈 바이트와 f09가 같다. |
+| 전체 Files 세대·같은 내용 저장 재사용·원본 캐시 보호 | `CanvasDocumentFiles.save/load`, `CanvasStore.saveDocumentWorkspace/restoreDocumentSource`, `CanvasModel.swift` | R165/R167/R168. 실제 native Files/새 Store 증거가 있으나 Mac DEBUG requiresScope=false·fixture PNG 범위다. iPad 선택 권한/bookmark·FileProvider 지속성과 GC/전체 누적 상한은 별도다. |
+| 보존 충돌·지속 held·명시 후보 선택/전체 GET 재열기 | `CanvasStore.synchronizeDocumentToVault/refreshDocumentFromVault/readDocumentConflict/resolveDocumentConflict`, `CanvasDocumentRelay.swift`, 실제 Node `obsidian-vault.js` | R175/R176의 f09 Store→Files→Node→별도 Store와409 응답 유실·네 후보·명시 복구. 절대 CAS/자동 rollback·원앱 클라우드 전체 동등성으로 설명하지 않는다. |
+
+**385행 ID/114그룹·분모와 원앱 상태·미확인은 그대로다.** 17행의 현재 진행/남은 행동을 정정했고, 그중 “구현 근거 미확인”이던 7행은 제한 구현이 있는 `parity_gap`으로 옮겼다. 현재 분포는 parity_gap127·implementation_evidence_missing220·support_unverified32·integration_pending6, 완료0/미완료385/N/A0이다. `complete`는 전 행 false, `allAppsComplete`와 현재 physical/runtime/testAccepted도 false다. 테스트 수는 기능 수가 아니다.
+
+### scoped 실행 증거와 독립 판정
+
+- [R175 실제 Store79 원본](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/document-store-http-evidence/FINAL-NATIVE-STORE-HTTP-f09.json)과 [R176 Helm 독립 증거 검수](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/document-store-http-review-helm-f09/result.json)의 판정은 `EVIDENCE_CLEAR_SCOPED_NATIVE_STORE_HTTP_F09`다. macOS DEBUG의 실제 Files/socket/별도 프로세스와 보존 충돌 자료에 대한 제한 수용이다. 이 판정을 새 source 검수·앱 runtimeAccepted·실제 iPad/렌더/Pencil 수용으로 합산하지 않는다. 과거 R162 영수증의 `actualStoreHTTP:false`는 그 영수증 발급 당시 상태이며 원문을 고치지 않는다.
+- [R178 성공200 ACK 후속 작성자 결과](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/document-store-http-evidence/FINAL-SUCCESS200-ACK-f09.json)는 이번 요청 기준 **Nash 독립 검수 대기**다. writer의 socket/snapshot 관측이 존재한다는 사실만 연결하고 accepted/source/runtime 수치에 더하지 않는다. 기존79의 Helm 판정은 성공200 경계를 포함하지 않는다.
+- 기존 PDF900 다중 페이지/직각 회전 앵커와 PDF 목차는 공식 소스 계보다. Helm013의 PDF 보기/Store 접합, parent7e53의 빈 페이지/순서, 진행 중 그룹/EPUB는 f09 밖의 후보다. 실제 파일에 후속 모듈이 보인다는 이유로 현재 공식 기능으로 올리지 않는다.
+
+새 제품/원앱/HTTP/프로세스/SDK/GUI·기기 검사는 실행하지 않았다. 정상 설치68은 마지막 보존 metadata이고 현재 직접 조회가 아니다. 최종 권한·GUI·실기기 구간은 기존 부모가 조율하며 여기서 새 질문·알림·실행을 발행하지 않는다. 다음 행동은 [NEXT.md](NEXT.md), 이번 문서 검증은 [외장 validation.json](/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/coverage-progress-f09-evidence/validation.json)에 남긴다. 기존 `verification.json`은 옛 문서판 검증 원본으로 유지한다.
+
+## 이하: 보존한 이전 900/964 문서 원문
+
+아래 “현재”·“미구현”은 해당 절의 당시 기준이다. f09의 현재 진행과 착수 판단에는 위 표와 기계 원장의 currentProgress/nextActions를 사용한다.
+
 ## 2026-10-29 후속 근거 — 공식 PDF900 기준
 
 이번 문서 작업의 기준은 `9006908998dbcbe0b278b3dc75c71d5d2006342a` / tree `c9d3fd1f19996328c191672ed30ef3051b9d7f3f`다. 아래의 기존 본문·385행 표는 **9646469 당시 snapshot**으로 보존한다. `coverage.json`의 기존 source snapshot·13개 sourceFileRegistry·상태·과거 count도 바꾸지 않았다. 새 사실은 `additionalOriginalEvidence`, `implementationUpdates.pdfPagesRotation9006908`, `evidenceFollowups`에서 구분한다.
