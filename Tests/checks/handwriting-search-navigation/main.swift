@@ -74,10 +74,16 @@ import PencilKit
                 let task = Task { @MainActor in await s.searchHandwriting("한글",search:gate.search) }
                 await gate.wait()
                 if kind == "focus" {
-                    check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"pending search can enter branch focus without editing ink")
+                    check(!s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"pending search retains the existing focus busy barrier")
+                } else {
+                    check(!s.setHierarchyOutlineVisible(true,owner:s.hierarchyFocusOwner),"pending search retains the existing outline busy barrier")
+                }
+                s.cancelHandwritingSearch()
+                if kind == "focus" {
+                    check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"explicit search cancellation releases branch focus without editing ink")
                     check(s.leaveHierarchyFocus(owner:s.hierarchyFocusOwner),"focus ABA returns to the same full view and geometry")
                 } else {
-                    check(s.setHierarchyOutlineVisible(true,owner:s.hierarchyFocusOwner),"pending search can enter outline without copying ink")
+                    check(s.setHierarchyOutlineVisible(true,owner:s.hierarchyFocusOwner),"explicit search cancellation releases outline without copying ink")
                     check(s.setHierarchyOutlineVisible(false,owner:s.hierarchyFocusOwner),"outline ABA returns to the same full view and geometry")
                 }
                 gate.finish([[first.id]]);await task.value
