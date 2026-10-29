@@ -47,6 +47,20 @@ import PencilKit
         let full=try CanvasFileWorkspace.bytes(scene)
         try CanvasLocalFile.write(full,to:sceneURL)
         var s=store();s.selectedNode=a
+        if CommandLine.arguments.contains("--preferences-only") {
+            let preferences = CanvasRuntime.defaults(), key = "canvas.hierarchyFocus.v1"
+            let before = try s.document.bytes()
+            let external:[String:Any] = ["preserve":"외부에서 보관한 미지원 초점 설정","rootID":a.uuidString,"visited":[b.uuidString]]
+            try preferences.set(external,forKey:key)
+            let raw = try CanvasLocalFile.read(prefsURL)
+            check(!s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"present non-string preference refuses an owner loaded from missing state")
+            check(try CanvasLocalFile.read(prefsURL)==raw && s.document.bytes()==before && s.hierarchyFocusRootID==nil,"rejected non-string collision preserves exact preferences document and view")
+            let fresh = store(); fresh.selectedNode=a
+            check(!fresh.focusHierarchy(a,owner:fresh.hierarchyFocusOwner) && !fresh.hierarchyFocusNotice.isEmpty,"fresh Store also preserves unsupported existing preferences")
+            check(try CanvasLocalFile.read(prefsURL)==raw,"fresh Store leaves unknown preference bytes intact")
+            try JSONSerialization.data(withJSONObject:["count":checks.count,"checks":checks,"PreferencesOnly":true,"whole58Repeated":false],options:[.prettyPrinted,.sortedKeys]).write(to:out.appendingPathComponent("observations.json"))
+            return
+        }
         if CommandLine.arguments.contains("--aba-only") {
             let original = try s.document.bytes()
             check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"ABA enters original A root")

@@ -1045,7 +1045,12 @@ final class CanvasStore: ObservableObject {
         do {
             if let root { _ = try hierarchyFocusScope(root) }
             // Preserve independent external preference edits instead of overwriting a stale view.
-            guard eraserDefaults.string(forKey:Self.hierarchyFocusKey) == hierarchyFocusRaw else { throw CanvasDocument.Failure.stale }
+            let existing = eraserDefaults.object(forKey:Self.hierarchyFocusKey)
+            if let loaded = hierarchyFocusRaw {
+                guard let current = existing as? String, current.utf8.elementsEqual(loaded.utf8) else { throw CanvasDocument.Failure.stale }
+            } else {
+                guard existing == nil else { throw CanvasDocument.Failure.stale }
+            }
             var next = hierarchyFocusPreferences
             var page = next.pages[hierarchyFocusPageKey] ?? .init()
             page.rootID = root
