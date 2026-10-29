@@ -1,0 +1,15 @@
+{
+  "method": "PUT",
+  "path": "/vault/note?path=CCR%20Documents%2F92272901-f979-46a8-85f1-dfd72c075f20.md",
+  "status": 409,
+  "request": {
+    "baseSha256": "f1181611a4d77c842b0acef8af3ba3748dececd5421400e3b0ead8efe01e1a65",
+    "text": "selected only"
+  },
+  "response": {
+    "error": "문서 전체 API로만 저장할 수 있습니다.",
+    "code": "document_api_required"
+  },
+  "responseJSONBase64": "eyJlcnJvciI6IuusuOyEnCDsoITssrQgQVBJ66Gc66eMIOyggOyepe2VoCDsiJgg7J6I7Iq164uI64ukLiIsImNvZGUiOiJkb2N1bWVudF9hcGlfcmVxdWlyZWQifQ==",
+  "responseSha256": "e8341e426f79b027f70c899c804e08a5dd7f81f7efa19cc25a9d1161f41be344"
+}

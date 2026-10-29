@@ -47,7 +47,7 @@ for label,sdk,target in [('mac',mac,'arm64e-apple-macos27.0'),('ios',ios,'arm64-
     if code: codes.append(code);continue
     canvas=inputdir/'iOSClient/CanvasBridge'
     if label=='mac':
-        source=[canvas/x for x in ['CanvasModel.swift','CanvasStore.swift','CanvasInkShapeProposal.swift','PencilTextCorrection.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[inputdir/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'main.swift']
+        source=[canvas/x for x in ['CanvasModel.swift','CanvasStore.swift','CanvasInkShapeProposal.swift','PencilTextCorrection.swift','CanvasDocument.swift','CanvasDocumentRelay.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[inputdir/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'main.swift']
         code=run(common+['-I',dest,dest/'StreamProtocol.o',*source,'-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',root/'Tests/checks/ink-undo/Info.plist','-o',dest/'check'],'mac-compile.log')
         if code==0:
             home=output/'home';home.mkdir(exist_ok=True)

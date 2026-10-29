@@ -1,0 +1,46 @@
+{
+  "method": "PUT",
+  "path": "/vault/document/conflict?id=92272901-f979-46a8-85f1-dfd72c075f20",
+  "status": 200,
+  "request": {
+    "recoveryID": "db061f5a-b7f0-434e-a781-10166c67d80b",
+    "expected": {
+      "activeSha256": "1a0dd8755cf35bd8e1ada9b6411b6e4b3dfa4baec78bcaaf7b58ad18236de9b2",
+      "baseSha256": "2d7dc7c9cebb93d6c7124c9bf8dc7f629d6dce86e47aecd229880a59add60562",
+      "displacedSha256": "e373da279d2e1b0a4bbe091e37a16c2ba9489d26920fe07fefb49d969eb0cde8",
+      "proposalSha256": "1a0dd8755cf35bd8e1ada9b6411b6e4b3dfa4baec78bcaaf7b58ad18236de9b2",
+      "historySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bundlesSha256": "9fbdb0fe250b45a63a08341f51beb69e67c3730ad57f1b09eb943bec69c2b555"
+    },
+    "decision": "useDisplaced"
+  },
+  "response": {
+    "schema": "ccr.vault-document/v1",
+    "id": "92272901-f979-46a8-85f1-dfd72c075f20",
+    "path": "CCR Documents/92272901-f979-46a8-85f1-dfd72c075f20.md",
+    "revision": 3,
+    "activePageID": "796e64f6-3a82-4554-987c-bc93e3d17b1a",
+    "noteSha256": "e373da279d2e1b0a4bbe091e37a16c2ba9489d26920fe07fefb49d969eb0cde8",
+    "documentSha256": "522eac7c595eb867db95da176c9bfcedcf41c8077ad71cd6df0e4a76a04b814c",
+    "manifestSha256": "ecec6f78d4f85f2e0aaedaee5ce2d15f0dbd6a17c82eba781acef45cdaf9dc68",
+    "generation": "06fa68c3-e19c-4461-9493-99dd89344bb4",
+    "pages": [
+      {
+        "id": "2444ff0a-e323-494e-a9f5-82530953986a",
+        "drawingSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "previewSha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96"
+      },
+      {
+        "id": "796e64f6-3a82-4554-987c-bc93e3d17b1a",
+        "drawingSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "previewSha256": "c47dd9465c00e9a0c8b85e9ea58d3034a0d23b9cf926113602f3460752a4eb96"
+      }
+    ],
+    "recoveryID": "db061f5a-b7f0-434e-a781-10166c67d80b",
+    "decision": "useDisplaced",
+    "resolved": true,
+    "reconciliationRequired": false
+  },
+  "responseJSONBase64": "eyJzY2hlbWEiOiJjY3IudmF1bHQtZG9jdW1lbnQvdjEiLCJpZCI6IjkyMjcyOTAxLWY5NzktNDZhOC04NWYxLWRmZDcyYzA3NWYyMCIsInBhdGgiOiJDQ1IgRG9jdW1lbnRzLzkyMjcyOTAxLWY5NzktNDZhOC04NWYxLWRmZDcyYzA3NWYyMC5tZCIsInJldmlzaW9uIjozLCJhY3RpdmVQYWdlSUQiOiI3OTZlNjRmNi0zYTgyLTQ1NTQtOTg3Yy1iYzkzZTNkMTdiMWEiLCJub3RlU2hhMjU2IjoiZTM3M2RhMjc5ZDJlMWIwYTRiYmUwOTFlMzdhMTZjMmJhOTQ4OWQyNjkyMGZlMDdmZWZiNDlkOTY5ZWIwY2RlOCIsImRvY3VtZW50U2hhMjU2IjoiNTIyZWFjN2M1OTVlYjg2N2RiOTVkYTE3NmM5YmZjZWRjZjQxYzgwNzdhZDcxY2Q2ZGYwZTRhNzZhMDRiODE0YyIsIm1hbmlmZXN0U2hhMjU2IjoiZWNlYzZmNzhkNGY4NWYyZTBhYWVkYWVlNWNlMmQxNWYwZGJkNmExN2M4MmViYTc4MWFjZWY0NWNkYWY5ZGM2OCIsImdlbmVyYXRpb24iOiIwNmZhNjhjMy1lMTljLTQ0NjEtOTQ5My05OWRkODkzNDRiYjQiLCJwYWdlcyI6W3siaWQiOiIyNDQ0ZmYwYS1lMzIzLTQ5NGUtYTlmNS04MjUzMDk1Mzk4NmEiLCJkcmF3aW5nU2hhMjU2IjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsInByZXZpZXdTaGEyNTYiOiJjNDdkZDk0NjVjMDBlOWEwYzhiODVlOWVhNThkMzAzNGEwZDIzYjljZjkyNjExMzYwMmYzNDYwNzUyYTRlYjk2In0seyJpZCI6Ijc5NmU2NGY2LTNhODItNDU1NC05ODdjLWJjOTNlM2QxN2IxYSIsImRyYXdpbmdTaGEyNTYiOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwicHJldmlld1NoYTI1NiI6ImM0N2RkOTQ2NWMwMGU5YTBjOGI4NWU5ZWE1OGQzMDM0YTBkMjNiOWNmOTI2MTEzNjAyZjM0NjA3NTJhNGViOTYifV0sInJlY292ZXJ5SUQiOiJkYjA2MWY1YS1iN2YwLTQzNGUtYTc4MS0xMDE2NmM2N2Q4MGIiLCJkZWNpc2lvbiI6InVzZURpc3BsYWNlZCIsInJlc29sdmVkIjp0cnVlLCJyZWNvbmNpbGlhdGlvblJlcXVpcmVkIjpmYWxzZX0=",
+  "responseSha256": "3cfd1a0c8bd0c2806e04ef074d131cdfe3603120f8a8dcbcbd11882cf6050678"
+}

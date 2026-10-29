@@ -144,15 +144,16 @@ struct CanvasRelay {
         return request
     }
 
-    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type, maxBytes: Int? = nil, maximumBytes: Int? = nil) async throws -> T {
+    private func response<T: Decodable>(_ request: URLRequest, as type: T.Type, maxBytes: Int? = nil, maximumBytes: Int? = nil,
+                                       limitError: Error = VaultPDFError.tooLarge, rejectReconciliation: Bool = false) async throws -> T {
         let data: Data, raw: URLResponse
         if let maxBytes {
             let (stream,response) = try await session.bytes(for:request)
             raw = response
-            guard response.expectedContentLength <= maxBytes else { throw VaultPDFError.tooLarge }
+            guard response.expectedContentLength <= maxBytes else { throw limitError }
             var bounded = Data()
             for try await byte in stream {
-                guard bounded.count < maxBytes else { throw VaultPDFError.tooLarge }
+                guard bounded.count < maxBytes else { throw limitError }
                 bounded.append(byte)
             }
             data = bounded
@@ -165,14 +166,17 @@ struct CanvasRelay {
         let vault = request.url?.path.contains("/vault/") ?? false
         let required = body?["reconciliationRequired"] as? Bool
         let preserved = vault && (body?["code"] as? String == "note_reconciliation_required" || required == true)
-        if !(200...299).contains(http.statusCode) || (preserved && request.httpMethod != "GET") {
+        if !(200...299).contains(http.statusCode) || (preserved && (request.httpMethod != "GET" || rejectReconciliation)) {
             var info: [String:Any] = [NSLocalizedDescriptionKey:body?["error"] as? String ?? "Mac 수신 오류"]
             let status = preserved ? 409 : http.statusCode
             if vault && status == 409 {
+                let document = ["/vault/document","/vault/document/conflict"].contains(request.url?.path ?? "")
+                let knownPrepublication = !document || ["document_stale","document_page_loss","document_schema_downgrade"].contains(body?["code"] as? String ?? "")
                 let kind: VaultSaveConflict = preserved ? .reconciliationRequired :
-                    (required == false && body?["publicationAttempted"] as? Bool == false ? .prepublication : .unclassified)
+                    (required == false && body?["publicationAttempted"] as? Bool == false && knownPrepublication ? .prepublication : .unclassified)
                 info[VaultSaveConflict.errorKey] = kind.rawValue
-                if let recoveryID = body?["recoveryID"] as? String, UUID(uuidString:recoveryID) != nil { info["CanvasRecoveryID"] = recoveryID }
+                if let recoveryID = body?["recoveryID"] as? String,
+                   (document ? CanvasDocumentRelay.opaqueID(recoveryID) : UUID(uuidString:recoveryID) != nil) { info["CanvasRecoveryID"] = recoveryID }
                 if let code = body?["code"] as? String { info["CanvasVaultErrorCode"] = code }
                 // No raw error/recovery path parsing or private path disclosure.
                 info[NSLocalizedDescriptionKey] = kind == .prepublication ?
@@ -184,6 +188,99 @@ struct CanvasRelay {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(type,from:data)
+    }
+
+    private func documentCurrent(_ isCurrent: @Sendable () async -> Bool) async throws {
+        try Task.checkCancellation()
+        guard await isCurrent() else { throw CancellationError() }
+        try Task.checkCancellation()
+    }
+
+    private func documentResponse<T: Decodable>(_ path: String, as type: T.Type, limit: Int,
+                                                method: String = "GET", body: Data? = nil, conflictSummary: Bool = false) async throws -> T {
+        try await response(request(path,method:method,body:body),as:type,maxBytes:limit,
+                           limitError:CanvasDocumentRelay.Failure.tooLarge,rejectReconciliation:!conflictSummary)
+    }
+
+    /// 호출자의 연결 epoch·문서 snapshot 소유권을 매 비동기 경계에서 확인한다.
+    func vaultDocument(id: UUID, isCurrent: @Sendable () async -> Bool) async throws -> CanvasDocumentRelay.Validated {
+        try await documentCurrent(isCurrent)
+        let bundle = try await documentResponse("/vault/document?id=\(id.uuidString.lowercased())",
+            as:CanvasDocumentRelay.Bundle.self,limit:CanvasDocumentRelay.bundleLimit)
+        try await documentCurrent(isCurrent)
+        let validated = try bundle.validated(id:id)
+        try await documentCurrent(isCurrent)
+        return validated
+    }
+
+    /// 원본 bytes를 보내고 성공 요약과 전체 재열기를 대조한다. 자동 재시도·checkpoint 해제는 하지 않는다.
+    func saveVaultDocument(documentJSON: Data, previews: [UUID:Data], base: CanvasDocumentRelay.Base?,
+                           isCurrent: @Sendable () async -> Bool) async throws -> CanvasDocumentRelay.Validated {
+        let (proposal,document,body) = try CanvasDocumentRelay.Put.make(bytes:documentJSON,previews:previews,base:base)
+        try await documentCurrent(isCurrent)
+        let capability = try await documentResponse("/vault/canvas/capabilities",as:CanvasDocumentRelay.Capabilities.self,limit:64*1024)
+        try capability.require()
+        try await documentCurrent(isCurrent)
+        let saved = try await documentResponse("/vault/document?id=\(document.id.uuidString.lowercased())",
+            as:CanvasDocumentRelay.Summary.self,limit:64*1024,method:"PUT",body:body)
+        try await documentCurrent(isCurrent)
+        try saved.matches(document,bytes:documentJSON,assets:proposal.pages.map(\.metadata))
+        let reopened = try await vaultDocument(id:document.id,isCurrent:isCurrent)
+        guard reopened.summary == saved, reopened.documentJSON == documentJSON, reopened.previews == previews else { throw CanvasDocumentRelay.Failure.invalid }
+        try await documentCurrent(isCurrent)
+        return reopened
+    }
+
+    func vaultDocumentConflict(id: UUID, isCurrent: @Sendable () async -> Bool) async throws -> CanvasDocumentRelay.Conflict {
+        try await documentCurrent(isCurrent)
+        let value = try await documentResponse("/vault/document/conflict?id=\(id.uuidString.lowercased())",
+            as:CanvasDocumentRelay.Conflict.self,limit:CanvasDocumentRelay.conflictLimit,conflictSummary:true)
+        try await documentCurrent(isCurrent)
+        return try value.validated(id:id)
+    }
+
+    func vaultDocumentCandidate(_ conflict: CanvasDocumentRelay.Conflict, material: CanvasDocumentRelay.MaterialName,
+                                isCurrent: @Sendable () async -> Bool) async throws -> CanvasDocumentRelay.Validated {
+        guard let id = UUID(uuidString:conflict.id) else { throw CanvasDocumentRelay.Failure.invalid }
+        _ = try conflict.validated(id:id)
+        guard let selected = conflict.materials[material], selected.validDocument, let summary = selected.document else { throw CanvasDocumentRelay.Failure.invalid }
+        var url = URLComponents(); url.path = "/vault/document/conflict"
+        url.queryItems = [.init(name:"id",value:conflict.id),.init(name:"recoveryID",value:conflict.recoveryID),
+                          .init(name:"material",value:material.rawValue),.init(name:"sha256",value:selected.sha256)]
+        url.percentEncodedQuery = url.percentEncodedQuery?.replacingOccurrences(of:"+",with:"%2B")
+        guard let path = url.string else { throw URLError(.badURL) }
+        try await documentCurrent(isCurrent)
+        let bundle = try await documentResponse(path,as:CanvasDocumentRelay.Bundle.self,limit:CanvasDocumentRelay.bundleLimit)
+        try await documentCurrent(isCurrent)
+        let validated = try bundle.validated(id:id)
+        guard validated.summary == summary, validated.summary.noteSha256 == selected.sha256 else { throw CanvasDocumentRelay.Failure.invalid }
+        try await documentCurrent(isCurrent)
+        return validated
+    }
+
+    func resolveVaultDocumentConflict(_ conflict: CanvasDocumentRelay.Conflict, decision: ConflictDecision,
+                                      candidate: CanvasDocumentRelay.Validated,
+                                      isCurrent: @Sendable () async -> Bool) async throws -> CanvasDocumentRelay.Validated {
+        guard let id = UUID(uuidString:conflict.id) else { throw CanvasDocumentRelay.Failure.invalid }
+        _ = try conflict.validated(id:id)
+        guard let selected = conflict.materials[conflict.chosen(decision)], selected.validDocument,
+              selected.document == candidate.summary else { throw CanvasDocumentRelay.Failure.invalid }
+        // candidate는 이미 모든 원문/PKDrawing/PNG를 검증한 읽기 결과다.
+        let body = try CanvasDocumentRelay.encoder().encode(CanvasDocumentRelay.Resolve(recoveryID:conflict.recoveryID,expected:conflict.expected,decision:decision))
+        guard body.count <= 16*1024 else { throw CanvasDocumentRelay.Failure.tooLarge }
+        try await documentCurrent(isCurrent)
+        let capability = try await documentResponse("/vault/canvas/capabilities",as:CanvasDocumentRelay.Capabilities.self,limit:64*1024)
+        try capability.require()
+        try await documentCurrent(isCurrent)
+        let result = try await documentResponse("/vault/document/conflict?id=\(conflict.id)",as:CanvasDocumentRelay.Resolved.self,
+            limit:64*1024,method:"PUT",body:body)
+        try await documentCurrent(isCurrent)
+        guard result.resolved, !result.reconciliationRequired, result.recoveryID.utf8.elementsEqual(conflict.recoveryID.utf8),
+              result.decision == decision, result.summary == candidate.summary else { throw CanvasDocumentRelay.Failure.invalid }
+        let reopened = try await vaultDocument(id:id,isCurrent:isCurrent)
+        guard reopened.sameOriginals(as:candidate) else { throw CanvasDocumentRelay.Failure.invalid }
+        try await documentCurrent(isCurrent)
+        return reopened
     }
 
     func projection() async throws -> VoiceProjection {

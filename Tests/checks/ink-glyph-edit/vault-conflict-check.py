@@ -10,7 +10,7 @@ args.output.mkdir(parents=True,exist_ok=True)
 out=Path(subprocess.check_output(['/bin/pwd','-P'],cwd=args.output,text=True).strip())/('vault-conflict-'+str(uuid.uuid4()));out.mkdir()
 for n in ['home','tmp']:(out/n).mkdir()
 env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',HOME=str(out/'home'),CFFIXED_USER_HOME=str(out/'home'),TMPDIR=str(out/'tmp')+'/')
-sources=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift','CanvasInkMathProposal.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'VaultConflictCheck.swift']
+sources=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift','CanvasInkMathProposal.swift','CanvasDocument.swift','CanvasDocumentRelay.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'VaultConflictCheck.swift']
 sources += [root/'Tests/checks/linked-obsidian-notes/WholeNoteRecoveryChecks.swift']
 inputs=sources+[root/'Sources/StreamProtocol/TestDestinations.swift',root/'iOSClient/CanvasBridge/CanvasWorkspace.swift',here/'WorkspaceConflictCheck.swift',root/'Tests/checks/linked-obsidian-notes/main.swift',Path(__file__).resolve()]
 hashes=lambda:{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
