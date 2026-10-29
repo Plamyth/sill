@@ -2,12 +2,16 @@ import Foundation
 import PDFKit
 import AppKit
 
-private func pagesPDF(_ pages: [(String,String)]) -> Data {
+private func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data {
     var objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count \(pages.count) /Kids [\(pages.indices.map { "\(4+$0*2) 0 R" }.joined(separator:" "))] >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
     for (index,item) in pages.enumerated() {
         let stream = "BT /F1 16 Tf 60 700 Td (Core) Tj 0 -40 Td (\(item.0)) Tj 0 -40 Td (Core) Tj ET"
         objects.append("<< /Type /Page /Parent 2 0 R \(item.1.hasPrefix("/MediaBox") ? "" : "/MediaBox [0 0 612 792]") \(item.1) /Resources << /Font << /F1 3 0 R >> >> /Contents \(5+index*2) 0 R >>")
         objects.append("<< /Length \(stream.utf8.count) >>\nstream\n\(stream)\nendstream")
+    }
+    if !outlineObjects.isEmpty {
+        objects[0] = "<< /Type /Catalog /Pages 2 0 R /Outlines \(objects.count + 1) 0 R >>"
+        objects.append(contentsOf:outlineObjects)
     }
     var data = Data("%PDF-1.4\n".utf8), offsets = [Int]()
     for (index,object) in objects.enumerated() { offsets.append(data.count); data.append(Data("\(index+1) 0 obj\n\(object)\nendobj\n".utf8)) }
@@ -197,4 +201,139 @@ private func pagesPDF(_ pages: [(String,String)]) -> Data {
         check(selection.range(at:0,on:page)==card.source.textRanges!.first!.ns && selection.selectionsByLine().map{VaultPDFExcerpt.Rect($0.bounds(for:page))}==card.source.selectionRects,
               "new process verifies actual UTF16 range and rotated page-space bounds")
     }
+}
+
+@MainActor func checkPDFOutline(_ check:(Bool,String)->Void) throws {
+    let fixture = URL(fileURLWithPath:ProcessInfo.processInfo.environment["PDF_OUTLINE_FIXTURE"]!)
+    let data = try Data(contentsOf:fixture)
+    check(CanvasPacket.sha(data) == "8ecbc452dfa4624c7479e2b86ff468278294a2da0f4da2f8458de08c81933ed0",
+          "REA R049 exact stored PDF fixture is reused without regeneration")
+    let root = URL(fileURLWithPath:ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!).appendingPathComponent("outline-fixtures")
+    try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+    let windows = NSApplication.shared.windows.count
+    func snapshot(_ bytes: Data) -> VaultPDFSnapshot {
+        .init(path:"자료/REA.pdf",sha256:CanvasPacket.sha(bytes),dataBase64:bytes.base64EncodedString())
+    }
+    let reader = try VaultPDFReader(snapshot:snapshot(data))
+    reader.view.frame = CGRect(x:0,y:0,width:640,height:900)
+    check(reader.pageCount == 3 && reader.outlineEntries.map(\.title) == ["REA Chapter 1","REA Chapter 3"] &&
+          reader.outlineEntries.map(\.pageNumber) == [1,3] && !reader.outlineTruncated,
+          "PDFKit reads the two actual stored chapter labels and their exact local page destinations")
+    for index in [1,0,1] {
+        let entry = reader.outlineEntries[index]
+        check(reader.go(toOutlineEntry:entry) && reader.pageNumber == entry.pageNumber &&
+              reader.view.currentPage?.string?.contains("REA OUTLINE PAGE \(entry.pageNumber!)") == true,
+              "chapter selection navigates the actual PDFView to the declared PAGE1 or PAGE3")
+    }
+    let page = reader.view.document!.page(at:2)!
+    reader.view.setCurrentSelection(page.selection(for:(page.string! as NSString).range(of:"ANCHOR_P3_ALPHA")),animate:false)
+    let original = try reader.excerpt(), card = try VaultPDFCard.parse(original.markdown())!
+    let text = try VaultPDFCard.parse(card.replacing(.title,with:"목차 이동 전 카드"))!.replacing(.memo,with:"보존 메모 e\u{301} 👩🏽‍💻")
+    try data.write(to:root.appendingPathComponent("REA.pdf"))
+    try Data(text.utf8).write(to:root.appendingPathComponent("card.md"))
+    check(reader.go(toOutlineEntry:reader.outlineEntries[0]) && reader.view.currentSelection == nil,
+          "valid outline navigation reuses page navigation and clears the old page-three selection")
+    let first = reader.view.currentPage!
+    reader.view.setCurrentSelection(first.selection(for:(first.string! as NSString).range(of:"ANCHOR_P1_ALPHA")),animate:false)
+    let source = try reader.excerpt(), saved = try VaultPDFCard.parse(source.markdown())!
+    let (_,returnedPage,returnedSelection) = try saved.source.sourcePage(in:snapshot(data))
+    check(source.pageIndex == 0 && source.pdfSha256 == original.pdfSha256 &&
+          returnedPage.string!.contains("REA OUTLINE PAGE 1") && returnedSelection.string == source.quote,
+          "new selection after chapter navigation uses existing schema2 SHA range Markdown and exact source return")
+    check(try String(contentsOf:root.appendingPathComponent("card.md"),encoding:.utf8).utf8.elementsEqual(text.utf8),
+          "outline browsing and new capture do not overwrite a prior card title memo quote or ID")
+
+    let noOutlineData = pagesPDF([("ONE",""),("TWO",""),("THREE","")])
+    let noOutline = try VaultPDFReader(snapshot:snapshot(noOutlineData))
+    noOutline.view.frame = reader.view.frame
+    check(noOutline.outlineEntries.isEmpty && !noOutline.outlineTruncated && noOutline.go(toPageNumber:3),
+          "PDF without an outline keeps ordinary page navigation available")
+    let noPage = noOutline.view.document!.page(at:2)!
+    noOutline.view.setCurrentSelection(noPage.selection(for:(noPage.string! as NSString).range(of:"Core",options:.backwards)),animate:false)
+    let plainSource = try noOutline.excerpt()
+    check(try VaultPDFReader(snapshot:snapshot(noOutlineData),source:plainSource).pageNumber == 3,
+          "PDF without an outline still captures and returns the selected text page")
+    let outlines = [
+        "<< /Type /Outlines /First 11 0 R /Last 16 0 R /Count 6 >>",
+        "<< /Title (Group) /Parent 10 0 R /First 12 0 R /Last 12 0 R /Count 1 /Next 13 0 R >>",
+        "<< /Title (Nested chapter) /Parent 11 0 R /Dest [8 0 R /Fit] >>",
+        "<< /Title (External URL) /Parent 10 0 R /Prev 11 0 R /Next 14 0 R /A << /S /URI /URI (https://fixture.invalid/) >> >>",
+        "<< /Title (External PDF) /Parent 10 0 R /Prev 13 0 R /Next 15 0 R /A << /S /GoToR /F (other.pdf) /D [0 /Fit] >> >>",
+        "<< /Title (Invalid page) /Parent 10 0 R /Prev 14 0 R /Next 16 0 R /Dest [2 0 R /Fit] >>",
+        "<< /Title (Local action) /Parent 10 0 R /Prev 15 0 R /A << /S /GoTo /D [4 0 R /Fit] >> >>"
+    ]
+    let mixed = try VaultPDFReader(snapshot:snapshot(pagesPDF([("ONE",""),("TWO",""),("THREE","")],outlineObjects:outlines)))
+    mixed.view.frame = reader.view.frame
+    check(mixed.outlineEntries.map(\.depth) == [0,1,0,0,0,0] && mixed.outlineEntries.map(\.pageNumber) == [nil,3,nil,nil,nil,1],
+          "native nested groups flatten in document order while pageless external and invalid destinations remain disabled")
+    check(mixed.go(toOutlineEntry:mixed.outlineEntries[1]) && mixed.pageNumber == 3,
+          "a local destination under a disabled group remains independently navigable")
+    let selectedPage = mixed.view.currentPage!
+    mixed.view.setCurrentSelection(selectedPage.selection(for:(selectedPage.string! as NSString).range(of:"Core",options:.backwards)),animate:false)
+    let selected = mixed.view.currentSelection!, selectedRange = selected.range(at:0,on:selectedPage)
+    func refused(_ entry: VaultPDFReader.OutlineEntry, _ label: String) {
+        check(!mixed.go(toOutlineEntry:entry) && mixed.pageNumber == 3 && mixed.view.currentSelection?.string == selected.string &&
+              mixed.view.currentSelection?.range(at:0,on:selectedPage) == selectedRange,label)
+    }
+    for index in [0,2,3,4] {
+        refused(mixed.outlineEntries[index],"group external action or invalid page is refused without losing the current selection")
+    }
+    refused(reader.outlineEntries[0],"an entry from a different reader cannot reuse a local ordinal")
+    let valid = mixed.outlineEntries[5]
+    let foreign = PDFDocument(data:noOutlineData)!
+    mixed.view.document!.outlineRoot!.child(at:4)!.destination = PDFDestination(page:foreign.page(at:0)!,at:.zero)
+    refused(valid,"destination changed to another PDF after presentation preserves the selection")
+    mixed.view.document!.outlineRoot!.child(at:4)!.destination = PDFDestination(page:mixed.view.document!.page(at:1)!,at:.zero)
+    refused(valid,"destination changed to another local page after presentation is not silently followed")
+    mixed.view.document!.outlineRoot = PDFOutline()
+    refused(valid,"replaced outline root refuses a stale menu entry")
+    mixed.view.document = foreign
+    refused(valid,"replaced PDFView document refuses an old verified outline entry")
+    check(reader.go(toOutlineEntry:reader.outlineEntries[1]) && reader.pageNumber == 3,
+          "local GoTo destination navigation still works after refusal fixtures")
+
+    let depthCount = VaultPDFReader.outlineDepthLimit + 4
+    var deep = ["<< /Type /Outlines /First 11 0 R /Last 11 0 R /Count \(depthCount) >>"]
+    for index in 0..<depthCount {
+        let next = 12 + index
+        deep.append("<< /Title (Depth \(index)) /Parent \(index == 0 ? 10 : 10 + index) 0 R \(index + 1 < depthCount ? "/First \(next) 0 R /Last \(next) 0 R /Count 1" : "/Dest [4 0 R /Fit]") >>")
+    }
+    let deepReader = try VaultPDFReader(snapshot:snapshot(pagesPDF([("ONE",""),("TWO",""),("THREE","")],outlineObjects:deep)))
+    check(deepReader.outlineTruncated && deepReader.outlineEntries.count == VaultPDFReader.outlineDepthLimit + 1 &&
+          deepReader.outlineEntries.map(\.depth).max() == VaultPDFReader.outlineDepthLimit,
+          "deep native outlines stop at the declared depth without recursive unbounded traversal")
+    for count in [VaultPDFReader.outlineEntryLimit,VaultPDFReader.outlineEntryLimit + 1] {
+        var wide = ["<< /Type /Outlines /First 11 0 R /Last \(10 + count) 0 R /Count \(count) >>"]
+        for index in 0..<count {
+            let node = 11 + index
+            wide.append("<< /Title (Entry \(index)) /Parent 10 0 R /Dest [4 0 R /Fit] \(index > 0 ? "/Prev \(node - 1) 0 R" : "") \(index + 1 < count ? "/Next \(node + 1) 0 R" : "") >>")
+        }
+        let wideReader = try VaultPDFReader(snapshot:snapshot(pagesPDF([("ONE",""),("TWO",""),("THREE","")],outlineObjects:wide)))
+        check(wideReader.outlineEntries.count == VaultPDFReader.outlineEntryLimit && wideReader.outlineTruncated == (count > VaultPDFReader.outlineEntryLimit),
+              "outline node cap is exact at its limit and reports truncation only for additional entries")
+    }
+    check(try Data(contentsOf:fixture) == data && Data(contentsOf:root.appendingPathComponent("REA.pdf")) == data,
+          "outline reads navigation selection refusal and capture preserve both original and reopened PDF file bytes")
+    check(NSApplication.shared.windows.count == windows,"outline checks do not create a visible native window")
+}
+
+@MainActor func checkPDFOutlineReopen(_ check:(Bool,String)->Void) throws {
+    let root = URL(fileURLWithPath:ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"]!).appendingPathComponent("outline-fixtures")
+    let data = try Data(contentsOf:root.appendingPathComponent("REA.pdf"))
+    let snapshot = VaultPDFSnapshot(path:"자료/REA.pdf",sha256:CanvasPacket.sha(data),dataBase64:data.base64EncodedString())
+    let text = try String(contentsOf:root.appendingPathComponent("card.md"),encoding:.utf8), card = try VaultPDFCard.parse(text)!
+    let reader = try VaultPDFReader(snapshot:snapshot,source:card.source)
+    reader.view.frame = CGRect(x:0,y:0,width:640,height:900)
+    check(reader.pageNumber == 3 && reader.view.currentSelection?.string == card.source.quote,
+          "fresh process reopens the old card on its exact source page and quote")
+    check(reader.outlineEntries.map(\.title) == ["REA Chapter 1","REA Chapter 3"] && reader.outlineEntries.map(\.pageNumber) == [1,3],
+          "fresh PDFKit process derives the same stored chapter menu without a separate bookmark database")
+    check(reader.go(toOutlineEntry:reader.outlineEntries[0]) && reader.pageNumber == 1 && reader.view.currentSelection == nil,
+          "reopened source reader navigates from its selected quote through the same chapter control")
+    let unchangedText = try String(contentsOf:root.appendingPathComponent("card.md"),encoding:.utf8)
+    check(card.title == "목차 이동 전 카드" && card.memo.utf8.elementsEqual("보존 메모 e\u{301} 👩🏽‍💻".utf8) &&
+          unchangedText.utf8.elementsEqual(text.utf8),
+          "fresh process outline navigation preserves persisted card ID title memo quote and source")
+    check(CanvasPacket.sha(try Data(contentsOf:root.appendingPathComponent("REA.pdf"))) == "8ecbc452dfa4624c7479e2b86ff468278294a2da0f4da2f8458de08c81933ed0",
+          "fresh process keeps the original REA PDF bytes unchanged")
 }
