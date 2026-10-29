@@ -7,7 +7,7 @@ function page(){const a=uuid(),b=uuid();return {schemaVersion:3,id:uuid(),revisi
 function document(){const pages=[page(),page()];return {format:'ccr.canvas-document',version:1,id:uuid(),revision:1,activePageID:pages[0].id,pages};}
 function body(d,base=null,images=d.pages.map(()=>png)) {const bytes=Buffer.from(JSON.stringify(d));return {base,documentJSONBase64:bytes.toString('base64'),documentSha256:sha(bytes),pages:d.pages.map((p,i)=>({id:p.id,drawingSha256:sha(Buffer.from(p.drawingBase64,'base64')),previewSha256:sha(images[i]),previewPNGBase64:images[i].toString('base64')}))};}
 const base=s=>Object.fromEntries(['noteSha256','documentSha256','manifestSha256'].map(k=>[k,s[k]]));
-function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ccr-document-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const d=document();return {root,d,vault:new ObsidianVault(root)};}
+function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'vault-save-boundary-document-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const d=document();return {root,d,vault:new ObsidianVault(root)};}
 function atExchange(file,callback,run){const exec=child.execFileSync;let fired=false;child.execFileSync=function(program,args,...rest){if(!fired&&args?.[0]?.endsWith('vault-note-exchange.py')&&args[2]===file){fired=true;callback(program,args);}return exec.call(this,program,args,...rest);};try{const result=run();assert(fired);return result;}finally{child.execFileSync=exec;}}
 function fault(f,decision='keepCurrent'){
  const first=f.vault.saveDocument(f.d.id,body(f.d)),file=path.join(f.root,first.path),original=fs.readFileSync(file);f.d.revision++;
