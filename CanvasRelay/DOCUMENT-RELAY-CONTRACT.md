@@ -96,7 +96,7 @@ const nextBase: DocumentBase = {
 
 PUT 성공 응답에는 `documentJSONBase64`와 `previewPNGBase64`가 없다. GET에는 둘 다 있다. 일반 성공 응답에 `saved`, `resolved`, `reconciliationRequired: false`가 들어온다고 가정하지 않는다. Files의 current.json token, scene SHA, page revision은 이 3개 SHA를 대신하지 않는다.
 
-documentJSONBase64를 해제한 원본은 `format: "ccr.canvas-document"`, `version: 1`의 문서 전체 JSON이다. id/revision/activePageID 및 순서 있는 pages를 갖는다. 각 페이지의 drawingBase64가 PKDrawing 원본이며 별도 중복 전송 필드는 없다. 요청 pages는 JSON과 길이·ID·순서가 같아야 한다. JSON 전체 및 각 drawing/preview의 SHA를 실제 바이트로 검사한다. 응답의 자산 ID는 소문자 정규형이다.
+documentJSONBase64를 해제한 원본은 `format: "ccr.canvas-document"`, `version: 1`의 문서 전체 JSON이다. id/revision/activePageID 및 순서 있는 pages를 갖는다. 각 페이지의 drawingBase64가 PKDrawing 원본이며 별도 중복 전송 필드는 없다. 요청 pages는 JSON과 길이·ID·순서가 같아야 한다. JSON 전체 및 각 drawing/preview의 SHA를 실제 바이트로 검사한다. 응답 요약의 문서 ID·현재 페이지 ID·자산 ID는 소문자 정규형이다. 원본 JSON 안의 UUID 대소문자는 바꾸지 않고 원바이트·SHA를 보존한다.
 
 원본 JSON과 모든 페이지 자산을 보존하며 미지원 버전·종류·중첩 필드를 성공 재직렬화로 버리지 않고 거부한다. JSON 변경 시 문서 revision이 전진해야 한다. preview만 변경하면 JSON SHA와 revision은 유지할 수 있지만 manifest/note CAS는 바뀐다. 문서 v1 모델에는 페이지 삭제 연산이 없으므로 기존 페이지를 빠뜨린 PUT을 거부한다. schema 3 페이지의 하향도 거부한다.
 

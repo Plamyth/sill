@@ -703,7 +703,7 @@ class ObsidianVault {
     if(![true,false].some(includeTags=>managed===this.#documentMarkdown(id,manifest,header[5],document,includeTags)))throw new VaultError('문서 관리 Markdown이 바뀌었습니다.',409);
     this.#checkDocumentLocation(location);
     for(const [file,before] of identities){const after=fs.lstatSync(file);if(after.isSymbolicLink()||before.dev!==after.dev||before.ino!==after.ino||before.isFile()&&(before.size!==after.size||before.mtimeMs!==after.mtimeMs||before.ctimeMs!==after.ctimeMs))throw new VaultError('문서 전체 자산의 최종 경로 또는 바이트가 바뀌었습니다.',409);}
-    return {schema:'ccr.vault-document/v1',id,path:note.path,revision:document.revision,activePageID:document.activePageID,
+    return {schema:'ccr.vault-document/v1',id,path:note.path,revision:document.revision,activePageID:document.activePageID.toLowerCase(),
       noteSha256:note.sha256,documentSha256:manifest.documentSHA,manifestSha256:header[5],generation:manifest.generation,
       pages:assets,...(includeAssets?{documentJSONBase64:bytes.toString('base64')}:{})};
   }
