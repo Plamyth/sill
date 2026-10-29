@@ -1357,6 +1357,19 @@ final class CanvasStore: ObservableObject {
     private var noteRecoveryBytes: Data?
     private var noteRecoveryAttemptedBytes: Data?
     private var noteRecoveryReadable = true
+    @Published private(set) var pdfViewReader: VaultPDFReader?
+    @Published private(set) var pdfViewBase: VaultNoteSnapshot?
+    @Published private(set) var pdfViewBusy = false
+    @Published private(set) var pdfViewConflict: CanvasRelay.NoteConflict?
+    private var pdfViewRequest = UUID()
+    private var pdfViewMissingConfirmed = false
+    private var pdfViewSceneID: UUID?
+    private var pdfViewAddress = ""
+    private var pdfViewOwner: CanvasDocument.PageSnapshot?
+    private var pdfViewSource: VaultPDFExcerpt?
+    var hasPendingPDFView: Bool { pdfExcerptRecovery?.viewRecovery != nil }
+    var pdfViewCanEdit: Bool { pdfViewReader != nil && pdfViewOwner.map({ document.accepts($0) }) == true && !pdfViewBusy && pdfExcerptRecovery?.saveConflict?.requiresExplicitReconciliation != true && !noteReconciliationHeld }
+    var pdfViewCanPersist: Bool { pdfViewCanEdit && pdfViewReader?.hasViewEdits == true && !vaultSaving && pdfExcerptRecovery?.viewRecovery?.submitted == nil && pdfExcerptRecoveryAttemptedBytes == nil }
     @Published private(set) var pdfExcerptRecovery: VaultPDFCreateRecovery?
     @Published private(set) var pdfExcerptRecoveryNotice = ""
     private let pdfExcerptRecoveryOverride: URL?
@@ -1432,6 +1445,7 @@ final class CanvasStore: ObservableObject {
     var noteReconciliationHeld: Bool {
         guard let url = try? CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json") else { return true }
         if !FileManager.default.fileExists(atPath:url.path) { return false }
+        if let bytes = try? CanvasLocalFile.read(url), let choice = try? JSONDecoder().decode(VaultPDFViewChoice.self,from:bytes).validated() { return !choice.closed }
         guard let choice = noteConflictChoice else { return true }
         return choice.sceneID == scene.id && choice.address == noteAddress && choice.phase != .completed && choice.phase != .superseded
     }
@@ -1712,6 +1726,8 @@ final class CanvasStore: ObservableObject {
 
     func setNoteConnection(address: String, token: String) {
         guard address != noteAddress || token != noteToken else { return }
+        guard closePDFView() else { return }
+        pdfViewConflict = nil
         noteAddress = address
         noteToken = token
         noteConnectionGeneration &+= 1
@@ -1733,6 +1749,8 @@ final class CanvasStore: ObservableObject {
     }
 
     private func invalidateNoteScene() {
+        _ = closePDFView()
+        pdfViewRequest = UUID(); pdfViewBusy = false; pdfViewConflict = nil
         noteSceneGeneration &+= 1
         invalidateNoteRequests()
     }
@@ -2330,6 +2348,231 @@ final class CanvasStore: ObservableObject {
         return id
     }
 
+    private func pdfViewIsCurrent(_ reader: VaultPDFReader, request: UUID, owner: CanvasDocument.PageSnapshot, connection: UInt64) -> Bool {
+        pdfViewReader === reader && pdfViewRequest == request && document.accepts(owner) &&
+            connection == noteConnectionGeneration && !Task.isCancelled
+    }
+    @discardableResult
+    func openPDFView(_ path: String, source: VaultPDFExcerpt? = nil,
+                     loadPDF: (String) async throws -> VaultPDFSnapshot,
+                     loadNote: (String) async throws -> VaultNoteSnapshot) async -> Bool {
+        guard !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy, !pdfViewBusy, !documentEditingBlocked,
+              noteRecoveryReadable, noteRecovery == nil, blockRecovery == nil, !noteToken.isEmpty,
+              pdfExcerptRecoveryReadable, pdfExcerptRecovery?.viewRecovery != nil || pdfExcerptRecovery == nil else { return false }
+        if let current = pdfViewReader, !preservePDFViewDraft(current) { return false }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot()
+            pdfViewRequest = request; pdfViewBusy = true
+            defer { if pdfViewRequest == request { pdfViewBusy = false } }
+            let snapshot = try await loadPDF(path)
+            let basic = try VaultPDFReader(snapshot:snapshot,source:source)
+            let expected = VaultPDFViewState(snapshot:snapshot,pageCount:basic.pageCount)
+            var base: VaultNoteSnapshot?, missing = false
+            if pdfExcerptRecovery?.viewRecovery == nil {
+                do {
+                    base = try await loadNote(expected.notePath).validated(at:expected.notePath)
+                    try VaultPDFViewState.SaveRequest.checkHeld(base!)
+                    _ = try VaultPDFViewState.parse(base!.text,snapshot:snapshot,pageCount:basic.pageCount)
+                } catch let error as NSError where error.domain == "CanvasRelay" && error.code == 404 { missing = true }
+            }
+            guard pdfViewRequest == request, document.accepts(owner), connection == noteConnectionGeneration, !Task.isCancelled else { return false }
+            let reader: VaultPDFReader
+            if let record = pdfExcerptRecovery, let recovery = record.viewRecovery {
+                guard record.sceneID == scene.id, record.relayAddress == noteAddress,
+                      record.path.utf8.elementsEqual(expected.notePath.utf8) else { throw VaultBlockRecoveryError.context }
+                try recovery.validate()
+                let prior = try recovery.base.map { try VaultPDFViewState.parse($0.text,snapshot:snapshot,pageCount:basic.pageCount) }
+                reader = try VaultPDFReader(snapshot:snapshot,source:source,viewState:prior)
+                try reader.applyViewState(recovery.draft.state)
+                base = recovery.base; missing = base == nil
+            } else {
+                let state = try base.map { try VaultPDFViewState.parse($0.text,snapshot:snapshot,pageCount:basic.pageCount) }
+                reader = try VaultPDFReader(snapshot:snapshot,source:source,viewState:state)
+            }
+            pdfViewReader = reader; pdfViewBase = base; pdfViewMissingConfirmed = missing
+            pdfViewSceneID = scene.id; pdfViewAddress = noteAddress; pdfViewOwner = owner; pdfViewSource = source
+            vaultStatus = "PDF 원본과 보기 설정 Markdown을 확인했습니다. 원문 앵커는 유지됩니다."
+            return true
+        } catch {
+            if pdfViewRequest == request { vaultStatus = "PDF 보기를 바꾸지 않았습니다. " + error.localizedDescription }
+            return false
+        }
+    }
+    @discardableResult
+    func preservePDFViewDraft(_ reader: VaultPDFReader) -> Bool {
+        guard pdfViewReader === reader else { return false }
+        do {
+            guard pdfViewBase != nil || pdfViewMissingConfirmed, let sceneID = pdfViewSceneID else { throw VaultBlockRecoveryError.context }
+            let draft = try reader.prepareViewStateSave(base:pdfViewBase)
+            let old = pdfExcerptRecovery
+            guard old == nil || (old?.viewRecovery != nil && old?.path.utf8.elementsEqual(draft.path.utf8) == true) else { throw VaultBlockRecoveryError.context }
+            if !reader.hasViewEdits && old?.viewRecovery?.submitted == nil {
+                if old != nil { try writePDFExcerptRecovery(nil) }; return true
+            }
+            let recovery = VaultPDFViewRecovery(id:old?.viewRecovery?.id ?? UUID(),base:pdfViewBase,draft:draft,submitted:old?.viewRecovery?.submitted)
+            try writePDFExcerptRecovery(.init(sceneID:sceneID,relayAddress:pdfViewAddress,path:draft.path,draft:draft.markdown,
+                submittedText:recovery.submitted?.markdown,saveConflict:old?.saveConflict,viewRecovery:recovery))
+            return true
+        } catch { vaultStatus = "보기 초안을 보존하지 못했습니다. 화면과 기존 입력을 유지합니다. " + error.localizedDescription; return false }
+    }
+    @discardableResult
+    func closePDFView() -> Bool {
+        if let reader = pdfViewReader, !preservePDFViewDraft(reader) { return false }
+        pdfViewRequest = UUID(); pdfViewBusy = false; pdfViewReader = nil; pdfViewBase = nil
+        pdfViewMissingConfirmed = false; pdfViewOwner = nil
+        return true
+    }
+    func savePDFView(_ submitted: VaultPDFViewState.SaveRequest, reader: VaultPDFReader,
+                     save: (String,String?,String) async throws -> VaultNoteSnapshot,
+                     load: (String) async throws -> VaultNoteSnapshot) async {
+        guard pdfViewReader === reader, pdfViewCanPersist, !noteReconciliationHeld,
+              preservePDFViewDraft(reader), var record = pdfExcerptRecovery, var recovery = record.viewRecovery,
+              recovery.submitted == nil else { return }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot()
+            pdfViewRequest = request
+            guard submitted.path.utf8.elementsEqual(recovery.draft.path.utf8), submitted.baseSHA256 == recovery.base?.sha256 else { throw VaultBlockRecoveryError.changed }
+            recovery.submitted = submitted
+            record = .init(sceneID:record.sceneID,relayAddress:record.relayAddress,path:record.path,draft:record.draft,
+                submittedText:submitted.markdown,saveConflict:.unclassified,viewRecovery:recovery)
+            try writePDFExcerptRecovery(record) // PUT보다 먼저 동일 path/base/text와 작업 ID를 보존한다.
+            pdfViewRequest = request; vaultSaving = true
+            defer { if pdfViewRequest == request { vaultSaving = false } }
+            let note = try await submitted.submit(save:save,load:load)
+            guard pdfViewIsCurrent(reader,request:request,owner:owner,connection:connection) else { return }
+            try finishPDFViewSave(submitted,reader:reader,note:note)
+        } catch {
+            guard pdfViewRequest == request else { return }
+            if let current = pdfExcerptRecovery, let recovery = current.viewRecovery {
+                let kind = VaultSaveConflict.classified(error) ?? .acknowledgementLost
+                try? writePDFExcerptRecovery(.init(sceneID:current.sceneID,relayAddress:current.relayAddress,path:current.path,draft:current.draft,
+                    submittedText:recovery.submitted?.markdown,saveConflict:kind,viewRecovery:recovery))
+            }
+            vaultStatus = "보기 설정 저장 결과 미확인·조정 대기. 입력을 보존하고 자동 재전송하지 않습니다. " + error.localizedDescription
+        }
+    }
+    private func finishPDFViewSave(_ submitted: VaultPDFViewState.SaveRequest, reader: VaultPDFReader, note: VaultNoteSnapshot) throws {
+        _ = try submitted.confirmed(note)
+        guard let current = pdfExcerptRecovery, current.viewRecovery?.submitted == submitted else { throw VaultBlockRecoveryError.changed }
+        try reader.confirmViewStateSave(submitted,note:note)
+        pdfViewBase = note; pdfViewMissingConfirmed = false
+        if reader.hasViewEdits {
+            let next = try reader.prepareViewStateSave(base:note)
+            let recovery = VaultPDFViewRecovery(id:current.viewRecovery!.id,base:note,draft:next,submitted:nil)
+            try writePDFExcerptRecovery(.init(sceneID:current.sceneID,relayAddress:current.relayAddress,path:next.path,draft:next.markdown,submittedText:nil,viewRecovery:recovery))
+        } else { try writePDFExcerptRecovery(nil) }
+        vaultStatus = "보기 설정 Markdown 저장과 전체 재조회를 확인했습니다. PDF와 원문 앵커는 변경하지 않았습니다."
+    }
+    func reloadPDFView(reader: VaultPDFReader, load: (String) async throws -> VaultNoteSnapshot) async {
+        guard pdfViewReader === reader, !pdfViewBusy, !vaultSaving else { return }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot()
+            pdfViewRequest = request; pdfViewBusy = true
+            defer { if pdfViewRequest == request { pdfViewBusy = false } }
+            let note = try await load(reader.viewState.notePath).validated(at:reader.viewState.notePath)
+            guard pdfViewIsCurrent(reader,request:request,owner:owner,connection:connection) else { return }
+            if let record = pdfExcerptRecovery, let submitted = record.viewRecovery?.submitted {
+                guard record.saveConflict?.requiresExplicitReconciliation != true else { throw VaultBlockRecoveryError.publicationConflict }
+                try finishPDFViewSave(submitted,reader:reader,note:note)
+            } else {
+                try reader.applyViewStateNote(note); pdfViewBase = note; pdfViewMissingConfirmed = false
+                vaultStatus = "외부 Markdown의 표시 순서·자르기를 역수신했습니다. 원문 PDF·발췌는 유지됩니다."
+            }
+        } catch { if pdfViewRequest == request { vaultStatus = "보기 설정 원본을 적용하지 않았습니다. " + error.localizedDescription } }
+    }
+    var pdfViewChoice: VaultPDFViewChoice? {
+        guard let url = try? CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json"),
+              let data = try? CanvasLocalFile.read(url), data.count <= 12*1024*1024 else { return nil }
+        return try? JSONDecoder().decode(VaultPDFViewChoice.self,from:data).validated()
+    }
+    private func writePDFViewChoice(_ choice: VaultPDFViewChoice, expected: Data?) throws {
+        let url = try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+        let current = FileManager.default.fileExists(atPath:url.path) ? try CanvasLocalFile.read(url) : nil
+        guard current == expected else { throw VaultBlockRecoveryError.changed }
+        let bytes = try JSONEncoder().encode(choice.validated())
+        guard bytes.count <= 12*1024*1024 else { throw VaultBlockRecoveryError.unavailable }
+        try CanvasLocalFile.write(bytes,to:url)
+        guard try CanvasLocalFile.read(url) == bytes else { throw VaultBlockRecoveryError.changed }
+    }
+    private func archivePDFViewChoice(_ data: Data) throws {
+        // Content identity makes an interrupted archival write converge without a new operation ID.
+        let h = CanvasPacket.sha(data)
+        let id = String(h.prefix(8))+"-"+String(h.dropFirst(8).prefix(4))+"-"+String(h.dropFirst(12).prefix(4))+"-"+String(h.dropFirst(16).prefix(4))+"-"+String(h.dropFirst(20).prefix(12))
+        let url = try CanvasRuntime.conflictRecoveryURL("NoteConflictAttempt-"+id+".json")
+        if FileManager.default.fileExists(atPath:url.path) {
+            guard try CanvasLocalFile.read(url) == data else { throw VaultBlockRecoveryError.changed }
+        } else { try CanvasLocalFile.write(data,to:url) }
+        guard try CanvasLocalFile.read(url) == data else { throw VaultBlockRecoveryError.changed }
+    }
+    func comparePDFViewConflict(reader: VaultPDFReader,
+                                load: (String) async throws -> CanvasRelay.NoteConflict) async {
+        guard pdfViewReader === reader, !pdfViewBusy, !vaultSaving, preservePDFViewDraft(reader),
+              let original = pdfExcerptRecovery, original.viewRecovery != nil else { return }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot()
+            pdfViewRequest = request; pdfViewBusy = true
+            defer { if pdfViewRequest == request { pdfViewBusy = false } }
+            let conflict = try await load(original.path).validated(path:original.path)
+            guard pdfViewIsCurrent(reader,request:request,owner:owner,connection:connection), pdfExcerptRecovery == original else { throw VaultBlockRecoveryError.changed }
+            let url = try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+            let previous = FileManager.default.fileExists(atPath:url.path) ? try CanvasLocalFile.read(url) : nil
+            if let previous {
+                if var old = try? JSONDecoder().decode(VaultPDFViewChoice.self,from:previous).validated() {
+                    guard old.original.sceneID == original.sceneID, old.original.relayAddress == original.relayAddress, old.original.path == original.path || old.closed else { throw VaultBlockRecoveryError.context }
+                    // An explicit fresh comparison supersedes the prior snapshot, preserving its full inputs.
+                    old.phase = .superseded
+                    try archivePDFViewChoice(JSONEncoder().encode(old.validated()))
+                } else {
+                    let old = try JSONDecoder().decode(NoteConflictLocalChoice.self,from:previous).validated()
+                    guard old.phase == .completed || old.phase == .superseded else { throw VaultBlockRecoveryError.publicationConflict }
+                    try archivePDFViewChoice(previous)
+                }
+            }
+            let choice = VaultPDFViewChoice(schema:VaultPDFViewChoice.schemaName,original:original,conflict:conflict,phase:.compared)
+            try writePDFViewChoice(choice,expected:previous)
+            pdfViewConflict = conflict
+            vaultStatus = "현재·기준·외부·제안 원문을 비교했습니다. 명시 선택 전에는 다시 저장하지 않습니다."
+        } catch { if pdfViewRequest == request { vaultStatus = "보기 설정 비교를 적용하지 않았습니다. " + error.localizedDescription } }
+    }
+    func resolvePDFViewConflict(_ decision: CanvasRelay.ConflictDecision, reader: VaultPDFReader,
+                               resolve: (CanvasRelay.NoteConflict,CanvasRelay.ConflictDecision) async throws -> VaultNoteSnapshot) async {
+        guard pdfViewReader === reader, !pdfViewBusy, !vaultSaving, let originalChoice = pdfViewChoice, originalChoice.phase != .superseded,
+              originalChoice.phase != .resolved || originalChoice.decision == decision,
+              originalChoice.original == pdfExcerptRecovery,
+              originalChoice.original.sceneID == scene.id, originalChoice.original.relayAddress == noteAddress else { return }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot()
+            let material = originalChoice.conflict.selected(decision)
+            guard let material, material.validNote, let markdown = material.markdown else { throw VaultBlockRecoveryError.unavailable }
+            // Reject malformed/other-PDF candidates before changing the server's active file.
+            _ = try VaultPDFViewState.parse(markdown,snapshot:reader.snapshot,pageCount:reader.pageCount)
+            let url = try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+            let previous = try CanvasLocalFile.read(url)
+            var choice = originalChoice; choice.decision = decision; choice.phase = .resolving
+            pdfViewRequest = request; pdfViewBusy = true
+            defer { if pdfViewRequest == request { pdfViewBusy = false } }
+            try writePDFViewChoice(choice,expected:previous)
+            let submittedChoice = try CanvasLocalFile.read(url)
+            let selected = try await resolve(choice.conflict,decision).validated(at:choice.original.path)
+            try VaultPDFViewState.SaveRequest.checkHeld(selected)
+            guard selected.sha256 == material.sha256, selected.text.utf8.elementsEqual(markdown.utf8),
+                  pdfViewIsCurrent(reader,request:request,owner:owner,connection:connection), pdfExcerptRecovery == choice.original else { throw VaultBlockRecoveryError.changed }
+            let state = try VaultPDFViewState.parse(selected.text,snapshot:reader.snapshot,pageCount:reader.pageCount)
+            let replacement = try VaultPDFReader(snapshot:reader.snapshot,source:pdfViewSource,viewState:state)
+            // The full former base/draft/submitted remains in the durable resolved choice.
+            choice.phase = .resolved; choice.resolved = selected
+            try writePDFViewChoice(choice,expected:submittedChoice)
+            try writePDFExcerptRecovery(nil)
+            pdfViewReader = replacement; pdfViewBase = selected; pdfViewMissingConfirmed = false
+            pdfViewConflict = nil; pdfViewOwner = owner
+            vaultStatus = "선택한 보기 설정과 전체 재조회를 확인했습니다. 이전 초안·원본·제안은 복구 자료에 보존했습니다."
+        } catch { if pdfViewRequest == request { vaultStatus = "보기 설정 조정 결과 미확인. 원문과 선택 의도를 보존합니다. " + error.localizedDescription } }
+    }
     var hasPendingPDFExcerpt: Bool { pdfExcerptRecovery != nil }
 
     private func writePDFExcerptRecovery(_ record: VaultPDFCreateRecovery?) throws {
@@ -2347,7 +2590,7 @@ final class CanvasStore: ObservableObject {
         pdfExcerptRecoveryBytes = bytes
         pdfExcerptRecoveryAttemptedBytes = nil
         pdfExcerptRecovery = record
-        pdfExcerptRecoveryNotice = record == nil ? "" : "보존된 PDF 발췌 생성 의도가 있습니다. 같은 ID의 저장 결과만 확인합니다."
+        pdfExcerptRecoveryNotice = record == nil ? "" : (record?.viewRecovery != nil ? "보존된 PDF 보기 초안·저장 의도가 있습니다. 자동 재전송하지 않습니다." : "보존된 PDF 발췌 생성 의도가 있습니다. 같은 ID의 저장 결과만 확인합니다.")
     }
 
     @discardableResult
@@ -2385,7 +2628,7 @@ final class CanvasStore: ObservableObject {
     func savePDFExcerpt(allowCreate: Bool,
                         create: (String,String) async throws -> VaultNoteSnapshot,
                         load: (String) async throws -> VaultNoteSnapshot) async -> UUID? {
-        guard !noteReconciliationHeld, var record = pdfExcerptRecovery, pdfExcerptRecoveryReadable,
+        guard !noteReconciliationHeld, var record = pdfExcerptRecovery, record.viewRecovery == nil, pdfExcerptRecoveryReadable,
               record.sceneID == scene.id, record.relayAddress == noteAddress,
               noteRecoveryReadable, noteRecovery == nil, !vaultDirty, !vaultInputBusy,
               !vaultSaving, !vaultLoading, !noteToken.isEmpty else { return nil }
@@ -3548,7 +3791,7 @@ final class CanvasStore: ObservableObject {
     var canTransitionDocument: Bool { !documentBusy && documentInputsClear }
     private var documentInputsClear: Bool { documentRecoveryInputsClear() && !documentPresentationBusy && !documentSyncHeld }
     private func documentRecoveryInputsClear(recoveringFiles: Bool = false) -> Bool {
-        documentOperationsEnabled && (sceneReadable || recoveringFiles) &&
+        documentOperationsEnabled && !pdfViewBusy && pdfViewReader?.hasViewEdits != true && (sceneReadable || recoveringFiles) &&
         !fileSaveBusy && (fileWorkspaceState != .blocked || recoveringFiles) && !inkBusy && !hasPendingInkProposal &&
         !inkMathInputBusy && !cardTagInputBusy && cardTagEditor == nil && cardMergeDraft == nil &&
         proposedNode == nil && commentSession == nil && !commentInputBusy &&
@@ -3907,6 +4150,9 @@ final class CanvasStore: ObservableObject {
                 let key = RecoveryKey(note:false,sceneID:record.conflict.id,address:record.address,recoveryID:record.conflict.recoveryID.uuidString,backup:record.backupFilename,sha:record.localSHA)
                 descriptors.append(.init(key:key,closed:record.disposition == .resolved || record.disposition == .superseded))
             } else if name == "NoteConflictChoice.json" || name.hasPrefix("NoteConflictAttempt-") {
+                if let choice = try? JSONDecoder().decode(VaultPDFViewChoice.self,from:bytes).validated() {
+                    guard choice.closed else { throw VaultBlockRecoveryError.publicationConflict }; continue
+                }
                 let record = try JSONDecoder().decode(NoteConflictLocalChoice.self,from:bytes).validated()
                 let snapshot = try JSONDecoder().decode(CanvasRelay.NoteConflict.self,from:record.snapshot).validated(path:record.path)
                 let backup = try CanvasLocalFile.read(CanvasRuntime.conflictRecoveryURL(record.backupFilename))
