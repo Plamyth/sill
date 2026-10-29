@@ -53,3 +53,7 @@ native는 실제 자체 ObsidianVault 파일 처리와 전체 Document Files gen
 원래54/child5 및 전체 SDK를 반복하지 않았다. 처음 부가 compile은 새 검사 fixture가 기존 Rect(CGRect) initializer를 잘못 호출해 실패했으며 `contract-d61ea99a-94d3-415d-8940-011b6b3fab93/result.json`에 보존했다. 검사 fixture만 수정했고 제품 validation은 바꾸지 않았다.
 
 이 후속의 변경은 이 문서와 `Tests/checks/epub-product/{README.md,run.py,contract-boundaries.swift}`뿐이다. 제품은 `70b3dc55` 그대로이며 부모 SDK/Nash 입력을 보존한다. 앱·서버·프로토콜의 tracked 바이트 전체 대조는 `evidence/PRODUCT-BYTES-70b3dc55-during-contract-native.json`에 연결했다. 통합/설치/서비스 반영·최종 수용은 수행하지 않았다.
+
+### 부모 전체 iOS27 SDK 수신
+
+부모가 정확 `70b3dc55` 제품의 `epub-product-sdk-70b3dc55-20261029/result.json`을 반환했다. `project-plist`/`ios-protocol`/`ios27-store-ui-typecheck`는 모두 exit0이고 실행 입력의 전후 SHA·70b Git blob 일치가 기록됐다. 이 writer도 영수증 필드와 현재 제품 bytes를 대조했다. 이는 위에서 대기였던 전체 Store/Workspace SDK의 후속 통과이며 실제 GUI·기기·설치 수용은 아니다. 이후 test/docs 후속 커밋은 제품 bytes를 바꾸지 않아 그 한정 범위로 기존 SDK 결과를 재사용한다. Nash 접합 독립 검수와 Laplace actual HTTP는 별도 진행 중이다. 전체 완료는 false다.
