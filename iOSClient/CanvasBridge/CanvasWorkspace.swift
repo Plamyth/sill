@@ -514,6 +514,7 @@ struct CanvasWorkspace: View {
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
             foldButton
             CanvasCardMergeMenu(store:store)
+            CanvasGroupMenu(store:store)
             CanvasCardTagsMenu(store:store)
             if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
@@ -1887,6 +1888,7 @@ struct CanvasWorkspace: View {
     }
 
     private var canvas: some View {
+        let groupOwner = store.groupCommandOwner
         let visible = store.cardTagVisibility
         let displayed = store.displayedScene
         let annotationFrames = displayed.annotationFrames
@@ -1905,6 +1907,7 @@ struct CanvasWorkspace: View {
                     annotationView(note,frame:annotationFrames[note.id]).accessibilityHidden(diagramMode == .diagram)
                 }
                 if store.mode == .select, let id = store.selectedNode, visible.nodeIDs.contains(id),
+                   !store.groups.contains(where:{ $0.node.id == id }),
                    let node = store.scene.nodes.first(where:{ $0.id == id }),
                    let shown = displayed.nodes.first(where:{ $0.id == id }),
                    let corner = shown.scenePoint(.init(x:shown.frame.x + shown.frame.width,y:shown.frame.y + shown.frame.height)),
@@ -1935,6 +1938,14 @@ struct CanvasWorkspace: View {
             .offset(store.pan)
         }
         .clipped()
+        .overlay(alignment:.topLeading) {
+            if let id = store.openedGroupID, let group = store.groups.first(where:{ $0.node.id == id }) {
+                HStack {
+                    Button("전체 지도로 돌아가기") { store.leaveGroup(owner:groupOwner) }
+                    Text("하위 지도 · \(group.node.text) · 같은 원본 획 바탕").font(.caption)
+                }.padding(8).background(.regularMaterial)
+            } else if let error = store.groupReadError { Text(error).padding(8).background(.regularMaterial) }
+        }
         .contentShape(Rectangle())
         .allowsHitTesting(!store.documentEditingBlocked)
         .background(Color(uiColor:.secondarySystemBackground))
@@ -1951,7 +1962,7 @@ struct CanvasWorkspace: View {
                 store.selectedNode = id
                 inspectorOpen = true
             },onError:{ if owner.map(store.document.accepts) == true { store.status = $0 } })
-            .id(store.isDocumentSource ? "\(store.document.id):\(store.document.pageEpoch)" : store.scene.id.uuidString)
+            .id((store.isDocumentSource ? "\(store.document.id):\(store.document.pageEpoch)" : store.scene.id.uuidString) + ":group:\(store.groupCommandOwner.view)")
         }.padding(8)
     }
 
@@ -1998,7 +2009,7 @@ struct CanvasWorkspace: View {
         .onTapGesture { store.selectLink(link.id) }
         .allowsHitTesting(store.mode == .select)
         .accessibilityElement(children:.ignore)
-        .accessibilityLabel(link.label.isEmpty ? "연결선" : "연결선 \(link.label)")
+        .accessibilityLabel(CanvasGroup.accessibilityLabel(link,in:store.scene))
         .accessibilityValue(store.selectedLink == link.id ? "선택됨. 시작점과 끝점을 끌어 연결 위치 변경" : "선택 안 됨")
         .accessibilityIdentifier("canvasLink-\(link.id.uuidString)")
         .accessibilityAddTraits(.isButton)
@@ -2081,7 +2092,7 @@ struct CanvasWorkspace: View {
             ForEach(store.scene.annotations.filter {
                 $0.nodeId == nil || store.scene.visibility.annotationIDs.contains($0.id)
             }) { note in
-                let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : note.author
+                let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : CanvasGroup.displayAuthor(note)
                 Text("\(author): \(note.text)").font(.body).textSelection(.enabled)
             }
             if let voice = store.displayedVoice {

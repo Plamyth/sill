@@ -74,16 +74,7 @@ enum CanvasCardMerge {
               scene.annotations.contains(where: {
                   $0.nodeId == id && $0.author == markerAuthor && $0.text.utf8.elementsEqual(markerText.utf8)
               }) else { return nil }
-        let links = scene.links.filter { $0.from == id && $0.label.hasPrefix(linkPrefix) }
-        guard (2...20).contains(links.count), Set(links.map(\.to)).count == links.count else { return nil }
-        var members: [CanvasNode] = []
-        for index in 1...links.count {
-            let matches = links.filter { $0.label.utf8.elementsEqual((linkPrefix + String(index)).utf8) }
-            guard matches.count == 1, let link = matches.first, link.kind != .parentChild, link.to != id,
-                  let source = scene.nodes.first(where: { $0.id == link.to }), source.kind == .note else { return nil }
-            members.append(source)
-        }
-        return members
+        return CanvasGroup.orderedMembers(of:id,in:scene,prefix:linkPrefix,count:2...20)
     }
 
     static func unmerging(_ id: UUID, in scene: CanvasScene) throws -> CanvasScene {
@@ -97,11 +88,67 @@ enum CanvasCardMerge {
         return next
     }
 
-    private static func validateSize(_ scene: CanvasScene) throws {
+    fileprivate static func validateSize(_ scene: CanvasScene) throws {
         try scene.requireCompatibleNodeKinds()
         guard scene.nodes.count < 1000,
               try CanvasFileWorkspace.bytes(scene).count <= CanvasScene.localByteLimit,
               scene.nodes.allSatisfy(\.hasValidRotation) else { throw Failure.tooLarge }
+    }
+}
+
+extension CanvasGroup {
+    struct Draft {
+        let selection: CanvasCardMerge.Draft
+        var memberIDs: [UUID] { selection.memberIDs }
+        var sceneSHA: String { selection.sceneSHA }
+
+        init(scene: CanvasScene, memberIDs: [UUID]) throws {
+            let entries = try CanvasGroup.entries(in:scene)
+            guard !entries.contains(where:{ !$0.memberIDs.filter(memberIDs.contains).isEmpty }),
+                  !scene.links.contains(where:{ $0.kind == .parentChild && (memberIDs.contains($0.from) || memberIDs.contains($0.to)) })
+            else { throw Failure.selection }
+            selection = try CanvasCardMerge.Draft(scene:scene,memberIDs:memberIDs)
+        }
+        func appending(_ id: UUID, in scene: CanvasScene) throws -> Draft {
+            guard try CanvasFileWorkspace.sceneSHA(scene) == sceneSHA else { throw Failure.changed }
+            return try Draft(scene:scene,memberIDs:memberIDs + [id])
+        }
+        func applying(to scene: CanvasScene) throws -> (scene:CanvasScene, groupID:UUID) {
+            guard try CanvasFileWorkspace.sceneSHA(scene) == sceneSHA, scene.revision < Int.max else { throw Failure.changed }
+            _ = try Draft(scene:scene,memberIDs:memberIDs)
+            let members = memberIDs.map { id in scene.nodes.first { $0.id == id }! }
+            guard members.allSatisfy({ $0.frame.isValidLinkFrame }) else { throw Failure.selection }
+            let corners = members.flatMap { node in
+                [CanvasPoint(x:node.frame.x,y:node.frame.y),.init(x:node.frame.x + node.frame.width,y:node.frame.y),
+                 .init(x:node.frame.x,y:node.frame.y + node.frame.height),.init(x:node.frame.x + node.frame.width,y:node.frame.y + node.frame.height)]
+                    .compactMap { node.scenePoint($0) }
+            }
+            guard corners.count == members.count * 4 else { throw Failure.selection }
+            let x = corners.map(\.x).min()! - 24, y = corners.map(\.y).min()! - 60
+            let right = corners.map(\.x).max()! + 24, bottom = corners.map(\.y).max()! + 24
+            let frame = CanvasRect(x:x,y:y,width:right - x,height:bottom - y)
+            guard frame.isValidLinkFrame else { throw Failure.selection }
+            var next = scene
+            let id = UUID()
+            // Put the outline behind the unchanged member cards; no card body or ink is copied.
+            next.nodes.insert(.init(id:id,kind:.box,frame:frame,text:"그룹",confidence:.confirmed,sourceStrokeIds:[],isCollapsed:false),at:0)
+            for (index,member) in memberIDs.enumerated() {
+                next.links.append(.init(id:UUID(),from:id,to:member,label:linkPrefix + String(index + 1),kind:.general))
+            }
+            next.annotations.append(.init(id:UUID(),nodeId:id,text:marker,author:author))
+            next.revision += 1
+            _ = try entries(in:next); try CanvasCardMerge.validateSize(next)
+            return (next,id)
+        }
+    }
+
+    static func toggling(_ expected: CanvasNode, in scene: CanvasScene) throws -> CanvasScene {
+        guard scene.revision < Int.max, let entry = try entries(in:scene).first(where:{ $0.node.id == expected.id }),
+              CanvasScene.sameNode(entry.node,expected), let index = scene.nodes.firstIndex(where:{ $0.id == expected.id })
+        else { throw Failure.changed }
+        var next = scene; next.nodes[index].isCollapsed = expected.isCollapsed != true; next.revision += 1
+        try CanvasCardMerge.validateSize(next)
+        return next
     }
 }
 
@@ -140,6 +187,46 @@ struct CanvasCardMergeMenu: View {
         }
         .accessibilityIdentifier("canvasCardMergeMenu")
         .accessibilityHint("카드를 하나씩 선택해 순서대로 추가합니다. 원본 카드와 부모·자식 관계는 바꾸지 않습니다.")
+    }
+}
+
+struct CanvasGroupMenu: View {
+    @ObservedObject var store: CanvasStore
+    var body: some View {
+        let owner = store.groupCommandOwner
+        return Menu("그룹 · 하위 지도") {
+            if let draft = store.groupDraft {
+                Text("그룹 순서 · \(draft.memberIDs.count)개")
+                Button("선택 카드를 다음 순서로 추가") { store.appendGroupCard(owner:owner) }.disabled(!store.canAppendGroupCard)
+                Button("이 순서로 그룹 만들기") { store.confirmGroup() }.disabled(!store.canConfirmGroup)
+                    .accessibilityIdentifier("canvasCreateGroup")
+                Button("그룹 선택 취소") { store.cancelGroupDraft() }
+            } else {
+                Button("선택 카드부터 그룹 준비") { store.beginGroup(owner:owner) }.disabled(!store.canBeginGroup)
+            }
+            if let selected = store.selectedNode.flatMap({ id in store.scene.nodes.first { $0.id == id } }),
+               store.groups.contains(where:{ $0.node.id == selected.id }) {
+                Button(selected.isCollapsed == true ? "그룹 펼치기" : "하위 지도로 접기") { store.toggleGroup(selected,owner:owner) }
+                    .disabled(!store.groupInputAllowed || store.groupDraft != nil)
+            }
+            ForEach(store.groups.filter { $0.node.isCollapsed == true },id:\.node.id) { group in
+                Button("하위 지도 열기 · \(group.node.text)") { store.enterGroup(group.node,owner:owner) }
+                    .disabled(!store.groupInputAllowed || store.groupDraft != nil)
+            }
+            if let id = store.openedGroupID, let group = store.groups.first(where:{ $0.node.id == id }) {
+                ForEach(Array(group.memberIDs.enumerated()),id:\.element) { index,id in
+                    if let node = store.scene.nodes.first(where:{ $0.id == id }) {
+                        Button("\(index + 1) · \(node.text.prefix(32))") {
+                            if owner == store.groupCommandOwner { store.select(id) }
+                        }
+                    }
+                }
+                Button("전체 지도로 돌아가기") { store.leaveGroup(owner:owner) }
+            }
+            if let error = store.groupReadError { Text(error) }
+        }
+        .accessibilityIdentifier("canvasGroupMenu")
+        .accessibilityHint("원본 메모 카드를 순서대로 선택합니다. 그룹 소속은 부모·자식 관계와 별개입니다.")
     }
 }
 #endif

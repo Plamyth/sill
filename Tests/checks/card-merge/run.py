@@ -14,6 +14,7 @@ here = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--sdk-check', action='store_true')
+parser.add_argument('--group-submap', action='store_true')
 args = parser.parse_args()
 archive = Path(json.loads(subprocess.check_output([
     '/Users/ambrion/.local/bin/storage-route', 'path', 'development-archive', '--project', 'BT_CCR-ipad'
@@ -28,15 +29,18 @@ env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer
            CFFIXED_USER_HOME=str(out / 'home'), TMPDIR=str(out / 'tmp') + '/')
 canvas = root / 'iOSClient/CanvasBridge'
 sources = [canvas / (name + '.swift') for name in [
-    'CanvasModel', 'CanvasDocument', 'CanvasDocumentFiles', 'CanvasDocumentRelay', 'VaultPDFExcerpt', 'CanvasCardTags', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
+    'CanvasModel', 'CanvasDocument', 'CanvasDocumentFiles', 'CanvasDocumentRelay', 'VaultPDFExcerpt', 'VaultPDFViewState', 'CanvasCardTags', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
     'CanvasInkMathProposal', 'CanvasInkSpacingProposal', 'CanvasCardMerge', 'CanvasRelay', 'ControlRoomProjection'
-]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / 'main.swift']
+]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / 'main.swift', here / 'GroupChecks.swift']
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
+native_reader = out / 'PDFNativeReader.swift'
+native_reader.write_text((canvas / 'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
+sources.append(native_reader)
 ios_sources = sorted(canvas.glob('*.swift')) + [root / 'iOSClient' / (n + '.swift') for n in [
     'IPadAudioSession', 'IPadAudioLeaseState', 'IPadAudioLeaseCoordinator'
 ]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
 project = root / 'iOSClient/Sill.xcodeproj/project.pbxproj'
-inputs = list(dict.fromkeys(sources + [protocol, project, canvas / 'CanvasWorkspace.swift', Path(__file__)] +
+inputs = list(dict.fromkeys([p for p in sources if p != native_reader] + [canvas / 'VaultPDFReader.swift', protocol, project, canvas / 'CanvasWorkspace.swift', Path(__file__)] +
                            (ios_sources if args.sdk_check else [])))
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
@@ -68,9 +72,12 @@ commands = [
                         '-emit-module-path', out / 'StreamProtocol.swiftmodule', '-o', out / 'StreamProtocol.o']),
     ('compile', base + ['-I', out, *sources, out / 'StreamProtocol.o', '-Xlinker', '-sectcreate', '-Xlinker',
                        '__TEXT', '-Xlinker', '__info_plist', '-Xlinker', out / 'Info.plist', '-o', out / 'check']),
-    ('product-runtime', [out / 'check', out, '--ccr-test-runtime', identity]),
+    ('product-runtime', [out / 'check', out, *(['--group-submap'] if args.group_submap else []), '--ccr-test-runtime', identity]),
     ('project-plist', ['plutil', '-lint', project]),
 ]
+if args.group_submap:
+    commands += [('group-fresh-reopen', [out / 'check', out, '--group-submap-reopen', '--ccr-test-runtime', identity]),
+                 ('group-document', [out / 'check', out, '--group-submap-document', '--ccr-test-runtime', identity])]
 if args.sdk_check:
     sdk_ios = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], env=env, text=True).strip()
     (out / 'ios').mkdir()

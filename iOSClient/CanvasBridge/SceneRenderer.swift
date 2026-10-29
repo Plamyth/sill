@@ -14,7 +14,7 @@ enum SceneRenderer {
     static func png(scene: CanvasScene) async -> Data? {
         guard (try? scene.validateNativeInkProjection()) != nil else { return nil }
         guard scene.nodes.allSatisfy(\.hasValidRotation) else { return nil }
-        let visible = scene.visibility
+        let visible = CanvasGroup.visibility(in:scene)
         let drawing: PKDrawing?
         if scene.drawingBase64.isEmpty {
             drawing = nil
@@ -106,7 +106,7 @@ enum SceneRenderer {
                 cg.restoreGState()
             }
             let annotationFrames = scene.annotationFrames
-            for note in scene.annotations {
+            for note in scene.annotations where visible.annotationIDs.contains(note.id) {
                 guard let placement = annotationFrames[note.id] else { continue }
                 let frame = CGRect(x:placement.x,y:placement.y,width:placement.width,height:placement.height)
                 cg.saveGState()
