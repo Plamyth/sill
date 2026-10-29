@@ -28,7 +28,7 @@ legacy와 Document 진입을 분리한다. 기존 Files 메뉴는 legacy scene �
 
 새 Document는 복구본부터 시작할 수 있지만 다른 문서/legacy로 떠나기 전에는 현재 전체 원본이 Files에 저장되어야 한다. Files binding은 bookmark·document ID·전체 head token·saved document SHA를 갖는다. 원본 디렉터리 identity/경합/전체 페이지·preview/native drawing 검증과 마지막 head 교체는 독립 수용된 `CanvasDocumentFiles`를 그대로 사용한다. 저장 의도가 없어지는 no-op과 안정 base 재사용도 그 구현을 소비한다. GC·기존 recovery 삭제·물리 저장량 상한 해결은 이 단위의 주장에 포함하지 않는다.
 
-선택/복제는 기존 전체 원본을 보존하고, 모든 페이지 preview를 렌더한 뒤 snapshot/취소를 다시 확인하고, 전체 Files CAS 저장·readback, 전체 cache atomic write/readback이 끝난 뒤에만 메모리를 설치한다. 실패 시 이전 페이지/선택/Undo를 유지한다. Files 교체 후 cache 쓰기 실패는 새 head와 옛 cache binding 차이로 재열기가 보류된다. 이를 저장 성공이나 자동 rollback으로 표시하지 않는다.
+선택/복제는 기존 전체 원본을 보존하고, 모든 페이지 preview를 렌더한 뒤 snapshot/취소를 다시 확인하고, 전체 Files CAS 저장·readback, 전체 cache atomic write/readback이 끝난 뒤에만 메모리를 설치한다. 실패 시 이전 페이지/선택/Undo를 유지한다. Files 교체 후 cache 쓰기 실패는 새 head와 옛 cache binding 차이로 재열기가 보류된다. 이를 저장 성공이나 자동 rollback으로 표시하지 않는다. 확정 로컬 본문이 마지막 저장 SHA와 같은 경우에만 명시 Files 재열기로 외부 전체 원본을 수용한다. 로컬 수정·미확인 발행·숨은 복구가 있으면 바꾸지 않는다. 보존용 전체 JSON 사본 내보내기는 보류를 해제하거나 원래 바인딩을 변경하지 않는다.
 
 페이지 전환은 Pencil tool/trace, 라쏘 인식 요청·제안, IME/Scribble/교정·댓글·태그·카드 입력, 드래그·endpoint·연결, 실제 표시 중인 sheet/alert/Files picker, note/PDF 읽기·쓰기·초안, outbox/send, note/block/PDF recovery의 시도와 손상, 미확인 checkpoint, 숨은 conflict choice/local/attempt 자료를 확인한다. 종결 choice와 정확한 owner/주소/recoveryID/backup SHA가 대응하는 보존본은 계속 보관하되 무조건 영구 차단하지 않는다. orphan/손상/미조정 자료는 차단한다.
 

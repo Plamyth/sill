@@ -3546,10 +3546,10 @@ final class CanvasStore: ObservableObject {
     }
     #endif
     var canTransitionDocument: Bool { !documentBusy && documentInputsClear }
-    private var documentInputsClear: Bool { documentRecoveryInputsClear && !documentPresentationBusy && !documentSyncHeld }
-    private var documentRecoveryInputsClear: Bool {
-        documentOperationsEnabled && sceneReadable &&
-        !fileSaveBusy && fileWorkspaceState != .blocked && !inkBusy && !hasPendingInkProposal &&
+    private var documentInputsClear: Bool { documentRecoveryInputsClear() && !documentPresentationBusy && !documentSyncHeld }
+    private func documentRecoveryInputsClear(recoveringFiles: Bool = false) -> Bool {
+        documentOperationsEnabled && (sceneReadable || recoveringFiles) &&
+        !fileSaveBusy && (fileWorkspaceState != .blocked || recoveringFiles) && !inkBusy && !hasPendingInkProposal &&
         !inkMathInputBusy && !cardTagInputBusy && cardTagEditor == nil && cardMergeDraft == nil &&
         proposedNode == nil && commentSession == nil && !commentInputBusy &&
         nodeResizeDrag == nil && nodeRotationDrag == nil && endpointDrag == nil && linkStart == nil &&
@@ -3560,8 +3560,11 @@ final class CanvasStore: ObservableObject {
         pdfExcerptRecoveryReadable && pdfExcerptRecovery == nil && pdfExcerptRecoveryAttemptedBytes == nil &&
         !noteReconciliationHeld
     }
-    private func documentBarrierCheck(checkFiles: Bool = true, reconciling: Bool = false) throws {
-        guard reconciling ? (!documentBusy && documentRecoveryInputsClear) : canTransitionDocument else { throw CocoaError(.userCancelled) }
+    private func documentBarrierCheck(checkFiles: Bool = true, reconciling: Bool = false, recoveringFiles: Bool = false) throws {
+        let recovering = recoveringFiles && isDocumentSource && (try? document.bytes()) != nil
+        let allowed = recovering ? (!documentBusy && !documentPresentationBusy && !documentSyncHeld && documentRecoveryInputsClear(recoveringFiles:true)) :
+            reconciling ? (!documentBusy && documentRecoveryInputsClear()) : canTransitionDocument
+        guard allowed else { throw CocoaError(.userCancelled) }
         let checkpointURL = try CanvasRuntime.stateURL(.checkpoint)
         if FileManager.default.fileExists(atPath:checkpointURL.path) {
             let checkpoint = try JSONDecoder().decode(CanvasVaultCheckpoint.self,from:CanvasLocalFile.read(checkpointURL))
@@ -3736,12 +3739,13 @@ final class CanvasStore: ObservableObject {
             let latest = try files.load(document.id)
             guard !latest.publicationPending else { throw CanvasDocumentFiles.Failure.pending }
             guard latest.token != binding.token else { return }
-            try documentBarrierCheck(checkFiles:false)
+            try documentBarrierCheck(checkFiles:false,recoveringFiles:true)
             guard try CanvasPacket.sha(document.bytes()) == binding.savedSHA else { throw CanvasDocumentFiles.Failure.conflict }
             let changed = DocumentFileBinding(bookmark:binding.bookmark,id:latest.document.id,token:latest.token,savedSHA:CanvasPacket.sha(try latest.document.bytes()))
             try writeDocumentSource(latest.document,binding:changed)
             try installDocument(latest.document,binding:changed,preservingHistory:false)
-            documentFileReady = true; fileWorkspaceStatus = "전체 문서 Files 외부 변경을 재열었습니다."
+            documentFileReady = true; sceneReadable = true; sceneRecoveryNotice = ""; fileWorkspaceState = .ready
+            fileWorkspaceStatus = "전체 문서 Files 외부 변경을 재열었습니다."
         } catch { documentFileReady = false; fileWorkspaceState = .blocked; status = error.localizedDescription }
     }
     func selectDocumentPage(_ id: UUID) async {

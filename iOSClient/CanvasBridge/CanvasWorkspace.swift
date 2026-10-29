@@ -446,7 +446,7 @@ struct CanvasWorkspace: View {
                     Button("페이지 목록·복제") { pageManagerOpen = true }.disabled(!store.canTransitionDocument)
                     Button("전체 문서 Files 폴더 연결") { openDocumentFolder(opening:false) }.disabled(!store.canTransitionDocument)
                     Button("전체 문서 원본 저장") { Task { await store.saveDocumentWorkspace() } }.disabled(store.documentEditingBlocked)
-                    Button("전체 문서 외부 변경 확인") { store.refreshDocumentWorkspace() }.disabled(store.documentEditingBlocked)
+                    Button("전체 문서 외부 변경 확인") { store.refreshDocumentWorkspace() }.disabled(store.documentBusy || store.documentSyncHeld)
                     Button("기존 한 장 그림으로 돌아가기") { do { try store.returnToLegacySource() } catch { store.status = error.localizedDescription } }.disabled(!store.canTransitionDocument || !store.documentFileReady)
                     if store.documentSyncHeld {
                         Button("미확인 문서 저장 · 전체 원본 재확인") { Task { await store.confirmDocumentAcknowledgement(relay) } }
@@ -525,10 +525,10 @@ struct CanvasWorkspace: View {
             Button("연결",systemImage:"network") { connectionOpen = true }
             Button("가져오기") { sourcePickerOwner = try? store.document.pageSnapshot(); importOpen = true }.disabled(store.documentEditingBlocked)
             Menu("내보내기") {
-                Button("편집 원본 JSON") { exportOpen = true }
-                Button("현재 페이지 PNG 이미지") { prepareRenderedExport(.png) }
-                Button("현재 페이지 PDF · 한 장 이미지로 저장") { prepareRenderedExport(.pdf) }
-            }.disabled(renderedExport.isBusy || !canPresentRenderedExport)
+                Button("편집 원본 JSON · 보존용 사본") { exportOpen = true }.disabled(store.documentBusy)
+                Button("현재 페이지 PNG 이미지") { prepareRenderedExport(.png) }.disabled(!canPresentRenderedExport)
+                Button("현재 페이지 PDF · 한 장 이미지로 저장") { prepareRenderedExport(.pdf) }.disabled(!canPresentRenderedExport)
+            }.disabled(renderedExport.isBusy)
         }
         .frame(minWidth:44,minHeight:44)
     }
