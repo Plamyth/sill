@@ -42,3 +42,11 @@ Pstack how/feature로 기존 투영·group membership·접기·원본 저장·in
 ## iOS27 SDK
 
 `evidence/outline-6e4196a9-c634-4c56-8c9c-e9293640e1f6/result.json`에서 제품 commit `ce7d652470f2d11415243213bd20ac529c0d80ab` / tree `9fa08c46bba5a465109eb91a19f5f2bcd2d72e9c`의 plist·iOS StreamProtocol·전체 Store/Workspace typecheck가 모두 exit0이었다. 입력 전후 SHA·normal sentinel은 같았고 native를 다시 실행하지 않은 `--sdk-only` 결과다. 기존 installTap/UIScreen.main deprecation 경고는 이 단위에서 수정하지 않았다. 이 영수증 연결 후속은 문서만 바꾸며 제품 bytes는 같다. 독립 source 검수·부모 초점 P2 수리와의 통합·실제 UIKit/iPad 수용은 남아 있다.
+
+## 후속 통합 검수: 임시 native 뷰 제거의 잉크 Undo P2
+
+부모가 전달한 `hierarchy-focus-union-independent-review-c3addfa3-20261029/REVIEW.md`의 HIERARCHY-FOCUS-UNION-R1은 legacy native Undo의 수명 결함이다. 원문 PKDrawing 삭제를 관측한 finding은 아니다. 초점으로 native 뷰가 제거되면 unchanged `PencilCanvas.dismantleUIView`의 flush→retire→legacy `inkHistory.detach`가 `invalidate/removeAllActions`를 호출해, 같은 원본 owner의 이력도 삭제할 수 있다. 개요 전환도 native 뷰를 임시 제거하므로 같은 공통 수리의 소비 대상이다.
+
+이 branch의 native47·child2는 실제 Store/Files·graph 접힘 Undo/Redo를 확인했으며 UIView dismantle을 실행하지 않았다. 앞선 초점의 Store-only native Undo suspension 대조 역시 이 cleanup 경계를 입증하지 않는다. 기존 성공 영수증은 해당 범위로 보존하되 “실제 임시 뷰 제거 뒤 잉크 Undo 보존”의 증거로 쓰지 않는다. iOS typecheck도 lifecycle 실행 수용이 아니다.
+
+부모가 c3addfa3 기반의 공통 release 경로에서 owner/page/generation이 같은 임시 제거의 history 보존을 수리한다. 실제 source 교체 시 invalidate와 Coordinator retire/늦은 callback 차단은 유지해야 한다. 이 writer는 별도 우회·중복 release 구현·원7db WT 수정을 하지 않는다. 검수된 부모 exact 수리와 최종 의미 통합 및 좁은 수명 회귀가 남은 의존이다. 전체 native/SDK 재실행과 GUI/Pencil 요청은 하지 않았다. 실제 Pencil은 최종 한 묶음, 전체 수용은 false다.
